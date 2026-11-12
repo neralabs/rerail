@@ -6,7 +6,7 @@ use regex_automata::util::look::{Look, LookMatcher};
 use std::collections::BTreeMap;
 
 #[path = "metal_lua_code.rs"]
-mod lua;
+pub mod lua;
 
 fn size(n: usize) -> Result<u32, Error> {
     u32::try_from(n).map_err(|_| Error::BackendCapacity)

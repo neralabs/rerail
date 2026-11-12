@@ -27,7 +27,7 @@ use ast_grep_core::tree_sitter::StrDoc;
 
 /// What a family's format style reads of a call before any sub-rule matches (`Prepared`), one method per document
 /// type the engine has; registered per style at load (`install_format_preparers`).
-pub(crate) trait FormatPreparer: Send + Sync {
+pub trait FormatPreparer: Send + Sync {
     fn prepare_tape<'t>(&self, format: &FormatArgs, env: &MetaVarEnv<'t, TapeDoc>) -> Prepared<'t, TapeDoc>;
     fn prepare_sub<'t>(&self, format: &FormatArgs, env: &MetaVarEnv<'t, SubDoc>) -> Prepared<'t, SubDoc>;
     fn prepare_str<'t>(
@@ -40,12 +40,12 @@ pub(crate) trait FormatPreparer: Send + Sync {
 static PREPARERS: std::sync::OnceLock<Vec<(Style, &'static dyn FormatPreparer)>> = std::sync::OnceLock::new();
 
 /// Registers each style's preparer (once, at load).
-pub(crate) fn install_format_preparers(preparers: Vec<(Style, &'static dyn FormatPreparer)>) {
+pub fn install_format_preparers(preparers: Vec<(Style, &'static dyn FormatPreparer)>) {
     let _ = PREPARERS.set(preparers);
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Style {
+pub enum Style {
     /// `str.format` templates (`braceFormat`).
     Brace,
     /// printf-style formats (`percentFormat`).
@@ -59,7 +59,7 @@ pub(crate) enum Style {
 }
 
 impl Style {
-    pub(crate) fn grammar(self) -> Grammar {
+    pub fn grammar(self) -> Grammar {
         match self {
             Self::Brace => Grammar::expect("braceFormat"),
             Self::Percent => Grammar::expect("percentFormat"),
@@ -71,47 +71,47 @@ impl Style {
 }
 
 #[derive(Clone)]
-pub(crate) struct FormatArgs {
-    pub(crate) style: Style,
+pub struct FormatArgs {
+    pub style: Style,
     /// The capture holding the format string.
-    pub(crate) string: String,
+    pub string: String,
     /// The capture holding the arguments: a call's argument list (a `$$$` capture), or the right
     /// operand of `%`.
-    pub(crate) args: String,
+    pub args: String,
     /// Matched on the host arguments no field consumes; binds into the host environment.
-    pub(crate) unused: Option<AstMatcher>,
+    pub unused: Option<AstMatcher>,
     /// Matched on the template's fields (placeholders and stars for `%`) no argument fills.
-    pub(crate) missing: Option<AstMatcher>,
+    pub missing: Option<AstMatcher>,
     /// The captures `missing` may bind, exported to the host.
     pub(crate) exports: Vec<String>,
     /// How a PHP format that is no string literal is read: its value through bindings (`printf`
     /// and `scanf`); `None` for Python's styles, which read a literal only.
-    pub(crate) reading: Option<Reading>,
+    pub reading: Option<Reading>,
 }
 
 /// One side's candidates: nodes and whether each is known to be unused (or missing); `incomplete`
 /// when others may be that the analysis cannot name (a `**` splat, a dynamic key).
-pub(crate) struct Side<T> {
+pub struct Side<T> {
     candidates: Vec<(T, bool)>,
     incomplete: bool,
 }
 
 impl<T> Side<T> {
-    fn known(candidates: Vec<(T, bool)>) -> Self {
+    pub fn known(candidates: Vec<(T, bool)>) -> Self {
         Self {
             candidates,
             incomplete: false,
         }
     }
 
-    fn unknown() -> Self {
+    pub fn unknown() -> Self {
         Self {
             candidates: Vec::new(),
             incomplete: true,
         }
     }
 
-    fn merge(mut self, other: Self) -> Self {
+    pub fn merge(mut self, other: Self) -> Self {
         self.candidates.extend(other.candidates);
         self.incomplete |= other.incomplete;
         self
@@ -119,17 +119,17 @@ impl<T> Side<T> {
 }
 
 /// A template's fields: `(node id, key)`, the key an argument index or a keyword.
-pub(crate) struct Fields {
-    fields: Vec<(usize, Key)>,
+pub struct Fields {
+    pub fields: Vec<(usize, Key)>,
 }
 
 #[derive(Clone, PartialEq)]
-pub(crate) enum Key {
+pub enum Key {
     Index(usize),
     Name(String),
 }
 
-fn key_of(value: Option<&Value>) -> Option<Key> {
+pub fn key_of(value: Option<&Value>) -> Option<Key> {
     match value? {
         Value::Str(name) => Some(Key::Name(name.clone())),
         Value::Int(index) => usize::try_from(index).ok().map(Key::Index),
@@ -138,7 +138,7 @@ fn key_of(value: Option<&Value>) -> Option<Key> {
 }
 
 /// What a format call's arguments and template give before any sub-rule is matched.
-pub(crate) enum Prepared<'t, D: Doc> {
+pub enum Prepared<'t, D: Doc> {
     NoMatch,
     Unknown,
     Sides {
@@ -300,7 +300,7 @@ fn first<'t, D: Doc>(
 }
 
 /// The expression inside parentheses, as Ruff's AST has none.
-fn unparenthesized<'t, D: Doc>(mut node: Node<'t, D>) -> Node<'t, D> {
+pub fn unparenthesized<'t, D: Doc>(mut node: Node<'t, D>) -> Node<'t, D> {
     while node.kind() == "parenthesized_expression" {
         let mut inner = node
             .named_code();
@@ -315,7 +315,7 @@ fn unparenthesized<'t, D: Doc>(mut node: Node<'t, D>) -> Node<'t, D> {
 
 
 /// The positional fields (placeholders and stars) whose index is at or past `count`.
-fn positional_past(fields: &Fields, count: usize) -> Side<usize> {
+pub fn positional_past(fields: &Fields, count: usize) -> Side<usize> {
     Side::known(
         fields
             .fields
@@ -328,14 +328,14 @@ fn positional_past(fields: &Fields, count: usize) -> Side<usize> {
 
 
 
-pub(crate) mod python;
-pub(crate) mod printf;
-pub(crate) mod rust;
-pub(crate) mod scanf;
+// cratify: `python` is rerail-lang-python's (it mounts it)
+// cratify: `printf` is rerail-lang-php's (it mounts it)
+// cratify: `rust` is rerail-lang-rust's (it mounts it)
+// cratify: `scanf` is rerail-lang-php's (it mounts it)
 
 impl FormatArgs {
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn facts<'t, D: Doc>(&self, env: &MetaVarEnv<'t, D>, facts: &mut Facts<'t, D>) {
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub fn facts<'t, D: Doc>(&self, env: &MetaVarEnv<'t, D>, facts: &mut Facts<'t, D>) {
         let (tree, unused, missing) = match self.prepare(env) {
             Prepared::NoMatch => return,
             Prepared::Unknown => {

@@ -22,7 +22,7 @@
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::matcher::AstMatcher;
 use crate::code_rule_dsl::tape::tokens::TokenGrammar;
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::tape::tokens::stored_gaps;
+pub use crate::code_rule_dsl::tape::tokens::stored_gaps;
 use ast_grep_core::{Doc, Node};
 use regex::Regex;
 use std::sync::Arc;

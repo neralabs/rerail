@@ -20,8 +20,8 @@ use crate::code_rule_dsl::tree::Tree;
 use ast_grep_core::{Doc, Node};
 use std::collections::{BTreeMap, HashSet};
 
-mod value_origins;
-pub(crate) use value_origins::value_origins;
+pub mod value_origins;
+pub use value_origins::value_origins;
 
 pub(crate) type NodeRange = (usize, usize);
 
@@ -51,7 +51,7 @@ pub(crate) enum Reason {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Fact<T> {
+pub enum Fact<T> {
     Known(T),
     /// A real semantic unknown or an input whose syntax is incomplete.
     Unknown(Reason),
@@ -138,7 +138,7 @@ pub enum Qualification {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct NodeFacts {
+pub struct NodeFacts {
     pub node_id: usize,
     pub range: NodeRange,
     pub expression_range: Option<NodeRange>,
@@ -465,7 +465,7 @@ fn binding(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::scope::options::DEFAULT_PYTHON_MINOR;
     use ast_grep_language::LanguageExt;

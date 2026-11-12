@@ -305,7 +305,7 @@ impl PythonProject for Batch {
 }
 
 /// Python's semantic facts as the batch's registered producer (`syntax::SemanticProducer`).
-pub(crate) struct Semantic;
+pub struct Semantic;
 
 impl super::SemanticProducer for Semantic {
     fn project(&self, batch: &Batch, kind: &str, requests: &[i64], targets: &BTreeSet<String>) -> Result<Vec<Vec<Value>>, String> {
@@ -318,7 +318,7 @@ impl super::SemanticProducer for Semantic {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::super::{Document, Projection};
     use super::*;
 use crate::code_rule_dsl::facts::producers::python::families as py;

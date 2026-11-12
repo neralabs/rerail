@@ -9,7 +9,7 @@ use crate::code_rule_dsl::package_manifest::{
 use std::any::Any;
 
 /// The repository's `package.json` files below its root (`RepositoryContext`).
-pub(crate) fn repository_context(root: std::path::PathBuf, server_graph: bool) -> Box<dyn RepositoryContext> {
+pub fn repository_context(root: std::path::PathBuf, server_graph: bool) -> Box<dyn RepositoryContext> {
     Box::new(Manifests::new(root).reading_server_graphs(server_graph))
 }
 
@@ -28,25 +28,25 @@ type Stale = (String, FileInput, Option<crate::code_rule_dsl::language::FileMani
 
 /// The workspace's ECMAScript project context.
 #[derive(Default)]
-pub(crate) struct EcmaProject {
+pub struct EcmaProject {
     /// The `package.json` entries requests sent, by directory: the manifests an ECMA file the
     /// host sent no `package` for reads (`refresh_manifest_context`).
-    pub(crate) manifests: BTreeMap<String, Arc<Manifest>>,
+    pub manifests: BTreeMap<String, Arc<Manifest>>,
     /// The `tsconfig.json`-style configuration texts requests sent, by path: the import aliases
     /// and `jsxImportSource` of those manifests (`refresh_manifest_context`).
-    pub(crate) module_configs: BTreeMap<String, Arc<String>>,
+    pub module_configs: BTreeMap<String, Arc<String>>,
     /// The `.npmignore` and `.gitignore` texts requests sent, by path: with those manifests'
     /// `files` and `main`, which of their files npm publishes (`refresh_manifest_context`).
     pub(crate) ignore_files: BTreeMap<String, Arc<String>>,
     /// The manifest directories whose server graph the workspace derives for files the host sent
     /// no `package` for: requests that change what the graph reads refresh them
     /// (`refresh_server_graphs`).
-    pub(crate) server_graph_directories: BTreeSet<String>,
+    pub server_graph_directories: BTreeSet<String>,
     /// What server graphs read of the files requests sent without a host `package`, by path:
     /// an ECMA source's summary, or `None` for another file, which only marks its folder present.
     /// Kept whatever the code rules' scopes, since a source outside them still moves others in or
     /// out of a graph (`refresh_server_graphs`).
-    pub(crate) graph_entries: BTreeMap<String, Option<module_graph::Summary>>,
+    pub graph_entries: BTreeMap<String, Option<module_graph::Summary>>,
 }
 
 impl ProjectState for EcmaProject {

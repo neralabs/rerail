@@ -12,7 +12,7 @@ use std::ops::Deref;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub(in crate::code_rule_dsl) struct Database {
+pub struct Database {
     // Drop the callback before closing its connection.
     profiler: Option<Box<crate::code_rule_dsl::sql_profile::Profiler>>,
     connection: Connection,
@@ -21,29 +21,29 @@ pub(in crate::code_rule_dsl) struct Database {
     pub(super) healthy: Cell<bool>,
     pub(super) active: Cell<usize>,
     pub(super) leases: Cell<usize>,
-    pub(super) plan_signature: Cell<u64>,
+    pub plan_signature: Cell<u64>,
     pub storage: RefCell<Storage>,
     pub(super) modules: Modules,
     /// The sources bound now, by table: the plan signature's input.
     pub(super) bound: RefCell<BTreeMap<String, Arc<dyn Source>>>,
     /// What the layers above set up on the connection (the transducer's demand module and its match registry,
     /// `ConnectionSetup`).
-    pub(in crate::code_rule_dsl) attached: Option<Box<dyn ConnectionSetup>>,
+    pub attached: Option<Box<dyn ConnectionSetup>>,
 }
 
 impl Database {
-    pub(in crate::code_rule_dsl) fn profiler(
+    pub fn profiler(
         &self,
     ) -> Option<&crate::code_rule_dsl::sql_profile::Profiler> {
         self.profiler.as_deref()
     }
-    pub(in crate::code_rule_dsl) fn profile_scope(
+    pub fn profile_scope(
         &self,
         fields: impl FnOnce() -> serde_json::Value,
     ) -> Option<crate::code_rule_dsl::sql_profile::Context> {
         self.profiler().map(|p| p.scope(fields()))
     }
-    pub(in crate::code_rule_dsl) fn profile_checkpoint(&self) {
+    pub fn profile_checkpoint(&self) {
         if let Some(profiler) = &self.profiler {
             if let Err(error) = profiler.checkpoint(self) {
                 eprintln!("SQL profile checkpoint failed: {error}");
@@ -51,16 +51,16 @@ impl Database {
         }
     }
     /// Forget execution bookkeeping after a standalone SQL session drops its generated objects.
-    pub(in crate::code_rule_dsl) fn reset_execution(&self) {
+    pub fn reset_execution(&self) {
         self.reset_execution_storage();
         self.flush_prepared_statement_cache();
     }
     /// Positive retained phases have fixed delta-first probes and stable native schemas.
     /// Their owner can forget storage bookkeeping while keeping those prepared plans.
-    pub(in crate::code_rule_dsl) fn reset_execution_storage(&self) {
+    pub fn reset_execution_storage(&self) {
         *self.storage.borrow_mut() = Storage::default();
     }
-    pub(in crate::code_rule_dsl) fn ensure_idle(&self) -> rusqlite::Result<()> {
+    pub fn ensure_idle(&self) -> rusqlite::Result<()> {
         // SAFETY: this connection and its statements belong to the current worker.
         // SQLite retains the statement list until statements are finalized here.
         unsafe {
@@ -90,7 +90,7 @@ impl Database {
         ))
     }
     /// Binds `source` to the vtab `name` and refreshes the plan signature.
-    pub(in crate::code_rule_dsl) fn bind(
+    pub fn bind(
         &self,
         name: &str,
         source: Arc<dyn Source>,
@@ -102,7 +102,7 @@ impl Database {
         Ok(())
     }
     /// Rebind one fact batch and calculate its planner signature once.
-    pub(in crate::code_rule_dsl) fn bind_many<'a>(
+    pub fn bind_many<'a>(
         &self,
         sources: impl IntoIterator<Item = (&'a str, Arc<dyn Source>)>,
     ) -> rusqlite::Result<()> {
@@ -125,7 +125,7 @@ impl Database {
     }
 
     /// Remove session-owned modules as well as their rows when an extension session closes.
-    pub(in crate::code_rule_dsl) fn remove_bindings(&self) -> rusqlite::Result<()> {
+    pub fn remove_bindings(&self) -> rusqlite::Result<()> {
         self.ensure_idle()?;
         self.flush_prepared_statement_cache();
         let names: Vec<String> = self.bound.borrow().keys().cloned().collect();
@@ -136,7 +136,7 @@ impl Database {
         Ok(())
     }
     /// SQLite-owned storage held by a suspended consumer, without scanning rows.
-    pub(in crate::code_rule_dsl) fn resident_bytes(&self) -> rusqlite::Result<usize> {
+    pub fn resident_bytes(&self) -> rusqlite::Result<usize> {
         let mut total = 0usize;
         for kind in [
             rusqlite::ffi::SQLITE_DBSTATUS_CACHE_USED,
@@ -165,7 +165,7 @@ impl Database {
         Ok(total)
     }
     /// A connection on `store`'s file with the symbol functions and the `demand` modules.
-    pub(in crate::code_rule_dsl) fn open(store: &ContentStore) -> StoreResult<Self> {
+    pub fn open(store: &ContentStore) -> StoreResult<Self> {
         let connection = store.open_connection()?;
         // SAFETY: this field is declared before the owned connection.
         let profiler =
@@ -196,7 +196,7 @@ impl Database {
         })
     }
     /// The owned connection, to set a hook of its own (an SQL session's step and time budget).
-    pub(in crate::code_rule_dsl) fn connection_mut(&mut self) -> &mut Connection {
+    pub fn connection_mut(&mut self) -> &mut Connection {
         &mut self.connection
     }
 }
@@ -208,11 +208,11 @@ impl Deref for Database {
     }
 }
 
-pub(crate) use crate::code_rule_dsl::facts::connection::{ConnectionSetup, SetUp};
+pub use crate::code_rule_dsl::facts::connection::{ConnectionSetup, SetUp};
 
 static SETUP: std::sync::OnceLock<SetUp> = std::sync::OnceLock::new();
 
 /// Registers what sets up each owned connection (once, at load).
-pub(crate) fn install_connection_setup(setup: SetUp) {
+pub fn install_connection_setup(setup: SetUp) {
     let _ = SETUP.set(setup);
 }

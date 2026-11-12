@@ -123,7 +123,7 @@ impl SearchIndexDraft {
     }
 }
 
-pub(crate) fn search_index_document(
+pub fn search_index_document(
     tape_id: crate::content_store::TapeId,
     file: &TapeDoc,
 ) -> crate::content_store::positional_search::TapeSearchIndex {
@@ -148,7 +148,7 @@ pub(crate) fn search_index_document(
 
 /// Build query-independent kind, bounded exact-value, and source-word FTS streams. The kind stream
 /// preserves preorder positions. The value stream stores one term per distinct file value.
-pub(crate) fn persist_search_index_batch(
+pub fn persist_search_index_batch(
     store: &crate::content_store::ContentStore,
     tape_ids: &[crate::content_store::TapeId],
     files: &[TapeDoc],
@@ -169,7 +169,7 @@ pub(crate) fn persist_search_index_batch(
     Ok(())
 }
 
-pub(super) fn load_literal_eligibility_batch(
+pub fn load_literal_eligibility_batch(
     store: &crate::content_store::ContentStore,
     tape_ids: &[crate::content_store::TapeId],
     programs: &[Program],
@@ -210,7 +210,7 @@ pub(super) fn load_literal_eligibility_batch(
 
 /// Bulk-load exact-value file eligibility. `None` means candidate or unknown and widens to terminal
 /// scanning. `Some([])` is a complete file rejection. Values outside the bounded domain stay unknown.
-pub(crate) fn load_literal_anchor_batch(
+pub fn load_literal_anchor_batch(
     store: &crate::content_store::ContentStore,
     tape_ids: &[crate::content_store::TapeId],
     programs: &[Program],
@@ -228,8 +228,8 @@ pub(crate) fn load_literal_anchor_batch(
         .collect())
 }
 
-#[cfg(all(test, target_os = "macos"))]
-pub(super) fn eligibility_masks(eligibility: Vec<Vec<Option<bool>>>, programs: usize) -> Vec<Vec<u32>> {
+#[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+pub fn eligibility_masks(eligibility: Vec<Vec<Option<bool>>>, programs: usize) -> Vec<Vec<u32>> {
     let words = programs.div_ceil(32);
     eligibility
         .into_iter()
@@ -245,7 +245,7 @@ pub(super) fn eligibility_masks(eligibility: Vec<Vec<Option<bool>>>, programs: u
         .collect()
 }
 
-pub(super) fn widen_anchor_candidates(
+pub fn widen_anchor_candidates(
     programs: &[Program],
     files: &[TapeDoc],
     selections: Vec<Vec<Option<Vec<u32>>>>,
@@ -291,7 +291,7 @@ pub(super) fn widen_anchor_candidates(
 
 /// Load positional kind roots for structural programs. Missing indexes stay unknown. The matcher
 /// can use extra roots, but it must not infer a negative result from an unknown index.
-pub(crate) fn load_kind_anchor_batch(
+pub fn load_kind_anchor_batch(
     store: &crate::content_store::ContentStore,
     tape_ids: &[crate::content_store::TapeId],
     kinds: &[u16],
@@ -331,7 +331,7 @@ pub(crate) fn load_kind_anchor_batch(
 
 /// Select files from required literal words before a regex terminal batch. A true value remains a
 /// candidate, a false value is a complete rejection, and `None` widens to terminal scanning.
-pub(crate) fn load_text_candidate_batch(
+pub fn load_text_candidate_batch(
     store: &crate::content_store::ContentStore,
     tape_ids: &[crate::content_store::TapeId],
     required_words: &[String],
@@ -341,8 +341,8 @@ pub(crate) fn load_text_candidate_batch(
 
 /// Convert complete exact-literal anchors directly into terminal outputs. The selector already
 /// proved the full predicate, so a second matcher or GPU dispatch would duplicate work.
-#[cfg(all(test, target_os = "macos"))]
-pub(super) fn materialize_literal_anchors(
+#[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+pub fn materialize_literal_anchors(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],

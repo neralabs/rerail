@@ -26,9 +26,9 @@ const MAX_FILES: usize = 200_000;
 
 /// The rows, as strings, before they are interned.
 #[derive(Default, Debug, PartialEq)]
-pub(crate) struct Rows {
-    pub(crate) option: Vec<(String, String)>,
-    pub(crate) option_item: Vec<(String, i64, String)>,
+pub struct Rows {
+    pub option: Vec<(String, String)>,
+    pub option_item: Vec<(String, i64, String)>,
     pub(crate) file: Vec<String>,
     pub(crate) package: Vec<(String, String)>,
     pub(crate) package_field: Vec<(String, String, String)>,
@@ -45,7 +45,7 @@ fn scalar(v: &Value) -> String {
 }
 
 /// `option` and `option_item` of a policy's `options`.
-pub(crate) fn options(opts: &Value, rows: &mut Rows) {
+pub fn options(opts: &Value, rows: &mut Rows) {
     let merged;
     let opts = match opts {
         Value::Array(list) => {
@@ -156,7 +156,7 @@ pub(crate) fn tree(root: &Path, docs: &[String], rows: &mut Rows) {
 }
 
 /// The repository inputs a program reads (`reads`), interned in `store`, by relation.
-pub(crate) fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Value, reads: &dyn Fn(&str) -> bool) -> StoreResult<Vec<(&'static str, Relation)>> {
+pub fn relations(store: &ContentStore, root: &Path, docs: &[String], opts: &Value, reads: &dyn Fn(&str) -> bool) -> StoreResult<Vec<(&'static str, Relation)>> {
     let mut rows = Rows::default();
     if reads("option") || reads("option_item") {
         options(opts, &mut rows);
@@ -200,7 +200,7 @@ pub(crate) fn relations(store: &ContentStore, root: &Path, docs: &[String], opts
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

@@ -782,7 +782,7 @@ impl Source for Renamed {
 
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// Only the documents whose rows differ are compared, and their rows new and gone are exactly the diff: with
@@ -1284,4 +1284,4 @@ impl Retained {
 }
 
 #[cfg(test)]
-mod frame_tests;
+pub mod frame_tests;

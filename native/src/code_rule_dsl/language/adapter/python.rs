@@ -4,7 +4,7 @@ use super::*;
 use crate::code_rule_dsl::suppress::{noqa::{NoqaIndex, parent_statement}, nosec::NosecIndex};
 
 /// Python's family: Ruff's semantics.
-pub(crate) struct Python;
+pub struct Python;
 
 impl Adapter for Python {
     const FAMILY: Family = Family::Python;

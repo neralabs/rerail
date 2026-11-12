@@ -283,7 +283,7 @@ pub(super) fn plan(steps: &mut [Step]) -> bags::Analysis {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn string_join_observes_deferred_sum_lookup_keys() {

@@ -411,5 +411,4 @@ pub(super) fn check_operands(
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

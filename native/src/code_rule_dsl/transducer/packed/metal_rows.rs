@@ -27,9 +27,9 @@
 use super::Error;
 use super::block::{BlockOp, BlockProgram, CmpOp, Rhs};
 use super::metal_sort::Held;
-pub(in crate::code_rule_dsl) use rerail_accel::gpu::tile::{Form, Resident};
-#[cfg(test)]
-pub(in crate::code_rule_dsl) use rerail_accel::gpu::tile::{Joined, tile_join};
+pub use rerail_accel::gpu::tile::{Form, Resident};
+#[cfg(any(test, feature = "test-hooks"))]
+pub use rerail_accel::gpu::tile::{Joined, tile_join};
 use super::metal_backend::launch::{commit_checked, gpu_seconds};
 use super::metal_parallel::encode;
 use std::fmt::Write as _;

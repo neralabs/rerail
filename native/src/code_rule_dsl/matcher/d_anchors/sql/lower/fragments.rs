@@ -25,7 +25,7 @@ pub(super) struct Fragment {
     pub admission: Admission,
     pub anchors: Vec<statistics::Decision>,
 }
-pub(in crate::code_rule_dsl::matcher::d_anchors::sql) struct Fragments {
+pub struct Fragments {
     cache: Cache<Key, Cached>,
     hits: usize,
     compilations: usize,
@@ -61,7 +61,7 @@ impl Fragments {
             self.hits += 1;
             return (Arc::clone(&cached.fragment), true);
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         super::FRAGMENT_COMPILES.set(super::FRAGMENT_COMPILES.get() + 1);
         self.compilations += 1;
         let mut lower = scope(lang, fids, path_glob, statistics);

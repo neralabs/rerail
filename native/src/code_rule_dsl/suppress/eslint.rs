@@ -9,7 +9,7 @@ use napi::Result;
 use serde_json::Value;
 
 /// ESLint's `eslint-disable` comments: the rule names a comment must name (or name none).
-pub(crate) struct Suppressions;
+pub struct Suppressions;
 
 impl super::SuppressionKind for Suppressions {
     const KEY: &'static str = "eslint";

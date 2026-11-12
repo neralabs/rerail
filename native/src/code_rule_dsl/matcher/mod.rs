@@ -1,117 +1,116 @@
-mod analysis;
-mod anchors;
+pub mod analysis;
+pub mod anchors;
 /// P's anchors module and SQL anchor engine as copied (2814d875), test-only (O20).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[allow(dead_code, unused_imports)]
-pub(in crate::code_rule_dsl) mod p_anchors;
+pub mod p_anchors;
 // P's anchor corpus at P's paths, for P's relational workspace code and the `p-anchor-corpus` path.
-#[cfg(test)]
-pub(in crate::code_rule_dsl) use p_anchors::sql::{Corpus, CorpusSlot};
-#[cfg(all(test, feature = "p-anchor-corpus"))]
-pub(in crate::code_rule_dsl) use p_anchors::sql::{anchor_plans, anchor_plans_for_file};
+#[cfg(any(test, feature = "test-hooks"))]
+pub use p_anchors::sql::{Corpus, CorpusSlot};
+#[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
+pub use p_anchors::sql::{anchor_plans, anchor_plans_for_file};
 /// D's anchors module and SQL anchor engine as copied (bb79b40a), test-only: the closure of D's
 /// plan-input statistics (O19).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[allow(dead_code, unused_imports)]
-pub(in crate::code_rule_dsl) mod d_anchors;
-pub(crate) mod arguments;
-pub(crate) mod arguments_sql;
-mod binding;
-mod binds;
-mod call;
-mod captures;
-mod collate;
-mod compare;
-mod count;
-mod each;
-mod embedded;
-mod exported;
-pub(crate) mod format_args;
-pub(in crate::code_rule_dsl) mod gap;
-mod layout;
+pub mod d_anchors;
+pub mod arguments;
+// cratify: `arguments_sql` is rerail-lang-sql's (it mounts it)
+pub mod binding;
+pub mod binds;
+pub mod call;
+pub mod captures;
+pub mod collate;
+pub mod compare;
+pub mod count;
+pub mod each;
+pub mod embedded;
+pub mod exported;
+pub mod format_args;
+pub mod gap;
+pub mod layout;
 // 06-first-slice S1: reached from the S1 gate only until the slice's wave (S4) calls it.
-#[cfg_attr(not(test), allow(dead_code))]
-mod lower;
-mod memo;
-mod nth_child;
-mod parse;
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+pub mod lower;
+pub mod memo;
+pub mod nth_child;
+pub mod parse;
+// cratify: `python_facts` is rerail-lang-python's (it mounts it)
+pub mod relation;
+pub mod resolve;
+pub mod run;
+pub mod semantic;
 #[cfg(test)]
-pub(crate) mod python_facts;
-mod relation;
-mod resolve;
-mod run;
-mod semantic;
-#[cfg(test)]
-mod tests;
-pub(in crate::code_rule_dsl) mod transform;
-pub(crate) mod util;
-mod value;
+pub mod tests;
+pub mod transform;
+pub mod util;
+pub mod value;
 
 use super::budget;
 use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
-pub(super) use analysis::RequiredText;
-#[cfg_attr(not(test), allow(unused_imports))]
-pub(super) use lower::{Axis, Fact, FactFound, MatchTree, Stop, DocumentGate, gated_match_tree, match_tree};
-pub(crate) use analysis::{calls_positive_only, reads_import_targets};
-pub(super) use anchors::{AnchorPlan, FileAnchorIndex, Selection};
+pub use analysis::RequiredText;
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(unused_imports))]
+pub use lower::{Axis, Fact, FactFound, MatchTree, Stop, DocumentGate, gated_match_tree, match_tree};
+pub use analysis::{calls_positive_only, reads_import_targets};
+pub use anchors::{AnchorPlan, FileAnchorIndex, Selection};
 // The prefilter lowers a plan's structure to SQL (`prefilter/lower.rs`).
-pub(super) use anchors::{Condition, Direction, Required, Requirement};
-pub(super) use arguments::{Arguments, Passed, SlotKind};
+pub use anchors::{Condition, Direction, Required, Requirement};
+pub use arguments::{Arguments, Passed, SlotKind};
 use ast_grep_core::matcher::Matcher;
 use ast_grep_core::matcher::{KindMatcher, Pattern};
 use ast_grep_core::matcher::{MatcherExt, NodeMatch};
 use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
 use ast_grep_core::{Doc, Node};
-pub(super) use binding::BindingTest;
-pub(super) use binds::{BindingCount, BindingFilter, Binds, Redefines, ScopeName};
-pub(super) use captures::{Capture, CaptureAnalysis, collect_variables, parse_exported};
-pub(super) use compare::{Collation, CompareOp, CompareText, Comparison, EqClass, SemanticText};
-pub(super) use count::{Count, CountBinding};
-pub(crate) use each::binding_range;
-pub(crate) use embedded::EmbeddedTest;
-pub(crate) use exported::{
+pub use binding::BindingTest;
+pub use binds::{BindingCount, BindingFilter, Binds, Redefines, ScopeName};
+pub use captures::{Capture, CaptureAnalysis, collect_variables, parse_exported};
+pub use compare::{Collation, CompareOp, CompareText, Comparison, EqClass, SemanticText};
+pub use count::{Count, CountBinding};
+pub use each::binding_range;
+pub use embedded::EmbeddedTest;
+pub use exported::{
     WITNESS_NODE, export_text, exported_span, exported_text, is_span_variable,
 };
-pub(crate) use format_args::{FormatArgs, Style};
-pub(crate) use layout::{Gap, Layout, LineContext, LineCount, Neighbour};
+pub use format_args::{FormatArgs, Style};
+pub use layout::{Gap, Layout, LineContext, LineCount, Neighbour};
 /// P's: the path of the file being matched (P's `calls` delta reads it).
-pub(in crate::code_rule_dsl) use resolve::file_path;
-pub(super) use memo::with_file as with_file_memo;
-pub(super) use nth_child::{NthChild, Position as NthPosition, parse_position};
-pub(in crate::code_rule_dsl) use nth_child::SiblingPositions;
-#[cfg(test)]
-pub(crate) use nth_child::{named_sibling_visits, reset_named_sibling_visits};
-#[cfg(test)]
-pub(crate) use parse::parse_fact_tree;
-pub(crate) use parse::{HostTest, ParseTest};
+pub use resolve::file_path;
+pub use memo::with_file as with_file_memo;
+pub use nth_child::{NthChild, Position as NthPosition, parse_position};
+pub use nth_child::SiblingPositions;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use nth_child::{named_sibling_visits, reset_named_sibling_visits};
+#[cfg(any(test, feature = "test-hooks"))]
+pub use parse::parse_fact_tree;
+pub use parse::{HostTest, ParseTest};
 use regex::Regex;
-pub(super) use relation::{FieldRelation, Related, StopBy, stop_rule};
-#[cfg(test)]
-pub(super) use relation::{set_answers_off, set_same_key_off};
-pub(crate) use resolve::{
+pub use relation::{FieldRelation, Related, StopBy, stop_rule};
+#[cfg(any(test, feature = "test-hooks"))]
+pub use relation::{set_answers_off, set_same_key_off};
+pub use resolve::{
     FileGates, calls_tables, file_index, file_lines, file_module, file_rerail_ignores, file_source_type_for,
     table_reading,
 };
-pub(super) use resolve::{FileScopeSlot, Unresolved, matched_file_path};
-pub(crate) use resolve::Resolves;
-pub(crate) use resolve::php as resolve_php;
-#[cfg(test)]
-pub(super) use resolve::{JSX_RUNTIME_DERIVATIONS, SOURCE_TYPE_DERIVATIONS, TABLE_BUILDS};
-pub(super) use run::{Stopped, enumerate, node_at, run_clause};
-#[cfg(test)]
-pub(crate) use run::{reset_roots_matched, roots_matched};
-pub(super) use semantic::Semantic;
+pub use resolve::{FileScopeSlot, Unresolved, matched_file_path};
+pub use resolve::Resolves;
+// cratify: a re-export of rerail-lang-php's, which its facades of this module make
+#[cfg(any(test, feature = "test-hooks"))]
+pub use resolve::{JSX_RUNTIME_DERIVATIONS, SOURCE_TYPE_DERIVATIONS, TABLE_BUILDS};
+pub use run::{Stopped, enumerate, node_at, run_clause};
+#[cfg(any(test, feature = "test-hooks"))]
+pub use run::{reset_roots_matched, roots_matched};
+pub use semantic::Semantic;
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
-pub(super) use transform::{Digits, Separator, Source, StringCase, Trans, Transform};
+pub use transform::{Digits, Separator, Source, StringCase, Trans, Transform};
 
-pub(crate) use transform::{NumberText, install_number_text, number_to_string};
-#[cfg(test)]
-pub(crate) use transform::{
+pub use transform::{NumberText, install_number_text, number_to_string};
+#[cfg(any(test, feature = "test-hooks"))]
+pub use transform::{
     line_table_constructions, note_line_table_construction, reset_line_table_constructions,
 };
-pub(super) use util::{
+pub use util::{
     CallArgs, MAX_UTIL_DEPTH, MAX_UTIL_INSTANCES, UtilCall, UtilLimit, UtilOrigin, UtilRef,
     UtilTable, UtilitySummary,
 };
@@ -120,19 +119,19 @@ use util::{
     UTIL_STEPS_LEFT, stack_address,
 };
 use util::{THREE_VALUED, UNKNOWN};
-pub(super) use value::{Bound, Reading, ValueTest};
-pub(crate) use value::Values;
+pub use value::{Bound, Reading, ValueTest};
+pub use value::Values;
 
-pub(crate) mod term;
-pub(crate) use term::{LanguageTerm, TermCompiler, install_terms};
+pub mod term;
+pub use term::{LanguageTerm, TermCompiler, install_terms};
 #[derive(Clone)]
-pub(super) struct GrammarMatcher {
+pub struct GrammarMatcher {
     /// The dialect of the document the matcher reads: the file's own, or for an embedded clause
     /// (`ast.embedded`) its program's.
-    pub(super) language: GrammarDialect,
+    pub language: GrammarDialect,
     /// The embedding whose program the matcher reads (`ast.embedded`); `None` for the file's own
     /// tree.
-    pub(super) document: Option<crate::code_rule_dsl::language::Via>,
+    pub document: Option<crate::code_rule_dsl::language::Via>,
     /// Keeps the utility tables of the file's other document alive (`embedded`, `host`), as
     /// `utils` does the clause's own: their rules reach them only weakly (`UtilRef`).
     #[allow(dead_code)]
@@ -140,30 +139,30 @@ pub(super) struct GrammarMatcher {
     /// Whether the rule crosses to the file's other document (`embedded`, `host`): the syntax
     /// errors of every document of the file then bear on it, not its own document's alone.
     pub(super) crosses: bool,
-    pub(super) matcher: AstMatcher,
-    pub(super) anchors: Arc<anchors::AnchorPlan>,
+    pub matcher: AstMatcher,
+    pub anchors: Arc<anchors::AnchorPlan>,
     /// What a file must contain for the matcher to match in it (`RequiredText`); `None` where
     /// nothing is required or the matcher can be unknown, which a file without a match still reports.
-    pub(super) text: Option<Arc<RequiredText>>,
+    pub text: Option<Arc<RequiredText>>,
     /// Whether witnesses outside syntax-error regions stay sound; see `sound_under_errors`.
-    pub(super) sound_under_errors: bool,
+    pub sound_under_errors: bool,
     /// Explicit whole-file syntax gate (P's `ast.syntax`); true admits invalid files and their
     /// error regions.
-    pub(super) invalid_syntax: Option<bool>,
+    pub invalid_syntax: Option<bool>,
     /// Whether the matcher or a utility it calls holds an `importTarget` term
     /// (`reads_import_targets`), worked out once when it is compiled.
     pub(super) import_target: bool,
     /// Keeps the query's utility rules alive (`AstMatcher::Util` holds only a weak reference)
     /// and lets violation compilation walk them.
-    pub(super) utils: Arc<UtilTable>,
+    pub utils: Arc<UtilTable>,
     /// The query's utilities in `utils`, by index: every one of a table of its own, the ones it
     /// reaches of a document's shared table, which holds other queries' too.
-    pub(super) query_utils: Arc<[usize]>,
+    pub query_utils: Arc<[usize]>,
     /// The query's `file` condition: a file whose module path fails it gets no matcher.
-    pub(super) file: Option<Arc<crate::code_rule_dsl::language::FileCondition>>,
+    pub file: Option<Arc<crate::code_rule_dsl::language::FileCondition>>,
     /// Whether the query's `when` gate holds. A query outside it is compiled in full, so its
     /// captures and templates are checked, but matches no file: sound, not unknown.
-    pub(super) applies: bool,
+    pub applies: bool,
     /// The source types `when.sourceType` lets a file have where the query leaves `sourceType`
     /// to each file (`SourceType::of_file`); a file of another matches nothing (`run_clause`).
     pub(super) source_types: Option<Vec<SourceType>>,
@@ -172,9 +171,9 @@ pub(super) struct GrammarMatcher {
     /// query's scope does, rather than its own.
     pub(super) package_type_gate: bool,
     /// Whether the matcher can reach an unknown verdict; see `reads_values`.
-    pub(super) three_valued: bool,
+    pub three_valued: bool,
     /// The query's `transform`, applied to each match after its rule and constraints.
-    pub(super) transform: Option<Arc<Transform>>,
+    pub transform: Option<Arc<Transform>>,
     /// The query's content digest and this matcher's dialect: what its lowered fact labels are
     /// keyed by (`lower::Fact::key`).
     pub(super) source: ([u8; 32], GrammarDialect),
@@ -182,8 +181,8 @@ pub(super) struct GrammarMatcher {
 
 impl GrammarMatcher {
     /// Share cheap syntax and text admission across preparation and matching (P's).
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(super) fn admits_source<'a>(
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub fn admits_source<'a>(
         &'a self,
         source: &str,
         errors: &crate::code_rule_dsl::soundness::SyntaxErrors,
@@ -227,7 +226,7 @@ impl GrammarMatcher {
 
     /// This matcher's rule (with its constraints) at one root of the clause `begin_clause` set up:
     /// the root's match. A root whose verdict is unknown does not match.
-    pub(super) fn match_rule<'tree, D: Doc>(&self, node: Node<'tree, D>) -> Option<NodeMatch<'tree, D>> {
+    pub fn match_rule<'tree, D: Doc>(&self, node: Node<'tree, D>) -> Option<NodeMatch<'tree, D>> {
         UNKNOWN.set(false);
         self.matcher.match_node(node)
     }
@@ -235,8 +234,8 @@ impl GrammarMatcher {
     /// Matches one root. Each utility evaluation spends one step of `work`, the caller's remaining
     /// utility budget for this file; like a traversal it is bounded by `maxVisitedNodes`. A root
     /// whose verdict is unknown is not a match.
-    #[cfg(test)]
-    pub(super) fn match_root<'tree, D: Doc>(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn match_root<'tree, D: Doc>(
         &self,
         node: Node<'tree, D>,
         work: &mut usize,
@@ -268,8 +267,8 @@ impl GrammarMatcher {
 /// to the captured node with the same environment. Unbound and multi-node captures are not checked.
 #[derive(Clone)]
 pub struct Constrained {
-    pub(super) rule: AstMatcher,
-    pub(super) constraints: Vec<(String, AstMatcher)>,
+    pub rule: AstMatcher,
+    pub constraints: Vec<(String, AstMatcher)>,
 }
 
 impl Constrained {
@@ -295,7 +294,7 @@ impl Constrained {
 }
 
 #[derive(Clone)]
-pub(super) enum AstMatcher {
+pub enum AstMatcher {
     Pattern(Pattern),
     Kind(KindMatcher),
     /// `kind` naming a grammar supertype (`expression`): the nodes the parser reported as its
@@ -335,8 +334,8 @@ pub(super) enum AstMatcher {
 /// A grammar supertype's id and the concrete kinds its members can have (`AstMatcher::Supertype`).
 #[derive(Clone, Debug)]
 pub struct Supertype {
-    pub(super) class: u16,
-    pub(super) kinds: Arc<std::collections::BTreeSet<u16>>,
+    pub class: u16,
+    pub kinds: Arc<std::collections::BTreeSet<u16>>,
 }
 
 impl Supertype {
@@ -865,14 +864,14 @@ fn util_limit_hit() -> bool {
 }
 
 /// Whether the bounded producer in progress hit a utility limit (N's catalog backend).
-#[cfg(test)]
-pub(crate) fn bounded_producer_exceeded() -> bool {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn bounded_producer_exceeded() -> bool {
     UTIL_EXCEEDED.get().is_some()
 }
 
 /// Sets up this thread for one bounded producer call of N's catalog backend, with `work` left.
-#[cfg(test)]
-pub(crate) fn begin_bounded_producer(work: usize) {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn begin_bounded_producer(work: usize) {
     UTIL_DEPTH.set(0);
     UTIL_EXCEEDED.set(None);
     UTIL_STACK_BASE.set(stack_address());
@@ -885,7 +884,7 @@ pub(crate) fn begin_bounded_producer(work: usize) {
 /// Sets up this thread to evaluate `matcher`'s clause on one file, with `work` left of its
 /// `maxVisitedNodes` budget, as `GrammarMatcher::match_root` does for each root, and the Unknown
 /// flag for the sub-rules semantic predicates match themselves.
-pub(super) fn begin_clause(matcher: &GrammarMatcher, work: usize) {
+pub fn begin_clause(matcher: &GrammarMatcher, work: usize) {
     CLAUSES_BEGUN.set(CLAUSES_BEGUN.get() + 1);
     UTIL_DEPTH.set(0);
     UTIL_EXCEEDED.set(None);
@@ -951,7 +950,7 @@ fn clause_state_reads() -> u64 {
 }
 
 /// Ends `begin_clause`: the work left, and the limit a term hit, if any.
-pub(super) fn end_clause() -> (usize, Option<UtilLimit>) {
+pub fn end_clause() -> (usize, Option<UtilLimit>) {
     UTIL_STACK_BASE.set(0);
     (UTIL_STEPS_LEFT.replace(usize::MAX), UTIL_EXCEEDED.take())
 }

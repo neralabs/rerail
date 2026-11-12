@@ -12,11 +12,11 @@ use std::sync::Arc;
 
 /// What audits the candidate compiler over a compiled rule (`prefilter::candidate_frontier_audit`, the engine's),
 /// registered at load.
-pub(crate) static FRONTIER_AUDIT: std::sync::OnceLock<fn(&CompiledCodeRule) -> Value> = std::sync::OnceLock::new();
+pub static FRONTIER_AUDIT: std::sync::OnceLock<fn(&CompiledCodeRule) -> Value> = std::sync::OnceLock::new();
 
 #[napi]
 pub struct CompiledCodeRuleDsl {
-    pub(crate) inner: Arc<CompiledCodeRule>,
+    #[napi(skip)] pub inner: Arc<CompiledCodeRule>,
 }
 
 #[napi]
@@ -86,7 +86,7 @@ impl CompiledCodeRuleDsl {
 #[napi]
 pub struct CodeRuleDslEditor {
     pub(crate) code_rule: Arc<CompiledCodeRule>,
-    pub(crate) snapshot: Snapshot,
+    #[napi(skip)] pub snapshot: Snapshot,
     /// The `package` the snapshot's `package.json` entries give the files the host sent none for:
     /// an edit gives them theirs again where it changes what they read (`DerivedPackages::edited`).
     derived: DerivedPackages,

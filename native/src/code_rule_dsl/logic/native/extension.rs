@@ -13,7 +13,7 @@
 //! - `set_fixpoint_open/run/close` and the `set_rel` vtab evaluate one component of set-valued relations natively
 //!   (see `setfix.rs`).
 // T's own set engine as copied (`extension/setfix.rs`); `logic::native::setfix` is its adaptation (O19).
-mod setfix;
+pub mod setfix;
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
 use rusqlite::vtab::{Context as VContext, CreateVTab, Filters, IndexConstraintOp, IndexInfo, Module, VTab, VTabConnection, VTabCursor, VTabKind};
@@ -345,7 +345,7 @@ fn init(db: Connection) -> Result<bool> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// The entry point registers T's functions; `tape_nearest` climbs the loaded tape.

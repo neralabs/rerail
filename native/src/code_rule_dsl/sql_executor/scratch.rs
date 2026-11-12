@@ -7,7 +7,7 @@ pub struct Pool {
     next: usize,
 }
 
-pub(super) struct Work<'a> {
+pub struct Work<'a> {
     pub db: &'a rusqlite::Connection,
     pub versions: Option<&'a versions::Store>,
     pub profiler: Option<&'a super::super::sql_profile::Profiler>,
@@ -24,7 +24,7 @@ pub(super) struct Work<'a> {
     pub context_rows: u64,
     pub summary_initializations: Vec<reductions::Initial>,
 }
-pub(super) struct Mark {
+pub struct Mark {
     used: usize,
     positions: BTreeMap<(String, bool, bool), usize>,
 }

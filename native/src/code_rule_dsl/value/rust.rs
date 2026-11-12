@@ -9,7 +9,7 @@ use num_bigint::BigInt;
 use num_traits::{FromPrimitive, Num, ToPrimitive, Zero};
 use std::cell::Cell;
 
-pub(crate) use super::types::{FloatTy, IntTy};
+pub use super::types::{FloatTy, IntTy};
 
 /// A Rust literal value.
 #[derive(Clone, Debug, PartialEq)]
@@ -1201,4 +1201,4 @@ fn wrap_int(value: BigInt, ty: IntTy) -> BigInt {
     value
 }
 #[cfg(test)]
-mod tests;
+pub mod tests;

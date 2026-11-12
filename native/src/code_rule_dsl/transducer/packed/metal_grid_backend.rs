@@ -45,7 +45,7 @@ pub(in crate::code_rule_dsl) fn execute_outcomes(
     execute_packed_with_result_limits(programs, files, anchors, None)?.into_outcome()
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn execute(
     programs: &[Program],
     files: &[TapeDoc],

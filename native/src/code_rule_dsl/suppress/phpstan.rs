@@ -21,7 +21,7 @@ use std::collections::HashMap;
 use std::ops::Range;
 
 /// PHPStan's `@phpstan-ignore` comments: the identifiers a local ignore must name.
-pub(crate) struct Suppressions;
+pub struct Suppressions;
 
 impl super::SuppressionKind for Suppressions {
     const KEY: &'static str = "phpstan";
@@ -167,7 +167,7 @@ impl PhpstanIndex {
     }
 
     /// Whether the file holds no comment PHPStan would apply.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn is_empty(&self) -> bool {
         self.lines.is_empty()
     }
@@ -470,7 +470,7 @@ pub(crate) fn phpstan_identifier(identifier: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::PhpstanIndex;
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::language::adapter::ast_grep;

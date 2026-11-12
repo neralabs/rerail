@@ -5,7 +5,7 @@ use crate::code_rule_dsl::facts::producers::python::{
     families::candidates, python_facts::Fact,
 };
 /// Python's call candidates over a batch (`SemanticProducer::candidates`).
-pub(crate) trait PythonCandidates {
+pub trait PythonCandidates {
     fn python_candidates(
         &self,
         scope: &[i64],

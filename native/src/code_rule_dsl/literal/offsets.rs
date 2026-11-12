@@ -6,34 +6,34 @@ use std::ops::Range;
 /// One decoded character: its byte offset in the decoded text and the source bytes it came from.
 /// An escape maps to the whole escape, `\r\n` to both bytes, an f-string's `{{` to both braces.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Span {
-    pub(crate) at: u32,
-    pub(crate) start: u32,
-    pub(crate) end: u32,
+pub struct Span {
+    pub at: u32,
+    pub start: u32,
+    pub end: u32,
 }
 
 /// Ruff's "simple" string (`parse_type_annotation`): one part whose raw content equals its value,
 /// so offsets into the value are offsets into the source.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Simple {
+pub struct Simple {
     /// Where the content starts in the source, after the prefix and the opening quotes.
-    pub(crate) content: usize,
-    pub(crate) triple: bool,
+    pub content: usize,
+    pub triple: bool,
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct Decoded {
-    pub(crate) text: String,
-    pub(crate) spans: Vec<Span>,
+pub struct Decoded {
+    pub text: String,
+    pub spans: Vec<Span>,
     /// The literal node's source range.
-    pub(crate) host: Range<usize>,
-    pub(crate) simple: Option<Simple>,
+    pub host: Range<usize>,
+    pub simple: Option<Simple>,
 }
 
 impl Decoded {
     /// The source range of the decoded bytes `range`: the first character's span start to the
     /// last one's end; an empty range sits at the next character's start (or after the last).
-    pub(crate) fn host_range(&self, range: Range<usize>) -> Range<usize> {
+    pub fn host_range(&self, range: Range<usize>) -> Range<usize> {
         let index = |at: usize| self.spans.partition_point(|span| (span.at as usize) < at);
         let first = index(range.start);
         let start = match self.spans.get(first) {
@@ -52,7 +52,7 @@ impl Decoded {
     }
 }
 
-pub(crate) enum Decode {
+pub enum Decode {
     Known(Decoded),
     /// A string whose value is not known: an f-string with a field, a `t` string, bytes, a value
     /// past 64 KiB, an escape Python refuses.
@@ -62,7 +62,7 @@ pub(crate) enum Decode {
 }
 
 
-pub(crate) fn push(decoded: &mut Decoded, c: char, start: usize, end: usize) {
+pub fn push(decoded: &mut Decoded, c: char, start: usize, end: usize) {
     decoded.spans.push(Span {
         at: decoded.text.len() as u32,
         start: start as u32,
@@ -73,5 +73,4 @@ pub(crate) fn push(decoded: &mut Decoded, c: char, start: usize, end: usize) {
 
 
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-lang-python's (it mounts it)

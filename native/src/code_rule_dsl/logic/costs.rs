@@ -37,7 +37,7 @@ fn path() -> Option<PathBuf> {
         Ok(v) if v == "off" || v.is_empty() => None,
         Ok(v) => Some(PathBuf::from(v)),
         // Tests write no statistics unless asked to.
-        Err(_) if cfg!(test) => None,
+        Err(_) if cfg!(any(test, feature = "test-hooks")) => None,
         Err(_) => std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache/rerail/costs.sqlite")),
     }
 }
@@ -334,7 +334,7 @@ pub(in crate::code_rule_dsl) fn summary() -> String {
 }
 
 #[cfg(all(test, target_os = "macos"))]
-mod tests {
+pub mod tests {
     /// The learned model against the rates on this machine's samples (decision 0100 §14): the store at
     /// `RERAIL_COSTS`, read only. Prints the comparison; asserts nothing about who wins.
     #[test]

@@ -88,7 +88,7 @@ pub(crate) const VALUE_KINDS: &[&str] = &[
     "unary_op_expression",
 ];
 
-pub(crate) use super::types::Key;
+pub use super::types::Key;
 
 /// A PHP number.
 #[derive(Clone, Copy, Debug)]
@@ -108,7 +108,7 @@ impl Num {
 
 /// Decodes `node` to its value; `Unknown` for anything that is not a constant expression this
 /// knows.
-pub(crate) fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
+pub fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     if !context.enter() {
         return Value::Unknown;
     }
@@ -1625,5 +1625,5 @@ fn subscript<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Option<Va
     })
 }
 
-#[cfg(test)]
-pub(crate) mod tests;
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod tests;

@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::{cell::RefCell, sync::Arc};
 
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Corpus {
+pub struct Corpus {
     state: Mutex<Option<State>>,
 }
 
@@ -31,7 +31,7 @@ struct State {
     plans: HashMap<usize, Arc<AnchorPlan>>,
     templates: HashMap<(u32, Vec<usize>), Arc<super::lower::Statement>>,
     languages: HashSet<u32>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     idle: Vec<Store>,
     // Drops after query connections, so the database is closed before unlinking it.
     writer: Store,
@@ -56,8 +56,8 @@ impl Corpus {
         }
     }
 
-    #[cfg(all(test, feature = "code-rule-profile"))]
-    pub(super) fn preparation_counts(&self) -> (u64, usize) {
+    #[cfg(all(any(test, feature = "test-hooks"), feature = "code-rule-profile"))]
+    pub fn preparation_counts(&self) -> (u64, usize) {
         let guard = self.state.lock();
         let state = guard.as_ref().unwrap();
         let decoded = state.writer.readers.0.lock().counters.decoded_nodes;
@@ -94,7 +94,7 @@ impl Corpus {
                 plans: HashMap::new(),
                 templates: HashMap::new(),
                 languages: HashSet::new(),
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-hooks"))]
                 idle: Vec::new(),
                 writer: Store::temporary()?,
             });
@@ -108,7 +108,7 @@ impl Corpus {
         {
             return Ok(file.fid);
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         crate::code_rule_dsl::walks::record_walk(
             crate::code_rule_dsl::walks::Walk::AnchorBuild,
         );
@@ -162,7 +162,7 @@ impl Corpus {
     }
 
     /// Test convenience for a frontier over every published file.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn prepare(
         &self,
         plans: &BTreeMap<u32, Vec<Arc<AnchorPlan>>>,
@@ -171,7 +171,7 @@ impl Corpus {
         phase_clock::timed(&phase_clock::ANCHOR_SELECT, || self.select(plans))
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn select(&self, plans: &BTreeMap<u32, Vec<Arc<AnchorPlan>>>) -> Result<()> {
         let mut guard = self.state.lock();
         let Some(state) = guard.as_mut() else {
@@ -421,7 +421,7 @@ impl Corpus {
         Ok(())
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn prepare_borrowed(&self, plans: &[&AnchorPlan], doc: &TapeDoc) -> Result<()> {
         let mut guard = self.state.lock();
         let state = guard.as_mut().expect("published test source");
@@ -435,16 +435,16 @@ impl Corpus {
         Self::select_group(state, lang, &ids, plans, false, None)
     }
 
-    #[cfg(test)]
-    pub(super) fn batch_queries(&self) -> usize {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn batch_queries(&self) -> usize {
         self.state
             .lock()
             .as_ref()
             .map_or(0, |state| state.batch_queries)
     }
 
-    #[cfg(test)]
-    pub(super) fn data_statements(&self) -> usize {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn data_statements(&self) -> usize {
         self.state
             .lock()
             .as_ref()
@@ -460,7 +460,7 @@ impl Corpus {
         Ok(self.prepared_file(path, lang, digest).is_some())
     }
 
-    pub(in crate::code_rule_dsl) fn remove(&self, path: &str) -> Result<()> {
+    pub fn remove(&self, path: &str) -> Result<()> {
         let mut state = self.state.lock();
         if let Some(state) = state.as_mut()
             && let Some(file) = state.files.get(path)
@@ -471,8 +471,8 @@ impl Corpus {
         Ok(())
     }
 
-    #[cfg(test)]
-    pub(in crate::code_rule_dsl) fn census(&self) -> (u64, i64) {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn census(&self) -> (u64, i64) {
         let guard = self.state.lock();
         guard.as_ref().map_or((0, 0), |state| {
             (
@@ -486,8 +486,8 @@ impl Corpus {
         })
     }
 
-    #[cfg(test)]
-    pub(super) fn connection(self: &Arc<Self>) -> Result<Connection> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn connection(self: &Arc<Self>) -> Result<Connection> {
         let mut guard = self.state.lock();
         let state = guard.as_mut().expect("publish before querying corpus");
         let store = match state.idle.pop() {
@@ -506,13 +506,13 @@ impl Corpus {
     }
 }
 
-#[cfg(test)]
-pub(super) struct Connection {
+#[cfg(any(test, feature = "test-hooks"))]
+pub struct Connection {
     store: Option<Store>,
     corpus: Arc<Corpus>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl std::ops::Deref for Connection {
     type Target = Store;
     fn deref(&self) -> &Store {
@@ -520,7 +520,7 @@ impl std::ops::Deref for Connection {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl Drop for Connection {
     fn drop(&mut self) {
         let store = self.store.take().expect("leased connection");
@@ -539,7 +539,7 @@ thread_local! {
     static CURRENT: RefCell<Option<Arc<Corpus>>> = const { RefCell::new(None) };
 }
 
-pub(in crate::code_rule_dsl) struct CorpusSlot(Option<Arc<Corpus>>);
+pub struct CorpusSlot(Option<Arc<Corpus>>);
 
 impl CorpusSlot {
     pub fn install(corpus: Arc<Corpus>) -> Self {

@@ -5,7 +5,7 @@ use num_bigint::BigInt;
 
 /// A Rust integer type (suffix or annotation).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum IntTy {
+pub enum IntTy {
     I8,
     I16,
     I32,
@@ -20,7 +20,7 @@ pub(crate) enum IntTy {
     Usize,
 }
 impl IntTy {
-    pub(crate) fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::I8 => "i8",
             Self::I16 => "i16",
@@ -36,7 +36,7 @@ impl IntTy {
             Self::Usize => "usize",
         }
     }
-    pub(crate) fn limits(self) -> (BigInt, BigInt) {
+    pub fn limits(self) -> (BigInt, BigInt) {
         let bits = match self {
             Self::I8 | Self::U8 => 8,
             Self::I16 | Self::U16 => 16,
@@ -59,12 +59,12 @@ impl IntTy {
 
 /// A Rust float type.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum FloatTy {
+pub enum FloatTy {
     F32,
     F64,
 }
 impl FloatTy {
-    pub(crate) fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             Self::F32 => "f32",
             Self::F64 => "f64",
@@ -74,7 +74,7 @@ impl FloatTy {
 
 /// A PHP array key: an integer, or a string that is not a canonical decimal integer.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum Key {
+pub enum Key {
     Int(i64),
     Str(Vec<u8>),
 }

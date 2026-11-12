@@ -436,4 +436,4 @@ pub(super) fn unregister(db: &Connection, name: &str) -> Result<()> {
 
 #[cfg(test)]
 #[path = "table/bindings_tests.rs"]
-mod bindings_tests;
+pub mod bindings_tests;

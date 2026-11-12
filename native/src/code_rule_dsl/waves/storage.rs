@@ -7,7 +7,7 @@
 //! its writers report (`analyze`, `populated`), written to `temp.wave_stats` at the boundary.
 use rusqlite::{Connection, Result};
 use std::collections::BTreeMap;
-mod contexts;
+pub mod contexts;
 #[derive(Default)]
 pub struct Storage {
     contexts: contexts::Contexts,
@@ -226,7 +226,7 @@ impl Storage {
         }
         Ok(())
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn clear(&mut self, db: &Connection) -> Result<()> {
         for (name, o) in &mut self.objects {
             if o.table && o.dirty && !o.ready {
@@ -352,7 +352,7 @@ impl Storage {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn reuses_empty_schemas_preserves_bags_and_affinity_and_separates_successive_bindings()

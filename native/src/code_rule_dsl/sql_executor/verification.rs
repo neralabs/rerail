@@ -253,7 +253,7 @@ impl CodeRuleSqlExecutor {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn document_and_symbol_cells_compare_across_different_store_local_ids() {

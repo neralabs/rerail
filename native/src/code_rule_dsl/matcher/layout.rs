@@ -12,7 +12,7 @@ use std::ops::Range;
 
 /// A count's bounds, inclusive; `eq` is `min == max`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct LineCount {
+pub struct LineCount {
     pub(crate) min: u64,
     pub(crate) max: Option<u64>,
 }
@@ -25,7 +25,7 @@ impl LineCount {
 
 /// The node a gap runs to.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Neighbour {
+pub enum Neighbour {
     /// The nearest token: a leaf of the tree, anonymous ones included, or a token the grammar
     /// implies, which a tape does not store (see [`token`]).
     Token,
@@ -37,7 +37,7 @@ pub(crate) enum Neighbour {
 
 /// `before` or `after`: the lines between the node and its neighbour on that side.
 #[derive(Clone, Debug)]
-pub(crate) struct Gap {
+pub struct Gap {
     pub(crate) to: Neighbour,
     /// Whether a comment counts as the neighbouring token or sibling (else it is passed over).
     pub(crate) comments: bool,
@@ -50,7 +50,7 @@ pub(crate) struct Gap {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct Layout {
+pub struct Layout {
     /// Line breaks inside the node.
     pub(crate) span: Option<LineCount>,
     /// The node's first byte.
@@ -63,7 +63,7 @@ pub(crate) struct Layout {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct LineContext {
+pub struct LineContext {
     pub(crate) before: usize,
     pub(crate) after: usize,
     pub(crate) through: Option<regex::Regex>,
@@ -72,7 +72,7 @@ pub(crate) struct LineContext {
 
 impl Layout {
     /// The captures the gaps read.
-    pub(crate) fn reads(&self) -> impl Iterator<Item = &str> {
+    pub fn reads(&self) -> impl Iterator<Item = &str> {
         [&self.before, &self.after]
             .into_iter()
             .flatten()
@@ -91,7 +91,7 @@ impl Layout {
             || self.context.is_some()
     }
 
-    pub(crate) fn match_node<'t, D: Doc>(
+    pub fn match_node<'t, D: Doc>(
         &self,
         node: Node<'t, D>,
         env: &mut Cow<MetaVarEnv<'t, D>>,
@@ -398,5 +398,4 @@ fn sibling<'t, D: Doc>(node: &Node<'t, D>, side: Side, comments: bool) -> Option
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

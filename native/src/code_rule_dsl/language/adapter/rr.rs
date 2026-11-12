@@ -31,7 +31,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 /// `.rr` rule files.
-pub(crate) struct Rr;
+pub struct Rr;
 
 fn refused(message: impl Into<Cow<'static, str>>) -> Result<(), Refusal> {
     Err(Refusal::Refused(message.into()))
@@ -152,7 +152,7 @@ impl ScopeRules for Rr {
         None
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn unbound_locally(_: &ScopeTable, _: &Reference, _: &str, _: bool) -> bool {
         false
     }

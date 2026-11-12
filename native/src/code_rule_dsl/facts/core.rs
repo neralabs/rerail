@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 /// A file as facts read it: its dialect's label and its text. The engine's request files implement it
 /// (`model::FileInput`).
-pub(crate) trait SourceFile: Send + Sync {
+pub trait SourceFile: Send + Sync {
     /// Its dialect's label (`language::dialect_by_label`).
     fn language(&self) -> &str;
     /// Its text.
@@ -26,9 +26,9 @@ pub(crate) trait SourceFile: Send + Sync {
 }
 
 /// A file that is no request's (a rule program, a library, a guest): its dialect's label and its text.
-pub(crate) struct Source {
-    pub(crate) language: String,
-    pub(crate) source: Arc<String>,
+pub struct Source {
+    pub language: String,
+    pub source: Arc<String>,
 }
 
 impl SourceFile for Source {
@@ -46,7 +46,7 @@ impl SourceFile for Source {
 /// What reads the values of a file's nodes off its tape (W's, `matcher::file_values`), registered at load:
 /// `each(followed, ordinal, text, types)` for every node with a known value, the plain reading where `plain`, the
 /// one that follows bindings where `follow`.
-pub(crate) trait ValueReader: Send + Sync {
+pub trait ValueReader: Send + Sync {
     fn values(
         &self,
         tape: &TapeDoc,
@@ -60,7 +60,7 @@ pub(crate) trait ValueReader: Send + Sync {
 static VALUE_READER: std::sync::OnceLock<&'static dyn ValueReader> = std::sync::OnceLock::new();
 
 /// Registers the reader of values (once, at load).
-pub(crate) fn install_value_reader(reader: &'static dyn ValueReader) {
+pub fn install_value_reader(reader: &'static dyn ValueReader) {
     let _ = VALUE_READER.set(reader);
 }
 
@@ -74,9 +74,9 @@ fn file_language(file: &dyn SourceFile) -> Option<crate::code_rule_dsl::language
     crate::code_rule_dsl::language::dialect_by_label(file.language())
 }
 
-pub(crate) const NONE: u32 = u32::MAX;
+pub const NONE: u32 = u32::MAX;
 /// Kind codes per dialect (the tape's `KIND_LIMIT`).
-pub(crate) const KIND_STRIDE: u32 = 1024;
+pub const KIND_STRIDE: u32 = 1024;
 
 /// Tree-sitter's ERROR symbol, past every grammar's kinds and so past the stride.
 const ERROR_SYMBOL: u16 = u16::MAX;
@@ -84,17 +84,17 @@ const ERROR_SYMBOL: u16 = u16::MAX;
 /// The atom of kind `code` in the dialect whose tape tag is `tag`. ERROR's atom takes code 0, the grammar's end
 /// symbol, which never labels a node (the tape's own `ERROR_CODE`), so every atom of a dialect stays in its stride:
 /// `tag * 1024 + 0xffff` would read as another dialect's kind.
-pub(crate) fn kind_atom(tag: u8, code: u16) -> u32 {
+pub fn kind_atom(tag: u8, code: u16) -> u32 {
     u32::from(tag) * KIND_STRIDE + if code == ERROR_SYMBOL { 0 } else { u32::from(code) }
 }
 
 /// The tape tag of a kind atom's dialect.
-pub(crate) fn kind_tag(atom: u32) -> u8 {
+pub fn kind_tag(atom: u32) -> u8 {
     (atom / KIND_STRIDE) as u8
 }
 
 /// The kind code of a kind atom in its dialect's catalog (`kind_atom`'s inverse: code 0 is ERROR).
-pub(crate) fn kind_code(atom: u32) -> u16 {
+pub fn kind_code(atom: u32) -> u16 {
     match atom % KIND_STRIDE {
         0 => ERROR_SYMBOL,
         code => code as u16,
@@ -102,12 +102,12 @@ pub(crate) fn kind_code(atom: u32) -> u16 {
 }
 
 /// The tape tag of a document's dialect (`Facts::tag`): a text-only document, which has no nodes, has its own.
-pub(crate) fn facts_tag(f: &Facts) -> u8 {
+pub fn facts_tag(f: &Facts) -> u8 {
     f.tag
 }
 
 /// One file's facts. Columns are indexed by node id.
-pub(crate) struct Facts {
+pub struct Facts {
     /// The tape tag of the file's dialect, which every kind atom is of.
     pub tag: u8,
     pub source: Arc<String>,
@@ -148,14 +148,14 @@ pub struct Token {
     pub end: u32,
 }
 
-pub(crate) enum Built {
+pub enum Built {
     Facts(Facts),
     /// The parser stopped at a limit (`file_tape` returned `None`).
     Unparsed,
 }
 
 /// Parses `file` in its own dialect and reads its facts off the tape.
-pub(crate) fn build(file: &dyn SourceFile) -> Result<Built, String> {
+pub fn build(file: &dyn SourceFile) -> Result<Built, String> {
     build_with_tape(file, false).map(|(built, _)| built)
 }
 
@@ -171,7 +171,7 @@ fn kept_tape(keep: bool, file: &dyn SourceFile, grammar: &Arc<crate::code_rule_d
 }
 
 /// [`build`], with the tape the facts were read off where `keep` (decision 0106).
-pub(crate) fn build_with_tape(file: &dyn SourceFile, keep: bool) -> Result<(Built, Option<TapeDoc>), String> {
+pub fn build_with_tape(file: &dyn SourceFile, keep: bool) -> Result<(Built, Option<TapeDoc>), String> {
     use crate::code_rule_dsl::{lines::Terminators, tape::{Grammar, TapeImage}};
     let language = file_language(file).ok_or_else(|| format!("{} has no grammar", file.language()))?;
     let grammar = Arc::new(Grammar::new(language)?);
@@ -190,7 +190,7 @@ pub(crate) fn build_with_tape(file: &dyn SourceFile, keep: bool) -> Result<(Buil
 /// [`build`], with the file's tape kept in `cache` (a content store, keyed by the source's content,
 /// the grammar's version and the tape format): read from it where it has one, else parsed and stored.
 /// The corpus runner's parse cache: a file parsed once is not parsed again by a later run.
-pub(crate) fn build_cached(file: &dyn SourceFile, cache: &crate::content_store::ContentStore) -> Result<Built, String> {
+pub fn build_cached(file: &dyn SourceFile, cache: &crate::content_store::ContentStore) -> Result<Built, String> {
     build_cached_as(file, cache, None)
 }
 
@@ -213,7 +213,7 @@ pub(crate) type Stored = std::sync::Arc<std::sync::Mutex<Vec<crate::content_stor
 /// first wave), or one still queued by this process, else the file is parsed and its source and tape are handed to
 /// the store's writer, behind the run (the id it stores the source under goes to `stored`). `digest` is the source's
 /// SHA-256, when the caller has it.
-pub(crate) fn build_in_wave(
+pub fn build_in_wave(
     file: &dyn SourceFile,
     cache: &crate::content_store::ContentStore,
     digest: Option<[u8; 32]>,
@@ -225,7 +225,7 @@ pub(crate) fn build_in_wave(
 
 /// [`build_in_wave`], with the tape the facts were read off where `keep` (a program's matchers run over it, decision
 /// 0106).
-pub(crate) fn build_in_wave_with_tape(
+pub fn build_in_wave_with_tape(
     file: &dyn SourceFile,
     cache: &crate::content_store::ContentStore,
     digest: Option<[u8; 32]>,
@@ -392,9 +392,9 @@ pub(crate) fn build_cached_with_tape(
     Ok((Built::Facts(facts), source_id, doc))
 }
 
-mod postings;
+pub mod postings;
 
-pub(crate) fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> {
+pub fn from_tape(doc: &TapeDoc, lines: Arc<LineTable>) -> Result<Facts, String> {
     let tag = tape_tag(doc.file_dialect()).ok_or("the tape's dialect has no tape tag")?;
     let n = doc.transducer_len();
     let mut f = empty(tag, Arc::clone(doc.document_source()), lines, n);
@@ -446,7 +446,7 @@ fn empty(tag: u8, source: Arc<String>, lines: Arc<LineTable>, n: usize) -> Facts
 }
 
 /// Reads the admitted tape directly into columns. The matcher and this reader share validation.
-pub(crate) fn from_image(source: Arc<String>, grammar: &crate::code_rule_dsl::tape::Grammar,
+pub fn from_image(source: Arc<String>, grammar: &crate::code_rule_dsl::tape::Grammar,
     image: &crate::code_rule_dsl::tape::TapeImage, lines: Arc<LineTable>) -> Result<Facts, String> {
     let tag = tape_tag(grammar.dialect()).ok_or("the tape's dialect has no tape tag")?;
     let mut f = empty(tag, Arc::clone(&source), lines, 0);
@@ -476,7 +476,7 @@ pub const TEXT: u8 = u8::MAX;
 
 /// The facts of a file read as text only (core.rr's `.scope text`): its source and lines, no tree. Its lines are W's
 /// for a file with no grammar (`Terminators::Eslint`: `\r\n`, `\r`, `\n`, U+2028, U+2029).
-pub(crate) fn text(source: Arc<String>) -> Facts {
+pub fn text(source: Arc<String>) -> Facts {
     let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::Terminators::Eslint));
     let mut f = Facts {
         tag: TEXT,
@@ -628,7 +628,7 @@ impl Facts {
 /// The digest of a file's core facts: every column a reader can see, and the source their spans
 /// read text from, so equal digests mean equal facts (the core derivation's output, `families`).
 /// Cutoff on an edit happens in the narrower families that read these, not here.
-pub(crate) fn digest(f: &Facts) -> [u8; 32] {
+pub fn digest(f: &Facts) -> [u8; 32] {
     use sha2::{Digest as _, Sha256};
     let mut hash = Sha256::new();
     hash.update(b"rerail.core-facts/v1\0");
@@ -679,7 +679,7 @@ impl LeBytes for u16 {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
 
 /// The relations `core.rr` declares (the engine's names, decision 0047), as the rule language reads them;
 /// registered at load (`install_core_names`). Empty without one.
@@ -691,12 +691,12 @@ pub(crate) fn core_names() -> &'static std::collections::BTreeSet<String> {
 static CORE_NAMES: std::sync::OnceLock<fn() -> &'static std::collections::BTreeSet<String>> = std::sync::OnceLock::new();
 
 /// Registers what reads `core.rr`'s names (once, at load).
-pub(crate) fn install_core_names(names: fn() -> &'static std::collections::BTreeSet<String>) {
+pub fn install_core_names(names: fn() -> &'static std::collections::BTreeSet<String>) {
     let _ = CORE_NAMES.set(names);
 }
 
 /// The columns of the planner's base relations (T's input schema). Others are `c0`, `c1`, ….
-pub(crate) fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
+pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
     Some(match rel {
         "node" => &["d", "n", "kind", "start", "end_"],
         "line" => &["n", "l"],
@@ -802,28 +802,28 @@ pub(crate) fn executor_for(device: bool) -> &'static rerail_accel::Executor {
 static EXECUTORS: std::sync::OnceLock<fn(bool) -> &'static rerail_accel::Executor> = std::sync::OnceLock::new();
 
 /// Registers the run's executors (once, at load).
-pub(crate) fn install_executors(executor: fn(bool) -> &'static rerail_accel::Executor) {
+pub fn install_executors(executor: fn(bool) -> &'static rerail_accel::Executor) {
     let _ = EXECUTORS.set(executor);
 }
 
 /// The relations CPython's facts bind (the corpus's names for the verdict, `ast.unparse`, `ast.dump` and their
 /// hashes) and their columns: base relations the planner reads by name.
-pub(crate) mod cpython_relations {
+pub mod cpython_relations {
     /// The relation the corpus binds for CPython's verdict (core.rr's `syntax_error(d, l, msg)`).
-    pub(crate) const SYNTAX_ERROR: &str = "cpython_syntax_error";
+    pub const SYNTAX_ERROR: &str = "cpython_syntax_error";
     /// W's `literal_json` (`cpython::literal`).
-    pub(crate) const LITERAL_JSON: &str = "literal_json";
+    pub const LITERAL_JSON: &str = "literal_json";
     /// core.rr's `@py_unparse(n)` (`cpython::unparse`).
-    pub(crate) const UNPARSE: &str = "cpython_unparse";
+    pub const UNPARSE: &str = "cpython_unparse";
     /// core.rr's `@ast_dump(n)` (`cpython::dump`).
-    pub(crate) const AST_DUMP: &str = "cpython_ast_dump";
+    pub const AST_DUMP: &str = "cpython_ast_dump";
     /// W's `dump_sha256`, `body_sha256` and `signature_sha256` (`cpython::dump`).
-    pub(crate) const DUMP_SHA256: &str = "dump_sha256";
-    pub(crate) const BODY_SHA256: &str = "body_sha256";
-    pub(crate) const SIGNATURE_SHA256: &str = "signature_sha256";
+    pub const DUMP_SHA256: &str = "dump_sha256";
+    pub const BODY_SHA256: &str = "body_sha256";
+    pub const SIGNATURE_SHA256: &str = "signature_sha256";
 
     /// A printed relation's columns.
-    pub(crate) fn columns(rel: &str) -> &'static [&'static str] {
+    pub fn columns(rel: &str) -> &'static [&'static str] {
         match rel {
             UNPARSE | AST_DUMP => &["n", "s"],
             DUMP_SHA256 => &["n", "h"],
@@ -833,21 +833,21 @@ pub(crate) mod cpython_relations {
 }
 
 /// The relations a program's `ast` atoms bind (`rr_ast_<k>`, `rr_ast_<k>_<m>`, decision 0107) and their columns.
-pub(crate) mod ast_matches {
+pub mod ast_matches {
     /// The prefix of a matcher's relation.
-    pub(crate) const PREFIX: &str = "rr_ast_";
+    pub const PREFIX: &str = "rr_ast_";
 
     /// A matcher relation's columns: the root `n`, then one a capture.
     pub(crate) const COLUMNS: [&str; 16] = ["n", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15"];
 
     /// The most captures an atom may name.
-    pub(crate) const MOST_CAPTURES: usize = COLUMNS.len() - 1;
+    pub const MOST_CAPTURES: usize = COLUMNS.len() - 1;
 
     /// The columns of matcher relation `rel` (`rr_ast_<k>` or `rr_ast_<k>_<m>`).
-    pub(crate) fn columns(rel: &str) -> &'static [&'static str] {
+    pub fn columns(rel: &str) -> &'static [&'static str] {
         let width = rel.strip_prefix(PREFIX).and_then(|rest| rest.split_once('_')).and_then(|(_, m)| m.parse::<usize>().ok()).unwrap_or(0);
         &COLUMNS[..=width.min(MOST_CAPTURES)]
     }
 }
 /// Python's execution contexts, by `ContextKind` order: `py_exec_context.kind`'s names, which a rule names.
-pub(crate) const PYTHON_CONTEXTS: [&str; 5] = ["module", "sync_function", "async_function", "class", "lambda"];
+pub const PYTHON_CONTEXTS: [&str; 5] = ["module", "sync_function", "async_function", "class", "lambda"];

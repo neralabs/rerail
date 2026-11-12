@@ -346,4 +346,4 @@ fn jumps_out_of_try_run_its_finally() {
     }
 }
 
-mod code_rules;
+// cratify: `code_rules` is rerail-engine's (it mounts it)

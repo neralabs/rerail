@@ -102,7 +102,7 @@ thread_local! {
 }
 
 /// Tests: components opened on this thread run semi-naive (`on`) or may take the form.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(in crate::code_rule_dsl::logic) fn semi_naive_here(on: bool) {
     SEMI_NAIVE_HERE.set(on);
 }

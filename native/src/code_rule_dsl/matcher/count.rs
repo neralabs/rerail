@@ -17,21 +17,21 @@ use std::ops::ControlFlow;
 /// rule reads the caller's bindings; like `not`, nothing it binds is kept. With `as`, the count
 /// itself is bound as text (`CountBinding`).
 #[derive(Clone)]
-pub(crate) struct Count {
+pub struct Count {
     /// `Inside`, `Has`, `Precedes` or `Follows`.
-    pub(crate) relation: AstMatcher,
-    pub(crate) min: usize,
-    pub(crate) max: Option<usize>,
-    pub(crate) binding: Option<CountBinding>,
+    pub relation: AstMatcher,
+    pub min: usize,
+    pub max: Option<usize>,
+    pub binding: Option<CountBinding>,
 }
 
 /// `as` and `offset`: a count that holds binds `offset` plus the exact count, in decimal, as a
 /// transformed variable named `name`, which messages and source-text comparisons read. The walk then runs to
 /// its end rather than stopping at `min`, and a count it cannot know exactly is unknown.
 #[derive(Clone, Debug)]
-pub(crate) struct CountBinding {
-    pub(crate) name: String,
-    pub(crate) offset: i64,
+pub struct CountBinding {
+    pub name: String,
+    pub offset: i64,
 }
 
 impl CountBinding {
@@ -155,5 +155,4 @@ impl Count {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

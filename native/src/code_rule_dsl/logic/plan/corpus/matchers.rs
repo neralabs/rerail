@@ -8,11 +8,11 @@
 use crate::code_rule_dsl::logic::front::{Atom, Literal, Program, Term};
 use std::collections::{BTreeSet, HashMap};
 
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::facts::grammar_shape::single_field;
-#[cfg(test)]
+pub use crate::code_rule_dsl::facts::grammar_shape::single_field;
+#[cfg(any(test, feature = "test-hooks"))]
 use crate::code_rule_dsl::facts::grammar_shape::{field_kinds, leaf_kind};
 
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::facts::core::ast_matches::{MOST_CAPTURES, PREFIX, columns};
+pub use crate::code_rule_dsl::facts::core::ast_matches::{MOST_CAPTURES, PREFIX, columns};
 
 /// The relation of the `k`th distinct matcher, capturing `m` names.
 fn relation(k: usize, m: usize) -> String {
@@ -30,7 +30,7 @@ fn atom(rel: &str, args: Vec<Term>) -> Literal {
 /// `C1: x`: decision 0107). Only a field a node of kind `K` holds at most one of ([`single_field`]): a matcher's
 /// `field` is the field's first node, where `field(r, "F", x)` is each of them (`import os, sys`'s two names). A field
 /// tested without a kind stays a join. The number of rules rewritten.
-pub(in crate::code_rule_dsl) fn absorb(prog: &mut Program, capture: bool) -> usize {
+pub fn absorb(prog: &mut Program, capture: bool) -> usize {
     let mut rewritten = 0;
     let mut fresh = 0;
     for rule in &mut prog.rules {
@@ -115,7 +115,7 @@ pub(in crate::code_rule_dsl) fn absorb(prog: &mut Program, capture: bool) -> usi
 
 /// Rewrites `prog`'s `ast` atoms over the matchers' relations: each relation, its matcher's text and the names it
 /// captures (an atom naming more than [`MOST_CAPTURES`] is left as written).
-pub(in crate::code_rule_dsl) fn lower(prog: &mut Program) -> Vec<(String, String, Vec<String>)> {
+pub fn lower(prog: &mut Program) -> Vec<(String, String, Vec<String>)> {
     let mut texts: Vec<(String, Vec<String>)> = Vec::new();
     for rule in &mut prog.rules {
         if !rule.body.iter().any(|l| matches!(l, Literal::Ast { captures, .. } if captures.len() <= MOST_CAPTURES)) {
@@ -187,5 +187,4 @@ pub(in crate::code_rule_dsl) fn compiled(matchers: &[(String, String, Vec<String
     crate::code_rule_dsl::facts::vtab::syntax::compile_matchers(matchers, policies)
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

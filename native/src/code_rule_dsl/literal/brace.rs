@@ -514,13 +514,13 @@ fn mini_language(base: &str, spec: &str) -> Vec<PNode> {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
 
 /// The `braceFormat` grammar (`literal::LiteralGrammar`).
 pub(crate) struct BraceGrammar;
 
 /// Its handle, which the engine registers (`literal::install`).
-pub(crate) const GRAMMAR: super::Grammar = super::Grammar::new(&BraceGrammar);
+pub const GRAMMAR: super::Grammar = super::Grammar::new(&BraceGrammar);
 
 impl super::LiteralGrammar for BraceGrammar {
     fn name(&self) -> &'static str {

@@ -45,7 +45,7 @@ fn violation_identity(
     (id, span, fallback)
 }
 
-pub(crate) fn violation_from_witness(
+pub fn violation_from_witness(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     mut witness: Witness,
@@ -80,7 +80,7 @@ pub(crate) fn violation_from_witness(
     violation
 }
 
-pub(in crate::code_rule_dsl) fn violation_id(
+pub fn violation_id(
     code_rule: &str,
     clause: &str,
     code: &str,
@@ -92,7 +92,7 @@ pub(in crate::code_rule_dsl) fn violation_id(
     format!("sha256:{}", hex_digest(source.as_bytes()))
 }
 
-pub(crate) fn evaluation_json(
+pub fn evaluation_json(
     mut evaluation: Evaluation,
     revision: Option<u32>,
     added: &[String],
@@ -172,7 +172,7 @@ pub(crate) fn evaluation_json(
 /// `partial` where each is a `PARTIAL_CODES` code, else `failed`. A reason is one code with its
 /// count and at most `COVERAGE_EXAMPLES` paths (the first in path order). A failure naming no
 /// evaluated clause (the `runtime` budget) counts against every clause of its code rule, or every clause.
-pub(crate) fn coverage(clauses: &[(Option<String>, String)], failures: &[Value]) -> Vec<Value> {
+pub fn coverage(clauses: &[(Option<String>, String)], failures: &[Value]) -> Vec<Value> {
     type Reasons<'f> = BTreeMap<&'f str, (usize, BTreeSet<&'f str>)>;
     let mut reasons = clauses
         .iter()
@@ -233,14 +233,14 @@ pub(crate) fn coverage(clauses: &[(Option<String>, String)], failures: &[Value])
         .collect()
 }
 
-pub(crate) fn overflow_evaluation(check_id: &str, message: &str) -> Evaluation {
+pub fn overflow_evaluation(check_id: &str, message: &str) -> Evaluation {
     Evaluation {
         failures: vec![failure(check_id, "budget-exceeded", message, None)],
         ..Evaluation::default()
     }
 }
 
-pub(crate) fn failure(check_id: &str, code: &str, message: &str, path: Option<&str>) -> Value {
+pub fn failure(check_id: &str, code: &str, message: &str, path: Option<&str>) -> Value {
     let mut value = json!({ "clauseId": check_id, "code": code, "message": message });
     if let Some(path) = path {
         value
@@ -251,7 +251,7 @@ pub(crate) fn failure(check_id: &str, code: &str, message: &str, path: Option<&s
     value
 }
 
-pub(crate) fn violation_ids(violations: &[Value]) -> BTreeSet<String> {
+pub fn violation_ids(violations: &[Value]) -> BTreeSet<String> {
     violations
         .iter()
         .filter_map(|violation| {
@@ -264,7 +264,7 @@ pub(crate) fn violation_ids(violations: &[Value]) -> BTreeSet<String> {
 }
 
 /// The order results are reported in: by path, start, code and id.
-pub(crate) fn result_order(value: &Value) -> (&str, u64, &str, &str) {
+pub fn result_order(value: &Value) -> (&str, u64, &str, &str) {
     let text = |key: &str| value.get(key).and_then(Value::as_str).unwrap_or("");
     (
         text("path"),
@@ -278,5 +278,4 @@ pub(crate) fn result_order(value: &Value) -> (&str, u64, &str, &str) {
     )
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

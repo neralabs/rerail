@@ -4,7 +4,7 @@
 use crate::code_rule_dsl::tape::TapeDoc;
 
 /// A kind atom as an FTS token: `k` and base 36.
-pub(crate) fn kind_token(code: u32) -> String {
+pub fn kind_token(code: u32) -> String {
     let mut digits = [0_u8; 7];
     let mut at = digits.len();
     let mut code = code;
@@ -21,18 +21,18 @@ pub(crate) fn kind_token(code: u32) -> String {
 
 /// The kind code of node `pre` in the prefilter's atoms. A restored tape reports ERROR as
 /// tree-sitter's symbol (u16::MAX); the atoms use its tape code, 0, which no other node has.
-pub(crate) fn kind_code(doc: &TapeDoc, pre: u32) -> u16 {
+pub fn kind_code(doc: &TapeDoc, pre: u32) -> u16 {
     if doc.transducer_flags(pre) & 8 != 0 { 0 } else { doc.transducer_kind(pre) }
 }
 
 /// Version 3: kind tokens are kind atoms (the prefilter's `kind_token`), as Pulling-it-all-together's
 /// `ftsk` spelled them, so dialects never share a token. Version 5: the stream is a tape's
 /// records, which hold no implied token (RER-131), so positions renumber.
-pub(crate) const POSITIONAL_INDEX_VERSION: i64 = 5;
+pub const POSITIONAL_INDEX_VERSION: i64 = 5;
 
 /// The token of `lang`'s kind `kind` in the positional kind stream: its atom (`tape tag · 1024 +
 /// kind code`) in the prefilter's spelling. `None` for a dialect without a tape tag.
-pub(crate) fn kind_index_token(lang: crate::code_rule_dsl::language::GrammarDialect, kind: u16) -> Option<String> {
+pub fn kind_index_token(lang: crate::code_rule_dsl::language::GrammarDialect, kind: u16) -> Option<String> {
     let tag = crate::code_rule_dsl::language::tape_tag(lang)?;
     Some(kind_token(
         crate::code_rule_dsl::facts::core::kind_atom(tag, kind),
@@ -65,7 +65,7 @@ fn search_index_document(
 }
 
 /// Build query-independent kind streams. The stream preserves preorder positions.
-pub(crate) fn persist_search_index_batch(
+pub fn persist_search_index_batch(
     store: &crate::content_store::ContentStore,
     tape_ids: &[crate::content_store::TapeId],
     files: &[TapeDoc],

@@ -294,13 +294,13 @@ fn star(
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
 
 /// The `printfFormat` grammar (`literal::LiteralGrammar`).
 pub(crate) struct PrintfGrammar;
 
 /// Its handle, which the engine registers (`literal::install`).
-pub(crate) const GRAMMAR: super::Grammar = super::Grammar::new(&PrintfGrammar);
+pub const GRAMMAR: super::Grammar = super::Grammar::new(&PrintfGrammar);
 
 impl super::LiteralGrammar for PrintfGrammar {
     fn name(&self) -> &'static str {

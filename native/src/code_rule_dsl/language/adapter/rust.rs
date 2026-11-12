@@ -46,7 +46,7 @@ use crate::code_rule_dsl::matcher::arguments::rust::RustArguments as _;
 use crate::code_rule_dsl::scope::usage::lang_rust::RustUsage as _;
 
 /// Rust's family.
-pub(crate) struct Rust;
+pub struct Rust;
 
 impl Adapter for Rust {
     const FAMILY: Family = Family::Rust;
@@ -315,7 +315,7 @@ impl ScopeRules for Rust {
         None
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn unbound_locally(_: &ScopeTable, _: &Reference, _: &str, _: bool) -> bool {
         false
     }

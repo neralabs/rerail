@@ -3,20 +3,20 @@
 //! document with its own environment; its nodes map back to the source through the literal's
 //! offset map, so captures exported to the host anchor where the text came from.
 
-pub(crate) mod annotation;
-pub(crate) mod brace;
-pub(crate) mod eslint_directive;
-pub(crate) mod identifier_words;
-pub(crate) mod offsets;
-pub(crate) mod percent;
-pub(crate) mod php_string;
-pub(crate) mod phpdoc;
-pub(crate) mod printf;
-pub(crate) mod python_fstring;
-pub(crate) mod python_string;
-pub(crate) mod rust_format;
-pub(crate) mod scanf;
-pub(crate) mod semantic;
+// cratify: `annotation` is rerail-lang-python's (it mounts it)
+// cratify: `brace` is rerail-lang-python's (it mounts it)
+// cratify: `eslint_directive` is rerail-lang-ecma's (it mounts it)
+// cratify: `identifier_words` is rerail-lang-python's (it mounts it)
+pub mod offsets;
+// cratify: `percent` is rerail-lang-python's (it mounts it)
+// cratify: `php_string` is rerail-lang-php's (it mounts it)
+// cratify: `phpdoc` is rerail-lang-php's (it mounts it)
+// cratify: `printf` is rerail-lang-php's (it mounts it)
+// cratify: `python_fstring` is rerail-lang-python's (it mounts it)
+// cratify: `python_string` is rerail-lang-python's (it mounts it)
+// cratify: `rust_format` is rerail-lang-rust's (it mounts it)
+// cratify: `scanf` is rerail-lang-php's (it mounts it)
+// cratify: `semantic` is rerail-lang-python's (it mounts it)
 
 use crate::code_rule_dsl::embed::segments::FileRanges;
 use crate::code_rule_dsl::language::GrammarDialect;
@@ -34,7 +34,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// A sub-grammar `parse` can apply, as the crate that reads its host's literals declares it: the engine registers
 /// each as it loads (`install`), in the order error messages list them.
-pub(crate) trait LiteralGrammar: Send + Sync + 'static {
+pub trait LiteralGrammar: Send + Sync + 'static {
     /// Its `parse.grammar` name.
     fn name(&self) -> &'static str;
     /// The kinds a tree of it has, in id order from 1.
@@ -83,12 +83,12 @@ pub(crate) trait LiteralGrammar: Send + Sync + 'static {
 
 /// A sub-grammar `parse` can apply (`LiteralGrammar`); equal by name.
 #[derive(Clone, Copy)]
-pub(crate) struct Grammar(&'static dyn LiteralGrammar);
+pub struct Grammar(&'static dyn LiteralGrammar);
 
 static GRAMMARS: std::sync::OnceLock<Vec<Grammar>> = std::sync::OnceLock::new();
 
 /// The engine's grammars, in the order error messages list them; the first call holds.
-pub(crate) fn install(grammars: Vec<Grammar>) {
+pub fn install(grammars: Vec<Grammar>) {
     let _ = GRAMMARS.set(grammars);
 }
 
@@ -114,7 +114,7 @@ impl std::fmt::Debug for Grammar {
 
 impl Grammar {
     /// `grammar`'s handle.
-    pub(crate) const fn new(grammar: &'static dyn LiteralGrammar) -> Self {
+    pub const fn new(grammar: &'static dyn LiteralGrammar) -> Self {
         Self(grammar)
     }
 
@@ -134,11 +134,11 @@ impl Grammar {
     }
 
     /// The registered grammar `name` names, which a part of the engine reads by name (`formatArgs`' styles).
-    pub(crate) fn expect(name: &str) -> Self {
+    pub fn expect(name: &str) -> Self {
         Self::named(name).unwrap_or_else(|| panic!("no grammar `{name}` registered"))
     }
 
-    pub(crate) fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         self.0.name()
     }
 
@@ -148,12 +148,12 @@ impl Grammar {
     }
 
     /// The language of the host the grammar parses, whose values its trees hold.
-    pub(crate) fn host_language(self) -> GrammarDialect {
+    pub fn host_language(self) -> GrammarDialect {
         self.0.host_language()
     }
 
     /// What the grammar parses, for messages.
-    pub(crate) fn host(self) -> &'static str {
+    pub fn host(self) -> &'static str {
         self.0.host()
     }
 
@@ -162,7 +162,7 @@ impl Grammar {
         self.0.host_kinds()
     }
 
-    pub(crate) fn reads_comments(self) -> bool {
+    pub fn reads_comments(self) -> bool {
         self.0.reads_comments()
     }
 
@@ -174,7 +174,7 @@ impl Grammar {
         self.0.item_resolves()
     }
 
-    pub(crate) fn interpolates(self) -> bool {
+    pub fn interpolates(self) -> bool {
         self.0.interpolates()
     }
 
@@ -184,7 +184,7 @@ impl Grammar {
         self.0.reads_only_the_node()
     }
 
-    fn kind_id(self, kind: &str) -> u16 {
+    pub fn kind_id(self, kind: &str) -> u16 {
         if let Some(id) = self.0.own_kind_id(kind) {
             return id;
         }
@@ -205,19 +205,19 @@ impl Grammar {
     }
 
     /// Parses decoded text into a tree root.
-    pub(crate) fn parse(self, text: &str) -> PNode {
+    pub fn parse(self, text: &str) -> PNode {
         self.0.parse(self, text)
     }
 }
 
 /// Test-only: every decoded character is a `char` node under a `text` root (`testChars`, of Python strings).
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) struct Chars;
 
-#[cfg(test)]
-pub(crate) const CHARS: Grammar = Grammar::new(&Chars);
+#[cfg(any(test, feature = "test-hooks"))]
+pub const CHARS: Grammar = Grammar::new(&Chars);
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl LiteralGrammar for Chars {
     fn name(&self) -> &'static str {
         "testChars"
@@ -248,21 +248,21 @@ impl LiteralGrammar for Chars {
 
 /// A node as a grammar's parser builds it; `SubTree::new` flattens it.
 #[derive(Clone, Debug)]
-pub(crate) struct PNode {
-    pub(crate) kind: u16,
+pub struct PNode {
+    pub kind: u16,
     /// Byte range in the decoded text.
-    pub(crate) start: usize,
-    pub(crate) end: usize,
-    pub(crate) named: bool,
-    pub(crate) error: bool,
-    pub(crate) extra: bool,
-    pub(crate) field: u16,
-    pub(crate) value: Option<Value>,
-    pub(crate) children: Vec<PNode>,
+    pub start: usize,
+    pub end: usize,
+    pub named: bool,
+    pub error: bool,
+    pub extra: bool,
+    pub field: u16,
+    pub value: Option<Value>,
+    pub children: Vec<PNode>,
 }
 
 impl PNode {
-    pub(crate) fn new(grammar: Grammar, kind: &str, start: usize, end: usize) -> Self {
+    pub fn new(grammar: Grammar, kind: &str, start: usize, end: usize) -> Self {
         let kind = grammar.kind_id(kind);
         debug_assert!(kind != 0, "unknown kind");
         Self {
@@ -278,13 +278,13 @@ impl PNode {
         }
     }
 
-    pub(crate) fn with_value(mut self, value: Value) -> Self {
+    pub fn with_value(mut self, value: Value) -> Self {
         self.value = Some(value);
         self
     }
 
     /// Nodes in this subtree.
-    pub(crate) fn size(&self) -> usize {
+    pub fn size(&self) -> usize {
         let mut size = 0;
         let mut stack = vec![self];
         while let Some(node) = stack.pop() {
@@ -314,7 +314,7 @@ struct Rec {
 }
 
 /// How the tree's nodes map to source bytes.
-pub(crate) enum HostMap {
+pub enum HostMap {
     /// Through the literal's per-character spans.
     Spans(Decoded),
     /// Every node covers this range (Ruff's complex string annotations).
@@ -324,7 +324,7 @@ pub(crate) enum HostMap {
 }
 
 /// A parsed literal: an immutable tree over its decoded text.
-pub(crate) struct SubTree {
+pub struct SubTree {
     lang: SubLang,
     source: SubSource,
     nodes: Vec<Rec>,
@@ -365,14 +365,14 @@ impl crate::code_rule_dsl::origin::Origin for SubTree {
 /// Blade trees (`blade::forte::tree`) draw their ids from the same counter.
 /// On wasm32 (the browser build) the top bit is bit 31, which leaves 7 bits of tree counter above a tree's 24
 /// bits of nodes: enough for an explorer's few files, not for a corpus (wasm/README.md).
-pub(crate) const ID_FLAG: usize = 1 << (usize::BITS - 1);
+pub const ID_FLAG: usize = 1 << (usize::BITS - 1);
 /// The tree counter's bits between `ID_FLAG` and a tree's 24 bits of nodes: 39 on 64-bit targets, 7 on wasm32.
-pub(crate) const TREE_MASK: usize = (1 << (usize::BITS - 25)) - 1;
-pub(crate) static NEXT_TREE: AtomicUsize = AtomicUsize::new(0);
+pub const TREE_MASK: usize = (1 << (usize::BITS - 25)) - 1;
+pub static NEXT_TREE: AtomicUsize = AtomicUsize::new(0);
 
 impl SubTree {
     /// Flattens `root` over `text`. `offset` shifts every node range (see `SubSource`).
-    pub(crate) fn new(
+    pub fn new(
         grammar: Grammar,
         text: String,
         offset: usize,
@@ -437,23 +437,23 @@ impl SubTree {
             .filter(|index| *index < self.nodes.len())
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     /// The grammar kind of the parsed root.
-    pub(crate) fn root_kind(&self) -> u16 {
+    pub fn root_kind(&self) -> u16 {
         self.nodes[0].kind
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     /// The grammar kind of the node with this id.
-    pub(crate) fn node_kind(&self, node_id: usize) -> Option<u16> {
+    pub fn node_kind(&self, node_id: usize) -> Option<u16> {
         self.nodes
             .get(self.index_of(node_id)?)
             .map(|node| node.kind)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     /// The source range of the node with this id.
-    pub(crate) fn host_range(&self, node_id: usize) -> Option<Range<usize>> {
+    pub fn host_range(&self, node_id: usize) -> Option<Range<usize>> {
         let rec = self.nodes.get(self.index_of(node_id)?)?;
         Some(self.map_range(rec.start as usize..rec.end as usize))
     }
@@ -479,37 +479,37 @@ impl SubTree {
     }
 
     /// Nodes in the tree.
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.nodes.len()
     }
 
     /// The decoded text.
-    pub(crate) fn text(&self) -> &str {
+    pub fn text(&self) -> &str {
         &self.source.text
     }
 
     /// Where node ranges start: the tree's offset (see `SubSource`).
-    pub(crate) fn offset(&self) -> usize {
+    pub fn offset(&self) -> usize {
         self.source.offset
     }
 
     /// Whether the tree is one error node: a literal its grammar refuses.
-    pub(crate) fn is_error(&self) -> bool {
+    pub fn is_error(&self) -> bool {
         self.nodes.first().is_some_and(|root| root.error)
     }
 
     /// The value the grammar gives the node with this id.
-    pub(crate) fn value(&self, node_id: usize) -> Option<&Value> {
+    pub fn value(&self, node_id: usize) -> Option<&Value> {
         self.values.get(self.index_of(node_id)?)?.as_ref()
     }
 
     /// The root's value.
-    pub(crate) fn root_value(&self) -> Option<&Value> {
+    pub fn root_value(&self) -> Option<&Value> {
         self.values.first()?.as_ref()
     }
 
     /// The root's children in order, each its kind's name and its value.
-    pub(crate) fn root_children(
+    pub fn root_children(
         &self,
     ) -> impl Iterator<Item = (&'static str, Option<&Value>)> + '_ {
         let grammar = self.lang.0;
@@ -526,7 +526,7 @@ impl SubTree {
 
     /// Every node in preorder (the tree's own order: a parent before its children, siblings in order), each with its
     /// parent's index (`None` at the root) and its range in `text()` (the offset left out).
-    pub(crate) fn preorder(&self) -> impl Iterator<Item = PreNode> + '_ {
+    pub fn preorder(&self) -> impl Iterator<Item = PreNode> + '_ {
         self.nodes.iter().map(|rec| PreNode {
             kind: rec.kind,
             field: rec.field,
@@ -544,12 +544,12 @@ impl SubTree {
 /// ERROR is `annotation::ERROR_KIND`), its parent's index, its range in the tree's text and its flags.
 #[derive(Clone, Copy, Debug)]
 pub struct PreNode {
-    pub(crate) kind: u16,
-    pub(crate) field: u16,
-    pub(crate) parent: Option<u32>,
-    pub(crate) start: u32,
-    pub(crate) end: u32,
-    pub(crate) named: bool,
+    pub kind: u16,
+    pub field: u16,
+    pub parent: Option<u32>,
+    pub start: u32,
+    pub end: u32,
+    pub named: bool,
     pub(crate) extra: bool,
     pub(crate) error: bool,
 }
@@ -609,8 +609,8 @@ impl Language for SubLang {
 
 /// A sub-tree as an ast-grep document.
 #[derive(Clone)]
-pub(crate) struct SubDoc {
-    pub(crate) tree: Arc<SubTree>,
+pub struct SubDoc {
+    pub tree: Arc<SubTree>,
 }
 
 impl SubDoc {}
@@ -773,13 +773,13 @@ impl<'r> SgNode<'r> for SubNode<'r> {
 }
 
 /// The sub-tree a node belongs to, when its document is one.
-pub(crate) fn sub_tree<'r, D: Doc>(node: &ast_grep_core::Node<'r, D>) -> Option<&'r Arc<SubTree>> {
+pub fn sub_tree<'r, D: Doc>(node: &ast_grep_core::Node<'r, D>) -> Option<&'r Arc<SubTree>> {
     let doc: &dyn std::any::Any = node.get_doc();
     doc.downcast_ref::<SubDoc>().map(|doc| &doc.tree)
 }
 
 /// What `parse` reads from a host node.
-pub(crate) enum Parsed {
+pub enum Parsed {
     Tree(Arc<SubTree>),
     /// A string whose value is not known (see `offsets::Decode::Unknown`).
     Unknown,
@@ -794,5 +794,4 @@ pub(crate) enum Parsed {
 
 
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-lang-python's (it mounts it)

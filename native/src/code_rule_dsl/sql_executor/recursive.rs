@@ -5,8 +5,8 @@ use super::super::logic::sql::{
 };
 use super::maintenance::{Delta, Work};
 use super::*;
-mod proof;
-mod seeds;
+pub mod proof;
+pub mod seeds;
 
 #[derive(Clone)]
 pub struct Partitioned {

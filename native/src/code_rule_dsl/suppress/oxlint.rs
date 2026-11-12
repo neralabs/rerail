@@ -27,7 +27,7 @@ use std::ops::Range;
 
 /// Oxlint's `oxlint-disable` comments: oxlint's names of the rule (without a plugin), which a
 /// directive must name (after its last `/`, or name none).
-pub(crate) struct Suppressions;
+pub struct Suppressions;
 
 impl super::SuppressionKind for Suppressions {
     const KEY: &'static str = "oxlint";
@@ -60,14 +60,14 @@ fn rule_name(name: &str) -> bool {
 /// Where a directive leaves a rule (or, `rule` none, every rule) off: `DisabledRule` over its
 /// interval.
 #[derive(Debug, PartialEq, Eq)]
-struct Interval {
-    start: usize,
-    stop: usize,
+pub struct Interval {
+    pub start: usize,
+    pub stop: usize,
     /// The name the directive lists, plugin prefix included; `None` disables every rule.
-    rule: Option<String>,
+    pub rule: Option<String>,
     /// A `-line` or `-next-line` directive (`is_next_line`): it covers a problem that starts in
     /// the interval, where a block covers one that overlaps it.
-    line: bool,
+    pub line: bool,
 }
 
 /// A directive's kind (`DirectiveKind`).
@@ -82,13 +82,13 @@ enum Kind {
 /// A file's oxlint (and ESLint-spelled) disable directives, as the intervals oxlint builds from
 /// them.
 #[derive(Debug, Default)]
-pub(crate) struct OxlintDirectives {
-    intervals: Vec<Interval>,
+pub struct OxlintDirectives {
+    pub intervals: Vec<Interval>,
 }
 
 impl OxlintDirectives {
     /// Reads every comment of the file `root` is the root of, HTML-like ones included.
-    pub(crate) fn read<D: Doc>(root: &Node<'_, D>, source: &str) -> Self {
+    pub fn read<D: Doc>(root: &Node<'_, D>, source: &str) -> Self {
         Self::build(
             source,
             root.dfs()
@@ -212,7 +212,7 @@ impl OxlintDirectives {
     /// spanning bytes `span`, is suppressed (`contains`): an interval that overlaps the span
     /// (`Lapper::find`) disables every rule or a listed name whose part after its last `/` is the
     /// rule's name; a `-line` or `-next-line` interval must also hold the span's start.
-    pub(crate) fn suppresses(&self, rules: &[String], span: Range<usize>) -> bool {
+    pub fn suppresses(&self, rules: &[String], span: Range<usize>) -> bool {
         self.intervals.iter().any(|interval| {
             let found = interval.start < span.end && interval.stop > span.start;
             let names = interval.rule.as_deref().is_none_or(|name| {
@@ -277,7 +277,7 @@ fn match_directive(text: &str) -> Option<(Kind, &str)> {
 
 /// `collect_rule_names`: names split on commas and white space, up to a description: `--`, or a
 /// `-` between white space.
-fn collect_rule_names(text: &str) -> Vec<&str> {
+pub fn collect_rule_names(text: &str) -> Vec<&str> {
     let mut rules = Vec::new();
     let mut rule_start = None;
     let mut rule_end = text.len();
@@ -307,5 +307,4 @@ fn collect_rule_names(text: &str) -> Vec<&str> {
     rules
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

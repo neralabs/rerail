@@ -6,10 +6,10 @@ use super::Error;
 use super::metal_backend::launch::LaunchScope;
 use metal::CommandQueue;
 
-pub(in crate::code_rule_dsl) use rerail_accel::gpu::join::Held;
+pub use rerail_accel::gpu::join::Held;
 /// The relational lab's (`setfix::lab`) and the tests' names for the device's joins.
-#[cfg(test)]
-pub(in crate::code_rule_dsl) use rerail_accel::gpu::join::{Column, Keyed, probe};
+#[cfg(any(test, feature = "test-hooks"))]
+pub use rerail_accel::gpu::join::{Column, Keyed, probe};
 
 /// The one queue of relational work (decision 0100 §2), shared with the executor's GPU lane.
 pub(super) fn queue() -> Result<CommandQueue, Error> {

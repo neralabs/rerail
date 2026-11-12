@@ -20,7 +20,7 @@ pub(super) fn read_varint(bytes: &[u8], at: &mut usize) -> Result<u32, String> {
     Err("span varint overflow".into())
 }
 
-pub(crate) fn index_span(
+pub fn index_span(
     spans: &[u8],
     checkpoints: &[u8],
     pre: usize,

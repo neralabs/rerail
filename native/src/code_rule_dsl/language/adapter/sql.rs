@@ -42,7 +42,7 @@ use std::sync::Arc;
 use crate::code_rule_dsl::scope::usage::lang_sql::SqlUsage as _;
 
 /// SQL's family: SQLFluff's semantics.
-pub(crate) struct Sql;
+pub struct Sql;
 
 fn refused(message: impl Into<Cow<'static, str>>) -> Result<(), Refusal> {
     Err(Refusal::Refused(message.into()))
@@ -220,7 +220,7 @@ impl ScopeRules for Sql {
         None
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn unbound_locally(_: &ScopeTable, _: &Reference, _: &str, _: bool) -> bool {
         false
     }

@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const MODULE_NAME: &CStr = c"rerail_matches";
 const BATCH_COLUMN: c_int = 0;
 const USE_BATCH: c_int = 1;
@@ -158,7 +158,7 @@ fn terminal_structure_key(tape: &TapeDoc, node: u32) -> String {
     .to_string()
 }
 
-pub(in crate::code_rule_dsl) struct PackedDemand {
+pub struct PackedDemand {
     backend: ExecutionBackend,
     programs: Vec<Program>,
     producer_kinds: Vec<ProducerKind>,
@@ -285,7 +285,7 @@ fn stable_partition_ranges(file_count: usize, fits: impl Fn(&Range<usize>) -> bo
 }
 
 impl PackedDemand {
-    pub(in crate::code_rule_dsl) fn new(
+    pub fn new(
         backend: ExecutionBackend,
         programs: Vec<Program>,
         files: Vec<TapeDoc>,
@@ -637,7 +637,7 @@ impl PackedDemand {
 
     /// The roots' match records walked elsewhere (per program, per file, `None` where not).
     /// The demand as plan `plan`'s (the wave's identity, `LoweredWave::identity`).
-    pub(in crate::code_rule_dsl) fn with_plan(mut self, plan: PlanId) -> Self {
+    pub fn with_plan(mut self, plan: PlanId) -> Self {
         self.plan = Some(plan);
         self
     }
@@ -650,7 +650,7 @@ impl PackedDemand {
         }
     }
 
-    pub(in crate::code_rule_dsl) fn with_records(
+    pub fn with_records(
         mut self,
         records: Vec<Option<Vec<Vec<(u32, super::super::transducer::packed::RootRecord)>>>>,
     ) -> Result<Self, PackedError> {
@@ -661,7 +661,7 @@ impl PackedDemand {
         Ok(self)
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(in crate::code_rule_dsl) fn with_failure_injection(
         mut self,
         producer: usize,
@@ -1433,7 +1433,7 @@ struct CaptureData {
     end_byte: usize,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(in crate::code_rule_dsl) struct TestProducerStatusRow {
     pub(in crate::code_rule_dsl) producer: i64,
@@ -1624,17 +1624,17 @@ impl PackedRow {
         row
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub const fn row_kind(&self) -> RowKind {
         self.row_kind
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn is_complete(&self) -> bool {
         self.complete != 0
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn error_code(&self) -> Option<&str> {
         self.error_code.as_deref()
     }
@@ -1747,7 +1747,7 @@ impl MatchBatch {
 }
 
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct MatchRegistry {
+pub struct MatchRegistry {
     next: AtomicI64,
     batches: Mutex<HashMap<i64, Arc<MatchBatch>>>,
 }
@@ -1771,7 +1771,7 @@ impl MatchRegistry {
         token
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(in crate::code_rule_dsl) fn query_producer_status_rows(
         &self,
         token: i64,
@@ -1797,7 +1797,7 @@ impl MatchRegistry {
             .collect()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(in crate::code_rule_dsl) fn query_execution_counters(
         &self,
         token: i64,
@@ -1847,7 +1847,7 @@ impl MatchRegistry {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const ALL_COLUMNS: [c_int; 35] = [
     0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
     26, 27, 28, 29, 30, 31, 32, 33, 34,
@@ -1892,7 +1892,7 @@ pub(in crate::code_rule_dsl) fn register_module(
     let register = |name, module: RelationModule| {
         connection.create_module(name, &MODULE, Some(Arc::new(module)))
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     register(
         MODULE_NAME,
         RelationModule {
@@ -2287,7 +2287,7 @@ unsafe impl VTabCursor for MatchCursor<'_> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::{
         HardPartition, MatchRegistry, PackedDemand, register_module,
         stable_partition_ranges,
@@ -2604,7 +2604,7 @@ impl crate::code_rule_dsl::facts::connection::ConnectionSetup for ConnectionRegi
 }
 
 /// Sets up an owned connection's demand module (`waves::owner::database::install_connection_setup`).
-pub(crate) fn set_up_connection(
+pub fn set_up_connection(
     connection: &Connection,
 ) -> crate::content_store::StoreResult<Box<dyn crate::code_rule_dsl::facts::connection::ConnectionSetup>> {
     let registry = Arc::new(MatchRegistry::default());
@@ -2613,7 +2613,7 @@ pub(crate) fn set_up_connection(
 }
 
 /// The match registry of an owned connection set up by `set_up_connection`.
-pub(crate) fn registry_of(
+pub fn registry_of(
     attached: Option<&dyn crate::code_rule_dsl::facts::connection::ConnectionSetup>,
 ) -> crate::content_store::StoreResult<&Arc<MatchRegistry>> {
     attached

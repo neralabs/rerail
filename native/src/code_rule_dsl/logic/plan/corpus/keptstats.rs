@@ -327,7 +327,7 @@ fn same(a: (memo::Content, i64), b: (memo::Content, i64)) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::{Keeper, memo};
 
     /// A keeper read back from its blob counts the same files the same way: an edit patches it as it would the one

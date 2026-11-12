@@ -32,18 +32,18 @@ use std::ops::Range;
 use std::sync::Arc;
 
 #[derive(Clone)]
-pub(crate) struct ParseTest {
-    pub(crate) grammar: Grammar,
+pub struct ParseTest {
+    pub grammar: Grammar,
     /// Opaque slot text for pythonFString; other grammars ignore it.
     pub(crate) interpolation: String,
     /// The rule matched on the parsed tree's root, compiled for the grammar.
-    pub(crate) rule: AstMatcher,
+    pub rule: AstMatcher,
     /// The captures the rule may bind, exported to the host.
-    pub(crate) exports: Vec<String>,
+    pub exports: Vec<String>,
     /// Host kinds that hold a literal of the grammar.
-    pub(crate) host_kinds: Arc<BTreeSet<u16>>,
+    pub host_kinds: Arc<BTreeSet<u16>>,
     /// How the scope table reads the file (`annotation`, whose trees the table parses).
-    pub(crate) reading: Reading,
+    pub reading: Reading,
     /// With `host` rules in the tree's rule: whether each is sound under syntax errors and none
     /// is negated (they read the file around the literal); `None` without any.
     pub(crate) host_sound: Option<bool>,
@@ -56,7 +56,7 @@ pub(crate) struct ParseTest {
 /// On an embedded program's node (outside `parse`), the file's own tree is the host
 /// (`embedded::document_host`).
 #[derive(Clone)]
-pub(crate) struct HostTest {
+pub struct HostTest {
     pub(crate) rule: AstMatcher,
 }
 
@@ -109,8 +109,8 @@ impl Drop for Hosted {
 }
 
 impl HostTest {
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(in crate::code_rule_dsl) fn rule(&self) -> &AstMatcher {
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub fn rule(&self) -> &AstMatcher {
         &self.rule
     }
 
@@ -168,8 +168,8 @@ pub(super) fn host_exports<D: Doc>(
 }
 
 // Read by N's catalog (test-only); W's matcher reads `parse_fact_tree_with`.
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn parse_fact_tree<'t, D: Doc>(
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+pub fn parse_fact_tree<'t, D: Doc>(
     node: &Node<'t, D>,
     grammar: Grammar,
     host_kinds: &BTreeSet<u16>,
@@ -279,7 +279,7 @@ impl ParseTest {
 
 /// The node's tree under a text grammar, parsed once per file; `None` when the budget ran out (the
 /// clause fails).
-pub(super) fn parsed_tree<D: Doc>(node: &Node<'_, D>, grammar: Grammar) -> Option<Parsed> {
+pub fn parsed_tree<D: Doc>(node: &Node<'_, D>, grammar: Grammar) -> Option<Parsed> {
     parsed_tree_with(node, grammar, "{}")
 }
 
@@ -314,7 +314,7 @@ fn parsed_tree_with<D: Doc>(
 /// format through concatenation or a variable's binding), parsed once per file and reading, every
 /// node mapped to `node`'s range. `NotString` where the value is known and no string; `None` when
 /// the budget ran out (the clause fails).
-pub(super) fn parsed_value_tree<D: Doc>(
+pub fn parsed_value_tree<D: Doc>(
     node: &Node<'_, D>,
     reading: &super::value::Reading,
     grammar: Grammar,

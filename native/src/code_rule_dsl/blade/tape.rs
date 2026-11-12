@@ -14,7 +14,7 @@ use crate::code_rule_dsl::tape::{
 };
 
 /// Blade's tree parser.
-pub(crate) struct Forte;
+pub struct Forte;
 
 impl TreeParser for Forte {
     fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
@@ -46,7 +46,7 @@ impl TreeParser for Forte {
 /// leaf: under the deepest node whose span holds it with bytes on both sides (a zero-width error
 /// strictly inside), after the children that end at or before its start. Siblings then still end
 /// in byte order. The node's id and the child index the leaf goes before.
-pub(in crate::code_rule_dsl) fn error_place(root: BladeNode<'_>, error: &Range<usize>) -> (usize, usize) {
+pub fn error_place(root: BladeNode<'_>, error: &Range<usize>) -> (usize, usize) {
     let mut node = root;
     loop {
         let inner = node.children().find(|child| {
@@ -158,7 +158,7 @@ fn encode_blade_tree(
 }
 
 /// The documents of a Blade template, parsed with Rerail's port of Forte (`encode_blade`).
-pub(in crate::code_rule_dsl) fn encode_template(
+pub fn encode_template(
     grammar: &Grammar,
     source: &str,
     budget: &impl Fn() -> bool,

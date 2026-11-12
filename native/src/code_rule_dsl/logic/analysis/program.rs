@@ -1,6 +1,6 @@
 //! Adapt the logical language to executor-independent key and scalar proofs.
 use super::{bags, keys, scalars};
-mod storage;
+pub mod storage;
 use crate::code_rule_dsl::logic::front::{self, AggOp, Atom, Literal, Term};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -12,7 +12,7 @@ pub(in crate::code_rule_dsl) struct RuleAnalysis {
     pub contribution_storage: super::storage::Projection,
 }
 #[derive(Clone, Debug, Default, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct ProgramAnalysis {
+pub struct ProgramAnalysis {
     pub relation_keys: keys::Keys,
     pub key_inferences: Vec<KeyInference>,
     pub rules: Vec<RuleAnalysis>,

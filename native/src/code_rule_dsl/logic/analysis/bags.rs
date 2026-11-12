@@ -2,13 +2,13 @@
 use super::scalars::{self, Expression, Kind, Scalar};
 use std::collections::BTreeMap;
 #[derive(Clone, Debug, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct Site {
+pub struct Site {
     pub rule: usize,
     pub head: String,
     pub scalar: usize,
 }
 #[derive(Clone, Debug, Default, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct Analysis {
+pub struct Analysis {
     pub sites: Vec<Site>,
     pub bags: scalars::Analysis,
     pub partitions: Vec<Partition>,
@@ -18,7 +18,7 @@ pub(in crate::code_rule_dsl) struct Partition {
     pub members: Vec<usize>,
     pub reason: &'static str,
 }
-pub(in crate::code_rule_dsl) fn analyze(
+pub fn analyze(
     inputs: impl IntoIterator<Item = (Site, Scalar)>,
 ) -> Analysis {
     let (sites, inputs): (Vec<_>, Vec<_>) = inputs.into_iter().unzip();

@@ -242,7 +242,7 @@ pub(super) fn sampled_report(r: &mut String) {
 }
 
 /// The sampler's timeline as TSV.
-pub(super) fn sampled_tsv() -> String {
+pub fn sampled_tsv() -> String {
     use std::fmt::Write as _;
     let s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let mut t = String::from("at_s\tunix_s\tfootprint_bytes\tmax_bytes\tjemalloc_live_bytes\tjemalloc_resident_bytes\tthreads\topen\n");

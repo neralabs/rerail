@@ -25,7 +25,7 @@ pub(in crate::code_rule_dsl::sql_executor) fn eligible(
     }
 }
 
-pub(in crate::code_rule_dsl::sql_executor) fn run(
+pub fn run(
     w: &mut Work<'_>,
     store: &versions::Store,
     run: &mut session::Execution,

@@ -1,14 +1,14 @@
 //! Benchmark-only attribution for the existing workspace evaluator.
 //! Disabled in production builds. Reports worker CPU separately from wall time.
 
-mod clock;
-pub(super) mod memory;
-pub(super) use clock::thread_cpu_ns;
-pub(super) mod navigation;
-mod semantic;
+pub mod clock;
+pub mod memory;
+pub use clock::thread_cpu_ns;
+pub mod navigation;
+pub mod semantic;
 #[allow(unused_imports)]
-pub(super) use super::sql_profile as sql;
-pub(crate) mod trace;
+pub use super::sql_profile as sql;
+pub mod trace;
 use ast_grep_core::matcher::{DumpPattern, Matcher};
 use serde_json::{Value, json};
 use std::borrow::Cow;
@@ -613,7 +613,7 @@ impl Drop for ApplyProfile {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

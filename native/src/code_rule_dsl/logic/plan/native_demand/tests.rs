@@ -1,7 +1,7 @@
 use super::*;
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::logic::native::component;
 
@@ -59,8 +59,7 @@ mod tests {
     }
 }
 
-#[cfg(test)]
-mod integration_tests;
+// cratify: `integration_tests` is rerail-device-metal's (it mounts it)
 
 #[test]
 fn native_metadata_reads_pin_inputs_and_targets_through_their_consumers() {

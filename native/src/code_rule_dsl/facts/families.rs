@@ -62,7 +62,7 @@ pub(crate) fn kinds_name(scope: &str, path: &str) -> String {
 }
 
 /// A document's derivation name for a registered family's relations (`Families::derived`).
-pub(crate) fn derived_name(families: &dyn LazyFamilies, scope: &str, path: &str) -> String {
+pub fn derived_name(families: &dyn LazyFamilies, scope: &str, path: &str) -> String {
     format!("{scope}{}{path}", families.derived())
 }
 
@@ -113,7 +113,7 @@ pub(crate) fn derived_record(families: &dyn LazyFamilies, scope: &str, path: &st
 /// The registered families' relations of `documents` as a wave reads them (Python's `py.*`): each document's name
 /// and digest, its derivation recorded the first time a wave reads it (a family nobody reads is never made), then
 /// kept current by propagation from its core name (`Families::recompute`).
-pub(crate) fn derived_inputs(
+pub fn derived_inputs(
     graph: &(impl Graph + ?Sized),
     scope: &str,
     documents: &[crate::code_rule_dsl::facts::vtab::syntax::Document],
@@ -162,7 +162,7 @@ pub(crate) fn histogram_digest(f: &Facts) -> [u8; 32] {
 }
 
 /// The source a path name's blob (a Git blob id in its first 20 bytes) is stored as.
-pub(crate) fn blob_source_id(graph: &(impl Graph + ?Sized), digest: [u8; 32]) -> StoreResult<Option<SourceId>> {
+pub fn blob_source_id(graph: &(impl Graph + ?Sized), digest: [u8; 32]) -> StoreResult<Option<SourceId>> {
     let blob: [u8; 20] = digest[..20].try_into().expect("twenty bytes");
     graph.store().source_by_alias(HashKey::git_sha1(blob))
 }
@@ -182,7 +182,7 @@ fn dialect(path: &str) -> Option<GrammarDialect> {
 }
 
 /// A stored tape, decoded.
-pub(crate) struct Tape {
+pub struct Tape {
     pub id: TapeId,
     pub doc: TapeDoc,
     pub lines: Arc<LineTable>,
@@ -200,14 +200,14 @@ pub(crate) struct Parses {
 /// What one ingest push did: the observer and propagation (`Push`), and the derivations created
 /// for paths no derivation read before.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct Ingested {
+pub struct Ingested {
     pub push: Push,
     pub created: u64,
 }
 
 /// Recomputes the ingest families for one push. Drop the value after the push.
 #[derive(Default)]
-pub(crate) struct Families {
+pub struct Families {
     tapes: HashMap<[u8; 32], (Arc<Tape>, u8)>,
     facts: HashMap<[u8; 32], Arc<Facts>>,
     /// Prefilter rows built in this recomputation, published together.
@@ -224,7 +224,7 @@ impl Families {
     /// dialect, a chunk of paths at a time, wave by wave (tape; core and prefilter; kinds). Cold
     /// and warm are this same call: cold every path is new. `others` re-runs each wave's
     /// derivations of other producers (the readers of these families).
-    pub(crate) fn push(
+    pub fn push(
         &mut self,
         graph: &(impl Graph + ?Sized),
         scope: &str,
@@ -274,7 +274,7 @@ impl Families {
     }
 
     /// Re-runs the ingest derivations of `frontier`; other producers' are left out.
-    pub(crate) fn recompute(
+    pub fn recompute(
         &mut self,
         graph: &(impl Graph + ?Sized),
         frontier: &[Derivation],
@@ -469,7 +469,7 @@ impl Families {
     /// families outside a push (a wave) reads.
     /// The working set's copy where it holds the tape (by its digest, the binding: the same
     /// tape), else the store's.
-    pub(crate) fn stored(graph: &(impl Graph + ?Sized), scope: &str, path: &str) -> StoreResult<Option<Arc<Tape>>> {
+    pub fn stored(graph: &(impl Graph + ?Sized), scope: &str, path: &str) -> StoreResult<Option<Arc<Tape>>> {
         let read = graph.binding(&tape_name(scope, path))?.unwrap_or(ABSENT);
         if read != ABSENT {
             if let Some(tape) = graph.store().working_set().tape(read).and_then(|tape| tape.downcast::<Tape>().ok()) {
@@ -591,7 +591,7 @@ fn split<'a>(output: &'a str, family: &str) -> StoreResult<(&'a str, &'a str)> {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
 
 /// What derives a tape's prefilter rows from the tape alone (`prefilter::image`), registered at load; `interrupted`
 /// is polled as it goes.
@@ -604,7 +604,7 @@ pub(crate) type PrefilterImage = fn(
 static PREFILTER_IMAGE: std::sync::OnceLock<PrefilterImage> = std::sync::OnceLock::new();
 
 /// Registers what derives a tape's prefilter rows (once, at load).
-pub(crate) fn install_prefilter_image(image: PrefilterImage) {
+pub fn install_prefilter_image(image: PrefilterImage) {
     let _ = PREFILTER_IMAGE.set(image);
 }
 
@@ -621,7 +621,7 @@ fn prefilter_image(
 
 /// The documents of `paths` in `scope` whose core facts are bound, each keyed by its path name's
 /// atom, its facts rebuilt from its stored tape.
-pub(crate) fn stored_documents(graph: &(impl Graph + ?Sized), scope: &str, paths: &[String]) -> StoreResult<Vec<crate::code_rule_dsl::facts::vtab::syntax::Document>> {
+pub fn stored_documents(graph: &(impl Graph + ?Sized), scope: &str, paths: &[String]) -> StoreResult<Vec<crate::code_rule_dsl::facts::vtab::syntax::Document>> {
     let mut out = Vec::new();
     for path in paths {
         let core = core_name(scope, path);

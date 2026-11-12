@@ -13,14 +13,14 @@ use std::borrow::Cow;
 /// CSS's `An+B`: a position `index` (1-based) matches where `index = step * n + offset` for some
 /// `n >= 0`; a zero step matches `offset` alone.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Position {
-    pub(crate) step: i32,
-    pub(crate) offset: i32,
+pub struct Position {
+    pub step: i32,
+    pub offset: i32,
 }
 
 impl Position {
     /// Upstream's `FunctionalPosition::is_matched`, integer division and remainder included.
-    fn holds(self, index: usize) -> bool {
+    pub fn holds(self, index: usize) -> bool {
         let Some(index) = i64::try_from(index)
             .ok()
             .and_then(|index| index.checked_add(1))
@@ -41,13 +41,13 @@ impl Position {
 }
 
 #[derive(Clone)]
-pub(crate) struct NthChild {
-    pub(crate) position: Position,
-    pub(crate) of_rule: Option<AstMatcher>,
+pub struct NthChild {
+    pub position: Position,
+    pub of_rule: Option<AstMatcher>,
     /// `of_rule`'s identity: equal keys count the same siblings (`Positions`); `None` where it is
     /// not shared (it calls a utility).
     pub(crate) of_rule_key: Option<String>,
-    pub(crate) reverse: bool,
+    pub reverse: bool,
     /// Whether `of_rule` reads and binds no capture (`CaptureAnalysis::mentions`), worked out on
     /// first use: its verdict at a sibling is then the same for every candidate.
     pub(crate) capture_free: std::sync::OnceLock<bool>,
@@ -76,7 +76,7 @@ impl NthChild {
         let named = || {
             parent.children().filter(|child| {
                 let named = child.is_named();
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-hooks"))]
                 if named {
                     NAMED_SIBLING_VISITS.set(NAMED_SIBLING_VISITS.get() + 1);
                 }
@@ -363,7 +363,7 @@ impl Positions {
 /// A tape's `Positions` by `ofRule` (none, or its key), and the answers of its `nthChild` facts by
 /// question (`Fact::question`): each made on first use and shared by the tape's facts.
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct SiblingPositions {
+pub struct SiblingPositions {
     positions: std::sync::Mutex<std::collections::HashMap<Option<String>, std::sync::Arc<Positions>>>,
     answers: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<Vec<u64>>>>,
 }
@@ -408,7 +408,7 @@ pub(super) struct Siblings {
 
 /// Upstream's `parse_an_b`: white space is ignored; `n`/`N` with an optional signed step, then an
 /// optional signed offset; or a bare signed number.
-pub(crate) fn parse_position(input: &str) -> Result<Position, String> {
+pub fn parse_position(input: &str) -> Result<Position, String> {
     enum State {
         Initial,
         N,
@@ -475,22 +475,21 @@ pub(crate) fn parse_position(input: &str) -> Result<Position, String> {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     static NAMED_SIBLING_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Named children `nthChild` listed on this thread (`reset_named_sibling_visits` restarts it).
-#[cfg(test)]
-pub(crate) fn named_sibling_visits() -> usize {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn named_sibling_visits() -> usize {
     NAMED_SIBLING_VISITS.get()
 }
 
-#[cfg(test)]
-pub(crate) fn reset_named_sibling_visits() {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn reset_named_sibling_visits() {
     NAMED_SIBLING_VISITS.set(0);
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
 

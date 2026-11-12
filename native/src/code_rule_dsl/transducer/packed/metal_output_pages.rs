@@ -18,11 +18,11 @@ const SOURCE: &str = concat!(
 );
 #[cfg(all(test, feature = "metal-tests"))]
 #[path = "metal_typed_checkpoint_tests.rs"]
-mod checkpoint_tests;
+pub mod checkpoint_tests;
 #[path = "metal_saved_columns.rs"]
-mod columns;
+pub mod columns;
 #[path = "metal_typed_merge.rs"]
-mod merge;
+pub mod merge;
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 /// Completed typed relations retain their checked physical format between producers.
@@ -560,4 +560,4 @@ impl SavedOutput {
 
 #[cfg(all(test, feature = "metal-tests"))]
 #[path = "metal_saved_output_contract_tests.rs"]
-mod tests;
+pub mod tests;

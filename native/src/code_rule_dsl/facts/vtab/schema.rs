@@ -8,13 +8,13 @@ use std::{
     borrow::Cow,
     ffi::{CStr, CString, c_int},
 };
-pub(crate) mod cache;
+pub mod cache;
 #[allow(dead_code)]
-pub(crate) mod inference;
+pub mod inference;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct Column {
-    pub(crate) name: String,
+    pub name: String,
     pub(crate) declared_type: String,
 }
 pub(crate) type Columns = Vec<Column>;
@@ -56,7 +56,7 @@ fn failure(message: &str) -> rusqlite::Error {
     rusqlite::Error::ModuleError(message.to_owned())
 }
 
-pub(crate) fn register(db: &Connection, name: &str, declaration: String) -> Result<Columns> {
+pub fn register(db: &Connection, name: &str, declaration: String) -> Result<Columns> {
     install(db, name, declaration)?;
     describe(db, name)
 }
@@ -145,7 +145,7 @@ unsafe impl VTabCursor for Cursor {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use std::sync::{
         Arc,

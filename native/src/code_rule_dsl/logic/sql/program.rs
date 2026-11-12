@@ -6,11 +6,11 @@ fn error(message: impl std::fmt::Display) -> napi::Error {
     napi::Error::from_reason(message.to_string())
 }
 
-pub(in crate::code_rule_dsl) fn logical_arity(program:&front::Program,name:&str)->usize {
+pub fn logical_arity(program:&front::Program,name:&str)->usize {
     if program.nullary.contains(name){0}else{program.decls[name].len()}
 }
 
-pub(in crate::code_rule_dsl) fn physical(program: &mut front::Program) {
+pub fn physical(program: &mut front::Program) {
     let sentinel: BTreeSet<String> = program
         .decls
         .iter()
@@ -50,7 +50,7 @@ pub(in crate::code_rule_dsl) fn physical(program: &mut front::Program) {
 }
 
 /// The `top` keyword belongs to a lattice, rather than the flat lattice's numeric sentinel.
-pub(in crate::code_rule_dsl) fn tops(
+pub fn tops(
     program: &mut front::Program,
     lattices: &BTreeMap<String, (usize, i64)>,
 ) -> Result<()> {

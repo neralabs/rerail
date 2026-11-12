@@ -149,7 +149,7 @@ pub(super) const RESERVED: [&str; 14] =
     ["glob", "iglob", "prefix", "iprefix", "suffix", "isuffix", "contains", "icontains", "word", "iword", "match", "match_all", "match_group", "split_dot"];
 
 /// A relation's `.rr` name.
-pub(super) fn relation(r: &str) -> String {
+pub fn relation(r: &str) -> String {
     if RESERVED.contains(&r) { format!("{r}_") } else { r.to_owned() }
 }
 
@@ -582,7 +582,7 @@ impl Translator<'_> {
 }
 
 /// The `.rr` text of an `.rdl` program.
-pub(in crate::code_rule_dsl) fn translate(src: &str) -> Result<String, Error> {
+pub fn translate(src: &str) -> Result<String, Error> {
     let mut t = Translator { src, toks: tokens(src)?, i: 0, out: String::new(), lattices: BTreeSet::new() };
     loop {
         let gap = t.gap();

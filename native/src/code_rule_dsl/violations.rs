@@ -21,13 +21,13 @@ use super::matcher::{
 use super::model::{
     Anchor, ClauseKind, FIX_TEXT_PREFIX, FixPlan, Query, RegexSource, Template, ViolationSpec,
 };
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use crate::code_rule_dsl::walks::{Walk, record_walk};
 /// P's column batches for projected facts: P's typed evidence projections (its `violations` delta).
-pub(crate) mod projection;
-mod semantic;
-mod suppression;
-pub(crate) use super::lines::Span;
+pub mod projection;
+pub mod semantic;
+pub mod suppression;
+pub use super::lines::Span;
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
 use crate::code_rule_dsl::origin::InFile;
 use ast_grep_core::matcher::NodeMatch;
@@ -39,35 +39,35 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::borrow::Cow;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Range;
 use std::sync::Arc;
-pub(super) use suppression::{names_rerail_ignore, rerail_ignores, suppresses};
+pub use suppression::{names_rerail_ignore, rerail_ignores, suppresses};
 use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     static NODE_GROUP_ENUMERATIONS: Cell<usize> = const { Cell::new(0) };
 }
 
-#[cfg(test)]
-pub(super) fn reset_node_group_enumerations() {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn reset_node_group_enumerations() {
     NODE_GROUP_ENUMERATIONS.with(|count| count.set(0));
 }
 
-#[cfg(test)]
-pub(super) fn node_group_enumerations() -> usize {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn node_group_enumerations() -> usize {
     NODE_GROUP_ENUMERATIONS.with(Cell::get)
 }
 
 /// Longest capture text a message interpolates before it is cut with an ellipsis.
-pub(super) const MESSAGE_CAPTURE_CHARS: usize = 80;
+pub const MESSAGE_CAPTURE_CHARS: usize = 80;
 
 /// A capture's text as a message shows it: the first line, at most `MESSAGE_CAPTURE_CHARS`
 /// characters, with `…` marking anything cut.
-pub(super) fn message_capture(text: &str) -> Cow<'_, str> {
+pub fn message_capture(text: &str) -> Cow<'_, str> {
     let first = text.split('\n').next().unwrap_or("");
     let cut_line = first.len() < text.len();
     if !cut_line && first.chars().count() <= MESSAGE_CAPTURE_CHARS {
@@ -99,7 +99,7 @@ fn emitting(query: &Query) -> &Query {
 /// bind; upstream's `defined_vars` lists them for `inside`/`precedes`/`follows` anyway, and a
 /// message there renders them empty. Each utility is summarized once per `summaries` (recursive
 /// ones together with the utilities they reach); walks sharing `summaries` reuse each other's.
-pub(super) fn ast_captures<'a>(
+pub fn ast_captures<'a>(
     matcher: &'a AstMatcher,
     utils: &'a UtilTable,
     summaries: &mut CaptureSummaries<'a>,
@@ -159,7 +159,7 @@ fn utility_captures<'a>(
         return BTreeSet::new();
     };
     summaries.summarize(index, BTreeSet::new(), |summaries| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         record_walk(Walk::AstCaptures);
         let mut summary = BTreeSet::new();
         ast_captures(rule, utils, summaries, &mut summary);
@@ -264,7 +264,7 @@ fn utility_exports<'a>(
 }
 
 /// The named groups of the regexes that test the witness node itself (`node_regexes`).
-pub(super) fn witness_groups(matcher: &AstMatcher, utils: &UtilTable) -> Vec<String> {
+pub fn witness_groups(matcher: &AstMatcher, utils: &UtilTable) -> Vec<String> {
     let mut regexes = Vec::new();
     node_regexes(matcher, utils, &mut regexes);
     regexes
@@ -274,7 +274,7 @@ pub(super) fn witness_groups(matcher: &AstMatcher, utils: &UtilTable) -> Vec<Str
 }
 
 /// The same-node regexes a matcher contributes to a violation or evidence projection.
-pub(super) fn witness_regexes(matcher: &AstMatcher, utils: &UtilTable) -> Vec<Regex> {
+pub fn witness_regexes(matcher: &AstMatcher, utils: &UtilTable) -> Vec<Regex> {
     let mut regexes = Vec::new();
     node_regexes(matcher, utils, &mut regexes);
     regexes.into_iter().cloned().collect()
@@ -358,7 +358,7 @@ fn node_regexes_utility<'a>(
         return;
     };
     let summary = summaries.summarize(index, UtilityRegexes::default(), |summaries| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         record_walk(Walk::NodeRegexes);
         let mut summary = Vec::new();
         node_regexes_in(rule, utils, summaries, &mut summary);
@@ -730,7 +730,7 @@ fn ast_capture_text<'e, D: Doc>(
 }
 
 /// A sub-node regex group of the witness: its name, text, and absolute byte range.
-pub(super) type NodeGroup = (String, std::sync::Arc<str>, Range<usize>);
+pub type NodeGroup = (String, std::sync::Arc<str>, Range<usize>);
 
 /// Named groups of the same-node regexes that match the witness text, each name once, first
 /// regex first.
@@ -775,7 +775,7 @@ pub(super) fn node_groups<D: Doc>(
 /// yet is one set: that match's groups, then the other regexes' as `node_groups` reads them. A
 /// witness where no match binds it has none: it reports nothing, as the linter reports nothing
 /// where no run is found. `cancelled` is polled before each match; once it holds, the walk ends.
-pub(super) fn each_node_group_set<D: Doc>(
+pub fn each_node_group_set<D: Doc>(
     violation: &ViolationSpec,
     language: GrammarDialect,
     matched: &NodeMatch<'_, D>,
@@ -814,7 +814,7 @@ pub(super) fn each_node_group_set<D: Doc>(
             if cancelled() {
                 return;
             }
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             NODE_GROUP_ENUMERATIONS.with(|count| count.set(count.get() + 1));
             let Some(group) = found.name(each) else {
                 continue;
@@ -946,27 +946,27 @@ fn fix_target<'t, D: Doc>(
 }
 
 #[derive(Clone, PartialEq)]
-pub(crate) struct Witness {
-    pub(crate) path: String,
+pub struct Witness {
+    pub path: String,
     /// Where in the file's content the witness lies; `None` for one that stands for the whole
     /// file (a `file` query, a `file.path` regex match), which has no source location.
-    pub(crate) span: Option<Span>,
-    pub(crate) captures: Captures,
+    pub span: Option<Span>,
+    pub captures: Captures,
     /// The violation message with captures interpolated, when it references any.
-    pub(crate) message: Option<String>,
+    pub message: Option<String>,
     /// The suggested fix: `{ span, text }` replacing the witness span.
-    pub(crate) fix: Option<Value>,
+    pub fix: Option<Value>,
     /// A `rerail-ignore` naming the code rule covers it, where its violation marks such witnesses
     /// instead of dropping them (`ViolationSpec::ignore_marks`: a `budget`'s rows).
-    pub(crate) ignored: bool,
+    pub ignored: bool,
     /// A complete violation projected by SQL. Publication returns it without host reconstruction.
-    pub(crate) sql_violation: Option<Value>,
+    pub sql_violation: Option<Value>,
 }
 
 /// The key under which a witness of an evidence producer carries its projected row.
 const PROJECTION: &str = "$project";
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[test]
 fn cloned_evidence_shares_its_projection_until_replaced() {
     let mut original = Captures::default();
@@ -983,7 +983,7 @@ fn cloned_evidence_shares_its_projection_until_replaced() {
 /// projects one. It serializes as the JSON object of each name's span list and the projection
 /// under `PROJECTION`, in key order.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct Captures {
+pub struct Captures {
     /// Each name's spans, in name order.
     spans: Vec<(Box<str>, Vec<Span>)>,
     projection: Option<projection::Row>,
@@ -999,7 +999,7 @@ impl Captures {
                 .sum::<usize>()
     }
 
-    pub(crate) fn from_spans(spans: BTreeMap<String, Vec<Span>>) -> Self {
+    pub fn from_spans(spans: BTreeMap<String, Vec<Span>>) -> Self {
         Self {
             spans: spans
                 .into_iter()
@@ -1010,28 +1010,28 @@ impl Captures {
     }
 
     /// The spans `name` captured, if it is bound.
-    pub(crate) fn get(&self, name: &str) -> Option<&[Span]> {
+    pub fn get(&self, name: &str) -> Option<&[Span]> {
         self.spans
             .binary_search_by(|(known, _)| known.as_ref().cmp(name))
             .ok()
             .map(|index| self.spans[index].1.as_slice())
     }
 
-    pub(crate) fn projection(&self) -> Option<&projection::Row> {
+    pub fn projection(&self) -> Option<&projection::Row> {
         self.projection.as_ref()
     }
 
-    pub(crate) fn set_projection(&mut self, projection: Option<Value>) {
+    pub fn set_projection(&mut self, projection: Option<Value>) {
         self.projection = projection.map(projection::Row::from_json);
     }
 
     // Read by P's relational inputs (test-only, open item O18).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     pub(crate) fn take_projection(&mut self) -> Option<projection::Row> {
         self.projection.take()
     }
 
-    pub(crate) fn set_typed_projection(&mut self, row: projection::Row) {
+    pub fn set_typed_projection(&mut self, row: projection::Row) {
         self.projection = Some(row);
     }
 
@@ -1129,7 +1129,7 @@ pub(super) fn regex_witness(
 
 /// The span a violation reports, and whether a capture anchor fell back to the witness span. A
 /// witness without a span reports none, except at `file.start`.
-pub(super) fn anchored_span(anchor: &Anchor, witness: &Witness) -> (Option<Span>, bool) {
+pub fn anchored_span(anchor: &Anchor, witness: &Witness) -> (Option<Span>, bool) {
     match anchor {
         Anchor::Span => (witness.span, false),
         Anchor::Start => (
@@ -1167,8 +1167,6 @@ pub(super) fn anchored_span(anchor: &Anchor, witness: &Witness) -> (Option<Span>
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
 
-#[cfg(test)]
-mod each_limit_tests;
+// cratify: `each_limit_tests` is rerail-engine's (it mounts it)

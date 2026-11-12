@@ -15,7 +15,7 @@ use rusqlite::types::Value;
 
 /// An argument or result: a symbol (text) or a number.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) enum Kind {
+pub enum Kind {
     Text,
     Number,
 }
@@ -111,7 +111,7 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
 
 /// The function the native engine computes `.rr`'s call `f` with: `f` itself when it is one of these, or its
 /// `rr_` name (`@add`, `@strlen`, …).
-pub(in crate::code_rule_dsl) fn native_call(f: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
+pub fn native_call(f: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
     match f {
         "add" | "sub" | "mul" | "div" | "max" | "min" | "strlen" | "to_string" | "substr" => signature(&format!("rr_{f}")),
         _ => signature(f),
@@ -119,7 +119,7 @@ pub(in crate::code_rule_dsl) fn native_call(f: &str) -> Option<(&'static str, &'
 }
 
 /// A function's name (as SQL names it), arguments and result, if `name` is one of these.
-pub(in crate::code_rule_dsl) fn signature(name: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
+pub fn signature(name: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
     FUNCTIONS.iter().find(|(n, _, _)| *n == name).copied()
 }
 
@@ -174,7 +174,7 @@ fn call(name: &str, kinds: &[Kind], ctx: &Context) -> Value {
 
 /// Function `name` of its text and number arguments, in its signature's order within each kind (`signature`):
 /// the value SQL's function of that name gives, NULL for none. The native engine's `func` step calls it too.
-pub(in crate::code_rule_dsl) fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
+pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
     let t = |i: usize| text[i];
     let out = match name {
         "qname" => Some(format!("{}#{}", t(0), t(1))),
@@ -368,7 +368,7 @@ fn strtoll(s: &str, base: u32) -> Option<i64> {
 
 /// A float as an integer key that orders as the floats do: its bits, with every bit but the sign flipped for a
 /// negative float; -0.0 is 0.0. The engine's values are integers (decision 0008), so a float column holds these.
-pub(in crate::code_rule_dsl) fn float_key(f: f64) -> i64 {
+pub fn float_key(f: f64) -> i64 {
     let bits = (if f == 0.0 { 0.0 } else { f }).to_bits() as i64;
     if bits < 0 { bits ^ i64::MAX } else { bits }
 }
@@ -391,14 +391,14 @@ fn with_regex<T>(re: &str, f: impl FnOnce(&regex::Regex) -> T) -> Option<T> {
 }
 
 /// `@pkg_up("a.b.c", 1)` = `"a.b"`: `q` without its last `k` dotted parts; `""` past the root.
-pub(in crate::code_rule_dsl) fn pkg_up(q: &str, k: i64) -> String {
+pub fn pkg_up(q: &str, k: i64) -> String {
     let parts: Vec<&str> = if q.is_empty() { Vec::new() } else { q.split('.').collect() };
     let keep = parts.len().saturating_sub(usize::try_from(k.max(0)).unwrap_or(usize::MAX));
     parts[..keep].join(".")
 }
 
 /// `@join("src/a", "../c")` = `"src/c"`: the path `rel` names from `dir`, with `.` and `..` resolved.
-pub(in crate::code_rule_dsl) fn join(dir: &str, rel: &str) -> String {
+pub fn join(dir: &str, rel: &str) -> String {
     let mut parts: Vec<&str> = if rel.starts_with('/') { Vec::new() } else { dir.split('/').filter(|p| !p.is_empty()).collect() };
     for p in rel.split('/') {
         match p {
@@ -414,7 +414,7 @@ pub(in crate::code_rule_dsl) fn join(dir: &str, rel: &str) -> String {
 
 /// `@glob_sub("@/*", "src/*", "@/lib/x")` = `"src/lib/x"`: `s` matched against `pat` (one `*`, or none), and what
 /// the `*` matched put in `to`'s `*`; `""` if it does not match.
-pub(in crate::code_rule_dsl) fn glob_sub(pat: &str, to: &str, s: &str) -> String {
+pub fn glob_sub(pat: &str, to: &str, s: &str) -> String {
     match pat.split_once('*') {
         None if s == pat => to.to_owned(),
         None => String::new(),
@@ -460,7 +460,7 @@ pub(in crate::code_rule_dsl) fn substr(s: &str, i: i64, n: i64) -> String {
 }
 
 #[cfg(test)]
-mod substr_tests {
+pub mod substr_tests {
     /// `substr` gives what SQLite's `substr(s, i + 1, n)` does, over the corners: starts before, at and past the
     /// text, negative and zero lengths, and characters of more than one byte.
     #[test]
@@ -477,7 +477,7 @@ mod substr_tests {
     }
 }
 
-pub(in crate::code_rule_dsl) fn slice(s: &str, start: i64, end: i64) -> String {
+pub fn slice(s: &str, start: i64, end: i64) -> String {
     let chars: Vec<char> = s.chars().collect();
     let n = chars.len() as i64;
     let at = |i: i64| (if i < 0 { n + i } else { i }).clamp(0, n) as usize;
@@ -487,7 +487,7 @@ pub(in crate::code_rule_dsl) fn slice(s: &str, start: i64, end: i64) -> String {
 
 /// `@convert("max-age", "camelCase", "dash")` = `"maxAge"`. `seps` names the separators (`dash`, `underscore`,
 /// `dot`, `space`, `slash`, `caseChange`), comma-separated; `""` is all of them.
-pub(in crate::code_rule_dsl) fn convert(s: &str, to: &str, seps: &str) -> String {
+pub fn convert(s: &str, to: &str, seps: &str) -> String {
     let all = seps.trim().is_empty();
     let named: Vec<&str> = seps.split(',').map(str::trim).collect();
     let on = |name: &str| all || named.contains(&name);
@@ -537,7 +537,7 @@ pub(in crate::code_rule_dsl) fn convert(s: &str, to: &str, seps: &str) -> String
 
 /// `s` as a JSON string literal, quotes included, as W's signed-list stages write an element (SQLite's
 /// `json_quote`/`json_group_array`, as `plan`'s SQL gives it): `"`, `\` and controls escaped, non-ASCII kept.
-pub(in crate::code_rule_dsl) fn json_str(s: &str) -> String {
+pub fn json_str(s: &str) -> String {
     let mut out = String::from("\"");
     for c in s.chars() {
         match c {

@@ -17,7 +17,7 @@ use std::sync::{Arc, OnceLock};
 
 /// How far a relation walks, as ast-grep-config 0.45.3's `StopBy` (`rule/stop_by.rs`).
 #[derive(Clone)]
-pub(crate) enum StopBy {
+pub enum StopBy {
     Neighbor,
     End,
     /// Walk until the first node this rule matches, inclusive: that node is still tested against the
@@ -49,7 +49,7 @@ fn stops_at_inner<D: Doc>(stop: &AstMatcher, node: &Node<'_, D>, three: bool) ->
 /// Whether a rule can bind a capture: a pattern with a named metavariable, through the composites,
 /// relations and utilities that share the caller's environment, or a count's value (`as`).
 /// `not`, a count's own rule and stop rules bind nothing the caller keeps.
-pub(super) fn may_bind(matcher: &AstMatcher) -> bool {
+pub fn may_bind(matcher: &AstMatcher) -> bool {
     !super::captures::binds(matcher).is_empty() || !super::captures::counts(matcher).is_empty()
 }
 
@@ -110,7 +110,7 @@ impl Search {
         candidate: Node<'t, D>,
         env: &mut Cow<MetaVarEnv<'t, D>>,
     ) -> ControlFlow<Option<Node<'t, D>>> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         CANDIDATES_TESTED.set(CANDIDATES_TESTED.get() + 1);
         if let Some(filter) = &self.filter
             && filter.kinds.binary_search(&candidate.kind_id()).is_err()
@@ -290,7 +290,7 @@ fn verdict(
     candidate: Node<'_, TapeDoc>,
     three: bool,
 ) -> Option<(Truth, bool)> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     CANDIDATES_TESTED.set(CANDIDATES_TESTED.get() + 1);
     if let Some(filter) = filter
         && filter.kinds.binary_search(&candidate.kind_id()).is_err()
@@ -608,7 +608,7 @@ fn has_until<'tree, D: Doc>(
 /// for a sibling with the same key as a capture bound outside it (`SameKey`), worked out on first
 /// use.
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Related {
+pub struct Related {
     rule: AstMatcher,
     filter: OnceLock<Option<Arc<WalkFilter>>>,
     chains: OnceLock<bool>,
@@ -625,12 +625,12 @@ impl Related {
         })
     }
 
-    pub(in crate::code_rule_dsl) fn rule(&self) -> &AstMatcher {
+    pub fn rule(&self) -> &AstMatcher {
         &self.rule
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(in crate::code_rule_dsl) fn with_rule(&self, rule: AstMatcher) -> Box<Self> {
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub fn with_rule(&self, rule: AstMatcher) -> Box<Self> {
         Self::new(rule)
     }
 
@@ -645,7 +645,7 @@ impl Related {
     /// Whether the rule's answers are remembered for the file in this walk: it is node-local
     /// (`chains`), and neither `violation.each` nor a `parse`'s host is being matched.
     fn remembers(&self) -> bool {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         if ANSWERS_OFF.get() {
             return false;
         }
@@ -664,7 +664,7 @@ impl Related {
         env: &MetaVarEnv<'t, D>,
         forward: bool,
     ) -> Option<Vec<Node<'t, D>>> {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         if SAME_KEY_OFF.get() {
             return None;
         }
@@ -814,9 +814,9 @@ impl std::ops::Deref for Related {
 /// What a node needs for a relation's rule to match it, where that is known: one of `kinds`
 /// (sorted), and text holding `needle`. A walk down the tree tests only such nodes
 /// (`memo::bounded`): its rule fails at every other.
-pub(crate) struct WalkFilter {
-    pub(super) kinds: Arc<[u16]>,
-    pub(super) needle: Option<RequiredText>,
+pub struct WalkFilter {
+    pub kinds: Arc<[u16]>,
+    pub needle: Option<RequiredText>,
 }
 
 impl WalkFilter {
@@ -885,13 +885,13 @@ fn node_kinds(
 
 /// `inside` or `has` with a `field` (ast-grep-config 0.45.3 `Inside`/`Has`, `relational_rule.rs`).
 #[derive(Clone)]
-pub(crate) struct FieldRelation {
+pub struct FieldRelation {
     /// `inside` when true, `has` otherwise.
-    pub(crate) inside: bool,
+    pub inside: bool,
     /// The grammar's field id.
-    pub(crate) field: u16,
-    pub(crate) rule: AstMatcher,
-    pub(crate) stop: StopBy,
+    pub field: u16,
+    pub rule: AstMatcher,
+    pub stop: StopBy,
     /// What a node needs for `rule` to match it (`WalkFilter`), worked out on first use.
     pub(crate) filter: OnceLock<Option<Arc<WalkFilter>>>,
 }
@@ -1026,14 +1026,14 @@ impl FieldRelation {
     }
 }
 
-pub(crate) fn stop_rule(stop: &StopBy) -> Option<&AstMatcher> {
+pub fn stop_rule(stop: &StopBy) -> Option<&AstMatcher> {
     match stop {
         StopBy::Rule(rule) => Some(rule),
         StopBy::Neighbor | StopBy::End => None,
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     static CANDIDATES_TESTED: Cell<usize> = const { Cell::new(0) };
     static SAME_KEY_OFF: Cell<bool> = const { Cell::new(false) };
@@ -1041,27 +1041,26 @@ thread_local! {
 }
 
 /// Walks every sibling where a rule looks for one with the same key (`SameKey`), on this thread.
-#[cfg(test)]
-pub(crate) fn set_same_key_off(off: bool) {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn set_same_key_off(off: bool) {
     SAME_KEY_OFF.set(off);
 }
 
 /// Remembers no node-local relation's answers (`Related::remembers`), on this thread.
-#[cfg(test)]
-pub(crate) fn set_answers_off(off: bool) {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn set_answers_off(off: bool) {
     ANSWERS_OFF.set(off);
 }
 
 /// Candidates relations tested on this thread (`reset_candidates_tested` restarts the count).
-#[cfg(test)]
-fn candidates_tested() -> usize {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn candidates_tested() -> usize {
     CANDIDATES_TESTED.get()
 }
 
-#[cfg(test)]
-fn reset_candidates_tested() {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn reset_candidates_tested() {
     CANDIDATES_TESTED.set(0);
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

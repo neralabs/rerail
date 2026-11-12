@@ -179,7 +179,7 @@ pub(super) fn run(db: &std::ffi::OsStr, sources: &[(String, Arc<dyn Source>, Kin
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     #[test]
     fn columns_round_trip() {
         let cols = vec![vec![5, 3, i64::MAX, -7, 0], vec![1 << 40, (1 << 40) + 3, 2, 2, -1]];

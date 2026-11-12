@@ -220,5 +220,4 @@ fn call_kinds(
     ))
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

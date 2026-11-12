@@ -5,15 +5,15 @@ use std::cell::Cell;
 
 #[derive(Clone, Copy, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct Counters {
-    pub(crate) calls: u64,
-    pub(crate) children_examined: u64,
-    pub(crate) misses: u64,
-    pub(crate) miss_children_examined: u64,
-    pub(crate) scans_over_64: u64,
-    pub(crate) max_scan: u64,
-    pub(crate) known_edge_checks: u64,
-    pub(crate) known_edge_matches: u64,
+pub struct Counters {
+    pub calls: u64,
+    pub children_examined: u64,
+    pub misses: u64,
+    pub miss_children_examined: u64,
+    pub scans_over_64: u64,
+    pub max_scan: u64,
+    pub known_edge_checks: u64,
+    pub known_edge_matches: u64,
 }
 thread_local! { static COUNTERS: Cell<Counters> = const { Cell::new(Counters {
     calls: 0, children_examined: 0, misses: 0, miss_children_examined: 0,
@@ -35,7 +35,7 @@ pub(crate) fn record(examined: usize, found: bool) {
         local.set(value);
     });
 }
-pub(crate) fn record_edge(found: bool) {
+pub fn record_edge(found: bool) {
     if !enabled() {
         return;
     }
@@ -46,12 +46,12 @@ pub(crate) fn record_edge(found: bool) {
         local.set(value);
     });
 }
-pub(crate) fn reset() {
+pub fn reset() {
     COUNTERS.with(|local| local.set(Counters::default()));
 }
 
 /// The counts so far on this thread, which start again from zero.
-pub(crate) fn take() -> Counters {
+pub fn take() -> Counters {
     COUNTERS.with(|local| local.replace(Counters::default()))
 }
 

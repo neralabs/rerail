@@ -244,7 +244,7 @@ impl Shape {
 
 impl Shape {
     /// Whether the device has every form the stratum uses.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn missing_none(&self) -> bool {
         self.forms.iter().all(|f| DEVICE_FORMS.contains(f))
     }
@@ -367,7 +367,7 @@ pub(in crate::code_rule_dsl) fn place(shape: &Shape) -> Placement {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::logic::front::Atom;
 

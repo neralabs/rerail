@@ -36,7 +36,7 @@ pub(crate) struct ExecutionContext {
     pub body: NodeRef,
 }
 #[derive(Debug)]
-pub(crate) struct CallSite {
+pub struct CallSite {
     pub call: NodeRef,
     /// The original function field, including all parentheses.
     pub callee: NodeRef,
@@ -135,7 +135,7 @@ pub(crate) struct Counters {
     pub peak_pending_nodes: usize,
 }
 #[derive(Default, Debug)]
-pub(crate) struct PythonStructure {
+pub struct PythonStructure {
     pub contexts: Vec<ExecutionContext>,
     pub calls: Vec<CallSite>,
     pub arguments: Vec<Argument>,
@@ -446,7 +446,7 @@ pub(crate) fn collect_with<'t, D: Doc>(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_core::AstGrep;

@@ -19,7 +19,7 @@ pub(crate) struct Request {
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct Document {
+pub struct Document {
     pub source: String,
     pub requests: Vec<Request>,
 }
@@ -33,11 +33,11 @@ pub struct Response {
     pub module_walks: usize,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) fn batch(documents: &[Document]) -> Result<Vec<Vec<Row>>, Error> {
     Ok(batch_with_metrics(documents)?.documents)
 }
-pub(crate) fn batch_with_metrics(documents: &[Document]) -> Result<Response, Error> {
+pub fn batch_with_metrics(documents: &[Document]) -> Result<Response, Error> {
     if documents.is_empty() {
         return Ok(Response {
             version: [3, 13],
@@ -107,4 +107,4 @@ pub(crate) fn batch_with_metrics(documents: &[Document]) -> Result<Response, Err
     Ok(response)
 }
 #[cfg(test)]
-mod tests;
+pub mod tests;

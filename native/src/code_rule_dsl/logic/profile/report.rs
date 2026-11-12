@@ -149,7 +149,7 @@ pub(in crate::code_rule_dsl) fn placements(r: &mut String, state: &State) {
 }
 
 /// The report, and the tables, into `dir`. `header`: what was run (lines put first).
-pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Result<()> {
+pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let state = super::state();
     let mut spans_tsv = String::from("path\tcalls\tcpu_s\town_s\talloc_bytes\town_alloc_bytes\tfreed_bytes\tpeak_rise_bytes\town_peak_rise_bytes\n");
@@ -471,7 +471,7 @@ pub(in crate::code_rule_dsl) fn write(dir: &Path, header: &str) -> std::io::Resu
 /// The report over what a run recorded, and the projection's provenance over a parsed program: here rather than in
 /// `profile`'s own tests, as they read the report and the `.rr` parser, which sit above the profiler.
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use super::super::{
         behind_the_run, decision, device, fallback, one_run, planned, reset, set, span, sql_in_wave, stratum, waves,

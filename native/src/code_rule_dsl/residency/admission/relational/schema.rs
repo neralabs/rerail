@@ -9,7 +9,7 @@ use std::{
     ffi::{CStr, CString, c_int},
 };
 #[path = "schema/cache.rs"]
-pub(crate) mod cache;
+pub mod cache;
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(crate) struct Column {
@@ -144,7 +144,7 @@ unsafe impl VTabCursor for Cursor {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use std::sync::{
         Arc,

@@ -5,7 +5,7 @@
 use base64::Engine as _;
 use ed25519_dalek::{Signature, VerifyingKey};
 
-pub(in crate::code_rule_dsl) fn ed25519_ok(public_key: &str, message: &str, signature: &str) -> bool {
+pub fn ed25519_ok(public_key: &str, message: &str, signature: &str) -> bool {
     if public_key.len() != 64 || signature.len() > 128 {
         return false;
     }

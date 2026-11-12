@@ -1261,7 +1261,7 @@ fn unestimate(model: &mut Model, inserted: Inserted) {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     fn rule(text: &str) -> Rule {

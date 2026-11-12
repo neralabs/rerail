@@ -24,7 +24,7 @@ struct Open {
     child_end: Option<u32>,
 }
 
-pub(in crate::code_rule_dsl) fn visit(
+pub fn visit(
     source: &str,
     grammar: &Grammar,
     image: &TapeImage,

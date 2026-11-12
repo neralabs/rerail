@@ -24,29 +24,29 @@ use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::logic::rr::WORLD;
 use crate::code_rule_dsl::typing::cross_rounds;
-pub(in crate::code_rule_dsl) mod guests;
-mod hiding;
-mod exports;
-mod combined;
-mod scoping;
+pub mod guests;
+pub mod hiding;
+pub mod exports;
+pub mod combined;
+pub mod scoping;
 #[cfg(test)]
-mod cache_architecture;
+pub mod cache_architecture;
 #[cfg(test)]
-mod cache_tests;
-pub(in crate::code_rule_dsl) use hiding::qualified;
-pub(in crate::code_rule_dsl) mod memo;
-mod kept_strata;
-mod maintained;
-mod cone_rounds;
-pub(in crate::code_rule_dsl) mod references;
+pub mod cache_tests;
+pub use hiding::qualified;
+pub mod memo;
+pub mod kept_strata;
+pub mod maintained;
+pub mod cone_rounds;
+// cratify: `references` is rerail-engine's (it mounts it)
 
 /// The reference graph's base relations (`reference_edge`, `reference_open`), and their columns
 /// (`sql::select::input_columns`).
-pub(in crate::code_rule_dsl) const REFERENCE_RELATIONS: [&str; 2] = ["reference_edge", "reference_open"];
+pub const REFERENCE_RELATIONS: [&str; 2] = ["reference_edge", "reference_open"];
 
 /// Base relations a program reads that are built across a run's files (the reference graph's,
 /// `corpus::references`): each file added as its facts are built, the rows bound in the cross-file part.
-pub(crate) trait CrossFileRelations: Send + Sync {
+pub trait CrossFileRelations: Send + Sync {
     /// Adds the file with key `key` at `path`, with its source and facts.
     fn add(&self, key: u32, path: &str, source: &Arc<String>, facts: &Arc<crate::code_rule_dsl::facts::core::Facts>) -> Result<()>;
     /// The relations the run's files give, with their columns and rows.
@@ -59,34 +59,33 @@ pub(crate) type MakeCrossFile = fn(&str, &crate::code_rule_dsl::logic::front::Pr
 static CROSS_FILE: std::sync::OnceLock<MakeCrossFile> = std::sync::OnceLock::new();
 
 /// Registers what makes a program's cross-file relations (once, at load).
-pub(crate) fn install_cross_file(make: MakeCrossFile) {
+pub fn install_cross_file(make: MakeCrossFile) {
     let _ = CROSS_FILE.set(make);
 }
-mod prepared;
-mod maintain;
-mod supports;
-mod recursive_spike;
-mod retain;
-mod keptstats;
-mod input_delta;
-pub(in crate::code_rule_dsl) mod bridge;
-pub(crate) mod phases;
-mod constants;
-pub(in crate::code_rule_dsl) mod inputs;
-pub(in crate::code_rule_dsl) use inputs::parameters as input_parameters;
-mod world;
-pub(in crate::code_rule_dsl) mod connections;
-mod reuse;
-pub(in crate::code_rule_dsl) mod phase0;
-mod cross_memo;
-pub(in crate::code_rule_dsl) mod matchers;
+pub mod prepared;
+pub mod maintain;
+pub mod supports;
+pub mod recursive_spike;
+pub mod retain;
+pub mod keptstats;
+pub mod input_delta;
+pub mod bridge;
+pub mod phases;
+pub mod constants;
+pub mod inputs;
+pub use inputs::parameters as input_parameters;
+pub mod world;
+pub mod connections;
+pub mod reuse;
+pub mod phase0;
+pub mod cross_memo;
+pub mod matchers;
 /// The prefix of an `ast` matcher's relation (decision 0106).
 pub(in crate::code_rule_dsl) const AST_MATCHES: &str = matchers::PREFIX;
-pub(in crate::code_rule_dsl) use matchers::columns as ast_columns;
-mod typing;
-#[cfg(test)]
-mod base_tests;
-pub(crate) use typing::{Typing, TypingReport};
+pub use matchers::columns as ast_columns;
+pub mod typing;
+// cratify: `base_tests` is rerail-engine's (it mounts it)
+pub use typing::{Typing, TypingReport};
 use crate::code_rule_dsl::typing::file_local::Binding;
 use crate::content_store::ContentStore;
 use rusqlite::Connection;
@@ -106,7 +105,7 @@ fn int(v: &SqlValue) -> i64 {
 /// T's statistics (`stats.py build`'s tables in `t`) with T's strings lowered as the program's are (decision 0009)
 /// and T's node ids as the vtabs' (`first`: each document's first id in T's facts), in schema `s` of `db`:
 /// `stat_kind`/`stat_edge` by kind atoms, `stat_val` by its column's domain, `stat_docrange` as id intervals.
-pub(in crate::code_rule_dsl) fn atomized_statistics(t: &Connection, db: &Connection, store: &ContentStore, first: &HashMap<i64, i64>, dialect: GrammarDialect) -> Result<()> {
+pub fn atomized_statistics(t: &Connection, db: &Connection, store: &ContentStore, first: &HashMap<i64, i64>, dialect: GrammarDialect) -> Result<()> {
     use lower::Domain;
     let tag = crate::code_rule_dsl::language::tape_tag(dialect).ok_or_else(|| Error::Plan("the dialect has no tape tag".to_owned()))?;
     let kinds = dialect.kinds();
@@ -180,9 +179,9 @@ pub(in crate::code_rule_dsl) fn atomized_statistics(t: &Connection, db: &Connect
     Ok(())
 }
 
-pub(crate) use crate::code_rule_dsl::prof::thread_usage;
+pub use crate::code_rule_dsl::prof::thread_usage;
 
-pub(crate) fn usage() -> (f64, f64, f64) {
+pub fn usage() -> (f64, f64, f64) {
     // wasm32: the one thread's time as user CPU, and no resident-set counter.
     #[cfg(target_family = "wasm")]
     {
@@ -207,54 +206,54 @@ pub(crate) fn usage() -> (f64, f64, f64) {
 
 /// What a corpus run did: its phases' CPU (user, system) and the peak RSS after each, and the outcome.
 #[derive(Default)]
-pub(crate) struct Report {
+pub struct Report {
     /// (phase, user, sys, peak RSS so far, SQLite statements run).
-    pub(crate) phases: Vec<(&'static str, f64, f64, f64, usize)>,
+    pub phases: Vec<(&'static str, f64, f64, f64, usize)>,
     /// Per phase, the whole process's retired instructions while it ran (its workers' too; macOS): steadier than CPU
     /// time on a loaded machine, so a change is attributed to a phase by them.
-    pub(crate) phase_instructions: Vec<(&'static str, u64)>,
-    pub(crate) files: usize,
-    pub(crate) nodes: usize,
-    pub(crate) native: usize,
-    pub(crate) rows: BTreeMap<String, usize>,
-    pub(crate) chunks: usize,
+    pub phase_instructions: Vec<(&'static str, u64)>,
+    pub files: usize,
+    pub nodes: usize,
+    pub native: usize,
+    pub rows: BTreeMap<String, usize>,
+    pub chunks: usize,
     /// The cross-file part's bounded rounds (`typing::cross_rounds`).
-    pub(crate) rounds: cross_rounds::Rounds,
+    pub rounds: cross_rounds::Rounds,
     /// Declarations, summaries and terms (`corpus::typing`).
-    pub(crate) typing: TypingReport,
+    pub typing: TypingReport,
     /// Text tests (decision 0037): relations, distinct strings tested, and the CPU testing them (seconds).
-    pub(crate) text: (usize, usize, f64),
+    pub text: (usize, usize, f64),
     /// The typing programs run for the rule's bridged relations (`bridge`), with their reports.
-    pub(crate) typing_runs: bridge::Runs,
+    pub typing_runs: bridge::Runs,
     /// The earlier phases this run read (decision 0083 §1), each its own run.
-    pub(crate) phase_runs: Vec<phases::PhaseRun>,
+    pub phase_runs: Vec<phases::PhaseRun>,
     /// The per-file memo: files read from it, and chunks whose rows it could not keep (a row naming no document).
-    pub(crate) memo: (usize, usize),
+    pub memo: (usize, usize),
     /// The cross-file memo (decision 0076): import components found and components derived.
-    pub(crate) cross: (usize, usize),
+    pub cross: (usize, usize),
     /// Where the prepared program came from: `prepared` by this run, kept in this process's `memory`, or read from the
     /// `store` (decision 0073).
-    pub(crate) prepared: &'static str,
+    pub prepared: &'static str,
     /// A session's run: the cross-file strata it evaluated, of all (decision 0077; `None` outside a session).
-    pub(crate) cross_strata: Option<(usize, usize)>,
+    pub cross_strata: Option<(usize, usize)>,
     /// A run with no session, its strata kept in the tape cache (decision 0077 §4): the cross-file strata it
     /// evaluated, of all.
-    pub(crate) cross_kept: Option<(usize, usize)>,
+    pub cross_kept: Option<(usize, usize)>,
     /// The cone of requests' strata evaluated, of all, when they are kept (t33 K3); `None` otherwise.
-    pub(crate) cone_kept: Option<(usize, usize)>,
+    pub cone_kept: Option<(usize, usize)>,
     /// The rounds the cone ran from the last run's final round (decision 0108); 0 when it ran the gated fixpoint.
-    pub(crate) cone_rounds: usize,
+    pub cone_rounds: usize,
     /// Of those, strata maintained from deltas, of them recursive, and strata derived again (decision 0077 §3).
-    pub(crate) cross_maintained: (usize, usize, usize),
+    pub cross_maintained: (usize, usize, usize),
     /// A session's run: the cross part's inputs that changed, and why its strata derived again were (each count).
-    pub(crate) cross_changed: Vec<String>,
-    pub(crate) cross_again: BTreeMap<&'static str, usize>,
+    pub cross_changed: Vec<String>,
+    pub cross_again: BTreeMap<&'static str, usize>,
     /// With `RERAIL_CROSS_DELTA_COUNTS`: rows over-deleted, inserted and held by the maintained relations, the rows of
     /// the deltas of their inputs, and the rows truly deleted and inserted.
-    pub(crate) cross_delta_counts: [usize; 6],
+    pub cross_delta_counts: [usize; 6],
     /// What the run consulted, as (what, path, digest): each workspace document's bytes, and what its requests read
     /// (`world::World::consulted`). A run whose consulted things are as they were derives the same (`unchanged`).
-    pub(crate) consulted: Vec<(String, String, String)>,
+    pub consulted: Vec<(String, String, String)>,
     /// Each document's rows of the per-file relations the requests' cone reads, as a digest, by path: node ids by
     /// their rank in the document, so an edit that renumbers nodes and nothing else leaves it. Two runs whose
     /// documents give the same digests, and whose requests are answered alike, load the same documents.
@@ -263,7 +262,7 @@ pub(crate) struct Report {
     /// whatever else is read, and can be replaced on their own.
     pub(crate) not_per_document: Option<String>,
     /// What phase 0's observer did during the run: stats, answers reused, files hashed, directories listed.
-    pub(crate) files_observed: crate::content_store::observe::Counts,
+    pub files_observed: crate::content_store::observe::Counts,
 }
 
 /// Whether a run of `programs` over `root` that consulted `consulted` (`Report::consulted`) would consult the same
@@ -388,7 +387,7 @@ fn cone_digests<'a>(exports: &exports::Exports, per_file: &[String], locations: 
     Ok(out)
 }
 
-pub(in crate::code_rule_dsl) mod session;
+pub mod session;
 
 /// Runs `program` (`.rr` text, `logic::rr`) over the files T's `t_facts` names under `root`, in native `modes`, with `nearest`
 /// bound as `binding`, and writes its outputs into `out` as T does. The store and its derived tables live in `out`.
@@ -416,7 +415,7 @@ fn external_inputs(prog: &mut front::Program, root: &Path) -> Result<()> {
 /// (extensions) holding a tenth of its nodes or more, in order, and its files' size, as the power of 4 of its mean
 /// nodes per file. Per-document relations (`doc`, `path_part`) grow with files, not nodes, so a chunk of many small
 /// files is not a chunk of a few large ones scaled. Documents are `(path, nodes)`.
-fn chunk_mix<'a>(docs: impl Iterator<Item = (&'a str, usize)>) -> String {
+pub fn chunk_mix<'a>(docs: impl Iterator<Item = (&'a str, usize)>) -> String {
     let mut by: BTreeMap<&str, usize> = BTreeMap::new();
     let mut files = 0;
     for (path, n) in docs {
@@ -464,13 +463,13 @@ fn embed_slice(local: &front::Program) -> Option<front::Program> {
     Some(slice)
 }
 
-pub(crate) fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize) -> Result<Report> {
+pub fn run(program: &str, root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize) -> Result<Report> {
     run_typed(&[program], root, t_facts, out, modes, binding, chunk_nodes, &Typing::default())
 }
 
 /// Every program of `programs` in one run: each file is read, parsed and batched once, and every rule runs over each
 /// chunk (`combine`).
-pub(crate) fn run_all(programs: &[&str], root: &Path, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize) -> Result<Report> {
+pub fn run_all(programs: &[&str], root: &Path, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize) -> Result<Report> {
     run_typed(programs, root, None, out, modes, binding, chunk_nodes, &Typing::default())
 }
 
@@ -479,7 +478,7 @@ pub(crate) fn run_all(programs: &[&str], root: &Path, out: &Path, modes: &str, b
 /// so programs that name relations alike (a converter's `m650`, `exists_0`) do not meet. The base inputs and the
 /// `violation` output are shared, and kind sets are named by their kinds (`ks<j>`), so programs asking for one set
 /// share its tape pass. The simplifier then merges relations that are equal across programs (decision 0038).
-pub(crate) fn combine(programs: &[&str], extra: &str) -> Result<front::Program> {
+pub fn combine(programs: &[&str], extra: &str) -> Result<front::Program> {
     use std::sync::{Mutex, OnceLock};
     // A function of the texts alone (`rr::parse` reads no file), so kept for the process by their digest: a session or
     // a test that runs one program over many roots parses and hides it once. A few programs at a time are kept.
@@ -745,12 +744,12 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
 /// each switch. A test's are its own thread's: tests run side by side, and one filling the cache clears it
 /// (`PREPARED_KEPT`) under another that expects its program kept (`prepared::tests`).
 fn with_prepared<R>(f: impl FnOnce(&mut HashMap<[u8; 32], Vec<Arc<Prepared>>>) -> R) -> R {
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-hooks")))]
     {
         static PREPARED: std::sync::LazyLock<std::sync::Mutex<HashMap<[u8; 32], Vec<Arc<Prepared>>>>> = std::sync::LazyLock::new(Default::default);
         f(&mut PREPARED.lock().expect("the prepared programs"))
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     {
         thread_local! {
             static PREPARED: std::cell::RefCell<HashMap<[u8; 32], Vec<Arc<Prepared>>>> = std::cell::RefCell::default();
@@ -777,7 +776,7 @@ fn keep_prepared(key: [u8; 32], p: Arc<Prepared>) {
     });
 }
 
-fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
+pub fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
     use front::{Literal, Program};
     // A program reads only relations it declares: an error here, not the planner's panic later (`front::declared`).
     let parse = |text: &str| -> Result<Program> {
@@ -1173,7 +1172,7 @@ fn cpython_functors(prog: &mut front::Program) -> Result<()> {
 /// What the converter gives an authored file to read (`logic::convert`, test-only): the scope, the report gate, the
 /// options, and the tape's syntax verdict (`tape_syntax_error(d)`: core.rr's `syntax_error` is the engine's, decision
 /// 0047). Here so the runner, which is not test-only, can tell them from unbound core relations.
-pub(in crate::code_rule_dsl) const GIVEN: [&str; 8] = ["in_scope", "out_scope", "report_when_gt", "option_on", "option_item", "option_value", "option_json", "tape_syntax_error"];
+pub const GIVEN: [&str; 8] = ["in_scope", "out_scope", "report_when_gt", "option_on", "option_item", "option_value", "option_json", "tape_syntax_error"];
 
 /// Fails, naming it, where `prog` reads one of core.rr's relations that nothing derives and the runner does not bind
 /// (`value`, `str_part`, …): the planner would otherwise fail on its missing statistics (`no statistics for
@@ -1405,11 +1404,11 @@ impl Drop for HeldPlan<'_> {
 type Late = Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>;
 
 /// The store's collection (decision 0053), started once the run's manifest is written: `join` waits for it.
-pub(in crate::code_rule_dsl) struct Collecting(std::sync::mpsc::Receiver<Option<std::thread::JoinHandle<(usize, std::result::Result<String, String>)>>>);
+pub struct Collecting(std::sync::mpsc::Receiver<Option<std::thread::JoinHandle<(usize, std::result::Result<String, String>)>>>);
 
 impl Collecting {
     /// The passes and their outcome, once the manifest is written and the passes ran; `None` when no pass was due.
-    pub(in crate::code_rule_dsl) fn join(self) -> std::thread::Result<Option<(usize, std::result::Result<String, String>)>> {
+    pub fn join(self) -> std::thread::Result<Option<(usize, std::result::Result<String, String>)>> {
         match self.0.recv() {
             Ok(Some(thread)) => thread.join().map(Some),
             _ => Ok(None),
@@ -1420,7 +1419,7 @@ impl Collecting {
 /// Records the run's manifest and relations, then starts collection if a pass is due: queued behind the run's
 /// writes (decision 0102), so the manifest names only what is written, and the lease on collection is let go
 /// once it is.
-fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], also: &[[u8; 32]], relations: &[(String, String)], late: &Late, reading: Option<crate::content_store::CollectionLease>, outer: bool) -> Result<Option<Collecting>> {
+pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], also: &[[u8; 32]], relations: &[(String, String)], late: &Late, reading: Option<crate::content_store::CollectionLease>, outer: bool) -> Result<Option<Collecting>> {
     memo::off();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
@@ -1497,16 +1496,16 @@ fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store
     Ok(Some(Collecting(rx)))
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// A test's own store, so that another test's collection in the shared default store does not evict its rows.
-    pub(in crate::code_rule_dsl) static TEST_TAPE_CACHE: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(None) };
+    pub static TEST_TAPE_CACHE: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Held by a test that starts the process's session (`session::start`) and by one whose runs must not see it: every
 /// run uses a live session's store.
-#[cfg(test)]
-pub(in crate::code_rule_dsl) static SESSION_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
+#[cfg(any(test, feature = "test-hooks"))]
+pub static SESSION_TESTS: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// The store the corpus runner keeps tapes in: `RERAIL_TAPE_CACHE`, else one in the temporary
 /// directory; `RERAIL_TAPE_CACHE=off` keeps none.
@@ -1517,10 +1516,10 @@ pub(in crate::code_rule_dsl) fn tape_cache() -> std::result::Result<Option<Conte
 /// Runs `f` with phase 0's observer (`content_store::observe`), kept beside the tape cache (`<tape cache>.files`), or
 /// in memory for the process when there is none. Every path the engine reads goes through it: rule files, corpus
 /// files, what resolution rules list, read and load.
-pub(in crate::code_rule_dsl) fn observe<T>(f: impl FnOnce(&mut crate::content_store::observe::Observer) -> T) -> T {
+pub fn observe<T>(f: impl FnOnce(&mut crate::content_store::observe::Observer) -> T) -> T {
     // The engine's tests check paths by their `stat`: the journal's wait for its cookie, made by every run, is the
     // journal's own tests' to measure (`content_store::observe`). A test of the engine that wants it turns it on.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     {
         static OFF: std::sync::Once = std::sync::Once::new();
         OFF.call_once(|| crate::content_store::observe::set_journal(false));
@@ -1528,7 +1527,7 @@ pub(in crate::code_rule_dsl) fn observe<T>(f: impl FnOnce(&mut crate::content_st
     let store = tape_cache_path().map(|p| crate::content_store::observe::store_beside(&p));
     // Each test thread its own observer, unless the test set its own tape cache: another test's run flushes a shared
     // one's journal, after which it answers for this test's edits until the next flush (decision 0105).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let store = store.map(|p| {
         if TEST_TAPE_CACHE.with(|t| t.borrow().is_some()) {
             return p;
@@ -1546,17 +1545,17 @@ fn close_beside(db: Connection) {
 }
 
 /// The path `tape_cache` opens (`None`: `RERAIL_TAPE_CACHE=off`).
-pub(in crate::code_rule_dsl) fn tape_cache_path() -> Option<std::path::PathBuf> {
-    #[cfg(test)]
+pub fn tape_cache_path() -> Option<std::path::PathBuf> {
+    #[cfg(any(test, feature = "test-hooks"))]
     if let Some(path) = TEST_TAPE_CACHE.with(|p| p.borrow().clone()) {
         return Some(path);
     }
     match std::env::var("RERAIL_TAPE_CACHE") {
         Ok(v) if v == "off" => None,
         Ok(v) => Some(std::path::PathBuf::from(v)),
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         Err(_) => Some(test_tape_cache().clone()),
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-hooks")))]
         Err(_) => Some(std::env::temp_dir().join("rerail-tape-cache.sqlite")),
     }
 }
@@ -1564,7 +1563,7 @@ pub(in crate::code_rule_dsl) fn tape_cache_path() -> Option<std::path::PathBuf> 
 /// A test process's own tape cache: the machine's is written by every other run on it, so a test's writes could wait
 /// out its busy deadline behind them. Removed when the process exits; one a killed process left is removed by the
 /// next test process to start.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn test_tape_cache() -> &'static std::path::PathBuf {
     static PATH: std::sync::LazyLock<std::path::PathBuf> = std::sync::LazyLock::new(|| {
         const PREFIX: &str = "rerail-tape-cache-test-";
@@ -1595,7 +1594,7 @@ fn test_tape_cache() -> &'static std::path::PathBuf {
 
 /// `run` with typing inputs and outputs (`typing`: declarations, dependency summaries, summarizing).
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing) -> Result<Report> {
+pub fn run_typed(programs: &[&str], root: &Path, t_facts: Option<&Path>, out: &Path, modes: &str, binding: Binding, chunk_nodes: usize, typing: &Typing) -> Result<Report> {
     run_with_options(programs, root, t_facts, out, modes, binding, chunk_nodes, typing, &serde_json::Value::Null)
 }
 
@@ -1612,7 +1611,7 @@ const RUN_MB: f64 = 1024.0;
 const MIN_CHUNK_NODES: usize = 8_192;
 
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn run_with_options(
+pub fn run_with_options(
     programs: &[&str],
     root: &Path,
     t_facts: Option<&Path>,
@@ -6300,7 +6299,7 @@ fn run_observed(
 /// (the planner's `const_freq`).
 /// Per relation, the integer constants its atoms test, by column (`constant_counts`'s): one pass over the rules,
 /// not one per relation.
-fn constants_tested(prog: &front::Program) -> HashMap<&str, BTreeSet<(usize, i64)>> {
+pub fn constants_tested(prog: &front::Program) -> HashMap<&str, BTreeSet<(usize, i64)>> {
     let mut by: HashMap<&str, BTreeSet<(usize, i64)>> = HashMap::new();
     for a in prog.rules.iter().flat_map(|r| &r.body).filter_map(front::Literal::atom) {
         for (c, t) in a.args.iter().enumerate() {
@@ -6786,11 +6785,11 @@ fn text_document(path: &str) -> bool {
 }
 
 /// A corpus's files by language: Python's, Rust's and `.rr` rule files, and the text-only documents.
-struct CorpusFiles {
+pub struct CorpusFiles {
     /// Each dialect's files, by its label (the language registry's).
-    by_label: BTreeMap<&'static str, Vec<String>>,
+    pub by_label: BTreeMap<&'static str, Vec<String>>,
     /// Files of no grammar: after `scoped`, those a `.scope text` glob reads as text (`front::Program::text_globs`).
-    text: Vec<String>,
+    pub text: Vec<String>,
 }
 
 impl CorpusFiles {
@@ -6803,12 +6802,12 @@ impl CorpusFiles {
     }
 
     /// How many files of `label` there are.
-    fn count(&self, label: &str) -> usize {
+    pub fn count(&self, label: &str) -> usize {
         self.by_label.get(label).map_or(0, Vec::len)
     }
 
     /// How many files of any grammar there are.
-    fn parsed(&self) -> usize {
+    pub fn parsed(&self) -> usize {
         self.by_label.values().map(Vec::len).sum()
     }
 }
@@ -6936,7 +6935,7 @@ fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
 
 /// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and rule files
 /// (`.rr`), skipping hidden directories and `target`.
-fn corpus_files(root: &Path) -> Result<CorpusFiles> {
+pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
     let (mut by_label, mut text): (BTreeMap<&'static str, Vec<String>>, Vec<String>) = (BTreeMap::new(), Vec::new());
     let mut classify = |relative: String| match crate::code_rule_dsl::language::label_of_path(&relative) {
         Some(label) => by_label.entry(label).or_default().push(relative),
@@ -7047,7 +7046,7 @@ fn hex(digest: &[u8]) -> String {
 /// A memo entry's rows holding its file's tree statistics (`Own::put`).
 const OWN_KINDS: &str = "own:kinds";
 const OWN_EDGES: &str = "own:edges";
-const OWN_DOCS: &str = "own:docs";
+pub const OWN_DOCS: &str = "own:docs";
 const OWN_POSTINGS: &str = "own:postings:";
 
 /// The base relations' statistics a chunk measures as it binds them, beyond each column's moments
@@ -7127,11 +7126,11 @@ fn record_own_counts(store: &ContentStore, kept: Option<&OwnKept>, program: &[u8
 }
 
 #[derive(Clone, Default)]
-struct Own {
-    kinds: BTreeMap<i64, (i64, i64)>,
-    edges: BTreeMap<(i64, i64), i64>,
-    docs: i64,
-    postings: BTreeMap<(String, String, i64), i64>,
+pub struct Own {
+    pub kinds: BTreeMap<i64, (i64, i64)>,
+    pub edges: BTreeMap<(i64, i64), i64>,
+    pub docs: i64,
+    pub postings: BTreeMap<(String, String, i64), i64>,
 }
 
 impl Own {
@@ -7342,7 +7341,7 @@ impl Own {
 
     /// Into a memo entry's rows (decision 0052): a memoised file hands on its share of the tree statistics as an
     /// evaluated one does.
-    fn put(&self, rows: &mut BTreeMap<String, (usize, Vec<i64>)>) {
+    pub fn put(&self, rows: &mut BTreeMap<String, (usize, Vec<i64>)>) {
         rows.insert(OWN_KINDS.into(), (3, self.kinds.iter().flat_map(|(k, (n, size))| [*k, *n, *size]).collect()));
         rows.insert(OWN_EDGES.into(), (3, self.edges.iter().flat_map(|((p, k), n)| [*p, *k, *n]).collect()));
         rows.insert(OWN_DOCS.into(), (1, vec![self.docs]));
@@ -7352,7 +7351,7 @@ impl Own {
     }
 
     /// Add a frame directly to the run's totals. No per-file maps are reconstructed.
-    fn add_rows(&mut self, rows: &BTreeMap<String, (usize, Vec<i64>)>) {
+    pub fn add_rows(&mut self, rows: &BTreeMap<String, (usize, Vec<i64>)>) {
         let flat = |key: &str| rows.get(key).map(|(_, v)| v.as_slice()).unwrap_or_default();
         for r in flat(OWN_KINDS).chunks_exact(3) {
             let k = self.kinds.entry(r[0]).or_default(); k.0 += r[1]; k.1 += r[2];
@@ -7391,8 +7390,7 @@ impl Own {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
 
 /// What a kept relation's lazy statistics leave the session (decision 0101 §4): its form kept by delta, or its
 /// measure.

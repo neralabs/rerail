@@ -500,7 +500,7 @@ fn expr_name(e: &Expr) -> &'static str {
 }
 
 /// Ruff's errors on `source` and the brackets left open, for a difference report.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) fn explain(source: &str) -> String {
     let parsed = parse_unchecked(source, ParseOptions::from(Mode::Module).with_target_version(super::VERSION));
     let lines = Lines::new(source);

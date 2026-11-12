@@ -8,18 +8,18 @@
 //! sensitive: branches do not end a binding. Python's unconditional `del` does, as Ruff's
 //! `Deletion` binding: order-based, not flow.
 
-pub(crate) mod ecma;
-mod lookup;
-pub(crate) mod options;
-pub(crate) mod php;
-pub(crate) mod php_names;
-pub(crate) mod flow;
-pub(crate) mod python;
-pub(crate) mod rust;
-pub(crate) mod sql;
-pub(crate) mod usage;
+// cratify: `ecma` is rerail-lang-ecma's (it mounts it)
+pub mod lookup;
+pub mod options;
+// cratify: `php` is rerail-lang-php's (it mounts it)
+// cratify: `php_names` is rerail-lang-php's (it mounts it)
+pub mod flow;
+// cratify: `python` is rerail-lang-python's (it mounts it)
+// cratify: `rust` is rerail-lang-rust's (it mounts it)
+// cratify: `sql` is rerail-lang-sql's (it mounts it)
+pub mod usage;
 
-pub(crate) use lookup::Lookup;
+pub use lookup::Lookup;
 
 use crate::code_rule_dsl::identifier::{name_in, nfkc};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
@@ -35,19 +35,19 @@ use std::sync::{Arc, OnceLock};
 use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// The value namespace: variables, functions, parameters, imports, classes, enums.
-pub(crate) const VALUE: u8 = 1;
+pub const VALUE: u8 = 1;
 /// TypeScript's type namespace: interfaces, type aliases, type parameters, classes, enums, imports.
-pub(crate) const TYPE: u8 = 2;
+pub const TYPE: u8 = 2;
 
 /// Nesting deeper than this fails the build instead of risking the stack.
-const MAX_BUILD_DEPTH: u32 = 2_000;
+pub const MAX_BUILD_DEPTH: u32 = 2_000;
 /// Stack the recursive build may use below its entry point.
-const MAX_BUILD_STACK_BYTES: usize = 512 << 10;
+pub const MAX_BUILD_STACK_BYTES: usize = 512 << 10;
 /// Nodes between two reads of the evaluation deadline.
-const DEADLINE_INTERVAL: usize = 1_024;
+pub const DEADLINE_INTERVAL: usize = 1_024;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum ScopeKind {
+pub enum ScopeKind {
     Module,
     Class,
     Function,
@@ -71,7 +71,7 @@ pub(crate) enum ScopeKind {
 
 /// How a name is bound: the construct its site is.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Form {
+pub enum Form {
     /// Python `x = v` (each target of `a = b = v` too); TypeScript `var`, `let` and `const`
     /// declarators.
     Assignment,
@@ -126,23 +126,23 @@ pub(crate) enum Form {
 
 /// Where and how a binding binds its name.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Site {
-    pub(crate) form: Form,
+pub struct Site {
+    pub form: Form,
     /// The construct that binds the name: the assignment, declarator, parameter, import item,
     /// `as` pattern, definition, loop or `global` statement.
-    pub(crate) node: Option<NodeRef>,
+    pub node: Option<NodeRef>,
     /// The value assigned to the name, for the forms that carry one: a plain Python name
     /// assignment, annotated assignment or walrus, or an unpacked name's element of a tuple or
     /// list display; a TypeScript declarator of a plain name with
     /// an initializer (`ScopeTable::value` adds TypeScript's write rule).
-    pub(crate) value: Option<NodeRef>,
+    pub value: Option<NodeRef>,
     /// The name's annotation, without its `:`: a Python annotated assignment or typed parameter;
     /// a TypeScript declarator, parameter or catch parameter.
-    pub(crate) annotation: Option<NodeRef>,
+    pub annotation: Option<NodeRef>,
 }
 
 impl Site {
-    pub(crate) const IMPLICIT: Site = Site {
+    pub const IMPLICIT: Site = Site {
         form: Form::Implicit,
         node: None,
         value: None,
@@ -151,42 +151,42 @@ impl Site {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct Binding {
+pub struct Binding {
     /// Where the binding takes effect (Python ordering); TypeScript ignores it.
-    pub(crate) offset: usize,
-    pub(crate) spaces: u8,
+    pub offset: usize,
+    pub spaces: u8,
     /// Made from a function body into an enclosing scope (`global`/`nonlocal`): Ruff visits it after
     /// the enclosing body, so only other deferred bodies see it.
-    pub(crate) deferred: bool,
-    pub(crate) import: Option<Import>,
-    pub(crate) origin: Origin,
+    pub deferred: bool,
+    pub import: Option<Import>,
+    pub origin: Origin,
     /// Where Python unbinds the name: the end of its `except` handler. A later read, and any read
     /// from a deferred body, sees what the name meant before.
-    pub(crate) until: Option<usize>,
-    pub(crate) site: Site,
+    pub until: Option<usize>,
+    pub site: Site,
     /// TypeScript: references that write the name (assignments, updates, `for ... in/of`
     /// targets), its declarator's initializer aside.
-    pub(crate) writes: u32,
+    pub writes: u32,
     /// TypeScript: a reference mutates a property of the value (`x.a = 1`, `x[0]++`,
     /// `x.push(1)`), as eslint-utils' `hasMutationInProperty` reads it.
     pub mutated: bool,
     /// The name node, where a linter reports the binding: the identifier; for an unaliased
     /// Python import item its `dotted_name` (`os.path`, `x`), for an aliased one the alias.
-    pub(crate) name: Option<NodeRef>,
+    pub name: Option<NodeRef>,
     /// Python: the innermost branch of an `if`/`elif`/`else`, `try` clause, `with` body or `match`
     /// case the binding's statement sits in (Ruff's branch path); 0 outside any. A `try` body and
     /// its `else` share one.
-    pub(crate) branch: u32,
+    pub branch: u32,
     /// Python: made under a `global` or `nonlocal` declaration (Ruff's `GLOBAL`/`NONLOCAL`
     /// flags): the `global` statement itself, a later binding of a name its scope declares
     /// `global`, or a `nonlocal` name's binding.
-    pub(crate) outer: bool,
+    pub outer: bool,
     /// Python: an explicit re-export, `import a as a` or `from m import a as a`.
-    pub(crate) explicit_export: bool,
+    pub explicit_export: bool,
     /// Python: `import a.b` without an alias binds `a`; this is the submodule it imports.
-    pub(crate) submodule: Option<Box<str>>,
+    pub submodule: Option<Box<str>>,
     /// Python: which import statement form binds the name (Ruff's binding kinds).
-    pub(crate) import_kind: Option<ImportKind>,
+    pub import_kind: Option<ImportKind>,
     /// Python: a nested function's `nonlocal` statement names this binding (Ruff's rebinding
     /// scopes), so a bare annotation may be initialized there.
     pub rebound: bool,
@@ -194,7 +194,7 @@ pub(crate) struct Binding {
 
 /// The import forms Ruff binds apart.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum ImportKind {
+pub enum ImportKind {
     /// `import m`, `import m as x`, `import a.b as x` (Ruff's `Import`).
     Module,
     /// `import a.b` without an alias, which binds `a` (Ruff's `SubmoduleImport`).
@@ -206,7 +206,7 @@ pub(crate) enum ImportKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Origin {
+pub enum Origin {
     Bound,
     /// A Python `global` statement (Ruff's `BindingKind::Global`): it binds the name in its own
     /// scope, and reads through it continue in the module.
@@ -218,7 +218,7 @@ pub(crate) enum Origin {
 
 impl Binding {
     /// Its value node `value`, followed (`value.follow`).
-    pub(crate) fn followed(&self, value: NodeRef) -> Followed {
+    pub fn followed(&self, value: NodeRef) -> Followed {
         Followed {
             value,
             mutated: self.mutated,
@@ -228,7 +228,7 @@ impl Binding {
     }
 
     /// A binding with no import, origin or Python flags.
-    pub(crate) fn new(offset: usize, spaces: u8, site: Site) -> Self {
+    pub fn new(offset: usize, spaces: u8, site: Site) -> Self {
         Self {
             offset,
             spaces,
@@ -250,23 +250,23 @@ impl Binding {
     }
 
     /// Whether the binding hides a global or builtin of the same name.
-    pub(crate) fn shadows(&self) -> bool {
+    pub fn shadows(&self) -> bool {
         self.origin != Origin::Declared
     }
 
     /// Whether the name is unbound here: a Python `del` removed it.
-    pub(crate) fn is_deletion(&self) -> bool {
+    pub fn is_deletion(&self) -> bool {
         self.site.form == Form::Deletion
     }
 
     /// Whether this is a bare Python annotation, `x: T`, which binds no value.
-    pub(crate) fn is_annotation(&self) -> bool {
+    pub fn is_annotation(&self) -> bool {
         self.site.form == Form::Annotation
     }
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Import {
+pub enum Import {
     /// The qualified name the bound name denotes (`import a.b` binds `a` to `a`).
     Qualified(Box<str>),
     /// A relative import, `level` dots and then `rest` (`from ..a import b`: 2, `a.b`). It
@@ -277,37 +277,37 @@ pub(crate) enum Import {
     Definition,
 }
 
-pub(crate) struct Scope {
-    pub(crate) kind: ScopeKind,
+pub struct Scope {
+    pub kind: ScopeKind,
     #[allow(dead_code)]
-    pub(crate) range: Range<usize>,
-    pub(crate) parent: Option<u32>,
-    pub(crate) bindings: HashMap<Box<str>, Vec<Binding>>,
+    pub range: Range<usize>,
+    pub parent: Option<u32>,
+    pub bindings: HashMap<Box<str>, Vec<Binding>>,
     /// Python `nonlocal` declarations of this scope.
-    pub(crate) nonlocals: BTreeSet<Box<str>>,
+    pub nonlocals: BTreeSet<Box<str>>,
     /// Python: where each `from m import *` of this scope takes effect, in order. Rust: where each
     /// glob import and each macro that may define items (`scope::rust::glob_visible`) stands.
-    pub(crate) stars: Vec<usize>,
+    pub stars: Vec<usize>,
 }
 
 /// A Python import statement's top-level module and where Ruff visits it: the module body first
 /// (`depth` 0), then function bodies one nesting level at a time, each level in document order.
 #[derive(Clone, Debug)]
-pub(crate) struct ModuleImport {
-    pub(crate) module: Box<str>,
-    pub(crate) depth: u32,
-    pub(crate) offset: usize,
+pub struct ModuleImport {
+    pub module: Box<str>,
+    pub depth: u32,
+    pub offset: usize,
 }
 
 /// Where a Python type definition may start: recorded while the table is built, classified after
 /// (`python::string_type_definitions`).
-pub(crate) struct TypeRoot {
-    pub(crate) node: NodeRef,
-    pub(crate) kind: RootKind,
+pub struct TypeRoot {
+    pub node: NodeRef,
+    pub kind: RootKind,
 }
 
 /// What a `TypeRoot` starts.
-pub(crate) enum RootKind {
+pub enum RootKind {
     /// An annotation, a `type` statement's value, a type parameter's bound.
     Definition,
     /// A subscript or call whose name may be a typing generic or callable.
@@ -335,7 +335,7 @@ impl ScopeTable {
 
 /// How a reference reads its name.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum Access {
+pub enum Access {
     /// A load, TypeScript's writes included.
     Load,
     /// Python `del x`: Ruff resolves it in the current scope only, and counts it as a use.
@@ -346,45 +346,45 @@ pub(crate) enum Access {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Reference {
-    pub(crate) start: usize,
-    pub(crate) end: usize,
-    pub(crate) scope: u32,
+pub struct Reference {
+    pub start: usize,
+    pub end: usize,
+    pub scope: u32,
     /// The namespaces the reference reads: `VALUE`, `TYPE`, or both (an export specifier).
-    pub(crate) spaces: u8,
+    pub spaces: u8,
     /// Where the reference is read, for Python ordering: a comprehension's element is read after
     /// its clauses, so it sees what a walrus in a condition binds.
-    pub(crate) at: usize,
+    pub at: usize,
     /// Read after the whole module, like a function body: an annotation under
     /// `from __future__ import annotations`.
-    pub(crate) deferred: bool,
+    pub deferred: bool,
     /// Python: a forward reference (a typing-only annotation read after the module, a name in a
     /// string type definition), which Ruff resolves in the module scope first (PEP 563, Ruff's
     /// `in_forward_reference`).
-    pub(crate) forward: bool,
+    pub forward: bool,
     /// Python: read in the type scope Ruff opens around a class or function definition (a class's
     /// bases and keywords, a function's parameter and return annotations), so no reference of the
     /// scope around the definition for Ruff's `undefined_local`.
-    pub(crate) type_scope: bool,
+    pub type_scope: bool,
     /// TypeScript: the reference writes the name (`x = 1`, `x++`, `[x] = a`, `for (x of a)`).
-    pub(crate) write: bool,
+    pub write: bool,
     /// TypeScript: the reference heads a member chain that is written, updated or called with a
     /// mutating array method (`x.a = 1`, `x[0]++`, `x.push(1)`).
-    pub(crate) mutates: bool,
-    pub(crate) access: Access,
+    pub mutates: bool,
+    pub access: Access,
 }
 
 /// Names in string type definitions have ranges of their own: this bit, then the annotation's
 /// index (`ScopeTable::annotations`) above the low 24 bits, which hold the offset into its text.
 /// No source position has them. On wasm32 (the browser build) the bit is bit 30 and the offset keeps 16 bits,
 /// so 16,384 annotations of up to 64 KiB each, below 1 GiB of source.
-pub(crate) const ANNOTATION_RANGE: usize = 1 << (usize::BITS - 2);
+pub const ANNOTATION_RANGE: usize = 1 << (usize::BITS - 2);
 const ANNOTATION_SHIFT: u32 = if usize::BITS == 32 { 16 } else { 24 };
 
 /// Where the names of the annotation with this index start.
 /// A family's own name table for a file, built before its scope where the family resolves names itself (PHP's
 /// `php_names::PhpNames`, `ScopeRules::names`): the shared code carries and charges it, the family's reads it.
-pub(crate) trait FileNames: std::any::Any + Send + Sync {
+pub trait FileNames: std::any::Any + Send + Sync {
     /// What building it cost, in visited nodes.
     fn cost(&self) -> usize;
     /// The table as its family's own type.
@@ -392,7 +392,7 @@ pub(crate) trait FileNames: std::any::Any + Send + Sync {
 }
 
 /// A file's name table, as the shared code holds it.
-pub(crate) type NameTable = Arc<dyn FileNames>;
+pub type NameTable = Arc<dyn FileNames>;
 
 /// The scope of a program an embedding gives a meaning of its own (`embed::Embedder`): its crate registers it
 /// for its `Via` as the engine loads (Blade's compiled view, `embed::compiled_view::scope`).
@@ -401,7 +401,7 @@ pub(crate) type ProgramScope = fn(&mut Builder<'_>, &Node<'_, crate::code_rule_d
 static PROGRAM_SCOPES: OnceLock<Vec<(crate::code_rule_dsl::language::Via, ProgramScope)>> = OnceLock::new();
 
 /// The engine's program scopes, by `Via`; the first call holds.
-pub(crate) fn install_program_scopes(scopes: Vec<(crate::code_rule_dsl::language::Via, ProgramScope)>) {
+pub fn install_program_scopes(scopes: Vec<(crate::code_rule_dsl::language::Via, ProgramScope)>) {
     let _ = PROGRAM_SCOPES.set(scopes);
 }
 
@@ -410,72 +410,72 @@ fn program_scope(via: crate::code_rule_dsl::language::Via) -> Option<ProgramScop
     PROGRAM_SCOPES.get()?.iter().find(|(known, _)| *known == via).map(|(_, scope)| *scope)
 }
 
-pub(crate) fn annotation_offset(index: usize) -> usize {
+pub fn annotation_offset(index: usize) -> usize {
     ANNOTATION_RANGE | (index << ANNOTATION_SHIFT)
 }
 
 /// A string type definition the table parsed and read (Ruff's `string_type_definitions`).
-pub(crate) struct Annotation {
+pub struct Annotation {
     /// The string literal's range: in the source, or, nested in another annotation, in that one's
     /// range space.
-    pub(crate) start: usize,
-    pub(crate) end: usize,
+    pub start: usize,
+    pub end: usize,
     /// The parsed expression, or one `ERROR` node where Ruff reports a syntax error (F722).
-    pub(crate) tree: Arc<crate::code_rule_dsl::literal::SubTree>,
+    pub tree: Arc<crate::code_rule_dsl::literal::SubTree>,
     /// The scope the string is read in.
-    pub(crate) scope: u32,
+    pub scope: u32,
 }
 
 /// ESLint `/* global */` comments of a file, for predicates that opt in to them.
 #[derive(Default, Debug)]
-pub(crate) struct Directives {
-    pub(crate) declared: BTreeSet<String>,
-    pub(crate) off: BTreeSet<String>,
+pub struct Directives {
+    pub declared: BTreeSet<String>,
+    pub off: BTreeSet<String>,
 }
 
-pub(crate) struct ScopeTable {
-    pub(crate) language: GrammarDialect,
+pub struct ScopeTable {
+    pub language: GrammarDialect,
     /// The family of `language`, whose `ScopeRules` read the table.
-    pub(crate) family: Family,
-    pub(crate) scopes: Vec<Scope>,
+    pub family: Family,
+    pub scopes: Vec<Scope>,
     /// Sorted by start byte; at most one reference starts at a byte.
-    pub(crate) references: Vec<Reference>,
-    pub(crate) directives: Directives,
+    pub references: Vec<Reference>,
+    pub directives: Directives,
     /// Nodes the build visited: what a clause pays for the table (`maxVisitedNodes`).
-    pub(crate) cost: usize,
+    pub cost: usize,
     /// How the table read its file.
-    pub(crate) reading: Reading,
+    pub reading: Reading,
     /// Python: the string type definitions, parsed; their names are references with ranges of
     /// their own (`annotation_offset`). Sorted by start.
-    pub(crate) annotations: Vec<Annotation>,
+    pub annotations: Vec<Annotation>,
     /// Python: module-level statements that assign `__all__` (`=`, `+=`, `: T =`).
-    pub(crate) dunder_all: Vec<NodeRef>,
+    pub dunder_all: Vec<NodeRef>,
     /// TypeScript: the scope of each JSX opening or self-closing element, in document order, and
     /// whether it is a fragment (`<>`), where typescript-eslint references the JSX pragma.
-    pub(crate) jsx: Vec<(u32, bool)>,
+    pub jsx: Vec<(u32, bool)>,
     /// TypeScript: the scopes a direct `eval(...)` or a `with` statement runs in, where a read may
     /// be unseen.
-    pub(crate) dynamic: Vec<u32>,
+    pub dynamic: Vec<u32>,
     /// Python: the scopes that call `locals()` directly (Ruff's `USES_LOCALS`).
-    pub(crate) locals_scopes: Vec<u32>,
+    pub locals_scopes: Vec<u32>,
     /// Python: each absolute import's top-level module, where Ruff's traversal visits it (Ruff's
     /// `add_module`, which `seen_module` reads).
-    pub(crate) module_imports: Vec<ModuleImport>,
+    pub module_imports: Vec<ModuleImport>,
     /// Python usedness, built on first use.
     pub(crate) usage: OnceLock<Arc<usage::Usage>>,
     /// Declaration names alone, without resolving every read in the file.
     pub(crate) declaration_sites: OnceLock<Arc<usage::Usage>>,
     /// What reaches each read of a variable, where the family has a flow (PHP's, `flow::VariableFlow`).
-    pub(crate) flow: Option<Box<dyn flow::VariableFlow>>,
+    pub flow: Option<Box<dyn flow::VariableFlow>>,
     /// The family's own resolution of the file's references beside its scopes, where it has one (SQL's query
     /// blocks, relations and qualified references, `scope/sql.rs`): it resolves a reference and decides a
     /// binding's usage.
-    pub(crate) sql: Option<Box<dyn FileResolution>>,
+    pub sql: Option<Box<dyn FileResolution>>,
 }
 
 /// A family's own resolution of a file's references beside the table's scopes (SQL's query blocks): a
 /// reference's binding, whether a rule reads the reference, and each binding's uses.
-pub(crate) trait FileResolution: Send + Sync {
+pub trait FileResolution: Send + Sync {
     /// The binding the reference spanning `start..end` resolves to: its scope in the file's table, its name there
     /// and its index among that scope's bindings of the name.
     fn resolved(&self, start: usize, end: usize) -> Option<(u32, &str, usize)>;
@@ -487,42 +487,42 @@ pub(crate) trait FileResolution: Send + Sync {
 
 /// How the references use one binding: a family's walk (`FileResolution::usage`, SQL's AL05 walk).
 #[derive(Clone, Copy, Debug, Default)]
-pub(crate) struct Uses {
+pub struct Uses {
     /// References that use it.
-    pub(crate) reads: u32,
+    pub reads: u32,
     /// Those of them in a block nested in the binding's.
-    pub(crate) nested: u32,
+    pub nested: u32,
 }
 
 /// How a table reads its file, beyond the grammar: tables of one file under different readings
 /// are kept apart.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Reading {
+pub struct Reading {
     /// Python: every annotation is read after the module (a target of 3.14 or later).
-    pub(crate) deferred_annotations: bool,
+    pub deferred_annotations: bool,
     /// TypeScript: blocks and switch bodies are scopes, as eslint-scope nests them from
     /// ecmaVersion 6 (ES2015); before it only functions and catch clauses are.
-    pub(crate) block_scopes: bool,
+    pub block_scopes: bool,
     /// Python: the file is a `.pyi` stub (the host's path says so), which Ruff reads with stub
     /// semantics: type definitions and class bases are read after the module, annotations are
     /// forward references, a bare annotation binds, and a read before a `del` sees the binding the
     /// `del` removes.
-    pub(crate) stub: bool,
+    pub stub: bool,
     /// Python: the target version's minor, which a stub's typing-aware reading needs (the builtins
     /// a generic subscript may name, TypedDict's keyword fields before 3.13). 0 outside stubs,
     /// so their tables are shared across versions: typing-aware reading then takes the default
     /// target (`target_minor`), and the semantic checks on parsed annotations the latest version,
     /// as Ruff's `parser_version` does where none is set.
-    pub(crate) python_minor: u8,
+    pub python_minor: u8,
     /// Python: Ruff's typing settings, which change what is `typing`'s and so which strings are
     /// type definitions and what a stub reads after the module.
-    pub(crate) typing: Option<&'static options::PythonTyping>,
+    pub typing: Option<&'static options::PythonTyping>,
 }
 
 impl Reading {
     /// The target minor a typing-aware reading uses: a stub's own, and the default target outside
     /// stubs, whose tables are shared across versions.
-    pub(crate) fn target_minor(&self) -> u8 {
+    pub fn target_minor(&self) -> u8 {
         match self.python_minor {
             0 => options::DEFAULT_PYTHON_MINOR,
             minor => minor,
@@ -545,7 +545,7 @@ impl Default for Reading {
 /// Why a build stopped. Any of them fails the clause for the file: a partial table could turn
 /// "shadowed" into "global", which a `not` would report.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum BuildError {
+pub enum BuildError {
     Budget,
     Depth,
     Deadline,
@@ -553,8 +553,8 @@ pub(crate) enum BuildError {
 
 impl ScopeTable {
     /// Builds the table of `root`'s file, visiting at most `cap` nodes.
-    #[cfg(test)]
-    pub(crate) fn build<D: Doc>(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn build<D: Doc>(
         root: Node<'_, D>,
         language: GrammarDialect,
         cap: usize,
@@ -574,8 +574,8 @@ impl ScopeTable {
     }
 
     /// Builds the table of `root`'s file under `reading`, visiting at most `cap` nodes.
-    #[cfg(test)]
-    pub(crate) fn build_with<D: Doc>(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn build_with<D: Doc>(
         root: Node<'_, D>,
         language: GrammarDialect,
         cap: usize,
@@ -587,7 +587,7 @@ impl ScopeTable {
 
     /// `build_with` for a Python file at `module`, against which its relative imports and
     /// definitions are qualified where Ruff's typing settings name them.
-    pub(crate) fn build_in<D: Doc>(
+    pub fn build_in<D: Doc>(
         root: Node<'_, D>,
         language: GrammarDialect,
         cap: usize,
@@ -669,7 +669,7 @@ impl ScopeTable {
     }
 
     /// Marks each Python binding a nested `nonlocal` statement names (`Binding::rebound`).
-    fn mark_rebound(&mut self, text: &str, base: usize) {
+    pub fn mark_rebound(&mut self, text: &str, base: usize) {
         let mut rebound = Vec::new();
         for reference in &self.references {
             if reference.access != Access::Nonlocal {
@@ -696,7 +696,7 @@ impl ScopeTable {
 
     /// Sorts the references by start. A node visited twice keeps its first reference, and is a write
     /// if either visit wrote.
-    fn sort_references(&mut self) {
+    pub fn sort_references(&mut self) {
         self.references.sort_by_key(|reference| reference.start);
         let mut references: Vec<Reference> = Vec::with_capacity(self.references.len());
         for reference in std::mem::take(&mut self.references) {
@@ -744,7 +744,7 @@ impl ScopeTable {
 
     /// A reference's name: the source text it spans (`text` is the file's from `base`), or the
     /// text of the annotation it lies in; a Python name NFKC-normalized, as the table's keys are.
-    pub(crate) fn reference_name<'a>(
+    pub fn reference_name<'a>(
         &'a self,
         reference: &Reference,
         text: &'a str,
@@ -768,7 +768,7 @@ impl ScopeTable {
     }
 
     /// Charges each TypeScript write and property mutation to the binding it resolves to.
-    fn count_writes(&mut self, text: &str, base: usize) {
+    pub fn count_writes(&mut self, text: &str, base: usize) {
         let mut charges = Vec::new();
         for reference in &self.references {
             if !(reference.write || reference.mutates) {
@@ -802,7 +802,7 @@ impl ScopeTable {
     }
 
     /// The reference whose identifier spans exactly `range`, if that node is in a reference position.
-    pub(crate) fn reference(&self, range: &Range<usize>) -> Option<&Reference> {
+    pub fn reference(&self, range: &Range<usize>) -> Option<&Reference> {
         let index = self
             .references
             .binary_search_by_key(&range.start, |reference| reference.start)
@@ -813,14 +813,14 @@ impl ScopeTable {
 
     /// The binding `name` resolves to at `reference`, or `None` for a global or builtin. A Python
     /// `del` resolves in its own scope only; a `Deletion` binding may be the answer.
-    pub(crate) fn resolve(&self, reference: &Reference, name: &str) -> Option<&Binding> {
+    pub fn resolve(&self, reference: &Reference, name: &str) -> Option<&Binding> {
         { let pack = language_pack::pack(self.family); pack.scope_resolve(self, reference, name) }
     }
 
     /// PHP: the one binding every path reaches a read with, as its scope and its index among that
     /// scope's bindings of the name. `None` where no binding reaches, where several may, where
     /// some path reaches none, or where PHP's dynamic symbol table may decide.
-    pub(crate) fn php_index(&self, reference: &Reference) -> Option<(u32, usize)> {
+    pub fn php_index(&self, reference: &Reference) -> Option<(u32, usize)> {
         let read = self.flow.as_deref()?.read(reference.start)?;
         match (read.bindings.as_ref(), read.defined) {
             ([binding], flow::Defined::Yes) => Some(*binding),
@@ -830,7 +830,7 @@ impl ScopeTable {
 
     /// Whether `name` at `reference` has no binding: none resolves, or a `del` unbound it
     /// (Ruff's F821, builtins and star imports aside).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn unbound(&self, reference: &Reference, name: &str) -> bool {
         if reference.access != Access::Del
             && let Some(annotation) = { let pack = language_pack::pack(self.family); pack.scope_unbound_annotation(self, reference, name) }
@@ -847,14 +847,14 @@ impl ScopeTable {
     /// builtins included: a deletion, an `except` name its handler unbound (when `builtin` says
     /// the name is no builtin, which the handler's lookup would have found), or a function's bare
     /// annotation no nested `nonlocal` may initialize.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn unbound_locally(&self, reference: &Reference, name: &str, builtin: bool) -> bool {
         { let pack = language_pack::pack(self.family); pack.scope_unbound_locally(self, reference, name, builtin) }
     }
 
     /// Ruff's lookup of `name` at `reference` (`unbound_locally`).
-    #[cfg(test)]
-    pub(crate) fn ruff_unbound_locally(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn ruff_unbound_locally(
         &self,
         reference: &Reference,
         name: &str,
@@ -876,7 +876,7 @@ impl ScopeTable {
     /// Whether a star import may bind `name` where `reference` reads it: one of an enclosing
     /// scope the read sees (not a class body it cannot see), made earlier or, from a function
     /// body, anywhere (Ruff's `uses_star_imports` along `resolve_load`).
-    pub(crate) fn star_visible(&self, reference: &Reference) -> bool {
+    pub fn star_visible(&self, reference: &Reference) -> bool {
         let mut crossed = reference.deferred;
         let mut current = Some(reference.scope);
         let mut previous: Option<ScopeKind> = None;
@@ -904,7 +904,7 @@ impl ScopeTable {
     /// Whether Python binds `name` implicitly where `reference` reads it, so Ruff never reports it
     /// undefined: `__module__` and `__qualname__` in a class body, `__class__` in a method or a
     /// lambda inside a class (Ruff's `DunderClassCell`), `__path__` in a package's `__init__`.
-    pub(crate) fn implicit(&self, reference: &Reference, name: &str, init: bool) -> bool {
+    pub fn implicit(&self, reference: &Reference, name: &str, init: bool) -> bool {
         match name {
             "__module__" | "__qualname__" => {
                 self.scopes[reference.scope as usize].kind == ScopeKind::Class
@@ -946,7 +946,7 @@ impl ScopeTable {
 
     /// The binding `name` at a Python `reference` resolves to, as its scope and its index among
     /// that scope's bindings of the name (in Ruff's order; see `build_with`).
-    pub(crate) fn resolve_python_index(
+    pub fn resolve_python_index(
         &self,
         reference: &Reference,
         name: &str,
@@ -961,13 +961,13 @@ impl ScopeTable {
         self.resolve_load_index(reference, name)
     }
 
-    pub(crate) fn binding_at(&self, (scope, index): (u32, usize), name: &str) -> &Binding {
+    pub fn binding_at(&self, (scope, index): (u32, usize), name: &str) -> &Binding {
         &self.scopes[scope as usize].bindings[name][index]
     }
 
     /// Ruff's `resolve_del`: the binding of the reference's own scope so far. A `nonlocal` name
     /// reads the enclosing function's.
-    pub(crate) fn resolve_del(&self, reference: &Reference, name: &str) -> Option<&Binding> {
+    pub fn resolve_del(&self, reference: &Reference, name: &str) -> Option<&Binding> {
         self.resolve_python_index(reference, name)
             .map(|found| self.binding_at(found, name))
     }
@@ -976,7 +976,7 @@ impl ScopeTable {
     /// is visible only to its own body (and to the type-parameter scope directly inside it), a
     /// `global` binding continues in the module, `nonlocal` skips its own scope. Before the lookup
     /// crosses a function boundary it sees the bindings made so far; after, every binding.
-    pub(crate) fn resolve_python(&self, reference: &Reference, name: &str) -> Option<&Binding> {
+    pub fn resolve_python(&self, reference: &Reference, name: &str) -> Option<&Binding> {
         self.resolve_load_index(reference, name)
             .map(|found| self.binding_at(found, name))
     }
@@ -1017,7 +1017,7 @@ impl ScopeTable {
     /// (Ruff's `resolve_load` still counts it read); with `load`, one of a function stops it (Ruff
     /// reads such a name as an unbound local), otherwise it is passed over too (`lookup_symbol`).
     /// A `nonlocal` statement finds a bare annotation.
-    pub(crate) fn walk(&self, reference: &Reference, name: &str, load: bool) -> Walk {
+    pub fn walk(&self, reference: &Reference, name: &str, load: bool) -> Walk {
         let mut walk = Walk::default();
         if let Some(found) = self.forward_module(reference, name) {
             walk.found = Some(((0, found), None));
@@ -1114,7 +1114,7 @@ impl ScopeTable {
     /// handler has unbound, with nothing bound before it in that scope: Ruff's
     /// `UnboundException(None)`, an undefined name whatever a star import may bind, unless the
     /// name is a builtin, which the handler's lookup would have found (the caller's to check).
-    pub(crate) fn unbound_exception(&self, reference: &Reference, name: &str) -> bool {
+    pub fn unbound_exception(&self, reference: &Reference, name: &str) -> bool {
         let mut crossed = reference.deferred;
         let mut current = Some(reference.scope);
         let mut previous: Option<ScopeKind> = None;
@@ -1163,14 +1163,14 @@ impl ScopeTable {
         })
     }
 
-    pub(crate) fn resolve_lexical(&self, reference: &Reference, name: &str) -> Option<&Binding> {
+    pub fn resolve_lexical(&self, reference: &Reference, name: &str) -> Option<&Binding> {
         self.resolve_lexical_scope(reference, name)
             .map(|(_, binding)| binding)
     }
 
     /// The binding `name` resolves to at a TypeScript `reference`, with the index of the scope that
     /// holds it (0 is the file's top level).
-    pub(crate) fn resolve_lexical_scope(
+    pub fn resolve_lexical_scope(
         &self,
         reference: &Reference,
         name: &str,
@@ -1181,7 +1181,7 @@ impl ScopeTable {
 
     /// The scope holding the binding `name` resolves to at a TypeScript `reference`, and the
     /// binding's index among that scope's bindings of the name.
-    pub(crate) fn resolve_lexical_index(
+    pub fn resolve_lexical_index(
         &self,
         reference: &Reference,
         name: &str,
@@ -1211,7 +1211,7 @@ impl ScopeTable {
     /// read on every path, and the variable is no reference.
     /// TypeScript binds one where the name has a single definition, a declarator of the plain name
     /// with an initializer, and no reference writes it (eslint-utils' `isEffectivelyConst`).
-    pub(crate) fn binding(
+    pub fn binding(
         &self,
         reference: &Reference,
         name: &str,
@@ -1226,7 +1226,7 @@ pub struct Walk {
     /// The bare annotations it passed over or stopped at, which Ruff counts as read.
     pub(crate) annotations: Vec<(u32, usize)>,
     /// A function's bare annotation that stopped a load: the name is an unbound local.
-    pub(crate) unbound: Option<(u32, usize)>,
+    pub unbound: Option<(u32, usize)>,
     /// The binding found and, through a `global` declaration, the module binding read.
     #[allow(clippy::type_complexity)]
     pub(crate) found: Option<((u32, usize), Option<(u32, usize)>)>,
@@ -1245,21 +1245,21 @@ fn latest(bindings: &[Binding], keep: impl Fn(&Binding) -> bool) -> Option<usize
 
 /// An address in the current stack frame.
 #[inline(always)]
-fn stack_address() -> usize {
+pub fn stack_address() -> usize {
     let marker = 0u8;
     std::hint::black_box(&marker) as *const u8 as usize
 }
 
 /// Kind tags and field ids of one grammar, looked up by the kind and field codes that both
 /// tree-sitter trees and tapes carry.
-pub(crate) struct Grammar<T> {
+pub struct Grammar<T> {
     tags: Vec<T>,
     ts: tree_sitter::Language,
 }
 
 impl<T: Copy + Default> Grammar<T> {
     /// The grammar of `dialect`, each named kind tagged by `tag`.
-    fn new(dialect: GrammarDialect, tag: impl Fn(&str) -> T) -> Self {
+    pub fn new(dialect: GrammarDialect, tag: impl Fn(&str) -> T) -> Self {
         let ts = dialect.get_ts_language();
         let mut tags = vec![T::default(); ts.node_kind_count()];
         for id in 0..ts.node_kind_count() as u16 {
@@ -1272,50 +1272,50 @@ impl<T: Copy + Default> Grammar<T> {
         Self { tags, ts }
     }
 
-    fn tag<D: Doc>(&self, node: &Node<'_, D>) -> T {
+    pub fn tag<D: Doc>(&self, node: &Node<'_, D>) -> T {
         self.tags
             .get(usize::from(node.kind_id()))
             .copied()
             .unwrap_or_default()
     }
 
-    fn field(&self, name: &str) -> u16 {
+    pub fn field(&self, name: &str) -> u16 {
         self.ts.field_id_for_name(name).map_or(0, |id| id.get())
     }
 }
 
-pub(crate) struct Builder<'d> {
-    table: ScopeTable,
+pub struct Builder<'d> {
+    pub table: ScopeTable,
     /// Python: the file's module path, when the host or the file's name gives one.
-    module: Option<ModulePath>,
-    current: u32,
+    pub module: Option<ModulePath>,
+    pub current: u32,
     /// Overrides where references are read (`Reference::at`).
-    position: Option<usize>,
+    pub position: Option<usize>,
     /// Marks references as read after the module (`Reference::deferred`).
-    deferring: bool,
+    pub deferring: bool,
     /// Marks references as forward references (`Reference::forward`).
-    forwarding: bool,
+    pub forwarding: bool,
     /// Marks references as read in a definition's type scope (`Reference::type_scope`).
-    typing: bool,
+    pub typing: bool,
     /// Python: where a type definition may start, for `python::string_type_definitions`.
-    type_roots: Vec<TypeRoot>,
+    pub type_roots: Vec<TypeRoot>,
     /// Python: each string literal's scope, by its range.
-    strings: HashMap<(usize, usize), u32>,
+    pub strings: HashMap<(usize, usize), u32>,
     /// The current Python branch (`Binding::branch`), and the last one opened.
-    branch: u32,
-    branches: u32,
-    cap: usize,
+    pub branch: u32,
+    pub branches: u32,
+    pub cap: usize,
     depth: u32,
     stack_base: usize,
-    deadline: &'d dyn Fn() -> bool,
+    pub deadline: &'d dyn Fn() -> bool,
     /// PHP: the file's resolved names, where the caller built them (and charged their cost); the
     /// flow builds them otherwise.
-    php_names: Option<NameTable>,
+    pub php_names: Option<NameTable>,
 }
 
 impl Builder<'_> {
     /// Accounts for one visited node and one level of recursion; `leave` undoes the level.
-    fn enter(&mut self) -> Result<(), BuildError> {
+    pub fn enter(&mut self) -> Result<(), BuildError> {
         self.table.cost += 1;
         if self.table.cost > self.cap {
             return Err(BuildError::Budget);
@@ -1332,11 +1332,11 @@ impl Builder<'_> {
         Ok(())
     }
 
-    fn leave(&mut self) {
+    pub fn leave(&mut self) {
         self.depth -= 1;
     }
 
-    fn push(&mut self, kind: ScopeKind, range: Range<usize>) -> u32 {
+    pub fn push(&mut self, kind: ScopeKind, range: Range<usize>) -> u32 {
         let parent = (!self.table.scopes.is_empty()).then_some(self.current);
         let index = self.table.scopes.len() as u32;
         self.table.scopes.push(Scope {
@@ -1351,15 +1351,15 @@ impl Builder<'_> {
         index
     }
 
-    fn pop(&mut self) {
+    pub fn pop(&mut self) {
         self.current = self.table.scopes[self.current as usize].parent.unwrap_or(0);
     }
 
-    fn scope(&self, index: u32) -> &Scope {
+    pub fn scope(&self, index: u32) -> &Scope {
         &self.table.scopes[index as usize]
     }
 
-    fn bind(&mut self, scope: u32, name: &str, binding: Binding) {
+    pub fn bind(&mut self, scope: u32, name: &str, binding: Binding) {
         let bindings = &mut self.table.scopes[scope as usize].bindings;
         // Most names are bound once: a chain starts with room for one binding, and a name already
         // bound allocates no key.
@@ -1371,16 +1371,16 @@ impl Builder<'_> {
         }
     }
 
-    fn reference(&mut self, range: Range<usize>, spaces: u8) {
+    pub fn reference(&mut self, range: Range<usize>, spaces: u8) {
         self.push_reference(range, spaces, false, false);
     }
 
     /// A reference that writes the name, or mutates a property of its value (TypeScript).
-    fn push_reference(&mut self, range: Range<usize>, spaces: u8, write: bool, mutates: bool) {
+    pub fn push_reference(&mut self, range: Range<usize>, spaces: u8, write: bool, mutates: bool) {
         self.access_reference(range, spaces, write, mutates, Access::Load);
     }
 
-    fn access_reference(
+    pub fn access_reference(
         &mut self,
         range: Range<usize>,
         spaces: u8,
@@ -1405,4 +1405,4 @@ impl Builder<'_> {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

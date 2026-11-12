@@ -6,11 +6,11 @@ use crate::code_rule_dsl::language::GrammarDialect as SupportLang;
 use std::time::Instant;
 
 #[path = "admission_spike_cases.rs"]
-mod cases;
+pub mod cases;
 #[path = "admission_spike_interpreter.rs"]
-mod interpreter;
+pub mod interpreter;
 #[path = "admission_ordered_model.rs"]
-mod ordered;
+pub mod ordered;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Strategy {
@@ -487,7 +487,7 @@ fn rejected_cursor_restoring_cycle_requires_more_than_active_batch_deduplication
 
 /// An advancing loop with a greedy continuation and a later reconverging branch.
 /// Both branches can reach the same loop state after its greedy token has retired.
-pub(super) fn advancing_greedy_reconvergence() -> (Program, TapeDoc, Vec<Output>) {
+pub fn advancing_greedy_reconvergence() -> (Program, TapeDoc, Vec<Output>) {
     let tape = document("# a\n# b\n");
     assert_eq!(tape.transducer_children(0).collect::<Vec<_>>(), [1, 2]);
     let program = repeated(vec![

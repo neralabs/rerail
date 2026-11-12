@@ -15,7 +15,7 @@
 
 use crate::content_store::{StoreError, StoreResult};
 
-pub(crate) use crate::code_rule_dsl::facts::nearest::{Binding, NONE, Trees};
+pub use crate::code_rule_dsl::facts::nearest::{Binding, NONE, Trees};
 /// The flat lattice's absent and top values (`logic::native::BOT`, `TOP`).
 const BOT: i64 = i64::MIN;
 const TOP: i64 = 1 << 62;
@@ -24,11 +24,11 @@ const TOP: i64 = 1 << 62;
 
 /// The flat-lattice system: seeds, and copies `(cell, source)`.
 pub struct System {
-    seeds: Vec<i64>,
-    copies: Vec<(u32, u32)>,
+    pub seeds: Vec<i64>,
+    pub copies: Vec<(u32, u32)>,
 }
 
-fn system(trees: &Trees<'_>, sets: &[Vec<i64>]) -> StoreResult<System> {
+pub fn system(trees: &Trees<'_>, sets: &[Vec<i64>]) -> StoreResult<System> {
     let n = trees.parent.len();
     let cells = n.checked_mul(sets.len()).filter(|&c| c < u32::MAX as usize).ok_or_else(|| StoreError::Invalid(format!("nearest: {n} nodes in {} sets", sets.len())))?;
     let mut seeds = vec![BOT; cells];
@@ -51,7 +51,7 @@ fn system(trees: &Trees<'_>, sets: &[Vec<i64>]) -> StoreResult<System> {
 
 /// The system's least fixpoint on the CPU: a cell's value is its seed joined with its sources', evaluated
 /// again whenever a source rises.
-fn solve_cpu(system: &System) -> Vec<i64> {
+pub fn solve_cpu(system: &System) -> Vec<i64> {
     let n = system.seeds.len();
     // Sources and dependents as CSR (a cell has one source here; the solver does not rely on it).
     let csr = |edges: &mut Vec<(u32, u32)>| -> (Vec<u32>, Vec<u32>) {
@@ -88,7 +88,7 @@ fn solve_cpu(system: &System) -> Vec<i64> {
 const CELLS: usize = 1 << 18;
 
 /// Per set, per node of `trees`: its nearest strict ancestor whose kind is in the set, or `NONE`.
-pub(crate) fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<Vec<Vec<u32>>> {
+pub fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<Vec<Vec<u32>>> {
     let n = trees.parent.len();
     if n == 0 || sets.is_empty() {
         return Ok(vec![Vec::new(); sets.len()]);
@@ -183,10 +183,9 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
         .collect()
 }
 
-mod split_memo;
-pub(crate) use split_memo::forget as forget_splits;
-#[cfg(test)]
-mod tests;
+pub mod split_memo;
+pub use split_memo::forget as forget_splits;
+// cratify: `tests` is rerail-device-metal's (it mounts it)
 
 /// The relations a program derives within one document (list step 29's split, R0): a relation is file-local when
 /// each of its rules joins only one document's rows. A rule is when every relation it reads (positive, negated or
@@ -196,7 +195,7 @@ mod tests;
 /// $x), text($b, $x)`) does not: those may be two files. The relations are the greatest set closed under this, so a
 /// recursion within a document is file-local. Evaluated per chunk of documents, a file-local relation's rows are the
 /// union of the chunks'.
-pub(crate) fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::collections::BTreeSet<String> {
+pub fn split(prog: &crate::code_rule_dsl::logic::front::Program) -> std::collections::BTreeSet<String> {
     split_located(prog).0
 }
 
@@ -235,7 +234,7 @@ pub(crate) fn reads_no_document(prog: &crate::code_rule_dsl::logic::front::Progr
 /// Derived relations made from the program's constants alone (`la_side_queue(x) :- la_set("…", x)`): every rule
 /// reads only facts, the run's options (`option_input`), other such relations and comparisons. They are constants to
 /// the split, like facts: a rule reading one joins no document by it, and both parts derive them.
-pub(crate) fn constant_relations(prog: &crate::code_rule_dsl::logic::front::Program) -> std::collections::BTreeSet<String> {
+pub fn constant_relations(prog: &crate::code_rule_dsl::logic::front::Program) -> std::collections::BTreeSet<String> {
     let index = RuleIndex::of(prog);
     let derived: std::collections::BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
     split_constants(prog, &index, &derived, &derived, None)
@@ -368,7 +367,7 @@ fn close_under(vars: &mut std::collections::BTreeSet<String>, equal: &[(String, 
     }
 }
 
-pub(crate) use crate::code_rule_dsl::logic::front::document_column;
+pub use crate::code_rule_dsl::logic::front::document_column;
 
 /// Base relations whose rows a chunk makes for itself and that name no document (decision 0058 §4).
 const CHUNK_VALUES: [&str; 3] = ["parse_of", "unparse_of", "splice_of"];
@@ -448,7 +447,7 @@ fn value_tapes(rule: &crate::code_rule_dsl::logic::front::Rule) -> ValueTapes {
 /// [`split`], with each derived relation's location columns: those every rule fills from a location (a node, or a
 /// document of `node`, `doc`, …), and the same-document columns of each file-local or base relation: its location
 /// columns, whose values in one row are all of one document. A row's document is read off any of them (decision 0052).
-pub(crate) fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::collections::BTreeSet<String>, std::collections::BTreeMap<String, Vec<usize>>, std::collections::BTreeMap<String, Vec<usize>>) {
+pub fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) -> (std::collections::BTreeSet<String>, std::collections::BTreeMap<String, Vec<usize>>, std::collections::BTreeMap<String, Vec<usize>>) {
     let (local, locations, same, _) = split_explained(prog);
     (local, locations, same)
 }
@@ -456,7 +455,7 @@ pub(crate) fn split_located(prog: &crate::code_rule_dsl::logic::front::Program) 
 /// Why each derived relation is cross-file, by the first rule the split found not to join one document: a root
 /// cause ("joins 2 documents: {n} {m}", "reads field with no location", "made natively") or "reads cross-file r".
 /// Read through the second kind to the first to see what makes a check run over the whole corpus.
-pub(crate) fn cross_causes(prog: &crate::code_rule_dsl::logic::front::Program) -> std::collections::BTreeMap<String, String> {
+pub fn cross_causes(prog: &crate::code_rule_dsl::logic::front::Program) -> std::collections::BTreeMap<String, String> {
     split_explained(prog).3
 }
 
@@ -732,17 +731,17 @@ fn split_in(
 /// columns whose values in one row lie in one document (`cross_rounds::bound`: a join through them crosses no file).
 #[derive(Clone)]
 pub struct Programs {
-    pub(crate) local: crate::code_rule_dsl::logic::front::Program,
-    pub(crate) cross: crate::code_rule_dsl::logic::front::Program,
-    pub(crate) exports: Vec<String>,
-    pub(crate) base: Vec<String>,
+    pub local: crate::code_rule_dsl::logic::front::Program,
+    pub cross: crate::code_rule_dsl::logic::front::Program,
+    pub exports: Vec<String>,
+    pub base: Vec<String>,
     /// Each derived relation's location columns (`split_located`).
     pub(crate) locations: std::collections::BTreeMap<String, Vec<usize>>,
     /// The same-document columns of each file-local or base relation (`split_located`): what a cross-file hop reads.
     pub(crate) same_doc: std::collections::BTreeMap<String, Vec<usize>>,
 }
 
-pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Programs {
+pub fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Programs {
     use crate::code_rule_dsl::logic::front::Literal;
     use std::collections::BTreeSet;
     let (mut local, locations, same_doc) = split_located(prog);
@@ -828,7 +827,7 @@ pub(crate) fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Pr
 /// cross part off the base relations (so the per-file memo works); when the cross part reads them anyway, it reads
 /// these lookups there too. So is a component that enumerates subtrees (`descends`): `within(n, a)` with `n`
 /// narrowed only by its attributes.
-pub(crate) fn push_local_joins(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Vec<String> {
+pub fn push_local_joins(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Vec<String> {
     let original = prog.clone();
     let (made, local) = push_with(prog, false);
     if cross_reads_base(prog, &local) {
@@ -868,7 +867,7 @@ const FACTOR_COPIES: usize = 8;
 ///   at most `FACTOR_COPIES`).
 ///
 /// Returns a line per relation factorized. A relation whose parts the split does not find file-local is left whole.
-pub(crate) fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Vec<String> {
+pub fn factorize_exports(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Vec<String> {
     use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
     use std::collections::{BTreeMap, BTreeSet};
     let local = split(prog);
@@ -1208,7 +1207,7 @@ fn relation_keys(prog: &crate::code_rule_dsl::logic::front::Program) -> std::col
 /// On the full data-layer tree, `lazy-architecture`'s cross part held 673 MB of these for about ten thousand
 /// lookups; on 200 files, the 66-rule pack's held 1.1M rows of each of `line`, `col` and `docof`, because one rule's
 /// walk turned the semi-join off for all of them.
-pub(crate) fn semijoin_bases(cross: &crate::code_rule_dsl::logic::front::Program, base: &[String]) -> Option<std::collections::BTreeSet<String>> {
+pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::front::Program, base: &[String]) -> Option<std::collections::BTreeSet<String>> {
     use crate::code_rule_dsl::logic::front::{Atom, Literal, Term};
     use std::collections::{BTreeMap, BTreeSet};
     // Each attribute relation's node column: the base ones, and a view the cross part derives from one
@@ -1562,7 +1561,7 @@ fn push_with(prog: &mut crate::code_rule_dsl::logic::front::Program, keep_unrest
 /// `doc`, `tape_line`, …, a document column left unnamed included, or a node through `node(d, n, …)`), and the
 /// cross-file part reads `r(p, l) :- r_at(_, p, l)`. A relation that file-local rules also read, a lattice, or
 /// one whose rule binds no location is left; its name is returned in the `Err`: its rows are not attributable.
-pub(crate) fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Result<Vec<String>, Vec<String>> {
+pub fn locate(prog: &mut crate::code_rule_dsl::logic::front::Program) -> Result<Vec<String>, Vec<String>> {
     use crate::code_rule_dsl::logic::front::{Atom, Literal, Rule, Term};
     use std::collections::BTreeSet;
     let split = programs(prog);

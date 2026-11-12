@@ -19,7 +19,7 @@ enum Prefix {
 }
 
 #[derive(Default, Debug)]
-pub(crate) struct Imports {
+pub struct Imports {
     bindings: BTreeMap<String, BTreeSet<Prefix>>,
     /// An import could not be understood, so qualification requests are admitted.
     pub opaque: bool,
@@ -273,7 +273,7 @@ fn wanted(name: &str, imports: &BTreeSet<String>) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::{
         language::GrammarDialect,

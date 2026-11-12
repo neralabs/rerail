@@ -316,7 +316,7 @@ fn convert(root: tree_sitter::Node<'_>, clamp: &dyn Fn(Range<usize>) -> Range<us
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::fixtures::oracle;
 
@@ -517,7 +517,7 @@ mod tests {
 pub(crate) struct AnnotationGrammar;
 
 /// Its handle, which the engine registers (`literal::install`).
-pub(crate) const GRAMMAR: super::Grammar = super::Grammar::new(&AnnotationGrammar);
+pub const GRAMMAR: super::Grammar = super::Grammar::new(&AnnotationGrammar);
 
 impl super::LiteralGrammar for AnnotationGrammar {
     fn name(&self) -> &'static str {

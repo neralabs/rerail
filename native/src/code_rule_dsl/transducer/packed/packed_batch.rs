@@ -20,13 +20,13 @@ const MAX_PROPERTIES_PER_TASK: u32 = 4_096;
 /// Packed query ordering and exact-admission metadata, derived from the Program.
 /// A program flag (`Program::flags`): a task keeps its first accepted result only, and its result
 /// capacity is one. A label pass that marks its roots reads no more (`metal_label_passes`).
-pub(super) const ONE_RESULT: u32 = 4;
+pub const ONE_RESULT: u32 = 4;
 /// A label pass's program that marks its route as it publishes (bit 31; bits 8..30 the row, bit 30
 /// its captured nodes, `TALLY` a count): its results are bits, so its tasks reserve no results and
 /// no final captures.
-pub(super) const MARKS: u32 = 0x8000_0000;
-pub(super) const MARKS_CAPTURED: u32 = 0x4000_0000;
-pub(super) const TALLY: u32 = 32;
+pub const MARKS: u32 = 0x8000_0000;
+pub const MARKS_CAPTURED: u32 = 0x4000_0000;
+pub const TALLY: u32 = 32;
 
 pub(super) fn program_flags(program: &Program) -> u32 {
     u32::from(program.tree_sitter_query)
@@ -45,13 +45,13 @@ fn bounded_capacity(needed: u32, maximum: u32) -> u32 {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct AssertionRecord {
-    pub(super) kind: u32,
-    pub(super) first: u32,
-    pub(super) second: u32,
-    pub(super) data_start: u32,
-    pub(super) data_count: u32,
-    pub(super) flags: u32,
+pub struct AssertionRecord {
+    pub kind: u32,
+    pub first: u32,
+    pub second: u32,
+    pub data_start: u32,
+    pub data_count: u32,
+    pub flags: u32,
 }
 
 #[repr(C)]
@@ -66,37 +66,37 @@ struct OutputInstructionRecord {
 }
 
 #[derive(Clone, Default)]
-pub(super) struct PackedBatch {
-    pub(super) header: MetalBatchHeader,
-    pub(super) nodes: Vec<BatchNode>,
-    pub(super) children: Vec<u32>,
-    pub(super) source: Vec<u8>,
-    pub(super) line_starts: Vec<u32>,
-    pub(super) supertypes: Vec<BatchSupertype>,
+pub struct PackedBatch {
+    pub header: MetalBatchHeader,
+    pub nodes: Vec<BatchNode>,
+    pub children: Vec<u32>,
+    pub source: Vec<u8>,
+    pub line_starts: Vec<u32>,
+    pub supertypes: Vec<BatchSupertype>,
     /// The files' derived classes (`TapeDoc::with_labels`) over the batch's nodes: per class from
     /// `DERIVED_CLASS_BASE`, `derived_words` words of bits, class after class.
     pub(super) derived: Vec<u32>,
     pub(super) derived_classes: u32,
     pub(super) derived_words: u32,
-    pub(super) files: Vec<BatchFile>,
-    pub(super) words: Vec<u32>,
-    pub(super) longs: Vec<u64>,
-    pub(super) string_bytes: Vec<u8>,
-    pub(super) strings: Vec<BatchString>,
-    pub(super) values: Vec<ValueRecord>,
-    pub(super) nfa_states: Vec<NfaStateRecord>,
-    pub(super) nfa_data: Vec<u32>,
-    pub(super) nfa_ranges: Vec<NfaRangeRecord>,
-    pub(super) lua_instructions: Vec<LuaInstructionRecord>,
-    pub(super) lua_members: Vec<LuaSetMemberRecord>,
-    pub(super) assertions: Vec<AssertionRecord>,
-    pub(super) assertion_data: Vec<u32>,
-    pub(super) labels: Vec<u16>,
-    pub(super) programs: Vec<BatchProgram>,
-    pub(super) tasks: Vec<BatchTask>,
-    pub(super) evaluations: Vec<MetalEvaluation>,
-    pub(super) evaluation_lanes: Vec<MetalEvaluation>,
-    pub(super) global_arenas: MetalGlobalArenas,
+    pub files: Vec<BatchFile>,
+    pub words: Vec<u32>,
+    pub longs: Vec<u64>,
+    pub string_bytes: Vec<u8>,
+    pub strings: Vec<BatchString>,
+    pub values: Vec<ValueRecord>,
+    pub nfa_states: Vec<NfaStateRecord>,
+    pub nfa_data: Vec<u32>,
+    pub nfa_ranges: Vec<NfaRangeRecord>,
+    pub lua_instructions: Vec<LuaInstructionRecord>,
+    pub lua_members: Vec<LuaSetMemberRecord>,
+    pub assertions: Vec<AssertionRecord>,
+    pub assertion_data: Vec<u32>,
+    pub labels: Vec<u16>,
+    pub programs: Vec<BatchProgram>,
+    pub tasks: Vec<BatchTask>,
+    pub evaluations: Vec<MetalEvaluation>,
+    pub evaluation_lanes: Vec<MetalEvaluation>,
+    pub global_arenas: MetalGlobalArenas,
     /// A resident batch's (`new_resident`): each task's root's source length, as the nodes a
     /// packed batch holds give it.
     pub(super) root_spans: Vec<u32>,
@@ -106,7 +106,7 @@ pub(super) struct PackedBatch {
     /// The most states of each transient kind a task may hold (pending paths, captures, cursors,
     /// ...): 65,536 where `None`. A lane reserves the most of its evaluations' up front, so the
     /// cap bounds a dispatch's lanes (`metal_label_passes`).
-    pub(super) state_cap: Option<u32>,
+    pub state_cap: Option<u32>,
 }
 
 fn checked_u32(value: usize) -> Result<u32, Error> {
@@ -128,7 +128,7 @@ impl PackedBatch {
     /// Metal's supertypes buffer and files: with derived classes, the buffer starts with them as
     /// the interpreter's `has_supertype` reads them (one record of the class and word counts, then
     /// the bits), and each file's supertypes start past them.
-    pub(super) fn metal_supertypes(&self) -> (std::borrow::Cow<'_, [BatchSupertype]>, std::borrow::Cow<'_, [BatchFile]>) {
+    pub fn metal_supertypes(&self) -> (std::borrow::Cow<'_, [BatchSupertype]>, std::borrow::Cow<'_, [BatchFile]>) {
         if self.derived_classes == 0 {
             return (std::borrow::Cow::Borrowed(&self.supertypes), std::borrow::Cow::Borrowed(&self.files));
         }
@@ -182,7 +182,7 @@ impl PackedBatch {
         Ok(index)
     }
 
-    pub(super) fn new(
+    pub fn new(
         programs: &[Program],
         files: &[TapeDoc],
         anchors: &[Vec<Vec<u32>>],
@@ -193,7 +193,7 @@ impl PackedBatch {
     /// The tasks of `programs` over `files` resident in the slabs (decision 0032): each file's
     /// record in the batch's numbering and the tasks, with no nodes, children, source, line starts
     /// or class pairs packed (the device reads the documents in place).
-    pub(super) fn new_resident(
+    pub fn new_resident(
         programs: &[Program],
         files: &[TapeDoc],
         anchors: &[Vec<Vec<u32>>],
@@ -201,7 +201,7 @@ impl PackedBatch {
         Self::build_tapes(programs, files.len(), anchors, true, true, |file| Ok(std::borrow::Cow::Borrowed(&files[file])), |_| Ok(()))
     }
 
-    pub(super) fn new_grid_inputs(
+    pub fn new_grid_inputs(
         programs: &[Program],
         files: &[TapeDoc],
         anchors: &[Vec<Vec<u32>>],
@@ -233,7 +233,7 @@ impl PackedBatch {
         )
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn new_streamed_grid_inputs(
         programs: &[Program],
         files: &[crate::code_rule_dsl::tape::TapeSource],
@@ -808,7 +808,7 @@ impl PackedBatch {
         .map(u64::from)
     }
 
-    pub(super) fn workspace_allocation_bytes(
+    pub fn workspace_allocation_bytes(
         &self,
         totals: super::packed_workspace::WorkspaceTotals,
     ) -> Option<u64> {
@@ -1054,7 +1054,7 @@ impl PackedBatch {
     /// evaluation is sized by a stand-in task whose root spans its file's source (a bound on any
     /// root's) and whose work estimate is the most, so its states are the state cap: the lanes'
     /// workspace is lanes times that, whatever the roots.
-    pub(super) fn assign_resident(&mut self, programs: &[Program], specs: &[[u32; 5]], lanes: usize) -> Result<super::packed_workspace::WorkspaceTotals, Error> {
+    pub fn assign_resident(&mut self, programs: &[Program], specs: &[[u32; 5]], lanes: usize) -> Result<super::packed_workspace::WorkspaceTotals, Error> {
         let total = specs.iter().try_fold(0_u32, |total, spec| total.checked_add(spec[4])).ok_or(Error::BackendCapacity)?;
         self.tasks = specs
             .iter()
@@ -1096,7 +1096,7 @@ impl PackedBatch {
         Ok(totals)
     }
 
-    pub(super) fn assign_workspace_with_result_limits_and_lanes(
+    pub fn assign_workspace_with_result_limits_and_lanes(
         &mut self,
         programs: &[Program],
         result_limits: Option<&[u32]>,
@@ -1534,8 +1534,8 @@ impl<'a> PackedResults<'a> {
 }
 
 #[derive(Clone)]
-pub(crate) struct PackedExecution {
-    pub(super) batch: Arc<PackedBatch>,
+pub struct PackedExecution {
+    pub batch: Arc<PackedBatch>,
     pages: Arc<Vec<PackedResultPage>>,
     evaluation_indexes: Arc<Vec<Option<usize>>>,
     file_task_ordinal_bases: Arc<Vec<u32>>,
@@ -1567,7 +1567,7 @@ impl PackedExecution {
     }
 
     // Test oracle: one file's interpreter values through the production publication adapter.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn interpret_reference(
         programs: &[Program],
         file: &TapeDoc,
@@ -1719,7 +1719,7 @@ impl PackedExecution {
         )
     }
 
-    pub(super) fn new(batch: PackedBatch, page: PackedResultPage) -> Self {
+    pub fn new(batch: PackedBatch, page: PackedResultPage) -> Self {
         let file_count = batch.files.len();
         let program_count = batch.programs.len();
         let mut evaluation_indexes = vec![None; file_count.saturating_mul(program_count)];
@@ -1749,7 +1749,7 @@ impl PackedExecution {
         }
     }
 
-    pub(super) fn from_grid_records(
+    pub fn from_grid_records(
         batch: impl Into<Arc<PackedBatch>>,
         evaluations: &[super::metal_grid::EvaluationSpan],
         results: Vec<ResultRecord>,
@@ -1781,7 +1781,7 @@ impl PackedExecution {
         publication.execution(vec![fragment], 0..publication.template.file_count)
     }
 
-    pub(super) fn into_outcome(self) -> Result<BatchOutcome, Error> {
+    pub fn into_outcome(self) -> Result<BatchOutcome, Error> {
         if self.file_start != 0
             || self.file_count != self.batch.files.len()
             || self.program_start != 0
@@ -1852,16 +1852,16 @@ impl PackedExecution {
         })
     }
 
-    pub(crate) fn file_count(&self) -> usize {
+    pub fn file_count(&self) -> usize {
         self.file_count
     }
 
-    pub(crate) fn program_count(&self) -> usize {
+    pub fn program_count(&self) -> usize {
         self.program_count
     }
 
-    #[cfg(all(test, target_os = "macos"))]
-    pub(super) fn host_arena_counts(&self) -> [usize; 4] {
+    #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+    pub fn host_arena_counts(&self) -> [usize; 4] {
         self.pages.iter().fold([0; 4], |mut counts, page| {
             for (count, length) in counts.iter_mut().zip([
                 page.results.len(),
@@ -1875,12 +1875,12 @@ impl PackedExecution {
         })
     }
 
-    #[cfg(all(test, target_os = "macos"))]
-    pub(super) fn physical_file_count(&self) -> usize {
+    #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+    pub fn physical_file_count(&self) -> usize {
         self.batch.files.len()
     }
 
-    pub(crate) fn program_results(
+    pub fn program_results(
         &self,
         file: usize,
         program: usize,
@@ -1935,27 +1935,27 @@ pub struct PackedCaptureView<'a> {
 }
 
 impl<'a> PackedCaptureView<'a> {
-    pub(crate) fn label(self) -> u16 {
+    pub fn label(self) -> u16 {
         self.record.label as u16
     }
 
-    pub(crate) fn node(self) -> u32 {
+    pub fn node(self) -> u32 {
         self.record.node - self.file.node_start
     }
 
-    pub(crate) fn span(self) -> std::ops::Range<usize> {
+    pub fn span(self) -> std::ops::Range<usize> {
         (self.record.start - self.file.source_start) as usize
             ..(self.record.end - self.file.source_start) as usize
     }
 
-    pub(crate) fn transformed_text(self) -> Option<&'a [u8]> {
+    pub fn transformed_text(self) -> Option<&'a [u8]> {
         (self.record.text_start != NONE).then(|| {
             &self.page.output_storage[self.record.text_start as usize
                 ..(self.record.text_start + self.record.text_length) as usize]
         })
     }
 
-    pub(crate) fn properties(self) -> impl Iterator<Item = (u16, Option<u16>)> + 'a {
+    pub fn properties(self) -> impl Iterator<Item = (u16, Option<u16>)> + 'a {
         let start = self.record.property_start as usize;
         let end = start + self.record.property_count as usize;
         self.page.properties[start..end].iter().map(|property| {
@@ -1977,23 +1977,23 @@ pub struct PackedResultView<'a> {
 }
 
 impl<'a> PackedResultView<'a> {
-    pub(crate) fn task_ordinal(self) -> u32 {
+    pub fn task_ordinal(self) -> u32 {
         self.record.task_ordinal - self.task_ordinal_base
     }
 
-    pub(crate) fn local_ordinal(self) -> u32 {
+    pub fn local_ordinal(self) -> u32 {
         self.record.local_ordinal
     }
 
-    pub(crate) fn start_node(self) -> u32 {
+    pub fn start_node(self) -> u32 {
         self.record.start - self.file.node_start
     }
 
-    pub(crate) fn label(self) -> u16 {
+    pub fn label(self) -> u16 {
         self.record.label as u16
     }
 
-    pub(crate) fn captures(self) -> impl Iterator<Item = PackedCaptureView<'a>> + 'a {
+    pub fn captures(self) -> impl Iterator<Item = PackedCaptureView<'a>> + 'a {
         let start = self.record.capture_start;
         self.page.final_captures[start as usize..(start + self.record.capture_count) as usize]
             .iter()
@@ -2006,7 +2006,7 @@ impl<'a> PackedResultView<'a> {
             })
     }
 
-    pub(crate) fn properties(self) -> impl Iterator<Item = (u16, Option<u16>)> + 'a {
+    pub fn properties(self) -> impl Iterator<Item = (u16, Option<u16>)> + 'a {
         let start = self.record.property_start as usize;
         let end = start + self.record.property_count as usize;
         self.page.properties[start..end].iter().map(|property| {
@@ -2017,7 +2017,7 @@ impl<'a> PackedResultView<'a> {
         })
     }
 
-    pub(crate) fn dynamic_properties(
+    pub fn dynamic_properties(
         self,
     ) -> impl Iterator<Item = (&'a [u8], Option<&'a [u8]>)> + 'a {
         let start = self.record.dynamic_start as usize;
@@ -2068,17 +2068,17 @@ impl EvaluationRows {
     }
 }
 type GridOrder = (u32, u32, Option<u32>, u32);
-pub(super) struct GridFragment {
+pub struct GridFragment {
     page: PackedResultPage,
     first: Option<GridOrder>,
     last: Option<GridOrder>,
 }
-pub(super) struct GridPublication {
+pub struct GridPublication {
     template: PackedExecution,
     evaluations: Vec<super::metal_grid::EvaluationSpan>,
 }
 impl GridPublication {
-    pub(super) fn new(
+    pub fn new(
         batch: Arc<PackedBatch>,
         evaluations: &[super::metal_grid::EvaluationSpan],
         errors: Vec<Option<Error>>,
@@ -2125,7 +2125,7 @@ impl GridPublication {
             },
         })
     }
-    pub(super) fn validate_page(
+    pub fn validate_page(
         &self,
         results: Vec<ResultRecord>,
         captures: Vec<FinalCaptureRecord>,
@@ -2332,7 +2332,7 @@ impl GridPublication {
             last: previous_order,
         })
     }
-    pub(super) fn execution(
+    pub fn execution(
         &self,
         fragments: Vec<GridFragment>,
         files: Range<usize>,
@@ -2358,7 +2358,7 @@ impl GridPublication {
     }
 }
 #[derive(Debug)]
-pub(super) struct PackedResultPage {
+pub struct PackedResultPage {
     statuses: Vec<TaskStatus>,
     results: Vec<ResultRecord>,
     final_captures: Vec<FinalCaptureRecord>,
@@ -2381,7 +2381,7 @@ fn copy_output_bytes(
 }
 
 impl PackedResultPage {
-    pub(super) fn empty() -> Self {
+    pub fn empty() -> Self {
         Self {
             statuses: Vec::new(),
             results: Vec::new(),
@@ -2393,7 +2393,7 @@ impl PackedResultPage {
         }
     }
 
-    pub(super) fn compact(
+    pub fn compact(
         batch: &PackedBatch,
         statuses: &[TaskStatus],
         results: &[ResultRecord],
@@ -2840,7 +2840,7 @@ impl PackedBatch {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect as SupportLang;
     use ast_grep_core::tree_sitter::LanguageExt;

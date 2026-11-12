@@ -371,7 +371,7 @@ impl Writer<'_> {
 }
 
 /// `prog` as facts of program `p`, added to `facts`.
-pub(in crate::code_rule_dsl) fn write(facts: &mut Facts, p: &str, prog: &Program) {
+pub fn write(facts: &mut Facts, p: &str, prog: &Program) {
     Writer { facts, p: p.to_owned(), terms: 0, atoms: 0, literals: 0 }.program(prog);
 }
 
@@ -691,7 +691,7 @@ impl<'a> Reader<'a> {
 }
 
 /// Program `p` of `facts`, as it was written.
-pub(in crate::code_rule_dsl) fn program(facts: &Facts, p: &str) -> Result<Program, String> {
+pub fn program(facts: &Facts, p: &str) -> Result<Program, String> {
     Reader::of(facts, p)?.program()
 }
 
@@ -808,7 +808,7 @@ pub(in crate::code_rule_dsl) fn decode(bytes: &[u8]) -> Result<Facts, String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     /// The encoding names each string by its first use and puts the table first: the bytes the two-pass writer made
     /// (strings counted, then the rows written), and they decode to the facts.
     #[test]

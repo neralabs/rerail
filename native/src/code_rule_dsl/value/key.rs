@@ -203,7 +203,7 @@ pub(crate) fn member_access_name<'r, D: Doc>(
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 /// The key node that ESLint's `key` or `property` is: a computed name without its brackets and
 /// parentheses, since ESTree has neither.
 pub(crate) fn key_node<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
@@ -289,7 +289,7 @@ pub(crate) fn identifier_name(text: &str) -> Option<Vec<u16>> {
 }
 
 // The DSL's number text, which is ECMAScript's (`matcher::transform`, the engine's).
-pub(crate) use crate::code_rule_dsl::matcher::transform::number_to_string;
+pub use crate::code_rule_dsl::matcher::transform::number_to_string;
 
 /// `StrWhiteSpaceChar`: ECMAScript white space and line terminators.
 fn is_str_white_space(c: char) -> bool {
@@ -417,7 +417,7 @@ pub(crate) fn to_int32(value: f64) -> i32 {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::fixtures::oracle;

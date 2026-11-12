@@ -7,11 +7,11 @@ use super::super::metal_state_values::ValueFrontier;
 use super::*;
 
 #[path = "metal_closure_composition_tests.rs"]
-mod composition;
+pub mod composition;
 #[path = "metal_position_order_tests.rs"]
-mod ordering_cases;
+pub mod ordering_cases;
 #[path = "metal_closure_reconstruction_validation_tests.rs"]
-mod reconstruction_cases;
+pub mod reconstruction_cases;
 
 pub(super) fn closure_program() -> Program {
     program(vec![

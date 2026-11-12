@@ -36,17 +36,17 @@
 //! per_probe done": per_probe is a comma-separated "ms:rows" for each probe line in spec order, and done is 1 at the
 //! fixpoint (new rows are written then), 0 when max_waves stopped it. `set_fixpoint_stats(name)` and
 //! `set_fixpoint_reprobe(name, i, hex SQL)` let the caller replan probes between bounded runs.
-mod scalars;
-mod liveness;
+pub mod scalars;
+pub mod liveness;
 /// The index-cost spike: column orders as sorted runs of row ids (`RERAIL_INDEX_SPIKE`).
-mod ordered;
+pub mod ordered;
 /// A relation's indexes (decision 0112): sorted orders of row ids for the key sets probes bind, one run a wave.
-mod runs;
+pub mod runs;
 use runs::Index;
 /// A column's statistics in a fixed size (decision 0112): no index is kept for them.
-mod sketch;
+pub mod sketch;
 use sketch::Sketch;
-pub(in crate::code_rule_dsl) mod rowcode;
+pub mod rowcode;
 use crate::code_rule_dsl::logic::analysis::scalars::Kind as ScalarKind;
 use rusqlite::ffi;
 use rusqlite::types::{Value, ValueRef};
@@ -63,16 +63,14 @@ use std::sync::{Arc, LazyLock, Mutex, RwLock};
 use std::time::Instant;
 
 /// Strata captured and run again on their own (decision 0095, step 0).
-pub(in crate::code_rule_dsl) mod lab;
-pub(in crate::code_rule_dsl) mod spec;
+pub mod lab;
+pub mod spec;
 use spec::{ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
-pub(super) mod closure;
-mod table;
-mod level;
-/// A stratum's joins on the device, when the placement puts it there (decision 0095, step 4).
-#[cfg(target_os = "macos")]
-pub(in crate::code_rule_dsl) mod device;
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::device::{Report as DeviceReport, take_report as device_report};
+pub mod closure;
+pub mod table;
+pub mod level;
+// cratify: `device` is rerail-device-metal's (it mounts it)
+pub use crate::code_rule_dsl::logic::device::{Report as DeviceReport, take_report as device_report};
 use crate::code_rule_dsl::logic::device::{JoinPlan, solver};
 
 fn err(m: impl Into<String>) -> Error { Error::UserFunctionError(m.into().into()) }
@@ -188,7 +186,7 @@ fn symbols_by_path(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
 }
 
 /// Intern a whole producer result without SQLite callbacks or a lock held across SQL.
-pub(in crate::code_rule_dsl) fn intern_batch<'a>(conn: &Connection, texts: impl IntoIterator<Item = &'a str>) -> Result<Vec<i64>> {
+pub fn intern_batch<'a>(conn: &Connection, texts: impl IntoIterator<Item = &'a str>) -> Result<Vec<i64>> {
     let shared = symbols(conn)?;
     let mut cursor = Interner::for_loading(&shared);
     let ids = texts.into_iter().map(|text| cursor.id(text)).collect();
@@ -248,7 +246,7 @@ pub fn register_symbols(conn: &Connection) -> Result<()> {
 }
 
 /// Decode a composed output through the shared atom arena, without a SQL query per row.
-pub(in crate::code_rule_dsl) fn symbol_text(conn: &Connection, atom: i64) -> Result<String> {
+pub fn symbol_text(conn: &Connection, atom: i64) -> Result<String> {
     let symbols=symbols(conn)?;
     let s=symbols.read().unwrap();
     if !s.known(atom)? {return Err(err(format!("no symbol {atom}")))}
@@ -261,7 +259,7 @@ pub fn flush_symbols(conn: &Connection) -> Result<()> {
 }
 
 enum Pat { Any, Slot(usize), Int(i64), Sym(i64) }
-enum Term { Slot(usize), Const(i64), Cat(usize, usize) }
+pub enum Term { Slot(usize), Const(i64), Cat(usize, usize) }
 
 fn hash_vals(vals: impl Iterator<Item = i64>) -> u64 {
     let mut h = FxHasher::default();
@@ -272,7 +270,7 @@ fn hash_vals(vals: impl Iterator<Item = i64>) -> u64 {
 /// `RERAIL_INDEX_REPORT` (the index-cost spike): every probe of a relation, by its name and the key columns it binds
 /// (`+delta` for a probe of the delta alone), and the planner's reads of its per-column indexes (`[stats]`,
 /// `[postings]`, `[lead]`). Measurement only: nothing reads it but the report.
-pub(crate) mod probed {
+pub mod probed {
     use std::collections::HashMap;
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     static PROBES: std::sync::Mutex<Option<HashMap<(String, Vec<usize>), u64>>> = std::sync::Mutex::new(None);
@@ -302,7 +300,7 @@ pub(crate) mod probed {
 /// Whether row `id` is dead in bitset `dead` (a relation started from a kept one, its deleted rows marked, not
 /// removed: decision 0090 step 4). Empty: none is.
 #[inline]
-fn is_dead(dead: &[u64], id: u32) -> bool {
+pub fn is_dead(dead: &[u64], id: u32) -> bool {
     !dead.is_empty() && dead.get(id as usize >> 6).is_some_and(|w| w >> (id & 63) & 1 == 1)
 }
 fn kill(dead: &mut Vec<u64>, id: u32) -> bool {
@@ -471,7 +469,7 @@ impl Rel {
         }
         find_row(&self.idx, data, k, row, skip)
     }
-    fn contains(&self, row: &[i64]) -> bool {
+    pub fn contains(&self, row: &[i64]) -> bool {
         self.find(row, |id| is_dead(&self.dead, id)).is_some()
     }
     /// Probes will bind the key set `keys` (columns): an order whose leading columns are that set answers them. An
@@ -662,16 +660,16 @@ impl Cands<'_> {
 /// are as derived. `emitted`: every row a rule derived this wave, new or not (`RERAIL_SPIKE_DERIVATIONS`: the
 /// derivations a counting scheme would count).
 #[derive(Clone, Default)]
-pub(in crate::code_rule_dsl) struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize }
+pub struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize }
 
 /// Rows a wave's derived tuples hold before they are checked against their relation (`Fresh::offer`): a wave that
 /// derives many rows already held keeps at most about this many more.
 const FRESH_BATCH: usize = 1 << 16;
 
 /// `RERAIL_SPIKE_DERIVATIONS`: rows derived (new or already held) and rows held new, by relation, over the process.
-pub(crate) static DERIVATIONS: std::sync::Mutex<std::collections::BTreeMap<String, (u64, u64)>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+pub static DERIVATIONS: std::sync::Mutex<std::collections::BTreeMap<String, (u64, u64)>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
 impl Fresh {
-    fn add(&mut self, row: &[i64]) { self.data.extend_from_slice(row); self.n += 1; }
+    pub fn add(&mut self, row: &[i64]) { self.data.extend_from_slice(row); self.n += 1; }
     /// A row a rule derived for `rel`: kept unchecked, the rows past `settled` checked a batch at a time.
     #[inline]
     fn offer(&mut self, row: &[i64], rel: &Rel) {
@@ -892,12 +890,12 @@ struct Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usi
 /// left here is dropped when it closes (`sqlite3_set_clientdata`'s destructor runs in `sqlite3_close`), so a new
 /// connection at the same address starts with none of it. Without this a second run over the same store read the
 /// first run's fixpoint as its own (a cone's loaded documents counted as the workspace's).
-pub(crate) fn scope(conn: &Connection) -> usize {
+pub fn scope(conn: &Connection) -> usize {
     crate::code_rule_dsl::facts::vtab::connection_scope(conn)
 }
 
 /// Drops what the connection at `at` left: its components and derived relations (`scope`).
-pub(crate) fn forget_scope(at: usize) {
+pub fn forget_scope(at: usize) {
     if let Ok(mut s) = SCOPE_SYMS.lock() {
         s.remove(&at);
     }
@@ -910,7 +908,7 @@ pub(crate) fn forget_scope(at: usize) {
 
 /// Drops the engine's relations and components a run left on the connection at `at` (when it closes, or when the
 /// next run reuses it, `vtab::reuse`). They are freed on a thread of their own: no run's work.
-pub(crate) fn forget_engine(at: usize) {
+pub fn forget_engine(at: usize) {
     let mut gone: (Vec<Arc<Mutex<Component>>>, Vec<Arc<InRel>>) = Default::default();
     if let Ok(mut c) = COMPONENTS.lock() {
         c.retain(|((s, _), comp)| *s != at || { gone.0.push(Arc::clone(comp)); false });
@@ -1665,20 +1663,20 @@ pub fn stats(conn: &Connection, name: &str) -> Result<String> {
 
 /// A fused filter over an input relation that a device can run alone (`scans`): its row program, its inputs, its
 /// atom's gathered rows, its parameters, and the rows the CPU passes with the CPU it took.
-pub(in crate::code_rule_dsl) struct ScanCase {
-    pub(in crate::code_rule_dsl) rule: String,
-    pub(in crate::code_rule_dsl) program: rerail_compiler::block::BlockProgram,
-    pub(in crate::code_rule_dsl) inputs: Vec<rowcode::Word>,
-    pub(in crate::code_rule_dsl) gathered: Vec<(usize, Vec<i64>)>,
-    pub(in crate::code_rule_dsl) params: Vec<i64>,
-    pub(in crate::code_rule_dsl) passed: Vec<u32>,
-    pub(in crate::code_rule_dsl) cpu_seconds: f64,
+pub struct ScanCase {
+    pub rule: String,
+    pub program: rerail_compiler::block::BlockProgram,
+    pub inputs: Vec<rowcode::Word>,
+    pub gathered: Vec<(usize, Vec<i64>)>,
+    pub params: Vec<i64>,
+    pub passed: Vec<u32>,
+    pub cpu_seconds: f64,
 }
 
 /// Each fused filter of an open component's rules whose atom reads an input relation with constant keys and whose
 /// parameters are constants: the whole of what it filters is known before the run, so a device scan of it can be
 /// checked against the CPU's (the relational lab).
-pub(in crate::code_rule_dsl) fn scans(conn: &Connection, name: &str) -> Result<Vec<ScanCase>> {
+pub fn scans(conn: &Connection, name: &str) -> Result<Vec<ScanCase>> {
     let comp = component(conn, name)?;
     let comp = comp.lock().unwrap();
     let mut out = Vec::new();
@@ -1727,22 +1725,22 @@ pub(in crate::code_rule_dsl) fn scans(conn: &Connection, name: &str) -> Result<V
 /// Two atoms of a rule over input relations, the second's keys all bound by the first (`tiles`): the first's rows (its
 /// constant keys checked) by the columns the second's keys read, the second's rows by its key columns, and the pairs
 /// a CPU hash join gives (left row, right row id) with the CPU it took.
-pub(in crate::code_rule_dsl) struct TileCase {
-    pub(in crate::code_rule_dsl) rule: String,
-    pub(in crate::code_rule_dsl) left: Vec<Vec<i64>>,
-    pub(in crate::code_rule_dsl) right: Vec<Vec<i64>>,
+pub struct TileCase {
+    pub rule: String,
+    pub left: Vec<Vec<i64>>,
+    pub right: Vec<Vec<i64>>,
     pub(in crate::code_rule_dsl) right_ids: Vec<u32>,
     /// The right side's identity: its relation, key columns and column tests (one sort serves every case of it).
-    pub(in crate::code_rule_dsl) right_key: String,
+    pub right_key: String,
     /// Whether each key holds symbols.
     pub(in crate::code_rule_dsl) symbols: Vec<bool>,
-    pub(in crate::code_rule_dsl) pairs: Vec<(u32, u32)>,
-    pub(in crate::code_rule_dsl) cpu_seconds: f64,
+    pub pairs: Vec<(u32, u32)>,
+    pub cpu_seconds: f64,
 }
 
 /// Each rule's first two steps when both are atoms over input relations and the second's keys are slots the first
 /// binds: a join whose whole input is known before the run (the relational lab's `tile`).
-pub(in crate::code_rule_dsl) fn tiles(conn: &Connection, name: &str) -> Result<Vec<TileCase>> {
+pub fn tiles(conn: &Connection, name: &str) -> Result<Vec<TileCase>> {
     let comp = component(conn, name)?;
     let comp = comp.lock().unwrap();
     let mut out = Vec::new();
@@ -2018,7 +2016,7 @@ fn thread_cpu() -> f64 {
 
 /// This thread's CPU seconds.
 #[cfg(unix)]
-fn thread_cpu() -> f64 {
+pub fn thread_cpu() -> f64 {
     let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
     unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
     t.tv_sec as f64 + t.tv_nsec as f64 / 1e9
@@ -2083,7 +2081,7 @@ pub enum RowRef<'a> { Flat(&'a [i64]), View(&'a View, usize), Source(&'a View, u
 const READ: usize = 8;
 impl<'a> RowRef<'a> {
     #[inline]
-    fn at(self, c: usize) -> i64 {
+    pub fn at(self, c: usize) -> i64 {
         match self {
             RowRef::Flat(r) => r[c],
             RowRef::View(v, id) => v.src.value(v.ids.as_ref().map_or(id, |ids| ids[id] as usize), v.cols[c]),
@@ -2094,7 +2092,7 @@ impl<'a> RowRef<'a> {
     /// The row with its view's columns read at once (`Source::row_at`): a view of a batch finds the row's document
     /// once, not once per column a step reads.
     #[inline]
-    fn read(self) -> RowRef<'a> {
+    pub fn read(self) -> RowRef<'a> {
         let (v, row) = match self {
             RowRef::View(v, id) => (v, v.ids.as_ref().map_or(id, |ids| ids[id] as usize)),
             RowRef::Source(v, row) => (v, row),
@@ -2890,7 +2888,7 @@ thread_local! {
 }
 
 /// Tests: this thread's count steps build their tables at their first probe.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn count_tables_at_once(on: bool) {
     table::AT_ONCE.with(|c| c.set(on));
 }
@@ -3148,13 +3146,13 @@ impl InRel {
     }
     /// A whole view's rows are its source's, counted when first asked: a source that makes its rows on lookup
     /// (`syntax::within`) makes them all only for a scan.
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         match &self.view { Some(v) if v.ids.is_none() => v.src.len(), _ => self.n }
     }
     /// A flat relation's row (a derived one: views are base inputs only).
-    fn row(&self, id: usize) -> &[i64] { &self.rows[id * self.k..][..self.k] }
+    pub fn row(&self, id: usize) -> &[i64] { &self.rows[id * self.k..][..self.k] }
     #[inline]
-    fn at(&self, id: usize) -> RowRef<'_> {
+    pub fn at(&self, id: usize) -> RowRef<'_> {
         match &self.view { Some(v) => RowRef::View(v, id), None => RowRef::Flat(&self.rows[id * self.k..][..self.k]) }
     }
     /// For a key of several columns over a view, the most selective column the source indexes (sorted, or by its
@@ -3969,11 +3967,11 @@ fn stored_table(conn: &Connection, schema: &str, name: &str, need: &[&str]) -> O
 }
 
 #[derive(Clone, Copy)]
-enum Key { Slot(usize), Const(i64) }
+pub enum Key { Slot(usize), Const(i64) }
 #[derive(Clone)]
-enum Src { Delta(usize), Full(usize), FullMulti(usize, Vec<usize>), In(Arc<InRel>, Arc<Csr>) }
+pub enum Src { Delta(usize), Full(usize), FullMulti(usize, Vec<usize>), In(Arc<InRel>, Arc<Csr>) }
 #[derive(Clone)]
-enum Step {
+pub enum Step {
     Unused { proof: crate::code_rule_dsl::logic::analysis::Decision },
     /// Key columns (bound), columns that bind a slot, and column pairs that must be equal (a variable repeated in
     /// the atom, first seen here).
@@ -4013,7 +4011,7 @@ enum Step {
 /// `forms`: per step, its count-table form's state (`table`).
 /// `spec`: the digest of the spec it was read from, which a level's batch keeps its pairs by (`level`).
 pub struct JoinRule { pub steps: Vec<Step>, pub out: Vec<Term>, pub nslots: usize, multi: Vec<(usize, Vec<usize>)>, pub counts: Vec<[std::cell::Cell<u64>; 2]>,
-                      fused: Vec<Option<Box<rowcode::Fused>>>, forms: Vec<table::StepForm>, spec: u64 }
+                      pub fused: Vec<Option<Box<rowcode::Fused>>>, forms: Vec<table::StepForm>, spec: u64 }
 
 fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<JoinRule> {
     join_rule(conn, &JoinSpec::parse(spec).map_err(err)?, syms)
@@ -4678,7 +4676,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
 }
 
 #[cfg(test)]
-mod posted_tests {
+pub mod posted_tests {
     use super::*;
 
     /// Decision 0112's shape: a relation's indexes are sorted orders, only for the key sets its probes bind, the
@@ -4986,7 +4984,7 @@ mod posted_tests {
 }
 
 #[cfg(test)]
-mod sorted_tests {
+pub mod sorted_tests {
     use super::Sorted;
 
     /// What the sort gives: (value, row) pairs in order.
@@ -5014,7 +5012,7 @@ mod sorted_tests {
 }
 
 #[cfg(test)]
-mod carry_sorted_tests {
+pub mod carry_sorted_tests {
     use super::*;
 
     /// A document's rows: node ids `doc << 32 | i`, a kind of few values, a value of many, and a column no rule reads.

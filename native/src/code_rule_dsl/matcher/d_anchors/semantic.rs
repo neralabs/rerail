@@ -99,7 +99,7 @@ pub(super) fn compile_in(semantic: &Semantic, _inlining: &mut Inlining) -> Ancho
                 let pattern = format!(r"^(?:{names}|\((?s:.*))$");
                 match Regex::new(&pattern) {
                     Ok(regex) => Condition::Text {
-                        #[cfg(test)]
+                        #[cfg(any(test, feature = "test-hooks"))]
                         probe: TextProbe::compile(regex.as_str()),
                         regex,
                     },

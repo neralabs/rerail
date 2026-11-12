@@ -49,7 +49,7 @@ pub struct Jobs<'s, 'r>(
 impl<'s> Jobs<'s, '_> {
     /// Starts `f` as the job `name` on the pool (wasm32 has no threads: it runs here). A wait that runs it for
     /// another knows it by its name (`rerail_accel::exec::waits`).
-    pub(crate) fn spawn(&self, name: &'static str, f: impl for<'x> FnOnce(&Jobs<'s, 'x>) + Send + 's) {
+    pub fn spawn(&self, name: &'static str, f: impl for<'x> FnOnce(&Jobs<'s, 'x>) + Send + 's) {
         #[cfg(not(target_family = "wasm"))]
         {
             // The job's span is under the one open where it was started, on whichever thread runs it.
@@ -68,7 +68,7 @@ impl<'s> Jobs<'s, '_> {
 
 /// Runs `op` on this thread with a scope for jobs that borrow its data; returns once they have all ended (meanwhile,
 /// on one of the pool's threads, it runs the pool's jobs).
-pub(crate) fn scope<'s, R>(op: impl for<'r> FnOnce(&Jobs<'s, 'r>) -> R) -> R {
+pub fn scope<'s, R>(op: impl for<'r> FnOnce(&Jobs<'s, 'r>) -> R) -> R {
     #[cfg(not(target_family = "wasm"))]
     {
         rayon::in_place_scope(|s| op(&Jobs(s)))
@@ -129,7 +129,7 @@ impl<T> Beside<T> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     /// The setting is at least one thread.
     #[test]
     fn the_setting_is_at_least_one_thread() {

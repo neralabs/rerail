@@ -105,7 +105,7 @@ fn input(state: &State) -> Input {
     i
 }
 
-pub(super) fn report(state: &State) -> (String, serde_json::Value) {
+pub fn report(state: &State) -> (String, serde_json::Value) {
     let i = input(state);
     let findings = analysis::analyze(&i);
     let text = analysis::render(&findings);
@@ -118,7 +118,7 @@ pub(super) fn report(state: &State) -> (String, serde_json::Value) {
 
 /// Explain scalar inputs using actual dependency edges, including native contracts.
 /// Keep one shortest consumer path per requested scalar relation, with cycle guards.
-pub(in crate::code_rule_dsl) fn projection(
+pub fn projection(
     prog: &crate::code_rule_dsl::logic::front::Program,
     reads: &BTreeSet<String>,
 ) {
@@ -166,7 +166,7 @@ pub(in crate::code_rule_dsl) fn projection(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn production_adapter_emits_ranked_findings_and_json() {

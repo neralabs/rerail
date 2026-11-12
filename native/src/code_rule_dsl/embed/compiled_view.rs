@@ -10,7 +10,7 @@ use ast_grep_core::Node;
 use tree_sitter::Node as TsNode;
 
 /// The embedder of `Via::CompiledView`.
-pub(crate) struct CompiledView;
+pub struct CompiledView;
 
 impl Embedder for CompiledView {
     /// No tree-sitter host compiles to a view: Blade's is built from its Forte tree.
@@ -21,6 +21,6 @@ impl Embedder for CompiledView {
 
 /// The scope of a view's PHP, whose markers stand for the variables Blade's directives define and whose
 /// top level is the scope of the view's data (`scope::php::visit_blade_program`; `scope::install_program_scopes`).
-pub(crate) fn scope(builder: &mut Builder<'_>, root: &Node<'_, TapeDoc>) -> Result<(), BuildError> {
+pub fn scope(builder: &mut Builder<'_>, root: &Node<'_, TapeDoc>) -> Result<(), BuildError> {
     crate::code_rule_dsl::scope::php::visit_blade_program(builder, root)
 }

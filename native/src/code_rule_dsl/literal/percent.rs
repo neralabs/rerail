@@ -323,7 +323,7 @@ fn quantity(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::fixtures::oracle;
 
@@ -505,7 +505,7 @@ mod tests {
 pub(crate) struct PercentGrammar;
 
 /// Its handle, which the engine registers (`literal::install`).
-pub(crate) const GRAMMAR: super::Grammar = super::Grammar::new(&PercentGrammar);
+pub const GRAMMAR: super::Grammar = super::Grammar::new(&PercentGrammar);
 
 impl super::LiteralGrammar for PercentGrammar {
     fn name(&self) -> &'static str {

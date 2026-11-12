@@ -11,14 +11,14 @@ use ast_grep_core::{Doc, Node};
 use serde_json::Value;
 use std::borrow::Cow;
 use std::sync::Arc;
-pub(in crate::code_rule_dsl) mod lang_python;
-pub(in crate::code_rule_dsl) mod lang_ecma;
-pub(in crate::code_rule_dsl) mod lang_php;
-pub(in crate::code_rule_dsl) mod lang_blade;
+// cratify: `lang_python` is rerail-lang-python's (it mounts it)
+// cratify: `lang_ecma` is rerail-lang-ecma's (it mounts it)
+// cratify: `lang_php` is rerail-lang-php's (it mounts it)
+// cratify: `lang_blade` is rerail-lang-php's (it mounts it)
 
 /// An option of a policy a family may not read.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum SyntaxFeature {
+pub enum SyntaxFeature {
     /// `parse` with a grammar: the family's literals the grammar's trees are parsed from.
     Parse(Grammar),
     /// A policy's `languageOptions`.
@@ -26,14 +26,14 @@ pub(crate) enum SyntaxFeature {
 }
 
 /// An ast query's compiled `languageOptions`: ESLint's settings, and Ruff's.
-pub(crate) type QueryOptions = (Option<Arc<LanguageOptions>>, Option<Arc<PythonOptions>>);
+pub type QueryOptions = (Option<Arc<LanguageOptions>>, Option<Arc<PythonOptions>>);
 
 /// Whether an ast query applies by its `when`, and the source types a file must have where the
 /// query leaves `sourceType` to each file (`SourceType::of_file`; `run_clause` checks them).
-pub(crate) type QueryWhen = (bool, Option<Vec<SourceType>>);
+pub type QueryWhen = (bool, Option<Vec<SourceType>>);
 
 /// A family's syntax.
-pub(crate) trait SyntaxRules: Adapter {
+pub trait SyntaxRules: Adapter {
     /// `node`'s tree under `grammar`, a grammar of this family's literals (`LiteralGrammar::host_language`):
     /// `interpolation` marks an interpolated literal's fields. Spends one step of `spend` per byte and tree node;
     /// `None` when the budget ran out.
@@ -69,7 +69,7 @@ pub(crate) trait SyntaxRules: Adapter {
 
 /// The refusal of `parse` with `grammar` by a family whose literals it does not read (`reason`
 /// naming the family's counterpart, if any).
-fn unhosted(grammar: Grammar, reason: &str) -> Result<(), Refusal> {
+pub fn unhosted(grammar: Grammar, reason: &str) -> Result<(), Refusal> {
     Err(Refusal::Refused(Cow::Owned(format!(
         "`{}` parses {}{reason}",
         grammar.name(),
@@ -77,13 +77,13 @@ fn unhosted(grammar: Grammar, reason: &str) -> Result<(), Refusal> {
     ))))
 }
 
-fn refused(message: &'static str) -> Result<(), Refusal> {
+pub fn refused(message: &'static str) -> Result<(), Refusal> {
     Err(Refusal::Refused(Cow::Borrowed(message)))
 }
 
 /// The kit's check of a family's `SyntaxRules`.
-#[cfg(test)]
-pub(super) mod kit {
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod kit {
     use super::{SyntaxFeature, SyntaxRules};
     use crate::code_rule_dsl::compile::config::Options;
     use crate::code_rule_dsl::language::SourceType;
@@ -98,17 +98,17 @@ pub(super) mod kit {
     );
 
     /// What a family's `SyntaxRules` answer.
-    pub(in super::super) struct Expect {
-        pub(in super::super) dollar_names: bool,
+    pub struct Expect {
+        pub dollar_names: bool,
         /// The refusal of `languageOptions`; `None` where read.
-        pub(in super::super) language_options: Option<&'static str>,
+        pub language_options: Option<&'static str>,
         /// Where read, a `languageOptions`, and the ESLint `ecmaVersion` and Python minor it
         /// compiles to.
-        pub(in super::super) compiled_options: Option<(&'static str, Option<u16>, Option<u8>)>,
-        pub(in super::super) when: &'static [When],
+        pub compiled_options: Option<(&'static str, Option<u16>, Option<u8>)>,
+        pub when: &'static [When],
         /// The refusals of `parse` with each grammar, in the registration order (`Grammar::all`); `None` where
         /// the family's literals host it.
-        pub(in super::super) parse: [Option<&'static str>; 8],
+        pub parse: [Option<&'static str>; 8],
     }
 
     /// A verdict as the kit compares it: `None` where read, else the refusal's message,
@@ -121,7 +121,7 @@ pub(super) mod kit {
         }
     }
 
-    pub(in super::super) fn check<A: SyntaxRules>(expect: &Expect) {
+    pub fn check<A: SyntaxRules>(expect: &Expect) {
         if let Some((source, ecma_version, python_minor)) = expect.compiled_options {
             let value = serde_json::from_str(source).expect("JSON");
             let (options, python) =

@@ -35,10 +35,10 @@ use std::collections::BTreeSet;
 use super::front::{AggOp, Atom, Literal, Program, Rule, Term};
 
 /// The counts' relation: `liveof_count(rel, what, n)`.
-pub(in crate::code_rule_dsl) const COUNTS: &str = "liveof_count";
+pub const COUNTS: &str = "liveof_count";
 
 /// What `COUNTS` counts, in the order the report prints it.
-pub(in crate::code_rule_dsl) const MEASURES: [&str; 6] = ["rows", "live", "keys", "live keys", "library", "library live"];
+pub const MEASURES: [&str; 6] = ["rows", "live", "keys", "live keys", "library", "library live"];
 
 /// `rel`'s liveness relation, under a prefix no program uses: a program may name its own relations `live_…`
 /// (calls_cx has `live_def`).
@@ -52,7 +52,7 @@ fn atom(rel: String, args: Vec<Term>) -> Atom {
 
 /// The backward rules and the counts for `prog` (its rules, declarations and outputs, as `rr::parse` gives them): a
 /// program of their own, to print after `prog`'s text, which declares what they read.
-pub(in crate::code_rule_dsl) fn program(prog: &Program) -> Program {
+pub fn program(prog: &Program) -> Program {
     // A program naming a relation as these do would read the liveness rules' rows as its own.
     if let Some(r) = prog.decls.keys().find(|r| r.starts_with(&live(""))) {
         panic!("{r}: the liveness rules' prefix is taken");
@@ -176,7 +176,7 @@ pub(in crate::code_rule_dsl) fn program(prog: &Program) -> Program {
 }
 
 /// `COUNTS`' rows (`liveof_count.csv`), by relation: each measure's count, absent where the relation had no row.
-pub(in crate::code_rule_dsl) fn read_counts(csv: &str) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> {
+pub fn read_counts(csv: &str) -> std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> {
     let mut out: std::collections::BTreeMap<String, std::collections::BTreeMap<String, u64>> = Default::default();
     for line in csv.lines() {
         let mut f = line.split('\t');
@@ -188,7 +188,7 @@ pub(in crate::code_rule_dsl) fn read_counts(csv: &str) -> std::collections::BTre
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     /// On a small program: an output's rows are live; a row no output reads is dead; a row that blocks a
     /// negation is live; a read inside a count makes its group live.
     #[test]

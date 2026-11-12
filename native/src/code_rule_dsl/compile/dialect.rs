@@ -65,5 +65,4 @@ pub(super) fn grammar_gap(gaps: &mut Vec<String>, reason: String) -> AstMatcher 
     AstMatcher::Never
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

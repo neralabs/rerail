@@ -84,5 +84,4 @@ pub(super) fn call<'t, D: Doc>(
     Ok(Some(env))
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

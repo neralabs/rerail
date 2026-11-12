@@ -21,7 +21,7 @@
 
 use crate::code_rule_dsl::tree::Tree;
 use super::php_names::{self, PhpNames, Resolved};
-pub(crate) use super::flow::{Defined, Modify, Quiet, Read, Reach};
+pub use super::flow::{Defined, Modify, Quiet, Read, Reach};
 use super::{Binding, BuildError, Builder, Form, NodeRef, ScopeKind, Site, VALUE};
 use crate::code_rule_dsl::value::{Context as Decoding, php as php_value};
 use ast_grep_core::{Doc, Node};
@@ -29,9 +29,9 @@ use foldhash::{HashMap, HashMapExt};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-mod blade;
+pub mod blade;
 #[path = "php/by_reference.generated.rs"]
-mod by_reference;
+pub mod by_reference;
 
 
 
@@ -60,9 +60,9 @@ enum Outer {
 /// What the flow found in a file: each read, and the scopes whose variables a construct reads or
 /// writes by a name the source does not spell.
 #[derive(Default)]
-pub(crate) struct Flow {
+pub struct Flow {
     /// By the read's start byte.
-    reads: HashMap<usize, Read>,
+    pub reads: HashMap<usize, Read>,
     /// Scopes where every variable may be read (`get_defined_vars()`, `compact` of a name that is
     /// not a literal, `$$name`, `eval`, `include`).
     pub(crate) reads_all: BTreeSet<u32>,
@@ -124,15 +124,15 @@ impl super::flow::VariableFlow for Flow {
 
 impl Flow {
     /// `flow` as PHP's own, where it is.
-    pub(crate) fn of(flow: &dyn super::flow::VariableFlow) -> Option<&Self> {
+    pub fn of(flow: &dyn super::flow::VariableFlow) -> Option<&Self> {
         flow.as_any().downcast_ref()
     }
 
-    pub(crate) fn read(&self, start: usize) -> Option<&Read> {
+    pub fn read(&self, start: usize) -> Option<&Read> {
         self.reads.get(&start)
     }
 
-    pub(crate) fn reads(&self) -> impl Iterator<Item = &Read> {
+    pub fn reads(&self) -> impl Iterator<Item = &Read> {
         self.reads.values()
     }
 
@@ -2542,8 +2542,7 @@ impl Visitor<'_, '_> {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
 
 #[cfg(test)]
-mod flow_tests;
+pub mod flow_tests;

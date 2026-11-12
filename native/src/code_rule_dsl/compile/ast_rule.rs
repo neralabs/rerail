@@ -1,4 +1,4 @@
-mod semantic;
+pub mod semantic;
 
 use super::compare::{count_bounds, parse_comparison};
 use super::dialect::grammar_gap;
@@ -23,7 +23,7 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
-#[cfg(not(test))]
+#[cfg(not(any(test, feature = "test-hooks")))]
 const AST_RULE_KEYS: &[&str] = &[
     "pattern",
     "kind",
@@ -55,7 +55,7 @@ const AST_RULE_KEYS: &[&str] = &[
     "stored",
 ];
 /// Tests add `testUnknown`, a leaf whose verdict is unknown where its regex matches the node's text.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const AST_RULE_KEYS: &[&str] = &[
     "pattern",
     "kind",
@@ -403,7 +403,7 @@ pub(super) fn relation_rule<'a>(
 /// Compiles a `validate_ast_rule`-checked rule for one grammar. A pattern or kind the grammar
 /// cannot express becomes `Never` and its reason is pushed to `gaps`; `Never` then propagates
 /// the way its logic dictates (drops an `any` branch, empties an `all`, satisfies a `not`).
-pub(crate) fn compile_ast_rule(
+pub fn compile_ast_rule(
     value: &Value,
     language: GrammarDialect,
     path: &str,
@@ -890,7 +890,7 @@ pub(crate) fn compile_ast_rule(
             .expect("value is semantic")?,
         );
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if let Some(regex) = rule.get("testUnknown").and_then(Value::as_str) {
         terms.push(AstMatcher::TestUnknown(Regex::new(regex).map_err(
             |_| invalid(format!("{path}/testUnknown: Parsing text matcher fails.")),
@@ -981,8 +981,7 @@ fn compile_relation<'a>(
     ))
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
 
 /// The gap test a relation to a bare token regex also needs (t31): `None` unless the target is
 /// a bare regex (or `any` alternatives of one) that matches a token the dialect's grammar implies

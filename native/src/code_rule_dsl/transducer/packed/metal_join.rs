@@ -760,7 +760,7 @@ impl Drop for Batch {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     fn rows(n: usize, seed: u64, modulus: i64) -> Vec<i64> {

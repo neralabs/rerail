@@ -100,7 +100,7 @@ fn lang_dialect(lang: Option<&str>) -> Option<GrammarDialect> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn dialect_defaults_to_javascript() {

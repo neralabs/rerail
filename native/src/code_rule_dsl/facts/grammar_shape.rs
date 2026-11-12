@@ -49,7 +49,7 @@ fn named_kinds(grammar: &serde_json::Value, e: &serde_json::Value, inside: bool,
 
 /// The kinds a node in field `field` can be, by tree-sitter-python's grammar, whatever its parent: every rule's
 /// `field`'s content's own named nodes. `None` without the grammar, or for a field it does not name.
-pub(crate) fn field_kinds(field: &str) -> Option<BTreeSet<String>> {
+pub fn field_kinds(field: &str) -> Option<BTreeSet<String>> {
     static KEPT: std::sync::LazyLock<Mutex<HashMap<String, Option<BTreeSet<String>>>>> = std::sync::LazyLock::new(Default::default);
     if let Some(k) = KEPT.lock().unwrap_or_else(|p| p.into_inner()).get(field) {
         return k.clone();
@@ -78,7 +78,7 @@ pub(crate) fn field_kinds(field: &str) -> Option<BTreeSet<String>> {
 
 /// Whether a node of kind `kind` has no named node under it, by tree-sitter-python's grammar (a token, an external,
 /// a rule of anonymous tokens only): its text is a token's. `false` without the grammar.
-pub(crate) fn leaf_kind(kind: &str) -> bool {
+pub fn leaf_kind(kind: &str) -> bool {
     let Some(grammar) = python_grammar() else { return false };
     let Some(rule) = grammar["rules"].get(kind) else { return true };
     let mut out = BTreeSet::new();
@@ -89,7 +89,7 @@ pub(crate) fn leaf_kind(kind: &str) -> bool {
 /// Whether a node of kind `kind` holds at most one node in field `field`, by tree-sitter-python's grammar: the field
 /// once in the kind's rule (its hidden and inlined rules read through), under no repeat. A kind some rule aliases a
 /// node to, or a rule that reads itself, is taken to hold several (so its parts stay joins).
-pub(crate) fn single_field(kind: &str, field: &str) -> bool {
+pub fn single_field(kind: &str, field: &str) -> bool {
     use serde_json::Value;
     static GRAMMAR: std::sync::LazyLock<Option<Value>> = std::sync::LazyLock::new(|| serde_json::from_str(include_str!("../../../grammars/tree-sitter-python/src/grammar.json")).ok());
     static KEPT: std::sync::LazyLock<Mutex<HashMap<(String, String), bool>>> = std::sync::LazyLock::new(Default::default);

@@ -51,7 +51,7 @@ fn key_agrees(key: &Key, oracle: &Json) -> bool {
 }
 
 /// Whether Rerail's value is the one PHP recorded (`generate_php.php`'s tagged encoding).
-pub(crate) fn agrees(value: &Value, oracle: &Json) -> bool {
+pub fn agrees(value: &Value, oracle: &Json) -> bool {
     match (value, oracle[0].as_str()) {
         (Value::None, Some("null")) => true,
         (Value::Bool(value), Some("bool")) => oracle[1].as_bool() == Some(*value),

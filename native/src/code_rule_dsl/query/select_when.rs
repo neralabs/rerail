@@ -195,7 +195,7 @@ pub(in crate::code_rule_dsl) fn answer<L>(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::model::RegexSource;
     use regex::Regex;

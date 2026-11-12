@@ -6,13 +6,13 @@
 //! program its scripts and template expressions make (`view`), each a document with its own
 //! grammar and spans; the program's text maps back to the `.vue` bytes it came from.
 #[cfg(test)]
-mod oracle_tests;
-mod sfc;
-mod template;
-pub(crate) mod view;
+pub mod oracle_tests;
+pub mod sfc;
+pub mod template;
+pub mod view;
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::scope::ScopeTable;
     use crate::code_rule_dsl::scope::usage::{BindingId, Usage};

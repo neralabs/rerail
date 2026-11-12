@@ -74,7 +74,7 @@ pub(crate) fn ignore_file_directory(path: &str) -> Option<&str> {
 
 /// An ECMA file's nearest `package.json`, as `file.package` and the module system read it.
 #[derive(Clone, Debug)]
-pub(crate) struct Manifest {
+pub struct Manifest {
     /// The manifest's directory, relative to the workspace root (`""` at the root).
     folder: String,
     package_type: PackageType,
@@ -344,14 +344,14 @@ impl Manifest {
     }
 
     /// Whether the manifest's `private` is `true`.
-    pub(crate) fn is_private(&self) -> bool {
+    pub fn is_private(&self) -> bool {
         self.private
     }
 
     /// Whether npm publishes the file at `path` (workspace-relative), as eslint-plugin-n's
     /// `getNpmignore` reads it (`NpmPublication`); `None` where a host sent no fact, or for a
     /// path outside the manifest's folder.
-    pub(crate) fn publishes(&self, path: &str) -> Option<bool> {
+    pub fn publishes(&self, path: &str) -> Option<bool> {
         match &self.publication {
             Publication::Unread => None,
             Publication::Member(published) => Some(*published),
@@ -370,7 +370,7 @@ impl Manifest {
     /// Whether the file at `path` (workspace-relative) is in its Next app's server graph; `None`
     /// where the manifest carries none (it names no `next`, nothing read the graph, or the
     /// package has none).
-    pub(crate) fn in_server_graph(&self, path: &str) -> Option<bool> {
+    pub fn in_server_graph(&self, path: &str) -> Option<bool> {
         match &self.server_graph {
             ServerGraph::Unread => None,
             ServerGraph::Member(member) => Some(*member),
@@ -410,7 +410,7 @@ impl Manifest {
     /// `files` (its non-empty strings, where an array) and `main` (where a string), which with
     /// the folder's ignore files (`with_ignore_files`, none until then) decide which files npm
     /// publishes; `private` when it is `true`.
-    pub(crate) fn parse(folder: String, bytes: &[u8]) -> Self {
+    pub fn parse(folder: String, bytes: &[u8]) -> Self {
         let manifest = (bytes.len() <= MAX_MANIFEST_BYTES)
             .then(|| serde_json::from_slice::<Value>(bytes).ok())
             .flatten();
@@ -561,7 +561,7 @@ impl Manifest {
     }
 
     /// The `package` fact hosts send for this manifest.
-    pub(crate) fn to_wire(&self) -> Value {
+    pub fn to_wire(&self) -> Value {
         let mut wire = Map::new();
         wire.insert("folder".to_owned(), Value::from(self.folder.as_str()));
         wire.insert("type".to_owned(), Value::from(self.package_type.as_str()));
@@ -592,28 +592,28 @@ impl Manifest {
         Value::Object(wire)
     }
 
-    pub(crate) fn folder(&self) -> &str {
+    pub fn folder(&self) -> &str {
         &self.folder
     }
 
-    pub(crate) fn package_type(&self) -> PackageType {
+    pub fn package_type(&self) -> PackageType {
         self.package_type
     }
 
-    pub(crate) fn bin(&self) -> impl Iterator<Item = &str> {
+    pub fn bin(&self) -> impl Iterator<Item = &str> {
         self.bin.iter().map(String::as_str)
     }
 
-    pub(crate) fn node_version(&self) -> Option<&str> {
+    pub fn node_version(&self) -> Option<&str> {
         self.node_version.as_deref()
     }
 
-    pub(crate) fn dependencies(&self) -> impl Iterator<Item = &str> {
+    pub fn dependencies(&self) -> impl Iterator<Item = &str> {
         self.dependencies.iter().map(String::as_str)
     }
 
     /// The digest reuse keys carry for this manifest.
-    pub(crate) fn digest(&self) -> &[u8; 32] {
+    pub fn digest(&self) -> &[u8; 32] {
         &self.digest
     }
 
@@ -677,7 +677,7 @@ impl Manifest {
         }
     }
 
-    pub(crate) fn jsx_import_source(&self) -> Option<&str> {
+    pub fn jsx_import_source(&self) -> Option<&str> {
         self.jsx_import_source.as_deref()
     }
 }
@@ -740,7 +740,7 @@ pub(crate) fn resolve_target(folder: &str, target: &str) -> Option<String> {
 
 /// The directory a file set's path holds a manifest for (`pkg` for `pkg/package.json`, `""` for
 /// a root one), if any.
-pub(crate) fn manifest_directory(path: &str) -> Option<&str> {
+pub fn manifest_directory(path: &str) -> Option<&str> {
     path.strip_suffix("/package.json")
         .or_else(|| (path == "package.json").then_some(""))
 }
@@ -748,7 +748,7 @@ pub(crate) fn manifest_directory(path: &str) -> Option<&str> {
 /// The nearest manifest at or above `path` in a file set (a workspace, a repository snapshot)
 /// whose manifests `manifest` returns by directory, as the file carries it (`Manifest::for_file`):
 /// the one a host reading the same files on disk would send.
-pub(crate) fn manifest_in<'m>(
+pub fn manifest_in<'m>(
     path: &str,
     manifest: impl Fn(&str) -> Option<&'m Arc<Manifest>>,
 ) -> Option<crate::code_rule_dsl::language::FileManifest> {
@@ -805,7 +805,7 @@ fn ignore_file_on_disk(directory: &Path, name: &str) -> Option<String> {
 /// at or above a file's directory, never above the root (the workspace's). Every ingestion path
 /// that reads files on disk derives `package` here. With `server_graph`, a manifest naming
 /// `next` carries its package's server graph, read on disk (`module_graph::on_disk`).
-pub(crate) struct Manifests {
+pub struct Manifests {
     root: PathBuf,
     /// `root` with its symlinks resolved, `None` where it cannot be: a directory is read only
     /// where it resolves below it, so a symlinked folder pointing outside the root holds no
@@ -816,7 +816,7 @@ pub(crate) struct Manifests {
 }
 
 impl Manifests {
-    pub(crate) fn new(root: impl Into<PathBuf>) -> Self {
+    pub fn new(root: impl Into<PathBuf>) -> Self {
         let root = root.into();
         Self {
             canonical_root: std::fs::canonicalize(&root).ok(),
@@ -827,20 +827,20 @@ impl Manifests {
     }
 
     /// Manifests that carry their package's server graph where one is read.
-    pub(crate) fn reading_server_graphs(mut self, server_graph: bool) -> Self {
+    pub fn reading_server_graphs(mut self, server_graph: bool) -> Self {
         self.server_graph = server_graph;
         self
     }
 
     /// `file`'s nearest manifest, as the file carries it (`Manifest::for_file`); `None` without
     /// one, or for a file outside the root.
-    pub(crate) fn of_file(&mut self, file: &Path) -> Option<Arc<Manifest>> {
+    pub fn of_file(&mut self, file: &Path) -> Option<Arc<Manifest>> {
         let manifest = self.of_directory(file.parent()?)?;
         Some(Manifest::for_file(&manifest, &self.folder(file)))
     }
 
     /// `path` relative to the root, `/`-separated: a file's workspace-relative path.
-    pub(crate) fn relative(&self, path: &Path) -> String {
+    pub fn relative(&self, path: &Path) -> String {
         self.folder(path)
     }
 
@@ -911,7 +911,7 @@ impl Manifests {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::Manifest;
     use crate::code_rule_dsl::semver::{Range, tally};
     use serde_json::json;
@@ -1003,15 +1003,15 @@ impl crate::code_rule_dsl::language::ProjectManifest for Manifest {
 
 /// A file without a `package.json`: its Node range eslint-plugin-n's default (`node_range_is_subset_of`).
 #[derive(Debug)]
-pub(crate) struct NoManifest;
+pub struct NoManifest;
 
 /// A request file's `package` (`language::set_manifest_reader`).
-pub(crate) fn read_wire(value: &Value, at: &str) -> Result<crate::code_rule_dsl::language::FileManifest> {
+pub fn read_wire(value: &Value, at: &str) -> Result<crate::code_rule_dsl::language::FileManifest> {
     Manifest::from_wire(value, at).map(|manifest| Arc::new(manifest) as crate::code_rule_dsl::language::FileManifest)
 }
 
 /// The manifest of a file the workspace holds, where it is ECMA's.
-pub(crate) fn of_file(manifest: &crate::code_rule_dsl::language::FileManifest) -> Option<&Manifest> {
+pub fn of_file(manifest: &crate::code_rule_dsl::language::FileManifest) -> Option<&Manifest> {
     manifest.as_any().downcast_ref()
 }
 
