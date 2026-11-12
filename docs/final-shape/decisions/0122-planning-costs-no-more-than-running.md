@@ -1,7 +1,7 @@
 # 0122: Planning costs no more than running, and a first wave driven by changes
 
 Status: decided and built (2026-11-12): §1 (`plan.rs`, `SEARCH_WORK`, `plan_rule_reused`, `drive`) and §2
-(`plan.rs`, `reads_change`; `native/setfix.rs`, `Line::KeptOld`), both on by default. §4 is open.
+(`plan.rs`, `reads_change`; `native/setfix.rs`, `Line::KeptOld`), both on by default. §4 is taken up by 0123.
 
 ## Intro
 
@@ -126,7 +126,7 @@ Without the `__grp` seed, the first test fails as it should: the session loses `
   `RERAIL_WAVE0=kept`, and asserts that it maintained nothing. The older session tests still compare against a
   plain full run.
 
-## 4. Open: statistics at a session's first edit
+## 4. Statistics at a session's first edit (taken up by 0123)
 
 At step 06, the first edit of the session, statistics cost 10.85 s against 0.6 s of joins:
 

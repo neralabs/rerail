@@ -5567,23 +5567,43 @@ fn run_observed(
                             // made when a stratum first plans with it (decision 0101 §4), as the eager path below would
                             // make them. Most strata a step reaches are quiet or join an empty delta and never do.
                             let measured_before = held.as_ref().and_then(|h| cell.as_ref().and_then(|k| k.measured(&rel, h)).filter(|m| m.2 == tested).cloned());
-                            if patched.is_none() && measured_before.is_none() && lazy_kept
+                            // Decision 0123: made only when a planning round requests them, measured before or not.
+                            if patched.is_none() && lazy_kept
                                 && let Some(h) = &held
                             {
-                                let maintains = rel.strip_suffix("__old").is_some_and(|of| part.program.decls.contains_key(&format!("{of}__del")));
+                                // Every relation this run maintains has its inserts (`r__ins`); one derived again has none.
+                                let maintains = rel.strip_suffix("__old").is_some_and(|of| part.program.decls.contains_key(&format!("{of}__ins")));
                                 let (h2, source2, tested2, rel2) = (Arc::clone(h), Arc::clone(&source), tested.clone(), rel.clone());
                                 let wanted = constants.get(rel.as_str()).cloned();
                                 let lazy = crate::code_rule_dsl::logic::plan::LazyStats::new(move || {
                                     let as_cols = |m: &[(String, i64, i64, i64, i64)]| m.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])).collect::<Vec<_>>();
                                     // Counted from the engine's postings of it, and kept by this run's delta (decision 0096
                                     // step 4), if this run maintains it; else, or with no index to count from, measured.
+                                    // Counted in the form patched by delta: from its postings where every column has them, else
+                                    // from its rows (its indexes dropped once no later stratum read it), as the run that first
+                                    // maintained it counted it before decision 0123.
                                     if maintains {
-                                        let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel2}"));
-                                        if let Some(stats) = super::statkeep::RelStats::from_postings(source2.columns(), h2.rows() as i64, &mut |c, visit| h2.each_posting(c, visit)) {
+                                        let names = source2.columns();
+                                        let stats = if h2.posts_all() {
+                                            let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel2}"));
+                                            super::statkeep::RelStats::from_postings(names.clone(), h2.rows() as i64, &mut |c, visit| h2.each_posting(c, visit))
+                                        } else {
+                                            let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel2} from its rows"));
+                                            h2.live_rows().map(|live| {
+                                                let mut stats = super::statkeep::RelStats::paired(names.clone());
+                                                stats.documents(&live, names.len(), 1);
+                                                stats
+                                            })
+                                        };
+                                        if let Some(stats) = stats {
                                             let counts = constant_counts(Some(&tested2), source2.as_ref());
                                             let p = retain::Patched { at: Arc::as_ptr(&h2) as *const u8 as usize, stats, counts: counts.clone(), tested: tested2.clone() };
                                             return (as_cols(&p.stats.statistics(&|_| true)), counts, LazyKept::Patched(p));
                                         }
+                                    }
+                                    // Measured by an earlier run of the same relation: as it was.
+                                    if let Some((measured, counts, tested)) = measured_before {
+                                        return (as_cols(&measured), counts.clone(), LazyKept::Measured(measured, counts, tested));
                                     }
                                     let _m = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel2}"));
                                     let measured = syntax::statistics(source2.as_ref());
@@ -5973,11 +5993,14 @@ fn run_observed(
                             // finds what was measured of it by the same relation, or binds it lazily, and it is
                             // counted once it changes (O125 step 1: 238 counts instead of 521).
                             None if std::ptr::eq(Arc::as_ptr(old), Arc::as_ptr(new)) => None,
-                            // Counted here once, the first run it is maintained, and patched by delta from then on. Left
-                            // to next run's lazy statistics instead, a relation is measured again at every step it is
-                            // planned with (a measure is not kept by delta): O125 steps 06-08 took 2.5, 2.5 and 3.0 s
-                            // so, against 5.6, 0.7 and 0.2 s counted here.
-                            None if new.delta_since(old).is_some() => new.live_rows().map(|live| {
+                            // Before decision 0123, counted here once, the first run it is maintained, and patched by
+                            // delta from then on: a lazy statistic was then measured, not counted, and measured again at
+                            // every step it was planned with (O125 steps 06-08: 2.5, 2.5 and 3.0 s so, against 5.6, 0.7
+                            // and 0.2 s counted here). A lazy statistic of a maintained relation is counted now.
+                            // Not counted here (decision 0123): the next run counts it from its postings when a round
+                            // requests it, and patches it by delta from then on. `RERAIL_COUNT_AT_END`: counted here,
+                            // the first run it is maintained, as before (a measurement aid).
+                            None if count_at_end() && new.delta_since(old).is_some() => new.live_rows().map(|live| {
                                 let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}"));
                                 let names: Vec<String> = (0..*width).map(|c| super::sql_col(&name, c)).collect();
                                 // From its postings, else its rows.
@@ -6431,6 +6454,13 @@ fn constants_tested(prog: &front::Program) -> HashMap<&str, BTreeSet<(usize, i64
         }
     }
     by
+}
+
+/// `RERAIL_COUNT_AT_END`: a maintained relation's statistics counted at the end of the run that first maintains it,
+/// whether or not a run plans with them (before decision 0123; a measurement aid).
+fn count_at_end() -> bool {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_COUNT_AT_END").is_some());
+    *ON
 }
 
 fn constant_counts(tested: Option<&BTreeSet<(usize, i64)>>, source: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Vec<(String, i64, i64)> {

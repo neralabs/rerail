@@ -3144,6 +3144,11 @@ impl InRel {
         });
         true
     }
+    /// Whether every column has its postings (`each_posting`): what its statistics are counted from without reading
+    /// its rows (decision 0123: else they are counted from its rows, not begun from postings and then dropped).
+    pub fn posts_all(&self) -> bool {
+        self.view.is_none() && (0..self.k).all(|c| self.chains.iter().any(|ix| ix.cols.first() == Some(&c) && ix.rows() >= self.n))
+    }
     /// Its live rows, row-major.
     pub fn live_rows(&self) -> Option<Vec<i64>> {
         if self.view.is_some() {
