@@ -3793,6 +3793,19 @@ that changed.
 **Seen.** About 1,880 components a step: spec text, indexes, joins, survivors, close. That is 2.65 s at step 01
 and 0.85 s cold, for a program of 680 rules.
 
+**Measured (2026-11-12): the cost of a component.** With `RERAIL_KEEP_EMPTY_JOINS=1` the strata held empty
+(about 2,000-2,400 a step) open as components: steps 01-03 go from 270.3 G to 355.4 G, about 13 M instructions a
+component that moves no rows. At about 1,858 opened a step that is some 24 G of a step's 90 G. In samples, an
+opened empty component is 54% join-order search, 20% opening its spec, 18% building indexes.
+
+What the levers can take, measured as ceilings:
+- **Search.** Ordering every delta-driven piece greedily (no search at all) takes steps 01-03 from 270.3 G to
+  258.5 G (-4.4%). In samples the search is about 21% of a warm step's CPU: it is memory-bound, so it costs more
+  time than its instructions say. Instructions alone undersell it.
+- **0101 §3 (one component per base stratum).** It removes the open and index cost of the pieces it merges, not
+  their planning: about 40% of 13 M, for about 1,000 fewer components a step, so at most about 5 G a step (6%).
+  Its engine part is gates per component, emitted in the spec (a program with gates is refused by maintenance).
+
 **Closure:** a component's spec and compiled joins are kept with its kept relations and reused while its plan
 is (O-warm-replan). Only what a component does with its delta is paid each step.
 
