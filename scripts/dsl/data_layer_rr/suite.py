@@ -493,6 +493,9 @@ class Suite:
             shared = importlib.import_module('scripts.lint_lib.serverplan_facts')
             originals.update(codes({'serverplan_facts': shared}))
         for check, module in self.modules.items():
+            if check == 'async_patterns':
+                from async_pattern_port import install
+                install(self,module)
             if check == 'async_executor':
                 from executor_port import install
                 install(self,module)

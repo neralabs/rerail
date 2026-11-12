@@ -29,9 +29,9 @@ def scan(suite, entry, module, args):
         except (OSError, UnicodeDecodeError) as caught:
             error, source = caught, ''
         options.update(ioError=str(isinstance(error, OSError)).lower(), decodeError=str(isinstance(error, UnicodeDecodeError)).lower())
-        # Path components remain input data: exclusion, scope, and fallback decisions are native.
-        logical = path.as_posix().lstrip('/') if path.is_absolute() else path.as_posix()
-        files = [dict(path=logical, source=source)]
+        # Workspace include patterns select the transport buffer. The original path
+        # remains native input for filename selection, scope, and fallback decisions.
+        files = [dict(path='api/_ap_single_input.py', source=source)]
     rows = suite.native('async_patterns', entry, files, options)
     for row in rows:
         if row['code']=='AP_AST_REQUIRED':

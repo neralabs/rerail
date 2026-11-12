@@ -6,6 +6,7 @@ apf_directory_skip(i) :- option_item("apCandidateRelative",i,p),(prefix("__pycac
 .decl apf_bare_py(path:symbol)
 apf_bare_py(p) :- apf_candidate(_,p),(p=".py";suffix("/.py",p)).
 apf_bare_py(p) :- option_item("apBatchPaths",_,p),(p=".py";suffix("/.py",p)).
+apf_bare_py(p) :- option("originalPath",p),(p=".py";suffix("/.py",p)).
 .decl apf_duplicate(i:number)
 apf_duplicate(i) :- apf_candidate(i,p),apf_candidate(j,p),j<i.
 .violation AsyncPatternFile(at:span,ordinal:number,path:symbol) code "AP_FILE" "selected async-pattern file"

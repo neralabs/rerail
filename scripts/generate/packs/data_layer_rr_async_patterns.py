@@ -81,7 +81,7 @@ ap_call_line(n, l) :- ap_native_enabled(), ap_call(n, _), line(n, l).
 ap_receiver_print(c, printed) :- ap_native_enabled(), call_receiver_text(c, printed).
 
 .decl ap_document(d: number, path: symbol)
-ap_document(d, p) :- doc(d, p, _), option("entryPoint", "lint_file"), file_name(d, n), suffix(".py", n), !syntax_error(d, _, _).
+ap_document(d, p) :- doc(d, p, _), option("entryPoint", "lint_file"), option("originalPath", actual), suffix(".py", actual), !apf_bare_py(actual), !syntax_error(d, _, _).
 ap_document(d, p) :- doc(d, p, _), !option("entryPoint", _), ap_scan_root(root), prefix(cat(root, "/"), p), file_name(d, n), suffix(".py", n), !ap_hidden(d), !syntax_error(d, _, _).
 .decl ap_hidden(d: number)
 ap_hidden(d) :- path_part(d, p), (p = ".git" ; p = ".venv" ; p = "venv" ; p = "__pycache__" ; p = "tmp").

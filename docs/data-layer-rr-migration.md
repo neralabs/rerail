@@ -3892,3 +3892,19 @@ The same thirteen direct-file inputs pass through the snapshot API after bare-fi
 Both APIs still pass all eleven original tests, including all eight positive observations.
 The failing workspace replay is retained in `rr-async-pattern-file-workspace-red-finalfcce.json.gz`.
 Final admission tests now require every family, retained edits, and effective controls. Their verifier is not implemented yet.
+
+### 2026-11-11 — Direct-file parity green and retained edits
+
+The native filename predicate now rejects the bare basename `.py` for direct-file requests.
+The direct-file transport supplies a stable `api` buffer and keeps the caller's path as native predicate input.
+This prevents workspace include patterns from filtering temporary absolute input paths.
+Non-Python suffixes, exclusion patterns, owner scope, and fallback classification still use the original path.
+
+Both APIs pass all 41 filesystem cases, all nineteen production cases, and all 38 earlier batch-two inputs.
+Both APIs also pass the eleven unchanged original tests, including all twelve observations and eight positive observations.
+The original suite now installs native configuration and the complete async-pattern adapter.
+Three persistent edit sequences pass all twenty steps per API, including unchanged inputs, aliases, links, deletions, and syntax failures.
+These are bounded fixture replays. No repository-wide cold execution or engine rebuild occurred.
+
+Helper, component, CLI, supplemental reporter, and removal-control acceptance is still running on this final rule revision.
+The rule remains a draft, with eighteen admissions overall.
