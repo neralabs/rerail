@@ -389,6 +389,23 @@ describe("rerail support-bundle", () => {
     expect(bundle.problems).toEqual([]);
   });
 
+  // Only the main daemon opens a store in the machine-wide folder; every other process's audits fail there.
+  it.each([
+    { build: "a package outside the home's versions", at: (world: Fixture) => join(world.root, "install", "node_modules", "@neralabs", "rerail"), managed: false },
+    { build: "a build in a Git checkout", at: (world: Fixture) => join(world.repo, "node_modules", "@neralabs", "rerail"), managed: false },
+    { build: "the managed install", at: (world: Fixture) => join(world.home, "versions", "9.9.9", "node_modules", "@neralabs", "rerail"), managed: true },
+  ])("counts a RERAIL_CONTENT_STORE_PATH in the machine-wide store folder as a store for the managed install alone: $build", async ({ at, managed }) => {
+    const world = await fixture();
+    // The machine-wide store folder, as the engine's mainContentStoreDirectory names it.
+    process.env.RERAIL_CONTENT_STORE_PATH = join(homedir(), ".cache", "rerail", "content.sqlite");
+    const current = activate(world, packageAt(at(world)));
+    const { bundle } = await runFrom(world, current);
+    expect(bundle.rerail.managedInstall).toBe(managed);
+    expect(bundle.problems).toEqual(managed ? [] : [
+      expect.stringMatching(/^install: RERAIL_CONTENT_STORE_PATH names .+, in the machine-wide content store directory .+, which only the main Rerail daemon opens$/u),
+    ]);
+  });
+
   it("says Rerail is the managed install when it runs from a version under the home", async () => {
     const world = await fixture();
     const current = activate(world, packageAt(join(world.home, "versions", "9.9.9", "node_modules", "@neralabs", "rerail")));

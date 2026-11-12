@@ -28,7 +28,13 @@ import {
 } from "../engine/catalog/repository-registry.js";
 import { activeCoreVersion, loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { listRepositoryRules } from "../engine/catalog/rule-configuration.js";
-import { contentStoreOverride, type RerailBuild, resolveRerailBuild } from "../engine/native/rerail-build.js";
+import {
+  contentStoreOverride,
+  isInMainContentStoreDirectory,
+  mainContentStoreDirectory,
+  type RerailBuild,
+  resolveRerailBuild,
+} from "../engine/native/rerail-build.js";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { sensitiveByName } from "../engine/path-boundary.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
@@ -519,18 +525,25 @@ async function readDaemon(home: string, busyWaitMs: number): Promise<SupportBund
 }
 
 /**
- * The build the package at `packageRoot` is. The managed installation is a version under the home's `versions/`, which
- * `current` usually points at; `current` can also point at a checkout or another package. One that is neither has no
- * content store of its own, so no rule runs, and that throws; unless `RERAIL_CONTENT_STORE_PATH` names a store, which
- * `contentStorePath` takes before it asks which build runs.
+ * The build the package at `packageRoot` is, or an error that says why it has no content store its rules can open. The
+ * managed installation is a version under the home's `versions/`, which `current` usually points at; `current` can also
+ * point at a checkout or another package, and one that is neither has no store of its own. `RERAIL_CONTENT_STORE_PATH`
+ * names a store for any build, as `contentStorePath` takes it first, except a file in the machine-wide store directory:
+ * `assertContentStoreOwner` lets only the main daemon open that, so there it counts for the managed installation alone.
  */
 function installBuild(packageRoot: string, home: string): RerailBuild | undefined {
+  const override = contentStoreOverride();
+  let build: RerailBuild | undefined;
   try {
-    return resolveRerailBuild(packageRoot, { ...process.env, RERAIL_HOME: home });
+    build = resolveRerailBuild(packageRoot, { ...process.env, RERAIL_HOME: home });
   } catch (error) {
-    if (contentStoreOverride() !== undefined) return undefined;
-    throw error;
+    if (override === undefined) throw error;
   }
+  if (override === undefined || build?.kind === "main" || !isInMainContentStoreDirectory(override)) return build;
+  throw new Error(
+    `RERAIL_CONTENT_STORE_PATH names ${override}, in the machine-wide content store directory ` +
+      `${mainContentStoreDirectory()}, which only the main Rerail daemon opens`,
+  );
 }
 
 function emptyRepository(state: string, git: boolean): SupportBundle["repository"] {

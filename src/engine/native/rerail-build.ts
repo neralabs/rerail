@@ -1,6 +1,6 @@
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { loadNativeBinding } from "./native.js";
 import { defaultRerailHome, VERSIONS_DIR } from "../storage/rerail-home.js";
 import { PACKAGE_ROOT, RERAIL_PACKAGE_NAME } from "../package-root.js";
@@ -68,6 +68,12 @@ export function isMainRerailBuild(): boolean {
 /** The directory holding the machine-wide content store that only the main build opens. */
 export function mainContentStoreDirectory(): string {
   return join(homedir(), ".cache", "rerail");
+}
+
+/** Whether `storePath` lies in the machine-wide content store directory, which only the main daemon opens. */
+export function isInMainContentStoreDirectory(storePath: string): boolean {
+  const path = relative(resolve(mainContentStoreDirectory()), resolve(storePath));
+  return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
 }
 
 /** The content store `RERAIL_CONTENT_STORE_PATH` names, absolute, or undefined when it names none. */
