@@ -90,6 +90,19 @@ Twenty-five new production contracts pass against the source and currently fail 
 Their [red receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-production-red.json.gz) defines the next implementation step.
 The admission inventory remains twenty-one rules.
 
+## Unresolved-reference production integration
+
+All twenty-five production contracts now pass through snapshot and workspace execution.
+The policy uses the existing `plugin-production.rr` discovery and loader. Native APIs, fact rows, and reports read one shared detector-event relation.
+Owner-relative paths stay attached to events, so aliases retain separate facts and findings while sharing their physical parse.
+The policy preserves static `api` and `impl` roots, framework exclusions, triggers, syntax-failure behavior, full fact payloads, and reporter order.
+The [production receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-production-native.json.gz) also compares each typed report with the default production findings.
+No engine code or optional execution mode was added.
+
+The full tooling suite now passes 720 tests in 55.083 seconds.
+The 74 historical inputs have been source-recorded again. Their native replay and retained workspace sequences are running next.
+The production change requires a final replay of the original and supplemental contracts before admission.
+
 ## Dynamic loading: complete original snapshot audit
 
 The complete owned corpus contains 315 original cases across five modules. Native snapshot execution passes 314.

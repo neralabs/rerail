@@ -1747,7 +1747,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/unresolved-forward-refs.rr",
-      "sha256": "df597b81a45b62c392669975704792df0fa9fb78c1582ce88ccc2b2d21616db7",
+      "sha256": "f6300601706430d4f32a08328753a326257f2d8c7e4c1e8e2d11caa5832d889f",
       "origin": "authored",
       "upstreamPath": "scripts/lint_unresolved_forward_refs.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -3952,7 +3952,7 @@
       "legacySha256": "084da92045c5621c0305bfaeee185abc331c46a6e1ad45de61e89ee3c382d231",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/unresolved-forward-refs.rr",
-      "ruleSha256": "df597b81a45b62c392669975704792df0fa9fb78c1582ce88ccc2b2d21616db7"
+      "ruleSha256": "f6300601706430d4f32a08328753a326257f2d8c7e4c1e8e2d11caa5832d889f"
     },
     {
       "check": "classvar_check",

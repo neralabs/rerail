@@ -115,15 +115,11 @@ uf_problem(p, problem) :- uf_is_problem(p, i, problem), i = min j : { uf_is_prob
 uf_problem(p, problem) :- !uf_is_problem(p, _, _), uf_eq_problem(p, i, problem),
     i = min j : { uf_eq_problem(p, j, _) }.
 .decl uf_active(d: number)
-uf_active(d) :- doc(d, _, _), option("entryPoint", "analyze_file"), option("suffix", ".py"),
+uf_active(d) :- pp_doc(d, _), option("entryPoint", "analyze_file"), option("suffix", ".py"),
     option("isFile", "true"), !option("relativePath", "true").
-uf_active(d) :- doc(d, buffer, _), option("entryPoint", "cli_scan"),
+uf_active(d) :- pp_doc(d, buffer), option("entryPoint", "cli_scan"),
     option_item("logicalFiles", i, buffer), option_item("fileSuffixes", i, ".py"), !option_item("relativeFiles", _, buffer).
-uf_active(d) :- doc(d, _, _), !option("entryPoint", _), file_name(d, name), suffix(".py", name),
-    doc(d, path, _), (prefix("api/", path) ; prefix("impl/", path)), !uf_hidden(d).
-.decl uf_hidden(d: number)
-uf_hidden(d) :- path_part(d, p),
-    (p = ".git" ; p = ".venv" ; p = "venv" ; p = "__pycache__" ; p = "tmp" ; p = "tests" ; p = "test").
+uf_active(d) :- pp_run(), pp_doc(d,_), pp_fact_present(d).
 .decl uf_context(n: node, name: symbol)
 .decl uf_function_name(f: node, name: symbol)
 uf_function_name(f, @nfkc(raw)) :- def_name(f, raw).
@@ -137,11 +133,14 @@ uf_parent(n, p) :- ast_parent(n, p).
 uf_bad(n, function, problem) :- uf_field(n), uf_parent(n, parent),
     !uf_safe_str(parent), !uf_safe_none(parent), !uf_safe_detection(parent), !uf_fallback(n),
     uf_problem(parent, problem), uf_context(n, function).
-.violation Unresolved(at: node, function: symbol, problem: symbol, source: symbol, ordinal: number)
+.decl uf_event(path:symbol,line:number,function:symbol,problem:symbol,source:symbol,ordinal:number)
+uf_event(p,l,function,problem,snippet,ordinal) :- uf_bad(n, function, problem), visit_index(n, ordinal),
+    docof(n,d),pp_doc(d,p),uf_active(d),!syntax_error(d,_,_),source(d,sp),text(sp,full),contains(".annotation",full),
+    line(n,l),split_line(d,l,raw),uf_trim(trim),snippet=@replace_all(raw,trim,"").
+.violation Unresolved(at: span, function: symbol, problem: symbol, source: symbol, ordinal: number)
     code "unresolved_forward_ref" "{function}(): {problem}"
-Unresolved(n, function, problem, snippet, ordinal) :- uf_bad(n, function, problem), visit_index(n, ordinal),
-    docof(n, d), uf_active(d), !syntax_error(d, _, _), source(d, sp), text(sp, full), contains(".annotation", full),
-    line(n, l), split_line(d, l, raw), uf_trim(trim), snippet = @replace_all(raw, trim, "").
+Unresolved(@place(p,l),f,problem,snippet,i) :- uf_event(p,l,f,problem,snippet,i),pp_api().
+Unresolved(@place(p,l),f,problem,snippet,i) :- uf_event(p,l,f,problem,snippet,i),pp_run(),!option("entryPoint","_production_contract").
 .violation ReadFailure(at: span) code "UF_READ_ERROR" "Source file could not be read"
 ReadFailure(@place("input.py", 1)) :- option("entryPoint", entry),
     (entry = "analyze_file" ; entry = "AnnotationUsageFinder.analyze"), option("readError", "true").
@@ -173,4 +172,16 @@ uf_cli_hidden(i) :- option_item("cliRelativePaths", i, path),
 CliFile(@place("cli", 1), i) :- option("entryPoint", "cli_selection"), option_item("cliModes", i, "direct").
 CliFile(@place("cli", 1), i) :- option("entryPoint", "cli_selection"), option_item("cliModes", i, "recursive"),
     option_item("cliNames", i, name), suffix(".py", name), !uf_cli_hidden(i).
-''' + supplied_ast() + '\n#include "data-layer/unresolved-api.rr"\n' + cli_suffix(source)
+''' + supplied_ast() + '\n#include "data-layer/unresolved-api.rr"\n' + cli_suffix(source) + production_suffix(original)
+
+
+def production_suffix(original):
+    plugin=original.unresolved_forward_refs_plugin(Path('.'))
+    config=dict(name=plugin.name,enforcement=plugin.enforcement,description=plugin.description,
+                findingSeverity='hard-fail',extractor=original.UNRESOLVED_FORWARD_REFS_EXTRACTOR.extractor_id,
+                parser=original.UNRESOLVED_FORWARD_REFS_EXTRACTOR.parser_mode,scope='static',include_tests='false',fact_kind='list',relative_reports='true')
+    text='#include "data-layer/unresolved-production.rr"\n'
+    text+=''.join('pp_config('+json.dumps(k)+','+json.dumps(v)+').\n'for k,v in config.items())
+    text+=''.join('pp_static_root('+json.dumps(str(p))+').\n'for p in plugin.file_scope.directories)
+    text+=''.join('pp_trigger('+json.dumps(p)+').\n'for p in original.UNRESOLVED_FORWARD_REFS_EXTRACTOR.source_triggers)
+    return text

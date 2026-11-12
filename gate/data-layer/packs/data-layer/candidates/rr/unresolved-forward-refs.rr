@@ -113,15 +113,11 @@ uf_problem(p, problem) :- uf_is_problem(p, i, problem), i = min j : { uf_is_prob
 uf_problem(p, problem) :- !uf_is_problem(p, _, _), uf_eq_problem(p, i, problem),
     i = min j : { uf_eq_problem(p, j, _) }.
 .decl uf_active(d: number)
-uf_active(d) :- doc(d, _, _), option("entryPoint", "analyze_file"), option("suffix", ".py"),
+uf_active(d) :- pp_doc(d, _), option("entryPoint", "analyze_file"), option("suffix", ".py"),
     option("isFile", "true"), !option("relativePath", "true").
-uf_active(d) :- doc(d, buffer, _), option("entryPoint", "cli_scan"),
+uf_active(d) :- pp_doc(d, buffer), option("entryPoint", "cli_scan"),
     option_item("logicalFiles", i, buffer), option_item("fileSuffixes", i, ".py"), !option_item("relativeFiles", _, buffer).
-uf_active(d) :- doc(d, _, _), !option("entryPoint", _), file_name(d, name), suffix(".py", name),
-    doc(d, path, _), (prefix("api/", path) ; prefix("impl/", path)), !uf_hidden(d).
-.decl uf_hidden(d: number)
-uf_hidden(d) :- path_part(d, p),
-    (p = ".git" ; p = ".venv" ; p = "venv" ; p = "__pycache__" ; p = "tmp" ; p = "tests" ; p = "test").
+uf_active(d) :- pp_run(), pp_doc(d,_), pp_fact_present(d).
 .decl uf_context(n: node, name: symbol)
 .decl uf_function_name(f: node, name: symbol)
 uf_function_name(f, @nfkc(raw)) :- def_name(f, raw).
@@ -135,11 +131,14 @@ uf_parent(n, p) :- ast_parent(n, p).
 uf_bad(n, function, problem) :- uf_field(n), uf_parent(n, parent),
     !uf_safe_str(parent), !uf_safe_none(parent), !uf_safe_detection(parent), !uf_fallback(n),
     uf_problem(parent, problem), uf_context(n, function).
-.violation Unresolved(at: node, function: symbol, problem: symbol, source: symbol, ordinal: number)
+.decl uf_event(path:symbol,line:number,function:symbol,problem:symbol,source:symbol,ordinal:number)
+uf_event(p,l,function,problem,snippet,ordinal) :- uf_bad(n, function, problem), visit_index(n, ordinal),
+    docof(n,d),pp_doc(d,p),uf_active(d),!syntax_error(d,_,_),source(d,sp),text(sp,full),contains(".annotation",full),
+    line(n,l),split_line(d,l,raw),uf_trim(trim),snippet=@replace_all(raw,trim,"").
+.violation Unresolved(at: span, function: symbol, problem: symbol, source: symbol, ordinal: number)
     code "unresolved_forward_ref" "{function}(): {problem}"
-Unresolved(n, function, problem, snippet, ordinal) :- uf_bad(n, function, problem), visit_index(n, ordinal),
-    docof(n, d), uf_active(d), !syntax_error(d, _, _), source(d, sp), text(sp, full), contains(".annotation", full),
-    line(n, l), split_line(d, l, raw), uf_trim(trim), snippet = @replace_all(raw, trim, "").
+Unresolved(@place(p,l),f,problem,snippet,i) :- uf_event(p,l,f,problem,snippet,i),pp_api().
+Unresolved(@place(p,l),f,problem,snippet,i) :- uf_event(p,l,f,problem,snippet,i),pp_run(),!option("entryPoint","_production_contract").
 .violation ReadFailure(at: span) code "UF_READ_ERROR" "Source file could not be read"
 ReadFailure(@place("input.py", 1)) :- option("entryPoint", entry),
     (entry = "analyze_file" ; entry = "AnnotationUsageFinder.analyze"), option("readError", "true").
@@ -223,3 +222,17 @@ Supplied(@place("provided-tree", line), function, problem, snippet, n, path) :- 
 
 #include "data-layer/unresolved-api.rr"
 uf_config("cli_schema","{\"description\": \"Lint for unresolved forward reference annotations\", \"epilog\": \"\\nExamples:\\n    # Show all violations\\n    uv run python scripts/lint_unresolved_forward_refs.py\\n\\n    # CI mode - exit 1 if violations found\\n    uv run python scripts/lint_unresolved_forward_refs.py --check\\n\\n    # Show verbose output with context\\n    uv run python scripts/lint_unresolved_forward_refs.py --verbose\\n\", \"arguments\": [{\"names\": [\"--check\"], \"kwargs\": {\"action\": \"store_true\", \"help\": \"Exit 1 if violations found\"}}, {\"names\": [\"--verbose\"], \"kwargs\": {\"action\": \"store_true\", \"help\": \"Show source context\"}}, {\"names\": [\"paths\"], \"kwargs\": {\"nargs\": \"*\", \"default\": null, \"help\": \"Paths to scan (default: api/ impl/)\"}}, {\"names\": [\"--root\"], \"kwargs\": {\"type\": \"str\", \"default\": null, \"help\": \"Project root directory to scan (default: data layer repo root)\"}}, {\"names\": [\"--dirs\"], \"kwargs\": {\"type\": \"str\", \"nargs\": \"*\", \"default\": null, \"help\": \"Subdirectories under --root to scan (default: production roots for the detected layout)\"}}]}").
+#include "data-layer/unresolved-production.rr"
+pp_config("name","unresolved_forward_refs").
+pp_config("enforcement","hard-fail").
+pp_config("description","FieldInfo annotations must be resolved before type inspection").
+pp_config("findingSeverity","hard-fail").
+pp_config("extractor","unresolved_forward_refs.findings").
+pp_config("parser","ast").
+pp_config("scope","static").
+pp_config("include_tests","false").
+pp_config("fact_kind","list").
+pp_config("relative_reports","true").
+pp_static_root("api").
+pp_static_root("impl").
+pp_trigger(".annotation").

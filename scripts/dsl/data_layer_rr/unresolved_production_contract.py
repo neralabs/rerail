@@ -42,7 +42,8 @@ def exercise(module,case,scratch):
 
 
 def install(backend,module,detectors=False):
-    pass
+    from classvar_production_port import production
+    module._rerail_unresolved_production=lambda root:production(backend,root,check=CHECK)
 
 
 if __name__=='__main__':

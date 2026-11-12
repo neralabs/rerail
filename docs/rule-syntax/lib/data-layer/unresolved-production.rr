@@ -1,0 +1,8 @@
+// Production discovery, public APIs and facts share the same detector events.
+#include "data-layer/plugin-production.rr"
+pp_fact_present(d) :- pp_doc(d,_),pp_triggered(d),!pp_group_missing(d),pp_config("parser","ast"),!syntax_error(d,_,_).
+pp_report(p,l,"unresolved_forward_ref",cat(f,"(): ",problem),p,l,cat(f,"(): ",problem),0,i,0,0) :-
+    uf_event(p,l,f,problem,_,i),pp_run().
+.violation UnresolvedProductionFact(at:span,path:symbol,path_order:symbol,order0:number,order1:number,order2:number,f_file:symbol,f_line:number,f_function:symbol,f_problem:symbol,f_source:symbol) code "DL_FACT" "production fact"
+UnresolvedProductionFact(@place(p,l),p,@replace_all(p,"/","\u0000"),i,0,0,p,l,f,problem,source) :-
+    option("entryPoint","_production_contract"),uf_event(p,l,f,problem,source,i).
