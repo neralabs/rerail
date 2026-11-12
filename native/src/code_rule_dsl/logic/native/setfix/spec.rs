@@ -131,8 +131,10 @@ pub enum Line {
     /// The placement put the stratum on the device (decision 0095 §7).
     Device,
     /// Its recursive relations keep each row's level (decision 0090): a session maintains them by levels. Without it
-    /// no row has one, and a closure may run on the device (bit rows give reach, not distance).
-    Leveled,
+    /// no row has one, and a closure may run on the device (bit rows give reach, not distance). The relations listed
+    /// reach themselves through the stratum's rules as written, so they keep levels even where this run's rules over
+    /// empty relations were left out and their cycle is not run (`leveled <rels|->`).
+    Leveled(Vec<usize>),
     Request(usize),
     Produced(usize),
     Seed { head: usize, join: Arc<JoinSpec> },
@@ -415,7 +417,7 @@ impl std::fmt::Display for Line {
             }
             Line::NoWrite => f.write_str("nowrite"),
             Line::Device => f.write_str("device"),
-            Line::Leveled => f.write_str("leveled"),
+            Line::Leveled(rels) => write!(f, "leveled {}", comma(rels)),
             Line::Request(r) => write!(f, "request {r}"),
             Line::Produced(r) => write!(f, "produced {r}"),
             Line::Seed { head, join } => write!(f, "seed {head} {}", hex(&join.to_text())),
@@ -499,7 +501,7 @@ impl ComponentSpec {
                 }
                 "nowrite" => Line::NoWrite,
                 "device" => Line::Device,
-                "leveled" => Line::Leveled,
+                "leveled" => Line::Leveled(t.get(1).map(|x| list(x)).transpose()?.unwrap_or_default()),
                 "request" => Line::Request(num(at(1)?)?),
                 "produced" => Line::Produced(num(at(1)?)?),
                 "seed" => Line::Seed { head: num(at(1)?)?, join: join(at(2)?)? },

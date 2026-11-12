@@ -295,11 +295,33 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         // overdeleted, when its rules are joins, negations and comparisons and every kept row has its level.
         let lv = is_recursive && levels_wanted() && mine.iter().all(|r| r.body.iter().all(|l| matches!(l, Literal::Atom(_) | Literal::Cmp { .. })))
             && scc.iter().all(|r| kept.kept(r).is_some_and(|(h, _)| h.has_levels()));
+        if lv {
+            BY_LEVELS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         if is_recursive && levels_wanted() && std::env::var_os("RERAIL_LEVELS_WHY").is_some() {
             let not_join = mine.iter().filter(|r| !r.body.iter().all(|l| matches!(l, Literal::Atom(_) | Literal::Cmp { .. }))).count();
             let no_levels: Vec<(&String, (usize, usize, bool))> = scc.iter().filter_map(|r| kept.kept(r).filter(|(h, _)| !h.has_levels()).map(|(h, _)| (r, h.levels_shape()))).take(4).collect();
             let unkept: Vec<&String> = scc.iter().filter(|r| kept.kept(r).is_none()).take(4).collect();
-            eprintln!("RERAIL_LEVELS_WHY {:?}: levels {lv}; rules not joins {not_join}; without levels {no_levels:?}; not kept {unkept:?}", scc.iter().next());
+            eprintln!("RERAIL_LEVELS_WHY {:?} ({} relations): levels {lv}; rules not joins {not_join}; without levels {no_levels:?}; not kept {unkept:?}", scc.iter().next(), scc.len());
+            // The literals that are not joins, by kind, with a few of their rules.
+            let kind = |l: &Literal| match l {
+                Literal::Atom(_) | Literal::Cmp { .. } => None,
+                Literal::Agg { .. } => Some("aggregate"),
+                other => Some(match format!("{other:?}").split(['(', ' ', '{']).next() { Some("Assign") => "assignment", Some("Nearest") => "nearest", Some("Ast") => "ast", _ => "other" }),
+            };
+            let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
+            for r in &mine {
+                for l in &r.body {
+                    if let Some(k) = kind(l) {
+                        let shown = if k == "other" { format!("other: {}", format!("{l:?}").split(['(', ' ', '{']).next().unwrap_or("")) } else { k.to_owned() };
+                        *kinds.entry(shown).or_default() += 1;
+                    }
+                }
+            }
+            eprintln!("RERAIL_LEVELS_WHY   literals not joins, by kind: {kinds:?}");
+            for r in mine.iter().filter(|r| !r.body.iter().all(|l| matches!(l, Literal::Atom(_) | Literal::Cmp { .. }))).take(6) {
+                eprintln!("RERAIL_LEVELS_WHY   {r}");
+            }
         }
         let gone = if lv { "gone" } else { "del" };
         // A read that can change: an atom of this stratum, or a changed relation (positive or negated).
@@ -583,6 +605,13 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     together(&mut part.program);
     let views = views.into_keys().collect();
     Ok(Maintained { program: part, sources, maintained, derived_again, recursive, again, views })
+}
+
+static BY_LEVELS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The recursive strata maintained by levels so far in this process (decision 0090), not by delete-and-rederive.
+pub fn strata_by_levels() -> usize {
+    BY_LEVELS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 static TOGETHER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);

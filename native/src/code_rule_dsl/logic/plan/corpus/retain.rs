@@ -848,6 +848,10 @@ const GRANULES: i64 = 64;
 /// The part of an input's frames that holds each document's digest (`DocDigests`), as rows (document, sum, rows);
 /// its frame's digest is the input's (`digest`). Granule `g` is part `1 + g`.
 const DOCS_PART: i64 = 0;
+/// The part of a derived relation's frames that holds its rows' levels (decision 0090), one row each in its rows'
+/// order, with their frame's digest: a new process maintains a recursive stratum by levels only if its kept
+/// relations have them. Read where its digest and count match the rows'; without it, the rows have no levels.
+const LEVELS_PART: i64 = -1;
 
 /// What the store's frames hold of a cross-file part (t33 K4), read before the run's cut: the derived relations
 /// stored and current, and each input's digest by document. Rows are read only for what the run then reads.
@@ -1071,6 +1075,9 @@ impl Retained {
         let mut keys = derived_keys.clone();
         keys.extend(input_parts.iter().flat_map(|(_, k)| k.iter().cloned()));
         let admitted = store.admit_frame_parts(&frames.space, &keys).map_err(|e| Error::Plan(e.to_string()))?;
+        // Their levels, where stored: not a key of the admission's check, as a relation may have none.
+        let level_keys: Vec<_> = wanted.iter().map(|r| (frames.names[r].clone(), LEVELS_PART)).collect();
+        let levels = store.admit_frame_parts(&frames.space, &level_keys).map_err(|e| Error::Plan(e.to_string()))?;
         // Prepare all rows before publishing any of them into the retained part. Failed admission is a cache
         // miss, and the caller must recompute its cut before maintenance can run.
         let decoded = (|| -> Option<_> {
@@ -1083,7 +1090,15 @@ impl Retained {
                 let width = prog.decls.get(rel)?.len();
                 if got.types.len() != width { return None; }
                 rows += got.n;
-                rels.push((rel.clone(), Kept { rel: InRel::from_flat(got.rows, got.n, got.types), width, output: None }));
+                let level = levels.get(&(key.0.clone(), LEVELS_PART))
+                    .filter(|l| frames.derived.get(rel).is_some_and(|s| s.digest == l.stored.digest))
+                    .and_then(|l| l.rows().ok()).filter(|l| l.n == got.n && l.rows.len() == got.n)
+                    .map(|l| l.rows.iter().map(|&v| v as u32).collect::<Vec<u32>>());
+                let rel_ = match level {
+                    Some(level) => InRel::from_flat_levels(got.rows, got.n, got.types, level)?,
+                    None => InRel::from_flat(got.rows, got.n, got.types),
+                };
+                rels.push((rel.clone(), Kept { rel: rel_, width, output: None }));
             }
             for (rel, keys) in &input_parts {
                 let width = prog.decls.get(*rel)?.len();
@@ -1285,6 +1300,9 @@ impl Retained {
                     continue;
                 }
                 written += n;
+                if let Some(level) = k.rel.live_levels() {
+                    puts.push(FramePut { rel: name.clone(), part: LEVELS_PART, digest: d, reads: Vec::new(), rows: FrameRows { types: vec![b'i'], rows: level.into_iter().map(i64::from).collect(), n } });
+                }
                 puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest: d, reads: read_digests, rows: FrameRows { types: k.rel.types().to_vec(), rows, n } });
             }
         }

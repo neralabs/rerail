@@ -4216,6 +4216,28 @@ fn same_order(a: &[Step], b: &[Step]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.at == y.at && x.mode == y.mode && x.lit == y.lit)
 }
 
+/// The relations of `scc` that reach themselves through `rules` (any read: positive, negated or aggregated).
+fn cyclic_relations(scc: &BTreeSet<String>, rules: &[&Rule]) -> BTreeSet<String> {
+    let mut next: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for r in rules {
+        for a in r.body.iter().filter_map(Literal::atom).filter(|a| scc.contains(a.rel.as_str())) {
+            next.entry(a.rel.as_str()).or_default().insert(r.head.rel.as_str());
+        }
+    }
+    scc.iter().filter(|start| {
+        let (mut seen, mut todo): (BTreeSet<&str>, Vec<&str>) = (BTreeSet::new(), next.get(start.as_str()).into_iter().flatten().copied().collect());
+        while let Some(x) = todo.pop() {
+            if x == start.as_str() {
+                return true;
+            }
+            if seen.insert(x) {
+                todo.extend(next.get(x).into_iter().flatten().copied());
+            }
+        }
+        false
+    }).cloned().collect()
+}
+
 /// Positive body atoms of `scc`, by body position.
 fn recursive<'r>(body: &'r [Literal], scc: &BTreeSet<String>) -> Vec<(usize, &'r Atom)> {
     body.iter()
@@ -5165,6 +5187,9 @@ impl<'a> Run<'a, '_> {
     /// relations join `native_rels`. False (and nothing run) where a rule has a literal with no native step.
     fn native_stratum_(&mut self, scc: &BTreeSet<String>, rules: &[&'a Rule], native_rels: &BTreeSet<String>, numbers: &rustc_hash::FxHashMap<*const Rule, usize>) -> Result<Native<'a>> {
         let prog = self.prog;
+        // The relations that reach themselves through the stratum's rules as written, before any is left out
+        // (`SpecLine::Leveled`).
+        let cyclic = cyclic_relations(scc, rules);
         self.why_not = None;
         self.why_class = None;
         if scc.iter().any(|r| prog.lattice.contains_key(r)) {
@@ -5314,7 +5339,7 @@ impl<'a> Run<'a, '_> {
         lines.push(SpecLine::NoWrite);
         // Its rows keep levels where a session maintains it by them (decision 0090, the `levels` qualifier).
         if scc.iter().any(|r| prog.qualified(r, "levels")) {
-            lines.push(SpecLine::Leveled);
+            lines.push(SpecLine::Leveled(rels.iter().enumerate().filter(|(_, r)| cyclic.contains(r.as_str())).map(|(i, _)| i).collect()));
         }
         // A component that answers requests (decision 0065 §2a) cannot fall back to SQL whole: a rule with no native
         // step is a SQL seed, run before the component opens, or a SQL probe over its relations' `set_rel` views.
