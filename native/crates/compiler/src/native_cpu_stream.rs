@@ -679,9 +679,12 @@ impl Reorder {
 /// makes its body from its `params` words and gives its heads. Only the token loop is inlined;
 /// the node table's passes run once, at `ACCEPT`, and would only crowd it. Checked: it calls
 /// nothing, and each loop is a stated one.
-fn outline(module: &mut JITModule, name: &str, params: usize, returns: usize, build: impl FnOnce(&mut FunctionBuilder<'_>, &[Value], &mut Vec<(Block, Step)>)) -> Result<(cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function), Error> {
+///
+/// `pinned`: its first parameter is `ctx`, in the pinned register (`pinned_ctx`): not an
+/// argument, read where it is entered; its callers pass the rest (`call_word`).
+fn outline(module: &mut JITModule, name: &str, params: usize, returns: usize, pinned: bool, build: impl FnOnce(&mut FunctionBuilder<'_>, &[Value], &mut Vec<(Block, Step)>)) -> Result<(cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function), Error> {
     let mut signature = module.make_signature();
-    for _ in 0..params {
+    for _ in 0..params - usize::from(pinned) {
         signature.params.push(AbiParam::new(types::I64));
     }
     for _ in 0..returns {
@@ -701,7 +704,11 @@ fn outline(module: &mut JITModule, name: &str, params: usize, returns: usize, bu
         let entry = f.create_block();
         f.append_block_params_for_function_params(entry);
         f.switch_to_block(entry);
-        let p = f.block_params(entry).to_vec();
+        let mut p = f.block_params(entry).to_vec();
+        if pinned {
+            let ctx = f.ins().get_pinned_reg(types::I64);
+            p.insert(0, ctx);
+        }
         build(&mut f, &p, &mut heads);
         f.seal_all_blocks();
         f.finalize();
@@ -1178,14 +1185,21 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
 }
 
 /// `TOKEN`'s function (`WordFn::Token`), made where first called.
-fn token_fn<'a>(module: &mut JITModule, fns: &'a mut std::collections::HashMap<WordFn, (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)>, any_mark: Option<usize>, shape: TokenShape) -> Result<&'a (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function), Error> {
+fn token_fn<'a>(module: &mut JITModule, fns: &'a mut std::collections::HashMap<WordFn, (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)>, any_mark: Option<usize>, shape: TokenShape, pinned: bool) -> Result<&'a (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function), Error> {
     let key = WordFn::Token { any_mark };
     if !fns.contains_key(&key) {
         let name = format!("tempo_word_{}", fns.len());
-        let made = outline(module, &name, 2, 1, |g, q, _| take_token(g, q, any_mark, shape))?;
+        let made = outline(module, &name, 2, 1, pinned, |g, q, _| take_token(g, q, any_mark, shape))?;
         fns.insert(key, made);
     }
     Ok(&fns[&key])
+}
+
+/// A call of a word's function (`outline`): `ctx`, then its arguments; with `ctx` pinned, the
+/// arguments alone.
+fn call_word(f: &mut FunctionBuilder<'_>, id: cranelift_module::FuncId, signature: &cranelift_codegen::ir::Signature, pinned: bool, ctx: Value, args: &[Value]) -> Vec<Value> {
+    let all: Vec<Value> = (!pinned).then_some(ctx).into_iter().chain(args.iter().copied()).collect();
+    call_own(f, id, signature, &all)
 }
 
 /// A call of an outlined function (`outline`), from `f`.
@@ -1661,6 +1675,15 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     if cut.speed {
         flags.push(("opt_level", "speed"));
     }
+    // With a function a grammar rule, `ctx` is in a register of its own through the run
+    // (Cranelift's pinned register, x21): `tempo_stream` sets it (and gives the host's back),
+    // each function reads it once where it is entered, into one value with no use fixed to an
+    // argument's register (a call passes no `ctx`), which the allocator keeps in one
+    // callee-saved register through the function, as rustc keeps the lean parser's `self`.
+    let pinned_ctx = clustered && cut.calls && !native.rules.is_empty();
+    if pinned_ctx {
+        flags.push(("enable_pinned_reg", "true"));
+    }
     // The passed fields come back with a function's result: more results than registers go
     // through a return area.
     if clustered && !cut.pass.is_empty() {
@@ -1702,7 +1725,11 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     let csig = if clustered {
         let mut c = module.make_signature();
         c.call_conv = cranelift_codegen::isa::CallConv::Tail;
-        c.params.extend([AbiParam::new(pointer), AbiParam::new(types::I64)]);
+        // `ctx` in the pinned register (`pinned_ctx`), else the first argument.
+        if !pinned_ctx {
+            c.params.push(AbiParam::new(pointer));
+        }
+        c.params.push(AbiParam::new(types::I64));
         // `Cut::pass`: those fields as arguments, in registers, and given back with the result,
         // as a call's arguments and results: a call stores none of them.
         c.params.extend(cut.pass.iter().map(|_| AbiParam::new(types::I64)));
@@ -1881,7 +1908,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         let wrapping = framed(words);
 
         f.switch_to_block(entry);
-        let ctx = f.block_params(entry)[0];
+        // `ctx`: read from its register where the function is entered, else its first argument.
+        let ctx = if pinned_ctx { f.ins().get_pinned_reg(types::I64) } else { f.block_params(entry)[0] };
+        let first_param = usize::from(!pinned_ctx);
         // `can_move`: a pure value to the optimizer, removed where unused (`Cut::speed`).
         let ro = MemFlags::trusted().with_readonly().with_can_move();
         let load = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, ro, ctx, at);
@@ -2009,7 +2038,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             for (k, v) in vars.iter().enumerate() {
                 if let Some(v) = *v {
                     let x = match cut.pass.iter().position(|&q| q as usize == k) {
-                        Some(j) => f.block_params(entry)[2 + j],
+                        Some(j) => f.block_params(entry)[first_param + 1 + j],
                         None => {
                             let p = pinned(&mut f);
                             f.ins().load(types::I64, MemFlags::trusted(), p, STATE + 8 * k as i32)
@@ -2198,13 +2227,12 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         let args: &[Value] = $args;
                         if !word_fns.contains_key(&key) {
                             let name = format!("tempo_word_{}", word_fns.len());
-                            let made = outline(&mut module, &name, 1 + args.len(), usize::from($refuses), |g, q, _| own_word(g, q, $refuses, &body))?;
+                            let made = outline(&mut module, &name, 1 + args.len(), usize::from($refuses), pinned_ctx, |g, q, _| own_word(g, q, $refuses, &body))?;
                             word_fns.insert(key, made);
                         }
                         let (id, sig, _) = &word_fns[&key];
                         let c = pinned(&mut f);
-                        let all: Vec<Value> = std::iter::once(c).chain(args.iter().copied()).collect();
-                        let r = call_own(&mut f, *id, sig, &all);
+                        let r = call_word(&mut f, *id, sig, pinned_ctx, c, args);
                         if $refuses {
                             guard(&mut f, r[0], pc);
                         }
@@ -2238,10 +2266,10 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                             continue;
                         }
                         let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from) };
-                        let (id, sig, _) = token_fn(&mut module, &mut word_fns, any_mark, shape)?;
+                        let (id, sig, _) = token_fn(&mut module, &mut word_fns, any_mark, shape, pinned_ctx)?;
                         let c = pinned(&mut f);
                         let open_calls = mget(&mut f, Mem::Ret);
-                        let r = call_own(&mut f, *id, sig, &[c, open_calls])[0];
+                        let r = call_word(&mut f, *id, sig, pinned_ctx, c, &[open_calls])[0];
                         // A refusal: past the stream's end at this word, or out of room.
                         let no = f.create_block();
                         f.ins().brif(r, no, &[], fall, &[]);
@@ -2879,7 +2907,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     });
                     let iv = f.ins().iconst(types::I64, i as i64);
                     let passed: Vec<Value> = cut.pass.iter().map(|&k| f.use_var(vars[k as usize].expect("a passed field is held"))).collect();
-                    let args: Vec<Value> = [ctx, iv].into_iter().chain(passed).chain(deeper).collect();
+                    let args: Vec<Value> = (!pinned_ctx).then_some(ctx).into_iter().chain([iv]).chain(passed).chain(deeper).collect();
                     let call = f.ins().call(fref, &args);
                     let back = f.inst_results(call).to_vec();
                     let v = back[0];
@@ -3050,7 +3078,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         let args = r.values();
                         if reorder_fn.is_none() {
                             let before = r.before.is_some();
-                            reorder_fn = Some(outline(&mut module, "tempo_stream_reorder", args.len(), 0, |f, p, heads| reorder(f, Reorder::of(p, before), heads))?);
+                            reorder_fn = Some(outline(&mut module, "tempo_stream_reorder", args.len(), 0, false, |f, p, heads| reorder(f, Reorder::of(p, before), heads))?);
                         }
                         let (id, sig, _) = reorder_fn.as_ref().expect("made");
                         call_own(&mut f, *id, sig, &args);
@@ -3113,7 +3141,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     f.import_function(ExtFuncData { name: ExternalName::user(name), signature, colocated: true })
                 });
                 let iv = f.ins().iconst(types::I64, i as i64);
-                let args: Vec<Value> = [ctx, iv].into_iter().chain(passed).chain(depth).collect();
+                let args: Vec<Value> = (!pinned_ctx).then_some(ctx).into_iter().chain([iv]).chain(passed).chain(depth).collect();
                 f.ins().return_call(fref, &args);
                 exits.insert(b, g);
                 tails += 1;
@@ -3123,7 +3151,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             for &g in &incoming[c as usize] {
                 targets.push((g, if g < n_words { wb[g].expect("an own place") } else { entries[g - n_words] }));
             }
-            let at = f.block_params(entry)[1];
+            let at = f.block_params(entry)[first_param];
             if targets.len() == 1 {
                 // One entry: no choice to make.
                 f.ins().jump(targets[0].1, &[]);
@@ -3152,7 +3180,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             let p = f.block_params(fin).to_vec();
             let extras = &native.readings.extras;
             if table_fn.is_none() {
-                table_fn = Some(outline(&mut module, "tempo_stream_table", 3, 1, |f, q, heads| table(f, q[0], q[1], q[2], extras, heads))?);
+                table_fn = Some(outline(&mut module, "tempo_stream_table", 3, 1, false, |f, q, heads| table(f, q[0], q[1], q[2], extras, heads))?);
             }
             let made = table_fn.as_ref().expect("made");
             let open_c = if cut.reload {
@@ -3184,7 +3212,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         f.seal_all_blocks();
         f.finalize();
         }
-        state_in_registers(&mut func);
+        if !pinned_ctx {
+            state_in_registers(&mut func);
+        }
         drop_unused_loads(&mut func);
         lowered.push(Lowered { func, heads, targets, exits, tails });
     }
@@ -3231,8 +3261,18 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             // The passed fields' first values, as the state's in `ctx`.
             let passed: Vec<Value> = cut.pass.iter().map(|&k| if k == Mem::Need as u32 { one } else if k == Mem::Lw as u32 { before_first } else { zero }).collect();
             let none_open = depth_arg.then_some(zero);
-            let args: Vec<Value> = [ctx, first].into_iter().chain(passed).chain(none_open).collect();
+            // With `ctx` pinned: the host's x21 kept, `ctx` there for the run, the host's back
+            // after (Cranelift saves no pinned register).
+            let host = pinned_ctx.then(|| {
+                let host = f.ins().get_pinned_reg(types::I64);
+                f.ins().set_pinned_reg(ctx);
+                host
+            });
+            let args: Vec<Value> = (!pinned_ctx).then_some(ctx).into_iter().chain([first]).chain(passed).chain(none_open).collect();
             let r = call_own(&mut f, cids[cut.of[0] as usize], &csig, &args);
+            if let Some(host) = host {
+                f.ins().set_pinned_reg(host);
+            }
             // The passed fields' last values, in the state, as the host reads it.
             for (j, &k) in cut.pass.iter().enumerate() {
                 f.ins().store(MemFlags::trusted(), r[1 + j], ctx, STATE + 8 * k as i32);
