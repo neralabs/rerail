@@ -3921,3 +3921,18 @@ The incomplete acceptance replay was cancelled before changing its consumed code
 Completed reports remain available, but they cannot admit the next rule revision.
 The ineffective reporter control was also retained in `rr-async-pattern-ineffective-control-red-finalfcce.json.gz`.
 The replacement control removes the actual message producer. It must fail parity through both APIs.
+
+### 2026-11-11 — Read and warning boundaries green
+
+Native directory selection now counts `.py` filenames independently of `is_file()`.
+A separate native batch selects files to read. Excluded filenames remain in checked counts without being opened.
+Explicit file batches propagate read failures. Directory scans retain their warning behavior and propagate later fatal read errors.
+Warnings are formatted in one native batch and emitted before any later fatal error.
+
+Fourteen I/O cases pass through both APIs. They compare complete values, exception arguments, stdout, and stderr.
+The warning-before-error defect is retained in `rr-async-pattern-warning-order-red-finalfcce.json.gz`.
+All 52 behavior-removal controls now produce valid native results that differ from their complete source witnesses.
+These controls include actual reporter output, excluded reads, and broken-link counting.
+
+The code is frozen for the complete replay. Final admission, the strict verifier tests, and the complete tooling suite remain required.
+The manifest still records eighteen admissions. No engine source changed, and compilation time remains zero.

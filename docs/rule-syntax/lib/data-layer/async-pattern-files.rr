@@ -1,6 +1,9 @@
 // Filesystem walks supply one ordered demand batch. Native predicates own selection.
 .decl apf_candidate(i:number,path:symbol)
 apf_candidate(i,p) :- option_item("apCandidatePaths",i,p),option_item("apCandidateIsFile",i,"1"),suffix(".py",p).
+.decl apf_directory_candidate(i:number,path:symbol)
+apf_directory_candidate(i,p) :- option_item("apCandidatePaths",i,p),suffix(".py",p).
+ap_excluded_path(p) :- option_item("apCandidatePaths",_,p),ap_exclude_pattern(pattern),contains(pattern,p).
 .decl apf_directory_skip(i:number)
 apf_directory_skip(i) :- option_item("apCandidateRelative",i,p),(prefix("__pycache__/",p);contains("/__pycache__/",p)).
 .decl apf_bare_py(path:symbol)
@@ -11,7 +14,8 @@ apf_bare_py(p) :- option("originalPath",p),(p=".py";suffix("/.py",p)).
 apf_duplicate(i) :- apf_candidate(i,p),apf_candidate(j,p),j<i.
 .violation AsyncPatternFile(at:span,ordinal:number,path:symbol) code "AP_FILE" "selected async-pattern file"
 AsyncPatternFile(@place("",0),i,p) :- option("entryPoint","_ap_file_select"),apf_candidate(i,p),!apf_duplicate(i),!apf_bare_py(p).
-AsyncPatternFile(@place("",0),i,p) :- option("entryPoint","_ap_directory_select"),apf_candidate(i,p),!apf_directory_skip(i).
+AsyncPatternFile(@place("",0),i,p) :- option("entryPoint","_ap_directory_select"),apf_directory_candidate(i,p),!apf_directory_skip(i).
+AsyncPatternFile(@place("",0),i,p) :- option("entryPoint","_ap_read_select"),option_item("apCandidatePaths",i,p),!ap_excluded_path(p).
 
 ap_document(d,p) :- option("entryPoint","_ap_file_batch"),pp_doc(d,p),!syntax_error(d,_,_),option_item("apBatchKeys",i,p),option_item("apBatchPaths",i,actual),!apf_bare_py(actual).
 ap_path(d,p,actual) :- option("entryPoint","_ap_file_batch"),ap_document(d,p),option_item("apBatchKeys",i,p),option_item("apBatchPaths",i,actual).

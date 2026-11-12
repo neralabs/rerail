@@ -19,25 +19,31 @@ def select(backend,paths,relative=None):
 
 
 def batch(backend,module,paths,*,directory=False):
-    files=[];owners={};errors=[];error_paths=[]
+    files=[];owners={};errors=[];error_paths=[];failure=None
+    if directory:
+        rows=query(backend,'_ap_read_select',options=dict(apCandidatePaths=[str(p) for p in paths]))
+        if any(r['code']!='AP_FILE' for r in rows):raise ValueError('Unexpected async-pattern read path')
+        readable={Path(r['parameters']['path']) for r in rows}
     for i,path in enumerate(paths):
-        try:source=path.read_text(encoding='utf-8')
+        try:source='' if directory and path not in readable else path.read_text(encoding='utf-8')
         except (SyntaxError,UnicodeDecodeError) as error:
+            if not directory:raise
             source=''
-            if directory:error_paths.append(str(path));errors.append(str(error))
-        except OSError:
-            if directory:raise
-            source=''
+            error_paths.append(str(path));errors.append(str(error))
+        except OSError as error:
+            if not directory:raise
+            failure=error;break
         key=f'api/_ap_buffers/{i}.py';files.append(dict(path=key,source=source));owners[key]=(i,path)
+    if errors:
+        warnings=query(backend,'_ap_read_warnings',options=dict(apErrorPaths=error_paths,apErrors=errors))
+        if any(r['code']!='AP_WARNING' for r in warnings):raise ValueError('Unexpected async-pattern warning')
+        for row in sorted(warnings,key=lambda r:r['parameters']['ordinal']):sys.stderr.write(row['parameters']['text'])
+    if failure is not None:raise failure
     rows=query(backend,'_ap_file_batch',files,dict(apBatchKeys=list(owners),apBatchPaths=[str(p) for _,p in owners.values()]))
     counts=[r['parameters'] for r in rows if r['code']=='AP_COUNTS']
     if len(counts)!=1 or any(r['code'] not in CODES|{'AP_COUNTS'} for r in rows):raise ValueError('Unexpected async-pattern file batch')
     ordered=sorted((r for r in rows if r['code'] in CODES),key=lambda r:(owners[r['path']][0],r['parameters']['ordinal'],r['parameters']['rank']))
     result=[module.Violation(owners[r['path']][1],r['line'],r['code'],r['message'],r['parameters']['context'],bool(r['parameters']['fallback'])) for r in ordered]
-    if errors:
-        warnings=query(backend,'_ap_read_warnings',options=dict(apErrorPaths=error_paths,apErrors=errors))
-        if any(r['code']!='AP_WARNING' for r in warnings):raise ValueError('Unexpected async-pattern warning')
-        for row in sorted(warnings,key=lambda r:r['parameters']['ordinal']):sys.stderr.write(row['parameters']['text'])
     return result,counts[0]
 
 

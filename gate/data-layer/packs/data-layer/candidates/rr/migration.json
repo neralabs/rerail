@@ -3070,7 +3070,7 @@
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_async_patterns.py",
-      "sha256": "ba7a7e5437fd9e1f7d558b290f3058257caa6b4dc5e3f2eb5c89924caa6af2b1"
+      "sha256": "7939bb724d77133364bca696489d3a05849c6f6f82c8fe25c5ad424552cfc9ad"
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/async-pattern-cli.rr",
