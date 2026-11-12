@@ -119,6 +119,19 @@ pub(in crate::code_rule_dsl) struct Inputs<'a> {
     pub(in crate::code_rule_dsl) corpus: &'a HashSet<i64>,
     /// The run's constants the cone reads (the observer's facts, an earlier phase's exports): bound as they are.
     pub(in crate::code_rule_dsl) constants: &'a BTreeMap<String, Arc<dyn Source>>,
+    /// The loads answered and taken back, between the rounds and the thread that answers them.
+    pub(in crate::code_rule_dsl) ledger: &'a std::sync::Mutex<LoadLedger>,
+}
+
+/// What the rounds and the thread answering their loads share (decision 0108, a load taken back).
+#[derive(Default)]
+pub(in crate::code_rule_dsl) struct LoadLedger {
+    /// Each file a load answered (its path's atom, `loaded`'s first column) with its document: what a load taken
+    /// back takes with it. Filled by the answering thread.
+    pub(in crate::code_rule_dsl) documents: HashMap<i64, i64>,
+    /// The files the rounds took back, which the answering thread has not yet unloaded (`World::unload`): their
+    /// places in the load budget are free again.
+    pub(in crate::code_rule_dsl) taken_back: Vec<i64>,
 }
 
 impl Inputs<'_> {
@@ -137,30 +150,36 @@ pub(in crate::code_rule_dsl) struct Answers {
 
 impl Answers {
     /// Takes back the loads `stale` (keys of `world::LOAD`, `(file, module, grammar)`), none of which `asked_now`
-    /// holds: the `loaded` rows of their module and grammar that no key still asked shares, and each row an answer
-    /// gave that names one of their files or a node of one of their documents (by `per_file`'s location column). Their documents go into `withdrawn`; the relations whose rows changed are returned.
-    fn withdraw(&mut self, stale: &[Vec<i64>], asked_now: &HashSet<Vec<i64>>, per_file: &[(String, Arc<dyn Source>, usize)], withdrawn: &mut HashSet<i64>) -> BTreeSet<String> {
+    /// holds: the `loaded` rows of their module and grammar that no key still asked shares, and the rows of the
+    /// per-file relations located at their files' documents (`documents`, as the answers recorded them; by
+    /// `per_file`'s location column). Nothing is matched by value. Their documents go into `withdrawn`; the relations
+    /// whose rows changed are returned.
+    fn withdraw(&mut self, stale: &[Vec<i64>], asked_now: &HashSet<Vec<i64>>, per_file: &[(String, Arc<dyn Source>, usize)], ledger: &mut LoadLedger, withdrawn: &mut HashSet<i64>) -> BTreeSet<String> {
         let live: HashSet<(i64, i64)> = asked_now.iter().filter(|k| k.len() == 3).map(|k| (k[1], k[2])).collect();
         let gone: HashSet<(i64, i64)> = stale.iter().filter(|k| k.len() == 3).map(|k| (k[1], k[2])).filter(|mg| !live.contains(mg)).collect();
         for k in stale {
             self.asked.remove(&(super::world::LOAD.to_owned(), k.clone()));
         }
         let files: HashSet<i64> = self.rows.get(super::world::LOADED).into_iter().flatten().filter(|r| r.len() == 3 && gone.contains(&(r[1], r[2]))).map(|r| r[0]).collect();
-        // A document of theirs: the one a per-file row that names one of the files is of (its location column).
+        // Their documents, as the answers recorded them. A file loaded under a module still asked keeps its `loaded`
+        // row and its document.
         let at: HashMap<&str, usize> = per_file.iter().map(|(r, _, at)| (r.as_str(), *at)).collect();
-        let docs: HashSet<i64> = self
-            .rows
-            .iter()
-            .filter_map(|(rel, rows)| Some((at.get(rel.as_str())?, rows)))
-            .flat_map(|(c, rows)| rows.iter().filter(|r| r.iter().any(|v| files.contains(v))).filter_map(|r| r.get(*c).map(|v| super::memo::document_of(*v))))
-            .collect();
+        let still: HashSet<i64> = self.rows.get(super::world::LOADED).into_iter().flatten().filter(|r| r.len() == 3 && !gone.contains(&(r[1], r[2]))).map(|r| r[0]).collect();
+        let taken: Vec<i64> = files.iter().filter(|f| !still.contains(*f)).copied().collect();
+        let docs: HashSet<i64> = taken.iter().filter_map(|f| ledger.documents.get(f).copied()).collect();
+        ledger.taken_back.extend(taken);
+        // A load this run asked and was not given (past the budget, say) is asked again: a place may be free now.
+        let given: HashSet<(i64, i64)> = self.rows.get(super::world::LOADED).into_iter().flatten().filter(|r| r.len() == 3 && !gone.contains(&(r[1], r[2]))).map(|r| (r[1], r[2])).collect();
+        if !docs.is_empty() {
+            self.asked.retain(|(rel, k)| !(rel == super::world::LOAD && k.len() == 3 && !given.contains(&(k[1], k[2]))));
+        }
         withdrawn.extend(docs.iter().copied());
         let mut touched = BTreeSet::new();
         for (rel, rows) in self.rows.iter_mut() {
             let before = rows.len();
             let of_doc = |r: &Vec<i64>| at.get(rel.as_str()).is_some_and(|c| r.get(*c).is_some_and(|v| docs.contains(&super::memo::document_of(*v))));
             let loaded_gone = |r: &Vec<i64>| rel == super::world::LOADED && r.len() == 3 && gone.contains(&(r[1], r[2]));
-            rows.retain(|r| !(loaded_gone(r) || of_doc(r) || r.iter().any(|v| files.contains(v))));
+            rows.retain(|r| !(loaded_gone(r) || of_doc(r)));
             if rows.len() != before {
                 touched.insert(rel.clone());
             }
@@ -380,6 +399,17 @@ impl RoundProgram {
             if let Some(batch) = batch {
                 for (req, keys) in batch {
                     let given = answer(&req, &keys)?;
+                    // A document taken back and loaded again is the run's again.
+                    if req == super::world::LOAD && !withdrawn.is_empty() {
+                        let ledger = inputs.ledger.lock().unwrap_or_else(|e| e.into_inner());
+                        for (_, rows) in given.iter().filter(|(r, _)| r == super::world::LOADED) {
+                            for r in rows {
+                                if let Some(d) = r.first().and_then(|f| ledger.documents.get(f)) {
+                                    withdrawn.remove(d);
+                                }
+                            }
+                        }
+                    }
                     dirty.extend(given.iter().filter(|(_, rows)| !rows.is_empty()).map(|(r, _)| r.clone()));
                     answers.record(&req, &keys, &given);
                 }
@@ -415,7 +445,7 @@ impl RoundProgram {
                 if closing {
                     return Err(Gave::Up("the closing round takes back a load".to_owned()));
                 }
-                let touched = answers.withdraw(&stale, &asked_now, inputs.per_file, &mut withdrawn);
+                let touched = answers.withdraw(&stale, &asked_now, inputs.per_file, &mut inputs.ledger.lock().unwrap_or_else(|e| e.into_inner()), &mut withdrawn);
                 dirty.extend(touched);
                 continue;
             }
