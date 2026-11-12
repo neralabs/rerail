@@ -1267,6 +1267,40 @@ SOFTWARE.
 
 ----------------------------------------------------------------------
 
+Vendored crate: ast-grep-core 0.51.0 (crates.io), patched
+Files: native/vendor/ast-grep-core-0.51.0/
+Source: https://crates.io/crates/ast-grep-core/0.51.0 (https://github.com/ast-grep/ast-grep)
+License: MIT (as the crate declares; the repository's LICENSE below, which the crate does not ship)
+
+MIT License
+
+Copyright (c) 2022 Herrington Darkholme
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+Modified by the Rerail authors: patterns end their children where a tape leaves
+out the tokens its grammar implies, a pattern can be built from a document its
+caller parsed, and a node with no children matches ellipses and the end of its
+children (native/vendor/ast-grep-core-0.51.0/PATCHES.md).
+
+----------------------------------------------------------------------
+
 Vendored crate: block 0.1.6 (crates.io), patched
 Files: native/vendor/block-0.1.6/
 Source: https://crates.io/crates/block/0.1.6 (https://github.com/SSheldon/rust-block)
