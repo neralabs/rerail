@@ -28,24 +28,27 @@ How the numbers are taken:
 
 ## The best to date
 
-Tier 2 at `f5357a7df`: the best in shape and in the benchmark.
+Tier 2 at `9a017c9b9`: the best in shape and in the benchmark.
 (`fa23bf4e5` has fewer machine instructions, 22,226,
 but functions entered at many places, as the lean parser's are not.)
 
 | | Tier 2 | Lean parser |
 |---|---|---|
-| Machine instructions | 23,981 | 10,008 |
+| Machine instructions | 23,758 | 10,008 |
 | Functions for rules | 55 | 45 |
-| Entries | 60 | 45 |
-| Words | 5,385 | |
+| Entries | 55 | 45 |
+| Words | 5,271 | |
 | A rule call | `mov`, `bl`, `cbnz` | `mov`, `bl`, a load |
-| Stores | 744 | |
-| Compares | 2,808 | 1,198 |
-| Benchmark, instructions | 315.7M | 356.6M |
-| Benchmark, cycles | 70.7M (load 30) | 75.1M |
+| Stores | 755 | |
+| Compares | 2,810 | 1,198 |
+| Benchmark, instructions | 312.6M | 356.4M |
+| Benchmark, cycles | 61.8M (load 16) | 68.4M |
 
-The next gap: tier 2 has 2.4 times the lean parser's machine instructions.
-Where the rest goes is not measured yet.
+The next gap, measured (page 34): two checks made in every state are 31% of the code.
+Comments are tested and taken in each state (4,076 instructions),
+where the lean parser takes them in its token step;
+the `no_value` mark is tested in each state (1,924),
+where the lean parser looks for it at an aggregate's `(` alone.
 
 Its structure:
 
@@ -59,12 +62,14 @@ Its structure:
   every place calls, one body each. Only the main loop is inlined.
 - **Words that behave the same are one word**, within a rule.
   Each rule keeps its own code, as each of the lean parser's methods does,
-  so a function is entered by calls alone (its top, or for five, its second word).
+  so a function is entered by calls alone, at its top.
   The verifier refuses any jump across rules that is not a call.
 - **A field on a called choice is set where the call returns**,
   as `self.product()?; self.field(Field::Right)`,
   on the node the call made if it has none.
 - **A term's rest is a call** (`more` is `[more1]`), as the lean parser's `self.term()`.
+- **Every call enters at the callee's start**: a merging callee too (the caller's extras pending),
+  a marked one (the caller keeps the mark for it), and a flag the call runs with is on its `PUSH`.
 - **One exit a function**, one epilogue, as rustc's.
 - **A rule's result**: 0 for every return, the run's end with its top bit flipped:
   one `cbnz` a call.
@@ -140,3 +145,4 @@ Numbers are tier 2's for `.rr`. Each step's commit is listed.
 | A field on a called choice set where it returns: 171 entries | `fa23bf4e5` | 22,226 | 346.1M (67.4M) |
 | Short tails each rule's own; a keyword's `REMEMBER` by its word: 94 entries | `6be997744` | 22,258 | |
 | One entry a function: each rule's own code, a term's rest a call: 60 entries | `f5357a7df` | 23,981 | 315.7M (70.7M) |
+| Every call at its callee's start (merge, mark, flag on `PUSH`): 55 entries | `9a017c9b9` | 23,758 | 312.6M (61.8M) |

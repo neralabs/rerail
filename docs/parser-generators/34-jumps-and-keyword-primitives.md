@@ -1032,9 +1032,54 @@ But tier 2 runs 9% fewer instructions than before it, and 11% fewer than the lea
 since no call picks its entry any more.
 (Cycles are taken on a shared machine: load 17, then 30.)
 
-Five functions still have a second entry.
-A caller enters them at their second word, or with a flag set first.
-Each is picked by one test.
+Five functions still had a second entry, each a call entered past its callee's start.
+Each is now a call at the start, as a lean parser's method is entered at its top:
+
+- **A callee whose first token merges into the leaf before** (a balanced pair's level).
+  A state whose arms call such a callee keeps its extras pending,
+  as a state whose arms merge does, so the merge still takes them as its text.
+- **A callee that may begin with a mark** (`braced_column`, which begins with `one_name`).
+  The caller's state tests the mark and keeps it (`MARK`, mode bit 64) for the callee,
+  which tests it again and takes it.
+- **A call with a flag set for it.** The flag is on the call's `PUSH`, as a parameter:
+  set after the caller's flags are saved, and the caller's given back where the call returns,
+  as `let f = self.flags; ..; self.call(); self.flags = f`.
+
+Every call now lands on its callee's first place: 55 functions, 55 entries.
+The rr test checks it.
+
+| | Before | One entry each | Lean parser |
+|---|---|---|---|
+| Entries | 60 | 55 | 45 |
+| Machine instructions | 23,981 | 23,758 | 10,008 |
+| Tier 2, instructions | 315.7M | 312.6M | 356.4M |
+| Tier 2, cycles | 70.7M | 61.8M (lean 68.4M) | |
+
+## Measured: where tier 2's code goes
+
+Tier 2 has 23,758 machine instructions, the lean parser 10,008.
+By the word that made it (19,294 of them are in words; the rest are word functions,
+prologues and epilogues):
+
+| What | Instructions | Share |
+|---|---|---|
+| Switches (`SWITCH`) | 5,607 | 29% |
+| Each state's test for a comment (`ROW`), and its way on | 3,307 | 17% |
+| Each state's comment arm (its leaf, back to the token) | 769 | 4% |
+| Each state's test for the `no_value` mark, and its refusal | 1,924 | 10% |
+| Taking a token (`TOKEN`) | 1,916 | 10% |
+
+Two checks made in every state are 31% of the code,
+and about 40% of the gap to the lean parser:
+
+- **Comments.** A comment is a row the record's kind does not name,
+  so every state tests for it after its switch and takes it with an arm of its own.
+  The lean parser takes comments in its token step (`skip_comments`), once.
+- **The `no_value` mark** (a `(` after an aggregate's word). It is not hidden,
+  so every state tests it after its token, to refuse it where no arm takes it.
+  The lean parser looks for it only where it reads an aggregate's `(`.
+
+## The order
 
 ## The order
 
@@ -1047,7 +1092,8 @@ Each is picked by one test.
    cheaper calls, callees shared across rules,
    `ctx` in a register of its own, code shared from the middle of rules,
    a call's bookkeeping as the lean parser's, switches as rustc lowers a `match`,
-   one entry a function.
-   Next: where tier 2's machine instructions go, at 2.4 times the lean parser's.
+   one entry a function (all 55).
+   Next: comments in the token step, and marks tested only where their token can be,
+   as the lean parser does: 31% of tier 2's code.
 4. Keyword marks from the records. Built for the marks of one word.
 5. Tier 1's primitives: the picked hash, then nibble fingerprints.
