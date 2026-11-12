@@ -319,11 +319,13 @@ function fileText(path: string): string | undefined {
  * the file's inode, but a new file can take an inode freed by an earlier rewrite, and within one tick of the file clock
  * it then keeps every part of the stamp. A stamp taken `settleMs` after the file's last change can only be repeated by a
  * write that carries a later time. `stat` opens and closes the file within one request, never across a turn.
+ * The age is counted in whole milliseconds on both sides: `Date.now()` drops the fraction of the current millisecond
+ * that the file's time keeps, so a file written in the millisecond of the read would otherwise come out younger than 0.
  */
 async function settledStamp(path: string, settleMs: number): Promise<{ readonly stamp: string; readonly settled: boolean } | undefined> {
   try {
     const info = await stat(path);
-    return { stamp: fileStamp(info), settled: Date.now() - info.ctimeMs >= settleMs };
+    return { stamp: fileStamp(info), settled: Date.now() - Math.floor(info.ctimeMs) >= settleMs };
   } catch (error) {
     return errorCode(error) === "ENOENT" ? { stamp: "!ENOENT", settled: true } : undefined;
   }

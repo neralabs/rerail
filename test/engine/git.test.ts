@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
 import { copyFileSync, renameSync, rmSync } from "node:fs";
 import type * as FileSystem from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -472,6 +472,22 @@ describe("gitHeadReader", () => {
     const read = gitHeadReader({ settleMs: 3_600_000 });
     expect(await processes(read, root)).toBe(2);
     expect(await processes(read, root)).toBe(1);
+  });
+
+  it("counts packed-refs written in the clock's current millisecond as 0 ms old, not younger", async () => {
+    const root = await repository({ "a.py": "1\n" });
+    git(root, "pack-refs", "--all");
+    // The clock reads whole milliseconds and the file's time keeps a fraction of one: the read comes in the millisecond
+    // the file was written in, as on a fast host.
+    const { ctimeMs } = await stat(join(root, ".git", "packed-refs"));
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Math.floor(ctimeMs));
+    try {
+      const read = gitHeadReader({ settleMs: 0 });
+      await processes(read, root);
+      expect(await processes(read, root)).toBe(0);
+    } finally {
+      clock.mockRestore();
+    }
   });
 
   it("reads a linked worktree's own HEAD, and its branch moved from the main checkout", async () => {
