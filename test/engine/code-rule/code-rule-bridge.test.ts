@@ -23,10 +23,11 @@ const discovery = vi.hoisted(() => ({
   directories: new Map<string, Array<() => Promise<void>>>(),
 }));
 /**
- * The arguments of every Git process Rerail started without blocking, for the tests that pin what a pass costs, and a
- * Git command (`failing`) that is made to fail, by an option Git does not know, while it is set.
+ * The arguments of every Git process Rerail started without blocking, for the tests that pin what a pass costs, a Git
+ * command (`failing`) that is made to fail, by an option Git does not know, while it is set, and work to run once each
+ * just before the next `rev-parse --verify` starts: another process moving HEAD while a read of it is in flight.
  */
-const asyncGitCalls = vi.hoisted(() => ({ args: [] as string[][], failing: undefined as string | undefined }));
+const asyncGitCalls = vi.hoisted(() => ({ args: [] as string[][], failing: undefined as string | undefined, beforeVerify: [] as Array<() => void> }));
 vi.mock("node:child_process", async importOriginal => {
   const actual = await importOriginal<typeof ChildProcess>();
   const { promisify } = await import("node:util");
@@ -37,6 +38,7 @@ vi.mock("node:child_process", async importOriginal => {
       const forwarded = fails ? [...args, "--no-such-option"] : [...args];
       call[1] = forwarded;
       asyncGitCalls.args.push(forwarded);
+      if (args.includes("--verify")) asyncGitCalls.beforeVerify.shift()?.();
     }
     return (actual.execFile as (...forwarded: unknown[]) => ReturnType<typeof actual.execFile>)(...call);
   };
@@ -109,6 +111,7 @@ afterEach(async () => {
   releases.splice(0).forEach(release => release());
   discovery.reads.clear();
   discovery.directories.clear();
+  asyncGitCalls.beforeVerify.length = 0;
   await Promise.all(passes.splice(0));
   await Promise.all(bridges.splice(0).map(bridge => bridge.close()));
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
@@ -1475,6 +1478,34 @@ describe("CodeRuleBridge and Git's own writes", () => {
     // The pass after a commit asks Git for HEAD once, and the one after that does not.
     expect((await gitReads(() => shell(bridge, () => git(root, "commit", "--quiet", "-m", "mine")))).heads).toBe(1);
     expect(await gitReads(() => bridge.checkpoint("turn"))).toEqual({ heads: 0, entries: 0 });
+  });
+
+  it("audits a file written and committed in one command after another process switched branches during a walk's HEAD read", async () => {
+    const root = await twoBranches();
+    // `twin`: a commit on `main` with the same files, so a switch between the two writes none.
+    const tree = execFileSync("git", ["rev-parse", "main^{tree}"], { cwd: root, encoding: "utf8" }).trim();
+    const twin = execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit-tree", "-p", "main", "-m", "twin", tree], {
+      cwd: root, encoding: "utf8",
+    }).trim();
+    git(root, "update-ref", "refs/heads/twin", twin);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    // Another process switches to `twin`, then back to `main` while the next walk asks Git for HEAD, so Git names `main`
+    // where the files the walk read said `twin`.
+    git(root, "switch", "--quiet", "twin");
+    asyncGitCalls.beforeVerify.push(() => git(root, "switch", "--quiet", "main"));
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    expect(asyncGitCalls.beforeVerify).toEqual([]);
+    // It switches to `twin` once more, and a walk reads HEAD there.
+    git(root, "switch", "--quiet", "twin");
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    // The agent writes a file and commits it in one command: the call's pass finds HEAD moved by that commit alone.
+    await shell(bridge, async () => {
+      await writeFile(join(root, "src", "a.py"), "old\nmine\n");
+      git(root, "commit", "--quiet", "-am", "mine");
+    });
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits.map(edit => edit.path))).toEqual([["src/a.py"]]);
   });
 
   it("reads one checkout each pass for a session opened in a subfolder of it, once a walk has found a change there too", async () => {

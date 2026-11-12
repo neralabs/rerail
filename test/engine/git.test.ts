@@ -12,12 +12,19 @@ import {
 } from "../../src/engine/git.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 
-/** The arguments of every Git process started without blocking, for the tests that count what a read costs. */
-const started = vi.hoisted(() => ({ args: [] as string[][] }));
+/**
+ * The arguments of every Git process started without blocking, for the tests that count what a read costs, and work to
+ * run once each just before the next `rev-parse --verify` starts: another process moving a ref while a read is in flight.
+ */
+const started = vi.hoisted(() => ({ args: [] as string[][], beforeVerify: [] as Array<() => void> }));
 vi.mock("node:child_process", async importOriginal => {
   const actual = await importOriginal<typeof ChildProcess>();
   const execFile = (...call: Parameters<typeof actual.execFile>) => {
-    if (Array.isArray(call[1])) started.args.push([...(call[1] as readonly string[])]);
+    if (Array.isArray(call[1])) {
+      const args = [...(call[1] as readonly string[])];
+      started.args.push(args);
+      if (args.includes("--verify")) started.beforeVerify.shift()?.();
+    }
     return (actual.execFile as (...forwarded: unknown[]) => ReturnType<typeof actual.execFile>)(...call);
   };
   return { ...actual, execFile };
@@ -369,7 +376,10 @@ describe("gitUnmergedReader", () => {
 });
 
 describe("gitHeadReader", () => {
-  afterEach(() => { heldFiles.clear(); });
+  afterEach(() => {
+    heldFiles.clear();
+    started.beforeVerify.length = 0;
+  });
 
   /** `HEAD` as `git rev-parse --verify --quiet HEAD` names it in `cwd`, or undefined where it names no commit. */
   function gitAnswer(cwd: string): string | undefined {
@@ -537,6 +547,69 @@ describe("gitHeadReader", () => {
     git(root, "commit", "--quiet", "--allow-empty", "-m", "two");
     expect(await processes(read, root)).toBe(1);
     expect(await processes(read, root)).toBe(1);
+  });
+
+  /** A repository on its branch at `one`, with the commit `two` after it. */
+  async function twoCommits(): Promise<{ root: string; branch: string; one: string; two: string }> {
+    const root = await repository({ "a.py": "1\n" });
+    const branch = git(root, "symbolic-ref", "HEAD").trim();
+    const one = gitAnswer(root)!;
+    git(root, "commit", "--quiet", "--allow-empty", "-m", "two");
+    const two = gitAnswer(root)!;
+    git(root, "update-ref", branch, one);
+    return { root, branch, one, two };
+  }
+  /** A folder to read, and how another process moves its `HEAD` to the commit `one` and to the commit `two`. */
+  interface Moves {
+    readonly cwd: string;
+    readonly toOne: () => void;
+    readonly toTwo: () => void;
+    readonly settleMs?: number;
+  }
+  const movedWhileGitReads: Array<[string, () => Promise<Moves>]> = [
+    ["its branch's loose ref", async () => {
+      const { root, branch, one, two } = await twoCommits();
+      return { cwd: root, toOne: () => git(root, "update-ref", branch, one), toTwo: () => git(root, "update-ref", branch, two) };
+    }],
+    ["HEAD to another branch", async () => {
+      const { root, branch, two } = await twoCommits();
+      git(root, "branch", "other", two);
+      return { cwd: root, toOne: () => git(root, "symbolic-ref", "HEAD", branch), toTwo: () => git(root, "symbolic-ref", "HEAD", "refs/heads/other") };
+    }],
+    ["HEAD to another branch, both packed", async () => {
+      const { root, branch, two } = await twoCommits();
+      git(root, "branch", "other", two);
+      git(root, "pack-refs", "--all");
+      return {
+        cwd: root, settleMs: 0, toOne: () => git(root, "symbolic-ref", "HEAD", branch), toTwo: () => git(root, "symbolic-ref", "HEAD", "refs/heads/other"),
+      };
+    }],
+    ["a detached HEAD", async () => {
+      const { root, one, two } = await twoCommits();
+      git(root, "update-ref", "--no-deref", "HEAD", one);
+      return { cwd: root, toOne: () => git(root, "update-ref", "--no-deref", "HEAD", one), toTwo: () => git(root, "update-ref", "--no-deref", "HEAD", two) };
+    }],
+    ["a linked worktree's branch, from the main checkout", async () => {
+      const { root, one, two } = await twoCommits();
+      git(root, "branch", "first", one);
+      const worktree = `${root}-worktree`;
+      roots.push(worktree);
+      git(root, "worktree", "add", "--quiet", worktree, "first");
+      return { cwd: worktree, toOne: () => git(root, "update-ref", "refs/heads/first", one), toTwo: () => git(root, "update-ref", "refs/heads/first", two) };
+    }],
+  ];
+
+  it.each(movedWhileGitReads)("keeps no answer the files it read do not name: %s moved back while Git read it, then again", async (_name, setUp) => {
+    const { cwd, toOne, toTwo, settleMs } = await setUp();
+    const read = gitHeadReader(settleMs === undefined ? {} : { settleMs });
+    await processes(read, cwd);
+    // The read finds the files at `two`, then another process moves HEAD back to `one` before Git reads it, so Git names
+    // `one`. Once the files say `two` again, the read must name `two`.
+    toTwo();
+    started.beforeVerify.push(toOne);
+    await processes(read, cwd);
+    toTwo();
+    await processes(read, cwd);
   });
 
   it("holds no file Git replaces open across a turn of the event loop", async () => {

@@ -276,11 +276,16 @@ type HeadLayout =
   | { readonly kind: "kept"; readonly dotGit: string; readonly gitDir: string; readonly commonDir: string }
   | { readonly kind: "asked"; readonly dotGit: string };
 
-/** What {@link gitHeadReader} compares between reads, and whether a read may keep the answer that goes with it. */
+/**
+ * What {@link gitHeadReader} compares between reads, and what a read checks before it keeps Git's answer with the key:
+ * that the files the key was read from name that commit, so an answer Git gave after one of them moved is not kept.
+ */
 interface HeadKey {
   readonly key: string;
   /** False while packed-refs, which the key holds by its stamp, is too new for the stamp to vouch for it. */
   readonly settled: boolean;
+  /** Whether the files the key was read from name `commit` as `HEAD`. */
+  readonly names: (commit: string) => boolean;
 }
 
 function errorCode(error: unknown): string {
@@ -318,6 +323,22 @@ async function packedRefsStamp(path: string, settleMs: number): Promise<{ readon
   } catch (error) {
     return errorCode(error) === "ENOENT" ? { stamp: "!ENOENT", settled: true } : undefined;
   }
+}
+
+/**
+ * Whether packed-refs at `path`, as stamped `stamp` (settled), names `commit` for `branch`. The file is stamped again
+ * once its text is read: a rewrite in between would carry a later stamp, so an equal one vouches that the text is that
+ * of the stamped file.
+ */
+function packedNames(path: string, stamp: string, branch: string, commit: string): boolean {
+  const text = fileText(path);
+  if (text === undefined || text.startsWith("!")) return false;
+  try {
+    if (fileStamp(statSync(path)) !== stamp) return false;
+  } catch {
+    return false;
+  }
+  return text.split("\n").some(line => line.trimEnd() === `${commit} ${branch}`);
 }
 
 async function present(path: string): Promise<boolean> {
@@ -358,23 +379,26 @@ async function headKey(layout: Extract<HeadLayout, { kind: "kept" }>, settleMs: 
   const head = fileText(join(layout.gitDir, "HEAD"));
   if (head === undefined || head.startsWith("!")) return undefined;
   // Detached: `HEAD` holds the commit itself.
-  if (!head.startsWith("ref:")) return { key: head, settled: true };
+  if (!head.startsWith("ref:")) return { key: head, settled: true, names: commit => commit === head.trim() };
   const branch = head.slice("ref:".length).trim();
   if (!branch.startsWith("refs/heads/") || branch === "refs/heads/.invalid" || branch.split("/").includes("..")) return undefined;
   const loose = fileText(join(layout.commonDir, ...branch.split("/")));
   if (loose === undefined || loose.startsWith("ref:")) return undefined;
-  if (!loose.startsWith("!")) return { key: `${head}\0${loose}`, settled: true };
+  if (!loose.startsWith("!")) return { key: `${head}\0${loose}`, settled: true, names: commit => commit === loose.trim() };
   // No loose ref, or a folder in its place: Git reads the branch from packed-refs.
-  const packed = await packedRefsStamp(join(layout.commonDir, "packed-refs"), settleMs);
-  return packed === undefined ? undefined : { key: `${head}\0${loose}\0${packed.stamp}`, settled: packed.settled };
+  const path = join(layout.commonDir, "packed-refs");
+  const packed = await packedRefsStamp(path, settleMs);
+  if (packed === undefined) return undefined;
+  return { key: `${head}\0${loose}\0${packed.stamp}`, settled: packed.settled, names: commit => packedNames(path, packed.stamp, branch, commit) };
 }
 
 /**
  * Reads `HEAD` ({@link gitHead}) for a caller that asks every pass, as the walk of a repository's worktrees does: it
  * starts a Git process only when a file Git reads `HEAD` from changed since the last read, and otherwise reads two to
  * four small files. A read keeps Git's answer with what those files held before Git read them: the folder's `.git`
- * entry, `HEAD`, and the branch's loose ref, else the stamp of packed-refs. A write between the two reads as a change
- * next time. The first read of a folder with a `.git` entry, and the first after that entry changes, also asks Git where
+ * entry, `HEAD`, and the branch's loose ref, else the stamp of packed-refs. It keeps the answer only where those files
+ * name that commit, so an answer Git gave after one of them moved is not kept, and a write between the two reads as a
+ * change next time. The first read of a folder with a `.git` entry, and the first after that entry changes, also asks Git where
  * the folder keeps `HEAD` (one more Git process). Where Git would read other files (a folder below the top of its
  * checkout, a branch naming another ref, a reftable repository), where packed-refs is newer than `settleMs`, and where
  * Git named no commit, every read asks Git: this can cost more, never answer differently from Git. Every file is read by
@@ -402,7 +426,7 @@ export function gitHeadReader(options: { readonly settleMs?: number } = {}): (cw
     if (key !== undefined && last?.key === key.key) return last.head;
     held.delete(cwd);
     const head = await gitHead(cwd);
-    if (key?.settled === true && head !== undefined) held.set(cwd, { key: key.key, head });
+    if (key?.settled === true && head !== undefined && key.names(head)) held.set(cwd, { key: key.key, head });
     return head;
   };
 }
