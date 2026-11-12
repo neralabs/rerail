@@ -1,1 +1,1 @@
-Rerail now starts one Git process to tell a shell edit from Git's own writes and recover the file's earlier text, where it started five to nine: it asks how a checkout writes line breaks only for a file that holds committed text in Windows line breaks, and reads Git's copies of the file once.
+Rerail starts two fewer Git processes for a shell edit of a file the session had not captured: it reads Git's copies of the file, checks the branches for its new text and recovers its earlier text with one process.
