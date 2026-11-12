@@ -233,17 +233,18 @@ export async function steerDashboard(cwd: string): Promise<string | undefined> {
 }
 
 /**
- * What the dashboard link needs of `repository_checkout_get`. Not the operation's own strict schema, so a daemon of
- * another version may add fields.
+ * The part of `repository_context_get` the dashboard link needs. Not the operation's own strict schema: a daemon of
+ * another version may answer with more or fewer repository fields, and the link needs none of them.
  */
-const dashboardScopeSchema = z.object({ repositoryKey: z.string(), checkoutPath: z.string() });
+const dashboardScopeSchema = z.object({
+  repository: z.object({ repositoryKey: z.string() }),
+  checkout: z.object({ checkoutPath: z.string() }).nullable(),
+});
 
-/**
- * The repository and checkout the daemon records for the verified checkout; null when it cannot say. It reads that one
- * checkout (`repository_checkout_get`): `repository_context_get` would work out every checkout's state for two fields.
- */
+/** The repository and checkout the daemon records for the verified checkout; null when it cannot say. */
 async function dashboardScope(daemon: VerifiedDaemon): Promise<RulesDashboardScope | null> {
-  return get(daemon, `/api/repository/checkout?${new URLSearchParams({ checkout: daemon.workspace })}`, dashboardScopeSchema)
+  return get(daemon, `/api/repository?${new URLSearchParams({ checkout: daemon.workspace })}`, dashboardScopeSchema)
+    .then(context => ({ repositoryKey: context.repository.repositoryKey, checkoutPath: context.checkout?.checkoutPath ?? null }))
     .catch(() => null);
 }
 

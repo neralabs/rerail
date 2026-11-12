@@ -323,7 +323,7 @@ describe("dashboard links", () => {
 describe("rules page", () => {
   let stub: Server | undefined;
   let health: Record<string, unknown>;
-  /** Whether the stub daemon has recorded the checkout, so `GET /api/repository/checkout?checkout=` answers. */
+  /** Whether the stub daemon has recorded the checkout, so `GET /api/repository?checkout=` answers. */
   let knownCheckout: boolean;
   /** The paths the stub daemon was asked for. */
   let served: string[];
@@ -334,6 +334,12 @@ describe("rules page", () => {
     stub = undefined;
     if (server !== undefined) await new Promise<void>(resolve => server.close(() => resolve()));
   };
+
+  const repositoryContext = (checkoutPath: string) => ({
+    repository: { repositoryKey, name: "app", aliases: [], setUp: true, configuredAt: 1, started: true, state: "started", checkoutCount: 1 },
+    clones: [],
+    checkout: { checkoutPath, folder: "", state: "started" },
+  });
 
   /** Liveness is only provable over the wire, so these fixtures answer `/healthz` from a real listener. */
   const listen = async (pid: number = process.pid): Promise<number> => {
@@ -348,7 +354,7 @@ describe("rules page", () => {
       const answers: Record<string, unknown> = {
         "/healthz": health,
         "/api/presentation": { presence: "compact", repositoryState: "stopped" },
-        ...(knownCheckout && url.searchParams.get("checkout") === checkoutPath ? { "/api/repository/checkout": { repositoryKey, checkoutPath } } : {}),
+        ...(knownCheckout && url.searchParams.get("checkout") === checkoutPath ? { "/api/repository": repositoryContext(checkoutPath) } : {}),
       };
       const body = answers[url.pathname];
       response.writeHead(body === undefined ? 404 : 200, { "content-type": "application/json" });
@@ -372,8 +378,8 @@ describe("rules page", () => {
     const port = await listen();
     await record(join(home, "daemon.json"), { pid: process.pid, port, url: `http://127.0.0.1:${port}/` });
     expect(await readRulesDashboard({ cwd })).toEqual({ url: await scoped(`http://127.0.0.1:${port}`), reason: null });
-    // The link needs the repository key and the checkout's path, not the repository's every checkout (`/api/repository`).
-    expect(served).toEqual(["/healthz", "/api/repository/checkout"]);
+    // The stub answers only what every daemon version answers, so the link is scoped whichever version runs.
+    expect(served).toEqual(["/healthz", "/api/repository"]);
     await rm(join(home, "daemon.json"));
     expect(await readRulesDashboard({ cwd })).toEqual({ url: null, reason: "daemon unavailable" });
   });
