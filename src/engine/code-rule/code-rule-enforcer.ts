@@ -776,29 +776,41 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     }
   }
 
+  /**
+   * Open once the catalog's code rules are registered in a new workspace: a boundary waiting for the evaluator waits for
+   * its rules alone. The content store attaches behind it, off the JS thread, as a replacement's does: the first apply
+   * waits for the attach (`#nextRevision`), and an attach that fails closes the workspace and records why, as a failed
+   * open does.
+   */
   async openWorkspace(sessionId: string): Promise<void> {
     if (this.#sessionId !== undefined || this.#closing)
       throw new Error("Executable policy enforcer cannot be reopened");
     this.#sessionId = sessionId;
     this.#reportQuarantined();
-    let prepared: PreparedWorkspace | undefined;
+    const prepared = this.#openingWorkspace();
+    if (prepared === undefined) return;
+    this.#workspace = prepared;
+    // A workspace a newer catalog replaced meanwhile was disposed with its attach: nothing is left to close or record.
+    void prepared.storage.catch((error: unknown) => {
+      if (this.#workspace !== prepared) return;
+      this.#disposeWorkspace(prepared.workspace);
+      this.#workspace = undefined;
+      this.#recordOpenFailure(error);
+    });
+  }
+
+  /** The workspace the evaluator opens with, or undefined once why it could not be made is recorded. */
+  #openingWorkspace(): PreparedWorkspace | undefined {
     try {
-      prepared = this.#prepareWorkspace();
-      this.#workspace = prepared;
-      await prepared.storage;
+      return this.#prepareWorkspace();
     } catch (error) {
-      if (prepared !== undefined && this.#workspace === prepared) {
-        this.#disposeWorkspace(prepared.workspace);
-        this.#workspace = undefined;
-      }
-      this.#recordImmediate(
-        this.#scope,
-        this.#mode,
-        0,
-        [],
-        [failure("catalog", "adapter-error", errorMessage(error), undefined, "evaluate")],
-      );
+      this.#recordOpenFailure(error);
+      return undefined;
     }
+  }
+
+  #recordOpenFailure(error: unknown): void {
+    this.#recordImmediate(this.#scope, this.#mode, 0, [], [failure("catalog", "adapter-error", errorMessage(error), undefined, "evaluate")]);
   }
 
   updateSettings(settings: Required<AuditSettings>): void {

@@ -625,7 +625,11 @@ describe("mechanical code rule regressions", () => {
 
   it("audits a Git checkout through the native repository index and records its clean directories for reuse", async () => {
     const { recorder, audits } = recordingAudits();
-    const { root, enforcer } = await fixture({ audits: recorder });
+    const attached = Promise.withResolvers<void>();
+    const { root, enforcer } = await fixture({
+      audits: recorder,
+      timingLog: line => { if (line.startsWith("rerail: repository storage")) attached.resolve(); },
+    });
     try {
       await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\napi/ignored.py\n");
       await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
@@ -635,6 +639,8 @@ describe("mechanical code rule regressions", () => {
       execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
       await writeFile(join(root, "api", "ignored.py"), "NEEDLE\n");
       await enforcer.openWorkspace("git-repository-audit");
+      // The evaluator opens before its content store attaches, and the attach may make the store: count once it has.
+      await attached.promise;
       const before = completedDirectories();
       const [auditId] = await enforcer.audit("git-repository-audit", { scope: "repository", mode: "log" });
       expect(audits.get(auditId!)?.result).toMatchObject({

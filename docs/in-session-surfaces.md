@@ -210,19 +210,19 @@ A steer never becomes your message, before or after the agent compacts its conte
 
 ### Edits made by shell commands and before rules are ready
 
-Rerail checks shell-written files when the command finishes. Edits made while a large repository indexes are checked in the first pass after.
+Rerail checks shell-written files when the command finishes. A tool call made while a session's code rules open waits for them, so its edit is checked at its own result.
 
 <details>
-<summary>Shell edits and indexing</summary>
+<summary>Shell edits and rules opening</summary>
 
 - A shell result, or a turn end, waits up to 10 seconds for Rerail to find what the shell wrote. Later finds are steered at a later step, and the dashboard timeline says rules had not yet seen shell edits there.
 - A file the shell deleted is reported only if Rerail had seen it.
 
-In a large repository, Rerail indexes at session start before code rules can run; nothing waits for it.
+A session's code rules open when it starts, and again after the daemon restarts. The repository's index attaches behind them; the first edit check waits for it.
 
-- Edits made meanwhile are not checked at their own result; the first pass after indexing checks every changed file.
-- OMP's footer shows ` · indexing` while it lasts, only if it takes over half a second.
-- The dashboard timeline says code rules were not yet running at those steps.
+- A tool call, its result or a turn end that comes while the rules open waits for them: up to 1 second in Claude Code, Codex and Cursor, up to 10 seconds in OMP and Pi. A prompt does not wait.
+- Past that wait, the step goes on without code rules, and so does every step after it until the rules are open. Those edits are not checked at their own result; the first pass after checks every changed file. The dashboard timeline says code rules were not yet running at those steps.
+- OMP's footer shows ` · indexing` while the rules open, only if that takes over half a second.
 
 </details>
 
@@ -294,7 +294,7 @@ It refreshes every five seconds and only reads: it never starts a daemon, runs a
 
 - ` · worktree` after the rule count, while the checkout runs its own rules from `.rerail/rules` ([a worktree's own rules](rule-packs.md#a-worktrees-own-rules)). Links to their pack page: `R E R A I L ● 27 rules · worktree · steered 3×`.
 - ` · N to approve` while N rules or packs on here run in Log awaiting [approval](rule-scoping.md#approval); a pack counts once. Links to the repository's Overview, which lists them.
-- ` · indexing` in OMP, not Pi, during indexing ([above](#edits-made-by-shell-commands-and-before-rules-are-ready)).
+- ` · indexing` in OMP, not Pi, while code rules open ([above](#edits-made-by-shell-commands-and-before-rules-are-ready)).
 - `engine unavailable` if the rule engine could not load.
 - `audit failed (N failures)` if the latest audit failed; N counts every failure, including any beyond its list of at most 20.
 - For a completed audit with gaps: `N files not checked`, `N rules ran out of work`, `N rules stopped by file work`.

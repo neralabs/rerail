@@ -489,6 +489,8 @@ interface RuntimeSessionState {
   codeRuleReady: boolean;
   /** The evaluator is still opening and owns its own release: closing the session does not wait for it. */
   codeRuleOpening: boolean;
+  /** A boundary stopped waiting for the evaluator to open: later boundaries answer without waiting until it has. */
+  codeRuleOpenWaitedOut: boolean;
   ownerClaim: PolicyOwnerClaim | undefined;
   auditRequestWork: Promise<void> | undefined;
   repositoryAudit: Promise<void> | undefined;
@@ -846,7 +848,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const state = this.#session(event.sessionId);
     this.#scheduleAuditRequests(state.descriptor.sessionId);
     state.ruleSync?.refresh();
-    // A code-rule boundary reached while the session's evaluator is still opening (indexing) goes on without code rules.
+    // A code-rule boundary reached while the session's evaluator is still opening waits for it, within a bound.
     const bridge = CODE_RULE_BOUNDARIES[event.kind] === true ? await this.#codeRuleWorkspaceNow(state, event) : state.codeRuleBridge;
     bridge?.refreshCodeRules();
     await this.#noteTurnWindow(state, event);
@@ -981,12 +983,19 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * The session's evaluator for a code-rule boundary, without waiting for one still opening (indexing the repository):
-   * such a boundary is answered without code rules and recorded in the session's history, and what it would have
-   * checked is not checked later either, so the agent is never held up by indexing nor steered turns later for it.
+   * The session's evaluator for a code-rule boundary. One still opening (registering its rules; its content store
+   * attaches behind it) is waited for as long as the host's boundary waits for an edit's check, so the boundary is
+   * checked as it is once the evaluator is open. Past that wait the boundary is answered without code rules and recorded
+   * in the session's history, and so is every later one until the evaluator opens: a slow open holds one boundary, not
+   * each of them in turn.
    */
   async #codeRuleWorkspaceNow(state: RuntimeSessionState, event: AdapterEvent): Promise<CodeRuleBridge | undefined> {
     if (!state.codeRuleOpening) return await state.codeRuleWorkspace;
+    if (!state.codeRuleOpenWaitedOut) {
+      const capMs = ADAPTER_CAPABILITIES[state.descriptor.host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS;
+      if (await settledWithin(state.codeRuleWorkspace.then(() => undefined), capMs)) return await state.codeRuleWorkspace;
+      state.codeRuleOpenWaitedOut = true;
+    }
     if (event.kind === "call" || event.kind === "result" || event.kind === "turn-end") {
       const boundary = event.kind;
       try {
@@ -1471,6 +1480,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       codeRuleWorkspace: Promise.resolve(undefined),
       codeRuleReady: false,
       codeRuleOpening: false,
+      codeRuleOpenWaitedOut: false,
       auditRequestWork: undefined,
       repositoryAudit: undefined,
       // Restored whether or not the evaluator opens, so their results still close them in the ledger.
@@ -1486,10 +1496,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * Opens a published session's evaluator behind its attach: Git discovery and the content-store snapshot of a large
-   * checkout take longer than a host waits for a session to start. The calls a previous runtime left unresolved are
-   * begun again before any new boundary sees the bridge, and the repository audit starts once it is open. An
-   * evaluator that cannot open is recorded as a failed audit; the session goes on without code rules.
+   * Opens a published session's evaluator behind its attach, so the host's session start never waits for it; a
+   * code-rule boundary that comes meanwhile waits for it within a bound (`#codeRuleWorkspaceNow`), and the content
+   * store attaches behind the open evaluator (`NativeCodeRuleEnforcer.openWorkspace`). The calls a previous runtime
+   * left unresolved are begun again before any new boundary sees the bridge, and the repository audit starts once it is
+   * open. An evaluator that cannot open is recorded as a failed audit; the session goes on without code rules.
    */
   async #openCodeRuleWorkspace(
     state: RuntimeSessionState,
@@ -2005,8 +2016,21 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const known = recordCheckout(this.#catalogs.database, cwd);
     if (known !== undefined && !known.git) this.#owners.addPlainRoot(known.checkoutPath);
     const start = startingCheckout(this.#owners, cwd);
-    this.#catalogs.refresh(start.checkoutRoot);
+    if (this.#catalogs.refresh(start.checkoutRoot) !== "unrecorded") this.#compileCodeRules(start.checkoutRoot);
     return { root: start.checkoutRoot, folder: start.path, cwd };
+  }
+
+  /**
+   * Compiles the checkout's code rules as the session opens, before its first boundary can wait for its evaluator: the
+   * evaluator's open then only registers them, and the event that opened the session waits for the compile either way
+   * (its rule coverage reads the catalog). A catalog that cannot compile is reported where the evaluator opens.
+   */
+  #compileCodeRules(root: string): void {
+    try {
+      this.#catalogs.catalog(root);
+    } catch {
+      // The evaluator's open builds the catalog again and records why it failed; the session starts either way.
+    }
   }
 
   async #restoreRegistry(

@@ -689,10 +689,9 @@ export function isCommandTool(toolName: string): boolean {
 }
 
 /**
- * How long a turn checkpoint or a command result waits for a checkout-wide source walk, and a code-rule boundary
- * waits for the session's evaluator to open, before answering with what it has. The work goes on, and what it finds
- * is audited and delivered at a later boundary; waiting longer would hold the session's event lane past the host's
- * per-event timeout.
+ * How long a turn checkpoint or a command result waits for a checkout-wide source walk before answering with what it
+ * has. The work goes on, and what it finds is audited and delivered at a later boundary; waiting longer would hold the
+ * session's event lane past the host's per-event timeout.
  */
 export const BOUNDARY_DISCOVERY_WAIT_MS = 10_000;
 /**

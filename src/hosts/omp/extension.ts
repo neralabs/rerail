@@ -470,8 +470,8 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
     };
 
     /**
-     * Shows `indexing` in the footer while the daemon indexes the repository the attached runtime checks. Nothing waits
-     * for it: until it ends, the session's tool calls, results and turn ends go on without code rules.
+     * Shows `indexing` in the footer while the daemon opens the code rules of the repository the attached runtime
+     * checks. A prompt does not wait for it; the session's next tool call, result or turn end does, for up to 10 s.
      */
     const watchIndexing = (client: NativeSessionClient): void => {
       const watched: Indexing = { client, done: false };

@@ -1,0 +1,1 @@
+A tool call made while a session's code rules open (at its start or after a daemon restart) now waits for them, up to 1 second in Claude Code, Codex and Cursor and 10 in OMP and Pi, so its edit is checked at its own result instead of at a later pass.

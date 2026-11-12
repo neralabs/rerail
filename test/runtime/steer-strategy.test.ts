@@ -68,7 +68,7 @@ async function strategySession(options: {
   });
   const sessionId = "strategy";
   await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: options.host, sessionId, cwd: root } });
-  // A boundary reached while the evaluator is still opening goes on without code rules.
+  // A boundary waits for an evaluator still opening only so long; past that it goes on without code rules.
   await runtime.codeRulesOpened(sessionId);
   let event = 0;
   const call = (toolCallId: string, path: string | readonly string[]) => runtime.ingest({
