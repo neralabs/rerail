@@ -275,7 +275,9 @@ The launcher, hooks and Claude Code's status line run the Node that ran set-up, 
 `/opt/homebrew/bin/node`, a link `brew upgrade` keeps, so upgrading changes nothing.
 
 If that Node is gone (`nvm uninstall`, say), they fall back to the first `node` on `PATH`. Claude Code's status line
-on Windows does not.
+on Windows does not. Nor do Claude Code's hooks on Windows when set-up found another `node` first on `PATH`, or none:
+they start the recorded Node directly, so each hook event runs one Node rather than two, and once that Node is gone
+Claude Code reports each hook as failed until `rerail install --refresh` runs.
 
 With that `node` older than 24, the daemon does not start and hooks do nothing. Claude Code's status line reads
 `R E R A I L ✕ needs Node 24 or newer (this is 22.12.0)`.

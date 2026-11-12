@@ -38,6 +38,19 @@ async function launch(recorded: Recorded, hookSource = REPORTING_HOOK): Promise<
   return { status: result.status, stdout: result.stdout, stderr: result.stderr };
 }
 
+describe("hook launcher started by the recorded node", () => {
+  it("runs the hook in its own process, so a hook event starts one node", async () => {
+    const base = await mkdtemp(join(tmpdir(), "rerail-hook-launcher-"));
+    temporaryDirectories.push(base);
+    const hook = join(base, "claude-hook.mjs");
+    await writeFile(hook, "process.stdout.write(JSON.stringify({ pid: process.pid, argv1: process.argv[1] }));");
+    // Set-up writes the recorded node as the command where `node` on PATH is another one.
+    const result = spawnSync(process.execPath, ["--import", "tsx", LAUNCHER, process.execPath, hook], { input: "{}", encoding: "utf8" });
+    expect(JSON.parse(result.stdout), result.stderr).toEqual({ pid: result.pid, argv1: hook });
+    expect(result.status).toBe(0);
+  }, 30_000);
+});
+
 describe.skipIf(process.platform === "win32")("hook launcher", () => {
   it("runs the hook under the recorded node while that binary exists, passing its answer through", async () => {
     const { status, stdout, stderr } = await launch("runs");

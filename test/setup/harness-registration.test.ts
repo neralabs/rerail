@@ -297,9 +297,56 @@ describe("Claude Code settings.json", () => {
     ]);
   });
 
+  /** A node at `<home>/../<folder>/node.exe` that `node` on PATH finds, as set-up reads PATH for Windows. */
+  async function windowsPathNode(home: string, folder: string): Promise<string> {
+    const directory = join(dirname(home), folder);
+    await mkdir(directory, { recursive: true });
+    const node = join(directory, "node.exe");
+    await writeFile(node, "");
+    vi.stubEnv("PATH", directory);
+    vi.stubEnv("PATHEXT", ".exe");
+    return node;
+  }
+
+  it("starts the Windows hooks with the recorded node itself when node on PATH is another one", async () => {
+    const { home, root } = await fixture();
+    const hookPath = join(root, "dist", "hosts", "claude", "claude-hook.js");
+    const launcherPath = join(root, "dist", "harness", "hook-launcher.js");
+    const path = join(home, ".claude", "settings.json");
+    await seed(path, foreign);
+    // An older node first on PATH, and set-up run with a newer one: `node` would start the launcher on the older node,
+    // and the launcher would start the recorded node as a second process on every hook event.
+    await windowsPathNode(home, "older-node");
+    const nodePath = join(dirname(home), "newer-node", "node.exe");
+    await mkdir(dirname(nodePath));
+    await writeFile(nodePath, "");
+    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const };
+
+    await registerHarnesses(windows);
+    const recordedEntry = { type: "command", command: nodePath, args: [launcherPath, nodePath, hookPath] };
+    const hooks = (await readJson(path)).hooks as Record<string, unknown[]>;
+    expect(hooks.SessionStart).toEqual([{ hooks: [recordedEntry] }]);
+    expect(hooks.PreToolUse).toEqual([...foreign.hooks.PreToolUse, { matcher: "", hooks: [recordedEntry] }]);
+    expect(change((await registerHarnesses(windows)).changes, "claude-code", "settings.json").action).toBe("unchanged");
+
+    // Recorded again with the node PATH finds, the entry goes back to `node` and replaces the one above.
+    const pathNode = await windowsPathNode(home, "older-node");
+    await registerHarnesses({ ...windows, nodePath: pathNode });
+    const replaced = (await readJson(path)).hooks as Record<string, unknown[]>;
+    expect(replaced.SessionStart).toEqual([{ hooks: [{ type: "command", command: "node", args: [launcherPath, pathNode, hookPath] }] }]);
+
+    // With no node on PATH at all, `node` could not start; the recorded node can.
+    vi.stubEnv("PATH", "");
+    await registerHarnesses(windows);
+    expect(((await readJson(path)).hooks as Record<string, unknown[]>).SessionStart).toEqual([{ hooks: [recordedEntry] }]);
+
+    await unregisterHarnesses(windows);
+    expect((await readJson(path)).hooks).toEqual(foreign.hooks);
+  });
+
   it("registers Windows hooks through the exec-form launcher and replaces the cmd wrapper Git Bash mangles", async () => {
     const { home, root } = await fixture();
-    const nodePath = String.raw`C:\Program Files\nodejs\node.exe`;
+    const nodePath = await windowsPathNode(home, "nodejs");
     const hookPath = join(root, "dist", "hosts", "claude", "claude-hook.js");
     const launcherPath = join(root, "dist", "harness", "hook-launcher.js");
     const path = join(home, ".claude", "settings.json");
@@ -317,7 +364,8 @@ describe("Claude Code settings.json", () => {
     expect(JSON.stringify(hooks)).not.toContain("cmd /d /c");
     expect(change((await registerHarnesses(windows)).changes, "claude-code", "settings.json").action).toBe("unchanged");
 
-    const upgradedNode = String.raw`C:\Users\dev\AppData\Local\nvm\v24.9.0\node.exe`;
+    // `rerail install --refresh` run with the new node first on PATH.
+    const upgradedNode = await windowsPathNode(home, "v24.9.0");
     await registerHarnesses({ ...windows, nodePath: upgradedNode });
     const upgraded = (await readJson(path)).hooks as Record<string, unknown[]>;
     expect(upgraded.SessionStart).toEqual([{ hooks: [{ ...execEntry, args: [launcherPath, upgradedNode, hookPath] }] }]);
