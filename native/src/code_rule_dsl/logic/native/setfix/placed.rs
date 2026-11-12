@@ -160,7 +160,7 @@ pub mod tests {
             let eq = |x: u32| &rows[x as usize * k..][..k] == row;
             assert_eq!(p.find(hash_of(id), eq), Some(id));
         }
-        let absent = [5i64, 5];
+        let absent = [5i64, 20_000];
         let h = super::super::hash_vals(absent.iter().copied());
         assert_eq!(p.find(h, |x| rows[x as usize * k..][..k] == absent), None);
         let mut ids: Vec<u32> = p.ids().collect();

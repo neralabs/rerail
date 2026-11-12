@@ -655,8 +655,9 @@ impl Rel {
         // Placed by hash while it grew: frozen, an order, sorted once (later strata probe it by its leading columns,
         // as by any order; placed, it would answer only whole rows, at no fewer bytes a row).
         if self.idx.first().is_some_and(Index::is_placed) {
+            // The rows placed so far (`..from`); the rest are added with every order's below, and the runs merged.
             let mut ix = Index::new((0..k).collect());
-            ix.add_run(&self.data, k, 0, n, 0);
+            ix.add_run(&self.data, k, 0, from, 0);
             self.idx[0] = ix;
         }
         for ix in &mut self.idx {
