@@ -3631,6 +3631,11 @@ it, holds the component DAG's closure instead of the documents' pairs.
 **Closure:** a warm run of the 54-file P3 corpus derives no stratum again with no input changed; cold CPU is back
 near 66.6 s (t32); findings unchanged.
 
+**Status (2026-11-11): mostly closed by decision 0115** (the reach index). `rr_cx_reach` is 208 KB of bitmaps,
+not 6.3 M rows. A warm run with nothing changed derives 2 of 480 strata again: the index's own two, rebuilt in
+0.1 s and never kept. It keeps 587 relations in 29.1 MB, and findings agree (4,815). Still open: the cold-CPU
+check against 66.6 s, measured with the per-file memo warm (0115 **Measured**).
+
 ## O-logic-tests-link. rerail-logic's test binary checks but does not link: the grammars are the engine's
 
 `cargo test -p rerail-logic --lib --no-run` compiles (01db3167f) but fails to link: `_tree_sitter_python`,

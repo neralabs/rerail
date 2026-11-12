@@ -3584,6 +3584,7 @@ impl Run<'_, '_> {
             Native::DfsFirst { edge, target, roots } => (edge, target, roots),
             Native::MatchAll { input, pattern, groups, positions } => return self.match_all(rel, input, pattern, groups, *positions),
             Native::Components { edge, own } => return self.components(rel, edge, own),
+            Native::Reach { .. } | Native::ReachThrough { .. } => return self.reach_rows(rel, native),
             Native::Python {kind,input,targets} => return self.python_relation(rel,kind,input,targets),
             Native::PythonCandidates {input,targets,..} => return self.python_relation(rel,"candidates",input,&Some(targets.clone())),
         };
@@ -3723,6 +3724,84 @@ impl Run<'_, '_> {
             freq: Vec::new(),
         });
         Ok(Some(source.len()))
+    }
+
+    /// The reach index (decision 0115, `front::Native::Reach` and `ReachThrough`) over relations the engine holds:
+    /// held as the index, read in place by its readers, no row made. `None`: an input is not held natively (the rows
+    /// are then made by `reach_rows`).
+    fn native_reach(&mut self, rel: &str, native: &crate::code_rule_dsl::logic::front::Native) -> Result<Option<usize>> {
+        use super::native::{component, reach::Closed};
+        use crate::code_rule_dsl::facts::vtab::Source as _;
+        use crate::code_rule_dsl::logic::front::Native;
+        if self.model.inputs.atoms.is_none() {
+            return Ok(None);
+        }
+        let held = |this: &Self, r: &str| -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+            if this.native_rels.contains(r) {
+                component::derived(this.db, r)
+            } else if this.prog.inputs.iter().any(|i| i == r) {
+                crate::code_rule_dsl::facts::vtab::bound_source(this.db, r)
+            } else {
+                None
+            }
+        };
+        let pairs = |s: &dyn crate::code_rule_dsl::facts::vtab::Source| -> Vec<(i64, i64)> {
+            let mut v = [0i64; 2];
+            (0..s.len()).map(|r| { s.row_at(r, &[0, 1], &mut v); (v[0], v[1]) }).collect()
+        };
+        let closed = match native {
+            Native::Reach { seed, edge } => {
+                let (Some(s), Some(e)) = (held(self, seed), held(self, edge)) else { return Ok(None) };
+                Closed::reach(&pairs(s.as_ref()), &pairs(e.as_ref()))
+            }
+            Native::ReachThrough { reach, map } => {
+                let (Some(r), Some(m)) = (component::held_source(self.db, reach), held(self, map)) else { return Ok(None) };
+                let Some(r) = r.as_any().and_then(|a| a.downcast_ref::<Closed>()) else { return Ok(None) };
+                r.through(&pairs(m.as_ref()))
+            }
+            _ => return Ok(None),
+        };
+        let n = closed.len();
+        let bytes = closed.bytes();
+        let stats = closed.statistics().expect("the index counts its statistics");
+        component::hold_source(self.db, rel, Arc::new(closed), vec![b'i'; self.prog.decls[rel].len()]);
+        self.native_rels.insert(rel.to_owned());
+        live_stats(&mut self.model, rel, LiveRel {
+            n: n as i64,
+            delta: n as i64,
+            ndv: stats.iter().map(|s| s.2).collect(),
+            sq: stats.iter().map(|s| s.3).collect(),
+            freq: Vec::new(),
+        });
+        super::profile::note(format!("{rel} index bytes"), || bytes.to_string());
+        Ok(Some(n))
+    }
+
+    /// The reach index's rows written to `rel`'s table, from its inputs' tables: for a run that holds no relation
+    /// natively.
+    fn reach_rows(&mut self, rel: &str, native: &crate::code_rule_dsl::logic::front::Native) -> Result<usize> {
+        use super::native::reach::Closed;
+        use crate::code_rule_dsl::facts::vtab::Source as _;
+        use crate::code_rule_dsl::logic::front::Native;
+        let ident = crate::code_rule_dsl::logic::sql::ident;
+        let pairs = |this: &Self, r: &str| -> Result<Vec<(i64, i64)>> {
+            let (c0, c1) = (this.model.col(r, 0), this.model.col(r, 1));
+            let mut st = this.db.prepare(&format!("SELECT DISTINCT {c0}, {c1} FROM {}", ident(r)))?;
+            let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            Ok(rows.collect::<rusqlite::Result<_>>()?)
+        };
+        let closed = match native {
+            Native::Reach { seed, edge } => Closed::reach(&pairs(self, seed)?, &pairs(self, edge)?),
+            Native::ReachThrough { reach, map } => {
+                let Some(Native::Reach { seed, edge }) = self.prog.natives.get(reach) else { return Err(Error::Plan(format!("{rel}: {reach} is not a reach"))) };
+                Closed::reach(&pairs(self, seed)?, &pairs(self, edge)?).through(&pairs(self, map)?)
+            }
+            _ => unreachable!("a reach index"),
+        };
+        let values = (0..closed.len()).map(|r| vec![SqlValue::Integer(closed.value(r, 0)), SqlValue::Integer(closed.value(r, 1))]).collect();
+        let before = self.db.total_changes();
+        insert_many(&self.db, &format!("INSERT OR IGNORE INTO {}", ident(rel)), values)?;
+        Ok((self.db.total_changes() - before) as usize)
     }
 
     fn components(&mut self, rel: &str, edge: &str, own: &str) -> Result<usize> {
@@ -7388,6 +7467,16 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             }
             let n = run.python_relation(rel, kind, input, &targets)?;
             super::profile::stratum(&skey, "native fact operator over retained demand relations", String::new);
+            super::profile::note(format!("{rel} rows"), || n.to_string());
+            outcome.native.insert(key);
+            continue;
+        }
+        // The reach index (decision 0115) over the relations the engine holds: no row made, read in place.
+        if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && let Some(native @ (super::front::Native::Reach { .. } | super::front::Native::ReachThrough { .. })) = prog.natives.get(*rel)
+            && let Some(n) = run.native_reach(rel, native)?
+        {
+            super::profile::stratum(&skey, "reach index over held relations (decision 0115)", String::new);
             super::profile::note(format!("{rel} rows"), || n.to_string());
             outcome.native.insert(key);
             continue;

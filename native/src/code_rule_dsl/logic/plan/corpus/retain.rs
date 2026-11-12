@@ -416,6 +416,11 @@ pub(in crate::code_rule_dsl) fn after(
     let mut bytes: usize = rels.values().map(Kept::bytes).sum();
     let budget = budget();
     for (rel, width, held) in derived {
+        // An index's relation (the reach index, decision 0115) is made again in less than reading it back costs:
+        // not kept, so it never takes the budget from the relations whose rows are work.
+        if held.held_source().is_some() {
+            continue;
+        }
         let k = Kept { rel: held, width, output: outputs.get(&rel).cloned() };
         bytes += k.bytes();
         if bytes > budget {

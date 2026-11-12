@@ -33,6 +33,7 @@ logic::front::tests	rerail-logic
 logic::front::yaml::tests	rerail-logic
 logic::magic::tests	rerail-logic
 logic::native::setfix::device::tests	rerail-engine
+logic::native::reach::tests	rerail-engine
 logic::native::setfix::lab::tests	rerail-engine
 logic::native::setfix::scalars::tests	rerail-engine
 logic::native::tests	rerail-engine

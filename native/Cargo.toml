@@ -98,6 +98,8 @@ rayon = "=1.12.0"
 serde = { version = "1.0", features = ["derive"] }
 fancy-regex = "=0.17.0"
 regex = "=1.13.1"
+# The reach index (decision 0115): each start's closure as a compressed bitmap.
+roaring = "=0.11.5"
 regex-automata = "=0.4.18"
 regex-syntax = "=0.8.11"
 # Held at 0.40.2, not main's 0.41.1: 0.41 registers hooks (`progress_handler`, `commit_hook`,

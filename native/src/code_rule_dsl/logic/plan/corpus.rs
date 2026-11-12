@@ -2188,6 +2188,11 @@ fn run_observed(
             // Bodies simplified first (decision 0038): implied atoms and set-member kind tests drop, identical relations merge.
             crate::code_rule_dsl::logic::simplify::simplify(&mut prog);
             prog = front::prune(prog);
+            // Transitive closures held as each start's bitmap, not as rows (decision 0115).
+            let (reaches, throughs) = crate::code_rule_dsl::logic::reach_form::find(&mut prog).map_err(|e| Error::Plan(format!("{e:?}")))?;
+            if reaches + throughs > 0 {
+                crate::code_rule_dsl::logic::profile::decision("reach index (decision 0115)", || format!("{reaches} closures and {throughs} relations through them held as bitmaps"));
+            }
             // Tests a rule negates of the nodes it has bound, computed for those nodes only, not every node (magic sets).
             let (mut prog, demanded) = crate::code_rule_dsl::logic::magic::demand_negated_tests(prog);
             drop(preparing);

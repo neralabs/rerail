@@ -115,7 +115,7 @@ fn recursive_cross_file_stratum() {
 #include "python/names.rr"
 .decl dep(a: number, b: number)
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
-.decl reach(a: number, b: number)
+.decl reach(a: number, b: number) no_reach
 reach(a, b) :- dep(a, b).
 reach(a, c) :- reach(a, b), dep(b, c).
 .violation CYC(at: node) code "CYC" "This import closes a cycle of imports."
@@ -296,7 +296,7 @@ fn a_session_inserts_only_rows_new_against_the_survivors() {
 #include "python/names.rr"
 .decl dep(a: number, b: number)
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
-.decl reach(a: number, b: number)
+.decl reach(a: number, b: number) no_reach
 reach(a, b) :- dep(a, b).
 reach(a, c) :- reach(a, b), dep(b, c).
 .violation CYC(at: node) code "CYC" "This import closes a cycle of imports."

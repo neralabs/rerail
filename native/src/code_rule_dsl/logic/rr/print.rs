@@ -180,6 +180,16 @@ fn native_rule(head: &Atom, native: &Native, prog: &Program) -> Result<String, E
         Native::Components { edge, own } => {
             format!("{} :- components({}, {}, {}).", atom(head, prog)?, terms(&head.args)?, relation(edge), relation(own))
         }
+        // The reach index's relations are plain rules (decision 0115): printed as the closure they hold, which is
+        // recognized again when read back.
+        Native::Reach { seed, edge } => {
+            let (r, x, y, z) = (relation(&head.rel), var("rr_x"), var("rr_y"), var("rr_z"));
+            format!("{r}({x}, {y}) :- {}({x}, {y}).\n{r}({x}, {z}) :- {r}({x}, {y}), {}({y}, {z}).", relation(seed), relation(edge))
+        }
+        Native::ReachThrough { reach, map } => {
+            let (x, e, q) = (var("rr_x"), var("rr_e"), var("rr_q"));
+            format!("{}({x}, {q}) :- {}({x}, {e}), {}({e}, {q}).", relation(&head.rel), relation(reach), relation(map))
+        }
         Native::MatchAll { input, pattern, groups, positions } => {
             let s = (0..).map(|i| format!("rr_text{i}")).find(|v| !groups.contains(v)).expect("a free name");
             let coordinates: Vec<_> = (0..).map(|i| format!("rr_position{i}")).filter(|v| !groups.contains(v) && v != &s).take(if *positions { 3 } else { 0 }).map(|v| var(&v)).collect();
