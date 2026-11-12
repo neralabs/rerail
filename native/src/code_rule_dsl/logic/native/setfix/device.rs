@@ -75,13 +75,24 @@ enum Kind {
 
 /// The texts of `keys` (slots an input column bound, or constants), for a stage that reads names: the columns and
 /// the constants, into `d`'s keys `0..` as slots or constants.
-fn text_keys(d: &mut mj::Stage, keys: &[Key], origin: &[Option<(Arc<InRel>, usize)>], what: &str) -> Result<Kind, String> {
+thread_local! {
+    /// The step that first bound each slot of the rule being compiled (its name): what a refusal of a slot names.
+    static BINDER: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn text_keys(d: &mut mj::Stage, keys: &[Key], origin: &[Option<(Arc<InRel>, usize)>], known: &HashMap<usize, i64>, what: &str) -> Result<Kind, String> {
     let (mut cols, mut consts): (Vec<(Arc<InRel>, usize)>, Vec<i64>) = (Vec::new(), Vec::new());
     for (k, a) in keys.iter().enumerate() {
-        match *a {
+        // A slot a `let` filled with a constant is that constant.
+        let a = match *a {
+            Key::Slot(x) => known.get(&x).map_or(Key::Slot(x), |&c| Key::Const(c)),
+            c => c,
+        };
+        match a {
             Key::Slot(x) => {
                 let Some(o) = origin.get(x).cloned().flatten() else {
-                    return Err(format!("{what} of a slot no input relation's column bound has no device form"));
+                    let by = BINDER.with_borrow(|b| b.get(x).copied().unwrap_or("nothing"));
+                    return Err(format!("{what} of a slot no input relation's column bound (bound by {by}) has no device form"));
                 };
                 if !cols.iter().any(|(r, c)| Arc::ptr_eq(r, &o.0) && *c == o.1) {
                     cols.push(o);
@@ -242,6 +253,25 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
     let mut bound = vec![false; j.nslots];
     // Where each slot's value came from: a column of an input relation (a text test's terms are its symbols).
     let mut origin: Vec<Option<(Arc<InRel>, usize)>> = vec![None; j.nslots];
+    // Slots a `let` filled with a constant (a text stage reads the constant).
+    let mut known: HashMap<usize, i64> = HashMap::new();
+    BINDER.with_borrow_mut(|b| {
+        b.clear();
+        b.resize(j.nslots, "nothing");
+        let mut seen = vec![false; j.nslots];
+        for st in &j.steps {
+            for x in 0..j.nslots {
+                if !seen[x] && binds_slot(st, x) {
+                    seen[x] = true;
+                    b[x] = match st {
+                        Step::Atom { src: Src::In(..), .. } => "an input relation's atom",
+                        Step::Atom { .. } => "an own relation's atom",
+                        other => step_name(other),
+                    };
+                }
+            }
+        }
+    });
     // `cat`s held back, by the slot they bind: each read only by an `eq` or `ne` after, which compares names.
     let mut deferred: HashMap<usize, (Key, Key, u32)> = HashMap::new();
     // Slots whose values are made texts (`MAKE`'s), read by the head alone.
@@ -369,6 +399,15 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
                 i += 1;
             }
+            Step::Test { op, s, p, want, .. }
+                if literal_test(op).is_some() && (matches!(p, Key::Slot(_)) || [s, p].iter().any(|k| matches!(k, Key::Slot(x) if deferred.contains_key(x)))) =>
+            {
+                // A literal test whose pattern is bound (or a cat's text): the two texts compared on the device a
+                // word at a time, pairwise, as `strings::test` does (a pattern holding the set separator refused).
+                let op = literal_test(op).expect("a literal test") | mj::TEXT_SPLIT;
+                stages.push(textop(i, op, *want, *p, *s, &deferred, &origin, &known)?);
+                i += 1;
+            }
             Step::Test { op, s, matcher, want, .. } => {
                 // A text test with constant patterns, of a slot an input relation's column bound: its verdicts per
                 // distinct symbol of the column, made on the device by the test's automaton (`text::table`).
@@ -418,6 +457,11 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                         origin.resize(out + 1, None);
                     }
                     origin[out] = match (doc, src) { (false, Key::Slot(x)) => origin.get(x).cloned().flatten(), _ => None };
+                    match (doc, src) {
+                        (false, Key::Const(c)) => known.insert(out, c),
+                        (false, Key::Slot(x)) => known.get(&x).copied().map(|c| known.insert(out, c)).flatten(),
+                        _ => known.remove(&out),
+                    };
                     n += 1;
                 }
                 d.nbinds = n as u32;
@@ -436,41 +480,33 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 if [a, b].iter().any(|k| matches!(k, Key::Slot(s) if deferred.contains_key(s) || made.contains(s))) {
                     return Err("cat of a cat's text has no device form".into());
                 }
-                if *bind && later.is_empty() && in_head && !in_head_cat {
+                let compares = |s: &&Step| matches!(s, Step::Eq { .. } | Step::Ne { .. }) || matches!(s, Step::Test { op, .. } if literal_test(op).is_some());
+                if *bind && in_head && !in_head_cat && later.iter().all(compares) {
+                    // Made for the head; compared, where later steps read it, from its parts as a held cat's.
+                    if !later.is_empty() {
+                        deferred.insert(*out, (*a, *b, form));
+                    }
                     let mut d = mj::Stage { mode: mj::MAKE, ..mj::Stage::default() };
-                    let kind = text_keys(&mut d, &[*a, *b], &origin, "cat")?;
+                    let kind = text_keys(&mut d, &[*a, *b], &origin, &known, "cat")?;
                     d.agg = [0, form];
                     d.bind_slot[0] = *out as u32;
                     made.push(*out);
                     stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
                 } else if *bind {
-                    if in_head || in_head_cat || !later.iter().all(|s| matches!(s, Step::Eq { .. } | Step::Ne { .. })) {
-                        return Err("a cat's text read past an eq or ne and the head has no device form (the device makes no symbol)".into());
+                    if in_head || in_head_cat || !later.iter().all(compares) {
+                        return Err("a cat's text read past an eq, ne, equals, prefix or suffix and the head has no device form (the device makes no symbol)".into());
                     }
                     deferred.insert(*out, (*a, *b, form));
                     stages.push(PStage { first: i, span: 1, kind: Kind::Pass, desc: mj::Stage::default(), npassed: 0 });
                 } else {
-                    let mut d = mj::Stage { mode: mj::CATEQ, ..mj::Stage::default() };
-                    let kind = text_keys(&mut d, &[*a, *b, Key::Slot(*out)], &origin, "cat")?;
-                    d.agg = [1, form];
-                    stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
+                    let mut held = HashMap::new();
+                    held.insert(usize::MAX, (*a, *b, form));
+                    stages.push(textop(i, mj::TEXT_EQ, true, Key::Slot(usize::MAX), Key::Slot(*out), &held, &origin, &known)?);
                 }
                 i += 1;
             }
             Step::Eq { a, b } | Step::Ne { a, b } if [a, b].iter().any(|k| matches!(k, Key::Slot(s) if deferred.contains_key(s))) => {
-                let (held, other) = match (a, b) {
-                    (Key::Slot(s), o) if deferred.contains_key(s) => (*s, *o),
-                    (o, Key::Slot(s)) => (*s, *o),
-                    _ => unreachable!("one side is a held cat"),
-                };
-                if matches!(other, Key::Slot(s) if deferred.contains_key(&s)) {
-                    return Err("an eq of two cats' texts has no device form".into());
-                }
-                let (ca, cb, form) = deferred[&held];
-                let mut d = mj::Stage { mode: mj::CATEQ, ..mj::Stage::default() };
-                let kind = text_keys(&mut d, &[ca, cb, other], &origin, "cat")?;
-                d.agg = [u32::from(matches!(step, Step::Eq { .. })), form];
-                stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
+                stages.push(textop(i, mj::TEXT_EQ, matches!(step, Step::Eq { .. }), *a, *b, &deferred, &origin, &known)?);
                 i += 1;
             }
             Step::Lt { .. } | Step::Eq { .. } | Step::Ne { .. } | Step::Doc { .. } | Step::DocOf { bind: false, .. } | Step::In { .. } => {
@@ -487,11 +523,12 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 stages.push(PStage { first: i, span: f.steps, kind: Kind::Filter, desc: d, npassed: f.steps });
                 i += f.steps;
             }
-            Step::Func { name: "str_cmp", args, out, bind: true, .. } => {
-                // The order of two symbols' names: compared on the device a word of eight bytes at a time, their
-                // texts those of the columns that bound the slots (and the constants').
+            Step::Func { name: name @ ("str_cmp" | "rr_strlen"), args, out, bind: true, .. } => {
+                // A function of names: the order of two (compared a word of eight bytes at a time) or one's
+                // characters, their texts those of the columns that bound the slots (and the constants').
                 let mut d = mj::Stage { mode: mj::STRCMP, ..mj::Stage::default() };
-                let kind = text_keys(&mut d, args, &origin, "str_cmp")?;
+                d.agg[0] = if *name == "str_cmp" { mj::NAMES_CMP } else { mj::NAMES_LEN };
+                let kind = text_keys(&mut d, args, &origin, &known, name)?;
                 d.bind_slot[0] = *out as u32;
                 if *out >= bound.len() {
                     bound.resize(*out + 1, false);
@@ -574,7 +611,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                     return Err("cat of a cat's text has no device form".into());
                 }
                 let mut d = mj::Stage { mode: mj::MAKE, ..mj::Stage::default() };
-                let Kind::Names { cols, consts } = text_keys(&mut d, &[Key::Slot(x), Key::Slot(y)], &origin, "cat")? else { unreachable!("names") };
+                let Kind::Names { cols, consts } = text_keys(&mut d, &[Key::Slot(x), Key::Slot(y)], &origin, &known, "cat")? else { unreachable!("names") };
                 d.agg = [0, mj::CAT_DOT];
                 d.bind_slot[0] = nslots as u32;
                 head.push(None);
@@ -594,6 +631,18 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
     Ok(Plan { stages, head, head_slots, made: made_cols, nslots, nsteps: j.steps.len(), key })
 }
 
+/// Whether `step` binds slot `x`.
+fn binds_slot(step: &Step, x: usize) -> bool {
+    match step {
+        Step::Atom { binds, neg: false, .. } => binds.iter().any(|&(_, s)| s == x),
+        Step::Scalar { out, bind, .. } | Step::StrJoin { out, bind, .. } => *bind && *out == x,
+        Step::Cat { out, bind, .. } | Step::Func { out, bind, .. } | Step::DocOf { out, bind, .. } => *bind && *out == x,
+        Step::Let { a, .. } => *a == x,
+        Step::Split { a, b, .. } => *a == Some(x) || *b == Some(x),
+        _ => false,
+    }
+}
+
 /// Whether `step` reads slot `x`.
 fn mentions(step: &Step, x: usize) -> bool {
     let k = |key: &Key| matches!(key, Key::Slot(s) if *s == x);
@@ -609,6 +658,33 @@ fn mentions(step: &Step, x: usize) -> bool {
         Step::Test { s, p, .. } => k(s) || k(p),
         Step::In { a, .. } => k(a),
     }
+}
+
+/// The literal text tests the device runs of any texts (`mj::TEXTOP`): `equals`, `prefix`, `suffix`.
+fn literal_test(op: &str) -> Option<u32> {
+    match op {
+        "equals" => Some(mj::TEXT_EQ),
+        "prefix" => Some(mj::TEXT_PREFIX),
+        "suffix" => Some(mj::TEXT_SUFFIX),
+        _ => None,
+    }
+}
+
+/// A `TEXTOP` stage: test `op` (`mj::TEXT_*`, with `mj::TEXT_SPLIT` for a text test) of pattern `x` and subject `y`,
+/// each a symbol or a held cat's text (`deferred`).
+fn textop(first: usize, op: u32, want: bool, x: Key, y: Key, deferred: &HashMap<usize, (Key, Key, u32)>, origin: &[Option<(Arc<InRel>, usize)>], known: &HashMap<usize, i64>) -> Result<PStage, String> {
+    let operand = |k: Key| match k {
+        Key::Slot(s) if deferred.contains_key(&s) => {
+            let (a, b, form) = deferred[&s];
+            (a, b, if form == mj::CAT_PLAIN { mj::OPND_PLAIN } else { mj::OPND_DOT })
+        }
+        k => (k, k, mj::OPND_SYM),
+    };
+    let ((xa, xb, xk), (ya, yb, yk)) = (operand(x), operand(y));
+    let mut d = mj::Stage { mode: mj::TEXTOP, ..mj::Stage::default() };
+    let kind = text_keys(&mut d, &[xa, xb, ya, yb], origin, known, "a text test")?;
+    d.agg = [u32::from(want) | op << 1, xk | yk << 4];
+    Ok(PStage { first, span: 1, kind, desc: d, npassed: 0 })
 }
 
 /// A text made of two names, unless it is bound already: its slot, the two parts, whether it binds, and its form
@@ -928,7 +1004,13 @@ impl<'p> Run<'p> {
                 }
                 Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } | Kind::Names { .. } => {
                     match (&s.kind, &self.rels[k]) {
-                        (Kind::Names { cols, consts }, None) => self.rels[k] = Some((texts(cols, consts, rep, names)?.rel(), None)),
+                        (Kind::Names { cols, consts }, None) => {
+                            let t = texts(cols, consts, rep, names)?;
+                            if s.desc.mode == mj::TEXTOP && s.desc.agg[0] & mj::TEXT_SPLIT != 0 && t.sep {
+                                return Err("a text test of a name holding the set separator (a set of patterns) has no device form".into());
+                            }
+                            self.rels[k] = Some((t.rel(), None));
+                        }
                         (Kind::Atom { rel, cols }, None) => self.rels[k] = Some(resident(rel, cols, batch, rep)?),
                         (Kind::Text { rel, col, table, key }, None) => self.rels[k] = Some((verdicts(rel, *col, table, key, batch, rep, names)?, None)),
                         (Kind::Own { rel, delta, cols }, None) => {
@@ -1722,6 +1804,21 @@ pub mod tests {
             format!("pos {n} v0 v1\nlt v1 i:700\ncat v2 v0 {}\nhead v2 v1", sym("made")),
             format!("pos {m} v0\npos {n} v1 v2\nlt v2 i:25\nhead cat:v0:v1 v2"),
             format!("pos {n} v0 v1\nlt v1 i:300\nfunc str_concat v2 v0 {}\nhead v2 v1", sym("!")),
+            // Bound patterns, pairwise: a relation's names as prefixes, suffixes, equals of another's (an empty one
+            // among them), and a cat's text as the pattern.
+            format!("pos {m} v0\npos {n} v1 v2\ntest prefix v1 v0 1\nhead v1 v2"),
+            format!("pos {m} v0\npos {n} v1 v2\nlt v2 i:400\ntest suffix v1 v0 1\nhead v0 v2"),
+            format!("pos {m} v0\npos {n} v1 v2\nlt v2 i:300\ntest suffix v1 v0 0\nhead v0 v2"),
+            format!("pos {m} v0\npos {n} v1 v2\ntest equals v1 v0 1\nhead v1 v2"),
+            format!("pos {m} v0\npos {n} v1 v2\ncat v3 {} v0\ntest suffix v1 v3 1\nhead v1 v2", sym("")),
+            format!("pos {m} v0\npos {n} v1 v2\nfunc str_concat v3 v0 {}\ntest prefix v1 v3 1\nhead v0 v2", sym("_")),
+            // A part a let filled with a constant (`q = @dot("builtins", x)`).
+            format!("pos {n} v0 v1\nlt v1 i:200\neq v2 {}\ncat v3 v2 v0\nhead v3 v1", sym("builtins")),
+            // Characters of names (multibyte ones among them, names past a word): strlen bound and compared.
+            format!("pos {n} v0 v1\nlt v1 i:300\nfunc rr_strlen v2 v0\nhead v0 v2"),
+            format!("pos {m} v0\nfunc rr_strlen v1 v0\nlt i:9 v1\nhead v0 v1"),
+            // A cat's text both compared and in the head.
+            format!("pos {m} v0\npos {n} v1 v2\nlt v2 i:500\ncat v3 v0 {}\nne v3 v1\ntest prefix v1 v0 1\nhead v3 v2", sym("ts")),
         ];
         let mut got = Vec::new();
         // The device first: the texts it makes are new symbols.

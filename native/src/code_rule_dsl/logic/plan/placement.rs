@@ -242,6 +242,8 @@ fn row_term(t: &Term) -> bool {
         Term::Call(f, args) if DEVICE_ARITHMETIC.contains(&f.as_str()) && args.len() == 2 => args.iter().all(row_term),
         // The order of two symbols' names (`<` of symbols lowers to it): their texts are the device's.
         Term::Call(f, args) if f == "str_cmp" && args.len() == 2 => args.iter().all(|a| !matches!(a, Term::Call(..))),
+        // A name's characters: counted over the device's names.
+        Term::Call(f, args) if (f == "strlen" || f == "rr_strlen") && args.len() == 1 => !matches!(args[0], Term::Call(..)),
         Term::Call(..) => false,
         _ => true,
     }
@@ -544,7 +546,7 @@ pub mod tests {
         // A large join with a negation, a text test and a computed head: the GPU's price is lower, and the computed
         // term is the form it lacks.
         let mut big = Shape::default();
-        let len = Term::Call("strlen".into(), vec![Term::Var("x".into())]);
+        let len = Term::Call("lower".into(), vec![Term::Var("x".into())]);
         big.add(&[atom("kind", false), atom("strtest_3", false), atom("within", true)], &[len], 4e6, false);
         assert_eq!(big.forms, [Form::Join, Form::Negation, Form::Computed, Form::TextTest].into_iter().collect());
         let p = place(&big);
@@ -561,7 +563,7 @@ pub mod tests {
         assert!(p.gpu && p.missing.is_empty(), "{p:?}");
         assert!(!place(&plain).gpu, "the CPU binding keeps it");
         // `@doc(x) = @doc(y)` and `@in(x, {…})` are row code, and so is `z = cat(x, y)` (a text the device makes);
-        // `strlen(x)` is not, nor a cat in a recursive stratum (its rounds would join the text before it is a symbol).
+        // `lower(x)` is not, nor a cat in a recursive stratum (its rounds would join the text before it is a symbol).
         let cmp = |l: Term, r: Term| Step { at: 0, lit: Literal::Cmp { l, op: "=", r }, mode: None };
         let doc = |v: &str| Term::Call("doc".into(), vec![Term::Var(v.into())]);
         let mut docs = Shape::default();
@@ -575,7 +577,7 @@ pub mod tests {
         rec.add(&[atom("kind", false), made()], &[], 1.0, true);
         assert!(rec.forms.contains(&Form::Computed));
         let mut len = Shape::default();
-        len.add(&[atom("kind", false), cmp(Term::Var("z".into()), Term::Call("strlen".into(), vec![Term::Var("x".into())]))], &[], 1.0, false);
+        len.add(&[atom("kind", false), cmp(Term::Var("z".into()), Term::Call("lower".into(), vec![Term::Var("x".into())]))], &[], 1.0, false);
         assert!(len.forms.contains(&Form::Computed));
         // A tiny stratum stays on the CPU: the submission costs more than the work, even under the Metal binding.
         let mut small = Shape::default();

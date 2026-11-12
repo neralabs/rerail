@@ -42,7 +42,7 @@ arithmetic *	native	device	p(x, y, z) :- n(x), n(y), z = x * y.
 arithmetic /	native	device	p(x, y, z) :- n(x), n(y), z = x / y.
 arithmetic %	native	device	p(x, y, z) :- n(x), n(y), z = x % y.
 arithmetic of floats	native	no computed term	p(z) :- s(a), z = to_float("1.5") + 2.25, a = "alpha".
-builtin strlen/1	native	no computed term	p(v) :- t(a), v = strlen(a).
+builtin strlen/1	native	device	p(v) :- t(a), v = strlen(a).
 builtin to_string/1	native	no computed term	p(v) :- m(x), v = to_string(x).
 builtin to_number/1	native	no computed term	p(v) :- t(a), v = to_number(a).
 builtin substr/3	native	no computed term	p(v) :- t(a), m(y), m(w), v = substr(a, y, w).
@@ -146,7 +146,7 @@ text test iglob: a bound pattern	native	refused: the text test @iglob of a patte
 text test prefix: a constant pattern	native	device	p(a) :- s(a), prefix("a", a).
 text test prefix: negated	native	device	p(a) :- s(a), !prefix("a", a).
 text test prefix: a set of patterns	native	device	p(a) :- s(a), (prefix("a", a) ; prefix("B", a)).
-text test prefix: a bound pattern	native	refused: the text test @prefix of a pattern that is not a constant has no device form	p(a, b) :- s(a), t(b), prefix(b, a).
+text test prefix: a bound pattern	native	device	p(a, b) :- s(a), t(b), prefix(b, a).
 text test iprefix: a constant pattern	native	device	p(a) :- s(a), iprefix("a", a).
 text test iprefix: negated	native	device	p(a) :- s(a), !iprefix("a", a).
 text test iprefix: a set of patterns	native	device	p(a) :- s(a), (iprefix("a", a) ; iprefix("B", a)).
@@ -154,7 +154,7 @@ text test iprefix: a bound pattern	native	refused: the text test @iprefix of a p
 text test suffix: a constant pattern	native	device	p(a) :- s(a), suffix("a", a).
 text test suffix: negated	native	device	p(a) :- s(a), !suffix("a", a).
 text test suffix: a set of patterns	native	device	p(a) :- s(a), (suffix("a", a) ; suffix("B", a)).
-text test suffix: a bound pattern	native	refused: the text test @suffix of a pattern that is not a constant has no device form	p(a, b) :- s(a), t(b), suffix(b, a).
+text test suffix: a bound pattern	native	device	p(a, b) :- s(a), t(b), suffix(b, a).
 text test isuffix: a constant pattern	native	device	p(a) :- s(a), isuffix("a", a).
 text test isuffix: negated	native	device	p(a) :- s(a), !isuffix("a", a).
 text test isuffix: a set of patterns	native	device	p(a) :- s(a), (isuffix("a", a) ; isuffix("B", a)).
@@ -178,7 +178,7 @@ text test iword: a bound pattern	native	refused: the text test @iword of a patte
 text test match: a constant pattern	native	device	p(a) :- s(a), match("a", a).
 text test match: negated	native	device	p(a) :- s(a), !match("a", a).
 text test match: a set of patterns	native	device	p(a) :- s(a), (match("a", a) ; match("B", a)).
-text test match: a bound pattern	native	refused: a cat's text read past an eq or ne and the head has no device form (the device makes no symbol)	p(a, b) :- s(a), t(b), match(b, a).
+text test match: a bound pattern	native	refused: a cat's text read past an eq, ne, equals, prefix or suffix and the head has no device form (the device makes no symbol)	p(a, b) :- s(a), t(b), match(b, a).
 aggregate count	native	device	p(a, c) :- s(a), c = count : { p(a, _) }.
 aggregate sum	native	device	p(a, c) :- s(a), c = sum v : { p(a, v) }.
 aggregate min	native	device	p(a, c) :- t(a), c = min v : { p(a, v) }.

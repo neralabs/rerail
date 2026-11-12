@@ -67,12 +67,23 @@ pub(in crate::code_rule_dsl) const AGG_MAX: u32 = 3;
 /// A text test of a slot (`Stage::agg`: `[slot, want]`): a binding passes when its symbol's verdict bit (the right
 /// relation, a bitset of 64 bits a row, by symbol) is `want`.
 pub(in crate::code_rule_dsl) const TEXT: u32 = 5;
-/// `str_cmp` of two symbols, each a slot or a constant (keys 0 and 1), their texts the right relation's (a
-/// `DevText`): the order into `bind_slot[0]`.
+/// A function of symbols' names, each a slot or a constant (keys 0 and 1), their texts the right relation's (a
+/// `DevText`), its value into `bind_slot[0]`: by `agg[0]`, `NAMES_CMP` (`str_cmp`) or `NAMES_LEN` (`strlen`).
 pub(in crate::code_rule_dsl) const STRCMP: u32 = 6;
-/// Whether symbol x's name is made of a's and b's (keys 0, 1, 2: a, b, x), as `agg[0]` wants (1: equal), by the
-/// form `agg[1]`.
-pub(in crate::code_rule_dsl) const CATEQ: u32 = 7;
+pub(in crate::code_rule_dsl) const NAMES_CMP: u32 = 0;
+pub(in crate::code_rule_dsl) const NAMES_LEN: u32 = 1;
+/// A literal text test of a pattern and a subject (keys 0 and 1, 2 and 3), each a symbol or a cat's text never made
+/// (`OPND_*`, `agg[1]`: the pattern's kind, the subject's << 4): `agg[0]` is the want (bit 0), the test (`TEXT_*`
+/// << 1), and `TEXT_SPLIT` when it is a text test (whose pattern a set separator would split).
+pub(in crate::code_rule_dsl) const TEXTOP: u32 = 7;
+pub(in crate::code_rule_dsl) const TEXT_EQ: u32 = 0;
+pub(in crate::code_rule_dsl) const TEXT_PREFIX: u32 = 1;
+pub(in crate::code_rule_dsl) const TEXT_SUFFIX: u32 = 2;
+pub(in crate::code_rule_dsl) const TEXT_SPLIT: u32 = 1 << 4;
+/// An operand: a symbol; `cat`'s text of two; `str_concat`'s.
+pub(in crate::code_rule_dsl) const OPND_SYM: u32 = 0;
+pub(in crate::code_rule_dsl) const OPND_DOT: u32 = 1;
+pub(in crate::code_rule_dsl) const OPND_PLAIN: u32 = 2;
 /// A text made of two names, a's and b's (keys 0 and 1) by the form `agg[1]`, into `bind_slot[0]` as a made value
 /// (`MADE`): the parts' symbols, not yet a symbol (the device makes none). Its counter word is set when a part is no
 /// symbol a made value holds (`MADE_PART`).
@@ -391,13 +402,23 @@ static inline long text_cmp(device const uchar* p, uint a, uint alen, uint b, ui
     return alen == blen ? 0 : (alen < blen ? -1 : 1);
 }
 
-// `str_cmp` of two symbols (mode 6): each a slot or a constant (`key_kind`, `key_slot`, `key_const` 0 and 1), their
-// texts in R; the order into `bind_slot[0]`.
+// A function of names (mode 6), its symbols each a slot or a constant (`key_kind`, `key_slot`, `key_const`), their
+// texts in R, the value into `bind_slot[0]`: by agg[0], 0 `str_cmp` of keys 0 and 1 (their order), 1 `strlen` of key
+// 0 (its characters: the bytes less the UTF-8 continuation bytes, `10xxxxxx`, counted a word of eight at a time).
 static inline long strcmp_value(constant Stage& s, device const long* L, uint t, device const long* R) {
     long v[2];
     for (uint k = 0; k < 2; k++) v[k] = s.key_kind[k] == 1 ? L[ulong(s.key_slot[k]) * s.cap_in + t] : s.key_const[k];
     uint ao, al, bo, bl;
     text_find(R, v[0], ao, al);
+    if (s.agg[0] == 1) {
+        device const uchar* p = text_chars(R) + ao;
+        uint cont = 0;
+        for (uint at = 0; at < al; at += 8) {
+            ulong w = text_word(p, at, al);
+            cont += popcount(w & ~(w << 1) & 0x8080808080808080ul);
+        }
+        return long(al - cont);
+    }
     text_find(R, v[1], bo, bl);
     return text_cmp(text_chars(R), ao, al, bo, bl);
 }
@@ -408,21 +429,62 @@ static inline bool text_same(device const uchar* p, uint a, uint b, uint len) {
     return true;
 }
 
-// Mode 7: whether x's name is made of a's and b's, as agg[0] wants: by agg[1] 0 (`cat`), b's alone when a's is empty,
-// else a's, ".", b's; by 1 (`str_concat`), a's then b's.
-static inline bool cateq_pass(constant Stage& s, device const long* L, uint t, device const long* R) {
-    long v[3];
-    for (uint k = 0; k < 3; k++) v[k] = s.key_kind[k] == 1 ? L[ulong(s.key_slot[k]) * s.cap_in + t] : s.key_const[k];
-    uint ao, al, bo, bl, xo, xl;
-    text_find(R, v[0], ao, al);
-    text_find(R, v[1], bo, bl);
-    text_find(R, v[2], xo, xl);
+// A key's value: a slot of binding t, or a constant.
+static inline long key_value(constant Stage& s, device const long* L, uint t, uint k) {
+    return s.key_kind[k] == 1 ? L[ulong(s.key_slot[k]) * s.cap_in + t] : s.key_const[k];
+}
+
+// A text operand (mode 7's): a symbol's name (b's empty), or a held cat's text, never made: a's name, "." when `dot`,
+// b's name.
+struct Txt { uint ao; uint al; uint bo; uint bl; uint dot; };
+
+static inline uchar txt_byte(device const uchar* p, Txt x, uint i) {
+    if (i < x.al) return p[x.ao + i];
+    i -= x.al;
+    if (i < x.dot) return uchar('.');
+    return p[x.bo + i - x.dot];
+}
+
+// Eight bytes of x from `at`, big-endian, zero past `end`.
+static inline ulong txt_word(device const uchar* p, Txt x, uint at, uint end) {
+    ulong w = 0;
+    for (uint k = 0; k < 8; k++) w = (w << 8) | ((at + k) < end ? ulong(txt_byte(p, x, at + k)) : 0ul);
+    return w;
+}
+
+// Whether n bytes of x from xs are those of y from ys: a word of eight at a time.
+static inline bool txt_same(device const uchar* p, Txt x, uint xs, Txt y, uint ys, uint n) {
+    for (uint at = 0; at < n; at += 8) if (txt_word(p, x, xs + at, xs + n) != txt_word(p, y, ys + at, ys + n)) return false;
+    return true;
+}
+
+// Operand kind 0: key k's symbol; 1: `cat`'s text of keys k and k + 1 (b's alone when a's is empty); 2:
+// `str_concat`'s.
+static inline Txt txt_of(constant Stage& s, device const long* L, uint t, device const long* R, uint k, uint kind) {
+    Txt x;
+    text_find(R, key_value(s, L, t, k), x.ao, x.al);
+    x.bo = 0;
+    x.bl = 0;
+    x.dot = 0;
+    if (kind != 0) {
+        text_find(R, key_value(s, L, t, k + 1), x.bo, x.bl);
+        x.dot = (kind == 1 && x.al > 0) ? 1 : 0;
+    }
+    return x;
+}
+
+// Mode 7: a literal text test of pattern X (keys 0, 1) and subject Y (keys 2, 3), each of kind agg[1] & 15 and
+// agg[1] >> 4: by op agg[0] >> 1 & 3, 0 equal, 1 Y begins with X, 2 Y ends with X; as agg[0] & 1 wants.
+static inline bool textop_pass(constant Stage& s, device const long* L, uint t, device const long* R) {
+    Txt x = txt_of(s, L, t, R, 0, s.agg[1] & 15), y = txt_of(s, L, t, R, 2, s.agg[1] >> 4);
     device const uchar* p = text_chars(R);
-    bool eq;
-    if (s.agg[1] == 1) eq = xl == al + bl && text_same(p, xo, ao, al) && text_same(p, xo + al, bo, bl);
-    else if (al == 0) eq = xl == bl && text_same(p, xo, bo, bl);
-    else eq = xl == al + 1 + bl && p[xo + al] == uchar('.') && text_same(p, xo, ao, al) && text_same(p, xo + al + 1, bo, bl);
-    return eq == (s.agg[0] != 0);
+    uint lx = x.al + x.dot + x.bl, ly = y.al + y.dot + y.bl;
+    uint op = (s.agg[0] >> 1) & 3;
+    bool r;
+    if (op == 0) r = lx == ly && txt_same(p, x, 0, y, 0, lx);
+    else if (op == 1) r = ly >= lx && txt_same(p, x, 0, y, 0, lx);
+    else r = ly >= lx && txt_same(p, x, 0, y, ly - lx, lx);
+    return r == ((s.agg[0] & 1) != 0);
 }
 
 // Mode 8: the made value of a's and b's symbols by form agg[1] (`MADE`); -1 when a part is none a made value holds.
@@ -452,7 +514,7 @@ kernel void stage_count(device const long* L [[buffer(0)]], device const long* R
     uint lo, hi;
     if (s.mode == 5) { counts[t] = uint(text_pass(s, L, t, R)); return; }
     if (s.mode == 6) { counts[t] = 1; return; }
-    if (s.mode == 7) { counts[t] = uint(cateq_pass(s, L, t, R)); return; }
+    if (s.mode == 7) { counts[t] = uint(textop_pass(s, L, t, R)); return; }
     if (s.mode == 8) {
         if (make_value(s, L, t) < 0 && s.counter != NONE) atomic_store_explicit(&counters[s.counter], 1u, memory_order_relaxed);
         counts[t] = 1;
@@ -833,6 +895,8 @@ pub(in crate::code_rule_dsl) struct DevText {
     pub(in crate::code_rule_dsl) span: usize,
     /// The longest name's bytes.
     pub(in crate::code_rule_dsl) longest: usize,
+    /// Whether a name holds the set separator (`strings::SET_SEP`): a text test would split it.
+    pub(in crate::code_rule_dsl) sep: bool,
 }
 
 impl DevText {
@@ -864,7 +928,8 @@ impl DevText {
         let rows = out.len().div_ceil(8);
         let held = Held::of(out.into_iter()).map_err(|_| Error::BackendCapacity)?;
         let longest = offs.windows(2).map(|w| (w[1] - w[0]) as usize).max().unwrap_or(0);
-        Ok(DevText { packed: std::rc::Rc::new(DevRel { buffer: held, rows, cols: 1 }), terms: n, span, longest })
+        let sep = chars.contains(&0x1f);
+        Ok(DevText { packed: std::rc::Rc::new(DevRel { buffer: held, rows, cols: 1 }), terms: n, span, longest, sep })
     }
 
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
