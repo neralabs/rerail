@@ -63,10 +63,6 @@ const FACT_STORE: &[&str] = &[
 /// Tables made and dropped inside one statement, one lab or one older pipeline's query.
 const SCRATCH: &[&str] = &[
     "x",
-    "a",
-    "b",
-    "c",
-    "h0",
     "t",
     "input",
     "value",
