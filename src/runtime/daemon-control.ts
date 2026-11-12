@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync, writeFileSync, writeSync } from "node:fs";
 import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { Agent as HttpsAgent, request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -245,16 +245,22 @@ export function nodeExecutable(): string {
 export { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE };
 /** In the Rerail home: the lock a daemon start holds. */
 export const START_LOCK_DIR = "start.lock";
-/** In the Rerail home: the claim of the one process that launched an autostart (`claimAutostart`). */
+/** In the Rerail home: the claim of the one autostart launch in progress, holding its launcher's pid (`claimAutostart`). */
 export const AUTOSTART_CLAIM_FILE = "autostart.claim";
 
 const START_TIMEOUT_MS = 15_000;
 /**
- * How long an autostart claim holds unless a start ends it: a launcher's whole life, its wait for the start lock and
- * then for the daemon.
+ * The longest an autostart claim holds, even while the pid it names is alive: a launcher's whole life, its wait for the
+ * start lock and then for the daemon. Past it that pid can be another process, which Windows gave a dead launcher's pid.
  */
 const AUTOSTART_CLAIM_MS = 2 * START_TIMEOUT_MS;
 const STOP_TIMEOUT_MS = 10_000;
+/**
+ * How long a daemon asked to stop runs the events still waiting for its hooks (`EngineCloseOptions.drainUntil`): 2 s
+ * short of `STOP_TIMEOUT_MS`, so the events it is running can finish, the hooks of the ones it then refuses get that
+ * answer, and its own shutdown runs before {@link stopDaemon} kills it.
+ */
+export const STOP_DRAIN_MS = STOP_TIMEOUT_MS - 2_000;
 const KILL_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
 const PROBE_TIMEOUT_MS = 2_000;
@@ -563,17 +569,19 @@ async function repairSqlite(control: DaemonControl): Promise<void> {
 }
 
 /**
- * Runs `start` under the start lock in `home`. A start that leaves a daemon answering ends the autostart claim
- * (`claimAutostart`): the launch it held other processes off for is done, so the next process to find the daemon gone
- * starts it again at once. A start that fails keeps the claim, which holds off launches for the rest of its 30 s
- * instead of letting every process that finds the daemon down launch a start that fails too.
+ * Runs `start` under the start lock in `home`, then ends the autostart claim (`claimAutostart`) however the start ended:
+ * the launch it held other processes off for is over, so the next process to find the daemon down launches again at
+ * once, after a start that failed too. While the daemon cannot start, that is one launch after another, never one per
+ * process that finds it down.
  */
 async function startUnderLock(home: string, start: () => Promise<StartDaemonResult>): Promise<StartDaemonResult> {
   makeRerailHome(home);
-  const result = await withStartLock(home, start);
-  // A claim that cannot be removed holds only until it is 30 s old.
-  await rm(join(home, AUTOSTART_CLAIM_FILE), { force: true }).catch(() => undefined);
-  return result;
+  try {
+    return await withStartLock(home, start);
+  } finally {
+    // A claim that cannot be removed holds only while its launcher runs, and 30 s at most.
+    await rm(join(home, AUTOSTART_CLAIM_FILE), { force: true }).catch(() => undefined);
+  }
 }
 
 /**
@@ -743,38 +751,73 @@ async function spawnDaemon(control: DaemonControl, options: DaemonLaunchOptions)
 
 let autostartAttempted = false;
 
-/** Creates `path` if nothing is there; whether this call made it. */
-function createOnce(path: string): boolean {
+/** Creates the claim at `path`, naming this process, if nothing is there; whether this call made it. */
+function createClaim(path: string): boolean {
+  let claim: number;
   try {
-    closeSync(openSync(path, "wx", 0o600));
-    return true;
+    claim = openSync(path, "wx", 0o600);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
     throw error;
   }
+  try {
+    writeSync(claim, String(process.pid));
+  } finally {
+    closeSync(claim);
+  }
+  return true;
 }
 
 /**
- * Whether this process launches the autostart: it created the claim in `home`, or found one made more than
- * `AUTOSTART_CLAIM_MS` from now and replaced it. Sessions and hooks each run in a process of their own, and the ones
- * that find the daemon gone arrive together; the claim is created exclusively, so one launches and the rest leave the
- * start to it. A start that leaves a daemon answering removes the claim (`startUnderLock`). The distance counts both
- * ways, so a claim made before the clock moved back expires too. Two processes that both replace an expired claim can
- * both launch; the start lock still lets only one launcher start a daemon.
+ * Whether the claim at `path` still holds: it is under `AUTOSTART_CLAIM_MS` from now, either way, so a claim made before
+ * the clock moved back expires too, and the process it names runs. A claim with no pid in it yet is being written by
+ * the process that created it, and holds.
+ */
+function claimHolds(path: string): boolean {
+  let made: number;
+  let text: string;
+  try {
+    made = statSync(path).mtimeMs;
+    text = readFileSync(path, "utf8").trim();
+  } catch (error) {
+    // A start ended it between this process's create and its look.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+  if (Math.abs(Date.now() - made) >= AUTOSTART_CLAIM_MS) return false;
+  return text === "" || (/^[1-9]\d*$/u.test(text) && processAlive(Number(text)));
+}
+
+/**
+ * Whether this process launches the autostart: it created the claim in `home`, or replaced one that no longer holds
+ * (`claimHolds`), such as one whose launcher died before its start. Sessions and hooks each run in a process of their
+ * own, and the ones that find the daemon gone arrive together; the claim is created exclusively, so one launches and the
+ * rest leave the start to it. Every start under the lock ends the claim (`startUnderLock`). Two processes that both
+ * replace a claim at once can both launch; the start lock still lets only one launcher start a daemon.
  */
 function claimAutostart(home: string): boolean {
   const claim = join(home, AUTOSTART_CLAIM_FILE);
-  if (createOnce(claim)) return true;
-  const held = statSync(claim, { throwIfNoEntry: false });
-  if (held !== undefined && Math.abs(Date.now() - held.mtimeMs) < AUTOSTART_CLAIM_MS) return false;
+  if (createClaim(claim)) return true;
+  if (claimHolds(claim)) return false;
   rmSync(claim, { force: true });
-  return createOnce(claim);
+  return createClaim(claim);
+}
+
+/**
+ * Hands the claim in `home` to the launcher this process started, so it holds while that launch runs; with no launcher
+ * (the launch started no process), removes it, so the next process to find the daemon down launches.
+ */
+function handOverClaim(home: string, launcher: number | undefined): void {
+  const claim = join(home, AUTOSTART_CLAIM_FILE);
+  if (launcher === undefined) rmSync(claim, { force: true });
+  else writeFileSync(claim, String(launcher), { mode: 0o600 });
 }
 
 /**
  * Bring the daemon up from inside a host session so the browser view is
- * live without anyone running `rerail daemon start`. One attempt per process,
- * and one launch per Rerail home while its claim holds (`claimAutostart`);
+ * live without anyone running `rerail daemon start`. One launch per process,
+ * and one per Rerail home while its claim holds (`claimAutostart`): a process
+ * that left the start to another asks again at its next call.
  * `RERAIL_AUTOSTART=0` disables it.
  *
  * Truly fire-and-forget: the work is handed to a detached `rerail daemon start`
@@ -790,7 +833,6 @@ function claimAutostart(home: string): boolean {
  */
 export function autostartDaemon(): void {
   if (autostartAttempted) return;
-  autostartAttempted = true;
   const setting = process.env.RERAIL_AUTOSTART;
   if (setting === "0" || setting === "false") return;
   const home = defaultRerailHome();
@@ -798,20 +840,32 @@ export function autostartDaemon(): void {
   try {
     makeRerailHome(home);
     if (!claimAutostart(home)) return;
-    const log = openSync(join(home, DAEMON_LOG_FILE), "a", 0o600);
+    autostartAttempted = true;
+    let launcher: number | undefined;
     try {
-      const child = spawn(
-        nodeExecutable(),
-        [join(packageRoot, ENTRY_POINTS.cli), "daemon", "start"],
-        { detached: true, stdio: ["ignore", log, log], env: process.env },
-      );
-      child.on("error", () => undefined);
-      child.unref();
+      launcher = launchAutostart(home, packageRoot);
     } finally {
-      closeSync(log);
+      handOverClaim(home, launcher);
     }
   } catch {
     // Autostart is a convenience; the session must never notice it failing.
+  }
+}
+
+/** Starts `rerail daemon start` from `packageRoot`, detached, its output appended to the log in `home`; its pid. */
+function launchAutostart(home: string, packageRoot: string): number | undefined {
+  const log = openSync(join(home, DAEMON_LOG_FILE), "a", 0o600);
+  try {
+    const child = spawn(
+      nodeExecutable(),
+      [join(packageRoot, ENTRY_POINTS.cli), "daemon", "start"],
+      { detached: true, stdio: ["ignore", log, log], env: process.env },
+    );
+    child.on("error", () => undefined);
+    child.unref();
+    return child.pid;
+  } finally {
+    closeSync(log);
   }
 }
 

@@ -1,6 +1,6 @@
 import { lstat, mkdir, unlink } from "node:fs/promises";
-import { createServer, request, type Server } from "node:http";
-import { connect } from "node:net";
+import { createServer, request, type IncomingMessage, type Server } from "node:http";
+import { connect, type Socket } from "node:net";
 import { dirname, resolve as resolvePath } from "node:path";
 import { z } from "zod/v4";
 import type { AdapterDelivery, AdapterEvent } from "../engine/adapter-contract.js";
@@ -16,11 +16,26 @@ import { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
 
 export interface EngineService {
-  close(): Promise<void>;
+  /**
+   * Stops taking connections, answers every request whose body has arrived (running each one's event, queued ones too,
+   * unless `options.drainUntil` passes first), then closes the runtimes. A request that stalls before it has all
+   * arrived is cut off ({@link cutStalledRequests}).
+   */
+  close(options?: EngineCloseOptions): Promise<void>;
   ingest(
     event: AdapterEvent,
     configuration?: EngineRuntimeConfiguration,
   ): Promise<readonly AdapterDelivery[]>;
+}
+
+export interface EngineCloseOptions {
+  /**
+   * When the events still waiting in their sessions' lanes stop running (epoch ms). A stop passes one that comes before
+   * `rerail daemon stop` kills the daemon (`STOP_DRAIN_MS`): from then on each waiting event is refused, its hook told
+   * that the daemon is stopping, and the close waits only for the events already running. Without it the close runs
+   * every event it took in, as a restart does.
+   */
+  drainUntil?: number;
 }
 
 const ConfigurationSchema = z
@@ -151,8 +166,8 @@ interface EngineRoutingState {
   runtimeKeysByConfiguration: Map<string, string>;
   lanes: SessionLanes;
   pending: Set<Promise<readonly AdapterDelivery[]>>;
-  /** Set once the service starts closing: an event still waiting in its session's lane is then not run. */
-  closing: boolean;
+  /** Set once a close passes its `drainUntil`: an event still waiting in its session's lane is then refused, not run. */
+  stopping: boolean;
 }
 
 interface RuntimeRoute {
@@ -219,7 +234,7 @@ async function routeEngineEvent(
   const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
   const { runtimeKey, runtimeOptions } = resolveRuntimeRoute(event, configuration, options, state);
   const execution = state.lanes.run(JSON.stringify([runtimeKey, sessionId]), () => {
-    if (state.closing) throw new Error(`The Rerail engine service is closing, so event ${event.eventId} was not run`);
+    if (state.stopping) throw new Error(`The Rerail daemon is stopping, so event ${event.eventId} was not checked or recorded`);
     let runtime = state.runtimes.get(runtimeKey);
     if (runtime === undefined) {
       if (runtimeOptions === undefined) throw new Error(`Kernel runtime is unavailable for session ${sessionId}`);
@@ -245,6 +260,42 @@ async function routeEngineEvent(
     if (keys?.size === 0) state.runtimeKeysBySession.delete(sessionId);
   }
   return deliveries;
+}
+
+/** How long a request that has not all arrived may send nothing while the service closes before it is cut off. */
+const STALLED_REQUEST_MS = 1_000;
+
+/**
+ * While the service closes, cuts off each connection whose request has not all arrived (or carries no request yet) once
+ * it has sent nothing for `STALLED_REQUEST_MS`, and every idle one. A hook writes its whole request at once, so one
+ * still arriving has stalled, and waiting for it would hold the close for the request's 30 s timeout. A request whose
+ * body has arrived is never cut: its event runs and its hook gets the answer. Each look runs after the event loop has
+ * read what arrived meanwhile (`setImmediate`), so a loop kept busy past the wait cuts off nothing that came in time.
+ * Returns the function that stops the looks.
+ */
+function cutStalledRequests(server: Server, connections: ReadonlyMap<Socket, IncomingMessage | undefined>): () => void {
+  let seen = new Map<Socket, number>();
+  const look = (): void => {
+    server.closeIdleConnections();
+    const now = new Map<Socket, number>();
+    for (const [socket, request] of connections) {
+      if (request?.complete === true) continue;
+      if (seen.get(socket) === socket.bytesRead) socket.destroy();
+      else now.set(socket, socket.bytesRead);
+    }
+    seen = now;
+  };
+  look();
+  const looks = setInterval(() => setImmediate(look), STALLED_REQUEST_MS);
+  return () => clearInterval(looks);
+}
+
+/** From `drainUntil` on, if given, refuses the events still waiting in their lanes (`EngineCloseOptions`). */
+function refuseWaitingFrom(state: EngineRoutingState, drainUntil: number | undefined): NodeJS.Timeout | undefined {
+  if (drainUntil === undefined) return undefined;
+  return setTimeout(() => {
+    state.stopping = true;
+  }, Math.max(0, drainUntil - Date.now()));
 }
 
 function listen(server: Server, socketPath: string): Promise<void> {
@@ -304,9 +355,12 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     runtimeKeysByConfiguration: new Map(),
     lanes: new SessionLanes(),
     pending: new Set(),
-    closing: false,
+    stopping: false,
   };
+  /** Each open connection, with the request it carries once that request's headers have arrived. */
+  const connections = new Map<Socket, IncomingMessage | undefined>();
   const server = createServer(async (incoming, response) => {
+    connections.set(incoming.socket, incoming);
     response.setHeader("Content-Type", "application/json");
     if (incoming.method !== "POST" || incoming.url !== "/events") {
       response.writeHead(404).end();
@@ -336,19 +390,28 @@ export async function startEngineService(options: EngineServiceOptions): Promise
   });
   const engineService: EngineService = {
     ingest: (event, configuration) => routeEngineEvent(event, configuration, options, routing),
-    async close() {
-      // A hook still waiting for its answer is cut off, and an event still waiting in its session's lane is not run:
-      // waiting for them, up to each request's 30 s timeout, would keep a busy daemon alive past the 10 s that
-      // `rerail daemon stop` gives it before a kill. An event already running finishes, so its writes complete.
-      routing.closing = true;
+    async close(closeOptions: EngineCloseOptions = {}) {
+      // Every hook whose request has arrived gets its answer, with the block or steer in it, and its event is recorded,
+      // the ones waiting behind a running event too. The close ends once the last of those connections has: its server
+      // takes no new ones, and a request that stalls is cut off.
       const closed = Promise.withResolvers<void>();
       server.close((error) => (error ? closed.reject(error) : closed.resolve()));
-      server.closeAllConnections();
-      await closed.promise;
-      await Promise.allSettled(routing.pending);
+      const stopLooking = cutStalledRequests(server, connections);
+      const refusal = refuseWaitingFrom(routing, closeOptions.drainUntil);
+      try {
+        await closed.promise;
+        await Promise.allSettled(routing.pending);
+      } finally {
+        stopLooking();
+        clearTimeout(refusal);
+      }
       await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
     },
   };
+  server.on("connection", (socket: Socket) => {
+    connections.set(socket, undefined);
+    socket.once("close", () => connections.delete(socket));
+  });
   server.requestTimeout = 30_000;
   try {
     await listenOnSocket(server, options.socketPath);
