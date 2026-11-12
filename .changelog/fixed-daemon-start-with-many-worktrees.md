@@ -1,0 +1,1 @@
+With many worktrees, the daemon no longer stops answering for tens of seconds after it starts: it asked Git where each checkout keeps its clone id at every lookup, thousands of times. It now asks once per checkout, and again only when a file Git read for that answer changes.
