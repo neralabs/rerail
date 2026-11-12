@@ -12,7 +12,6 @@ import {
   readdirSync,
   readFileSync,
   readSync,
-  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -92,19 +91,6 @@ function registryContents(commonDirectory: string): string {
       return name;
     }
   }).join("\0");
-}
-
-/**
- * The time Git last added or dropped an entry in the registry of `commonDirectory` (`git worktree add`, `remove` or
- * `prune`): its `worktrees` folder's, one stat where `registryContents` reads every entry. A `move` or `repair` rewrites
- * a file inside an entry and leaves it as it was. Undefined while the folder does not exist.
- */
-export function worktreeFolderStamp(commonDirectory: string): number | undefined {
-  try {
-    return statSync(join(commonDirectory, "worktrees"), { throwIfNoEntry: false })?.mtimeMs;
-  } catch {
-    return undefined;
-  }
 }
 
 /**

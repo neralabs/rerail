@@ -1,1 +1,1 @@
-Edits in a Git worktree made while a session is open, in a folder that session had already written to, are checked again, and the session's walk of the other worktrees includes it. Before, Rerail skipped both until its daemon restarted.
+Edits in a Git worktree made while a session is open, in a folder that session had already written to, are checked again, whichever started repository the worktree belongs to. A worktree of the session's own repository also joins its walk of the other worktrees. Before, Rerail skipped both until its daemon restarted.

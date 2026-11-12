@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
@@ -22,23 +22,41 @@ function git(cwd: string, ...args: string[]): void {
 /** The folders below each checkout's top level; the deepest holds the one source. */
 const FOLDERS = [["src"], ["src", "a"], ["src", "a", "b"], ["src", "a", "b", "c"]];
 
+const SESSION = "session-1";
+
 const printRule = codeRuleSchema.parse({
   format: "rerail.policy/v1", id: "test:print", revision: 1, mode: "steer", scope: { include: ["**/*.py"], exclude: [] },
   clauses: [{ id: "print", violation: { code: "P", anchor: "witness.span", message: "No print" }, forbid: { ast: { language: "python", rule: { pattern: "print($ARG)" } } } }],
 });
 
+/** A started repository at `path` holding `FOLDERS`, set up with the print rule; returns `path`. */
+async function startedRepository(path: string, databasePath: string): Promise<string> {
+  await mkdir(join(path, ...FOLDERS.at(-1)!), { recursive: true });
+  await writeFile(join(path, ...FOLDERS.at(-1)!, "x.py"), "x = 1\n");
+  git(path, "init", "--quiet");
+  git(path, "add", ".");
+  git(path, "commit", "--quiet", "-m", "seed");
+  setUpTestRepository(path, { library: [{ kind: "code", rule: printRule }] }, databasePath);
+  return path;
+}
+
 /** A started repository at `main` with three linked worktrees beside it, each holding `FOLDERS`; physical paths. */
 async function repositoryWithWorktrees(root: string, databasePath: string): Promise<{ main: string; worktrees: string[] }> {
-  const main = join(root, "main");
-  await mkdir(join(main, ...FOLDERS.at(-1)!), { recursive: true });
-  await writeFile(join(main, ...FOLDERS.at(-1)!, "x.py"), "x = 1\n");
-  git(main, "init", "--quiet");
-  git(main, "add", ".");
-  git(main, "commit", "--quiet", "-m", "seed");
-  setUpTestRepository(main, { library: [{ kind: "code", rule: printRule }] }, databasePath);
+  const main = await startedRepository(join(root, "main"), databasePath);
   const worktrees = ["w1", "w2", "w3"].map(name => join(root, name));
   for (const worktree of worktrees) git(main, "worktree", "add", "--quiet", "--detach", worktree);
   return { main, worktrees };
+}
+
+/** A runtime for `main` with `SESSION` open there, after its first turn, whose end waits for the session's first walk. */
+async function openedSession(root: string, main: string, databasePath: string): Promise<RerailRuntime> {
+  const runtime = new RerailRuntime({
+    storageRoot: join(root, "sessions"), databasePath, workspaceRoot: main, embedder: testEmbedder, autostart: false, startGate: true,
+  });
+  await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId: SESSION, cwd: main } });
+  await runtime.codeRulesOpened(SESSION);
+  await runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId: SESSION, text: "" });
+  return runtime;
 }
 
 /** Writes `text` to `path` in a Write tool call of `sessionId`; the lines of the steers its result brings that name a file. */
@@ -94,26 +112,69 @@ describe("a runtime's checkout lookups", () => {
     const root = await realpath(await temporaryDirectory({ started: false }));
     const databasePath = join(root, "rerail.sqlite");
     const { main } = await repositoryWithWorktrees(root, databasePath);
-    const runtime = new RerailRuntime({
-      storageRoot: join(root, "sessions"), databasePath, workspaceRoot: main, embedder: testEmbedder, autostart: false, startGate: true,
-    });
-    const session = { host: "claude-code" as const, sessionId: "session-1", cwd: main };
     const later = join(root, "later");
+    const runtime = await openedSession(root, main, databasePath);
     try {
-      await runtime.ingest({ kind: "session-start", eventId: "start", session });
-      await runtime.codeRulesOpened(session.sessionId);
-      // The turn's end waits for the session's first walk, which reads Git's worktree registry.
-      await runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId: session.sessionId, text: "" });
-      const plain = await write(runtime, session.sessionId, join(later, ...FOLDERS.at(-1)!, "a.py"), "print(1)\n");
+      const plain = await write(runtime, SESSION, join(later, ...FOLDERS.at(-1)!, "a.py"), "print(1)\n");
       await rm(later, { recursive: true, force: true });
       git(main, "worktree", "add", "--quiet", "--detach", later);
 
-      const worktree = await write(runtime, session.sessionId, join(later, ...FOLDERS.at(-1)!, "b.py"), "print(1)\n");
+      const worktree = await write(runtime, SESSION, join(later, ...FOLDERS.at(-1)!, "b.py"), "print(1)\n");
 
       // The first write looked up each folder from the file up while `later` was a plain one. Those answers named no
       // checkout and stayed for as long as the session was open, so its writes in the worktree were not checked.
       expect({ plain, worktree }).toEqual({ plain: [], worktree: [expect.stringMatching(/later\/src\/a\/b\/c\/b\.py:1:1/u)] });
-      await runtime.ingest({ kind: "session-end", eventId: "end", sessionId: session.sessionId });
+      await runtime.ingest({ kind: "session-end", eventId: "end", sessionId: SESSION });
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("find a worktree another started repository made where the session had written to a plain folder", { timeout: 120_000 }, async () => {
+    const root = await realpath(await temporaryDirectory({ started: false }));
+    const databasePath = join(root, "rerail.sqlite");
+    const main = await startedRepository(join(root, "main"), databasePath);
+    const other = await startedRepository(join(root, "other"), databasePath);
+    const later = join(root, "later");
+    const runtime = await openedSession(root, main, databasePath);
+    try {
+      const plain = await write(runtime, SESSION, join(later, ...FOLDERS.at(-1)!, "a.py"), "print(1)\n");
+      await rm(later, { recursive: true, force: true });
+      git(other, "worktree", "add", "--quiet", "--detach", later);
+
+      const worktree = await write(runtime, SESSION, join(later, ...FOLDERS.at(-1)!, "b.py"), "print(1)\n");
+
+      // The session's repository lists no such worktree, so reading its registry dropped none of the answers the first
+      // write left, and the session's writes in the other repository's worktree were not checked.
+      expect({ plain, worktree }).toEqual({ plain: [], worktree: [expect.stringMatching(/later\/src\/a\/b\/c\/b\.py:1:1/u)] });
+      await runtime.ingest({ kind: "session-end", eventId: "end", sessionId: SESSION });
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("find a worktree whose .git file Git wrote after an event of the session found it listed", { timeout: 120_000 }, async () => {
+    const root = await realpath(await temporaryDirectory({ started: false }));
+    const databasePath = join(root, "rerail.sqlite");
+    const main = await startedRepository(join(root, "main"), databasePath);
+    const later = join(root, "later");
+    const runtime = await openedSession(root, main, databasePath);
+    try {
+      const plain = await write(runtime, SESSION, join(later, ...FOLDERS.at(-1)!, "a.py"), "print(1)\n");
+      await rm(later, { recursive: true, force: true });
+      git(main, "worktree", "add", "--quiet", "--detach", later);
+      // `git worktree add` lists the worktree before it writes the worktree's .git file; with the file hidden, one event
+      // lands between the two.
+      await rename(join(later, ".git"), join(later, ".git-pending"));
+      const between = await write(runtime, SESSION, join(main, "between.py"), "x = 2\n");
+      await rename(join(later, ".git-pending"), join(later, ".git"));
+
+      const worktree = await write(runtime, SESSION, join(later, ...FOLDERS.at(-1)!, "b.py"), "print(1)\n");
+
+      // That event saw the registry change and looked again at a folder with no .git entry yet; nothing looked again
+      // once Git wrote it, as the registry did not change again.
+      expect({ plain, between, worktree }).toEqual({ plain: [], between: [], worktree: [expect.stringMatching(/later\/src\/a\/b\/c\/b\.py:1:1/u)] });
+      await runtime.ingest({ kind: "session-end", eventId: "end", sessionId: SESSION });
     } finally {
       await runtime.dispose();
     }

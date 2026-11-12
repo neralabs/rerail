@@ -46,6 +46,12 @@ export class CheckoutOwners {
   readonly #confirmed = new Map<string, string | undefined>();
   /** Physical checkout root → whether the checkout around it declares it as a submodule (a gitlink). */
   readonly #submodules = new Map<string, boolean>();
+  /**
+   * The folders `#confirm` found holding a `.git` entry that Git did not take for a top level (one naming a Git folder
+   * that is gone, say), told apart from those that held none: `lookAgainAt` leaves them be, so such an entry costs one
+   * Git process, not one per write below it. `#confirm` keeps it in step for every folder `#confirmed` holds.
+   */
+  readonly #unconfirmedGitEntries = new Set<string>();
   /** Recorded checkouts outside Git (identity under `.rerail`), physical. */
   readonly #plainRoots = new Set<string>();
 
@@ -68,21 +74,26 @@ export class CheckoutOwners {
   forgetFolders(): void {
     this.#roots.clear();
     for (const [directory, root] of this.#confirmed) if (root === undefined) this.#confirmed.delete(directory);
+    this.#unconfirmedGitEntries.clear();
   }
 
   /**
-   * Drops every answer at and below `root` when `root` holds a `.git` entry that those answers do not take for a checkout
-   * top level, so the next lookup asks the disk and Git again. Answers from before `git worktree add` made a plain folder
-   * there a worktree name no checkout for its files, or the checkout around it, and stay until the recorded checkouts
-   * change. The router calls this for the folders Git's worktree registry lists, once per change of the registry.
-   * Returns whether it dropped them.
+   * Drops the answers kept at and below each folder on the way up from `path` that a lookup found with no `.git` entry
+   * and that holds one now, so the next lookup asks the disk and Git again. `git worktree add`, from any repository, or
+   * `git init` can make a folder a session already looked up a checkout's top level; the answers from before name the
+   * checkout around it, or none, for its files, and would stay until the recorded checkouts change. Costs a stat per
+   * folder kept as plain on the way up from `path`, and from its real path when that differs. Returns whether it
+   * dropped any.
    */
-  lookAgainAt(root: string): boolean {
-    if (!holdsGitEntry(root) || this.ownerOf(root)?.checkoutRoot === root) return false;
-    for (const answers of [this.#roots, this.#confirmed, this.#submodules]) {
-      for (const folder of answers.keys()) if (within(root, folder)) answers.delete(folder);
-    }
-    return true;
+  lookAgainAt(path: string): boolean {
+    this.#revalidate();
+    const lexical = resolve(path);
+    const real = physicalPath(lexical);
+    const outgrown = (real === lexical ? [lexical] : [lexical, real])
+      .map(start => this.#outgrownAbove(start))
+      .filter((folder): folder is string => folder !== undefined);
+    for (const folder of outgrown) this.#forgetWithin(folder);
+    return outgrown.length > 0;
   }
 
   /** How many folders it holds an answer for. */
@@ -184,13 +195,37 @@ export class CheckoutOwners {
 
   #confirm(directory: string): string | undefined {
     if (this.#confirmed.has(directory)) return this.#confirmed.get(directory);
+    const gitEntry = holdsGitEntry(directory);
     let root: string | undefined;
-    if (holdsGitEntry(directory)) {
+    if (gitEntry) {
       const location = repositoryIdentityLocation(directory);
       const top = location.git ? physicalPath(location.workspaceRoot) : undefined;
       if (top !== undefined && top === physicalPath(directory)) root = top;
     }
     this.#confirmed.set(directory, root);
+    if (gitEntry && root === undefined) this.#unconfirmedGitEntries.add(directory);
+    else this.#unconfirmedGitEntries.delete(directory);
     return root;
+  }
+
+  /** The highest folder from `path` up that a lookup found with no `.git` entry and that holds one now. */
+  #outgrownAbove(path: string): string | undefined {
+    let outgrown: string | undefined;
+    for (let folder = path; ; folder = dirname(folder)) {
+      if (this.#keptAsPlain(folder) && holdsGitEntry(folder)) outgrown = folder;
+      if (dirname(folder) === folder) return outgrown;
+    }
+  }
+
+  /** Whether the kept answer for `folder` is that it held no `.git` entry. */
+  #keptAsPlain(folder: string): boolean {
+    return this.#confirmed.get(folder) === undefined && this.#confirmed.has(folder) && !this.#unconfirmedGitEntries.has(folder);
+  }
+
+  /** Drops every answer kept at and below `folder`. */
+  #forgetWithin(folder: string): void {
+    for (const answers of [this.#roots, this.#confirmed, this.#submodules, this.#unconfirmedGitEntries]) {
+      for (const kept of answers.keys()) if (within(folder, kept)) answers.delete(kept);
+    }
   }
 }

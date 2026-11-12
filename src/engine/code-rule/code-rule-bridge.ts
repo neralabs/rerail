@@ -839,6 +839,7 @@ export class CodeRuleBridge {
     discovery.toolCalls.begin(toolCallId, await filesystemClock());
     this.refreshCodeRules();
     const paths = generatedEditPaths(toolName, input);
+    this.#auditor.refreshOwners?.(paths);
     // What the ignore files a tool is about to write hold now is the baseline its edit is compared with.
     await this.#rememberIgnoreFiles(paths);
     if (paths.length === 0) {
@@ -889,6 +890,7 @@ export class CodeRuleBridge {
       this.#pending.delete(toolCallId);
       if (pending === undefined || failed) return [];
       this.refreshCodeRules();
+      this.#auditor.refreshOwners?.(pending.paths);
       this.#reportIgnoredEdits(discovery.root, pending.paths);
       await this.#noteIgnoreRules(pending.paths);
       const { edits, uncaptured } = await this.#readEdits(discovery, pending.paths, pending.preimages);
