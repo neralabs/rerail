@@ -113,33 +113,6 @@ async function cost(app: ReturnType<typeof createRerailApi>, path: string): Prom
   return { status: response.status, statements: statements.run, existsSync: fileChecks.existsSync, body: await response.json() };
 }
 
-describe("the dashboard link's read", () => {
-  it("names a checkout's repository and top folder at the same cost however many checkouts the repository has", async () => {
-    const answers = [];
-    for (const count of [10, 190]) {
-      const { main, repositoryKey, app } = await repositoryOf(count);
-      mkdirSync(join(main, "src"));
-      const answer = await cost(app, `/api/repository/checkout?${new URLSearchParams({ checkout: join(main, "src") })}`);
-      expect(answer.status).toBe(200);
-      expect(answer.body).toEqual({ repositoryKey, checkoutPath: main });
-      answers.push(answer);
-    }
-    const [few, many] = answers;
-    expect({ statements: many!.statements, existsSync: many!.existsSync }).toEqual({ statements: few!.statements, existsSync: few!.existsSync });
-  });
-
-  it("answers for a path Rerail has not seen as for one that does not exist", async () => {
-    const { main, app } = await repositoryOf(1);
-    const unseen = join(main, "..", "unseen");
-    mkdirSync(unseen);
-    for (const checkout of [unseen, join(main, "..", "missing")]) {
-      const response = await app.request(`/api/repository/checkout?${new URLSearchParams({ checkout })}`);
-      expect(response.status).toBe(404);
-      expect(await response.json()).toMatchObject({ error: "checkout-not-found" });
-    }
-  });
-});
-
 describe("a repository's context", () => {
   it("runs the same statements however many checkouts the repository has, and checks each checkout's folder once", async () => {
     const answers = [];

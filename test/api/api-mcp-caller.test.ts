@@ -117,16 +117,9 @@ describe("MCP callers and the agent guard", () => {
     expect(await call("repository_context_get", { checkout: nested }, from(parent))).toMatchObject({ result: { repository: { repositoryKey: nestedKey } } });
     const sibling = gitRepository(join(root, "sibling"), "https://github.com/acme/sibling.git");
     recordCheckout(stores.database(), sibling);
-    for (const [name, args] of [
-      ["repository_context_get", { checkout: sibling }], ["repository_checkout_get", { checkout: sibling }],
-      ["repository_rules_get", { checkout: sibling }], ["rule_packs_recommend", { checkout: sibling }],
-    ] as const) {
+    for (const [name, args] of [["repository_context_get", { checkout: sibling }], ["repository_rules_get", { checkout: sibling }], ["rule_packs_recommend", { checkout: sibling }]] as const) {
       expect((await call(name, args, from(parent))).result, name).toMatch(/^agent-not-permitted: a coding agent reads only in the repository it works in/u);
     }
-    // The dashboard link's read names the caller's own checkout without a target, and one nested in it on request.
-    expect((await call("repository_checkout_get", {}, from(join(parent, "web", "src")))).result).toEqual({ repositoryKey: parentKey, checkoutPath: parent });
-    expect((await call("repository_checkout_get", { checkout: nested }, from(parent))).result).toEqual({ repositoryKey: nestedKey, checkoutPath: nested });
-    expect((await call("repository_checkout_get", {})).result).toMatch(/^target-required/u);
     expect((await call("repositories_list", {}, from(parent))).result).toMatchObject({ repositories: [{ repositoryKey: parentKey }] });
     expect((await call("repositories_list", {})).result).toEqual({ repositories: [] });
     expect((await call("presentation_get", { repository: sibling, host: "omp" }, from(parent))).result).toMatch(/^agent-not-permitted/u);

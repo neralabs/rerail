@@ -64,11 +64,6 @@ export const repositoryContextSchema = z.object({
   }).strict().nullable().describe("The checkout the target or the calling agent names; null for a repository-only target."),
 }).strict();
 
-export const repositoryCheckoutSchema = z.object({
-  repositoryKey: z.string(),
-  checkoutPath: z.string().describe("The checkout's own folder (a Git checkout's top level), symlinks resolved."),
-}).strict();
-
 export const deciderSchema = z.discriminatedUnion("by", [
   z.object({ by: z.literal("checkout"), checkoutPath: z.string(), folder: z.string(), target: z.enum(RULE_SETTING_TARGET_KINDS) }).strict(),
   z.object({ by: z.literal("repository"), folder: z.string(), target: z.enum(RULE_SETTING_TARGET_KINDS) }).strict(),
