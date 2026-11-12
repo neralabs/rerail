@@ -1,6 +1,6 @@
 import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { loadNativeBinding } from "./native.js";
 import { defaultRerailHome, VERSIONS_DIR } from "../storage/rerail-home.js";
 import { PACKAGE_ROOT, RERAIL_PACKAGE_NAME } from "../package-root.js";
@@ -49,21 +49,53 @@ export function resolveRerailBuild(packageRoot: string, environment: NodeJS.Proc
   );
 }
 
+/** A package's build, or why it has none: what `resolveRerailBuild` threw for it. */
+type BuildResolution = { build: RerailBuild } | { problem: string };
+
+function resolveBuildOrProblem(packageRoot: string, environment: NodeJS.ProcessEnv): BuildResolution {
+  try {
+    return { build: resolveRerailBuild(packageRoot, environment) };
+  } catch (error) {
+    return { problem: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 /**
  * The running build, or why it has none: resolved once per process, a failure as much as a build. Every code rule
  * workspace asks for it, so a failure resolved again would repeat the realpath and the walk to the root each time.
  */
-let current: { build: RerailBuild } | { problem: string } | undefined;
+let current: BuildResolution | undefined;
 
-function currentResolution(): { build: RerailBuild } | { problem: string } {
-  if (current === undefined) {
-    try {
-      current = { build: resolveRerailBuild(PACKAGE_ROOT) };
-    } catch (error) {
-      current = { problem: error instanceof Error ? error.message : String(error) };
-    }
-  }
+function currentResolution(): BuildResolution {
+  current ??= resolveBuildOrProblem(PACKAGE_ROOT, process.env);
   return current;
+}
+
+/**
+ * Why a Rerail whose build `resolution` gives has no content store its code rules can open in `environment`, or
+ * undefined when it has one. `RERAIL_CONTENT_STORE_PATH` names a store for any build, except one in the machine-wide
+ * store directory: only the main daemon opens that (`assertContentStoreOwner` refuses every other process), so there
+ * it counts for main alone. The daemon's engine status and `install --root` both decide by this, so they agree.
+ */
+function storeProblem(resolution: () => BuildResolution, environment: NodeJS.ProcessEnv): string | undefined {
+  const override = contentStoreOverride(environment);
+  // An override elsewhere is a store whatever the build, which then need not be resolved.
+  if (override !== undefined && !isInMainContentStoreDirectory(override)) return undefined;
+  const resolved = resolution();
+  if (override === undefined) return "problem" in resolved ? resolved.problem : undefined;
+  if ("build" in resolved && resolved.build.kind === "main") return undefined;
+  return (
+    `RERAIL_CONTENT_STORE_PATH names ${override}, in the machine-wide content store directory ` +
+    `${mainContentStoreDirectory()}, which only the main Rerail daemon opens`
+  );
+}
+
+/**
+ * Why a Rerail running from `packageRoot` in `environment` would have no content store, so would run no code rule;
+ * undefined when it would have one. `install --root` refuses such a root.
+ */
+export function packageContentStoreProblem(packageRoot: string, environment: NodeJS.ProcessEnv = process.env): string | undefined {
+  return storeProblem(() => resolveBuildOrProblem(packageRoot, environment), environment);
 }
 
 /** The running build, resolved once per process; a package with no content store throws the same reason every time. */
@@ -75,12 +107,10 @@ export function currentRerailBuild(): RerailBuild {
 
 /**
  * Why this process has no content store, so no code rule can run; undefined when it has one (its build's, or the one
- * `RERAIL_CONTENT_STORE_PATH` names). Never throws: the daemon reports it as its engine's status.
+ * `RERAIL_CONTENT_STORE_PATH` names that it may open). Never throws: the daemon reports it as its engine's status.
  */
 export function contentStoreProblem(): string | undefined {
-  if (contentStoreOverride() !== undefined) return undefined;
-  const resolution = currentResolution();
-  return "problem" in resolution ? resolution.problem : undefined;
+  return storeProblem(currentResolution, process.env);
 }
 
 /**
@@ -96,9 +126,15 @@ export function mainContentStoreDirectory(): string {
   return join(homedir(), ".cache", "rerail");
 }
 
+/** Whether `storePath` lies in the machine-wide content store directory, which only the main daemon opens. */
+export function isInMainContentStoreDirectory(storePath: string): boolean {
+  const path = relative(resolve(mainContentStoreDirectory()), resolve(storePath));
+  return path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
+}
+
 /** The content store `RERAIL_CONTENT_STORE_PATH` names, absolute, or undefined when it names none. */
-export function contentStoreOverride(): string | undefined {
-  const override = process.env.RERAIL_CONTENT_STORE_PATH;
+export function contentStoreOverride(environment: NodeJS.ProcessEnv = process.env): string | undefined {
+  const override = environment.RERAIL_CONTENT_STORE_PATH;
   return override === undefined || override === "" ? undefined : resolve(override);
 }
 

@@ -20,7 +20,7 @@ import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import { RULES_DUMP_FILE } from "../engine/catalog/rule-bootstrap.js";
 import { INSTALLED_PACKS_DIR, installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
-import { contentStoreOverride, mainContentStoreDirectory, resolveRerailBuild } from "../engine/native/rerail-build.js";
+import { contentStoreOverride, mainContentStoreDirectory, packageContentStoreProblem } from "../engine/native/rerail-build.js";
 import {
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
@@ -129,20 +129,21 @@ async function currentPointsAt(context: SetupContext, root: string): Promise<boo
 }
 
 /**
- * Refuses a root that would have no content store: one in no Git checkout and not a version under `home`, such as a
- * package `npm install` put in a folder of its own. Its daemon would answer every hook and run no code rule.
+ * Refuses a root that would have no content store, by the rule the daemon reports its engine with: one in no Git
+ * checkout and not a version under `home`, such as a package `npm install` put in a folder of its own, unless
+ * `RERAIL_CONTENT_STORE_PATH` names a store; and any root but such a version while that variable names a file in the
+ * machine-wide store directory. Its daemon would answer every hook and run no code rule.
  */
 function requireContentStore(root: string, home: string): void {
   // A root that is not there fails on its package.json next, as it always has.
   if (!existsSync(root)) return;
-  try {
-    resolveRerailBuild(root, { ...process.env, RERAIL_HOME: home });
-  } catch (error) {
-    throw new Error(
-      `${error instanceof Error ? error.message : String(error)} and would run no code rule. ` +
-        "--root takes a Rerail checkout; to run a published version, run npx @neralabs/rerail setup",
-    );
-  }
+  const problem = packageContentStoreProblem(root, { ...process.env, RERAIL_HOME: home });
+  if (problem === undefined) return;
+  // With the variable set, the problem is where it points, not the root.
+  const remedy = contentStoreOverride() === undefined
+    ? "--root takes a Rerail checkout; to run a published version, run npx @neralabs/rerail setup"
+    : "Point RERAIL_CONTENT_STORE_PATH at a file outside that directory, or unset it";
+  throw new Error(`No code rule would run from ${root}: ${problem}. ${remedy}`);
 }
 
 /**

@@ -14,7 +14,7 @@ vi.mock("../../src/runtime/daemon-control.js", async () => {
 });
 import { existsSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, rm, stat, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { CONSENT_FILE, cleanupCommand, runInstallCommand, type SetupContext } from "../../src/cli/setup-cli.js";
 import {
@@ -72,6 +72,14 @@ async function fixture(): Promise<Fixture> {
     hostConfigHome,
     packageRoot,
   };
+}
+
+/** A package `npm install` put in a folder of its own beside the Rerail home: in no Git checkout and no managed version. */
+async function packageOutsideCheckout(context: SetupContext): Promise<string> {
+  const installed = join(dirname(context.home), "install", "node_modules", "@neralabs", "rerail");
+  await mkdir(join(installed, "dist"), { recursive: true });
+  await writeFile(join(installed, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
+  return installed;
 }
 
 /** The database a stopped daemon leaves, recording one repository's `checkouts`. */
@@ -139,17 +147,37 @@ describe("rerail install --root", () => {
 
   it("refuses a package in no Git checkout and no managed version, which would run no code rule, and changes nothing", async () => {
     const { context, hostConfigHome } = await fixture();
-    const installed = join(dirname(context.home), "install", "node_modules", "@neralabs", "rerail");
-    await mkdir(join(installed, "dist"), { recursive: true });
-    await writeFile(join(installed, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
+    const installed = await packageOutsideCheckout(context);
+    // The test set-up names a content store for each test file; an install names none.
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", "");
 
     for (const args of [["--root", installed, "--agents", "claude-code"], ["--root", installed, "--dry-run"]]) {
       await expect(runInstallCommand(args, context)).rejects.toThrow(
-        /is neither the managed installation under .+ nor in a Git checkout, so it has no content store and would run no code rule\. --root takes a Rerail checkout/u,
+        /^No code rule would run from .+: Rerail at .+ is neither the managed installation under .+ nor in a Git checkout, so it has no content store\. --root takes a Rerail checkout/u,
       );
     }
     expect(existsSync(context.home)).toBe(false);
     expect(existsSync(join(hostConfigHome, ".claude", "settings.json"))).toBe(false);
+  });
+
+  it("takes that package while RERAIL_CONTENT_STORE_PATH names a store, which its daemon opens", async () => {
+    const { context } = await fixture();
+    const installed = await packageOutsideCheckout(context);
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", join(dirname(context.home), "store", "content.sqlite"));
+
+    expect(await runInstallCommand(["--root", installed, "--agents", "claude-code"], context)).toBe(0);
+    expect(await readlink(context.updater.currentLink)).toBe(installed);
+  });
+
+  it("refuses a checkout while RERAIL_CONTENT_STORE_PATH names a file in the machine-wide store directory", async () => {
+    const { context, packageRoot } = await fixture();
+    // Only the main daemon opens a store in `~/.cache/rerail`, so a checkout's daemon would fail every code rule workspace.
+    vi.stubEnv("RERAIL_CONTENT_STORE_PATH", join(homedir(), ".cache", "rerail", "content-v1.sqlite"));
+
+    await expect(runInstallCommand(["--root", packageRoot, "--dry-run"], context)).rejects.toThrow(
+      /^No code rule would run from .+: RERAIL_CONTENT_STORE_PATH names .+, which only the main Rerail daemon opens\. Point RERAIL_CONTENT_STORE_PATH at a file outside that directory, or unset it$/u,
+    );
+    expect(existsSync(context.home)).toBe(false);
   });
 
   it("takes a version Rerail installed under its home", async () => {

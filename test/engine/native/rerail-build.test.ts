@@ -10,6 +10,7 @@ import {
   currentRerailBuild,
   isMainRerailBuild,
   mainContentStoreDirectory,
+  packageContentStoreProblem,
   resolveRerailBuild,
 } from "../../../src/engine/native/rerail-build.js";
 
@@ -106,6 +107,44 @@ describe("resolveRerailBuild", () => {
   });
 });
 
+/** The reason a build that is not main gives while `RERAIL_CONTENT_STORE_PATH` names `store` in the main store's directory. */
+function mainDirectoryReason(store: string): string {
+  return (
+    `RERAIL_CONTENT_STORE_PATH names ${store}, in the machine-wide content store directory ` +
+    `${mainContentStoreDirectory()}, which only the main Rerail daemon opens`
+  );
+}
+
+describe("packageContentStoreProblem", () => {
+  test("a package in no checkout and no managed version has no store, unless RERAIL_CONTENT_STORE_PATH names one", () => {
+    const home = join(root, "rerail-home");
+    const installed = join(root, "install", "node_modules", "@neralabs", "rerail");
+    mkdirSync(installed, { recursive: true });
+
+    expect(packageContentStoreProblem(installed, { RERAIL_HOME: home })).toBe(
+      `Rerail at ${installed} is neither the managed installation under ${join(home, "versions")} nor in a Git ` +
+        "checkout, so it has no content store",
+    );
+    expect(packageContentStoreProblem(installed, { RERAIL_HOME: home, RERAIL_CONTENT_STORE_PATH: join(root, "store.sqlite") }))
+      .toBeUndefined();
+  });
+
+  test("a store in the machine-wide store directory is one only the main build may open", () => {
+    const { home, packageRoot: managed } = managedHome("1.4.0");
+    const checkout = join(root, "checkout");
+    mkdirSync(join(checkout, ".git"), { recursive: true });
+    const installed = join(root, "install", "node_modules", "@neralabs", "rerail");
+    mkdirSync(installed, { recursive: true });
+    const store = join(mainContentStoreDirectory(), STORE_FILE);
+    const environment = { RERAIL_HOME: home, RERAIL_CONTENT_STORE_PATH: store };
+
+    expect(packageContentStoreProblem(managed, environment)).toBeUndefined();
+    // Any other build fails every code rule workspace there: `assertContentStoreOwner` refuses it the store.
+    expect(packageContentStoreProblem(checkout, environment)).toBe(mainDirectoryReason(store));
+    expect(packageContentStoreProblem(installed, environment)).toBe(mainDirectoryReason(store));
+  });
+});
+
 describe("a running package with no content store", () => {
   /** This module as a process running from `packageRoot` loads it: its own `currentRerailBuild` cache. */
   async function runningFrom(packageRoot: string): Promise<typeof import("../../../src/engine/native/rerail-build.js")> {
@@ -143,8 +182,25 @@ describe("a running package with no content store", () => {
     expect(running.contentStoreProblem()).toBeUndefined();
   });
 
+  test("an override in the machine-wide store directory gives it none, since only the main daemon opens that store", async () => {
+    const packageRoot = join(root, "install", "node_modules", "@neralabs", "rerail");
+    mkdirSync(packageRoot, { recursive: true });
+    const running = await runningFrom(packageRoot);
+    const store = join(mainContentStoreDirectory(), STORE_FILE);
+    process.env.RERAIL_CONTENT_STORE_PATH = store;
+
+    expect(running.contentStoreProblem()).toBe(mainDirectoryReason(store));
+  });
+
   test("a build that has a store has no problem to report", () => {
     expect(contentStoreProblem()).toBeUndefined();
+  });
+
+  test("a checkout's build reports one while RERAIL_CONTENT_STORE_PATH names the machine-wide store", () => {
+    const store = join(mainContentStoreDirectory(), STORE_FILE);
+    process.env.RERAIL_CONTENT_STORE_PATH = store;
+
+    expect(contentStoreProblem()).toBe(mainDirectoryReason(store));
   });
 });
 

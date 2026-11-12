@@ -447,6 +447,10 @@ there, and every audit fails. Install a published
 version with `npx @neralabs/rerail setup`, or run a checkout's build with `just rerail-dev --install-bridge`
 ([Developing from a checkout](how-setup-works.md#developing-from-a-checkout)).
 
+With `RERAIL_CONTENT_STORE_PATH` set to a file in `~/.cache/rerail/`, any Rerail but the managed installation says
+`Engine: unavailable: RERAIL_CONTENT_STORE_PATH names … which only the main Rerail daemon opens` instead: point the
+variable at a file elsewhere, or unset it.
+
 ### `Another main Rerail instance is running`
 
 A second daemon, from another `RERAIL_HOME` or left behind, holds Rerail's machine-wide lock. Stop it

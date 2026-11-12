@@ -472,7 +472,8 @@ database before the now-active version, to put back by hand (see [Database compa
 Policy evaluation caches parsed files and results in a content store; where the package lives, not a flag, picks which one.
 
 The managed installation uses `~/.cache/rerail/content-v1.sqlite`; a build from a Git checkout uses
-`<checkout>/.rerail/content-v1.sqlite`. `RERAIL_CONTENT_STORE_PATH` overrides either location.
+`<checkout>/.rerail/content-v1.sqlite`. `RERAIL_CONTENT_STORE_PATH` overrides either location and gives any build a
+store, except a file in `~/.cache/rerail/`: only the managed installation's daemon opens a store there.
 
 <details>
 <summary>Which store a build uses</summary>
@@ -660,8 +661,10 @@ This builds the checkout, activates it as `~/.rerail/current` the way `setup` ac
 the launcher, registers every harness, and starts the checkout's dev daemon on the default home. Its hooks name
 `~/.rerail/current`, never the checkout path.
 
-It runs `rerail install --root <checkout>`, which refuses a package in no Git checkout and outside
-`~/.rerail/versions`: that package has no [content store](#the-content-store), so it would run no code rule.
+It runs `rerail install --root <checkout>`, which refuses a root that would have no
+[content store](#the-content-store), so would run no code rule: a package in no Git checkout and outside
+`~/.rerail/versions`, unless `RERAIL_CONTENT_STORE_PATH` names a store, and any root but such a version while that
+variable names a file in `~/.cache/rerail/`. It decides as the daemon's engine status does.
 
 - `just nuke-rerail` removes it again (with a backup).
 - `npx @neralabs/rerail setup` returns to the published package.
