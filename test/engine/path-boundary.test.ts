@@ -167,4 +167,18 @@ describe("the path boundary", () => {
       "\\\\?\\C:\\work\\notes.txt",
     ]);
   });
+
+  it.runIf(process.platform === "win32")("on Windows counts a path it does not look up against its resolutions, as one that does not exist", () => {
+    const lookups: string[] = [];
+    vi.spyOn(realpathSync, "native").mockImplementation((path: PathLike) => {
+      lookups.push(String(path));
+      return String(path);
+    });
+    const boundary = checkoutPathBoundary("C:\\repo", 2);
+    for (const path of ["//198.51.100.1/api/v1", "//198.51.100.1/api/v1", "//198.51.100.1/docs/a.md", "docs/a.md"]) {
+      expect(boundary.leadsTo(path), path).toBeUndefined();
+    }
+    // The root only: the two URLs spent both resolutions, so `docs/a.md` is judged by its name.
+    expect(lookups).toEqual(["C:\\repo"]);
+  });
 });

@@ -152,8 +152,9 @@ function lookupMayWait(named: string, roots: readonly string[]): boolean {
  * by its absolute path or through `..`. A path that does not resolve (it does not exist, or `root` does not) is judged
  * by its name alone, as is any path past the first `resolutions` distinct ones, so a boundary makes at most
  * `resolutions + 1` file system calls. On Windows a path that names another machine or a device (`\\host\share`,
- * `\\?\UNC\`, `\\.\`) off the share the checkout lies on is judged by its name alone too, and not looked up, since a
- * lookup there can wait 21 s. Meant to live for one judgment's worth of paths: a steer, a tool call's input.
+ * `\\?\UNC\`, `\\.\`) off the share the checkout lies on is not looked up, since a lookup there can wait 21 s: it is
+ * judged by its name alone and counts among the `resolutions`, as a path that does not resolve does. Meant to live
+ * for one judgment's worth of paths: a steer, a tool call's input.
  */
 export function checkoutPathBoundary(root: string, resolutions = CHECKOUT_PATH_RESOLUTIONS): CheckoutPathBoundary {
   // The root is resolved with the first path, so a judgment that resolves none reads nothing on disk.
@@ -169,9 +170,9 @@ export function checkoutPathBoundary(root: string, resolutions = CHECKOUT_PATH_R
     if (targets.has(path)) return targets.get(path);
     if (targets.size >= resolutions) return undefined;
     const named = resolve(root, path);
-    // Not kept: it makes no file system call, so it spends none of the budget.
-    if (lookupMayWait(named, [root, realRoot])) return undefined;
-    const resolved = realPath(named);
+    // Judged as a path that does not resolve: kept, so a repeat costs one map lookup, and counted against the budget,
+    // so an input of many URLs stops at it as on Linux, where `//host/api` is a local path.
+    const resolved = lookupMayWait(named, [root, realRoot]) ? undefined : realPath(named);
     let led: string | undefined;
     // A path no link redirects is judged by its own name, already.
     if (resolved !== undefined && resolved !== resolve(realRoot, path)) {
