@@ -97,6 +97,25 @@ describe("WalkDigests", () => {
     expect(lines).toEqual([]);
   });
 
+  it("gives back every read of a root of more files than it judges, writes or reads at once", async () => {
+    const [folder, root] = [await scratch(), await scratch()];
+    // More than two slices of reads (`SLICE`), and a path whose quote and newline its line must escape.
+    const odd = 'src/a "quoted"\nname.py';
+    const paths = [...Array.from({ length: 4_501 }, (_, index) => `src/${index}.py`), odd];
+    const sources = new Map(paths.map(path => [path, read({ path })]));
+    const first = new WalkDigests(folder);
+    first.keep(root, { sources, previous: new Map(), kept: undefined, observedAt: 3_000 });
+    // Before they are written, a walk of the root takes the reads waiting.
+    expect((await first.load(root, 4_000)).size).toBe(paths.length);
+    await first.close();
+    const next = new WalkDigests(folder);
+    const kept = await next.load(root, 4_000);
+    await next.close();
+    expect([kept.size, kept.get(odd), kept.get("src/4500.py")]).toEqual([
+      paths.length, { kind: "text", stamp: stamp(), digest: DIGEST }, { kind: "text", stamp: stamp(), digest: DIGEST },
+    ]);
+  });
+
   it("writes nothing for a walk that found every file as it started or as the last daemon kept it", async () => {
     const [folder, root] = [await scratch(), await scratch()];
     const unchanged = read();

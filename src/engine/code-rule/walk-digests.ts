@@ -12,10 +12,13 @@
  * ones holding secrets are never kept. The reads of a root live in one file of `folder`, written off the event path; a
  * root that is gone, or that no walk used for 30 days, is dropped, and past `maxBytes` the least recently used go first.
  * A read or write that fails costs the next walks reads, never a change they miss, and the daemon's log says so once.
+ * The reads of a root are judged, written and read `SLICE` at a time, so a root of many files holds the daemon's thread,
+ * which answers every hook, a few milliseconds at a time.
  */
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import { promisify } from "node:util";
 import { gunzip, gzip } from "node:zlib";
 import { z } from "zod/v4";
@@ -56,6 +59,12 @@ const FORMAT = 1;
 const SUFFIX = ".reads";
 /** The most a root's first line, which names it, may take. */
 const MAX_HEADER_BYTES = 8 * 1024;
+/**
+ * Reads handled between two turns of the event loop. Each read takes a microsecond or two to judge, write or read
+ * back: a root of 100,000 files done in one piece would hold the daemon's thread, and each hook waiting on it, for a
+ * tenth of a second; 2,000 at a time hold it for a few milliseconds.
+ */
+const SLICE = 2_000;
 
 const gzipped = promisify(gzip);
 const gunzipped = promisify(gunzip);
@@ -95,21 +104,35 @@ export function keptRead(path: string, source: ObservedSource): KeptRead | undef
   return source.digest === undefined ? { kind: "binary", stamp } : { kind: "text", stamp, digest: source.digest };
 }
 
-function sameRead(left: KeptRead, right: KeptRead): boolean {
-  if (left.stamp !== right.stamp) return false;
-  return left.kind === "binary" ? right.kind === "binary" : right.kind === "text" && left.digest === right.digest;
+/** Whether `source` is what `kept` stands for, as a walk observes a file it takes from a kept read. */
+function keptAsItIs(kept: KeptRead, source: ObservedSource): boolean {
+  return kept.stamp === source.stamp && (kept.kind === "binary" ? source.digest === undefined : source.digest === kept.digest);
 }
 
-/** Whether a walk found nothing the kept reads of its root lack: every source it read is the one it started from, or one kept as it is. */
+/**
+ * Whether a walk found nothing the kept reads of its root lack: each source is the one it started from, the one the
+ * last daemon kept, or one the next daemon may not take. Only a source the walk read is judged by `keptRead`, so the
+ * first walk after a start, which took its files from the kept reads, costs two comparisons a file.
+ */
 function holdsNothingNew(walk: WalkReads): boolean {
   for (const [path, source] of walk.sources) {
     if (walk.previous.get(path) === source) continue;
-    const read = keptRead(path, source);
-    if (read === undefined) continue;
     const kept = walk.kept?.get(path);
-    if (kept === undefined || !sameRead(kept, read)) return false;
+    if (kept !== undefined && keptAsItIs(kept, source)) continue;
+    if (keptRead(path, source) !== undefined) return false;
   }
   return true;
+}
+
+/** Calls `take` with each read of `sources` the next daemon may take ({@link keptRead}), letting the event loop run between slices. */
+async function forEachKeptRead(sources: ReadonlyMap<string, ObservedSource>, take: (path: string, read: KeptRead) => void): Promise<void> {
+  let count = 0;
+  for (const [path, source] of sources) {
+    const read = keptRead(path, source);
+    if (read !== undefined) take(path, read);
+    count += 1;
+    if (count % SLICE === 0) await nextTurn();
+  }
 }
 
 /** A root's file name: its path's digest, which any length or letter of path fits. */
@@ -137,15 +160,34 @@ function parseHeader(line: string): Header | undefined {
   }
 }
 
-/** A root's file: its first line names the root and when its walk began, the rest is its reads, compressed. */
+/** The reads of `sources` the next daemon may take, one JSON line each (`StoredRead`), so they can be read back a slice at a time. */
+async function storedReads(sources: ReadonlyMap<string, ObservedSource>): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let lines: string[] = [];
+  await forEachKeptRead(sources, (path, read) => {
+    lines.push(`${JSON.stringify([path, read.stamp, read.kind === "text" ? read.digest : null] satisfies StoredRead)}\n`);
+    if (lines.length < SLICE) return;
+    chunks.push(Buffer.from(lines.join("")));
+    lines = [];
+  });
+  chunks.push(Buffer.from(lines.join("")));
+  return Buffer.concat(chunks);
+}
+
+/** A root's file: its first line names the root and when its walk began, the rest is its reads, a line each, compressed. */
 async function encode(root: string, walk: Pick<WalkReads, "sources" | "observedAt">): Promise<Buffer> {
-  const reads: StoredRead[] = [];
-  for (const [path, source] of walk.sources) {
-    const read = keptRead(path, source);
-    if (read !== undefined) reads.push([path, read.stamp, read.kind === "text" ? read.digest : null]);
-  }
   const header = Buffer.from(`${JSON.stringify({ format: FORMAT, root, observedAt: walk.observedAt } satisfies Header)}\n`);
-  return Buffer.concat([header, await gzipped(Buffer.from(JSON.stringify(reads)))]);
+  return Buffer.concat([header, await gzipped(await storedReads(walk.sources))]);
+}
+
+/** Each line of `body`, without its newline. */
+function* linesOf(body: Buffer): Generator<string> {
+  for (let start = 0; start < body.length;) {
+    const newline = body.indexOf(0x0a, start);
+    const stop = newline < 0 ? body.length : newline;
+    yield body.toString("utf8", start, stop);
+    start = stop + 1;
+  }
 }
 
 /** The reads in a root's file, or undefined for a file of another root or format, or one that does not decode. */
@@ -153,13 +195,15 @@ async function decode(root: string, data: Buffer): Promise<{ header: Header; rea
   const end = data.indexOf(0x0a);
   const header = end < 0 ? undefined : parseHeader(data.subarray(0, end).toString("utf8"));
   if (header?.root !== root) return undefined;
-  const stored: unknown = JSON.parse((await gunzipped(data.subarray(end + 1))).toString("utf8"));
-  if (!Array.isArray(stored)) return undefined;
   const reads = new Map<string, KeptRead>();
-  for (const item of stored) {
+  let count = 0;
+  for (const line of linesOf(await gunzipped(data.subarray(end + 1)))) {
+    const item: unknown = JSON.parse(line);
     if (!isStoredRead(item)) return undefined;
     const [path, stamp, digest] = item;
     reads.set(path, digest === null ? { kind: "binary", stamp } : { kind: "text", stamp, digest });
+    count += 1;
+    if (count % SLICE === 0) await nextTurn();
   }
   return { header, reads };
 }
@@ -225,7 +269,7 @@ export class WalkDigests {
    */
   async load(root: string, observedAt: number): Promise<KeptReads> {
     const pending = this.#pending.get(root);
-    if (pending !== undefined) return this.#pendingReads(pending, observedAt);
+    if (pending !== undefined) return await this.#pendingReads(pending, observedAt);
     const name = fileName(root);
     try {
       const decoded = await decode(root, await readFile(join(this.#folder, name)));
@@ -269,13 +313,10 @@ export class WalkDigests {
     await this.#disk;
   }
 
-  #pendingReads(pending: Pick<WalkReads, "sources" | "observedAt">, observedAt: number): KeptReads {
+  async #pendingReads(pending: Pick<WalkReads, "sources" | "observedAt">, observedAt: number): Promise<KeptReads> {
     const reads = new Map<string, KeptRead>();
     if (observedAt < pending.observedAt) return reads;
-    for (const [path, source] of pending.sources) {
-      const read = keptRead(path, source);
-      if (read !== undefined) reads.set(path, read);
-    }
+    await forEachKeptRead(pending.sources, (path, read) => reads.set(path, read));
     return reads;
   }
 
