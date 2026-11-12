@@ -647,6 +647,7 @@ pub mod tests {
     /// budget, halved where refused; its GPU seconds by kind (the first pass, the runs again,
     /// the positions), its launches and rounds, and the host's CPU and wall.
     #[test]
+    #[cfg(target_os = "macos")]
     #[ignore = "a benchmark: run by hand"]
     fn rr_metal_bench() {
         use rerail_metal::block_program::serial::{compiles, prewarm, run_resident_digested, SerialRun};
