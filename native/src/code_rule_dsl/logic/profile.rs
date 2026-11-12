@@ -292,7 +292,10 @@ pub struct StepPlan {
     pub access: String,
     pub source: String,
     pub rows: f64,
-    pub passed: Vec<(String, f64)>,
+    pub passed: Vec<(String, f64, String)>,
+    /// The rule the step's rows a binding were priced by (`plan_search`'s `atom_rows`): postings, observed,
+    /// absence proof, membership, and the containment share applied, so a misprediction names its rule.
+    pub basis: String,
 }
 
 /// A rule's plan as the planner chose it: estimated work and rows, and its search (subsets kept, candidates priced).
@@ -1290,9 +1293,11 @@ pub fn explain(r: &mut String, state: &State) {
                 } else {
                     String::new()
                 };
-                let _ = writeln!(r, "       {:>2}. {:<44} {:<30} {:<20} est {:>11}  {actual}", i + 1, short(&st.literal, 44), short(&st.access, 30), short(&st.source, 20), rows(st.rows));
-                for (lit, per) in &st.passed {
-                    let _ = writeln!(r, "           passed over {:<44} {per:.1} rows a binding", short(lit, 44));
+                let basis = if st.basis.is_empty() { String::new() } else { format!("  [{}]", st.basis) };
+                let _ = writeln!(r, "       {:>2}. {:<44} {:<30} {:<20} est {:>11}  {actual}{basis}", i + 1, short(&st.literal, 44), short(&st.access, 30), short(&st.source, 20), rows(st.rows));
+                for (lit, per, why) in &st.passed {
+                    let why = if why.is_empty() { String::new() } else { format!("  [{why}]") };
+                    let _ = writeln!(r, "           passed over {:<44} {per:.1} rows a binding{why}", short(lit, 44));
                 }
             }
         }

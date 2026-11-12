@@ -4317,7 +4317,16 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                      hints: Vec<[u32; runs::HINTS]>,
                      collect: Option<&'c mut Vec<i64>>,
                      /// The row the first step is at (a count table's counts per row are by it).
-                     at0: u32 }
+                     at0: u32,
+                     /// Per atom step, the slots it binds that the steps before `upto` read, and `upto` (`factored`):
+                     /// a row whose rest of the body fails before reaching `upto` fails by those values alone.
+                     factor: Vec<Option<Factor>>,
+                     /// The deepest step entered (`go`), so a factored step knows where its row's descent stopped.
+                     deep: usize,
+                     /// Per such step, in its current probe, the values of those slots the rest of the body failed for.
+                     failed: Vec<rustc_hash::FxHashSet<[i64; FACTOR_MAX]>>,
+                     /// Rows passed over by `failed`: read and tested, not joined on.
+                     skipped: u64 }
     fn val(slots: &[i64], k: Key) -> i64 { match k { Key::Slot(s) => slots[s], Key::Const(c) => c } }
     /// Where an atom's candidate tuples are: an input relation or a component relation, by id.
     #[derive(Clone, Copy)]
@@ -4385,6 +4394,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         let (j, store): (&'a JoinRule, &'a Store) = (cx.j, cx.store);
         if i > 0 { let c = &j.counts[i - 1][1]; c.set(c.get() + 1); }
         if let Some(c) = j.counts.get(i) { c[0].set(c[0].get() + 1); }
+        if i > cx.deep { cx.deep = i; }
         // Keep exact sums until a predicate, lookup, function, or emitted head
         // observes the binding. A later filter can remove a row before that use.
         if !cx.pending.is_empty() {
@@ -4458,6 +4468,8 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 if let Some(f) = j.fused[i].as_deref() {
                     // Fused with the filters after it: the candidates a chunk at a time, the filters one row program
                     // over each chunk, and only its rows go on (`rowcode`).
+                    // Its filters run inside the row program, not through `go`: they count as reached (`factored`).
+                    if i + f.steps > cx.deep { cx.deep = i + f.steps; }
                     let mut s = std::mem::take(&mut cx.scratch[i]);
                     s.columns.resize_with(f.columns.len(), Vec::new);
                     s.params.clear();
@@ -4504,6 +4516,11 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 // An atom that binds nothing (`ann_root(_)`, a key all bound) is a test: every row it matches leads to
                 // the same bindings, so the rest of the body runs once if one does (a semi-join), not once per row.
                 let exists = *neg || binds.is_empty();
+                // A row whose slots the rest of the body reads are those of a row it already failed for fails too
+                // (`factored`): it is passed over, not joined on. `pfn`'s `pcall__ins` by `$o` gave 733,692 rows, each
+                // tested against `fv` by `$m` alone and every one rejected, where few distinct `$m` were tested.
+                let factor = if exists { None } else { cx.factor[i] };
+                if factor.is_some() && !cx.failed[i].is_empty() { cx.failed[i].clear(); }
                 let found = cands.any(|id| {
                     if rows.dead(id) { return false; }
                     let row = rows.row(id);
@@ -4511,6 +4528,18 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     if exists { return true; }
                     for &(c, s) in binds { slots[s] = row.at(c); }
                     if i == 0 { cx.at0 = id; }
+                    if let Some(Factor { read, n, upto }) = factor {
+                        let mut key = [0i64; FACTOR_MAX];
+                        for (x, &s) in read[..n].iter().enumerate() { key[x] = slots[s]; }
+                        if cx.failed[i].contains(&key) { cx.skipped += 1; return false; }
+                        let (made, deep) = (cx.n, cx.deep);
+                        cx.deep = i;
+                        go(cx, i + 1, slots);
+                        // Stopped before `upto`: only `read` of this row's bindings was looked at.
+                        if cx.n == made && cx.deep < upto && cx.error.is_none() { cx.failed[i].insert(key); }
+                        cx.deep = cx.deep.max(deep);
+                        return false;
+                    }
                     go(cx, i + 1, slots);
                     false
                 });
@@ -4662,7 +4691,10 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         }
     }
     let scratch = j.steps.iter().map(|_| rowcode::Scratch::default()).collect();
-    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(), scratch, collect, at0: 0, hints: vec![[0; runs::HINTS]; j.steps.len()] };
+    let factor = factored(j);
+    let failed = factor.iter().map(|_| Default::default()).collect();
+    let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(), scratch, collect, at0: 0, hints: vec![[0; runs::HINTS]; j.steps.len()],
+                       factor, failed, skipped: 0, deep: 0 };
     let mut slots = vec![0i64; j.nslots];
     for &(s, v) in preset { slots[s] = v; }
     match (each, paired, j.steps.first(), j.steps.get(1)) {
@@ -4703,7 +4735,46 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         _ => go(&mut cx, 0, &mut slots),
     }
     scalars::explain(&j.steps,store);
+    // Each passed-over row was read and tested against a hash set, as a probe is.
+    if cx.skipped > 0 { charge(Unit::JoinRow, cx.skipped); }
     match cx.error {Some(e)=>Err(e),None=>Ok(cx.n)}
+}
+
+/// The most slots a factored step's failed set is keyed by.
+const FACTOR_MAX: usize = 4;
+
+/// A factored step's key (`factored`): the `n` slots of `read`, which the steps before `upto` read of its bindings.
+#[derive(Clone, Copy)]
+struct Factor { read: [usize; FACTOR_MAX], n: usize, upto: usize }
+
+/// Per step, for an atom (after the first, not fused) that binds slots: `upto`, the first later step that reads
+/// every slot it binds (or the head, past the last step), and `read`, the slots it binds that the steps before
+/// `upto` read, at most `FACTOR_MAX`. A row's rest of the body that made nothing and entered no step from `upto` on
+/// looked only at `read` of the row's bindings (with the slots bound before): every row with the same values fails
+/// alike and is passed over. So the order a rule was planned in costs a probe per distinct value of what the
+/// failing steps read, not per row: `pfn`'s `pcall__ins($c, $o, $m)` by `$o`, then `fv` by `$m` (which rejected all
+/// 733,692 rows), then `!pfn__old($c, …)` (`upto`, the first step to read `$c`).
+fn factored(j: &JoinRule) -> Vec<Option<Factor>> {
+    j.steps.iter().enumerate().map(|(i, st)| {
+        let Step::Atom { neg: false, binds, .. } = st else { return None };
+        if i == 0 || binds.is_empty() || j.fused.get(i).is_some_and(Option::is_some) { return None; }
+        let reads = |t: &Step, s: usize| t.observes(s) || matches!(t, Step::Let { b: Key::Slot(x), .. } if *x == s);
+        let mut bound: Vec<usize> = binds.iter().map(|&(_, s)| s).collect();
+        bound.sort_unstable();
+        bound.dedup();
+        let mut seen: Vec<usize> = Vec::new();
+        let mut upto = j.steps.len();
+        for (t, step) in j.steps.iter().enumerate().skip(i + 1) {
+            let now: Vec<usize> = bound.iter().copied().filter(|&s| !seen.contains(&s) && reads(step, s)).collect();
+            if seen.len() + now.len() == bound.len() { upto = t; break; }
+            seen.extend(now);
+        }
+        // Nothing before `upto` to fail in, or too wide a key.
+        if upto <= i + 1 || seen.len() > FACTOR_MAX { return None; }
+        let mut read = [0usize; FACTOR_MAX];
+        read[..seen.len()].copy_from_slice(&seen);
+        Some(Factor { read, n: seen.len(), upto })
+    }).collect()
 }
 
 #[cfg(test)]

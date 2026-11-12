@@ -494,8 +494,8 @@ mod tests {
             subsets: 4,
             candidates: 6,
             steps: vec![
-                StepPlan { literal: "a($x)".into(), access: "scan".into(), source: "input".into(), rows: 5.0, passed: Vec::new() },
-                StepPlan { literal: "b($x)".into(), access: "lookup on (c0)".into(), source: "derived".into(), rows: 2.0, passed: vec![("c($x)".into(), 7.0)] },
+                StepPlan { literal: "a($x)".into(), access: "scan".into(), source: "input".into(), rows: 5.0, passed: Vec::new(), basis: "relation size".into() },
+                StepPlan { literal: "b($x)".into(), access: "lookup on (c0)".into(), source: "derived".into(), rows: 2.0, passed: vec![("c($x)".into(), 7.0, "postings".into())], basis: "postings, containment 0.500".into() },
             ],
         };
         planned("xstratum", "seed xrule", Some(3), &plan, 0.01, 0, Some(&[(1, 5), (5, 2)]), None);
@@ -542,7 +542,8 @@ mod tests {
         assert!(report.contains("native: aggregate join (string concatenation)") && report.contains("metal: computed term: @sql_instr in a comparison"), "{report}");
         assert!(report.contains("xstratum: Metal x1, native CPU x1; metal: computed term: @sql_instr in a comparison"), "{report}");
         assert!(report.contains("rule #0003 (seed xrule)") && report.contains("loops=2 replans=1"));
-        assert!(report.contains("passed over c($x)") && report.contains("7.0 rows a binding"), "the joins a step passed over: {report}");
+        assert!(report.contains("passed over c($x)") && report.contains("7.0 rows a binding  [postings]"), "the joins a step passed over: {report}");
+        assert!(report.contains("[postings, containment 0.500]"), "the rule a step was priced by: {report}");
         // Actual rows add over the loops.
         assert!(report.contains("actual 9 -> 3"), "{report}");
         assert!(report.contains("xkernel  (xspan)"));

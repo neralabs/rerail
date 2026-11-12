@@ -17,6 +17,8 @@ pub struct Watch {
     delta_priced: Vec<Option<f64>>,
     deltas: Vec<i64>,
     dirty: Vec<bool>,
+    /// Per probe, its steps' observed fanouts as last published (`observed`).
+    fans: Vec<Vec<Option<f64>>>,
 }
 
 impl Watch {
@@ -26,6 +28,7 @@ impl Watch {
             delta_of: Vec::new(),
             delta_readers: vec![Vec::new(); rels.len()], delta_priced: vec![None; rels.len()],
             deltas: vec![0; rels.len()], dirty: vec![true; probes.len()],
+            fans: vec![Vec::new(); probes.len()],
         };
         for (p, (rule, delta, _)) in probes.iter().enumerate() {
             let delta_rel = rule.body[*delta].atom().and_then(|a| rels.get(a.rel.as_str())).copied();
@@ -83,6 +86,21 @@ impl Watch {
             for &p in &self.delta_readers[rel] { self.dirty[p] = true; }
         }
     }
+    /// A probe's steps' observed fanouts (`observed_fans`), which price those steps first: a fanout seen for the
+    /// first time, or moved past the drift threshold, makes the probe's plan dirty. `pfn`'s probe priced
+    /// `pcall__ins` at 0.01 rows a binding, saw 20.8, and was not planned again.
+    pub fn observed(&mut self, probe: usize, fans: Vec<Option<f64>>) {
+        let old = &self.fans[probe];
+        let moved = fans.iter().enumerate().any(|(i, f)| match (old.get(i).copied().flatten(), *f) {
+            (None, Some(_)) => true,
+            (Some(a), Some(b)) => !near(&[a.max(0.01)], &[b.max(0.01)]),
+            _ => false,
+        });
+        if moved {
+            self.dirty[probe] = true;
+            self.fans[probe] = fans;
+        }
+    }
     pub fn take(&mut self, probe: usize) -> bool {
         if self.delta_of[probe].is_some_and(|r| self.deltas[r] == 0) { return false; }
         std::mem::replace(&mut self.dirty[probe], false)
@@ -111,5 +129,10 @@ pub mod tests {
         w.delta(0,0); w.changed(0,0);
         assert!(!w.take(0));
         w.delta(0,1); assert!(w.take(0), "retain invalidation until the delta can execute");
+        // A step's fanout observed for the first time, then moved past the drift threshold, replans the probe;
+        // a small move does not.
+        w.observed(0, vec![None, Some(0.01)]); assert!(w.take(0));
+        w.observed(0, vec![None, Some(0.015)]); assert!(!w.take(0));
+        w.observed(0, vec![None, Some(20.8)]); assert!(w.take(0));
     }
 }
