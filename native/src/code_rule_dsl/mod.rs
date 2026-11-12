@@ -971,6 +971,9 @@ pub(crate) mod logic {
         pub use rerail_prof::code_rule_dsl::logic::profile::*;
         pub use rerail_logic::code_rule_dsl::logic::profile::report;
         pub use rerail_logic::code_rule_dsl::logic::profile::watch;
+        #[cfg(test)]
+        #[path = "threads_tests.rs"]
+        mod threads_tests;
         #[allow(unused_imports)]
         use std::collections::BTreeMap;
         #[allow(unused_imports)]

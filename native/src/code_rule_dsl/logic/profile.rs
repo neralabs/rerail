@@ -387,6 +387,129 @@ pub struct Thread {
     opens: Vec<Open>,
     /// The statement SQLite is running for it, and since when (`strict_statement`).
     statement: Option<(String, std::time::Instant)>,
+    /// The CPU its outermost spans took: what of its CPU the spans account for (`threads`).
+    covered: f64,
+}
+
+/// A thread that opened a span leaves its account when it ends (`threads`): its CPU and its spans' then.
+impl Drop for Thread {
+    fn drop(&mut self) {
+        if let Some(cpu) = thread_cpu(self.port) {
+            EXITED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((self.name.clone(), cpu, self.covered));
+        }
+    }
+}
+
+/// The accounts of threads that opened spans and have ended: name, CPU, CPU under spans.
+static EXITED: LazyLock<Mutex<Vec<(String, f64, f64)>>> = LazyLock::new(Default::default);
+
+/// One thread's CPU, and what of it its spans took.
+#[derive(Clone, Debug)]
+pub struct ThreadCpu {
+    pub name: String,
+    pub cpu: f64,
+    pub covered: f64,
+}
+
+/// The process's CPU by thread (`threads`): every live thread, the ended ones that opened spans, and a row for the
+/// threads that ended without one (the process's CPU less all the others'), so the rows add up to `process`.
+#[derive(Clone, Debug, Default)]
+pub struct Threads {
+    pub process: f64,
+    pub rows: Vec<ThreadCpu>,
+}
+
+/// The process's CPU (user + system) so far.
+pub fn process_cpu() -> f64 {
+    #[cfg(unix)]
+    {
+        let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
+        // SAFETY: fills a `rusage` for this process.
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
+        let t = |v: libc::timeval| v.tv_sec as f64 + v.tv_usec as f64 / 1e6;
+        t(usage.ru_utime) + t(usage.ru_stime)
+    }
+    #[cfg(not(unix))]
+    {
+        0.0
+    }
+}
+
+/// The live threads' Mach ports and names (macOS; none elsewhere).
+fn live_threads() -> Vec<(u32, String)> {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe extern "C" {
+            fn mach_port_deallocate(task: libc::mach_port_t, name: libc::mach_port_t) -> libc::kern_return_t;
+        }
+        let mut list: libc::thread_act_array_t = std::ptr::null_mut();
+        let mut count: libc::mach_msg_type_number_t = 0;
+        // SAFETY: the task's own threads; the list and each port's right are given back below.
+        let task = unsafe { libc::mach_task_self() };
+        if unsafe { libc::task_threads(task, &mut list, &mut count) } != 0 {
+            return Vec::new();
+        }
+        let ports: Vec<u32> = (0..count as usize).map(|i| unsafe { *list.add(i) }).collect();
+        let named = ports
+            .iter()
+            .map(|&port| {
+                let mut name = [0 as libc::c_char; 64];
+                // SAFETY: a thread of this task; a thread that ended meanwhile gives a null pthread.
+                let thread = unsafe { libc::pthread_from_mach_thread_np(port) };
+                let name = if thread == 0 || unsafe { libc::pthread_getname_np(thread, name.as_mut_ptr(), name.len()) } != 0 {
+                    String::new()
+                } else {
+                    unsafe { std::ffi::CStr::from_ptr(name.as_ptr()) }.to_string_lossy().into_owned()
+                };
+                (port, if name.is_empty() { "unnamed".to_owned() } else { name })
+            })
+            .collect();
+        for &port in &ports {
+            unsafe { mach_port_deallocate(task, port) };
+        }
+        unsafe { libc::vm_deallocate(task, list as libc::vm_address_t, (count as usize * std::mem::size_of::<libc::thread_act_t>()) as libc::vm_size_t) };
+        named
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Vec::new()
+    }
+}
+
+/// The process's CPU now, by thread: each live thread's, with what its outermost spans took, and the ended ones'.
+/// A span's CPU is its own thread's, so work it hands to another thread (rayon's, a helper's) is under no span unless
+/// that thread opens one (`span_at`): this says where such CPU went.
+pub fn threads() -> Threads {
+    let process = process_cpu();
+    let registered: Vec<(u32, f64)> = THREADS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .iter()
+        .filter_map(std::sync::Weak::upgrade)
+        .map(|t| {
+            let t = t.lock();
+            // Spans open now count what they have taken so far.
+            let open = t.opens.first().map_or(0.0, |o| thread_cpu(t.port).map_or(0.0, |now| now - o.start));
+            (t.port, t.covered + open)
+        })
+        .collect();
+    let mut rows: Vec<ThreadCpu> = live_threads()
+        .into_iter()
+        .filter_map(|(port, name)| {
+            let cpu = thread_cpu(port)?;
+            let covered = registered.iter().find(|(p, _)| *p == port).map_or(0.0, |(_, c)| *c);
+            Some(ThreadCpu { name, cpu, covered })
+        })
+        .collect();
+    let live: f64 = rows.iter().map(|t| t.cpu).sum();
+    let ended = EXITED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    let named: f64 = ended.iter().map(|(_, cpu, _)| cpu).sum();
+    rows.extend(ended.into_iter().map(|(name, cpu, covered)| ThreadCpu { name: format!("{name} (ended)"), cpu, covered }));
+    let unnamed = process - live - named;
+    if unnamed > 0.005 {
+        rows.push(ThreadCpu { name: "ended threads that opened no span".to_owned(), cpu: unnamed, covered: 0.0 });
+    }
+    Threads { process, rows }
 }
 
 /// Every thread that opened a span, while it lives.
@@ -404,6 +527,7 @@ fn register() -> std::sync::Arc<parking_lot::Mutex<Thread>> {
         counters: memory::Counters::mine(),
         opens: Vec::new(),
         statement: None,
+        covered: 0.0,
     }));
     let mut all = THREADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     all.retain(|t| t.strong_count() > 0);
@@ -482,6 +606,9 @@ impl Drop for Span {
             let (allocated, freed) = s.counters.read();
             let Some(open) = s.opens.pop() else { return };
             let total = now - open.start;
+            if s.opens.is_empty() {
+                s.covered += total;
+            }
             let alloc = allocated.saturating_sub(open.alloc.0);
             let rise = peak.saturating_sub(open.peak);
             if let Some(parent) = s.opens.last_mut() {
