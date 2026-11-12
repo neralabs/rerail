@@ -19,6 +19,8 @@ export interface DatabaseApiStoresOptions {
   readonly origin: () => string;
   /** The coding agent check set-up provides (`codingAgentStates`); the API answers 503 without it. */
   readonly codingAgents?: () => Promise<CodingAgentState[]>;
+  /** The daemon's engine service, which opens again a session it suspended (`RerailApiStores.resumeSession`). */
+  readonly resumeSession?: (sessionId: string) => Promise<void>;
 }
 
 /**
@@ -56,6 +58,10 @@ export class DatabaseApiStores implements RerailApiStores {
 
   codingAgents(): Promise<CodingAgentState[]> | undefined {
     return this.#options.codingAgents?.();
+  }
+
+  async resumeSession(sessionId: string): Promise<void> {
+    await this.#options.resumeSession?.(sessionId);
   }
 
   dashboardOrigin(): string {

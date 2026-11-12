@@ -484,14 +484,16 @@ export class RerailDaemon {
     // The paths of a session whose host sends none.
     const { storageRoot, modelPath } = resolveSessionPaths(workspaceRoot);
     let daemon: RerailDaemon | undefined;
+    const started: StartedServices = {};
     // Open the database before binding anything: a refused open (a file this build cannot read, say) must leave no
     // engine socket behind, or every later start fails with EADDRINUSE.
     const stores = new DatabaseApiStores(databasePath, {
       health: () => daemon!.health(),
       origin: () => new URL(daemon!.url).origin,
       ...(options.codingAgents === undefined ? {} : { codingAgents: options.codingAgents }),
+      // The server listens only once the engine service runs, so a scan request always finds it.
+      resumeSession: async sessionId => await started.engineService?.resumeSession(sessionId),
     });
-    const started: StartedServices = {};
     try {
       const engineService = await startEngineService({
         socketPath: kernelSocketPath,

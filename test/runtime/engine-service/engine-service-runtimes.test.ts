@@ -4,12 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CheckoutCatalogs, codeRuleSchema, type AdapterEvent } from "../../../src/engine/index.js";
+import {
+  CheckoutCatalogs, codeRuleSchema, SqliteAuditControlStore, type AdapterEvent, type AuditRecorder, type CodeRuleAuditor,
+} from "../../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { setUpTestRepository, type TestRepositoryRules } from "../../support/repository-rules.js";
-import { startTestRepository } from "../../support/started-repository.js";
+import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
+
+type CodeRuleEditBatch = Parameters<CodeRuleAuditor["auditGeneratedEdits"]>[1];
 
 const roots: string[] = [];
 const services: EngineService[] = [];
@@ -136,8 +140,40 @@ describe("the engine service's runtimes", () => {
   });
 });
 
+/**
+ * An evaluator that checks nothing and records every batch of edits it is given (`batches`) and the paths a walk asked
+ * it about (`looked`); its scans (`scans`) complete with no finding, each recorded in the audit store as a real scan is.
+ */
+function recordingAuditor() {
+  const batches: CodeRuleEditBatch[] = [];
+  const scans: string[] = [];
+  const looked = new Set<string>();
+  const create = (options: { workspaceRoot: string; audits: AuditRecorder }): CodeRuleAuditor => ({
+    openWorkspace: async () => undefined,
+    acceptsPath: (path) => {
+      looked.add(path);
+      return true;
+    },
+    auditGeneratedEdits: async (_sessionId, batch) => {
+      batches.push(batch);
+      return { revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] };
+    },
+    audit: async (sessionId, input) => {
+      scans.push(input.scope);
+      const auditId = options.audits.start({
+        sessionId, workspaceRoot: options.workspaceRoot, scope: input.scope, mode: input.mode, revision: 0,
+        catalogRevision: "test", ruleRevisions: [], paths: [],
+      });
+      options.audits.finish(auditId, { status: "completed", violations: [], failures: [] });
+      return [auditId];
+    },
+    close: async () => undefined,
+  });
+  return { create, batches, scans, looked };
+}
+
 describe("the engine service's idle close", () => {
-  /** A service over two started checkouts whose sessions close after a minute of `clock` without an event. */
+  /** A service over two started checkouts whose sessions are suspended after a minute of `clock` without an event. */
   async function idleService(options: Partial<Parameters<typeof startEngineService>[0]> = {}) {
     const root = await mkdtemp(join(tmpdir(), "rerail-idle-"));
     roots.push(root);
@@ -170,33 +206,129 @@ describe("the engine service's idle close", () => {
     const session = (sessionId: string, cwd = first) => ({ host: "claude-code" as const, sessionId, cwd });
     const send = (event: AdapterEvent) => ingestEngineEvent({ socketPath }, event);
     return {
-      first, second, clock, service, session, send,
+      first, second, clock, service, session, send, databasePath,
       start: (sessionId: string, cwd = first) => send({ kind: "session-start", eventId: `${sessionId}:start`, session: session(sessionId, cwd) }),
       prompt: (sessionId: string, text: string, cwd = first) =>
         send({ kind: "user-prompt", eventId: `${sessionId}:${text}`, sessionId, session: session(sessionId, cwd), text }),
       ended: (sessionId: string) => endedAt(databasePath, sessionId),
+      live: (sessionId: string) => ownedLive(databasePath, sessionId),
     };
   }
 
-  it("closes a session that sent no end once it has gone quiet, so a killed agent's session does not stay forever", async () => {
-    const { second, clock, service, start, prompt, ended } = await idleService();
+  // A quiet session's agent may still be open: a person away, a long think. Before the idle close it read as live.
+  it("frees a quiet session's memory and keeps its record open and owned, so a killed agent's session holds nothing and a live one still reads as live", async () => {
+    const { second, clock, service, start, prompt, ended, live } = await idleService();
     await start("a");
     await start("b", second);
     clock.now += 50_000;
     await prompt("b", "still here", second);
     clock.now += 20_000;
-    // `a` has been quiet for 70 s, `b` for 20 s: only `a` closes, and its checkout's runtime with it.
+    // `a` has been quiet for 70 s, `b` for 20 s: only `a` lets go of its memory, and its checkout's runtime with it.
     await service.closeIdleSessions();
     expect(service.openRuntimes()).toBe(1);
-    expect(ended("a")).not.toBeNull();
+    expect(ended("a")).toBeNull();
+    expect(live("a")).toBe(true);
     expect(ended("b")).toBeNull();
-    // A closed session's next event opens it again from its ledger.
+    // A suspended session's next event opens it again from its ledger.
     await prompt("a", "back");
     expect(service.openRuntimes()).toBe(2);
     expect(ended("a")).toBeNull();
+    expect(live("a")).toBe(true);
   });
 
-  it("keeps a quiet session open while it waits on a tool call, and closes it once the call is done", async () => {
+  it("ends a suspended session's record when the service stops, as stopping ends every open session", async () => {
+    const { clock, service, start, ended, live } = await idleService();
+    await start("a");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    expect(ended("a")).toBeNull();
+    services.splice(services.indexOf(service), 1);
+    await service.close();
+    expect(ended("a")).not.toBeNull();
+    expect(live("a")).toBe(false);
+  });
+
+  // At base a scan asked for an open session was claimed within 250 ms and ran; the idle close failed it with
+  // "Session is inactive" though the agent was still open.
+  it("takes a scan asked for a quiet session and runs it now, as it did while the session was open", async () => {
+    const { create, scans } = recordingAuditor();
+    const { clock, service, start, databasePath } = await idleService({ createAuditor: create });
+    await start("a");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(0);
+    const controls = new SqliteAuditControlStore(databasePath);
+    try {
+      const request = controls.requestAudit("a", { scope: "repository" });
+      expect(request).toMatchObject({ status: "queued", error: null });
+      // The daemon's API asks the engine service to open the session again (`audit_requests_create`).
+      await service.resumeSession("a");
+      await vi.waitFor(() => {
+        expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({ status: "completed", error: null });
+      }, { timeout: 10_000, interval: 50 });
+      expect(scans).toEqual(["repository"]);
+    } finally {
+      controls.close();
+    }
+  });
+
+  it("runs a scan queued for a quiet session once its next event opens it, as the session's owner", async () => {
+    const { create, scans } = recordingAuditor();
+    const { clock, service, start, prompt, databasePath } = await idleService({ createAuditor: create });
+    await start("a");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    const controls = new SqliteAuditControlStore(databasePath);
+    try {
+      // Queued by a writer that does not open the session (a second connection, as `rerail scan` once wrote).
+      const request = controls.requestAudit("a", { scope: "repository" });
+      expect(request).toMatchObject({ status: "queued", error: null });
+      await prompt("a", "back");
+      await vi.waitFor(() => {
+        expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({ status: "completed", error: null });
+      }, { timeout: 10_000, interval: 50 });
+      expect(scans).toEqual(["repository"]);
+    } finally {
+      controls.close();
+    }
+  });
+
+  it("runs a scan asked for a quiet session whose repository was stopped since, as the open session ran it", async () => {
+    const { create, scans } = recordingAuditor();
+    const { first, clock, service, start, databasePath } = await idleService({ createAuditor: create });
+    await start("a");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    stopTestRepository(first, databasePath);
+    const controls = new SqliteAuditControlStore(databasePath);
+    try {
+      const request = controls.requestAudit("a", { scope: "repository" });
+      expect(request).toMatchObject({ status: "queued", error: null });
+      await service.resumeSession("a");
+      await vi.waitFor(() => {
+        expect(controls.listAuditRequests("a").find(item => item.id === request.id)).toMatchObject({ status: "completed", error: null });
+      }, { timeout: 10_000, interval: 50 });
+      expect(scans).toEqual(["repository"]);
+    } finally {
+      controls.close();
+    }
+  });
+
+  it("ends a quiet session's record when its end comes, also from a repository stopped since", async () => {
+    const { first, second, clock, service, session, send, start, ended, databasePath } = await idleService();
+    await start("a");
+    await start("b", second);
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    // `a`'s end opens it again and closes it; `b`'s runtime records nothing once its repository stopped.
+    stopTestRepository(second, databasePath);
+    await send({ kind: "session-end", eventId: "a:end", sessionId: "a", session: session("a", first) });
+    await send({ kind: "session-end", eventId: "b:end", sessionId: "b", session: session("b", second) });
+    expect(ended("a")).not.toBeNull();
+    expect(ended("b")).not.toBeNull();
+  });
+
+  it("keeps a quiet session in memory while it waits on a tool call, and suspends it once the call is done", async () => {
     const { clock, service, session, send, start, ended } = await idleService();
     const tool = { sessionId: "a", session: session("a"), toolCallId: "t1", toolName: "Bash" } as const;
     await start("a");
@@ -205,15 +337,14 @@ describe("the engine service's idle close", () => {
     clock.now += 60_000;
     await service.closeIdleSessions();
     expect(service.openRuntimes()).toBe(1);
-    expect(ended("a")).toBeNull();
     await send({ kind: "result", eventId: "a:result", ...tool, output: "ok" });
     clock.now += 60_000;
     await service.closeIdleSessions();
     expect(service.openRuntimes()).toBe(0);
-    expect(ended("a")).not.toBeNull();
+    expect(ended("a")).toBeNull();
   });
 
-  it("closes a session that waits on a tool call once it has been quiet a day, so an agent killed at a permission prompt does not keep it forever", async () => {
+  it("suspends a session that waits on a tool call once it has been quiet a day, so an agent killed at a permission prompt does not keep its memory forever", async () => {
     const { clock, service, session, send, start, ended } = await idleService();
     const hour = 60 * 60_000;
     await start("a");
@@ -222,11 +353,10 @@ describe("the engine service's idle close", () => {
     clock.now += 23 * hour;
     await service.closeIdleSessions();
     expect(service.openRuntimes()).toBe(1);
-    expect(ended("a")).toBeNull();
     clock.now += hour;
     await service.closeIdleSessions();
     expect(service.openRuntimes()).toBe(0);
-    expect(ended("a")).not.toBeNull();
+    expect(ended("a")).toBeNull();
   });
 
   it("keeps a session open whose event came in while the sweep waited behind the one before it", async () => {
@@ -259,7 +389,7 @@ describe("the engine service's idle close", () => {
       clock.now += 60_000;
       vi.advanceTimersByTime(60_000);
       await vi.waitFor(() => expect(service.openRuntimes()).toBe(0));
-      expect(ended("a")).not.toBeNull();
+      expect(ended("a")).toBeNull();
     } finally {
       vi.useRealTimers();
     }
@@ -284,6 +414,16 @@ describe("the engine service's idle close", () => {
     }
   });
 });
+
+/** Whether `sessionId` reads as live (open and owned by a live runtime), as `rerail settings` reports it. */
+function ownedLive(databasePath: string, sessionId: string): boolean {
+  const controls = new SqliteAuditControlStore(databasePath);
+  try {
+    return controls.getSettings(sessionId).active;
+  } finally {
+    controls.close();
+  }
+}
 
 /** When the database says `sessionId` ended, read through a connection of its own; null while it runs. */
 function endedAt(databasePath: string, sessionId: string): number | null {
