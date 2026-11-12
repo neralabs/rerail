@@ -7,12 +7,17 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
 import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/code-rule/code-rule.js";
 import { WorktreeWalks } from "../../../../src/engine/code-rule/worktree-walks.js";
+import type * as Git from "../../../../src/engine/git.js";
 
 /**
- * How many times each file was read whole through `node:fs/promises`, by the path it was read at, and the listings held
- * back until a test lets them go, by folder.
+ * How many times each file was read whole through `node:fs/promises`, by the path it was read at; the listings held back
+ * until a test lets them go, by folder; and how many times Git listed each checkout's changed files.
  */
-const counted = vi.hoisted(() => ({ reads: new Map<string, number>(), held: new Map<string, () => Promise<void>>() }));
+const counted = vi.hoisted(() => ({
+  reads: new Map<string, number>(),
+  held: new Map<string, () => Promise<void>>(),
+  listings: new Map<string, number>(),
+}));
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof FileSystem>();
   return {
@@ -30,7 +35,17 @@ vi.mock("node:fs/promises", async importOriginal => {
     },
   };
 });
-const { reads } = counted;
+vi.mock("../../../../src/engine/git.js", async importOriginal => {
+  const actual = await importOriginal<typeof Git>();
+  return {
+    ...actual,
+    gitModifiedOrUntrackedPaths: async (cwd: string) => {
+      counted.listings.set(cwd, (counted.listings.get(cwd) ?? 0) + 1);
+      return await actual.gitModifiedOrUntrackedPaths(cwd);
+    },
+  };
+});
+const { reads, listings } = counted;
 
 // Each test opens several sessions and walks four or five checkouts many times over.
 vi.setConfig({ testTimeout: 60_000 });
@@ -43,6 +58,7 @@ afterEach(async () => {
   counted.held.clear();
   await Promise.all(bridges.splice(0).map(bridge => bridge.close()));
   reads.clear();
+  listings.clear();
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
 
@@ -225,6 +241,25 @@ describe("WorktreeWalks", () => {
     await walks.idle();
     // The walk had read `main` and `w2` when the sessions closed; with no session left to walk again, nothing would drop them.
     expect(walks.observations()).toBe(0);
+  });
+
+  it("lists a worktree's changed files from Git once for all the sessions that first take it in one walk", async () => {
+    const { checkouts, worktrees } = await repository(["w1", "w2", "w3", "w4"]);
+    await mkdir(join(worktrees[3]!, "deep"));
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const first = await opened(worktrees[0]!, checkouts, walks);
+    const hold = holdListing(join(worktrees[3]!, "deep"));
+    await first.bridge.checkpoint("turn");
+    await hold.entered;
+    // Both ask for a walk while the first session's is held, so one walk shows them the other worktrees first.
+    const second = await opened(worktrees[1]!, checkouts, walks);
+    await second.bridge.checkpoint("turn");
+    const third = await opened(worktrees[2]!, checkouts, walks);
+    await third.bridge.checkpoint("turn");
+    hold.release();
+    await turn(first, second, third);
+    // `w4` is new to each session: listed once for the first session's walk and once for the walk the other two share.
+    expect(listings.get(worktrees[3]!)).toBe(2);
   });
 });
 

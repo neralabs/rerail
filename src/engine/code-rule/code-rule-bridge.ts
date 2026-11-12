@@ -1544,6 +1544,7 @@ export class CodeRuleBridge {
     return {
       worktrees: new Set(worktrees),
       checkout: this.#owningCheckout(discovery.root, ""),
+      firstSight: new Set(worktrees.filter(worktree => this.#mayFirstSee(discovery, sessionPath(discovery.root, worktree)))),
       startedAt: discovery.startedAt,
       scan: request => this.#scanWorktree(discovery, request),
       take: walk => this.#takeWorktreeWalk(discovery, start, walk),
@@ -1756,8 +1757,10 @@ export class CodeRuleBridge {
 
   /**
    * The sources the walk is the first to show the session, in a worktree new to it or under a subtree it could not read
-   * before, that the Git of the checkout owning them lists as modified or untracked. One the session had not taken is
-   * added to `scan.sources` from the snapshot, so its text is checked against the digest observed.
+   * before, that the Git of the checkout owning them lists as modified or untracked. The walk listed them once for every
+   * session first taking the worktree (`WorktreeFindings.listed`); a worktree the session had not asked it to list is
+   * listed here. One the session had not taken is added to `scan.sources` from the snapshot, so its text is checked
+   * against the digest observed.
    */
   async #firstSeenInWorktrees(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan, found: ReadonlyMap<string, WorktreeFindings>): Promise<string[]> {
     const listed: string[] = [];
@@ -1766,7 +1769,7 @@ export class CodeRuleBridge {
       if (!walk.worktrees.has(worktree) || !this.#mayFirstSee(discovery, worktree)) continue;
       for (const checkout of findings.checkouts) {
         if (this.#abandoned(discovery)) return listed;
-        const changed = await gitModifiedOrUntrackedPaths(checkout);
+        const changed = findings.listed.get(checkout) ?? await gitModifiedOrUntrackedPaths(checkout);
         listed.push(...this.#firstSeenOf(discovery, walk, { worktree, findings, scan }, changed.map(path => sessionPath(discovery.root, resolve(checkout, path)))));
       }
     }
