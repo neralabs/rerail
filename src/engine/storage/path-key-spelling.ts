@@ -38,7 +38,7 @@ const PATH_KEYED_TABLES: readonly PathKeyedTable[] = [
   },
   { table: "audit_settings", key: "workspace_root", paths: "1", rest: [], newer: "updated_at" },
   { table: "repository_audits", key: "workspace_root", paths: "1", rest: [], newer: "started_at" },
-  // No time is kept with a preference: the one saved last under its spelling, the newer row, stays.
+  // A preference keeps no time, and saving one again updates its row in place, so the row created later stays.
   { table: "presentation_preferences", key: "repository", paths: "repository <> ''", rest: ["host"], newer: "rowid" },
 ];
 

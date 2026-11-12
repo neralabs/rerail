@@ -229,7 +229,8 @@ the audit settings and presentation preferences of a session opened as `c:\…`.
 database, its `path-keys-as-stored` migration step (`src/engine/storage/path-key-spelling.ts`) moves each key to the
 spelling this version looks it up by (`currentPathKey`), so a checkout keeps its start state, its rule settings, its
 audit settings and audit, and its presentation preferences. Two rows that come to one folder merge: the newer one stays
-(last seen, last saved, last started), and a start state either row held is kept. A folder Rerail cannot read keeps
+(last seen, last saved, last started; of two presentation preferences, which keep no time, the one created later), and
+a start state either row held is kept. A folder Rerail cannot read keeps
 its key, and the database still opens. So does a folder on a network share (`\\host\share\…`), which the step does
 not look up: a host that does not answer would hold the database for about 21 seconds. On macOS and Linux the step
 moves nothing.
