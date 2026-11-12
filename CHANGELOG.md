@@ -4,9 +4,34 @@ Every notable change to Rerail's core package, `@neralabs/rerail`, latest first.
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. A release is a patch unless it names a later version, and a patch can change or remove what you use, so read the notes before you update.
 
-## Unreleased
+## 0.1.4 (2026-11-12)
 
 0.1.4 stops steering an agent for changes it did not make: a file changed by another session, your editor or a background process no longer counts as its edit. A steer found as a turn ends now reaches Claude Code then, not at your next prompt. The dashboard shows each violation under the tool call it followed, and set-up works on Linux images with no compiler. Before you update: Claude Code 2.1.196 or newer is required.
+
+### Added
+
+- `rerail rules show <id>` prints a rule as a draft, and `rerail rules add` stores an edited pack rule as your copy, which turns the original off once approved. Changing where a rule applies, a Rerail pack's rule included, takes a few steps from any coding agent: `/rerail-create` changes only its scope, checks a few paths and shows the change.
+
+### Changed
+
+- Claude Code 2.1.196 or newer is required. Older versions do not tell hooks which prompt they belong to, so Rerail recorded none of their prompts or turn ends and steered nothing as a turn ended.
+- Code rules: a file-level gate written once as a shared utility (for example `inside module` holding an import check) now skips a file that fails it as quickly as the same gate written in every clause.
+- When no rule pack fits a repository, set-up and `rerail packs recommend` now say why: the files scanned, counted by ending, the folders not scanned, the packs whose excludes left out every file they look for, and what each pack looks for.
+
+### Fixed
+
+- Rerail steers a session only on files changed while one of its tool calls ran, or during its turn in Codex, whose `apply_patch` runs no hook. A file another session, your editor or a background process changed counted as an edit in every session there, so an agent that only read code was told about code it never wrote.
+- In the dashboard's Claude Code sessions, a subagent's report and the reminders Claude Code adds to a prompt (`<task-notification>`, `<agent-message>`, `<system-reminder>`) no longer show as what you said, and no longer become the session's title.
+- In History by session, a violation's card now sits under the tool call its audit followed, and the findings of one audit sit together under that call, instead of under the first call that mentioned the file or in a block at the end of the timeline.
+- The dashboard now shows a violation that an audit in Log mode recorded as "Logged", and steered counts leave it out, even when its rule is on Steer: that audit never told the coding agent. Violations already recorded are corrected when you update.
+- Rerail steers an agent for its shell edit of a file a merge or rebase left conflicted, even when the file still holds its side of the conflict, and no longer counts the files that merged cleanly beside a modify/delete conflict as the agent's edits.
+- Python rules no longer read a line that opens with `[` after an unpacking assignment, such as `a, b = c, d()`, as part of that assignment. `ruff-f823-undefined-local` reported a variable read on that line as read before the assignment bound it.
+- When Stop hooks keep a Claude Code or Codex turn going, Rerail now records the turn ends that follow and checks them against conversation rules, counting those that end on the same final message once. Before, it recorded none of these turn ends after the first one in Claude Code, and none after the second in Codex.
+- `rerail rules test` counts a draft's matches only where `rules add` would run the rule: for a rule of yours, the draft's `folder` and where it is added; for your copy of a pack's rule, where the original is. It counted the whole repository before. `--json` lists the folders (`repository.folders`), and why `rules add` would refuse the draft (`refusal`).
+- On macOS and Linux, a set-up question in the terminal waits for an answer given once it is on screen. Enter pressed while set-up was busy, such as during the download or the scan, no longer answers the next question with its first answer, which allowed session access, scanned the repository or started Rerail without asking.
+- `npx @neralabs/rerail setup` no longer compiles `better-sqlite3` from source, so it works on a Linux image with no compiler, such as `node:24-slim`, where it failed with `not found: make`. It uses the prebuilt binary `better-sqlite3` ships, as `rerail update` already did.
+- A shell edit to a file that already had unstaged changes when the session started, or was new and not ignored by Git, is now measured from the text the session first saw, so the agent is steered only on the lines it changed, not on every finding in the file.
+- A steer found as a turn ends reaches the agent when you see its line, and counts then. Claude Code gets it as the turn ends and carries on to act on it, not at your next prompt's first tool call; in Codex the line waits for the steer.
 
 ## 0.1.3 (2026-11-06)
 

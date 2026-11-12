@@ -17,6 +17,7 @@ import {
   type NativeCompiledCodeRuleDsl,
   type NativeGitIgnoreMatcher,
 } from "../native/native.js";
+import { folderContains } from "../catalog/repository-model.js";
 import type { CodeRuleSourceLanguage } from "./code-rule.js";
 import { bundledCodeRuleDslDirectory, CodeRuleCompileError } from "./code-rule-compile.js";
 import {
@@ -298,53 +299,76 @@ async function* repositoryPaths(root: string, prune: (path: string) => boolean):
   }
 }
 
+/** What the repository pass has collected so far: the files it reads, their bytes, and what it left out or skipped. */
+interface CollectedFiles {
+  readonly files: SourceFile[];
+  bytes: number;
+  leftOut: number;
+  binary: number;
+}
+
+/** Adds one file `repositoryFile` read to `collected`: counted when binary, kept when read, dropped when over bounds. */
+function collect(collected: CollectedFiles, read: Awaited<ReturnType<typeof repositoryFile>>): void {
+  if (read === "binary") collected.binary += 1;
+  else if (read !== undefined) {
+    collected.bytes += read.size;
+    collected.files.push(read.file);
+  }
+}
+
 /**
- * The files a repository scan would hand the rule (the same ignored directories, file types and bounds) that the
- * data boundary lets the pass read, how many files and folders it left out, and how many in-scope files it skipped
- * as binary.
+ * The language the pass reads `path` in, or undefined where the rule does not check it: outside `folders`, outside
+ * the rule's scope, or a file no language lists for a rule that does not read text.
+ */
+function checkedLanguage(check: CompiledCheck, path: string, folders: readonly string[], readsText: boolean): CodeRuleSourceLanguage | undefined {
+  if (!folders.some(folder => folderContains(folder, path)) || !check.compiled.inScope(path)) return undefined;
+  // An unlisted file is read as text, but only for a rule that reads text, as audits read it.
+  return languageFor(path) ?? (readsText ? UNLISTED_TEXT_LANGUAGE : undefined);
+}
+
+/**
+ * The files in `folders` a repository scan would hand the rule (the same ignored directories, file types and bounds)
+ * that the data boundary lets the pass read, how many files and folders it left out, and how many in-scope files it
+ * skipped as binary. A file outside `folders` is not the rule's to check, as in a session or an audit, so it is
+ * neither read nor counted.
  */
 async function repositoryFiles(
   check: CompiledCheck,
   root: string,
-  followGitignore: boolean,
+  { followGitignore, folders }: RepositoryPassOptions,
 ): Promise<{ files: SourceFile[]; leftOut: number; binary: number }> {
   const withheld = repositoryBoundary(check.binding, root, followGitignore);
   const readsText = check.compiled.readsText();
-  const files: SourceFile[] = [];
   const cache = sourceFactsCache();
-  let bytes = 0;
-  let leftOut = 0;
-  let binary = 0;
+  const collected: CollectedFiles = { files: [], bytes: 0, leftOut: 0, binary: 0 };
   const prune = (path: string): boolean => {
+    // A folder above one of `folders` is walked to reach it.
+    if (!folders.some(folder => folderContains(folder, path) || folderContains(path, folder))) return true;
     if (!withheld(path, true)) return false;
-    leftOut += 1;
+    collected.leftOut += 1;
     return true;
   };
   for await (const path of repositoryPaths(root, prune)) {
-    if (files.length >= AUDIT_MAX_FILES) break;
-    // An unlisted file is read as text, but only for a rule that reads text, as audits read it.
-    const language = languageFor(path) ?? (readsText ? UNLISTED_TEXT_LANGUAGE : undefined);
-    if (language === undefined || !check.compiled.inScope(path)) continue;
-    if (withheld(path, false)) {
-      leftOut += 1;
-      continue;
-    }
-    const read = await repositoryFile(check.compiled, root, path, language, bytes, cache);
-    if (read === "binary") binary += 1;
-    if (read === undefined || read === "binary") continue;
-    bytes += read.size;
-    files.push(read.file);
+    if (collected.files.length >= AUDIT_MAX_FILES) break;
+    const language = checkedLanguage(check, path, folders, readsText);
+    if (language === undefined) continue;
+    if (withheld(path, false)) collected.leftOut += 1;
+    else collect(collected, await repositoryFile(check.compiled, root, path, language, collected.bytes, cache));
   }
+  const { files, leftOut, binary } = collected;
   return { files, leftOut, binary };
 }
 
-/** Run the rule over `root`'s files behind the data boundary. */
-export async function repositoryPass(
-  check: CompiledCheck,
-  root: string,
-  options: { followGitignore: boolean },
-): Promise<RepositoryPassResult> {
-  const { files, leftOut, binary } = await repositoryFiles(check, root, options.followGitignore);
+export interface RepositoryPassOptions {
+  /** Whether the pass leaves out files Git ignores, as the repository's `followGitignore`. */
+  readonly followGitignore: boolean;
+  /** The repository folders the pass covers, where the rule runs; `""` is the whole repository. */
+  readonly folders: readonly string[];
+}
+
+/** Run the rule over `root`'s files in `options.folders`, behind the data boundary. */
+export async function repositoryPass(check: CompiledCheck, root: string, options: RepositoryPassOptions): Promise<RepositoryPassResult> {
+  const { files, leftOut, binary } = await repositoryFiles(check, root, options);
   const sources = new Map(files.map(file => [file.path, file.source]));
   const lines = new Map<string, string[]>();
   const evaluation = await evaluate(check, root, files);
