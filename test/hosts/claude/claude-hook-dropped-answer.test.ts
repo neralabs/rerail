@@ -4,11 +4,11 @@ import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { describe, expect, it } from "vitest";
-import { languageFor, renderSteer, type CodeRuleViolation, type RerailEventLoop } from "../../../src/engine/index.js";
+import { describe, expect, it, vi } from "vitest";
+import { languageFor, renderSteer, type AdapterDelivery, type CodeRuleViolation, type RerailEventLoop } from "../../../src/engine/index.js";
 import { handleClaudeEvent } from "../../../src/hosts/claude/claude-hook-adapter.js";
 import { bindSteerReceipt, type HookInput } from "../../../src/harness/index.js";
-import { ingestEngineEvent, startEngineService } from "../../../src/runtime/index.js";
+import { ingestEngineEvent, RerailRuntime, startEngineService } from "../../../src/runtime/index.js";
 import { serveText, testEmbedder } from "../../support/hook-events.js";
 import { startTestRepository } from "../../support/started-repository.js";
 
@@ -108,7 +108,7 @@ async function engineSession() {
 
 /**
  * An event loop that sends its event to the engine service as a hook does and gives up on it once `waiting` settles,
- * as a hook does at its request deadline: the connection closes before the daemon answers.
+ * as a hook does at its request deadline: the connection closes before the daemon's answer reaches it.
  */
 function givingUp(socketPath: string, waiting: Promise<void>): RerailEventLoop {
   return {
@@ -153,6 +153,40 @@ describe("Claude Code hook whose answer from the daemon never arrived", () => {
       // Recorded once, when it went out, not also for the answer nobody read.
       expect(await session.recordedSteers()).toEqual([["test:no-bad"]]);
     } finally {
+      await session.close();
+    }
+  });
+
+  it("gives the steer to the session's next hook, once, when the hook gives up after the daemon has its answer ready", { timeout: 20_000 }, async () => {
+    const session = await engineSession();
+    const ready = Promise.withResolvers<void>();
+    let turnEndAnswer: readonly AdapterDelivery[] | undefined;
+    const ingest = RerailRuntime.prototype.ingest;
+    vi.spyOn(RerailRuntime.prototype, "ingest").mockImplementation(async function (this: RerailRuntime, ...args: Parameters<RerailRuntime["ingest"]>) {
+      const answer = await ingest.apply(this, args);
+      if (args[0].kind === "turn-end") {
+        turnEndAnswer = answer;
+        // The hook gives up with the answer ready, and the daemon sees its connection close before it writes the answer.
+        ready.resolve();
+        await delay(200);
+      }
+      return answer;
+    });
+    try {
+      await session.badEdit();
+      session.check.resolve();
+      expect(await session.hook({ hook_event_name: "Stop", prompt_id: "p1", stop_hook_active: false }, givingUp(session.socketPath, ready.promise)))
+        .toEqual({ output: {}, stderr: "rerail hook: Kernel request timed out\n" });
+      expect(turnEndAnswer).toEqual([expect.objectContaining({ ruleIds: ["test:no-bad"] })]);
+
+      expect((await session.hook({ ...READ, tool_use_id: "tool-2" })).output).toEqual(STEERED);
+      expect(session.receipts).toEqual([["test:no-bad"]]);
+      expect((await session.hook({ ...READ, tool_use_id: "tool-3" })).output).toEqual({});
+      expect(session.receipts).toEqual([["test:no-bad"]]);
+      // Recorded once: for the answer nobody read, not again when it went out.
+      expect(await session.recordedSteers()).toEqual([["test:no-bad"]]);
+    } finally {
+      vi.restoreAllMocks();
       await session.close();
     }
   });

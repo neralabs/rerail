@@ -421,6 +421,16 @@ interface PendingSteer {
   delivery: AdapterDelivery;
   revision: number;
   scope: string[];
+  /** Its delivery is in the session's ledger already: an answer nobody read took it and gave it back (`#giveBack`). */
+  recorded?: true;
+}
+
+/** What an answer took from its session, given back when nobody reads that answer (`#giveBack`). */
+interface UnreadAnswer {
+  readonly taken: readonly PendingSteer[];
+  /** The held findings its yield digest was built from; none when it carried no digest. */
+  readonly held: readonly MissedFinding[];
+  readonly matched: readonly AdapterDelivery[];
 }
 
 /**
@@ -818,9 +828,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * Takes one event of a session and answers with the steers for its host. `signal` aborts once the host stops waiting
-   * for that answer, as a hook does at its request deadline: the steers it would carry then stay with the session for
-   * its next answer (`#answer`).
+   * Takes one event of a session and answers with the steers for its host. `signal` aborts when the host never gets
+   * that answer, as when a hook gives up at its request deadline: the steers it would carry, or did, then stay with the
+   * session for its next answer (`#answer`).
    */
   ingest(event: AdapterEvent, { signal }: { signal?: AbortSignal | undefined } = {}): Promise<readonly AdapterDelivery[]> {
     const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
@@ -918,25 +928,49 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   /**
    * An event's answer: the pending steers, the digest at a yield, then the conversation rules' steers, those of earlier
-   * answers nobody read first. When `signal` has aborted, the host stopped waiting for the answer (a hook gave up at its
-   * request deadline), so none of it would reach the agent and it takes nothing: the pending steers stay pending, each
-   * recorded once when it goes out, the held findings stay held for the next yield, and the conversation rules' steers
-   * wait for the session's next answer (`unansweredMatches`).
+   * answers nobody read first. `signal` aborts when the host never gets the answer: a hook gave up at its request
+   * deadline before the answer reached it. Aborted before the answer is put together, it takes nothing, so the pending
+   * steers stay pending, each recorded once when it goes out, and the held findings stay held for the next yield.
+   * Aborted later, while the answer is put together or written, the answer gives back what it took (`#giveBack`).
+   * Either way its conversation rules' steers wait for the session's next answer (`unansweredMatches`).
    */
   async #answer(state: RuntimeSessionState, eventId: string, yields: boolean, signal: AbortSignal | undefined): Promise<AdapterDelivery[]> {
     const matched = [...state.unansweredMatches, ...(state.eventDeliveries.get(eventId) ?? [])];
     state.unansweredMatches = [];
     state.eventDeliveries.delete(eventId);
-    const taken = signal?.aborted === true ? [] : await this.#takePendingSteers(state);
+    // Read afresh after each wait: the host can give up at any point.
+    const unread = (): boolean => signal?.aborted === true;
+    if (unread()) {
+      this.#giveBack(state, { taken: [], held: [], matched });
+      return [];
+    }
+    const taken = await this.#takePendingSteers(state);
     const held = state.missedFindings;
-    const digest = yields && signal?.aborted !== true ? await this.#takeMissedDigest(state) : undefined;
-    if (signal?.aborted !== true) return [...taken.map(pending => pending.delivery), ...(digest === undefined ? [] : [digest]), ...matched];
-    // The host stopped waiting while the answer was put together: what it took goes back, and is recorded again when it
-    // goes out.
+    const digest = yields && !unread() ? await this.#takeMissedDigest(state) : undefined;
+    const deliveries = [...taken.map(pending => pending.delivery), ...(digest === undefined ? [] : [digest]), ...matched];
+    if (signal === undefined || deliveries.length === 0) return deliveries;
+    const answer: UnreadAnswer = { taken, held: digest === undefined ? [] : held, matched };
+    if (unread()) {
+      this.#giveBack(state, answer);
+      return [];
+    }
+    // The engine service aborts the signal when the connection closes before the answer is written.
+    signal.addEventListener("abort", () => this.#giveBack(state, answer), { once: true });
+    return deliveries;
+  }
+
+  /**
+   * Gives back what an answer nobody read took, ahead of what came since: its pending steers, which the ledger already
+   * records, so they are not recorded again when they go out; the held findings its digest was built from, for the next
+   * yield's digest, a steer of its own; and its conversation rules' steers, for the session's next answer. A session
+   * that has closed since gets nothing back.
+   */
+  #giveBack(state: RuntimeSessionState, { taken, held, matched }: UnreadAnswer): void {
+    if (state.closed || this.#sessions.get(state.descriptor.sessionId) !== state) return;
+    for (const pending of taken) pending.recorded = true;
     state.pendingSteers.unshift(...taken);
-    if (digest !== undefined) state.missedFindings = [...held, ...state.missedFindings];
-    state.unansweredMatches = matched.filter(delivery => steers(delivery.requested));
-    return [];
+    state.missedFindings = [...held, ...state.missedFindings];
+    state.unansweredMatches = [...matched.filter(delivery => steers(delivery.requested)), ...state.unansweredMatches];
   }
 
   /** Runs `wait` as a boundary waiting for the session's edit checks: the steers they produce meanwhile ride its answer. */
@@ -1984,10 +2018,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       return undefined;
     }
     if (this.#stopped()) return undefined;
-    try {
-      await this.persistDelivery(pending.delivery);
-    } catch (error) {
-      process.stderr.write(`rerail: could not record policy delivery: ${error instanceof Error ? error.message : String(error)}\n`);
+    if (pending.recorded !== true) {
+      try {
+        await this.persistDelivery(pending.delivery);
+      } catch (error) {
+        process.stderr.write(`rerail: could not record policy delivery: ${error instanceof Error ? error.message : String(error)}\n`);
+      }
     }
     // A stop committed elsewhere while the ledger was written withholds the result.
     if (!this.#isCurrentSteer(state, pending)) {

@@ -17,7 +17,7 @@ import { SessionLanes } from "./session-lanes.js";
 
 export interface EngineService {
   close(): Promise<void>;
-  /** `signal` aborts once the caller stops waiting for the answer; its steers then stay for the session's next one. */
+  /** `signal` aborts when the caller never gets the answer; its steers then stay for, or go back to, the session's next one. */
   ingest(
     event: AdapterEvent,
     configuration?: EngineRuntimeConfiguration,
@@ -298,7 +298,8 @@ async function listenOnSocket(server: Server, socketPath: string): Promise<void>
 
 /**
  * Aborts once `response`'s connection closes before the response is written: the client stopped waiting, as a hook
- * does at its request deadline (`ingestEngineEvent`), and nothing written after that reaches it.
+ * does at its request deadline (`ingestEngineEvent`), and nothing written after that reaches it. A close the daemon
+ * sees only when it writes the answer, because the client gave up just as the answer was ready, aborts it too.
  */
 function closedUnanswered(response: ServerResponse): AbortSignal {
   const unanswered = new AbortController();
