@@ -2985,6 +2985,11 @@ fn run_observed(
     // The kept inputs read at the waves' end, which the cross part adopts as its old sources; and the maintained
     // cross program their key was made of, which it uses.
     let mut kept_loaded: Option<HashMap<String, retain::KeptInput>> = None;
+    // The kept inputs' deltas as their owners changed (decision 0117 step 2): `r__plus` and `r__minus` as given, their
+    // digests by owner after the edit, and the base relations bound as the kept rows with their delta.
+    let mut given_deltas: HashMap<String, (Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = HashMap::new();
+    let mut kept_input_docs: HashMap<String, Arc<retain::DocDigests>> = HashMap::new();
+    let mut base_layered: HashMap<String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> = HashMap::new();
     let maintained_early: std::cell::RefCell<Option<(lower::Lowered, Option<(usize, usize)>)>> = std::cell::RefCell::new(None);
     // The memo hits' exports are not measured while the keeper counts them: their statistics are its (after the chunks).
     let mut hits_unmeasured = false;
@@ -4035,6 +4040,11 @@ fn run_observed(
         // The base rows a memoised chunk hands on, per relation: the columns in `input_columns` order, and the rows.
         let mut base_seen: Vec<(String, Vec<usize>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::new();
         let mut base_whole = true;
+        // Memoised, the chunk's base rows are its entries' (decision 0117 step 2): a row once per file whose entry
+        // holds it, as a memo hit's are. Its rows as the batch has them are kept for a chunk the memo cannot
+        // attribute (with a semi-join's rows to keep).
+        let mut raw_base: Vec<(String, Vec<(usize, usize)>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Option<Vec<usize>>)> = Vec::new();
+        let mut canonical: Vec<(String, Vec<i64>)> = Vec::new();
         // The semi-join's relations, taken after the run (`semijoin`), and the values the chunk's exports hold.
         let mut deferred: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Vec<(usize, usize)>)> = Vec::new();
         let mut mentioned: std::collections::HashSet<i64> = std::collections::HashSet::new();
@@ -4067,13 +4077,15 @@ fn run_observed(
                     let c = have.iter().position(|h| h == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
                     let to = held.0.iter().position(|h| h == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
                     let col = held.1[to].get_or_insert_with(Vec::new);
-                    if !semijoin.contains(&rel) {
+                    if !semijoin.contains(&rel) && !memoised {
                         col.extend((0..source.len()).map(|r| source.value(r, c)));
                     }
                     pairs.push((c, to));
                 }
                 if semijoin.contains(&rel) {
                     deferred.push((rel.clone(), Arc::clone(&source), pairs));
+                } else if memoised {
+                    raw_base.push((rel.clone(), pairs, Arc::clone(&source), None));
                 }
                 // Memoised, each row goes to its document's entry whole, in `input_columns` order, as its first
                 // column names it (a node or a document key).
@@ -4268,6 +4280,10 @@ fn run_observed(
             let have = source.columns();
             let key = have.iter().position(|h| h == "n").ok_or_else(|| Error::Plan(format!("{rel} has no node column")))?;
             let keep: Vec<usize> = (0..source.len()).filter(|&r| mentioned.contains(&source.value(r, key))).collect();
+            if memoised {
+                raw_base.push((rel, pairs, source, Some(keep)));
+                continue;
+            }
             let held = base_rows.get_mut(&rel).expect("deferred relations are held");
             for &(c, to) in &pairs {
                 held.1[to].get_or_insert_with(Vec::new).extend(keep.iter().map(|&r| source.value(r, c)));
@@ -4365,8 +4381,38 @@ fn run_observed(
                         run = Some((memo::document_of(v), files));
                     }
                 }
+                canonical.push((rel.clone(), by_file.values().flatten().copied().collect()));
                 for (f, values) in by_file {
                     entries.get_mut(&f).expect("checked").rows.get_mut(&key).expect("every entry has every base key").1.extend(values);
+                }
+            }
+        }
+        // The chunk's base rows for the cross part: its entries' when the memo attributed them all, else the
+        // batch's (decision 0117 step 2).
+        if memoised {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "base rows for the cross part".into());
+            if attributable {
+                for (rel, flat) in std::mem::take(&mut canonical) {
+                    let Some((_, names)) = stored.iter().find(|(r, _)| *r == rel) else { continue };
+                    let all = super::super::sql::select::input_columns(&rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
+                    let width = all.len();
+                    let held = base_rows.get_mut(&rel).expect("a stored relation's rows are held");
+                    for name in names {
+                        let from = all.iter().position(|c| c == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
+                        let to = held.0.iter().position(|h| h == name).ok_or_else(|| Error::Plan(format!("{rel} has no column {name}")))?;
+                        held.1[to].get_or_insert_with(Vec::new).extend(flat.chunks_exact(width.max(1)).map(|r| r[from]));
+                    }
+                }
+            } else {
+                for (rel, pairs, source, keep) in std::mem::take(&mut raw_base) {
+                    let held = base_rows.get_mut(&rel).expect("a stored relation's rows are held");
+                    for &(c, to) in &pairs {
+                        let col = held.1[to].get_or_insert_with(Vec::new);
+                        match &keep {
+                            Some(keep) => col.extend(keep.iter().map(|&r| source.value(r, c))),
+                            None => col.extend((0..source.len()).map(|r| source.value(r, c))),
+                        }
+                    }
                 }
             }
         }
@@ -4967,25 +5013,19 @@ fn run_observed(
                 let prog = &maintained.0.program;
                 let rels: Vec<String> = split.exports.iter().cloned().chain(stored.iter().map(|(r, _)| r.clone())).collect();
                 let kept = retain::kept_inputs(store, kept_strata::space(root), ckey, prog, &rels).map_err(|e| e.to_string())?.ok_or("no kept inputs of this cross part")?;
-                // The changed documents: the run's files not read from the kept inputs, and those gone since.
-                let read_kept: BTreeSet<i64> = kept_hits.values().map(|(_, key, _)| *key).collect();
-                let mut owners: rustc_hash::FxHashSet<i64> = docs.iter().map(|(d, _)| *d).filter(|d| !read_kept.contains(d)).collect();
-                let present: BTreeSet<&str> = docs.iter().map(|(_, p)| p.as_str()).collect();
-                owners.extend(counted_now.iter().filter(|(p, _)| !present.contains(p.as_str())).map(|(_, (_, key))| *key));
-                // Their entries as the kept inputs hold them: the keeper's, found before the first wave.
+                // The changed files' entries as the kept inputs hold them: the keeper's, found before the first wave.
                 let mut old_entries = Vec::new();
                 for (path, found) in &counted_before {
                     let Some((_, key)) = counted_now.get(path) else { continue };
                     let entry = found.as_ref().ok_or_else(|| format!("{path}: its counted entry is not in the memo"))?.entry(*key).map_err(|e| e.to_string())?.ok_or_else(|| format!("{path}: its counted entry is another document's"))?;
                     old_entries.push(entry);
                 }
-                let guests = (crate::code_rule_dsl::facts::vtab::syntax::GUEST_KEYS as i64)..(crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS as i64);
+                let no_holders = rustc_hash::FxHashMap::default();
                 let mut changed = 0usize;
-                let mut results: Vec<(String, usize, Option<Vec<String>>, Vec<String>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::new();
+                let mut results: Vec<(String, usize, bool, Vec<String>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, OwnerPatch)> = Vec::new();
                 for rel in &rels {
                     let k = &kept[rel];
-                    let decl = &prog.decls[rel];
-                    let width = decl.len();
+                    let width = prog.decls[rel].len();
                     let base = stored.iter().find(|(r, _)| r == rel).map(|(_, held)| held);
                     // A base relation's frame holds its columns as the run binds them: `base_rows`' columns, every
                     // input column in order (an unheld one reads as 0). An export's, as it declares them.
@@ -4996,29 +5036,39 @@ fn run_observed(
                             None => super::super::sql::select::input_columns(rel).ok_or_else(|| format!("no columns for {rel}"))?.iter().map(|c| (*c).to_owned()).collect(),
                         },
                     };
-                    if names.len() != k.source.columns().len() {
+                    if names.len() != width || k.source.columns().len() != width {
                         return Err(format!("{rel}: the kept input has {} columns, the run binds {}", k.source.columns().len(), names.len()));
                     }
-                    // A changed document's old rows, read as the kept input's columns.
-                    let mut old: Vec<Vec<i64>> = Vec::new();
+                    // An export's holders are its owners' (`group_col`): the column the memo attributes its rows by.
+                    let g = retain::group_col(prog, rel);
+                    if base.is_none() && width > 0 && split.locations.get(rel).and_then(|l| l.first()) != Some(&g) {
+                        return Err(format!("{rel}: its rows are kept by column {g}, the memo attributes them by {:?}", split.locations.get(rel)));
+                    }
+                    // Each changed file's old rows, read as the kept input's columns.
+                    let mut old: Vec<Vec<Vec<i64>>> = Vec::new();
                     for e in &old_entries {
+                        let mut rows: Vec<Vec<i64>> = Vec::new();
                         match base {
                             None => {
-                                let Some((w, flat)) = e.rows.get(rel) else { continue };
-                                if *w != width {
-                                    return Err(format!("{rel}: an entry's rows are {w} wide, the input {width}"));
+                                if let Some((w, flat)) = e.rows.get(rel) {
+                                    if *w != width {
+                                        return Err(format!("{rel}: an entry's rows are {w} wide, the input {width}"));
+                                    }
+                                    rows.extend(flat.chunks_exact(width.max(1)).map(<[i64]>::to_vec));
                                 }
-                                old.extend(flat.chunks_exact(width.max(1)).map(<[i64]>::to_vec));
                             }
                             Some(held) => {
-                                let Some((w, flat)) = e.rows.get(&memo::base_key(rel)) else { continue };
-                                let all = super::super::sql::select::input_columns(rel).ok_or_else(|| format!("no columns for {rel}"))?;
-                                let at: Vec<Option<usize>> = names.iter().map(|n| held.contains(n).then(|| all.iter().position(|c| c == n)).flatten().filter(|c| c < w)).collect();
-                                old.extend(flat.chunks_exact((*w).max(1)).map(|r| at.iter().map(|c| c.map_or(0, |c| r[c])).collect()));
+                                if let Some((w, flat)) = e.rows.get(&memo::base_key(rel)) {
+                                    let all = super::super::sql::select::input_columns(rel).ok_or_else(|| format!("no columns for {rel}"))?;
+                                    let at: Vec<Option<usize>> = names.iter().map(|n| held.contains(n).then(|| all.iter().position(|c| c == n)).flatten().filter(|c| c < w)).collect();
+                                    rows.extend(flat.chunks_exact((*w).max(1)).map(|r| at.iter().map(|c| c.map_or(0, |c| r[c])).collect()));
+                                }
                             }
                         }
+                        old.push(rows);
                     }
-                    // This run's rows of the changed documents.
+                    // This run's rows of the changed files: the sum of their new entries (the chunks' base rows are
+                    // their entries', decision 0117 step 2).
                     let new: Vec<Vec<i64>> = match base {
                         None => {
                             let s = exports.borrow().snapshot(rel, width);
@@ -5035,55 +5085,43 @@ fn run_observed(
                             }
                         },
                     };
-                    let mut owned = owners.clone();
-                    // An export's rows name their document in its location column; a base relation's are counted.
-                    let at = base.is_none().then(|| split.locations.get(rel).and_then(|l| l.first().copied()).filter(|a| *a < width));
-                    if let Some(Some(c)) = at {
-                        owned.extend(old.iter().chain(&new).filter_map(|r| r.get(c)).map(|v| memo::document_of(*v)).filter(|d| guests.contains(d)));
-                    }
-                    let source = match kept_with_changed(rel, k, &owned, old, new, at)? {
-                        None => Arc::clone(&k.source),
-                        Some(s) => {
-                            changed += 1;
-                            s
-                        }
-                    };
-                    results.push((rel.clone(), width, base.cloned(), names, source));
-                }
-                // Every input made: only now are they the run's, so a failure above leaves the run as it was.
-                let mut adopted: HashMap<String, retain::KeptInput> = HashMap::new();
-                for (rel, width, base, names, source) in results {
-                    let k = &kept[&rel];
-                    input_digests.insert(rel.clone(), if Arc::ptr_eq(&source, &k.source) { k.digest } else { retain::digest(source.as_ref()) });
-                    // Named as the run binds it: an export's columns `c0…`, a base relation's its held columns.
+                    let holders = base.is_none().then(|| keeper.as_ref().and_then(|k| k.holders(rel)).unwrap_or(&no_holders));
+                    let mut patch = patch_owners(rel, k, g, holders, &old, new)?;
                     let bound: Vec<String> = match base {
                         None => (0..width).map(|c| format!("c{c}")).collect(),
                         Some(_) => names.clone(),
                     };
-                    adopted.insert(rel.clone(), retain::KeptInput { source: retain::renamed(Arc::clone(&k.source), bound.clone()), docs: Arc::clone(&k.docs), digest: k.digest });
-                    let source = retain::renamed(source, bound);
-                    let base = base.as_ref();
-                    let rel = &rel;
-                    match base {
-                        None => exports.borrow_mut().install(rel, width, source),
-                        Some(held) => {
-                            let have: Vec<String> = base_rows.get(rel).map(|(h, _)| h.clone()).unwrap_or_else(|| projection.columns(rel).unwrap_or_default().iter().map(|c| (*c).to_owned()).collect());
-                            let all: Vec<usize> = (0..names.len()).collect();
-                            let mut columns: Vec<Vec<i64>> = vec![Vec::with_capacity(source.len()); names.len()];
-                            let mut row = vec![0i64; names.len()];
-                            for r in 0..source.len() {
-                                source.row_at(r, &all, &mut row);
-                                for (c, v) in row.iter().enumerate() {
-                                    columns[c].push(*v);
-                                }
-                            }
-                            let values: Vec<Option<Vec<i64>>> = have.iter().map(|h| match (held.contains(h), names.iter().position(|n| n == h)) {
-                                (true, Some(c)) => Some(std::mem::take(&mut columns[c])),
-                                (true, None) => Some(vec![0; source.len()]),
-                                (false, _) => None,
-                            }).collect();
-                            base_rows.insert(rel.clone(), (have, values));
-                        }
+                    let source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source> = if patch.changed.is_empty() {
+                        retain::renamed(Arc::clone(&k.source), bound.clone())
+                    } else {
+                        changed += 1;
+                        Arc::new(retain::Layered::new(bound.clone(), Arc::clone(&k.source), Arc::clone(&k.ranges), std::mem::take(&mut patch.changed)))
+                    };
+                    results.push((rel.clone(), width, base.is_some(), bound, source, patch));
+                }
+                // Every input made: only now are they the run's, so a failure above leaves the run as it was.
+                let mut adopted: HashMap<String, retain::KeptInput> = HashMap::new();
+                for (rel, width, is_base, bound, source, patch) in results {
+                    let k = &kept[&rel];
+                    input_digests.insert(rel.clone(), patch.digest);
+                    adopted.insert(rel.clone(), retain::KeptInput { source: retain::renamed(Arc::clone(&k.source), bound.clone()), docs: Arc::clone(&k.docs), digest: k.digest, ranges: Arc::clone(&k.ranges) });
+                    if let Some(docs) = patch.docs {
+                        // Its rows' digests by owner, for the frames written back and the next run.
+                        kept_input_docs.insert(rel.clone(), Arc::new(docs));
+                        // Named as the planner reads `r__plus`'s and `r__minus`'s statistics (`sql_col`).
+                        let rows_source = |rows: &[Vec<i64>], suffix: &str| {
+                            let name = format!("{rel}__{suffix}");
+                            crate::code_rule_dsl::logic::native::component::columns_source((0..width).map(|c| super::sql_col(&name, c)).collect(), (0..width).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect())
+                        };
+                        given_deltas.insert(rel.clone(), (rows_source(&patch.plus, "plus"), rows_source(&patch.minus, "minus")));
+                    }
+                    if is_base {
+                        let held = &stored.iter().find(|(r, _)| *r == rel).expect("a base relation").1;
+                        let values = bound.iter().map(|c| held.contains(c).then(Vec::new)).collect();
+                        base_rows.insert(rel.clone(), (bound, values));
+                        base_layered.insert(rel, source);
+                    } else {
+                        exports.borrow_mut().install(&rel, width, source);
                     }
                 }
                 drop(kept);
@@ -5092,9 +5130,9 @@ fn run_observed(
                 Ok((changed, rels.len()))
             })();
             match installed {
-                Ok((changed, all)) => crate::code_rule_dsl::logic::profile::decision("the kept inputs (decision 0117 step 1)", || format!("{} memo hits read for their outputs alone; {changed} of {all} inputs changed, from {} changed documents", kept_hits.len(), counted_before.len())),
+                Ok((changed, all)) => crate::code_rule_dsl::logic::profile::decision("the kept inputs (decision 0117 steps 1, 2)", || format!("{} memo hits read for their outputs alone; {changed} of {all} inputs changed, from {} changed files, each its kept rows with its changed owners' rows", kept_hits.len(), counted_before.len())),
                 Err(why) => {
-                    crate::code_rule_dsl::logic::profile::decision("the kept inputs (decision 0117 step 1)", || format!("not taken ({why}): {} memo hits decoded whole", kept_hits.len()));
+                    crate::code_rule_dsl::logic::profile::decision("the kept inputs (decision 0117 steps 1, 2)", || format!("not taken ({why}): {} memo hits decoded whole", kept_hits.len()));
                     if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
                         eprintln!("rerail: the kept inputs not taken: {why}");
                     }
@@ -5225,8 +5263,25 @@ fn run_observed(
             _ => {}
         }
         for (rel, (columns, values)) in std::mem::take(&mut base_rows) {
-            let rows = values.iter().flatten().map(Vec::len).next().unwrap_or(0);
             base_held.insert(rel.clone(), columns.iter().zip(&values).map(|(c, v)| v.is_some().then(|| c.clone())).collect());
+            // A kept base relation with its delta (decision 0117 step 2): bound as it is, its digest taken from its
+            // owners', its statistics the keeper's.
+            if let Some(source) = base_layered.remove(&rel) {
+                let rows = source.len();
+                let held: BTreeSet<&str> = columns.iter().zip(&values).filter(|(_, v)| v.is_some()).map(|(c, _)| c.as_str()).collect();
+                let statistics = match kept.as_ref().and_then(|m| m.get(&memo::base_key(&rel))).filter(|r| !semijoin.contains(&rel) && r.rows() == rows as i64) {
+                    Some(r) => {
+                        let by_name: HashMap<String, (String, i64, i64, i64, i64)> = r.statistics(&|c| held.contains(c)).into_iter().map(|m| (m.0.clone(), m)).collect();
+                        let n = rows as i64;
+                        columns.iter().map(|c| by_name.get(c).cloned().unwrap_or((c.clone(), n, n, n, n))).collect::<Vec<_>>()
+                    }
+                    None => syntax::statistics(source.as_ref()),
+                };
+                totals.add(&rel, rows, &statistics);
+                base_sources.insert(rel, source);
+                continue;
+            }
+            let rows = values.iter().flatten().map(Vec::len).next().unwrap_or(0);
             // A semi-join's relation holds only the rows its exports name: measured, as the keeper counts every row.
             let statistics = kept.as_ref().and_then(|m| m.get(&memo::base_key(&rel))).filter(|r| !semijoin.contains(&rel) && r.rows() == rows as i64).map(|r| {
                 let held: BTreeSet<&str> = columns.iter().zip(&values).filter(|(_, v)| v.is_some()).map(|(c, _)| c.as_str()).collect();
@@ -5653,10 +5708,17 @@ fn run_observed(
                         _ => None,
                     };
                     let (mut from_entries, mut from_entries_rows, mut hashed) = (0usize, 0usize, Vec::<String>::new());
-                    let mut input_docs: HashMap<String, Arc<retain::DocDigests>> = HashMap::new();
+                    // The kept inputs' digests by owner after the edit (decision 0117 step 2), for the frames written back.
+                    let mut input_docs: HashMap<String, Arc<retain::DocDigests>> = std::mem::take(&mut kept_input_docs);
+                    let mut from_owners = 0usize;
                     let mut answer = |rel: &str| -> Option<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> {
                         if by_rules_only {
                             return None;
+                        }
+                        // A kept input's delta is beside it: the rows its changed owners gained and lost.
+                        if let Some((plus, minus)) = given_deltas.get(rel) {
+                            from_owners += 1;
+                            return Some((Arc::clone(plus), Arc::clone(minus)));
                         }
                         let kept = cell.as_ref()?;
                         let Some((_, new)) = cross_inputs.iter().find(|(r, _)| r == rel) else {
@@ -5693,7 +5755,7 @@ fn run_observed(
                             return None;
                         };
                         let _s = crate::code_rule_dsl::logic::profile::span(|| "session/input delta by document".into());
-                        let Some((delta, docs)) = retain::document_delta(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref()) else {
+                        let Some((delta, docs)) = retain::document_delta(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref(), retain::group_col(&cross.program, rel)) else {
                             if trace { eprintln!("rerail: input delta of {rel}: not by document (old columns {:?}, new {:?}, {} and {} rows), diffed by rules", old.columns(), new.columns(), old.len(), new.len()); }
                             return None;
                         };
@@ -5712,8 +5774,8 @@ fn run_observed(
                         }
                     }
                     crate::code_rule_dsl::logic::profile::decision("input deltas", || match &changes {
-                        Some(c) => format!("{} documents changed; {from_entries} inputs' deltas read from their memo entries ({from_entries_rows} rows), {} found by hashing their documents: {}", c.len(), hashed.len(), hashed.join(", ")),
-                        None => format!("no kept documents: {} inputs' deltas found by hashing their documents", hashed.len()),
+                        Some(c) => format!("{} documents changed; {from_owners} inputs' deltas kept beside them; {from_entries} read from their memo entries ({from_entries_rows} rows), {} found by hashing their documents: {}", c.len(), hashed.len(), hashed.join(", ")),
+                        None => format!("{from_owners} inputs' deltas kept beside them (decision 0117 step 2); {} found by hashing their documents", hashed.len()),
                     });
                     if std::env::var_os("RERAIL_SPIKE_DELTA").is_some() {
                         let read: usize = changes.iter().flatten().flat_map(|(a, b)| [a, b]).flatten().map(|e| e.rows.values().map(|(w, r)| r.len() / (*w).max(1)).sum::<usize>()).sum();
@@ -8413,88 +8475,126 @@ fn maintained_cross(cross: &lower::Lowered) -> (lower::Lowered, Option<(usize, u
     }
 }
 
-/// Decision 0117 step 1: an input of the cross part from its kept rows `kept` and the changed documents' rows,
-/// `old` (their entries' rows, which the kept rows hold) and `new` (this run's). `Ok(None)` when they are the same
-/// rows: the input is its kept rows. Else:
-/// - a base relation (`at` `None`) is every file's rows, each file's added: its kept rows less `old`, each row as
-///   many times as `old` has it, and `new`;
-/// - an export (`at`, its column that names a row's document) holds each row once, whatever files hold it: its
-///   kept rows less those of a changed document (`owners`), and `new`. Exact when every row of `old` and `new` is
-///   a changed document's, and the kept rows of the changed documents are `old`'s.
-/// `Err` otherwise, and the run decodes its hits whole.
-fn kept_with_changed(
-    rel: &str, kept: &retain::KeptInput, owners: &rustc_hash::FxHashSet<i64>, mut old: Vec<Vec<i64>>, mut new: Vec<Vec<i64>>, at: Option<Option<usize>>,
-) -> std::result::Result<Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>, String> {
-    let export = at.is_some();
-    if export {
-        old.sort_unstable();
-        old.dedup();
-        new.sort_unstable();
-        new.dedup();
-    } else {
-        old.sort_unstable();
-        new.sort_unstable();
+/// An input's change by owner (decision 0117 step 2, `patch_owners`): each changed owner's rows now, the rows the
+/// input gained and lost as a set (`r__plus`, `r__minus`), and its digests by owner and digest after it (`None`, the
+/// kept ones, when no owner's rows changed).
+struct OwnerPatch {
+    changed: Vec<(i64, Vec<Vec<i64>>)>,
+    plus: Vec<Vec<i64>>,
+    minus: Vec<Vec<i64>>,
+    docs: Option<retain::DocDigests>,
+    digest: u64,
+}
+
+/// Decision 0117 step 2: input `rel` after an edit, from its kept rows `kept` (each owner's a range, owner by
+/// column `g`), the changed files' old entries' rows (`old`, one list a file) and this run's rows of them (`new`).
+/// Only the owners those rows name are read.
+/// - A base relation (`holders` `None`) holds a row once per file whose entry holds it: an owner's rows are its kept
+///   rows less each old entry's, plus this run's.
+/// - An export holds each row once. An owner's rows are this run's if a changed file holds it now; else its kept
+///   rows while another file holds it (a value document: the keeper's `holders`), else none. A value document's
+///   rows are the same in every file that holds it, which is checked.
+/// `Err` when the kept rows do not hold what the old entries say (the run then decodes its hits whole).
+fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&rustc_hash::FxHashMap<i64, i64>>, old: &[Vec<Vec<i64>>], new: Vec<Vec<i64>>) -> std::result::Result<OwnerPatch, String> {
+    use rustc_hash::FxHashMap;
+    let width = kept.source.columns().len();
+    let values = crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS as i64;
+    if width == 0 {
+        // A relation of no columns is its rows' count (`write_frames`): none of its rows names an owner.
+        return if old.iter().all(Vec::is_empty) && new.is_empty() { Ok(OwnerPatch { changed: Vec::new(), plus: Vec::new(), minus: Vec::new(), docs: None, digest: kept.digest }) } else { Err(format!("{rel}: a relation of no columns changed")) };
     }
-    if old == new {
-        return Ok(None);
-    }
-    let source = &kept.source;
-    let width = source.columns().len();
-    let mut columns: Vec<Vec<i64>> = vec![Vec::with_capacity(source.len() + new.len()); width];
-    let mut row = vec![0i64; width];
-    let all: Vec<usize> = (0..width).collect();
-    match at {
-        // A base relation: the kept rows less `old`, by count. A row is looked up only when its first value is
-        // one of `old`'s.
-        None => {
-            let mut left: rustc_hash::FxHashMap<&[i64], usize> = rustc_hash::FxHashMap::default();
-            for r in &old {
-                *left.entry(r.as_slice()).or_default() += 1;
-            }
-            let firsts: rustc_hash::FxHashSet<i64> = old.iter().filter_map(|r| r.first().copied()).collect();
-            for r in 0..source.len() {
-                source.row_at(r, &all, &mut row);
-                if row.first().is_some_and(|v| firsts.contains(v))
-                    && let Some(n) = left.get_mut(row.as_slice()).filter(|n| **n > 0)
-                {
-                    *n -= 1;
-                    continue;
-                }
-                for (c, v) in row.iter().enumerate() {
-                    columns[c].push(*v);
-                }
-            }
-            if let Some((r, n)) = left.iter().find(|(_, n)| **n > 0) {
-                return Err(format!("{rel}: {n} of a changed document's old rows are not kept ({r:?})"));
-            }
+    let mut by_old: BTreeMap<i64, Vec<Vec<Vec<i64>>>> = BTreeMap::new();
+    for rows in old {
+        let mut per: FxHashMap<i64, Vec<Vec<i64>>> = FxHashMap::default();
+        for r in rows {
+            per.entry(retain::owner_of(r, g)).or_default().push(r.clone());
         }
-        Some(None) => return Err(format!("{rel}: an export with no column that names its rows' document changed")),
-        Some(Some(at)) => {
-            let owned = |row: &[i64]| row.get(at).is_some_and(|v| owners.contains(&memo::document_of(*v)));
-            if let Some(r) = old.iter().chain(&new).find(|r| !owned(r)) {
-                return Err(format!("{rel}: a changed document's row names no changed document ({r:?})"));
+        for (o, rows) in per {
+            by_old.entry(o).or_default().push(rows);
+        }
+    }
+    let mut by_new: BTreeMap<i64, Vec<Vec<i64>>> = BTreeMap::new();
+    for r in new {
+        by_new.entry(retain::owner_of(&r, g)).or_default().push(r);
+    }
+    let touched: BTreeSet<i64> = by_old.keys().chain(by_new.keys()).copied().collect();
+    let all: Vec<usize> = (0..width).collect();
+    let mut docs: Option<retain::DocDigests> = None;
+    let (mut changed, mut plus, mut minus) = (Vec::new(), Vec::new(), Vec::new());
+    let sorted = |mut rows: Vec<Vec<i64>>| {
+        rows.sort_unstable();
+        rows
+    };
+    let set = |rows: &[Vec<i64>]| rows.iter().cloned().collect::<BTreeSet<Vec<i64>>>();
+    for o in touched {
+        // The owner's kept rows, checked against its digest: the only kept rows the edit reads.
+        let was: Vec<Vec<i64>> = match kept.ranges.get(&o) {
+            Some(&(start, n)) => {
+                let mut row = vec![0i64; width];
+                let rows: Vec<Vec<i64>> = (start..start + n).map(|r| { kept.source.row_at(r as usize, &all, &mut row); row.clone() }).collect();
+                let sum = rows.iter().fold(0u64, |s, r| s.wrapping_add(retain::row_hash(r)));
+                if kept.docs.get(&o) != Some(&(sum, n as u64)) {
+                    return Err(format!("{rel}: owner {o}'s kept rows are not its digest's"));
+                }
+                rows
             }
-            let mut dropped = Vec::new();
-            for r in 0..source.len() {
-                source.row_at(r, &all, &mut row);
-                if owned(&row) {
-                    dropped.push(row.clone());
-                } else {
-                    for (c, v) in row.iter().enumerate() {
-                        columns[c].push(*v);
+            None => Vec::new(),
+        };
+        let old_rows = by_old.remove(&o).unwrap_or_default();
+        let new_rows = by_new.remove(&o);
+        let now: Vec<Vec<i64>> = match holders {
+            None => {
+                let mut count: FxHashMap<&[i64], i64> = FxHashMap::default();
+                for r in &was {
+                    *count.entry(r).or_default() += 1;
+                }
+                for r in old_rows.iter().flatten() {
+                    let n = count.entry(r).or_default();
+                    *n -= 1;
+                    if *n < 0 {
+                        return Err(format!("{rel}: a changed file's old row is not kept ({r:?})"));
                     }
                 }
+                let mut now: Vec<Vec<i64>> = count.into_iter().flat_map(|(r, n)| std::iter::repeat_n(r.to_vec(), n as usize)).collect();
+                now.extend(new_rows.unwrap_or_default());
+                sorted(now)
             }
-            dropped.sort_unstable();
-            if dropped != old {
-                return Err(format!("{rel}: the kept rows of the changed documents are not their entries' ({} kept, {} in the entries)", dropped.len(), old.len()));
+            Some(h) => {
+                let kept_set = set(&was);
+                if old_rows.iter().any(|rows| set(rows) != kept_set) {
+                    return Err(format!("{rel}: owner {o}'s kept rows are not a changed file's old ones"));
+                }
+                let held = if o >= values { h.get(&o).copied().unwrap_or(0) } else { i64::from(new_rows.is_some()) };
+                match (held > 0, new_rows) {
+                    (false, _) => Vec::new(),
+                    (true, Some(rows)) => {
+                        let rows: Vec<Vec<i64>> = set(&rows).into_iter().collect();
+                        // A value document's rows are its key's (its text, parsed): the same in every file that
+                        // holds it, so rows kept of it that differ are another run's mistake.
+                        if o >= values && !kept_set.is_empty() && rows.iter().ne(kept_set.iter()) {
+                            return Err(format!("{rel}: value document {o}'s rows differ between the files that hold it"));
+                        }
+                        rows
+                    }
+                    (true, None) if !was.is_empty() => sorted(was.clone()),
+                    (true, None) => return Err(format!("{rel}: value document {o} is held, but no rows of it are")),
+                }
             }
+        };
+        if now == sorted(was.clone()) {
+            continue;
         }
-    }
-    for r in &new {
-        for (c, v) in r.iter().enumerate() {
-            columns[c].push(*v);
+        let (a, b) = (set(&was), set(&now));
+        minus.extend(a.difference(&b).cloned());
+        plus.extend(b.difference(&a).cloned());
+        let d = docs.get_or_insert_with(|| (*kept.docs).clone());
+        if now.is_empty() {
+            d.remove(&o);
+        } else {
+            d.insert(o, (now.iter().fold(0u64, |s, r| s.wrapping_add(retain::row_hash(r))), now.len() as u64));
         }
+        changed.push((o, now));
     }
-    Ok(Some(crate::code_rule_dsl::logic::native::component::columns_source(source.columns().to_vec(), columns.into_iter().map(Some).collect())))
+    let digest = docs.as_ref().map_or(kept.digest, retain::digest_of_docs);
+    Ok(OwnerPatch { changed, plus, minus, docs, digest })
 }

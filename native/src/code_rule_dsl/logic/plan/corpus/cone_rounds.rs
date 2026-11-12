@@ -290,10 +290,10 @@ impl RoundProgram {
                 provisional.insert(rel.clone(), k.read_input(on.store, program, rel, None)?.unwrap_or_default());
             }
             // The loaded documents' rows of each per-file relation: the kept rows not of the corpus's documents
-            // (only their granules read, where the documents are the first column's).
+            // (only their granules read, where the documents are the column the frames group its rows by).
             for (rel, _, at) in inputs.per_file {
                 let loaded = |d: i64| !inputs.corpus.contains(&d);
-                let rows = k.read_input(on.store, program, rel, (*at == 0).then_some(&loaded as &dyn Fn(i64) -> bool))?.unwrap_or_default();
+                let rows = k.read_input(on.store, program, rel, (*at == retain::group_col(program, rel)).then_some(&loaded as &dyn Fn(i64) -> bool))?.unwrap_or_default();
                 provisional.insert(rel.clone(), rows.into_iter().filter(|r| loaded(super::memo::document_of(r[*at]))).collect());
             }
             for (req, _) in &self.requests {
