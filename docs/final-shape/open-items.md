@@ -3708,6 +3708,9 @@ compiled only there.
 
 **Closure:** the target builds, and `base_tests` runs (O-p0-stats-flake's 20 runs).
 
+**Status (2026-11-12):** the target builds (the engine hosts the tests that read above the crate); 20 pass,
+the two text tests fail (O-device-step-counts).
+
 ## O-phase0-store-state. Phase 0's include graph depends on what the store already holds
 
 Each test now starts from a copy of a store template that already holds the
@@ -3741,3 +3744,27 @@ transducer's run goes on over `a b c` and gives one match of three items.
 **Closure:** decide whether any rule depends on tree-sitter's boundary. If one
 does, the program reads the boundary from the gap between stored siblings
 (the tape's `implied` gaps, `tape.rs`), never from generated tokens.
+
+## O-slice-launch-limit. One file's Metal label passes take more launches than the bound
+
+**Seen (2026-11-12).** `slice::tests::the_backends_find_the_same_keys_on_real_files`: the interpreter and the
+JIT agree (101 files, 491 clauses, 2193 keys); the Metal backends end in `BackendLaunchLimit`.
+`roots_metal_split` halves the batch down to one file, and one file still needs more than
+`KERNEL_LAUNCH_LIMIT` (200, the user's decision of list step 26). `RERAIL_LAUNCHES=1`, refused dispatches of
+the whole batch: `label_settle` 1044, `label_micro_8` 912, `label_micro` 526, `clause_patterns` 33,
+`label_round` 5, a few `label_group_*` and `root_records_*`.
+
+**Closure:** the label passes' launches bounded by the plan (settle and micro passes batched over clauses), or
+a new bound decided by the user. The bound is not raised here.
+
+## O-device-step-counts. The device's per-step counts of a cross join are not the CPU's
+
+**Seen (2026-11-12),** now that `rerail-device-metal`'s test target builds (O-device-metal-tests):
+`setfix::device::tests::text_tests_on_the_device_are_the_cpus` and `text_functions_on_the_device_are_the_cpus`.
+The rows are the CPU's; the counts differ only at a step that joins `m` (60 rows) with `n` (2000 rows): the
+CPU counts the product, 120000, the device 78733 to 80169, a different count per rule. `stage_count`'s
+counters are atomic; its `p0` counts the candidates in `lo..hi`, so the device seems to probe `n` by a key
+the CPU's walk does not have.
+
+**Closure:** find which candidates the device's stage reads, then decide what a step's count is (the planner's
+actual rows): the product as the CPU walks it, or the probe's candidates, with the test following.
