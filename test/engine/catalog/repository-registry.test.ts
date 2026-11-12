@@ -186,6 +186,25 @@ describe("the repository registry", () => {
     if (process.platform === "win32") expect(runtime.get("\\\\server\\share\\inner")).toEqual([true, "parent", "\\\\server\\share"]);
   });
 
+  it("lets the spelling recorded first decide for the checkouts inside a folder recorded under two spellings of one length", async () => {
+    const base = join(parse(tmpdir()).root, "rerail-listed");
+    const inner = join(base, "wt", "inner");
+    // One folder as path.relative reads both: a `.` segment before or after its name, and on Windows its letter case.
+    const spellings: Array<readonly [string, string]> = [
+      [`${base}${sep}.${sep}wt`, `${base}${sep}wt${sep}.`],
+      ...process.platform === "win32" ? [[join(base, "wt"), join(base, "WT")] as const] : [],
+    ];
+    for (const [one, other] of spellings) {
+      for (const [first, second] of [[one, other], [other, one]] as const) {
+        // Stopped as the spelling recorded first, started as the other one.
+        const { database, repositoryKey } = await recordedRows([[first, false], [second, true], [inner, null]]);
+        const { listed, runtime } = bothReads(database, repositoryKey);
+        expect(runtime.get(inner), `${first} then ${second}`).toEqual([false, "parent", first]);
+        expect(listed.get(inner), `${first} then ${second}`).toEqual([false, "parent", first]);
+      }
+    }
+  });
+
   it("puts a submodule checked out under two worktrees of its parent in one repository", async () => {
     const root = await temporary("rerail-registry-submodule-");
     const database = open(join(root, "rerail.sqlite"));

@@ -178,19 +178,20 @@ describe("a repository's context", () => {
     expect(await shownStates(app, reused)).toEqual({ listed: null, dashboard: "stopped", statusLine: "stopped" });
   });
 
-  it("picks the same containing checkout as the runtime when two recorded ones differ only in letter case, whichever came first", async () => {
+  it("picks the same containing checkout as the runtime when two recorded ones differ only in letter case, the one recorded first", async () => {
     for (const order of [["wt", "WT"], ["WT", "wt"]] as const) {
       const { db, main, repositoryKey, cloneId, app } = await repositoryWith([]);
-      // One folder on Windows, recorded under two spellings: stopped as wt, started as WT. Elsewhere two folders.
-      for (const segment of order) {
-        db.insert(checkouts).values({ checkoutPath: join(main, segment), repositoryKey, cloneId, started: segment === "WT", createdAt: 1, lastSeenAt: 1 }).run();
+      // One folder on Windows, recorded under two spellings a millisecond apart: stopped as wt, started as WT. Elsewhere two folders.
+      for (const [index, segment] of order.entries()) {
+        db.insert(checkouts).values({ checkoutPath: join(main, segment), repositoryKey, cloneId, started: segment === "WT", createdAt: index + 1, lastSeenAt: 1 }).run();
       }
       const inner = join(main, "wt", "inner");
       addWorktree(main, inner);
-      db.insert(checkouts).values({ checkoutPath: inner, repositoryKey, cloneId, started: null, createdAt: 1, lastSeenAt: 1 }).run();
-      // Of one folder's spellings the one first in path order holds the checkout: upper case comes before lower case.
-      const [state, parent] = process.platform === "win32" ? ["started", join(main, "WT")] : ["stopped", join(main, "wt")];
-      expect(await shownStates(app, inner), order.join(" then ")).toEqual({ listed: [state, parent], dashboard: state, statusLine: state });
+      db.insert(checkouts).values({ checkoutPath: inner, repositoryKey, cloneId, started: null, createdAt: 3, lastSeenAt: 1 }).run();
+      // Of one folder's spellings the one recorded first holds the checkout, as it did before the readers shared an order.
+      const holder = process.platform === "win32" ? order[0] : "wt";
+      const state = holder === "WT" ? "started" : "stopped";
+      expect(await shownStates(app, inner), order.join(" then ")).toEqual({ listed: [state, join(main, holder)], dashboard: state, statusLine: state });
     }
   });
 });
