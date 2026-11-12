@@ -1841,15 +1841,25 @@ export class CodeRuleBridge {
    * Folders Git ignores (when the session follows `.gitignore`) are never entered, so nothing below them is observed,
    * and files it ignores are not observed either; Git's rules are asked once for all of a folder's entries. A
    * `.gitignore` is walked whatever Git says of it, since it decides what is ignored. A folder's `.git` is not entered
-   * either, and marks the checkout that owns the folder's files (`SourceScan.checkouts`).
+   * either, and marks the checkout that owns the folder's files (`SourceScan.checkouts`). A listing that fails part way
+   * still walks the entries it gave, and its error then fails the folder (`#observePath`).
    */
   async #expandDirectory(walk: SourceWalk, absolute: string): Promise<void> {
     const entries: Dirent[] = [];
-    for await (const entry of await opendir(absolute)) {
-      if (walk.discovery.cancelled) return;
-      if (entry.name === ".git") this.#noteCheckout(walk, join(absolute, entry.name));
-      else if (this.#walksInto(walk, absolute, entry)) entries.push(entry);
+    try {
+      for await (const entry of await opendir(absolute)) {
+        if (walk.discovery.cancelled) return;
+        if (entry.name === ".git") this.#noteCheckout(walk, join(absolute, entry.name));
+        else if (this.#walksInto(walk, absolute, entry)) entries.push(entry);
+      }
+    } finally {
+      if (!walk.discovery.cancelled) this.#pushKept(walk, absolute, entries);
     }
+  }
+
+  /** Pushes the `entries` of the folder `absolute` that Git keeps, and any `.gitignore`, for the walk to observe. */
+  #pushKept(walk: SourceWalk, absolute: string, entries: readonly Dirent[]): void {
+    if (entries.length === 0) return;
     const ignored = this.#ignoredEntries(walk, absolute, entries);
     for (const [index, entry] of entries.entries()) {
       if (ignored[index] !== true || (entry.isFile() && entry.name === GITIGNORE)) walk.stack.push(join(absolute, entry.name));

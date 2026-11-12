@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
 import { createHash } from "node:crypto";
+import type { Dirent } from "node:fs";
 import { appendFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative, resolve, sep } from "node:path";
+import { basename, join, relative, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CodeRuleBridge,
@@ -18,9 +19,15 @@ import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../..
 import type { IgnoreRulesChange } from "../../../src/engine/code-rule/ignore-rule-files.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
 
+/**
+ * Hooks into the walk's reads and listings, by path: `reads` and `directories` run before a file's read or a folder's
+ * listing, and each number in `failingListings` makes one listing of the folder fail after that many entries, in name
+ * order, as a disk error part way through a folder would.
+ */
 const discovery = vi.hoisted(() => ({
   reads: new Map<string, Array<() => Promise<void>>>(),
   directories: new Map<string, Array<() => Promise<void>>>(),
+  failingListings: new Map<string, number[]>(),
 }));
 /**
  * The arguments of every Git process Rerail started without blocking, for the tests that pin what a pass costs, and a
@@ -54,7 +61,18 @@ vi.mock("node:fs/promises", async importOriginal => {
     },
     opendir: async (...args: Parameters<typeof actual.opendir>) => {
       await discovery.directories.get(String(args[0]))?.shift()?.();
-      return await actual.opendir(...args);
+      const directory = await actual.opendir(...args);
+      const listed = discovery.failingListings.get(String(args[0]))?.shift();
+      if (listed === undefined) return directory;
+      const entries: Dirent[] = [];
+      for await (const entry of directory) entries.push(entry);
+      entries.sort((left, right) => (left.name < right.name ? -1 : 1));
+      return {
+        async *[Symbol.asyncIterator]() {
+          yield* entries.slice(0, listed);
+          throw Object.assign(new Error("EIO: i/o error, readdir"), { code: "EIO" });
+        },
+      };
     },
   };
 });
@@ -109,6 +127,7 @@ afterEach(async () => {
   releases.splice(0).forEach(release => release());
   discovery.reads.clear();
   discovery.directories.clear();
+  discovery.failingListings.clear();
   await Promise.all(passes.splice(0));
   await Promise.all(bridges.splice(0).map(bridge => bridge.close()));
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
@@ -390,6 +409,31 @@ describe("CodeRuleBridge", () => {
     await shell(bridge, () => writeFile(draft, "draft\nmine\n"));
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
       [{ path: "deep/draft.py", language: "python", previousText: "draft\n", generatedText: "draft\nmine\n" }],
+    ]);
+  });
+
+  it("walks the entries a folder's listing gave before it failed, so the next walk audits only the rest", async () => {
+    const root = await workspace();
+    const files = ["a.py", "b.py", "c.py"].map(name => join(root, "deep", name));
+    await mkdir(join(root, "deep"));
+    for (const file of files) await writeFile(file, `${basename(file)}\n`);
+    commitAll(root);
+    await awaitClockAfter(...files);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    discovery.failingListings.set(join(root, "deep"), [2]);
+    await shell(bridge, async () => {
+      for (const file of files) await appendFile(file, "mine\n");
+    });
+    // The listing works again: the walk reads what the failed one could not.
+    await shell(bridge, () => undefined);
+    const uncaptured = "Source changed outside a tool with a captured preimage";
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [
+        { path: "deep/a.py", language: "python", previousText: "a.py\n", generatedText: "a.py\nmine\n" },
+        { path: "deep/b.py", language: "python", previousText: "b.py\n", generatedText: "b.py\nmine\n" },
+        { path: "deep/c.py", language: "python", previousReadError: uncaptured, readError: "EIO: i/o error, readdir" },
+      ],
+      [{ path: "deep/c.py", language: "python", previousReadError: uncaptured, generatedText: "c.py\nmine\n" }],
     ]);
   });
 
