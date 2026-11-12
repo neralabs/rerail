@@ -37,8 +37,9 @@ pub(super) fn base(name: &str) -> &str {
     name.strip_suffix("__old").unwrap_or(name)
 }
 
-/// The frame part a relation's statistics are stored in (its rows are part 0, an input's granules 1 and up).
-pub(super) const PART: i64 = -1;
+/// The frame part a relation's statistics are stored in (its rows are part 0, an input's granules 1 and up, its
+/// deltas -1 down to -16: decision 0117 step 4, whose chain reads every part from -k to -1).
+pub(super) const PART: i64 = i64::MIN;
 
 /// Whether statistics are kept in the frames: `RERAIL_KEPT_STATS=off` keeps none, as before 0120.
 pub(super) fn on() -> bool {

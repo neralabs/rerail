@@ -103,6 +103,35 @@ fn lapsed_plan_hold(connection: &rusqlite::Connection, now: i64) -> StoreResult<
         .is_some())
 }
 
+/// The holds (`object_pins`) of runs whose process is gone: a run killed (a watchdog, a crash) never releases its
+/// hold, which kept its plans live, and their memos (decision 0108), for the lease's 6 hours. A run's owner names its
+/// process (`corpus-run:<pid>:…`); a process of this host that no longer exists holds nothing. A pid used again by
+/// another process keeps the hold to its lease, as before.
+fn orphaned_holds(connection: &rusqlite::Connection) -> StoreResult<Vec<String>> {
+    let mut st = connection.prepare_cached(
+        "SELECT DISTINCT s.value FROM object_pins p JOIN strings s ON s.string_id = p.owner_string_id WHERE s.domain_id = ?1 AND s.value LIKE 'corpus-run:%'",
+    )?;
+    let owners = st.query_map([STRING_OWNER], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+    Ok(owners.into_iter().filter(|o| o.split(':').nth(1).and_then(|p| p.parse::<i32>().ok()).is_some_and(process_gone)).collect())
+}
+
+/// Whether no process `pid` exists on this host.
+fn process_gone(pid: i32) -> bool {
+    if pid <= 0 || pid as u32 == std::process::id() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        // SAFETY: signal 0 only checks that the process exists.
+        let r = unsafe { libc::kill(pid, 0) };
+        r != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
 /// Memo rows of dead plans deleted per pass.
 const PLAN_ROWS_PER_PASS: i64 = 4096;
 
@@ -505,12 +534,30 @@ impl ContentStore {
             let mut keep_plans: BTreeSet<Vec<u8>> = BTreeSet::new();
             for m in manifests.iter().filter(|m| kept_ids.contains(&m.id)) {
                 keep_live.extend(m.sources.iter().map(|&s| (s, m.grammar_version, m.tape_format)));
+            }
+            // A plan is live while a root's protected runs name it (or a run holds it). A kept manifest past them
+            // keeps its sources and tapes (any build's warm run reads them), not its plan: a plan names the engine
+            // build and the program, and its memo (decision 0108: a space of frames, the size of every file's
+            // results) serves only runs of both. Manifests are kept by the bytes of their sources and tapes, which
+            // a small corpus never fills, so every build's memo stayed live (1.75 GB of 1.86 GB of frames).
+            let mut protected: HashMap<i64, usize> = HashMap::new();
+            let protected_ids: HashSet<i64> = manifests
+                .iter()
+                .filter(|m| kept_ids.contains(&m.id))
+                .filter(|m| {
+                    let n = protected.entry(m.root).or_default();
+                    *n += 1;
+                    *n <= policy.protected_runs.max(1)
+                })
+                .map(|m| m.id)
+                .collect();
+            for m in manifests.iter().filter(|m| protected_ids.contains(&m.id)) {
                 keep_plans.insert(m.plan.clone());
             }
-            // The other plans kept manifests name (`record_corpus_run_naming`).
+            // The other plans those manifests name (`record_corpus_run_naming`).
             {
                 let mut named = tx.prepare_cached("SELECT plan_digest FROM corpus_manifest_plans WHERE manifest_id=?1")?;
-                for m in manifests.iter().filter(|m| kept_ids.contains(&m.id)) {
+                for m in manifests.iter().filter(|m| protected_ids.contains(&m.id)) {
                     for p in named.query_map([m.id], |r| r.get::<_, Vec<u8>>(0))? {
                         keep_plans.insert(p?);
                     }
@@ -573,12 +620,22 @@ impl ContentStore {
             Ok(n)
         })?;
         pass.plan_rows = swept;
+        // Holds of runs whose process is gone are released: their plans may be dead now, so a decision is due.
+        let orphans = {
+            let connection = self.connection.lock().expect("content store connection unavailable");
+            orphaned_holds(&connection)?
+        };
+        for owner in &orphans {
+            self.release_pins(owner)?;
+        }
+        let orphaned = !orphans.is_empty();
         let due = match self.corpus_due()? {
+            _ if orphaned => 1,
             0 if self.lapsed_plan_hold(now)? => 1,
             due => due,
         };
         if due == 1 {
-            if !self.corpus_decision_worth(policy, now)? {
+            if !orphaned && !self.corpus_decision_worth(policy, now)? {
                 // Nothing a decision could change: no root went past its protected runs, and the last decision is
                 // recent. The sweep waits for the next decision too; a new manifest makes collection due again.
                 self.immediate_transaction(|tx| Ok(tx.execute("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=1", [])?))?;
@@ -589,29 +646,42 @@ impl ContentStore {
             }
             pass.kept = Some(self.keep_corpus_runs_held(policy, now)?);
         }
-        pass.plan_rows += self.immediate_transaction(|tx| {
-            let dead: Option<Vec<u8>> = tx.query_row("SELECT plan_digest FROM corpus_plans WHERE live=0 LIMIT 1", [], |r| r.get(0)).optional()?;
-            let Some(plan) = dead else { return Ok(0) };
-            let n = tx.execute(
-                "DELETE FROM facts_results WHERE (source_id, fact_schema, path, plan_digest) IN (\
-                 SELECT source_id, fact_schema, path, plan_digest FROM facts_results WHERE plan_digest=?1 LIMIT ?2)",
-                params![plan, PLAN_ROWS_PER_PASS],
-            )?;
-            if (n as i64) < PLAN_ROWS_PER_PASS {
-                // The plan's per-file memo (decision 0108): its frames' space.
-                if let Ok(digest) = <[u8; 32]>::try_from(plan.as_slice()) {
-                    let space = super::frames::local_space(&digest);
-                    let frames: i64 = tx.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='frames'", [], |r| r.get(0))?;
-                    if frames > 0 {
-                        tx.execute("DELETE FROM frames WHERE space = ?1", [&space[..]])?;
-                        tx.execute("DELETE FROM frame_spaces WHERE space = ?1", [&space[..]])?;
+        // Dead plans, one transaction each, until the pass's budget of rows is spent: a dead build's memo is a few
+        // frames (one statement), and one plan a pass left a store's dead builds for as many runs.
+        let mut budget = PLAN_ROWS_PER_PASS as usize;
+        while budget > 0 {
+            let n = self.immediate_transaction(|tx| {
+                let dead: Option<Vec<u8>> = tx.query_row("SELECT plan_digest FROM corpus_plans WHERE live=0 LIMIT 1", [], |r| r.get(0)).optional()?;
+                let Some(plan) = dead else { return Ok(0) };
+                let n = tx.execute(
+                    "DELETE FROM facts_results WHERE (source_id, fact_schema, path, plan_digest) IN (\
+                     SELECT source_id, fact_schema, path, plan_digest FROM facts_results WHERE plan_digest=?1 LIMIT ?2)",
+                    params![plan, PLAN_ROWS_PER_PASS],
+                )?;
+                if (n as i64) < PLAN_ROWS_PER_PASS {
+                    // The plan's per-file memo (decision 0108): its frames' space.
+                    let mut frames_gone = 0;
+                    if let Ok(digest) = <[u8; 32]>::try_from(plan.as_slice()) {
+                        let space = super::frames::local_space(&digest);
+                        let frames: i64 = tx.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='frames'", [], |r| r.get(0))?;
+                        if frames > 0 {
+                            frames_gone = tx.execute("DELETE FROM frames WHERE space = ?1", [&space[..]])?;
+                            tx.execute("DELETE FROM frame_spaces WHERE space = ?1", [&space[..]])?;
+                        }
                     }
+                    tx.execute("DELETE FROM corpus_plans WHERE plan_digest=?1 AND live=0", [&plan])?;
+                    tx.execute("DELETE FROM corpus_plan_relations WHERE plan_digest=?1", [&plan])?;
+                    // A dead plan collected is work done, though its memo is frames now (decision 0108), not rows.
+                    return Ok(n + frames_gone + 1);
                 }
-                tx.execute("DELETE FROM corpus_plans WHERE plan_digest=?1 AND live=0", [&plan])?;
-                tx.execute("DELETE FROM corpus_plan_relations WHERE plan_digest=?1", [&plan])?;
+                Ok(n)
+            })?;
+            pass.plan_rows += n;
+            if n == 0 {
+                break;
             }
-            Ok(n)
-        })?;
+            budget = budget.saturating_sub(n);
+        }
         pass.collection = self.collect_held(now, MAX_COLLECTION_BATCH)?;
         if !pass.did_work() {
             self.immediate_transaction(|tx| Ok(tx.execute("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=2", [])?))?;

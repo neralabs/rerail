@@ -343,6 +343,6 @@ fn listing_digest(entries: &[(String, bool)]) -> String {
 }
 
 /// A file's bytes' digest ("" when it cannot be read), from phase 0's observer: read only when its stat changed.
-pub(super) fn bytes_digest(path: &Path) -> String {
+pub(in crate::code_rule_dsl::logic::plan) fn bytes_digest(path: &Path) -> String {
     super::observe(|o| o.digest(path)).map(|d| hex(&d)).unwrap_or_default()
 }

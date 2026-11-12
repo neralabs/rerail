@@ -1726,6 +1726,7 @@ mod sql_executor {
         #[allow(unused_imports)]
         use frame::Frame;
     }
+    #[cfg(any(any(test, feature = "test-hooks"), feature = "headless"))]
     pub mod component_loop {
         pub use rerail_sessions::code_rule_dsl::sql_executor::component_loop::*;
         #[cfg(test)]

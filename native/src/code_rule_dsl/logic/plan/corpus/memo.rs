@@ -217,8 +217,12 @@ pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, late
 /// every root's, so worktrees that take turns keep theirs.
 const MEMO_RUNS: i64 = 32;
 
+/// How many contents of one path the memo keeps (decision 0117): the newest, by their last use. Worktrees or
+/// branches that take turns at a file keep theirs (decision 0108 §4); an edited file's earlier contents go.
+const MEMO_CONTENTS: usize = 4;
+
 /// The memo's relation in its plan's space: one frame per entry (decision 0108).
-fn entry_rel(plan: &[u8; 32]) -> crate::content_store::FrameRel {
+pub(super) fn entry_rel(plan: &[u8; 32]) -> crate::content_store::FrameRel {
     crate::content_store::FrameRel { name: "local".to_owned(), ident: *plan }
 }
 
@@ -392,7 +396,14 @@ fn by_digest_in(store: &ContentStore, plan: &[u8; 32], paths: &[&str], wanted: V
     let wanted: Vec<(usize, [u8; 32], i64)> = wanted.into_iter().map(|(i, d)| (i, d, part_of(&d, paths[i]))).collect();
     let docs: Vec<((), &str)> = paths.iter().map(|p| ((), *p)).collect();
     let space = crate::content_store::local_space(plan);
-    let mut frames = store.admit_parts_of(&space, &rel, &wanted.iter().map(|(_, _, p)| *p).collect::<Vec<_>>())?;
+    let parts: Vec<i64> = wanted.iter().map(|(_, _, p)| *p).collect();
+    // An entry (not its outputs) looked up before the waves is read from the store by its key: the snapshot holds a
+    // run's entries only for what its waves look up (`admit_memo_entries`, decision 0117).
+    let mut frames = if rel.name == entry_rel(plan).name && !crate::code_rule_dsl::logic::profile::inside_waves() {
+        store.admit_parts_stored(&space, &rel, &parts)?
+    } else {
+        store.admit_parts_of(&space, &rel, &parts)?
+    };
     let mut out = Vec::new();
     let mut used = Vec::new();
     for (i, digest, part) in wanted {
@@ -506,7 +517,13 @@ pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Ve
             store.keep_frames(&space, &puts, &[], None)?;
             let parts: Vec<i64> = puts.iter().filter(|p| p.rel.name == "local").map(|p| p.part).collect();
             store.use_frame_parts(&space, &entry_rel(&plan), &parts, token, MEMO_RUNS)?;
-            store.use_frame_parts(&space, &outputs_rel(&plan), &parts, token, MEMO_RUNS)
+            store.use_frame_parts(&space, &outputs_rel(&plan), &parts, token, MEMO_RUNS)?;
+            // A path's earlier contents: its newest `MEMO_CONTENTS` kept (an edited file's entry each edit, 15 MB for
+            // one file of the 20, was kept `MEMO_RUNS` runs: 450 MB of one space).
+            for rel in [entry_rel(&plan), outputs_rel(&plan)] {
+                store.keep_newest_by_path(&space, &rel.name, MEMO_CONTENTS)?;
+            }
+            Ok(())
         }),
     );
 }

@@ -130,7 +130,7 @@ So every command-line edit counts each maintained relation from its postings (`c
 "counted here once, the first run it is maintained". That held only within one process.
 
 **The fix** (`retain/kept_stats.rs`):
-- **At write-back**, each kept relation's statistics are a part of its frame (part −1; its rows are part 0), under
+- **At write-back**, each kept relation's statistics are a part of its frame (part `i64::MIN`, `kept_stats::PART`; its rows are part 0, its levels −1), under
   its rows' digest, holding each name a run binds it as (`r`, `r__old`). A relation admitted with them at the same
   rows is not written again. No new store: the frames hold them as they hold the rows.
 - **At admission**, the part is admitted in the same batch as the rows (`Retained::load`). A relation whose part's

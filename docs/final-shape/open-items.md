@@ -3944,6 +3944,7 @@ document's rows come from its own file alone (`memo::document_of`), so for every
 its rows are this run's. The count arithmetic is kept for value documents, which several files hold. Both tests
 pass again.
 
+
 ## The big rocks of O125's cold run and edit step (found 2026-11-12)
 
 **Seen.** O125's replay has 74 Python files and 33,311 lines. The figures are CPU from span trees, summed over
@@ -4101,3 +4102,4 @@ long rules' orders and searches short ones it could keep.
 
 **Closure:** one O125 measurement of a search's fixed cost and its cost per candidate, in the build both run; both
 gates read `search_rows`, and `SEARCH_WORK` is its fixed part.
+

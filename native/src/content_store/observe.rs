@@ -307,6 +307,24 @@ impl Observer {
             .as_ref()
             .map(|k| k.meta.keys().filter(|k| k.starts_with("journal:")).filter_map(|k| k.splitn(3, ':').nth(2)).map(PathBuf::from).collect())
             .unwrap_or_default();
+        // The journal's streams for the roots the last runs watched, started now: their replays run while the process
+        // starts, before a run asks (decision 0105).
+        if journal_on()
+            && let (Some(k), Some(dir)) = (db.as_ref(), cookies.as_deref())
+        {
+            let roots: Vec<(PathBuf, String)> = stored_roots
+                .iter()
+                .filter_map(|r| {
+                    let v = super::journal::volume(r)?;
+                    match k.meta.get(&cursor_key(r, v))? {
+                        rusqlite::types::Value::Text(t) => Some((r.clone(), t.clone())),
+                        rusqlite::types::Value::Integer(i) => Some((r.clone(), i.to_string())),
+                        _ => None,
+                    }
+                })
+                .collect();
+            super::journal::prepare(&roots, dir);
+        }
         Observer { db, entries, dirty: Vec::new(), aliases, new_aliases: Vec::new(), canon, new_canon: Vec::new(), epoch, validate_every, counts: Counts::default(), cwd: std::env::current_dir().unwrap_or_default(), git: Vec::new(), roots: Vec::new(), flushes: 0, open: 0, stored_roots, cookies }
     }
 
@@ -506,6 +524,10 @@ impl Observer {
     /// asked of the journal again (`watch`).
     pub fn begin(&mut self) {
         self.git.clear();
+        // An outermost run: the journal is synchronised once for it, and the runs inside it share that.
+        if self.open == 0 {
+            super::journal::next_epoch();
+        }
         self.open += 1;
     }
 
