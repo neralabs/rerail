@@ -2502,3 +2502,17 @@ Blanket collection adds overhead: Python collection takes about 99 ms on the cur
 No additional production collection pass or automatic probing path is justified by these results.
 Retained statistics should follow normal typed facts and rule-defined caches, with population/revision keys and global limits.
 The README records supported semantics, index prerequisites, measurements, reproduction commands, and remaining heavy-tail limitations.
+
+## 2026-11-12 — Record the statistics result and overall status
+
+Recorded the bounded-statistics outcome in [the workplan status](workplan-status-2026-11-12.md).
+The experiment is complete. Production integration of random probing is not accepted by its results.
+Demanded-key counters are the strongest next candidate, subject to a demonstrated remaining bad plan and measured collection cost.
+The current captured plans are already optimal within the spike's supported orders.
+Cold probes add work on historical controls. Prior measurements help only with matching relation revisions and an explicit acquisition cost.
+
+The status separates completed production repairs, the latest qualification, and unfinished work.
+Selective replanning still lacks the requested 40–50 ms result.
+Conditional and scalar-domain estimates remain incomplete. Cold input processing still dominates much of the complete job.
+The latest qualified engine includes local integration `20644b585`, not every current sibling tip.
+No production code or acceptance ceiling changes in this documentation update.
