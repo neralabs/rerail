@@ -428,7 +428,8 @@ export async function probeDaemon(
   }
 }
 
-export async function lookupDaemon(home: string): Promise<DaemonLookup> {
+/** The daemon recorded in `home`, checked against reality ({@link DaemonLookup}); `probeTimeoutMs` bounds its health probe. */
+export async function lookupDaemon(home: string, probeTimeoutMs: number = PROBE_TIMEOUT_MS): Promise<DaemonLookup> {
   const stateFile = join(home, DAEMON_STATE_FILE);
   const state = await readDaemonState(stateFile);
   if (state === undefined) return { status: "absent" };
@@ -437,7 +438,7 @@ export async function lookupDaemon(home: string): Promise<DaemonLookup> {
     await rm(stateFile, { force: true });
     return { status: "absent" };
   }
-  const probe = await probeDaemon(state);
+  const probe = await probeDaemon(state, undefined, probeTimeoutMs);
   if (probe.status === "refused") return { status: "refused", state };
   if (probe.status === "unreachable") return { status: "unresponsive", state };
   if (probe.health.pid !== state.pid) {
