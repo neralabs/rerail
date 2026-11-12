@@ -67,6 +67,7 @@ pub mod maintain;
 pub mod supports;
 pub mod recursive_spike;
 pub mod retain;
+mod identity;
 pub mod keptstats;
 pub mod input_delta;
 pub mod bridge;
@@ -5920,6 +5921,18 @@ fn run_observed(
                     drop(s);
                     // A maintained relation's statistics as next run binds it (`r__old`): those of the relation it
                     // started as, patched by its delta; counted from its rows once, the first run it is maintained.
+                    if std::env::var_os("RERAIL_IDENTITY_MEASURE").is_some() {
+                        let now: Vec<(String, usize, Arc<crate::code_rule_dsl::logic::native::component::InRel>)> = rows.iter().map(|(r, w, h)| ((*r).clone(), *w, Arc::clone(h))).collect();
+                        let name_fields: rustc_hash::FxHashSet<i64> = ["python", "typescript", "tsx", "javascript", "php", "rust", "sql"]
+                            .iter()
+                            .filter_map(|l| crate::code_rule_dsl::language::dialect_by_label(l))
+                            .filter_map(|d| Some((crate::code_rule_dsl::language::tape_tag(d)?, d.kinds().field_id("name")?)))
+                            .map(|(tag, f)| i64::from(syntax::field_atom(tag, f)))
+                            .collect();
+                        let new_input = |r: &str| cross_inputs.iter().find(|(x, _)| x == r).map(|(_, s)| Arc::clone(s));
+                        let old_input = |r: &str| maintained.sources.iter().find(|(x, _, _)| *x == format!("{r}__old")).map(|(_, s, _)| Arc::clone(s));
+                        identity::measure(&cross.program, &now, &|r| bound_old.get(r).map(|(o, _)| Arc::clone(o)), &new_input, &old_input, &name_fields);
+                    }
                     if std::env::var_os("RERAIL_CUTOFF_MEASURE").is_some() {
                         let now: Vec<(String, usize, Arc<crate::code_rule_dsl::logic::native::component::InRel>)> = rows.iter().map(|(r, w, h)| ((*r).clone(), *w, Arc::clone(h))).collect();
                         retain::measure_cutoff(&cross.program, &cut, &now, &|r| bound_old.get(r).map(|(o, _)| Arc::clone(o)));

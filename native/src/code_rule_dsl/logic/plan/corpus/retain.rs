@@ -256,13 +256,13 @@ pub(in crate::code_rule_dsl) const TREE: [&str; 2] = ["node", "child"];
 /// The relations each stratum's rules read (atoms, aggregates' atoms and a native operator's inputs), its rules found
 /// by their heads in one pass over the program: a scan of every rule per stratum was 15% of a one-file run of the
 /// Python pack (16 k rules, 10 k strata).
-struct Reads<'a> {
+pub(in crate::code_rule_dsl) struct Reads<'a> {
     prog: &'a front::Program,
     by_head: HashMap<&'a str, Vec<&'a front::Rule>>,
 }
 
 impl<'a> Reads<'a> {
-    fn of(prog: &'a front::Program) -> Self {
+    pub(in crate::code_rule_dsl) fn of(prog: &'a front::Program) -> Self {
         let mut by_head: HashMap<&str, Vec<&front::Rule>> = HashMap::new();
         for r in &prog.rules {
             by_head.entry(r.head.rel.as_str()).or_default().push(r);
@@ -270,7 +270,7 @@ impl<'a> Reads<'a> {
         Reads { prog, by_head }
     }
 
-    fn of_scc(&self, scc: &BTreeSet<String>) -> BTreeSet<String> {
+    pub(in crate::code_rule_dsl) fn of_scc(&self, scc: &BTreeSet<String>) -> BTreeSet<String> {
         let rules = || scc.iter().filter_map(|rel| self.by_head.get(rel.as_str())).flatten();
         let mut out: BTreeSet<String> = rules().flat_map(|r| &r.body).filter_map(|l| l.atom().map(|a| a.rel.to_string())).collect();
         // A `nearest` literal climbs the tree: it reads `node` and `child`, which an edit changes.
