@@ -148,6 +148,14 @@ declare module "*/ui/state.js" {
     sessionDetail: Map<string, SessionDetail>;
     missing: boolean;
     disconnected: boolean;
+    /** `/healthz` as the daemon last answered it; `null` until it answers once. */
+    health: {
+      version: string;
+      model: { ok: boolean; message: string };
+      native: { ok: true; kernelVersion: string } | { ok: false; error: string };
+    } | null;
+    updatedAt: number;
+    loaded: boolean;
   };
   export function setScope(scope: { repository?: string; checkout?: string } | null): void;
   export const ui: { filter: string; query: string; range: number; actRule: string | null; histOutcome: "all" | "steered" | "logged"; view: string; settingUp: boolean; selectedSession: string | null; panel: object | null };
@@ -296,6 +304,11 @@ declare module "*/ui/views/create.js" {
     attachedPacks: ReadonlyMap<string, unknown>,
     packs: ReadonlyArray<{ id: string; name: string }>,
   ): CreateSuggestion[];
+}
+
+declare module "*/ui/frame/topbar.js" {
+  /** The status pill: its tone (`""`, `"warn"` or `"down"`), its words and its tooltip. */
+  export function headerStatus(): { cls: "" | "warn" | "down"; text: string; title: string; dot?: false };
 }
 
 declare module "*/ui/first-open.js" {

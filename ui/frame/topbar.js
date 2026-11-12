@@ -14,7 +14,7 @@ const $ = id => document.getElementById(id);
  * One indicator for the daemon and this repo: "Live" while the polls come in, "Updated
  * 3 min ago" when the page has fallen behind (a hidden tab, a slow answer), amber when Rerail is not on here or the
  * page is reconnecting, red once the daemon has not answered for a while or reports its model broken (the file at
- * fault named). The repo is in the pill beside the wordmark and the install date in Settings: the bar keeps only the
+ * fault named) or its engine unavailable (the reason in the tooltip). The repo is in the pill beside the wordmark and the install date in Settings: the bar keeps only the
  * dot and how fresh the data is. */
 
 const DOWN_AFTER_MS = 30_000;
@@ -34,7 +34,7 @@ function updatedAgo(at) {
 /* Labels stay short and leave out the repo (it is in the pill); the tooltip says what is known and what to do. Any
  * failed poll that is not the repository's 404 counts as disconnected, so the words claim only that the daemon did not
  * answer, not why. Only running sessions lose steering: the hook that starts a session may start the daemon. */
-function status() {
+export function headerStatus() {
   if (!data.loaded && !data.disconnected && !data.accessRequired) return { cls: "", text: "Connecting…", title: `Waiting for the local daemon at ${location.origin}.` };
   const rel = data.updatedAt ? updatedAgo(data.updatedAt) : "never";
   const version = data.health ? ` ${data.health.version}` : "";
@@ -56,6 +56,12 @@ function status() {
     return { cls: "down", text: `Model: ${model.message}`,
       title: "The engine's model files do not match model/manifest.json, so no session can attach. Reinstall Rerail, or in a source checkout run git lfs install && git lfs pull and rebuild; then run rerail daemon stop and rerail daemon start." };
   }
+  // A kernel that did not load, or a Rerail with no content store, runs no code rule in any repo.
+  const engine = data.health?.native;
+  if (engine && !engine.ok) {
+    return { cls: "down", text: "Engine unavailable",
+      title: `${engine.error}. No code rule runs. Reinstall Rerail with npx @neralabs/rerail setup, or in a source checkout rebuild it; then run rerail daemon stop and rerail daemon start.` };
+  }
   if (ui.scope === null) return { cls: "", dot: false, text: "No repo selected", title: "Open the dashboard from a session, or pick a repo." };
   if (data.missing) return { cls: "warn", text: "Repo not found", title: "The daemon has no record of this checkout. Run /rerail-start in a session there, or pick another repo." };
   if (data.repository?.setUp === false) {
@@ -70,7 +76,7 @@ function status() {
 
 /** The status pill; also run on a timer, since "Updated 2 min ago" ages without a poll. */
 export function renderStatus() {
-  const s = status(), el = $("status");
+  const s = headerStatus(), el = $("status");
   setAttr(el, "class", `status${s.cls ? ` ${s.cls}` : ""}`);
   setAttr(el.querySelector(".dot"), "hidden", s.dot === false);
   setText($("statusText"), s.text);

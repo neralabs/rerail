@@ -441,8 +441,9 @@ The following lines are what this start wrote to `~/.rerail/daemon.log`, and say
 
 ### `Engine: unavailable: … so it has no content store`
 
-`rerail status` says this when Rerail runs from a package in no Git checkout and outside `~/.rerail/versions`, such as
-one `npm install` put in a folder of its own. No code rule runs there, and every audit fails. Install a published
+`rerail status` says this, and the dashboard header `Engine unavailable`, when Rerail runs from a package in no Git
+checkout and outside `~/.rerail/versions`, such as one `npm install` put in a folder of its own. No code rule runs
+there, and every audit fails. Install a published
 version with `npx @neralabs/rerail setup`, or run a checkout's build with `just rerail-dev --install-bridge`
 ([Developing from a checkout](how-setup-works.md#developing-from-a-checkout)).
 
