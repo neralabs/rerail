@@ -40,8 +40,11 @@ are swept.
    staging left by a dead process. A binary that registers no language (a lower crate's) cannot run phase 0: its
    template is an empty store, and it says so.
 
-3. **A copy is a new store.** It gets an identity of its own (`store_identity`), as a store made again at a path
-   does, so nothing the process keys by identity takes it for the template or for another test's copy.
+3. **A copy is a new store, and a copy is only a clone.** The template is published in WAL mode and with no
+   identity (`store_identity` empty): it is no store until copied. At its first open a copy takes an identity of its
+   own (`ContentStore::initialize`, on a writer's thread, as a new store's schema is written), so nothing the process
+   keys by identity takes it for another test's copy. The copies are in `$TMPDIR/rerail-test-stores/`, so sweeping
+   them reads only theirs.
 
 4. **A store removed while the process goes on is forgotten** (`ContentStore::forget`, `observe::forget`): the frames
    the process read of it, its identity, and its observer. Each run's end waits on every observer the process holds,
@@ -78,4 +81,9 @@ Instructions retired, peak memory and the load are from `/usr/bin/time -l`.
 - **The rest is per test, about 0.65 G instructions.** A test's first run on a new store opens it, makes its observer
   store, and finds the process's caches of that store cold. One shared store used to carry that warmth from test to
   test. That warmth is the cross-test sharing this decision removes, so the cost is intrinsic, not overhead.
-- **Making the template** costs about 2 s of CPU, once per build. Its copies are clones.
+- **Making the template** costs about 2 s of CPU, once per build.
+- **A copy** (`benchmark_test_store_copy`, `benchmark_test_store_copy_steps`): 318 µs and 3.3 M instructions with
+  its removal, of which the clone is 66–104 µs. Writing the identity through a connection of its own cost 1,056 µs
+  and 8.5 M instructions (SQLite parsing the store's schema a second time); it is now part of the first open, which
+  every test pays anyway (2.7 ms, 14.2 M). In all, about 3 ms and 17.5 M instructions a test, against 3.6 ms and
+  24 M before: about 3% of what a test's first run on a new store costs.

@@ -11,7 +11,8 @@
 //! `VACUUM INTO` and a rename, so a reader never sees half of one. A binary that registers no language (a lower
 //! crate's) cannot run phase 0: its template is an empty store, and it says so once.
 //!
-//! A copy is a new store: it gets an identity of its own (`store_identity`), as a store created again does.
+//! A copy is a new store: the template has no identity, and a copy takes its own (`store_identity`) at its first open,
+//! as a store created does. So a copy is a clone and nothing more.
 use std::path::{Path, PathBuf};
 
 /// Where templates are kept, one per build.
@@ -19,8 +20,10 @@ fn templates() -> PathBuf {
     std::env::temp_dir().join("rerail-store-templates")
 }
 
-/// A test's directories: `rerail-test-store-<pid>-<n>`.
-const COPY_PREFIX: &str = "rerail-test-store-";
+/// Where the tests' stores are: one directory each, `<pid>-<n>`, so that sweeping them reads only theirs.
+fn copies() -> PathBuf {
+    std::env::temp_dir().join("rerail-test-stores")
+}
 
 /// Another build's template unused this long is removed: every build of the engine has its own (an edit is a new
 /// build), so they are many while one works.
@@ -70,6 +73,11 @@ fn make(path: &Path) {
     let published = path.with_extension(format!("{}.{}.tmp", std::process::id(), nanos()));
     let db = rusqlite::Connection::open(&store).expect("the template's staging store");
     db.execute("VACUUM INTO ?1", [published.to_string_lossy()]).expect("the template, written whole");
+    drop(db);
+    // Published as a copy needs it: in WAL mode (a store's first open would switch it), and with no identity (each
+    // copy takes its own at its first open, `ContentStore::initialize`), so that a copy is a clone and nothing more.
+    let db = rusqlite::Connection::open(&published).expect("the published template");
+    db.execute_batch("DELETE FROM store_identity; PRAGMA journal_mode=WAL;").expect("the template, made ready to copy");
     drop(db);
     std::fs::rename(&published, path).expect("the template, published");
     let _ = std::fs::remove_dir_all(&staging);
@@ -150,21 +158,19 @@ pub fn open_under(dir: &Path) -> usize {
         .count()
 }
 
-/// A copy of the template, in a directory of its own.
+/// A copy of the template, in a directory of its own: a clone, which becomes a store of its own (its identity) at its
+/// first open.
 pub fn copy() -> Store {
+    let template = template();
     static SWEPT: std::sync::Once = std::sync::Once::new();
     SWEPT.call_once(sweep_copies);
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!("{COPY_PREFIX}{}-{n}", std::process::id()));
+    let dir = copies().join(format!("{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("a test store's directory");
     let path = dir.join("store.sqlite");
-    clone_file(template(), &path).expect("a copy of the template");
-    // A new store: an identity of its own.
-    rusqlite::Connection::open(&path)
-        .and_then(|db| db.execute("UPDATE store_identity SET id = random() WHERE singleton = 1", []))
-        .expect("the copy's identity");
+    clone_file(template, &path).expect("a copy of the template");
     Store { dir, path }
 }
 
@@ -196,9 +202,9 @@ pub(super) fn is_own(path: &Path) -> bool {
 /// Removes the directories of test processes that have exited.
 fn sweep_copies() {
     let me = std::process::id();
-    for entry in std::fs::read_dir(std::env::temp_dir()).into_iter().flatten().flatten() {
+    for entry in std::fs::read_dir(copies()).into_iter().flatten().flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        let Some(pid) = name.strip_prefix(COPY_PREFIX).and_then(|rest| rest.split('-').next()).and_then(|p| p.parse::<i32>().ok()) else { continue };
+        let Some(pid) = name.split('-').next().and_then(|p| p.parse::<i32>().ok()) else { continue };
         // SAFETY: signal 0 sends nothing; it asks whether the process exists.
         if pid as u32 != me && unsafe { libc::kill(pid, 0) } != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
             let _ = std::fs::remove_dir_all(entry.path());

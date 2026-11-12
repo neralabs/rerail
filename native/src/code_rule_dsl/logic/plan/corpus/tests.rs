@@ -635,7 +635,7 @@ fn a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test() {
     let count = |path: &std::path::Path, sql: &str| -> i64 { rusqlite::Connection::open(path).unwrap().query_row(sql, [], |r| r.get(0)).unwrap() };
     let tapes = count(&template, "SELECT count(*) FROM tape_objects");
     assert!(tapes > 0, "the template holds the library's tapes");
-    let identity = count(&template, "SELECT id FROM store_identity");
+    assert_eq!(count(&template, "SELECT count(*) FROM store_identity"), 0, "the template is no store until copied");
     let probe = |n: usize| {
         let template = template.clone();
         // A thread named as the harness names a test's.
@@ -648,19 +648,90 @@ fn a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test() {
             assert_eq!(std::fs::read_to_string(out.join("defs.csv")).unwrap().trim(), "f");
             let path = super::tape_cache_path().unwrap();
             assert_ne!(path, template);
-            assert!(path.to_string_lossy().contains("rerail-test-store-"), "{}", path.display());
+            assert!(path.to_string_lossy().contains("rerail-test-stores"), "{}", path.display());
             let count = |sql: &str| -> i64 { rusqlite::Connection::open(&path).unwrap().query_row(sql, [], |r| r.get(0)).unwrap() };
             assert!(count("SELECT count(*) FROM tape_objects") > tapes, "the library's tapes and the test's own");
-            assert_ne!(count("SELECT id FROM store_identity"), identity, "a copy is a store of its own");
-            path.parent().unwrap().to_path_buf()
+            (path.parent().unwrap().to_path_buf(), count("SELECT id FROM store_identity"))
         }).unwrap()
     };
     let (a, b) = (probe(0), probe(1));
-    let (a, b) = (a.join().unwrap(), b.join().unwrap());
+    let ((a, ia), (b, ib)) = (a.join().unwrap(), b.join().unwrap());
     assert_ne!(a, b, "two tests, two stores");
+    assert_ne!(ia, ib, "each copy took an identity of its own");
     for dir in [a, b] {
         assert!(!dir.exists(), "{} is removed with its test", dir.display());
         #[cfg(target_vendor = "apple")]
         assert_eq!(super::test_store::open_under(&dir), 0, "nothing of {} is held open after its test", dir.display());
     }
+}
+
+/// What a test's store costs to make and remove (`test_store::copy`), the template already made: wall, CPU and the
+/// process's instructions per copy, over 200.
+#[test]
+#[ignore = "a benchmark: the cost of a test's store"]
+fn benchmark_test_store_copy() {
+    let _ = super::test_store::template();
+    drop(super::test_store::copy());
+    let n = 200;
+    let (i0, _) = rerail_compiler::native_cpu_codegen::retired();
+    let cpu0 = super::usage();
+    let t = std::time::Instant::now();
+    for _ in 0..n {
+        let store = super::test_store::copy();
+        assert!(store.path().exists());
+    }
+    let wall = t.elapsed().as_secs_f64();
+    let cpu1 = super::usage();
+    let (i1, _) = rerail_compiler::native_cpu_codegen::retired();
+    eprintln!(
+        "test store copy: {:.0} µs wall, {:.0} µs user+sys, {:.2} M instructions, each (template {} bytes)",
+        wall * 1e6 / n as f64,
+        ((cpu1.0 - cpu0.0) + (cpu1.1 - cpu0.1)) * 1e6 / n as f64,
+        (i1 - i0) as f64 / 1e6 / n as f64,
+        std::fs::metadata(super::test_store::template()).unwrap().len()
+    );
+}
+
+/// `benchmark_test_store_copy`'s steps apart: the clone, the identity's write (as `copy` makes it, and without a
+/// journal or a sync), a first open as a store, and the removal.
+#[test]
+#[ignore = "a benchmark: the steps of a test's store"]
+fn benchmark_test_store_copy_steps() {
+    use std::os::unix::ffi::OsStrExt as _;
+    let template = super::test_store::template().to_path_buf();
+    let base = tempfile::tempdir().unwrap();
+    let n = 100;
+    let step = |label: &str, f: &mut dyn FnMut(usize)| {
+        let (i0, _) = rerail_compiler::native_cpu_codegen::retired();
+        let t = std::time::Instant::now();
+        for k in 0..n {
+            f(k);
+        }
+        let (i1, _) = rerail_compiler::native_cpu_codegen::retired();
+        eprintln!("{label:<44} {:>7.0} µs wall {:>7.2} M instructions", t.elapsed().as_secs_f64() * 1e6 / n as f64, (i1 - i0) as f64 / 1e6 / n as f64);
+    };
+    let path = |round: &str, k: usize| base.path().join(format!("{round}-{k}.sqlite"));
+    let clone = |to: &std::path::Path| {
+        let a = std::ffi::CString::new(template.as_os_str().as_bytes()).unwrap();
+        let b = std::ffi::CString::new(to.as_os_str().as_bytes()).unwrap();
+        // SAFETY: NUL-terminated paths that outlive the call.
+        assert_eq!(unsafe { libc::clonefile(a.as_ptr(), b.as_ptr(), 0) }, 0);
+    };
+    step("clonefile", &mut |k| clone(&path("a", k)));
+    step("identity: UPDATE (journal, full sync)", &mut |k| {
+        rusqlite::Connection::open(path("a", k)).unwrap().execute("UPDATE store_identity SET id = random() WHERE singleton = 1", []).unwrap();
+    });
+    step("clonefile again", &mut |k| clone(&path("b", k)));
+    step("identity: UPDATE, journal off, no sync", &mut |k| {
+        let db = rusqlite::Connection::open(path("b", k)).unwrap();
+        db.execute_batch("PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; UPDATE store_identity SET id = random() WHERE singleton = 1;").unwrap();
+    });
+    step("first open as a store (ContentStore::open)", &mut |k| drop(crate::content_store::ContentStore::open(&path("b", k)).unwrap()));
+    step("remove the file and its sidecars", &mut |k| {
+        for p in std::fs::read_dir(base.path()).unwrap().flatten().map(|e| e.path()) {
+            if p.file_name().unwrap().to_string_lossy().starts_with(&format!("b-{k}.")) {
+                let _ = std::fs::remove_file(p);
+            }
+        }
+    });
 }
