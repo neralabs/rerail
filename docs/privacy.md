@@ -219,8 +219,9 @@ Three commands remove data, each reaching further.
 <summary>Exactly what each command removes</summary>
 
 - **`rerail reset`** in a repository deletes its history (sessions, events, steer feedback, audits) and rewrites the
-  database so it cannot be recovered. Rules, settings, `.rerail/sessions/`, the content cache and daemon log stay. All
-  writes zero freed space (`secure_delete`).
+  database so it cannot be recovered. Rules, settings, `.rerail/sessions/`, the content cache and daemon log stay.
+  Writes zero freed space (`secure_delete`), except the one-time move of audits' rule provenance after an update: the
+  space it frees holds copies of provenance the database keeps, and the `VACUUM` after the move drops them.
 - **`rerail install --remove`** disconnects agents, stops the daemon, removes Rerail from `PATH`, and **moves** the
   database to `~/.rerail-clean-YYYYMMDD`.
 - **`rerail install --remove --delete-data`** deletes the databases, every `~/.rerail-clean-*` backup, the content cache

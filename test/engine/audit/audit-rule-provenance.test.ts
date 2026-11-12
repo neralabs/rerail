@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFileSync, statfsSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statfsSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -310,6 +310,27 @@ describe("audit rule provenance", () => {
       store.close();
       older.close();
     }
+  });
+
+  it("writes no zeroed copy of what the move frees through the WAL", async () => {
+    const path = await fileOfTheBuildBefore();
+    const provenance = provenanceOf("/home/dev/app", 200);
+    writeInlineAudits(path, Array.from({ length: 30 }, () => provenance));
+    const wal = (): number => (existsSync(`${path}-wal`) ? statSync(`${path}-wal`).size : 0);
+
+    let largest = 0;
+    const moved = await move(path, {
+      perBatch: 10,
+      pause: () => {
+        largest = Math.max(largest, wal());
+        return Promise.resolve();
+      },
+    });
+
+    // The WAL holds the pages the batches changed. Zeroing what they freed would write each batch's 10 copies again.
+    expect(moved).toBe(30);
+    expect(largest).toBeGreaterThan(0);
+    expect(largest).toBeLessThan(10 * Buffer.byteLength(JSON.stringify(provenance)));
   });
 
   it("gives the space the move freed back to the disk once it ends, and no later move rewrites the file", async () => {
