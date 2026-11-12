@@ -1062,15 +1062,19 @@ async function gitReads(run: () => Promise<unknown>): Promise<{ heads: number; e
   const named = (name: string) => asyncGitCalls.args.filter(args => args.includes(name)).length;
   return { heads: named("--verify"), entries: named("--unmerged") };
 }
-/**
- * The Git processes `run` started to read what a checkout writes line breaks by: `check-attr`, and `config` for
- * `core.autocrlf` or `core.eol`. Each is named by its command and arguments past `-C <folder>`.
- */
-async function lineEndingReads(run: () => Promise<unknown>): Promise<string[]> {
+/** The Git processes `run` started that `pattern` matches, each named by its command and arguments past `-C <folder>`. */
+async function gitCommands(run: () => Promise<unknown>, pattern: RegExp): Promise<string[]> {
   asyncGitCalls.args.length = 0;
   await run();
-  const commands = asyncGitCalls.args.map(args => args.slice(args.indexOf("-C") + 2).join(" "));
-  return commands.filter(command => /^check-attr |^config .*core\\?\.(?:autocrlf|eol)/u.test(command));
+  return asyncGitCalls.args.map(args => args.slice(args.indexOf("-C") + 2).join(" ")).filter(command => pattern.test(command));
+}
+/** The Git processes `run` started to read what a checkout writes line breaks by: `check-attr`, and `config` for `core.autocrlf` or `core.eol`. */
+async function lineEndingReads(run: () => Promise<unknown>): Promise<string[]> {
+  return await gitCommands(run, /^check-attr |^config .*core\\?\.(?:autocrlf|eol)/u);
+}
+/** The Git processes `run` started to read objects: blobs, and which object ids the repository holds. */
+async function objectReads(run: () => Promise<unknown>): Promise<string[]> {
+  return await gitCommands(run, /^cat-file /u);
 }
 /**
  * A repository with a checkout in `lib` that owns its files: a repository of its own, or with `linked` a worktree of one
@@ -1551,6 +1555,18 @@ describe("CodeRuleBridge and Git's own writes under core.autocrlf", () => {
 });
 
 describe("CodeRuleBridge and Git's own writes", () => {
+  it("reads Git's blobs for a shell edit and whether a branch could hold its text by one Git process", async () => {
+    const root = await twoBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    // The first edit's text before it was never captured, so Git's blobs are read for that too (`recoverFromGit`).
+    await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nmine\n"));
+    expect(await objectReads(() => shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nmine\nmore\n")))).toEqual(["cat-file --batch"]);
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/a.py", language: "python", previousText: "old\n", generatedText: "old\nmine\n" }],
+      [{ path: "src/a.py", language: "python", previousText: "old\nmine\n", generatedText: "old\nmine\nmore\n" }],
+    ]);
+  });
+
   it.each([
     ["checkout", ["checkout", "--quiet", "other"]],
     ["switch", ["switch", "--quiet", "other"]],

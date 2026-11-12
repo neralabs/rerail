@@ -11,7 +11,7 @@ vi.mock("node:child_process", { spy: true });
 import {
   findGit, gitBehindLauncher, gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitCrlfPaths, gitExcludeFiles, gitExecutable, gitHead, gitHome,
   gitInstalled, gitModifiedOrUntrackedPaths, GitReads, GitUnavailableError, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds,
-  readGitBlobs, runGit, searchGitFrom,
+  readGitBlobs, readGitObjects, runGit, searchGitFrom,
 } from "../../src/engine/git.js";
 import { processState } from "../../src/engine/process-liveness.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
@@ -86,6 +86,35 @@ describe("readGitBlobIds", () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-git-ids-"));
     roots.push(root);
     await expect(readGitBlobIds(root, ["HEAD:./a.py"])).resolves.toEqual(new Map());
+  });
+});
+
+describe("readGitObjects", () => {
+  it("reads what readGitBlobs and readGitBlobIds read, by one Git process", async () => {
+    const root = await repository({ "big.py": "x".repeat(5_000), "small.py": "print(1)\n" });
+    await mkdir(join(root, "dir"));
+    await writeFile(join(root, "dir", "c.py"), "3\n");
+    git(root, "add", ".");
+    git(root, "commit", "--quiet", "-m", "more");
+    await writeFile(join(root, "small.py"), "print(2)\n");
+    git(root, "add", "small.py");
+    const [big, small, tree] = ["HEAD:big.py", "HEAD:small.py", "HEAD:dir"].map(revision => git(root, "rev-parse", revision).trim());
+    const revisions = [":./big.py", ":./small.py", "HEAD:./small.py", ":./missing.py", "HEAD:./dir", "HEAD:./dir/c.py"];
+    // A blob over the size limit is held all the same; a tree, a missing object and a name that is no id are not.
+    const ids = [big!, small!, tree!, "0".repeat(40), "HEAD:./small.py"];
+    vi.mocked(spawn).mockClear();
+    const read = await readGitObjects(root, revisions, ids, { maxBlobBytes: 1_000 });
+    expect(vi.mocked(spawn)).toHaveBeenCalledTimes(1);
+    expect(read.blobs).toEqual(await readGitBlobs(root, revisions, { maxBlobBytes: 1_000 }));
+    expect([...read.held].sort()).toEqual([big!, small!].sort());
+    expect([...read.held].sort()).toEqual([...(await readGitBlobIds(root, ids.slice(0, 4))).keys()].sort());
+  });
+
+  it("reads nothing outside a repository", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-git-objects-"));
+    roots.push(root);
+    const read = await readGitObjects(root, ["HEAD:./a.py"], ["0".repeat(40)], { maxBlobBytes: 1_000 });
+    expect([read.blobs, read.held]).toEqual([new Map(), new Set()]);
   });
 });
 

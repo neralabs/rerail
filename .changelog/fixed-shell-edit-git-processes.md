@@ -1,0 +1,1 @@
+Rerail starts four fewer Git processes to tell a shell edit from Git's own writes: it asks how a checkout writes line breaks only for a file that holds a committed text in Windows line breaks, and reads Git's copies of the file and checks the branches for its text with one process.

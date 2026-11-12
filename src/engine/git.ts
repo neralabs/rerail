@@ -868,18 +868,59 @@ export async function readGitBlobs(
   if (asked.length === 0) return blobs;
   await streamGit(cwd, ["cat-file", "--batch"], {
     input: asked.map(revision => `${revision}\n`).join(""),
-    onData: batchReader(asked, options.maxBlobBytes, blobs),
+    onData: batchReader(asked, (_index, type, size) => type === "blob" && size <= options.maxBlobBytes, blobs),
     ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
     signal: options.signal,
   });
   return blobs;
 }
 
+/** What {@link readGitObjects} read. */
+export interface GitObjects {
+  /** The content of each revision asked for that names a blob, as {@link readGitBlobs} reads it. */
+  readonly blobs: ReadonlyMap<string, Buffer>;
+  /** The object ids asked for that name a blob the repository holds, as {@link readGitBlobIds} finds them. */
+  readonly held: ReadonlySet<string>;
+}
+
 /**
- * Reads `git cat-file --batch` output for `asked`, chunk by chunk, into `blobs`: each blob of at most `maxBlobBytes`,
- * under the revision that asked for it.
+ * {@link readGitBlobs} for `revisions` and {@link readGitBlobIds} for `ids` (object ids, which name themselves) by one
+ * `git cat-file --batch` instead of two Git processes. Git prints the body of each blob an id names, which is skipped as
+ * it streams past; a blob counts as held whatever its size. Without Git, outside a repository or past the timeout, what
+ * Git printed before it stopped is kept, as each of those reads keeps it.
  */
-function batchReader(asked: readonly string[], maxBlobBytes: number, blobs: Map<string, Buffer>): (chunk: Buffer) => void {
+export async function readGitObjects(
+  cwd: string,
+  revisions: readonly string[],
+  ids: readonly string[],
+  options: GitReadOptions & { maxBlobBytes: number },
+): Promise<GitObjects> {
+  const askedRevisions = revisions.filter(revision => !/[\r\n]/u.test(revision));
+  const askedIds = ids.filter(id => /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u.test(id));
+  const blobs = new Map<string, Buffer>();
+  const held = new Set<string>();
+  const asked = [...askedRevisions, ...askedIds];
+  if (asked.length === 0) return { blobs, held };
+  const keep = (index: number, type: string, size: number): boolean => {
+    if (index < askedRevisions.length) return type === "blob" && size <= options.maxBlobBytes;
+    if (type === "blob") held.add(asked[index]!);
+    return false;
+  };
+  await streamGit(cwd, ["cat-file", "--batch"], {
+    input: asked.map(revision => `${revision}\n`).join(""), onData: batchReader(asked, keep, blobs), signal: options.signal,
+  });
+  return { blobs, held };
+}
+
+/**
+ * Reads `git cat-file --batch` output for `asked`, chunk by chunk, into `blobs`: each object `keep` keeps, told its
+ * place in `asked`, its type and its size, under the revision that asked for it.
+ */
+function batchReader(
+  asked: readonly string[],
+  keep: (index: number, type: string, size: number) => boolean,
+  blobs: Map<string, Buffer>,
+): (chunk: Buffer) => void {
   let next = 0;
   let header: Buffer[] = [];
   let body: BatchBody | undefined;
@@ -907,11 +948,11 @@ function batchReader(asked: readonly string[], maxBlobBytes: number, blobs: Map<
       // `<oid> <type> <size>` then the object and a newline; anything else (`<revision> missing`) has no body.
       const fields = Buffer.concat(header).toString("utf8").split(" ");
       header = [];
-      const revision = asked[next++];
+      const index = next++;
+      const revision = asked[index];
       if (revision === undefined || fields.length !== 3 || !/^[0-9a-f]+$/u.test(fields[0]!)) continue;
       const size = Number(fields[2]);
-      const kept = fields[1] === "blob" && size <= maxBlobBytes ? [] : undefined;
-      body = { revision, size, kept, remaining: size + 1 };
+      body = { revision, size, kept: keep(index, fields[1]!, size) ? [] : undefined, remaining: size + 1 };
     }
   };
 }
