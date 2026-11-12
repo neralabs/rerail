@@ -3,13 +3,14 @@
  * physical git top-level, and belongs to one repository: the repository of another checkout of the same clone, else
  * the one its `origin` (or sole) remote names, else a repository of its own keyed by its clone id.
  */
+import { readFileSync, statSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, parse } from "node:path";
+import { dirname, join, parse, resolve } from "node:path";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { physicalPath, storedPath, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
-import { gitExecutable, GitUnavailableError } from "../git.js";
+import { gitExecutable, GitUnavailableError, runGit } from "../git.js";
 import type { CheckoutContext, CheckoutRecord, RepositoryKey, RepositoryRecord, RepositoryStatus } from "./repository-model.js";
 import {
   normalizeRemoteAddress,
@@ -21,7 +22,7 @@ import {
   worktreeRegistry,
   type RepositoryIdentityLocation,
 } from "./repository-identity.js";
-import { checkouts, repositories, ruleSettings, sessions } from "../storage/schema.js";
+import { checkouts, repositories, ruleSettings } from "../storage/schema.js";
 
 type Reader = Pick<RerailDatabase, "select">;
 type Writer = Pick<RerailDatabase, "select" | "insert" | "update" | "delete">;
@@ -392,26 +393,117 @@ export function repositoryHistoryIds(repository: RepositoryListing): string[] {
 }
 
 /**
- * Whether Git still lists a checkout as a worktree of its clone, for one pass over the recorded checkouts; true where
- * Git can't say (outside Git, no Git). Every worktree a listing names is kept for the pass, so Git is asked once per
- * clone whose checkouts it all lists, and {@link worktreeRegistry} asks Git again only once the clone's registry has
- * changed.
+ * What one pass learns of a recorded checkout from its folder, without running Git:
+ * - `{ commonDirectory }`: a checkout of the clone whose common Git folder that is ({@link gitEntry}), which stays;
+ * - `unlisted`: no checkout's top level now, as its folder, its `.git` entry or the Git folder that entry names is gone,
+ *   which stays only while the registry of its clone names it ({@link unlistedByTheirClones});
+ * - `unknown`: the folder gives no answer, or its `.git` entry can't be read, which stays.
  */
-function gitWorktreeListing(): (checkoutPath: string) => boolean {
-  const listed = new Set<string>();
-  return checkoutPath => {
-    if (listed.has(checkoutPath)) return true;
-    let registry;
-    try {
-      registry = worktreeRegistry(checkoutPath);
-    } catch (error) {
-      if (error instanceof GitUnavailableError) return true;
-      throw error;
-    }
-    if (registry === undefined) return true;
-    for (const worktree of registry.worktrees) listed.add(storedPath(worktree));
-    return listed.has(checkoutPath);
-  };
+type OnDisk = { readonly commonDirectory: string } | "unlisted" | "unknown";
+
+interface LookedAt {
+  readonly path: string;
+  readonly cloneId: string;
+  readonly onDisk: OnDisk;
+}
+
+/**
+ * What the `.git` entry at the top of `checkoutPath` makes it, read as Git reads it: a checkout of its clone while the
+ * entry names a Git folder that is there; no checkout's top level once the entry, or the Git folder it names, is gone,
+ * as after `git worktree prune`; unknown where the entry can't be read, since Git can't read it either.
+ */
+function gitEntry(checkoutPath: string): OnDisk {
+  const entry = join(checkoutPath, ".git");
+  let gitFolder: string;
+  try {
+    // A `.git` file holds `gitdir: <path>`, relative to the checkout or absolute; Git refuses any other.
+    const named = statSync(entry).isDirectory() ? entry : /^gitdir: (.+)/u.exec(readFileSync(entry, "utf8"))?.[1]?.trim();
+    if (named === undefined) return "unknown";
+    gitFolder = resolve(checkoutPath, named);
+  } catch (error) {
+    return missing(error) ? "unlisted" : "unknown";
+  }
+  return gitFolderClone(gitFolder);
+}
+
+/**
+ * The clone of a Git folder a `.git` entry names, by its common Git folder: the one a linked worktree's names in
+ * `commondir`, else the folder itself (a clone's own, a submodule's, a `--separate-git-dir` clone's), whose
+ * `git worktree list` names the Git folder and not the checkout. `unlisted` once the folder is gone.
+ */
+function gitFolderClone(gitFolder: string): OnDisk {
+  try {
+    if (!statSync(gitFolder).isDirectory()) return "unknown";
+  } catch (error) {
+    return missing(error) ? "unlisted" : "unknown";
+  }
+  let commonDirectory = gitFolder;
+  try {
+    commonDirectory = resolve(gitFolder, readFileSync(join(gitFolder, "commondir"), "utf8").trim());
+  } catch (error) {
+    if (!missing(error)) return "unknown";
+  }
+  return { commonDirectory: storedPath(commonDirectory) };
+}
+
+/**
+ * The paths of `looked` that are no checkout's top level and that the registry of their clone does not name, as Git
+ * leaves them after `git worktree remove`, `prune` or `move`. Git runs in a checkout of the clone that is on disk, once
+ * per clone. Where none is, or Git gives no answer, the clone's checkouts stay. So do those of a clone whose checkouts
+ * on disk read more than one common Git folder: a copy made with its `.git` keeps the clone id but registers its own
+ * worktrees, so neither registry speaks for the other's. The checkout Git runs in stays, so the clone keeps a recorded
+ * checkout and the sessions recorded under its id stay in its repository's history ({@link repositoryHistoryIds}).
+ */
+function unlistedByTheirClones(looked: readonly LookedAt[]): string[] {
+  const clones = new Map<string, Map<string, string>>();
+  for (const { path, cloneId, onDisk } of looked) {
+    if (typeof onDisk !== "object") continue;
+    const folders = clones.get(cloneId) ?? new Map<string, string>();
+    if (!folders.has(onDisk.commonDirectory)) folders.set(onDisk.commonDirectory, path);
+    clones.set(cloneId, folders);
+  }
+  const listings = new Map<string, ReadonlySet<string> | undefined>();
+  return looked.filter(row => row.onDisk === "unlisted" && !listedInClone(row.path, clones.get(row.cloneId), listings)).map(row => row.path);
+}
+
+/**
+ * Whether `path` may still be a checkout of the clone whose common Git folders on disk are `folders`, each with a
+ * checkout in it; `listings` keeps each folder's answer for the pass.
+ */
+function listedInClone(
+  path: string,
+  folders: ReadonlyMap<string, string> | undefined,
+  listings: Map<string, ReadonlySet<string> | undefined>,
+): boolean {
+  const only = folders?.size === 1 ? [...folders][0] : undefined;
+  if (only === undefined) return true;
+  const [commonDirectory, checkout] = only;
+  if (!listings.has(commonDirectory)) listings.set(commonDirectory, worktreesListedIn(checkout, commonDirectory));
+  const listed = listings.get(commonDirectory);
+  return listed === undefined || listed.has(path);
+}
+
+/**
+ * The checkouts `git worktree list` names when run in `checkout`, a checkout of the clone whose common Git folder is
+ * `commonDirectory`, as Rerail stores paths. Undefined when Git can't answer, or can't name the clone's own checkout:
+ * Git names it as the folder holding a common `.git` folder, so for a submodule or a `--separate-git-dir` clone, whose
+ * Git folder lives elsewhere, it names the Git folder, and that checkout may be any folder the listing leaves out.
+ */
+function worktreesListedIn(checkout: string, commonDirectory: string): ReadonlySet<string> | undefined {
+  let result;
+  try {
+    result = runGit(checkout, ["worktree", "list", "--porcelain"]);
+  } catch (error) {
+    if (error instanceof GitUnavailableError) return undefined;
+    throw error;
+  }
+  if (result.status !== 0) return undefined;
+  const lines = result.stdout.split("\n");
+  const listed = lines.filter(line => line.startsWith("worktree ")).map(line => storedPath(line.slice("worktree ".length)));
+  // The first entry is the clone's own checkout, or its Git folder with a `bare` line when it has none.
+  const end = lines.indexOf("");
+  const bare = (end === -1 ? lines : lines.slice(0, end)).includes("bare");
+  return !bare && listed[0] === commonDirectory ? undefined : new Set(listed);
 }
 
 /**
@@ -424,9 +516,14 @@ async function folderPresent(path: string): Promise<boolean | undefined> {
     await stat(path);
     return true;
   } catch (error) {
-    const code = error instanceof Error && "code" in error ? error.code : undefined;
-    return code === "ENOENT" || code === "ENOTDIR" ? false : undefined;
+    return missing(error) ? false : undefined;
   }
+}
+
+/** Whether a filesystem call failed because nothing is at the path: ENOENT, or ENOTDIR where a part of it is a file. */
+function missing(error: unknown): boolean {
+  const code = error instanceof Error && "code" in error ? error.code : undefined;
+  return code === "ENOENT" || code === "ENOTDIR";
 }
 
 export interface PruneCheckoutsOptions {
@@ -437,50 +534,42 @@ export interface PruneCheckoutsOptions {
 }
 
 /**
- * Forget the recorded checkouts whose folder is gone or that Git no longer lists as a worktree, with their own
- * settings, and return their paths. The folders are looked at one by one, without blocking, and Git is asked once per
- * clone whose worktrees it all lists. Two stay: a checkout recorded or seen again since `now`, as when a session
- * starts in a folder made again while the others are looked at; and the last checkout of a clone whose id names a
- * recorded session, so that session stays in its repository's history ({@link repositoryHistoryIds}).
+ * Forget the recorded checkouts Git no longer takes for checkouts of their clone ({@link unlistedByTheirClones}), with
+ * their own settings, and return their paths. A checkout Git can't answer for stays, whatever became of its folder: a
+ * clone's own checkout while its `.git` entry is there, a folder renamed away, one on a drive that is not mounted or a
+ * share that is down, a clone with no checkout on disk. So a checkout that comes back has its start state and
+ * settings. The folders are looked at one by one without blocking, and Git runs once per clone with a checkout to
+ * decide. A checkout recorded or seen again since `now` stays, as when a session starts in a worktree made again at a
+ * removed one's path while the others are looked at.
  */
 export async function pruneCheckouts(db: RerailDatabase, { now = Date.now(), signal }: PruneCheckoutsOptions = {}): Promise<string[]> {
-  const gone: string[] = [];
-  const listedByGit = gitWorktreeListing();
-  for (const { path } of db.select({ path: checkouts.checkoutPath }).from(checkouts).all()) {
-    const present = await folderPresent(path);
+  const looked: LookedAt[] = [];
+  for (const row of db.select({ path: checkouts.checkoutPath, cloneId: checkouts.cloneId }).from(checkouts).all()) {
+    const present = await folderPresent(row.path);
     // A folder on a share that does not answer can take the system's whole timeout; a stopping daemon waits for one.
     if (signal?.aborted === true) return [];
-    if (present === false || (present === true && !listedByGit(path))) gone.push(path);
+    looked.push({ ...row, onDisk: onDiskOf(row.path, present) });
   }
+  const gone = unlistedByTheirClones(looked);
   if (gone.length === 0) return gone;
-  return db.transaction(tx => {
-    const forgotten = forgettable(tx, gone, now);
-    if (forgotten.length > 0) {
-      deleteCheckoutSettings(tx, forgotten);
-      tx.delete(checkouts).where(inArray(checkouts.checkoutPath, forgotten)).run();
-    }
-    return forgotten;
-  }, { behavior: "immediate" });
+  return db.transaction(tx => forgetCheckouts(tx, gone, now), { behavior: "immediate" });
 }
 
-/**
- * The `gone` checkouts {@link pruneCheckouts} forgets: those not seen since `now`, except, for a clone whose id names
- * a recorded session and none of whose checkouts would stay, the one of them seen last.
- */
-function forgettable(tx: Writer, gone: readonly string[], now: number): string[] {
-  const stale = tx.select({ path: checkouts.checkoutPath, cloneId: checkouts.cloneId, lastSeenAt: checkouts.lastSeenAt })
-    .from(checkouts).where(inArray(checkouts.checkoutPath, [...gone])).all()
-    .filter(row => row.lastSeenAt < now);
-  const forgotten = new Set(stale.map(row => row.path));
-  for (const cloneId of new Set(stale.map(row => row.cloneId))) {
-    const recorded = tx.select({ path: checkouts.checkoutPath }).from(checkouts).where(eq(checkouts.cloneId, cloneId)).all();
-    if (recorded.some(row => !forgotten.has(row.path))) continue;
-    const named = tx.select({ id: sessions.sessionId }).from(sessions).where(eq(sessions.repositoryId, cloneId)).limit(1).get();
-    if (named === undefined) continue;
-    const ofClone = stale.filter(row => row.cloneId === cloneId);
-    forgotten.delete(ofClone.reduce((last, row) => (row.lastSeenAt > last.lastSeenAt ? row : last)).path);
-  }
-  return [...forgotten];
+function onDiskOf(path: string, present: boolean | undefined): OnDisk {
+  if (present === undefined) return "unknown";
+  return present ? gitEntry(path) : "unlisted";
+}
+
+/** Forget those of `gone` not recorded or seen again since `now`, with their own settings, and return their paths. */
+function forgetCheckouts(tx: Writer, gone: readonly string[], now: number): string[] {
+  const forgotten = tx.select({ path: checkouts.checkoutPath, lastSeenAt: checkouts.lastSeenAt }).from(checkouts)
+    .where(inArray(checkouts.checkoutPath, [...gone])).all()
+    .filter(row => row.lastSeenAt < now)
+    .map(row => row.path);
+  if (forgotten.length === 0) return forgotten;
+  deleteCheckoutSettings(tx, forgotten);
+  tx.delete(checkouts).where(inArray(checkouts.checkoutPath, forgotten)).run();
+  return forgotten;
 }
 
 /**

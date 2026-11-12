@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -275,24 +275,47 @@ describe("the repository registry", () => {
     expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath).sort()).toEqual([main, worktree].sort());
   });
 
-  it("keeps the last checkout of a removed clone whose id names a session, so the session stays in its repository's history", async () => {
-    const root = await temporary("rerail-registry-prune-history-");
+  it("keeps the checkouts of clones with none on disk, renamed away or deleted, with their start state and settings", async () => {
+    const root = await temporary("rerail-registry-prune-away-");
     const database = open(join(root, "rerail.sqlite"));
-    const named = gitRepository(join(root, "named"), "git@github.com:acme/web.git");
-    const worktree = join(root, "named-feature");
-    git(named, "worktree", "add", "-q", "-b", "feature", worktree);
+    const main = gitRepository(join(root, "main"), "git@github.com:acme/web.git");
+    const worktree = join(root, "main-feature");
+    git(main, "worktree", "add", "-q", "-b", "feature", worktree);
     const other = gitRepository(join(root, "other"), "git@github.com:acme/web.git");
-    const { cloneId } = recordCheckout(database, named, 1_000);
-    recordCheckout(database, worktree, 2_000);
-    recordCheckout(database, other, 1_000);
-    // A session recorded under the clone id, as sessions were before they carried the repository key.
-    database.$client.prepare("INSERT INTO sessions (session_id, host, cwd, repository_id, started_at) VALUES ('s', 'claude-code', ?, ?, 1)")
-      .run(named, cloneId);
-    for (const path of [worktree, named, other]) rmSync(path, { recursive: true, force: true });
+    const recorded = [main, worktree, other].map(path => recordCheckout(database, path).checkoutPath).sort();
+    for (const path of recorded) checkoutSetting(database, path);
+    database.$client.prepare("UPDATE checkouts SET started = 0 WHERE checkout_path = ?").run(main);
+    for (const path of [main, worktree]) renameSync(path, `${path}-away`);
+    rmSync(other, { recursive: true, force: true });
 
-    expect((await pruneCheckouts(database, { now: 5_000 })).sort()).toEqual([named, other].sort());
-    // History reads take the clone ids of the recorded checkouts (repositoryHistoryIds), so the session's id stays one.
-    expect(listRepositories(database)[0]?.checkouts.map(row => [row.checkoutPath, row.cloneId])).toEqual([[worktree, cloneId]]);
+    // No checkout of either clone is on disk to ask Git in, and a folder renamed away looks like a deleted one.
+    expect(await pruneCheckouts(database)).toEqual([]);
+    for (const path of [main, worktree]) renameSync(`${path}-away`, path);
+    expect(await pruneCheckouts(database)).toEqual([]);
+    expect(listRepositories(database)[0]?.checkouts.map(row => [row.checkoutPath, row.started]))
+      .toEqual(recorded.map(path => [path, path === main ? false : null]));
+    expect(settingOwners(database)).toEqual(recorded.map(path => ({ owner_kind: "checkout", owner_id: path })));
+  });
+
+  it("keeps a worktree moved without Git, at its old path and its new one, until Git prunes its entry", async () => {
+    const root = await temporary("rerail-registry-prune-moved-");
+    const database = open(join(root, "rerail.sqlite"));
+    const main = gitRepository(join(root, "main"));
+    const worktree = join(root, "feature");
+    git(main, "worktree", "add", "-q", "-b", "feature", worktree);
+    recordCheckout(database, main);
+    recordCheckout(database, worktree);
+    checkoutSetting(database, worktree);
+    const moved = `${worktree}-moved`;
+    renameSync(worktree, moved);
+    // A session that starts there records it: Git runs in it, though its registry still names the old path.
+    recordCheckout(database, moved);
+
+    expect(await pruneCheckouts(database)).toEqual([]);
+    git(main, "worktree", "prune");
+    expect((await pruneCheckouts(database)).sort()).toEqual([worktree, moved].sort());
+    expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath)).toEqual([main]);
+    expect(settingOwners(database)).toEqual([]);
   });
 
   it.skipIf(!caseInsensitiveFilesystem())("keeps a worktree Git registered under a path typed in another case than the folder has", async () => {
@@ -306,6 +329,53 @@ describe("the repository registry", () => {
     expect(worktree).toBe(join(root, "elsewhere", "feature"));
 
     expect(await pruneCheckouts(database)).toEqual([]);
+  });
+
+
+  it.each([
+    { when: "the clone's own checkout is looked at first", outer: "outer", earlierPass: false },
+    { when: "the folder is looked at first", outer: "around", earlierPass: false },
+    { when: "the folder is looked at first and a pass asked Git in it before", outer: "around", earlierPass: true },
+  ])("keeps a worktree that lost its .git file while its clone's registry names it, and forgets it once Git prunes it, when $when", async ({ outer, earlierPass }) => {
+    const root = await temporary("rerail-registry-prune-outer-");
+    const database = open(join(root, "rerail.sqlite"));
+    const main = gitRepository(join(root, "main"));
+    const worktree = join(gitRepository(join(root, outer)), "feature");
+    git(main, "worktree", "add", "-q", "-b", "feature", worktree);
+    // Recorded in path order, which is the order a pass reads them in.
+    for (const path of [main, worktree].sort()) recordCheckout(database, path);
+    if (earlierPass) expect(await pruneCheckouts(database)).toEqual([]);
+    // Git in the folder now answers for the repository around it, while main's registry still names the folder, and
+    // `git worktree repair` there would write its .git file again.
+    unlinkSync(join(worktree, ".git"));
+
+    expect(await pruneCheckouts(database)).toEqual([]);
+    git(main, "worktree", "prune");
+    expect(await pruneCheckouts(database)).toEqual([worktree]);
+    expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath)).toEqual([main]);
+  });
+
+  it("keeps a submodule and a clone made with --separate-git-dir, there or renamed away, though Git lists their Git folders", async () => {
+    const root = await temporary("rerail-registry-prune-own-");
+    const database = open(join(root, "rerail.sqlite"));
+    const parent = gitRepository(join(root, "parent"));
+    git(parent, "submodule", "add", "-q", gitRepository(join(root, "library")), "vendor/library");
+    const submodule = join(parent, "vendor", "library");
+    const separate = join(root, "separate");
+    git(root, "init", "-q", "-b", "main", "--separate-git-dir", join(root, "separate.git"), separate);
+    git(separate, "-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-q", "--allow-empty", "-m", "base");
+    // A worktree of each, on disk, is where the pass asks Git about them once they are renamed away.
+    const worktrees = [join(root, "library-feature"), join(root, "separate-feature")];
+    git(submodule, "worktree", "add", "-q", "-b", "feature", worktrees[0]!);
+    git(separate, "worktree", "add", "-q", "-b", "feature", worktrees[1]!);
+    const own = [submodule, separate].map(path => recordCheckout(database, path).checkoutPath).sort();
+    for (const path of worktrees) recordCheckout(database, path);
+    for (const path of own) checkoutSetting(database, path);
+
+    expect(await pruneCheckouts(database)).toEqual([]);
+    for (const path of own) renameSync(path, `${path}-away`);
+    expect(await pruneCheckouts(database)).toEqual([]);
+    expect(settingOwners(database)).toEqual(own.map(path => ({ owner_kind: "checkout", owner_id: path })));
   });
 
   it("looks a checkout up without writing anything or creating a clone id", async () => {

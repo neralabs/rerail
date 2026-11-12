@@ -1,13 +1,13 @@
 /**
- * The daemon's upkeep of the recorded checkouts: when it starts and every hour after, it forgets the checkouts whose
- * folder is gone or that Git no longer lists ({@link pruneCheckouts}), so the reads that go over a repository's
- * checkouts on every request, and its checkout count, follow the worktrees and clones on disk.
+ * The daemon's upkeep of the recorded checkouts: when it starts and every hour after, it forgets the checkouts Git no
+ * longer lists as checkouts of their clone ({@link pruneCheckouts}), so the reads that go over a repository's
+ * checkouts on every request, and its checkout count, follow the worktrees Git knows.
  */
 import { existsSync } from "node:fs";
 import { pruneCheckouts } from "../engine/catalog/repository-registry.js";
 import { openRerailDatabase } from "../engine/storage/database.js";
 
-/** How often a running daemon forgets gone checkouts, so a removed worktree stays recorded at most this long. */
+/** How often a running daemon forgets gone checkouts, so a worktree Git removed stays recorded at most this long. */
 const CHECKOUT_PRUNING_INTERVAL_MS = 60 * 60 * 1000;
 
 export interface CheckoutPruning {
