@@ -287,15 +287,12 @@ impl ContentStore {
         self.immediate_transaction_once(|t| {
             t.execute_batch(SCHEMA)?;
             let run = count_run(t, space, token)?;
-            for batch in parts.chunks(READ_BATCH * 4) {
-                let values = (0..batch.len()).map(|i| format!("(?{})", 5 + i)).collect::<Vec<_>>().join(",");
-                let sql = format!(
-                    "WITH demanded(part) AS (VALUES {values}) UPDATE frames SET used = ?4 \
-                     WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part IN (SELECT part FROM demanded)"
-                );
-                let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into(), rel.name.clone().into(), rel.ident.to_vec().into(), run.into()];
-                args.extend(batch.iter().map(|p| rusqlite::types::Value::from(*p)));
-                t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
+            // Give SQLite the entire key set in one prepared statement. Each run
+            // orders it once, without rebuilding SQL and temporary sets per chunk.
+            if !parts.is_empty() {
+                let parts: rusqlite::vtab::array::Array = std::rc::Rc::new(parts.iter().copied().map(rusqlite::types::Value::from).collect());
+                t.prepare_cached("UPDATE frames SET used = ?4 WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part IN rarray(?5)")?
+                    .execute(params![&space[..], rel.name, &rel.ident[..], run, parts])?;
             }
             t.execute("DELETE FROM frames WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND used <= ?4", params![&space[..], rel.name, &rel.ident[..], run - keep])?;
             Ok(())
@@ -475,6 +472,66 @@ fn decode_reads(mut bytes: &[u8]) -> Vec<(String, u64)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frame_part_usage_is_one_bulk_update_and_preserves_retention() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let dir = tempfile::tempdir().unwrap();
+        let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
+        let relation = rel("local", 1);
+        let puts: Vec<_> = (0..8193).map(|part| Put { rel: relation.clone(), part,
+            digest: 7, reads: vec![("input-source-identity".into(),7);8], rows: Rows { types: vec![0], rows: vec![part], n: 1 } }).collect();
+        store.keep_frames(&[42;32], &puts, &[], None).unwrap();
+        // These share either the space or the relation, but are outside the requested identity.
+        store.keep_frames(&[43;32], &puts[..1], &[], None).unwrap();
+        let other = Put { rel: rel("local",2), part:8192, digest:7, reads:vec![], rows:puts[0].rows.clone() };
+        store.keep_frames(&[42;32], &[other], &[], None).unwrap();
+        let pages = store.connection.lock().unwrap().query_row("PRAGMA page_count",[],|r|r.get::<_,i64>(0)).unwrap() as usize;
+        let cache_writes = || {
+            let (mut now,mut peak)=(0,0);
+            unsafe { rusqlite::ffi::sqlite3_db_status(store.connection.lock().unwrap().handle(),
+                rusqlite::ffi::SQLITE_DBSTATUS_CACHE_WRITE,&mut now,&mut peak,1); }
+            now as usize
+        };
+        cache_writes();
+        let counts = [AtomicUsize::new(0), AtomicUsize::new(0)];
+        unsafe extern "C" fn trace(event:u32, state:*mut std::ffi::c_void, stmt:*mut std::ffi::c_void, _: *mut std::ffi::c_void) -> i32 {
+            let c = unsafe { &*state.cast::<[AtomicUsize;2]>() };
+            if event == rusqlite::ffi::SQLITE_TRACE_STMT {
+                c[0].fetch_add(1,Ordering::Relaxed);
+                unsafe { rusqlite::ffi::sqlite3_stmt_status(stmt.cast(),rusqlite::ffi::SQLITE_STMTSTATUS_VM_STEP,1) };
+            } else {
+                let vm = unsafe { rusqlite::ffi::sqlite3_stmt_status(stmt.cast(),rusqlite::ffi::SQLITE_STMTSTATUS_VM_STEP,1) };
+                c[1].fetch_add(vm as usize,Ordering::Relaxed);
+            }
+            0
+        }
+        unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),
+            rusqlite::ffi::SQLITE_TRACE_STMT | rusqlite::ffi::SQLITE_TRACE_PROFILE, Some(trace),
+            (&counts as *const [AtomicUsize;2]).cast_mut().cast()); }
+        // File order and digest-derived partition order are unrelated.
+        let parts: Vec<_> = (0..8192).map(|i| i*4051%8192).chain([7,7,-1]).collect();
+        let result=store.use_frame_parts(&[42;32],&relation,&parts,0,2);
+        unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),0,None,std::ptr::null_mut()); }
+        result.unwrap();
+        let statements=counts[0].load(Ordering::Relaxed);
+        let vm=counts[1].load(Ordering::Relaxed);
+        let writes=cache_writes();
+        eprintln!("frame parts used: {statements} statements, {vm} VM instructions, {writes} page writes for {pages} database pages");
+        assert!(statements<=10,"usage must be one bulk update, independent of key count: {statements}");
+        assert!(vm<500_000,"usage must stay linear in keys: {vm}");
+        assert!(writes<2*pages,"bulk usage must not spill the same pages across key chunks: {writes} writes for {pages} pages");
+        assert!(store.frame_rows(&[42;32],&relation,8192).unwrap().is_some());
+        store.use_frame_parts(&[42;32],&relation,&parts,0,2).unwrap();
+        assert!(store.frame_rows(&[42;32],&relation,8192).unwrap().is_none(),"an unused part expires after two runs");
+        assert!(store.frame_rows(&[42;32],&relation,8191).unwrap().is_some());
+        assert!(store.frame_rows(&[43;32],&relation,0).unwrap().is_some());
+        assert!(store.frame_rows(&[42;32],&rel("local",2),8192).unwrap().is_some());
+        store.use_frame_parts(&[42;32],&relation,&[],0,2).unwrap();
+        assert!(store.frame_rows(&[42;32],&relation,8191).unwrap().is_some());
+        store.use_frame_parts(&[42;32],&relation,&[],0,2).unwrap();
+        assert!(store.frame_rows(&[42;32],&relation,8191).unwrap().is_none());
+    }
 
     #[test]
     fn frame_publication_batches_put_delete_and_usage_with_bounded_work() {

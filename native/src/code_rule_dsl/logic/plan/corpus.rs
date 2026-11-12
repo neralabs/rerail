@@ -1522,14 +1522,20 @@ pub fn observe<T>(f: impl FnOnce(&mut crate::content_store::observe::Observer) -
     #[cfg(any(test, feature = "test-hooks"))]
     {
         static OFF: std::sync::Once = std::sync::Once::new();
-        OFF.call_once(|| crate::content_store::observe::set_journal(false));
+        OFF.call_once(|| {
+            // Explicit workload caches use production observer semantics. Ordinary unit
+            // tests keep stat-based isolation; RERAIL_JOURNAL still controls benchmarks.
+            if std::env::var_os("RERAIL_TAPE_CACHE").is_none() {
+                crate::content_store::observe::set_journal(false);
+            }
+        });
     }
     let store = tape_cache_path().map(|p| crate::content_store::observe::store_beside(&p));
     // Each test thread its own observer, unless the test set its own tape cache: another test's run flushes a shared
     // one's journal, after which it answers for this test's edits until the next flush (decision 0105).
     #[cfg(any(test, feature = "test-hooks"))]
     let store = store.map(|p| {
-        if TEST_TAPE_CACHE.with(|t| t.borrow().is_some()) {
+        if TEST_TAPE_CACHE.with(|t| t.borrow().is_some()) || std::env::var_os("RERAIL_TAPE_CACHE").is_some() {
             return p;
         }
         let thread: String = format!("{:?}", std::thread::current().id()).chars().filter(char::is_ascii_digit).collect();
@@ -1622,6 +1628,10 @@ pub fn run_with_options(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
+    let lifecycle_start = usage();
+    // Library and test callers do not pass through the CLI/Node pool setup.
+    // Initialize before phase 0 or a parallel read can create rayon's default pool.
+    crate::threads::configure(false);
     // Whether the native strata may be placed on the device (`plan::placement`, decision 0095), for this run.
     struct Device(bool);
     impl Drop for Device {
@@ -1639,21 +1649,34 @@ pub fn run_with_options(
         o.watch(&[root.to_path_buf(), library]);
         o.counts
     });
+    let lifecycle_observed = usage();
     // Phase 0 first: each text's include graph, from `bootstrap.rr`'s run, before anything reads a text (the later
     // reads keep it while its files hold).
-    // The engine's own `components.rr` (read by the cross-file memo) is resolved in the same run, so no phase-0 run
-    // starts inside this one.
+    // Resolve `components.rr` only when the program or one of its modules can use
+    // it, before the main run takes its execution lock.
     let seeding = crate::code_rule_dsl::logic::profile::span(|| "phase 0: the texts' include graphs".into());
-    let mut seeds: Vec<phase0::Seed> = programs.iter().map(|t| crate::code_rule_dsl::logic::rr::text_seed(t)).collect::<std::result::Result<Vec<_>, _>>()?.into_iter().flatten().collect();
+    let seeds: Vec<phase0::Seed> = programs.iter().map(|t| crate::code_rule_dsl::logic::rr::text_seed(t)).collect::<std::result::Result<Vec<_>, _>>()?.into_iter().flatten().collect();
+    let mut component_seeded = false;
     if !phase0::active() {
-        if let Ok(components) = crate::code_rule_dsl::logic::rr::library().join("components.rr").canonicalize() {
-            seeds.push(phase0::Seed::File(components));
+        let graphs = phase0::graphs(&seeds)?;
+        // Includes alone do not imply component demand. Inspect each observed
+        // module once; comments can conservatively request preparation. Missing
+        // or malformed modules remain the parser's error, not a proof of no demand.
+        let uses_components = |text: &str| text.contains("cross-memo") || text.contains("rr_cx_");
+        let modules: BTreeSet<_> = graphs.iter().flat_map(|g| g.digests.keys()).collect();
+        component_seeded = programs.iter().any(|t| uses_components(t)) || modules.into_iter().any(|path| {
+            observe(|o| o.read(path)).is_none_or(|(bytes, _)| {
+                std::str::from_utf8(&bytes).map_or(true, uses_components)
+            })
+        });
+        if component_seeded {
+            if let Ok(components) = crate::code_rule_dsl::logic::rr::library().join("components.rr").canonicalize() {
+                phase0::graph(&phase0::Seed::File(components))?;
+            }
         }
     }
-    if !seeds.is_empty() && !phase0::active() {
-        phase0::graphs(&seeds)?;
-    }
     drop(seeding);
+    let lifecycle_seeded = usage();
     // Phase 0's cutoff (`reuse`): a run whose every read is as it was writes the outputs it wrote.
     let reuse = reuse::wanted(options, typing, t_facts);
     let kept = if reuse { reuse::reused(programs, root, out, modes, typing, options) } else { Ok(None) };
@@ -1667,17 +1690,40 @@ pub fn run_with_options(
             Ok(report)
         }),
     };
+    let lifecycle_executed = usage();
     // Phase 0's observations, written once the run has read everything (they may lag the run, never lead it).
     let did = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 0's observations written".into());
         observe(|o| {
             o.flush();
+            // Flush queues the final observations. Waiting before it leaves a cold
+            // observer store when the process exits immediately after this run.
+            if !phase0::active() { o.written(); }
             o.counts.since(&before)
         })
     };
     // `RERAIL_OBSERVED`: what the run's observer did, on stderr (the profile is written before this).
     if std::env::var_os("RERAIL_OBSERVED").is_some() {
         eprintln!("rerail: files observed: {did}");
+    }
+    let lifecycle_written = usage();
+    crate::code_rule_dsl::logic::profile::decision("run lifecycle CPU", || {
+        let cpu = |a: (f64,f64,f64), b: (f64,f64,f64)| b.0 + b.1 - a.0 - a.1;
+        serde_json::json!({"root":root,"componentGraphRequested":component_seeded,"observer":cpu(lifecycle_start,lifecycle_observed),
+            "phase0":cpu(lifecycle_observed,lifecycle_seeded),"execution":cpu(lifecycle_seeded,lifecycle_executed),
+            "observerFlush":cpu(lifecycle_executed,lifecycle_written)}).to_string()
+    });
+    if report.is_ok() && crate::code_rule_dsl::logic::profile::on() && !phase0::active()
+        && RUNS_UNDER_WAY.with(std::cell::Cell::get) == 0
+        && let Some(dir) = crate::code_rule_dsl::logic::profile::directory()
+    {
+        use std::io::Write as _;
+        let cpu = |a: (f64,f64,f64), b: (f64,f64,f64)| b.0 + b.1 - a.0 - a.1;
+        let mut file = std::fs::OpenOptions::new().append(true).open(dir.join("profile.txt")).map_err(|e| Error::Plan(format!("profile lifecycle: {e}")))?;
+        writeln!(file, "\n== Whole run lifecycle (process CPU, including workers)\nobserver {:.6} s; include graphs {:.6} s; execution {:.6} s; final observations {:.6} s\nThese intervals partition the run; do not add them to nested span totals.",
+            cpu(lifecycle_start,lifecycle_observed),cpu(lifecycle_observed,lifecycle_seeded),
+            cpu(lifecycle_seeded,lifecycle_executed),cpu(lifecycle_executed,lifecycle_written))
+            .map_err(|e| Error::Plan(format!("profile lifecycle: {e}")))?;
     }
     report.map(|mut r| {
         r.files_observed = did;
@@ -1732,6 +1778,8 @@ fn run_observed(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
+    let process_cpu = || { let u = usage(); u.0 + u.1 };
+    let process_started = process_cpu();
     // The store's writer held from the run's start to its end (decision 0102): the handles the run opens and closes on
     // the way (the combined program's) queue their writes and go, and the run's end waits for every one. Declared
     // first, so dropped last.
@@ -1749,12 +1797,17 @@ fn run_observed(
     let main_usage = || { let (u, s) = thread_usage(); (u - rerail_accel::exec::helped(), s, usage().2) };
     // When the run began: the first phase counts combining.
     let began = main_usage();
+    let mut process_last = process_cpu();
+    let mut process_phases = vec![("settings", process_last - process_started)];
     let mut phases: Vec<(&'static str, f64, f64, f64, usize)> = Vec::new();
     let mut phase_instructions: Vec<(&'static str, u64)> = Vec::new();
     let mut last = began;
     let mut last_instructions = crate::code_rule_dsl::logic::settings::process_counters().map_or(0, |c| c.0);
     let mut counted = 0;
     let mut phase = |name: &'static str, statements: usize| {
+        let process_now = process_cpu();
+        process_phases.push((name, process_now - process_last));
+        process_last = process_now;
         let now = main_usage();
         let instructions = crate::code_rule_dsl::logic::settings::process_counters().map_or(0, |c| c.0);
         match phase_instructions.iter_mut().find(|p| p.0 == name) {
@@ -1956,7 +2009,10 @@ fn run_observed(
     let mut docs = docs;
     // What the run consults (`Report::consulted`): first the workspace documents, when they are files under `root`.
     let mut consulted: Vec<(String, String, String)> =
-        if t.is_none() { docs.iter().map(|(_, p)| ("doc".to_owned(), p.clone(), world::bytes_digest(&root.join(p)))).collect() } else { Vec::new() };
+        if t.is_none() {
+            let _span = crate::code_rule_dsl::logic::profile::span(|| "observe document digests".into());
+            docs.iter().map(|(_, p)| ("doc".to_owned(), p.clone(), world::bytes_digest(&root.join(p)))).collect()
+        } else { Vec::new() };
     let mut paths: HashMap<i64, String> = docs.iter().cloned().collect();
     // The documents requests loaded (decision 0065 §2a), whose rows are not the run's findings: their keys.
     let mut loaded_keys: std::collections::HashSet<i64> = std::collections::HashSet::new();
@@ -2013,7 +2069,10 @@ fn run_observed(
     // The run's connections, set up by their owner and passed through (`connections`): a session's are kept from run
     // to run, readied here, before the scratch files are made again; a run of its own opens its own. (A run that
     // fails leaves its session new ones to open.)
-    let handed = connections::Handed::take(session.as_ref().map(|s| Arc::clone(&s.connections)))?;
+    let handed = {
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "prepare connections".into());
+        connections::Handed::take(session.as_ref().map(|s| Arc::clone(&s.connections)))?
+    };
     let own_kept = session.as_ref().map(|s| Arc::clone(&s.own));
     let (path, cross_path) = match &session {
         Some(s) => (s.path.clone(), out.join("cross.sqlite")),
@@ -2033,7 +2092,10 @@ fn run_observed(
     // atoms. Without the store, or reproducing T, the atoms are the run's own; in a session, the session's store's.
     // Without the `tape-cache` feature (the browser build) there is no store to keep: `tapes` is `None` where the
     // compiler can see it, so the memo, the run record and their zstd frames are not linked.
-    let tapes = if cfg!(feature = "tape-cache") { handed.tapes().map_err(|e| Error::Plan(e.to_string()))? } else { &None };
+    let tapes = if cfg!(feature = "tape-cache") {
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "open tape store".into());
+        handed.tapes().map_err(|e| Error::Plan(e.to_string()))?
+    } else { &None };
     // Hold before any source/stat lookup, through parsing, memo publication and the run manifest. This shared lock is
     // the run's one hold on collection (O108): every collector takes it exclusively first (`try_collect`), and a run
     // that dies releases it with its process.
@@ -2054,7 +2116,10 @@ fn run_observed(
     };
     // `shortlex_min<>` orders the run's symbols by their text: the store's atoms (decision 0108).
     crate::code_rule_dsl::logic::native::declare("shortlex_min", Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));
-    let db = handed.run(&path)?;
+    let db = {
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "open run connection".into());
+        handed.run(&path)?
+    };
     // The run's databases are scratch, made again by every run (removed above): a commit need not reach the disk. Set
     // when SQL first runs on it (`vtab::setup_now`).
     crate::code_rule_dsl::facts::vtab::defer_setup(&db, "PRAGMA synchronous=OFF;");
@@ -3383,6 +3448,8 @@ fn run_observed(
         projected: parking_lot::Mutex<BTreeMap<usize, std::thread::Result<(Result<Sources>, (f64, f64))>>>,
         /// The documents' and windows' jobs' CPU: parse time.
         jobs_cpu: parking_lot::Mutex<(f64, f64)>,
+        build_jobs: std::sync::atomic::AtomicUsize,
+        ready_hits: std::sync::atomic::AtomicUsize,
         /// At most this many documents built ahead of the next taken, and chunks projected at once beside the one
         /// waiting for the main thread.
         ahead: usize,
@@ -3501,6 +3568,9 @@ fn run_observed(
                 };
             };
             let len = docs.asked.len();
+            // Ready memo rows can be consumed before the resolver publishes its
+            // new horizon. They need no job when that horizon becomes visible.
+            c.spawned = c.spawned.max(c.next);
             let horizon = (c.next + self.ahead).min(len);
             // The next window, once the last is resolved, while a document within `ahead` needs it.
             let to = docs.resolved_to.load(Acquire);
@@ -3512,7 +3582,19 @@ fn run_observed(
                     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (&mut *self.resolve.lock())(&docs.asked[to..end])));
                     Self::add(&mut self.jobs_cpu.lock(), from);
                     match r {
-                        Ok(Ok(r)) => docs.resolved.lock().extend((to..end).zip(r)),
+                        Ok(Ok(r)) => {
+                            let (mut resolved, mut built) = (docs.resolved.lock(), docs.built.lock());
+                            for (i, row) in (to..end).zip(r) {
+                                match row {
+                                    Some((content, Ok(entry))) => {
+                                        self.ready_hits.fetch_add(1, Relaxed);
+                                        built.insert(i, Ok(Some((content, Ok(entry)))));
+                                    }
+                                    None => { built.insert(i, Ok(None)); }
+                                    miss => { resolved.insert(i, miss); }
+                                }
+                            }
+                        }
                         Ok(Err(e)) => {
                             docs.built.lock().insert(to, Err(e));
                         }
@@ -3542,6 +3624,7 @@ fn run_observed(
             ready.sort_by(|a, b| b.cmp(a));
             for (_, i) in ready {
                 let docs = Arc::clone(&docs);
+                self.build_jobs.fetch_add(1, Relaxed);
                 jobs.spawn("a document built", move |jobs| {
                     let from = thread_usage();
                     let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (self.build)(&docs, i))).unwrap_or_else(|_| Err(Error::Plan("the chunk builder panicked".to_owned())));
@@ -3692,6 +3775,8 @@ fn run_observed(
         stopped: false.into(),
         projected: Default::default(),
         jobs_cpu: Default::default(),
+        build_jobs: 0.into(),
+        ready_hits: 0.into(),
         ahead: builders * 8,
         in_flight: 2,
         resolve: &resolver,
@@ -4775,6 +4860,10 @@ fn run_observed(
     // The builder's CPU: its own steps and its documents' jobs as parse time, its chunks' projections as batch time.
     let mut c = builder.cut.lock();
     let jobs_cpu = *builder.jobs_cpu.lock();
+    crate::code_rule_dsl::logic::profile::decision("input scheduling", || serde_json::json!({
+        "root":root,"buildJobs":builder.build_jobs.load(std::sync::atomic::Ordering::Relaxed),
+        "cachedDocuments":builder.ready_hits.load(std::sync::atomic::Ordering::Relaxed)
+    }).to_string());
     Ok(((c.parse.0 + jobs_cpu.0, c.parse.1 + jobs_cpu.1), c.batch, std::mem::take(&mut c.read_sources), std::mem::take(&mut *stats_read.lock())))
     })?;
     (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
@@ -6333,12 +6422,14 @@ fn run_observed(
         }
         outcome.map_err(|e| Error::Plan(e.to_string()))?;
     }
-    // And the observer's (decision 0105), queued behind the run as the store's are.
-    if !phase0::active() {
-        crate::content_store::observe::written();
-    }
     store.atoms_handle().run_over();
     crate::code_rule_dsl::logic::profile::decision("chunks", || format!("{chunks} chunks of about {chunk_nodes} nodes; the next chunk is parsed and batched on a worker while this one runs"));
+    process_phases.push(("finalize", process_cpu() - process_last));
+    crate::code_rule_dsl::logic::profile::decision("run process CPU by phase", || {
+        let mut totals: BTreeMap<&str, f64> = BTreeMap::new();
+        for &(name, cpu) in &process_phases { *totals.entry(name).or_default() += cpu; }
+        serde_json::json!({"root":root,"phases":totals}).to_string()
+    });
     if profiling && let Some(dir) = crate::code_rule_dsl::logic::profile::directory().map(|d| if phase0::active() { d.join("phase-0") } else { d }) {
         let mut header = format!(
             "Profile of a corpus run: {} files, {nodes} nodes, {chunks} chunks; text tests {} relations, {tested} strings, {text_cpu:.3} s CPU\n\n== Phases (CPU = user + system; worker phases run beside the main thread)\n",
@@ -7532,6 +7623,9 @@ pub mod tests {
         let digested = super::thread_usage();
         let did = super::observe(|o| {
             o.flush();
+            // Flush queues the final observations. Waiting before it leaves a cold
+            // observer store when the process exits immediately after this run.
+            if !phase0::active() { o.written(); }
             o.counts.since(&before)
         });
         let flushed = super::thread_usage();

@@ -16,7 +16,8 @@ fn run(root: &Path, out: &Path) -> (Value, Keys) {
     let base = std::env::var_os("RERAIL_RR_RULE_DIR").map(PathBuf::from).unwrap_or_else(||crate::code_rule_dsl::logic::rr::library().parent().expect("rule library parent").join("packs/python"));
     let began = cpu_ns();
     let wall = Instant::now();
-    let programs: Vec<String> = RULES.iter().map(|r| tools::flatten(&base.join(r)).unwrap()).collect();
+    let rule_paths: Vec<_> = RULES.iter().map(|r| base.join(r)).collect();
+    let programs = tools::program_texts(&rule_paths.iter().map(PathBuf::as_path).collect::<Vec<_>>()).unwrap();
     let flatten_ns = cpu_ns() - began;
     let flatten_wall_ns = wall.elapsed().as_nanos() as u64;
     let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
@@ -57,7 +58,7 @@ fn run(root: &Path, out: &Path) -> (Value, Keys) {
     let result = json!({"schema":"rerail-async-authored-rr-comparison-v1",
         "rules":RULES,"root":root,"out":out,"execution":"combined production corpus::run_with_options; program; CPU",
         "suppression":"declarations retained; raw violation.csv keys",
-        "profiling":profile::on(),
+        "profiling":profile::on(),"workerThreads":rayon::current_num_threads(),
         "flattenCpuNs":flatten_ns,"flattenWallNs":flatten_wall_ns,"cpuNs":cpu,"wallNs":wall_ns,
         "report":{"phases":report.phases,"files":report.files,"nodes":report.nodes,
             "native":report.native,"rows":report.rows,"chunks":report.chunks,"text":report.text,
@@ -67,7 +68,10 @@ fn run(root: &Path, out: &Path) -> (Value, Keys) {
             "crossDeltaCounts":report.cross_delta_counts,
             "rounds":{"run":report.rounds.run,"converged":report.rounds.converged,"pending":report.rounds.pending},"typing":format!("{:?}",report.typing),
             "typingRunNames":report.typing_runs.iter().map(|(name,_)|name).collect::<Vec<_>>(),
-            "phaseRunCount":report.phase_runs.len()},
+            "phaseRunCount":report.phase_runs.len(),
+            "observed":{"stats":report.files_observed.stats,"hashed":report.files_observed.hashed,
+                "bytes":report.files_observed.bytes,"reused":report.files_observed.reused,
+                "trusted":report.files_observed.trusted,"validated":report.files_observed.validated}},
         "profile":{"directory":profile_dir,"spans":spans,"statements":statements,"decisions":decisions},
         "keyCount":keys.len(),"keys":keys});
     (result, keys)
@@ -79,10 +83,34 @@ fn complete_async_family_authored_rr_corpus_profile() {
     let root = PathBuf::from(std::env::var("RERAIL_SHARED_CORPUS").expect("RERAIL_SHARED_CORPUS"));
     let out = PathBuf::from(std::env::var("RERAIL_RR_OUT").expect("RERAIL_RR_OUT"));
     let report_path = PathBuf::from(std::env::var("RERAIL_RR_REPORT").expect("RERAIL_RR_REPORT"));
-    let (report, _) = run(&root, &out);
+    // Repetition keeps the process alive for a native stack sampler. Each measured
+    // run still includes the complete input lifecycle and reports its own cost.
+    let repeat = std::env::var("RERAIL_RR_REPEAT").ok().and_then(|n|n.parse::<usize>().ok()).unwrap_or(1).max(1);
+    let mut report = Value::Null;
+    for _ in 0..repeat { report = run(&root, &out).0; }
     std::fs::write(report_path, serde_json::to_string_pretty(&report).unwrap()).unwrap();
+    assert_eq!(report["workerThreads"].as_u64(),Some(crate::threads::max() as u64),
+        "the workload must use its configured thread count, not rayon's machine-wide default");
     let executions: u64=report["report"]["phases"].as_array().unwrap().iter().map(|p|p[4].as_u64().unwrap()).sum();
     assert!(executions<=100,"whole-job SQL execution budget exceeded: {executions} > 100; profile preserved");
+    if report["profiling"].as_bool()==Some(true) {
+        let lifecycle = report["profile"]["decisions"].as_array().unwrap().iter()
+            .filter(|d|d["topic"]=="run lifecycle CPU")
+            .map(|d|serde_json::from_str::<Value>(d["text"].as_str().unwrap()).unwrap())
+            .find(|d|d["root"]==json!(root)).expect("profile must report the whole lifecycle");
+        assert_eq!(lifecycle["componentGraphRequested"],false,
+            "the async family has no cross-file component consumer, even through includes");
+    }
+    if report["profiling"].as_bool()==Some(true)
+        && report["report"]["files"].as_u64().is_some_and(|n| n>0 && report["report"]["memo"][0].as_u64()==Some(n))
+    {
+        let scheduling = report["profile"]["decisions"].as_array().unwrap().iter()
+            .filter(|d|d["topic"]=="input scheduling")
+            .map(|d|serde_json::from_str::<Value>(d["text"].as_str().unwrap()).unwrap())
+            .find(|d|d["root"]==json!(root)).expect("profile must report input scheduling");
+        assert_eq!(scheduling["buildJobs"],0,"a fully memoized workload must not schedule per-document builds");
+        assert_eq!(scheduling["cachedDocuments"],report["report"]["files"]);
+    }
     eprintln!("authored .rr: {} files, {} keys, {} CPU ns, {} wall ns",
         report["report"]["files"],report["keyCount"],report["cpuNs"],report["wallNs"]);
 }
@@ -220,4 +248,125 @@ out(c,f,r,o) :- python_candidates(c,f,r,o,docs,targets,"async_function","open").
 "#).unwrap();
     let local=crate::code_rule_dsl::typing::file_local::split(&p);
     assert!(p.natives.iter().filter(|(_,n)|matches!(n,front::Native::PythonCandidates{..})).all(|(rel,_)|!local.contains(rel)));
+}
+
+/// Empty positive inputs must reject a join before its expanding prefix. A later
+/// request answer must still wake the same rule through its other delta probe.
+#[test]
+fn empty_required_input_avoids_expansion_and_resumes_after_growth() {
+    use crate::code_rule_dsl::logic::native::{self, setfix};
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    native::register(&db).unwrap();
+    native::register_symbols(&db).unwrap();
+    db.execute_batch("CREATE TABLE many(c0 INTEGER); INSERT INTO many VALUES(1),(2),(3); CREATE TABLE ready(c0 INTEGER); CREATE TABLE result(c0 INTEGER);").unwrap();
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    let scan = format!("pos t:b:{}:{}:i v0",hex("many"),hex("c0"));
+    let seed = format!("{scan}\npos c1 v1\nhead v0");
+    let delta = format!("{scan}\npos d1 v1\nhead v0");
+    setfix::open(&db, &format!("name empty_guard\nrel result i empty\nrel ready i empty\nproduced 1\nseed 0 {}\njoin 0 1 {}",hex(&seed),hex(&delta))).unwrap();
+    setfix::run(&db,"empty_guard",0).unwrap();
+    let counts=setfix::step_counts(&db,"empty_guard").unwrap();
+    assert_eq!(counts.iter().flatten().map(|(n,_)|*n).sum::<i64>(),0,"the empty positive input must prevent the scan: {counts:?}");
+    setfix::add(&db,"empty_guard","ready",&[vec![9]]).unwrap();
+    setfix::run(&db,"empty_guard",0).unwrap();
+    let result:Vec<i64>=db.prepare("SELECT c0 FROM result ORDER BY c0").unwrap().query_map([],|r|r.get(0)).unwrap().collect::<Result<_,_>>().unwrap();
+    assert_eq!(result,vec![1,2,3],"an input that grows must wake the join");
+    setfix::close(&db,"empty_guard").unwrap();
+}
+
+/// Binding a demand key does not make its remaining membership restrictions redundant.
+#[test]
+fn annotation_demand_keeps_string_membership_before_parsing() {
+    let base = std::env::temp_dir().join(format!("rerail-annotation-demand-{}", std::process::id()));
+    let root = base.join("source");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "x: int\ny: list[int]\nz: \"Target\"\n").unwrap();
+    let src = r#"
+#include "core.rr"
+.decl qann(s:node,e:node)
+qann(s,e) :- kind(t,"type"), child(t,s,0), kind(s,"string"), parsed(s,"annotation",e).
+.decl asked(k:symbol)
+asked(k) :- rr_embed_req(s,"annotation"), kind(s,k).
+.output qann, asked
+"#;
+    corpus::run_with_options(&[src], &root, None, &base.join("out"), "program", Binding::Cpu,
+        1 << 18, &corpus::Typing::default(), &json!({"inputFiles":["a.py"]})).unwrap();
+    let asked = std::fs::read_to_string(base.join("out/asked.csv")).unwrap();
+    assert_eq!(asked.trim(), "string", "annotation demand must not parse ordinary type expressions");
+    assert_eq!(std::fs::read_to_string(base.join("out/qann.csv")).unwrap().lines().count(), 1);
+    std::fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
+fn long_text_fallback_exposes_its_candidate_keys_to_planning() {
+    use crate::code_rule_dsl::{facts::vtab::syntax, logic::{rr,front::{Literal,Term}}};
+    let mut p=rr::parse(r#"
+#include "core.rr"
+.decl result(t:symbol)
+result(t) :- node(_,n,_,_,_), text(n,t).
+.output result
+"#).unwrap();
+    assert_eq!(syntax::long_text_twins(&mut p,&[]),1);
+    for rule in &p.rules {
+        for node in rule.body.iter().filter_map(|lit| match lit {
+            Literal::Cmp { r:Term::Call(f,args),.. } if f=="rr_node_text" => args.first(),
+            _=>None,
+        }) {
+            assert!(rule.body.iter().any(|lit| matches!(lit,Literal::Atom(a) if !a.neg && a.rel=="rr_long_text_node" && a.args==[node.clone()])),
+                "long-text fallback must expose its sparse node domain before joins: {rule}");
+        }
+    }
+}
+
+#[test]
+fn long_text_fallback_keeps_short_and_long_results_across_memo_replay() {
+    let base = crate::code_rule_dsl::prefilter::tests::temp().with_extension("long-text-domain");
+    let root = base.join("src");
+    std::fs::create_dir_all(&root).unwrap();
+    let long = format!("[{}]", vec!["123"; 100].join(","));
+    std::fs::write(root.join("a.py"), format!("a = {long}\nb = [1]\n")).unwrap();
+    let src = r#"
+#include "core.rr"
+.decl result(t:symbol)
+result(t) :- field(_,"right",n), text(n,t).
+.output result
+"#;
+    for _ in 0..2 {
+        corpus::run_with_options(&[src], &root, None, &base.join("out"), "program", Binding::Cpu,
+            1 << 18, &corpus::Typing::default(), &json!({"inputFiles":["a.py"]})).unwrap();
+        let rows = std::fs::read_to_string(base.join("out/result.csv")).unwrap();
+        let got: std::collections::BTreeSet<_> = rows.lines().collect();
+        assert_eq!(got, [long.as_str(),"[1]"].into_iter().collect());
+    }
+    std::fs::remove_dir_all(base).unwrap();
+}
+
+#[test]
+fn demanded_component_graph_keeps_cross_file_cache_results() {
+    let base = crate::code_rule_dsl::prefilter::tests::temp().with_extension("component-demand");
+    let root = base.join("src");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("a.py"), "def f():\n    pass\n").unwrap();
+    std::fs::write(root.join("b.py"), "from a import f\ndef g():\n    pass\n").unwrap();
+    let src = r#"
+#include "core.rr"
+.pragma "cross-memo" "uses"
+.decl def(n:node,q:symbol)
+def(n,@dot(m,x)) :- kind(n,"function_definition"), field(n,"name",c), text(c,x), docof(n,d), doc(d,_,m).
+.decl imp(n:node,q:symbol)
+imp(n,@dot(m,x)) :- kind(n,"import_from_statement"), field(n,"module_name",mn), text(mn,m), field(n,"name",xn), text(xn,x).
+.decl uses(n:node,f:node)
+uses(n,f) :- imp(n,q), def(f,q).
+.output uses
+"#;
+    let out = base.join("out");
+    let run = || corpus::run_with_options(&[src], &root, None, &out, "program", Binding::Cpu,
+        1 << 18, &corpus::Typing::default(), &json!({"inputFiles":["a.py","b.py"]})).unwrap();
+    let first = run();
+    let rows = std::fs::read_to_string(out.join("uses.csv")).unwrap();
+    assert_eq!(first.cross, (0, 2));
+    assert_eq!(rows.lines().count(), 1);
+    assert_eq!(run().cross, (2, 0));
+    assert_eq!(std::fs::read_to_string(out.join("uses.csv")).unwrap(), rows);
+    std::fs::remove_dir_all(base).unwrap();
 }

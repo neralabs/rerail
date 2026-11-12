@@ -694,7 +694,7 @@ impl CoreRows {
                 self.name.push([n, string(text) as i64]);
             }
             let named_child = |k: &dyn Fn(&str) -> bool| children.iter().any(|&c| f.named(c) && k(dialect.name(f, c)));
-            let interpolated = match (dialect.family, kind) {
+            let interpolated = !self.skip.literal && match (dialect.family, kind) {
                 (Family::Python, _) => named_child(&|k| k == "interpolation"),
                 (Family::Php, "encapsed_string") => named_child(&|k| !matches!(k, "string_content" | "escape_sequence")),
                 _ => false,

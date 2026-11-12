@@ -17,6 +17,9 @@ pub struct Watch {
     delta_priced: Vec<Option<f64>>,
     deltas: Vec<i64>,
     dirty: Vec<bool>,
+    whole_pending: Vec<bool>,
+    required: Vec<Vec<usize>>,
+    rows: Vec<Option<i64>>,
 }
 
 impl Watch {
@@ -26,10 +29,16 @@ impl Watch {
             delta_of: Vec::new(),
             delta_readers: vec![Vec::new(); rels.len()], delta_priced: vec![None; rels.len()],
             deltas: vec![0; rels.len()], dirty: vec![true; probes.len()],
+            whole_pending: vec![true; probes.len()],
+            required: Vec::new(), rows: vec![None; rels.len()],
         };
         for (p, (rule, delta, _)) in probes.iter().enumerate() {
             let delta_rel = rule.body[*delta].atom().and_then(|a| rels.get(a.rel.as_str())).copied();
             watch.delta_of.push(delta_rel);
+            watch.required.push(rule.body.iter().filter_map(|lit| match lit {
+                Literal::Atom(a) if !a.neg => rels.get(a.rel.as_str()).copied(),
+                _ => None,
+            }).collect());
             if let Some(r) = delta_rel { watch.delta_readers[r].push(p); }
             for atom in rule.body.iter().filter_map(|l| match l {
                 Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a), _ => None,
@@ -76,6 +85,14 @@ impl Watch {
             for &p in &version.readers { self.dirty[p] = true; }
         }
     }
+    pub fn rows(&mut self, rel: usize, rows: i64) {
+        let old = self.rows[rel].replace(rows);
+        if old.is_none_or(|old| (old == 0) != (rows == 0)) {
+            if let Some(version) = self.versions[rel].first() {
+                for &p in &version.readers { self.dirty[p] = true; }
+            }
+        }
+    }
     pub fn delta(&mut self, rel: usize, rows: i64) {
         self.deltas[rel] = rows;
         if self.delta_priced[rel].is_none_or(|old| !near(&[old], &[rows as f64])) {
@@ -85,7 +102,14 @@ impl Watch {
     }
     pub fn take(&mut self, probe: usize) -> bool {
         if self.delta_of[probe].is_some_and(|r| self.deltas[r] == 0) { return false; }
+        if self.required[probe].iter().any(|&r| self.rows[r] == Some(0)) { return false; }
         std::mem::replace(&mut self.dirty[probe], false)
+    }
+    /// Price a whole join once its required inputs can produce rows. An empty
+    /// seed wave defers this work; it does not discard the later replan.
+    pub fn take_whole(&mut self, probe: usize) -> bool {
+        if self.required[probe].iter().any(|&r| self.rows[r] == Some(0)) { return false; }
+        std::mem::replace(&mut self.whole_pending[probe], false)
     }
 }
 

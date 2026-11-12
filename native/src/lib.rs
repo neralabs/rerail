@@ -4,6 +4,10 @@
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
+// The self dev-dependency owns the production allocator. Keep it linked even
+// when split-crate tests no longer reference one of its exported types.
+#[cfg(test)]
+extern crate rerail_engine as _;
 /// `build.rs` compiles this file too; the library builds it only for tests, so `cargo test`
 /// checks the identities the build script computes.
 #[cfg(test)]
@@ -45,7 +49,7 @@ use std::path::Path;
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-#[cfg(not(any(windows, target_family = "wasm")))]
+#[cfg(not(any(test, windows, target_family = "wasm")))]
 union JemallocConf {
     byte: &'static u8,
     character: &'static std::ffi::c_char,
@@ -55,7 +59,7 @@ union JemallocConf {
 // decay cost a tenth of a storage-heavy benchmark's CPU in mmap/munmap); every apply purges them
 // when it ends and again once its response is freed (`purge_allocator_pages`), so nothing dirty
 // is kept at rest.
-#[cfg(not(any(windows, target_family = "wasm")))]
+#[cfg(not(any(test, windows, target_family = "wasm")))]
 #[allow(non_upper_case_globals)]
 #[unsafe(export_name = "_rjem_malloc_conf")]
 pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
@@ -472,6 +476,17 @@ pub(crate) use code_rule_dsl::prof::lower_hex;
 mod tests {
     use tikv_jemalloc_ctl::{epoch, raw};
     use tikv_jemalloc_sys::{MALLOCX_ARENA, MALLOCX_TCACHE_NONE, dallocx, mallocx};
+
+    #[cfg(not(any(target_family = "wasm", feature = "system-allocator")))]
+    #[test]
+    fn rust_allocations_reach_the_profile_allocator() {
+        let allocated = || unsafe { raw::read::<u64>(b"thread.allocated\0") }.unwrap();
+        let before = allocated();
+        let bytes = std::hint::black_box(vec![0u8; 1 << 20]);
+        let after = allocated();
+        assert!(after - before >= bytes.len() as u64,
+            "Rust allocations must use production jemalloc and reach its profile counters: {} bytes recorded for {} allocated", after - before, bytes.len());
+    }
 
     #[test]
     fn purge_returns_freed_pages() {

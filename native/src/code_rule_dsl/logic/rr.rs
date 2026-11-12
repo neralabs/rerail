@@ -331,6 +331,14 @@ fn modules_of(paths: Vec<PathBuf>) -> Result<Files, Error> {
 /// for a text that includes nothing, or while phase 0 itself runs.
 pub(in crate::code_rule_dsl) fn text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>, Error> {
     use super::plan::corpus::phase0;
+    if phase0::active() { return Ok(None); }
+    // Find directives lexically before constructing another syntax tree for a
+    // program without includes.
+    // Strings, patterns and comments containing "#include" are not directives.
+    let lexed = syntax::lex(src);
+    if lexed.error.is_none() && !lexed.toks.iter().any(|(t,_,_)| matches!(t, syntax::Tok::Hash(_))) {
+        return Ok(None);
+    }
     let statements = from_tape::statements(src, &tape(src))?;
     let names: Vec<(i64, String)> = statements
         .iter()

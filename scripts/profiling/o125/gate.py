@@ -5,12 +5,41 @@ Run spike_o125_replay with RERAIL_PROFILE for each binary first. Keep run.log an
 O125_SAVE's rows/07.txt beside each profile directory. The replay prints parity;
 this gate requires it and compares the saved outputs. It checks recorded native work,
 not total CPU: whole-plan execution omits step counts, and counts can span more than one planned order.
+For a tape-format change, supply both benchmark_node.csv captures to compare node
+locations. Unmapped identities and ambiguous locations fail the comparison.
 """
 import argparse
 import csv
 import json
 import re
+from collections import Counter
 from pathlib import Path
+
+
+def located_rows(rows, node_map):
+    """Compare identities across tape formats using captured node locations."""
+    locations = {}
+    identities = {}
+    for line in node_map.read_text().splitlines():
+        _, node, kind, start, end = line.split("\t")
+        location = (node.rsplit(":", 1)[0], kind, start, end)
+        if node in locations and locations[node] != location:
+            raise ValueError(f"ambiguous node identity: {node}")
+        if location in identities and identities[location] != node:
+            raise ValueError(f"ambiguous node location: {location}")
+        locations[node] = location
+        identities[location] = node
+
+    def locate(value):
+        if value in locations:
+            return ("node", *locations[value])
+        if re.search(r":\d+\.\d+$", value):
+            raise ValueError(f"node missing from identity capture: {value}")
+        return ("value", value)
+
+    return [Counter(tuple(locate(v) for v in line.split("\t"))
+                    for line in group.splitlines())
+            for group in rows.decode().split("\n--\n")]
 
 
 def measure(path):
@@ -39,7 +68,12 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("baseline", type=Path)
     parser.add_argument("candidate", type=Path)
+    parser.add_argument("--baseline-node-map", type=Path,
+                        help="captured benchmark_node.csv for a tape-format change")
+    parser.add_argument("--candidate-node-map", type=Path)
     args = parser.parse_args()
+    if bool(args.baseline_node_map) != bool(args.candidate_node_map):
+        parser.error("both node maps are required")
     result, failures = {}, []
     for label, path in [("baseline", args.baseline), ("candidate", args.candidate)]:
         log = (path.parent / "run.log").read_text()
@@ -47,7 +81,11 @@ def main():
             failures.append(f"{label} lacks successful incremental/full output parity")
     baseline_rows = (args.baseline.parent / "rows/07.txt").read_bytes()
     candidate_rows = (args.candidate.parent / "rows/07.txt").read_bytes()
-    if not baseline_rows or candidate_rows != baseline_rows:
+    if args.baseline_node_map:
+        same = located_rows(baseline_rows, args.baseline_node_map) == located_rows(candidate_rows, args.candidate_node_map)
+    else:
+        same = candidate_rows == baseline_rows
+    if not baseline_rows or not same:
         failures.append("saved outputs differ from the nonempty baseline")
     for phase in ["06-cold", "07-session", "07-full"]:
         before = measure(args.baseline / f"native-{phase}.tsv")
