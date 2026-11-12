@@ -990,6 +990,61 @@ describe("CodeRuleBridge", () => {
   });
 });
 
+describe("CodeRuleBridge and a call it takes up only after its tool wrote the file", () => {
+  /**
+   * `src/a.py` holding `before` when the session opens, then `after` written by a Claude Code Edit whose call the bridge
+   * begins only once the tool ran, as a daemon too busy to answer the hook in time does; the call finishes with the
+   * tool's result, `output`. The edits the auditor was given.
+   */
+  async function lateEdit(before: string, after: string, output: (path: string) => unknown) {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, before);
+    await awaitClockAfter(path);
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await writeFile(path, after);
+    await bridge.begin("edit-1", "Edit", { file_path: path });
+    await bridge.finish("edit-1", false, { output: output(path) });
+    return auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits);
+  }
+  /** Claude Code's Edit result with the line diff it made (`structuredPatch`) and no copy of the text it replaced. */
+  const editResult = (lines: readonly string[]) => (path: string) => ({
+    filePath: path, oldString: "two", newString: "TWO", originalFile: null, userModified: false, replaceAll: false,
+    structuredPatch: [{ oldStart: 1, oldLines: 2, newStart: 1, newLines: 2, lines }],
+  });
+
+  it("reads the edit against the text the result's line diff rebuilds when the result leaves out the text it replaced", async () => {
+    const before = "one\ntwo\nthree\n";
+    const after = "one\nTWO\nthree\nfour\n";
+    const output = (path: string) => ({
+      ...editResult([])(path),
+      structuredPatch: [{ oldStart: 1, oldLines: 3, newStart: 1, newLines: 4, lines: [" one", "-two", "+TWO", " three", "+four"] }],
+    });
+    expect(await lateEdit(before, after, output)).toEqual([{ path: "src/a.py", language: "python", previousText: before, generatedText: after }]);
+  });
+
+  it.each([
+    { carriageReturns: "without", lines: [" one", "-two", "+TWO"] },
+    { carriageReturns: "with", lines: [" one\r", "-two\r", "+TWO\r"] },
+  ])("rebuilds a file with CRLF line endings from a line diff $carriageReturns carriage returns", async ({ lines }) => {
+    expect(await lateEdit("one\r\ntwo\r\n", "one\r\nTWO\r\n", editResult(lines))).toEqual([
+      { path: "src/a.py", language: "python", previousText: "one\r\ntwo\r\n", generatedText: "one\r\nTWO\r\n" },
+    ]);
+  });
+
+  it("rebuilds a last line with no line feed", async () => {
+    const lines = [" one", "-two", "\\ No newline at end of file", "+TWO", "\\ No newline at end of file"];
+    expect(await lateEdit("one\ntwo", "one\nTWO", editResult(lines))).toEqual([
+      { path: "src/a.py", language: "python", previousText: "one\ntwo", generatedText: "one\nTWO" },
+    ]);
+  });
+
+  it("leaves the edit unchecked when the file no longer holds the diff's lines where the diff places them", async () => {
+    // Changed again after the tool wrote it: what the diff rebuilt would credit that change to the edit.
+    expect(await lateEdit("one\ntwo\n", "one\nTWO, then changed\n", editResult([" one", "-two", "+TWO"]))).toEqual([]);
+  });
+});
+
 describe("ledgerPreimage", () => {
   it("keeps the text of a source that only names a token, and withholds one that assigns one", () => {
     const source = "import { getAuthTokenFromHeader } from './auth';\n\nconst token = getAuthTokenFromHeader;\nexport default token;\n";

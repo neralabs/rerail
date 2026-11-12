@@ -443,14 +443,14 @@ describe("Rerail tool results waiting for their edit's check", () => {
       return { answering: runtime.ingest({ kind: "result", eventId: `result-${id}`, sessionId: session.sessionId, toolCallId: id, toolName: "Write", output: "ok" }) };
     };
     /**
-     * Writes `text` into `file` with the Write tool before its call reaches the runtime, as a daemon too busy to take
-     * the call up until the hook gave up on it, and the tool ran, sees it; `output` is the tool's result.
+     * Writes `text` into `file` with `tool` before its call reaches the runtime, as a daemon too busy to take the call
+     * up until the hook gave up on it, and the tool ran, sees it; `output` is the tool's result.
      */
-    const lateEdit = async (id: string, file: string, text: string, output: (path: string) => unknown) => {
+    const lateEdit = async (id: string, file: string, text: string, output: (path: string) => unknown, tool: "Write" | "Edit" = "Write") => {
       const path = join(root, file);
       await writeFile(path, text);
-      await runtime.ingest({ kind: "call", eventId: `call-${id}`, sessionId: session.sessionId, toolCallId: id, toolName: "Write", input: { file_path: path, content: text } });
-      return { answering: runtime.ingest({ kind: "result", eventId: `result-${id}`, sessionId: session.sessionId, toolCallId: id, toolName: "Write", output: output(path) }) };
+      await runtime.ingest({ kind: "call", eventId: `call-${id}`, sessionId: session.sessionId, toolCallId: id, toolName: tool, input: { file_path: path, content: text } });
+      return { answering: runtime.ingest({ kind: "result", eventId: `result-${id}`, sessionId: session.sessionId, toolCallId: id, toolName: tool, output: output(path) }) };
     };
     const turnEnd = (eventId: string) => runtime.ingest({ kind: "turn-end", eventId, sessionId: session.sessionId, session, text: "" });
     return { runtime, root, session, check, checking, steered, edit, lateEdit, turnEnd };
@@ -471,15 +471,24 @@ describe("Rerail tool results waiting for their edit's check", () => {
     }
   });
 
-  // Claude Code's Write result, as its PostToolUse hook carries it: `type: "create"` for a file the tool made, else the
-  // text it replaced in `originalFile`.
+  // Claude Code's Write and Edit results, as its PostToolUse hook carries them: `type: "create"` for a file the Write
+  // made, else the text the tool replaced in `originalFile` or, where that is null, the line diff it made.
   it.each([
-    { made: "a file the tool made", file: "b.ts", output: (path: string) => ({ type: "create", filePath: path, content: BAD, structuredPatch: [], originalFile: null }) },
-    { made: "a file the tool rewrote", file: "a.ts", output: (path: string) => ({ type: "update", filePath: path, content: BAD, structuredPatch: [], originalFile: "export const a = 1;\n" }) },
-  ])("steers $made when its call arrives only after the tool wrote it, from what Claude Code says the file held", async ({ file, output }) => {
+    { made: "a file the tool made", file: "b.ts", tool: "Write" as const, output: (path: string) => ({ type: "create", filePath: path, content: BAD, structuredPatch: [], originalFile: null }) },
+    { made: "a file the tool rewrote", file: "a.ts", tool: "Write" as const, output: (path: string) => ({ type: "update", filePath: path, content: BAD, structuredPatch: [], originalFile: "export const a = 1;\n" }) },
+    {
+      made: "a file the tool edited, from its line diff where the result leaves out the text it replaced",
+      file: "a.ts",
+      tool: "Edit" as const,
+      output: (path: string) => ({
+        filePath: path, oldString: "export const a = 1;\n", newString: BAD, originalFile: null, userModified: false, replaceAll: false,
+        structuredPatch: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, lines: [" export const a = 1;", "+const bad = 2;"] }],
+      }),
+    },
+  ])("steers $made when its call arrives only after the tool wrote it, from what Claude Code says the file held", async ({ file, tool, output }) => {
     const { runtime, check, lateEdit } = await hookSession();
     try {
-      const { answering } = await lateEdit("t1", file, BAD, output);
+      const { answering } = await lateEdit("t1", file, BAD, output, tool);
       check.resolve();
       expect((await answering).map(delivery => delivery.content)).toEqual([renderSteer([finding(file)])]);
     } finally {

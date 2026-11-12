@@ -42,6 +42,7 @@ import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
 import { ToolCallWindows } from "./tool-call-windows.js";
+import { claudeCodeReportedPreimage, type ReportedPreimage, reportedText } from "./reported-preimage.js";
 
 
 /** The name of the ignore files a walk observes whatever Git says of them. */
@@ -156,23 +157,6 @@ function preimageOf(source: Source): Preimage | undefined {
     return sensitiveByName(source.path) ? { withheld: { sha256: source.digest!, bytes: Buffer.byteLength(source.text) } } : { text: source.text };
   if (source.readError !== undefined) return { readError: source.readError };
   return source.deleted === true ? {} : undefined;
-}
-/** A file a tool's own result says it wrote (`path`, as the result names it), and what the file held before. */
-interface ReportedPreimage {
-  readonly path: string;
-  readonly preimage: Preimage;
-}
-/**
- * What the file a tool wrote held before it, as the tool's result says: Claude Code's Write, Edit and MultiEdit results
- * name the file (`filePath`) and the text the tool replaced (`originalFile`), and a Write that made the file says
- * `type: "create"`. Undefined when the result says neither.
- */
-function reportedPreimage(output: unknown): ReportedPreimage | undefined {
-  if (typeof output !== "object" || output === null) return undefined;
-  const { filePath, originalFile, type } = output as { filePath?: unknown; originalFile?: unknown; type?: unknown };
-  if (typeof filePath !== "string" || filePath === "") return undefined;
-  if (type === "create") return { path: filePath, preimage: {} };
-  return typeof originalFile === "string" ? { path: filePath, preimage: { text: originalFile } } : undefined;
 }
 /** `preimage` of the file at `path` as a capture keeps it: a file named like one holding secrets keeps only its digest and size. */
 function keptPreimage(path: string, preimage: Preimage): Preimage {
@@ -367,8 +351,10 @@ function unchangedSince(source: Source, preimage: Preimage | undefined): boolean
  * The preimage a tool edit of `source` is read against: the call's own capture, or, where that capture already holds
  * what the tool wrote (the call reached Rerail only after the tool ran), what the tool's result says the file held.
  */
-function editPreimage(source: Source, captured: Preimage | undefined, reported: Preimage | undefined): Preimage | undefined {
-  return reported !== undefined && captured !== undefined && unchangedSince(source, captured) ? keptPreimage(source.path, reported) : captured;
+function editPreimage(source: Source, captured: Preimage | undefined, reported: ReportedPreimage | undefined): Preimage | undefined {
+  if (reported === undefined || captured === undefined || !unchangedSince(source, captured)) return captured;
+  const preimage = reportedText(reported, source.text);
+  return preimage === undefined ? captured : keptPreimage(source.path, preimage);
 }
 function absentThroughout(source: Source, preimage: Preimage | undefined): boolean {
   return source.deleted === true && preimage !== undefined && preimage.text === undefined && preimage.readError === undefined;
@@ -1086,7 +1072,7 @@ export class CodeRuleBridge {
   /**
    * A failed command may still have written files, so command results reconcile regardless of `failed`. With
    * `rewindable` the edit's preimages are kept for `rewind` until `release`. `output`, the tool's result, may say what
-   * the file it wrote held before (`reportedPreimage`): that is the edit's preimage where the call's own capture already
+   * the file it wrote held before (`claudeCodeReportedPreimage`): that is the edit's preimage where the call's own capture already
    * holds the write, as it does when the call reached Rerail only after the tool ran.
    */
   async finish(toolCallId: string, failed = false, options: { rewindable?: boolean; output?: unknown } = {}): Promise<readonly CodeRuleResponse[]> {
@@ -1105,7 +1091,7 @@ export class CodeRuleBridge {
       this.refreshCodeRules();
       this.#reportIgnoredEdits(discovery.root, pending.paths);
       await this.#noteIgnoreRules(pending.paths);
-      const { edits, uncaptured, preimages } = await this.#readEdits(discovery, pending, reportedPreimage(options.output));
+      const { edits, uncaptured, preimages } = await this.#readEdits(discovery, pending, claudeCodeReportedPreimage(options.output));
       if (edits.length === 0) return [];
       // Kept before the audit starts, so a steer its evaluation publishes finds it.
       if (options.rewindable === true) {
@@ -1437,7 +1423,7 @@ export class CodeRuleBridge {
     const preimages = new Map(pending.preimages);
     const reportedPath = reported === undefined ? undefined : this.#sourceLocation(root, reported.path)?.path;
     const preimageOfEdit = (source: Source): Preimage | undefined => {
-      const preimage = editPreimage(source, preimages.get(source.path), source.path === reportedPath ? reported?.preimage : undefined);
+      const preimage = editPreimage(source, preimages.get(source.path), source.path === reportedPath ? reported : undefined);
       if (preimage !== undefined) preimages.set(source.path, preimage);
       return preimage;
     };
