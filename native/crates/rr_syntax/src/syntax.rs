@@ -321,6 +321,10 @@ pub enum Item {
     /// A setting directive (`.policy "id" revision 1`, `.mode`, `.scope`, …): its name and its text.
     Setting { key: String, text: String },
     Clause { heads: Vec<Head>, body: Vec<Lit>, edits: Vec<Term> },
+    /// `.test name [exactly]` … `.end` (decision 0119): a test of the file's rules, its statements (`.fixture`,
+    /// `.expect`: settings; the test's own declarations and clauses) in order. Lowering never reads it; only testing
+    /// mode does (`logic::rr::testing`).
+    Test { name: String, exactly: bool, items: Vec<Statement> },
 }
 
 /// A `.violation`'s code: a column's value (`code {c}`), or a constant (`code "E501"`).
@@ -789,6 +793,10 @@ impl<'s> Parser<'s> {
             self.field(Field::Path);
             self.close();
             Ok(Item::Include(path))
+        } else if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(d) if d == "test") {
+            self.test()
+        } else if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(d) if d == "end") {
+            self.fail("a `.test` before its `.end`")
         } else if self.is_p(".")
             && let Tok::Id(d) = self.peek_at(1).clone()
         {
@@ -834,6 +842,40 @@ impl<'s> Parser<'s> {
         } else {
             self.clause()
         }
+    }
+
+    /// `.test name [exactly]`, its statements, `.end` (decision 0119). The kind implies `.test` and `.end`.
+    fn test(&mut self) -> Result<Item, Error> {
+        self.open(Kind::TestBlock);
+        self.implied();
+        self.implied();
+        let name = self.id()?;
+        self.field(Field::Name);
+        let exactly = self.is_id("exactly");
+        if exactly {
+            self.bump_as(Kind::Identifier);
+            self.field(Field::Modifier);
+        }
+        let mut items = Vec::new();
+        loop {
+            if *self.peek() == Tok::Eof {
+                return self.fail("`.end`");
+            }
+            if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(d) if d == "end") {
+                self.implied();
+                self.implied();
+                break;
+            }
+            if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(d) if d == "test") {
+                return self.fail("`.end` (tests do not nest)");
+            }
+            let line = self.line();
+            let item = self.statement(line)?;
+            self.field(Field::Body);
+            items.push((item, line));
+        }
+        self.close();
+        Ok(Item::Test { name, exactly, items })
     }
 
     /// A directive's statement, after its `.word`.

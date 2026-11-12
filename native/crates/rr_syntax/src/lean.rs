@@ -1080,6 +1080,10 @@ impl Parser<'_> {
             self.field(Field::Path);
             self.close();
             Ok(())
+        } else if self.is_p(DOT) && self.is_word_at(1, b"test") {
+            self.test()
+        } else if self.is_p(DOT) && self.is_word_at(1, b"end") {
+            Err(())
         } else if self.is_p(DOT) && self.is_id_at(1) {
             let d = self.t[self.i + 1].word;
             let policy = d == W_POLICY && self.is_p_at(2, LBRACE);
@@ -1119,6 +1123,39 @@ impl Parser<'_> {
         } else {
             self.clause()
         }
+    }
+
+    /// Whether token `k` ahead is the word `w`.
+    fn is_word_at(&self, k: usize, w: &[u8]) -> bool {
+        self.is_id_at(k) && self.t.get(self.i + k).is_some_and(|t| &self.b[t.start as usize..t.end as usize] == w)
+    }
+
+    /// `syntax::Parser::test`: `.test name [exactly]`, its statements, `.end`.
+    fn test(&mut self) -> R<()> {
+        self.open(Kind::TestBlock);
+        self.i += 2;
+        self.id()?;
+        self.field(Field::Name);
+        if self.is_word_at(0, b"exactly") {
+            self.bump_as(Kind::Identifier);
+            self.field(Field::Modifier);
+        }
+        loop {
+            if self.kind() == EOF {
+                return Err(());
+            }
+            if self.is_p(DOT) && self.is_word_at(1, b"end") {
+                self.i += 2;
+                break;
+            }
+            if self.is_p(DOT) && self.is_word_at(1, b"test") {
+                return Err(());
+            }
+            self.statement()?;
+            self.field(Field::Body);
+        }
+        self.close();
+        Ok(())
     }
 
     fn io_relation(&mut self) -> R<()> {

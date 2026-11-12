@@ -1,6 +1,6 @@
 # 0119. A rule file carries its own tests
 
-Status: design (2026-11-12). Nothing of it is built yet.
+Status: spike built (2026-11-12): items 1 to 5, but not `rerail rules test`, and not item 6. See "What the spike built" below.
 
 ## Intro
 
@@ -143,7 +143,33 @@ B101(a) :- kind(a, "assert_statement").
 - **Edits** (`.edit`, a fix's replacement): a `.expect fix <code> at …` that asserts the text after the fix is a
   natural next step. It is not designed here.
 
+## What the spike built
+
+- **Parsing** (item 2): `Item::Test`, the tape kind `test_block` (its name, `exactly` as a modifier, its statements
+  under `body`), in the engine's parser (`syntax.rs`), the lean parser (`lean.rs`) and `from_tape.rs`. The Bitlex
+  grammar does not know the block yet (O-rr-tests-bitlex).
+- **Dropped** (item 3), more simply than the read option above: `rr::lower` skips `Item::Test` always, so no
+  option exists that could leak a test into a program. Testing mode splices a test's statements into the file's own,
+  then lowers them as `read_file` does (`rr::lower_files`, split out of `read_file`). The guard is
+  `a_rule_files_tests_are_no_part_of_its_program`: each file with tests lowers to the same program as with its
+  tests' lines blank.
+- **Running** (item 4, `logic/rr/testing.rs`): each test is `run-rr`'s run (`tools::run_program`, split out of
+  `run_rr`) over a directory holding its fixtures. No namespace is needed: a test's rules are in its run alone. The
+  relations an `.expect` names are made outputs of the run.
+- **Where** (item 5): `rerail-engine test-rr <file or directory>... [--filter <text>]`, and the engine's tests
+  `rule_files_pass_their_own_tests`, `failed_expectations_say_what_the_run_had` and `test_blocks_parse_only_whole`.
+  `rerail rules test` does not call it yet.
+- **Samples:** `packs/python/bandit-b101-assert-used.rr` carries three tests. `spikes/rr-tests/print-calls.rr` uses
+  every form: inline and `from` fixtures, a testing rule, row and count assertions, and `exactly`.
+- **Not kept by the printer:** `rr::print` prints a lowered program, so `convert-rr` and `flatten` leave tests out.
+  A formatter that keeps them is still to be written.
+
 ## Measured
 
-Nothing is built yet, so there is nothing to measure. The cost of each test is the cost of a run over its fixtures:
-a small corpus with the policy's plans, which a test without testing rules shares with every other test.
+`rerail-engine test-rr` on the two sample files: 6 tests pass. The same tests with wrong expectations fail, and
+each failure names its line and what the run had (`reported P001 at "app/main.py":2`,
+`printed_line has 2 rows: (2), (3)`, `counted 2`, `exactly: also reported …`). The engine's four tests take 7.3 s
+of wall time in all, with 4.3 s user and 4.2 s system CPU (62.9 G instructions). Under `RERAIL_SQL_STRICT=1`,
+`test-rr` stops as `run-rr` does (O-run-rr-strict).
+Once in four tries over `docs/rule-syntax/`, one test's run found the store's writer busy (O-test-rr-busy).
+

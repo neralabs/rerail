@@ -13,3 +13,37 @@
     "Replace this assert with an if check that raises an exception; asserts are stripped when Python runs with -O."
     suppress nosec "B101"
 B101(a) :- kind(a, "assert_statement").
+
+// Tests (decision 0119): run by `rerail-engine test-rr`, left out of the rule otherwise.
+.test asserts_are_reported
+    .fixture "app/views.py" ```
+        def view(user):
+            assert user.is_admin
+            return render(user)
+        ```
+    .expect B101 at "app/views.py":2
+    .expect no B101 at "app/views.py":3
+.end
+
+// `exactly`: these findings and no others. The test files are out of the scope.
+.test test_files_are_out_of_scope exactly
+    .fixture "app/a.py" ```
+        assert x
+        ```
+    .fixture "app/tests/test_a.py" ```
+        assert x
+        ```
+    .fixture "conftest.py" ```
+        assert x
+        ```
+    .expect B101 at "app/a.py":1
+.end
+
+// A raise is the replacement: nothing to report.
+.test a_raise_passes
+    .fixture "app/b.py" ```
+        if not user.is_admin:
+            raise Denied()
+        ```
+    .expect no B101
+.end

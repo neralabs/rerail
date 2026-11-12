@@ -2807,3 +2807,110 @@ fn quoting_escapes_only_what_needs_it() {
     assert_eq!(super::quote("plain text é"), "\"plain text é\"");
     assert_eq!(super::quote("a\"b\\c\nd\te\u{1}"), "\"a\\\"b\\\\c\\nd\\te\\u{1}\"");
 }
+
+// ---------------------------------------------------------------- tests in rule files (decision 0119)
+
+/// `text` with each `.test` … `.end` block's lines blank: its program, were tests part of it, would differ.
+fn without_tests(text: &str) -> String {
+    let mut inside = false;
+    text.lines()
+        .map(|l| {
+            let t = l.trim_start();
+            let blank = inside || t.starts_with(".test ");
+            if t.starts_with(".test ") {
+                inside = true;
+            } else if t == ".end" {
+                inside = false;
+            }
+            if blank { "" } else { l }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn files_with_tests() -> Vec<PathBuf> {
+    let files: Vec<PathBuf> = rr_files().into_iter().filter(|f| super::testing::may_hold_tests(&std::fs::read_to_string(f).unwrap())).collect();
+    assert!(files.len() >= 2, "the B101 pack rule and the spike carry tests: {files:?}");
+    files
+}
+
+/// Every test a rule file carries passes (`rerail-engine test-rr` over `docs/rule-syntax/`).
+#[test]
+fn rule_files_pass_their_own_tests() {
+    let work = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-tests");
+    let mut failed = Vec::new();
+    let mut ran = 0;
+    for (k, file) in files_with_tests().iter().enumerate() {
+        for (j, test) in super::testing::tests(file).unwrap().iter().enumerate() {
+            ran += 1;
+            match super::testing::run(file, test, &work.join(format!("{k}-{j}"))) {
+                Ok(outcome) if outcome.passed() => {}
+                Ok(outcome) => failed.push(format!("{}::{}: {:?} (findings {:?})", file.display(), test.name, outcome.failures, outcome.findings)),
+                Err(e) => failed.push(format!("{}::{}: {e}", file.display(), test.name)),
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&work);
+    assert!(ran >= 6, "{ran} tests");
+    assert!(failed.is_empty(), "{failed:#?}");
+}
+
+/// A test is no part of its file's program (decision 0119): the program, and so every key made of it, is the one the
+/// file has with its tests' lines blank.
+#[test]
+fn a_rule_files_tests_are_no_part_of_its_program() {
+    for file in files_with_tests() {
+        let text = std::fs::read_to_string(&file).unwrap();
+        let with = super::parse(&text).unwrap();
+        let without = super::parse(&without_tests(&text)).unwrap();
+        assert_eq!(format!("{with:?}"), format!("{without:?}"), "{}", file.display());
+        assert!(!super::testing::tests(&file).unwrap().is_empty());
+    }
+}
+
+/// A failed `.expect` names its line and what the run had instead; `exactly` names the findings no `.expect` lists.
+#[test]
+fn failed_expectations_say_what_the_run_had() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-test-fail");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("t.rr");
+    std::fs::write(&file, r#".policy "t:fail" revision 1
+.language python
+.scope include "**/*.py"
+.violation Call(at: node) code "C1" "a call"
+Call(c) :- kind(c, "call").
+.test wrong exactly
+    .fixture "a.py" ```
+        f()
+        g()
+        ```
+    .decl called(l: number)
+    called(l) :- Call(c), line(c, l).
+    .expect C1 at "a.py":1
+    .expect called(7)
+    .expect count C1 = 3
+.end
+"#).unwrap();
+    let tests = super::testing::tests(&file).unwrap();
+    let outcome = super::testing::run(&file, &tests[0], &dir.join("work")).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(outcome.failures, [
+        "line 14: .expect called(7): called has 2 rows: (1), (2)",
+        "line 15: .expect count C1 = 3: counted 2",
+        "line 6: exactly: also reported C1 at \"a.py\":2",
+    ], "{outcome:?}");
+}
+
+/// A test's block is checked as it is parsed: closed by `.end`, not nested, and no `.end` outside one.
+#[test]
+fn test_blocks_parse_only_whole() {
+    for (text, why) in [
+        (".test a\n.expect X\n", "`.end`"),
+        (".test a\n.test b\n.end\n.end\n", "tests do not nest"),
+        (".end\n", "a `.test` before its `.end`"),
+    ] {
+        let error = super::parse(text).map(|_| ()).unwrap_err().to_string();
+        assert!(error.contains(why), "{text:?}: {error}");
+    }
+    assert_eq!(super::testing::dedent("\n    a\n      b\n\n    c\n    "), "a\n  b\n\nc\n");
+}

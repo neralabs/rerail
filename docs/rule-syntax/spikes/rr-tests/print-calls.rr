@@ -1,0 +1,46 @@
+.policy "spike:print-calls" revision 1
+.description "Report calls to print; use logging instead."
+.language python
+.mode steer
+.scope include "**/*.py"
+
+// A call whose function is the name `print`.
+.decl print_call(c: node)
+print_call(c) :- kind(c, "call"), field(c, "function", f), text(f, "print").
+
+.violation P001(at: node) code "P001" "Use logging instead of print."
+P001(c) :- print_call(c).
+
+// Findings, by their keys: code, path and line.
+.test print_is_reported
+    .fixture "app/main.py" ```
+        import logging
+        print("starting")
+        logging.info("started")
+        ```
+    .expect P001 at "app/main.py":2
+    .expect no P001 at "app/main.py":3
+    .expect count P001 = 1
+.end
+
+// A testing rule: `printed_line` is the test's own relation. It reads the
+// policy's `print_call`, and the assertions read its rows.
+.test testing_rules_read_the_policy
+    .fixture "a.py" ```
+        def f():
+            print(1)
+            print(2)
+        ```
+    .decl printed_line(l: number)
+    printed_line(l) :- print_call(c), line(c, l).
+    .expect printed_line(2)
+    .expect printed_line(3)
+    .expect no printed_line(1)
+    .expect count printed_line = 2
+.end
+
+// A fixture from a file beside the rule: Python 2's print statement is no call.
+.test a_fixture_from_a_file exactly
+    .fixture "legacy.py" from "legacy.py"
+    .expect P001 at "legacy.py":2
+.end

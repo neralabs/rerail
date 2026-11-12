@@ -3670,3 +3670,38 @@ Without `test-hooks` its own facade fails (`fixtures`, `p_table`, `drop_unread_c
 compiled only there.
 
 **Closure:** the target builds, and `base_tests` runs (O-p0-stats-flake's 20 runs).
+
+## O-rr-tests-bitlex. The compiled `.rr` grammar does not know `.test` blocks
+
+**Seen (2026-11-12), decision 0119.** The engine's parser (`syntax.rs`) and the lean parser (`lean.rs`) read a
+`.test` … `.end` block into a `test_block` node. The Bitlex grammar (`rr_syntax/bitlex_ladder/21-named-only.bitlex`,
+compiled by `rerail-rr-parser`) does not: it reads each of the block's lines as a setting and does not refuse the
+file, so its tape differs from the engine's on a file with tests. The compiled parser is on no read path yet
+(`transducer/packed.rs`), and its corpus test (`corpus_tapes_are_the_engines`) is ignored and was not run.
+
+**Closure:** the grammar reads the block as the engine does, and `corpus_tapes_are_the_engines` passes on the
+files with tests (`packs/python/bandit-b101-assert-used.rr`, `spikes/rr-tests/print-calls.rr`).
+
+## O-run-rr-strict. `run-rr` reads atoms inside the waves under `RERAIL_SQL_STRICT`
+
+**Seen (2026-11-12).** `rerail-engine run-rr docs/rule-syntax/packs/python/bandit-b101-assert-used.rr <a one-file
+corpus> <out>` with `RERAIL_SQL_STRICT=1` stops at `SELECT id FROM atom_key WHERE h IN rarray(?1)`. The read is
+`atoms::find`, from `intern_atoms` while a chunk builds its matchers (`facts::vtab::syntax::with_matchers`,
+`run_observed`'s `cut_chunk`). `test-rr` runs through `run-rr`, so it stops the same way. Without strict SQL, both
+run and their results are right. Decision 0119's work does not touch that path. Whether it fails on the hub was not
+checked.
+
+**Closure:** a chunk's matchers intern their atoms before the first wave, or from what the run read then, and
+`run-rr` and `test-rr` pass under `RERAIL_SQL_STRICT=1`.
+
+## O-test-rr-busy. Back-to-back runs in one `test-rr` process can find the store's writer busy
+
+**Seen (2026-11-12), decision 0119.** `rerail-engine test-rr docs/rule-syntax` runs six tests, each a run, one
+after another in one process, on the CLI's default store. Once in four tries, one test failed with "a write queued
+behind the run failed: … the batch's commit: content store writer is busy". The other three tries passed all six.
+A run's writes may lag it (decision: SQLite durable, memory ahead), so the next run's write can meet the last one's.
+No other `rerail-engine` process was running. The engine's tests did not show it: each test has its own store
+(decision 0118).
+
+**Closure:** a write queued behind one run waits for or joins the next run's writer, rather than failing. Or a run
+in a process waits for the last run's queued writes before it writes. Then twenty tries of `test-rr` pass.

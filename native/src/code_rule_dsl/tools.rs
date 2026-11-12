@@ -229,6 +229,22 @@ pub fn run_rr(
         typing::file_local::Binding,
     };
     let (program, files) = rr::read_file(path).map_err(|e| e.to_string())?;
+    run_program(path, program, &files, root, out, options)
+}
+
+/// `run_rr` of a program already read: `path`'s, or a test's (decision 0119, `rr::testing`).
+pub fn run_program(
+    path: &std::path::Path,
+    program: super::logic::front::Program,
+    files: &[super::logic::rr::LibraryFile],
+    root: &std::path::Path,
+    out: &std::path::Path,
+    options: &serde_json::Value,
+) -> Result<serde_json::Value, String> {
+    use super::{
+        logic::{plan::corpus, rr},
+        typing::file_local::Binding,
+    };
     let metadata = rr::metadata(&program).map_err(|e| e.to_string())?;
     if !program.outputs.iter().any(|name| name == "rr_diagnostic") {
         return Err(format!("{}: no .violation declarations", path.display()));
@@ -454,9 +470,10 @@ mod settings_tests {
 //   rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]
 //   rerail-engine run-policies <corpus root> <out dir> <policy.rr>...
 //   rerail-engine check-rr <rule>... | convert-rr <rule>...
+//   rerail-engine test-rr <rule or directory>... [--filter <text>]
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr <rule>...";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rr | dir of .rr> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rr>...\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten <program.rr>\n  rerail-engine run-rr <policy.rr> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies <corpus root> <out dir> <policy.rr>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>]";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -509,6 +526,8 @@ pub fn cli(args: &[String]) -> Result<String, String> {
                 Err(format!("{failures} rules failed the .rr reader"))
             } else { Ok(text) }
         }
+        // Each test the files carry (decision 0119).
+        Some("test-rr") => crate::code_rule_dsl::logic::rr::testing::command(&args[1..]),
         Some("convert-rr") if args.len() > 1 => {
             let paths = args[1..].iter().map(std::path::PathBuf::from).collect::<Vec<_>>();
             serde_json::to_string_pretty(&crate::tools::convert_rr(&paths)).map_err(|e| e.to_string())

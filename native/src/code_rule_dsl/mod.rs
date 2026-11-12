@@ -1017,6 +1017,7 @@ pub(crate) mod logic {
         }
         #[cfg(test)]
         pub mod tests;
+        pub mod testing;
         #[allow(unused_imports)]
         use rerail_rr_syntax::syntax;
         #[allow(unused_imports)]
