@@ -245,6 +245,8 @@ describe("WorktreeWalks", () => {
     const walks = new WorktreeWalks({ gapMs: 0 });
     const first = await session(worktrees[0]!, checkouts, walks);
     const second = await session(worktrees[1]!, checkouts, walks);
+    // A write in each makes the next walk read them, `w3` after `main` and `w2`.
+    for (const checkout of [checkouts[0]!, worktrees[1]!, worktrees[2]!]) await writeFile(join(checkout, "src", "a.py"), "old\nmine\n");
     const hold = holdListing(join(worktrees[2]!, "deep"));
     await first.bridge.checkpoint("turn");
     await hold.entered;
