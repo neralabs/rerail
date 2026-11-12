@@ -86,7 +86,7 @@ describe("Rerail with no daemon running", () => {
 });
 
 describe("Rerail with a daemon that does not answer", () => {
-  test("rerail session says the daemon is running, not how to start it, after one read", async () => {
+  test("the status line and rerail session say the daemon is not answering, not how to start it, after one read each", async () => {
     const { root, env } = await checkout();
     const home = env.RERAIL_HOME!;
     startSetUp(root, join(home, "rerail.sqlite"));
@@ -102,10 +102,11 @@ describe("Rerail with a daemon that does not answer", () => {
       }));
       const notAnswering = "● Rerail is running, but its daemon did not answer in time.\n"
         + "  Ask again in a moment; if it keeps happening, run `rerail status` in a terminal.";
+      expect(await claudeStatus(root, env)).toBe("R E R A I L ● not answering");
       expect(await rerailSession(root, env, ["cursor"])).toBe(notAnswering);
       expect(await rerailSession(root, env, ["claude-code", "abc"])).toBe(notAnswering);
       // One read per run: a second, for the dashboard link, would wait out its own 2 seconds too.
-      expect(asked).toEqual(["/api/presentation", "/api/presentation"]);
+      expect(asked).toEqual(["/api/presentation", "/api/presentation", "/api/presentation"]);
     } finally {
       daemon.closeAllConnections();
       await new Promise<void>(resolve => daemon.close(() => resolve()));
