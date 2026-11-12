@@ -4,7 +4,7 @@ import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   getLibraryRule,
   loadRuleCatalog,
@@ -28,6 +28,10 @@ import { installPack } from "../support/installed-packs.js";
 // with option values set.
 installPack("complexity");
 installPack("typescript");
+
+// rules add compiles every installed pack's rules, once in a process while the installed packs stay the same: done
+// here, that one compile is no single case's work, and does not count against that case's time limit.
+beforeAll(() => { loadRuleCatalog(); });
 
 const directories: string[] = [];
 
