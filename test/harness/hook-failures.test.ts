@@ -1,11 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setImmediate } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const autostart = vi.hoisted(() => ({ calls: 0 }));
@@ -114,33 +115,86 @@ describe("the hook failure log", () => {
     )]);
   });
 
+  // A log of failures at 1 ms, just past its size: the next failure finds it full and moves it aside.
+  const fullLine = JSON.stringify({ at: 1, host: "claude-code", event: "PostToolUse", agent: null, rerail: "0.1.3", reason: "x".repeat(1_000) });
+  const full = Math.ceil((256 * 1024 + 1) / (fullLine.length + 1));
+  const writeFullLog = (rerailHome: string): void => {
+    writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), `${fullLine}\n`.repeat(full));
+  };
+
   // A busy daemon fails every hook at once, 25 to 37 at a time on a loaded Windows machine. Each round, every process
   // records one failure into a log already past its size, so each finds it full and moves it aside.
   it("keeps every failure when hooks running at once each find the log full", async () => {
     const processes = 8;
     const rounds = 4;
-    const line = JSON.stringify({ at: 1, host: "claude-code", event: "PostToolUse", agent: null, rerail: "0.1.3", reason: "x".repeat(1_000) });
-    const full = Math.ceil((256 * 1024 + 1) / (line.length + 1));
-    const started = await Promise.allSettled(Array.from({ length: processes }, () => startHookProcess()));
-    const hooks = started.flatMap(outcome => (outcome.status === "fulfilled" ? [outcome.value] : []));
+    const hooks = await startHookProcesses(processes);
     try {
-      expect(started.flatMap(outcome => (outcome.status === "rejected" ? [String(outcome.reason)] : []))).toEqual([]);
       for (let round = 0; round < rounds; round += 1) {
         const rerailHome = await home();
-        writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), `${line}\n`.repeat(full));
+        writeFullLog(rerailHome);
         await Promise.all(hooks.map((hook, index) => hook.fail(rerailHome, 2 + index)));
         // The full log moved aside whole, and every hook's own failure after it.
         expect({ round, kept: readHookFailures(rerailHome, 0).failures.length }).toEqual({ round, kept: full + processes });
         expect(readFileSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`), "utf8").split("\n").filter(Boolean)).toHaveLength(full);
       }
     } finally {
-      await Promise.all(hooks.map(({ child }) => {
-        // A process that already exited, such as one that crashed in a round, sends no exit event to wait for.
-        if (child.exitCode !== null || child.signalCode !== null) return undefined;
-        const exited = once(child, "exit");
-        child.kill();
-        return exited;
-      }));
+      await stopHookProcesses(hooks);
+    }
+  });
+
+  // The files of the log in `rerailHome`, by name.
+  const logFiles = (rerailHome: string): string[] => readdirSync(rerailHome).filter(name => name.startsWith(HOOK_FAILURES_FILE)).sort();
+  // A hook the coding agent stops the moment it has taken the full log under its own name, as it stops a hook past its
+  // time limit.
+  const stopAfterTheTake = `rename => (from, to) => {
+    rename(from, to);
+    if (to.endsWith(".old")) process.kill(process.pid, "SIGKILL");
+  }`;
+
+  it("counts the full log a hook was stopped holding as it moved it aside", async () => {
+    const rerailHome = await home();
+    writeFullLog(rerailHome);
+    await recordWithRename(rerailHome, 2, stopAfterTheTake);
+    // The log is left under the stopped hook's own name, and the hook's own failure was never written.
+    expect(logFiles(rerailHome)).toEqual([expect.stringMatching(/^hook-failures\.jsonl\.\d+\.[0-9a-f-]+\.old$/u)]);
+    expect(readHookFailures(rerailHome, 0).failures).toHaveLength(full);
+    recordLast(rerailHome, 3);
+    expect(readHookFailures(rerailHome, 0).failures).toHaveLength(full + 1);
+  });
+
+  it("says since when it counts from the log moved aside, not from an older log a hook was stopped holding", async () => {
+    const rerailHome = await home();
+    writeFullLog(rerailHome);
+    await recordWithRename(rerailHome, 2, stopAfterTheTake);
+    // The log moves aside at the 7th and the 10th failure; the 4th to 6th are gone, and the stopped hook's log is older.
+    for (let second = 4; second <= 9; second += 1) recordLarge(rerailHome, second * 1_000);
+    recordLast(rerailHome, 10_000);
+    expect(statusSays(rerailHome, 0, 8_500)).toEqual([expect.stringMatching(
+      /^Hooks: 4 hook events could not be recorded since 1970-01-01T00:00:07\.000Z, as far back as the log goes; /u,
+    )]);
+  });
+
+  // `rerail status` can read the log while a hook moves it aside. The log holds the full log's failures until the hook
+  // writes its own, then one more, so every read must count one of those two.
+  it("counts every failure once when status reads the log while a hook moves it aside", async () => {
+    const hooks = await startHookProcesses(1);
+    try {
+      for (let round = 0; round < 20; round += 1) {
+        const rerailHome = await home();
+        writeFullLog(rerailHome);
+        let recorded = false;
+        const recording = hooks[0]!.fail(rerailHome, 2).then(() => { recorded = true; });
+        const counts = new Set<number>();
+        while (!recorded) {
+          counts.add(readHookFailures(rerailHome, 0).failures.length);
+          await setImmediate();
+        }
+        await recording;
+        expect({ round, counts: [...counts].filter(count => count !== full && count !== full + 1) }).toEqual({ round, counts: [] });
+        expect(readHookFailures(rerailHome, 0).failures).toHaveLength(full + 1);
+      }
+    } finally {
+      await stopHookProcesses(hooks);
     }
   });
 });
@@ -177,6 +231,50 @@ process.send("ready");
       return recorded;
     },
   };
+}
+
+/** Starts `count` hook processes; fails with the reason of each that did not start, once the others are stopped. */
+async function startHookProcesses(count: number): Promise<HookProcess[]> {
+  const started = await Promise.allSettled(Array.from({ length: count }, () => startHookProcess()));
+  const hooks = started.flatMap(outcome => (outcome.status === "fulfilled" ? [outcome.value] : []));
+  const failed = started.flatMap(outcome => (outcome.status === "rejected" ? [String(outcome.reason)] : []));
+  if (failed.length > 0) {
+    await stopHookProcesses(hooks);
+    expect(failed).toEqual([]);
+  }
+  return hooks;
+}
+
+async function stopHookProcesses(hooks: readonly HookProcess[]): Promise<void> {
+  await Promise.all(hooks.map(({ child }) => {
+    // A process that already exited, such as one that crashed in a round, sends no exit event to wait for.
+    if (child.exitCode !== null || child.signalCode !== null) return undefined;
+    const exited = once(child, "exit");
+    child.kill();
+    return exited;
+  }));
+}
+
+/**
+ * Records one failure at `at` into `rerailHome` in a process of its own whose `fs.renameSync` is the function that
+ * `wrapRename`, a function's source, makes of the real one: a hook stopped, or a rename refused, at one step of a move.
+ * Resolves with what the process wrote to its standard output, once it has ended.
+ */
+async function recordWithRename(rerailHome: string, at: number, wrapRename: string): Promise<string> {
+  const program = `import fs from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
+fs.renameSync = (${wrapRename})(fs.renameSync);
+syncBuiltinESMExports();
+const { recordHookFailure } = await import(${JSON.stringify(sourceModule("src/harness/hook-failures.ts"))});
+recordHookFailure({ host: "claude-code", event: "PostToolUse", reason: "the daemon did not answer" }, { home: ${JSON.stringify(rerailHome)}, now: ${at}, env: {} });
+`;
+  const child = spawn(process.execPath, ["--import", "tsx", "--input-type=module", "-e", program], {
+    cwd: join(import.meta.dirname, "..", ".."), stdio: ["ignore", "pipe", "inherit"], windowsHide: true,
+  });
+  let output = "";
+  child.stdout.setEncoding("utf8").on("data", (chunk: string) => { output += chunk; });
+  await once(child, "close");
+  return output;
 }
 
 describe("a hook that cannot record its event", () => {
