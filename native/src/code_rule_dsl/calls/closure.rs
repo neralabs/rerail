@@ -255,7 +255,7 @@ fn parallel<I: Sync, R: Send>(items: &[I], work: impl Fn(&I) -> R + Sync + Send)
 /// shape did (its numbering, a definition's flags or openness, or an edge), without which every
 /// walk over it finds what it did. `touched` holds the definitions whose flags, openness or
 /// edges may have changed, `dropped` those no longer in the graph.
-pub(crate) struct GraphUpdate {
+pub struct GraphUpdate {
     pub(crate) slots: Vec<u32>,
     pub reshaped: bool,
     pub(crate) touched: Vec<DefRef>,
@@ -496,7 +496,7 @@ impl Dense {
 /// Graph size, for measurements.
 #[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct GraphStats {
+pub struct GraphStats {
     pub(crate) files: usize,
     pub(crate) defs: usize,
     pub(crate) edges: usize,

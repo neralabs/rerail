@@ -75,5 +75,4 @@ pub(in crate::code_rule_dsl) fn check(
     Ok(admitted)
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

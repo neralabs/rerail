@@ -1,6 +1,6 @@
 //! Worked examples kept within the structural compiler's supported code-rule surface.
 
-// cratify: a re-export of rerail-engine's, which its facades of this module make
+use crate::code_rule_dsl::test_support::*;
 use serde_json::{Value, json};
 
 const NO_UNUSED_VARS: &str =

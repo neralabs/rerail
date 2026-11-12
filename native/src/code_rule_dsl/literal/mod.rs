@@ -773,7 +773,7 @@ impl<'r> SgNode<'r> for SubNode<'r> {
 }
 
 /// The sub-tree a node belongs to, when its document is one.
-pub(crate) fn sub_tree<'r, D: Doc>(node: &ast_grep_core::Node<'r, D>) -> Option<&'r Arc<SubTree>> {
+pub fn sub_tree<'r, D: Doc>(node: &ast_grep_core::Node<'r, D>) -> Option<&'r Arc<SubTree>> {
     let doc: &dyn std::any::Any = node.get_doc();
     doc.downcast_ref::<SubDoc>().map(|doc| &doc.tree)
 }
@@ -794,5 +794,4 @@ pub enum Parsed {
 
 
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

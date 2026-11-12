@@ -1,5 +1,6 @@
+use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use super::{NameKind, PhpNames, Reference, Resolved};
-// cratify: a re-export of rerail-engine's, which its facades of this module make
+use crate::code_rule_dsl::test_support::*;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::fixtures::oracle;
 use crate::code_rule_dsl::scope::BuildError;

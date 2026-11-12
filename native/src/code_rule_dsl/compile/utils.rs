@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Weak};
 
 /// A `utils` or `constraints` object: names to ast rules, in name order.
-pub(super) fn rule_map<'a>(
+pub fn rule_map<'a>(
     value: Option<&'a Value>,
     path: &str,
 ) -> Result<BTreeMap<String, &'a Value>> {
@@ -34,7 +34,7 @@ pub(super) fn rule_map<'a>(
 /// or a `define` clause's for a utility the document shares). A utility with parameters runs in a
 /// frame of its own (`UtilCall`).
 #[derive(Clone)]
-pub(super) struct UtilDef<'a> {
+pub struct UtilDef<'a> {
     pub(super) rule: &'a Value,
     pub(super) params: Vec<String>,
     /// The utility's path; its rule's is `rule_path`.
@@ -43,13 +43,13 @@ pub(super) struct UtilDef<'a> {
 }
 
 /// The utilities a rule may name, by id, with their parameters.
-pub(crate) type UtilIds<'a> = BTreeMap<&'a str, &'a [String]>;
+pub type UtilIds<'a> = BTreeMap<&'a str, &'a [String]>;
 
 /// Distinct parameterized calls: each utility and the mapping of its parameters.
 pub(crate) type Instances = RefCell<BTreeSet<(usize, CallArgs)>>;
 
 /// Whether a name is a metavariable's (without `$`), as a pattern spells it.
-pub(super) fn is_metavariable_name(name: &str) -> bool {
+pub fn is_metavariable_name(name: &str) -> bool {
     !name.is_empty()
         && name
             .chars()
@@ -58,7 +58,7 @@ pub(super) fn is_metavariable_name(name: &str) -> bool {
 
 /// A `utils` object as utility definitions, ids checked. A utility is a rule, or `{ params, rule }`:
 /// capture names its callers bind to their own (`{ "matches": { "id": { "P": "$C" } } }`).
-pub(super) fn util_map<'a>(
+pub fn util_map<'a>(
     value: Option<&'a Value>,
     path: &str,
 ) -> Result<BTreeMap<String, UtilDef<'a>>> {
@@ -150,7 +150,7 @@ fn called_ids<'a>(value: &'a Value, ids: &mut Vec<&'a str>) {
 }
 
 /// The shared utilities `roots` reach through `matches`, directly or through each other.
-pub(super) fn reachable<'a>(
+pub fn reachable<'a>(
     roots: impl IntoIterator<Item = &'a Value>,
     shared: &BTreeMap<String, UtilDef<'a>>,
 ) -> BTreeSet<String> {
@@ -172,7 +172,7 @@ pub(super) fn reachable<'a>(
 /// ast-grep-config's cycle check: utilities may recurse only through a relation, which always moves
 /// to another node. A reference reached through `all`/`any`/`not`/`matches` alone would evaluate the
 /// same utility on the same node forever, so it is rejected, as upstream does.
-pub(super) fn reject_util_cycles(utils: &BTreeMap<String, UtilDef>) -> Result<()> {
+pub fn reject_util_cycles(utils: &BTreeMap<String, UtilDef>) -> Result<()> {
     fn same_node_refs<'a>(rule: &'a Value, refs: &mut Vec<&'a str>) {
         if let Some(id) = rule.get("matches").and_then(call_target) {
             refs.push(id);
@@ -302,5 +302,4 @@ pub struct UtilScope<'a> {
     pub side: Side,
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

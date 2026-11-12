@@ -9,13 +9,13 @@ use std::sync::Arc;
 struct Key(u32, Required);
 
 #[derive(Clone, Copy)]
-pub(super) struct Estimate {
+pub struct Estimate {
     pub rows: u64,
     pub uncovered: u64,
 }
 
 #[derive(Clone, Default)]
-pub(super) struct Statistics(Arc<BTreeMap<Key, Estimate>>);
+pub struct Statistics(Arc<BTreeMap<Key, Estimate>>);
 
 fn patterns(plan: &AnchorPlan, seen: &mut HashSet<usize>, visit: &mut impl FnMut(&[Requirement])) {
     match &plan.condition {
@@ -128,7 +128,7 @@ impl Statistics {
 }
 
 #[derive(Clone, serde::Serialize)]
-pub(super) struct Decision {
+pub struct Decision {
     pub consumer: usize,
     pub pattern: usize,
     pub requirement: usize,
@@ -196,5 +196,4 @@ pub(super) fn upgrade(db: &Connection) -> Result<()> {
     result.and(removed)
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

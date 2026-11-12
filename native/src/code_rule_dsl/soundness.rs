@@ -29,7 +29,7 @@ type SoundMemo<T> = UtilitySummary<(usize, bool, bool), T>;
 // failed, which an error region can cause: reading it where unbound means "pass" (a negated
 // comparison, a constraint) turns the relation's failure into a violation, so such a read is unsound.
 // Positive comparisons fail on an unbound side, a false negative at worst.
-pub(super) fn sound_under_errors(matcher: &AstMatcher) -> bool {
+pub fn sound_under_errors(matcher: &AstMatcher) -> bool {
     let mut optional = BTreeSet::new();
     optional_outward_captures(matcher, false, false, &mut SoundMemo::new(), &mut optional);
     sound(matcher, false, false, &optional, &mut SoundMemo::new())
@@ -288,7 +288,7 @@ fn utility_leaves_witness(util: &UtilRef, memo: &mut UtilitySummary<usize, bool>
 /// are merged, so range ends never decrease. Each document of a file has its own: a host's errors
 /// are not a guest's, unless the guest reads the host through them (a Blade view).
 pub struct SyntaxErrors {
-    regions: Vec<Range<usize>>,
+    pub regions: Vec<Range<usize>>,
 }
 
 /// The share of a file's bytes, in percent, its error regions must cover for the file to count as
@@ -299,9 +299,9 @@ const UNREAD_PERCENT: usize = 50;
 
 /// The failure message an AST clause gets on a file the parser did not read; persisted results
 /// store it, and `SyntaxReading::Unread` carries the detail reported in its place.
-pub(super) const UNREAD: &str = "file did not parse";
+pub const UNREAD: &str = "file did not parse";
 /// The `source-incomplete` failure of an AST clause a file's syntax errors kept out.
-pub(super) const SYNTAX_ERRORS: &str = "file has syntax errors";
+pub const SYNTAX_ERRORS: &str = "file has syntax errors";
 
 /// How much of a file with syntax errors its AST clauses read, with the message to report.
 pub enum SyntaxReading {
@@ -457,5 +457,4 @@ impl SyntaxErrors {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

@@ -19,13 +19,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 /// Constraint forms, including the compatibility surface used by recorded data-layer policies.
-pub(super) const CLAUSE_KINDS: [&str; 5] = ["forbid", "require_each", "budget", "relational", "llm"];
+pub const CLAUSE_KINDS: [&str; 5] = ["forbid", "require_each", "budget", "relational", "llm"];
 
 /// Each language's shared utilities, by id.
 pub(super) type SharedUtils<'a> = BTreeMap<String, BTreeMap<String, UtilDef<'a>>>;
 
 /// What the document's defines hold: shared utilities and options.
-pub(in crate::code_rule_dsl) struct Defines<'a> {
+pub struct Defines<'a> {
     pub(super) utils: &'a SharedUtils<'a>,
     pub(super) options: Options,
     /// The shared utilities' tables, which the queries that reach them fill.
@@ -33,13 +33,13 @@ pub(in crate::code_rule_dsl) struct Defines<'a> {
 }
 
 /// Whether a clause is a define.
-pub(super) fn is_define(clause: &Value) -> bool {
+pub fn is_define(clause: &Value) -> bool {
     clause.get("define").is_some()
 }
 
 /// Reads and validates the document's defines. Their utilities are checked as a query's are: shape,
 /// cycles, and whole in some dialect of their language, used or not.
-pub(super) fn collect_defines<'a>(
+pub fn collect_defines<'a>(
     clauses: &'a [Value],
     capabilities: &Capabilities,
 ) -> Result<SharedUtils<'a>> {
@@ -265,5 +265,4 @@ fn check_dialects<'u>(
     Err(invalid(message))
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

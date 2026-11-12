@@ -51,7 +51,7 @@ pub(crate) enum Reason {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum Fact<T> {
+pub enum Fact<T> {
     Known(T),
     /// A real semantic unknown or an input whose syntax is incomplete.
     Unknown(Reason),
@@ -138,7 +138,7 @@ pub enum Qualification {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct NodeFacts {
+pub struct NodeFacts {
     pub node_id: usize,
     pub range: NodeRange,
     pub expression_range: Option<NodeRange>,

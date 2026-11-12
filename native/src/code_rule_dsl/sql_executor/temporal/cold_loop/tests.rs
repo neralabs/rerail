@@ -1,3 +1,4 @@
+use serde_json::json;
 use super::super::super::tests::{executor, rows};
 use super::*;
 

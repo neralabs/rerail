@@ -236,7 +236,7 @@ pub enum Refusal {
 }
 
 /// The compile error of a refusal at `path`: invalid, or `language-not-supported`.
-pub(crate) fn gate(path: &str, verdict: Result<(), Refusal>) -> napi::Result<()> {
+pub fn gate(path: &str, verdict: Result<(), Refusal>) -> napi::Result<()> {
     verdict.map_err(|refusal| match refusal {
         Refusal::Refused(message) => invalid(format!("{path}: {message}")),
         Refusal::NotSupportedYet(message) => language_not_supported(format!("{path}: {message}")),

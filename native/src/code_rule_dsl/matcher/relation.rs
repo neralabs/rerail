@@ -49,7 +49,7 @@ fn stops_at_inner<D: Doc>(stop: &AstMatcher, node: &Node<'_, D>, three: bool) ->
 /// Whether a rule can bind a capture: a pattern with a named metavariable, through the composites,
 /// relations and utilities that share the caller's environment, or a count's value (`as`).
 /// `not`, a count's own rule and stop rules bind nothing the caller keeps.
-pub(super) fn may_bind(matcher: &AstMatcher) -> bool {
+pub fn may_bind(matcher: &AstMatcher) -> bool {
     !super::captures::binds(matcher).is_empty() || !super::captures::counts(matcher).is_empty()
 }
 
@@ -328,7 +328,7 @@ fn settle(answer: Truth) -> bool {
 
 /// Visits descendants in pre-order; a descendant `stop` matches is visited but not entered. One
 /// whose stop verdict is unknown is not entered either, and sets `open`.
-pub(super) fn descend_until<'tree, D: Doc>(
+pub fn descend_until<'tree, D: Doc>(
     node: &Node<'tree, D>,
     stop: &AstMatcher,
     mut visit: impl FnMut(Node<'tree, D>) -> ControlFlow<()>,
@@ -814,9 +814,9 @@ impl std::ops::Deref for Related {
 /// What a node needs for a relation's rule to match it, where that is known: one of `kinds`
 /// (sorted), and text holding `needle`. A walk down the tree tests only such nodes
 /// (`memo::bounded`): its rule fails at every other.
-pub(crate) struct WalkFilter {
-    pub(super) kinds: Arc<[u16]>,
-    pub(super) needle: Option<RequiredText>,
+pub struct WalkFilter {
+    pub kinds: Arc<[u16]>,
+    pub needle: Option<RequiredText>,
 }
 
 impl WalkFilter {
@@ -1054,14 +1054,13 @@ pub fn set_answers_off(off: bool) {
 
 /// Candidates relations tested on this thread (`reset_candidates_tested` restarts the count).
 #[cfg(any(test, feature = "test-hooks"))]
-fn candidates_tested() -> usize {
+pub fn candidates_tested() -> usize {
     CANDIDATES_TESTED.get()
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
-fn reset_candidates_tested() {
+pub fn reset_candidates_tested() {
     CANDIDATES_TESTED.set(0);
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

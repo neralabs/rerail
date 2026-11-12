@@ -42,9 +42,9 @@ use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
 use storage::StorageContext;
 
-type ClauseId = (usize, usize);
+pub type ClauseId = (usize, usize);
 type LocalFailure = (&'static str, &'static str);
-type CandidateSets =
+pub type CandidateSets =
     HashMap<(Option<GrammarDialect>, Vec<ClauseId>, Vec<ClauseId>), Arc<Candidates>>;
 /// Budget polls one clause's evaluation of a small file (or a global clause's evaluation) may
 /// spend, the same on any machine and under any load. Measured over whole corpora (laravel and a

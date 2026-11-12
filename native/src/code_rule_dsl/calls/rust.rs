@@ -18,17 +18,16 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 /// The crates whose paths name library code, not the crate itself.
-pub(crate) const LIBRARY_ROOTS: &[&str] = &["std", "core", "alloc"];
+pub const LIBRARY_ROOTS: &[&str] = &["std", "core", "alloc"];
 /// Tuple variants of the prelude: calling one builds a value, it calls no function.
 const PRELUDE_CONSTRUCTORS: &[&str] = &["Some", "Ok", "Err"];
 
 /// What a call expression calls.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Callee {
+pub enum Callee {
     /// A function of the crate, by the qualified name `definitions` gives it.
     Path(String),
     /// A function of `std`, `core`, `alloc` or an extern crate, by its path as imported or written.
@@ -41,7 +40,7 @@ pub(crate) enum Callee {
 /// crate's files define, and the traits among the types it names (a call through a trait
 /// dispatches). A deferred one knows none of them: a file's summary names every crate path a
 /// call denotes, and the call graph confirms it against the crate's definitions (`link`).
-pub(crate) struct Known {
+pub struct Known {
     counts: HashMap<String, usize>,
     traits: HashSet<String>,
     deferred: bool,
@@ -50,7 +49,7 @@ pub(crate) struct Known {
 impl Known {
     /// The crate's `definitions` of every file, and its `trait_names`.
     #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
-    pub(crate) fn new(
+    pub fn new(
         definitions: impl IntoIterator<Item = String>,
         traits: impl IntoIterator<Item = String>,
     ) -> Self {
@@ -94,7 +93,7 @@ impl Known {
 /// `None` for a file outside `src/`, outside Rust, or under `src/bin/` (each file there is a
 /// crate root of its own). A module declared with `#[path]` is named by its declaration, not its
 /// file: `summary` names such a crate opaque, so no call into it is linked by these names.
-pub(crate) fn module_of(path: &str) -> Option<Vec<String>> {
+pub fn module_of(path: &str) -> Option<Vec<String>> {
     let rest = path.strip_prefix("src/")?;
     let stem = rest.strip_suffix(".rs")?;
     let mut segments: Vec<&str> = stem.split('/').collect();
@@ -297,7 +296,7 @@ fn enclosing_module<D: Doc>(node: &Node<'_, D>, module: &[String]) -> Vec<String
 /// reference, a library type) defines nothing here. `module` is the file's `module_of`; `table` its
 /// scope table.
 #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
-pub(crate) fn definitions<D: Doc>(
+pub fn definitions<D: Doc>(
     root: &Node<'_, D>,
     module: &[String],
     table: &ScopeTable,
@@ -313,7 +312,7 @@ pub(crate) fn definitions<D: Doc>(
 
 /// The qualified names of the traits a file declares (`Known::new`'s second argument).
 #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
-pub(crate) fn trait_names<D: Doc>(
+pub fn trait_names<D: Doc>(
     root: &Node<'_, D>,
     module: &[String],
     table: &ScopeTable,
@@ -334,7 +333,7 @@ pub(crate) fn trait_names<D: Doc>(
 /// call a function of the crate (`macro_may_call`) is `Open` at its macro's path. `module` is the
 /// file's `module_of`; `table` its scope table; `known` the crate's definitions.
 #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
-pub(crate) fn callees<D: Doc>(
+pub fn callees<D: Doc>(
     root: &Node<'_, D>,
     module: &[String],
     table: &ScopeTable,
@@ -354,7 +353,7 @@ pub(crate) const TRAIT_METHOD: u8 = 8;
 /// `src/` (empty for the workspace root's) and `module_of` the path under it. A file outside a
 /// crate's `src/` (a test, an example, a build script) and a binary under `src/bin/` is a crate
 /// root of its own, named by its path.
-pub(crate) fn crate_module(path: &str) -> (String, Vec<String>) {
+pub fn crate_module(path: &str) -> (String, Vec<String>) {
     let split = match path.strip_prefix("src/") {
         Some(rest) => Some(("", rest)),
         None => path.find("/src/").map(|at| (&path[..at], &path[at + 5..])),
@@ -381,7 +380,7 @@ fn graph_name(dir: &str, qualified: &str) -> String {
 /// which `callee_at` reads back. A file that declares a module with a `#[path]` attribute names
 /// its crate opaque (`crate_root`): the crate's module paths are not its files' (`module_of`), so
 /// no call into it is linked.
-pub(crate) fn summary<D: Doc>(
+pub fn summary<D: Doc>(
     root: &Node<'_, D>,
     path: &str,
     table: Option<&ScopeTable>,
@@ -638,7 +637,7 @@ const STD_MACROS: &[&str] = &[
 
 /// The name of the `STD_MACROS` macro the invocation `invocation` calls, by its bare name or a
 /// path of the standard library (`std::println!`); `None` for any other macro.
-pub(crate) fn std_macro<D: Doc>(invocation: &Node<'_, D>) -> Option<&'static str> {
+pub fn std_macro<D: Doc>(invocation: &Node<'_, D>) -> Option<&'static str> {
     let path: String = invocation
         .field("macro")?
         .text()

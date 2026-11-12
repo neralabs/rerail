@@ -51,7 +51,7 @@ struct Entry {
 }
 
 #[derive(Default)]
-pub(super) struct Definitions {
+pub struct Definitions {
     entries: Vec<Entry>,
     names: HashMap<String, usize>,
 }

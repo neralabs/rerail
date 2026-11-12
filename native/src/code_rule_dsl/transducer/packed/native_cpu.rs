@@ -26,7 +26,7 @@ use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 use std::sync::{Arc, LazyLock, Mutex};
 
-struct DemandZeroRegion<T> {
+pub struct DemandZeroRegion<T> {
     pointer: NonNull<T>,
     count: usize,
     mapped_bytes: usize,
@@ -67,7 +67,7 @@ impl<T> Drop for DemandZeroRegion<T> {
 
 #[cfg(unix)]
 impl<T> DemandZeroRegion<T> {
-    fn new(count: usize) -> Result<Self, Error> {
+    pub fn new(count: usize) -> Result<Self, Error> {
         let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         if page <= 0 {
             return Err(Error::BackendFailure);
@@ -163,7 +163,7 @@ impl<T> Drop for DemandZeroRegion<T> {
 }
 
 #[repr(C)]
-pub(super) struct NativeTaskContext {
+pub struct NativeTaskContext {
     pub nodes: *const MetalNode,
     pub node_count: u32,
     pub children: *const u32,
@@ -247,18 +247,18 @@ pub(super) type NativeTaskEntry = unsafe extern "C" fn(*mut NativeTaskContext);
 
 pub(super) type TaskEntry = unsafe extern "C" fn(*mut TaskStatus);
 
-pub(super) struct CompiledTaskShell {
+pub struct CompiledTaskShell {
     _module: JITModule,
     entry: TaskEntry,
 }
 
 impl CompiledTaskShell {
-    pub(super) fn execute(&self, status: &mut TaskStatus) {
+    pub fn execute(&self, status: &mut TaskStatus) {
         unsafe { (self.entry)(status) };
     }
 }
 
-pub(super) fn compile_task_shell(_native: &NativeModule) -> Result<CompiledTaskShell, Error> {
+pub fn compile_task_shell(_native: &NativeModule) -> Result<CompiledTaskShell, Error> {
     let builder = JITBuilder::new(default_libcall_names()).map_err(|_| Error::BackendFailure)?;
     let mut module = JITModule::new(builder);
     let mut signature = module.make_signature();
@@ -300,27 +300,27 @@ pub(super) fn compile_task_shell(_native: &NativeModule) -> Result<CompiledTaskS
     })
 }
 
-pub(super) struct CompiledStraightLine {
+pub struct CompiledStraightLine {
     _module: JITModule,
     value_tables: PackedValueTables,
     entry: NativeTaskEntry,
     #[cfg(any(test, feature = "test-hooks"))]
-    cursor_equal: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
+    pub cursor_equal: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
     #[cfg(any(test, feature = "test-hooks"))]
-    repeat_equal: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
+    pub repeat_equal: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
     #[cfg(any(test, feature = "test-hooks"))]
-    capture_contains: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
+    pub capture_contains: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
     #[cfg(any(test, feature = "test-hooks"))]
-    query_admit: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
+    pub query_admit: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
     #[cfg(any(test, feature = "test-hooks"))]
-    exact_state_equal:
+    pub exact_state_equal:
         unsafe extern "C" fn(*mut NativeTaskContext, u32, u32, u32, u32, u32, u32) -> u32,
     #[cfg(any(test, feature = "test-hooks"))]
-    queue_insert: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
+    pub queue_insert: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
     #[cfg(any(test, feature = "test-hooks"))]
-    greedy_schedule: unsafe extern "C" fn(*mut NativeTaskContext, u32) -> u64,
+    pub greedy_schedule: unsafe extern "C" fn(*mut NativeTaskContext, u32) -> u64,
     #[cfg(any(test, feature = "test-hooks"))]
-    greedy_take: unsafe extern "C" fn(*mut NativeTaskContext, u32) -> u64,
+    pub greedy_take: unsafe extern "C" fn(*mut NativeTaskContext, u32) -> u64,
 }
 
 // Finalized JIT modules and packed constants are immutable during execution.
@@ -333,7 +333,7 @@ static CPU_JIT_CACHE: LazyLock<Mutex<BTreeMap<String, Arc<CompiledStraightLine>>
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 impl CompiledStraightLine {
-    pub(super) fn execute(&self, context: &mut NativeTaskContext) {
+    pub fn execute(&self, context: &mut NativeTaskContext) {
         context.values = self.value_tables.values.as_ptr();
         context.value_count = self.value_tables.values.len() as u32;
         context.nfa_states = self.value_tables.nfa_states.as_ptr();
@@ -421,7 +421,7 @@ fn context_pointer(
         .load(pointer_type, MemFlags::trusted(), context, offset as i32)
 }
 
-pub(super) fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLine, Error> {
+pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLine, Error> {
     let mut value_tables = PackedValueTables::with_unicode_word_data();
     value_tables.push_program(&native.value_programs)?;
     for instruction in &native.output_program.instructions {
@@ -2936,7 +2936,7 @@ pub fn execute_terminal_reference_with_work_limit(
     execute_batch_packed_with_work_limit(programs, files, anchors, result_limits, work_limit)
 }
 
-fn execute_batch_packed_with_work_limit(
+pub fn execute_batch_packed_with_work_limit(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],
@@ -3356,5 +3356,4 @@ fn execute_batch_packed_with_work_limit(
     Ok(PackedExecution::new(batch, page))
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

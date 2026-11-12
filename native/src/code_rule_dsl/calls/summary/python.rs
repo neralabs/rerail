@@ -6,7 +6,7 @@ use crate::code_rule_dsl::scope::options::{DEFAULT_PYTHON_MINOR, PythonOptions};
 
 /// Extracts `root`'s summary through its scope table; without one (it could not be built), a
 /// summary of its definitions alone, which is open.
-pub(crate) fn extract<D: Doc>(
+pub fn extract<D: Doc>(
     root: &Node<'_, D>,
     table: Option<&ScopeTable>,
     module: Option<&ModulePath>,
@@ -1074,7 +1074,7 @@ impl<'t> Extractor<'t> {
 
 /// What the call `call` in `summary`'s file denotes: the same answer extraction recorded for it.
 /// `None` where the call can run no workspace definition.
-pub(crate) fn callee_at<D: Doc>(
+pub fn callee_at<D: Doc>(
     table: &ScopeTable,
     path: Option<&ModulePath>,
     summary: &Summary,

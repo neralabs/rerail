@@ -248,8 +248,7 @@ pub fn unparenthesized<'r, D: Doc>(mut node: Node<'r, D>) -> Node<'r, D> {
 }
 
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 // cratify: `php_syntactic_tests` is rerail-lang-php's (it mounts it)
 // cratify: `rust` is rerail-lang-rust's (it mounts it)

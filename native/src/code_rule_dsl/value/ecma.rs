@@ -19,7 +19,7 @@ pub use calls::to_precision;
 pub use destructure::destructured;
 
 /// Decodes `node` to its value; `Unknown` for anything that is not a literal this knows.
-pub(crate) fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
+pub fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     if !context.enter() {
         return Value::Unknown;
     }
@@ -247,7 +247,7 @@ fn binary<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
 }
 
 /// The expression a wrapper holds: its one named child that is not a type or a comment.
-pub(super) fn operand<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
+pub fn operand<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
     let kind = node.kind();
     if kind == "type_assertion" {
         // `<T>x`: type arguments first, then the expression.
@@ -752,8 +752,7 @@ fn object<D: Doc>(node: &Node<'_, D>) -> Value {
     }
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 /// ECMAScript's numbers as `toPrecision` reads them (`matcher::transform::NumberText`).
 pub struct Numbers;

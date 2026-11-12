@@ -95,7 +95,7 @@ pub(super) fn is_rule_key(key: &str) -> bool {
 
 type RelationConstructor = fn(Box<Related>, StopBy) -> AstMatcher;
 
-pub(super) const AST_RELATIONS: [(&str, RelationConstructor); 4] = [
+pub const AST_RELATIONS: [(&str, RelationConstructor); 4] = [
     ("inside", AstMatcher::Inside),
     ("has", AstMatcher::Has),
     ("precedes", AstMatcher::Precedes),
@@ -104,7 +104,7 @@ pub(super) const AST_RELATIONS: [(&str, RelationConstructor); 4] = [
 
 /// Every check an ast rule must pass regardless of grammar: field names, value types, byte limits,
 /// and regex syntax. `compile_ast_rule` relies on these having passed.
-pub(super) fn validate_ast_rule(
+pub fn validate_ast_rule(
     value: &Value,
     path: &str,
     limits: &Limits,
@@ -360,14 +360,14 @@ fn literal_dollar_name(
 }
 
 /// A relation's `stopBy` as written: a rule object is compiled per grammar like any sub-rule.
-pub(super) enum StopSpec<'a> {
+pub enum StopSpec<'a> {
     Neighbor,
     End,
     Rule(&'a Value),
 }
 
 /// A relation's `stopBy`, its `field` and the sub-rule it applies to.
-pub(super) fn relation_rule<'a>(
+pub fn relation_rule<'a>(
     value: &'a Value,
     path: &str,
 ) -> Result<(StopSpec<'a>, Option<&'a str>, Value)> {
@@ -981,8 +981,7 @@ fn compile_relation<'a>(
     ))
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 /// The gap test a relation to a bare token regex also needs (t31): `None` unless the target is
 /// a bare regex (or `any` alternatives of one) that matches a token the dialect's grammar implies
