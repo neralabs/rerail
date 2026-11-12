@@ -6197,6 +6197,9 @@ fn run_observed(
                     };
                     drop(s);
                     let Binder { constants, mut measured_kept, mut bound_old, mut lazies, .. } = binder;
+                    let mut got = got;
+                    // The relations whose rows are as they were (decision 0117 step 4): their frames are not written.
+                    let unchanged_rels = std::mem::take(&mut got.unchanged);
                     // Decision 0090 §4: the maintained strata the run chose to derive again, by their deltas' size.
                     let run_again = got.again;
                     step("ran");
@@ -6519,7 +6522,7 @@ fn run_observed(
                     }
                     let next = retain::after(cell.take(), ckey, digests.clone(), &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_stats, input_docs, (run_docs_held.lock().expect("the run's documents").clone(), memo_program), patched);
                     if let Some(was) = &was_frames {
-                        let written = next.write_frames(store, was, &cross.program, &cut, &cross_inputs, &digests)?;
+                        let written = next.write_frames(store, was, &cross.program, &cut, &cross_inputs, &digests, &unchanged_rels)?;
                         crate::code_rule_dsl::logic::profile::decision("the kept part, to the frames (t33 K4)", || format!("{written} rows of what changed queued to the store"));
                     }
                     drop(s);

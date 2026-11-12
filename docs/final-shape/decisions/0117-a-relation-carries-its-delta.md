@@ -312,3 +312,33 @@ more than deriving again. The driver of step 3 should choose between the two by 
 writes back 12,227,715 rows:
 - 2,752 relations whose rows changed: 9,323,541 rows, each relation written whole, though a delta changed it;
 - 2,674 relations whose rows did not change, rewritten only because their reads' digests changed: 2,904,174 rows.
+
+## Built: step 4, first part (2026-11-12): a relation whose rows did not change is not written again
+
+**What it does.**
+- **The run names the relations whose rows are as they were** (`Outcome::unchanged`): those of a stratum held as
+  kept, and those a form maintained to an empty delta.
+- **Their frames are not written again** (`Retained::write_frames`). Each one's digest is its stored one, so its rows
+  are neither copied out nor hashed. Where its reads' digests changed, only the reads are written:
+  `ContentStore::queue_frames_retagged` updates the frame's `reads`, and its rows, digest and the rest stay as stored.
+  The frames' snapshot shares the stored rows (`Data::Encoded` holds them in an `Arc`).
+
+**Measured** (20 files, unprofiled, `RERAIL_STATS_KEEP_TRACE`; findings equal to the cold run's each time):
+
+| | Before | After |
+|---|---|---|
+| Frames written whole although their rows had not changed | 2,674 (2,904,174 rows) | 0; 3,620 frames' reads updated, no rows |
+| Frames of relations that changed | 2,752 (9,323,541 rows) | 214–216 (8,989,543–9,012,206 rows) |
+| Later edits | 208.7–219.0 G | 214.1–218.6 G (load 49–63) |
+
+The second edit after a rebuild still writes 2,752 relations whole. That edit's first run kept every relation as
+changed, since none had a frame of the run's yet.
+
+**Open in step 4, measured:**
+- **A relation that changed is still written whole**: 214 relations, 9.0 M rows an edit, where a delta of a few
+  rows changed each. Its frame is one part. The fix is the inputs' layout (step 2): a derived relation's frame in
+  parts by its owner's granule, with only the changed owners' granules written. The digest is a sum of row hashes
+  (`rows_digest`), so it can be patched by the delta, without a pass over the rows.
+- **The old rows are still read for every stratum the cut keeps dirty** (`Retained::load`: 9,671 relations,
+  12,960,053 rows), though the walk reaches 3,719 strata. A relation should be admitted from its frames when a
+  reached stratum reads it, or when the run's end hands it on.

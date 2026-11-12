@@ -1480,7 +1480,7 @@ impl Retained {
     /// Writes to the frames what this run changed of the part (t33 K4), behind the run (the store's writer): each
     /// relation it derived whose rows or reads differ from its frame, and each input's granules whose documents'
     /// rows changed, with the input's digests by document. The relations kept as they were stay as stored.
-    pub(in crate::code_rule_dsl) fn write_frames(&self, store: &ContentStore, was: &InFrames, prog: &front::Program, cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>) -> Result<usize> {
+    pub(in crate::code_rule_dsl) fn write_frames(&self, store: &ContentStore, was: &InFrames, prog: &front::Program, cut: &Cut, inputs: &[(String, Arc<dyn Source>)], digests: &HashMap<String, u64>, unchanged: &BTreeSet<String>) -> Result<usize> {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the kept part's changes, to the frames".into());
         let (sccs, _) = front::strata(prog).map_err(|e| Error::Plan(e.to_string()))?;
         // Literal-only leaves are part of the derived relation's identity (leaf_identity), not runtime
@@ -1562,6 +1562,7 @@ impl Retained {
         let all_reads = Reads::of(prog);
         let trace = std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some();
         let mut tally = [(0usize, 0usize); 2];
+        let mut retags: Vec<crate::content_store::FrameRetag> = Vec::new();
         for scc in &sccs {
             let reads: Vec<String> = all_reads.of_scc(scc).into_iter().filter(|r| !scc.contains(r) && !literals.contains(r.as_str())).collect();
             for rel in scc {
@@ -1573,6 +1574,20 @@ impl Retained {
                     continue;
                 }
                 let read_digests = reads.iter().map(|r| read_digest(r, &now, &derived, prog).map(|d| (r.clone(), d))).collect::<Option<Vec<_>>>();
+                // Its rows are as they were (decision 0117 step 4): its digest is the stored one, and its rows are
+                // neither read nor written; its reads are told again if they changed.
+                if unchanged.contains(rel)
+                    && let Some(stored) = was.derived.get(rel)
+                {
+                    now.insert(rel.clone(), stored.digest);
+                    match read_digests {
+                        Some(rd) if rd != stored.reads => {
+                            retags.push(crate::content_store::FrameRetag { rel: name.clone(), part: DOCS_PART, reads: rd });
+                        }
+                        _ => {}
+                    }
+                    continue;
+                }
                 // A relation with no rows to keep (a view, one past the budget) is named by its reads' digests:
                 // derived again from the same reads, it has the same rows, so its readers' frames stay current.
                 let Some(rows) = self.rels.get(rel).and_then(|k| k.rel.live_rows().map(|rows| (k, rows))) else {
@@ -1599,9 +1614,9 @@ impl Retained {
             }
         }
         if trace {
-            eprintln!("rerail: derived frames written: {} relations ({} rows) whose rows changed; {} ({} rows) whose rows are the same and whose reads changed", tally[0].0, tally[0].1, tally[1].0, tally[1].1);
+            eprintln!("rerail: derived frames written: {} relations ({} rows) whose rows changed; {} ({} rows) whose rows are the same and whose reads changed; {} unchanged retagged", tally[0].0, tally[0].1, tally[1].0, tally[1].1, retags.len());
         }
-        store.queue_frames(was.space, puts, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token())));
+        store.queue_frames_retagged(was.space, puts, retags, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token())));
         Ok(written)
     }
 }

@@ -66,6 +66,15 @@ pub struct Stored {
     pub reads: Vec<(String, u64)>,
 }
 
+/// A frame whose rows stay as stored and whose reads are told again: the relation's rows did not change, and what
+/// it read did (decision 0117 step 4). Its digest stays.
+#[derive(Clone, Debug)]
+pub struct Retag {
+    pub rel: Rel,
+    pub part: i64,
+    pub reads: Vec<(String, u64)>,
+}
+
 /// A frame a run writes.
 pub struct Put {
     pub rel: Rel,
@@ -82,8 +91,9 @@ pub struct Admitted {
     data: Data,
 }
 
+#[derive(Clone)]
 enum Data {
-    Encoded { types: Vec<u8>, n: usize, bytes: Vec<u8> },
+    Encoded { types: Vec<u8>, n: usize, bytes: Arc<Vec<u8>> },
     Queued(Arc<Put>),
     Metadata,
 }
@@ -156,7 +166,7 @@ impl ContentStore {
                 let data: Vec<u8> = row.get(8)?;
                 Ok((space, (Rel { name: row.get(1)?, ident }, row.get::<_, i64>(3)?), Arc::new(Admitted {
                     stored: Stored { digest: row.get::<_, i64>(4)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(5)?) },
-                    data: Data::Encoded { n: row.get::<_, i64>(6)? as usize, types: row.get(7)?, bytes: data },
+                    data: Data::Encoded { n: row.get::<_, i64>(6)? as usize, types: row.get(7)?, bytes: Arc::new(data) },
                 })))
             })?;
             for row in rows {
@@ -236,7 +246,7 @@ impl ContentStore {
                 let ident: [u8; 32] = ident.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
                 Ok(((Rel { name: row.get(0)?, ident }, row.get(2)?), Arc::new(Admitted {
                     stored: Stored { digest: row.get::<_, i64>(3)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(4)?) },
-                    data: if payload { Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes: row.get(7)? } } else { Data::Metadata },
+                    data: if payload { Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes: Arc::new(row.get(7)?) } } else { Data::Metadata },
                 })))
             })?;
             for frame in frames { let (key, frame) = frame?; out.insert(key, frame); }
@@ -316,6 +326,11 @@ impl ContentStore {
 
     /// `keep_frames`, queued behind the run (decision 0102): encoded and written by the store's writer.
     pub fn queue_frames(&self, space: [u8; 32], puts: Vec<Put>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
+        self.queue_frames_retagged(space, puts, Vec::new(), gone, used)
+    }
+
+    /// `queue_frames`, and `retags`: frames whose rows stay, with their reads told again (no rows are written).
+    pub fn queue_frames_retagged(&self, space: [u8; 32], puts: Vec<Put>, retags: Vec<Retag>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
         let bytes: usize = puts.iter().map(|p| p.rows.rows.len() * 8).sum();
         // What a large write of frames holds, by relation (profiling only): what makes the store's writes large.
         if bytes > 16 << 20 && std::env::var_os("RERAIL_PROFILE").is_some() {
@@ -348,6 +363,14 @@ impl ContentStore {
         if let Some(snapshot) = self.snapshot() {
             let mut snapshot = snapshot.lock().expect("the frames' snapshot");
             let held = snapshot.entry(space).or_default();
+            // A retagged frame keeps its rows (shared) and digest, with its new reads.
+            for r in &retags {
+                if let Some(was) = held.get(&(r.rel.clone(), r.part)).cloned() {
+                    let frame = Arc::new(Admitted { stored: Stored { digest: was.stored.digest, reads: r.reads.clone() }, data: was.data.clone() });
+                    keys.push((frame_key(&space, &r.rel, r.part), Some(Arc::new(Some(Arc::clone(&frame))) as Arc<dyn std::any::Any + Send + Sync>)));
+                    held.insert((r.rel.clone(), r.part), frame);
+                }
+            }
             for p in &puts {
                 held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Queued(Arc::clone(p)) }));
             }
@@ -358,7 +381,7 @@ impl ContentStore {
         self.write_back("frames", bytes, keys, Box::new(move |store| {
             // Attempted once: a busy store leaves these frames unwritten, and the next run derives them again.
             let refs: Vec<_> = puts.iter().map(Arc::as_ref).collect();
-            let _ = store.keep_frame_refs(&space, &refs, &gone, used.as_ref().map(|(rels, run)| (rels.as_slice(), *run)));
+            let _ = store.keep_frame_refs(&space, &refs, &retags, &gone, used.as_ref().map(|(rels, run)| (rels.as_slice(), *run)));
             Ok(())
         }));
     }
@@ -367,17 +390,17 @@ impl ContentStore {
     /// is over: the space counts the run if it has not yet, marks the relations the program used, and forgets those
     /// the last [`RUNS`] runs did not use.
     pub fn keep_frames(&self, space: &[u8; 32], puts: &[Put], gone: &[(Rel, i64)], used: Option<(&[Rel], u64)>) -> StoreResult<()> {
-        self.keep_frame_refs(space, &puts.iter().collect::<Vec<_>>(), gone, used)
+        self.keep_frame_refs(space, &puts.iter().collect::<Vec<_>>(), &[], gone, used)
     }
 
-    fn keep_frame_refs(&self, space: &[u8; 32], puts: &[&Put], gone: &[(Rel, i64)], used: Option<(&[Rel], u64)>) -> StoreResult<()> {
+    fn keep_frame_refs(&self, space: &[u8; 32], puts: &[&Put], retags: &[Retag], gone: &[(Rel, i64)], used: Option<(&[Rel], u64)>) -> StoreResult<()> {
         let blocks: Vec<Vec<u8>> = puts.iter().map(|p| super::cross_rows::encode(p.rows.types.len(), &p.rows.rows)).collect();
         // The snapshot holds what is written (a write the writer runs was put there as it was queued: the same).
         if let Some(snapshot) = self.snapshot() {
             let mut snapshot = snapshot.lock().expect("the frames' snapshot");
             let held = snapshot.entry(*space).or_default();
             for (p, block) in puts.iter().zip(&blocks) {
-                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Encoded { types: p.rows.types.clone(), n: p.rows.n, bytes: block.clone() } }));
+                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Encoded { types: p.rows.types.clone(), n: p.rows.n, bytes: Arc::new(block.clone()) } }));
             }
             for key in gone {
                 held.remove(key);
@@ -409,6 +432,11 @@ impl ContentStore {
                         encode_reads(&p.reads).into(),(p.rows.types.len() as i64).into(),(p.rows.n as i64).into(),p.rows.types.clone().into(),(*data).clone().into()]);
                 }
                 t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
+            }
+            // A retagged frame: its reads only; its rows, digest and the rest stay as stored.
+            for r in retags {
+                t.prepare_cached("UPDATE frames SET reads = ?5, used = ?6 WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?
+                    .execute(rusqlite::params![&space[..], r.rel.name, &r.rel.ident[..], r.part, encode_reads(&r.reads), run])?;
             }
             for batch in gone.chunks(READ_BATCH) {
                 let values=(0..batch.len()).map(|i|format!("(?{},?{},?{})",2+3*i,3+3*i,4+3*i)).collect::<Vec<_>>().join(",");
@@ -471,7 +499,7 @@ fn count_run(t: &rusqlite::Connection, space: &[u8; 32], token: u64) -> rusqlite
 fn admitted_part(row: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, Arc<Admitted>)> {
     Ok((row.get(0)?, Arc::new(Admitted {
         stored: Stored { digest: row.get::<_, i64>(1)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(2)?) },
-        data: Data::Encoded { n: row.get::<_, i64>(3)? as usize, types: row.get(4)?, bytes: row.get(5)? },
+        data: Data::Encoded { n: row.get::<_, i64>(3)? as usize, types: row.get(4)?, bytes: Arc::new(row.get(5)?) },
     })))
 }
 
@@ -586,7 +614,7 @@ mod tests {
         unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),
             rusqlite::ffi::SQLITE_TRACE_STMT | rusqlite::ffi::SQLITE_TRACE_PROFILE, Some(trace), (&counters as *const [AtomicUsize;2]).cast_mut().cast()); }
         let refs: Vec<_> = changed.iter().collect();
-        let result = store.keep_frame_refs(&[1;32], &refs, &gone, Some((&used, 1)));
+        let result = store.keep_frame_refs(&[1;32], &refs, &[], &gone, Some((&used, 1)));
         unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),0,None,std::ptr::null_mut()); }
         result.unwrap();
         eprintln!("frame publication total: {} statements, {} VM",counters[0].load(Ordering::Relaxed),counters[1].load(Ordering::Relaxed));

@@ -3273,6 +3273,9 @@ pub struct Outcome {
     pub inlined: BTreeSet<String>,
     /// The maintained strata derived again by their input deltas' size (decision 0090 §4), chosen during the run.
     pub again: usize,
+    /// A maintained run's relations whose rows are as they were (decision 0117 step 4): held as kept (no read of
+    /// them moved), or maintained to an empty delta. Their kept frames are not written again.
+    pub unchanged: BTreeSet<String>,
 }
 
 /// The set engine's component calls. Over atoms they are made in process (`native::component`), with no statement
@@ -7457,6 +7460,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                         run.native_rels.insert(r.clone());
                     }
                     quiet_slots += 1;
+                    outcome.unchanged.extend(scc.iter().cloned());
                     super::profile::stratum(&key, "native set engine", || "quiet: no read changed; each relation is its kept one (decision 0117 step 3)".to_owned());
                     continue;
                 }
@@ -7500,6 +7504,8 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                         let rows = |d: &str| super::native::component::held(db, &format!("{r}__{d}")).map_or(0, |h| h.rows());
                         if rows("minus") + rows("plus") > 0 {
                             moved_rels.insert(r.clone());
+                        } else {
+                            outcome.unchanged.insert(r.clone());
                         }
                     } else {
                         m.no_delta(r);
