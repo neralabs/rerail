@@ -15,8 +15,10 @@ def async_patterns(source,target,header):
         text+=f'.decl {rel}(value: symbol)\n'+''.join(f'{rel}({q(v)}).\n' for v in sorted(values))
     text+=''.join(f'.decl ap_fixed_{code}(message: symbol)\nap_fixed_{code}({q(original.VIOLATIONS[code])}).\n' for code in ['ASYNC001','ASYNC002'])
     text+=r'''
+.decl ap_supplied()
+ap_supplied() :- option("entryPoint","analyze_source").
 .decl ap_native_enabled()
-ap_native_enabled() :- !option("entryPoint", "analyze_source").
+ap_native_enabled() :- !ap_supplied().
 .decl ap_parent(n: node, p: node)
 ap_parent(n, p) :- ap_native_enabled(), ast_parent(n, p).
 .decl ap_frame_node(n: node)
@@ -103,10 +105,10 @@ ap_line(d, l, text) :- ap_native_enabled(), ap_document(d, _), split_line(d, l, 
 .decl ap_call_doc(c: node, d: number, path: symbol)
 ap_call_doc(c, d, path) :- ap_call(c, _), ap_native_enabled(), docof(c, d), ap_document(d, path), ap_in_scope(d, path), ap_source_triggered(d).
 // The supplied tree and original source are independent inputs. Its printer buffer is never a detector input.
-ap_document(0, path) :- option("entryPoint", "analyze_source"), option("analysisPath", path), option("providedTree", "true").
-ap_line(0, i + 1, text) :- option("entryPoint", "analyze_source"), option_item("sourceLines", i, text).
-ap_source_triggered(0) :- option("entryPoint", "analyze_source"), option("providedSource", text), ap_trigger(trigger), contains(trigger, text).
-ap_call_doc(c, 0, path) :- option("entryPoint", "analyze_source"), ap_call(c, _), ap_document(0, path), ap_in_scope(0, path), ap_source_triggered(0).
+ap_document(0, path) :- ap_supplied(), option("analysisPath", path), option("providedTree", "true").
+ap_line(0, i + 1, text) :- ap_supplied(), option_item("sourceLines", i, text).
+ap_source_triggered(0) :- ap_supplied(), option("providedSource", text), ap_trigger(trigger), contains(trigger, text).
+ap_call_doc(c, 0, path) :- ap_supplied(), ap_call(c, _), ap_document(0, path), ap_in_scope(0, path), ap_source_triggered(0).
 
 .decl ap_write_decorator(f: node)
 ap_write_decorator(f) :- ap_decorator(f, e), ap_call_expr(e, fn), ap_attr(fn, _, "write_async").
@@ -155,7 +157,7 @@ ap_connection_receiver(c, obj) :- ap_async_call(c, f, _), ap_receiver_root(obj, 
 .decl ap_abstract(c: node, d: number, owner: symbol)
 ap_abstract(c, d, owner) :- ap_class_base(c, b), ap_name(b, "ABC"), docof(c, d), ap_document(d, owner), ap_native_enabled().
 ap_abstract(c, d, owner) :- ap_class_base(c, b), ap_attr(b, _, "ABC"), docof(c, d), ap_document(d, owner), ap_native_enabled().
-ap_abstract(c, 0, owner) :- ap_document(0, owner), ap_class_base(c, b), (ap_name(b, "ABC") ; ap_attr(b, _, "ABC")), option("entryPoint", "analyze_source").
+ap_abstract(c, 0, owner) :- ap_document(0, owner), ap_class_base(c, b), (ap_name(b, "ABC") ; ap_attr(b, _, "ABC")), ap_supplied().
 ap_abstract(c, d, owner) :- ap_class(c, name), ap_api(d, owner),
     (contains("Transaction", name) ; contains("Connection", name) ; contains("Query", name) ; contains("Handle", name) ; contains("Version", name)).
 .decl ap_window_query(radius: number, fragment: symbol)
@@ -195,7 +197,7 @@ ap_visible(c, owner, code, message, 0, rank) :- ap_issue(c, owner, code, message
 '''
     for code in ['ASYNC001','ASYNC002','ASYNC004','ASYNC005','ASYNC006','ASYNC007','ASYNC008']:
         text+=f'.violation Async{code}(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code {q(code)} "{{message}}"\n'
-        text+=f'Async{code}(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, {q(code)}, message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal).\n'
+        text+=f'Async{code}(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, {q(code)}, message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_ap_ast_collect").\n'
     text+=r'''
  .violation Excluded(at: span) code "AP_EXCLUDED" "excluded"
 Excluded(@place("input.py", 1)) :- option("entryPoint", "should_exclude"), option("originalPath", path), ap_excluded_path(path).
@@ -207,4 +209,5 @@ ParseWarning(@place("input.py", 1)) :- option("entryPoint", "lint_file"), option
 MissingTree(@place("input.py", 1)) :- option("entryPoint", "analyze_source"), option("providedTree", "false"), ap_source_triggered(0).
 '''
     from data_layer_rr_async_pattern_production import production
-    return production(source,text+supplied_ast())
+    from data_layer_rr_async_pattern_api import suffix
+    return production(source,text+supplied_ast())+suffix(source)

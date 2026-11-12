@@ -1,0 +1,94 @@
+#include "project.rr"
+.decl ap_config(key:symbol,value:symbol)
+.violation AsyncPatternConfiguration(at:span,key:symbol,value:symbol) code "AP_CONFIG" "async pattern configuration"
+AsyncPatternConfiguration(@place("",0),k,v) :- option("entryPoint","_ap_configuration"),ap_config(k,v).
+
+// Collection consumes supplied syntax without the standalone scanner's source prefilter.
+ap_supplied() :- option("entryPoint","_ap_ast_collect").
+ap_document(0,p) :- option("entryPoint","_ap_ast_collect"),option("analysisPath",p),option("providedTree","true").
+ap_source_triggered(0) :- option("entryPoint","_ap_ast_collect").
+ap_visible(c,p,code,message,fallback,rank) :- option("entryPoint","_ap_ast_collect"),ap_issue(c,p,code,message,fallback,rank).
+
+// Caller values retain Python types. Coercion occurs in the shared typed reader.
+#include "data-layer/supplied-facts.rr"
+.decl apv_container(b:number,kind:symbol)
+.input apv_container(IO=json,filename="async-pattern-values.json",path="/bundles/*/kind",projection="python-str")
+.decl apv_shape(b:number,r:number,kind:symbol)
+.input apv_shape(IO=json,filename="async-pattern-values.json",path="/bundles/*/rows/*/kind",projection="python-str")
+.decl apv_member(b:number,r:number,f:number,key:symbol)
+.input apv_member(IO=json,filename="async-pattern-values.json",path="/bundles/*/rows/*/fields/*/key",projection="python-str")
+.decl apv_text(b:number,r:number,f:number,value:symbol)
+.input apv_text(IO=json,filename="async-pattern-values.json",path="/bundles/*/rows/*/fields/*/encoded",projection="python-value-str")
+.decl apv_int(b:number,r:number,f:number,value:symbol,error_type:symbol,detail:symbol)
+.input apv_int(IO=json,filename="async-pattern-values.json",path="/bundles/*/rows/*/fields/*/encoded",projection="python-value-int")
+.decl apv_tag(b:number,r:number,f:number,kind:symbol)
+.input apv_tag(IO=json,filename="async-pattern-values.json",path="/bundles/*/rows/*/fields/*/encoded/0",projection="python-str")
+.decl apv_scalar(b:number,r:number,f:number,value:symbol)
+.input apv_scalar(IO=json,filename="async-pattern-values.json",path="/bundles/*/rows/*/fields/*/encoded/1",projection="python-str")
+.decl apv_child(b:number,r:number,f:number,i:number,value:symbol)
+.input apv_child(IO=json,filename="async-pattern-values.json",path="/bundles/*/rows/*/fields/*/encoded/1/*",projection="json")
+.decl apv_field(b:number,r:number,key:symbol,value:symbol)
+apv_field(b,r,k,v) :- apv_member(b,r,f,k),apv_text(b,r,f,v).
+.decl apv_line(b:number,r:number,value:symbol)
+apv_line(b,r,l) :- apv_member(b,r,f,"line"),apv_int(b,r,f,l,"",_).
+.decl apv_valid(b:number,r:number)
+apv_valid(b,r) :- apv_container(b,"array"),apv_shape(b,r,"object"),apv_field(b,r,"path",_),apv_line(b,r,_),apv_field(b,r,"code",_),apv_field(b,r,"message",_).
+.decl apv_true(b:number,r:number,key:symbol)
+apv_true(b,r,k) :- apv_member(b,r,f,k),apv_tag(b,r,f,"bool"),apv_scalar(b,r,f,"True").
+apv_true(b,r,k) :- apv_member(b,r,f,k),apv_tag(b,r,f,"int"),apv_scalar(b,r,f,v),v!="0".
+apv_true(b,r,k) :- apv_member(b,r,f,k),apv_tag(b,r,f,"float"),apv_scalar(b,r,f,v),v!="0000000000000000",v!="8000000000000000".
+apv_true(b,r,k) :- apv_member(b,r,f,k),apv_tag(b,r,f,"str"),apv_scalar(b,r,f,v),v!="".
+apv_true(b,r,k) :- apv_member(b,r,f,k),apv_tag(b,r,f,t),(t="list";t="dict"),apv_child(b,r,f,_,_).
+.decl apv_context(b:number,r:number,value:symbol)
+apv_context(b,r,c) :- apv_valid(b,r),apv_field(b,r,"context",c).
+apv_context(b,r,"") :- apv_valid(b,r),!apv_member(b,r,_,"context").
+.decl apv_flag(b:number,r:number,json:symbol)
+apv_flag(b,r,"true") :- apv_valid(b,r),apv_true(b,r,"is_fallback").
+apv_flag(b,r,"false") :- apv_valid(b,r),!apv_true(b,r,"is_fallback").
+
+// PosixPath joining and normalization are shared with the other reporters.
+sf_path_input(b,r,p) :- apv_valid(b,r),apv_field(b,r,"path",p),prefix("/",p).
+sf_path_input(b,r,cat(root,"/",p)) :- apv_valid(b,r),apv_field(b,r,"path",p),!prefix("/",p),option("apOwnerRoot",root),!suffix("/",root).
+sf_path_input(b,r,cat(root,p)) :- apv_valid(b,r),apv_field(b,r,"path",p),!prefix("/",p),option("apOwnerRoot",root),suffix("/",root).
+sf_container(b,k) :- apv_container(b,k).
+sf_shape(b,r,k) :- apv_shape(b,r,k).
+sf_line(b,r,l,l) :- apv_valid(b,r),apv_line(b,r,l).
+sf_bad(b,r) :- apv_true(b,r,"is_fallback").
+sf_code(b,r,c) :- sf_active(b,r),apv_field(b,r,"code",c).
+sf_message(b,r,m) :- sf_active(b,r),apv_field(b,r,"message",m).
+sf_config("order","code"). sf_config("strict_line","true").
+.violation AsyncPatternValue(at:span,bundle:number,ordinal:number,value_json:symbol) code "AP_VALUE" "async pattern value"
+AsyncPatternValue(@place("",0),b,r,cat("{\"file\":",@json_str(p),",\"line\":",l,",\"code\":",@json_str(c),",\"message\":",@json_str(m),",\"context\":",@json_str(ctx),",\"is_fallback\":",flag,"}")) :- option("entryPoint","_ap_from_fact"),apv_valid(b,r),sf_path(b,r,p),apv_line(b,r,l),apv_field(b,r,"code",c),apv_field(b,r,"message",m),apv_context(b,r,ctx),apv_flag(b,r,flag).
+AsyncPatternValue(@place("",0),b,r,"null") :- option("entryPoint","_ap_from_fact"),apv_shape(b,r,_),!apv_valid(b,r).
+.violation AsyncPatternValueError(at:span,bundle:number,ordinal:number,error_type:symbol,detail:symbol) code "AP_VALUE_ERROR" "async pattern conversion error"
+AsyncPatternValueError(@place("",0),b,r,t,m) :- option("entryPoint",e),(e="_ap_from_fact";e="_report_facts"),apv_container(b,"array"),apv_shape(b,r,"object"),apv_field(b,r,"path",_),apv_member(b,r,f,"line"),apv_int(b,r,f,_,t,m),t="OverflowError".
+
+// Projection preserves the caller's dataclass values and lexical path ownership.
+.decl apj_path(i:number,value:symbol)
+.input apj_path(IO=json,filename="async-pattern-project.json",path="/rows/*/file",projection="python-str")
+.decl apj_line(i:number,value:symbol)
+.input apj_line(IO=json,filename="async-pattern-project.json",path="/rows/*/line",projection="json")
+.decl apj_code(i:number,value:symbol)
+.input apj_code(IO=json,filename="async-pattern-project.json",path="/rows/*/code",projection="json")
+.decl apj_message(i:number,value:symbol)
+.input apj_message(IO=json,filename="async-pattern-project.json",path="/rows/*/message",projection="json")
+.decl apj_context(i:number,value:symbol)
+.input apj_context(IO=json,filename="async-pattern-project.json",path="/rows/*/context",projection="json")
+.decl apj_flag(i:number,value:symbol)
+.input apj_flag(IO=json,filename="async-pattern-project.json",path="/rows/*/is_fallback",projection="json")
+.decl apr_path(path:symbol)
+apr_path(p) :- apj_path(_,p).
+apr_path(p) :- option("entryPoint","_ap_ast_collect"),option("originalPath",p).
+.decl apr_relative(path:symbol,value:symbol)
+apr_relative(p,".") :- apr_path(p),option("apOwnerRoot",p).
+apr_relative(p,p) :- apr_path(p),option("apOwnerRoot","."),!prefix("/",p).
+apr_relative(p,@slice(p,1,strlen(p))) :- apr_path(p),option("apOwnerRoot","/"),p!="/",prefix("/",p),!prefix("//",p).
+apr_relative(p,@slice(p,2,strlen(p))) :- apr_path(p),option("apOwnerRoot","//"),p!="//",prefix("//",p).
+apr_relative(p,@slice(p,strlen(root)+1,strlen(p))) :- apr_path(p),option("apOwnerRoot",root),root!=".",root!="/",root!="//",prefix(cat(root,"/"),p).
+.decl apr_result(path:symbol,value:symbol)
+apr_result(p,r) :- apr_relative(p,r).
+apr_result(p,p) :- apr_path(p),!apr_relative(p,_).
+AsyncPatternValue(@place("",0),0,i,cat("{\"path\":",@json_str(p),",\"line\":",l,",\"code\":",c,",\"message\":",m,",\"context\":",ctx,",\"is_fallback\":",flag,"}")) :- option("entryPoint","_ap_to_fact"),apj_path(i,raw),apr_result(raw,p),apj_line(i,l),apj_code(i,c),apj_message(i,m),apj_context(i,ctx),apj_flag(i,flag).
+.decl apc_flag(value:number,json:symbol)
+apc_flag(0,"false"). apc_flag(1,"true").
+AsyncPatternValue(@place("",0),ordinal,rank,cat("{\"path\":",@json_str(p),",\"line\":",to_string(l),",\"code\":",@json_str(code),",\"message\":",@json_str(message),",\"context\":",@json_str(ctx),",\"is_fallback\":",flag_json,"}")) :- option("entryPoint","_ap_ast_collect"),ap_issue(c,owner,code,message,flag,rank),ap_call_doc(c,_,owner),ap_call_line(c,l),ap_order(c,ordinal),ap_context(c,ctx),apc_flag(flag,flag_json),option("originalPath",actual),apr_result(actual,p).

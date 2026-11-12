@@ -3805,3 +3805,39 @@ This checkpoint cannot admit the rule.
 Collector callbacks, complete helper APIs, raw supplied facts, CLI and ratchet behavior, historical inputs, retained updates, and controls remain required.
 The manifest records eighteen full admissions, eighty-one drafts, and one absent translation.
 The native engine source and binary remain unchanged. Compilation time is zero.
+
+### 2026-11-11 — Complete async-pattern component and helper parity
+
+Both native APIs pass 162 component cases and 137 helper cases on one coherent rule revision.
+The component cases cover extractor registration, direct collection, metadata, projection, coercion, and raw supplied-fact reporting.
+The helper cases cover constructor state, context slicing, annotation matching, parameter inference, receiver roots, aliases, expression rendering, and filesystem rooting.
+Both APIs also pass all eleven unchanged original assertions and twelve complete observations, including eight finding-positive observations.
+The detailed checkpoint retains 956 native executions.
+
+The first component run exposes public finding rows leaking into the collector response.
+The collector entry now emits its typed fact response alone.
+Further cases expose three independent defects.
+A shared reporter default creates an extra line-one finding beside each converted fact.
+An absolute root produces a double leading slash when joined to a relative path.
+An event-free collector receives no selected node, and its empty response triggers the standalone scanner's missing-tree error.
+The reporter now requires converted lines. Path joining preserves root separators.
+An event-free collector submits an empty native syntax batch without the standalone scanner's validation error.
+
+Raw-fact cases preserve unbounded integers, Python casts, truthiness, fallback filtering, duplicate rows, stable ordering, and conversion exceptions.
+The helper name getters preserve the caller's set identity and mutations after native index selection.
+Registered collection reuses the supplied-syntax predicates that serve complete native scans.
+The rule does not invoke Python.
+
+The detailed progress receipt is `rr-async-pattern-details-finalfcce.json.gz`.
+Eight verifier tests reject omitted cases, altered values, source fallback, mixed harnesses, removed native work, and omitted original observations.
+The rule remains a draft. This receipt cannot grant admission.
+
+Source recordings also retain 28 filesystem-helper cases and forty CLI/ratchet cases.
+Their native replays fail at the remaining source implementations, as required by the semantic guard.
+The source and red receipt is `rr-async-pattern-file-cli-source-red-finalfcce.json.gz`.
+Explicit file scans include files under `tmp` and `.venv`; production discovery excludes those directories.
+The next implementation must preserve that distinction and batch directory demands.
+
+All 589 Python tooling tests pass after the detailed checkpoint.
+The native engine source and binary remain unchanged. Compilation time is zero.
+The manifest still records eighteen full admissions, eighty-one drafts, and one absent translation.

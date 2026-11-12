@@ -1773,7 +1773,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/async-patterns.rr",
-      "sha256": "5184d59a2f00cdd45daaa3b8dd3295615eaa1408d15ed889adf697b0a764ddc6",
+      "sha256": "18e9a2ff052d181234ce61160bf5dc73053c39b7e4faba659503d29489d2a33e",
       "origin": "authored",
       "upstreamPath": "scripts/lint_async_patterns.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -3050,6 +3050,20 @@
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_async_executor.py",
       "sha256": "e6fdc01fb79190df07a884544b0436b59dd63816db24ae160a3cb61defe56f79"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/async-pattern-api.rr",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_async_patterns.py",
+      "sha256": "691b375bfdc3ea15a359b848e7f0fb4db30c2afa11468b5ba03d4c6f645ab82a"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/async-pattern-helpers.rr",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_async_patterns.py",
+      "sha256": "96c3c9a4d7b048f24337fbc075c587ca0bcd55d929c476f6de78d9d0ee8adc85"
     }
   ],
   "rules": [
@@ -4211,35 +4225,61 @@
       "legacySha256": "1c3b5cae27b159d4c71665594c0978c02333725e41cba8e006a734859438bb5d",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/async-patterns.rr",
-      "ruleSha256": "5184d59a2f00cdd45daaa3b8dd3295615eaa1408d15ed889adf697b0a764ddc6",
+      "ruleSha256": "18e9a2ff052d181234ce61160bf5dc73053c39b7e4faba659503d29489d2a33e",
       "migrationProgress": {
-        "status": "native-production-and-supplemental-progress",
+        "status": "native-components-and-helpers-progress",
         "admitted": false,
-        "verifiedNativeExecutions": 414,
+        "verifiedNativeExecutions": 956,
         "checkpoint": {
-          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-async-pattern-owner-progress-finalfcce.json.gz",
-          "sha256": "fbbfde6c6822860d34c1fcd9038cb3ff30c52e1b5f58e508c65a69a0a4778ad5"
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-async-pattern-details-finalfcce.json.gz",
+          "sha256": "0cb10b41f601a2998078d3a60e93b8f18539027114a90298d28c5bb2dc9df973"
         },
         "summary": {
           "check": "async_patterns",
           "originalCasesPerAPI": 11,
           "originalPositiveObservationsPerAPI": 8,
-          "nativeExecutions": 414,
+          "nativeExecutions": 956,
           "admitted": false,
           "fullMigrationAcceptance": false,
-          "recordedCasesPerAPI": 19,
-          "sourceFormat": "rerail.async_patterns-production/v1",
-          "supplementalCasesSnapshot": {
-            "api": 158,
-            "report": 136
-          }
+          "recordedCasesPerAPI": 137,
+          "sourceFormat": "rerail.async-pattern-helpers/v1",
+          "componentCasesPerAPI": 162
         },
         "remaining": [
-          "Collector callbacks, registry and complete helper APIs remain required.",
-          "Complete raw supplied-fact and CLI/ratchet contracts remain required.",
+          "File/directory helpers and CLI/ratchet integration require native acceptance.",
           "Historical inputs, retained updates, behavior-removal controls and strict full admission remain required."
         ]
-      }
+      },
+      "migrationProgressHistory": [
+        {
+          "status": "native-production-and-supplemental-progress",
+          "admitted": false,
+          "verifiedNativeExecutions": 414,
+          "checkpoint": {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-async-pattern-owner-progress-finalfcce.json.gz",
+            "sha256": "fbbfde6c6822860d34c1fcd9038cb3ff30c52e1b5f58e508c65a69a0a4778ad5"
+          },
+          "summary": {
+            "check": "async_patterns",
+            "originalCasesPerAPI": 11,
+            "originalPositiveObservationsPerAPI": 8,
+            "nativeExecutions": 414,
+            "admitted": false,
+            "fullMigrationAcceptance": false,
+            "recordedCasesPerAPI": 19,
+            "sourceFormat": "rerail.async_patterns-production/v1",
+            "supplementalCasesSnapshot": {
+              "api": 158,
+              "report": 136
+            }
+          },
+          "remaining": [
+            "Collector callbacks, registry and complete helper APIs remain required.",
+            "Complete raw supplied-fact and CLI/ratchet contracts remain required.",
+            "Historical inputs, retained updates, behavior-removal controls and strict full admission remain required."
+          ]
+        }
+      ]
     },
     {
       "check": "async_sync_boundary",

@@ -44,6 +44,6 @@ ap_assignment(a, target, value) :- ap_graph_kind(a, "Assign"), ap_graph_edge(a, 
 ap_assignment(a, target, value) :- ap_graph_kind(a, "AnnAssign"), ap_graph_edge(a, "target", t), ap_name(t, target), ap_graph_edge(a, "value", value).
 ap_order(n, n) :- ap_graph_kind(n, _).
 ap_call_line(n, to_number(line)) :- ap_graph_kind(n, "Call"), option_item("astLines", n, line).
-ap_receiver_print(c, printed) :- option("entryPoint", "analyze_source"), ap_graph_kind(c, "Call"),
+ap_receiver_print(c, printed) :- ap_supplied(), ap_graph_kind(c, "Call"),
     sig_param(_, _, nm, _, _, ann, _), text(nm, name), prefix("call", name), c = to_number(@slice(name, 4, strlen(name))), annotation_text(ann, printed).
 '''

@@ -1,0 +1,65 @@
+// Collector helpers read the same caller-supplied syntax columns as complete scans.
+ap_supplied() :- option("entryPoint","_ap_helper").
+.decl aph_initial(key:symbol,value:number)
+.decl aph_initial_true(key:symbol)
+aph_initial_true("excluded") :- option("originalPath",p),ap_excluded_path(p).
+aph_initial_true("in_scope") :- option("originalPath",p),!ap_excluded_path(p),(contains("impl/",p);contains("impl\\",p);contains("api/",p);contains("api\\",p);contains("conform/",p);contains("conform\\",p)).
+aph_initial_true("in_impl") :- option("originalPath",p),(contains("impl/",p);contains("impl\\",p)).
+aph_initial_true("in_api") :- option("originalPath",p),(contains("api/",p);contains("api\\",p)).
+.decl aph_initial_key(key:symbol)
+aph_initial_key("excluded"). aph_initial_key("in_scope"). aph_initial_key("in_impl"). aph_initial_key("in_api").
+aph_initial(k,1) :- aph_initial_true(k).
+aph_initial(k,0) :- aph_initial_key(k),!aph_initial_true(k).
+.violation AsyncPatternInitial(at:span,key:symbol,value:number) code "AP_INITIAL" "collector context"
+AsyncPatternInitial(@place("",0),k,v) :- option("entryPoint","_ap_initial"),aph_initial(k,v).
+
+// Native slicing follows the collector's max/min bounds and Python's negative slice end.
+.decl aph_size(n:number)
+aph_size(n) :- option("entryPoint","_ap_helper"),n=count:{option_item("apHelperLines",i,_)}.
+.decl aph_raw_bounds(start:number,end:number)
+aph_raw_bounds(s,e) :- option("apHelperLine",raw),option("apHelperRadius",radius),l=to_number(raw),r=to_number(radius),aph_size(n),(l-r-1>0,s=l-r-1;l-r-1<=0,s=0),(l+r<n,e=l+r;l+r>=n,e=n).
+.decl aph_bounds(start:number,end:number)
+aph_bounds(s,e) :- aph_raw_bounds(s,e),e>=0.
+aph_bounds(s,e+n) :- aph_raw_bounds(s,e),e<0,aph_size(n),e+n>=0.
+aph_bounds(s,0) :- aph_raw_bounds(s,e),e<0,aph_size(n),e+n<0.
+.decl aph_context_line(i:number,text:symbol)
+aph_context_line(i,cat("  ",@slice("    ",0,4-strlen(to_string(i+1))),to_string(i+1)," | ",s)) :- option_item("apHelperLines",i,s),i<999.
+aph_context_line(i,cat("  ",to_string(i+1)," | ",s)) :- option_item("apHelperLines",i,s),i>=999.
+.decl aph_context(value:symbol)
+aph_context(value) :- aph_bounds(s,e),value=join t by i sep "\n":{aph_context_line(i,t),i>=s,i<e}.
+
+.decl aph_contains(n:node)
+aph_contains(n) :- ap_name(n,name),option_item("apHelperTypes",_,name).
+aph_contains(n) :- ap_attr(n,_,name),option_item("apHelperTypes",_,name).
+aph_contains(n) :- ap_graph_kind(n,"Constant"),option_item("astValueTypes",n,"str"),option_item("apHelperStrings",n,value),option_item("apHelperTypes",_,name),contains(name,value).
+aph_contains(n) :- ap_annotation_edge(n,e),aph_contains(e).
+.decl aph_query(n:node)
+aph_query(n) :- ap_call_expr(n,fn),ap_attr(fn,obj,method),ap_query_method(method),ap_receiver_root(obj,name),option_item("apHelperTxn",_,name).
+aph_query(n) :- ap_call_expr(n,fn),ap_attr(fn,obj,_),aph_query(obj).
+.decl aph_true()
+aph_true() :- option("apHelper","annotation"),aph_contains(0).
+aph_true() :- option("apHelper","session"),ap_call_expr(0,fn),ap_attr(fn,_,"session").
+aph_true() :- option("apHelper","query"),aph_query(0).
+aph_true() :- option("apHelper","decorator"),option("apHelperDecorator",name),ap_call_expr(0,fn),ap_attr(fn,_,name).
+aph_true() :- option("apHelper","marked"),aph_context(c),contains("ASYNC_FALLBACK:",c).
+aph_true() :- option("apHelper","marked"),aph_context(c),contains("TODO: Implement",c),contains("native async",c).
+.decl aph_bool_helper(name:symbol)
+aph_bool_helper("annotation"). aph_bool_helper("session"). aph_bool_helper("query"). aph_bool_helper("decorator"). aph_bool_helper("marked").
+.violation AsyncPatternHelper(at:span,value_json:symbol) code "AP_HELPER" "collector helper"
+AsyncPatternHelper(@place("",0),"true") :- option("entryPoint","_ap_helper"),option("apHelper",h),aph_bool_helper(h),aph_true().
+AsyncPatternHelper(@place("",0),"false") :- option("entryPoint","_ap_helper"),option("apHelper",h),aph_bool_helper(h),!aph_true().
+AsyncPatternHelper(@place("",0),@json_str(c)) :- option("entryPoint","_ap_helper"),option("apHelper","context"),aph_context(c).
+AsyncPatternHelper(@place("",0),@json_str(n)) :- option("entryPoint","_ap_helper"),option("apHelper","receiver"),ap_receiver_root(0,n).
+AsyncPatternHelper(@place("",0),"null") :- option("entryPoint","_ap_helper"),option("apHelper","receiver"),!ap_receiver_root(0,_).
+.violation AsyncPatternName(at:span,value:symbol) code "AP_NAME" "transaction parameter"
+AsyncPatternName(@place("",0),name) :- option("entryPoint","_ap_helper"),option("apHelper","infer"),ap_txn_name(0,name).
+AsyncPatternHelper(@place("",0),to_string(to_number(n)-1)) :- option("entryPoint","_ap_helper"),option("apHelper","getter"),option("apHelperStackSize",n).
+AsyncPatternHelper(@place("",0),"\"<expr>\"") :- option("entryPoint","_ap_helper"),option("apHelper","render"),option("apHelperRenderFailure","1").
+AsyncPatternHelper(@place("",0),"\"\"") :- option("entryPoint","_ap_helper"),option("apHelper","render"),option("apHelperRenderEmpty","1").
+AsyncPatternHelper(@place("",0),@json_str(value)) :- option("entryPoint","_ap_helper"),option("apHelper","render"),sig_param(_,_,nm,_,_,ann,_),text(nm,"expression"),annotation_text(ann,value).
+
+// Filesystem resolution and existence are input facts. Selection stays native and batched.
+.decl aph_marked_parent(i:number,path:symbol)
+aph_marked_parent(i,p) :- option_item("apParentPaths",i,p),option_item("apParentMarkers",i,"1").
+AsyncPatternHelper(@place("",0),@json_str(p)) :- option("entryPoint","_ap_helper"),option("apHelper","root"),i=min j:{aph_marked_parent(j,_)},aph_marked_parent(i,p).
+AsyncPatternHelper(@place("",0),@json_str(p)) :- option("entryPoint","_ap_helper"),option("apHelper","root"),!aph_marked_parent(_,_),option("apParentFallback",p).

@@ -110,8 +110,10 @@ ap_fixed_ASYNC001("Use native async instead of to_thread() in impl/").
 .decl ap_fixed_ASYNC002(message: symbol)
 ap_fixed_ASYNC002("Use native async instead of run_in_executor() in impl/").
 
+.decl ap_supplied()
+ap_supplied() :- option("entryPoint","analyze_source").
 .decl ap_native_enabled()
-ap_native_enabled() :- !option("entryPoint", "analyze_source").
+ap_native_enabled() :- !ap_supplied().
 .decl ap_parent(n: node, p: node)
 ap_parent(n, p) :- ap_native_enabled(), ast_parent(n, p).
 .decl ap_frame_node(n: node)
@@ -197,10 +199,10 @@ ap_line(d, l, text) :- ap_native_enabled(), ap_document(d, _), split_line(d, l, 
 .decl ap_call_doc(c: node, d: number, path: symbol)
 ap_call_doc(c, d, path) :- ap_call(c, _), ap_native_enabled(), docof(c, d), ap_document(d, path), ap_in_scope(d, path), ap_source_triggered(d).
 // The supplied tree and original source are independent inputs. Its printer buffer is never a detector input.
-ap_document(0, path) :- option("entryPoint", "analyze_source"), option("analysisPath", path), option("providedTree", "true").
-ap_line(0, i + 1, text) :- option("entryPoint", "analyze_source"), option_item("sourceLines", i, text).
-ap_source_triggered(0) :- option("entryPoint", "analyze_source"), option("providedSource", text), ap_trigger(trigger), contains(trigger, text).
-ap_call_doc(c, 0, path) :- option("entryPoint", "analyze_source"), ap_call(c, _), ap_document(0, path), ap_in_scope(0, path), ap_source_triggered(0).
+ap_document(0, path) :- ap_supplied(), option("analysisPath", path), option("providedTree", "true").
+ap_line(0, i + 1, text) :- ap_supplied(), option_item("sourceLines", i, text).
+ap_source_triggered(0) :- ap_supplied(), option("providedSource", text), ap_trigger(trigger), contains(trigger, text).
+ap_call_doc(c, 0, path) :- ap_supplied(), ap_call(c, _), ap_document(0, path), ap_in_scope(0, path), ap_source_triggered(0).
 
 .decl ap_write_decorator(f: node)
 ap_write_decorator(f) :- ap_decorator(f, e), ap_call_expr(e, fn), ap_attr(fn, _, "write_async").
@@ -249,7 +251,7 @@ ap_connection_receiver(c, obj) :- ap_async_call(c, f, _), ap_receiver_root(obj, 
 .decl ap_abstract(c: node, d: number, owner: symbol)
 ap_abstract(c, d, owner) :- ap_class_base(c, b), ap_name(b, "ABC"), docof(c, d), ap_document(d, owner), ap_native_enabled().
 ap_abstract(c, d, owner) :- ap_class_base(c, b), ap_attr(b, _, "ABC"), docof(c, d), ap_document(d, owner), ap_native_enabled().
-ap_abstract(c, 0, owner) :- ap_document(0, owner), ap_class_base(c, b), (ap_name(b, "ABC") ; ap_attr(b, _, "ABC")), option("entryPoint", "analyze_source").
+ap_abstract(c, 0, owner) :- ap_document(0, owner), ap_class_base(c, b), (ap_name(b, "ABC") ; ap_attr(b, _, "ABC")), ap_supplied().
 ap_abstract(c, d, owner) :- ap_class(c, name), ap_api(d, owner),
     (contains("Transaction", name) ; contains("Connection", name) ; contains("Query", name) ; contains("Handle", name) ; contains("Version", name)).
 .decl ap_window_query(radius: number, fragment: symbol)
@@ -287,19 +289,19 @@ ap_issue(c, owner, "ASYNC008", cat("Sync polymorphic metadata helper '", printed
 ap_visible(c, owner, code, message, fallback, rank) :- ap_issue(c, owner, code, message, fallback, rank), option("entryPoint", e), (e = "lint_file" ; e = "analyze_source").
 ap_visible(c, owner, code, message, 0, rank) :- ap_issue(c, owner, code, message, 0, rank), pp_run().
 .violation AsyncASYNC001(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code "ASYNC001" "{message}"
-AsyncASYNC001(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, "ASYNC001", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
+AsyncASYNC001(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, "ASYNC001", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_ap_ast_collect"), !option("entryPoint","_production_contract").
 .violation AsyncASYNC002(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code "ASYNC002" "{message}"
-AsyncASYNC002(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, "ASYNC002", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
+AsyncASYNC002(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, "ASYNC002", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_ap_ast_collect"), !option("entryPoint","_production_contract").
 .violation AsyncASYNC004(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code "ASYNC004" "{message}"
-AsyncASYNC004(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, "ASYNC004", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
+AsyncASYNC004(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, "ASYNC004", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_ap_ast_collect"), !option("entryPoint","_production_contract").
 .violation AsyncASYNC005(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code "ASYNC005" "{message}"
-AsyncASYNC005(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, "ASYNC005", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
+AsyncASYNC005(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, "ASYNC005", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_ap_ast_collect"), !option("entryPoint","_production_contract").
 .violation AsyncASYNC006(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code "ASYNC006" "{message}"
-AsyncASYNC006(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, "ASYNC006", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
+AsyncASYNC006(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, "ASYNC006", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_ap_ast_collect"), !option("entryPoint","_production_contract").
 .violation AsyncASYNC007(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code "ASYNC007" "{message}"
-AsyncASYNC007(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, "ASYNC007", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
+AsyncASYNC007(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, "ASYNC007", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_ap_ast_collect"), !option("entryPoint","_production_contract").
 .violation AsyncASYNC008(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code "ASYNC008" "{message}"
-AsyncASYNC008(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, "ASYNC008", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
+AsyncASYNC008(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, "ASYNC008", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_ap_ast_collect"), !option("entryPoint","_production_contract").
 
  .violation Excluded(at: span) code "AP_EXCLUDED" "excluded"
 Excluded(@place("input.py", 1)) :- option("entryPoint", "should_exclude"), option("originalPath", path), ap_excluded_path(path).
@@ -351,7 +353,7 @@ ap_assignment(a, target, value) :- ap_graph_kind(a, "Assign"), ap_graph_edge(a, 
 ap_assignment(a, target, value) :- ap_graph_kind(a, "AnnAssign"), ap_graph_edge(a, "target", t), ap_name(t, target), ap_graph_edge(a, "value", value).
 ap_order(n, n) :- ap_graph_kind(n, _).
 ap_call_line(n, to_number(line)) :- ap_graph_kind(n, "Call"), option_item("astLines", n, line).
-ap_receiver_print(c, printed) :- option("entryPoint", "analyze_source"), ap_graph_kind(c, "Call"),
+ap_receiver_print(c, printed) :- ap_supplied(), ap_graph_kind(c, "Call"),
     sig_param(_, _, nm, _, _, ann, _), text(nm, name), prefix("call", name), c = to_number(@slice(name, 4, strlen(name))), annotation_text(ann, printed).
 
 #include "data-layer/plugin-production.rr"
@@ -381,3 +383,10 @@ ap_document(d,p) :- pp_run(), pp_doc(d,p), pp_fact_present(d).
 pp_report(p,l,code,message,p,l,code,0,ordinal,rank,0) :- pp_run(), ap_issue(c,p,code,message,0,rank), ap_call_doc(c,_,p), ap_call_line(c,l), ap_order(c,ordinal).
 .violation AsyncPatternProductionFact(at:span,path:symbol,path_order:symbol,order0:number,order1:number,order2:number,f_path:symbol,f_line:number,f_code:symbol,f_message:symbol,f_context:symbol,f_is_fallback:number) code "DL_FACT" "async pattern production fact"
 AsyncPatternProductionFact(@place(p,l),p,@replace_all(p,"/","\u0000"),ordinal,rank,0,p,l,code,message,context,fallback) :- option("entryPoint","_production_contract"),ap_issue(c,p,code,message,fallback,rank),ap_call_doc(c,_,p),ap_call_line(c,l),ap_context(c,context),ap_order(c,ordinal).
+ap_config("collector_defaults","{\"violations\": [], \"current_class\": null, \"in_abstract_class\": false, \"in_async_write_txn\": false, \"in_async_read_txn\": false, \"in_async_function\": false, \"current_async_function_name\": null, \"async_txn_name_stack\": [], \"async_session_name_stack\": [], \"async_query_name_stack\": [], \"_class_state_stack\": [], \"_async_function_state_stack\": []}").
+ap_config("constants","{\"VIOLATIONS\": {\"kind\": \"dict\", \"value\": {\"ASYNC001\": \"Use native async instead of to_thread() in impl/\", \"ASYNC002\": \"Use native async instead of run_in_executor() in impl/\", \"ASYNC003\": \"Abstract method may need async partner\", \"ASYNC004\": \"Sync method called in async transaction - use async version\", \"ASYNC005\": \"Sync I/O method called in async function - needs async implementation\", \"ASYNC006\": \"Sync transaction method called in async function\", \"ASYNC007\": \"Sync connection method called in async function - use async version\", \"ASYNC008\": \"Sync polymorphic metadata helper called in async function\"}}, \"SYNC_WRITE_METHODS\": {\"kind\": \"dict\", \"value\": {\"insert\": \"insert_async\", \"insert_many\": \"insert_many_async\", \"update\": \"update_async\", \"update_many\": \"update_many_async\", \"delete_by_id\": \"delete_by_id_async\", \"delete_many\": \"delete_many_async\", \"delete_returning\": \"delete_returning_async\", \"delete_many_returning\": \"delete_many_returning_async\", \"delete_by_key_many\": \"delete_by_key_many_async\", \"upsert\": \"upsert_async\", \"upsert_many\": \"upsert_many_async\", \"commit\": \"commit_async\", \"rollback\": \"rollback_async\"}}, \"SYNC_READ_METHODS\": {\"kind\": \"dict\", \"value\": {\"select_one\": \"select_one_async\", \"execute\": \"execute_async\", \"execute_one\": \"execute_one_async\", \"count\": \"count_async\", \"exists\": \"exists_async\", \"first\": \"first_async\"}}, \"SYNC_INTERNAL_IO_METHODS\": {\"kind\": \"dict\", \"value\": {\"_execute_sql\": \"_execute_sql_async\", \"_fetchone\": \"_fetchone_async\", \"_fetchall\": \"_fetchall_async\", \"raw_execute\": \"raw_execute_async\", \"_execute_template_with_params\": \"_execute_template_with_params_async\", \"nonportably_execute_sql\": \"nonportably_execute_sql_async\"}}, \"SYNC_CONNECTION_METHODS\": {\"kind\": \"dict\", \"value\": {\"read\": \"read_async\", \"write\": \"write_async\"}}, \"SYNC_POLYMORPHIC_METADATA_METHODS\": {\"kind\": \"dict\", \"value\": {\"ensure_dynamic_polymorphic_metadata\": \"ensure_dynamic_polymorphic_metadata_async\", \"register_polymorphic_metadata_for_schema_update\": \"register_polymorphic_metadata_for_schema_update_async\"}}, \"ALL_SYNC_TRANSACTION_METHODS\": {\"kind\": \"dict\", \"value\": {\"insert\": \"insert_async\", \"insert_many\": \"insert_many_async\", \"update\": \"update_async\", \"update_many\": \"update_many_async\", \"delete_by_id\": \"delete_by_id_async\", \"delete_many\": \"delete_many_async\", \"delete_returning\": \"delete_returning_async\", \"delete_many_returning\": \"delete_many_returning_async\", \"delete_by_key_many\": \"delete_by_key_many_async\", \"upsert\": \"upsert_async\", \"upsert_many\": \"upsert_many_async\", \"commit\": \"commit_async\", \"rollback\": \"rollback_async\", \"select_one\": \"select_one_async\", \"execute\": \"execute_async\", \"execute_one\": \"execute_one_async\", \"count\": \"count_async\", \"exists\": \"exists_async\", \"first\": \"first_async\", \"execute_raw\": \"execute_raw_async\", \"fetchone_raw\": \"fetchone_raw_async\", \"fetchall_raw\": \"fetchall_raw_async\", \"search\": \"search_async\", \"commit_branch\": \"commit_branch_async\", \"get_history\": \"get_history_async\", \"get_branch_tip\": \"get_branch_tip_async\", \"select_at_revision\": \"select_at_revision_async\"}}, \"SCAN_PATHS\": {\"kind\": \"list\", \"value\": [\"impl/sqlite\", \"impl/postgres\", \"impl/mariadb\", \"impl/doltdb\", \"impl/mongodb\", \"impl/neo4j\", \"impl/common\", \"api\", \"conform\"]}, \"EXCLUDE_PATTERNS\": {\"kind\": \"list\", \"value\": [\"tests/\", \"test_\", \"__pycache__\"]}, \"TRANSACTION_PARAM_NAMES\": {\"kind\": \"frozenset\", \"value\": [\"rtxn\", \"tx\", \"txn\", \"vrtxn\", \"vtxn\", \"wtxn\"]}, \"TRANSACTION_TYPE_NAMES\": {\"kind\": \"frozenset\", \"value\": [\"LazyVersionedReadTransaction\", \"LazyVersionedWriteTransaction\", \"ReadTransaction\", \"WriteTransaction\"]}, \"QUERY_SOURCE_METHODS\": {\"kind\": \"frozenset\", \"value\": [\"cross_branch\", \"query\", \"select_at_revision\"]}, \"SOURCE_TRIGGERS\": {\"kind\": \"tuple\", \"value\": [\"async def\", \"to_thread\", \"run_in_executor\"]}}").
+ap_config("extractor","{\"extractor_id\": \"async_patterns.violations\", \"schema_version\": \"1\", \"implementation_version\": \"async-patterns-v2\", \"parser_mode\": \"ast_collect\", \"source_triggers\": [\"async def\", \"to_thread\", \"run_in_executor\"], \"source_trigger_groups\": [], \"cacheable\": true, \"workload_scope\": \"file\", \"project_input_facts\": [], \"project_input_scope\": null, \"implementation_digest\": \"9a9b44db2ff7128a\", \"node_kinds\": [\"ClassDef\", \"AsyncFunctionDef\", \"FunctionDef\", \"Lambda\", \"Assign\", \"AnnAssign\", \"Call\"]}").
+ap_config("scope","{\"directories\": [\"impl/sqlite\", \"impl/postgres\", \"impl/mariadb\", \"impl/doltdb\", \"impl/mongodb\", \"impl/neo4j\", \"impl/common\", \"api\", \"conform\"], \"explicit_files\": [], \"include_tests\": true, \"broad_repo_scope\": false}").
+ap_config("plugin","{\"name\": \"async_patterns\", \"enforcement\": \"hard-fail\", \"description\": \"Sync-in-async fallback patterns must not appear in actionable code\"}").
+#include "data-layer/async-pattern-api.rr"
+#include "data-layer/async-pattern-helpers.rr"
