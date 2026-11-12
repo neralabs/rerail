@@ -293,7 +293,9 @@ mod tests {
         }));
         let document = json!({ "format": "rerail.policy/v1", "id": "table", "revision": 1, "mode": "steer", "clauses": clauses });
         let capabilities = serde_json::from_str::<Value>(CAPABILITIES).expect("capabilities");
-        let (compiled, held) = retained(|| compile_document_with(document, &capabilities));
+        // A copy goes in: the compilation frees what it is given, which `retained` would take
+        // off what the rule holds.
+        let (compiled, held) = retained(|| compile_document_with(document.clone(), &capabilities));
         compiled.unwrap_or_else(|error| panic!("{}", error.reason));
         held
     }
