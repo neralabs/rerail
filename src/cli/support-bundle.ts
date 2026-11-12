@@ -220,26 +220,45 @@ function pathForms(value: string): string[] {
   return [...new Set([value, forward, backward, backward.replaceAll("\\", "\\\\"), forward.replaceAll("/", "\\/")])];
 }
 
-/** Takes what this computer knows out of `text`, longest value first so a path goes before a folder inside it, then what looks like a secret. */
-export function scrubText(text: string, { knownValues }: { knownValues: readonly KnownValue[] }): string {
-  let scrubbed = text;
-  const forms = knownValues.flatMap(literal => pathForms(literal.value).map(value => ({ ...literal, value })));
-  for (const { value, label, word, pathOnly } of forms.sort((left, right) => right.value.length - left.value.length)) {
-    // A home or checkout of `/`, as a container can have, would take every slash with it.
-    if (value.length < 2) continue;
-    if (pathOnly === true) scrubbed = scrubbed.replace(new RegExp(`(?<=[\\\\/])${escapeRegExp(value)}(?![\\w-])`, "gu"), () => label);
-    else if (word === true) scrubbed = scrubbed.replace(new RegExp(`(?<![\\w-])${escapeRegExp(value)}(?![\\w-])`, "gu"), () => label);
-    else scrubbed = scrubbed.replaceAll(value, () => label);
-  }
-  for (const [pattern, replacement] of SECRET_PATTERNS) scrubbed = scrubbed.replace(pattern, replacement);
-  return scrubbed;
+/** How one form of a known value is found: a user name only as a whole word, or only inside a path. */
+function knownPattern({ value, word, pathOnly }: KnownValue): string {
+  if (pathOnly === true) return `(?<=[\\\\/])${escapeRegExp(value)}(?![\\w-])`;
+  if (word === true) return `(?<![\\w-])${escapeRegExp(value)}(?![\\w-])`;
+  return escapeRegExp(value);
 }
 
-function scrubValue<T>(value: T, knownValues: readonly KnownValue[]): T {
-  if (typeof value === "string") return scrubText(value, { knownValues }) as T;
-  if (Array.isArray(value)) return value.map(item => scrubValue(item as unknown, knownValues)) as T;
+/**
+ * The scrub of `knownValues`, built once for every text it is given: each form of each value is one alternative of a
+ * single pattern, longest first, so a path goes before a folder inside it and a text is read once however many values
+ * there are. Then what looks like a secret goes. A bundle holds thousands of texts, and a database can record hundreds
+ * of checkouts.
+ */
+function textScrub(knownValues: readonly KnownValue[]): (text: string) => string {
+  const forms = knownValues
+    .flatMap(literal => pathForms(literal.value).map(value => ({ ...literal, value })))
+    // A home or checkout of `/`, as a container can have, would take every slash with it.
+    .filter(({ value }) => value.length >= 2)
+    .sort((left, right) => right.value.length - left.value.length);
+  const labels = new Map<string, string>();
+  for (const { value, label } of forms) if (!labels.has(value)) labels.set(value, label);
+  const known = forms.length === 0 ? undefined : new RegExp([...new Set(forms.map(knownPattern))].join("|"), "gu");
+  return text => {
+    let scrubbed = known === undefined ? text : text.replace(known, value => labels.get(value) ?? REDACTED);
+    for (const [pattern, replacement] of SECRET_PATTERNS) scrubbed = scrubbed.replace(pattern, replacement);
+    return scrubbed;
+  };
+}
+
+/** Takes what this computer knows out of `text`, then what looks like a secret ({@link textScrub}). */
+export function scrubText(text: string, { knownValues }: { knownValues: readonly KnownValue[] }): string {
+  return textScrub(knownValues)(text);
+}
+
+function scrubValue<T>(value: T, scrub: (text: string) => string): T {
+  if (typeof value === "string") return scrub(value) as T;
+  if (Array.isArray(value)) return value.map(item => scrubValue(item as unknown, scrub)) as T;
   if (typeof value !== "object" || value === null) return value;
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => [scrubText(key, { knownValues }), scrubValue(item as unknown, knownValues)])) as T;
+  return Object.fromEntries(Object.entries(value).map(([key, item]) => [scrub(key), scrubValue(item as unknown, scrub)])) as T;
 }
 
 function readQuietly(path: string): string | undefined {
@@ -545,7 +564,8 @@ export async function collectSupportBundle({ repo, home, databasePath, sessionId
     daemonLogOmittedLines: omitted,
     problems,
   };
-  return { bundle: scrubValue(bundle, knownValues), ownRules: scrubValue(ownRules, knownValues) };
+  const scrub = textScrub(knownValues);
+  return { bundle: scrubValue(bundle, scrub), ownRules: scrubValue(ownRules, scrub) };
 }
 
 /** Reads one section of the bundle; a section that throws gives `fallback` and says why in `problems`. */

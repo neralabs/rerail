@@ -5,7 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { defaultRerailDatabasePath, events, openRerailDatabase, policySessionOwners, sessions, SqliteAuditStore } from "../../src/engine/index.js";
+import { checkouts, defaultRerailDatabasePath, events, openRerailDatabase, policySessionOwners, sessions, SqliteAuditStore } from "../../src/engine/index.js";
 import { runSupportBundleCommand, scrubText, type SupportBundle } from "../../src/cli/support-bundle.js";
 import { startTestRepository } from "../support/started-repository.js";
 
@@ -118,6 +118,45 @@ async function run(world: Fixture, ...args: string[]): Promise<{ exit: number; s
   if (exit !== 0) return { exit, stdout, stderr, text: "", bundle: {} as SupportBundle };
   const text = readFileSync(world.output, "utf8");
   return { exit, stdout, stderr, text, bundle: JSON.parse(text) as SupportBundle };
+}
+
+/**
+ * `count` more checkouts recorded for `world`'s repository, and a session with a thousand events and fifty failed
+ * audits of twenty failures each: about what a few weeks of worktrees and one busy day leave in the database.
+ */
+function busyHistory(world: Fixture, count: number): void {
+  const database = openRerailDatabase(defaultRerailDatabasePath());
+  try {
+    database.$client.transaction(() => {
+      for (let index = 0; index < count; index += 1) {
+        const checkoutPath = join(world.root, "worktrees", `feature-${index}`);
+        database.insert(checkouts).values({ checkoutPath, repositoryKey: world.repositoryKey, cloneId: `clone-${index}`, started: null, createdAt: 1, lastSeenAt: 1 }).run();
+      }
+      database.insert(sessions).values({ sessionId: SESSION, host: "claude-code", cwd: world.repo, repositoryId: world.repositoryKey, startedAt: 1 }).run();
+      for (let index = 0; index < 1_000; index += 1) {
+        const kind = ["call", "result", "turn-end", "code-rules-pending"][index % 4]!;
+        database.insert(events).values({ sessionId: SESSION, eventId: `e${index}`, kind, observedAt: index, payloadJson: JSON.stringify({ kind, toolName: "Edit", boundary: "turn-end" }) }).run();
+      }
+    })();
+  } finally {
+    database.$client.close();
+  }
+  const store = new SqliteAuditStore(defaultRerailDatabasePath());
+  try {
+    for (let index = 0; index < 50; index += 1) {
+      const auditId = store.start({ sessionId: SESSION, workspaceRoot: world.repo, scope: "ai-output", mode: "steer", revision: 1, catalogRevision: "digest", ruleRevisions: [{ ruleId: "eslint-eqeqeq", revision: 1 }], paths: ["src/app.ts"] });
+      store.finish(auditId, {
+        status: "failed",
+        violations: [],
+        failures: Array.from({ length: 20 }, (_, failure) => ({
+          ruleId: `rule-${failure}`, clauseId: "clause", code: "adapter-error", stage: "evaluate", path: `src/file-${index}-${failure}.ts`,
+          message: `evaluate failed in ${world.repo} for src/file-${index}-${failure}.ts`,
+        })),
+      });
+    }
+  } finally {
+    store.close();
+  }
 }
 
 async function reportedWorld(): Promise<Fixture> {
@@ -248,6 +287,21 @@ describe("rerail support-bundle", () => {
     expect(bundle.daemon.status).toBe("absent");
     expect(bundle.session).toBeNull();
     expect(bundle.platform.os).toBe(process.platform);
+  });
+
+  it("takes about as long where the database records a thousand checkouts as where it records none", { timeout: 180_000 }, async () => {
+    const elapsed = async (checkoutCount: number): Promise<number> => {
+      const world = await fixture();
+      busyHistory(world, checkoutCount);
+      const started = performance.now();
+      const { exit, bundle } = await run(world);
+      expect(exit).toBe(0);
+      expect(bundle.session?.audits).toHaveLength(50);
+      return performance.now() - started;
+    };
+    const none = await elapsed(0);
+    const thousand = await elapsed(1_000);
+    expect(thousand, `${none.toFixed(0)} ms with none, ${thousand.toFixed(0)} ms with a thousand`).toBeLessThan(3 * none + 2_000);
   });
 
   describe("where set-up never finished: a database, and this checkout not recorded in it", () => {
