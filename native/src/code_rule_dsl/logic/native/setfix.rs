@@ -323,7 +323,10 @@ pub struct Rel { table: String, types: Vec<u8>, k: usize, n: usize, data: Vec<i6
              /// bytes a row they are not held for the others.
              leveled: bool,
              /// Spike (`RERAIL_SPIKE_PLACED`): a dedup-only relation's row ids by row hash, holding ids `..upto`.
-             placed: std::sync::Mutex<(HashTable<u32>, usize)> }
+             placed: std::sync::Mutex<(HashTable<u32>, usize)>,
+             /// Its statistics kept as its rows come (`kept_stats`), the planner's form of them kept by delta
+             /// (decision 0096): rows `..indexed` counted in, and those `stats_dead` marks counted out.
+             stats: Option<KeptStats>, stats_dead: Vec<u64> }
 
 /// The id of a live row equal to `row` in the relation of `orders` (its first holds every column), not `skip`.
 fn find_row(orders: &[Index], data: &[i64], k: usize, row: &[i64], skip: impl Fn(u32) -> bool) -> Option<u32> {
@@ -374,7 +377,7 @@ impl Rel {
         Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Vec::new(), stored: 0, lo: 0, hi: 0, wave: 0,
               idx: vec![Index::new((0..k).collect())], serves: vec![Vec::new()], indexed: 0, pending: HashTable::new(),
               sketches: vec![Sketch::default(); k], dead: Vec::new(), ndead: 0, summaries: Default::default(), from: None,
-              level: Vec::new(), lbase: 0, leveled: true, placed: Default::default() }
+              level: Vec::new(), lbase: 0, leveled: true, placed: Default::default(), stats: None, stats_dead: Vec::new() }
     }
     /// A relation that starts as `old` (a kept one: its rows copied as memory; its orders' runs and its sketches
     /// shared, not built again) less the rows of `gone`, marked dead in place (decision 0090 step 4). Its rows are the
@@ -421,7 +424,7 @@ impl Rel {
         let from = Some(Origin::Based { at: old as *const InRel as usize, n: old.n });
         Some(Rel { table: table.to_string(), types: types.to_vec(), k, n: old.n, data: data.clone(), stored: 0, lo: 0, hi: 0, wave: 0, idx, serves,
                    indexed: old.n, pending: HashTable::new(), sketches: old.sketches.clone(), dead, ndead, summaries: Default::default(), from, level,
-                   lbase: 0, leveled: true, placed: Default::default() })
+                   lbase: 0, leveled: true, placed: Default::default(), stats: old.stats.clone(), stats_dead: old.dead.clone() })
     }
     /// `based`'s relation, made from `old`'s rows less those of `gone` rather than in place (compacted).
     fn compacted(table: &str, types: &[u8], old: &InRel, gone: Option<&InRel>) -> Rel {
@@ -563,8 +566,35 @@ impl Rel {
                 sk.add(self.data[id * self.k + c]);
             }
         }
+        if let Some(stats) = &mut self.stats {
+            stats.0.delta(&self.data[self.indexed * self.k..self.n * self.k], &[], self.k);
+        }
         self.indexed = self.n;
         self.pending = HashTable::new();
+    }
+    /// The rows dead now and not when the statistics last counted them out taken out of them, and those revived
+    /// (a level's rows dead while checked, `Levels`) put back: a word of the dead marks at a time, so a relation with
+    /// none changed costs its marks' words.
+    fn count_dead(&mut self) {
+        let Some(stats) = &mut self.stats else { return };
+        let (k, words) = (self.k, self.dead.len().max(self.stats_dead.len()));
+        let (mut plus, mut minus) = (Vec::new(), Vec::new());
+        for w in 0..words {
+            let (now, was) = (self.dead.get(w).copied().unwrap_or(0), self.stats_dead.get(w).copied().unwrap_or(0));
+            let mut changed = now ^ was;
+            while changed != 0 {
+                let id = w * 64 + changed.trailing_zeros() as usize;
+                changed &= changed - 1;
+                if id < self.indexed {
+                    let row = &self.data[id * k..(id + 1) * k];
+                    if now >> (id % 64) & 1 == 1 { minus.extend_from_slice(row) } else { plus.extend_from_slice(row) }
+                }
+            }
+        }
+        if !plus.is_empty() || !minus.is_empty() {
+            stats.0.delta(&plus, &minus, k);
+        }
+        self.stats_dead.clone_from(&self.dead);
     }
     /// The next wave: its delta is rows `lo..hi`. The rows pushed since the last wave become each order's runs: those
     /// before `lo` as of the wave ending, the rest as the new wave's (its delta). First, each order's older runs merge
@@ -590,7 +620,7 @@ impl Rel {
         for ix in &mut self.idx {
             ix.settle(&self.data, k, u32::MAX);
             ix.add_run(&self.data, k, from, n, 0);
-            ix.tier(&self.data, k, runs::spike_tier(FROZEN_RUNS));
+            ix.tier(&self.data, k, FROZEN_RUNS);
         }
         self.indexed_to_n();
     }
@@ -632,8 +662,10 @@ fn best_order<'a>(orders: &'a [Index], keys: &[usize]) -> Option<(&'a Index, usi
     orders.iter().map(|ix| (ix, ix.cols.iter().take_while(|c| keys.contains(c)).count())).filter(|&(_, m)| m > 0).max_by_key(|&(_, m)| m)
 }
 
-/// A frozen relation's runs an index at most (`Rel::index_rest`).
-const FROZEN_RUNS: usize = 4;
+/// A frozen relation's runs an index at most (`Rel::index_rest`): one, as its probes cannot merge it later, and
+/// each probe of a frozen order otherwise read every run (O125: 9 G instructions of the cold run's 346 G cheaper
+/// than four, and 3 G of step 01's 181 G).
+const FROZEN_RUNS: usize = 1;
 
 /// Candidate row ids: a range, a list, or a key's ranges of an index's runs.
 #[derive(Clone)]
@@ -694,14 +726,7 @@ impl Fresh {
             runs::cmp_vals(cols, tagged, &data[a as usize * k..][..k], &data[b as usize * k..][..k])
         };
         let mut order: Vec<u32> = (settled as u32..n as u32).collect();
-        if runs::keyed_on() {
-            runs::sort_keyed(&mut order, tagged, cols.len(), |q, i| data[q as usize * k + cols[i]], &cmp);
-        } else if tagged {
-            // By tag as integers, then rows only within a tag (`runs::sort_by_tag`).
-            runs::sort_by_tag(&mut order, |q| runs::tag(data[q as usize * k + cols[0]]), &cmp);
-        } else {
-            order.sort_unstable_by(|&a, &b| cmp(a, b));
-        }
+        runs::sort_keyed(&mut order, tagged, cols.len(), |q, i| data[q as usize * k + cols[i]], &cmp);
         order.dedup_by(|a, b| cmp(*a, *b).is_eq());
         // The new rows' check: rows pushed since the last wave (in no order yet), then the first order.
         let mut held = vec![false; order.len()];
@@ -1040,6 +1065,8 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     // CPU's indexes, and compiled for the device below.
     let mut device_wanted = false;
     let mut leveled = false;
+    // The relations whose statistics are kept as their rows come (`Line::Stats`).
+    let mut counted: Vec<usize> = Vec::new();
     let mut seed_specs: Vec<(usize, Arc<JoinSpec>)> = Vec::new();
     for line in &spec.lines {
         match line {
@@ -1099,6 +1126,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
             Line::NoWrite => write = false,
             Line::Request(r) => requests.push((*r, 0)),
             Line::Produced(r) => produced.push(*r),
+            Line::Stats(r) => counted.push(*r),
             Line::Gate { done, src, quiet, after } => gates.push(Gate { done: *done, src: *src, quiet: quiet.clone(), after: after.clone(), passed: 0 }),
             Line::Join { head, delta, join, whole } => {
                 let w = match whole { Some(w) => Some(joins(w, &mut syms)?), None => None };
@@ -1197,6 +1225,12 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     // Rows this run pushes go above every kept row's level in the component (`Rel::level`).
     let lbase = rels.iter().filter(|r| r.level.len() == r.n).flat_map(|r| r.level.iter().copied()).max().unwrap_or(0);
     for r in &mut rels { r.lbase = lbase; }
+    // Counted from their first rows (a relation started from a kept one has its statistics already).
+    for &r in &counted {
+        if let Some(rel) = rels.get_mut(r).filter(|rel| rel.stats.is_none() && rel.indexed == 0) {
+            rel.stats = Some(KeptStats::of(rel.k));
+        }
+    }
     for r in &mut rels { let n = r.n; r.set_delta(0, n); }   // the first wave reads the seeds as its delta
     // Levels (decision 0090): `live`'s rows are shown a level at a time, never a delta, so no probe reads it as
     // one; the other levels relations get small batches from row 0, which a whole plan (one for a delta that is
@@ -2106,7 +2140,9 @@ pub struct InRel { pub k: usize, n: usize, rows: Vec<i64>, pub view: Option<View
                    /// Its id for the run: the executor keeps what a lane built from it by this (decision 0100 §4).
                    uid: level::Uid,
                    /// Each row's level, when the native engine derived it (`Rel::level`); empty otherwise.
-                   level: Vec<u32> }
+                   level: Vec<u32>,
+                   /// Its statistics, kept as its relation's rows came and went (`Rel::stats`).
+                   stats: Option<KeptStats> }
 /// A base input read in place: the bound vtab source's columns `cols`, at its rows `ids` (all rows when `None`, the
 /// rows passing the atom's constant filters otherwise). Nothing of the source is copied.
 pub struct View { pub src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vec<usize>, ids: Option<Vec<u32>>, eqs: Vec<(usize, i64)> }
@@ -2434,7 +2470,7 @@ impl InRel {
     /// A relation of `rows` (flat, `types.len()` values each) an earlier run kept (decision 0077 §4), in no table.
     pub fn kept(types: Vec<u8>, rows: Vec<i64>, n: usize) -> Arc<InRel> {
         let k = types.len();
-        Arc::new(InRel { k, n, rows, view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new() })
+        Arc::new(InRel { k, n, rows, view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None })
     }
     /// Its columns' value types (the engine's codes).
     pub fn types(&self) -> &[u8] {
@@ -2445,13 +2481,13 @@ impl InRel {
         let k = types.len();
         let n = rows.len();
         let flat: Vec<i64> = rows.iter().flat_map(|r| r.iter().copied()).collect();
-        Arc::new(InRel { k, n, rows: flat, view: None, base: false, types, stored: n, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new() })
+        Arc::new(InRel { k, n, rows: flat, view: None, base: false, types, stored: n, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None })
     }
     /// A relation of `n` rows, flat (`types.len()` values each), as a stored frame gives them (t33 K4): read as a
     /// relation the run derived.
     pub fn from_flat(rows: Vec<i64>, n: usize, types: Vec<u8>) -> Arc<InRel> {
         let k = types.len();
-        Arc::new(InRel { k, n, rows, view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new() })
+        Arc::new(InRel { k, n, rows, view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None })
     }
     /// Its rows, as a source of columns `names`.
     pub fn source(self: &Arc<Self>, names: Vec<String>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {
@@ -3090,12 +3126,29 @@ unsafe impl VTabCursor for DerivedCursor {
     }
     fn rowid(&self) -> Result<i64> { Ok(self.id as i64) }
 }
+/// A relation's statistics in the planner's form (`statkeep::RelStats`, paired: kept by rows that are not whole
+/// documents), counted as its rows are indexed and as they die, so a kept relation carries them to the next run and
+/// is not counted again from its rows there (decision 0096 step 4). Columns named `c0`, `c1`, … until read.
+#[derive(Clone)]
+pub struct KeptStats(crate::code_rule_dsl::logic::plan::statkeep::RelStats);
+impl KeptStats {
+    fn of(k: usize) -> KeptStats {
+        KeptStats(crate::code_rule_dsl::logic::plan::statkeep::RelStats::paired((0..k).map(|c| format!("c{c}")).collect()))
+    }
+}
 impl InRel {
+    /// Its statistics as kept while its rows came (`Rel::stats`), its columns named `names`: `None` for one not
+    /// derived by the native engine, or whose rows were not all counted.
+    pub(in crate::code_rule_dsl) fn kept_stats(&self, names: Vec<String>) -> Option<crate::code_rule_dsl::logic::plan::statkeep::RelStats> {
+        let s = self.stats.as_ref()?;
+        (s.0.rows() == (self.n - self.ndead) as i64 && names.len() == self.k).then(|| s.0.renamed(names))
+    }
     /// A component's relation at its fixpoint, its rows and indexes moved.
     fn moved(mut rel: Rel) -> InRel {
         rel.index_rest();
+        rel.count_dead();
         InRel { k: rel.k, n: rel.n, rows: rel.data, view: None, base: false, types: rel.types, stored: rel.stored, idx: Mutex::new(HashMap::default()), chains: rel.idx,
-                sketches: rel.sketches, serves: rel.serves, dead: rel.dead, ndead: rel.ndead, summaries: rel.summaries, measured: Default::default(), counted: Default::default(), tables: Default::default(), name: std::sync::OnceLock::from(rel.table), from: rel.from, uid: Default::default(), level: rel.level }
+                sketches: rel.sketches, serves: rel.serves, dead: rel.dead, ndead: rel.ndead, summaries: rel.summaries, measured: Default::default(), counted: Default::default(), tables: Default::default(), name: std::sync::OnceLock::from(rel.table), from: rel.from, uid: Default::default(), level: rel.level, stats: rel.stats }
     }
     /// Its rows' change from `old`, the kept relation it started as (`Rel::based`), as `(added, removed)` row-major:
     /// the rows it added after `old`'s, and `old`'s live rows it marked dead. A row deleted and derived again is in
@@ -3177,7 +3230,7 @@ impl InRel {
     }
     /// No rows, `k` columns.
     fn empty(k: usize) -> InRel {
-        InRel { k, n: 0, rows: Vec::new(), view: None, base: false, types: vec![b'i'; k], stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new() }
+        InRel { k, n: 0, rows: Vec::new(), view: None, base: false, types: vec![b'i'; k], stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None }
     }
     /// Rows, levels held, and whether it is a view (`RERAIL_LEVELS_WHY`).
     pub fn levels_shape(&self) -> (usize, usize, bool) {
@@ -3383,7 +3436,7 @@ fn input_of(conn: impl Scoped, spec: &InputKey, syms: &mut Interner) -> Result<A
     if base && (types.iter().all(|&t| t == b'i') || !table.starts_with("main.")) {
         if let Some(view) = view(conn, &table, &cols) {
             let n = view.ids.as_ref().map_or(0, Vec::len);
-            let rel = Arc::new(InRel { k: types.len(), n, rows: Vec::new(), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new() });
+            let rel = Arc::new(InRel { k: types.len(), n, rows: Vec::new(), view: Some(view), base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
             LOADS.lock().unwrap()[0].0 += thread_cpu() - c0;
             if env_set!("RDL_PROFILE") {
                 eprintln!("      view of {n} rows in {:.1} ms: SELECT {cols} FROM {table}", t0.elapsed().as_secs_f64() * 1e3);
@@ -3399,7 +3452,7 @@ fn input_of(conn: impl Scoped, spec: &InputKey, syms: &mut Interner) -> Result<A
         for (i, &t) in types.iter().enumerate() { rows.push(read_value(r.get_ref(i)?, t, syms).map_err(|e| err(format!("{table}: {e}")))?); }
         n += 1;
     }
-    let rel = Arc::new(InRel { k: types.len(), n, rows, view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new() });
+    let rel = Arc::new(InRel { k: types.len(), n, rows, view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new(), stats: None });
     {
         let l = &mut LOADS.lock().unwrap()[usize::from(!base)];
         l.0 += thread_cpu() - c0;
@@ -4385,13 +4438,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         let tagged = index.is_tagged(k);
         let mut order: Vec<u32> = (0..n as u32).collect();
         let cmp = |a: u32, b: u32| vals[a as usize * m..][..m].cmp(&vals[b as usize * m..][..m]);
-        if runs::keyed_on() {
-            runs::sort_keyed(&mut order, tagged, m, |q, i| vals[q as usize * m + i], cmp);
-        } else if tagged {
-            runs::sort_by_tag(&mut order, |q| runs::tag(vals[q as usize * m]), cmp);
-        } else {
-            order.sort_by(|&a, &b| cmp(a, b));
-        }
+        runs::sort_keyed(&mut order, tagged, m, |q, i| vals[q as usize * m + i], cmp);
         Some(order.into_iter().map(|q| lo + q).collect())
     }
     fn go<'a>(cx: &mut Ctx<'a, '_>, i: usize, slots: &mut [i64]) {
@@ -5023,7 +5070,7 @@ pub mod posted_tests {
     impl InRel {
         fn clone_rows(&self) -> InRel {
             InRel { k: self.k, n: self.n, rows: self.rows.clone(), view: None, base: false, types: self.types.clone(), stored: self.stored, idx: Mutex::new(HashMap::default()), chains: self.chains.clone(),
-                    sketches: self.sketches.clone(), serves: self.serves.clone(), dead: self.dead.clone(), ndead: self.ndead, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: self.level.clone() }
+                    sketches: self.sketches.clone(), serves: self.serves.clone(), dead: self.dead.clone(), ndead: self.ndead, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: self.level.clone(), stats: self.stats.clone() }
         }
     }
 }

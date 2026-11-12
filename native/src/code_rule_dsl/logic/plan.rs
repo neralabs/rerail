@@ -5058,6 +5058,11 @@ impl<'a> Run<'a, '_> {
             if produced.contains_key(r.as_str()) {
                 lines.push(SpecLine::Produced(ri[*r]));
             }
+            // Stored for a session's next run (decision 0099): its statistics kept as its rows come, so that run
+            // does not count them from its rows (decision 0096 step 4).
+            if prog.qualified(r, "no_inline") {
+                lines.push(SpecLine::Stats(ri[*r]));
+            }
         }
         let mut est: HashMap<&str, f64> = HashMap::new();
         for (h, (old, _)) in &based {

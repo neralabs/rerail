@@ -5570,6 +5570,17 @@ fn run_observed(
                                     let as_cols = |m: &[(String, i64, i64, i64, i64)]| m.iter().map(|(c, rows, ndv, sq, sqd)| (c.clone(), [*rows, *ndv, *sq, *sqd])).collect::<Vec<_>>();
                                     // Counted from the engine's postings of it, and kept by this run's delta (decision 0096
                                     // step 4), if this run maintains it; else, or with no index to count from, measured.
+                                    // Kept by the engine as its rows came (`InRel::kept_stats`): read, not counted.
+                                    if let Some(stats) = h2.kept_stats(source2.columns()) {
+                                        let counts = kept_counts(&stats, &tested2, source2.as_ref());
+                                        let cols = as_cols(&stats.statistics(&|_| true));
+                                        if maintains {
+                                            let p = retain::Patched { at: Arc::as_ptr(&h2) as *const u8 as usize, stats, counts: counts.clone(), tested: tested2.clone() };
+                                            return (cols, counts, LazyKept::Patched(p));
+                                        }
+                                        let measured = stats.statistics(&|_| true);
+                                        return (cols, counts.clone(), LazyKept::Measured(measured, counts, tested2));
+                                    }
                                     if maintains {
                                         let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel2}"));
                                         if let Some(stats) = super::statkeep::RelStats::from_postings(source2.columns(), h2.rows() as i64, &mut |c, visit| h2.each_posting(c, visit)) {
@@ -5950,6 +5961,12 @@ fn run_observed(
                             // finds what was measured of it by the same relation, or binds it lazily, and it is
                             // counted once it changes (O125 step 1: 238 counts instead of 521).
                             None if std::ptr::eq(Arc::as_ptr(old), Arc::as_ptr(new)) => None,
+                            // Kept by the engine as its rows came (`InRel::kept_stats`): read, not counted.
+                            None if let Some(stats) = new.kept_stats((0..*width).map(|c| super::sql_col(&name, c)).collect()) => {
+                                let tested = constants.get(name.as_str()).cloned().unwrap_or_default();
+                                let counts = kept_counts(&stats, &tested, new.source(stats.columns().to_vec()).as_ref());
+                                Some(retain::Patched { at: Arc::as_ptr(new) as *const u8 as usize, stats, counts, tested })
+                            }
                             None if new.delta_since(old).is_some() => new.live_rows().map(|live| {
                                 let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}"));
                                 let names: Vec<String> = (0..*width).map(|c| super::sql_col(&name, c)).collect();
@@ -6404,6 +6421,20 @@ fn constants_tested(prog: &front::Program) -> HashMap<&str, BTreeSet<(usize, i64
         }
     }
     by
+}
+
+/// The rows of each constant `tested`, from the kept statistics' exact counts where its column has them (a column
+/// of few values, as the ones rules test by constants are), else counted from `source` (`constant_counts`).
+fn kept_counts(stats: &super::statkeep::RelStats, tested: &BTreeSet<(usize, i64)>, source: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Vec<(String, i64, i64)> {
+    let names = stats.columns();
+    let mut exact: HashMap<usize, HashMap<i64, i64>> = HashMap::new();
+    for &(c, _) in tested {
+        if c < names.len() && !exact.contains_key(&c) {
+            let Some(e) = stats.exact(c) else { return constant_counts(Some(tested), source) };
+            exact.insert(c, e.collect());
+        }
+    }
+    tested.iter().filter(|(c, _)| *c < names.len()).map(|&(c, v)| (names[c].clone(), v, exact[&c].get(&v).copied().unwrap_or(0))).collect()
 }
 
 fn constant_counts(tested: Option<&BTreeSet<(usize, i64)>>, source: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Vec<(String, i64, i64)> {
