@@ -97,7 +97,7 @@ by a library Rerail does not control for example, then shares the hidden console
 - The daemon runs in the Rerail home, never in the folder of the session that started it. Windows holds a process's
   current folder open, so a daemon started from a repository kept that checkout, and every folder above it, from
   being deleted or renamed. The repository reaches it as `--workspace-root`, and `searchGitFrom`
-  (`src/engine/git.ts`) looks for Git from there, so a `PATH` entry inside the repository is still skipped. The
+  (`src/engine/git-access/find-git.ts`) looks for Git from there, so a `PATH` entry inside the repository is still skipped. The
   `rerail daemon start` a hook's autostart runs (`autostartDaemon`) starts in the Rerail home too, and hands it the
   session's folder as `--workspace-root`. This holds on every platform.
 - The Rust test `starts_the_daemon_with_a_hidden_console_not_without_one` checks the flags on every OS, and the Windows
@@ -148,7 +148,7 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
 - `<Git>\cmd\git.exe` and `<Git>\bin\git.exe` are launchers: they set up the environment and run
   `<Git>\mingw64\bin\git.exe` (`clangarm64` on ARM64, `mingw32` on 32-bit) as their child. Killing a process on
   Windows leaves its children running, so when a Git call timed out the real Git ran on in the repository and kept
-  its locks. `gitBehindLauncher` (`src/engine/git.ts`) resolves a launcher to that `git.exe`, which finds its own DLLs,
+  its locks. `gitBehindLauncher` (`src/engine/git-access/find-git.ts`) resolves a launcher to that `git.exe`, which finds its own DLLs,
   helpers and system configuration from its folder.
 - Anyone can put a `cmd\git.exe` or `bin\git.exe` on `PATH`, so Rerail goes behind one only into a Git for Windows
   install: `<Git>\cmd\git.exe` runs, and `<Git>\etc\gitconfig` or the build's `share\git` is there. The `git.exe` it
@@ -261,7 +261,7 @@ file restored from a branch by its blob id. Under `core.autocrlf=true` neither e
 `git checkout`, `restore`, `stash`, `pull` or `merge` rewrote was audited as the agent's own edit, and a shell edit of
 a tracked file lost its earlier text.
 
-`gitCrlfPaths` (`src/engine/git.ts`) asks Git, in one `git check-attr --stdin`, for each file's `text` and `eol`
+`gitCrlfPaths` (`src/engine/git-access/git-process.ts`) asks Git, in one `git check-attr --stdin`, for each file's `text` and `eol`
 attributes, and reads `core.autocrlf` and `core.eol`. It names the files a checkout writes with CRLF as Git decides:
 an `eol` attribute as it says, never a `-text` file, a file with no `text` attribute only under `core.autocrlf=true`,
 and a text file under `core.autocrlf=true`, else by `core.eol`, whose native default is CRLF on Windows alone. For
@@ -452,7 +452,7 @@ ends its whole process tree when it overruns its 2 s budget.
 Node's `shell: true` is cmd.exe on Windows, which reads `~`, single quotes and `$(...)` as plain text, so a bash
 status line broke once Rerail wrapped it. `previousStatusSpawn` (`src/hosts/claude/claude-status.ts`) runs it with
 Git Bash's `bash.exe`: `CLAUDE_CODE_GIT_BASH_PATH`, as Claude Code reads it, else the one beside the Git Rerail runs
-(`gitBash` in `src/engine/git.ts`), else cmd.exe when there is no Git Bash. Finding that Git stops at the first Git
+(`gitBash` in `src/engine/git-access/find-git.ts`), else cmd.exe when there is no Git Bash. Finding that Git stops at the first Git
 that runs (`findGit`), which the status line pays for on every refresh.
 
 On a timeout, the status line ends the shell's tree with `endProcessTree` (`src/engine/child-process.ts`), the one

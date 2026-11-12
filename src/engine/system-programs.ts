@@ -6,7 +6,7 @@ import { delimiter, isAbsolute, join, win32 } from "node:path";
  * folder before PATH, and Rerail runs inside repositories it does not trust, so a `git.exe`, `node.exe` or
  * `powershell.exe` committed to one would run in Rerail's place; the child-process helper refuses a bare name there
  * (`assertProgramPath`). Programs Windows ships come from System32 ({@link windowsSystemProgram}), others from PATH
- * ({@link programOnPath}), and Git from its own search (`gitExecutable` in `git.ts`).
+ * ({@link programOnPath}), and Git from its own search (`gitExecutable` in `git-access/find-git.ts`).
  */
 
 /**
