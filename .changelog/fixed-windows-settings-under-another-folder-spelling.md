@@ -1,0 +1,1 @@
+On Windows, a checkout keeps its start state, rule settings, audit settings and presentation preferences when an earlier version saved them under another spelling of its folder, such as `c:\` from VS Code: the first run of this version moves them to the spelling it now uses.
