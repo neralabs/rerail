@@ -4018,6 +4018,7 @@ dependencies = [
  "regex",
  "regex-automata",
  "regex-syntax",
+ "rerail-accel",
  "rerail-rr-syntax",
  "ruff_python_ast",
  "ruff_python_parser",
