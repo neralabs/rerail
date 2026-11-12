@@ -17,7 +17,7 @@ import type {
 } from "./code-rule.js";
 import type { AuditMode } from "../audit/audit.js";
 import { fileStamp } from "../file-stamp.js";
-import { GitReads, type CrlfRule } from "../git.js";
+import { GitReads, type CrlfRule } from "../git-access/checkout-git.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { removeScratch, renameWithRetry } from "../file-replace.js";

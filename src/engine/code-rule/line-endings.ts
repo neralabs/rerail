@@ -7,7 +7,7 @@
  * checkout writes the blob as stored.
  */
 import { createHash } from "node:crypto";
-import type { CrlfRule } from "../git.js";
+import type { CrlfRule } from "../git-access/checkout-git.js";
 
 /** The bytes a file holds a blob in: the blob's own (`stored`), or those a checkout writes for it by a CRLF rule. */
 export type LineForm = "stored" | CrlfRule;

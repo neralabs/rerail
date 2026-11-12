@@ -4,7 +4,7 @@ import type { Readable, Writable } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
 import { endProcessTree, spawn } from "../../engine/child-process.js";
-import { gitBash } from "../../engine/git.js";
+import { gitBash } from "../../engine/git-access/checkout-git.js";
 import { processState } from "../../engine/process-liveness.js";
 import { readClaudeStatusCommand, type ClaudeStatusLine } from "../../setup/claude-status-store.js";
 import { fallbackPresentation, formatTerminalStatus, readPresentation } from "../../presentation/session-presentation.js";

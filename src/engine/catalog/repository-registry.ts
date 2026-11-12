@@ -9,7 +9,7 @@ import { dirname, parse } from "node:path";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { physicalPath, storedPath, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
-import { gitExecutable, GitUnavailableError, runGit } from "../git.js";
+import { checkoutGit, GitUnavailableError, requireGit } from "../git-access/checkout-git.js";
 import type { CheckoutContext, CheckoutRecord, RepositoryKey, RepositoryRecord, RepositoryStatus } from "./repository-model.js";
 import {
   normalizeRemoteAddress,
@@ -188,7 +188,7 @@ function registryLists(checkout: string, commonDirectory: string, root: string):
  */
 export function lookupCheckout(db: Reader, workspace: string): CheckoutContext | undefined {
   try {
-    gitExecutable();
+    requireGit();
   } catch (error) {
     if (error instanceof GitUnavailableError) return undefined;
     throw error;
@@ -235,7 +235,7 @@ export function createCheckoutResolver(db: Reader): (workspace: string) => Check
   const remoteKeys = new Map<string, RepositoryKey | undefined>();
   return workspace => {
     try {
-      gitExecutable();
+      requireGit();
     } catch (error) {
       if (error instanceof GitUnavailableError) return undefined;
       throw error;
@@ -395,7 +395,7 @@ export function repositoryHistoryIds(repository: RepositoryListing): string[] {
 function listedByGit(checkoutPath: string): boolean {
   let listed;
   try {
-    listed = runGit(checkoutPath, ["worktree", "list", "--porcelain"], { timeout: 10_000 });
+    listed = checkoutGit.worktreeList(checkoutPath);
   } catch (error) {
     if (error instanceof GitUnavailableError) return true;
     throw error;

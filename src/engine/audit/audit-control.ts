@@ -5,7 +5,7 @@ import { and, asc, eq, inArray } from "drizzle-orm";
 import { z } from "zod/v4";
 import { checkoutRealpath, physicalPath } from "../catalog/checkout-control.js";
 import { openRerailDatabase, type RerailDatabase } from "../storage/database.js";
-import { runGit } from "../git.js";
+import { checkoutGit } from "../git-access/checkout-git.js";
 import { processState } from "../process-liveness.js";
 import { checkouts, repositoryAudits, auditRequests, policySessionOwners, auditSettings, sessions, audits } from "../storage/schema.js";
 import { isOmittedFailuresSummary, isSourceGap } from "./audit.js";
@@ -16,7 +16,6 @@ import {
   DEFAULT_AUDIT_SETTINGS, type AuditSettings, type AuditSettingsPatch, type RepositoryAudit, type AuditControls, type AuditRequest,
 } from "./audit-control-schema.js";
 export interface PolicyOwnerClaim { readonly token: string; }
-const GIT_OUTPUT_LIMIT = 10 * 1024 * 1024;
 
 /**
  * The scan-level failure recorded when a repository scan stops at its failure limit ("Repository scan stopped after
@@ -27,13 +26,6 @@ const GIT_OUTPUT_LIMIT = 10 * 1024 * 1024;
 function isScanLimitMarker(failure: { stage?: string | undefined; code: string; message: string }): boolean {
   return failure.stage === "scan" && failure.code === "budget-exceeded"
     && /^Repository scan stopped after reaching \d+ failures$/u.test(failure.message);
-}
-
-function gitPaths(workspaceRoot: string, args: readonly string[]): string[] {
-  const result = runGit(workspaceRoot, args, { maxBuffer: GIT_OUTPUT_LIMIT });
-  if (result.error !== undefined) throw result.error;
-  if (result.status !== 0) throw new Error(result.stderr.trim() || `git exited with code ${result.status ?? "unknown"}`);
-  return result.stdout.split("\0").filter(Boolean);
 }
 
 function isDirectory(path: string): boolean {
@@ -47,7 +39,7 @@ function isDirectory(path: string): boolean {
 /** Which of `folders` (relative to `workspaceRoot`) are submodules its index declares: gitlinks, mode 160000. */
 function declaredSubmodules(workspaceRoot: string, folders: readonly string[]): Set<string> {
   if (folders.length === 0) return new Set();
-  return new Set(gitPaths(workspaceRoot, ["--literal-pathspecs", "ls-files", "--stage", "-z", "--", ...folders])
+  return new Set(checkoutGit.auditGitlinks(workspaceRoot, folders)
     .filter(entry => entry.startsWith("160000 "))
     .map(entry => entry.slice(entry.indexOf("\t") + 1)));
 }
@@ -60,9 +52,9 @@ function declaredSubmodules(workspaceRoot: string, folders: readonly string[]): 
  */
 function gitDiffPaths(workspaceRoot: string, isRecordedCheckout: (path: string) => boolean, prefix = ""): string[] {
   const entries = new Set([
-    ...gitPaths(workspaceRoot, ["diff", "--name-only", "--no-renames", "--relative", "--ignore-submodules=none", "--diff-filter=ACMRTUXB", "-z", "--"]),
-    ...gitPaths(workspaceRoot, ["diff", "--cached", "--name-only", "--no-renames", "--relative", "--ignore-submodules=none", "--diff-filter=ACMRTUXB", "-z", "--"]),
-    ...gitPaths(workspaceRoot, ["ls-files", "--others", "--exclude-standard", "-z", "--"]),
+    ...checkoutGit.auditUnstaged(workspaceRoot),
+    ...checkoutGit.auditStaged(workspaceRoot),
+    ...checkoutGit.auditUntracked(workspaceRoot),
   ].map(entry => entry.endsWith("/") ? entry.slice(0, -1) : entry));
   const folders = [...entries].filter(path => isDirectory(join(workspaceRoot, path)));
   const submodules = declaredSubmodules(workspaceRoot, folders);

@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
-import { GitReads } from "../git.js";
+import { GitReads } from "../git-access/checkout-git.js";
 
 /**
  * A change to Git's ignore rules in a session that can make them ignore more. `ignoresMore` holds each pattern the file

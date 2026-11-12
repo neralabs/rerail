@@ -4,19 +4,14 @@ import { copyFile, mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { eq } from "drizzle-orm";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { recordCheckout, recordStartedWorktree } from "../../../src/engine/catalog/repository-registry.js";
 import { repositoryIdentityLocation } from "../../../src/engine/catalog/repository-identity.js";
-import { runGit } from "../../../src/engine/git.js";
+import { checkoutGit } from "../../../src/engine/git-access/checkout-git.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { checkouts } from "../../../src/engine/storage/schema.js";
 import { setRepositoryStarted } from "../../../src/runtime/index.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
-
-vi.mock("../../../src/engine/git.js", async importOriginal => {
-  const actual = await importOriginal<typeof import("../../../src/engine/git.js")>();
-  return { ...actual, runGit: vi.fn(actual.runGit) };
-});
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -54,7 +49,7 @@ function caseInsensitiveFilesystem(): boolean {
   }
 }
 
-const worktreeLists = () => vi.mocked(runGit).mock.calls.filter(([, args]) => args[0] === "worktree").length;
+const worktreeLists = () => checkoutGit.counts().questions["worktree-list"]?.starts ?? 0;
 
 describe("recordStartedWorktree", () => {
   it("asks Git once for a .git file it does not list, however often that folder is looked at", async () => {

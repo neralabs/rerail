@@ -231,7 +231,7 @@ export {
   type RepositoryIdentityLocation,
 } from "./engine/catalog/repository-identity.js";
 export { loadRuleCatalog } from "./engine/catalog/rule-catalog.js";
-export { GitUnavailableError } from "./engine/git.js";
+export { GitUnavailableError } from "./engine/git-access/checkout-git.js";
 export {
   ApiError,
   invokeOperation,

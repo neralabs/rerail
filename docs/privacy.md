@@ -23,7 +23,7 @@ Rerail sends nothing about you or your work unless you add a remote, and calls n
 - **No silent updates.** Only `rerail update` or `rerail setup` installs a version (`src/setup/updater.ts`).
 - **No pack install scripts.** Packs are installed and removed with `npm --ignore-scripts`
   (`src/setup/rule-pack-store.ts`).
-- **No remote Git.** All Git commands are local, with hooks and fsmonitor disabled (`src/engine/git.ts`).
+- **No remote Git.** All Git commands are local, with hooks and fsmonitor disabled (`src/engine/git-access/git-process.ts`, the one module that starts Git).
 - **No third-party dashboard resources.** The dashboard loads nothing from outside your machine (`ui/`).
 
 </details>

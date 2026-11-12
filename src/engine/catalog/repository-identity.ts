@@ -17,7 +17,7 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { physicalPath } from "./checkout-control.js";
 import { openNoFollowSync } from "../no-follow.js";
-import { GitUnavailableError, gitText, runGit } from "../git.js";
+import { checkoutGit, GitUnavailableError, type GitResult } from "../git-access/checkout-git.js";
 import type { RepositoryKey } from "./repository-model.js";
 
 /** Where a checkout keeps its clone id, and which checkout it is. */
@@ -45,9 +45,9 @@ export function repositoryIdentityLocation(workspace: string): RepositoryIdentit
 }
 
 /** Git's top level, common directory and Git directory for `requested`; undefined when Git is not installed. */
-function locateInGit(requested: string): ReturnType<typeof runGit> | undefined {
+function locateInGit(requested: string): GitResult | undefined {
   try {
-    return runGit(requested, ["rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--git-dir"]);
+    return checkoutGit.checkoutLocation(requested);
   } catch (error) {
     if (error instanceof GitUnavailableError) return undefined;
     throw error;
@@ -124,7 +124,7 @@ function registryCommonDirectory(checkout: string): string | undefined {
 }
 
 function listWorktrees(checkout: string, commonDirectory: string, contents: string): WorktreeRegistry & { readonly contents: string } | undefined {
-  const result = runGit(checkout, ["worktree", "list", "--porcelain"]);
+  const result = checkoutGit.worktreeList(checkout);
   if (result.status !== 0) return undefined;
   const worktrees = result.stdout.split("\n").filter(line => line.startsWith("worktree ")).map(line => line.slice("worktree ".length));
   return { commonDirectory, worktrees, contents };
@@ -220,7 +220,7 @@ function readOrCreateIdentity(identityPath: string, candidate: string): string {
 export function resolveCloneId(workspace: string): { cloneId: string; location: RepositoryIdentityLocation } {
   const location = repositoryIdentityLocation(workspace);
   if (location.git) {
-    const legacyId = gitText(location.workspaceRoot, ["config", "--local", "--get", "rerail.repository-id"]) ?? "";
+    const legacyId = checkoutGit.legacyRepositoryId(location.workspaceRoot) ?? "";
     return { cloneId: readOrCreateIdentity(location.identityPath, CLONE_ID.test(legacyId) ? legacyId : `git:${randomUUID()}`), location };
   }
   const directory = dirname(location.identityPath);
@@ -248,15 +248,15 @@ export function readRemoteAddress(root: string): RemoteAddress | undefined {
 
 /** `origin`'s address; `ls-remote --get-url` gives the name back when no remote has it. */
 function originUrl(root: string): string | undefined {
-  const origin = gitText(root, ["ls-remote", "--get-url", "origin"]);
+  const origin = checkoutGit.originUrl(root);
   return origin === undefined || origin === "" || origin === "origin" ? undefined : origin;
 }
 
 function soleRemote(root: string): RemoteAddress | undefined {
-  const names = (gitText(root, ["remote"]) ?? "").split("\n").map(name => name.trim()).filter(name => name.length > 0);
+  const names = (checkoutGit.remoteNames(root) ?? "").split("\n").map(name => name.trim()).filter(name => name.length > 0);
   if (names.length !== 1) return undefined;
   const [name] = names as [string];
-  const url = gitText(root, ["remote", "get-url", "--", name]);
+  const url = checkoutGit.remoteUrl(root, name);
   return url === undefined || url === "" ? undefined : { name, url };
 }
 

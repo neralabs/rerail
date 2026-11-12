@@ -3,7 +3,61 @@ import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve, win32 } from "node:path";
 import { endProcessTree, execFile, spawn, spawnSync } from "../child-process.js";
-import { gitExecutable } from "./find-git.js";
+import { gitExecutable, GitUnavailableError } from "./find-git.js";
+
+// The only file in src/ that starts Git (check-owned-builtins.mjs, row git-starts). Each function below that starts a
+// Git process names its question, and the process is counted under that name ({@link gitStartCounts}); every Git argument
+// list Rerail builds is written here, so a question is asked the same way wherever it is asked from.
+
+/**
+ * Each question Rerail asks Git, as its starts are counted. `other` counts {@link runGit}, the one starter that takes
+ * its arguments from its caller.
+ */
+export type GitQuestion =
+  | "checkout-location" | "worktree-list" | "legacy-repository-id" | "origin-url" | "remote-names" | "remote-url"
+  | "submodule-paths" | "submodule-gitlinks" | "head" | "index-file" | "unmerged-entries" | "moved-only-by-commits"
+  | "blobs" | "blob-ids" | "autocrlf" | "core-eol" | "line-ending-attributes" | "branch-tips" | "commits-between"
+  | "modified-or-untracked" | "exclude-file" | "excludes-file-config" | "config-files" | "files-on-disk"
+  | "deleted-files" | "audit-unstaged" | "audit-staged" | "audit-untracked" | "audit-gitlinks" | "scan-top-level"
+  | "scan-commit" | "scan-holds" | "scan-tree-entries" | "scan-head" | "scan-head-ref" | "scan-empty-tree"
+  | "scan-merge-base" | "scan-changed" | "scan-untracked" | "other";
+
+/** The Git processes one question started: all of them, and those that blocked the event loop until Git exited. */
+export interface QuestionStarts {
+  readonly starts: number;
+  readonly blocking: number;
+}
+
+/** The Git processes this process started, in all and by question; a question that started none is left out. */
+export interface GitAccessCounts extends QuestionStarts {
+  readonly questions: Readonly<Partial<Record<GitQuestion, QuestionStarts>>>;
+}
+
+const started = new Map<GitQuestion, { starts: number; blocking: number }>();
+
+/** Counts one Git process `question` is about to start; `blocking` when it is started with `spawnSync`. */
+function counted(question: GitQuestion, blocking: boolean): void {
+  const count = started.get(question) ?? { starts: 0, blocking: 0 };
+  count.starts += 1;
+  if (blocking) count.blocking += 1;
+  started.set(question, count);
+}
+
+/**
+ * Every Git process this process has started since it began, by question, in the order each question first started
+ * one. A process counts once Rerail asked the system to start it, whether it then ran, failed to start or was killed.
+ */
+export function gitStartCounts(): GitAccessCounts {
+  const questions: Partial<Record<GitQuestion, QuestionStarts>> = {};
+  let starts = 0;
+  let blocking = 0;
+  for (const [question, count] of started) {
+    questions[question] = { ...count };
+    starts += count.starts;
+    blocking += count.blocking;
+  }
+  return { starts, blocking, questions };
+}
 
 export interface GitResult {
   /** Null when Git could not be started or was killed. */
@@ -34,11 +88,13 @@ function gitEnvironment(): NodeJS.ProcessEnv {
 
 /**
  * `git -C <cwd> <args>` with fsmonitor and hooks disabled, in {@link gitEnvironment} (no optional locks, no lazy fetch
- * of a partial clone's missing objects), and a 10 s default timeout; throws {@link GitUnavailableError} when Git is
- * missing, never on a non-zero exit.
+ * of a partial clone's missing objects), and a 10 s default timeout, blocking until Git exits; counted under
+ * `question`. Throws {@link GitUnavailableError} when Git is missing, never on a non-zero exit.
  */
-export function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
-  const result = spawnSync(gitExecutable(), [...SAFE_CONFIG, "-C", cwd, ...args], {
+function askGit(question: GitQuestion, cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
+  const git = gitExecutable();
+  counted(question, true);
+  const result = spawnSync(git, [...SAFE_CONFIG, "-C", cwd, ...args], {
     encoding: "utf8",
     timeout: DEFAULT_TIMEOUT_MS,
     ...options,
@@ -47,9 +103,17 @@ export function runGit(cwd: string, args: readonly string[], options: RunGitOpti
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
 }
 
-/** Trimmed stdout of a successful `git -C <cwd> <args>`, or undefined when it fails. */
-export function gitText(cwd: string, args: readonly string[]): string | undefined {
-  const result = runGit(cwd, args);
+/**
+ * {@link askGit} with arguments the caller names, counted as `other`: for code that cannot name its question here
+ * yet (src/setup/, which this module's first change left as it was) and for tests that set up a repository.
+ */
+export function runGit(cwd: string, args: readonly string[], options: RunGitOptions = {}): GitResult {
+  return askGit("other", cwd, args, options);
+}
+
+/** Trimmed stdout of a successful {@link askGit}, or undefined when it fails. */
+function gitText(question: GitQuestion, cwd: string, args: readonly string[]): string | undefined {
+  const result = askGit(question, cwd, args);
   return result.status === 0 ? result.stdout.trim() : undefined;
 }
 
@@ -106,14 +170,21 @@ async function exited(child: ChildProcess): Promise<void> {
  * Its timeout and `signal` end it as they end a batch read ({@link settleWhenDone}); it settles once that Git has exited
  * ({@link GitReadOptions}).
  */
-async function gitOutput(cwd: string, args: readonly string[], signal: AbortSignal | undefined): Promise<string | undefined> {
-  return (await gitStdout(cwd, args, signal))?.trim();
+async function gitOutput(question: GitQuestion, cwd: string, args: readonly string[], signal: AbortSignal | undefined): Promise<string | undefined> {
+  return (await gitStdout(question, cwd, args, signal))?.trim();
 }
 
 /** Stdout, as Git wrote it, of a successful Git command run as `gitOutput` runs one; undefined past `maxBuffer` bytes. */
-async function gitStdout(cwd: string, args: readonly string[], signal: AbortSignal | undefined, maxBuffer = 1024 * 1024): Promise<string | undefined> {
+async function gitStdout(
+  question: GitQuestion,
+  cwd: string,
+  args: readonly string[],
+  signal: AbortSignal | undefined,
+  maxBuffer = 1024 * 1024,
+): Promise<string | undefined> {
   const executable = readerGit(signal);
   if (executable === undefined) return undefined;
+  counted(question, false);
   const { promise, resolve: settle } = Promise.withResolvers<string | undefined>();
   const child = execFile(
     executable,
@@ -130,7 +201,7 @@ async function gitStdout(cwd: string, args: readonly string[], signal: AbortSign
 
 /** The commit `HEAD` names in `cwd`; undefined outside a repository, or before its first commit. */
 export async function gitHead(cwd: string, options: GitReadOptions = {}): Promise<string | undefined> {
-  return await gitOutput(cwd, ["rev-parse", "--verify", "--quiet", "HEAD"], options.signal);
+  return await gitOutput("head", cwd, ["rev-parse", "--verify", "--quiet", "HEAD"], options.signal);
 }
 
 /**
@@ -140,9 +211,9 @@ export async function gitHead(cwd: string, options: GitReadOptions = {}): Promis
  */
 export async function gitExcludeFiles(cwd: string, options: GitReadOptions = {}): Promise<string[]> {
   // Git prints the path relative to `cwd` unless it is elsewhere; `--path-format` would need Git 2.31.
-  const exclude = await gitOutput(cwd, ["rev-parse", "--git-path", "info/exclude"], options.signal);
+  const exclude = await gitOutput("exclude-file", cwd, ["rev-parse", "--git-path", "info/exclude"], options.signal);
   if (exclude === undefined || exclude === "") return [];
-  const configured = await gitOutput(cwd, ["config", "--path", "--get", "core.excludesFile"], options.signal);
+  const configured = await gitOutput("excludes-file-config", cwd, ["config", "--path", "--get", "core.excludesFile"], options.signal);
   return [resolve(cwd, exclude), resolve(cwd, configured || defaultExcludesFile())];
 }
 
@@ -193,7 +264,7 @@ export async function gitConfigFiles(
   options: GitReadOptions & { env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform } = {},
 ): Promise<string[]> {
   const { env = process.env, platform = process.platform } = options;
-  const local = await gitOutput(cwd, ["rev-parse", "--git-path", "config", "--git-path", "config.worktree"], options.signal);
+  const local = await gitOutput("config-files", cwd, ["rev-parse", "--git-path", "config", "--git-path", "config.worktree"], options.signal);
   if (local === undefined || local === "") return [];
   const global = env.GIT_CONFIG_GLOBAL;
   const globals = global === undefined || global === ""
@@ -213,7 +284,7 @@ const COMMIT_SUBJECT = /^commit(?: \([^)]*\))?: /u;
  * so did a move the reflog cannot show (`from` is not in it). With no `from`, `HEAD`'s newest move is all there is to go by.
  */
 export async function headMovedOnlyByCommits(cwd: string, from: string | undefined, options: GitReadOptions = {}): Promise<boolean> {
-  const reflog = await gitOutput(cwd, ["reflog", "show", "-n", String(MAX_REFLOG_ENTRIES), "--format=%H %gs", "HEAD"], options.signal);
+  const reflog = await gitOutput("moved-only-by-commits", cwd, ["reflog", "show", "-n", String(MAX_REFLOG_ENTRIES), "--format=%H %gs", "HEAD"], options.signal);
   if (reflog === undefined) return false;
   const entries = reflog.split("\n");
   const moves = from === undefined ? 1 : entries.findIndex(entry => entry.startsWith(`${from} `));
@@ -222,13 +293,13 @@ export async function headMovedOnlyByCommits(cwd: string, from: string | undefin
 
 /** The distinct commits `cwd`'s branches and remote-tracking branches point at; empty without Git or outside a repository. */
 export async function gitBranchTips(cwd: string, options: GitReadOptions = {}): Promise<string[]> {
-  const tips = await gitOutput(cwd, ["for-each-ref", "--format=%(objectname)", "refs/heads", "refs/remotes"], options.signal);
+  const tips = await gitOutput("branch-tips", cwd, ["for-each-ref", "--format=%(objectname)", "refs/heads", "refs/remotes"], options.signal);
   return tips === undefined || tips === "" ? [] : [...new Set(tips.split("\n"))];
 }
 
 /** The commits reachable from `to` but not from `from` (`git rev-list from..to`); empty when Git cannot say. */
 export async function gitCommitsBetween(cwd: string, from: string, to: string, options: GitReadOptions = {}): Promise<string[]> {
-  const commits = await gitOutput(cwd, ["rev-list", `${from}..${to}`], options.signal);
+  const commits = await gitOutput("commits-between", cwd, ["rev-list", `${from}..${to}`], options.signal);
   return commits === undefined || commits === "" ? [] : commits.split("\n");
 }
 
@@ -297,7 +368,7 @@ function crlfRule(attributes: LineEndingAttributes, config: LineEndingConfig, pl
 async function lineEndingAttributes(cwd: string, paths: readonly string[], signal: AbortSignal | undefined): Promise<Map<string, LineEndingAttributes>> {
   const attributes = new Map<string, { text: string; crlf: string; eol: string }>();
   const chunks: Buffer[] = [];
-  await streamGit(cwd, ["check-attr", "-z", "--stdin", "text", "crlf", "eol"], {
+  await streamGit("line-ending-attributes", cwd, ["check-attr", "-z", "--stdin", "text", "crlf", "eol"], {
     input: paths.map(path => `${path}\0`).join(""), onData: chunk => chunks.push(chunk), signal,
   });
   // `<path> NUL <attribute> NUL <value> NUL`, once per path and attribute.
@@ -327,8 +398,8 @@ export async function gitCrlfPaths(
   const rules = new Map<string, CrlfRule>();
   if (asked.length === 0) return rules;
   const [autocrlf, coreEol, attributes] = await Promise.all([
-    gitOutput(cwd, ["config", "--get", "core.autocrlf"], signal),
-    gitOutput(cwd, ["config", "--get", "core.eol"], signal),
+    gitOutput("autocrlf", cwd, ["config", "--get", "core.autocrlf"], signal),
+    gitOutput("core-eol", cwd, ["config", "--get", "core.eol"], signal),
     lineEndingAttributes(cwd, asked, signal),
   ]);
   const config = { autocrlf: autocrlf?.toLowerCase(), coreEol: coreEol?.toLowerCase() };
@@ -349,7 +420,7 @@ const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;
  * `MAX_LISTED_PATH_BYTES` of paths.
  */
 export async function gitModifiedOrUntrackedPaths(cwd: string, options: GitReadOptions = {}): Promise<string[]> {
-  const listed = await gitStdout(cwd, ["ls-files", "-z", "--modified", "--others", "--exclude-standard"], options.signal, MAX_LISTED_PATH_BYTES);
+  const listed = await gitStdout("modified-or-untracked", cwd, ["ls-files", "-z", "--modified", "--others", "--exclude-standard"], options.signal, MAX_LISTED_PATH_BYTES);
   return listed === undefined ? [] : listed.split("\0").filter(path => path !== "");
 }
 
@@ -363,7 +434,7 @@ export async function readGitBlobIds(cwd: string, revisions: readonly string[], 
   const ids = new Map<string, string>();
   if (asked.length === 0) return ids;
   const chunks: Buffer[] = [];
-  await streamGit(cwd, ["cat-file", "--batch-check=%(objectname) %(objecttype)"], {
+  await streamGit("blob-ids", cwd, ["cat-file", "--batch-check=%(objectname) %(objecttype)"], {
     input: asked.map(revision => `${revision}\n`).join(""), onData: chunk => chunks.push(chunk), signal: options.signal,
   });
   // One line per revision, in order: `<oid> <type>`, or `<revision> missing` (or `ambiguous`), which repeats the
@@ -440,9 +511,10 @@ interface GitStream extends GitReadOptions {
  * each chunk it prints to `stream.onData`. Settles once Git is done ({@link settleWhenDone}) and has exited
  * ({@link GitReadOptions}); without Git, or once `stream.signal` is aborted, it starts nothing.
  */
-async function streamGit(cwd: string, args: readonly string[], stream: GitStream): Promise<void> {
+async function streamGit(question: GitQuestion, cwd: string, args: readonly string[], stream: GitStream): Promise<void> {
   const executable = readerGit(stream.signal);
   if (executable === undefined) return;
+  counted(question, false);
   const { promise, resolve: settle } = Promise.withResolvers<void>();
   const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, ...args], {
     env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
@@ -462,7 +534,7 @@ async function streamGit(cwd: string, args: readonly string[], stream: GitStream
  * timeout, past `MAX_LISTED_PATH_BYTES` of entries, or once `signal` is aborted.
  */
 export async function unmergedEntries(cwd: string, signal: AbortSignal | undefined): Promise<ReadonlyMap<string, string> | undefined> {
-  const listed = await gitStdout(cwd, ["ls-files", "--unmerged", "-z"], signal, MAX_LISTED_PATH_BYTES);
+  const listed = await gitStdout("unmerged-entries", cwd, ["ls-files", "--unmerged", "-z"], signal, MAX_LISTED_PATH_BYTES);
   if (listed === undefined) return undefined;
   const entries = new Map<string, string>();
   for (const record of listed.split("\0")) {
@@ -476,7 +548,7 @@ export async function unmergedEntries(cwd: string, signal: AbortSignal | undefin
 
 /** The file `cwd`'s checkout keeps its index in (a linked worktree's is under the main `.git`); undefined when Git cannot say. */
 export async function gitIndexPath(cwd: string, signal: AbortSignal | undefined): Promise<string | undefined> {
-  const path = await gitOutput(cwd, ["rev-parse", "--git-path", "index"], signal);
+  const path = await gitOutput("index-file", cwd, ["rev-parse", "--git-path", "index"], signal);
   return path === undefined ? undefined : resolve(cwd, path);
 }
 
@@ -501,7 +573,7 @@ export async function batchBlobs(cwd: string, revisions: readonly string[], opti
   const asked = revisions.filter(revision => !/[\r\n]/u.test(revision));
   const blobs = new Map<string, Buffer>();
   if (asked.length === 0) return blobs;
-  await streamGit(cwd, ["cat-file", "--batch"], {
+  await streamGit("blobs", cwd, ["cat-file", "--batch"], {
     input: asked.map(revision => `${revision}\n`).join(""),
     onData: batchReader(asked, options.maxBlobBytes, blobs),
     ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
@@ -549,4 +621,178 @@ function batchReader(asked: readonly string[], maxBlobBytes: number, blobs: Map<
       body = { revision, size, kept, remaining: size + 1 };
     }
   };
+}
+
+// The questions below block the event loop until Git exits (spawnSync), as their callers did before they moved here.
+
+/**
+ * Git's top level, common directory and Git directory for `folder`, one absolute path a line, for the clone id's
+ * place (`repository-identity.ts`). Throws {@link GitUnavailableError} when Git is missing.
+ */
+export function checkoutLocation(folder: string): GitResult {
+  return askGit("checkout-location", folder, ["rev-parse", "--show-toplevel", "--path-format=absolute", "--git-common-dir", "--git-dir"]);
+}
+
+/** `git worktree list --porcelain` in `checkout`: its repository's main checkout and each linked worktree. */
+export function worktreeList(checkout: string): GitResult {
+  return askGit("worktree-list", checkout, ["worktree", "list", "--porcelain"]);
+}
+
+/** The `rerail.repository-id` value an older Rerail kept in the local config of the checkout at `root`. */
+export function legacyRepositoryId(root: string): string | undefined {
+  return gitText("legacy-repository-id", root, ["config", "--local", "--get", "rerail.repository-id"]);
+}
+
+/** `origin`'s address in the checkout at `root`; `ls-remote --get-url` gives the name back when no remote has it. */
+export function originUrl(root: string): string | undefined {
+  return gitText("origin-url", root, ["ls-remote", "--get-url", "origin"]);
+}
+
+/** The names of the remotes of the checkout at `root`, one a line. */
+export function remoteNames(root: string): string | undefined {
+  return gitText("remote-names", root, ["remote"]);
+}
+
+/** The address of the remote `name` of the checkout at `root`. */
+export function remoteUrl(root: string, name: string): string | undefined {
+  return gitText("remote-url", root, ["remote", "get-url", "--", name]);
+}
+
+/** Each `submodule.<name>.path` the `.gitmodules` file of the checkout at `root` declares, as `<key>\n<path>\0`. */
+export function submodulePaths(root: string): GitResult {
+  return askGit("submodule-paths", root, ["config", "--file", ".gitmodules", "--null", "--get-regexp", String.raw`^submodule\..*\.path$`]);
+}
+
+/** The index entries of the checkout at `root` at `paths`, taken literally: `<mode> <object> <stage>\t<path>\0` each. */
+export function submoduleGitlinks(root: string, paths: readonly string[]): GitResult {
+  return askGit("submodule-gitlinks", root, ["--literal-pathspecs", "ls-files", "--stage", "-z", "--", ...paths]);
+}
+
+/** The most bytes of a listing {@link filesOnDisk} and {@link deletedFiles} read. */
+const GIT_LIST_BUFFER_BYTES = 256 * 1024 * 1024;
+
+/** `git ls-files -z <flags>` in `root`, one entry each; undefined when Git is missing or fails. */
+function listing(question: GitQuestion, root: string, flags: readonly string[]): string[] | undefined {
+  let listed;
+  try {
+    listed = askGit(question, root, ["ls-files", "-z", ...flags], { maxBuffer: GIT_LIST_BUFFER_BYTES });
+  } catch (error) {
+    if (error instanceof GitUnavailableError) return undefined;
+    throw error;
+  }
+  return listed.status === 0 ? listed.stdout.split("\0").filter(path => path.length > 0) : undefined;
+}
+
+/**
+ * Every file of the checkout at `root` that Git tracks or that is untracked and not ignored, each after its
+ * `ls-files -t` status tag and a space (`H` tracked, `S` skip-worktree, `?` untracked, …), for the pack matcher.
+ */
+export function filesOnDisk(root: string): string[] | undefined {
+  return listing("files-on-disk", root, ["-t", "--cached", "--others", "--exclude-standard"]);
+}
+
+/** The tracked files the checkout at `root` deleted from its working tree. */
+export function deletedFiles(root: string): string[] | undefined {
+  return listing("deleted-files", root, ["--deleted"]);
+}
+
+/** The most bytes of output an audit's Git reads. */
+const AUDIT_OUTPUT_LIMIT = 10 * 1024 * 1024;
+
+/** The NUL-separated entries `git <args>` prints in `root`, for an audit; throws when Git fails. */
+function auditPaths(question: GitQuestion, root: string, args: readonly string[]): string[] {
+  const result = askGit(question, root, args, { maxBuffer: AUDIT_OUTPUT_LIMIT });
+  if (result.error !== undefined) throw result.error;
+  if (result.status !== 0) throw new Error(result.stderr.trim() || `git exited with code ${result.status ?? "unknown"}`);
+  return result.stdout.split("\0").filter(Boolean);
+}
+
+/** The index entries of the checkout at `root` at `folders`, taken literally, as {@link submoduleGitlinks} prints them. */
+export function auditGitlinks(root: string, folders: readonly string[]): string[] {
+  return auditPaths("audit-gitlinks", root, ["--literal-pathspecs", "ls-files", "--stage", "-z", "--", ...folders]);
+}
+
+/** The files of the checkout at `root` changed since staged, relative to it. */
+export function auditUnstaged(root: string): string[] {
+  return auditPaths("audit-unstaged", root, ["diff", "--name-only", "--no-renames", "--relative", "--ignore-submodules=none", "--diff-filter=ACMRTUXB", "-z", "--"]);
+}
+
+/** The files the index of the checkout at `root` holds changed from `HEAD`, relative to it. */
+export function auditStaged(root: string): string[] {
+  return auditPaths("audit-staged", root, ["diff", "--cached", "--name-only", "--no-renames", "--relative", "--ignore-submodules=none", "--diff-filter=ACMRTUXB", "-z", "--"]);
+}
+
+/** The untracked files of the checkout at `root` that are not ignored, relative to it. */
+export function auditUntracked(root: string): string[] {
+  return auditPaths("audit-untracked", root, ["ls-files", "--others", "--exclude-standard", "-z", "--"]);
+}
+
+/** The most bytes of output a scan's Git reads. */
+const SCAN_OUTPUT_LIMIT = 256 * 1024 * 1024;
+
+/** What `git <args>` prints in `cwd`, for the scan command; throws, naming the command, when Git fails. */
+function scanOutput(question: GitQuestion, cwd: string, args: readonly string[]): string {
+  const result = askGit(question, cwd, args, { maxBuffer: SCAN_OUTPUT_LIMIT });
+  if (result.error !== undefined) throw result.error;
+  if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr.trim()}`);
+  return result.stdout;
+}
+
+/** What `git <args>` prints in `cwd`, trimmed, for the scan command; null when Git fails. */
+function scanText(question: GitQuestion, cwd: string, args: readonly string[]): string | null {
+  const result = askGit(question, cwd, args);
+  return result.status === 0 ? result.stdout.trim() : null;
+}
+
+/** The top folder of the checkout `folder` is in; null outside one. */
+export function scanTopLevel(folder: string): string | null {
+  return scanText("scan-top-level", folder, ["rev-parse", "--show-toplevel"]);
+}
+
+/** The commit `ref` names in the checkout at `root`; null when it names none. */
+export function scanCommit(root: string, ref: string): string | null {
+  return scanText("scan-commit", root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+}
+
+/** Whether the repository of the checkout at `root` holds the object `revision` names. */
+export function scanHolds(root: string, revision: string): boolean {
+  return askGit("scan-holds", root, ["cat-file", "-e", revision]).status === 0;
+}
+
+/** The entries of the tree `revision` names, `<mode> <type> <object>\t<name>\0` each. */
+export function scanTreeEntries(root: string, revision: string): string {
+  return scanOutput("scan-tree-entries", root, ["ls-tree", "-z", revision]);
+}
+
+/** The commit `HEAD` names in the checkout at `root`; null before its first commit. */
+export function scanHead(root: string): string | null {
+  return scanText("scan-head", root, ["rev-parse", "--verify", "--quiet", "HEAD"]);
+}
+
+/** The branch `HEAD` names in the checkout at `root`; null when `HEAD` is detached. */
+export function scanHeadRef(root: string): string | null {
+  return scanText("scan-head-ref", root, ["symbolic-ref", "--quiet", "HEAD"]);
+}
+
+/** The id of the empty tree in the repository of the checkout at `root`, as Git prints it. */
+export function scanEmptyTree(root: string): string {
+  return scanOutput("scan-empty-tree", root, ["hash-object", "-t", "tree", "/dev/null"]);
+}
+
+/** The merge base of `base` and `HEAD` in the checkout at `root`; null when they have none. */
+export function scanMergeBase(root: string, base: string): string | null {
+  return scanText("scan-merge-base", root, ["merge-base", base, "HEAD"]);
+}
+
+/**
+ * The files of the checkout at `root` changed against `against` (the working tree, staged changes included), relative
+ * to it, NUL-separated. With `--no-renames` a rename is its new path, and Git needs no blob it would fetch to detect one.
+ */
+export function scanChanged(root: string, against: string): string {
+  return scanOutput("scan-changed", root, ["diff", "--name-only", "--no-renames", "--relative", "--diff-filter=ACMRTUXB", "-z", against, "--"]);
+}
+
+/** The untracked files of the checkout at `root` that are not ignored, relative to it, NUL-separated. */
+export function scanUntracked(root: string): string {
+  return scanOutput("scan-untracked", root, ["ls-files", "--others", "--exclude-standard", "-z", "--"]);
 }

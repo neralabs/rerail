@@ -6,7 +6,7 @@
 import { lstatSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { physicalPath } from "./checkout-control.js";
-import { runGit } from "../git.js";
+import { checkoutGit } from "../git-access/checkout-git.js";
 import { repositoryIdentityLocation } from "./repository-identity.js";
 
 export interface CheckoutOwner {
@@ -96,11 +96,11 @@ export class CheckoutOwners {
    * as a gitlink and that Git confirms as a checkout top level. Physical roots.
    */
   declaredSubmodules(root: string): string[] {
-    const configured = runGit(root, ["config", "--file", ".gitmodules", "--null", "--get-regexp", String.raw`^submodule\..*\.path$`]);
+    const configured = checkoutGit.submodulePaths(root);
     if (configured.status !== 0) return [];
     const paths = configured.stdout.split("\0").filter(Boolean).map(entry => entry.slice(entry.indexOf("\n") + 1));
     if (paths.length === 0) return [];
-    const index = runGit(root, ["--literal-pathspecs", "ls-files", "--stage", "-z", "--", ...paths]);
+    const index = checkoutGit.submoduleGitlinks(root, paths);
     if (index.status !== 0) return [];
     return index.stdout.split("\0")
       .filter(entry => entry.startsWith("160000 "))

@@ -3,7 +3,7 @@ import { dirname, join, posix, relative, sep } from "node:path";
 import { checkoutRealpath, withinCheckout } from "./checkout-control.js";
 import { readTomlStringLists } from "./lint-config/lint-config-formats.js";
 import { IGNORED_DIRECTORIES } from "../code-rule/code-rule-enforcer.js";
-import { GitUnavailableError, runGit } from "../git.js";
+import { checkoutGit } from "../git-access/checkout-git.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 
 /**
@@ -48,7 +48,6 @@ export interface NotScannedFolder {
   readonly fileCount?: number;
 }
 
-const GIT_LIST_BUFFER_BYTES = 256 * 1024 * 1024;
 /** Outside Git the walk stops here; a folder this large is not one project. */
 const MAX_WALKED_FILES = 200_000;
 /** Test data says nothing about a repository's own stack: a PHP fixture does not make a repo a PHP repo. */
@@ -99,17 +98,6 @@ function walk(root: string): Walked {
   return walked;
 }
 
-function gitListing(root: string, flags: readonly string[]): string[] | undefined {
-  let listed;
-  try {
-    listed = runGit(root, ["ls-files", "-z", ...flags], { maxBuffer: GIT_LIST_BUFFER_BYTES });
-  } catch (error) {
-    if (error instanceof GitUnavailableError) return undefined;
-    throw error;
-  }
-  return listed.status === 0 ? listed.stdout.split("\0").filter(path => path.length > 0) : undefined;
-}
-
 /** `git ls-files -t` tag of an entry the sparse checkout left off disk (the skip-worktree bit). */
 const SKIP_WORKTREE_TAG = "S";
 
@@ -119,10 +107,10 @@ const SKIP_WORKTREE_TAG = "S";
  * a bounded walk elsewhere. Files under a folder the scan does not enter are left out and counted per folder name.
  */
 function listRepositoryFiles(root: string): Pick<RepositoryScan, "files" | "notScanned" | "git" | "stoppedEarly"> {
-  // `-t` prefixes each entry with its status tag and a space: `H` tracked, `S` skip-worktree, `?` untracked, ….
-  const tagged = gitListing(root, ["-t", "--cached", "--others", "--exclude-standard"]);
+  // Each entry starts with its status tag and a space: `H` tracked, `S` skip-worktree, `?` untracked, ….
+  const tagged = checkoutGit.filesOnDisk(root);
   const listed = tagged?.filter(entry => !entry.startsWith(`${SKIP_WORKTREE_TAG} `)).map(entry => entry.slice(2));
-  const deleted = new Set(listed === undefined ? [] : gitListing(root, ["--deleted"]) ?? []);
+  const deleted = new Set(listed === undefined ? [] : checkoutGit.deletedFiles(root) ?? []);
   const walked = listed === undefined ? walk(root) : undefined;
   const paths = walked?.files ?? listed!.filter(path => !deleted.has(path));
   const counts = new Map<string, number>();

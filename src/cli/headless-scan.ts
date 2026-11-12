@@ -29,7 +29,7 @@ import { isWorktreePack, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeRuleCa
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
 import type { CodeRuleViolation } from "../engine/code-rule/code-rule.js";
 import { CheckoutCatalogs, startingCheckout } from "../engine/code-rule/code-rule-dsl-catalog.js";
-import { GitReads, runGit } from "../engine/git.js";
+import { checkoutGit, GitReads } from "../engine/git-access/checkout-git.js";
 import { defaultRerailDatabasePath, openRerailDatabase, openRerailDatabaseAsIs, type RerailDatabase } from "../engine/storage/database.js";
 import { repositories } from "../engine/storage/schema.js";
 import { tableColumns } from "../engine/storage/table-probe.js";
@@ -115,29 +115,17 @@ export interface HeadlessScanOptions {
   ruleDocuments?: Map<string, RuleDocument>;
 }
 
-function git(cwd: string, args: readonly string[]): string {
-  const result = runGit(cwd, args, { maxBuffer: 256 * 1024 * 1024 });
-  if (result.error !== undefined) throw result.error;
-  if (result.status !== 0) throw new Error(`git ${args.join(" ")} failed: ${result.stderr.trim()}`);
-  return result.stdout;
-}
-
-function gitMaybe(cwd: string, args: readonly string[]): string | null {
-  const result = runGit(cwd, args);
-  return result.status === 0 ? result.stdout.trim() : null;
-}
-
 function nulList(text: string): string[] {
   return text.split("\0").filter(entry => entry.length > 0);
 }
 
 /**
- * Changed files against `against` (the working tree, staged changes included) plus untracked files, sorted. With
- * `--no-renames` a rename is its new path, and Git needs no blob it would fetch to detect one: lazy fetch is off.
+ * Changed files against `against` (the working tree, staged changes included) plus untracked files, sorted. A rename
+ * is its new path, and Git needs no blob it would fetch to detect one: lazy fetch is off.
  */
 function diffPaths(root: string, against: string): string[] {
-  const changed = nulList(git(root, ["diff", "--name-only", "--no-renames", "--relative", "--diff-filter=ACMRTUXB", "-z", against, "--"]));
-  const untracked = nulList(git(root, ["ls-files", "--others", "--exclude-standard", "-z", "--"]));
+  const changed = nulList(checkoutGit.scan.changed(root, against));
+  const untracked = nulList(checkoutGit.scan.untracked(root));
   return [...new Set([...changed, ...untracked])].sort((left, right) => left.localeCompare(right));
 }
 
@@ -155,15 +143,15 @@ interface RefRules {
  * commit throws: a typo must not pass as a scan with no rules.
  */
 async function rulesAtRef(root: string, ref: string, scratch: string): Promise<RefRules> {
-  const resolved = gitMaybe(root, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+  const resolved = checkoutGit.scan.commit(root, ref);
   if (resolved === null) throw new Error(`--rules-ref ${ref} is not a commit in ${root}`);
-  if (runGit(root, ["cat-file", "-e", `${resolved}:${WORKTREE_RULES_FOLDER}`]).status !== 0) return { documents: [], skipped: [] };
+  if (!checkoutGit.scan.holds(root, `${resolved}:${WORKTREE_RULES_FOLDER}`)) return { documents: [], skipped: [] };
   const copy = join(scratch, "rules-ref");
   const folder = join(copy, WORKTREE_RULES_FOLDER);
   mkdirSync(folder, { recursive: true });
   // `<mode> <type> <object>\t<name>`: regular files are written as they are, anything else as what it is, so the
   // loader leaves it out as it would leave it out of a checkout.
-  const entries = nulList(git(root, ["ls-tree", "-z", `${resolved}:${WORKTREE_RULES_FOLDER}`])).flatMap(entry => {
+  const entries = nulList(checkoutGit.scan.treeEntries(root, `${resolved}:${WORKTREE_RULES_FOLDER}`)).flatMap(entry => {
     const match = /^(\d+) (\w+) ([0-9a-f]+)\t(.+)$/su.exec(entry);
     if (match === null) return [];
     const [, mode, type, object, name] = match as unknown as [string, string, string, string, string];
@@ -361,7 +349,7 @@ function position(line: number, column: number): ScanPosition {
 /** The checkout `options.repo` is in, once the options that depend on the scope are checked. */
 function scanRoot(options: HeadlessScanOptions): string {
   const requested = realpathSync(resolve(options.repo));
-  const top = gitMaybe(requested, ["rev-parse", "--show-toplevel"]);
+  const top = checkoutGit.scan.topLevel(requested);
   if (top === null) throw new Error(`${requested} is not inside a Git checkout`);
   const root = realpathSync(top);
   if (options.base !== undefined && options.scope !== "git-diff") throw new Error("--base applies only to --scope git-diff");
@@ -404,9 +392,9 @@ function scanTarget(options: HeadlessScanOptions, root: string): { base: ScanRep
   }
   if (options.scope !== "git-diff") return { base: null, paths: null };
   if (options.base === undefined) {
-    return { base: null, paths: diffPaths(root, gitMaybe(root, ["rev-parse", "--verify", "--quiet", "HEAD"]) === null ? git(root, ["hash-object", "-t", "tree", "/dev/null"]).trim() : "HEAD") };
+    return { base: null, paths: diffPaths(root, checkoutGit.scan.head(root) === null ? checkoutGit.scan.emptyTree(root).trim() : "HEAD") };
   }
-  const mergeBase = gitMaybe(root, ["merge-base", options.base, "HEAD"]);
+  const mergeBase = checkoutGit.scan.mergeBase(root, options.base);
   if (mergeBase === null) throw new Error(`--base ${options.base} has no merge base with HEAD in ${root}`);
   return { base: { ref: options.base, mergeBase }, paths: diffPaths(root, mergeBase) };
 }
@@ -526,8 +514,8 @@ async function scanReport(
     repository,
     checkout: {
       path: root,
-      head: gitMaybe(root, ["rev-parse", "--verify", "--quiet", "HEAD"]),
-      ref: gitMaybe(root, ["symbolic-ref", "--quiet", "HEAD"]),
+      head: checkoutGit.scan.head(root),
+      ref: checkoutGit.scan.headRef(root),
     },
     scope: options.scope,
     base,

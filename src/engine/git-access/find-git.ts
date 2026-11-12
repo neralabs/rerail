@@ -299,6 +299,14 @@ export function gitExecutable(): string {
 }
 
 /**
+ * Throws {@link GitUnavailableError} when no Git runs here ({@link gitExecutable}), for code that needs Git to be
+ * installed and never starts it: only `git-process.ts` takes Git's path.
+ */
+export function requireGit(): void {
+  gitExecutable();
+}
+
+/**
  * Git Bash's `bash.exe` in the Git for Windows install Rerail runs Git from ({@link gitExecutable}), or undefined
  * without Git or a Git Bash beside it. `<Git>\bin\bash.exe` sits a folder or two above its git.exe: `cmd\`, `bin\` or
  * `mingw64\bin\`.

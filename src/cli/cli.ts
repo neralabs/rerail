@@ -25,7 +25,7 @@ import {
 } from "../runtime/repository-start.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import { repositoryFolderName, repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
-import { gitExecutable, GitUnavailableError } from "../engine/git.js";
+import { GitUnavailableError, requireGit } from "../engine/git-access/checkout-git.js";
 import { checkSetupAnswer, setupAgents, setupPacks, startRerail } from "./repository-setup.js";
 import { isPreSetupHealthCheck, skipsSessionsApproval, startForPreSetupHealthCheck } from "../runtime/pre-setup-health-check.js";
 import {
@@ -267,7 +267,7 @@ async function runDaemonStartCommand(args: readonly string[], home: string): Pro
 /** Whether a Git Rerail can run is installed, and where it looked when none is. */
 function gitLookup(): { found: true } | { found: false; looked: readonly string[] } {
   try {
-    gitExecutable();
+    requireGit();
     return { found: true };
   } catch (error) {
     if (error instanceof GitUnavailableError) return { found: false, looked: error.looked };
