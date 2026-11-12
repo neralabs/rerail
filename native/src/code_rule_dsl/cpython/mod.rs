@@ -29,6 +29,21 @@ pub mod parity;
 #[cfg(test)]
 pub mod tests;
 
+/// This crate's own test binary, which the engine does not load: Python's language pack is registered as the binary
+/// loads, as the engine registers it (`crate::install_languages`), so the parity tests parse Python here.
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        use crate::code_rule_dsl::language::{self, Family, adapter::{pack::{Pack, register}, python::Python}};
+        register(Family::Python, &Pack::<Python>::NEW);
+        language::register_base(Family::Python, &Pack::<Python>::NEW);
+    }
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}
+
 /// The CPython these facts are CPython's: its grammar decides the verdict (3.14's `except A, B:` and t-strings are
 /// syntax errors here, as in 3.13).
 pub(crate) const VERSION: ruff_python_ast::PythonVersion = ruff_python_ast::PythonVersion::PY313;
