@@ -3801,6 +3801,16 @@ launches), a closure not recognized (the stratum placed on device rounds), and a
 
 **Closure:** make the assertion name which of the three it was, then fix that one at its root.
 
+## O-metal-slice-cpu. The Metal backends take three times the CPU backends' process CPU on the slice
+
+**Seen (2026-11-12)** in `slice::tests::the_backends_find_the_same_keys_on_real_files`, once the Metal backends
+completed (O-slice-launch-limit): interpreter 130 s, JIT 130 s, metal-interpreter 449 s, metal-jit 428 s of process
+CPU for the same 101 files and 2193 keys. One run, under `nice`, on a shared machine; not split by phase. The
+batch splits on `BackendCapacity` (101 → 50 → 25 → 12 files) each encode the clause again before it fails.
+
+**Closure:** measure warm and unprofiled (host CPU, GPU and wall apart, zero compiles in the timed run), split
+the host CPU by phase, and find the host work a Metal run repeats or does at all; then fix it at its shape.
+
 ## O-pack-upstream-data. The Python pack's upstream sources are not in the checkout
 
 `compile_matcher_tests::the_gate_catches_a_widened_walk` fails here (`only 2 widened clauses differ`), with the
