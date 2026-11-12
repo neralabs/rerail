@@ -14,6 +14,9 @@ GOVERNANCE_NAMES = frozenset({
 
 
 def prepare(backend, targets):
+    if any(target.split('::',1)[0]=='scripts/tests/test_linter_supplied_ast_contracts.py' for target in targets):
+        from structural_helper_port import install
+        install(backend,importlib.import_module('scripts.lint_connection_structural_boundaries'))
     if not any(target.split('::', 1)[0] == 'scripts/tests/test_lint_all.py' for target in targets):
         return
     suite = importlib.import_module('scripts.lint_all')

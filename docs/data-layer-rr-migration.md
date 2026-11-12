@@ -65,6 +65,31 @@ This evaluates a passive DTO declaration for the unchanged Pydantic assertion; i
 The [focused receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-alias-guard.json.gz) preserves both runs and the recorded declaration.
 The shared structural helper remains unported, so this repair does not admit unresolved references or transaction patterns.
 
+## Shared structural helper and complete original replay
+
+`_connection_file_violations` now runs as a supplied-tree native policy. The adapter transports the caller's tree and file content.
+The rule preserves top-level traversal order, the first matching core class, sorted duplicate base names, residual symbols, and complete violation DTOs.
+Its constants come from the pinned source through the offline generator. No native engine code changed.
+
+The first native run exposed a Unicode line-separator mismatch. The rule now counts Python `str.splitlines()` separators, including terminal-line behavior.
+The corpus grew from 81 to 117 cases. It contains every residual symbol as a class, function, and async function, plus positive base and line-limit cases.
+All 117 pass through snapshot and workspace execution. All six removal mutations produce valid parity failures through both interfaces.
+The [complete helper receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-structural-helper-complete.json.gz) binds 264 native executions and all twelve controls.
+Fourteen validator tests reject missing positives, missing controls, changed expectations, callbacks, invalid mutants, and unbound programs.
+The engine also records absent include candidates; the receipt retains these negative dependencies explicitly.
+
+All 119 unchanged unresolved-reference original tests now pass through both APIs, with all 63 detector observations per run.
+There are no semantic fallbacks or missing results. One passive type-alias evaluation per run remains explicitly recorded.
+The shard merger now retains those declaration records; two TDD tests prevent them from disappearing during aggregation.
+The [repaired original receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-original-repaired.json.gz) preserves the complete shards and their merged views.
+The tooling suite passed 704 tests before the two merger and fourteen helper-validator tests; those sixteen focused additions also pass.
+
+The shared helper is complete within its stated function scope. The structural linter as a whole remains a draft.
+Unresolved references still needs production parity, retained updates, 74 historical inputs, full removal controls, and strict rule admission.
+Twenty-five new production contracts pass against the source and currently fail the native guard.
+Their [red receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-production-red.json.gz) defines the next implementation step.
+The admission inventory remains twenty-one rules.
+
 ## Dynamic loading: complete original snapshot audit
 
 The complete owned corpus contains 315 original cases across five modules. Native snapshot execution passes 314.

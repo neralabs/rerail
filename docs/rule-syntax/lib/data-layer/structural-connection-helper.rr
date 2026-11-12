@@ -1,0 +1,37 @@
+// Preserve the supplied module's top-level order and the first matching core class.
+.decl sch_kind(n:number,kind:symbol)
+sch_kind(n,k) :- option_item("astKinds",n,k).
+.decl sch_edge(parent:number,field:symbol,ordinal:number,child:number)
+sch_edge(to_number(p),f,to_number(i),n) :- option_item("astParents",n,p),p!="-1",option_item("astFields",n,f),option_item("astOrdinals",n,i).
+.decl sch_top(n:number,ordinal:number,name:symbol)
+sch_top(n,i,name) :- sch_kind(0,"Module"),sch_edge(0,"body",i,n),sch_kind(n,k),(k="ClassDef";k="FunctionDef";k="AsyncFunctionDef"),option_item("astNames",n,name).
+.decl sch_core(n:number)
+sch_core(n) :- sch_top(n,i,"_DatabaseConnectionCore"),sch_kind(n,"ClassDef"),i=min j:{sch_top(c,j,"_DatabaseConnectionCore"),sch_kind(c,"ClassDef")}.
+.decl sch_base(n:number,ordinal:number,name:symbol)
+sch_base(c,i,name) :- sch_core(c),sch_edge(c,"bases",i,n),sch_kind(n,"Name"),option_item("astIds",n,name).
+sch_base(c,i,name) :- sch_core(c),sch_edge(c,"bases",i,n),sch_kind(n,"Attribute"),option_item("astAttrs",n,name).
+.decl sch_forbidden(n:number,ordinal:number,name:symbol)
+sch_forbidden(c,i,name) :- sch_base(c,i,name),!option_item("schAllowedBases",_,name).
+.decl sch_rank(n:number,ordinal:number,name:symbol,rank:number)
+sch_rank(c,i,name,rank) :- sch_forbidden(c,i,name),rank=count:{sch_forbidden(c,j,other),(@str_cmp(other,name)<0;other=name,j<i)}.
+.decl sch_bases(n:number,names:symbol)
+sch_bases(c,names) :- sch_core(c),sch_forbidden(c,_,_),names=join name by rank sep ", " : {sch_rank(c,_,name,rank)}.
+.decl sch_line(n:number,value:number)
+sch_line(n,to_number(v)) :- option_item("astLines",n,v).
+.decl sch_source(value:symbol)
+sch_source(raw) :- option("entryPoint","_connection_file_violations"),doc(d,"_structural_helper.py",_),source(d,s),text(s,raw).
+// The helper counts Python str.splitlines(), including Unicode separators.
+.decl sch_separators(pattern:symbol)
+sch_separators("\\r\\n|[\\n\\r\\x{b}\\x{c}\\x{1c}-\\x{1e}\\x{85}\\x{2028}\\x{2029}]").
+.decl sch_terminal(value:symbol)
+sch_terminal(raw) :- sch_source(raw),match("(?s).*?[\\n\\r\\x{b}\\x{c}\\x{1c}-\\x{1e}\\x{85}\\x{2028}\\x{2029}]\\z",raw).
+.decl sch_count(value:number)
+sch_count(@count_matches(pattern,raw)) :- sch_source(raw),sch_terminal(raw),sch_separators(pattern).
+sch_count(@count_matches(pattern,raw)+1) :- sch_source(raw),raw!="",!sch_terminal(raw),sch_separators(pattern).
+sch_count(0) :- sch_source("").
+.violation StructuralHelperConfig(at:span,key:symbol,value:symbol) code "CSB_SETTING" "Structural helper setting"
+StructuralHelperConfig(@place("",0),k,v) :- option("entryPoint","_structural_helper_configuration"),sch_config(k,v).
+.violation StructuralHelperFinding(at:span,phase:number,ordinal:number,source_code:symbol,line_number:number,source_message:symbol) code "CSB_HELPER" "{source_message}"
+StructuralHelperFinding(@place("",0),0,0,"CSB001",1,cat("connection.py has ",to_string(n)," lines; target is <= ",limit)) :- sch_count(n),option("schMaxLines",limit),n>to_number(limit).
+StructuralHelperFinding(@place("",0),1,i,"CSB002",l,cat("residual non-state/lazy symbol ",@python_repr(name)," still lives in connection.py")) :- option("entryPoint","_connection_file_violations"),sch_top(n,i,name),option_item("schResidualSymbols",_,name),sch_line(n,l).
+StructuralHelperFinding(@place("",0),2,0,"CSB003",l,cat("_DatabaseConnectionCore still inherits non-state ownership mixins: ",names)) :- option("entryPoint","_connection_file_violations"),sch_bases(c,names),sch_line(c,l).

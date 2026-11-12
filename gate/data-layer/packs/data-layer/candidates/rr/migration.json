@@ -3127,6 +3127,13 @@
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_unresolved_forward_refs.py"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/connection-structural-boundaries-supplied.rr",
+      "sha256": "86357d49a4b64ffae96b512b38a9c3a4d1b5064fb9363dd4b8a9639cabc9be5c",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_connection_structural_boundaries.py"
     }
   ],
   "rules": [

@@ -9,7 +9,7 @@ def merge(reports):
     require(len(reports)==parts and Counter(r['part'] for r in reports)==Counter(range(parts)),
             'Original shards omitted or repeated')
     first=reports[0];result=dict(first,part=0,parts=1,cases={},calls=[],detectorObservations=[],harnessFiles={},
-        semanticFallbacks=[],missingResults=[],assertionTranslations=[],hostProtocolCalls=[],hostTransfers=[],
+        semanticFallbacks=[],missingResults=[],assertionTranslations=[],hostProtocolCalls=[],hostTransfers=[],passiveDeclarationCalls=[],
         casesWithoutNativeCalls=[],retainedCaseIds=[])
     for report in sorted(reports,key=lambda r:r['part']):
         for key in ['sourcePin','engineSha256','sourceFiles','policySha256','originalRecordingSha256','mode','collected','parts']:
@@ -25,7 +25,7 @@ def merge(reports):
         for name,digest in report['harnessFiles'].items():
             require(name not in result['harnessFiles'] or result['harnessFiles'][name]==digest,'Original shard harness differs')
             result['harnessFiles'][name]=digest
-        for key in ['calls','detectorObservations','assertionTranslations','hostProtocolCalls','hostTransfers',
+        for key in ['calls','detectorObservations','assertionTranslations','hostProtocolCalls','hostTransfers','passiveDeclarationCalls',
                     'casesWithoutNativeCalls','retainedCaseIds']:
             result[key].extend(report.get(key,[]))
     require(set(result['cases'])==set(first['collected']),'Original assertions omitted')
@@ -66,7 +66,7 @@ def merge_modules(reports):
     require(bool(reports),'Module reports missing')
     first=reports[0]
     arrays=['collected','calls','detectorObservations','assertionTranslations','hostTransfers',
-            'hostProtocolCalls','casesWithoutNativeCalls','testTargets']
+            'hostProtocolCalls','passiveDeclarationCalls','casesWithoutNativeCalls','testTargets']
     tables=['sourceFiles','policySha256','harnessFiles']
     result=dict(first,part=0,parts=1,cases={},configurationBindings={})
     result.update({key:[] for key in arrays});result.update({key:{} for key in tables})

@@ -38,6 +38,9 @@ def cases(module):
         ('crlf','a\r\nb\r\n',1),('carriage-return','a\rb\r',1),('unicode-lines','a\x85b\u2028c\x1cd',3),
         ('default-limit','x\n'*900,900),('default-over','x\n'*901,900)]:
         rows.append(dict(id='lines-'+name,kind='helper',tree='',source=source,limit=limit))
+    for i,separator in enumerate(['\n','\r','\r\n','\v','\f','\x1c','\x1d','\x1e','\x85','\u2028','\u2029','\x1f']):
+        for name,source in [('middle','a'+separator+'b'),('terminal','a'+separator+'b'+separator),('empty-lines',separator*2)]:
+            rows.append(dict(id=f'separator-{i}-{name}',kind='helper',tree='',source=source,limit=1))
     rows.extend([
         dict(id='combined',kind='helper',tree=shapes['report-order'],source='a\nb\n',limit=1),
         dict(id='missing-tree',kind='helper',tree='',source='pass\n',missingTree=True),
@@ -67,7 +70,8 @@ def exercise(module,case,scratch):
 
 
 def install(backend,module,detectors=False):
-    pass
+    from structural_helper_port import install as install_native
+    install_native(backend,module)
 
 
 if __name__=='__main__':main(CHECK,'rerail.structural-connection-helper/v1',cases,exercise,install,['structural_helper_contract.py','fresh.py'])
