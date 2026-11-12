@@ -25,3 +25,7 @@ cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
 # The browser build: a page has no executable memory (the engine's `wasm/README.md`).
 [target.'cfg(target_family = "wasm")'.dependencies]
 cranelift-jit-wasm = { path = "../../wasm/cranelift-jit" }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-compiler = { path = ".", features = ["test-hooks"] }

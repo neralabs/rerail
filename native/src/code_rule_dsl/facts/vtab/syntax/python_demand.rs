@@ -19,10 +19,10 @@ use std::{
     sync::Arc,
 };
 
-pub(crate) struct Semantics {
+pub struct Semantics {
     root: AstGrep<TapeDoc>,
     table: ScopeTable,
-    facts: BTreeMap<u32, NodeFacts>,
+    pub facts: BTreeMap<u32, NodeFacts>,
 }
 fn at<'a>(root: &Node<'a, TapeDoc>, id: u32) -> Node<'a, TapeDoc> {
     root.root().adopt(root.get_doc().node(id))
@@ -317,5 +317,4 @@ impl super::SemanticProducer for Semantic {
     }
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

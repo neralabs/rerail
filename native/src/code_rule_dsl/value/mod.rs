@@ -61,7 +61,7 @@ impl NodeRef {
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn range(&self) -> Range<usize> {
+    pub fn range(&self) -> Range<usize> {
         self.start as usize..self.end as usize
     }
 

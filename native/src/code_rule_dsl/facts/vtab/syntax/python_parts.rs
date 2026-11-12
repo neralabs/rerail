@@ -2,7 +2,7 @@
 use super::core_rr::py_unescape;
 
 #[cfg(any(test, feature = "test-hooks"))]
-pub(super) fn with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, usize)> {
+pub fn with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, usize)> {
     use crate::code_rule_dsl::{facts::core::{self, Built}, model::FileInput};
     use std::sync::Arc;
     if parts.is_empty() { return Vec::new(); }
@@ -144,5 +144,4 @@ impl Constants<'_> {
     }
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

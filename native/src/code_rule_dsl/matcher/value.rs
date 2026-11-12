@@ -35,7 +35,7 @@ pub struct Reading {
     /// A parsed literal's nodes (`parse`): each has the value its grammar gives it, if any.
     pub(crate) literal: bool,
     /// Stable identity for this reading's cache entries, including its language options.
-    cache_id: usize,
+    pub cache_id: usize,
 }
 
 static NEXT_READING_ID: AtomicUsize = AtomicUsize::new(1);
@@ -444,5 +444,4 @@ impl crate::code_rule_dsl::facts::core::ValueReader for Values {
 /// [`file_values`]' `each(followed, ordinal, text, types)`.
 pub(in crate::code_rule_dsl) type ValueSink<'a> = dyn FnMut(bool, u32, Option<String>, &[&'static str]) + 'a;
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

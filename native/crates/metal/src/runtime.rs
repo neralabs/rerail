@@ -779,7 +779,9 @@ mod execution_lock_tests {
             Err(std::sync::TryLockError::WouldBlock)
         ));
         drop(guard);
-        assert!(METAL_EXECUTION_LOCK.try_lock().is_ok());
+        // Released, it is taken again: by a blocking take, since another test may hold it by now (a `try_lock`
+        // here failed when one did).
+        drop(metal_execution_guard().unwrap());
     }
 }
 

@@ -25,13 +25,13 @@ pub use value_origins::value_origins;
 
 pub(crate) type NodeRange = (usize, usize);
 
-pub(crate) struct Config<'a> {
+pub struct Config<'a> {
     pub module: Option<&'a ModulePath>,
     pub python: &'a PythonOptions,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ProjectionError {
+pub enum ProjectionError {
     NotPython,
     UnsupportedPythonVersion,
     ReadingMismatch,
@@ -39,7 +39,7 @@ pub(crate) enum ProjectionError {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Reason {
+pub enum Reason {
     SyntaxError,
     UnsupportedExpression,
     MissingReference,
@@ -73,20 +73,20 @@ fn unavailable<T>(reason: Reason) -> Fact<T> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Target {
+pub struct Target {
     pub range: NodeRange,
     pub kind: u16,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct BindingId {
+pub struct BindingId {
     pub scope: u32,
     // An index is relative to this row's normalized head name, not scope alone.
     pub index: usize,
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct BindingProjection {
+pub struct BindingProjection {
     pub id: BindingId,
     pub form: Form,
     pub site: Option<Target>,
@@ -97,13 +97,13 @@ pub(crate) struct BindingProjection {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct Bindings {
+pub struct Bindings {
     pub default: Fact<Option<BindingProjection>>,
     pub stop_at_global: Fact<Option<BindingProjection>>,
 }
 impl Bindings {
     /// `only` needs a separate native lookup and is deliberately not guessed here.
-    pub(crate) fn get(&self, lookup: Lookup) -> Fact<Option<BindingProjection>> {
+    pub fn get(&self, lookup: Lookup) -> Fact<Option<BindingProjection>> {
         if lookup.only {
             unavailable(Reason::LookupNotProjected)
         } else if lookup.stop_at_global {
@@ -115,7 +115,7 @@ impl Bindings {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum QualifiedOrigin {
+pub enum QualifiedOrigin {
     Import,
     Definition,
 }
@@ -152,14 +152,14 @@ pub struct NodeFacts {
 }
 
 #[derive(Default, Debug)]
-pub(crate) struct Stats {
+pub struct Stats {
     pub requested: usize,
     pub distinct: usize,
     pub qualified_lookups: usize,
     pub binding_lookups: usize,
 }
 #[derive(Default, Debug)]
-pub(crate) struct Batch {
+pub struct Batch {
     // Distinct node kinds can occupy the same range; retain every requested ID.
     pub by_range: BTreeMap<NodeRange, Vec<NodeFacts>>,
     pub stats: Stats,
@@ -168,7 +168,7 @@ pub(crate) struct Batch {
 /// Project each distinct requested node once. The batch must belong to one file;
 /// parenthesized identifier/attribute expressions are supported. Missing/unsupported
 /// facts distinguish not-applicable, unsupported and semantic unknown states.
-pub(crate) fn project<'t, D: Doc>(
+pub fn project<'t, D: Doc>(
     table: &ScopeTable,
     config: Config<'_>,
     nodes: impl IntoIterator<Item = Node<'t, D>>,
@@ -270,14 +270,14 @@ fn chain<'t, D: Doc>(
 }
 /// Normalized, scope-free shape of an identifier/attribute qualification demand.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct QualificationChain {
+pub struct QualificationChain {
     pub head: String,
     pub attributes: Vec<String>,
 }
 
 /// Parse and normalize once for callers that also need coarse import screening.
 /// This acquires no scopes and evaluates no semantic predicate.
-pub(crate) fn qualification_chain<D: Doc>(node: &Node<'_, D>) -> Fact<QualificationChain> {
+pub fn qualification_chain<D: Doc>(node: &Node<'_, D>) -> Fact<QualificationChain> {
     match chain(node) {
         Ok((_, head, attributes)) => Fact::Known(QualificationChain {
             head: python_identifier(&head).into_owned(),
@@ -289,7 +289,7 @@ pub(crate) fn qualification_chain<D: Doc>(node: &Node<'_, D>) -> Fact<Qualificat
 
 /// Well-formed call/subscript/other non-name heads cannot satisfy explicit native
 /// import/global qualification. Incomplete syntax stays unknown.
-pub(crate) fn qualification_eligibility<D: Doc>(node: &Node<'_, D>) -> Fact<()> {
+pub fn qualification_eligibility<D: Doc>(node: &Node<'_, D>) -> Fact<()> {
     match qualification_chain(node) {
         Fact::Known(_) => Fact::Known(()),
         Fact::NotApplicable(reason) => Fact::NotApplicable(reason),
@@ -464,5 +464,4 @@ fn binding(
     }
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

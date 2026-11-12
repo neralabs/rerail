@@ -242,7 +242,7 @@ fn utf16(bytes: &[u8]) -> Option<Vec<u16>> {
 /// The key a node holds or is, as UTF-16 (`compare`'s `key` and `member`): `value` reads a
 /// computed key's expression. `Some(None)` where the node holds no key; `None` where the key's
 /// value is not known, PHP refuses it, or it is not UTF-8.
-pub(crate) fn key_name<'r, D: Doc>(
+pub fn key_name<'r, D: Doc>(
     node: &Node<'r, D>,
     value: &mut dyn FnMut(&Node<'r, D>) -> Value,
 ) -> KeyName {
@@ -388,7 +388,7 @@ fn folded(text: &str, case: Case) -> Vec<u8> {
 /// qualified or relative name or namespace name folded as its position looks it up, a variable's
 /// name without `$` (`$this` is `this`), `self`, `static` and `parent` in lower case, and a
 /// string literal's value. `None` for any other node, or a name that is not UTF-8.
-pub(crate) fn node_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
+pub fn node_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
     let bytes = match node.kind().as_ref() {
         "name" if node.named_code().next().is_none() => {
             // A variable's own name is as written.
@@ -547,7 +547,7 @@ fn scope<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
 /// not a computed one, and literal keys compare by `===`. A variable variable is the same as
 /// another of the same reference; anything else (a call, `$a[]`, an interpolated string) is
 /// never. `None` where a literal does not decode.
-pub(crate) fn same_reference<D: Doc>(
+pub fn same_reference<D: Doc>(
     left: &Node<'_, D>,
     right: &Node<'_, D>,
     static_keys: bool,
@@ -611,5 +611,4 @@ pub(crate) fn same_reference<D: Doc>(
     }
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

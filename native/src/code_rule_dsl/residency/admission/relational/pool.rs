@@ -8,8 +8,8 @@ use std::{
 };
 const READERS: usize = 4;
 #[derive(Default, Clone)]
-pub(in crate::code_rule_dsl) struct Pool(Rc<RefCell<Vec<Database>>>);
-pub(in crate::code_rule_dsl) struct Lease {
+pub struct Pool(Rc<RefCell<Vec<Database>>>);
+pub struct Lease {
     db: Option<Database>,
     pool: Pool,
     pub reusable: Cell<bool>,
@@ -89,5 +89,4 @@ impl Drop for Lease {
     }
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

@@ -432,7 +432,8 @@
         assert!(compiled_sound(json!({
             "rule": { "kind": "call_expression", "pattern": "$F($$$)", "any": [{ "has": { "kind": "arguments", "pattern": "$ARGS" } }, { "regex": "." }],
                 "not": { "compare": { "left": "F", "op": "eq", "right": "ARGS" } } },
-            "constraints": { "ARGS": { "regex": "^\\(" } },
+            // `kind`: the regex tests the argument list's text (a named-only tape keeps no `(` to test).
+            "constraints": { "ARGS": { "kind": "arguments", "regex": "^\\(" } },
         })));
         // Positive comparisons stay sound: an unbound side makes them fail, a false negative.
         assert!(compiled_sound(json!({

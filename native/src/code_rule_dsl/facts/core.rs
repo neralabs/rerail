@@ -678,8 +678,7 @@ impl LeBytes for u16 {
     }
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 /// The relations `core.rr` declares (the engine's names, decision 0047), as the rule language reads them;
 /// registered at load (`install_core_names`). Empty without one.

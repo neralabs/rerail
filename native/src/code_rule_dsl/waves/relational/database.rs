@@ -17,7 +17,7 @@ pub struct Database {
     pub(super) healthy: std::cell::Cell<bool>,
     pub(super) active: std::cell::Cell<usize>,
     pub(super) plan_signature: std::cell::Cell<u64>,
-    pub(super) storage: std::cell::RefCell<super::storage::Storage>,
+    pub storage: std::cell::RefCell<super::storage::Storage>,
     pub(super) bindings: std::cell::RefCell<super::shared::Bindings>,
     pub(super) program_bytes: std::cell::Cell<usize>,
     pub(super) descriptor_bytes: std::cell::Cell<usize>,

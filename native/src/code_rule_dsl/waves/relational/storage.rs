@@ -7,7 +7,7 @@ pub mod contexts;
 #[path = "storage/contexts_tests.rs"]
 pub mod contexts_tests;
 #[derive(Default)]
-pub(super) struct Storage {
+pub struct Storage {
     contexts: contexts::Contexts,
     objects: BTreeMap<String, Object>,
     pub(super) owner: Option<usize>,

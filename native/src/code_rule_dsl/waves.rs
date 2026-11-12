@@ -10,6 +10,46 @@ pub mod owner {
 #[cfg(test)]
 #[path = "waves/relational"]
 pub(in crate::code_rule_dsl) mod relational {
+    pub mod shared {
+        pub use rerail_w::code_rule_dsl::waves::relational::shared::*;
+        #[cfg(test)]
+        pub mod identity_tests;
+            #[allow(unused_imports)]
+            use super::{Plan, Stage, syntax};
+            #[allow(unused_imports)]
+            use crate::code_rule_dsl::model::{CompiledCodeRule, FileInput, Snapshot};
+            #[allow(unused_imports)]
+            use sha2::{Digest, Sha256};
+            #[allow(unused_imports)]
+            use std::collections::{BTreeMap, HashMap, HashSet};
+            #[allow(unused_imports)]
+            use std::hash::{Hash, Hasher};
+            #[allow(unused_imports)]
+            use std::sync::Arc;
+    }
+    pub mod producer {
+        pub mod layout {
+            pub use rerail_w::code_rule_dsl::waves::relational::producer::layout::*;
+            #[cfg(test)]
+            pub mod tests;
+                #[allow(unused_imports)]
+                use super::{Demand, Resident};
+                #[allow(unused_imports)]
+                use std::{collections::HashSet, sync::Arc};
+        }
+        pub use rerail_w::code_rule_dsl::waves::relational::producer::*;
+    }
+    pub mod pool {
+        pub use rerail_w::code_rule_dsl::waves::relational::pool::*;
+        #[cfg(test)]
+        pub mod tests;
+            #[allow(unused_imports)]
+            use super::{Database, Result, configure_in_place, connection};
+            #[allow(unused_imports)]
+            use parking_lot::{ArcMutexGuard, Mutex, RawMutex};
+            #[allow(unused_imports)]
+            use std::{ cell::{OnceCell, RefCell}, ops::Deref, rc::Rc, sync::{Arc, atomic::AtomicUsize}, };
+    }
     pub use rerail_w::code_rule_dsl::waves::relational::*;
     #[path = "batch"]
     pub mod batch {

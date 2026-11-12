@@ -64,10 +64,6 @@ const FACT_STORE: &[&str] = &[
 ];
 /// Tables made and dropped inside one statement, one lab or one older pipeline's query.
 const SCRATCH: &[&str] = &[
-    // The device tests' inputs (`setfix/device.rs`, an inline test module the file filter cannot leave out).
-    "e",
-    "m",
-    "n",
     "x",
     "t",
     "input",
@@ -89,9 +85,8 @@ const SCRATCH: &[&str] = &[
     "stat_docrange",
     "{table} in code_rule_dsl/logic/native/setfix/lab.rs",
     "{} in code_rule_dsl/slice.rs",
-    // A test's in-memory input (`plan/acyclic/queries.rs`) and the device wave test's heads (`setfix/device.rs`).
+    // A test's in-memory input (`plan/acyclic/queries.rs`).
     "facts",
-    "{h} in code_rule_dsl/logic/native/setfix/device.rs",
 ];
 /// Caches between runs not yet facts: (table, the 0104 step that moves it).
 const NOT_YET_TABLES: &[(&str, &str)] = &[

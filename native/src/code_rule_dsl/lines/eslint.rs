@@ -106,24 +106,38 @@ fn sort_keys_restarts_after_a_blank_line() {
 
 /// no-unexpected-multiline for calls and computed members: the `(` or `[` on a line after the
 /// token before it (comments passed over, as `getTokenBefore` does), unless optional (a call's
-/// `?.` is a token, a member's an `optional_chain`) or without arguments.
+/// `?.` is a token, a member's an `optional_chain`) or without arguments. A named-only tape keeps
+/// neither bracket (RER-131), so the rule asks the named structure, as the pack's rule does: a
+/// call's argument list starts at its `(`, and a member reports at its index, the first node after
+/// its `[` (ESLint's start, moved past the bracket and any space).
 #[test]
 fn no_unexpected_multiline_reads_the_line_before_the_bracket() {
     let broken = json!({ "layout": { "before": { "to": "token", "breaks": { "min": 1 } } } });
-    let not_optional = json!({ "not": { "has": { "stopBy": "neighbor",
-        "any": [{ "kind": "optional_chain" }, { "regex": "^\\?\\.$" }] } } });
-    let mut call = json!({ "regex": "^\\($", "inside": { "kind": "arguments", "stopBy": "neighbor",
-        "has": { "stopBy": "neighbor", "not": { "regex": "^[(),]$" } },
-        "inside": { "kind": "call_expression", "stopBy": "neighbor", "all": [not_optional.clone()] } } });
-    call["layout"] = broken["layout"].clone();
-    let mut member = json!({ "regex": "^\\[$", "inside": { "kind": "subscript_expression", "stopBy": "neighbor",
-        "all": [not_optional] } });
-    member["layout"] = broken["layout"].clone();
+    let call = json!({ "kind": "arguments",
+        "has": { "stopBy": "neighbor", "not": { "any": [{ "kind": "comment" }, { "regex": "^[(),]$" }] } },
+        "inside": { "kind": "call_expression", "stopBy": "neighbor",
+            "not": { "has": { "stopBy": "neighbor", "regex": "^\\?\\.$" } } },
+        "all": [broken] });
+    let member = json!({ "inside": { "kind": "subscript_expression", "stopBy": "neighbor", "field": "index",
+        "not": { "has": { "stopBy": "neighbor", "kind": "optional_chain" } },
+        "has": { "stopBy": "neighbor", "field": "object",
+            "layout": { "after": { "to": "token", "breaks": { "min": 1 } } } } } });
     let ast = json!({ "rule": { "any": [call, member] } });
-    assert_eq!(
-        starts(ast, oracle!("ecma/lines/eslint/no-unexpected-multiline.ts")),
-        expected("no-unexpected-multiline.ts")
-    );
+    let source = oracle!("ecma/lines/eslint/no-unexpected-multiline.ts");
+    let past_bracket = |start: u64| {
+        let bytes = source.as_bytes();
+        let mut at = start as usize;
+        if bytes[at] == b'[' {
+            at += 1;
+            while bytes[at].is_ascii_whitespace() {
+                at += 1;
+            }
+        }
+        at as u64
+    };
+    let mut expected = expected("no-unexpected-multiline.ts").into_iter().map(past_bracket).collect::<Vec<_>>();
+    expected.sort_unstable();
+    assert_eq!(starts(ast, source), expected);
 }
 
 /// no-useless-concat: `+` between two string literals on one line: the left operand's end and the
