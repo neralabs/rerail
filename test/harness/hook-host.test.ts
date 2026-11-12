@@ -233,6 +233,29 @@ describe("hook steers", () => {
   });
 });
 
+// Each coding agent's session start with no session id: the checkout is all the start check needs.
+const sessionlessStarts: Array<{
+  host: "claude-code" | "codex" | "cursor";
+  run: (input: HookInput, options: HookOptions) => Promise<HookOutput>;
+  input: (cwd: string) => HookInput;
+  omitted: string;
+}> = [
+  { host: "claude-code", run: runClaudeHook, input: cwd => ({ cwd, hook_event_name: "SessionStart", source: "startup" }), omitted: "Claude hook omitted session_id" },
+  { host: "codex", run: runCodexHook, input: cwd => ({ cwd, hook_event_name: "SessionStart", source: "startup" }), omitted: "Codex hook omitted session_id" },
+  { host: "cursor", run: runCursorHook, input: cwd => ({ workspace_roots: [cwd], hook_event_name: "sessionStart" }), omitted: "Cursor hook omitted conversation_id" },
+];
+
+describe("the order a hook reads its payload in", () => {
+  // Where Rerail is not started a hook answers {} whatever else the payload lacks: the start check comes first, and only
+  // a started checkout reads the session and the event.
+  it.each(sessionlessStarts)("reads $host's session only where Rerail is started", async ({ run, input, omitted }) => {
+    const off = await temporaryDirectory({ started: false });
+    expect(await run(input(off), hookOptions(off))).toEqual({});
+    const on = await temporaryDirectory();
+    await expect(run(input(on), hookOptions(on))).rejects.toThrow(omitted);
+  });
+});
+
 describe("hook host durable state", () => {
   it("preserves queued deliveries across appends until the receiving hook consumes them", async () => {
     const root = await temporaryDirectory();
