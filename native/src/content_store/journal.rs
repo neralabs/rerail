@@ -69,6 +69,16 @@ pub fn volume(path: &Path) -> Option<[u8; 16]> {
 /// (`None`: no earlier cursor), the journal synchronised by a cookie written in `cookie_dir` (Watchman syncs with its
 /// own).
 pub fn since(roots: &[PathBuf], cursor: Option<&str>, cookie_dir: &Path) -> Since {
+    let at = std::time::Instant::now();
+    let r = since_backend(roots, cursor, cookie_dir);
+    if std::env::var_os("RERAIL_JOURNAL_TRACE").is_some() {
+        let what = match &r { Since::Changed { paths, .. } => format!("{} paths", paths.len()), Since::Lost { why, .. } => format!("lost: {why}") };
+        eprintln!("journal: {:.3} s, {} roots ({}), {what}", at.elapsed().as_secs_f64(), roots.len(), roots.first().map_or(String::new(), |r| r.display().to_string()));
+    }
+    r
+}
+
+fn since_backend(roots: &[PathBuf], cursor: Option<&str>, cookie_dir: &Path) -> Since {
     match backend() {
         #[cfg(target_os = "macos")]
         Backend::FsEvents => match fsevents::since(roots, cursor.and_then(|c| c.parse().ok()), cookie_dir) {
