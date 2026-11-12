@@ -260,7 +260,9 @@ pub mod tests {
         // code, as the lean parser's methods do (4,841 words when rules shared alike code), and
         // a term's rest (`more`) is a call: fewer states and arms. A callee that begins with a
         // mark or a merge is called too, at its start (375 states, 3,064 arms, 5,385 words before).
-        assert!(states <= 380 && arms <= 3076 && c.program.words.len() <= 5271, "{states} states, {arms} arms, {} words", c.program.words.len());
+        // With a rule file's tests in the grammar (0119, More-ergonomic) on these calls: 413 states,
+        // 3,004 arms, 3,773 words (the grammar's tests alone had taken it to 380 and 9,348).
+        assert!(states <= 413 && arms <= 3004 && c.program.words.len() <= 3773, "{states} states, {arms} arms, {} words", c.program.words.len());
         let native = native_ir::lower(&c.program, 0, 0).expect("lowers");
         let cut = native_cpu_clusters::by_rules(&native);
         assert_eq!((cut.count as usize, cut.calls), (rules.len(), true), "a function a rule");

@@ -1446,6 +1446,11 @@ impl Collecting {
     }
 }
 
+thread_local! {
+    /// The plans of the runs inside the outer run on this thread (its phases', the constants'), named by its manifest.
+    static INNER_PLANS: std::cell::RefCell<Vec<[u8; 32]>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Records the run's manifest and relations, then starts collection if a pass is due: queued behind the run's
 /// writes (decision 0102), so the manifest names only what is written, and the lease on collection is let go
 /// once it is.
@@ -1453,8 +1458,16 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
     memo::off();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let (root, sources, also, relations) = (root.to_string_lossy().into_owned(), sources.to_vec(), also.to_vec(), relations.to_vec());
+    let (root, sources, mut also, relations) = (root.to_string_lossy().into_owned(), sources.to_vec(), also.to_vec(), relations.to_vec());
     let plan = memo::plan_digest(program);
+    // Only a root's newest manifests keep their plans live (its protected runs), and a run's phases record theirs
+    // under its root: the outer run's manifest names its inner runs' plans too, so a later process finds every phase's
+    // prepared program and memo, not only the last two's.
+    if outer {
+        also.extend(INNER_PLANS.with(|p| std::mem::take(&mut *p.borrow_mut())));
+    } else {
+        INNER_PLANS.with(|p| p.borrow_mut().extend(std::iter::once(plan).chain(also.iter().copied())));
+    }
     // A run inside another (a phase's, as phase 1's while the outer run lists its files; the constants') leaves
     // collection to the outer run, which collects after its last wave: here it would run beside the outer run's waves.
     let collect = !std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off") && outer;
