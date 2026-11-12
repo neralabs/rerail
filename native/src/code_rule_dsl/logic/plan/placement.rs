@@ -243,9 +243,11 @@ fn row_term(t: &Term) -> bool {
         Term::Call(f, args) if DEVICE_ARITHMETIC.contains(&f.as_str()) && args.len() == 2 => args.iter().all(row_term),
         // The order of two symbols' names (`<` of symbols lowers to it): their texts are the device's.
         // Of names or cats' texts (compared from their parts, never made).
-        Term::Call(f, args) if f == "str_cmp" && args.len() == 2 => args.iter().all(|a| !matches!(a, Term::Call(..)) || is_cat_of_rows(a)),
+        Term::Call(f, args) if f == "str_cmp" && args.len() == 2 => args.iter().all(|a| !matches!(a, Term::Call(..)) || is_cat_of_rows(a) || is_text_fn_of_rows(a)),
         // A name's characters (or a cat's text's): counted over the device's names.
-        Term::Call(f, args) if (f == "strlen" || f == "rr_strlen") && args.len() == 1 => !matches!(args[0], Term::Call(..)) || is_cat_of_rows(&args[0]),
+        Term::Call(f, args) if (f == "strlen" || f == "rr_strlen") && args.len() == 1 => !matches!(args[0], Term::Call(..)) || is_cat_of_rows(&args[0]) || is_text_fn_of_rows(&args[0]),
+        // A text function the device makes into its text arena (`setfix::device`'s `TEXTFN`).
+        Term::Call(f, _) if DEVICE_TEXT_FUNCTIONS.contains(&f.as_str()) => is_text_fn_of_rows(t),
         Term::Call(..) => false,
         _ => true,
     }
@@ -254,6 +256,31 @@ fn row_term(t: &Term) -> bool {
 /// `cat(a, b)` (lowered, `concat`) of variables and constants: a text the device compares where it is read.
 fn is_cat_of_rows(t: &Term) -> bool {
     matches!(t, Term::Call(f, args) if (f == "cat" || f == "concat") && args.len() == 2 && args.iter().all(|a| !matches!(a, Term::Call(..))))
+}
+
+/// The text functions the device makes (`metal_join::TEXTFN`), by the names the planner's terms and the native
+/// engine's steps give them.
+const DEVICE_TEXT_FUNCTIONS: [&str; 12] =
+    ["lower", "sql_lower", "sql_upper", "head", "dir", "substr", "rr_substr", "sql_substr", "slice", "to_string", "rr_to_string", "sql_replace"];
+
+/// A text function of variables and constants (its text argument perhaps another's value): a text the device makes.
+fn is_text_fn_of_rows(t: &Term) -> bool {
+    match t {
+        Term::Call(f, args) if DEVICE_TEXT_FUNCTIONS.contains(&f.as_str()) && !args.is_empty() => {
+            (!matches!(args[0], Term::Call(..)) || is_text_fn_of_rows(&args[0])) && args[1..].iter().all(|a| !matches!(a, Term::Call(..)))
+        }
+        _ => false,
+    }
+}
+
+/// The first text function in `t` (`@lower`): a text the device makes into its arena, which a recursive stratum's
+/// rounds and an atom's keys cannot read.
+fn text_fn_in(t: &Term) -> Option<String> {
+    match t {
+        Term::Call(f, _) if DEVICE_TEXT_FUNCTIONS.contains(&f.as_str()) => Some(format!("@{f}")),
+        Term::Call(_, args) => args.iter().find_map(text_fn_in),
+        _ => None,
+    }
 }
 
 /// The integer functions the device computes (`.rr`'s `+ - * / %`, Soufflé's `max` and `min`).
@@ -278,7 +305,9 @@ impl Shape {
         }
         // A cat of row terms in a head is made on the device (`mj::MAKE`), its text stored as a symbol after the run;
         // not in a recursive stratum, whose rounds would join it before it is one.
-        if let Some(op) = head.iter().filter(|t| recursive || !is_cat_of_rows(t)).find_map(not_row) {
+        // A text function's text, likewise (the device's arena; never in a recursive stratum).
+        let arena = |t: &Term| if recursive { text_fn_in(t) } else { None };
+        if let Some(op) = head.iter().filter(|t| recursive || !is_cat_of_rows(t)).find_map(|t| not_row(t).or_else(|| arena(t))) {
             self.note(Form::Computed, || format!("{op} in a head"));
         }
         for step in order {
@@ -291,7 +320,7 @@ impl Shape {
                     if a.rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) {
                         self.note(Form::TextTest, || format!("text test {}", a.rel));
                     }
-                    if let Some(op) = a.args.iter().find_map(not_row) {
+                    if let Some(op) = a.args.iter().find_map(|t| not_row(t).or_else(|| text_fn_in(t))) {
                         self.note(Form::Computed, || format!("{op} in an atom's argument"));
                     }
                 }
@@ -309,7 +338,7 @@ impl Shape {
                 }) => {
                     self.note(Form::Comparison, String::new);
                 }
-                Literal::Cmp { l, r, .. } => match [l, r].iter().find_map(|t| not_row(t)) {
+                Literal::Cmp { l, r, .. } => match [l, r].iter().find_map(|t| not_row(t).or_else(|| arena(t))) {
                     Some(op) => self.note(Form::Computed, || format!("{op} in a comparison")),
                     None => self.note(Form::Comparison, String::new),
                 },
@@ -548,7 +577,7 @@ mod tests {
         // A large join with a negation, a text test and a computed head: the GPU's price is lower, and the computed
         // term is the form it lacks.
         let mut big = Shape::default();
-        let len = Term::Call("lower".into(), vec![Term::Var("x".into())]);
+        let len = Term::Call("sha256".into(), vec![Term::Var("x".into())]);
         big.add(&[atom("kind", false), atom("strtest_3", false), atom("within", true)], &[len], 4e6, false);
         assert_eq!(big.forms, [Form::Join, Form::Negation, Form::Computed, Form::TextTest].into_iter().collect());
         let p = place(&big);
@@ -565,7 +594,8 @@ mod tests {
         assert!(p.gpu && p.missing.is_empty(), "{p:?}");
         assert!(!place(&plain).gpu, "the CPU binding keeps it");
         // `@doc(x) = @doc(y)` and `@in(x, {…})` are row code, and so is `z = cat(x, y)` (a text the device makes);
-        // `lower(x)` is not, nor a cat in a recursive stratum (its rounds would join the text before it is a symbol).
+        // `sha256(x)` is not, nor a cat or `lower(x)` in a recursive stratum (its rounds would join the text before it
+        // is a symbol); `lower(x)` is (a text the device makes into its arena).
         let cmp = |l: Term, r: Term| Step { at: 0, lit: Literal::Cmp { l, op: "=", r }, mode: None };
         let doc = |v: &str| Term::Call("doc".into(), vec![Term::Var(v.into())]);
         let mut docs = Shape::default();
@@ -578,9 +608,16 @@ mod tests {
         let mut rec = Shape::default();
         rec.add(&[atom("kind", false), made()], &[], 1.0, true);
         assert!(rec.forms.contains(&Form::Computed));
+        let lower = || cmp(Term::Var("z".into()), Term::Call("lower".into(), vec![Term::Var("x".into())]));
         let mut len = Shape::default();
-        len.add(&[atom("kind", false), cmp(Term::Var("z".into()), Term::Call("lower".into(), vec![Term::Var("x".into())]))], &[], 1.0, false);
+        len.add(&[atom("kind", false), cmp(Term::Var("z".into()), Term::Call("sha256".into(), vec![Term::Var("x".into())]))], &[], 1.0, false);
         assert!(len.forms.contains(&Form::Computed));
+        let mut low = Shape::default();
+        low.add(&[atom("kind", false), lower()], &[], 1.0, false);
+        assert!(!low.forms.contains(&Form::Computed), "{:?}", low.forms);
+        let mut low_rec = Shape::default();
+        low_rec.add(&[atom("kind", false), lower()], &[], 1.0, true);
+        assert!(low_rec.forms.contains(&Form::Computed));
         // A tiny stratum stays on the CPU: the submission costs more than the work, even under the Metal binding.
         let mut small = Shape::default();
         small.add(&[atom("kind", false)], &[], 10.0, false);

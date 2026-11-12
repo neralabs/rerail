@@ -97,6 +97,27 @@ pub(in crate::code_rule_dsl) const MADE_PART: i64 = 1 << 30;
 pub(in crate::code_rule_dsl) const CAT_DOT: u32 = 0;
 /// `str_concat`'s form: a's name then b's.
 pub(in crate::code_rule_dsl) const CAT_PLAIN: u32 = 1;
+/// Mode 9: a text function's value made into the batch's text arena (`Arena`), or a range of its text, bound to
+/// `bind_slot[0]`: of X (keys 0, 1, kind `agg[1]`), Y and Z (keys 2 and 4, symbols), numbers (keys 5 and 6), by
+/// `agg[0]`. A value with none (the arena full, or `lower` past ASCII) sets the stage's counter word (`TEXTFN_FULL`,
+/// `TEXTFN_HOST`).
+pub(in crate::code_rule_dsl) const TEXTFN: u32 = 9;
+pub(in crate::code_rule_dsl) const TEXTFN_LOWER: u32 = 0;
+pub(in crate::code_rule_dsl) const TEXTFN_HEAD: u32 = 1;
+pub(in crate::code_rule_dsl) const TEXTFN_DIR: u32 = 2;
+pub(in crate::code_rule_dsl) const TEXTFN_SUBSTR: u32 = 3;
+pub(in crate::code_rule_dsl) const TEXTFN_SLICE: u32 = 4;
+pub(in crate::code_rule_dsl) const TEXTFN_TO_STRING: u32 = 5;
+pub(in crate::code_rule_dsl) const TEXTFN_REPLACE: u32 = 6;
+pub(in crate::code_rule_dsl) const TEXTFN_SQL_SUBSTR: u32 = 7;
+pub(in crate::code_rule_dsl) const TEXTFN_ASCII_LOWER: u32 = 8;
+pub(in crate::code_rule_dsl) const TEXTFN_ASCII_UPPER: u32 = 9;
+pub(in crate::code_rule_dsl) const TEXTFN_FULL: u32 = 1;
+pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
+/// An operand that is an arena text (a text function's value).
+pub(in crate::code_rule_dsl) const OPND_ARENA: u32 = 3;
+/// An arena text's value: the sign bit, its offset from bit 24, its length in the low 24 bits.
+pub(in crate::code_rule_dsl) const ARENA_TEXT: i64 = i64::MIN;
 
 /// A program column's or a bind's source: a candidate's column, or the binding's slot.
 pub(in crate::code_rule_dsl) const RIGHT: u32 = 0;
@@ -413,40 +434,62 @@ static inline long key_value(constant Stage& s, device const long* L, uint t, ui
     return s.key_kind[k] == 1 ? L[ulong(s.key_slot[k]) * s.cap_in + t] : s.key_const[k];
 }
 
-// A text operand (mode 7's): a symbol's name (b's empty), or a held cat's text, never made: a's name, "." when `dot`,
-// b's name.
-struct Txt { uint ao; uint al; uint bo; uint bl; uint dot; };
+// The text arena (`Arena`): its first word the bytes given out (an atomic bump, counting on past the end, so a full
+// one says how much was wanted), its second its capacity, its bytes from the 16th.
+static inline device const uchar* arena_bytes(device atomic_uint* A) { return (device const uchar*)A + 16; }
 
-static inline uchar txt_byte(device const uchar* p, Txt x, uint i) {
-    if (i < x.al) return p[x.ao + i];
+// An arena text's value: the sign bit, its offset from bit 24, its length in the low 24 bits.
+static inline long arena_value(uint off, uint len) { return long(0x8000000000000000ul | (ulong(off) << 24) | ulong(len)); }
+
+// A text operand: a symbol's name (b's empty), a held cat's text, never made (a's name, "." when `dot`, b's name), or
+// an arena text.
+struct Txt { device const uchar* a; uint al; device const uchar* b; uint bl; uint dot; };
+
+static inline uint txt_len(Txt x) { return x.al + x.dot + x.bl; }
+
+static inline uchar txt_byte(Txt x, uint i) {
+    if (i < x.al) return x.a[i];
     i -= x.al;
     if (i < x.dot) return uchar('.');
-    return p[x.bo + i - x.dot];
+    return x.b[i - x.dot];
 }
 
 // Eight bytes of x from `at`, big-endian, zero past `end`.
-static inline ulong txt_word(device const uchar* p, Txt x, uint at, uint end) {
+static inline ulong txt_word(Txt x, uint at, uint end) {
     ulong w = 0;
-    for (uint k = 0; k < 8; k++) w = (w << 8) | ((at + k) < end ? ulong(txt_byte(p, x, at + k)) : 0ul);
+    for (uint k = 0; k < 8; k++) w = (w << 8) | ((at + k) < end ? ulong(txt_byte(x, at + k)) : 0ul);
     return w;
 }
 
 // Whether n bytes of x from xs are those of y from ys: a word of eight at a time.
-static inline bool txt_same(device const uchar* p, Txt x, uint xs, Txt y, uint ys, uint n) {
-    for (uint at = 0; at < n; at += 8) if (txt_word(p, x, xs + at, xs + n) != txt_word(p, y, ys + at, ys + n)) return false;
+static inline bool txt_same(Txt x, uint xs, Txt y, uint ys, uint n) {
+    for (uint at = 0; at < n; at += 8) if (txt_word(x, xs + at, xs + n) != txt_word(y, ys + at, ys + n)) return false;
     return true;
 }
 
 // Operand kind 0: key k's symbol; 1: `cat`'s text of keys k and k + 1 (b's alone when a's is empty); 2:
-// `str_concat`'s.
-static inline Txt txt_of(constant Stage& s, device const long* L, uint t, device const long* R, uint k, uint kind) {
+// `str_concat`'s; 3: key k's arena text.
+static inline Txt txt_of(constant Stage& s, device const long* L, uint t, device const long* R, device atomic_uint* A, uint k, uint kind) {
     Txt x;
-    text_find(R, key_value(s, L, t, k), x.ao, x.al);
-    x.bo = 0;
+    x.b = text_chars(R);
     x.bl = 0;
     x.dot = 0;
+    long v = key_value(s, L, t, k);
+    if (kind == 3) {
+        // A value with none (-1: the arena was full) reads as empty: the stage runs again.
+        ulong off = (ulong(v) >> 24) & ((1ul << 39) - 1);
+        uint len = uint(v & 0xffffff);
+        bool ok = v != -1 && off + len <= ulong(((device const uint*)A)[1]);
+        x.a = arena_bytes(A) + (ok ? off : 0);
+        x.al = ok ? len : 0;
+        return x;
+    }
+    uint off;
+    text_find(R, v, off, x.al);
+    x.a = text_chars(R) + off;
     if (kind != 0) {
-        text_find(R, key_value(s, L, t, k + 1), x.bo, x.bl);
+        text_find(R, key_value(s, L, t, k + 1), off, x.bl);
+        x.b = text_chars(R) + off;
         x.dot = (kind == 1 && x.al > 0) ? 1 : 0;
     }
     return x;
@@ -454,41 +497,155 @@ static inline Txt txt_of(constant Stage& s, device const long* L, uint t, device
 
 // Mode 7: a literal text test of pattern X (keys 0, 1) and subject Y (keys 2, 3), each of kind agg[1] & 15 and
 // agg[1] >> 4: by op agg[0] >> 1 & 3, 0 equal, 1 Y begins with X, 2 Y ends with X; as agg[0] & 1 wants.
-static inline bool textop_pass(constant Stage& s, device const long* L, uint t, device const long* R) {
-    Txt x = txt_of(s, L, t, R, 0, s.agg[1] & 15), y = txt_of(s, L, t, R, 2, s.agg[1] >> 4);
-    device const uchar* p = text_chars(R);
-    uint lx = x.al + x.dot + x.bl, ly = y.al + y.dot + y.bl;
+static inline bool textop_pass(constant Stage& s, device const long* L, uint t, device const long* R, device atomic_uint* A) {
+    Txt x = txt_of(s, L, t, R, A, 0, s.agg[1] & 15), y = txt_of(s, L, t, R, A, 2, s.agg[1] >> 4);
+    uint lx = txt_len(x), ly = txt_len(y);
     uint op = (s.agg[0] >> 1) & 3;
     bool r;
-    if (op == 0) r = lx == ly && txt_same(p, x, 0, y, 0, lx);
-    else if (op == 1) r = ly >= lx && txt_same(p, x, 0, y, 0, lx);
-    else r = ly >= lx && txt_same(p, x, 0, y, ly - lx, lx);
+    if (op == 0) r = lx == ly && txt_same(x, 0, y, 0, lx);
+    else if (op == 1) r = ly >= lx && txt_same(x, 0, y, 0, lx);
+    else r = ly >= lx && txt_same(x, 0, y, ly - lx, lx);
     return r == ((s.agg[0] & 1) != 0);
+}
+
+// The characters of x: its bytes less the UTF-8 continuation bytes (`10xxxxxx`), counted a word at a time.
+static inline uint txt_chars(Txt x) {
+    uint n = txt_len(x), cont = 0;
+    for (uint at = 0; at < n; at += 8) {
+        ulong w = txt_word(x, at, n);
+        cont += popcount(w & ~(w << 1) & 0x8080808080808080ul);
+    }
+    return n - cont;
 }
 
 // A function of names (mode 6), of operands X (keys 0, 1) and Y (keys 2, 3) as mode 7's (kinds agg[1] & 15 and
 // agg[1] >> 4), its value into `bind_slot[0]`: by agg[0], 0 `str_cmp` (their order by bytes, a word of eight at a
-// time, then their lengths, as Rust's `str::cmp`), 1 `strlen` of X (its characters: the bytes less the UTF-8
-// continuation bytes, `10xxxxxx`, counted a word at a time).
-static inline long strcmp_value(constant Stage& s, device const long* L, uint t, device const long* R) {
-    device const uchar* p = text_chars(R);
-    Txt x = txt_of(s, L, t, R, 0, s.agg[1] & 15);
-    uint lx = x.al + x.dot + x.bl;
-    if (s.agg[0] == 1) {
-        uint cont = 0;
-        for (uint at = 0; at < lx; at += 8) {
-            ulong w = txt_word(p, x, at, lx);
-            cont += popcount(w & ~(w << 1) & 0x8080808080808080ul);
-        }
-        return long(lx - cont);
-    }
-    Txt y = txt_of(s, L, t, R, 2, s.agg[1] >> 4);
-    uint ly = y.al + y.dot + y.bl, m = min(lx, ly);
+// time, then their lengths, as Rust's `str::cmp`), 1 `strlen` of X (its characters).
+static inline long strcmp_value(constant Stage& s, device const long* L, uint t, device const long* R, device atomic_uint* A) {
+    Txt x = txt_of(s, L, t, R, A, 0, s.agg[1] & 15);
+    if (s.agg[0] == 1) return long(txt_chars(x));
+    uint lx = txt_len(x);
+    Txt y = txt_of(s, L, t, R, A, 2, s.agg[1] >> 4);
+    uint ly = txt_len(y), m = min(lx, ly);
     for (uint at = 0; at < m; at += 8) {
-        ulong u = txt_word(p, x, at, m), v = txt_word(p, y, at, m);
+        ulong u = txt_word(x, at, m), v = txt_word(y, at, m);
         if (u != v) return u < v ? -1 : 1;
     }
     return lx == ly ? 0 : (lx < ly ? -1 : 1);
+}
+
+// The byte offset of character `c` of x (its length past the last).
+static inline uint txt_char_at(Txt x, uint c) {
+    uint n = txt_len(x), seen = 0;
+    for (uint i = 0; i < n; i++) {
+        if ((txt_byte(x, i) & 0xc0) != 0x80) {
+            if (seen == c) return i;
+            seen++;
+        }
+    }
+    return n;
+}
+
+// Mode 9, a text function (agg[0]: `TEXTFN_*`) of X (keys 0, 1, kind agg[1] & 15), Y and Z (keys 2 and 4, symbols:
+// `replace_all`'s pattern and replacement) and numbers (keys 5 and 6): its text's bytes [from, from + len) of X
+// (`head`, `dir`, `substr`, `slice`), or made into the arena (`lower`, `to_string`, `replace_all`). Its value: an
+// arena text; -1 and a flag in the stage's counter word (1: the arena is full, its first word then says how much
+// was wanted; 2: `lower` of a name past ASCII, which the host's Unicode mapping makes) when it has none.
+static inline long textfn_value(constant Stage& s, device const long* L, uint t, device const long* R, device atomic_uint* A, device atomic_uint* counters) {
+    Txt x = txt_of(s, L, t, R, A, 0, s.agg[1] & 15);
+    uint n = txt_len(x), f = s.agg[0];
+    long n0 = key_value(s, L, t, 5), n1 = key_value(s, L, t, 6);
+    // A range of X (in bytes) when the function copies one.
+    uint from = 0, len = 0, made = 0;
+    Txt y, z;
+    char digits[24];
+    if (f == 8 || f == 9) {
+        // SQLite's lower and upper: ASCII alone.
+        made = n;
+    } else if (f == 0) {
+        // lower: ASCII alone (a name past it is the host's: Unicode's mapping).
+        for (uint i = 0; i < n; i++) if (txt_byte(x, i) >= 0x80) {
+            if (s.counter != NONE) atomic_fetch_or_explicit(&counters[s.counter], 2u, memory_order_relaxed);
+            return -1;
+        }
+        made = n;
+    } else if (f == 1) {
+        // head: up to the first ".".
+        len = n;
+        for (uint i = 0; i < n; i++) if (txt_byte(x, i) == uchar('.')) { len = i; break; }
+    } else if (f == 2) {
+        // dir: up to the last "/" (none: empty).
+        for (uint i = n; i > 0; i--) if (txt_byte(x, i - 1) == uchar('/')) { len = i - 1; break; }
+    } else if (f == 3 || f == 4 || f == 7) {
+        long nc = long(txt_chars(x)), a, b;
+        if (f != 4) {
+            // substr(s, i, n): SQLite's substr(s, i + 1, n) (f 7: SQLite's own), in characters.
+            long p1 = f == 3 ? n0 + 1 : n0, p2 = n1;
+            bool neg = p2 < 0;
+            if (neg) p2 = -p2;
+            if (p1 < 0) {
+                p1 += nc;
+                if (p1 < 0) { p2 = max(p2 + p1, 0l); p1 = 0; }
+            } else if (p1 > 0) p1 -= 1;
+            else if (p2 > 0) p2 -= 1;
+            if (neg) {
+                p1 -= p2;
+                if (p1 < 0) { p2 += p1; p1 = 0; }
+            }
+            a = clamp(p1, 0l, nc);
+            b = clamp(p1 + p2, a, nc);
+        } else {
+            // slice(s, start, end): characters, negative from the end, clamped.
+            a = clamp(n0 < 0 ? nc + n0 : n0, 0l, nc);
+            b = clamp(n1 < 0 ? nc + n1 : n1, 0l, nc);
+            if (a > b) b = a;
+        }
+        from = txt_char_at(x, uint(a));
+        len = txt_char_at(x, uint(b)) - from;
+    } else if (f == 5) {
+        // to_string(n): its decimal digits.
+        ulong u = n0 < 0 ? ulong(-(n0 + 1)) + 1 : ulong(n0);
+        uint k = 0;
+        do { digits[k++] = char('0' + u % 10); u /= 10; } while (u > 0);
+        if (n0 < 0) digits[k++] = '-';
+        made = k;
+    } else {
+        // replace_all(s, p, r) of a literal p (not empty) and r: the leftmost matches, not overlapping.
+        y = txt_of(s, L, t, R, A, 2, 0);
+        z = txt_of(s, L, t, R, A, 4, 0);
+        uint ly = txt_len(y), lz = txt_len(z), hits = 0;
+        for (uint i = 0; i + ly <= n && ly > 0;) {
+            if (txt_same(x, i, y, 0, ly)) { hits++; i += ly; } else i++;
+        }
+        made = n - hits * ly + hits * lz;
+    }
+    if (f >= 1 && f <= 4 || f == 7) made = len;
+    device atomic_uint* used = A;
+    uint cap = ((device const uint*)A)[1];
+    uint off = atomic_fetch_add_explicit(used, made, memory_order_relaxed);
+    if (ulong(off) + made > cap) {
+        if (s.counter != NONE) atomic_fetch_or_explicit(&counters[s.counter], 1u, memory_order_relaxed);
+        return -1;
+    }
+    device uchar* o = (device uchar*)A + 16 + off;
+    if (f == 0 || f == 8) {
+        for (uint i = 0; i < n; i++) { uchar c = txt_byte(x, i); o[i] = (c >= 'A' && c <= 'Z') ? c + 32 : c; }
+    } else if (f == 9) {
+        for (uint i = 0; i < n; i++) { uchar c = txt_byte(x, i); o[i] = (c >= 'a' && c <= 'z') ? c - 32 : c; }
+    } else if (f == 5) {
+        for (uint i = 0; i < made; i++) o[i] = uchar(digits[made - 1 - i]);
+    } else if (f == 6) {
+        uint ly = txt_len(y), lz = txt_len(z), w = 0;
+        for (uint i = 0; i < n;) {
+            if (ly > 0 && i + ly <= n && txt_same(x, i, y, 0, ly)) {
+                for (uint k = 0; k < lz; k++) o[w++] = txt_byte(z, k);
+                i += ly;
+            } else o[w++] = txt_byte(x, i++);
+        }
+    } else {
+        for (uint i = 0; i < len; i++) o[i] = txt_byte(x, from + i);
+    }
+    return arena_value(off, made);
 }
 
 // Mode 8: the made value of a's and b's symbols by form agg[1] (`MADE`); -1 when a part is none a made value holds.
@@ -510,7 +667,7 @@ static inline bool text_pass(constant Stage& s, device const long* L, uint t, de
 kernel void stage_count(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]], device const uint* perm [[buffer(2)]],
                         device const uint* starts [[buffer(3)]], device const uint* rkeys [[buffer(4)]], device const uint* nruns [[buffer(5)]],
                         device const uint* totals [[buffer(6)]], device atomic_uint* counters [[buffer(7)]], device uint* counts [[buffer(8)]],
-                        constant Stage& s [[buffer(9)]], uint t [[thread_position_in_grid]]) {
+                        device atomic_uint* A [[buffer(9)]], constant Stage& s [[buffer(10)]], uint t [[thread_position_in_grid]]) {
     if (t > s.cap_in) return;
     uint n = min(totals[s.in_slot], s.cap_in);
     if (t >= n) { counts[t] = 0; return; }
@@ -518,7 +675,8 @@ kernel void stage_count(device const long* L [[buffer(0)]], device const long* R
     uint lo, hi;
     if (s.mode == 5) { counts[t] = uint(text_pass(s, L, t, R)); return; }
     if (s.mode == 6) { counts[t] = 1; return; }
-    if (s.mode == 7) { counts[t] = uint(textop_pass(s, L, t, R)); return; }
+    if (s.mode == 7) { counts[t] = uint(textop_pass(s, L, t, R, A)); return; }
+    if (s.mode == 9) { counts[t] = 1; return; }
     if (s.mode == 8) {
         if (make_value(s, L, t) < 0 && s.counter != NONE) atomic_store_explicit(&counters[s.counter], 1u, memory_order_relaxed);
         counts[t] = 1;
@@ -571,7 +729,8 @@ static inline void write_row(constant Stage& s, device const long* L, uint t, de
 kernel void stage_scatter(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]], device const uint* perm [[buffer(2)]],
                           device const uint* starts [[buffer(3)]], device const uint* rkeys [[buffer(4)]], device const uint* nruns [[buffer(5)]],
                           device uint* totals [[buffer(6)]], device const uint* offsets [[buffer(7)]], device long* O [[buffer(8)]],
-                          constant Stage& s [[buffer(9)]], uint t [[thread_position_in_grid]]) {
+                          device atomic_uint* A [[buffer(9)]], device atomic_uint* counters [[buffer(10)]], constant Stage& s [[buffer(11)]],
+                          uint t [[thread_position_in_grid]]) {
     if (t == 0) totals[s.out_slot] = offsets[s.cap_in];
     uint n = min(totals[s.in_slot], s.cap_in);
     if (t >= n) return;
@@ -586,7 +745,13 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
     if (s.mode == 6) {
         if (offsets[t + 1] <= at) return;
         write_row(s, L, t, R, 0, O, at);
-        O[ulong(s.bind_slot[0]) * s.cap_out + at] = strcmp_value(s, L, t, R);
+        O[ulong(s.bind_slot[0]) * s.cap_out + at] = strcmp_value(s, L, t, R, A);
+        return;
+    }
+    if (s.mode == 9) {
+        if (offsets[t + 1] <= at) return;
+        write_row(s, L, t, R, 0, O, at);
+        O[ulong(s.bind_slot[0]) * s.cap_out + at] = textfn_value(s, L, t, R, A, counters);
         return;
     }
     if (s.mode == 8) {
@@ -1091,6 +1256,47 @@ impl Words {
     }
 }
 
+/// A batch's text arena: the texts its text functions make (`TEXTFN`), shared by every job in the batch. Its first
+/// word is an atomic bump of the bytes given out, which counts on past the end, so a full arena says how much its
+/// jobs wanted (they then run again in one that big, or on the host); its second, its capacity.
+pub(in crate::code_rule_dsl) struct Arena {
+    buffer: Held,
+    pub(in crate::code_rule_dsl) cap: usize,
+}
+
+/// A batch's arena, to start with: most strata make few texts.
+pub(in crate::code_rule_dsl) const ARENA_START: usize = 64 << 10;
+
+impl Arena {
+    pub(in crate::code_rule_dsl) fn new(cap: usize) -> Result<Arena, Error> {
+        let cap = cap.clamp(16, u32::MAX as usize / 2);
+        let buffer = Held::new(16 + cap)?;
+        // SAFETY: 16 bytes of header, written before any command buffer reads them.
+        let head = unsafe { std::slice::from_raw_parts_mut(buffer.buffer.contents().cast::<u32>(), 4) };
+        head.copy_from_slice(&[0, cap as u32, 0, 0]);
+        Ok(Arena { buffer, cap })
+    }
+
+    /// The bytes its jobs asked for (past `cap` when it filled), once they completed.
+    pub(in crate::code_rule_dsl) fn wanted(&self) -> usize {
+        // SAFETY: the header's first word, read once the command buffers that write it completed.
+        unsafe { *self.buffer.buffer.contents().cast::<u32>() as usize }
+    }
+
+    /// The text of arena value `v` (`ARENA_TEXT`'s), once the command buffers that made it completed.
+    pub(in crate::code_rule_dsl) fn text(&self, v: i64) -> Option<&[u8]> {
+        if v & ARENA_TEXT == 0 || v == -1 {
+            return None;
+        }
+        let (off, len) = (((v as u64) >> 24 & ((1 << 39) - 1)) as usize, (v & 0xff_ffff) as usize);
+        if off + len > self.cap {
+            return None;
+        }
+        // SAFETY: within the arena's `cap` bytes past its header.
+        Some(unsafe { std::slice::from_raw_parts(self.buffer.buffer.contents().cast::<u8>().add(16 + off), len) })
+    }
+}
+
 /// What a batch did: its command buffers, dispatches, the GPU's time on them, and the host's CPU encoding them.
 #[derive(Clone, Copy, Debug, Default)]
 pub(in crate::code_rule_dsl) struct Done {
@@ -1110,12 +1316,29 @@ pub(in crate::code_rule_dsl) struct Batch {
     /// Buffers the encoded work reads that nothing else holds: kept until it completes (a pooled buffer is written
     /// by the host when handed out again, and Metal orders no host write after a GPU read).
     keep: Vec<Held>,
+    /// The texts its jobs' text functions make, made the first time a job asks.
+    arena: Option<std::rc::Rc<Arena>>,
+    arena_cap: usize,
 }
 
 impl Batch {
     pub(in crate::code_rule_dsl) fn new() -> Result<Batch, Error> {
         rerail_accel::gpu::join::device()?;
-        Ok(Batch { open: None, pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, keep: Vec::new() })
+        Batch::with_arena(ARENA_START)
+    }
+
+    /// A batch whose text arena holds `cap` bytes.
+    pub(in crate::code_rule_dsl) fn with_arena(cap: usize) -> Result<Batch, Error> {
+        rerail_accel::gpu::join::device()?;
+        Ok(Batch { open: None, pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, keep: Vec::new(), arena: None, arena_cap: cap })
+    }
+
+    /// Its text arena, shared by its jobs.
+    pub(in crate::code_rule_dsl) fn arena(&mut self) -> Result<std::rc::Rc<Arena>, Error> {
+        if self.arena.is_none() {
+            self.arena = Some(std::rc::Rc::new(Arena::new(self.arena_cap)?));
+        }
+        Ok(self.arena.clone().expect("the arena"))
     }
 
     /// The encoder of the open command buffer, with room for `need` more dispatches (a new command buffer when not).
@@ -1221,11 +1444,16 @@ impl Batch {
         let n = left.cap + 1;
         let counts = scratch(FREE, 4 * n)?;
         let scan = Scan::new(n)?;
+        let arena: metal::Buffer = if stage.mode == TEXTFN || matches!(stage.mode, STRCMP | TEXTOP) && (stage.agg[1] & 15 == OPND_ARENA || stage.agg[1] >> 4 == OPND_ARENA) {
+            self.arena()?.buffer.buffer.to_owned()
+        } else {
+            self.dummy.buffer.to_owned()
+        };
         let pass = self.pass(12)?;
         let lbuf: &BufferRef = &left.buffer.buffer;
-        pass.run_bytes(&count, &[lbuf, &rbuf, &perm, &starts, &rkeys, &nruns, &totals.buffer.buffer, &counters.buffer.buffer, &counts], stage.bytes(), groups(n));
+        pass.run_bytes(&count, &[lbuf, &rbuf, &perm, &starts, &rkeys, &nruns, &totals.buffer.buffer, &counters.buffer.buffer, &counts, &arena], stage.bytes(), groups(n));
         scan.encode(pass, &counts)?;
-        pass.run_bytes(&scatter, &[lbuf, &rbuf, &perm, &starts, &rkeys, &nruns, &totals.buffer.buffer, &counts, &out.buffer.buffer], stage.bytes(), groups(n));
+        pass.run_bytes(&scatter, &[lbuf, &rbuf, &perm, &starts, &rkeys, &nruns, &totals.buffer.buffer, &counts, &out.buffer.buffer, &arena, &counters.buffer.buffer], stage.bytes(), groups(n));
         Ok(())
     }
 
