@@ -252,9 +252,27 @@ describe("the repository registry", () => {
     git(main, "worktree", "remove", worktree);
 
     // A session that starts in a worktree made again at the path while the prune looks at the folders records it after then.
-    expect(await pruneCheckouts(database, 2_000)).toEqual([]);
-    expect(await pruneCheckouts(database, 4_000)).toEqual([worktree]);
+    expect(await pruneCheckouts(database, { now: 2_000 })).toEqual([]);
+    expect(await pruneCheckouts(database, { now: 4_000 })).toEqual([worktree]);
     expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath)).toEqual([main]);
+  });
+
+  it("forgets nothing when its signal aborts while it looks at the folders, as when the daemon stops", async () => {
+    const root = await temporary("rerail-registry-prune-abort-");
+    const database = open(join(root, "rerail.sqlite"));
+    const main = gitRepository(join(root, "main"));
+    const worktree = join(root, "feature");
+    git(main, "worktree", "add", "-q", "-b", "feature", worktree);
+    recordCheckout(database, main);
+    recordCheckout(database, worktree);
+    git(main, "worktree", "remove", worktree);
+
+    const abort = new AbortController();
+    // The pass has read the rows and asked for the first folder by the time the call returns.
+    const pass = pruneCheckouts(database, { signal: abort.signal });
+    abort.abort();
+    expect(await pass).toEqual([]);
+    expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath).sort()).toEqual([main, worktree].sort());
   });
 
   it("keeps the last checkout of a removed clone whose id names a session, so the session stays in its repository's history", async () => {
@@ -272,7 +290,7 @@ describe("the repository registry", () => {
       .run(named, cloneId);
     for (const path of [worktree, named, other]) rmSync(path, { recursive: true, force: true });
 
-    expect((await pruneCheckouts(database, 5_000)).sort()).toEqual([named, other].sort());
+    expect((await pruneCheckouts(database, { now: 5_000 })).sort()).toEqual([named, other].sort());
     // History reads take the clone ids of the recorded checkouts (repositoryHistoryIds), so the session's id stays one.
     expect(listRepositories(database)[0]?.checkouts.map(row => [row.checkoutPath, row.cloneId])).toEqual([[worktree, cloneId]]);
   });

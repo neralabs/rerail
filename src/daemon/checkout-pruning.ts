@@ -11,7 +11,10 @@ import { openRerailDatabase } from "../engine/storage/database.js";
 export const CHECKOUT_PRUNING_INTERVAL_MS = 60 * 60 * 1000;
 
 export interface CheckoutPruning {
-  /** Stops the passes and waits for one under way, whose connection is closed once this settles. */
+  /**
+   * Stops the passes. A pass under way forgets nothing and ends after the folder it is looking at; its connection is
+   * closed once this settles.
+   */
   stop(): Promise<void>;
 }
 
@@ -28,10 +31,10 @@ export interface CheckoutPruningOptions {
 export function startCheckoutPruning(databasePath: string, options: CheckoutPruningOptions = {}): CheckoutPruning {
   const log = options.log ?? (line => process.stderr.write(line));
   let running: Promise<void> | undefined;
-  let stopped = false;
+  const abort = new AbortController();
   const pass = (): void => {
-    if (stopped || running !== undefined || !existsSync(databasePath)) return;
-    running = prune(databasePath)
+    if (abort.signal.aborted || running !== undefined || !existsSync(databasePath)) return;
+    running = prune(databasePath, abort.signal)
       .catch((error: unknown) => log(`rerail daemon: forgetting removed checkouts: ${error instanceof Error ? error.message : String(error)}\n`))
       .finally(() => { running = undefined; });
   };
@@ -40,17 +43,17 @@ export function startCheckoutPruning(databasePath: string, options: CheckoutPrun
   pass();
   return {
     async stop() {
-      stopped = true;
       clearInterval(timer);
+      abort.abort();
       await running;
     },
   };
 }
 
-async function prune(databasePath: string): Promise<void> {
+async function prune(databasePath: string, signal: AbortSignal): Promise<void> {
   const database = openRerailDatabase(databasePath);
   try {
-    await pruneCheckouts(database);
+    await pruneCheckouts(database, { signal });
   } finally {
     database.$client.close();
   }

@@ -424,6 +424,13 @@ async function folderPresent(path: string): Promise<boolean | undefined> {
   }
 }
 
+export interface PruneCheckoutsOptions {
+  /** When the pass began: a checkout recorded or seen again since then stays. */
+  readonly now?: number;
+  /** Once aborted, the pass forgets nothing and ends after the folder it is looking at. */
+  readonly signal?: AbortSignal;
+}
+
 /**
  * Forget the recorded checkouts whose folder is gone or that Git no longer lists as a worktree, with their own
  * settings, and return their paths. The folders are looked at one by one, without blocking, and Git is asked once per
@@ -431,11 +438,13 @@ async function folderPresent(path: string): Promise<boolean | undefined> {
  * starts in a folder made again while the others are looked at; and the last checkout of a clone whose id names a
  * recorded session, so that session stays in its repository's history ({@link repositoryHistoryIds}).
  */
-export async function pruneCheckouts(db: RerailDatabase, now = Date.now()): Promise<string[]> {
+export async function pruneCheckouts(db: RerailDatabase, { now = Date.now(), signal }: PruneCheckoutsOptions = {}): Promise<string[]> {
   const gone: string[] = [];
   const listed = new Set<string>();
   for (const { path } of db.select({ path: checkouts.checkoutPath }).from(checkouts).all()) {
     const present = await folderPresent(path);
+    // A folder on a share that does not answer can take the system's whole timeout; a stopping daemon waits for one.
+    if (signal?.aborted === true) return [];
     if (present === false || (present === true && !listed.has(path) && !listedByGit(path, listed))) gone.push(path);
   }
   if (gone.length === 0) return gone;
