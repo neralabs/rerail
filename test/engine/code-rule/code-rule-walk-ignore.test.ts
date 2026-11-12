@@ -72,6 +72,7 @@ vi.mock("../../../src/engine/native/native.js", async importOriginal => {
 import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
 import { CheckoutCodeRuleRouter } from "../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { CodeRuleBridge } from "../../../src/engine/code-rule/code-rule-bridge.js";
+import { NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import type { AuditResult } from "../../../src/engine/audit/audit.js";
 import type { CodeRuleEditBatch, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
 import { CheckoutCatalogs, startingCheckout } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
@@ -364,6 +365,47 @@ describe("a walk of a session that follows .gitignore", () => {
     } finally {
       stderr.mockRestore();
       engine.rereadFails = false;
+    }
+  });
+
+  it("opens a lane for a walk's questions about another worktree only where acceptsPath and ignoresPath of its files do", async () => {
+    const { base, root, databasePath } = await checkout({ ".gitignore": "out/\n", "api/x.py": "x = 1\n" });
+    git(root, "worktree", "add", "--quiet", "-b", "linked", join(base, "linked"));
+    const lanes = vi.spyOn(NativeCodeRuleEnforcer.prototype, "openWorkspace");
+    /** How many lanes a fresh session in `root` opens while `ask` asks it about the linked worktree. */
+    const lanesOpened = async (sessionId: string, ask: (router: CheckoutCodeRuleRouter) => void): Promise<number> => {
+      const catalogs = new CheckoutCatalogs(databasePath);
+      const owners = new CheckoutOwners(() => catalogs.recordedCheckoutsVersion());
+      const router = new CheckoutCodeRuleRouter({
+        sessionRoot: root, startingCheckout: startingCheckout(owners, root).checkoutRoot, owners, catalogs,
+        steerDelivery: { requestSteer: async () => undefined },
+        audits: { start: () => "audit", finish: () => undefined, progress: () => undefined, interrupt: () => undefined },
+        followGitignore: true,
+      });
+      cleanups.push(async () => {
+        await router.close();
+        catalogs.close();
+      });
+      await router.openWorkspace(sessionId);
+      const before = lanes.mock.calls.length;
+      ask(router);
+      return lanes.mock.calls.length - before;
+    };
+    const entries = [{ name: ".gitignore", directory: false }, { name: "api", directory: true }, { name: "out", directory: true }];
+    try {
+      const walked = await lanesOpened("walk", router => {
+        expect(router.ignoredEntries("../linked", entries)).toEqual([false, false, true]);
+        expect(router.ignoredEntries("../linked/api", [{ name: "x.py", directory: false }])).toEqual([false]);
+        expect(router.readsPath("../linked/api/x.py")).toBe(true);
+      });
+      const asked = await lanesOpened("ask", router => {
+        expect(entries.map(entry => router.ignoresPath(`../linked/${entry.name}`, entry.directory))).toEqual([false, false, true]);
+        expect(router.acceptsPath("../linked/api/x.py")).toBe(true);
+      });
+      // A walk asks these of every worktree it walks: a change to when the per-path questions open a lane holds for them.
+      expect(walked).toBe(asked);
+    } finally {
+      lanes.mockRestore();
     }
   });
 });
