@@ -1376,6 +1376,7 @@ pub(in crate::code_rule_dsl) fn resume(ticket: u64, rules: &[(&Plan, &JoinRule, 
         rep.submissions += d.submissions;
         rep.dispatches += d.dispatches;
         rep.gpu_seconds += d.gpu_seconds;
+        rep.sized += d.sized;
     }
     rep.waved = 1;
     let c0 = thread_cpu();
@@ -1421,6 +1422,7 @@ fn finish_timed(batch: &mut mj::Batch, rep: &mut Report) -> Result<(), String> {
     rep.submissions += done.submissions;
     rep.dispatches += done.dispatches;
     rep.gpu_seconds += done.gpu_seconds;
+    rep.sized += done.sized;
     Ok(())
 }
 
@@ -1613,6 +1615,7 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Inte
         rep.submissions += done.submissions;
         rep.dispatches += done.dispatches;
         rep.gpu_seconds += done.gpu_seconds;
+        rep.sized += done.sized;
         let mut again = Vec::new();
         for &k in &pending {
             let r = runs[k].as_mut().expect("a run");
@@ -1751,6 +1754,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         rep.submissions += done.submissions;
         rep.dispatches += done.dispatches;
         rep.gpu_seconds += done.gpu_seconds;
+        rep.sized += done.sized;
         drop(ran);
         drop(hold);
         // The new rows onto each relation, and as its next delta; a relation with none has no delta.
@@ -1784,6 +1788,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         rep.submissions += done.submissions;
         rep.dispatches += done.dispatches;
         rep.gpu_seconds += done.gpu_seconds;
+        rep.sized += done.sized;
         if !any {
             break;
         }

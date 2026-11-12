@@ -37,6 +37,7 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
                 made: d.made,
                 waved: u64::from(d.waved),
                 arena_reruns: u64::from(d.arena_reruns),
+                sized: u64::from(d.sized),
             });
             true
         }

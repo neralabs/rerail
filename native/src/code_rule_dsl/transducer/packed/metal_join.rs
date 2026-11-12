@@ -762,8 +762,9 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
                           device uint* totals [[buffer(6)]], device const uint* offsets [[buffer(7)]], device long* O [[buffer(8)]],
                           device atomic_uint* A [[buffer(9)]], device atomic_uint* counters [[buffer(10)]], constant Stage& s [[buffer(11)]],
                           uint t [[thread_position_in_grid]]) {
-    if (t == 0) totals[s.out_slot] = offsets[s.cap_in];
     uint n = min(totals[s.in_slot], s.cap_in);
+    // The offsets past the rows' are not scanned when the grids are sized on the device (`Scan::size`).
+    if (t == 0) totals[s.out_slot] = offsets[n];
     if (t >= n) return;
     uint at = offsets[t];
     if (at >= s.cap_out) return;
@@ -1258,6 +1259,17 @@ impl Words {
     }
 }
 
+/// A stage whose table's space is past this many rows has its grids sized on the device (`Scan::size`): below it,
+/// the threads past the rows are fewer than the sizing's own dispatch costs. `RERAIL_DEVICE_SIZED_MIN` sets it
+/// (0: every stage's, to test them), `RERAIL_DEVICE_SIZED=off` turns the sizing off.
+fn sized_min() -> usize {
+    static MIN: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *MIN.get_or_init(|| match std::env::var("RERAIL_DEVICE_SIZED") {
+        Ok(v) if v == "off" => usize::MAX,
+        _ => std::env::var("RERAIL_DEVICE_SIZED_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(4096),
+    })
+}
+
 /// Bytes the device reads (a regex's automaton for `TEXTFN_REGEX`).
 pub(in crate::code_rule_dsl) struct DevBytes {
     held: Held,
@@ -1316,6 +1328,8 @@ pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) submissions: u32,
     pub(in crate::code_rule_dsl) dispatches: u32,
     pub(in crate::code_rule_dsl) gpu_seconds: f64,
+    /// Stages whose grids were sized on the device (`Scan::size`).
+    pub(in crate::code_rule_dsl) sized: u32,
 }
 
 /// Work encoded into one command buffer at a time, committed when the launch budget of one is near and at `finish`;
@@ -1464,11 +1478,24 @@ impl Batch {
         } else {
             self.dummy.buffer.to_owned()
         };
-        let pass = self.pass(12)?;
+        let pass = self.pass(13)?;
         let lbuf: &BufferRef = &left.buffer.buffer;
-        pass.run_bytes(&count, &[lbuf, &rbuf, &perm, &starts, &rkeys, &nruns, &totals.buffer.buffer, &counters.buffer.buffer, &counts, &arena], stage.bytes(), groups(n));
+        let count_bufs: [&BufferRef; 10] = [lbuf, &rbuf, &perm, &starts, &rkeys, &nruns, &totals.buffer.buffer, &counters.buffer.buffer, &counts, &arena];
+        let scatter_bufs: [&BufferRef; 11] = [lbuf, &rbuf, &perm, &starts, &rkeys, &nruns, &totals.buffer.buffer, &counts, &out.buffer.buffer, &arena, &counters.buffer.buffer];
+        if n > sized_min() {
+            // The table's space is the host's guess: the grids are sized on the device, from the rows the stage
+            // before made (decision 0113's GPU-sized work).
+            let sizes = scan.size(pass, &totals.buffer.buffer, in_slot, left.cap)?;
+            pass.run_bytes_indirect(&count, &count_bufs, stage.bytes(), &sizes.buffer, 4 * 32);
+            scan.encode_sized(pass, &counts, &sizes)?;
+            pass.run_bytes_indirect(&scatter, &scatter_bufs, stage.bytes(), &sizes.buffer, 4 * 32);
+            self.done.sized += 1;
+            self.keep.push(sizes);
+            return Ok(());
+        }
+        pass.run_bytes(&count, &count_bufs, stage.bytes(), groups(n));
         scan.encode(pass, &counts)?;
-        pass.run_bytes(&scatter, &[lbuf, &rbuf, &perm, &starts, &rkeys, &nruns, &totals.buffer.buffer, &counts, &out.buffer.buffer, &arena, &counters.buffer.buffer], stage.bytes(), groups(n));
+        pass.run_bytes(&scatter, &scatter_bufs, stage.bytes(), groups(n));
         Ok(())
     }
 
