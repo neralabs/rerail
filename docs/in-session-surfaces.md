@@ -230,6 +230,11 @@ TypeScript repository's five packs on a Windows laptop); nothing waits for that 
 
 - An edit made meanwhile is not checked at its own result. The turn's end checks it, and its steer reaches the agent at
   its next tool call, a turn later than usual.
+- A steer the session had not yet delivered waits in the session's records and goes out with its next event, as it
+  would have; so does one owed when the daemon stops or restarts. A finding held for the missed-steer digest waits for
+  the next digest the same way.
+- A session waiting on a tool call (a permission prompt, a long command), holding a finding for the digest, or still
+  running a check stays open for up to a day before it closes.
 
 </details>
 

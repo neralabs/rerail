@@ -30,8 +30,8 @@ export interface EngineService {
   /** How many runtimes are open: one per checkout some live session uses. */
   openRuntimes(): number;
   /**
-   * Closes every session that has sent no event for the idle limit and owes its agent nothing, and every one quiet for
-   * a day whatever it owes; the service also does this every minute.
+   * Closes every session that has sent no event for the idle limit and owes its agent nothing that would arrive later
+   * for it, and every one quiet for a day whatever it owes; the service also does this every minute.
    */
   closeIdleSessions(): Promise<void>;
 }
@@ -41,19 +41,20 @@ export interface EngineService {
  * arrive: a coding agent that is killed sends none, and Claude Code gives its SessionEnd hook 1.5 s, which a hook on a
  * busy Windows machine outlasts. A session whose end was lost kept its state (its own copy of its checkout's source
  * walk, its conversation history, its evaluator) until the daemon stopped. A closed session's next event opens it again
- * from its ledger. A session waiting on a tool call, or holding a steer for its agent, stays open for up to a day
- * (`OWING_SESSION_IDLE_MS`): its ledger holds neither. A call that arrives while its rules compile again goes on without
- * code rules; the turn end checks the edit, and its steer arrives at the agent's next tool call, a turn later
- * (`#codeRuleWorkspaceNow` in runtime.ts).
+ * from its ledger, which also keeps the steers it had not yet delivered: they go out with that event's answer. A session
+ * waiting on a tool call, holding a finding for its yield's digest, or running a check stays open for up to a day
+ * (`OWING_SESSION_IDLE_MS`), since once opened again what it owes would reach its agent later. A call that arrives while
+ * its rules compile again goes on without code rules; the turn end checks the edit, and its steer arrives at the agent's
+ * next tool call, a turn later (`#codeRuleWorkspaceNow` in runtime.ts).
  */
 export const IDLE_SESSION_MS = 30 * 60_000;
 /**
- * How long a session that still owes its agent something (a tool call's result, a steer, a held finding, a scan) may
- * send no event before the engine service closes it anyway, and what it owed is lost. An agent killed while its session
- * owed it something, as Claude Code closed at a permission prompt is, sends no end and no result: without a bound its
- * session kept its source walk, its evaluator and its checkout's runtime until the daemon stopped. The bound is a day,
- * not `IDLE_SESSION_MS`, because an agent waiting on a person at a permission prompt can be left for hours while they
- * are away, and closing its session then would drop the check of the call's edit or the steer it holds.
+ * How long a session that still owes its agent something that would arrive later once it opens again (a tool call's
+ * result, a held finding, a check, a scan) may send no event before the engine service closes it anyway. An agent
+ * killed while its session owed it something, as Claude Code closed at a permission prompt is, sends no end and no
+ * result: without a bound its session kept its source walk, its evaluator and its checkout's runtime until the daemon
+ * stopped. The bound is a day, not `IDLE_SESSION_MS`, because an agent waiting on a person at a permission prompt can be
+ * left for hours while they are away. The steers and findings the session holds wait in its ledger past the bound.
  */
 const OWING_SESSION_IDLE_MS = 24 * 60 * 60_000;
 /** How often the engine service looks for idle sessions. */
@@ -326,7 +327,7 @@ function releaseSessionRuntime(state: EngineRoutingState, sessionId: string, run
 /**
  * Closes, as its end would, each session that has sent no event for `idleMs` (`IDLE_SESSION_MS`), and then retires its
  * runtime as an end does. The check runs again in the session's lane, so an event that came in meanwhile keeps the
- * session open. A session that still owes its agent a tool call's check, a steer or a scan stays open
+ * session open. A session that still owes its agent a tool call's check, a held finding or a scan stays open
  * (`RerailRuntime.closeIdleSession`) until it has been quiet for `OWING_SESSION_IDLE_MS`, and so does one whose close
  * fails, which is reported; the next sweep looks again.
  */

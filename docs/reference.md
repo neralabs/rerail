@@ -187,7 +187,7 @@ Code-rule path filters (`scope.include`, `scope.exclude`; exclusions win) apply 
 `rerail scrub` covers:
 
 - **Database**: event payloads, audit findings (message, captured variables, fix text) and audit errors, in batches, then `VACUUM` in place as `rerail reset` does.
-- **Ledgers**: each checkout's `.rerail/sessions/*/events.jsonl` (linked folders skipped). Sample text and delivery content are scrubbed; a secret-holding preimage becomes its SHA-256 and size.
+- **Ledgers**: each checkout's `.rerail/sessions/*/events.jsonl` (linked folders skipped). Sample text, delivery content and the steers and findings a closed session still owes are scrubbed; a secret-holding preimage becomes its SHA-256 and size.
 - **Held steers**: `.rerail/sessions/<host>-pending/*.json`, under the hook's session lock.
 - **`daemon.log`**.
 

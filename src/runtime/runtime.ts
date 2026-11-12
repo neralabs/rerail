@@ -5,7 +5,6 @@ import { dirname, join, resolve } from "node:path";
 import { z } from "zod/v4";
 import {
   ADAPTER_CAPABILITIES,
-  STEER_STRATEGIES,
   type AdapterDelivery,
   type AdapterEvent,
   type AdapterSample,
@@ -16,7 +15,8 @@ import {
 } from "../engine/adapter-contract.js";
 import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState } from "./host-runtime.js";
 import { autostartDaemon } from "./daemon-control.js";
-import { InactiveSessionError, SteerRuleSchema } from "./event-protocol.js";
+import { InactiveSessionError } from "./event-protocol.js";
+import { LedgerDeliverySchema, owedFinding, owedForDisk, OwedEntrySchema, type OwedEntry, type OwedSteer } from "./owed-ledger.js";
 import {
   CodeRuleBridge, generatedEditPaths, ledgerPreimage, type Preimage, type RewoundEdit, type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
@@ -46,7 +46,6 @@ import { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "../
 import { ConversationRuleRegistry, type RuleMatch } from "../engine/catalog/registry.js";
 import { LiveConversationRules } from "../engine/catalog/conversation-rule-sync.js";
 import { parseSampleSource, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-schema.js";
-import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 import { restorableRule, type DroppedEvents, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
 import { rewoundSteer, steerBlock, steerRules, steerShell, subagentSteer, type SteerShell } from "../engine/code-rule/rerail-steer.js";
@@ -239,6 +238,25 @@ function secretCallsOf(ledger: readonly LedgerEntry[]): { calls: Set<string>; re
   return { calls, results };
 }
 
+/**
+ * What the ledger says the session owed its agent when it last closed without its end, as the session takes it back
+ * when it opens: at revision 0, so the first revision this opening makes of a source drops what spoke for it.
+ */
+function restoredOwed(ledger: readonly LedgerEntry[]): OwedState {
+  const owed = ledger.findLast((entry): entry is OwedEntry => entry.type === "owed");
+  if (owed === undefined) return { steers: [], findings: [], recorded: 0 };
+  return {
+    steers: owed.steers.map(steer => ({ delivery: steer.delivery, revision: 0, scope: [...steer.scope] })),
+    findings: owed.findings.map(finding => ({
+      violation: { ...finding.violation, captures: {}, variables: {} },
+      sourceOf: () => finding.source ?? undefined,
+      revision: 0,
+      scope: [...finding.scope],
+    })),
+    recorded: owed.steers.length + owed.findings.length,
+  };
+}
+
 
 const PrimitiveSchema = z.union([z.string(), z.number().finite(), z.boolean(), z.null()]);
 const ContentRefSchema = z
@@ -278,21 +296,7 @@ const LedgerEntrySchema = z.union([
   z.object({ type: z.literal("hud-tracking-start") }),
   z.object({ type: z.literal("sample"), item: ContentItemSchema }),
   z.object({ type: z.literal("turn"), eventId: z.string() }),
-  z.object({
-    type: z.literal("delivery"),
-    delivery: z.object({
-      sessionId: z.string(),
-      requested: z.enum(RULE_MODES),
-      mechanism: z.enum(["observe", "native-queue", "additional-context", "deferred-context"]),
-      content: z.string(),
-      ruleIds: z.array(z.string()),
-      // Absent in a ledger written before deliveries carried their rules.
-      rules: z.array(SteerRuleSchema).default([]),
-      strategy: z.enum(STEER_STRATEGIES).optional(),
-      toolCallId: z.string().optional(),
-      rewound: z.array(z.string()).optional(),
-    }),
-  }),
+  z.object({ type: z.literal("delivery"), delivery: LedgerDeliverySchema }),
   z.object({ type: z.literal("rule-mutation"), mutation: z.unknown() }),
   z.object({ type: z.literal("rule-match"), ruleId: z.string(), turn: z.number().int().nonnegative() }),
   z.object({
@@ -306,6 +310,7 @@ const LedgerEntrySchema = z.union([
   z.object({ type: z.literal("policy-result"), toolCallId: z.string() }),
   z.object({ type: z.literal("secret-call"), toolCallId: z.string() }),
   z.object({ type: z.literal("secret-result"), toolCallId: z.string(), eventId: z.string() }),
+  OwedEntrySchema,
 ]);
 
 type LedgerEntry =
@@ -319,7 +324,8 @@ type LedgerEntry =
   | { type: "policy-call"; toolCallId: string; toolName: string; paths: string[]; preimages?: Readonly<Record<string, Preimage>> }
   | { type: "policy-result"; toolCallId: string }
   | { type: "secret-call"; toolCallId: string }
-  | { type: "secret-result"; toolCallId: string; eventId: string };
+  | { type: "secret-result"; toolCallId: string; eventId: string }
+  | OwedEntry;
 
 export function compactValidated<T>(value: unknown): T {
   // Zod has already validated this value; the round-trip removes explicit undefined keys for exact optional types.
@@ -349,9 +355,14 @@ function ledgerEntryForDisk(entry: LedgerEntry): LedgerEntry {
   return entry;
 }
 
+/** A ledger entry as it is written to disk: `ledgerEntryForDisk`, or what a closed session owes in `owedForDisk`'s form. */
+function storedLedgerEntry(entry: LedgerEntry): LedgerEntry {
+  return entry.type === "owed" ? owedForDisk(entry) : ledgerEntryForDisk(entry);
+}
+
 /**
  * One line of an existing session ledger as `rerail scrub` rewrites it: an entry this build reads, in its disk form
- * (`ledgerEntryForDisk`); undefined when the line stays as it is (unchanged, or not an entry this build knows).
+ * (`storedLedgerEntry`); undefined when the line stays as it is (unchanged, or not an entry this build knows).
  */
 export function scrubbedLedgerLine(line: string): string | undefined {
   let value: unknown;
@@ -363,7 +374,7 @@ export function scrubbedLedgerLine(line: string): string | undefined {
   const parsed = LedgerEntrySchema.safeParse(value);
   if (!parsed.success) return undefined;
   const entry = compactValidated<LedgerEntry>(parsed.data);
-  const stored = ledgerEntryForDisk(entry);
+  const stored = storedLedgerEntry(entry);
   return stored === entry ? undefined : JSON.stringify(stored);
 }
 
@@ -504,6 +515,18 @@ interface MissedFinding {
   scope: string[];
 }
 
+/**
+ * What the session owed its agent when it last closed without its end, taken back from its ledger (`restoredOwed`)
+ * until it goes out. Its steers go out with the session's next answer without waiting for its evaluator, which did not
+ * find them; its findings join the evaluator's once it is open, for the next yield's digest.
+ */
+interface OwedState {
+  steers: PendingSteer[];
+  findings: MissedFinding[];
+  /** How many steers and findings the ledger's last `owed` entry lists. */
+  recorded: number;
+}
+
 /** The checkout a session started in (physical root), the session folder relative to it, and that folder resolved once. */
 interface StartingCheckout {
   root: string;
@@ -573,6 +596,12 @@ interface RuntimeSessionState {
   yieldWaits: number;
   /** Generated-edit findings no boundary waited for, in the order they arrived, until the session's next yield. */
   missedFindings: MissedFinding[];
+  owed: OwedState;
+  /**
+   * Whether closing the session keeps what it owes its agent in its ledger: set for a close without its end, as when it
+   * has gone quiet or its runtime closes. Its end drops what it owes, as it always has.
+   */
+  keepsOwed: boolean;
   /**
    * The session's tool calls whose input names a secret-like path (`callNamesSecretPath`), until their result is stored.
    * The ledger records both ends (`secret-call`, `secret-result`), so a session reopened between them still knows.
@@ -1140,15 +1169,87 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   async #collectPendingSteers(state: RuntimeSessionState): Promise<AdapterDelivery[]> {
+    const deliveries = await this.#takeOwed(state);
     // An evaluator still opening may yet fail, and what it observed with it.
-    if (!state.codeRuleReady) return [];
+    if (!state.codeRuleReady) return deliveries;
     // Delivery removes entries from the list, so iterate a snapshot.
-    const deliveries: AdapterDelivery[] = [];
     for (const pending of state.pendingSteers.slice()) {
       const delivery = await this.#deliverSteer(state, pending, false);
       if (delivery !== undefined) deliveries.push(delivery);
     }
     return deliveries;
+  }
+
+  /**
+   * The steers the session owed its agent when it last closed, recorded as delivered, for the answer collecting them; a
+   * source revised since drops a steer that spoke for it, as it drops any. Its held findings join the evaluator's once
+   * it is open. The ledger's entry is written again with what is still owed.
+   */
+  async #takeOwed(state: RuntimeSessionState): Promise<AdapterDelivery[]> {
+    const steers = state.owed.steers.splice(0);
+    const findings = state.codeRuleReady ? state.owed.findings.splice(0) : [];
+    state.missedFindings.unshift(...findings);
+    if (steers.length + findings.length > 0) await this.#recordOwed(state, this.#owedEntry(state, [], state.owed.findings));
+    const deliveries: AdapterDelivery[] = [];
+    for (const steer of steers) {
+      if (this.#isCurrentSteer(state, steer)) deliveries.push(await this.#recordedDelivery(steer.delivery));
+      else this.#recordUndelivered(state, steer);
+    }
+    return deliveries;
+  }
+
+  /** `delivery`, recorded in its session's ledger; a failure to record it is reported and does not withhold it. */
+  async #recordedDelivery(delivery: AdapterDelivery): Promise<AdapterDelivery> {
+    try {
+      await this.persistDelivery(delivery);
+    } catch (error) {
+      process.stderr.write(`rerail: could not record policy delivery: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
+    return delivery;
+  }
+
+  /**
+   * What the session owes its agent as it closes, taken from it: the steers and held findings no newer revision has
+   * overtaken, as its ledger keeps them (`owedFinding`), when the close keeps them (`keepsOwed`); none at its end.
+   */
+  #owedAtClose(state: RuntimeSessionState): OwedEntry {
+    const current = <T extends PendingSteer | MissedFinding>(owed: T[]): T[] => owed.filter(item => this.#isCurrentSteer(state, item));
+    const steers = [...current(state.owed.steers), ...current(state.pendingSteers)];
+    const findings = [...current(state.owed.findings), ...current(state.missedFindings)];
+    state.owed.steers = [];
+    state.owed.findings = [];
+    state.pendingSteers = [];
+    state.missedFindings = [];
+    return state.keepsOwed ? this.#owedEntry(state, steers, findings) : this.#owedEntry(state, [], []);
+  }
+
+  #owedEntry(state: RuntimeSessionState, steers: readonly PendingSteer[], findings: readonly MissedFinding[]): OwedEntry {
+    // Judged as the digest judges them, so a file there that links to a secret is one.
+    const sensitive = findings.length === 0 ? () => false : checkoutPathBoundary(state.checkout.cwd).sensitive;
+    return {
+      type: "owed",
+      steers: steers.map((steer): OwedSteer => ({ delivery: steer.delivery, scope: [...steer.scope] })),
+      findings: findings.map(finding => owedFinding(finding.violation, finding.sourceOf(finding.violation.ruleId), finding.scope, sensitive)),
+    };
+  }
+
+  /** Writes what the session owes as it closes (`#owedAtClose`) when it owes something, or its ledger says it did. */
+  async #keepOwed(state: RuntimeSessionState, entry: OwedEntry): Promise<void> {
+    if (entry.steers.length + entry.findings.length > 0 || state.owed.recorded > 0) await this.#recordOwed(state, entry);
+  }
+
+  /**
+   * Writes `entry` to the session's ledger, whose last `owed` entry says what the session owes while it is closed. A
+   * stopped repository records nothing. A failure is reported, never raised: it must not fail the close or the answer.
+   */
+  async #recordOwed(state: RuntimeSessionState, entry: OwedEntry): Promise<void> {
+    if (this.#stopped()) return;
+    try {
+      await this.#append(state, entry);
+      state.owed.recorded = entry.steers.length + entry.findings.length;
+    } catch (error) {
+      process.stderr.write(`rerail: could not record what session ${state.descriptor.sessionId} owes its agent: ${error instanceof Error ? error.message : String(error)}\n`);
+    }
   }
 
   /**
@@ -1355,6 +1456,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   async dispose(): Promise<void> {
     clearInterval(this.#controlTimer);
+    // The sessions still open did not end: what each owes its agent waits in its ledger for its next event, as across
+    // the daemon's own restart at its heap ceiling.
+    for (const state of this.#sessions.values()) state.keepsOwed = true;
     await Promise.all([...this.#sessions.keys()].map(sessionId => this.closeSession(sessionId)));
     await Promise.allSettled(this.#evaluatorOpens);
     await Promise.allSettled(this.#steersInFlight);
@@ -1589,6 +1693,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       editCheckWaits: 0,
       yieldWaits: 0,
       missedFindings: [],
+      owed: restoredOwed(ledger.entries),
+      keepsOwed: false,
       secretCalls: secrets.calls,
       withheldResults: secrets.results,
       closed: false,
@@ -1687,36 +1793,39 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   /**
    * Closes a session that sent no end and has gone quiet, as its end would, without recording an event: its host router
-   * forgets it too, so its next event opens it again from its ledger. A session that still owes its agent something the
-   * ledger does not hold (`#owesAgent`) stays open, false then, unless `evenIfOwing`: the engine service closes it anyway
-   * once it has been quiet a day (`OWING_SESSION_IDLE_MS` in engine-service.ts), and what it owed is lost.
+   * forgets it too, so its next event opens it again from its ledger. The steers it has not delivered and the findings it
+   * holds wait in its ledger, and go out as they would have (`#takeOwed`). A session that still owes its agent something
+   * that would arrive later once it opens again (`#owesAgent`) stays open, false then, unless `evenIfOwing`: the engine
+   * service closes it anyway once it has been quiet a day (`OWING_SESSION_IDLE_MS` in engine-service.ts).
    */
   closeIdleSession(sessionId: string, options: { evenIfOwing?: boolean } = {}): Promise<boolean> {
     return this.#ingestLanes.run(sessionId, async () => {
       const state = this.#sessions.get(sessionId);
       if (state === undefined) return true;
       if (options.evenIfOwing !== true && this.#owesAgent(state)) return false;
+      state.keepsOwed = true;
       await this.#router(state.descriptor.host).stop(sessionId);
       return true;
     });
   }
 
   /**
-   * Whether the session still owes its agent something that closing it would lose, since its ledger does not hold it: a
-   * tool call of its turn waiting for its result (a session opened again checks no edit the call makes), an edit check
-   * still running, a steer or held finding not yet delivered, or a scan the dashboard asked for.
+   * Whether the session still owes its agent something that would reach it later, or not at all, were it closed and
+   * opened again: a tool call of its turn waiting for its result (the result of a session opened again comes while its
+   * evaluator opens, so the call's edit is not checked at it), an edit check still running, a finding held for the
+   * yield's digest (which waits for the evaluator once the session opens again), or a scan the dashboard asked for. A
+   * steer not yet delivered is not among them: it waits in the ledger and goes out with the next answer as it would.
    */
   #owesAgent(state: RuntimeSessionState): boolean {
-    return state.callsAwaitingResult.size > 0 || state.overdueEditChecks !== undefined || state.pendingSteers.length > 0
+    return state.callsAwaitingResult.size > 0 || state.overdueEditChecks !== undefined
       || state.missedFindings.length > 0 || state.auditRequestWork !== undefined;
   }
 
   async closeSession(sessionId: string): Promise<void> {
     const state = this.#sessions.get(sessionId);
     if (state !== undefined) {
+      const owed = this.#owedAtClose(state);
       state.closed = true;
-      state.pendingSteers = [];
-      state.missedFindings = [];
       this.#closedSessions.set(sessionId, {
         descriptor: state.descriptor, startedAt: state.startedAt, endedAt: Date.now(), repositoryKey: this.#repositoryKey(state.checkout),
       });
@@ -1727,6 +1836,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         this.#controls.interruptRepositoryAudit(sessionId);
         this.#controls.releaseOwner(sessionId, state.ownerClaim);
       }
+      await this.#keepOwed(state, owed);
     }
     let bridge: CodeRuleBridge | undefined;
     try {
@@ -2194,6 +2304,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   async #append(state: RuntimeSessionState, entry: LedgerEntry): Promise<void> {
-    await appendJsonLine(state.ledgerPath, ledgerEntryForDisk(entry), state.ledgerAppendState);
+    await appendJsonLine(state.ledgerPath, storedLedgerEntry(entry), state.ledgerAppendState);
   }
 }
