@@ -4049,3 +4049,14 @@ This red witness is retained in `rr-boundary-cli-source-red-finalfcce.json.gz`.
 The rule remains a draft. Native rendering and CLI administration, all earlier inputs, retained updates, removal controls, and strict admission remain open.
 The global inventory remains nineteen admitted rules, eighty drafts, and one absent translation.
 No native engine source changed. No repository-wide cold run or additional Linear ticket was created.
+
+### 2026-11-12 — Native boundary rendering and CLI first replay
+
+All 31 rendering cases pass through both APIs, including category groups, stable ordering, wide line numbers, and context windows.
+The CLI now uses native root and directory selection, rendering, action selection, and the shared SQL ratchet.
+The first CLI replay passes 32 of 37 cases through each API.
+Help and unknown-option output expose an argument-order defect in the generated parser schema.
+Three baseline-writing cases expose a fixture defect: the source uses a second ratchet module alias whose clock was not frozen.
+The native baseline bytes differ only in timestamps. The fixture must freeze both aliases and keep exact byte comparisons.
+The complete first replay is retained in `rr-boundary-frontends-first-finalfcce.json.gz`.
+The rule remains a draft. No new engine feature is required by these failures.

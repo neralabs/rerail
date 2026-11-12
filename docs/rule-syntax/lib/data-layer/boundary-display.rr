@@ -1,0 +1,83 @@
+// Native formatting consumes a complete batch of passive violations and context lines.
+.decl bsd_file(r:number,value:symbol)
+.input bsd_file(IO=json,filename="boundary-display.json",path="/rows/*/file",projection="python-str")
+.decl bsd_line(r:number,value:symbol)
+.input bsd_line(IO=json,filename="boundary-display.json",path="/rows/*/line",projection="json")
+.decl bsd_line_text(r:number,value:symbol)
+.input bsd_line_text(IO=json,filename="boundary-display.json",path="/rows/*/line",projection="python-str")
+.decl bsd_category(r:number,value:symbol)
+.input bsd_category(IO=json,filename="boundary-display.json",path="/rows/*/category",projection="python-str")
+.decl bsd_function_name(r:number,value:symbol)
+.input bsd_function_name(IO=json,filename="boundary-display.json",path="/rows/*/function_name",projection="python-str")
+.decl bsd_call_text(r:number,value:symbol)
+.input bsd_call_text(IO=json,filename="boundary-display.json",path="/rows/*/call_text",projection="python-str")
+.decl bsd_is_async_ctx(r:number,value:symbol)
+.input bsd_is_async_ctx(IO=json,filename="boundary-display.json",path="/rows/*/is_async_ctx",projection="json")
+
+bs_target(p,f) :- bsd_file(r,p),bsd_function_name(r,f).
+bs_info_path(p) :- bsd_file(_,p).
+.decl bsd_group(r:number,group:number)
+bsd_group(r,0) :- option("bsDisplayMode","violations"),bsd_file(r,_).
+bsd_group(r,1) :- option("bsDisplayMode","results"),bsd_file(r,p),bs_informational(p).
+bsd_group(r,2) :- option("bsDisplayMode","results"),bsd_file(r,p),bsd_function_name(r,f),!bs_informational(p),bs_allowed(p,f).
+bsd_group(r,0) :- option("bsDisplayMode","results"),bsd_file(r,p),bsd_function_name(r,f),!bs_informational(p),!bs_allowed(p,f).
+.decl bsd_visible(r:number,g:number)
+bsd_visible(r,g) :- bsd_group(r,g),g!=2.
+bsd_visible(r,2) :- bsd_group(r,2),option("bsShowAllowed","1").
+.decl bsd_group_count(g:number,n:number)
+bsd_group_count(g,n) :- bsd_group(_,g),n=count:{bsd_group(r,g)}.
+.decl bsd_counts(actionable:number,informational:number,allowed:number,sync:number,async_:number,executor:number)
+bsd_counts(a,i,w,s,n,e) :- option("bsDisplayMode","results"),a=count:{bsd_group(r,0)},i=count:{bsd_group(r,1)},w=count:{bsd_group(r,2)},s=count:{bsd_category(r,"SYNC_WRAPS_ASYNC")},n=count:{bsd_category(r,"ASYNC_WRAPS_SYNC")},e=count:{bsd_category(r,"EXECUTOR_ESCAPE")}.
+.decl bsd_file_group(g:number,path:symbol)
+bsd_file_group(g,p) :- bsd_visible(r,g),bsd_file(r,p).
+.decl bsd_label(r:number,text:symbol)
+bsd_label(r,t) :- bsd_category(r,c),bs_label(c,t).
+bsd_label(r,c) :- bsd_category(r,c),!bs_label(c,_).
+.decl bsd_async_label(r:number,text:symbol)
+bsd_async_label(r,"sync") :- bsd_is_async_ctx(r,"false").
+bsd_async_label(r,"async") :- bsd_is_async_ctx(r,"true").
+sf_line(999,r,l,l) :- bsd_line(r,l),match("^-?[0-9]+$",l).
+sf_line(999,r,"1","1") :- bsd_line(r,"true").
+sf_line(999,r,"0","0") :- bsd_line(r,"false").
+.decl bsd_order(r:number,sign:number,length:number,digits:symbol)
+bsd_order(r,s,n,d) :- sf_line(999,r,l,_),sf_line_key(l,s,n,d).
+.decl bsd_small_line(r:number,line:number)
+bsd_small_line(r,to_number(l)) :- sf_line(999,r,l,_),strlen(l)<19.
+
+.decl bsd_context_path(r:number,path:symbol)
+bsd_context_path(r,p) :- bsd_visible(r,_),bsd_file(r,p),option("bsShowContext","1"),option("bsHasRoot","1"),prefix("/",p).
+bsd_context_path(r,cat(root,"/",p)) :- bsd_visible(r,_),bsd_file(r,p),option("bsShowContext","1"),option("bsHasRoot","1"),!prefix("/",p),option("bsContextRoot",root).
+.violation BoundaryContextDemand(at:span,ordinal:number,path:symbol) code "BS_CONTEXT" "boundary context demand"
+BoundaryContextDemand(@place("",0),r,p) :- option("entryPoint","_bs_display_demand"),bsd_context_path(r,p).
+.decl bsd_context_file(c:number,path:symbol)
+.input bsd_context_file(IO=json,filename="boundary-display.json",path="/contexts/*/path",projection="python-str")
+.decl bsd_context_source(c:number,i:number,text:symbol)
+.input bsd_context_source(IO=json,filename="boundary-display.json",path="/contexts/*/lines/*",projection="python-str")
+.decl bsd_context_size(c:number,n:number)
+bsd_context_size(c,n) :- bsd_context_file(c,_),n=count:{bsd_context_source(c,i,_)}.
+.decl bsd_context(r:number,i:number,text:symbol)
+bsd_context(r,i,text) :- bsd_context_path(r,p),bsd_context_file(c,p),bsd_context_size(c,n),bsd_small_line(r,l),bsd_context_source(c,i,text),i>=0,i>=l-3,i<l+2,i<n.
+.decl bsd_context_text(r:number,i:number,text:symbol)
+bsd_context_text(r,i,cat("           ",mark," ",@slice("    ",0,4-strlen(to_string(i+1))),to_string(i+1)," | ",text,"\n")) :- bsd_context(r,i,text),bsd_small_line(r,l),i<999,(i=l-1,mark=">>>";i!=l-1,mark="   ").
+bsd_context_text(r,i,cat("           ",mark," ",to_string(i+1)," | ",text,"\n")) :- bsd_context(r,i,text),bsd_small_line(r,l),i>=999,(i=l-1,mark=">>>";i!=l-1,mark="   ").
+
+.violation BoundaryDisplayOutput(at:span,phase:number,group:number,section:number,file:symbol,part:number,sign:number,length:number,digits:symbol,ordinal:number,sub:number,text:symbol) code "BS_OUTPUT" "boundary output"
+BoundaryDisplayOutput(@place("",0),0,0,0,"",0,0,0,"",0,0,"======================================================================\nASYNC/SYNC BOUNDARY VIOLATIONS\n======================================================================\n\n") :- option("entryPoint","_bs_display"),option("bsDisplayMode","results").
+BoundaryDisplayOutput(@place("",0),1,0,0,"",0,0,0,"",0,0,cat("ACTIONABLE (",to_string(n)," violations)\n--------------------------------------------------\n")) :- option("entryPoint","_bs_display"),option("bsDisplayMode","results"),bsd_group_count(0,n).
+BoundaryDisplayOutput(@place("",0),1,1,0,"",0,0,0,"",0,0,cat("INFORMATIONAL -- in tests/scripts (",to_string(n)," violations)\n--------------------------------------------------\n")) :- option("entryPoint","_bs_display"),option("bsDisplayMode","results"),bsd_group_count(1,n).
+BoundaryDisplayOutput(@place("",0),1,2,0,"",0,0,0,"",0,0,cat("ALLOWLISTED (",to_string(n)," violations)\n--------------------------------------------------\n")) :- option("entryPoint","_bs_display"),option("bsDisplayMode","results"),bsd_group_count(2,n),option("bsShowAllowed","1").
+
+BoundaryDisplayOutput(@place("",0),1,g,1,p,0,0,0,"",0,0,cat("  ",p,"\n")) :- option("entryPoint","_bs_display"),bsd_file_group(g,p).
+BoundaryDisplayOutput(@place("",0),1,g,1,p,1,s,n,d,r,0,cat("    L",line,": [",category,"] ",text," in ",a," ",fn,"()\n           ",label,"\n")) :- option("entryPoint","_bs_display"),bsd_visible(r,g),bsd_file(r,p),bsd_order(r,s,n,d),bsd_line_text(r,line),bsd_category(r,category),bsd_function_name(r,fn),bsd_call_text(r,text),bsd_async_label(r,a),bsd_label(r,label).
+BoundaryDisplayOutput(@place("",0),1,g,1,p,1,s,n,d,r,i+1,text) :- option("entryPoint","_bs_display"),bsd_visible(r,g),bsd_file(r,p),bsd_order(r,s,n,d),bsd_context_text(r,i,text).
+BoundaryDisplayOutput(@place("",0),1,g,1,p,2,0,0,"",0,0,"\n") :- option("entryPoint","_bs_display"),bsd_file_group(g,p).
+BoundaryDisplayOutput(@place("",0),1,g,2,"",0,0,0,"",0,0,"\n") :- option("entryPoint","_bs_display"),option("bsDisplayMode","results"),bsd_visible(_,g).
+BoundaryDisplayOutput(@place("",0),2,0,0,"",0,0,0,"",0,0,cat("======================================================================\nSUMMARY\n--------------------------------------------------\n  Files checked:       ",checked,"\n  SYNC_WRAPS_ASYNC:    ",to_string(s),"\n  ASYNC_WRAPS_SYNC:    ",to_string(n),"\n  EXECUTOR_ESCAPE:     ",to_string(e),"\n  Actionable:          ",to_string(a),"\n  Informational:       ",to_string(i),"\n  Allowlisted:         ",to_string(w),"\n======================================================================\n")) :- option("entryPoint","_bs_display"),bsd_counts(a,i,w,s,n,e),option("bsFilesChecked",checked).
+
+.violation BoundaryDisplayCounts(at:span,actionable:number,allowed:number) code "BS_DISPLAY_COUNTS" "boundary output counts"
+BoundaryDisplayCounts(@place("",0),a,w) :- option("entryPoint","_bs_display"),bsd_counts(a,_,w,_,_,_).
+
+// Standalone context helpers use the same layout and Python range bounds.
+BoundaryDisplayOutput(@place("",0),0,0,0,"",0,0,0,"",0,i,cat("           ",mark," ",@slice("    ",0,4-strlen(to_string(i+1))),to_string(i+1)," | ",text,"\n")) :- option("entryPoint","_bs_show_context"),option_item("bsContextLines",i,text),option("bsContextLine",line),option("bsContextRadius",radius),l=to_number(line),r=to_number(radius),i>=0,i>=l-r-1,i<l+r,i<999,(i=l-1,mark=">>>";i!=l-1,mark="   ").
+BoundaryDisplayOutput(@place("",0),0,0,0,"",0,0,0,"",0,i,cat("           ",mark," ",to_string(i+1)," | ",text,"\n")) :- option("entryPoint","_bs_show_context"),option_item("bsContextLines",i,text),option("bsContextLine",line),option("bsContextRadius",radius),l=to_number(line),r=to_number(radius),i>=0,i>=l-r-1,i<l+r,i>=999,(i=l-1,mark=">>>";i!=l-1,mark="   ").
+

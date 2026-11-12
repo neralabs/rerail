@@ -84,6 +84,10 @@ def install(backend,module,detectors=False):
     backend.replace(module,'async_sync_boundary_plugin',plugin)
     from boundary_port import install as install_properties,scan
     install_properties(backend,module)
+    from boundary_display_port import install as install_display
+    install_display(backend,module)
+    from boundary_cli_port import install as install_cli
+    install_cli(backend,module,config)
     if detectors:
         for entry in ['scan_tree','_get_call_name','_is_allowlisted','_is_informational']:
             signature=inspect.signature(getattr(module,entry))

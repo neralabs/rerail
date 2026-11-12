@@ -25,4 +25,4 @@ def suffix(source):
     config=dict(constants=constants,extractor=asdict(original.ASYNC_SYNC_BOUNDARY_EXTRACTOR),scope=scope,collector_defaults=initial,
         plugin=dict(name=plugin.name,enforcement=plugin.enforcement,description=plugin.description),
         cli_schema=dict(description=literal(next(k.value for k in parser.keywords if k.arg=='description')),arguments=arguments))
-    return ''.join('bs_config('+json.dumps(k)+','+json.dumps(json.dumps(v))+').\n' for k,v in config.items())+'#include "data-layer/boundary-api.rr"\n'
+    return ''.join('bs_config('+json.dumps(k)+','+json.dumps(json.dumps(v))+').\n' for k,v in config.items())+'#include "data-layer/boundary-api.rr"\n#include "data-layer/boundary-display.rr"\n#include "data-layer/boundary-cli.rr"\n#include "data-layer/lint-ratchet.rr"\n'

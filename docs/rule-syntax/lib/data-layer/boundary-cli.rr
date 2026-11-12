@@ -1,0 +1,27 @@
+#include "data-layer/python-discovery-roots.rr"
+sgd_enabled() :- env("boundary.paths","true").
+sgd_configured() :- env("boundary.paths","true").
+.violation BoundaryCliRoot(at:span,path:symbol,direct:number) code "BS_CLI_ROOT" "boundary CLI root"
+BoundaryCliRoot(@place("",0),@dir(@dir(p)),1) :- option("entryPoint","_bs_cli_root"),option("bsLegacyPaths","1"),option("bsModulePath",p).
+BoundaryCliRoot(@place("",0),p,0) :- option("entryPoint","_bs_cli_root"),option("bsLegacyPaths","0"),option("bsExplicitRoot","1"),option("bsRoot",p).
+BoundaryCliRoot(@place("",0),@dir(@dir(@dir(p))),0) :- option("entryPoint","_bs_cli_root"),option("bsLegacyPaths","0"),option("bsExplicitRoot","0"),option("bsDiscoverySource",p).
+.violation BoundaryCliArgument(at:span,ordinal:number,path:symbol) code "BS_CLI_ARG" "boundary directory argument"
+BoundaryCliArgument(@place("",0),i,p) :- option("entryPoint","_bs_cli_root"),option("bsLegacyPaths","1"),option_item("bsLegacyDirs",i,p).
+BoundaryCliArgument(@place("",0),i,p) :- option("entryPoint","_bs_cli_root"),option("bsLegacyPaths","0"),option("bsHasDirs","1"),option_item("bsDirs",i,p).
+BoundaryCliArgument(@place("",0),i,p) :- option("entryPoint","_bs_cli_root"),option("bsLegacyPaths","0"),option("bsHasDirs","0"),option_item("bsDefaults",i,p).
+.violation BoundaryCliDirectory(at:span,argument:number,rank:number,path:symbol) code "BS_CLI_DIR" "boundary directory"
+BoundaryCliDirectory(@place("",0),i,r,p) :- option("entryPoint","_bs_cli_dirs"),sgd_chosen(i,r,p).
+
+.decl bscli_action(action:symbol)
+bscli_action("update") :- option("bsUpdate","1").
+bscli_action("check") :- !option("bsUpdate","1"),option("bsCheck","1").
+bscli_action("done") :- !option("bsUpdate","1"),!option("bsCheck","1").
+.violation BoundaryCliControl(at:span,action:symbol,count:number) code "BS_CLI_CONTROL" "boundary CLI action"
+BoundaryCliControl(@place("",0),action,to_number(n)) :- option("entryPoint","_bs_cli_control"),bscli_action(action),option("bsActionable",n).
+.decl bscli_failed()
+bscli_failed() :- !option("bsUpdate","1"),option("bsCheck","1"),option("bsCheckPassed","0").
+.violation BoundaryCliReturn(at:span,status:number) code "BS_CLI_RETURN" "boundary CLI status"
+BoundaryCliReturn(@place("",0),1) :- option("entryPoint","_bs_cli_finish"),bscli_failed().
+BoundaryCliReturn(@place("",0),0) :- option("entryPoint","_bs_cli_finish"),!bscli_failed().
+.violation BoundaryCliOutput(at:span,text:symbol) code "BS_CLI_OUTPUT" "boundary CLI message"
+BoundaryCliOutput(@place("",0),"\nOK: No actionable violations.\n") :- option("entryPoint","_bs_cli_finish"),!bscli_failed(),!option("bsUpdate","1"),option("bsActionable","0").
