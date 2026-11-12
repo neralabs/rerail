@@ -515,6 +515,17 @@ jobs:
           tool: eslint-plugin-vue
           fetch: "false"
 
+      # The canonical Python AST facts (`value::python_ast`) run CPython 3.13 as `python3.13`; the runner has 3.12.
+      - if: matrix.task == 'test'
+        name: Set up uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+
+      - if: matrix.task == 'test'
+        name: Put CPython 3.13 on PATH
+        run: |
+          uv python install 3.13
+          dirname "$(uv python find 3.13)" >> "$GITHUB_PATH"
+
       # rust-toolchain.toml is the single pin: rustup reads it whenever cargo runs in this repository,
       # so the toolchain installed here must be the same channel.
       - id: rust-toolchain
