@@ -614,20 +614,62 @@ impl Mem {
 /// stack loads over `.rr`'s tier 2, against 161 in the lean parser).
 pub const HELD_IN_RULES: [u32; 0] = [];
 
-/// A compare tree over a byte (or a place): runs of one target, split at the middle run.
+/// A compare tree over a byte (or a place), as rustc lowers a `match` (LLVM's switch lowering):
+/// `runs` are runs of one target (the first from 0, the last on past every value). The target
+/// with the most runs is the default; the tree is over the other runs alone (the cases), split
+/// at the middle case, each side knowing the range its value is in; a case is one test at its
+/// leaf (an equality, a bound, or a range), and a value in no case goes to the default. A
+/// switch that expects one kind is one compare, as `expect(kind)`.
 fn dispatch(f: &mut FunctionBuilder<'_>, x: Value, runs: &[(u32, Block)]) {
-    if runs.len() == 1 {
-        f.ins().jump(runs[0].1, &[]);
-        return;
+    let ends: Vec<u64> = runs.iter().skip(1).map(|r| u64::from(r.0)).chain([u64::MAX]).collect();
+    let spans: Vec<(u64, u64, Block)> = runs.iter().zip(&ends).enumerate().map(|(i, (r, &e))| (if i == 0 { 0 } else { u64::from(r.0) }, e, r.1)).collect();
+    // The default: the target with the most runs (the first such).
+    let mut count: Vec<(Block, usize)> = Vec::new();
+    for &(_, _, b) in &spans {
+        match count.iter_mut().find(|(x, _)| *x == b) {
+            Some(c) => c.1 += 1,
+            None => count.push((b, 1)),
+        }
     }
-    let mid = runs.len() / 2;
-    let (low, high) = (f.create_block(), f.create_block());
-    let below = f.ins().icmp_imm(IntCC::UnsignedLessThan, x, i64::from(runs[mid].0));
-    f.ins().brif(below, low, &[], high, &[]);
-    f.switch_to_block(low);
-    dispatch(f, x, &runs[..mid]);
-    f.switch_to_block(high);
-    dispatch(f, x, &runs[mid..]);
+    let default = count.iter().max_by_key(|&&(_, n)| n).map(|&(b, _)| b).expect("a run");
+    let cases: Vec<(u64, u64, Block)> = spans.into_iter().filter(|&(_, _, b)| b != default).collect();
+    cases_tree(f, x, 0, u64::MAX, &cases, default);
+}
+
+/// `dispatch`'s tree over `cases` for a value known to be in `lo..hi`.
+fn cases_tree(f: &mut FunctionBuilder<'_>, x: Value, lo: u64, hi: u64, cases: &[(u64, u64, Block)], default: Block) {
+    match cases {
+        [] => {
+            f.ins().jump(default, &[]);
+        }
+        &[(a, b, to)] => {
+            let inside = if a <= lo && b >= hi {
+                f.ins().jump(to, &[]);
+                return;
+            } else if a <= lo {
+                f.ins().icmp_imm(IntCC::UnsignedLessThan, x, b as i64)
+            } else if b >= hi {
+                f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, x, a as i64)
+            } else if b == a + 1 {
+                f.ins().icmp_imm(IntCC::Equal, x, a as i64)
+            } else {
+                let d = f.ins().iadd_imm(x, -(a as i64));
+                f.ins().icmp_imm(IntCC::UnsignedLessThan, d, (b - a) as i64)
+            };
+            f.ins().brif(inside, to, &[], default, &[]);
+        }
+        _ => {
+            let mid = cases.len() / 2;
+            let pivot = cases[mid].0;
+            let (low, high) = (f.create_block(), f.create_block());
+            let below = f.ins().icmp_imm(IntCC::UnsignedLessThan, x, pivot as i64);
+            f.ins().brif(below, low, &[], high, &[]);
+            f.switch_to_block(low);
+            cases_tree(f, x, lo, pivot, &cases[..mid], default);
+            f.switch_to_block(high);
+            cases_tree(f, x, pivot, hi, &cases[mid..], default);
+        }
+    }
 }
 
 /// `dispatch` weighted by a profile: a run with half the weight or more is tested first (one
