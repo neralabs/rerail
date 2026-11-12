@@ -267,9 +267,11 @@ fn nested<'a>(facts: &'a Facts, rel: &str) -> Result<BTreeMap<i64, Vec<&'a [Valu
 
 /// The prepared program `facts` holds, for `dialect`.
 pub(super) fn prepared_of(facts: &Facts, dialect: GrammarDialect) -> Result<Prepared, String> {
+    // Its programs' rows, grouped by program in one pass (`Grouped`).
+    let grouped = program_facts::Grouped::of(facts);
     let (prog, program) = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "read the programs off the facts".into());
-        (program_facts::program(facts, "front")?, program_facts::program(facts, "lowered")?)
+        (grouped.program("front")?, grouped.program("lowered")?)
     };
     let mut by_rel: BTreeMap<String, Vec<(i64, lower::Domain)>> = BTreeMap::new();
     for r in facts.get("prepared_domain").into_iter().flatten() {
@@ -354,8 +356,8 @@ pub(super) fn prepared_of(facts: &Facts, dialect: GrammarDialect) -> Result<Prep
                 }).collect())
             };
             crate::code_rule_dsl::typing::file_local::Programs {
-                local: program_facts::program(facts, "split_local")?,
-                cross: program_facts::program(facts, "split_cross")?,
+                local: grouped.program("split_local")?,
+                cross: grouped.program("split_cross")?,
                 exports: list("prepared_export")?,
                 base: list("prepared_base")?,
                 locations: columns("prepared_location")?,
