@@ -6,7 +6,8 @@ import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { REQUIRED_NODE_MAJOR } from "../../src/engine/index.js";
-import { bundleTarget, OLDER_NODE_VERSION, olderNodeArguments } from "../support/platform/older-node.js";
+import { scriptBundleOptions } from "../support/build/script-bundle.js";
+import { OLDER_NODE_VERSION, olderNodeArguments } from "../support/platform/older-node.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 const manifestSchema = z.object({ scripts: z.record(z.string(), z.string()), bin: z.object({ rerail: z.string() }) });
@@ -30,8 +31,7 @@ describe("the rerail command's bundle", () => {
       "src/hosts/cursor/cursor-hook.ts", "src/harness/event-stream.ts", "src/harness/hook-launcher.ts", "src/cli/daemon-entry.ts",
     ];
     const { metafile } = await build({
-      entryPoints: ["src/cli/cli.ts"], bundle: true, platform: "node", format: "esm", external: ["better-sqlite3"],
-      write: false, metafile: true, logLevel: "silent",
+      ...await scriptBundleOptions("build:ts", "src/cli/cli.ts", "."), write: false, metafile: true, logLevel: "silent",
     });
     expect(Object.keys(metafile.inputs).filter(path => selfStarting.includes(path))).toEqual([]);
   }, 60_000);
@@ -45,12 +45,7 @@ describe("the rerail command's bundle", () => {
       await mkdir(binding, { recursive: true });
       await writeFile(join(binding, "package.json"), JSON.stringify({ name: "better-sqlite3", main: "index.js" }));
       await writeFile(join(binding, "index.js"), "module.exports = class Database {};\n");
-      const entry = "src/cli/cli.ts";
-      // The same options as `npm run build:ts` bundles the command with, its target included.
-      await build({
-        entryPoints: [entry], bundle: true, platform: "node", format: "esm", external: ["better-sqlite3"],
-        ...await bundleTarget("build:ts", entry), outfile: join(root, "dist", "cli", "cli.js"), logLevel: "silent",
-      });
+      await build({ ...await scriptBundleOptions("build:ts", "src/cli/cli.ts", root), logLevel: "silent" });
       const version = spawnSync(process.execPath, [...olderNodeArguments(), join(root, "dist", "cli", "cli.js"), "version"], { encoding: "utf8" });
       expect(version.stderr).toContain(`Rerail needs Node ${REQUIRED_NODE_MAJOR} or newer. You have Node ${OLDER_NODE_VERSION}.`);
       expect(version.status).toBe(1);
