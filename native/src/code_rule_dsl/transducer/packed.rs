@@ -1292,10 +1292,34 @@ struct CaptureStateSet {
     states: HashSet<Arc<[CaptureIdentity]>>,
 }
 
+// A test's per-task work limit (`TaskLimit::enter`), which `charge_task_work` reads in tests.
+#[cfg(test)]
+thread_local! {
+    static TASK_LIMIT: std::cell::Cell<usize> = const { std::cell::Cell::new(MAX_WORK_PER_TASK) };
+}
+#[cfg(test)]
+pub(in crate::code_rule_dsl) fn task_work_limit() -> usize {
+    TASK_LIMIT.with(std::cell::Cell::get)
+}
+#[cfg(test)]
+pub(in crate::code_rule_dsl) struct TaskLimit(usize);
+#[cfg(test)]
+impl TaskLimit {
+    pub(in crate::code_rule_dsl) fn enter(limit: usize) -> Self {
+        Self(TASK_LIMIT.with(|value| value.replace(limit)))
+    }
+}
+#[cfg(test)]
+impl Drop for TaskLimit {
+    fn drop(&mut self) {
+        TASK_LIMIT.with(|value| value.set(self.0));
+    }
+}
+
 fn charge_task_work(work: &mut usize) -> Result<(), Error> {
     *work = work.checked_add(1).ok_or(Error::WorkLimit)?;
     #[cfg(test)]
-    let limit = capture_run_tests::task_work_limit();
+    let limit = task_work_limit();
     #[cfg(not(test))]
     let limit = MAX_WORK_PER_TASK;
     if *work > limit {
