@@ -1,7 +1,13 @@
-import { readFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { REQUIRED_NODE_MAJOR } from "../../src/engine/index.js";
+import { bundleTarget, OLDER_NODE_VERSION, olderNodeArguments } from "../support/platform/older-node.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const manifestSchema = z.object({ scripts: z.record(z.string(), z.string()), bin: z.object({ rerail: z.string() }) });
 
@@ -28,5 +34,28 @@ describe("the rerail command's bundle", () => {
       write: false, metafile: true, logLevel: "silent",
     });
     expect(Object.keys(metafile.inputs).filter(path => selfStarting.includes(path))).toEqual([]);
+  }, 60_000);
+
+  it("refuses an older Node with set-up's message", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-cli-bundle-"));
+    try {
+      await writeFile(join(root, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.0.0" }));
+      // The bundle leaves the SQLite binding out, and refusing a Node never opens a database: an empty module stands in.
+      const binding = join(root, "node_modules", "better-sqlite3");
+      await mkdir(binding, { recursive: true });
+      await writeFile(join(binding, "package.json"), JSON.stringify({ name: "better-sqlite3", main: "index.js" }));
+      await writeFile(join(binding, "index.js"), "module.exports = class Database {};\n");
+      const entry = "src/cli/cli.ts";
+      // The same options as `npm run build:ts` bundles the command with, its target included.
+      await build({
+        entryPoints: [entry], bundle: true, platform: "node", format: "esm", external: ["better-sqlite3"],
+        ...await bundleTarget("build:ts", entry), outfile: join(root, "dist", "cli", "cli.js"), logLevel: "silent",
+      });
+      const version = spawnSync(process.execPath, [...olderNodeArguments(), join(root, "dist", "cli", "cli.js"), "version"], { encoding: "utf8" });
+      expect(version.stderr).toContain(`Rerail needs Node ${REQUIRED_NODE_MAJOR} or newer. You have Node ${OLDER_NODE_VERSION}.`);
+      expect(version.status).toBe(1);
+    } finally {
+      await removeFolder(root);
+    }
   }, 60_000);
 });
