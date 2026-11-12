@@ -174,6 +174,30 @@ fn cpu_by_thread(r: &mut String, threads: &super::Threads) {
     for (name, (n, cpu, cov)) in by.iter().take(20) {
         let _ = writeln!(r, "{cpu:>9.2} {cov:>9.2} {:>9.2} {n:>8}  {name}", (cpu - cov).max(0.0));
     }
+    // By the spans' last steps: a pool's items share them wherever they were started (gaps.tsv has the paths).
+    let mut by: BTreeMap<(&str, &str), (f64, usize)> = BTreeMap::new();
+    let gaps = super::gaps();
+    for g in &gaps {
+        let e = by.entry((last_step(&g.after), last_step(&g.before))).or_default();
+        e.0 += g.cpu;
+        e.1 += 1;
+    }
+    let mut by: Vec<_> = by.into_iter().filter(|(_, (cpu, _))| *cpu >= 0.01).collect();
+    by.sort_by(|a, b| b.1.0.total_cmp(&a.1.0));
+    if !by.is_empty() {
+        let total: f64 = gaps.iter().map(|g| g.cpu).sum();
+        let _ = writeln!(r, "Outside every span, between a thread's spans: {total:.2} s (the outermost span that closed -> the next that opened, by");
+        let _ = writeln!(r, "their last steps; on a pool's threads, its own work between items: stealing, splitting, spinning; gaps.tsv):");
+        let _ = writeln!(r, "{:>9} {:>7}  closed -> opened", "cpu s", "paths");
+        for ((after, before), (cpu, n)) in by.iter().take(12) {
+            let _ = writeln!(r, "{cpu:>9.2} {n:>7}  {after} -> {before}");
+        }
+    }
+}
+
+/// A span path's last step.
+fn last_step(path: &str) -> &str {
+    path.rsplit('/').next().unwrap_or(path)
 }
 
 /// The report, and the tables, into `dir`. `header`: what was run (lines put first).
@@ -185,6 +209,11 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
         let _ = writeln!(threads_tsv, "{}\t{:.4}\t{:.4}\t{:.4}", t.name, t.cpu, t.covered, (t.cpu - t.covered).max(0.0));
     }
     std::fs::write(dir.join("threads.tsv"), threads_tsv)?;
+    let mut gaps_tsv = String::from("after\tbefore\tcpu_s\n");
+    for g in super::gaps() {
+        let _ = writeln!(gaps_tsv, "{}\t{}\t{:.4}", g.after, g.before, g.cpu);
+    }
+    std::fs::write(dir.join("gaps.tsv"), gaps_tsv)?;
     let state = super::state();
     let mut spans_tsv = String::from("path\tcalls\tcpu_s\town_s\talloc_bytes\town_alloc_bytes\tfreed_bytes\tpeak_rise_bytes\town_peak_rise_bytes\n");
     for (p, t) in &state.spans {

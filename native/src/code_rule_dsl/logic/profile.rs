@@ -27,7 +27,7 @@
 //! `write(dir)` writes `profile.txt` (the report: spans by CPU, statements by time with their query plans, native
 //! steps by work, the roofline, and warnings) and the tables `spans.tsv`, `sql.tsv` and `native.tsv`. Off, a span costs one load.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -389,15 +389,64 @@ pub struct Thread {
     statement: Option<(String, std::time::Instant)>,
     /// The CPU its outermost spans took: what of its CPU the spans account for (`threads`).
     covered: f64,
+    /// The outermost span that closed last, and the thread's CPU then.
+    between: Option<(String, f64)>,
+    /// Its CPU outside every span, by the outermost spans around it: (closed before, opened after) (`gaps`).
+    gaps: HashMap<(String, String), f64>,
 }
+
+/// Where a thread was outside every span before its first span opened, and after its last closed.
+const THREAD_START: &str = "(the thread's start)";
+const THREAD_END: &str = "(the thread's end, or now)";
 
 /// A thread that opened a span leaves its account when it ends (`threads`): its CPU and its spans' then.
 impl Drop for Thread {
     fn drop(&mut self) {
         if let Some(cpu) = thread_cpu(self.port) {
             EXITED.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push((self.name.clone(), cpu, self.covered));
+            let mut gaps = std::mem::take(&mut self.gaps);
+            if let Some((after, at)) = self.between.take() {
+                *gaps.entry((after, THREAD_END.to_owned())).or_default() += (cpu - at).max(0.0);
+            }
+            let mut ended = EXITED_GAPS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            for (k, v) in gaps {
+                *ended.entry(k).or_default() += v;
+            }
         }
     }
+}
+
+/// The gaps of threads that have ended (`gaps`).
+static EXITED_GAPS: LazyLock<Mutex<HashMap<(String, String), f64>>> = LazyLock::new(Default::default);
+
+/// CPU a thread took outside every span, between the outermost span that closed before it (`after`) and the one that
+/// opened after it (`before`), summed over the threads.
+#[derive(Clone, Debug)]
+pub struct Gap {
+    pub after: String,
+    pub before: String,
+    pub cpu: f64,
+}
+
+/// Every thread's CPU outside its spans, by the spans around it, largest first: ended threads' and live ones' (their
+/// CPU since their last span closed counted as before their end).
+pub fn gaps() -> Vec<Gap> {
+    let mut all = EXITED_GAPS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+    let live: Vec<_> = THREADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().filter_map(std::sync::Weak::upgrade).collect();
+    for t in live {
+        let t = t.lock();
+        for (k, v) in &t.gaps {
+            *all.entry(k.clone()).or_default() += v;
+        }
+        if t.opens.is_empty()
+            && let (Some((after, at)), Some(now)) = (&t.between, thread_cpu(t.port))
+        {
+            *all.entry((after.clone(), THREAD_END.to_owned())).or_default() += (now - at).max(0.0);
+        }
+    }
+    let mut out: Vec<Gap> = all.into_iter().map(|((after, before), cpu)| Gap { after, before, cpu }).collect();
+    out.sort_by(|a, b| b.cpu.total_cmp(&a.cpu));
+    out
 }
 
 /// The accounts of threads that opened spans and have ended: name, CPU, CPU under spans.
@@ -528,6 +577,8 @@ fn register() -> std::sync::Arc<parking_lot::Mutex<Thread>> {
         opens: Vec::new(),
         statement: None,
         covered: 0.0,
+        between: None,
+        gaps: HashMap::new(),
     }));
     let mut all = THREADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     all.retain(|t| t.strong_count() > 0);
@@ -560,6 +611,17 @@ pub fn here() -> Option<String> {
 
 /// Opens span `name` under `under`, a path another thread's `here` gave: a pool job's span (`crate::threads`), at
 /// that path whichever thread runs it. Without `under`, under this thread's open span, as `span` opens one.
+/// `f` for a parallel iterator's items, each a sizeable piece of work (a file, a tape): on a thread with no span
+/// open (a pool thread that took the item), under `name` in the span open where `carried` was called; on a thread
+/// with one open (the caller's), as it is. Rayon's work taken by another thread is under no span of that thread's.
+pub fn carried<A, R>(name: &'static str, f: impl Fn(A) -> R + Sync + Send) -> impl Fn(A) -> R + Sync + Send {
+    let under = here();
+    move |a| {
+        let _span = (under.is_some() && STACK.with(|s| s.lock().opens.is_empty())).then(|| span_at(under.as_deref(), || name.to_owned()));
+        f(a)
+    }
+}
+
 pub fn span_at(under: Option<&str>, name: impl FnOnce() -> String) -> Span {
     match under {
         Some(p) => open(format!("{p}/{}", name())),
@@ -589,7 +651,14 @@ fn open(path: String) -> Span {
     STACK.with(|s| {
         let mut s = s.lock();
         let alloc = s.counters.read();
-        s.opens.push(Open { path, start: cpu(), children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0 });
+        let start = cpu();
+        if s.opens.is_empty() {
+            let (after, at) = s.between.take().unwrap_or_else(|| (THREAD_START.to_owned(), 0.0));
+            if start > at {
+                *s.gaps.entry((after, path.clone())).or_default() += start - at;
+            }
+        }
+        s.opens.push(Open { path, start, children: 0.0, alloc, peak: memory::peak_sampled(), children_alloc: 0, children_rise: 0 });
     });
     Span(true)
 }
@@ -608,20 +677,10 @@ impl Drop for Span {
             let total = now - open.start;
             if s.opens.is_empty() {
                 s.covered += total;
+                s.between = Some((open.path.clone(), now));
             }
             let alloc = allocated.saturating_sub(open.alloc.0);
             let rise = peak.saturating_sub(open.peak);
-/// `f` for a parallel iterator's items, each a sizeable piece of work (a file, a tape): on a thread with no span
-/// open (a pool thread that took the item), under `name` in the span open where `carried` was called; on a thread
-/// with one open (the caller's), as it is. Rayon's work taken by another thread is under no span of that thread's.
-pub fn carried<A, R>(name: &'static str, f: impl Fn(A) -> R + Sync + Send) -> impl Fn(A) -> R + Sync + Send {
-    let under = here();
-    move |a| {
-        let _span = (under.is_some() && STACK.with(|s| s.lock().opens.is_empty())).then(|| span_at(under.as_deref(), || name.to_owned()));
-        f(a)
-    }
-}
-
             if let Some(parent) = s.opens.last_mut() {
                 parent.children += total;
                 parent.children_alloc += alloc;
@@ -806,6 +865,15 @@ pub fn behind_the_run() {
     BEHIND.with(|b| b.set(true));
 }
 
+/// Runs `f` on this thread as work behind the run: a write after the run's last wave, as a command's end flushes its
+/// cost samples (decision 0104).
+pub fn behind<T>(f: impl FnOnce() -> T) -> T {
+    let was = BEHIND.with(|b| b.replace(true));
+    let out = f();
+    BEHIND.with(|b| b.set(was));
+    out
+}
+
 fn in_waves() -> bool {
     on() && WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0 && !BEHIND.with(std::cell::Cell::get)
 }
@@ -874,15 +942,6 @@ pub fn wait_in_wave(what: &str, wall: f64) {
     let e = state.hazards.entry(("a wait for the store's writer", path, format!("store: {what}"))).or_default();
     e.0 += 1;
     e.1 += (wall * 1e9) as u64;
-}
-
-/// Runs `f` on this thread as work behind the run: a write after the run's last wave, as a command's end flushes its
-/// cost samples (decision 0104).
-pub fn behind<T>(f: impl FnOnce() -> T) -> T {
-    let was = BEHIND.with(|b| b.replace(true));
-    let out = f();
-    BEHIND.with(|b| b.set(was));
-    out
 }
 
 /// The hazards: SQL a wave's thread ran or waited on between the run's first wave and its last.
