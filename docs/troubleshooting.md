@@ -434,8 +434,9 @@ to `hook-failures.jsonl.1`, replacing the one there. Update Rerail with `rerail 
 with `rerail support-bundle`.
 
 When events were recorded since the first failure, the line reads `Hooks: N hook events could not be recorded in the
-last 24 hours` instead. When more hooks failed in that time than the two files hold, it counts the failures they still
-hold and says from when: `since <time>, as far back as the log goes`.
+last 24 hours` instead. Once the log has moved aside and holds nothing from 24 hours ago, failures before its oldest
+may be gone, so the line counts what the two files hold and says from when: `since <time>, as far back as the log
+goes`.
 
 With `RERAIL_AUTOSTART=0` (or `false`) hooks start no daemon, and a hook that finds none logs nothing, since that is
 what you asked for. `rerail status` then says the daemon is not running and that `RERAIL_AUTOSTART=0` keeps hooks from
