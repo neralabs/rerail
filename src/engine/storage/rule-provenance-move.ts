@@ -98,10 +98,20 @@ async function whenFree<T>(step: () => T, pause: () => Promise<void>, signal: Ab
   }
 }
 
-/** A checkpoint that another connection's read kept from emptying the WAL. */
+/** A `wal_checkpoint` row: `busy` is 1 when another connection kept it from finishing; frames in the WAL, and written. */
+interface Checkpoint {
+  readonly busy: number;
+  readonly log: number;
+  readonly checkpointed: number;
+}
+
+/** A checkpoint that another connection's read kept from emptying the WAL, with how far it got. */
 class WalInUse extends Error {
-  constructor() {
+  readonly checkpoint: Checkpoint | undefined;
+
+  constructor(checkpoint: Checkpoint | undefined) {
     super("another connection kept the WAL from being emptied");
+    this.checkpoint = checkpoint;
   }
 }
 
@@ -112,8 +122,8 @@ function isBusy(error: unknown): boolean {
 
 /** Writes the WAL into the database file and empties it (`wal_checkpoint(TRUNCATE)`); throws `WalInUse` when it could not. */
 function emptyWal(client: Client): void {
-  const [checkpoint] = client.pragma("wal_checkpoint(TRUNCATE)") as Array<{ busy: number }>;
-  if (checkpoint?.busy !== 0) throw new WalInUse();
+  const [checkpoint] = client.pragma("wal_checkpoint(TRUNCATE)") as Checkpoint[];
+  if (checkpoint?.busy !== 0) throw new WalInUse(checkpoint);
 }
 
 /** When the file ran `audit-rule-provenance-once` (epoch ms), or undefined when it has no record of that. */
@@ -157,8 +167,9 @@ function moveBatch(
  * file and writes them back through the WAL while it holds the write lock, and empty the WAL again. `VACUUM` is skipped,
  * and stderr says why, when another connection keeps the WAL from being emptied first, when the database's folder or the
  * temporary folder has less free disk space than the file's size, or when `VACUUM` fails (another writer holding the
- * lock through every try, a full disk), which leaves the file as it was. Stderr also says when the file shrinks only
- * later (`sayShrinkWaits`). Throws only what a checkpoint throws other than a busy WAL; the move has committed.
+ * lock through every try, a full disk), which leaves the file as it was. Stderr also says when a read keeps the WAL
+ * full after `VACUUM` (`sayWalInUse`). Throws only what a checkpoint throws other than a busy WAL; the move has
+ * committed.
  */
 async function giveBackFreedSpace(client: Client, path: string, free: Free): Promise<void> {
   const skipped = await vacuumSkipped(client, path, free);
@@ -170,7 +181,7 @@ async function giveBackFreedSpace(client: Client, path: string, free: Free): Pro
     await free(() => emptyWal(client));
   } catch (error) {
     if (!(error instanceof WalInUse)) throw error;
-    sayShrinkWaits(client, path);
+    sayWalInUse(client, path, error.checkpoint);
   }
 }
 
@@ -200,12 +211,20 @@ function sayKeepsItsSize(client: Client, path: string, skipped: string): void {
 }
 
 /**
- * The line for a `VACUUM` that ended while another connection was reading: the checkpoint after it could not write the
- * rewritten file from the WAL into the database file, so the file keeps its size, and the WAL the size of the new copy,
- * until the first checkpoint after that read ends.
+ * The line for a WAL that another connection's read kept full after `VACUUM`. A read begun before `VACUUM` ended keeps
+ * the checkpoint from writing the rewritten file into the database file, which keeps its size until the first
+ * checkpoint after that read ends. A read begun after it lets the checkpoint write every frame (`checkpointed` reaches
+ * `log`) and cut the file to its pages in use; only the WAL keeps the rewritten file's size, which SQLite keeps on disk
+ * until the last connection to the file closes.
  */
-function sayShrinkWaits(client: Client, path: string): void {
+function sayWalInUse(client: Client, path: string, checkpoint: Checkpoint | undefined): void {
   const size = sizesOr(() => ` to ${megabytes(pragmaNumber(client, "page_count") * pragmaNumber(client, "page_size"))}`);
+  if (checkpoint !== undefined && checkpoint.log > 0 && checkpoint.checkpointed === checkpoint.log) {
+    const wal = sizesOr(() => ` at ${megabytes(statSync(`${path}-wal`).size)}`);
+    process.stderr.write(`rerail: ${path} shrank${size} after this Rerail's upgrade, but its WAL stays${wal} until the last `
+      + "connection to the file closes: another connection was reading it as the WAL was emptied.\n");
+    return;
+  }
   process.stderr.write(`rerail: ${path} shrinks${size} at a later checkpoint, after this Rerail's upgrade: another `
     + "connection was reading it as VACUUM ended, so the rewritten file waits in its WAL.\n");
 }

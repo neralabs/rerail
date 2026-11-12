@@ -487,6 +487,43 @@ describe("audit rule provenance", () => {
     expect(statSync(path).size).toBe(bytesInUse(path));
   }, 30_000);
 
+  it("says the file has shrunk and only its WAL waits when another connection begins a read just after the VACUUM", async () => {
+    const path = await fileOfTheBuildBefore();
+    writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
+    const readers: Database.Database[] = [];
+    const exec = Database.prototype.exec;
+    // A read that begins once `VACUUM` has committed reads the rewritten file, so it lets the checkpoint after it write
+    // every frame into the database file, but not empty the WAL.
+    const vacuum = vi.spyOn(Database.prototype, "exec").mockImplementation(function (this: Database.Database, source: string) {
+      exec.call(this, source);
+      if (source === "VACUUM") {
+        const reader = new Database(path, { readonly: true });
+        readers.push(reader);
+        reader.exec("BEGIN");
+        reader.prepare("SELECT count(*) FROM audits").get();
+      }
+      return this;
+    });
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    let logged = "";
+    try {
+      expect(await move(path)).toBe(30);
+      logged = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
+      // While the read lasts: the file is its pages in use already, and the WAL still holds the rewritten file.
+      expect(readers).toHaveLength(1);
+      expect(pageBytes(path).free).toBe(0);
+      expect(statSync(path).size).toBe(bytesInUse(path));
+      expect(statSync(`${path}-wal`).size).toBeGreaterThan(statSync(path).size);
+    } finally {
+      stderr.mockRestore();
+      vacuum.mockRestore();
+      for (const reader of readers) reader.close();
+    }
+    expect(logged).toContain(`rerail: ${path} shrank to `);
+    expect(logged).toContain("but its WAL stays at ");
+    expect(logged).not.toContain("at a later checkpoint");
+  });
+
   it("leaves nothing of a repository's provenance in the file once its history is reset", async () => {
     const path = await temporaryDatabase();
     const marker = "/checkouts/reset-marker";
