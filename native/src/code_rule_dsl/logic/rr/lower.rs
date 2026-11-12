@@ -2341,7 +2341,7 @@ impl Lowerer {
         // Only the literals tied to `vars` through shared variables: one tied to none tests that some row exists
         // anywhere (`ann_root(_)` once `(s = a ; within(s, a))` is left out), which makes every row of the context
         // depend on every document. Leaving it out widens the context, which the rule joins with its own literals.
-        let context = Self::covering(Self::connected(Self::placed_texts(Self::connected(context, vars), vars), vars), vars);
+        let context = self.covering(Self::connected(Self::placed_texts(Self::connected(context, vars), vars), vars), vars)?;
         let ctx = self.fresh("ctx");
         let alts = self.conjunction(&context, &vars.iter().cloned().collect())?;
         let types = vars.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
@@ -2398,11 +2398,14 @@ impl Lowerer {
         context.into_iter().zip(keep).filter(|(_, k)| *k).map(|(l, _)| l).collect()
     }
 
-    /// Of a context's groups of literals (joined through variables other than `vars`), those that bind a variable of
-    /// `vars` no group before them does. Another group only tests that rows exist, and joined in it multiplies the
-    /// context's rows by its own: `within(c1, n), within(c2, n)` asked for `n` is every pair of n's descendants (1.3 G
-    /// rows on 20 files). The context may hold more rows than the rule, which joins it with its own literals.
-    fn covering(context: Vec<Lit>, vars: &[String]) -> Vec<Lit> {
+    /// A context's groups of literals (joined through variables other than `vars`), each joined once: the first
+    /// group to bind a variable of `vars` as it is, a later one only as the asked variables it binds. Joined in
+    /// whole, a later group multiplies the context's rows by its own: `within(c1, n), within(c2, n)` asked for `n`
+    /// is every pair of n's descendants (1.3 G rows on 20 files). Left out, it no longer narrows the context, which
+    /// then holds every row the first group does (O125's cold run 346 -> 437 G instructions). So such a group is a
+    /// relation of its own over the asked variables it binds, a row per distinct binding, joined in its place. A
+    /// group that reads an asked variable it does not bind, or binds none, stays as it is.
+    fn covering(&mut self, context: Vec<Lit>, vars: &[String]) -> Result<Vec<Lit>, Error> {
         let asked: BTreeSet<String> = vars.iter().cloned().collect();
         let of: Vec<BTreeSet<String>> = context.iter().map(|l| body_vars(std::slice::from_ref(l))).collect();
         // Each literal's group: literals sharing a variable not asked about are one group.
@@ -2422,29 +2425,64 @@ impl Lowerer {
                 }
             }
         }
+        let groups: Vec<usize> = (0..context.len()).map(|k| root(&mut group, k)).collect();
         let binds = |l: &Lit| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && rel != "earlier");
+        // Per group: the asked variables its binding atoms bind, and those any of its literals reads.
+        let asked_in = |g: usize, only_binding: bool| -> BTreeSet<String> {
+            (0..context.len())
+                .filter(|&k| groups[k] == g && (!only_binding || binds(&context[k])))
+                .flat_map(|k| of[k].iter().filter(|v| asked.contains(*v)).cloned().collect::<Vec<_>>())
+                .collect()
+        };
         let mut covered: BTreeSet<String> = BTreeSet::new();
-        let mut kept: BTreeSet<usize> = BTreeSet::new();
-        for i in 0..context.len() {
-            let g = root(&mut group, i);
-            if kept.contains(&g) {
+        // A group's place: kept whole, or joined as the asked variables it binds.
+        let mut whole: BTreeSet<usize> = BTreeSet::new();
+        let mut projected: Vec<(usize, Vec<String>)> = Vec::new();
+        for k in 0..context.len() {
+            let g = groups[k];
+            if whole.contains(&g) || projected.iter().any(|(p, _)| *p == g) {
                 continue;
             }
-            let bound: BTreeSet<String> = (0..context.len())
-                .filter(|&k| root(&mut group, k) == g && binds(&context[k]))
-                .flat_map(|k| of[k].iter().filter(|v| asked.contains(*v)).cloned().collect::<Vec<_>>())
-                .collect();
-            if !bound.is_subset(&covered) {
+            let bound = asked_in(g, true);
+            if bound.is_empty() || !bound.is_subset(&covered) {
                 covered.extend(bound);
-                kept.insert(g);
+                whole.insert(g);
+            } else if asked_in(g, false).is_subset(&bound) {
+                projected.push((g, vars.iter().filter(|v| bound.contains(*v)).cloned().collect()));
+            } else {
+                whole.insert(g);
             }
         }
         // A variable no group binds is left to the context as it was.
-        if !asked.is_subset(&covered) {
-            return context;
+        if !asked.is_subset(&covered) || projected.is_empty() {
+            return Ok(context);
         }
-        let groups: Vec<usize> = (0..context.len()).map(|k| root(&mut group, k)).collect();
-        context.into_iter().zip(groups).filter(|(_, g)| kept.contains(g)).map(|(l, _)| l).collect()
+        let mut members: BTreeMap<usize, Vec<Lit>> = BTreeMap::new();
+        for (l, g) in context.iter().zip(&groups) {
+            if !whole.contains(g) {
+                members.entry(*g).or_default().push(l.clone());
+            }
+        }
+        let mut out = Vec::new();
+        for (l, g) in context.into_iter().zip(groups) {
+            if whole.contains(&g) {
+                out.push(l);
+                continue;
+            }
+            // In the first literal's place: the group as the asked variables it binds.
+            let Some(lits) = members.remove(&g) else { continue };
+            let cols = projected.iter().find(|(p, _)| *p == g).map(|(_, c)| c.clone()).expect("a projected group");
+            let rel = self.fresh("cover");
+            let alts = self.conjunction(&lits, &cols.iter().cloned().collect())?;
+            let types = cols.iter().map(|c| (c.clone(), self.type_of(c, &alts))).collect();
+            self.prog.decls.insert(rel.clone(), types);
+            let head = Atom { rel: rel.clone().into(), args: cols.iter().map(|c| Term::Var(c.clone())).collect(), neg: false, gated: false };
+            for b in alts {
+                self.prog.rules.push(Rule { head: head.clone(), body: b });
+            }
+            out.push(Lit::Atom { rel, args: cols.into_iter().map(STerm::Var).collect(), neg: false });
+        }
+        Ok(out)
     }
 
     /// A context's atoms and the comparisons it can evaluate, in order, and the variables they bind.

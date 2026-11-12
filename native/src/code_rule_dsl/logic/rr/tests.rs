@@ -395,6 +395,27 @@ fn a_context_leaves_out_literals_not_tied_to_its_variables() {
     assert!(ctx.iter().all(|r| !r.contains("root(")), "{ctx:?}");
 }
 
+/// A context's second group binding only what the first binds still narrows it, joined once a binding: as a
+/// relation of the asked variable, not left out (every row the first group gives) and not joined whole (every pair
+/// of the two groups' rows, pyi041's `within(c1, n), within(c2, n)`).
+#[test]
+fn a_context_joins_a_later_group_by_what_it_binds() {
+    let p = parse(concat!(
+        ".decl within(n: node, a: node)\n.decl kind(n: node, k: symbol)\n",
+        ".input within, kind\n",
+        ".decl hit(e: node, s: node)\n.output hit\n",
+        "hit(r, s) :- within(c1, s), kind(c1, \"call\"), within(c2, s), kind(c2, \"name\"), parsed(s, \"annotation\", r).\n",
+    ))
+    .unwrap();
+    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    let shown = |stem: &str| -> Vec<String> { p.rules.iter().filter(|r| r.head.rel.starts_with(stem)).map(|r| r.to_string()).collect() };
+    let (ctx, cover) = (shown("rr_ctx"), shown("rr_cover"));
+    assert!(!ctx.is_empty(), "the parse's demand has a context");
+    assert!(ctx.iter().all(|r| r.contains("\"call\"") && r.contains("rr_cover") && !r.contains("\"name\"")), "{ctx:?}");
+    assert!(!cover.is_empty() && cover.iter().all(|r| r.contains("\"name\"") && !r.contains("\"call\"")), "{cover:?}");
+    assert!(p.decls.iter().any(|(rel, cols)| rel.starts_with("rr_cover") && cols.len() == 1), "a relation of s alone");
+}
+
 /// Tests of one span in a disjunction, folded into one set test, test its text as a single test does
 /// (bootstrap-engine-invariants' `source(d, sp), (contains("a", sp) ; contains("b", sp))`).
 #[test]
@@ -714,14 +735,15 @@ fn normalized(mut p: front::Program) -> front::Program {
 
 /// A lowered `.rr` program without the requests its lowering derives (`rr_embed_req` for `parsed`, decision 0055;
 /// `rr_parse_req`, `rr_splice_req` for tape operations, 0058;
-/// `rr_dir_req`, `rr_file_req` for the file system, t21) and the context relations only they read: an `.rdl` program
+/// `rr_dir_req`, `rr_file_req` for the file system, t21) and the context relations only they read (a context's
+/// `rr_ctx` and the `rr_cover` groups it joins): an `.rdl` program
 /// asks for nothing, and the requests change no relation the program derives.
 fn without_requests(mut p: front::Program) -> front::Program {
     let mut gone: BTreeSet<String> = ["rr_embed_req", "rr_parse_req", "rr_splice_req"].into_iter().map(str::to_owned).chain(super::WORLD.iter().map(|(_, d)| (*d).to_owned())).collect();
     loop {
         p.rules.retain(|r| !gone.contains(r.head.rel.as_str()));
         let read: BTreeSet<&str> = p.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.as_str()).collect();
-        let more: Vec<String> = p.rules.iter().map(|r| r.head.rel.to_string()).filter(|h| h.starts_with("rr_ctx") && !read.contains(h.as_str()) && !gone.contains(h.as_str())).collect();
+        let more: Vec<String> = p.rules.iter().map(|r| r.head.rel.to_string()).filter(|h| (h.starts_with("rr_ctx") || h.starts_with("rr_cover")) && !read.contains(h.as_str()) && !gone.contains(h.as_str())).collect();
         if more.is_empty() {
             break;
         }
