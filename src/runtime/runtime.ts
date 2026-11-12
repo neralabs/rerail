@@ -1842,6 +1842,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const items = ledger.entries.flatMap((entry) => (entry.type === "sample" ? [entry.item] : []));
     const source = new MutableContentSource(items, keepsSamples(session.host));
     const secrets = secretCallsOf(ledger.entries);
+    const openCalls = unresolvedCodeRuleCalls(ledger.entries);
     return {
       descriptor: session,
       checkout,
@@ -1873,7 +1874,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       auditRequestWork: undefined,
       repositoryAudit: undefined,
       // Restored whether or not the evaluator opens, so their results still close them in the ledger.
-      pendingCodeRuleCalls: unresolvedCodeRuleCalls(ledger.entries).map(call => ({
+      pendingCodeRuleCalls: openCalls.map(call => ({
         id: call.toolCallId, toolName: call.toolName, ...(call.agentId === undefined ? {} : { agentId: call.agentId }),
       })),
       callsAwaitingResult: new Set(),
@@ -1883,7 +1884,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       missedFindings: [],
       owed: restoredOwed(ledger.entries),
       keepsOwed: false,
-      restoredCalls: new Map(unresolvedCodeRuleCalls(ledger.entries).map(call => [call.toolCallId, call])),
+      restoredCalls: new Map(openCalls.map(call => [call.toolCallId, call])),
       secretCalls: secrets.calls,
       withheldResults: secrets.results,
       closed: false,
