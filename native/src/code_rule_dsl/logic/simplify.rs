@@ -2195,10 +2195,10 @@ pub mod tests {
     #[test]
     fn a_merged_variable_is_renamed_inside_the_head() {
         let mut rule = Rule {
-            head: Atom { rel: "rn".to_owned(), args: vec![Term::Var("n".to_owned()), Term::Call("lower".to_owned(), vec![Term::Var("t".to_owned())])], neg: false, gated: false },
+            head: Atom { rel: "rn".into(), args: vec![Term::Var("n".to_owned()), Term::Call("lower".to_owned(), vec![Term::Var("t".to_owned())])], neg: false, gated: false },
             body: vec![
-                Literal::Atom(Atom { rel: "text".to_owned(), args: vec![Term::Var("n".to_owned()), Term::Var("u".to_owned())], neg: false, gated: false }),
-                Literal::Atom(Atom { rel: "text".to_owned(), args: vec![Term::Var("n".to_owned()), Term::Var("t".to_owned())], neg: false, gated: false }),
+                Literal::Atom(Atom { rel: "text".into(), args: vec![Term::Var("n".to_owned()), Term::Var("u".to_owned())], neg: false, gated: false }),
+                Literal::Atom(Atom { rel: "text".into(), args: vec![Term::Var("n".to_owned()), Term::Var("t".to_owned())], neg: false, gated: false }),
             ],
         };
         assert_eq!(merge_keyed(&mut rule), 1);

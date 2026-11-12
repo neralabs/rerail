@@ -1211,7 +1211,7 @@ fn converted_rules_give_the_recorded_findings() {
     let mut gapped = BTreeMap::<String, BTreeSet<String>>::new();
     let (mut misses, mut config_misses) = (Vec::new(), Vec::new());
     let (mut now, mut ran) = (Baseline::default(), BTreeSet::new());
-    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("replay");
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("replay");
     let events = events();
     let ids = event_ids(&events);
     for (k, (event, id)) in events.iter().zip(&ids).enumerate() {
@@ -1296,7 +1296,7 @@ fn a_sample_of_the_replay_gives_the_recorded_findings() {
     let baseline = Baseline::read().unwrap_or_else(|e| panic!("{e}"));
     let events = events();
     let ids = event_ids(&events);
-    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("replay-sample");
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("replay-sample");
     let _ = std::fs::remove_dir_all(&root);
     // Per group and check, its events with findings to compare that the baseline records exact.
     let mut by_check = BTreeMap::<(&str, &str), Vec<usize>>::new();
@@ -1432,7 +1432,7 @@ fn has_filters_the_ancestor_by_its_own_kinds() {
     let source = "def run(step: ServerPlanStep, other: int):\n    if step_tags(step):\n        pass\n    if \"x\" in step_tags(step):\n        pass\n";
     let rule = rule_file("serverplan_target_architecture").unwrap();
     let c = convert_over(&rule, &Adjust::default(), None).unwrap();
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("has-ancestor");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("has-ancestor");
     let _ = std::fs::remove_dir_all(&dir);
     write_files(&dir, [(path, source)]);
     let mut got = findings(&c.program, &dir).unwrap();
@@ -1458,7 +1458,7 @@ fn has_filters_the_ancestor_by_its_own_kinds() {
 /// A converted rule's findings on one file, and W's of the clauses converted (its lines 0-based), each sorted.
 fn converted_and_w(rule: &Path, path: &str, source: &str, name: &str) -> (Vec<String>, Vec<String>) {
     let c = convert_over(rule, &Adjust::default(), None).unwrap();
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
     let _ = std::fs::remove_dir_all(&dir);
     write_files(&dir, [(path, source)]);
     let mut got = findings(&c.program, &dir).unwrap();
@@ -1486,7 +1486,7 @@ fn converted_and_w(rule: &Path, path: &str, source: &str, name: &str) -> (Vec<St
 /// `$PARAM`" was such a helper.
 #[test]
 fn helpers_take_the_metavariables_bound_around_them() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("metavariables");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("metavariables");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let rule = dir.join("probe.json");
@@ -1586,7 +1586,7 @@ violation("data-layer-serverplan-target-architecture", "required-contracts", "SP
 /// dropped with its helpers.
 #[test]
 fn authored_clauses_replace_the_converters() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("authored");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("authored");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join(format!("{TARGET_ID}.rr")), TARGET_AUTHORED).unwrap();
@@ -1658,7 +1658,7 @@ usage_0_quiet(k) :- report_when_gt(k), c = count : {{ usage_0_witness(_, _) }}, 
 violation("{ID}", "usage-0", "escape_hatch", p, l) :- usage_0_witness(p, l), !usage_0_quiet(_).
 "#
     );
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("report-gate");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("report-gate");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join(format!("{ID}.rr")), authored).unwrap();
@@ -1708,7 +1708,7 @@ category_1_def(n, s) :- node(_, n, "function_definition", _, _), field(n, "name"
 violation("{ID}", "category-1", "TEST", p, l) :- option_on("oracleAnalyzer"), category_1_def(n, s), option_item("category-LEGITIMATE", _, s), node(d, n, _, _, _), in_scope(d), doc(d, p, _), line(n, l).
 "#
     );
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("options");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("options");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join(format!("{ID}.rr")), authored).unwrap();
@@ -1956,7 +1956,7 @@ fn measure_shape(corpus: &Path, rules: &str, mode: &str, label: &str) -> (usize,
         }
     }
     let programs: Vec<&str> = texts.iter().map(String::as_str).collect();
-    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension(format!("measure-{label}"));
+    let out = crate::code_rule_dsl::fixtures::temp().with_extension(format!("measure-{label}"));
     if let Some(dir) = std::env::var_os("RERAIL_PROFILE") {
         crate::code_rule_dsl::logic::profile::set_directory(&PathBuf::from(dir).join(label));
     }
@@ -2015,7 +2015,7 @@ fn measure_converted_rules() {
         let local = crate::code_rule_dsl::typing::file_local::split(&parsed);
         let not_local: BTreeSet<&str> = parsed.rules.iter().map(|r| r.head.rel.as_str()).filter(|r| !local.contains(*r)).collect();
         println!("CROSS {id}: derives {cross:?}, not file-local {not_local:?}, reads base {:?}", split.base);
-        let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension(format!("measure-{id}"));
+        let out = crate::code_rule_dsl::fixtures::temp().with_extension(format!("measure-{id}"));
         // `RERAIL_PROFILE=<dir>`: each rule's profile in `<dir>/<id>` (`logic::profile`).
         if let Some(dir) = std::env::var_os("RERAIL_PROFILE") {
             crate::code_rule_dsl::logic::profile::set_directory(&PathBuf::from(dir).join(id));
@@ -2052,7 +2052,7 @@ const LIBRARY_FIXTURE: (&str, &str) = (
 #[test]
 #[ignore = "a report: which library relations lower and run through an overlay"]
 fn library_relations_through_an_overlay_report() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("library-report");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("library-report");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     // One corpus directory per run: a run's store is its own.
@@ -2095,7 +2095,7 @@ fn library_relations_through_an_overlay_report() {
 /// assignment before a read in CPython's order, owners' dotted paths, calls' names.
 #[test]
 fn an_overlay_includes_the_python_library() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("library-overlay");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("library-overlay");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let authored = format!(
@@ -2175,7 +2175,7 @@ violation("{TARGET_ID}", "executor-parameters", "SPTA006", p, l) :- in_scope(d),
 violation("{TARGET_ID}", "required-contracts", "SPTA001", p, 1) :- in_scope(d), doc(d, p, _), node(d, _, "module", _, _).
 "#
     );
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("authored-match");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("authored-match");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join(format!("{TARGET_ID}.rr")), authored).unwrap();

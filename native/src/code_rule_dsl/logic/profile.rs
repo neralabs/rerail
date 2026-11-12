@@ -1469,7 +1469,7 @@ pub mod tests {
             .unwrap();
         }
         sql_in_wave("run", "SELECT 1 FROM xafter", 1_000);
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("explain");
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("explain");
         report::write(&dir, "header\n").unwrap();
         let report = std::fs::read_to_string(dir.join("profile.txt")).unwrap();
         set(false);

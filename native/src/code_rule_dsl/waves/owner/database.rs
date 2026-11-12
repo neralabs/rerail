@@ -21,7 +21,7 @@ pub struct Database {
     pub(super) healthy: Cell<bool>,
     pub(super) active: Cell<usize>,
     pub(super) leases: Cell<usize>,
-    pub(super) plan_signature: Cell<u64>,
+    pub plan_signature: Cell<u64>,
     pub storage: RefCell<Storage>,
     pub(super) modules: Modules,
     /// The sources bound now, by table: the plan signature's input.

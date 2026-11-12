@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 /// `files` (path, source) written under a fresh directory named for `name`.
 fn corpus(name: &str, files: &[(&str, &str)]) -> PathBuf {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(format!("base-{name}"));
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(format!("base-{name}"));
     let _ = std::fs::remove_dir_all(&dir);
     for (path, source) in files {
         let p = dir.join(path);

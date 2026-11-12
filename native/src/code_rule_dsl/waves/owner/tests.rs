@@ -1,4 +1,6 @@
 use super::*;
+use crate::code_rule_dsl::facts::vtab::syntax::tests::documents;
+use crate::content_store::ContentStore;
 use crate::code_rule_dsl::facts::vtab::syntax::{sources};
 use std::path::PathBuf;
 

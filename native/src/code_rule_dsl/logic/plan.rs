@@ -450,7 +450,7 @@ impl Stats {
 
     /// A relation's statistics measured in memory: its rows and per column (rows, ndv, sq, sqd), replacing what was
     /// read; with `vals`, a value column's exact postings per value (`stat_val`'s `n`).
-    pub(in crate::code_rule_dsl) fn measured(&mut self, rel: &str, cols: impl IntoIterator<Item = (String, [i64; 4])>, vals: impl IntoIterator<Item = (String, i64, i64)>) {
+    pub fn measured(&mut self, rel: &str, cols: impl IntoIterator<Item = (String, [i64; 4])>, vals: impl IntoIterator<Item = (String, i64, i64)>) {
         for (col, m) in cols {
             self.col.insert((rel.to_owned(), col), m);
         }
@@ -770,7 +770,7 @@ fn plan_cache(outcome: usize) {
 
 /// Quiet strata passed on unchanged in this process (decision 0101 §1), for tests.
 static QUIET_STRATA: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-pub(in crate::code_rule_dsl) fn quiet_strata() -> usize {
+pub fn quiet_strata() -> usize {
     QUIET_STRATA.load(std::sync::atomic::Ordering::Relaxed)
 }
 

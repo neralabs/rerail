@@ -101,7 +101,7 @@ fn composed_queries_read_adopted_inputs_and_replace_their_versions() {
     use crate::code_rule_dsl::logic::native;
     // The composed form runs only when asked (54a3db76e): this test is of it.
     ASKED.set(true);
-    let path = crate::code_rule_dsl::prefilter::tests::temp();
+    let path = crate::code_rule_dsl::fixtures::temp();
     let store = crate::content_store::ContentStore::open(&path).unwrap();
     let db = Connection::open(&path).unwrap();
     native::register(&db).unwrap();

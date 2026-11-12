@@ -37,7 +37,7 @@ impl Corpus {
         Corpus::of(name, &program("v1"))
     }
     fn of(name: &str, program: &str) -> Corpus {
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
         std::fs::create_dir_all(dir.join("ws")).unwrap();
         let rule = dir.join("cache.rr");
         std::fs::write(&rule, program).unwrap();

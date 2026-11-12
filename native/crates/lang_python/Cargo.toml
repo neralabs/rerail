@@ -111,5 +111,6 @@ metal = "0.33.0"
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 
 [dev-dependencies]
+rerail-lang-python = { path = ".", features = ["test-hooks"] }
 ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
 rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "array"] }

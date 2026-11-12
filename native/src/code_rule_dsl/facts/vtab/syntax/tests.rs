@@ -403,7 +403,7 @@ fn programs_that_include_core_rr_read_its_shape() {
 #[test]
 fn core_rr_programs_read_options_and_functors() {
     use crate::code_rule_dsl::logic::plan::corpus;
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("core-rr");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("core-rr");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "# hello\nx = 1\n").unwrap();
     let core = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();

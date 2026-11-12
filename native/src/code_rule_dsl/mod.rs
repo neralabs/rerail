@@ -820,6 +820,13 @@ pub(crate) mod logic {
             pub use rerail_logic::code_rule_dsl::logic::native::setfix::*;
             #[cfg(target_os="macos")]
             pub use rerail_device_metal::code_rule_dsl::logic::native::setfix::device;
+            // The lab's tests run strata on the Metal device (the transducer's), which the engine alone sees.
+            #[path = "lab"]
+            pub mod lab {
+                pub use rerail_logic::code_rule_dsl::logic::native::setfix::lab::*;
+                #[cfg(test)]
+                pub mod tests;
+            }
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::analysis::scalars::Kind as ScalarKind;
             #[allow(unused_imports)]
@@ -892,10 +899,35 @@ pub(crate) mod logic {
     #[path = "plan"]
     pub mod plan {
         pub use rerail_logic::code_rule_dsl::logic::plan::*;
+        // Native demand's integration tests read the content store's documents through the engine's facts.
+        #[path = "native_demand"]
+        pub mod native_demand {
+            pub use rerail_logic::code_rule_dsl::logic::plan::native_demand::*;
+            #[cfg(test)]
+            #[path = "tests"]
+            pub mod tests {
+                pub mod integration_tests;
+            }
+        }
         #[path = "corpus"]
         pub mod corpus {
             pub use rerail_logic::code_rule_dsl::logic::plan::corpus::*;
             pub mod references;
+            // The corpus's tests run whole rule sets (the engine's): its own, a session's and the AST matchers'.
+            #[cfg(test)]
+            pub mod tests;
+            #[path = "session"]
+            pub mod session {
+                pub use rerail_logic::code_rule_dsl::logic::plan::corpus::session::*;
+                #[cfg(test)]
+                pub mod tests;
+            }
+            #[path = "matchers"]
+            pub mod matchers {
+                pub use rerail_logic::code_rule_dsl::logic::plan::corpus::matchers::*;
+                #[cfg(test)]
+                pub mod tests;
+            }
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::plan::{Error, Outcome, Result, lower};
             #[allow(unused_imports)]
