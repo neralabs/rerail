@@ -35,11 +35,11 @@ export function lineOf(source, node) {
 export const originalName = specifier => (specifier.propertyName ?? specifier.name).text;
 
 /**
- * Every code file under `folder` in the repository at `root`, as `{ path, text }` with a repository-relative path:
+ * Every code file under `folders` in the repository at `root`, as `{ path, text }` with a repository-relative path:
  * untracked ones too, so a new file is checked before its first commit.
  */
-export function codeFiles(root, folder) {
-  const listed = spawnSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard", folder], { cwd: root, encoding: "utf8", maxBuffer: 1 << 28 });
+export function codeFiles(root, ...folders) {
+  const listed = spawnSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard", ...folders], { cwd: root, encoding: "utf8", maxBuffer: 1 << 28 });
   if (listed.status !== 0) throw new Error(`git ls-files failed: ${listed.stderr}`);
   return listed.stdout.split("\0").filter(path => CODE.test(path)).map(path => ({ path, text: readFileSync(resolve(root, path), "utf8") }));
 }

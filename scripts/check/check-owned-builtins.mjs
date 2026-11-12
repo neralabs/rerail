@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// The Node built-ins only one module in src/ may use, each owned by the module that makes it safe on Windows.
+// The Node built-ins only one module in src/ or test/ may use, each owned by the module that makes it safe on Windows.
 //
 // Rerail fixes several classes of Windows defect by sending every use of a built-in through one module. Each row of
-// RULES names that module (the owner), the built-in modules, the names in them only the owner may reach (or none, when
-// no use is safe) or, for a row with `options`, the options only the owner may call them with, the files the rule
+// RULES names that module (the owner), the modules it watches, the names in them only the owner may reach (or none,
+// when no use is safe) or, for a row with `options`, the options only the owner may call them with, the files the rule
 // covers, and the reason:
 //
 //   child-process   node:child_process, anywhere in src/. On Windows Node starts a child with a visible window unless
@@ -26,6 +26,16 @@
 //                   (a spread, a variable), anywhere in src/; any other rm is free. That rm repeats the retries at every
 //                   level of the folder, each try at a folder removing its contents with a full set again: a file
 //                   Windows held one folder down kept a removal trying for minutes rather than 5.5 s.
+//   test-folder-removal
+//                   In test/, but the files TEST_EXEMPT names: rmdir and rmdirSync of node:fs in any form, rm and rmSync
+//                   called with recursive (or options the check cannot read), and rimraf. Removing one file is free.
+//                   On Windows a folder cannot be removed while a process runs in it or holds a file in it (EBUSY,
+//                   EPERM): a test that removed its temp folder with one rm failed whenever something still held it, a
+//                   Git a session left running, a daemon or database not closed, or antivirus scanning a file just
+//                   written. test/support/platform/remove-folder.ts fails at once, naming the process, when one the
+//                   test started still runs there, and otherwise retries as Rerail's own removals do.
+//
+// An option given `false` asks for nothing: `rm(file, { recursive: false })` removes one file.
 //
 // One walk of each file finds every way to reach a name: an `import` (named, default or namespace), `import x =
 // require(...)`, the module's name as an argument of any call (`require`, `import()`, a `createRequire` result,
@@ -56,8 +66,21 @@ export const KEYED = [
   "src/api/",
 ];
 
+/** The module every test removes its folders through. */
+export const REMOVE_FOLDER = "test/support/platform/remove-folder.ts";
+
+/** Test files left to remove folders themselves, each with the reason. */
+export const TEST_EXEMPT = new Map([
+  ["test/scripts/ensure-sqlite.test.mjs", "runs under `node --test`, which cannot load the TypeScript helper"],
+  ["test/setup/scratch-cleanup.test.ts", "its mock of node:fs/promises hands each removal it does not fail to the real rm, with the caller's options"],
+  ["test/support/platform/remove-folder.test.ts", "shows the one try the helper replaces failing while a process runs in the folder"],
+]);
+
 const inSrc = path => path.startsWith("src/");
+const inTests = path => path.startsWith("test/") && !TEST_EXEMPT.has(path);
 const keyed = path => KEYED.some(entry => (entry.endsWith("/") ? path.startsWith(entry) : path === entry));
+
+const TEST_FOLDER_REMOVAL_MESSAGE = `removes a folder directly; use removeFolder or removeFolderSync from ${REMOVE_FOLDER}, which names a process the test left running in it and waits out any other holder on Windows`;
 
 /**
  * One owned built-in: `names` are dotted paths inside each of `modules` (`constants.O_NOFOLLOW`); without them every
@@ -105,6 +128,31 @@ export const RULES = [
     options: ["maxRetries"],
     covers: inSrc,
     message: "gives rm maxRetries, which rm repeats at every level of the folder, so a file Windows holds a folder down stalls the removal for minutes; use removeWithRetry from src/engine/file-replace.ts, which counts its own tries",
+  },
+  // One rule in three rows: the names no test may reach, the calls that remove a folder, and a module that only does.
+  {
+    id: "test-folder-removal",
+    owner: REMOVE_FOLDER,
+    modules: FS,
+    names: ["rmdir", "rmdirSync"],
+    covers: inTests,
+    message: TEST_FOLDER_REMOVAL_MESSAGE,
+  },
+  {
+    id: "test-folder-removal",
+    owner: REMOVE_FOLDER,
+    modules: FS,
+    names: ["rm", "rmSync"],
+    options: ["recursive"],
+    covers: inTests,
+    message: TEST_FOLDER_REMOVAL_MESSAGE,
+  },
+  {
+    id: "test-folder-removal",
+    owner: REMOVE_FOLDER,
+    modules: ["rimraf"],
+    covers: inTests,
+    message: TEST_FOLDER_REMOVAL_MESSAGE,
   },
 ].map(rule => ({ ...rule, names: rule.names?.map(name => name.split(".")) }));
 
@@ -202,11 +250,16 @@ function importBindings(node) {
 /** The property an object pattern's element reads: `a` in `{ a }`, `{ a: b }`, `{ "a": b }` and `{ ["a"]: b }`. */
 const elementKey = element => nameText(element.propertyName ?? element.name);
 
-/** Whether an object literal's property may set one of `names`: a spread, a key the check cannot read, or one of them. */
+/**
+ * Whether an object literal's property may set one of `names`: a spread, a key the check cannot read, or one of them
+ * given any value but `false`, which asks for nothing.
+ */
 function propertySets(property, names) {
   if (ts.isSpreadAssignment(property)) return true;
   const key = nameText(property.name);
-  return key === undefined || names.includes(key);
+  if (key === undefined) return true;
+  const unset = ts.isPropertyAssignment(property) && property.initializer.kind === ts.SyntaxKind.FalseKeyword;
+  return names.includes(key) && !unset;
 }
 
 /** Whether a call's options argument may set one of `names`: options that are no object literal may hold any. */
@@ -469,11 +522,11 @@ export function ownedBuiltinProblems(files, rules = RULES) {
 }
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const files = codeFiles(resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."), "src");
+  const files = codeFiles(resolve(dirname(fileURLToPath(import.meta.url)), "..", ".."), "src", "test");
   const problems = ownedBuiltinProblems(files);
   for (const { path, line, rule, message } of problems) console.error(`${path}:${line}: [${rule}] ${message}`);
   console.log(problems.length === 0
-    ? `check-owned-builtins: ${files.length} files reach ${RULES.map(rule => rule.id).join(", ")} only through their owners`
+    ? `check-owned-builtins: ${files.length} files reach ${[...new Set(RULES.map(rule => rule.id))].join(", ")} only through their owners`
     : `check-owned-builtins: ${problems.length} problem(s)`);
   process.exit(problems.length === 0 ? 0 : 1);
 }

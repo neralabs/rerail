@@ -1,5 +1,6 @@
 /**
- * Removing a folder a test made: every test removes its folders through this module (`npm run check:folder-removal`).
+ * Removing a folder a test made: every test removes its folders through this module (the `test-folder-removal` rule of
+ * `npm run check:owned-builtins`).
  *
  * Windows refuses to remove a folder while a process runs in it or holds a file in it (`EBUSY`, `EPERM`). A process
  * this test process started that still runs in the folder (a Git, a daemon, a hook) was left running by the test or by

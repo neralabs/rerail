@@ -1,10 +1,11 @@
-// scripts/check/check-owned-builtins.mjs: each built-in that one module owns is reached only through that module.
+// scripts/check/check-owned-builtins.mjs: each built-in that one module owns is reached only through that module, and
+// every folder a test makes is removed through test/support/platform/remove-folder.ts.
 
 import { spawnSync } from "node:child_process";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { ownedBuiltinProblems, RULES } from "../../../scripts/check/check-owned-builtins.mjs";
+import { ownedBuiltinProblems, REMOVE_FOLDER, RULES, TEST_EXEMPT } from "../../../scripts/check/check-owned-builtins.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const rules = (problems) => problems.map(({ path, line, rule }) => `${path}:${line}:${rule}`);
@@ -53,7 +54,7 @@ const FORMS = {
 };
 
 /** A file each named rule covers, the owner aside. */
-const COVERED = { "file-replace": "src/a.ts", "checkout-paths": "src/engine/catalog/a.ts", "no-follow": "src/a.ts" };
+const COVERED = { "file-replace": "src/a.ts", "checkout-paths": "src/engine/catalog/a.ts", "no-follow": "src/a.ts", "test-folder-removal": "test/a.ts" };
 
 describe("check-owned-builtins", () => {
   describe.each(Object.keys(COVERED))("the %s rule", (id) => {
@@ -143,7 +144,7 @@ describe("check-owned-builtins", () => {
       { path: "src/a.ts", text: 'import { rm } from "node:fs/promises";\nawait rm("x");\nawait rm("x", { force: true });\nawait rm("x", { recursive: true, force: true, ["force"]: true });\n' },
       { path: "src/b.ts", text: 'import { rmSync } from "node:fs";\nrmSync("x", { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });\n' },
       { path: "src/c.ts", text: 'import { removeWithRetry } from "./engine/file-replace.js";\nawait removeWithRetry("x");\nconst retries = { maxRetries: 10 };\n' },
-      { path: "test/d.ts", text: 'import { rm } from "node:fs/promises";\nawait rm("x", { recursive: true, maxRetries: 10 });\n' },
+      { path: "test/d.ts", text: 'import { rm } from "node:fs/promises";\nawait rm("x", { maxRetries: 10 });\n' },
     ])).toEqual([]);
   });
 
@@ -175,7 +176,44 @@ describe("check-owned-builtins", () => {
     ])).toEqual([]);
   });
 
-  it("passes on this checkout's src/", () => {
+  it("flags a test that removes its temp folder directly", () => {
+    const problems = ownedBuiltinProblems([{
+      path: "test/a.test.ts",
+      text: 'import { mkdtemp, rm } from "node:fs/promises";\nafterEach(async () => {\n  await rm(root, { recursive: true, force: true });\n});\n',
+    }]);
+    expect(rules(problems)).toEqual(["test/a.test.ts:3:test-folder-removal"]);
+    expect(problems[0].message).toContain(REMOVE_FOLDER);
+  });
+
+  it("flags every other way a test removes a folder itself, however it reaches the removal", () => {
+    expect(rules(ownedBuiltinProblems([
+      { path: "test/b.test.ts", text: 'import { rmSync as remove } from "node:fs";\nremove(root, { force: true, recursive: true });\n' },
+      { path: "test/c.test.ts", text: 'import * as fs from "node:fs";\nfs.rmSync(root, { recursive: true });\nfs.rmdirSync(root);\n' },
+      { path: "test/d.test.mjs", text: 'import fs from "fs";\nawait fs.promises.rm(root, options);\n' },
+      { path: "test/e.test.ts", text: 'import { promises as p } from "node:fs";\nawait p.rmdir(root);\nawait p.rm(root, { ...forced });\n' },
+      { path: "test/support/f.ts", text: 'import { rimraf } from "rimraf";\n' },
+      { path: "test/g.test.mjs", text: 'const { rmSync } = require("node:fs");\nrmSync(root, { recursive: true });\n' },
+      { path: "test/h.test.ts", text: '(await import("node:fs")).rmSync(root, { recursive: true });\nconst fs = await import("node:fs/promises");\nconst alias = fs;\nawait alias.rmdir(root);\n' },
+    ]))).toEqual([
+      "test/b.test.ts:2:test-folder-removal", "test/c.test.ts:2:test-folder-removal", "test/c.test.ts:3:test-folder-removal",
+      "test/d.test.mjs:2:test-folder-removal", "test/e.test.ts:2:test-folder-removal", "test/e.test.ts:3:test-folder-removal",
+      "test/support/f.ts:1:test-folder-removal", "test/g.test.mjs:2:test-folder-removal", "test/h.test.ts:1:test-folder-removal",
+      "test/h.test.ts:4:test-folder-removal",
+    ]);
+  });
+
+  it("allows a test to remove one file, and leaves the helper, the exempt files and code outside test/ alone", () => {
+    expect(ownedBuiltinProblems([
+      { path: "test/a.test.ts", text: 'import { rm, rmSync } from "node:fs/promises";\nawait rm(file);\nrmSync(file, { force: true, recursive: false });\n' },
+      { path: "test/b.test.ts", text: 'import { removeFolder } from "./support/platform/remove-folder.js";\nawait removeFolder(root);\n' },
+      { path: "test/c.test.ts", text: 'import type { rm } from "node:fs/promises";\nconst fake: typeof rm = async () => {};\nawait fake(root, { recursive: true });\n' },
+      { path: REMOVE_FOLDER, text: 'import { rm } from "node:fs/promises";\nawait rm(path, { recursive: true, force: true });\n' },
+      ...[...TEST_EXEMPT.keys()].map(path => ({ path, text: 'import { rm } from "node:fs/promises";\nawait rm(prefix, { recursive: true, force: true });\n' })),
+      { path: "src/a.ts", text: 'import { rm } from "node:fs/promises";\nawait rm(path, { recursive: true });\n' },
+    ])).toEqual([]);
+  });
+
+  it("passes on this checkout's src/ and test/", () => {
     const run = spawnSync(process.execPath, [join(ROOT, "scripts/check/check-owned-builtins.mjs")], { cwd: ROOT, encoding: "utf8" });
     expect(run.stderr).toBe("");
     expect(run.status).toBe(0);
