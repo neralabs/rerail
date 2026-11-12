@@ -686,6 +686,33 @@ describe("CodeRuleBridge", () => {
     }
   });
 
+  it("waits behind an overdue walk at the end of the agent's run: a checkpoint that ends it, or once for a boundary that skipped its wait", async () => {
+    const root = await workspace();
+    const pending: string[] = [];
+    const bridge = createBridge(root, auditor(async (_sessionId, batch) => response(batch)), { onDiscoveryPending: boundary => { pending.push(boundary); } });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      // The session's first walk, which the shell result gives up on, and the pass the boundaries ask for behind it.
+      const [slow, behind] = [holdDiscovery("directories", root), holdDiscovery("directories", root)];
+      await bridge.openWorkspace("session-1");
+      await slow.entered;
+      await bridge.begin("shell-1", "Bash", { command: "./build.sh" });
+      const result = await discoveryWaits(() => bridge.finish("shell-1"));
+      const turn = await discoveryWaits(() => bridge.checkpoint("turn"));
+      // A yield after that turn end waits in its stead, once.
+      const yielded = [await discoveryWaits(() => bridge.awaitSkippedWalk()), await discoveryWaits(() => bridge.awaitSkippedWalk())];
+      // A stop hook waits though the walk is still overdue; a yield after a boundary that waited does not wait again.
+      const stop = await discoveryWaits(() => bridge.checkpoint("turn", { endsRun: true }));
+      const afterStop = await discoveryWaits(() => bridge.awaitSkippedWalk());
+      expect({ waits: [result, turn, ...yielded, stop, afterStop], pending })
+        .toEqual({ waits: [1, 0, 1, 0, 1, 0], pending: ["command", "turn", "turn"] });
+      slow.release();
+      behind.release();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("discovers a command's shell write that races the startup snapshot read", async () => {
     const root = await workspace();
     const path = join(root, "src", "a.py");

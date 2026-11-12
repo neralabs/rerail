@@ -31,8 +31,9 @@ interface FixtureOptions {
   /** Start the workspace's repository and gate the runtime on it, as resident runtimes are. */
   startGate?: boolean;
   timingLog?(line: string): void;
+  discoveryWaitMs?: number;
 }
-async function fixture({ deliverBackground, host = "claude-code", prepare, auditGeneratedEdits, startGate, timingLog }: FixtureOptions = {}) {
+async function fixture({ deliverBackground, host = "claude-code", prepare, auditGeneratedEdits, startGate, timingLog, discoveryWaitMs }: FixtureOptions = {}) {
   const root = await temporaryDirectory();
   await prepare?.(root);
   const databasePath = join(root, "rerail.sqlite");
@@ -44,6 +45,7 @@ async function fixture({ deliverBackground, host = "claude-code", prepare, audit
     embedder: testEmbedder, startGate: startGate === true,
     ...(deliverBackground === undefined ? {} : { deliverBackground }),
     ...(timingLog === undefined ? {} : { timingLog }),
+    ...(discoveryWaitMs === undefined ? {} : { discoveryWaitMs }),
     createAuditor: options => {
       steerDelivery = options.steerDelivery;
       return {
@@ -557,6 +559,131 @@ describe("source-scoped steers", () => {
       stderr.mockRestore();
       vi.mocked(opendir).mockRestore();
     }
+  });
+
+  describe("a shell-write walk an earlier boundary stopped waiting for", () => {
+    /** The walk's wait, told apart by its length from the edit checks' caps (1 s and 10 s). */
+    const WALK_WAIT_MS = 4_000;
+    interface ShellCommand { toolName: string; input: Record<string, unknown> }
+    const BASH: ShellCommand = { toolName: "Bash", input: { command: "./gen.sh" } };
+
+    /** Resolves once `done` holds, checked after each turn of the event loop: fake timers leave `setImmediate` real. */
+    async function until(done: () => boolean): Promise<void> {
+      while (!done()) await new Promise(resolve => setImmediate(resolve));
+    }
+
+    /**
+     * A session on `host` whose rules steer on NEEDLE, where a shell command writes NEEDLE to a.py and its result's wait
+     * for the walk runs out: the walk stays held until `release`. Fake timers run the waits, so nothing depends on the
+     * machine's speed; `walkWaits` counts the waits for the walk set so far, and `steered` the files steered on.
+     */
+    async function overdueWalk(host: RerailHost, command: ShellCommand) {
+      const steered: string[] = [];
+      const test = await fixture({
+        host, discoveryWaitMs: WALK_WAIT_MS,
+        prepare: root => writeFile(join(root, "a.py"), "before\n"),
+        auditGeneratedEdits: steerDelivery => async (sessionId, batch) => {
+          const needles = batch.edits.filter(edit => edit.generatedText?.includes("NEEDLE")).map(edit => edit.path);
+          if (needles.length > 0) {
+            await steerDelivery.requestSteer(sessionId, "steer", `NEEDLE in ${needles.join(", ")}`, {
+              revision: batch.revision, scope: batch.edits.map(edit => edit.path),
+            });
+            steered.push(...needles);
+          }
+          return { revision: batch.revision, disposition: "continue", violations: [], failures: [] };
+        },
+      });
+      const sessionId = test.session.sessionId;
+      // The baseline walk, not held.
+      await test.runtime.ingest({ kind: "turn-end", eventId: "baseline", sessionId, text: "" });
+      const root = await realpath(test.root);
+      const walk = Promise.withResolvers<void>();
+      const actual = await vi.importActual<typeof FsPromises>("node:fs/promises");
+      vi.mocked(opendir).mockImplementation(async (...args) => {
+        if (args[0] === root) await walk.promise;
+        return actual.opendir(...args);
+      });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const timers = vi.spyOn(globalThis, "setTimeout");
+      const overdue = {
+        runtime: test.runtime, sessionId, steered,
+        walkWaits: () => timers.mock.calls.filter(([, milliseconds]) => milliseconds === WALK_WAIT_MS).length,
+        release: () => walk.resolve(),
+        close: async () => {
+          walk.resolve();
+          timers.mockRestore();
+          vi.useRealTimers();
+          await test.close();
+          vi.mocked(opendir).mockRestore();
+        },
+      };
+      try {
+        await test.runtime.ingest({ kind: "call", eventId: "call-1", sessionId, toolCallId: "shell-1", ...command });
+        await writeFile(join(test.root, "a.py"), "NEEDLE\n");
+        const result = test.runtime.ingest({ kind: "result", eventId: "result-1", sessionId, toolCallId: "shell-1", toolName: command.toolName, output: "" });
+        await until(() => overdue.walkWaits() === 1);
+        await vi.advanceTimersToNextTimerAsync();
+        expect(await result).toEqual([]);
+      } catch (error) {
+        await overdue.close();
+        throw error;
+      }
+      return overdue;
+    }
+
+    it.each([
+      { host: "claude-code" as const, command: BASH },
+      { host: "codex" as const, command: { toolName: "shell", input: { command: ["bash", "-lc", "./gen.sh"] } } },
+    ])("still holds a $host stop hook, which carries what the walk finds when it ends inside the wait", async ({ host, command }) => {
+      const test = await overdueWalk(host, command);
+      try {
+        let answered = false;
+        const stop = test.runtime.ingest({ kind: "turn-end", eventId: "stop", sessionId: test.sessionId, text: "done" })
+          .finally(() => { answered = true; });
+        await until(() => answered || test.walkWaits() === 2);
+        test.release();
+        expect(await stop).toEqual([expect.objectContaining({ content: "NEEDLE in a.py" })]);
+      } finally {
+        await test.close();
+      }
+    });
+
+    it("holds OMP's yield in its last turn end's stead, which carries what the walk finds when it ends inside the wait", async () => {
+      const test = await overdueWalk("omp", { toolName: "bash", input: { command: "./gen.sh" } });
+      try {
+        let answered = false;
+        // OMP ends a turn at each model call; the agent's run ends at its yield, right after the last one.
+        const end = (async () => [
+          ...await test.runtime.ingest({ kind: "turn-end", eventId: "last-turn", sessionId: test.sessionId, text: "done" }),
+          ...await test.runtime.yieldDeliveries(test.sessionId),
+        ])().finally(() => { answered = true; });
+        await until(() => answered || test.walkWaits() === 2);
+        test.release();
+        expect(await end).toEqual([expect.objectContaining({ content: "NEEDLE in a.py" })]);
+      } finally {
+        await test.close();
+      }
+    });
+
+    it("answers a later shell result at once, and what the walk finds comes with the next event", async () => {
+      const test = await overdueWalk("claude-code", BASH);
+      try {
+        const { sessionId } = test;
+        await test.runtime.ingest({ kind: "call", eventId: "call-2", sessionId, toolCallId: "shell-2", toolName: "Bash", input: { command: "ls" } });
+        let answered = false;
+        const result = test.runtime.ingest({ kind: "result", eventId: "result-2", sessionId, toolCallId: "shell-2", toolName: "Bash", output: "" })
+          .finally(() => { answered = true; });
+        await until(() => answered || test.walkWaits() === 2);
+        const waited = test.walkWaits() === 2;
+        test.release();
+        const answer = await result;
+        await until(() => test.steered.length > 0);
+        const next = await test.runtime.ingest({ kind: "call", eventId: "call-3", sessionId, toolCallId: "shell-3", toolName: "Bash", input: { command: "ls" } });
+        expect({ waited, answer, next }).toEqual({ waited: false, answer: [], next: [expect.objectContaining({ content: "NEEDLE in a.py" })] });
+      } finally {
+        await test.close();
+      }
+    });
   });
 
   it("starts a session before its evaluator opens, and answers a tool call at once without code rules", async () => {

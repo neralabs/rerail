@@ -891,7 +891,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       // The source walk checks the shell writes it finds as generated edits, so the boundary waits from its start.
       await this.#waitingForEditChecks(state, yields, async () => {
         const walkStartedAt = performance.now();
-        await bridge?.checkpoint("turn");
+        // A stop hook waits for the walk even behind one an earlier boundary gave up on: a finding that misses it reaches
+        // the agent only once the person prompts again.
+        await bridge?.checkpoint("turn", { endsRun: yields });
         this.#reportSlowTurnEndWait(event.sessionId, "the source walk", walkStartedAt);
         // The turn's own edits, not unrelated audits: the session-start repository audit runs for minutes on a
         // large checkout, and a turn boundary that waited for it held the session's request lane past the host's timeout.
@@ -1013,10 +1015,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * The end of an OMP or Pi agent's run, which their turn end is not (they end a turn at every model call). Waits, as
-   * a turn end does, for the session's edit checks within `NATIVE_EDIT_CHECK_MS`, then answers with the steers still
-   * pending and the digest of the findings no earlier boundary waited for. Findings that arrive later wait for the
-   * session's next yield.
+   * The end of an OMP or Pi agent's run, which their turn end is not (they end a turn at every model call). When the
+   * last turn end answered at once behind a source walk an earlier boundary gave up on, waits for that walk as the turn
+   * end would have (`CodeRuleBridge.awaitSkippedWalk`). Then waits, as a turn end does, for the session's edit checks
+   * within `NATIVE_EDIT_CHECK_MS`, and answers with the steers still pending and the digest of the findings no earlier
+   * boundary waited for. Findings that arrive later wait for the session's next yield.
    */
   yieldDeliveries(sessionId: string): Promise<AdapterDelivery[]> {
     if (this.#stopped()) return Promise.resolve([]);
@@ -1024,7 +1027,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       const state = this.#sessions.get(sessionId);
       if (state === undefined || this.#stopped()) return [];
       const bridge = state.codeRuleReady ? state.codeRuleBridge : undefined;
-      await this.#waitingForEditChecks(state, true, () => this.#awaitEditChecks(state, bridge, NATIVE_EDIT_CHECK_MS));
+      await this.#waitingForEditChecks(state, true, async () => {
+        await bridge?.awaitSkippedWalk();
+        await this.#awaitEditChecks(state, bridge, NATIVE_EDIT_CHECK_MS);
+      });
       const deliveries = await this.#collectPendingSteers(state);
       const digest = await this.#takeMissedDigest(state);
       if (digest !== undefined) deliveries.push(digest);

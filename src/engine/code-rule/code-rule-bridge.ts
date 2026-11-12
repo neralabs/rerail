@@ -394,6 +394,11 @@ interface SourceDiscovery {
    */
   overdueThrough: number;
   /**
+   * The last boundary answered at once behind an overdue walk, and none has waited since. A host whose last turn end
+   * is not the end of the agent's run waits for that walk at the end instead (`awaitSkippedWalk`).
+   */
+  skippedWait: boolean;
+  /**
    * The unlisted files the last walk found too large to read, by path, with their stamps. Each is reported as not
    * checked at one boundary only while its stamp holds (`reported`), not at every turn: it is no listed source.
    */
@@ -708,7 +713,8 @@ export function isCommandTool(toolName: string): boolean {
  * waits for the session's evaluator to open, before answering with what it has. The work goes on, and what it finds
  * is audited and delivered at a later boundary; waiting longer would hold the session's event lane past the host's
  * per-event timeout. Once a boundary's wait for a walk runs out, the boundaries that come before that walk has finished
- * do not wait for it; the first one after it waits for its own walk again.
+ * do not wait for it; the first one after it waits for its own walk again. The end of the agent's run waits as before,
+ * so what such a walk finds in time still reaches the agent before its run ends.
  */
 export const BOUNDARY_DISCOVERY_WAIT_MS = 10_000;
 /**
@@ -831,7 +837,7 @@ export class CodeRuleBridge {
       this.#lastResponse = emptyResponse(0);
       const discovery: SourceDiscovery = {
         startedAt, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
-        passesStarted: 0, passesFinished: 0, overdueThrough: 0,
+        passesStarted: 0, passesFinished: 0, overdueThrough: 0, skippedWait: false,
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
         heads: new Map(), unmerged: new Map(), passedCheckouts: new Set(), readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
       };
@@ -1109,12 +1115,16 @@ export class CodeRuleBridge {
   /**
    * Resolves after every requested walk has run, so the checkpoint's violations are delivered with this boundary; a walk
    * that outlasts the boundary's wait is reported pending, and what it finds reaches a later boundary. Behind a walk an
-   * earlier boundary stopped waiting for, it resolves at once, reported pending.
+   * earlier boundary stopped waiting for, it resolves at once, reported pending, unless it `endsRun`: the agent's run
+   * ends with this answer, and a finding that misses it reaches the agent only once the person prompts again.
    */
-  async checkpoint(checkpoint: Extract<CodeRuleCheckpoint, "turn" | "final">): Promise<CodeRuleResponse> {
+  async checkpoint(
+    checkpoint: Extract<CodeRuleCheckpoint, "turn" | "final">,
+    { endsRun = false }: { endsRun?: boolean } = {},
+  ): Promise<CodeRuleResponse> {
     const discovery = this.#requireDiscovery();
     discovery.toolCalls.finishAll(await filesystemClock());
-    await this.#awaitDiscovery(discovery, checkpoint, checkpoint);
+    await this.#awaitDiscovery(discovery, checkpoint, checkpoint, endsRun);
     await this.#noteIgnoreRules([]);
     this.#assertDiscovery(discovery);
     return this.#discoveryResponse(discovery);
@@ -1127,6 +1137,20 @@ export class CodeRuleBridge {
     this.#assertDiscovery(discovery);
     return this.#revision === revision ? [] : [this.#lastResponse];
   }
+
+  /**
+   * The end of an agent's run on a host whose turn end is not it (OMP's and Pi's yield). When the last boundary answered
+   * at once behind an overdue walk, waits for that walk's whole run, as that boundary would have, at most
+   * `#discoveryWaitMs`, and asks for no pass of its own: what the walk finds in time reaches the agent before its run
+   * ends. Past the wait the walk stays overdue; that boundary was already reported pending.
+   */
+  async awaitSkippedWalk(): Promise<void> {
+    const discovery = this.#discovery;
+    if (discovery === undefined || discovery.cancelled || !discovery.skippedWait) return;
+    discovery.skippedWait = false;
+    if (discovery.idle !== undefined) await this.#waitForWalk(discovery, discovery.idle, undefined);
+  }
+
   async settleGeneratedEdits(): Promise<void> {
     this.#requireSession();
     await this.#queue;
@@ -1251,28 +1275,42 @@ export class CodeRuleBridge {
    * A requested walk, waited for at most `#discoveryWaitMs`; a walk that outlasts it is reported pending at `boundary`.
    * Passes run one after another, so while the pass an earlier boundary stopped waiting for has yet to finish, this
    * boundary's pass is behind it: the boundary asks for that pass and is reported pending at once rather than spend the
-   * wait again. Once that pass has run, a boundary waits again, though passes asked for behind it may still run: one
-   * slow walk does not stop later boundaries from waiting for walks that fit the wait.
+   * wait again, unless it `endsRun`. Once that pass has run, a boundary waits again, though passes asked for behind it
+   * may still run: one slow walk does not stop later boundaries from waiting for walks that fit the wait.
    */
   async #awaitDiscovery(
     discovery: SourceDiscovery,
     checkpoint: DiscoveryCheckpoint,
     boundary: Exclude<DiscoveryPendingBoundary, "close">,
+    endsRun = false,
   ): Promise<void> {
     const idle = this.#requestDiscovery(discovery, checkpoint);
-    if (sessionWalkOverdue(discovery)) {
-      if (!discovery.cancelled) this.#reportDiscoveryPending(boundary);
-      return;
+    discovery.skippedWait = !endsRun && sessionWalkOverdue(discovery);
+    if (!discovery.skippedWait) {
+      await this.#waitForWalk(discovery, idle, boundary);
+    } else if (!discovery.cancelled) {
+      this.#reportDiscoveryPending(boundary);
     }
+  }
+
+  /**
+   * Waits for the walk's run to go `idle`, at most `#discoveryWaitMs`. Past the wait, the pass holding the writes so far
+   * is overdue, and `boundary`, if any, is reported pending.
+   */
+  async #waitForWalk(
+    discovery: SourceDiscovery,
+    idle: Promise<void>,
+    boundary: Exclude<DiscoveryPendingBoundary, "close"> | undefined,
+  ): Promise<void> {
     const budget = Promise.withResolvers<boolean>();
     const timer = setTimeout(() => budget.resolve(false), this.#discoveryWaitMs);
     try {
       const walked = await Promise.race([idle.then(() => true), budget.promise]);
       if (!walked && !discovery.cancelled) {
         discovery.pendingReported = true;
-        // This boundary's writes are in the pass running now, or in the one queued behind it if its request is still there.
+        // The writes so far are in the pass running now, or in the one queued behind it if a request is still there.
         discovery.overdueThrough = discovery.passesStarted + (discovery.requested === undefined ? 0 : 1);
-        this.#reportDiscoveryPending(boundary);
+        if (boundary !== undefined) this.#reportDiscoveryPending(boundary);
       }
     } finally {
       clearTimeout(timer);
