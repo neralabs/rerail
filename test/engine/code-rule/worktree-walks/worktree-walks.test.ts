@@ -1,17 +1,18 @@
+import type * as ChildProcess from "node:child_process";
 import { execFileSync } from "node:child_process";
 import type * as FileSystem from "node:fs/promises";
-import { lstat, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { appendFile, lstat, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
 import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/code-rule/code-rule.js";
 import { WorktreeWalks } from "../../../../src/engine/code-rule/worktree-walks.js";
-import type * as Git from "../../../../src/engine/git.js";
 
 /**
  * How many times each file was read whole through `node:fs/promises`, by the path it was read at; the listings held back
- * until a test lets them go, by folder; and how many times Git listed each checkout's changed files.
+ * until a test lets them go, by folder; and how many Git processes listed each checkout's changed files
+ * (`git ls-files --modified --others`), by the folder Git ran in.
  */
 const counted = vi.hoisted(() => ({
   reads: new Map<string, number>(),
@@ -35,13 +36,16 @@ vi.mock("node:fs/promises", async importOriginal => {
     },
   };
 });
-vi.mock("../../../../src/engine/git.js", async importOriginal => {
-  const actual = await importOriginal<typeof Git>();
+vi.mock("node:child_process", async importOriginal => {
+  const actual = await importOriginal<typeof ChildProcess>();
   return {
     ...actual,
-    gitModifiedOrUntrackedPaths: async (cwd: string) => {
-      counted.listings.set(cwd, (counted.listings.get(cwd) ?? 0) + 1);
-      return await actual.gitModifiedOrUntrackedPaths(cwd);
+    execFile: (file: string, args: unknown, ...rest: unknown[]): unknown => {
+      if (Array.isArray(args) && args.includes("ls-files") && args.includes("--modified")) {
+        const folder = String(args[args.indexOf("-C") + 1]);
+        counted.listings.set(folder, (counted.listings.get(folder) ?? 0) + 1);
+      }
+      return Reflect.apply(actual.execFile, undefined, [file, args, ...rest]);
     },
   };
 });
@@ -152,6 +156,34 @@ async function shell(bridge: CodeRuleBridge, id: string, run: () => unknown): Pr
   await bridge.finish(id);
 }
 
+/** Each edit a session's auditor was given, by path: the text the session measured it from, else why it had none. */
+function told({ auditGeneratedEdits }: Session): Array<[string, string | undefined]> {
+  return auditGeneratedEdits.mock.calls
+    .flatMap(([, batch]) => batch.edits.map(edit => [edit.path, edit.previousText ?? edit.previousReadError] as [string, string | undefined]))
+    .sort(([left], [right]) => left.localeCompare(right));
+}
+
+/** How many times Git listed the changed files of any of `folders`. */
+function listedIn(folders: readonly string[]): number {
+  return folders.reduce((sum, folder) => sum + (listings.get(folder) ?? 0), 0);
+}
+
+/**
+ * Gives the worktree at `worktree` a file changed since Git staged it, an untracked file, a file Git ignores and a file
+ * deleted since Git staged it, all before any session opens.
+ */
+async function dirty(worktree: string): Promise<void> {
+  await writeFile(join(worktree, "src", "gone.py"), "gone\n");
+  git(worktree, "add", "src/gone.py");
+  git(worktree, "commit", "--quiet", "-m", "gone");
+  await rm(join(worktree, "src", "gone.py"));
+  await writeFile(join(worktree, "src", "a.py"), "old\nbefore\n");
+  await writeFile(join(worktree, "src", "new.py"), "draft\n");
+  await writeFile(join(worktree, ".gitignore"), "src/ignored.py\n");
+  await writeFile(join(worktree, "src", "ignored.py"), "kept\n");
+  await awaitClockAfter(join(worktree, "src", "ignored.py"));
+}
+
 /** Holds the next listing of `folder` until `release` is called; `entered` resolves as the listing starts. */
 function holdListing(folder: string): { entered: Promise<void>; release: () => void } {
   const entered = Promise.withResolvers<void>();
@@ -258,8 +290,92 @@ describe("WorktreeWalks", () => {
     await third.bridge.checkpoint("turn");
     hold.release();
     await turn(first, second, third);
-    // `w4` is new to each session: listed once for the first session's walk and once for the walk the other two share.
-    expect(listings.get(worktrees[3]!)).toBe(2);
+    // `w4` is new to each session: listed for the first session's walk, and kept for the walk the other two share.
+    expect(listings.get(worktrees[3]!)).toBe(1);
+  });
+
+  it("lists each worktree's changed files from Git once for the sessions that first take it, and not for one joining later", async () => {
+    const { main, checkouts, worktrees } = await repository(["w1", "w2", "w3", "w4"]);
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    // Three sessions in `main` open one after the other, so each first takes the four worktrees in a walk of its own.
+    for (let opened = 0; opened < 3; opened += 1) await session(main, checkouts, walks);
+    expect(listedIn(worktrees)).toBe(4);
+    await session(main, checkouts, walks);
+    expect(listedIn(worktrees)).toBe(4);
+  });
+
+  it("tells each session that first takes a worktree what Git lists of it, as when each session listed it itself", async () => {
+    const { main, checkouts, worktrees } = await repository(["w1", "w2", "w3", "w4"]);
+    const w4 = worktrees[3]!;
+    await dirty(w4);
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const sessions: Session[] = [];
+    for (const folder of [worktrees[0]!, worktrees[1]!, worktrees[2]!, main]) sessions.push(await session(folder, checkouts, walks));
+    await turn(...sessions);
+    for (const name of ["a.py", "new.py", "ignored.py", "gone.py"]) await appendFile(join(w4, "src", name), "after\n");
+    await turn(...sessions);
+    // What each session measured the writes from when it listed the worktree itself: its first sight of the modified and
+    // untracked files; none of the file Git ignores, which Git does not list; Git's text of the deleted one.
+    const expected = [
+      ["../w4/src/a.py", "old\nbefore\n"],
+      ["../w4/src/gone.py", "gone\n"],
+      ["../w4/src/ignored.py", "Source changed outside a tool with a captured preimage"],
+      ["../w4/src/new.py", "draft\n"],
+    ];
+    expect(sessions.map(told)).toEqual(sessions.map(() => expected));
+  });
+
+  it("lists a worktree again for a session joining after its index changed", async () => {
+    const { main, checkouts, worktrees } = await repository(["w1", "w2"]);
+    const w2 = worktrees[1]!;
+    await writeFile(join(w2, "src", "a.py"), "old\nbefore\n");
+    await awaitClockAfter(join(w2, "src", "a.py"));
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    await session(worktrees[0]!, checkouts, walks);
+    git(w2, "add", "src/a.py");
+    await session(main, checkouts, walks);
+    expect(listings.get(w2)).toBe(2);
+  });
+
+  it("tells a session joining after the repository's info/exclude changed what Git lists now", async () => {
+    const { main, checkouts, worktrees } = await repository(["w1", "w2"]);
+    const w2 = worktrees[1]!;
+    await writeFile(join(w2, "src", "new.py"), "draft\n");
+    await awaitClockAfter(join(w2, "src", "new.py"));
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const first = await session(worktrees[0]!, checkouts, walks);
+    await mkdir(join(main, ".git", "info"), { recursive: true });
+    await appendFile(join(main, ".git", "info", "exclude"), "\nsrc/new.py\n");
+    const second = await session(main, checkouts, walks);
+    await appendFile(join(w2, "src", "new.py"), "after\n");
+    await turn(first, second);
+    // Git listed the file to the first session only: only it measures the write from what it first saw.
+    expect([told(first), told(second)]).toEqual([
+      [["../w2/src/new.py", "draft\n"]],
+      [["../w2/src/new.py", "Source changed outside a tool with a captured preimage"]],
+    ]);
+  });
+
+  it("tells a session joining after core.excludesFile or the file it names changed what Git lists now", async () => {
+    const { main, checkouts, worktrees } = await repository(["w1", "w2", "w3"]);
+    const w3 = worktrees[2]!;
+    const excludes = join(main, "..", "excludes");
+    await writeFile(excludes, "");
+    await writeFile(join(w3, "src", "new.py"), "draft\n");
+    await awaitClockAfter(join(w3, "src", "new.py"));
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const first = await session(worktrees[0]!, checkouts, walks);
+    git(main, "config", "core.excludesFile", excludes);
+    const second = await session(worktrees[1]!, checkouts, walks);
+    await writeFile(excludes, "src/new.py\n");
+    const third = await session(main, checkouts, walks);
+    await appendFile(join(w3, "src", "new.py"), "after\n");
+    await turn(first, second, third);
+    expect([told(first), told(second), told(third)]).toEqual([
+      [["../w3/src/new.py", "draft\n"]],
+      [["../w3/src/new.py", "draft\n"]],
+      [["../w3/src/new.py", "Source changed outside a tool with a captured preimage"]],
+    ]);
   });
 });
 

@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitExcludeFiles, gitHead, gitInstalled, gitUnmergedReader, headMovedOnlyByCommits,
-  readGitBlobIds, readGitBlobs, runGit,
+  gitBranchTips, gitCandidates, gitCheckoutReaders, gitCommitsBetween, gitConfigFiles, gitExcludeFiles, gitHead, gitInstalled, gitUnmergedReader,
+  headMovedOnlyByCommits, readGitBlobIds, readGitBlobs, runGit,
 } from "../../src/engine/git.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 
@@ -336,6 +336,120 @@ describe("gitUnmergedReader", () => {
     const again = await read(root);
     expect(again).toEqual(first);
     expect(again).not.toBe(first);
+  });
+});
+
+describe("gitCheckoutReaders().modifiedOrUntracked", () => {
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  /**
+   * A checkout in a fresh home whose Git reads no system or global configuration, holding `a.py` committed and changed
+   * since, and `b.py` untracked.
+   */
+  async function changedCheckout(): Promise<{ root: string; home: string }> {
+    const home = await realpath(await mkdtemp(join(tmpdir(), "rerail-git-listing-")));
+    roots.push(home);
+    vi.stubEnv("HOME", home);
+    vi.stubEnv("XDG_CONFIG_HOME", "");
+    vi.stubEnv("GIT_CONFIG_GLOBAL", join(home, "no-gitconfig"));
+    vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
+    const root = join(home, "repo");
+    await mkdir(root);
+    git(root, "init", "--quiet");
+    await writeFile(join(root, "a.py"), "1\n");
+    git(root, "add", "a.py");
+    git(root, "commit", "--quiet", "-m", "seed");
+    await writeFile(join(root, "a.py"), "2\n");
+    await writeFile(join(root, "b.py"), "1\n");
+    return { root, home };
+  }
+
+  /** What `read` lists of `cwd` for `tree`, in order. */
+  async function listed(read: ReturnType<typeof gitCheckoutReaders>, cwd: string, tree: object): Promise<string[]> {
+    return [...await read.modifiedOrUntracked(cwd, tree)].sort();
+  }
+
+  it("keeps Git's listing for the same tree while no file Git reads for it changed, and lists again for another tree", async () => {
+    const { root } = await changedCheckout();
+    const read = gitCheckoutReaders();
+    const tree = {};
+    const first = await read.modifiedOrUntracked(root, tree);
+    expect([...first].sort()).toEqual(["a.py", "b.py"]);
+    expect(await read.modifiedOrUntracked(root, tree)).toBe(first);
+    const other = await read.modifiedOrUntracked(root, {});
+    expect(other).not.toBe(first);
+    expect(other).toEqual(first);
+  });
+
+  it("lists again once the index changed, and answers what Git lists now", async () => {
+    const { root } = await changedCheckout();
+    const read = gitCheckoutReaders();
+    const tree = {};
+    expect(await listed(read, root, tree)).toEqual(["a.py", "b.py"]);
+    git(root, "add", "a.py");
+    expect(await listed(read, root, tree)).toEqual(["b.py"]);
+  });
+
+  it("lists again once info/exclude, core.excludesFile or the file it names changed", async () => {
+    const { root, home } = await changedCheckout();
+    const read = gitCheckoutReaders();
+    const tree = {};
+    expect(await listed(read, root, tree)).toEqual(["a.py", "b.py"]);
+    await mkdir(join(root, ".git", "info"), { recursive: true });
+    await writeFile(join(root, ".git", "info", "exclude"), "b.py\n");
+    expect(await listed(read, root, tree)).toEqual(["a.py"]);
+    await writeFile(join(root, ".git", "info", "exclude"), "");
+    expect(await listed(read, root, tree)).toEqual(["a.py", "b.py"]);
+    await writeFile(join(home, "ignores"), "");
+    git(root, "config", "core.excludesFile", join(home, "ignores"));
+    expect(await listed(read, root, tree)).toEqual(["a.py", "b.py"]);
+    await writeFile(join(home, "ignores"), "b.py\n");
+    expect(await listed(read, root, tree)).toEqual(["a.py"]);
+  });
+
+  it("finds each checkout's own excludes file where an include sets it for one checkout alone", async () => {
+    const { root, home } = await changedCheckout();
+    const worktree = join(home, "worktree");
+    git(root, "worktree", "add", "--quiet", "--detach", worktree);
+    await writeFile(join(worktree, "b.py"), "1\n");
+    // The main checkout, on `feature`, reads an excludes file of its own; the detached worktree reads Git's default.
+    git(root, "switch", "--quiet", "-c", "feature");
+    await writeFile(join(home, "feature-ignores"), "");
+    await writeFile(join(home, "feature.gitconfig"), `[core]\n\texcludesFile = ${join(home, "feature-ignores").replaceAll("\\", "/")}\n`);
+    git(root, "config", "includeIf.onbranch:feature.path", join(home, "feature.gitconfig").replaceAll("\\", "/"));
+    const read = gitCheckoutReaders();
+    const [inRoot, inWorktree] = [{}, {}];
+    expect(await listed(read, root, inRoot)).toEqual(["a.py", "b.py"]);
+    expect(await listed(read, worktree, inWorktree)).toEqual(["b.py"]);
+    await mkdir(join(home, ".config", "git"), { recursive: true });
+    await writeFile(join(home, ".config", "git", "ignore"), "b.py\n");
+    expect(await listed(read, worktree, inWorktree)).toEqual([]);
+    expect(await listed(read, root, inRoot)).toEqual(["a.py", "b.py"]);
+  });
+
+  it("follows a worktree's folder to the index of a clone made in its place", async () => {
+    const { root, home } = await changedCheckout();
+    const worktree = join(home, "worktree");
+    git(root, "worktree", "add", "--quiet", "--detach", worktree);
+    const read = gitCheckoutReaders();
+    expect(await listed(read, worktree, {})).toEqual([]);
+    // Deleted without Git, so its Git folder in `root` stays with its index; a clone then takes the folder.
+    await rm(worktree, { recursive: true, force: true });
+    git(home, "clone", "--quiet", root, worktree);
+    const tree = {};
+    expect(await listed(read, worktree, tree)).toEqual([]);
+    git(worktree, "rm", "--cached", "--quiet", "a.py");
+    expect(await listed(read, worktree, tree)).toEqual(["a.py"]);
+  });
+
+  it("keeps no listing where Git gave none", async () => {
+    const outside = await mkdtemp(join(tmpdir(), "rerail-git-listing-"));
+    roots.push(outside);
+    const read = gitCheckoutReaders();
+    const tree = {};
+    const first = await read.modifiedOrUntracked(outside, tree);
+    expect(first).toEqual([]);
+    expect(await read.modifiedOrUntracked(outside, tree)).not.toBe(first);
   });
 });
 

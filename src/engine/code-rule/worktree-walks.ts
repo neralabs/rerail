@@ -6,7 +6,7 @@
  * once, for every session watching it, and keeps what it saw as a snapshot; each session takes from a walk only the
  * sources that changed since the snapshot it took last (`CodeRuleBridge`).
  */
-import { gitHead, gitModifiedOrUntrackedPaths, gitUnmergedReader } from "../git.js";
+import { gitCheckoutReaders, gitHead } from "../git.js";
 import type { ObservedSource, ScanError, Source, SourceScan } from "./code-rule-bridge.js";
 
 /**
@@ -37,7 +37,9 @@ export interface WorktreeFindings {
   readonly checkouts: ReadonlySet<string>;
   /**
    * For each of `checkouts`, the files its Git lists as modified or untracked (`gitModifiedOrUntrackedPaths`), relative
-   * to it: listed once for every session that takes the worktree for the first time in this walk, and only then.
+   * to it: given when a session takes the worktree for the first time in this walk, and only then. Git lists a checkout
+   * once for every session, and again only once the snapshot or a file Git reads for the listing changed
+   * (`GitCheckoutReaders.modifiedOrUntracked`); the listing answers for the snapshot's files.
    */
   readonly listed: ReadonlyMap<string, readonly string[]>;
   /** Subtrees the walk could not read. */
@@ -180,13 +182,6 @@ function leftOut(roots: ReadonlySet<string>, walks: Iterable<WatcherWalk>): Set<
   return skip;
 }
 
-/** What Git lists as modified or untracked in each of `checkouts`, one Git process each. */
-async function listChanged(checkouts: ReadonlySet<string>): Promise<Map<string, readonly string[]>> {
-  const listed = new Map<string, readonly string[]>();
-  for (const checkout of checkouts) listed.set(checkout, await gitModifiedOrUntrackedPaths(checkout));
-  return listed;
-}
-
 /**
  * The walks of a repository's other worktrees for every session that watches them: one per repository, shared by the
  * runtimes of an engine service (`RepositoryWorktreeWalks`), or one per session where nothing shares it. Each walk reads
@@ -198,7 +193,8 @@ export class WorktreeWalks {
   /** Every session watching, in the order they started: a worktree is read through the first that watches it. */
   readonly #watching: Watching[] = [];
   readonly #snapshots = new Map<string, WorktreeSnapshot>();
-  readonly #readUnmerged = gitUnmergedReader();
+  /** Reads a worktree's unmerged entries only once its index changed, and lists its changed files only once it or its snapshot did. */
+  readonly #git = gitCheckoutReaders();
   /** The walk running or timed; undefined while none is due. */
   #walk: Promise<void> | undefined;
   #nextWalkAt = 0;
@@ -361,7 +357,7 @@ export class WorktreeWalks {
     const checkouts = new Map<string, Pick<WorktreeFindings, "head" | "unmerged">>();
     for (const root of roots) {
       const head = await gitHead(root);
-      checkouts.set(root, { head, unmerged: head === undefined ? undefined : await this.#readUnmerged(root) });
+      checkouts.set(root, { head, unmerged: head === undefined ? undefined : await this.#git.unmerged(root) });
     }
     return checkouts;
   }
@@ -387,13 +383,24 @@ export class WorktreeWalks {
       const scan = await walk.scan(request);
       if (scan === undefined) continue;
       const { snapshot, texts } = nextSnapshot(previous, scan);
-      const listed = watchers.some(watcher => watcher.firstSight.has(root)) ? await listChanged(scan.checkouts) : new Map<string, readonly string[]>();
+      const listed = watchers.some(watcher => watcher.firstSight.has(root)) ? await this.#listChanged(scan.checkouts, snapshot) : new Map<string, readonly string[]>();
       return {
         snapshot, texts, head: read.head, unmerged: read.unmerged, checkouts: scan.checkouts, listed,
         failedRoots: scan.failedRoots, errors: scan.errors, unread: scan.unread,
       };
     }
     return undefined;
+  }
+
+  /**
+   * What Git lists as modified or untracked in each of `checkouts` of a worktree whose walk made `snapshot`. A listing is
+   * kept with the snapshot, so a session that first takes a worktree no file of which changed since another session did
+   * starts no Git process.
+   */
+  async #listChanged(checkouts: ReadonlySet<string>, snapshot: WorktreeSnapshot): Promise<Map<string, readonly string[]>> {
+    const listed = new Map<string, readonly string[]>();
+    for (const checkout of checkouts) listed.set(checkout, await this.#git.modifiedOrUntracked(checkout, snapshot));
+    return listed;
   }
 
   #deliver(watching: Watching, delivery: NonNullable<Watching["waiting"]>): void {

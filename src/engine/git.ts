@@ -1,6 +1,6 @@
 import { execFile, spawn, spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
-import { stat } from "node:fs/promises";
+import { accessSync, constants, existsSync, realpathSync, type Stats, statSync } from "node:fs";
+import { readFile, stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { dirname, join, posix, resolve, win32 } from "node:path";
 import { fileStamp } from "./file-stamp.js";
@@ -292,11 +292,15 @@ function defaultExcludesFile(): string {
 export async function gitConfigFiles(cwd: string): Promise<string[]> {
   const local = await gitOutput(cwd, ["rev-parse", "--git-path", "config", "--git-path", "config.worktree"]);
   if (local === undefined || local === "") return [];
+  return [...local.split("\n").map(path => resolve(cwd, path)), ...globalConfigFiles().map(path => resolve(cwd, path))];
+}
+
+/** The global configuration files: `GIT_CONFIG_GLOBAL` when set, else `~/.gitconfig` and `git/config` in `XDG_CONFIG_HOME` or `~/.config`. */
+function globalConfigFiles(): string[] {
   const global = process.env.GIT_CONFIG_GLOBAL;
-  const globals = global === undefined || global === ""
+  return global === undefined || global === ""
     ? [join(process.env.HOME ?? homedir(), ".gitconfig"), join(dirname(defaultExcludesFile()), "config")]
     : [global];
-  return [...local.split("\n").map(path => resolve(cwd, path)), ...globals.map(path => resolve(cwd, path))];
 }
 
 /** How far back {@link headMovedOnlyByCommits} looks: a window longer than this is no agent's one command. */
@@ -338,8 +342,13 @@ const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;
  * `MAX_LISTED_PATH_BYTES` of paths.
  */
 export async function gitModifiedOrUntrackedPaths(cwd: string): Promise<string[]> {
+  return (await modifiedOrUntrackedPaths(cwd)) ?? [];
+}
+
+/** {@link gitModifiedOrUntrackedPaths}, or undefined where Git gave no listing: it failed, timed out or printed too much. */
+async function modifiedOrUntrackedPaths(cwd: string): Promise<string[] | undefined> {
   const listed = await gitStdout(cwd, ["ls-files", "-z", "--modified", "--others", "--exclude-standard"], MAX_LISTED_PATH_BYTES);
-  return listed === undefined ? [] : listed.split("\0").filter(path => path !== "");
+  return listed?.split("\0").filter(path => path !== "");
 }
 
 /**
@@ -398,34 +407,217 @@ async function unmergedEntries(cwd: string): Promise<ReadonlyMap<string, string>
   return entries;
 }
 
-/** The file `cwd`'s checkout keeps its index in (a linked worktree's is under the main `.git`); undefined when Git cannot say. */
-async function gitIndexPath(cwd: string): Promise<string | undefined> {
-  const path = await gitOutput(cwd, ["rev-parse", "--git-path", "index"]);
-  return path === undefined ? undefined : resolve(cwd, path);
+/**
+ * Where Git keeps a checkout's files besides its working tree, absolute: its index (a linked worktree's is under the main
+ * `.git`), its `info/exclude` (the common Git folder's), and the configuration files that can name its excludes file, as
+ * {@link gitConfigFiles} names them; with what the folder's `.git` entry was when they were found ({@link dotGitStamp}).
+ */
+interface CheckoutFiles {
+  readonly dotGit: string;
+  readonly index: string;
+  readonly exclude: string;
+  readonly config: readonly string[];
+}
+
+/** What a file's stamp is while there is no file at its path. */
+const ABSENT = "absent";
+
+/** `stat` of `path`, undefined where nothing is there; throws where it cannot be read otherwise. */
+async function statIfPresent(path: string): Promise<Stats | undefined> {
+  try {
+    return await stat(path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return undefined;
+    throw error;
+  }
+}
+
+/** A file's stamp ({@link fileStamp}), or {@link ABSENT}; throws where it cannot be stamped otherwise. */
+async function stampOrAbsent(path: string): Promise<string> {
+  const info = await statIfPresent(path);
+  return info === undefined ? ABSENT : fileStamp(info);
+}
+
+/**
+ * The folder's `.git` entry as far as it says where Git keeps the checkout's files: a `.git` file (a linked worktree's,
+ * a submodule's) by its stamp, since it names that place; a `.git` folder is the place, and Git writes in it all the time.
+ */
+async function dotGitStamp(cwd: string): Promise<string> {
+  const info = await statIfPresent(join(cwd, ".git"));
+  if (info === undefined) return ABSENT;
+  return info.isDirectory() ? "folder" : fileStamp(info);
+}
+
+/**
+ * Finds {@link CheckoutFiles} of a folder by one Git process and remembers them, finding them again only once the
+ * folder's `.git` file changed: a worktree removed and added again at the same path can keep its index elsewhere.
+ * Undefined, and nothing kept, when Git cannot say or the entry cannot be stamped.
+ */
+function checkoutFilesFinder(): (cwd: string) => Promise<CheckoutFiles | undefined> {
+  const found = new Map<string, CheckoutFiles>();
+  return async cwd => {
+    let dotGit: string;
+    try {
+      dotGit = await dotGitStamp(cwd);
+    } catch {
+      return undefined;
+    }
+    const known = found.get(cwd);
+    if (known?.dotGit === dotGit) return known;
+    found.delete(cwd);
+    // Git prints each path relative to `cwd` unless it is elsewhere; `--path-format` would need Git 2.31.
+    const printed = await gitOutput(cwd, ["rev-parse", "--git-path", "index", "--git-path", "info/exclude", "--git-path", "config", "--git-path", "config.worktree"]);
+    const [index, exclude, ...local] = printed === undefined || printed === "" ? [] : printed.split("\n").map(path => resolve(cwd, path));
+    if (index === undefined || exclude === undefined || local.length !== 2) return undefined;
+    const files = { dotGit, index, exclude, config: [...local, ...globalConfigFiles().map(path => resolve(cwd, path))] };
+    found.set(cwd, files);
+    return files;
+  };
+}
+
+/**
+ * The path setting `key` in `cwd`, as `git config --path --get` prints it: null where no configuration file sets it,
+ * undefined where Git gave no answer (it failed or timed out).
+ */
+async function gitConfigPath(cwd: string, key: string): Promise<string | null | undefined> {
+  let executable: string;
+  try {
+    executable = gitExecutable();
+  } catch {
+    return undefined;
+  }
+  const { promise, resolve: settle } = Promise.withResolvers<string | null | undefined>();
+  execFile(
+    executable,
+    [...SAFE_CONFIG, "-C", cwd, "config", "--path", "--get", key],
+    { encoding: "utf8", timeout: DEFAULT_TIMEOUT_MS, env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" } },
+    // Git exits 1, printing nothing, for a setting no file holds.
+    (error, stdout) => settle(error === null ? stdout.trim() : error.code === 1 ? null : undefined),
+  );
+  return await promise;
+}
+
+/** Whether a configuration file among `paths` has an `include` or `includeIf` section; true for one it cannot read. */
+async function includesAnother(paths: readonly string[]): Promise<boolean> {
+  for (const path of paths) {
+    try {
+      if (/^\s*\[\s*include/imu.test(await readFile(path, "utf8"))) return true;
+    } catch {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Finds the excludes file Git reads for a checkout (`core.excludesFile`, else Git's default), given its configuration
+ * files with their stamps ({@link ABSENT} for one that does not exist). Git is asked once for every checkout whose
+ * existing configuration files are the same files with the same stamps, and again once one of them changed; where one has
+ * an `include` or `includeIf` section, which can set it for each checkout apart, once per checkout. Undefined where Git
+ * gave no answer.
+ */
+function excludesFileFinder(): (cwd: string, config: ReadonlyArray<readonly [string, string]>) => Promise<string | undefined> {
+  /** By the existing configuration files: their stamps, whether one includes another, and the setting by checkout (`""`: every one). */
+  const known = new Map<string, { readonly stamps: string; readonly includes: boolean; readonly settings: Map<string, string | null> }>();
+  return async (cwd, config) => {
+    const present = config.filter(([, stamp]) => stamp !== ABSENT);
+    const files = JSON.stringify(present.map(([path]) => path));
+    const stamps = JSON.stringify(present.map(([, stamp]) => stamp));
+    let entry = known.get(files);
+    if (entry?.stamps !== stamps) {
+      entry = { stamps, includes: await includesAnother(present.map(([path]) => path)), settings: new Map() };
+      known.set(files, entry);
+    }
+    const asker = entry.includes ? cwd : "";
+    let setting = entry.settings.get(asker);
+    if (setting === undefined) {
+      const asked = await gitConfigPath(cwd, "core.excludesFile");
+      if (asked === undefined) return undefined;
+      setting = asked;
+      entry.settings.set(asker, setting);
+    }
+    return resolve(cwd, setting || defaultExcludesFile());
+  };
+}
+
+/** Readers for a caller that asks about the same checkouts every pass, as the walk of a repository's worktrees does. */
+export interface GitCheckoutReaders {
+  /** The index's unmerged entries under a folder, as {@link gitUnmergedReader} reads them. */
+  readonly unmerged: (cwd: string) => Promise<ReadonlyMap<string, string> | undefined>;
+  /**
+   * {@link gitModifiedOrUntrackedPaths} of the checkout at `cwd`, for a caller whose `tree` is the same object only while
+   * no file of the working tree it stands for changed. Git's listing is kept with `tree`, and Git lists again only once
+   * `tree` is another object or a file Git reads for the listing besides the working tree changed: the folder's `.git`
+   * entry, its index, `info/exclude`, the excludes file, or a configuration file that can name it. Git replaces the index
+   * on every write, so a write changes its inode even inside one clock tick. The listing answers only for the files
+   * `tree` stands for: another file it names may have changed since. A listing Git did not give (it failed or timed out),
+   * one made while a file could not be found or stamped, and one made without an index are not kept.
+   */
+  readonly modifiedOrUntracked: (cwd: string, tree: object) => Promise<readonly string[]>;
+}
+
+/**
+ * {@link GitCheckoutReaders}. They find where Git keeps each checkout's files once, by one Git process both share, and the
+ * excludes file once for every checkout with the same configuration files.
+ */
+export function gitCheckoutReaders(): GitCheckoutReaders {
+  const filesOf = checkoutFilesFinder();
+  const excludesFile = excludesFileFinder();
+  /** Each listing kept, by the tree it was made for, then by checkout, with the stamp it was made under. */
+  const listings = new WeakMap<object, Map<string, { readonly stamp: string; readonly paths: readonly string[] }>>();
+  /** The stamp of every file Git reads to list `cwd` besides its working tree; undefined where no listing is to be kept. */
+  const listingStamp = async (cwd: string): Promise<string | undefined> => {
+    try {
+      const files = await filesOf(cwd);
+      if (files === undefined) return undefined;
+      const config = await Promise.all(files.config.map(async path => [path, await stampOrAbsent(path)] as const));
+      const excludes = await excludesFile(cwd, config);
+      if (excludes === undefined) return undefined;
+      const stamps = await Promise.all([files.index, files.exclude, excludes].map(stampOrAbsent));
+      return stamps[0] === ABSENT ? undefined : JSON.stringify([files.dotGit, ...stamps, excludes, config]);
+    } catch {
+      return undefined;
+    }
+  };
+  return {
+    unmerged: unmergedReader(async cwd => {
+      const files = await filesOf(cwd);
+      return files === undefined ? undefined : await stat(files.index).then(fileStamp, () => undefined);
+    }),
+    modifiedOrUntracked: async (cwd, tree) => {
+      // Stamped before Git lists: a file written between the two reads as changed next time.
+      const stamp = await listingStamp(cwd);
+      const kept = listings.get(tree)?.get(cwd);
+      if (stamp !== undefined && kept?.stamp === stamp) return kept.paths;
+      const paths = await modifiedOrUntrackedPaths(cwd);
+      if (paths === undefined) return [];
+      if (stamp !== undefined) {
+        const byCheckout = listings.get(tree) ?? new Map<string, { readonly stamp: string; readonly paths: readonly string[] }>();
+        byCheckout.set(cwd, { stamp, paths });
+        listings.set(tree, byCheckout);
+      }
+      return paths;
+    },
+  };
 }
 
 /**
  * Reads the index's unmerged entries under a folder ({@link unmergedEntries}), for a caller that asks every pass: it
- * starts a Git process only when the folder's index file changed since the last read, and otherwise costs one `stat`
- * (plus one Git process the first time, to find the file). Git replaces that file with a new one on every write, so a
+ * starts a Git process only when the folder's index file changed since the last read, and otherwise costs two `stat`
+ * calls, of the index and of the folder's `.git` entry (plus one Git process the first time, and again once that entry
+ * changed, to find the file). Git replaces that file with a new one on every write, so a
  * write changes its inode even inside one clock tick. A folder whose file cannot be found or stamped is read every time,
  * so this can cost more, never answer with stale entries. When Git cannot list them (it failed or timed out), the
  * answer is undefined and nothing is kept, so the next read asks Git again.
  */
 export function gitUnmergedReader(): (cwd: string) => Promise<ReadonlyMap<string, string> | undefined> {
-  const indexes = new Map<string, string>();
+  return gitCheckoutReaders().unmerged;
+}
+
+/** {@link gitUnmergedReader}'s read, given the stamp of a folder's index file (undefined when it cannot be found or stamped). */
+function unmergedReader(indexStamp: (cwd: string) => Promise<string | undefined>): (cwd: string) => Promise<ReadonlyMap<string, string> | undefined> {
   const held = new Map<string, { readonly stamp: string; readonly entries: ReadonlyMap<string, string> }>();
-  /** The stamp of `cwd`'s index file, found once and remembered; undefined when it cannot be found or stamped. */
-  const indexStamp = async (cwd: string): Promise<string | undefined> => {
-    const index = indexes.get(cwd) ?? await gitIndexPath(cwd);
-    if (index === undefined) return undefined;
-    indexes.set(cwd, index);
-    try {
-      return fileStamp(await stat(index));
-    } catch {
-      return undefined;
-    }
-  };
   return async cwd => {
     // Stamped before the read: an index written between the two reads as changed next time.
     const stamp = await indexStamp(cwd);

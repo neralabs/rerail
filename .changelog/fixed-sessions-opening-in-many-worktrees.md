@@ -1,0 +1,1 @@
+In a repository with many worktrees, Rerail's daemon asks Git which files changed in each other worktree once for all the sessions that open, and again only once that worktree or Git's index or ignore files change. Every new session asked for every worktree, so opening several sessions kept the daemon busy for minutes and hooks timed out.
