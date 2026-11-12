@@ -84,6 +84,13 @@ pub fn token_mark_rows(out: &mut String, marks: &[crate::program::TokenMark]) {
     }
 }
 
+pub fn count_rows(out: &mut String, counts: &[u16]) {
+    use std::fmt::Write as _;
+    for (at, m) in counts.iter().enumerate() {
+        let _ = writeln!(out, "  tokencount {at} max {m}");
+    }
+}
+
 pub fn rule_rows(out: &mut String, rules: &[u16]) {
     use std::fmt::Write as _;
     for (at, p) in rules.iter().enumerate() {

@@ -159,6 +159,9 @@ pub enum StructuralOperation {
     /// The level's flag `flag`: set, clear, or a test that runs the next word where it is set
     /// (`FLAG m=0, 1, 2`).
     Flag { flag: u16, op: FlagOp },
+    /// `COUNT`: a count of tokens (`Words::counts`, its index), one more (`up`, refused past
+    /// `max`) or one less.
+    Count { count: u16, up: bool, max: u16 },
     /// To switch on this token again (`again`), or to take the next.
     Return { again: bool },
     Accept,
@@ -227,6 +230,7 @@ impl StructuralOperation {
             Self::Push { target, flag } => (PUSH, flag.map_or(0, |(k, set)| push_flag(k, set)), target),
             Self::Remember { kind } => (REMEMBER, 0, kind),
             Self::Flag { flag, op } => (FLAG, op as u8, flag),
+            Self::Count { count, up, .. } => (crate::program::COUNT, u8::from(!up), count),
             Self::Return { again } => (RETURN, u8::from(again), 0),
             Self::Accept => (ACCEPT, 0, 0),
             Self::Text { .. } | Self::Assert { .. } => {
@@ -481,6 +485,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
                     _ => FlagOp::Test,
                 },
             },
+            crate::program::COUNT => StructuralOperation::Count { count: operand, up: mode == 0, max: program.counts[usize::from(operand)] },
             RETURN => StructuralOperation::Return { again: mode != 0 },
             ACCEPT => StructuralOperation::Accept,
             _ => {

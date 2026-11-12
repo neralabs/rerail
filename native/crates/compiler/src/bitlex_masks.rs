@@ -178,6 +178,10 @@ pub struct Lowering {
     /// The masks any of whose bits sends the file to tree-sitter: errors and escapes.
     pub fallbacks: Vec<Val>,
     pub counts: HashMap<String, Count>,
+    /// The counts no value has read yet (`C.frame` lowers one when it reads it): a tree's whose
+    /// ups and downs are tokens' starts are tier 2's (`COUNT`, `tree_section`), the rest lowered
+    /// after it. Each its name, up, down and most.
+    pub pending_counts: Vec<(String, Val, Val, u32)>,
     /// Each number's planes, bit 0 first (`NUMBER_BITS`).
     pub numbers: HashMap<String, Vec<Val>>,
     pub tokens: Vec<(String, Val, Option<TokenEnd>)>,
@@ -271,6 +275,7 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         names: HashMap::new(),
         fallbacks: Vec::new(),
         counts: HashMap::new(),
+        pending_counts: Vec::new(),
         numbers: HashMap::new(),
         tokens: Vec::new(),
         keywords: Vec::new(),
@@ -307,6 +312,11 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
     if has_tree {
         let symbols = symbols.ok_or("a tree section needs the grammar's ids")?;
         tier2 = Some(tree_section(symbols, &mut low, &token_rows)?);
+    }
+    // The counts left: tier 1's, as bit-planes.
+    for (name, up, down, max) in std::mem::take(&mut low.pending_counts) {
+        let count = low.count(up, down, max)?;
+        low.counts.insert(name, count);
     }
     let mut vals: Vec<(String, Val)> = Vec::new();
     // The words read the fallback's totals (`EMPTY`), so a tree's program always has them.
@@ -480,8 +490,7 @@ impl Lowering {
                         return Err(format!("count {name}: `reset` is not compiled yet"));
                     }
                     let (up, down) = (self.expr(up)?, self.expr(down)?);
-                    let count = self.count(up, down, *max)?;
-                    self.counts.insert(name.clone(), count);
+                    self.pending_counts.push((name.clone(), up, down, *max));
                 }
                 Stmt::Token { kind, start, through, last } => {
                     let start = self.expr(start)?;
@@ -908,6 +917,11 @@ impl Lowering {
             }
             Expr::Call(f, args) => self.call(f, args),
             Expr::Test { target, method, arg: Some(arg), .. } if method == "frame" => {
+                if let Some(i) = self.pending_counts.iter().position(|c| &c.0 == target) {
+                    let (name, up, down, max) = self.pending_counts.remove(i);
+                    let count = self.count(up, down, max)?;
+                    self.counts.insert(name, count);
+                }
                 let count = self.counts.get(target).cloned().ok_or_else(|| format!("{target}.frame: `{target}` is not a count"))?;
                 let a = self.expr(arg)?;
                 self.frame(&count, a)
@@ -1893,13 +1907,54 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     let meets = row_modes(low, &token_rows, &rows, &states, &arms, &mark_kinds)?;
     // The totals are one flag (`BlockRun::totals`), tested once: `EMPTY 0`.
     let empties = 1;
-    let tested = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, whole, true, by_rules, token_extras)?.tested;
+    // The counts no value reads whose ups and downs are tokens' starts, each of tokens whose text
+    // is one of a few words (each proved, `never`): tier 2 counts them at the arms that take the
+    // tokens (`COUNT`), as the lean parser counts its depth as it parses. Tier 1 makes no planes.
+    let mut counts: Vec<(Vec<u16>, Vec<u16>)> = Vec::new();
+    let mut count_most: Vec<u16> = Vec::new();
+    {
+        let words: Vec<(usize, Vec<u8>)> = (0..rows.len())
+            .filter(|&r| !low.extra.contains(&token_rows[r].0))
+            .flat_map(|r| rows[r].keywords.iter().map(move |(w, _)| (r, w.clone())))
+            .collect();
+        let pending = std::mem::take(&mut low.pending_counts);
+        for (name, up, down, max) in pending {
+            let kinds_of = |x: Val, low: &mut Lowering| -> Result<Option<Vec<u16>>, String> {
+                let (mut kinds, mut all): (Vec<u16>, Option<Val>) = (Vec::new(), None);
+                for (r, w) in &words {
+                    let k = low.keyword(token_rows[*r].1, token_rows[*r].2, w)?;
+                    let both = low.and(x, k)?;
+                    if bitlex_prove::never(&low.program.ops, &low.program.tables, both.v, both.d) {
+                        continue;
+                    }
+                    kinds.push(id(&String::from_utf8_lossy(w))?);
+                    all = Some(match all {
+                        Some(a) => low.or(a, k)?,
+                        None => k,
+                    });
+                }
+                let Some(all) = all else { return Ok(None) };
+                let differs = low.xor(x, all)?;
+                Ok(bitlex_prove::never(&low.program.ops, &low.program.tables, differs.v, differs.d).then_some(kinds))
+            };
+            let (u, d) = (kinds_of(up, low)?, kinds_of(down, low)?);
+            match (u, d, u16::try_from(max)) {
+                (Some(u), Some(d), Ok(m)) => {
+                    counts.push((u, d));
+                    count_most.push(m);
+                }
+                _ => low.pending_counts.push((name, up, down, max)),
+            }
+        }
+    }
+    let tested = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, whole, true, by_rules, token_extras, &counts)?.tested;
     for (j, &r) in tested.iter().enumerate() {
         rows[r].mask = Some(row_masks + j as u16);
         mark_masks.push(token_rows[r].1);
     }
     // The words, once the fallback's totals are known: each must be zero.
-    let mut lowered = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, whole, false, by_rules, token_extras)?;
+    let mut lowered = bitlex_tier2::lower(&states, &arms, &rows, &marks, any_mark, &meets, empties, whole, false, by_rules, token_extras, &counts)?;
+    crate::rir_text::count_rows(&mut lowered.text, &count_most);
     // The extras' kinds: the node table flags their nodes (comments).
     readings.extras = low.extra.iter().map(|k| id(k)).collect::<Result<_, _>>()?;
     crate::rir_text::reading_rows(&mut lowered.text, &readings);

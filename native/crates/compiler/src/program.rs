@@ -87,6 +87,11 @@ pub const REMEMBER: u8 = 0x63;
 /// `PUSH` (the called level's; the caller's come back where it returns); `m=2` a test, which
 /// runs the next word where the flag is set and skips it where it is clear.
 pub const FLAG: u8 = 0x64;
+/// A count of tokens, the file refused past its most (`Words::counts`, operand its index): `m=0`
+/// one more (the token is an up's, as `{`), `m=1` one less where above 0 (a down's, `}`).
+/// Tier 1's `count(up, down) max M` where its ups and downs are tokens' starts, at the arms
+/// that take them, as the lean parser counts a depth as it parses.
+pub const COUNT: u8 = 0x65;
 
 pub const NAMED: u8 = 1;
 pub const GREEDY: u8 = 1;
@@ -145,6 +150,8 @@ pub struct Words {
     /// record's bit does and its tokens follow, each element one record (the extras between
     /// skipped). Rising by mark.
     pub token_marks: Vec<TokenMark>,
+    /// The counts of tokens (`COUNT`; `tokencount N max M`): each one's most.
+    pub counts: Vec<u16>,
 }
 
 /// A token mark (`Words::token_marks`): its order, and its elements.

@@ -148,6 +148,8 @@ struct Emit<'a> {
     /// where an extra opens the root (`grammar::with_extras`).
     token_extras: bool,
     whole: bool,
+    /// The counts of tokens (`COUNT`): each one's ups' and downs' kinds.
+    counts: Vec<(Vec<u16>, Vec<u16>)>,
     /// The rows each state can meet (`bitlex_compile::row_modes`).
     meets: &'a [Vec<bool>],
     /// A first lowering, to find the rows `ROW` tests: their masks are not given yet.
@@ -280,6 +282,17 @@ impl Emit<'_> {
             _ if self.arms[arm].call => {}
             Span::Len(n) => self.push("SPAN", 0, Arg::Num(n)),
             Span::Last => self.push("SPAN", 1, Arg::Num(LASTS)),
+        }
+        // A token a count counts, taken here: once a token, as only an arm takes one.
+        if !self.arms[arm].call {
+            let token = self.arms[arm].token;
+            for i in 0..self.counts.len() {
+                if self.counts[i].0.contains(&token) {
+                    self.push("COUNT", 0, Arg::Num(i as u16));
+                } else if self.counts[i].1.contains(&token) {
+                    self.push("COUNT", 1, Arg::Num(i as u16));
+                }
+            }
         }
         match &pre {
             Pre::None => {}
@@ -938,8 +951,9 @@ fn tests_of(states: &[StateRow], arms: &[ArmRow], marks: &[Mark]) -> Vec<Vec<usi
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark], any_mark: Option<u16>, meets: &[Vec<bool>], empties: u16, whole: bool, survey: bool, rules: bool, token_extras: bool) -> Result<Lowered, String> {
+pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark], any_mark: Option<u16>, meets: &[Vec<bool>], empties: u16, whole: bool, survey: bool, rules: bool, token_extras: bool, counts: &[(Vec<u16>, Vec<u16>)]) -> Result<Lowered, String> {
     let mut e = Emit {
+        counts: counts.to_vec(),
         token_extras,
         whole,
         rule_of: Vec::new(),

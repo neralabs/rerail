@@ -59,6 +59,7 @@ pub const OPCODES: &[(u8, &str)] = &[
     (WRAP, "WRAP"),
     (REMEMBER, "REMEMBER"),
     (FLAG, "FLAG"),
+    (COUNT, "COUNT"),
 ];
 
 /// How an opcode's operand prints.
@@ -434,6 +435,16 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             }
             parts.word_kinds.push((s, k));
         }
+        "tokencount" => {
+            let at: usize = line.number("")?;
+            if at != parts.counts.len() {
+                return Err(format!("tokencount {at} out of order"));
+            }
+            if line.word()? != "max" {
+                return Err("tokencount N max M".into());
+            }
+            parts.counts.push(line.number("")?);
+        }
         "tokenmark" => {
             let order: u8 = line.number("")?;
             if parts.token_marks.last().is_some_and(|m| m.order >= order) {
@@ -698,6 +709,7 @@ pub fn head_rows(out: &mut String, program: &Words) {
     crate::rir_text::word_kind_rows(out, &program.word_kinds);
     crate::rir_text::extra_rows(out, &program.extras);
     crate::rir_text::token_mark_rows(out, &program.token_marks);
+    crate::rir_text::count_rows(out, &program.counts);
     crate::rir_text::rule_rows(out, &program.rules);
 }
 

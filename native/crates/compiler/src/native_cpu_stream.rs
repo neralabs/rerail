@@ -609,10 +609,12 @@ enum Mem {
     Need,
     /// The marks not yet taken or passed at this token, a bit each.
     Live,
+    /// The count of tokens (`COUNT`).
+    Depth,
 }
 
 impl Mem {
-    const COUNT: u32 = 25;
+    const COUNT: u32 = 26;
 }
 
 /// The fields a rule's function holds in registers (`Cut::held`) and passes to its calls, given
@@ -1888,7 +1890,7 @@ pub struct SharedRuns {
 fn plain(op: &Op) -> bool {
     matches!(
         op,
-        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::Settle { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. } | Op::Remember { .. } | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. }
+        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::Settle { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. } | Op::Remember { .. } | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. } | Op::Count { .. }
     )
 }
 
@@ -3241,6 +3243,25 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 Op::Remember { kind } => {
                     let k = f.ins().iconst(types::I64, i64::from(kind));
                     mset(&mut f, Mem::Word, k);
+                    f.ins().jump(fall, &[]);
+                }
+                Op::Count { count, up, max } => {
+                    // One count (a file's depth) for now.
+                    if count != 0 {
+                        return Err(Error::UnsupportedBackend);
+                    }
+                    let d = mget(&mut f, Mem::Depth);
+                    if up {
+                        let d = f.ins().iadd_imm(d, 1);
+                        mset(&mut f, Mem::Depth, d);
+                        let past = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, d, i64::from(max));
+                        guard(&mut f, past, pc);
+                    } else {
+                        let above = f.ins().icmp_imm(IntCC::NotEqual, d, 0);
+                        let one = f.ins().uextend(types::I64, above);
+                        let d = f.ins().isub(d, one);
+                        mset(&mut f, Mem::Depth, d);
+                    }
                     f.ins().jump(fall, &[]);
                 }
                 Op::Flag { flag, op } => {

@@ -13,7 +13,7 @@ pub use crate::stream_ir::{ByteSwitch, DEAD, GONE, KEEP, REFUSE, REMEMBERED, Rea
 
 /// Whether a word is one of tier 2's.
 pub fn is_stream(opcode: u8) -> bool {
-    (TOKEN..=FLAG).contains(&opcode)
+    (TOKEN..=COUNT).contains(&opcode)
 }
 
 /// The operand rules of tier 2's words, and of the words a tier-2 program may hold besides
@@ -67,6 +67,7 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         REMEMBER if operand == WORD_KIND => mode == 0 && !program.word_kinds.is_empty() && records.is_some_and(|r| r.words == program.strings),
         REMEMBER => mode == 0 && operand != 0 && operand != REMEMBERED,
         FLAG => mode <= 2 && operand < 16,
+        COUNT => mode <= 1 && usize::from(operand) < program.counts.len(),
         CLOSE => mode <= 1 && operand == 0,
         // `m`: the flag the call runs with (`push_flag`), of 16.
         PUSH => mode <= 32 && usize::from(operand) < words,
@@ -366,6 +367,8 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
     let mut word: u16 = 0;
     // The level's flags (`FLAG`), a bit each: the caller's come back where a call returns.
     let mut flags: u16 = 0;
+    // The counts of tokens (`COUNT`).
+    let mut counts: Vec<u32> = vec![0; program.counts.len()];
     let refuse = |pc: usize, why: &'static str| Err(Refused { pc, why });
     loop {
         seen(pc);
@@ -684,6 +687,13 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 }
             }
             REMEMBER => word = operand,
+            COUNT if mode == 0 => {
+                counts[usize::from(operand)] += 1;
+                if counts[usize::from(operand)] > u32::from(program.counts[usize::from(operand)]) {
+                    return refuse(pc - 1, "a count past its most");
+                }
+            }
+            COUNT => counts[usize::from(operand)] = counts[usize::from(operand)].saturating_sub(1),
             FLAG if mode == 0 => flags |= 1 << operand,
             FLAG if mode == 1 => flags &= !(1 << operand),
             FLAG => {

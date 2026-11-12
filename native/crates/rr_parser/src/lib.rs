@@ -307,6 +307,10 @@ pub mod tests {
             assert!(super::compiled_tape(src).is_some(), "the grammar refuses {src:?}");
             assert_eq!(super::tape(src), super::engine_columns(&super::rr::tape(src)), "{src:?}");
         }
+        // 127 deep, the most (tier 2's count, `COUNT`), is taken; 128 deep is not.
+        let most = format!(".policy {{\"a\": {}{}}}", "[".repeat(126), "]".repeat(126));
+        assert!(super::compiled_tape(&most).is_some(), "127 deep is taken");
+        assert_eq!(super::tape(&most), super::engine_columns(&super::rr::tape(&most)));
         let deep = format!(".policy {{\"a\": {}{}}}", "[".repeat(127), "]".repeat(127));
         for src in ["r(x) :- x ~ ````a````.", deep.as_str(), "r(x) :- ."] {
             assert!(super::compiled_tape(src).is_none(), "the grammar takes {src:?}");
