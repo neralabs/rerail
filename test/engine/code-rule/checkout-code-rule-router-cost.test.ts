@@ -15,6 +15,19 @@ vi.mock("node:child_process", async importOriginal => {
   return { ...original, spawnSync: counted(original.spawnSync), execFile: counted(original.execFile), spawn: counted(original.spawn) };
 });
 
+/** Reads of the installed packs' catalog, each a check of the packs' files on disk. */
+const ruleCatalogReads = vi.hoisted(() => ({ count: 0 }));
+vi.mock("../../../src/engine/catalog/rule-catalog.js", async importOriginal => {
+  const original = await importOriginal<typeof import("../../../src/engine/catalog/rule-catalog.js")>();
+  return {
+    ...original,
+    loadRuleCatalog: (...parameters: Parameters<typeof original.loadRuleCatalog>) => {
+      ruleCatalogReads.count += 1;
+      return original.loadRuleCatalog(...parameters);
+    },
+  };
+});
+
 import Database from "better-sqlite3";
 import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
 import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
@@ -23,7 +36,8 @@ import { CheckoutCodeRuleRouter } from "../../../src/engine/code-rule/checkout-c
 import { CheckoutCatalogs, startingCheckout } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
-import { setCheckoutStarted } from "../../../src/runtime/index.js";
+import { RerailRuntime, setCheckoutStarted } from "../../../src/runtime/index.js";
+import { testEmbedder } from "../../support/hook-events.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -174,6 +188,29 @@ describe("CheckoutCodeRuleRouter in a repository with many worktrees", () => {
     expect(await gitOf(6)).toBe(await gitOf(1));
   }, 60_000);
 
+  it("reads the session checkout's rules once in an event, however many times the router, its lane and the conversation rules ask", async () => {
+    const { main, catalogs, auditor } = await sessionWithWorktrees(1);
+    const conversation = catalogs.conversationRules(main, "");
+    const toolCall = async (revision: number, inEvent: boolean) => {
+      const reads = ruleCatalogReads.count;
+      const closeEvent = inEvent ? catalogs.openEvent() : () => undefined;
+      try {
+        const { statements } = await cost(catalogs.database, async () => {
+          conversation.signature();
+          await editToolCall(auditor, revision);
+        });
+        return { statements, ruleCatalogReads: ruleCatalogReads.count - reads };
+      } finally {
+        closeEvent();
+      }
+    };
+    await toolCall(1, false);
+    // With no event open, each of the six refreshes reads the checkout's record, its rule configuration and the installed
+    // packs; in one event the first does, and the router still reads every known checkout's record at each of its four.
+    expect(await toolCall(2, false)).toEqual({ statements: 20, ruleCatalogReads: 6 });
+    expect(await toolCall(3, true)).toEqual({ statements: 10, ruleCatalogReads: 1 });
+  }, 60_000);
+
   it("reads the session checkout's rules at every event, so what its catalog reports is current before any tool call", async () => {
     const { main, databasePath, catalogs, auditor } = await sessionWithWorktrees(1);
     const catalog = catalogs.catalog(main);
@@ -247,5 +284,31 @@ describe("CheckoutCodeRuleRouter in a repository with many worktrees", () => {
     expect(next.violations).toEqual([]);
     expect(auditor.acceptsPath(join(stopped!, "api", "x.py"))).toBe(false);
     expect(auditor.acceptsPath("api/x.py")).toBe(true);
+  }, 60_000);
+});
+
+describe("a tool call through the runtime", () => {
+  it("reads the installed packs' catalog once in each of its events, however many of their steps refresh the rules", async () => {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "rerail-runtime-cost-")));
+    cleanups.push(() => rm(base, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+    const main = join(base, "main");
+    await mkdir(join(main, "api"), { recursive: true });
+    await writeFile(join(main, "api", "x.py"), "x = 1\n");
+    git(base, "init", "--quiet", "-b", "main", main);
+    git(main, "add", ".");
+    git(main, "commit", "--quiet", "-m", "seed");
+    const databasePath = join(base, "rerail.sqlite");
+    setUpTestRepository(main, { library: [{ kind: "code", rule: RULE }] }, databasePath);
+    const runtime = new RerailRuntime({ storageRoot: join(base, "sessions"), databasePath, workspaceRoot: main, embedder: testEmbedder, autostart: false });
+    cleanups.push(() => runtime.dispose());
+    await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId: "session", cwd: main } });
+    await runtime.codeRulesOpened("session");
+
+    const reads = ruleCatalogReads.count;
+    const write = { sessionId: "session", toolCallId: "write", toolName: "Write" };
+    await runtime.ingest({ kind: "call", eventId: "write", ...write, input: { file_path: join(main, "api", "x.py"), content: "x = 2\n" } });
+    await writeFile(join(main, "api", "x.py"), "x = 2\n");
+    await runtime.ingest({ kind: "result", eventId: "written", ...write, output: "ok" });
+    expect(ruleCatalogReads.count - reads).toBe(2);
   }, 60_000);
 });

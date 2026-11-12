@@ -9,6 +9,7 @@ import { CheckoutCodeRuleRouter } from "../../../src/engine/code-rule/checkout-c
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { CheckoutCatalogs, startingCheckout } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { SqliteAuditReader } from "../../../src/engine/audit/audit-store.js";
+import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control.js";
 import type { AuditRecorder, AuditInput, AuditResult } from "../../../src/engine/audit/audit.js";
 import { type CodeRule, codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
@@ -747,6 +748,37 @@ describe("repository audit through the runtime", () => {
     } finally {
       reader.close();
     }
+  }, 60_000);
+
+  it("scans with the rules as they are when a scan starts, though no event came after a rule was turned off elsewhere", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const main = await repository(join(root, "main"));
+    await writeFile(join(main, "api", "a.py"), "NEEDLE\n");
+    const repositoryKey = setUpTestRepository(main, { library: [file(needle("test:main", "MAIN"))] }, databasePath);
+    const runtime = new RerailRuntime({ storageRoot: join(root, "sessions"), databasePath, workspaceRoot: main, embedder: testEmbedder, autostart: false });
+    cleanups.push(() => runtime.dispose());
+    const controls = new SqliteAuditControlStore(databasePath);
+    cleanups.push(async () => { controls.close(); });
+    const reader = new SqliteAuditReader(databasePath);
+    cleanups.push(async () => { reader.close(); });
+    await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "omp", sessionId: "scan", cwd: main } });
+    await runtime.codeRulesOpened("scan");
+    // A scan the runtime's timer picks up, as `rerail scan` asks for one: the violations it records.
+    const scan = async () => {
+      const { id } = controls.requestAudit("scan", { scope: "repository" });
+      const request = () => controls.listAuditRequests("scan").find(item => item.id === id)!;
+      await expect.poll(() => request().status, { timeout: 30_000 }).toBe("completed");
+      return request().auditIds.flatMap(auditId => reader.get(auditId)!.violations.map(violation => `${violation.path} ${violation.code}`));
+    };
+    expect(await scan()).toEqual(["api/a.py MAIN"]);
+    const database = openRerailDatabase(databasePath);
+    try {
+      setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "", targetKind: "rule", targetId: "test:main", on: false, mode: null });
+    } finally {
+      database.$client.close();
+    }
+    expect(await scan()).toEqual([]);
   }, 60_000);
 });
 

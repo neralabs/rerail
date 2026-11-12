@@ -295,7 +295,7 @@ describe("checkout code-rule catalog", () => {
       const counted = countStatements(catalogs.database, () => {
         for (let refresh = 0; refresh < 3; refresh += 1) expect(catalog.refresh()).toBe(false);
       });
-      // Each refresh reads the checkout's start state and set-up, then its rule configuration.
+      // With no event open, each refresh reads the checkout's start state and set-up, then its rule configuration.
       expect(counted).toEqual({ prepared: 0, run: 6 });
       expect(catalog.status.sourceSignature).toBe(loaded);
 
@@ -308,6 +308,58 @@ describe("checkout code-rule catalog", () => {
       }
       catalog.refresh();
       expect(catalog.status.sourceSignature).not.toBe(loaded);
+    } finally {
+      catalogs.close();
+    }
+  });
+
+  it("reads a checkout's start state and rule configuration once in an event, however many refreshes ask", () => {
+    const { root, databasePath } = checkout();
+    const key = setUpTestRepository(root, {}, databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: loadRuleCatalog() });
+    try {
+      const catalog = catalogs.catalog(root);
+      const conversation = catalogs.conversationRules(root, "");
+      const loaded = catalog.status.sourceSignature;
+      const closeEvent = catalogs.openEvent();
+      const counted = countStatements(catalogs.database, () => {
+        expect(catalog.refresh()).toBe(false);
+        expect(conversation.signature()).toBe(loaded);
+        expect(catalog.refresh()).toBe(false);
+      });
+      // The first refresh reads the start state and set-up, then the rule configuration; the others take that answer.
+      expect(counted).toEqual({ prepared: 0, run: 2 });
+
+      // A setting another process makes reaches the next event, one that opens while this one is still open included.
+      const other = openRerailDatabase(databasePath);
+      try {
+        setRuleSetting(other, { owner: { kind: "repository", repositoryKey: key }, folder: "docs", targetKind: "rule", targetId: "test:any", on: false, mode: null });
+      } finally {
+        other.$client.close();
+      }
+      const closeNext = catalogs.openEvent();
+      expect(conversation.signature()).not.toBe(loaded);
+      catalog.refresh();
+      expect(catalog.status.sourceSignature).toBe(conversation.signature());
+      closeNext();
+      closeEvent();
+    } finally {
+      catalogs.close();
+    }
+  });
+
+  it("reads a checkout recorded during an event as recorded once a refresh reads its record", () => {
+    const { root, databasePath } = checkout();
+    const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: loadRuleCatalog() });
+    try {
+      const closeEvent = catalogs.openEvent();
+      const conversation = catalogs.conversationRules(root, "");
+      expect(conversation.signature()).toBe("unrecorded");
+      // The runtime records the folder a session starts in, then refreshes it, in the session's start event.
+      setUpTestRepository(root, {}, databasePath);
+      expect(catalogs.refresh(root)).toBe("ok");
+      expect(conversation.signature()).toMatch(/^ok\0sha256:/u);
+      closeEvent();
     } finally {
       catalogs.close();
     }
