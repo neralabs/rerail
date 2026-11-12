@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { createServer, type AddressInfo } from "node:net";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,6 +41,7 @@ import {
   withStartLock,
 } from "../../src/runtime/daemon-control.js";
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/engine-pipe.js";
+import { runConsoleProbe } from "../support/platform/console-probe.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { otherUserPid } from "../support/other-user-pid.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -718,6 +719,22 @@ describe("launching the daemon", () => {
       env: { A: "1", RERAIL_WINDOWLESS_CONSOLE: "1" }, logFile: log,
     }]);
   });
+
+  it.runIf(process.platform === "win32")("on Windows starts a process whose Git shares its console, so Windows starts no console host for that Git", async () => {
+    const log = join(home, "probe.log");
+    const seen = await runConsoleProbe(home, true, ({ args, cwd }) => {
+      const probe = launchDetached({ args, cwd, env: process.env, logFile: log });
+      return {
+        ended: () => probe.exitReason() !== undefined,
+        kill: () => {
+          if (probe.pid !== undefined) process.kill(probe.pid);
+        },
+        output: async () => await readFile(log, "utf8"),
+      };
+    });
+    // Node's windowsHide gives the second Git a console of its own, so its console host shows the count is read.
+    expect(seen).toEqual({ attached: true, shares: true, consoleHosts: [0, 1] });
+  }, 60_000);
 
   // The native spawn on Windows, Node's elsewhere: each platform's launch, on every OS.
   it.each(["linux", "win32"] as const)("starts the daemon in the Rerail home and names the caller's folder as its workspace root (%s)", async platform => {

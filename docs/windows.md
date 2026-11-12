@@ -67,8 +67,8 @@ for which Windows starts a console host (`conhost.exe`). The option does nothing
   - Only the helper loads `node:child_process` as a value, by any import or export, `require`, `import()`, a
     `createRequire` result under any name, `module.require` or `process.getBuiltinModule`. A type-only use passes.
   - `test/engine/child-process.test.ts` checks that every starter the helper exports hides the window, and on Windows
-    refuses a program named without its folder, starts Git with no console host of its own from a process started
-    as the daemon is, and keeps `windowsHide` in a process with no console.
+    refuses a program named without its folder and keeps `windowsHide` in a process with no console. The daemon's
+    Git: see [The daemon's console](#the-daemons-console).
   - `program-path`: see [Programs by absolute path](#programs-by-absolute-path).
 - Scripts outside `src/` (build, check and test scripts) are not in the package and may load `node:child_process`
   themselves.
@@ -114,6 +114,9 @@ console a person sees, and could write to it or read what they type.
 - The Rust test `starts_the_daemon_with_a_hidden_console_not_without_one` checks the flags on every OS, and the Windows
   build checks them against `windows-sys` when it compiles. PR CI builds the native engine on Linux only, so its
   `cfg(windows)` code first compiles in `release.yml`.
+- On Windows `test/runtime/daemon-control.test.ts` starts a probe (`test/support/platform/console-probe.ts`) through
+  `launchDetached` and counts the console hosts under the Git it starts through the helper: none, while a Git it
+  starts beside it with `windowsHide` has one.
 
 </details>
 
