@@ -3637,7 +3637,8 @@ an inline test module, and the engine mounts none for it.
 target built only together with the engine: nothing turned on its own `test-hooks` (16 errors: `tempfile`,
 `fixtures`, `drop_unread_core`). It now has the engine's self dev-dependency (`rerail-logic = { path = ".",
 features = ["test-hooks"] }`, the same in `rerail-device-metal`), and `rerail-lang`'s `test-hooks` turns on
-`rerail-store`'s and `rerail-compiler`'s, which no crate's list named. Built alone, 269 pass and 41 fail.
+`rerail-store`'s and `rerail-compiler`'s, which no crate's list named. Built alone, 269 pass and 41 fail;
+33 once `corpus::tests` went to the engine (More-ergonomic `b2bfa28d6`).
 Every failing test reads what the engine registers as it loads, through a
 registry that no static read shows, so `hosts.py` leaves them in `rerail-logic`:
 
@@ -3645,7 +3646,7 @@ registry that no static read shows, so `hosts.py` leaves them in `rerail-logic`:
 - then the language crates' `.rr` libraries (`#include "python/modules.rr": no such library`) and the Python pack;
 - the `to_precision` function (`TO_PRECISION`, set by the ECMA crate).
 
-They are the corpus, session, phases, prepared, reuse, cache and `typing::phase_tests` modules, and
+They are the session, phases, prepared, reuse, cache, liveness, compose and `typing::phase_tests` modules, and
 `waves::owner::tests`. Registering the Rr pack alone in `logic::test_load` (with a `rerail-w` dev-dependency)
 clears 6 of them and leaves the rest on the libraries. `rerail-device-metal`'s test target still fails
 (24 errors): `corpus::base_tests` and the device tests read the engine (`prefilter`, `evaluate_file`,

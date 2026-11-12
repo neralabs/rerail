@@ -198,7 +198,7 @@ pub fn engine_columns(nodes: &[rr::tape::Node]) -> Columns {
             rows[p as usize].size += rows[i].size;
         }
     }
-    Columns { rows }
+    Columns { rows, ..Columns::default() }
 }
 
 /// Why the grammar did not compile, if it did not: a test's check.
