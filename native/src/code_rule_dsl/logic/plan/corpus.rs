@@ -983,7 +983,9 @@ pub fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
     }
     let _merging = crate::code_rule_dsl::logic::profile::span(|| "merge the programs".into());
     if parsed.len() == 1 {
-        return Ok(parsed.pop().expect("one program"));
+        let mut one = parsed.pop().expect("one program");
+        same_relations(&mut one);
+        return Ok(one);
     }
     let axis = crate::code_rule_dsl::logic::front::AXIS;
     let mut all = Program::default();
@@ -1134,7 +1136,71 @@ pub fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
             if guarded.is_empty() { "none".to_owned() } else { guarded.join(", ") },
         )
     });
+    same_relations(&mut all);
     Ok(all)
+}
+
+/// The relations that are one relation under two names made one, after the transforms that run after `simplify`
+/// (guest hiding's copies, the programs combined, their fact spaces): `simplify`'s congruence again
+/// (`merge_identical`). Hiding copied `rr_ctx…` helpers and copies of copies (`rr_in_annotation_0_annotation_2_wrap`)
+/// whose rules are another's. `RERAIL_SAME=off` keeps them apart.
+fn same_relations(prog: &mut front::Program) {
+    if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
+        return;
+    }
+    let _span = crate::code_rule_dsl::logic::profile::span(|| format!("merge the relations that are one ({} rules)", prog.rules.len()));
+    let rules = prog.rules.len();
+    let (merged, shared, repeated) = merge_to_fixpoint(prog);
+    if merged > 0 || repeated > 0 {
+        crate::code_rule_dsl::logic::profile::decision("merged after hiding and combining", || {
+            format!("{merged} relations merged into an identical one ({shared} classes shared across programs), {repeated} rules that repeat another dropped; {} rules of {rules} left", prog.rules.len())
+        });
+    }
+}
+
+/// `simplify::merge_identical` and `drop_repeated_rules` until neither changes anything: each enables the other, as a
+/// repeated rule keeps a relation's rules apart from its twin's (they are compared as lists), and a merge renames
+/// atoms, which can make two rules one. The relations merged, the classes shared across programs, the rules dropped.
+pub fn merge_to_fixpoint(prog: &mut front::Program) -> (usize, usize, usize) {
+    // Another merge is wanted only when the last one made rules repeat: a merge alone finds every class at once (its
+    // congruence is the greatest), and one that renames a class of outputs reports a merge each time (a loop on `m`
+    // never ended on `libraries_are_held_once_and_equal_requests_share_one_cone`).
+    let mut repeated = drop_repeated_rules(prog);
+    let (mut merged, mut shared) = crate::code_rule_dsl::logic::simplify::merge_identical(prog);
+    for _ in 0..16 {
+        let r = drop_repeated_rules(prog);
+        if r == 0 {
+            break;
+        }
+        repeated += r;
+        let (m, s) = crate::code_rule_dsl::logic::simplify::merge_identical(prog);
+        merged += m;
+        shared += s;
+    }
+    (merged, shared, repeated)
+}
+
+/// Drops each rule equal to an earlier one: a relation is a set, so a second copy of a rule derives nothing, yet it
+/// was planned and run as a rule of its own. Hiding's clones made them (at O125 step 07, 407 of the cross part's
+/// 1,483 rules, `rr_in_annotation_0_bv`'s most). Returns how many it dropped.
+pub fn drop_repeated_rules(prog: &mut front::Program) -> usize {
+    use std::hash::{Hash, Hasher};
+    let before = prog.rules.len();
+    let mut seen: HashMap<u64, Vec<usize>> = HashMap::new();
+    let mut keep: Vec<bool> = Vec::with_capacity(before);
+    for (i, r) in prog.rules.iter().enumerate() {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        r.hash(&mut h);
+        let at = seen.entry(h.finish()).or_default();
+        let repeat = at.iter().any(|&j| prog.rules[j] == *r);
+        if !repeat {
+            at.push(i);
+        }
+        keep.push(!repeat);
+    }
+    let mut k = keep.into_iter();
+    prog.rules.retain(|_| k.next().expect("one flag a rule"));
+    before - prog.rules.len()
 }
 
 /// core.rr's functors only CPython gives, each of a node, and the relations the batches bind them as
@@ -2362,7 +2428,12 @@ fn run_observed(
             // The joins pushed are made per rule, so two programs' copies of one library rule made two: merged again, and so
             // are the relations over them, before the program splits.
             let _step = crate::code_rule_dsl::logic::profile::span(|| "merge identical relations again".into());
-            let merged = crate::code_rule_dsl::logic::simplify::merge_identical(&mut lowered.program);
+            let merged = if std::env::var("RERAIL_SAME").is_ok_and(|v| v == "off") {
+                crate::code_rule_dsl::logic::simplify::merge_identical(&mut lowered.program)
+            } else {
+                let (m, s, _) = merge_to_fixpoint(&mut lowered.program);
+                (m, s)
+            };
             drop(_step);
             let read: BTreeSet<String> = lowered.program.rules.iter().flat_map(|r| r.body.iter().filter_map(|l| l.atom()).map(|a| a.rel.to_string())).collect();
             // An input no rule reads is never bound or measured: it is not an input of what runs.

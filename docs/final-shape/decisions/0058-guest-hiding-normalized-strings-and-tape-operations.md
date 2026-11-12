@@ -242,3 +242,36 @@ stays as it is for the host's nodes, and a clone with the variable seeded as the
 - O96, O97 and O98 are closed (see the tests above).
 - O99: guests and hiding on the 9,010-file repository, in CPU time.
 - O100: normalized strings as native operations that rules read, and later as a transducer side program.
+
+## Built: hiding's copies that are another relation, merged (2026-11-12)
+
+**What was wrong.** At O125 step 07, hiding's `rr_in_annotation_*` copies were 419 relations holding 751 k rows,
+and 39% of the step's join work read or wrote one. Two kinds were pure duplication in the program:
+
+- **Copies whose rules are another relation's**, renamed: context helpers (`rr_ctx12` as `rr_ctx11`) and copies of
+  copies (`rr_in_annotation_0_annotation_2_wrap`).
+- **Repeated rules.** Hiding's O110 clones were made again, so 407 of the cross part's 1,483 rules were exact
+  repeats of another rule. Each was planned and run on its own, though it derives nothing new. A repeat also kept
+  its relation apart from its twin, since `simplify`'s congruence compares rule lists.
+
+**What runs now.** After hiding and combining, and again after the joins are pushed, the program drops repeated
+rules and merges identical relations (`simplify::merge_identical`), in turn until neither changes anything
+(`corpus::merge_to_fixpoint`). `RERAIL_SAME=off` turns it off. The test
+`the_combined_program_has_no_relation_twice_and_no_rule_twice` guards the combined `calls` program; with the
+switch off it finds 39 classes.
+
+**Measured at O125 step 07** (outputs equal to a full run's):
+
+| | Before | After |
+|---|---:|---:|
+| Cross-part rules | 1,483 | 1,053 |
+| Strata (run / all) | 775 / 829 | 596 / 645 |
+| Session CPU, step 07 | 17.4 s | 12.8 s |
+| Instructions, whole replay (cold run at 06 included) | 695.1 G | 621.9 G (first version) |
+| Peak memory | 1,152 MB | 1,049 MB |
+
+**Not merged: the copies that equal their originals only on this corpus.** `fret` reads `retval` and its copy,
+while `rr_in_annotation_0_fret` reads the copy only. The two hold the same rows because no hidden guest's rows
+reach them here, not because their rules agree. Removing them needs the copy to be a filtered view of its original,
+or the program specialised by a phase fact saying the run has no hidden guest documents. Both are open.
+
