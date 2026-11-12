@@ -112,13 +112,15 @@ export class RuntimePool {
   readonly #idle = new Map<string, NodeJS.Timeout>();
 
   constructor(options: RuntimeDefaults & RuntimeLifetimes) {
-    this.#defaults = options;
-    this.#idleSessionMs = options.idleSessionMs ?? IDLE_SESSION_MS;
-    this.#idleRuntimeMs = options.idleRuntimeMs ?? IDLE_RUNTIME_MS;
-    this.#now = options.now ?? (() => Date.now());
+    // A runtime is made from the defaults alone: the lifetimes are the pool's.
+    const { idleSessionMs, idleRuntimeMs, now, ...defaults } = options;
+    this.#defaults = defaults;
+    this.#idleSessionMs = idleSessionMs ?? IDLE_SESSION_MS;
+    this.#idleRuntimeMs = idleRuntimeMs ?? IDLE_RUNTIME_MS;
+    this.#now = now ?? (() => Date.now());
   }
 
-  /** How many runtimes are open: one per checkout some live session uses. */
+  /** How many runtimes are open: one per checkout a session uses, or used within `idleRuntimeMs`. */
   openRuntimes(): number {
     return this.#runtimes.size;
   }

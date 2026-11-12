@@ -145,8 +145,6 @@ describe("the engine service's runtimes", () => {
   // before it was done would leave that work cut short.
   it("waits, as it closes, for a runtime still closing after its last session ended", async () => {
     const { service, first, start, end } = await twoCheckouts(0);
-    // This test closes the service itself.
-    services.splice(services.indexOf(service), 1);
     const disposing = Promise.withResolvers<void>();
     const order: string[] = [];
     const dispose = RerailRuntime.prototype.dispose;
@@ -158,6 +156,8 @@ describe("the engine service's runtimes", () => {
     try {
       await start("a", first);
       await end("a", first);
+      // This test closes the service itself; until here, a failed start or end leaves it to `afterEach`.
+      services.splice(services.indexOf(service), 1);
       const closing = service.close().then(() => order.push("service closed"));
       // Long enough for a close that does not wait to have returned.
       await sleep(200);

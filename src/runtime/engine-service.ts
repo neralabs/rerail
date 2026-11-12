@@ -13,7 +13,7 @@ import {
 import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
 import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./engine-proof.js";
 import { isNamedPipe } from "./engine-pipe.js";
-import { RuntimePool, type RuntimeDefaults, type RuntimeLifetimes } from "./runtime-pool.js";
+import { RuntimePool, type RuntimeConfiguration, type RuntimeDefaults, type RuntimeLifetimes } from "./runtime-pool.js";
 
 export interface EngineService {
   /** Where it listens: the socket path it was given, or its `pipeFallback` when another process held that pipe. */
@@ -23,7 +23,7 @@ export interface EngineService {
     event: AdapterEvent,
     configuration?: EngineRuntimeConfiguration,
   ): Promise<readonly AdapterDelivery[]>;
-  /** How many runtimes are open: one per checkout some live session uses. */
+  /** How many runtimes are open: one per checkout a session uses, or used within `idleRuntimeMs`. */
   openRuntimes(): number;
   /**
    * Closes every session that has sent no event for the idle limit and owes its agent nothing, and every one quiet for
@@ -35,16 +35,16 @@ export interface EngineService {
 /** How often the engine service looks for idle sessions (`RuntimePool.closeIdleSessions`). */
 const IDLE_SWEEP_MS = 60_000;
 
-const ConfigurationSchema = z
+/** A request's configuration, checked against the type the runtime pool reads it as. */
+const ConfigurationSchema: z.ZodType<RuntimeConfiguration> = z
   .object({
     storageRoot: z.string().min(1),
     modelPath: z.string().min(1),
-    /** Absent selects the engine service's own database. */
     databasePath: z.string().min(1).optional(),
     workspaceRoot: z.string().min(1).optional(),
   })
   .strict();
-export type EngineRuntimeConfiguration = z.infer<typeof ConfigurationSchema>;
+export type EngineRuntimeConfiguration = RuntimeConfiguration;
 const RequestSchema = z
   .object({
     event: AdapterEventSchema,
@@ -268,9 +268,9 @@ async function listenOnSocket(
 
 export async function startEngineService(options: EngineServiceOptions): Promise<EngineService> {
   if (!isNamedPipe(options.socketPath)) await preparePrivateDirectory(dirname(options.socketPath));
-  // A runtime is made from everything but the capability: only this service checks it.
-  const { accessToken: _accessToken, ...runtimeDefaults } = options;
-  const pool = new RuntimePool(runtimeDefaults);
+  // The pool gets every option but the capability, which only this service checks, and where the service listens.
+  const { accessToken: _accessToken, socketPath: _socketPath, pipeFallback: _pipeFallback, ...pooled } = options;
+  const pool = new RuntimePool(pooled);
   const server = createServer(async (incoming, response) => {
     response.setHeader("Content-Type", "application/json");
     if (incoming.method === "POST" && incoming.url === ENGINE_PROOF_PATH && options.accessToken !== undefined) {
