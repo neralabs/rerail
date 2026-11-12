@@ -44,10 +44,8 @@ but functions entered at many places, as the lean parser's are not.)
 | Benchmark, instructions | 315.7M | 356.6M |
 | Benchmark, cycles | 70.7M (load 30) | 75.1M |
 
-The next gap: the code each rule repeats.
-Tier 2 has 2.4 times the lean parser's machine instructions,
-and most of it is each rule's own copy of words alike in many rules
-(a token taken, its marks, a leaf), where the lean parser calls one method.
+The next gap: tier 2 has 2.4 times the lean parser's machine instructions.
+Where the rest goes is not measured yet.
 
 Its structure:
 

@@ -1048,6 +1048,6 @@ Each is picked by one test.
    `ctx` in a register of its own, code shared from the middle of rules,
    a call's bookkeeping as the lean parser's, switches as rustc lowers a `match`,
    one entry a function.
-   Next: the code each rule repeats (machine instructions 2.4 times the lean parser's).
+   Next: where tier 2's machine instructions go, at 2.4 times the lean parser's.
 4. Keyword marks from the records. Built for the marks of one word.
 5. Tier 1's primitives: the picked hash, then nibble fingerprints.
