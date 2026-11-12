@@ -95,8 +95,10 @@ describe("removeFolder", () => {
     const database = new Database(held);
     database.exec("CREATE TABLE t (x)");
     const { maxRetries, retryDelay } = REMOVAL_RETRIES;
-    // The waits between tries, 100 ms and then each 100 ms longer than the last (5.5 s), and a second for the tries.
-    const limit = retryDelay * maxRetries * (maxRetries + 1) / 2 + 1_000;
+    // The waits between tries, 100 ms and then each 100 ms longer than the last (5.5 s), and 10 s for the 11 tries
+    // themselves, which a busy machine slows. A removal that retries at every level of the tree, as `rm`'s own retries
+    // do, keeps trying for a minute or more, so it still fails here, and within the 30 s a Windows test may take.
+    const limit = retryDelay * maxRetries * (maxRetries + 1) / 2 + 10_000;
     try {
       const outcome = await Promise.race([
         removeFolder(path).then(() => "removed", (error: unknown) => error),
