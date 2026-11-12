@@ -26,10 +26,10 @@ class Admission(unittest.TestCase):
         self.assertFalse(s['fullMigrationAcceptance'])
         self.assertEqual(s['originalCasesPerAPI'],11)
         self.assertEqual(s['originalPositiveObservationsPerAPI'],8)
-        self.assertEqual(s['casesPerAPI'],dict(helpers=137,components=162,files=41,cli=40,production=19,legacy=38))
+        self.assertEqual(s['casesPerAPI'],dict(helpers=137,components=162,files=41,cli=40,production=19,legacy=38,io=14))
         self.assertEqual(s['supplementalCasesSnapshot'],dict(api=158,report=136))
         self.assertEqual(s['persistentStepsPerAPI'],20)
-        self.assertEqual(s['controls'],48)
+        self.assertEqual(s['controls'],52)
 
     def test_missing_original_positive(self):
         v=copy.deepcopy(self.value);v['originals']['workspace']['detectorObservations'].pop();self.rejected(v)
@@ -48,6 +48,23 @@ class Admission(unittest.TestCase):
     def test_missing_direct_file_case(self):
         v=copy.deepcopy(self.value)
         for r in v['groups']['files']['reports']['workspace']:r['cases'][:]=[c for c in r['cases'] if c['input']['id']!='lint-file-9']
+        self.rejected(v)
+
+    def test_missing_io_boundary(self):
+        v=copy.deepcopy(self.value);v['groups']['io']['reports']['workspace'][0]['cases'].pop();self.rejected(v)
+
+    def test_suppressed_decode_error(self):
+        v=copy.deepcopy(self.value)
+        for report in v['groups']['io']['reports']['snapshot']:
+            for row in report['cases']:
+                if row['input']['id']=='files-decode':row['actual']={'value':[],'stdout':'','stderr':''}
+        self.rejected(v)
+
+    def test_spurious_excluded_warning(self):
+        v=copy.deepcopy(self.value)
+        for report in v['groups']['io']['reports']['workspace']:
+            for row in report['cases']:
+                if row['input']['id']=='directory-excluded-decode':row['actual']['stderr']='unexpected warning'
         self.rejected(v)
 
     def test_changed_cli_write(self):
@@ -83,6 +100,13 @@ class Admission(unittest.TestCase):
 
     def test_invalid_control(self):
         v=copy.deepcopy(self.value);v['controls'][0]['cases'][0]['actual']={'error':'bad native program'};self.rejected(v)
+
+    def test_invalid_cli_control(self):
+        v=copy.deepcopy(self.value)
+        for report in v['controls']:
+            for row in report['cases']:
+                if row['control']=='cli-header':row['actual']={'value':{'error':{'type':'RuntimeError'}}}
+        self.rejected(v)
 
     def test_unrelated_mutation(self):
         v=copy.deepcopy(self.value);v['controls'][0]['cases'][0]['programCopies']={};self.rejected(v)

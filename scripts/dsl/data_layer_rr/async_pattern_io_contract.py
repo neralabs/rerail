@@ -17,6 +17,7 @@ def cases(_module):
                 file=dict(path=path,symlink='missing.py') if broken else dict(path=path,source='',bytes=[255])
                 rows.append(dict(kind=kind,id=f'{kind}-'+('excluded-' if excluded else '')+('broken-link' if broken else 'decode'),files=[file],path=path))
     rows.append(dict(kind='directory',id='directory-bare-decode',files=[dict(path='api/.py',source='',bytes=[255])],path='api/.py'))
+    rows.append(dict(kind='directory',id='directory-warning-before-error',files=[dict(path='api/first.py',source='',bytes=[255]),dict(path='api/last.py',symlink='missing.py')],path='api/first.py'))
     return rows
 
 
