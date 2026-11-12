@@ -174,6 +174,21 @@ describe("the hook failure log", () => {
     )]);
   });
 
+  // Another program can hold `.1` open on Windows, such as an editor or a backup. A hook that waited 2 s for it held the
+  // full log under its own name all that time.
+  it("gives the full log back at once when it cannot move it to .1", async () => {
+    const rerailHome = await home();
+    writeFullLog(rerailHome);
+    const refused = await recordWithRename(rerailHome, 2, `rename => (from, to) => {
+      if (!to.endsWith(".1")) return rename(from, to);
+      fs.writeSync(1, "refused ");
+      throw Object.assign(new Error("EPERM: operation not permitted, rename"), { code: "EPERM" });
+    }`);
+    expect(refused).toBe("refused ");
+    expect(logFiles(rerailHome)).toEqual([HOOK_FAILURES_FILE]);
+    expect(readHookFailures(rerailHome, 0).failures).toHaveLength(full + 1);
+  });
+
   // `rerail status` can read the log while a hook moves it aside. The log holds the full log's failures until the hook
   // writes its own, then one more, so every read must count one of those two.
   it("counts every failure once when status reads the log while a hook moves it aside", async () => {
