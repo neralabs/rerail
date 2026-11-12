@@ -206,28 +206,16 @@ export class SqliteSessionStore {
   readonly #repositoryId: string | null;
   /** Each session's repository as it opened here, to restore its row after a reset. */
   readonly #sessionRepositories = new Map<string, string | null>();
-  /** True while `#synced` runs a write: one nested in it keeps FULL until the outer write ends. */
-  #syncing = false;
 
   constructor(path: string, { repositoryId }: { repositoryId?: string | undefined } = {}) {
     this.path = path;
     this.#repositoryId = repositoryId ?? null;
     this.#database = openRerailDatabase(path);
-    // Events arrive with every hook, and a disk sync at each commit (FULL) held the daemon's only thread for each one:
-    // up to hundreds of milliseconds on a busy Linux disk, 1.7 to 3.2 on a Windows desktop. NORMAL syncs the
-    // write-ahead log only before a checkpoint, and the file stays consistent. A committed event survives the daemon
-    // crashing, since it sits in the operating system's cache. A power cut or system crash loses the events committed
-    // since the log was last synced, on Linux up to 30 s or more when nothing else writes. The rows that create a
-    // session and start its HUD counts are not among them: they commit at FULL (`#synced`) as the session opens, or as
-    // an append puts the row back after a reset. Nor are steer receipts, one per steer. The session ledger, written
-    // after each insert and never synced, can keep its lines for events the history lost; an agent that sends one
-    // again stores it again (`unrecorded` in runtime.ts).
-    this.#database.run(sql`PRAGMA synchronous = NORMAL`);
   }
 
   openSession(session: AdapterSession, startedAt = Date.now(), repositoryKey: string | null = this.#repositoryId): void {
     this.#sessionRepositories.set(session.sessionId, repositoryKey);
-    this.#synced(() => this.#database
+    this.#database
       .insert(sessions)
       .values({ ...session, repositoryId: repositoryKey, startedAt, endedAt: null })
       .onConflictDoUpdate({
@@ -239,53 +227,32 @@ export class SqliteSessionStore {
           ...(repositoryKey === null ? {} : { repositoryId: repositoryKey }),
         },
       })
-      .run());
+      .run();
   }
 
   /** A stable identity makes reopen idempotent; missing history can never become complete later. */
   startHudTracking(session: AdapterSession, complete: boolean): void {
-    this.#synced(() => this.append({
+    this.append({
       sessionId: session.sessionId,
       eventId: "hud-tracking-start",
       kind: "hud-tracking-start",
       payload: { complete },
-    }, session));
+    }, session);
   }
 
-  /**
-   * Runs `write` with each commit it makes synced to disk (FULL), then goes back to NORMAL: for the rows a power cut
-   * must not take, so the history never lists a session's events without the session or shows a HUD count that is
-   * short. SQLite refuses the change inside a transaction, and this connection opens none around these writes.
-   */
-  #synced<T>(write: () => T): T {
-    if (this.#syncing) return write();
-    this.#database.run(sql`PRAGMA synchronous = FULL`);
-    this.#syncing = true;
-    try {
-      return write();
-    } finally {
-      this.#syncing = false;
-      this.#database.run(sql`PRAGMA synchronous = NORMAL`);
-    }
-  }
-
-  /**
-   * `ruleIds` credits the steer to the rules whose violations it carried. The HUD counts receipts as exact once the
-   * session's baseline says complete, so each one commits with a disk sync (`#synced`): a power cut never leaves a
-   * count lower than the steers the person saw.
-   */
+  /** `ruleIds` credits the steer to the rules whose violations it carried. */
   recordSteer(
     session: AdapterSession,
     receiptId: string,
     ruleIds: readonly string[] = [],
     attribution?: SessionAttribution,
   ): void {
-    this.#synced(() => this.append({
+    this.append({
       sessionId: session.sessionId,
       eventId: `steering-delivered:${receiptId}`,
       kind: "steering-delivered",
       payload: { ruleIds: [...ruleIds] },
-    }, session, attribution));
+    }, session, attribution);
   }
 
   /** Marks the session's history incomplete over a stretch of events its host never delivered. */
@@ -364,12 +331,12 @@ export class SqliteSessionStore {
       // A `rerail reset` rebuilt the tables underneath a running session: its row is gone, so put
       // it back and keep going. The events before the reset are gone by design; these are not.
       if (session === undefined || !isForeignKeyFailure(error)) throw error;
-      this.#synced(() => this.#database.insert(sessions).values({
+      this.#database.insert(sessions).values({
         ...session,
         repositoryId: attribution?.repositoryKey ?? this.#sessionRepositories.get(session.sessionId) ?? this.#repositoryId,
         startedAt: attribution?.startedAt ?? Date.now(),
         endedAt: attribution?.endedAt ?? null,
-      }).onConflictDoNothing().run());
+      }).onConflictDoNothing().run();
       this.#database.insert(events).values(row).onConflictDoNothing().run();
     }
     return eventId;
@@ -377,15 +344,6 @@ export class SqliteSessionStore {
 
   closeSession(sessionId: string, endedAt = Date.now()): void {
     this.#database.update(sessions).set({ endedAt }).where(eq(sessions.sessionId, sessionId)).run();
-  }
-
-  /** Those of `eventIds` the session's history does not hold, in one query: one probe of its event index each. */
-  unrecordedEvents(sessionId: string, eventIds: Iterable<string>): Set<string> {
-    const rows = this.#database.all<{ eventId: string }>(sql`
-      SELECT given.value AS eventId FROM json_each(${JSON.stringify([...eventIds])}) given
-      WHERE NOT EXISTS (SELECT 1 FROM ${events} event WHERE event.session_id = ${sessionId} AND event.event_id = given.value)
-    `);
-    return new Set(rows.map(row => row.eventId));
   }
 
   sessions(): readonly StoredSessionSummary[] {

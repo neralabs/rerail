@@ -133,11 +133,6 @@ function validatedLedger(values: readonly unknown[]): LedgerEntry[] {
 function processedEventIds(ledger: readonly LedgerEntry[]): Set<string> {
   return new Set(ledger.flatMap((entry) => (entry.type === "event" ? [entry.eventId] : [])));
 }
-
-/** What a session's host runtime skips when the agent sends an event again: the processed events its history holds. */
-function hostSessionState(state: Pick<RuntimeSessionState, "processed" | "unrecorded">): HostRuntimeSessionState {
-  return { processedEventIds: [...state.processed].filter(eventId => !state.unrecorded.has(eventId)) };
-}
 interface AuditRequestVerdict {
   status: "completed" | "failed" | "interrupted";
   error: string | null;
@@ -463,15 +458,7 @@ interface RuntimeSessionState {
   /** Decides the session's conversation rules, coverage and repository attribution. */
   checkout: StartingCheckout;
   startedAt: number;
-  /** The events the session ledger marks processed: it holds what each did, each recorded in the history first. */
   processed: Set<string>;
-  /**
-   * Of those, the ones the session history lacked as the session opened. A power cut can roll the history back past
-   * events whose ledger lines reached the disk (the store does not sync an event's commit), and a reset empties it.
-   * An agent that sends one again gets its history row back and nothing more, since the ledger holds the rest of what
-   * it did.
-   */
-  unrecorded: ReadonlySet<string>;
   source: MutableContentSource;
   workspace: SemanticWorkspace;
   selections: Map<string, Selection>;
@@ -1274,7 +1261,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   async openSession(session: AdapterSession): Promise<HostRuntimeSessionState> {
     const existing = this.#sessions.get(session.sessionId);
-    if (existing !== undefined) return hostSessionState(existing);
+    if (existing !== undefined) return { processedEventIds: [...existing.processed] };
     const recordedSession = this.#sessionStore.session(session.sessionId);
     const startedAt = recordedSession?.startedAt ?? Date.now();
     const ledger = await this.#openLedger(session, recordedSession === undefined);
@@ -1431,7 +1418,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#evaluatorOpens.add(workspace);
     const released = (): void => { this.#evaluatorOpens.delete(workspace); };
     void workspace.then(released, released);
-    return hostSessionState(opened);
+    return { processedEventIds: [...opened.processed] };
   }
 
   /** Makes the session's ledger folder, reads its ledger back and marks where history tracking began. */
@@ -1458,13 +1445,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const items = ledger.entries.flatMap((entry) => (entry.type === "sample" ? [entry.item] : []));
     const source = new MutableContentSource(items);
     const secrets = secretCallsOf(ledger.entries);
-    const processed = processedEventIds(ledger.entries);
     return {
       descriptor: session,
       checkout,
       startedAt,
-      processed,
-      unrecorded: this.#sessionStore.unrecordedEvents(session.sessionId, processed),
+      processed: processedEventIds(ledger.entries),
       source,
       workspace: new SemanticWorkspace({ sources: [source], watermarks, embedder: this.#embedder }),
       selections: new Map(),
@@ -1667,15 +1652,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async persistEvent(event: AdapterEvent): Promise<void> {
     const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
     const state = this.#session(sessionId);
-    // Sent again after the history lost it: the ledger holds the rest of what it did, its secret call's mark included.
-    const unrecorded = state.unrecorded.has(event.eventId);
-    if (!unrecorded && event.kind === "call" && callNamesSecretPath(event.input, state.descriptor.cwd)) {
+    if (event.kind === "call" && callNamesSecretPath(event.input, state.descriptor.cwd)) {
       // Recorded before the event counts as processed: a call sent again after a crash here is judged again.
       await this.#append(state, { type: "secret-call", toolCallId: event.toolCallId });
       state.secretCalls.add(event.toolCallId);
     }
-    // A result withheld once stays withheld when stored again, though its call no longer waits for it.
-    const withheld = event.kind === "result" && (state.secretCalls.has(event.toolCallId) || state.withheldResults.has(event.eventId));
+    const withheld = event.kind === "result" && state.secretCalls.has(event.toolCallId);
     this.#sessionStore.append({
       sessionId,
       eventId: event.eventId,
@@ -1683,7 +1665,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       // Stored scrubbed of secrets (`scrubValue`); the live event, which rules match, keeps them.
       payload: event.kind === "result" && withheld ? { ...event, output: withheldOutput(event.output) } : scrubValue(event),
     }, state.descriptor);
-    if (unrecorded) return;
     if (withheld) {
       await this.#append(state, { type: "secret-result", toolCallId: event.toolCallId, eventId: event.eventId });
       state.secretCalls.delete(event.toolCallId);
@@ -1695,8 +1676,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   async persistTurn(sessionId: string, eventId: string): Promise<void> {
     const state = this.#session(sessionId);
-    // Its turn is in the ledger already (`unrecorded`).
-    if (state.unrecorded.has(eventId)) return;
     await this.#append(state, { type: "turn", eventId });
     state.turn += 1;
     this.#nativeSession?.onTurn?.(state.turn);
@@ -1708,8 +1687,6 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   async acceptSample(sample: AdapterSample): Promise<void> {
     const state = this.#session(sample.sessionId);
-    // Its samples, and the rules they matched, are in the ledger already (`unrecorded`).
-    if (state.unrecorded.has(sample.eventId)) return;
     const plainUserMessage = sample.source === "user-input" && sample.boundary === "message";
     const id = plainUserMessage ? sample.eventId : `${sample.eventId}:${sample.boundary}:${state.sampleSequence++}`;
     const owner = sampleOwner(sample.source);

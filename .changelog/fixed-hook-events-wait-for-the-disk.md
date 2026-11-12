@@ -1,1 +1,0 @@
-Recording a hook event no longer waits for the disk: a few milliseconds on a Windows desktop, up to hundreds on a busy Linux disk. Events survive a daemon crash; a power cut or system crash can lose the last seconds of them, 30 or more on Linux, but not the session or its steer count.

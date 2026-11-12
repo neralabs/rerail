@@ -1,16 +1,13 @@
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { once } from "node:events";
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { chmod, mkdtemp, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import Database from "better-sqlite3";
 import { is } from "drizzle-orm";
 import { getTableConfig, SQLiteTable } from "drizzle-orm/sqlite-core";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { createConversationRulesExtension } from "../../src/hosts/omp/index.js";
 import { RerailRuntime } from "../../src/runtime/runtime.js";
 import {
@@ -30,15 +27,13 @@ import { SqlitePresentationPreferenceStore } from "../../src/runtime/presentatio
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
 import { decodeEventPayload, SqliteSessionReader, SqliteSessionStore } from "../../src/runtime/session-store.js";
 import { NativeSessionClient } from "../../src/harness/index.js";
-import { databaseInstalledAt, resetRepositoryHistoryIn, schema, type AdapterEvent } from "../../src/engine/index.js";
+import { databaseInstalledAt, resetRepositoryHistoryIn, schema } from "../../src/engine/index.js";
 import { testEmbedder } from "../support/hook-events.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../support/native-daemon.js";
 import { startTestRepository } from "../support/started-repository.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
 import { approve, currentSubject } from "../../src/engine/index.js";
 
-const PACKAGE_ROOT = resolve(import.meta.dirname, "..", "..");
-const SESSION_STORE_MODULE = pathToFileURL(join(PACKAGE_ROOT, "src", "runtime", "session-store.ts")).href;
 const temporaryDirectories: string[] = [];
 const temporaryConnections: Array<{ close(): void }> = [];
 
@@ -519,161 +514,6 @@ describe("SQLite session persistence", () => {
     reader.close();
   });
 
-  it("commits each appended event without a disk sync of its own: SQLite syncs the log when it checkpoints", async () => {
-    const root = await temporaryDirectory();
-    const store = closeAfterTest(new SqliteSessionStore(join(root, "rerail.sqlite")));
-    store.openSession({ host: "claude-code", sessionId: "session-1", cwd: "/workspace" }, 100);
-    // The connection the append runs on, caught as it prepares the insert.
-    const prepare = vi.spyOn(Database.prototype, "prepare");
-    let connection: unknown;
-    try {
-      store.append({ sessionId: "session-1", eventId: "event-1", kind: "result", observedAt: 110, payload: { output: "ok" } });
-      connection = prepare.mock.contexts[0];
-    } finally {
-      prepare.mockRestore();
-    }
-    expect(connection).toBeInstanceOf(Database);
-    // SQLite's synchronous levels: FULL (2) syncs the write-ahead log at every commit, NORMAL (1) only before a
-    // checkpoint.
-    expect(connection instanceof Database && connection.pragma("synchronous", { simple: true })).toBe(1);
-  });
-
-  it("commits a session's row, HUD baseline and steer receipts with a disk sync, also when an append puts the row back after a reset", async () => {
-    const root = await temporaryDirectory();
-    const path = join(root, "rerail.sqlite");
-    const store = closeAfterTest(new SqliteSessionStore(path, { repositoryId: "repository" }));
-    const session = { host: "claude-code" as const, sessionId: "session-1", cwd: "/workspace" };
-    // Each insert with its connection's synchronous level as the insert is prepared: FULL (2) syncs the write-ahead
-    // log at the commit, NORMAL (1) only before a checkpoint.
-    const commits: string[] = [];
-    const prepare = Database.prototype.prepare;
-    const spy = vi.spyOn(Database.prototype, "prepare").mockImplementation(function (this: Database.Database, source: string) {
-      const table = /^insert into "(sessions|events)"/u.exec(source)?.[1];
-      if (table !== undefined) commits.push(`${table} ${String(prepare.call(this, "PRAGMA synchronous").pluck().get())}`);
-      return prepare.call(this, source);
-    });
-    try {
-      store.openSession(session, 100);
-      store.startHudTracking(session, true);
-      store.append({ sessionId: session.sessionId, eventId: "event-1", kind: "result", observedAt: 110, payload: { output: "ok" } });
-      store.recordSteer(session, "receipt-1", ["rule:one"]);
-      store.closeSession(session.sessionId, 120);
-      resetRepositoryHistory(path, "repository");
-      store.append({ sessionId: session.sessionId, eventId: "event-2", kind: "result", observedAt: 130, payload: { output: "ok" } }, session);
-    } finally {
-      spy.mockRestore();
-    }
-    expect(commits).toEqual([
-      "sessions 2",
-      "events 2",
-      "events 1",
-      "events 2",
-      // The reset took the row: the event's first insert fails on its foreign key, the row goes back, the event follows.
-      "events 1",
-      "sessions 2",
-      "events 1",
-    ]);
-  });
-
-  it("keeps every event a writer appended when its process is killed before it closes the store", async () => {
-    const root = await temporaryDirectory();
-    const path = join(root, "rerail.sqlite");
-    const child = spawn(process.execPath, [
-      "--import", "tsx", "--input-type=module", "-e",
-      `import { SqliteSessionStore } from ${JSON.stringify(SESSION_STORE_MODULE)};
-       const store = new SqliteSessionStore(${JSON.stringify(path)});
-       store.openSession({ host: "claude-code", sessionId: "session-1", cwd: "/workspace" }, 100);
-       for (let i = 1; i <= 20; i += 1) {
-         store.append({ sessionId: "session-1", eventId: "event-" + i, kind: "result", observedAt: 100 + i, payload: { output: "x".repeat(2500) } });
-       }
-       process.stdout.write("appended\\n");
-       process.stdin.resume();`,
-    ], { cwd: PACKAGE_ROOT, stdio: ["pipe", "pipe", "pipe"] });
-    let stderr = "";
-    child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
-    const exited = once(child, "exit");
-    const outcome = await Promise.race([
-      once(child.stdout, "data").then(([chunk]) => String(chunk)),
-      exited.then(() => `the writer exited early: ${stderr}`),
-    ]);
-    child.kill("SIGKILL");
-    await exited;
-    expect(outcome).toBe("appended\n");
-
-    const reader = closeAfterTest(new SqliteSessionReader(path));
-    expect(reader.events("session-1").map(event => event.eventId)).toEqual(Array.from({ length: 20 }, (_, i) => `event-${i + 1}`));
-  }, 30_000);
-
-  describe("after a power cut or a reset left the session ledger's lines for events the history lost", () => {
-    const sessionId = "cut-session";
-
-    /**
-     * Sends `sent` to a runtime, cuts its history as `cut` says, then sends `sent` again to a new runtime, as an agent
-     * that replays its session's events after a restart does. The history syncs only at checkpoints, while the ledger
-     * line written after each event's insert can reach the disk first: deleting the events' rows leaves the state such a
-     * cut leaves. Returns the history and the session ledger's entries before the cut and after the second sending.
-     */
-    async function sendAgainAfterCut(root: string, sent: readonly AdapterEvent[], cut: (database: Database.Database) => void) {
-      const databasePath = defaultRerailDatabasePath();
-      const storageRoot = join(root, "sessions");
-      const options = { storageRoot, databasePath, workspaceRoot: root, embedder: testEmbedder };
-      const ledgerPath = join(storageRoot, createHash("sha256").update(sessionId).digest("hex"), "events.jsonl");
-      const ledger = async () => (await readFile(ledgerPath, "utf8")).split("\n").filter(Boolean).map(line => JSON.parse(line) as { type: string });
-      const before = new RerailRuntime(options);
-      for (const event of sent) await before.ingest(event);
-      await before.dispose();
-      const ledgerBefore = await ledger();
-      const database = new Database(databasePath);
-      cut(database);
-      database.close();
-      const after = new RerailRuntime(options);
-      for (const event of sent) await after.ingest(event);
-      await after.dispose();
-      return { databasePath, ledgerBefore, ledgerAfter: await ledger() };
-    }
-
-    // A reset removes an ended session's row with its events and keeps the ledger. A power cut cannot, since the row
-    // commits with a disk sync.
-    it.each([
-      { lost: "its last events", cut: (database: Database.Database) => database.exec("DELETE FROM events WHERE event_id IN ('prompt-2', 'turn-2')") },
-      { lost: "the events of a session a reset removed", cut: (database: Database.Database) => database.exec("DELETE FROM events; DELETE FROM sessions") },
-    ])("stores $lost again when the agent sends them again, and does nothing else for them twice", async ({ cut }) => {
-      const root = await temporaryDirectory();
-      const sent: AdapterEvent[] = [
-        { kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId, cwd: root } },
-        { kind: "user-prompt", eventId: "prompt-1", sessionId, text: "first" },
-        { kind: "turn-end", eventId: "turn-1", sessionId, text: "done first" },
-        { kind: "user-prompt", eventId: "prompt-2", sessionId, text: "second" },
-        { kind: "turn-end", eventId: "turn-2", sessionId, text: "done second" },
-      ];
-      const { databasePath, ledgerBefore, ledgerAfter } = await sendAgainAfterCut(root, sent, cut);
-
-      const ids = sent.map(event => event.eventId);
-      const reader = closeAfterTest(new SqliteSessionReader(databasePath));
-      expect(reader.events(sessionId).map(event => event.eventId).filter(id => ids.includes(id))).toEqual(ids);
-      // The ledger already held the rest of what each event did: its mark as processed, its samples and its turn.
-      const done = (entries: readonly { type: string }[]) => entries.filter(entry => ["event", "sample", "turn"].includes(entry.type));
-      expect(done(ledgerAfter)).toEqual(done(ledgerBefore));
-    });
-
-    it("stores a result it withheld without its output again", async () => {
-      const root = await temporaryDirectory();
-      const secret = "API_TOKEN=sk-live-0123456789";
-      const sent: AdapterEvent[] = [
-        { kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId, cwd: root } },
-        { kind: "call", eventId: "env-call", toolCallId: "env", sessionId, toolName: "Bash", input: { command: "cat .env" } },
-        { kind: "result", eventId: "env-result", toolCallId: "env", sessionId, toolName: "Bash", output: secret },
-      ];
-      const { databasePath } = await sendAgainAfterCut(root, sent, database => database.exec("DELETE FROM events WHERE event_id = 'env-result'"));
-
-      const database = closeAfterTest(new Database(databasePath, { readonly: true }));
-      const stored = database.prepare("SELECT payload_json FROM events WHERE event_id = 'env-result'").pluck().get();
-      expect(JSON.parse(String(stored))).toMatchObject({ output: { withheld: "tool output", bytes: secret.length } });
-      expect((database.prepare("SELECT payload_json FROM events").pluck().all() as string[]).join("\n")).not.toContain(secret);
-    });
-  });
-
-  // Its 503 receipts each commit with a disk sync (`recordSteer`), which takes seconds in all on a busy disk.
   it("counts successful steers across the full session history, deduplicating only receipt retries", async () => {
     const { store, reader, session: first } = await hudFixture("first");
     const second = { ...first, sessionId: "second" };
@@ -695,7 +535,7 @@ describe("SQLite session persistence", () => {
     store.openSession(first);
     store.startHudTracking(first, false);
     expect(reader.hud(first.sessionId).steeringCount).toBe(501);
-  }, 30_000);
+  });
 
   it("counts one steer per rule a receipt carried, so two rules in one edit read twice", async () => {
     const { store, reader, session } = await hudFixture("per-rule");
