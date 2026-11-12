@@ -519,6 +519,86 @@ struct Shape {
     file_count: u32,
     /// A micro walk's steps (`compile_micro::steps` for the largest file and program).
     steps: u32,
+    /// Profiling (`RERAIL_GPU_WALK_STEPS`): 1 + the dispatch's first pass's place in its stats
+    /// buffer (bound at `WALK_STATS_SLOT`); 0 off.
+    profile: u32,
+    /// The spill queue's capacity in frames (`MicroQ`, decision 0116); 0 no spill.
+    queue: u32,
+    /// A walk's steps between spills (`SPILL_BUDGET`).
+    budget: u32,
+}
+
+/// A walk's steps before it spills a frame, and between spills: well past a short walk's (most take
+/// under 20), well under a long one's (a module's descendants, 10^5).
+const SPILL_BUDGET: u32 = 512;
+
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    /// Tests: the spill budget (`SPILL_BUDGET`), low so every walk spills.
+    pub static SPILL_BUDGET_TEST: std::cell::Cell<Option<u32>> = const { std::cell::Cell::new(None) };
+}
+
+fn spill_budget() -> u32 {
+    #[cfg(any(test, feature = "test-hooks"))]
+    if let Some(budget) = SPILL_BUDGET_TEST.get() {
+        return budget;
+    }
+    SPILL_BUDGET
+}
+
+/// Where a micro kernel binds its spill queue's slots, control and items (`MicroQ`).
+const SPILL_SLOTS: [u64; 3] = [23, 24, 25];
+/// The spill queue's frames: a long walk's frames past its step budget (`MICRO_BUDGET`).
+const SPILL_FRAMES: usize = 1 << 15;
+/// A spilled frame's words (`MICRO_ITEM`).
+const SPILL_ITEM: usize = 20;
+
+/// Whether long micro walks spill their frames to other threads (`RERAIL_MICRO_SPILL=off`: not).
+fn spill_on() -> bool {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_MICRO_SPILL").map_or(true, |v| v != "off"));
+    *ON
+}
+
+/// Where a micro kernel binds its walk statistics (`Shape::profile`): below the slabs.
+const WALK_STATS_SLOT: u64 = 26;
+
+/// Profiling (`RERAIL_GPU_WALK_STEPS`): each micro pass's walks, steps and longest walk, by its
+/// words, in the profile's stages (`walk_steps.`, `walk_items.`, `walk_max.`).
+fn walk_steps_on() -> bool {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_GPU_WALK_STEPS").is_some());
+    *ON
+}
+
+/// A micro walk's words as text: what a profile names the walk by.
+fn describe_walk(tier: usize, words: &[u32]) -> String {
+    let mut out = format!("t{tier}:");
+    for &word in words {
+        let (op, mode, arg) = super::super::split(word);
+        let named = if mode == 1 { "n" } else { "" };
+        let part = match op {
+            0 => "fail".to_owned(),
+            1 => format!("kind={arg}"),
+            2 => format!("field={arg}"),
+            3 => format!("flags{mode}/{arg}"),
+            4 => format!("text{arg}"),
+            10 => format!("class={arg}"),
+            16 => format!("child{named}"),
+            17 => format!("next{named}"),
+            18 => "parent".to_owned(),
+            19 => format!("desc{named}"),
+            20 => format!("after{named}"),
+            21 => format!("save{arg}"),
+            22 => format!("load{arg}"),
+            32 => "capture".to_owned(),
+            48 => format!("fork@{arg}"),
+            49 => format!("jump@{arg}"),
+            64 => format!("emit{arg}"),
+            other => format!("op{other}/{arg}"),
+        };
+        out.push(' ');
+        out.push_str(&part);
+    }
+    out
 }
 
 #[repr(C)]
@@ -672,7 +752,7 @@ fn scratch_rows(plan: &Plan<'_>) -> usize {
 /// The device's tape view (decision 0032), which the label and pattern kernels read.
 const TAPE_VIEW: &str = concat!("#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape.metal"));
 /// The label kernels over the tape view.
-const SOURCE: &str = concat!("#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape.metal"), include_str!("metal_label_passes.metal"));
+const SOURCE: &str = concat!("#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape.metal"), include_str!("metal_work_queue.metal"), include_str!("metal_label_passes.metal"));
 /// Where a label kernel binds the batch's four slabs (`Slabs`): past every other buffer.
 const SLAB_SLOT: u64 = 27;
 const KERNELS: [&str; 12] = [
@@ -940,6 +1020,12 @@ struct Runner<'a> {
     outcome: Outcome,
     /// The plan's root walks, encoded after its passes (`records`).
     roots: Option<RootsEncoded>,
+    /// Profiling (`RERAIL_GPU_WALK_STEPS`): the stats buffer of each micro dispatch encoded since
+    /// the last flush, with its passes' names; the next dispatch's binding.
+    walk_stats: Vec<(MappedBuffer, Vec<String>)>,
+    walk_bind: Option<Buffer>,
+    /// The micro walks' spill queue (`MicroQ`): slots, control, items; made on first use.
+    spill: Option<[MappedBuffer; 3]>,
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
@@ -953,6 +1039,16 @@ fn interpret_only() -> bool {
     return INTERPRET_ONLY.get();
     #[cfg(not(any(test, feature = "test-hooks")))]
     false
+}
+
+/// `Error::BackendCapacity`, counted by where it was raised (`capacity.<line>` in the profile's stages): which bound a
+/// run that fell back to the CPU met.
+#[track_caller]
+fn capacity() -> Error {
+    if crate::code_rule_dsl::prof::on() {
+        crate::code_rule_dsl::prof::count_named(format!("capacity.label_passes:{}", std::panic::Location::caller().line()), 1);
+    }
+    Error::BackendCapacity
 }
 
 pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
@@ -1091,7 +1187,7 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
                 lanes.1 = lanes.1.map(|states| states / 2);
                 continue;
             }
-            Err(Error::BackendBudget) => return Err(Error::BackendCapacity),
+            Err(Error::BackendBudget) => return Err(capacity()),
             // A loop walk outgrew the pool's 64 frames (or a walk its captures or steps): the
             // pool's 128-frame stacks first. Only a walk's overflow reaches here; a batch over a
             // budget (`BackendCapacity`) goes back to the wave to be split, before anything of a
@@ -1229,6 +1325,9 @@ fn encode(
             ..Outcome::default()
         },
         roots: None,
+        walk_stats: Vec::new(),
+        walk_bind: None,
+        spill: None,
     };
     mark("buffers");
     if crate::code_rule_dsl::prof::on() {
@@ -1395,7 +1494,7 @@ fn tapes(
     // The documents in the slabs, one table over them: a batch over `MAX_SLABS` is the wave's to
     // split.
     let table = crate::code_rule_dsl::prof::time("residency.docs", || crate::code_rule_dsl::residency::slabs::admit_docs(files))?;
-    let table = crate::code_rule_dsl::residency::slabs::DocTable::new(table).ok_or(Error::BackendCapacity)?;
+    let table = crate::code_rule_dsl::residency::slabs::DocTable::new(table).ok_or_else(capacity)?;
     if table.nodes != files.iter().map(TapeDoc::transducer_len).sum::<usize>() {
         return Err(Error::BackendFailure);
     }
@@ -1461,6 +1560,16 @@ impl Runner<'_> {
             self.outcome.device += (end - start).max(0.0);
         }
         self.outcome.command_buffers += 1;
+        for (stats, names) in self.walk_stats.drain(..) {
+            let values = unsafe { std::slice::from_raw_parts(stats.buffer.contents().cast::<u32>(), 3 * names.len()) };
+            let mut stages = rerail_prof::stages();
+            for (name, v) in names.iter().zip(values.chunks(3)) {
+                stages.entry(format!("walk_items.{name}")).or_default().1 += v[0] as usize;
+                stages.entry(format!("walk_steps.{name}")).or_default().1 += v[1] as usize;
+                let max = stages.entry(format!("walk_max.{name}")).or_default();
+                max.1 = max.1.max(v[2] as usize);
+            }
+        }
         self.retained.clear();
         self.programs.clear();
         self.segment_bytes = 0;
@@ -1538,6 +1647,12 @@ impl Runner<'_> {
             encoder.set_buffer(index as u64, Some(buffer), *offset);
         }
         self.bind_slabs(encoder);
+        if label.starts_with("label_micro") {
+            encoder.set_buffer(WALK_STATS_SLOT, Some(self.walk_bind.as_ref().unwrap_or(&self.flags.buffer)), 0);
+            for (slot, buffer) in SPILL_SLOTS.iter().zip(self.spill.iter().flatten().map(|b| &b.buffer).chain(std::iter::repeat(&self.flags.buffer))) {
+                encoder.set_buffer(*slot, Some(buffer), 0);
+            }
+        }
         encoder.set_bytes(
             buffers.len() as u64,
             std::mem::size_of::<Shape>() as u64,
@@ -1808,7 +1923,7 @@ impl Runner<'_> {
             use super::super::packed_batch::{MARKS, MARKS_CAPTURED, ONE_RESULT, TALLY};
             for (program, (_, _, mode, slot)) in batch.programs.iter_mut().zip(&passes) {
                 if *slot >= 1 << 22 {
-                    return Err(Error::BackendCapacity);
+                    return Err(capacity());
                 }
                 program.flags |= MARKS | (slot << 8);
                 if matches!(*mode, 1 | 3) {
@@ -2040,8 +2155,8 @@ impl Runner<'_> {
         let workspace = self.workspace.as_mut().ok_or(Error::BackendFailure)?;
         let lease = &mut workspace.lease;
         let generation = lease.generation;
-        let span = u32::try_from(prepared.task_count + 1).map_err(|_| Error::BackendCapacity)? * 2;
-        lease.generation = lease.generation.checked_add(span).ok_or(Error::BackendCapacity)?;
+        let span = u32::try_from(prepared.task_count + 1).map_err(|_| capacity())? * 2;
+        lease.generation = lease.generation.checked_add(span).ok_or_else(capacity)?;
         let stamp = |evaluations: &[MetalEvaluation]| {
             let mut evaluations = evaluations.to_vec();
             evaluations.iter_mut().for_each(|evaluation| evaluation.generation = generation);
@@ -2469,7 +2584,36 @@ impl Runner<'_> {
         let tiers = walks.tiers.iter().map(|(tier, passes, count, threads)| (*tier, passes.buffer.clone(), *count, *threads)).collect::<Vec<_>>();
         let stacks = self.stacks()?;
         for (tier, passes, count, threads) in tiers {
-        let shape = Shape { item_count: threads as u32, target_count: count as u32, steps, ..self.shape() };
+        let mut shape = Shape { item_count: threads as u32, target_count: count as u32, steps, ..self.shape() };
+        if spill_on() {
+            if self.spill.is_none() {
+                self.spill = Some([
+                    MappedBuffer::zeroed::<u32>(self.device, SPILL_FRAMES)?,
+                    MappedBuffer::zeroed::<u32>(self.device, 8)?,
+                    MappedBuffer::zeroed::<u32>(self.device, SPILL_FRAMES * SPILL_ITEM)?,
+                ]);
+            }
+            // A fresh queue each dispatch: its slots empty, its head, tail, active, overflow and
+            // frames taken zero.
+            let [slots, control, _] = self.spill.as_ref().expect("the spill queue");
+            let blit = self.command.new_blit_command_encoder();
+            blit.set_label("Rerail micro spill queue");
+            blit.fill_buffer(&slots.buffer, metal::NSRange::new(0, 4 * SPILL_FRAMES as u64), 0);
+            blit.fill_buffer(&control.buffer, metal::NSRange::new(0, 32), 0);
+            blit.end_encoding();
+            shape.queue = SPILL_FRAMES as u32;
+            shape.budget = spill_budget();
+        }
+        if walk_steps_on() {
+            // Each pass's record names it by its words.
+            let records = unsafe { std::slice::from_raw_parts(passes.contents().cast::<[u32; 8]>(), count) };
+            let all = unsafe { std::slice::from_raw_parts(words.contents().cast::<u32>(), words.length() as usize / 4) };
+            let names = records.iter().map(|r| describe_walk(tier, &all[r[0] as usize..(r[0] + r[1]) as usize])).collect();
+            let stats = MappedBuffer::zeroed::<u32>(self.device, 3 * count.max(1))?;
+            self.walk_bind = Some(stats.buffer.clone());
+            self.walk_stats.push((stats, names));
+            shape.profile = 1;
+        }
         let tapes = &self.tapes;
         let (docs, head) = (tapes.docs.buffer.clone(), tapes.supertypes.buffer.clone());
         let (state, flags) = (self.tapes.supertypes.buffer.clone(), self.flags.buffer.clone());
@@ -2494,6 +2638,7 @@ impl Runner<'_> {
             _ => (TIER_KERNELS[tier], threads.min(stack_lanes(TIER_FRAMES[tier], 17))),
         };
         self.kernel(pipeline, &buffers, shape, threads);
+        self.walk_bind = None;
         }
         Ok(())
     }

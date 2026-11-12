@@ -10,7 +10,8 @@ use std::collections::BTreeMap;
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
-static ON: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_PROF").is_some());
+// The workspace profile (`RERAIL_PROFILE`) reports the stages too (its "Stages" section).
+static ON: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_PROF").is_some() || std::env::var_os("RERAIL_PROFILE").is_some());
 static STAGES: Mutex<BTreeMap<String, (Duration, usize)>> = Mutex::new(BTreeMap::new());
 
 pub fn time<T>(stage: &str, f: impl FnOnce() -> T) -> T {
@@ -168,7 +169,7 @@ pub fn count(stage: &'static str, amount: usize) {
     }
 }
 
-/// Whether stages are timed (`RERAIL_PROF`).
+/// Whether stages are timed (`RERAIL_PROF`, or the workspace profile's `RERAIL_PROFILE`).
 pub fn on() -> bool {
     *ON
 }

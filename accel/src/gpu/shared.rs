@@ -24,6 +24,14 @@ use std::sync::{Mutex, OnceLock};
 const SMALLEST: usize = 16 << 10;
 /// The most bytes the pool keeps idle (decision 0039).
 const IDLE_LIMIT: usize = 32 << 20;
+/// The bytes leased now (and not yet dropped): what relational work holds on the device, for the profile.
+static LIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The bytes leased now, and the bytes the pool keeps idle: relational work's share of the device's memory.
+pub fn held_bytes() -> (usize, usize) {
+    let idle = pool().lock().map_or(0, |p| p.held);
+    (LIVE.load(std::sync::atomic::Ordering::Relaxed), idle)
+}
 
 /// The device and its one queue.
 pub struct Shared {
@@ -130,6 +138,7 @@ impl std::ops::Deref for Pooled {
 impl Drop for Pooled {
     fn drop(&mut self) {
         let Some(b) = self.buffer.take() else { return };
+        LIVE.fetch_sub(b.length() as usize, std::sync::atomic::Ordering::Relaxed);
         if !self.keep {
             return;
         }
@@ -151,17 +160,20 @@ pub fn lease(bytes: usize) -> Result<Pooled, String> {
             return Err(format!("a buffer of {bytes} bytes is past the device's largest ({})", shared.max_buffer));
         }
         let b = objc::rc::autoreleasepool(|| shared.device.new_buffer(bytes as u64, MTLResourceOptions::StorageModeShared));
+        LIVE.fetch_add(b.length() as usize, std::sync::atomic::Ordering::Relaxed);
         return Ok(Pooled { buffer: Some(b), keep: false });
     }
     let mut p = pool().lock().expect("the pool");
     if let Some(b) = p.idle.get_mut(&class).and_then(Vec::pop) {
         p.held -= class;
         p.reused += 1;
+        LIVE.fetch_add(b.length() as usize, std::sync::atomic::Ordering::Relaxed);
         return Ok(Pooled { buffer: Some(b), keep: true });
     }
     p.made += 1;
     drop(p);
     let b = crate::score::phase("new buffer", || objc::rc::autoreleasepool(|| shared.device.new_buffer(class as u64, MTLResourceOptions::StorageModeShared)));
+    LIVE.fetch_add(b.length() as usize, std::sync::atomic::Ordering::Relaxed);
     Ok(Pooled { buffer: Some(b), keep: true })
 }
 

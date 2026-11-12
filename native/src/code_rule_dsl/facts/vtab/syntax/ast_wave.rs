@@ -110,6 +110,9 @@ type WaveFound = Result<(Vec<Vec<BTreeSet<u32>>>, crate::code_rule_dsl::transduc
 const WAVE_CPU_PER_NODE_PASS: f64 = 2e-8;
 const WAVE_GPU_PER_NODE_PASS: f64 = 2.5e-8;
 
+/// The profile's topic for a wave the GPU lane ran on the CPU, its Metal run having failed (`MatcherWave::run`).
+pub const METAL_FELL_BACK: &str = "ast matcher wave fell back to the CPU (its Metal run failed)";
+
 impl MatcherWave {
     fn on(&self, backend: crate::code_rule_dsl::transducer::packed::MatcherBackend) -> WaveFound {
         let started = std::time::Instant::now();
@@ -139,10 +142,13 @@ impl rerail_accel::kernel::Program for MatcherWave {
     fn run(&self, lane: rerail_accel::Lane) -> Result<rerail_accel::kernel::ProgramOutput, String> {
         use crate::code_rule_dsl::transducer::packed::MatcherBackend;
         #[cfg(target_os = "macos")]
-        if lane == rerail_accel::Lane::Gpu
-            && let Ok(found) = self.on(MatcherBackend::MetalInterpreter)
-        {
-            return Ok(Arc::new(Ok(found) as WaveFound));
+        if lane == rerail_accel::Lane::Gpu {
+            match self.on(MatcherBackend::MetalInterpreter) {
+                Ok(found) => return Ok(Arc::new(Ok(found) as WaveFound)),
+                // The CPU's wave instead, named in the profile's warnings: a Metal path that fails (a kernel that does
+                // not compile, a run over its bounds) is never silent.
+                Err(e) => crate::code_rule_dsl::logic::profile::decision(METAL_FELL_BACK, || e.lines().next().unwrap_or("").chars().take(160).collect()),
+            }
         }
         let _ = lane;
         Ok(Arc::new(self.on(MatcherBackend::Cpu)))

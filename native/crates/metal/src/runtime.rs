@@ -152,6 +152,7 @@ impl BufferReservation {
                         std::backtrace::Backtrace::force_capture()
                     );
                 }
+                rerail_prof::count("capacity.metal_pool_ledger", 1);
                 Error::BackendCapacity
             })?;
         let pooled = std::ptr::eq(ledger, pool());
@@ -430,6 +431,20 @@ impl MappedBuffer {
                     device.max_buffer_length()
                 );
             }
+            rerail_prof::count("capacity.metal_pool_driver", 1);
+            if rerail_prof::on() {
+                // What the driver held then, and the pool's own part of it (the most seen).
+                let mut stages = rerail_prof::stages();
+                let e = stages.entry("capacity.driver_mb_max".to_owned()).or_default();
+                e.1 = e.1.max((driver_bytes(device) >> 20) as usize);
+                let e = stages.entry("capacity.pool_mb_at_refusal_max".to_owned()).or_default();
+                e.1 = e.1.max(pool().load(Ordering::Acquire) >> 20);
+                let (live, idle) = rerail_accel::gpu::shared::held_bytes();
+                let e = stages.entry("capacity.accel_live_mb_at_refusal_max".to_owned()).or_default();
+                e.1 = e.1.max(live >> 20);
+                let e = stages.entry("capacity.accel_idle_mb_at_refusal_max".to_owned()).or_default();
+                e.1 = e.1.max(idle >> 20);
+            }
             return Err(Error::BackendCapacity);
         }
         // The command buffer can retain this resource after the Rust wrapper drops. The Metal
@@ -481,6 +496,20 @@ impl MappedBuffer {
                     device.max_buffer_length(),
                     std::panic::Location::caller()
                 );
+            }
+            rerail_prof::count("capacity.metal_pool_driver", 1);
+            if rerail_prof::on() {
+                // What the driver held then, and the pool's own part of it (the most seen).
+                let mut stages = rerail_prof::stages();
+                let e = stages.entry("capacity.driver_mb_max".to_owned()).or_default();
+                e.1 = e.1.max((driver_bytes(device) >> 20) as usize);
+                let e = stages.entry("capacity.pool_mb_at_refusal_max".to_owned()).or_default();
+                e.1 = e.1.max(pool().load(Ordering::Acquire) >> 20);
+                let (live, idle) = rerail_accel::gpu::shared::held_bytes();
+                let e = stages.entry("capacity.accel_live_mb_at_refusal_max".to_owned()).or_default();
+                e.1 = e.1.max(live >> 20);
+                let e = stages.entry("capacity.accel_idle_mb_at_refusal_max".to_owned()).or_default();
+                e.1 = e.1.max(idle >> 20);
             }
             return Err(Error::BackendCapacity);
         }
