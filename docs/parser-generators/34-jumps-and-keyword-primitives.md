@@ -284,10 +284,11 @@ That is the next step: a call's arguments and results, or only the fields it tou
 - **`ctx` is the state's address,** every rule function's first argument,
   kept by the allocator in a callee-saved register, as `&mut self` is.
   No pinned register, so no move each block.
-- **Four fields are passed and given back** (`HELD_IN_RULES`):
+- **Four fields were passed and given back** (`HELD_IN_RULES`):
   the token's code, start and end, and the stream's end.
   Four fit the argument registers after `ctx` and the entry.
   Ten went through the stack and a return area: 706 KB of code, 525M instructions.
+  Now none is (below: the tape and the state as the lean parser's).
 - **The rest of the state is in memory,** read and written where used (`Cut::reload`).
   So is each `ctx` field: none lives across the function and spills.
 - **A call's result is 0 or 1** for a return (`cbz`, a compare with 1), as a `Result` is.
@@ -382,12 +383,66 @@ The rest of the 180 letter operations stay, for two reasons:
 
 Each proof takes 10 to 100 ms in a debug build.
 
+## Built: the tape and the state as the lean parser's
+
+The lean parser's code, read beside tier 2's, showed six differences.
+Each is now the lean parser's shape:
+
+- **No load nothing reads.**
+  A word loaded each `ctx` field it might read where it started.
+  On most paths most were unread, and Cranelift keeps a load that is not read-only.
+  A pass before compiling removes each load that can not trap and whose value is unread.
+- **Nothing held or passed across calls.**
+  The four passed fields were live through every block, and spilled:
+  15,133 stack loads, against 161 in the lean parser.
+  Now the token and the state are read from `ctx` where used, as `&mut self` is.
+- **`TOKEN` branches to its end.**
+  The stream's end is a cold block, taken once a file.
+  The token's start, end and code are stored as loaded, with no `select`.
+- **The kind and the word are bytes of the code.**
+  A switch loads the kind's byte (`ldrb`), a keyword test the word's.
+  Before, each test masked the code again: 579 `and #0xff`.
+- **The marks are in the record.**
+  A code is the kind, the word and the token's marks, a byte, a byte and 16 bits.
+  The record pass sets a mark's bit where the mark holds at the token's start,
+  its word compared for a mark of one word.
+  This is on the interpreter, Cranelift and Metal.
+  A mark in tier 2 is one bit test.
+- **The node table is rows.**
+  A node is 24 bytes, as the lean parser's `Node`:
+  kind and field (16 bits each), start, end, size, parent, extra flag.
+  A word computes its row's address once (`madd`) and stores each field at an offset.
+  Before, a node was six column stores, each with its own address.
+  The host reads the rows as written.
+- **One exit a function.**
+  Each return was an epilogue: its saved registers restored, 3,919 `ldp` in all.
+  Every return now jumps to the function's one exit, as in the lean parser.
+
+Not done: a frame-free fast path.
+The lean parser's small functions return without a frame on their fast path.
+That would mean splitting each rule's function into a leaf and its body.
+
+| | Before | After | Lean parser |
+|---|---|---|---|
+| Machine instructions | 157,702 | 100,134 | 10,008 |
+| Stack loads | 15,133 | 365 | 161 |
+| Stack stores | 5,450 | 284 | |
+| Returns | 731 | 58 | 41 |
+| Code bytes | 630,808 | 400,540 | |
+| Tier 2, instructions | 440.2M | 351.7M | 356.9M |
+| Tier 2, cycles | 108M | 71.2M | 74.2M |
+| Tier 1, instructions | 616.3M | 745.3M | |
+
+The cycles are with the machine loaded (load average 60 to 100).
+Tier 1 runs more: the record pass loads each mark's word at each token.
+
 ## The order
 
 1. One symbol a token: rows and keywords in the record, one switch a state.
    Built for keywords; rows stay `ROW` tests, which are cold.
-2. Marks in the record. Built as the marks live from one mask, at `TOKEN`.
-3. A cheaper `TOKEN`, and the hot state in registers.
-   Built: held within a function, and four fields passed in registers across calls.
+2. Marks in the record. Built: the record pass writes them into the code.
+3. A cheaper `TOKEN`, and the state as the lean parser's.
+   Built: no select, nothing held across calls, the tape in rows, one exit a function.
+   Left: a frame-free fast path.
 4. Keyword marks from the records. Built for the marks of one word.
 5. Tier 1's primitives: the picked hash, then nibble fingerprints.

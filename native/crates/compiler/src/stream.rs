@@ -333,7 +333,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     let at = start as usize + usize::from(s.offset);
                     // A word the switch names: its target. Else zeros past the file, as every
                     // executor reads them.
-                    let word = (code >> crate::records::KIND_BITS).checked_sub(1).and_then(|w| s.word(w as u16));
+                    let word = crate::records::word_of(code).checked_sub(1).and_then(|w| s.word(w as u16));
                     match word {
                         Some(t) if s.offset == 0 => t,
                         _ if at >= rec_end as usize => REFUSE,
@@ -347,7 +347,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             }
             WORD_IS => {
                 // The record's word: its code names the string.
-                let same = code >> crate::records::KIND_BITS == u32::from(operand) + 1;
+                let same = crate::records::word_of(code) == u32::from(operand) + 1;
                 match (mode, same) {
                     (_, true) => {}
                     // A test: the next word is the keyword's way; a token that is not the word skips it.
@@ -359,10 +359,18 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 let k = u32::from(mode % 32);
                 // A mark of one word (`Words::mark_words`): the token's record names it too.
                 let word_ok = || match program.mark_words.iter().find(|&&(x, _)| u32::from(x) == k) {
-                    Some(&(_, s)) => code >> crate::records::KIND_BITS == u32::from(s) + 1,
+                    Some(&(_, s)) => crate::records::word_of(code) == u32::from(s) + 1,
                     None => true,
                 };
-                let here = if at_end { mode & 32 != 0 } else { mask_bit(operand, start) && word_ok() };
+                // A mark the record has (`Records::marks`): its bit in the code.
+                let in_code = (k as usize) < records.map_or(0, |r| r.marks.len());
+                let here = if at_end {
+                    mode & 32 != 0
+                } else if in_code {
+                    code >> (crate::records::MARK_SHIFT + k) & 1 == 1
+                } else {
+                    mask_bit(operand, start) && word_ok()
+                };
                 if live >> k & 1 == 1 && here {
                     // Taken: it and the marks before it are done at this token.
                     live &= !(u32::MAX >> (31 - k));

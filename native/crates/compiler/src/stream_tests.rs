@@ -60,7 +60,7 @@ fn a_tier2_program_writes_its_nodes() {
     let block = &p.block_programs[0];
     let table = crate::records::WordTable::new(&[]).expect("no words");
     let r = block.records.as_ref().expect("records");
-    let bad = |s: &[u32], l: &[u32]| crate::records::pass(r, &table, b"aaaa", s, l).1;
+    let bad = |s: &[u32], l: &[u32]| crate::records::pass(r, &table, b"aaaa", s, l, &[]).1;
     assert!(!bad(&[0, 1], &[0, 1]));
     assert!(bad(&[0, 1], &[0, 1, 2]));
     assert!(bad(&[0, 1], &[0]));

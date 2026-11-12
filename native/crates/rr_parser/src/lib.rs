@@ -13,7 +13,7 @@
 //! on purpose: a run of four backticks or more, braces nested past 127.
 
 use rerail_compiler::bitlex_masks as bitlex_compile;
-pub use rerail_compiler::native_cpu_stream::{Columns, NO_PARENT};
+pub use rerail_compiler::native_cpu_stream::{Columns, NO_PARENT, NodeRow};
 use rerail_compiler::{native_cpu_stream, native_ir, rir_asm as rir};
 use rerail_rr_syntax as rr;
 use std::cell::RefCell;
@@ -186,24 +186,19 @@ fn metal_tapes(c: &Compiled, files: &[&str], out: &mut Vec<Columns>) -> bool {
     }
 }
 
-/// The fallback: the engine's parser's nodes, in the compiled parser's columns.
+/// The fallback: the engine's parser's nodes, in the compiled parser's rows.
 pub fn engine_columns(nodes: &[rr::tape::Node]) -> Columns {
-    let mut c = Columns { size: vec![1; nodes.len()], ..Columns::default() };
-    for n in nodes {
-        c.kind.push(u32::from(n.kind));
-        c.field.push(u32::from(n.field));
-        c.start.push(n.start);
-        c.end.push(n.end);
-        c.parent.push(n.parent.unwrap_or(NO_PARENT));
-        c.extra.push(u8::from(n.extra));
-    }
+    let mut rows: Vec<NodeRow> = nodes
+        .iter()
+        .map(|n| NodeRow { kind: n.kind, field: n.field, start: n.start, end: n.end, size: 1, parent: n.parent.unwrap_or(NO_PARENT), extra: u8::from(n.extra), pad: [0; 3] })
+        .collect();
     // In preorder a node comes after its parent: sizes from the last node back.
     for (i, n) in nodes.iter().enumerate().rev() {
         if let Some(p) = n.parent {
-            c.size[p as usize] += c.size[i];
+            rows[p as usize].size += rows[i].size;
         }
     }
-    c
+    Columns { rows }
 }
 
 /// Why the grammar did not compile, if it did not: a test's check.
@@ -1486,13 +1481,13 @@ pub mod tests {
             let mut batch = Batch::new(&p.tier1, &[src.as_bytes()]);
             batch.call(&p.tier1);
             let mut tape = p.tape(&batch);
-            room += tape.kind.capacity();
+            room += tape.rows.capacity();
             if p.words(&batch, &mut tape).is_ok() {
                 used += tape.counts[0] as usize;
             }
         }
         let retries = rerail_compiler::native_cpu_stream::ROOM_RETRIES.load(std::sync::atomic::Ordering::Relaxed);
-        eprintln!("tape rows: {room} allocated, {used} written ({:.1}x), {} MB of room a pass; {retries} runs again on the bound's tape (all passes)", room as f64 / used.max(1) as f64, room * 4 * 7 / 1_000_000);
+        eprintln!("tape rows: {room} allocated, {used} written ({:.1}x), {} MB of room a pass; {retries} runs again on the bound's tape (all passes)", room as f64 / used.max(1) as f64, room * 24 / 1_000_000);
         // Tier 1 alone, every file in one batch.
         let refs: Vec<&[u8]> = files.iter().map(|f| f.as_bytes()).collect();
         let t = thread_cpu();

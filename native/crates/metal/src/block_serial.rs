@@ -1337,7 +1337,7 @@ fn records_source(programs: &[&BlockNative]) -> String {
              constant ulong record_keys_{p}[{slots}] = {{{keys}}};\n\
              constant uint record_meta_{p}[{slots}] = {{{meta}}};\n\
              constant ulong record_tails_{p}[{nt}] = {{{tails}}};\n\
-             static inline void records_{p}(device const uint4* bytes, FileRow f, uint lane, device uint* positions, device const uint* tot, device atomic_uint* flag) {{\n\
+             static inline void records_{p}(device const uint4* bytes, FileRow f, uint lane, device const ulong* out, device uint* positions, device const uint* tot, device atomic_uint* flag) {{\n\
              \x20 const uint cap = max(f.len, 1u);\n\
              \x20 device const uint* starts = positions + f.pos_base + {se}u * cap;\n\
              \x20 device const uint* lasts = positions + f.pos_base + {le}u * cap;\n\
@@ -1359,7 +1359,8 @@ fn records_source(programs: &[&BlockNative]) -> String {
              \x20     for (uint j = 1u; j < 8u; j++) all = all && (len <= 8u * j || record_cut(record_load8(bytes, f, s + 8u * j), len - 8u * j) == record_tails_{p}[(word - 1u) * 7u + j - 1u]);\n\
              \x20     word = all ? word : 0u;\n\
              \x20   }}\n\
-             \x20   codes[k] = kind | (word << {kb}u);\n\
+             \x20   uint marks = 0u;{marks}\n\
+             \x20   codes[k] = kind | (word << {kb}u) | (marks << {ms}u);\n\
              \x20 }}\n\
              \x20 if (bad) atomic_fetch_or_explicit(flag + f.tot_base + {x}u, 1u, memory_order_relaxed);\n\
              }}\n",
@@ -1373,12 +1374,22 @@ fn records_source(programs: &[&BlockNative]) -> String {
             mult = t.mult,
             shift = 64 - t.bits,
             kb = rerail_compiler::records::KIND_BITS,
+            ms = rerail_compiler::records::MARK_SHIFT,
+            marks = r
+                .marks
+                .iter()
+                .enumerate()
+                .map(|(k, &(o, w))| {
+                    let word = if w == 0 { String::new() } else { format!(" && word == {w}u") };
+                    format!(" if (((out[f.out_base + {o}u * f.groups + s / 64u] >> (s % 64u)) & 1ul) != 0ul{word}) marks |= {}u;", 1u32 << k)
+                })
+                .collect::<String>(),
         ));
-        cases.push_str(&format!("    case {p}u: records_{p}(bytes, f, lane, positions, tot, flag); break;\n"));
+        cases.push_str(&format!("    case {p}u: records_{p}(bytes, f, lane, out, positions, tot, flag); break;\n"));
     }
     out.push_str(&format!(
         "// The record pass: thread `t` is file `t / {lanes}`'s lane `t % {lanes}`.\n\
-         kernel void serial_records(device const uint4* s0 [[buffer(0)]], device const FileRow* files [[buffer(2)]], device uint* positions [[buffer(6)]],\n\
+         kernel void serial_records(device const uint4* s0 [[buffer(0)]], device const ulong* out [[buffer(1)]], device const FileRow* files [[buffer(2)]], device uint* positions [[buffer(6)]],\n\
          \x20   constant uint4& q [[buffer(7)]], device const uint* tot [[buffer(8)]], device atomic_uint* flag [[buffer(9)]],\n\
          \x20   device const uint4* s1 [[buffer(16)]], device const uint4* s2 [[buffer(17)]], device const uint4* s3 [[buffer(18)]], uint t [[thread_position_in_grid]]) {{\n\
          \x20 const uint fi = t / {lanes}u, lane = t % {lanes}u;\n\
