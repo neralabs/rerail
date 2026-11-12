@@ -3711,7 +3711,7 @@ compiled only there.
 **Status (2026-11-12):** the target builds (the engine hosts the tests that read above the crate); 20 pass,
 the two text tests fail (O-device-step-counts).
 
-## O-phase0-store-state. Phase 0's include graph depends on what the store already holds
+## O-phase0-store-state (closed 2026-11-12). Phase 0's include graph depends on what the store already holds
 
 Each test now starts from a copy of a store template that already holds the
 library's facts (decision 0118). In such a store, two runs of phase 0 on the
@@ -3732,6 +3732,10 @@ relations, not the observer: the module digests match.
 It passes with `RERAIL_TAPE_CACHE` pointing at an empty store. Next step: find
 whether the first or the second run is wrong (compare both with a run on an
 empty store), then fix the rule or the maintenance that loses the edge.
+
+**Closed (2026-11-12).** On the hub after the final roll-up, the test passes in the template's store: six
+runs alone, and `logic::plan::corpus` (73 tests) twice in one process. The maintenance merged in the roll-up
+keeps the edge. `bootstrap_resolves_as_the_builtin_reader_does` runs again (no `#[ignore]`).
 
 ## O-repetition-implied-boundary. A `+` run on the tape does not end at an implied token
 

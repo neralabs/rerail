@@ -3,7 +3,6 @@
     /// Each library module's text, included by a program: the files phase 0's graph gives, in its order, are the
     /// builtin reader's (the library first, then beside the includer; `core.rr` first; includes first).
     #[test]
-    #[ignore = "O-phase0-store-state: in a store holding the template's library facts (0118), a second derive loses python/env.rr's implicit core.rr include"]
     fn bootstrap_resolves_as_the_builtin_reader_does() {
         let lib = crate::code_rule_dsl::logic::rr::library();
         let mut names: Vec<String> = Vec::new();
