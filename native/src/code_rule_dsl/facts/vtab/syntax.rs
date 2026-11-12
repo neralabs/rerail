@@ -1104,6 +1104,8 @@ pub struct Dialect {
     family: Family,
     pub catalog: KindCatalog,
     classes: Vec<Class>,
+    /// Each kind code's `granules::kind_flags`.
+    granule_kinds: Vec<u8>,
     operator: Option<u16>,
     /// The `operators` field: a comparison's operator tokens (`a < b <= c`).
     operators: Option<u16>,
@@ -1137,6 +1139,7 @@ impl Dialect {
         let catalog = dialect.kinds();
         let values = crate::code_rule_dsl::language::base(crate::code_rule_dsl::language::Family::of(dialect)).reads_values();
         let classes = (0..catalog.kind_count()).map(|k| catalog.kind_name(k as u16).map_or(Class::Other, Class::of)).collect();
+        let granule_kinds = (0..catalog.kind_count()).map(|k| catalog.kind_name(k as u16).map_or(0, granules::kind_flags)).collect();
         let canonical: Vec<u16> = (0..catalog.kind_count() as u16)
             .map(|k| match catalog.kind_name(k) {
                 Some(name) if catalog.kind_is_named(k) => Some(catalog.kind_id(name)).filter(|&c| c != 0).unwrap_or(k),
@@ -1149,10 +1152,14 @@ impl Dialect {
         }
         let family = Family::of(from_tape_tag(tag).and_then(crate::code_rule_dsl::language::label));
         let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(dialect);
-        Ok(Self { tag, family, catalog, classes, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, codes, values, grammar })
+        Ok(Self { tag, family, catalog, classes, granule_kinds, operator: catalog.field_id("operator"), operators: catalog.field_id("operators"), canonical, codes, values, grammar })
+    }
+    /// What kind code `code` is to the granules (`granules::kind_flags`); ERROR and an unknown code are nothing.
+    pub fn granule_kind(&self, code: u16) -> u8 {
+        self.granule_kinds.get(usize::from(code)).copied().unwrap_or(0)
     }
     /// Node `id`'s kind code (ERROR's is `u16::MAX`).
-    fn code(&self, f: &Facts, id: u32) -> u16 {
+    pub(super) fn code(&self, f: &Facts, id: u32) -> u16 {
         kind_code(f.kind[id as usize])
     }
     fn class(&self, f: &Facts, id: u32) -> Class {

@@ -1171,3 +1171,23 @@ fn definition_ids_are_pinned() {
     let got: String = h.finalize()[..16].iter().map(|b| format!("{b:02x}")).collect();
     assert_eq!(got, "f280acef04fbe4f44e98f401f7f7d4f8", "the definition ids moved");
 }
+
+/// What a kind is to the granules (a definition, a wrapper, a body, a container's owner) is a table by kind code,
+/// made once per grammar from the kind names (`Dialect::granule_kind`), not names matched for each node: in every
+/// grammar the table says what the names say.
+#[test]
+fn granule_kinds_are_a_table_by_kind_code() {
+    for (label, path, source) in [("python", "a.py", "x = 1\n"), ("javascript", "a.js", "x;\n"), ("typescript", "a.ts", "x;\n"), ("tsx", "a.tsx", "x;\n"),
+        ("php", "a.php", "<?php\nx();\n"), ("rust", "a.rs", "fn f() {}\n"), ("sql", "a.sql", "SELECT 1;\n")] {
+        let d = document(7, path, label, source);
+        let dialect = Dialect::new(core::facts_tag(&d.facts)).unwrap();
+        let mut seen = 0;
+        for code in 0..dialect.catalog.kind_count() {
+            let name = dialect.catalog.kind_name(code as u16).unwrap_or("");
+            let want = granules::kind_flags(name);
+            seen += usize::from(want != 0);
+            assert_eq!(dialect.granule_kind(code as u16), want, "{label}: {name}");
+        }
+        assert!(seen > 0, "{label}: no kind starts or holds a granule");
+    }
+}
