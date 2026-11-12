@@ -1,1 +1,1 @@
-In a repository that follows `.gitignore`, Rerail's look for shell writes asks Git's ignore rules once per folder instead of twice per file, so large checkouts and repositories with many worktrees keep the daemon far less busy, most of all on Windows.
+In a repository that follows `.gitignore`, Rerail's look for shell writes asks Git's ignore rules once per folder instead of twice per file, so a look through a large checkout takes less time, most of all on Windows.
