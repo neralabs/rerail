@@ -1979,6 +1979,8 @@ describe("CodeRuleBridge and another session's writes", () => {
       await shell(a.bridge, () => appendFile(join(root, "src", "a.py"), line));
       await awaitClockPastNow();
       await shell(b.bridge, () => undefined);
+      // The next write must not share the tick the call of this session ended in, or it reads as this session's.
+      await awaitClockPastNow();
     }
     await b.bridge.checkpoint("turn");
     expect(b.auditGeneratedEdits).not.toHaveBeenCalled();
