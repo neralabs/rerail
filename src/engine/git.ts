@@ -694,6 +694,23 @@ function crlfRule(attributes: LineEndingAttributes, config: LineEndingConfig, pl
 }
 
 /**
+ * `core.autocrlf` and `core.eol` in `cwd`, by one `git config -z --get-regexp`, each as `git config --get` answers it:
+ * the last value set wins, trimmed, and a key set with no value reads as empty. Both are unset without Git, outside a
+ * repository, past the timeout, or where neither is set (Git then exits 1).
+ */
+async function lineEndingConfig(cwd: string, signal: AbortSignal | undefined): Promise<LineEndingConfig> {
+  const listed = await gitStdout(cwd, ["config", "-z", "--get-regexp", String.raw`^core\.(autocrlf|eol)$`], signal);
+  const values = new Map<string, string>();
+  // `<key> LF <value> NUL` per value set, in the order Git reads them; `<key> NUL` for a key with no value.
+  for (const entry of listed?.split("\0") ?? []) {
+    const end = entry.indexOf("\n");
+    const key = end < 0 ? entry : entry.slice(0, end);
+    if (key === "core.autocrlf" || key === "core.eol") values.set(key, end < 0 ? "" : entry.slice(end + 1).trim().toLowerCase());
+  }
+  return { autocrlf: values.get("core.autocrlf"), coreEol: values.get("core.eol") };
+}
+
+/**
  * The `text`, `crlf` and `eol` attributes of each of `paths` (relative to `cwd`), by one `git check-attr --stdin`; empty
  * without Git, outside a repository or past the timeout.
  */
@@ -729,12 +746,7 @@ async function gitCrlfPaths(
   const asked = paths.filter(path => !path.includes("\0"));
   const rules = new Map<string, CrlfRule>();
   if (asked.length === 0) return rules;
-  const [autocrlf, coreEol, attributes] = await Promise.all([
-    gitOutput(cwd, ["config", "--get", "core.autocrlf"], signal),
-    gitOutput(cwd, ["config", "--get", "core.eol"], signal),
-    lineEndingAttributes(cwd, asked, signal),
-  ]);
-  const config = { autocrlf: autocrlf?.toLowerCase(), coreEol: coreEol?.toLowerCase() };
+  const [config, attributes] = await Promise.all([lineEndingConfig(cwd, signal), lineEndingAttributes(cwd, asked, signal)]);
   for (const path of asked) {
     const attribute = attributes.get(path);
     const rule = attribute === undefined ? undefined : crlfRule(attribute, config, platform);

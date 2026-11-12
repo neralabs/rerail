@@ -139,7 +139,8 @@ function uncapturedPrior(edit: CodeRuleEdit, preimage: Preimage | undefined, bef
 }
 /**
  * What Git decided about a change: it was Git's (`keptAs` when the text it left is held by neither the index nor `HEAD`:
- * a stopped merge wrote it, or it was restored from a branch), or the text Git's move proves it was changed from.
+ * a stopped merge wrote it, or it was restored from a branch), or the text it was changed from, which Git's move proves
+ * or the index or `HEAD` holds.
  */
 interface GitVerdict {
   readonly previousText?: string;
@@ -695,14 +696,37 @@ async function recoverFromGit(
     discovery.git.crlfPaths(checkout, named.map(({ inCheckout }) => inCheckout)),
   ]);
   for (const { path, inCheckout } of named) {
-    const digest = uncaptured.get(path);
-    for (const blob of [blobs.get(`:./${inCheckout}`), blobs.get(`HEAD:./${inCheckout}`)]) {
-      const form = heldAs(blob, digest, crlf.get(inCheckout));
-      if (blob === undefined || form === undefined) continue;
-      // In the line breaks the file held it in, so the diff against the working tree lines up line by line.
-      recovered.set(path, textAs(blob, form));
-      break;
-    }
+    const text = gitHeldText({ blobs, crlf }, inCheckout, uncaptured.get(path));
+    if (text !== undefined) recovered.set(path, text);
+  }
+}
+
+/**
+ * The text of `path`'s index or `HEAD` blob in `held` (keyed as `gitRevisions` keys them) when a file whose bytes had
+ * `digest` held it, in the line breaks the file held it in, so the diff against the working tree lines up line by line.
+ */
+function gitHeldText(held: Pick<GitBlobs, "blobs" | "crlf">, path: string, digest: string | undefined): string | undefined {
+  for (const blob of [held.blobs.get(`:./${path}`), held.blobs.get(`HEAD:./${path}`)]) {
+    const form = heldAs(blob, digest, held.crlf.get(path));
+    if (blob !== undefined && form !== undefined) return textAs(blob, form);
+  }
+  return undefined;
+}
+
+/**
+ * Gives each change no verdict explains, made with no preimage captured (`prior` is the digest observed before it), the
+ * text of its index or `HEAD` blob where the file held that blob before (`gitHeldText`). The walk has just read those
+ * blobs and their line-ending rules, so `#recoverPreimages` does not read them again.
+ */
+function addHeldTexts(
+  view: GitBlobs,
+  named: ReadonlyArray<{ edit: CodeRuleEdit; path: string; prior: string | undefined }>,
+  verdicts: Map<string, GitVerdict>,
+): void {
+  for (const { edit, path, prior } of named) {
+    if (prior === undefined || verdicts.has(edit.path)) continue;
+    const previousText = gitHeldText(view, path, prior);
+    if (previousText !== undefined) verdicts.set(edit.path, { previousText });
   }
 }
 
@@ -1691,8 +1715,11 @@ export class CodeRuleBridge {
       for (const edit of group) {
         const verdict = verdicts.get(edit.path);
         if (verdict === undefined) unwritten.push(edit);
-        else if (verdict.previousText === undefined) this.#sortUnownedWrite(edit, verdict.keptAs, notOwn);
-        else {
+        else if (verdict.previousText === undefined) {
+          // Git wrote it: no edit of this walk is measured from its text, so `#recoverPreimages` need not look for it.
+          uncaptured.delete(edit.path);
+          this.#sortUnownedWrite(edit, verdict.keptAs, notOwn);
+        } else {
           uncaptured.delete(edit.path);
           unwritten.push({ ...withoutUncaptured(edit), previousText: verdict.previousText });
         }
@@ -1753,7 +1780,8 @@ export class CodeRuleBridge {
   }
 
   /**
-   * Which of a checkout's changes Git wrote, and for the rest the text Git's move proves each was changed from.
+   * Which of a checkout's changes Git wrote, and for the rest the text each was changed from, where Git's move proves it
+   * or the index or `HEAD` holds it.
    *
    * Git wrote a file that now holds exactly `HEAD`'s blob, unless only commits moved `HEAD` since the last walk: a commit
    * writes no file, so that file was written by something else and then committed, and stays the session's (measured
@@ -1764,7 +1792,8 @@ export class CodeRuleBridge {
    * the same unmerged entries as the last walk is no longer Git's stop, even when the file held the blob of its side
    * before it. A file holds a blob in the CRLF line breaks as well where the repository's settings have a checkout write
    * them (`GitReads.crlfPaths`, `line-endings.ts`); other filters' bytes never match, and stay the session's.
-   * Of the rest, a file restored from a branch is Git's too (`#restoredFromBranches`).
+   * Of the rest, a file restored from a branch is Git's too (`#restoredFromBranches`), and one that held its index or
+   * `HEAD` blob before the change was changed from that blob's text (`addHeldTexts`).
    */
   async #gitVerdicts(
     discovery: SourceDiscovery,
@@ -1782,6 +1811,7 @@ export class CodeRuleBridge {
       if (verdict !== undefined) verdicts.set(edit.path, verdict);
     }
     await this.#addRestoredVerdicts(discovery.git, checkout, view, named, verdicts);
+    addHeldTexts(view, named, verdicts);
     return verdicts;
   }
 
