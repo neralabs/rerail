@@ -20,6 +20,10 @@ class ExecutionScope(unittest.TestCase):
             supplemental=dict(report=dict(source=source,reports=[reports[2]])),
             updates=dict(snapshot=[reports[3]],workspace=[reports[4]]),controls=[reports[5]])
         self.assertEqual(list(boundary_admission.execution_reports(value)),reports)
+    def test_aggregate_program_inventory_is_not_an_invocation(self):
+        call=dict(programInputs=[dict(path='rule.rr',sha256='digest')],phases=[])
+        report=dict(programInputs=call['programInputs'],calls=[call])
+        self.assertEqual(list(boundary_admission.native_calls(report)),[call])
 
 
 class Admission(unittest.TestCase):
@@ -80,6 +84,8 @@ class Admission(unittest.TestCase):
         v=copy.deepcopy(self.value);v['programs'][v['rulePath']]['sha256']='other';self.rejected(v)
     def test_null_native_program_inputs(self):
         v=copy.deepcopy(self.value);v['supplemental']['report']['reports'][0]['results'][0]['programInputs']=None;self.rejected(v)
+    def test_missing_native_program_inputs(self):
+        v=copy.deepcopy(self.value);del v['supplemental']['report']['reports'][0]['results'][0]['programInputs'];self.rejected(v)
 
 
 if __name__=='__main__':unittest.main()
