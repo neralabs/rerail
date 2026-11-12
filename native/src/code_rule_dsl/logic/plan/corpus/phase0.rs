@@ -57,7 +57,7 @@ impl Graph {
     }
 
     /// The program's key: its modules (path and digest) and its edges.
-    pub(in crate::code_rule_dsl) fn digest(&self) -> [u8; 32] {
+    pub fn digest(&self) -> [u8; 32] {
         use sha2::{Digest as _, Sha256};
         let mut h = Sha256::new();
         h.update(b"rerail.module-graph/v1\0");
@@ -110,7 +110,7 @@ impl Graph {
 pub(in crate::code_rule_dsl) const TEXT: &str = "text";
 
 /// The include graph for `seed`: kept in this process while it holds, else derived by running `bootstrap.rr`.
-pub(in crate::code_rule_dsl) fn graph(seed: &Seed) -> std::result::Result<Arc<Graph>, Error> {
+pub fn graph(seed: &Seed) -> std::result::Result<Arc<Graph>, Error> {
     Ok(graphs(std::slice::from_ref(seed))?.remove(0))
 }
 
@@ -192,7 +192,7 @@ fn quote(s: &str) -> String {
 impl Graph {
     /// The part of a run's graph one seed reaches (its `k`, its place among the run's seeds), a text's key named
     /// [`TEXT`].
-    fn of(&self, seed: &Seed, k: usize) -> Graph {
+    pub fn of(&self, seed: &Seed, k: usize) -> Graph {
         let start = match seed {
             Seed::Text { .. } => text_key(k),
             Seed::File(p) => p.to_string_lossy().into_owned(),
@@ -226,7 +226,7 @@ impl Graph {
 }
 
 /// Runs `bootstrap.rr` over the seeds' facts, as a corpus run with no corpus: every document it reads it loads.
-fn derive(seeds: &[Seed]) -> Result<Graph> {
+pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     let lib = crate::code_rule_dsl::logic::rr::library();
     let lib = std::fs::canonicalize(&lib).map_err(|e| PlanError::Plan(format!("{}: {e}", lib.display())))?;
     let bootstrap = lib.join("bootstrap.rr");
@@ -310,57 +310,8 @@ fn derive(seeds: &[Seed]) -> Result<Graph> {
     result
 }
 
-#[cfg(test)]
-pub mod tests {
-    use std::path::PathBuf;
-
-    /// Each library module's text, included by a program: the files phase 0's graph gives, in its order, are the
-    /// builtin reader's (the library first, then beside the includer; `core.rr` first; includes first).
-    #[test]
-    fn bootstrap_resolves_as_the_builtin_reader_does() {
-        let lib = crate::code_rule_dsl::logic::rr::library();
-        let mut names: Vec<String> = Vec::new();
-        for dir in ["python", "rust", "data-layer", "complexity", "php"] {
-            for e in std::fs::read_dir(lib.join(dir)).unwrap().flatten() {
-                let name = e.file_name().to_string_lossy().into_owned();
-                if name.ends_with(".rr") {
-                    names.push(format!("{dir}/{name}"));
-                }
-            }
-        }
-        names.sort();
-        names.truncate(40);
-        let order = |text: &str| -> Vec<PathBuf> { crate::code_rule_dsl::logic::rr::included_files(text).unwrap() };
-        for name in &names {
-            let text = format!("#include \"{name}\"\n.decl x(s: symbol)\n");
-            let graph = order(&text);
-            super::IN_PHASE_0.with(|c| c.set(true));
-            let builtin = order(&text);
-            super::IN_PHASE_0.with(|c| c.set(false));
-            assert_eq!(graph, builtin, "{name}");
-        }
-        // Two names, and a text in T's shape (no `core.rr`).
-        for text in ["#include \"python/env.rr\"\n#include \"python/imports.rr\"\n", "#include \"python/env.rr\"\n.decl doc(d: number, p: symbol, m: symbol)\n"] {
-            let graph = order(text);
-            super::IN_PHASE_0.with(|c| c.set(true));
-            let builtin = order(text);
-            super::IN_PHASE_0.with(|c| c.set(false));
-            assert_eq!(graph, builtin, "{text}");
-        }
-        // A text made from a program file keeps the graph a run of `bootstrap.rr` would give it (`keep_text`).
-        let programs = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/typing/programs");
-        for file in [programs.join("calls_cx.rr"), lib.join("python/conditions.rr")] {
-            let text = crate::code_rule_dsl::logic::settings::program_text(&file).unwrap();
-            let seed = crate::code_rule_dsl::logic::rr::text_seed(&text).unwrap().expect("includes");
-            let kept = super::graph(&seed).unwrap().digest();
-            let derived = super::derive(std::slice::from_ref(&seed)).unwrap().of(&seed, 0).digest();
-            assert_eq!(kept, derived, "{}", file.display());
-        }
-        // A name with no file is refused as before.
-        let err = crate::code_rule_dsl::logic::rr::parse("#include \"no/such.rr\"\n").err().expect("refused").to_string();
-        assert!(err.contains("no such file in the library"), "{err}");
-    }
-}
+// Its tests run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
+// engine registers as it loads (the languages, their `.rr` libraries).
 
 
 #[cfg(test)]

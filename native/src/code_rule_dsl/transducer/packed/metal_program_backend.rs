@@ -36,9 +36,8 @@ pub(in crate::code_rule_dsl) fn metrics() -> (usize, usize) {
 
 #[path = "metal_label_passes.rs"]
 pub mod label_passes;
-#[cfg(test)]
-#[path = "metal_tape_tests.rs"]
-pub mod tape_tests;
+// Its tests run in the engine's test binary (its facade of this module mounts `metal_tape_tests.rs` as `tape_tests`): they read what the
+// engine registers as it loads (the languages, their `.rr` libraries).
 #[path = "metal_set_steps.rs"]
 pub mod set_steps;
 // Block programs on Metal: the Metal crate's.
@@ -347,7 +346,7 @@ pub(super) struct CachedProgramBuffers {
 pub(super) type ProgramBufferCache = Arc<Mutex<Option<CachedProgramBuffers>>>;
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) enum Engine {
+pub enum Engine {
     Interpreter {
         pipeline: ComputePipelineState,
         buffers: ProgramBufferCache,
@@ -600,7 +599,7 @@ pub(super) fn compile_resident_interpreter_cached() -> Result<Engine, Error> {
     Ok(engine)
 }
 
-pub(in crate::code_rule_dsl) fn compile_interpreter() -> Result<Engine, Error> {
+pub fn compile_interpreter() -> Result<Engine, Error> {
     Ok(Engine::Interpreter {
         pipeline: pipeline_named(
             &kernel_source(
@@ -739,7 +738,7 @@ pub(super) fn execute_packed(
     execute_packed_with_result_limits(engine, programs, files, anchors, None)
 }
 
-pub(in crate::code_rule_dsl) fn execute_packed_with_result_limits(
+pub fn execute_packed_with_result_limits(
     engine: &Engine,
     programs: &[Program],
     files: &[TapeDoc],

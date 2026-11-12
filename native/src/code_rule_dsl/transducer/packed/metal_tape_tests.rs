@@ -6,7 +6,12 @@ use crate::code_rule_dsl::fixtures::{document, temp};
 use crate::code_rule_dsl::residency::slabs::{self, DocTable, DocView};
 use crate::code_rule_dsl::tape::{Grammar, TAPE_FORMAT_VERSION};
 use crate::content_store::ContentStore;
-use sha2::Sha256;
+use sha2::{Digest as _, Sha256};
+// What the backend reads through its own imports, which its facade in the engine does not re-export.
+use crate::code_rule_dsl::transducer::packed::metal_backend::{MappedBuffer, pipeline_named};
+use crate::code_rule_dsl::transducer::packed::packed_batch::PackedBatch;
+use crate::code_rule_dsl::transducer::packed::Program;
+use metal::MTLSize;
 
 const TAPE: &str = include_str!("metal_tape.metal");
 const FIELDS: usize = 12;

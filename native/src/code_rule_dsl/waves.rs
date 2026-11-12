@@ -1,7 +1,12 @@
 //! SQL-driven waves (docs/final-shape/03-architecture.md §4, §7; decision 0010): one owner
 //! connection on the content store, the temp schema's lifecycle, and the frontier loop that SQL
 //! steers, wave by wave, until no relation changes.
-pub use rerail_logic::code_rule_dsl::waves::owner;
+// Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+pub mod owner {
+    pub use rerail_logic::code_rule_dsl::waves::owner::*;
+    #[cfg(test)]
+    pub mod tests;
+}
 #[cfg(test)]
 #[path = "waves/relational"]
 pub(in crate::code_rule_dsl) mod relational {

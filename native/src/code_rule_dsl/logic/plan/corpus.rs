@@ -31,8 +31,8 @@ pub mod combined;
 pub mod scoping;
 #[cfg(test)]
 pub mod cache_architecture;
-#[cfg(test)]
-pub mod cache_tests;
+// Its tests run in the engine's test binary (its facade of this module mounts `corpus/cache_tests.rs`): they read what the
+// engine registers as it loads (the languages, their `.rr` libraries).
 pub use hiding::qualified;
 pub mod memo;
 pub mod kept_strata;
@@ -84,7 +84,7 @@ pub mod matchers;
 pub(in crate::code_rule_dsl) const AST_MATCHES: &str = matchers::PREFIX;
 pub use matchers::columns as ast_columns;
 pub mod typing;
-// cratify: `base_tests` is rerail-device-metal's (it mounts it)
+// `base_tests` is the engine's (its facade of this module mounts it): it compiles rule documents through the engine.
 pub use typing::{Typing, TypingReport};
 use crate::code_rule_dsl::typing::file_local::Binding;
 use crate::content_store::ContentStore;
@@ -572,21 +572,21 @@ fn texts_digest(programs: &[&str], extra: &str) -> [u8; 32] {
 /// outputs), the stage and the dialect; and of the store's atoms, so `interned` is every intern call lowering made,
 /// asked again of the store on reuse.
 #[derive(Clone)]
-struct Prepared {
-    prog: front::Program,
-    vocabulary: Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
-    lowered: lower::Lowered,
-    sets: Vec<(String, Vec<i64>)>,
+pub struct Prepared {
+    pub prog: front::Program,
+    pub vocabulary: Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
+    pub lowered: lower::Lowered,
+    pub sets: Vec<(String, Vec<i64>)>,
     /// The `ast` atoms' matchers, by relation (`matchers::lower`, decision 0106).
-    matchers: Vec<(String, String, Vec<String>)>,
-    demanded: Vec<String>,
-    pushed: Vec<String>,
+    pub matchers: Vec<(String, String, Vec<String>)>,
+    pub demanded: Vec<String>,
+    pub pushed: Vec<String>,
     /// The exports handed on as parts (decision 0099, `file_local::factorize_exports`), a line each.
-    factorized: Vec<String>,
-    located: std::result::Result<Vec<String>, Vec<String>>,
-    merged: (usize, usize),
-    split: crate::code_rule_dsl::typing::file_local::Programs,
-    interned: Vec<(Vec<String>, Vec<u32>)>,
+    pub factorized: Vec<String>,
+    pub located: std::result::Result<Vec<String>, Vec<String>>,
+    pub merged: (usize, usize),
+    pub split: crate::code_rule_dsl::typing::file_local::Programs,
+    pub interned: Vec<(Vec<String>, Vec<u32>)>,
 }
 
 /// A measurement (dev only, `RERAIL_SPLIT_DUMP=<file>`): each cross-file relation of the split, by how its rules read
@@ -762,7 +762,7 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
 /// it holds (`interned`), so a process serving two stores (a session's and another run's) does not prepare again on
 /// each switch. A test's are its own thread's: tests run side by side, and one filling the cache clears it
 /// (`PREPARED_KEPT`) under another that expects its program kept (`prepared::tests`).
-fn with_prepared<R>(f: impl FnOnce(&mut HashMap<[u8; 32], Vec<Arc<Prepared>>>) -> R) -> R {
+pub fn with_prepared<R>(f: impl FnOnce(&mut HashMap<[u8; 32], Vec<Arc<Prepared>>>) -> R) -> R {
     #[cfg(not(any(test, feature = "test-hooks")))]
     {
         static PREPARED: std::sync::LazyLock<std::sync::Mutex<HashMap<[u8; 32], Vec<Arc<Prepared>>>>> = std::sync::LazyLock::new(Default::default);

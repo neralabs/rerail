@@ -26,10 +26,10 @@ use super::magic::{Gate, Report};
 use std::collections::BTreeMap;
 
 /// Rows by relation, as a program's `facts` holds them.
-pub(in crate::code_rule_dsl) type Facts = BTreeMap<String, Vec<Vec<Value>>>;
+pub type Facts = BTreeMap<String, Vec<Vec<Value>>>;
 
 /// Each relation of the schema and its columns (`int` or `sym`).
-pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String)>> {
+pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
     const SCHEMA: &[(&str, &[&str])] = &[
         ("program", &["p:sym"]),
         ("rule", &["p:sym", "r:int", "head:int"]),
@@ -748,7 +748,7 @@ pub fn program(facts: &Facts, p: &str) -> Result<Program, String> {
 
 /// `facts` as a `.rr` document: the schema's declarations and every row as a fact. `rr::parse` reads it back as the
 /// same rows (`document_facts`).
-pub(in crate::code_rule_dsl) fn document(facts: &Facts, extra: &BTreeMap<String, Vec<(String, String)>>) -> Result<String, String> {
+pub fn document(facts: &Facts, extra: &BTreeMap<String, Vec<(String, String)>>) -> Result<String, String> {
     let mut decls = schema();
     decls.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
     let prog = Program { decls, facts: facts.clone(), ..Program::default() };
@@ -756,13 +756,13 @@ pub(in crate::code_rule_dsl) fn document(facts: &Facts, extra: &BTreeMap<String,
 }
 
 /// A document's rows, as `rr::parse` reads them.
-pub(in crate::code_rule_dsl) fn document_facts(text: &str) -> Result<Facts, String> {
+pub fn document_facts(text: &str) -> Result<Facts, String> {
     let prog = super::rr::parse(text).map_err(|e| bad(format!("{e:?}")))?;
     Ok(prog.facts)
 }
 
 /// `facts` as bytes: a compact encoding for the facts memo (strings in a table, each value a tag and a number).
-pub(in crate::code_rule_dsl) fn encode(facts: &Facts) -> Vec<u8> {
+pub fn encode(facts: &Facts) -> Vec<u8> {
     // One pass: each string's id by first use (relation, then its rows' values, in order), the rows written as they
     // are met; the table, which comes first, written after.
     let mut strings: rustc_hash::FxHashMap<&str, u32> = Default::default();
@@ -810,7 +810,7 @@ pub(in crate::code_rule_dsl) fn encode(facts: &Facts) -> Vec<u8> {
 }
 
 /// Bytes `encode` made, as facts.
-pub(in crate::code_rule_dsl) fn decode(bytes: &[u8]) -> Result<Facts, String> {
+pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
     struct At<'a>(&'a [u8], usize);
     impl At<'_> {
         fn take(&mut self, n: usize) -> Result<&[u8], String> {

@@ -774,6 +774,12 @@ mod literal {
 #[path = "logic"]
 pub(crate) mod logic {
     pub use rerail_logic::code_rule_dsl::logic::*;
+    // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+    pub mod liveness {
+        pub use rerail_logic::code_rule_dsl::logic::liveness::*;
+        #[cfg(test)]
+        pub mod tests;
+    }
     pub mod convert;
     #[path = "front"]
     pub mod front {
@@ -895,9 +901,58 @@ pub(crate) mod logic {
     #[path = "plan"]
     pub mod plan {
         pub use rerail_logic::code_rule_dsl::logic::plan::*;
+        // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+        pub mod compose {
+            pub use rerail_logic::code_rule_dsl::logic::plan::compose::*;
+            #[cfg(test)]
+            pub mod engine_tests;
+        }
+        // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+        pub mod native_demand {
+            pub use rerail_logic::code_rule_dsl::logic::plan::native_demand::*;
+            #[cfg(test)]
+            pub mod engine_tests;
+        }
         #[path = "corpus"]
         pub mod corpus {
             pub use rerail_logic::code_rule_dsl::logic::plan::corpus::*;
+            // The base tests compile and evaluate rule documents through the engine (`test_support`).
+            #[cfg(test)]
+            pub mod base_tests;
+            #[cfg(test)]
+            pub mod cache_tests;
+            // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+            pub mod phase0 {
+                pub use rerail_logic::code_rule_dsl::logic::plan::corpus::phase0::*;
+                #[cfg(test)]
+                pub mod tests;
+            }
+            // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+            pub mod phases {
+                pub use rerail_logic::code_rule_dsl::logic::plan::corpus::phases::*;
+                #[cfg(test)]
+                pub mod tests;
+            }
+            // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+            pub mod prepared {
+                pub use rerail_logic::code_rule_dsl::logic::plan::corpus::prepared::*;
+                #[cfg(test)]
+                pub mod tests;
+                #[cfg(test)]
+                pub mod identity_tests;
+            }
+            // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+            pub mod reuse {
+                pub use rerail_logic::code_rule_dsl::logic::plan::corpus::reuse::*;
+                #[cfg(test)]
+                pub mod tests;
+            }
+            // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+            pub mod session {
+                pub use rerail_logic::code_rule_dsl::logic::plan::corpus::session::*;
+                #[cfg(test)]
+                pub mod tests;
+            }
             pub mod references;
             // The corpus runner's tests: they parse files, so they run where the languages are registered.
             #[cfg(test)]
@@ -977,7 +1032,12 @@ pub(crate) mod logic {
     #[path = "profile"]
     pub mod profile {
         pub use rerail_prof::code_rule_dsl::logic::profile::*;
-        pub use rerail_logic::code_rule_dsl::logic::profile::report;
+        // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+        pub mod report {
+            pub use rerail_logic::code_rule_dsl::logic::profile::report::*;
+            #[cfg(test)]
+            pub mod tests;
+        }
         pub use rerail_logic::code_rule_dsl::logic::profile::watch;
         #[allow(unused_imports)]
         use std::collections::BTreeMap;
@@ -1050,6 +1110,9 @@ pub(crate) mod logic {
     #[path = "strings"]
     pub mod strings {
         pub use rerail_facts::code_rule_dsl::logic::strings::*;
+        // `to_precision` is the ECMA crate's (`TO_PRECISION`), registered as the engine loads.
+        #[cfg(test)]
+        pub mod engine_tests;
         #[allow(unused_imports)]
         use std::collections::{BTreeMap, HashMap, HashSet};
         #[allow(unused_imports)]
@@ -1771,8 +1834,13 @@ mod residency {
     }
     #[cfg(target_os="macos")]
     pub use rerail_device_metal::code_rule_dsl::residency::metal;
+    // The slabs' tests store parsed documents: they run where the languages are registered.
     #[cfg(target_os="macos")]
-    pub use rerail_device_metal::code_rule_dsl::residency::slabs;
+    pub mod slabs {
+        pub use rerail_device_metal::code_rule_dsl::residency::slabs::*;
+        #[cfg(test)]
+        pub mod tests;
+    }
     #[allow(unused_imports)]
     pub(in crate::code_rule_dsl) use crate::code_rule_dsl::residency::admission::relational::ast_stage::install_ast_producer;
 }
@@ -1951,7 +2019,12 @@ mod transducer {
         pub mod compile_matcher_tests;
         pub use rerail_lang_json::code_rule_dsl::transducer::packed::json_parser;
         #[cfg(target_os="macos")]
-        pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_backend;
+        pub mod metal_backend {
+            pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_backend::*;
+            // A launch-budget test that parses a document: it runs where the languages are registered.
+            #[cfg(test)]
+            pub mod engine_tests;
+        }
         #[cfg(target_os="macos")]
         pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_bulk_closure;
         #[cfg(target_os="macos")]
@@ -2019,7 +2092,14 @@ mod transducer {
         #[cfg(target_os="macos")]
         pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_position_order;
         #[cfg(target_os="macos")]
-        pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_program_backend;
+        #[path = "."]
+        pub mod metal_program_backend {
+            pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_program_backend::*;
+            // The tape tests store parsed documents: they run where the languages are registered.
+            #[cfg(test)]
+            #[path = "metal_tape_tests.rs"]
+            pub mod tape_tests;
+        }
         #[cfg(target_os="macos")]
         pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_ready_batch;
         #[cfg(target_os="macos")]
@@ -2154,9 +2234,15 @@ mod transducer {
 #[path = "typing"]
 mod typing {
     pub use rerail_logic::code_rule_dsl::typing::*;
+    // Tests that read what the engine registers as it loads (the languages, their `.rr` libraries) run here.
+    #[cfg(test)]
+    pub mod phase_tests;
     #[path = "file_local"]
     pub mod file_local {
         pub use rerail_logic::code_rule_dsl::typing::file_local::*;
+        // A test that reads T's programs as text: it runs where the Rr language is registered.
+        #[cfg(test)]
+        pub mod engine_tests;
         #[allow(unused_imports)]
         use crate::content_store::{StoreError, StoreResult};
         #[allow(unused_imports)]

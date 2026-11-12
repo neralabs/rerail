@@ -253,7 +253,7 @@ pub(in crate::code_rule_dsl) fn lower_library(paths: &[PathBuf]) -> Result<Progr
 
 /// The library files a program's text reads, includes resolved (`core.rr` first unless the text is in T's shape):
 /// what a record of the run must check besides the text (phase 0, t23). Empty for a text that includes nothing.
-pub(in crate::code_rule_dsl) fn included_files(src: &str) -> Result<Vec<PathBuf>, Error> {
+pub fn included_files(src: &str) -> Result<Vec<PathBuf>, Error> {
     let statements = from_tape::statements(src, &tape(src))?;
     let mut paths: Vec<PathBuf> = if statements.iter().any(|(item, _)| matches!(item, syntax::Item::Include(_))) {
         resolve(statements)?.0.into_iter().map(|(p, _)| p).collect()
@@ -329,7 +329,7 @@ fn modules_of(paths: Vec<PathBuf>) -> Result<Files, Error> {
 
 /// The seed phase 0 starts from for a program text: whether it is in T's shape, and the names it includes. `None`
 /// for a text that includes nothing, or while phase 0 itself runs.
-pub(in crate::code_rule_dsl) fn text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>, Error> {
+pub fn text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>, Error> {
     use super::plan::corpus::phase0;
     let statements = from_tape::statements(src, &tape(src))?;
     let names: Vec<(i64, String)> = statements

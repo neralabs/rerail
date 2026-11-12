@@ -3646,12 +3646,28 @@ registry that no static read shows, so `hosts.py` leaves them in `rerail-logic`:
 - then the language crates' `.rr` libraries (`#include "python/modules.rr": no such library`) and the Python pack;
 - the `to_precision` function (`TO_PRECISION`, set by the ECMA crate).
 
-They are the session, phases, prepared, reuse, cache, liveness, compose and `typing::phase_tests` modules, and
-`waves::owner::tests`. Registering the Rr pack alone in `logic::test_load` (with a `rerail-w` dev-dependency)
-clears 6 of them and leaves the rest on the libraries. `rerail-device-metal`'s test target still fails
-(24 errors): `corpus::base_tests` and the device tests read the engine (`prefilter`, `evaluate_file`,
-`CAPABILITIES`), so they too belong to the engine. Copying the engine's `install_languages` into the crate
-would be a second loader, so they are left for the hosting step. A test that reads through a load-time registry
-reads the crate that registers it, and goes to the engine.
+**Hosted in the engine (2026-11-11).** A test that reads through a load-time registry reads the crate that
+registers it, so these went to the engine; copying `install_languages` into `rerail-logic` would have been a second
+loader. Each module's facade in the engine (`native/src/code_rule_dsl/mod.rs`, `waves.rs`) mounts the test file,
+and what the tests read became `pub`:
+
+- whole modules: `liveness::tests`, `corpus::{cache_tests, base_tests}`, `phase0::tests`, `phases::tests`,
+  `prepared::{tests, identity_tests}`, `reuse::tests`, `session::tests`, `profile::report::tests`,
+  `typing::phase_tests`, `waves::owner::tests`, `residency::slabs::tests` and
+  `metal_program_backend::tape_tests` (inline ones first moved to files);
+- the one test of a module that needs a language, in `engine_tests.rs` beside the module: `compose`,
+  `native_demand`, `strings` (`to_precision`), `metal_backend` (the launch budget) and `typing::file_local`.
+
+Their rule paths are the engine's manifest's (`CARGO_MANIFEST_DIR` is `native/`). The device tests stay in
+`rerail-device-metal`, which now registers Metal as its own test binary loads (`device_metal::test_load`), as the
+engine does. The launch-guard test cut each file at `#[cfg(test)]\nmod `, which the split's `pub mod` test modules
+no longer match, so it read its own list of forbidden calls; it cuts at either. Results: `rerail-logic` 262 pass,
+0 fail; the 83 hosted tests pass in the engine; `rerail-device-metal` 20 pass, 2 fail (below).
+
+**Still open:** `setfix::device::tests::{text_functions_on_the_device_are_the_cpus,
+text_tests_on_the_device_are_the_cpus}` ran nowhere on the hub until now. In the cases with a 60 × 2000 cross step
+the device reports fewer bindings at that step than the CPU (79,153 against 120,000); every final head count is the
+CPU's. It is Native-and-GPU-strata's to read: either the device drops bindings it should not, or it counts them
+after a filter the CPU applies one step later.
 
 **Closure:** each runs in the engine's test binary (or in a crate that has what it reads), and the gates go.
