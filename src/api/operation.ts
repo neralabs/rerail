@@ -46,7 +46,7 @@ export interface RerailApiStores {
   health(): z.infer<typeof presentationDaemonSchema>;
   /** Every coding agent and whether Rerail is connected to it; undefined when this process cannot check. */
   codingAgents(): Promise<CodingAgentState[]> | undefined;
-  /** Merge Assist for one checkout at a time: its decisions, other branches' findings, and the changes people make. */
+  /** Merge Assist for one checkout at a time: its in-flight conflicts, settings, and the changes people make. */
   mergeAssist(): MergeAssistService;
 }
 

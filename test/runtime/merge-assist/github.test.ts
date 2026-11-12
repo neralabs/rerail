@@ -11,11 +11,6 @@ import {
   type GithubRepository,
 } from "../../../src/runtime/merge-assist/github.js";
 
-/** The limits and format docs/merge-assist-v1-build.md §6–7 fixes: 64 candidates per branch, 16 KiB per file. */
-const CANDIDATE_FORMAT = "rerail.candidate/v1";
-const MAX_CANDIDATE_BYTES = 16 * 1024;
-const MAX_CANDIDATES_PER_BRANCH = 64;
-
 const REPOSITORY: GithubRepository = { host: "github.com", owner: "neralabs", name: "rerail" };
 const COMMIT = "ed0e9fcf09b181eb3440042af2cb24e5cc63b722";
 const ACCEPT = "Accept: application/vnd.github+json";
@@ -80,49 +75,6 @@ function fakeGh(reply: (args: readonly string[]) => Reply): FakeGh {
   return { spawn: fake as unknown as typeof spawn, calls };
 }
 
-/** The REST path a `gh api` invocation reads. */
-function apiPath(args: readonly string[]): string | null {
-  return args[0] === "api" ? args.at(-1) ?? null : null;
-}
-
-function notFound(): Reply {
-  return {
-    code: 1,
-    stdout: JSON.stringify({ message: "Not Found", documentation_url: "https://docs.github.com/rest", status: "404" }),
-    stderr: "gh: Not Found (HTTP 404)\n",
-  };
-}
-
-function candidateText(id: string, overrides: Record<string, unknown> = {}): string {
-  return `${JSON.stringify({
-    format: CANDIDATE_FORMAT,
-    id: `candidate:${id}`,
-    decision: "Retries live in the transport layer; callers don't wrap requests in retry loops.",
-    generality: "repository",
-    scope: ["src/api/**"],
-    author: "jbarnes",
-    createdAt: "2026-11-03T14:02:11Z",
-    state: "active",
-    supersedes: null,
-    ...overrides,
-  }, null, 2)}\n`;
-}
-
-function sha(seed: number): string {
-  return seed.toString(16).padStart(40, "0");
-}
-
-/** One entry of the contents API listing a directory, as GitHub returns it (trimmed to the fields Rerail reads). */
-function listed(name: string, seed: number, size: number, type = "file"): Record<string, unknown> {
-  return { name, path: `.rerail/candidates/${name}`, sha: sha(seed), size, type, url: "https://api.github.com/..." };
-}
-
-/** The git blobs API response: base64 content wrapped at 60 columns, as GitHub sends it. */
-function blob(seed: number, text: string): string {
-  const content = Buffer.from(text, "utf8").toString("base64").replace(/(.{60})/gu, "$1\n");
-  return JSON.stringify({ sha: sha(seed), node_id: "B_x", size: Buffer.byteLength(text), url: "https://api.github.com/...", content, encoding: "base64" });
-}
-
 let home: string;
 let env: NodeJS.ProcessEnv;
 
@@ -164,11 +116,11 @@ describe("gh invocation", () => {
   });
 
   it("reads the API only with GET, an explicit host and the GitHub media type", async () => {
-    const gh = fakeGh(() => ({ stdout: JSON.stringify({ permission: "write", role_name: "write" }) }));
-    await createGithubClient({ env, spawn: gh.spawn }).authorPermission({ ...REPOSITORY, host: "github.example.com" }, "jbarnes");
+    const gh = fakeGh(() => ({ stdout: JSON.stringify({ login: "jbarnes" }) }));
+    await createGithubClient({ env, spawn: gh.spawn }).readiness({ ...REPOSITORY, host: "github.example.com" });
     expect(gh.calls.map(call => call.args)).toEqual([
       ["auth", "status", "--hostname", "github.example.com"],
-      ["api", "--method", "GET", "--hostname", "github.example.com", "-H", ACCEPT, "repos/neralabs/rerail/collaborators/jbarnes/permission"],
+      ["api", "--method", "GET", "--hostname", "github.example.com", "-H", ACCEPT, "user"],
     ]);
   });
 
@@ -178,9 +130,8 @@ describe("gh invocation", () => {
     const gh = fakeGh(args => (args[0] === "auth" ? { code: 1, stderr: "You are not logged into any accounts on github.evil.example\n" } : { stdout: "[]" }));
     const client = createGithubClient({ env, spawn: gh.spawn });
     await expect(client.openPullRequests(lookalike)).rejects.toMatchObject({ reason: "failed", message: expect.stringContaining("not signed in to github.evil.example") });
-    await expect(client.candidatesAt(lookalike, COMMIT)).rejects.toMatchObject({ reason: "failed" });
-    await expect(client.authorPermission(lookalike, "jbarnes")).resolves.toBe("unknown");
-    expect(gh.calls.map(call => call.args[0])).toEqual(["auth", "auth", "auth"]);
+    await expect(client.readiness(lookalike)).resolves.toEqual({ state: "signed-out", login: null, repository: "neralabs/rerail" });
+    expect(gh.calls.map(call => call.args[0])).toEqual(["auth", "auth"]);
     for (const call of gh.calls) {
       expect(call.options.env?.GH_ENTERPRISE_TOKEN).toBeUndefined();
       expect(call.options.env?.GITHUB_ENTERPRISE_TOKEN).toBeUndefined();
@@ -213,7 +164,7 @@ describe("gh invocation", () => {
     expect(gh.calls[0]?.kills).toEqual(["SIGTERM"]);
   });
 
-  it("refuses an owner, name, host, commit or login that could change the API path, without running gh", async () => {
+  it("refuses an owner, name or host that could change the API path, without running gh", async () => {
     const gh = fakeGh(() => ({ stdout: "[]" }));
     const client = createGithubClient({ env, spawn: gh.spawn });
     const repositories: GithubRepository[] = [
@@ -229,14 +180,7 @@ describe("gh invocation", () => {
     ];
     for (const repository of repositories) {
       await expect(client.openPullRequests(repository)).rejects.toMatchObject({ reason: "invalid-input" });
-      await expect(client.candidatesAt(repository, COMMIT)).rejects.toMatchObject({ reason: "invalid-input" });
-      await expect(client.authorPermission(repository, "jbarnes")).rejects.toMatchObject({ reason: "invalid-input" });
-    }
-    for (const commit of ["main", "../../user", `${COMMIT}&ref=main`, COMMIT.toUpperCase(), `${COMMIT}0`]) {
-      await expect(client.candidatesAt(REPOSITORY, commit)).rejects.toMatchObject({ reason: "invalid-input" });
-    }
-    for (const login of ["../admin", "a/b", "jbarnes?x=1", "jbarnes%2F", "", "a".repeat(40), "bot[bot][bot]"]) {
-      await expect(client.authorPermission(REPOSITORY, login)).rejects.toMatchObject({ reason: "invalid-input" });
+      await expect(client.readiness(repository)).resolves.toEqual({ state: "not-github", login: null, repository: null });
     }
     expect(gh.calls).toEqual([]);
   });
@@ -343,153 +287,5 @@ describe("openPullRequests", () => {
   it("throws on output that is not a list", async () => {
     const gh = fakeGh(() => ({ stdout: "{\"message\":\"nope\"}" }));
     await expect(createGithubClient({ env, spawn: gh.spawn }).openPullRequests(REPOSITORY)).rejects.toMatchObject({ reason: "invalid-response" });
-  });
-});
-
-describe("candidatesAt", () => {
-  const listingPath = `repos/neralabs/rerail/contents/.rerail/candidates?ref=${COMMIT}`;
-
-  function contents(entries: unknown, blobs: Record<string, Reply> = {}): FakeGh {
-    return fakeGh(args => {
-      const path = apiPath(args);
-      if (path === listingPath) return { stdout: JSON.stringify(entries) };
-      const blobSha = /\/git\/blobs\/([0-9a-f]+)$/u.exec(path ?? "")?.[1];
-      if (blobSha !== undefined && blobs[blobSha] !== undefined) return blobs[blobSha];
-      return notFound();
-    });
-  }
-
-  it("is an empty set when the folder is not at the commit", async () => {
-    const gh = fakeGh(() => notFound());
-    await expect(createGithubClient({ env, spawn: gh.spawn }).candidatesAt(REPOSITORY, COMMIT))
-      .resolves.toEqual({ candidates: [], problems: [], truncated: false });
-    expect(gh.calls[0]?.args).toEqual(["api", "--method", "GET", "--hostname", "github.com", "-H", ACCEPT, listingPath]);
-  });
-
-  it("throws when the listing fails for any other reason", async () => {
-    const gh = fakeGh(() => ({ code: 1, stderr: "gh: Server Error (HTTP 502)\n" }));
-    await expect(createGithubClient({ env, spawn: gh.spawn }).candidatesAt(REPOSITORY, COMMIT))
-      .rejects.toMatchObject({ reason: "failed", status: 502 });
-  });
-
-  it("decodes each file's base64 blob and parses it", async () => {
-    const text = candidateText("retries-in-transport-3f9a1c");
-    const gh = contents([listed("retries-in-transport-3f9a1c.json", 1, Buffer.byteLength(text))], { [sha(1)]: { stdout: blob(1, text) } });
-    const set = await createGithubClient({ env, spawn: gh.spawn }).candidatesAt(REPOSITORY, COMMIT);
-    expect(set.problems).toEqual([]);
-    expect(set.truncated).toBe(false);
-    expect(set.candidates.map(candidate => [candidate.id, candidate.author])).toEqual([["candidate:retries-in-transport-3f9a1c", "jbarnes"]]);
-    expect(gh.calls[1]?.args.at(-1)).toBe(`repos/neralabs/rerail/git/blobs/${sha(1)}`);
-  });
-
-  it("ignores names Rerail does not read, and reports matching names that are not regular files", async () => {
-    const gh = contents([
-      listed("README.md", 1, 10),
-      listed("Upper.json", 2, 10),
-      listed("-dash.json", 3, 10),
-      listed("nested", 4, 0, "dir"),
-      listed("linked.json", 5, 30, "symlink"),
-      { ...listed("moved.json", 6, 10), path: "elsewhere/moved.json" },
-    ]);
-    const set = await createGithubClient({ env, spawn: gh.spawn }).candidatesAt(REPOSITORY, COMMIT);
-    expect(set).toEqual({
-      candidates: [],
-      problems: ["linked.json: not a regular file", "moved.json: GitHub listed it in a shape Rerail does not read"],
-      truncated: false,
-    });
-    expect(gh.calls).toHaveLength(1);
-  });
-
-  it("skips a file listed larger than the limit without fetching it", async () => {
-    const text = candidateText("small-one-aaaaaa");
-    const gh = contents(
-      [listed("huge-one-bbbbbb.json", 2, MAX_CANDIDATE_BYTES + 1), listed("small-one-aaaaaa.json", 1, Buffer.byteLength(text))],
-      { [sha(1)]: { stdout: blob(1, text) }, [sha(2)]: { stdout: blob(2, text) } },
-    );
-    const set = await createGithubClient({ env, spawn: gh.spawn }).candidatesAt(REPOSITORY, COMMIT);
-    expect(set.problems).toEqual([`huge-one-bbbbbb.json: larger than ${MAX_CANDIDATE_BYTES} bytes`]);
-    expect(set.candidates.map(candidate => candidate.id)).toEqual(["candidate:small-one-aaaaaa"]);
-    expect(gh.calls.map(call => apiPath(call.args))).not.toContain(`repos/neralabs/rerail/git/blobs/${sha(2)}`);
-  });
-
-  it("reads at most the per-branch limit, in name order, and says the rest was left", async () => {
-    const count = MAX_CANDIDATES_PER_BRANCH + 6;
-    const entries = Array.from({ length: count }, (_, index) => listed(`c${String(count - index).padStart(3, "0")}.json`, index + 1, 100));
-    const blobs = Object.fromEntries(entries.map((entry, index) => {
-      const id = String(entry.name).replace(/\.json$/u, "");
-      return [sha(index + 1), { stdout: blob(index + 1, candidateText(id)) }];
-    }));
-    const gh = contents(entries, blobs);
-    const set = await createGithubClient({ env, spawn: gh.spawn }).candidatesAt(REPOSITORY, COMMIT);
-    expect(set.truncated).toBe(true);
-    expect(set.problems).toEqual([`.rerail/candidates: 6 more candidate files not read; a branch holds at most ${MAX_CANDIDATES_PER_BRANCH}`]);
-    expect(set.candidates).toHaveLength(MAX_CANDIDATES_PER_BRANCH);
-    expect(set.candidates[0]?.id).toBe("candidate:c001");
-    expect(set.candidates.at(-1)?.id).toBe(`candidate:c${String(MAX_CANDIDATES_PER_BRANCH).padStart(3, "0")}`);
-    expect(gh.calls).toHaveLength(1 + MAX_CANDIDATES_PER_BRANCH);
-  });
-
-  it("surfaces files that do not decode or parse as problems", async () => {
-    const wrongId = candidateText("good-one-cccccc", { id: "candidate:Not Valid" });
-    const gh = contents(
-      [listed("a-json.json", 1, 9), listed("b-schema.json", 2, 200), listed("c-binary.json", 3, 2), listed("d-encoding.json", 4, 2), listed("e-renamed.json", 5, 300)],
-      {
-        [sha(1)]: { stdout: blob(1, "not json") },
-        [sha(2)]: { stdout: blob(2, wrongId) },
-        [sha(3)]: { stdout: JSON.stringify({ sha: sha(3), size: 2, encoding: "base64", content: Buffer.from([0xff, 0xfe]).toString("base64") }) },
-        [sha(4)]: { stdout: JSON.stringify({ sha: sha(4), size: 2, encoding: "utf-8", content: "{}" }) },
-        [sha(5)]: { stdout: blob(5, candidateText("someone-else-eeeeee")) },
-      },
-    );
-    const set = await createGithubClient({ env, spawn: gh.spawn }).candidatesAt(REPOSITORY, COMMIT);
-    expect(set.candidates).toEqual([]);
-    expect(set.problems).toEqual([
-      "a-json.json: not JSON",
-      expect.stringMatching(/^b-schema\.json: id: a candidate id is/u),
-      "c-binary.json: not UTF-8 text",
-      "d-encoding.json: GitHub did not return its content",
-      "e-renamed.json: its id candidate:someone-else-eeeeee belongs in someone-else-eeeeee.json",
-    ]);
-  });
-
-  it("reports a candidates path that is not a folder", async () => {
-    const gh = fakeGh(() => ({ stdout: JSON.stringify({ name: "candidates", path: ".rerail/candidates", type: "symlink", target: "/etc", size: 4, sha: sha(1) }) }));
-    await expect(createGithubClient({ env, spawn: gh.spawn }).candidatesAt(REPOSITORY, COMMIT))
-      .resolves.toEqual({ candidates: [], problems: [".rerail/candidates: not a folder"], truncated: false });
-  });
-
-  it("throws when a listed file cannot be fetched, rather than dropping it", async () => {
-    const gh = contents([listed("gone-one-dddddd.json", 1, 100)], { [sha(1)]: { code: 1, stderr: "gh: Server Error (HTTP 500)\n" } });
-    await expect(createGithubClient({ env, spawn: gh.spawn }).candidatesAt(REPOSITORY, COMMIT)).rejects.toMatchObject({ reason: "failed", status: 500 });
-  });
-});
-
-describe("authorPermission", () => {
-  async function permission(reply: Reply): Promise<string> {
-    const gh = fakeGh(() => reply);
-    return await createGithubClient({ env, spawn: gh.spawn }).authorPermission(REPOSITORY, "jbarnes");
-  }
-
-  it("reads a built-in role before the base permission", async () => {
-    // `gh api repos/{o}/{r}/collaborators/{login}/permission --jq '{permission, role_name}'` → {"permission":"admin","role_name":"admin"}
-    await expect(permission({ stdout: JSON.stringify({ permission: "admin", role_name: "admin", user: { login: "jbarnes" } }) })).resolves.toBe("admin");
-    await expect(permission({ stdout: JSON.stringify({ permission: "write", role_name: "maintain" }) })).resolves.toBe("maintain");
-    await expect(permission({ stdout: JSON.stringify({ permission: "read", role_name: "triage" }) })).resolves.toBe("triage");
-    await expect(permission({ stdout: JSON.stringify({ permission: "write", role_name: "release-manager" }) })).resolves.toBe("write");
-    await expect(permission({ stdout: JSON.stringify({ permission: "read", role_name: "read" }) })).resolves.toBe("read");
-    await expect(permission({ stdout: JSON.stringify({ permission: "none" }) })).resolves.toBe("none");
-  });
-
-  it("is none when GitHub does not know the author, and unknown when it will not say", async () => {
-    await expect(permission(notFound())).resolves.toBe("none");
-    await expect(permission({ code: 1, stderr: "gh: Must have push access to view collaborator permission. (HTTP 403)\n" })).resolves.toBe("unknown");
-    await expect(permission({ stdout: JSON.stringify({ permission: "constructor" }) })).resolves.toBe("unknown");
-    await expect(permission({ stdout: "<html>" })).resolves.toBe("unknown");
-  });
-
-  it("encodes a bot login in the path", async () => {
-    const gh = fakeGh(() => ({ stdout: JSON.stringify({ permission: "write", role_name: "write" }) }));
-    await createGithubClient({ env, spawn: gh.spawn }).authorPermission(REPOSITORY, "dependabot[bot]");
-    expect(gh.calls[0]?.args.at(-1)).toBe("repos/neralabs/rerail/collaborators/dependabot%5Bbot%5D/permission");
   });
 });

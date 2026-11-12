@@ -1,29 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { Finding, MergeAssistStatus, OwnDecision } from "../../src/engine/index.js";
+import type { MergeAssistStatus } from "../../src/engine/index.js";
 import { changeScope } from "../../ui/poll.js";
 import { data, ui } from "../../ui/state.js";
 import { actions, onInput, render } from "../../ui/views/merge.js";
 import { FakeElement, FakeNode, fakeDocument, type FakeDocument } from "./support/fake-dom.js";
+import { conflict } from "./support/merge-conflicts.js";
 
 type Request = { method: string; url: string; body: Record<string, unknown> | undefined; answer: (status: number, body?: unknown) => void };
-
-const HOSTILE = `<img src=x onerror="alert(1)"><b>bold</b>`;
-
-const finding = (id: string, tier: Finding["tier"], status: Finding["status"], over: Partial<Finding> = {}): Finding => ({
-  id, tier, status,
-  candidate: { id: `candidate:${id}`, decision: `Decision ${id}`, scope: ["src/api/**"], level: "code", author: "jbarnes", createdAt: "2026-11-02T10:00:00Z" },
-  peer: { kind: "branch", ref: "jbarnes/session-retry", commit: "abc", number: null, title: null, url: null, author: null, trusted: true },
-  reason: "Your branch's changes pass its rule.",
-  evidence: { violations: [], conflicts: [], mine: null, judgment: null },
-  message: null,
-  updatedAt: "2026-11-02T11:00:00Z",
-  ...over,
-});
-
-const own = (id: string, state: OwnDecision["state"]): OwnDecision => ({
-  id, decision: `Own ${id}`, generality: "branch", scope: ["src/api/**"], level: "note", state, createdAt: "2026-11-02T09:00:00Z",
-  committed: false, amends: null, amendedBy: null, source: { sessionId: null, at: null },
-});
 
 const fixture = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({
   repositoryKey: "remote:github.com/acme/storefront",
@@ -31,52 +14,27 @@ const fixture = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({
   branch: "tbelanger/export-api",
   baseBranch: "main",
   enabled: false,
-  experimental: { conflictVerdicts: false },
   settings: { delivery: "both", hook: null },
   readiness: {
     judge: { available: false, runner: null, problem: "Neither claude nor codex is on PATH." },
     github: { state: "signed-out", login: null, repository: null },
-    candidatesIgnored: false,
-    rulesActive: true,
   },
   budget: { used: 0, limit: 40, windowMinutes: 60 },
   scanning: false,
   lastScan: null,
-  own: [],
-  findings: [],
   conflicts: [],
   ...over,
 });
 
-/**
- * On, with one finding in each section, a decision of this branch and one marked as not a rule. A pull request's text
- * is hostile, and its decision file claims a teammate as its author.
- */
+/** On, signed in, scanned two minutes before noon, with one open conflict. */
 const onFixture = (): MergeAssistStatus => fixture({
   enabled: true,
   readiness: {
     judge: { available: true, runner: "claude", problem: null },
     github: { state: "signed-in", login: "tbelanger", repository: "acme/storefront" },
-    candidatesIgnored: false,
-    rulesActive: true,
   },
   lastScan: { at: "2026-11-02T11:58:00Z", peers: { branches: 2, pullRequests: 1 }, problems: [] },
-  findings: [
-    finding("talk", "talk", "open", {
-      evidence: { violations: [], conflicts: [], mine: { id: "candidate:mine", decision: "Errors are thrown." }, judgment: { verdict: "contradicts", explanation: "They disagree." } },
-      message: "Hi Jeremy, we decided differently about errors.",
-    }),
-    finding("review", "review", "open", {
-      candidate: { id: "candidate:review", decision: HOSTILE, scope: ["src/**"], level: "code", author: "tbelanger", createdAt: "2026-11-02T10:00:00Z" },
-      peer: { kind: "pull-request", ref: "outside/x", commit: "def", number: 7, title: HOSTILE, url: "javascript:alert(1)", author: HOSTILE, trusted: false },
-      reason: "Its author is not a collaborator.",
-      evidence: { violations: [{ path: "src/api/client.ts", line: 12, message: HOSTILE }], conflicts: [], mine: null, judgment: null },
-    }),
-    finding("added", "absorb", "applied", {
-      peer: { kind: "pull-request", ref: "jbarnes/x", commit: "123", number: 12, title: "Retry layer", url: "https://github.com/acme/storefront/pull/12", author: "jbarnes", trusted: true },
-    }),
-  ],
-  own: [own("candidate:mine", "active"), own("candidate:old", "rejected")],
+  conflicts: [conflict("conflict:a")],
 });
 
 describe("the Merge Assist page", () => {
@@ -93,14 +51,13 @@ describe("the Merge Assist page", () => {
     if (el.disabled) return undefined;
     return actions[el.dataset.act!]!(el.dataset.i, el);
   };
-  const section = (name: string) => root.querySelector(`section[data-section="${name}"]`)!;
+  const conflicts = () => root.querySelector('section[data-section="conflicts"]')!;
 
   beforeEach(() => {
     requests = [];
     document = fakeDocument();
     vi.stubGlobal("document", document);
     vi.stubGlobal("Node", FakeNode);
-    vi.stubGlobal("navigator", { clipboard: { writeText: vi.fn(async () => {}) } });
     vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
     vi.stubGlobal("fetch", (input: URL, init: { method?: string; body?: string } = {}) => {
       const { promise, resolve } = Promise.withResolvers<Response>();
@@ -122,6 +79,13 @@ describe("the Merge Assist page", () => {
     vi.unstubAllGlobals();
   });
 
+  it("pitches catching collisions with work in flight", () => {
+    data.mergeAssist = fixture();
+    render(root);
+    expect(root.querySelector("p.pitch")!.textContent).toBe(
+      "Rerail watches the branches and pull requests in flight and tells you and your coding agent when your work collides with someone else’s, before it merges.");
+  });
+
   describe("while off", () => {
     beforeEach(() => {
       data.mergeAssist = fixture();
@@ -131,14 +95,16 @@ describe("the Merge Assist page", () => {
     it("says what turning it on does and what Rerail found, with the one button", () => {
       const card = root.querySelector(".mconsent")!;
       expect(card.textContent).toContain("What turning it on does");
-      expect(card.querySelectorAll("ul.mbul li")).toHaveLength(4);
-      expect(card.textContent).toContain(".rerail/candidates/");
+      const bullets = card.querySelectorAll("ul.mbul li").map(li => li.textContent);
+      expect(bullets).toHaveLength(3);
+      expect(bullets[0]).toBe("Rerail reads your other local branches, and open pull requests through gh with your sign-in, read-only.");
+      expect(bullets[1]).toContain("for a one-line summary of each conflict");
       const checks = card.querySelectorAll("ul.mchecks li");
-      expect(checks.map(li => [li.dataset.check, li.className])).toEqual([["judge", "mnotready"], ["github", "mnotready"], ["ignored", "mready"], ["rules", "mready"]]);
+      expect(checks.map(li => [li.dataset.check, li.className])).toEqual([["judge", "mnotready"], ["github", "mnotready"]]);
       expect(checks[0]!.textContent).toContain("need Claude Code or Codex on your PATH");
       expect(button("maon")!.textContent).toBe("Turn on Merge Assist");
       expect(root.querySelector(".mstrip")).toBeNull();
-      expect(section("own").hidden).toBe(true);
+      expect(conflicts().hidden).toBe(true);
     });
 
     it("turning on sends the setting for the checkout the page shows, holds the button, then shows the page on", async () => {
@@ -156,11 +122,12 @@ describe("the Merge Assist page", () => {
       await turning;
       render(root);
 
-      expect(toastText()).toMatch(/^Merge Assist is on in storefront\./u);
+      expect(toastText()).toBe("Merge Assist is on in storefront. You and your coding agent are told when your work here collides with work in flight.");
       expect(root.querySelector(".mconsent")).toBeNull();
       expect(root.querySelector(".mstrip")!.textContent).toContain("Not scanned yet");
-      expect(section("own").textContent).toContain("No decisions on this branch yet");
-      expect(section("own").textContent).toContain("don’t wrap API calls in retry loops");
+      expect(conflicts().hidden).toBe(false);
+      expect(conflicts().textContent).toContain("No open conflicts");
+      expect(conflicts().textContent).toContain("Rerail looks for conflicts on every scan and after your coding agent’s edits");
     });
 
     it("says why when turning on fails, and offers the button again", async () => {
@@ -182,139 +149,29 @@ describe("the Merge Assist page", () => {
       render(root);
     });
 
-    it("shows the sections in order with their counts, the decision marked as not a rule folded", () => {
-      const shown = root.querySelectorAll("section.msec").filter(s => s.closest("[hidden]") === null).map(s => s.querySelector("h2")!.textContent);
-      expect(shown).toEqual(["Decided differently1", "Needs your review1", "Added from other branches1", "Decisions on this branch1"]);
-      const fold = section("own").querySelector("details.mfold")!;
-      expect(fold.hidden).toBe(false);
-      expect(fold.hasAttribute("open")).toBe(false);
-      expect(fold.querySelector("summary")!.textContent).toBe("Not rules (1)");
-      expect(root.querySelector(".mstrip")!.textContent).toContain("Signed in as tbelanger");
-      expect(root.querySelector(".mstrip")!.textContent).toContain("0 of 40 this hour");
+    it("shows the strip, then the open conflicts with their count, and no tabs", () => {
+      const strip = root.querySelector(".mstrip")!;
+      expect(strip.textContent).toContain("Signed in as tbelanger");
+      expect(strip.textContent).toContain("Claude Code");
+      expect(strip.textContent).toContain("0 of 40 this hour");
+      expect(conflicts().querySelector("h2")!.textContent).toBe("Open conflicts1");
+      expect(conflicts().querySelectorAll("article.mcard")).toHaveLength(1);
+      expect(root.querySelector(".mtabs")).toBeNull();
     });
 
-    it("shows both decisions of a disagreement and copies the message for its author", async () => {
-      const talk = section("talk");
-      expect(talk.querySelectorAll(".mside").map(side => side.textContent)).toEqual(["Your decisionErrors are thrown.", "jbarnes’s decisionDecision talk"]);
-      await click(button("macopy", "talk"));
-      await vi.waitFor(() => expect(toastText()).toBe("Copied. Send it to jbarnes."));
-      expect(vi.mocked(navigator.clipboard.writeText)).toHaveBeenCalledWith("Hi Jeremy, we decided differently about errors.");
-    });
-
-    it("renders a peer's text as text and links only a pull request URL it can trust", () => {
-      const review = section("review");
-      expect(review.querySelectorAll("img")).toHaveLength(0);
-      expect(review.querySelectorAll("b").map(b => b.className)).toEqual(["mauthor"]);
-      expect(review.querySelector(".mq")!.textContent).toBe(HOSTILE);
-      expect(review.textContent).toContain(`src/api/client.ts:12 — ${HOSTILE}`);
-      expect(review.textContent).toContain("Author not verified");
-      expect(review.querySelectorAll("a")).toHaveLength(0);
-
-      const link = section("added").querySelector("a")!;
-      expect(link.getAttribute("href")).toBe("https://github.com/acme/storefront/pull/12");
-      expect(link.getAttribute("rel")).toBe("noopener noreferrer");
-    });
-
-    it("names a pull request's author as GitHub reports it, and a local branch's as its decision file declares it", () => {
-      const review = section("review");
-      expect(review.querySelector(".mauthor")!.textContent).toBe(HOSTILE);
-      expect(review.textContent).toContain(`by ${HOSTILE}`);
-      // The teammate the pull request's decision file names never shows.
-      expect(review.textContent).not.toContain("tbelanger");
-      expect(section("added").textContent).toContain("by jbarnes");
-      expect(section("talk").querySelector(".mmeta")!.textContent).toContain("declared by jbarnes");
-    });
-
-    it("Adopt sends the finding's adopt, keeps the row busy, and toasts once it applies", async () => {
-      const adopting = click(button("maadopt", "review"));
-      render(root);
-      expect(button("maadopt", "review")!.disabled).toBe(true);
-      expect(button("madismiss", "review")!.disabled).toBe(true);
-      await vi.waitFor(() => expect(writes()).toHaveLength(1));
-      expect(writes()[0]).toMatchObject({
-        method: "PUT", url: expect.stringMatching(/\/api\/merge-assist\/findings$/u),
-        body: { repository: "A", checkout: "/work/a", findingId: "review", action: "adopt" },
-      });
-
-      const after = onFixture();
-      after.findings = after.findings.map(f => (f.id === "review" ? { ...f, status: "applied" } : f));
-      writes()[0]!.answer(200, after);
-      await adopting;
-      render(root);
-
-      expect(toastText()).toMatch(/^Adopted “/u);
-      expect(section("review").hidden).toBe(true);
-      expect(section("added").querySelectorAll("article")).toHaveLength(2);
-    });
-
-    it("Dismiss hides the finding at once and brings it back when the write fails", async () => {
-      const dismissing = click(button("madismiss", "talk"));
-      render(root);
-      expect(section("talk").hidden).toBe(true);
-      await vi.waitFor(() => expect(writes()).toHaveLength(1));
-      expect(writes()[0]!.body).toEqual({ repository: "A", checkout: "/work/a", findingId: "talk", action: "dismiss" });
-
-      writes()[0]!.answer(409, { error: "invalid-state", message: "This finding is no longer open." });
-      await dismissing;
-      render(root);
-
-      expect(section("talk").hidden).toBe(false);
-      expect(toastText()).toContain("Couldn’t dismiss “Decision talk”. This finding is no longer open.");
-    });
-
-    it("Undo removes an added decision from this checkout", async () => {
-      const undoing = click(button("maundo", "added"));
-      await vi.waitFor(() => expect(writes()).toHaveLength(1));
-      expect(writes()[0]!.body).toEqual({ repository: "A", checkout: "/work/a", findingId: "added", action: "undo" });
-      const after = onFixture();
-      after.findings = after.findings.filter(f => f.id !== "added");
-      writes()[0]!.answer(200, after);
-      await undoing;
-      render(root);
-
-      expect(toastText()).toBe("Removed “Decision added” from this checkout. It no longer steers your coding agent.");
-      expect(section("added").textContent).toContain("Nothing added yet");
-    });
-
-    it("Not a rule moves the decision at once, and its toast's Undo restores it", async () => {
-      const marking = click(button("mareject", "candidate:mine"));
-      render(root);
-      expect(section("own").querySelector("details.mfold summary")!.textContent).toBe("Not rules (2)");
-      await vi.waitFor(() => expect(writes()).toHaveLength(1));
-      expect(writes()[0]).toMatchObject({
-        method: "PUT", url: expect.stringMatching(/\/api\/merge-assist\/candidates$/u),
-        body: { repository: "A", checkout: "/work/a", candidateId: "candidate:mine", state: "rejected" },
-      });
-      const after = onFixture();
-      after.own = after.own.map(d => ({ ...d, state: "rejected" as const }));
-      writes()[0]!.answer(200, after);
-      await marking;
-      expect(toastText()).toContain("Marked “Own candidate:mine” as not a rule. It no longer steers here. Commit the change so teammates who added it drop it too.");
-
-      const undo = document.getElementById("toast")!.querySelector("button.tact")!;
-      expect(undo.dataset.act).toBe("marestore");
-      expect(undo.dataset.i).toBe("candidate:mine");
-      const restoring = click(undo);
-      await vi.waitFor(() => expect(writes()).toHaveLength(2));
-      expect(writes()[1]!.body).toEqual({ repository: "A", checkout: "/work/a", candidateId: "candidate:mine", state: "active" });
-      writes()[1]!.answer(200, onFixture());
-      await restoring;
-      expect(toastText()).toBe("“Own candidate:mine” is a decision on this branch again.");
-    });
-
-    it("Scan now posts a scan for the checkout and says what it found that was not shown before", async () => {
-      data.mergeAssist = { ...onFixture(), findings: onFixture().findings.filter(f => f.id !== "review") };
-      render(root);
+    it("Scan now posts a scan for the checkout and says how many conflicts it found that were not shown before", async () => {
       const scanning = click(button("mascan"));
       render(root);
       expect(button("mascan")!.textContent).toBe("Scanning…");
       expect(button("mascan")!.disabled).toBe(true);
       await vi.waitFor(() => expect(writes()).toHaveLength(1));
       expect(writes()[0]).toMatchObject({ method: "POST", url: expect.stringMatching(/\/api\/merge-assist\/scan$/u), body: { repository: "A", checkout: "/work/a" } });
-      writes()[0]!.answer(200, onFixture());
+      writes()[0]!.answer(200, { ...onFixture(), conflicts: [conflict("conflict:a"), conflict("conflict:b")] });
       await scanning;
+      render(root);
 
-      expect(toastText()).toBe("Scanned 2 local branches and 1 open pull request. New: 1 needs your review.");
+      expect(toastText()).toBe("Scanned 2 local branches and 1 open pull request. New: 1 conflict.");
+      expect(conflicts().querySelectorAll("article.mcard")).toHaveLength(2);
     });
 
     it("says when another scan holds the checkout, and shows the last results", async () => {
@@ -345,28 +202,37 @@ describe("the Merge Assist page", () => {
       render(root);
       expect(button("maoff")).toBe(offButton);
       expect([offButton!.disabled, offButton!.textContent]).toEqual([true, "Turning off…"]);
+      expect(button("madismiss", "conflict:a")!.disabled).toBe(true);
       await vi.waitFor(() => expect(writes()).toHaveLength(2));
       writes()[1]!.answer(500, { error: "internal", message: "Disk full." });
       await turningOff;
       render(root);
       expect(button("maoff")).toBe(offButton);
       expect(offButton!.disabled).toBe(false);
+      expect(button("madismiss", "conflict:a")!.disabled).toBe(false);
     });
 
-    it("moves the times it shows on without rebuilding their rows", () => {
-      vi.useFakeTimers({ toFake: ["Date"] });
-      try {
-        vi.setSystemTime(Date.parse("2026-11-02T11:04:00Z"));
-        render(root);
-        const row = section("added").querySelector("article")!;
-        expect(row.textContent).toContain("Added automatically 4m ago");
-        vi.setSystemTime(Date.parse("2026-11-02T14:00:00Z"));
-        render(root);
-        expect(section("added").querySelector("article")).toBe(row);
-        expect(row.textContent).toContain("Added automatically 3h ago");
-      } finally {
-        vi.useRealTimers();
-      }
+    it("turning off says Rerail no longer looks for conflicts here, and shows the consent card again", async () => {
+      const turningOff = click(button("maoff"));
+      await vi.waitFor(() => expect(writes()).toHaveLength(1));
+      expect(writes()[0]!.body).toEqual({ repository: "A", checkout: "/work/a", enabled: false });
+      writes()[0]!.answer(200, { ...onFixture(), enabled: false });
+      await turningOff;
+      render(root);
+      expect(toastText()).toBe("Merge Assist is off in storefront. Rerail no longer looks for conflicts here.");
+      expect(root.querySelector(".mconsent")).not.toBeNull();
+      expect(conflicts().hidden).toBe(true);
+    });
+
+    it("unfolds what the last scan could not read, and keeps it open across renders", () => {
+      data.mergeAssist = { ...onFixture(), lastScan: { at: "2026-11-02T11:58:00Z", peers: { branches: 2, pullRequests: 1 }, problems: ["gh: rate limited"] } };
+      render(root);
+      const fold = root.querySelector("details.mproblems")!;
+      expect(fold.querySelector("summary")!.textContent).toBe("1 thing the last scan could not read");
+      click(fold.querySelector("summary"));
+      render(root);
+      expect(root.querySelector("details.mproblems")!.hasAttribute("open")).toBe(true);
+      expect(ui.mergeOpen.has("problems")).toBe(true);
     });
 
     it("shows why it cannot read Merge Assist and nothing to act on, not the last status", () => {
@@ -374,7 +240,7 @@ describe("the Merge Assist page", () => {
       render(root);
       expect(root.querySelector('[role="alert"]')!.textContent).toContain("Couldn’t read Merge Assist for this checkout.");
       expect(root.querySelectorAll("button[data-act]").filter(b => b.closest("[hidden]") === null).map(b => b.dataset.act)).toEqual([]);
-      expect(root.querySelectorAll("section.msec").filter(s => s.closest("[hidden]") === null)).toEqual([]);
+      expect(conflicts().hidden).toBe(true);
       expect(root.querySelector(".mstrip")).toBeNull();
 
       data.mergeAssistError = null;
@@ -401,20 +267,6 @@ describe("the Merge Assist page", () => {
       render(root);
       expect(data.mergeAssist!.checkout).toBe("/work/b");
       expect([ui.mergeScanning, ui.mergeSwitching]).toEqual([false, false]);
-    });
-
-    it("opens the decisions marked as not a rule from their summary, and keeps them open across renders", () => {
-      click(section("own").querySelector("details.mfold summary"));
-      render(root);
-      expect(section("own").querySelector("details.mfold")!.hasAttribute("open")).toBe(true);
-      expect(ui.mergeOpen.has("notRules")).toBe(true);
-    });
-
-    it("says decisions can't steer and links Overview when Rerail is not started here", () => {
-      data.mergeAssist = { ...onFixture(), readiness: { ...onFixture().readiness, rulesActive: false } };
-      render(root);
-      expect(root.textContent).toContain("Rerail isn’t set up and started in this checkout, so decisions can’t steer yet.");
-      expect(root.querySelector(`button[data-act="nav"][data-i="overview"]`)).not.toBeNull();
     });
 
     describe("the Settings section", () => {

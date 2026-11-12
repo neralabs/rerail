@@ -573,7 +573,7 @@ function pumpTitles() {
  * - `sessions`: the first page of the sessions list (`data.sessions`).
  * - `selectedSession`: the selected session's head, new transcript events and violations; nothing without one.
  * - `mergeAssist`: Merge Assist for the scoped checkout (`data.mergeAssist`), every poll.
- * - `mergeAssistCount`: the same, read at most every 30 s: the sidebar's count of findings waiting.
+ * - `mergeAssistCount`: the same, read at most every 30 s: the sidebar's count of open conflicts.
  */
 const NEEDS = {
   rules: () => loadRules(),
@@ -696,10 +696,8 @@ export function changeScope(scope) {
   ui.removedPacks.clear();
   ui.selectedSession = null;
   ui.sessRule = null;
-  ui.mergePending.clear();
+  ui.mergeDismissing.clear();
   ui.mergeOpen.clear();
-  ui.mergeTab = null;
-  ui.mergeDraft = null;
   ui.mergeSettings = null;
   ui.mergeSaving = false;
   ui.mergeSwitching = false;

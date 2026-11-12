@@ -60,7 +60,8 @@ Internal designs for contributors.
 
 - [content-addressed-workspace-store.md](content-addressed-workspace-store.md): the machine-wide content store
 - [transducer-design.md](transducer-design.md): the tape transducer language used by tests and benchmarks
-- [merge-assist-prd.md](merge-assist-prd.md): requirements and design for Merge Assist (internal testing), which
-  shares decisions between branches before they merge, as rules in `.rerail/rules/`;
-  [merge-assist-v1-build.md](merge-assist-v1-build.md) specifies the first build, and
-  [branch-coordination-amp-comparison.md](branch-coordination-amp-comparison.md) compares the approach with Amp
+- [merge-assist-v1-build.md](merge-assist-v1-build.md): Merge Assist (internal testing), which detects in-flight
+  conflicts, where this checkout's work overlaps other branches and open pull requests, and tells the person and their
+  coding agent before they merge; [merge-assist-prd.md](merge-assist-prd.md) states its delivered scope and keeps the
+  design and evaluation record of what was built and removed, and
+  [branch-coordination-amp-comparison.md](branch-coordination-amp-comparison.md) compares the earlier approach with Amp

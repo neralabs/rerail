@@ -60,9 +60,9 @@ const byFile = (conflicts: readonly Conflict[], file: string): Conflict => {
 };
 
 describe("conflict levels", { timeout: 60_000 }, () => {
-  it("raises a growing overlap to a checkpoint: a card for the agent to show, with the verdicts when they are on, and the person's line", async () => {
+  it("raises a growing overlap to a checkpoint: a card for the agent to show, and the person's line", async () => {
     const ws = await overlaps(["src/retry.ts"], 30);
-    const service = ws.service({ conflictVerdicts: true });
+    const service = ws.service();
     await service.setEnabled(ws.repo, true);
     const [conflict] = open((await service.scan(ws.repo)).conflicts);
     expect(conflict).toMatchObject({ level: "checkpoint", queued: false, reasons: expect.arrayContaining(["+31 lines on theirs and +1 on this branch in 1 h"]) });
@@ -71,10 +71,10 @@ describe("conflict levels", { timeout: 60_000 }, () => {
     expect(more).toEqual([]);
     expect(note!.conflict).toEqual({ id: conflict!.id, text: "decide: retry.ts · function retry (jbarnes-1)" });
     expect(note!.content).toContain("In your next message to the user, show them this card exactly as written:");
-    expect(note!.content).toContain(`◆ RERAIL · decide #${conflict!.shortId}: retry.ts · function retry`);
+    expect(note!.content).toContain(`◆ RERAIL · conflict #${conflict!.shortId}: retry.ts · function retry`);
     expect(note!.content).toContain("  Theirs   \"Grow src/retry.ts\"  (written by Tim Belanger · jbarnes-1)");
     expect(note!.content).toContain(`  Size     ${conflict!.reasons.join(" · ")}`);
-    expect(note!.content).toContain("  → keep mine · take theirs · new decision: <text> · later");
+    expect(note!.content).toContain("  → Talk to Tim Belanger about it (jbarnes-1).\n    Not a conflict? Dismiss it on the Merge Assist page of the dashboard.");
     expect(note!.content).toContain("Until they decide, stop deepening these files: `src/retry.ts`. Continue with the rest of your task.");
     expect(takeNotes(service, "session-1", ws.repo)).toHaveLength(1);
     expect(takeNotes(service, "session-1", ws.repo)).toEqual([]);
@@ -114,37 +114,6 @@ describe("conflict levels", { timeout: 60_000 }, () => {
     now = start + 25 * HOUR;
     const next = open((await service.scan(ws.repo)).conflicts);
     expect(next.find(conflict => conflict.id === queued.id)).toMatchObject({ level: "checkpoint", queued: false, queuedFor: null });
-  });
-
-  it("records the person's plain answer from chat as theirs, only in the session shown the card, and nothing for an ambiguous one", async () => {
-    const ws = await overlaps(["src/retry.ts", "src/cache.ts"], 30);
-    const service = ws.service({ conflictVerdicts: true });
-    await service.setEnabled(ws.repo, true);
-    const conflicts = open((await service.scan(ws.repo)).conflicts);
-    expect(conflicts.map(conflict => conflict.level)).toEqual(["checkpoint", "checkpoint"]);
-    // No session was handed a card yet: nothing answers it.
-    expect(await service.answerFromChat(ws.repo, "take theirs", "session-1")).toEqual({ kind: "none" });
-    expect(takeNotes(service, "session-1", ws.repo)).toHaveLength(2);
-
-    expect(await service.answerFromChat(ws.repo, "keep mine", "session-1")).toMatchObject({ kind: "ambiguous" });
-    expect(await service.answerFromChat(ws.repo, "take theirs into account", "session-1")).toEqual({ kind: "none" });
-    expect(open((await service.status(ws.repo)).conflicts)).toHaveLength(2);
-
-    const cacheConflict = byFile(conflicts, "src/cache.ts");
-    expect(await service.answerFromChat(ws.repo, `#${cacheConflict.shortId} later`, "session-1")).toMatchObject({ kind: "answer", option: "later" });
-    const snoozed = byFile((await service.status(ws.repo)).conflicts, "src/cache.ts");
-    expect(snoozed).toMatchObject({ status: "open", level: "checkpoint", snooze: { level: "checkpoint", endedAt: null } });
-    // Put off, it shows no card to a new session; the other still does.
-    expect(service.pendingNotes("session-2", ws.repo).map(note => note.conflict?.id)).toEqual([byFile(conflicts, "src/retry.ts").id]);
-
-    // A prompt in a session that was never shown the card (an agent's headless `claude -p`, say) records nothing.
-    expect(await service.answerFromChat(ws.repo, "take theirs", "headless-session")).toEqual({ kind: "none" });
-    // With the other put off, a bare answer in the card's session is for the one still open.
-    expect(await service.answerFromChat(ws.repo, "Take theirs.", "session-1")).toMatchObject({ kind: "answer", option: "theirs" });
-    const resolved = byFile((await service.status(ws.repo)).conflicts, "src/retry.ts");
-    expect(resolved).toMatchObject({ status: "resolved", resolution: { action: "theirs", name: "Tim Belanger" } });
-    // Resolution resets the dimmer.
-    expect(resolved).toMatchObject({ level: "logged", signals: null, score: 0, reasons: [], queued: false, snooze: null });
   });
 
   it("stops the line before an edit to a contested migration: Claude Code asks the person, other hosts tell the agent to", async () => {
@@ -241,9 +210,9 @@ describe("conflict levels", { timeout: 60_000 }, () => {
     expect(conflict!.signals).toMatchObject({ lockIn: 2, lockInClass: "exported" });
   });
 
-  it("shows the conflicts in the session's footer: overlaps at ambient, the decision waiting at a checkpoint", async () => {
+  it("shows the conflicts in the session's footer: the conflict waiting on the person at a checkpoint, until they dismiss it", async () => {
     const ws = await overlaps(["src/retry.ts"], 30);
-    const service = ws.service({ conflictVerdicts: true });
+    const service = ws.service();
     await service.setEnabled(ws.repo, true);
     const store = new SqliteSessionStore(ws.databasePath);
     const reader = new SqliteSessionReader(ws.databasePath);
@@ -253,18 +222,18 @@ describe("conflict levels", { timeout: 60_000 }, () => {
       const [conflict] = open((await service.scan(ws.repo)).conflicts);
       expect(reader.hud("session-1").mergeAssist).toEqual({ conflicts: 1, decide: { id: conflict!.id, title: conflict!.title }, summary: { id: conflict!.id, text: expect.any(String) } });
       expect(takeNotes(service, "session-1", ws.repo)).toHaveLength(1);
-      await service.answerFromChat(ws.repo, "later", "session-1");
-      expect(reader.hud("session-1").mergeAssist).toEqual({ conflicts: 1, decide: null, summary: { id: conflict!.id, text: expect.any(String) } });
+      await service.dismissConflict(ws.repo, conflict!.id);
+      expect(reader.hud("session-1")).not.toHaveProperty("mergeAssist");
     } finally {
       store.close();
       reader.close();
     }
   });
 
-  it("in a Claude Code session: asks the person at the edit of a contested file, and records their answer from the next prompt", async () => {
+  it("in a Claude Code session: asks the person at the edit of a contested file, and nothing once they dismiss it", async () => {
     const migration = "db/migrations/users.sql";
     const ws = await overlaps([migration], 60);
-    const service = ws.service({ conflictVerdicts: true });
+    const service = ws.service();
     await service.setEnabled(ws.repo, true);
     const runtime = sessionRuntime(ws, service);
     const sessionId = "claude-session";
@@ -280,9 +249,15 @@ describe("conflict levels", { timeout: 60_000 }, () => {
       expect(output.hookSpecificOutput.additionalContext).toContain("Rerail asked the user before this edit");
       expect(output.systemMessage).toContain("◆ Rerail · decide: users.sql · function users (jbarnes-1)");
 
-      await runtime.ingest({ kind: "user-prompt", eventId: "answer", sessionId, text: "Take theirs." });
-      await vi.waitFor(async () => expect(open((await service.status(ws.repo)).conflicts)).toEqual([]), { timeout: 20_000, interval: 100 });
-      expect((await service.status(ws.repo)).conflicts[0]).toMatchObject({ status: "resolved", resolution: { action: "theirs", name: "Tim Belanger" } });
+      await runtime.ingest({ kind: "result", eventId: "edited", sessionId, toolCallId: "1", toolName: "Edit", output: "ok" });
+
+      const [conflict] = open((await service.status(ws.repo)).conflicts);
+      await service.dismissConflict(ws.repo, conflict!.id);
+      const again = await runtime.ingest({
+        kind: "call", eventId: "edit-2", sessionId, toolCallId: "2", toolName: "Edit", input: { file_path: join(ws.repo, migration), old_string: "b", new_string: "c" },
+      });
+      expect(again.filter(delivery => delivery.conflict !== undefined)).toEqual([]);
+      expect(claudeHookOutput("PreToolUse", again)).not.toHaveProperty("hookSpecificOutput.permissionDecision");
     } finally {
       await runtime.dispose();
     }

@@ -139,17 +139,10 @@ export const ui = {
   closedEvents: new Set(),
   openFolds: new Set(),
   resumeOpen: false,
-  /**
-   * Merge Assist writes in flight: `finding:<id>` → action, `candidate:<id>` → state, `conflict:<id>` → action
-   * (`merge-model.js` `sectionsOf`, `conflictSections`).
-   */
-  mergePending: new Map(),
-  /** Merge Assist's open disclosures: "notRules", "problems", "closedConflicts", "settings". */
+  /** Merge Assist conflicts being dismissed, by id, while their write is out (`merge-model.js` `conflictSections`). */
+  mergeDismissing: new Set(),
+  /** Merge Assist's open disclosures: "problems", "dismissed", "settings". */
   mergeOpen: new Set(),
-  /** Merge Assist's tab the person chose ("conflicts", "decisions"), or `null` for the default (`tabOf`). */
-  mergeTab: null,
-  /** The decision being written for a conflict: `{ id, action: "mine"|"theirs"|"new", text }`, or `null`. */
-  mergeDraft: null,
   /** The Settings form while the person edits it: `{ delivery, command, timeout, problem }`, or `null` for the saved values. */
   mergeSettings: null,
   /** Merge Assist's settings being saved, while their request is out for the repository shown. */
@@ -262,20 +255,13 @@ export function matches(stored) {
 export const filtering = () => ui.filter !== "all" || ui.query !== "";
 
 /**
- * A Merge Assist decision's rule (`<candidate id>~<8-hex tag>`): stored as a library rule so it can steer one
- * checkout, but it is a decision on a branch, listed on the Merge Assist page, not a rule the person created here.
- */
-export const isMergeAssistRule = stored => /^candidate:[a-z0-9-]+~[0-9a-f]{8}$/u.test(stored.rule.id);
-
-/**
  * The rule list's sections, in order: Created rules, one per rule pack added here, then every other
  * rule from a pack (added on its own, not through it). Each section holds its groups; a group holds
- * every rule (`all`). Merge Assist decisions are in none of them.
+ * every rule (`all`).
  */
 export function ruleSections() {
   const mine = [], byPack = new Map(), other = new Map();
   for (const r of data.rules.values()) {
-    if (isMergeAssistRule(r)) continue;
     if (!isFromPack(r)) { mine.push(r); continue; }
     const pack = attachedPackOf(r);
     if (pack === undefined) {

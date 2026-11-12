@@ -72,7 +72,8 @@ to GitHub through **`gh`**, with your own `gh` sign-in (`src/runtime/merge-assis
 
 | When | What `gh` reads |
 | --- | --- |
-| A Merge Assist scan (at session start, after a decision is saved, and on demand) | Your sign-in state, the open pull requests of the repository, the `.rerail/candidates/` files at each one's head commit, and whether each author has write access |
+| Merge Assist reads its readiness (at most every five minutes, and at each scan) | Your sign-in state and login |
+| A Merge Assist scan (at session start and on demand), and detection after your agent's edits (at most every five minutes) | The open pull requests of the repository: number, title, URL, author, draft state, last update, head and base branch, and head commit |
 
 Rerail runs only `gh auth status`, `gh pr list` and `gh api` with `GET`; it never writes to GitHub. A repository whose
 remote is not on GitHub is not read at all; only its local branches are.
@@ -85,11 +86,12 @@ Rerail steers by adding messages to the agent's session. The agent's next reques
 under the provider's terms. Steers can hold paths, line numbers, rule messages quoting matched code, suggested fixes
 and your rules' text.
 
-With Merge Assist on, Rerail also runs your coding agent's CLI (Claude Code or Codex) headless to judge corrections
-and decisions: whether a correction is a decision worth keeping, and whether a teammate's decision contradicts one of
-yours (`src/runtime/merge-assist/agent-judge.ts`). That run sends the correction, the code it corrected, and the
-candidate decisions it compares to the CLI's provider, under that provider's terms and your own sign-in. The CLI runs
-with no tools, in an empty temporary folder, so it cannot read your repository. Rerail makes no model request itself.
+With Merge Assist on, Rerail also runs your coding agent's CLI (Claude Code or Codex) headless for a one-line summary
+of each new in-flight conflict: what the other side is doing and why it collides with your branch
+(`src/runtime/merge-assist/agent-judge.ts`). That run sends both sides' one-line summaries (commit subjects or pull
+request titles), the other side's label and author, the contested file names, and both sides' contested hunks, clipped,
+to the CLI's provider, under that provider's terms and your own sign-in. The CLI runs with no tools, in an empty
+temporary folder, so it cannot read your repository. Rerail makes no model request itself.
 
 ## What Rerail keeps on your machine
 
@@ -101,10 +103,9 @@ repository's `.rerail/sessions/`.
 
 | Where | What |
 | --- | --- |
-| `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits, findings, steer feedback, and all agent events (prompts, replies, tool inputs and outputs). Also daemon state and log, consent answer, rule packs, managed installs |
+| `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits, findings, steer feedback, and all agent events (prompts, replies, tool inputs and outputs). With Merge Assist on, also its in-flight conflicts (both sides' summaries and contested hunks), its last scan, your Merge Assist settings, and the summaries your coding agent's CLI wrote; turning Merge Assist off clears the conflicts and scans. Also daemon state and log, consent answer, rule packs, managed installs |
 | `~/.cache/rerail/` | `content-v1.sqlite`: compressed source files Rerail read, with syntax trees and check results |
 | `<your repository>/.rerail/sessions/` | One ledger per session: events and pre-edit file text. Its `.gitignore` of `*` keeps it out of Git |
-| `<your repository>/.rerail/candidates/` | With Merge Assist on, one file per decision you made on the branch, meant to be committed so teammates see it (mode `0644`). It holds only the decision, its scope, its rule and an author name: your `gh` login, else Git's `user.name`, else your account's user name on this machine. Never the correction, your code, session ids or anything else from the transcript |
 
 Steer feedback is the agent's one-line reason for ignoring a steer (`rerail feedback`). It is sent nowhere;
 `rerail feedback list` prints it for an issue.

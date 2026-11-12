@@ -1,7 +1,7 @@
 /**
- * Merge Assist's judge: runs the person's own coding agent CLI headless, with no tools, to classify a correction or
- * compare decisions. Answers must match a JSON schema and are used only as verdicts. Calls are cached by a hash of their
- * inputs and limited per repository and hour. See docs/merge-assist-v1-build.md §7 and §9.4.
+ * Merge Assist's judge: runs the person's own coding agent CLI headless, with no tools, for the quick call that puts a
+ * conflict in one line (docs/merge-assist-v1-build.md §9.5). Answers must match a JSON schema and are used only as text.
+ * Calls are cached by a hash of their inputs and limited per repository and hour. See §6 and §8.3.
  */
 import { spawn as nodeSpawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -35,11 +35,8 @@ const RUNNER_NAMES: Record<JudgeRunnerId, string> = { claude: "Claude Code", cod
 const HOST_RUNNERS: Partial<Record<RerailHost, JudgeRunnerId>> = { "claude-code": "claude", codex: "codex" };
 
 export interface JudgeTask<T> {
-  /**
-   * `grade` is an evaluation's blind grading call (benchmarks only); the product never asks it. `resolve` is one
-   * conflict-panel judge's vote. `summary` is a conflict's status line (the conflict hook's quick call).
-   */
-  readonly kind: "capture" | "compare" | "signals" | "rank" | "positions" | "resolve" | "grade" | "summary";
+  /** `summary` is a conflict's status line (the conflict hook's quick call). */
+  readonly kind: "summary";
   readonly repositoryKey: string;
   /** The complete prompt, untrusted data already fenced. */
   readonly prompt: string;
@@ -396,8 +393,8 @@ function claudeAnswer(result: Extract<ProcessResult, { status: "exited" }>): Run
   } catch {
     return result.code !== 0 ? exitFailure(name, result.code, result.stderr) : { ok: false, reason: "invalid", detail: `${name} printed no JSON result.` };
   }
-  const candidate = Array.isArray(parsed) ? parsed.findLast(item => claudeResultSchema.safeParse(item).success) : parsed;
-  const message = claudeResultSchema.safeParse(candidate);
+  const last = Array.isArray(parsed) ? parsed.findLast(item => claudeResultSchema.safeParse(item).success) : parsed;
+  const message = claudeResultSchema.safeParse(last);
   if (!message.success) {
     return result.code !== 0 ? exitFailure(name, result.code, result.stderr) : { ok: false, reason: "invalid", detail: `${name} printed no result message.` };
   }

@@ -91,7 +91,7 @@ export class DatabaseApiStores implements RerailApiStores {
   }
 
   mergeAssist(): MergeAssistService {
-    this.#mergeAssist ??= this.#options.mergeAssist ?? createMergeAssistService({ database: this.database(), ruleCatalog: this.ruleCatalog() });
+    this.#mergeAssist ??= this.#options.mergeAssist ?? createMergeAssistService({ database: this.database() });
     return this.#mergeAssist;
   }
 

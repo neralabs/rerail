@@ -473,7 +473,7 @@ export class RerailDaemon {
     let daemon: RerailDaemon | undefined;
     // One Merge Assist for the API and every session this daemon runs, so a scan runs once per checkout and gh's
     // readiness is read once; its database opens with the stores', on first use.
-    const mergeAssist = createMergeAssistService({ database: () => stores.database(), ruleCatalog: loadRuleCatalog });
+    const mergeAssist = createMergeAssistService({ database: () => stores.database() });
     // Open the database before binding anything: a refused open (a file this build cannot read, say) must leave no
     // engine socket behind, or every later start fails with EADDRINUSE.
     const stores = new DatabaseApiStores(databasePath, {

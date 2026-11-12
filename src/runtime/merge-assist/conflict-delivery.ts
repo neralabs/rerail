@@ -1,5 +1,5 @@
 /**
- * Where conflicts reach the person (docs/merge-assist-v1-build.md §12.6): the person's `conflictDelivery` setting for a
+ * Where conflicts reach the person (docs/merge-assist-v1-build.md §9.6): the person's `conflictDelivery` setting for a
  * repository, kept with Merge Assist's state on this machine (`settings:<repository>`), never in a committed file, with
  * the conflict hook's command; the status line's words for a conflict; and the delivery handler, which hands every
  * conflict event to the checkout's sessions. `chat` delivers through the coding agent (its note, the checkpoint card),
@@ -54,7 +54,7 @@ export function fallbackSummary({ conflict, files }: Pick<StoredConflict, "confl
   const who = conflict.theirs.author === null ? conflict.theirs.label : `${conflict.theirs.label} (${conflict.theirs.author})`;
   // An overlap's title is `<file> · <symbol>` when Git names the symbol, else the file's name.
   const [, symbol] = conflict.title.split(" · ");
-  const what = conflict.kind !== "overlap" ? conflict.title : symbol ?? files[0] ?? basename(conflict.title);
+  const what = symbol ?? files[0] ?? basename(conflict.title);
   return { text: `${who} is changing ${what}`, via: "fallback", at: isoSeconds(now), reason: null };
 }
 

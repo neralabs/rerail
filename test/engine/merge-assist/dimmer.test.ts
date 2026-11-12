@@ -10,7 +10,7 @@ const ROOMY: DimmerBudget = { stops: 1, checkpoints: 3 };
  */
 const signals = (over: Partial<ConflictSignals> = {}): ConflictSignals => ({
   quiet: false, lockIn: 1, lockInClass: "local", blastRadius: 0, callers: 0, otherRefs: 0, growthPerHour: 10,
-  linesTheirs: 10, linesMine: 0, windowHours: 1, pLose: 0.5, hoursToMerge: 24, pullRequest: false, verdict: false,
+  linesTheirs: 10, linesMine: 0, windowHours: 1, pLose: 0.5, hoursToMerge: 24, pullRequest: false,
   ...over,
 });
 
@@ -35,12 +35,11 @@ describe("the dimmer", () => {
     expect(level({ quiet: true, growthPerHour: 500, lockIn: 4 })).toMatchObject({ level: "logged", reasons: ["only lockfiles, changelogs, generated output or docs"] });
   });
 
-  it("stops the line only for lock-in ×4, fast growth, no verdict and four interruptions' worth of rework", () => {
+  it("stops the line only for lock-in ×4, fast growth and four interruptions' worth of rework", () => {
     const stop = { lockIn: 4 as const, lockInClass: "persisted" as const };
     expect(level({ ...stop, growthPerHour: 60 }).level).toBe("stop");
     // Each condition missing leaves a checkpoint.
     expect(level({ ...stop, growthPerHour: 50 }).level).toBe("checkpoint");
-    expect(level({ ...stop, growthPerHour: 60, verdict: true }).level).toBe("checkpoint");
     expect(level({ lockIn: 2, lockInClass: "exported", growthPerHour: 120 }).level).toBe("checkpoint");
     expect(level({ ...stop, growthPerHour: 60, pLose: 0.1 }).level).toBe("checkpoint");
   });
@@ -78,10 +77,10 @@ describe("the dimmer", () => {
       "+380 lines on theirs and +12 on this branch in 14 h",
       "14 callers, and 2 other branches touch the same files",
       "pull request open: about 24 h to merge",
-      "no verdict yet: even odds either side loses",
+      "even odds either side loses",
     ]);
-    expect(level({ callers: 1, linesTheirs: 3, hoursToMerge: 72.4, verdict: true }).reasons)
-      .toEqual(["local code: ×1", "+3 lines on theirs in 1 h", "1 caller", "about 72 h to merge", "a verdict on this question exists"]);
+    expect(level({ callers: 1, linesTheirs: 3, hoursToMerge: 72.4 }).reasons)
+      .toEqual(["local code: ×1", "+3 lines on theirs in 1 h", "1 caller", "about 72 h to merge", "even odds either side loses"]);
   });
 
   it("reads its settings from the policy's dimmer section, with defaults", () => {

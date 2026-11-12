@@ -58,7 +58,7 @@ const okJsonSchema = { type: "object", properties: { ok: { type: "boolean" } }, 
 
 function task(overrides: Partial<JudgeTask<{ ok: boolean }>> = {}): JudgeTask<{ ok: boolean }> {
   return {
-    kind: "capture",
+    kind: "summary",
     repositoryKey: "local:judge-test",
     prompt: "Reply with {\"ok\":true}",
     jsonSchema: okJsonSchema,
@@ -183,7 +183,7 @@ describe("agent judge invocations", () => {
 
     expect(outcome).toMatchObject({ ok: false, reason: "invalid" });
     expect(!outcome.ok && outcome.detail).toMatch(/^Codex's answer did not match the schema: /u);
-    expect(rows(database).map(row => row.task)).toEqual(["capture:failed"]);
+    expect(rows(database).map(row => row.task)).toEqual(["summary:failed"]);
   });
 
   it("stops a run that outlives the timeout with SIGTERM, then SIGKILL, and reports timeout", async () => {
@@ -227,7 +227,7 @@ describe("agent judge budget and cache", () => {
     expect(second).toEqual({ ok: true, value: { ok: true }, runner: "codex", cached: true });
     expect(calls).toHaveLength(1);
     expect(judge.budget("local:judge-test")).toEqual({ used: 1, limit: 40, windowMinutes: 60 });
-    expect(rows(database)).toEqual([expect.objectContaining({ key: "a".repeat(64), task: "capture", runner: "codex", resultJson: "{\"ok\":true}" })]);
+    expect(rows(database)).toEqual([expect.objectContaining({ key: "a".repeat(64), task: "summary", runner: "codex", resultJson: "{\"ok\":true}" })]);
   });
 
   it("answers from the cache even when no agent CLI is on PATH", async () => {

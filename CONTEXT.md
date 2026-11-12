@@ -130,12 +130,8 @@ The kind of scope that holds a binding (the engine's `ScopeKind`), which `binds:
 
 ## Merge Assist
 
-An experimental, per-repository feature, off until a person turns it on, that shares the decisions developers make while correcting their coding agents between branches of one repository before they merge. It captures Candidate Rules, reads those on other local branches and open pull requests, and sorts each into a Finding tier.
+An experimental, per-repository feature, off until a person turns it on, that watches the branches and pull requests in flight and tells the person and their coding agent when their work collides with someone else's, before it merges. It finds Conflicts, decides how loud each is with the dimmer, and delivers them through the conflict hook; the person's one action on a Conflict is to dismiss it.
 
-## Candidate Rule
+## Conflict
 
-One decision a developer made while correcting their coding agent, saved as a file on the branch (`.rerail/candidates/<id>.json`, `rerail.candidate/v1`) so it travels with commits. It holds the decision text, its scope and author, and a Code Rule in `steer` mode when Rerail could check it exactly; without one it is a note only the person's coding agent judges. It is `active` or `rejected` (Not a rule), never stronger than steer, and never holds the correction or code it came from. An **amendment** is a Candidate Rule whose `supersedes` names another on the same branch: while it is active, it is in force and the one it amends is not.
-
-## Finding Tiers
-
-Where Merge Assist puts a Candidate Rule from another branch. **Absorb**: from a trusted author and compatible with this branch, it steers this checkout, with undo. **Review**: this branch already breaks it, its author is not trusted, or the judgment cannot tell; it waits for the person to adopt or dismiss it. **Talk**: it contradicts one of this branch's own decisions; both are shown and nothing is applied, for the two people to resolve.
+An overlap between this checkout's work (committed and not, against the merge base with the base branch) and one live ref (a local branch, a remote-tracking branch or an open pull request the repository holds) in one file: hunks that touch the same base lines or leave at most 3 unchanged lines between them. Its id is anchored on the contested base lines' content and their ref, so it survives lines added above it and a merge from the base. It is `open` or `dismissed` (Not a conflict), and while open its level is `logged`, `ambient`, `checkpoint` or `stop`. Rerail never settles one: the people involved do.

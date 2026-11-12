@@ -1,7 +1,7 @@
 /**
  * The sidebar (`#sidenav`): Overview; one item per rule pack added here with how many of its rules are on, and
  * Created by you once there is a rule created by you; Add rule packs and Create a rule; History by rule and by
- * session; Merge Assist, with how many of its findings wait for the person; Settings. Each item is a `nav` action to
+ * session; Merge Assist, with how many of its conflicts are open; Settings. Each item is a `nav` action to
  * its view's hash (`routes.js`).
  */
 import { h, setContent, icon } from "../dom.js";
@@ -9,7 +9,7 @@ import { fmt, plural } from "../format.js";
 import { isRunning } from "../derive.js";
 import { data, ui, ruleSections, repoName } from "../state.js";
 import { packIcon } from "../render/pack-panel.js";
-import { waitingCount } from "../merge-model.js";
+import { openConflictCount } from "../merge-model.js";
 
 /** A section's rules that run, of all of them: "24/71" in the item, "24 of 71 rules on" as its tooltip and accessible name. */
 function onCount(section) {
@@ -37,14 +37,11 @@ function repositoryItems() {
   ];
 }
 
-/**
- * Merge Assist's findings that wait for the person (decided differently, needs review): "3", or nothing at 0 and while
- * the last read failed (the count may no longer hold).
- */
+/** Merge Assist's open conflicts: "3", or nothing at 0 and while the last read failed (the count may no longer hold). */
 function mergeCount() {
-  const n = data.mergeAssistError === null ? waitingCount(data.mergeAssist, ui.mergePending) : 0;
+  const n = data.mergeAssistError === null ? openConflictCount(data.mergeAssist, ui.mergeDismissing) : 0;
   if (n === 0) return null;
-  const long = `${fmt(n)} ${plural(n, "finding waits", "findings wait")} for you`;
+  const long = `${fmt(n)} open ${plural(n, "conflict")}`;
   return { short: fmt(n), long, cls: ".due" };
 }
 
@@ -74,7 +71,7 @@ export function renderSidenav(root) {
     item("history", "By rule", icon("rule", 14)),
     item("sessions", "By session", icon("session", 14)),
     scoped ? h("div.sn-h", null, "Experimental") : null,
-    scoped ? item("merge", "Merge Assist", icon("repo", 14), { n: merge, title: "Share the decisions you make with your coding agent between branches" }) : null,
+    scoped ? item("merge", "Merge Assist", icon("repo", 14), { n: merge, title: "See when your work collides with work in flight, before it merges" }) : null,
     h("div.sn-foot", null, item("settings", "Settings", icon("gear", 14))),
   ]);
 }

@@ -6,14 +6,12 @@ import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   baseBranch,
-  changedPaths,
   commitExists,
   currentBranch,
   githubRepositoryOf,
   isAncestor,
   localBranches,
   mergeBase,
-  mergeTreeConflicts,
 } from "../../../src/engine/merge-assist/branch-git.js";
 
 const roots: string[] = [];
@@ -132,56 +130,6 @@ describe("ancestry", () => {
     expect(commitExists(root, "0".repeat(40))).toBe(false);
     expect(commitExists(root, "--all")).toBe(false);
     expect(mergeBase(root, "--all", "main")).toBeNull();
-  });
-});
-
-describe("changedPaths", () => {
-  it("lists the branch's paths since the merge base, and with the working tree its staged, unstaged and untracked ones", async () => {
-    const root = await repository();
-    git(root, "checkout", "--quiet", "-b", "feature");
-    commit(root, { "src/api/client.ts": "export const a = 2;\n", "src/new.ts": "export {};\n" }, "feature");
-    git(root, "mv", "README.md", "docs.md");
-    git(root, "commit", "--quiet", "-m", "rename");
-    // Base moves on; its own change is not the branch's.
-    git(root, "checkout", "--quiet", "main");
-    commit(root, { "base-only.ts": "export {};\n" }, "base");
-    git(root, "checkout", "--quiet", "feature");
-
-    expect(changedPaths(root, "main", "feature")).toEqual(["README.md", "docs.md", "src/api/client.ts", "src/new.ts"]);
-
-    write(root, { "staged.ts": "1\n", "src/new.ts": "export const changed = 1;\n", "untracked dir/file.ts": "1\n", "ignored.log": "x\n", ".gitignore": "*.log\n" });
-    git(root, "add", "staged.ts");
-    expect(changedPaths(root, "main", "HEAD")).toEqual(["README.md", "docs.md", "src/api/client.ts", "src/new.ts"]);
-    expect(changedPaths(root, "main", "HEAD", { workingTree: true })).toEqual([
-      ".gitignore", "README.md", "docs.md", "src/api/client.ts", "src/new.ts", "staged.ts", "untracked dir/file.ts",
-    ]);
-  });
-
-  it("throws rather than answer for a commit it cannot find", async () => {
-    const root = await repository();
-    expect(() => changedPaths(root, "main", "missing")).toThrow(/not a commit here/u);
-  });
-});
-
-describe("mergeTreeConflicts", () => {
-  it("lists the files two branches conflict on, nothing for a clean merge, and null for an unknown commit", async () => {
-    const root = await repository();
-    git(root, "checkout", "--quiet", "-b", "theirs");
-    commit(root, { "src/api/client.ts": "export const a = 'theirs';\n", "src/theirs.ts": "1\n" }, "theirs");
-    git(root, "checkout", "--quiet", "main");
-    git(root, "checkout", "--quiet", "-b", "ours");
-    commit(root, { "src/api/client.ts": "export const a = 'ours';\n", "src/ours.ts": "1\n" }, "ours");
-    git(root, "checkout", "--quiet", "main");
-    git(root, "checkout", "--quiet", "-b", "clean");
-    commit(root, { "src/clean.ts": "1\n" }, "clean");
-    const before = git(root, "status", "--porcelain");
-
-    expect(mergeTreeConflicts(root, "ours", "theirs")).toEqual(["src/api/client.ts"]);
-    expect(mergeTreeConflicts(root, "ours", "clean")).toEqual([]);
-    expect(mergeTreeConflicts(root, "ours", "0".repeat(40))).toBeNull();
-    // Nothing in the checkout changed.
-    expect(git(root, "status", "--porcelain")).toBe(before);
-    expect(currentBranch(root)).toBe("clean");
   });
 });
 

@@ -1,29 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { ConflictDelivery, Finding, MergeAssistStatus, OwnDecision } from "../../src/engine/index.js";
+import type { ConflictDelivery, MergeAssistStatus } from "../../src/engine/index.js";
 import {
-  authorOf, budgetText, conflictSections, conflictToast, draftProblem, draftText, githubText, hookFailure, hunkLines, judgeText,
-  readinessChecks, resolutionText, resolveBody, safePeerUrl, scanSummary, scannedWhat, sectionsOf,
-  settingsChange, settingsDraft, settingsSummary, tabOf, waitingCount, writeError,
+  budgetText, conflictSections, dismissToast, githubText, hookFailure, hunkLines, judgeText, openConflictCount,
+  readinessChecks, safePeerUrl, scanSummary, scannedWhat, settingsChange, settingsDraft, settingsSummary, writeError,
 } from "../../ui/merge-model.js";
-import { conflict, resolved, side } from "./support/merge-conflicts.js";
+import { conflict, dismissed } from "./support/merge-conflicts.js";
 
 const NOW = Date.parse("2026-11-02T12:00:00Z");
 const at = (minutesAgo: number) => new Date(NOW - minutesAgo * 60_000).toISOString();
-
-const finding = (id: string, tier: Finding["tier"], status: Finding["status"], updatedMinutesAgo = 0): Finding => ({
-  id, tier, status,
-  candidate: { id: `candidate:${id}`, decision: `Decision ${id}`, scope: ["src/**"], level: "code", author: "jbarnes", createdAt: at(120) },
-  peer: { kind: "branch", ref: "jbarnes/session-retry", commit: "abc", number: null, title: null, url: null, author: null, trusted: true },
-  reason: "Compatible with your decisions.",
-  evidence: { violations: [], conflicts: [], mine: null, judgment: null },
-  message: null,
-  updatedAt: at(updatedMinutesAgo),
-});
-
-const own = (id: string, state: OwnDecision["state"], createdMinutesAgo = 0): OwnDecision => ({
-  id, decision: `Own ${id}`, generality: "branch", scope: ["src/api/**"], level: "note", state, createdAt: at(createdMinutesAgo),
-  committed: false, amends: null, amendedBy: null, source: { sessionId: null, at: null },
-});
 
 const status = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({
   repositoryKey: "remote:github.com/acme/storefront",
@@ -31,92 +15,16 @@ const status = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({
   branch: "tbelanger/export-api",
   baseBranch: "main",
   enabled: true,
-  experimental: { conflictVerdicts: false },
   settings: { delivery: "both", hook: null },
   readiness: {
     judge: { available: true, runner: "claude", problem: null },
     github: { state: "signed-in", login: "tbelanger", repository: "acme/storefront" },
-    candidatesIgnored: false,
-    rulesActive: true,
   },
   budget: { used: 3, limit: 40, windowMinutes: 60 },
   scanning: false,
   lastScan: { at: at(4), peers: { branches: 3, pullRequests: 2 }, problems: [] },
-  own: [],
-  findings: [],
   conflicts: [],
   ...over,
-});
-
-describe("the page's sections", () => {
-  const findings = [
-    finding("talk-old", "talk", "open", 30),
-    finding("review", "review", "open", 5),
-    finding("talk-new", "talk", "open", 1),
-    finding("absorbed", "absorb", "applied", 10),
-    finding("adopted", "review", "applied", 2),
-    finding("dismissed", "review", "dismissed"),
-  ];
-
-  it("sorts open contradictions into Decided differently and other open findings into Needs your review, newest first", () => {
-    const sections = sectionsOf(status({ findings }));
-    expect(sections.talk.map(f => f.id)).toEqual(["talk-new", "talk-old"]);
-    expect(sections.review.map(f => f.id)).toEqual(["review"]);
-  });
-
-  it("lists absorbed and adopted findings under Added from other branches and hides dismissed ones", () => {
-    const sections = sectionsOf(status({ findings }));
-    expect(sections.added.map(f => f.id)).toEqual(["adopted", "absorbed"]);
-    expect(Object.values(sections).flat().map(item => item.id)).not.toContain("dismissed");
-  });
-
-  it("splits this branch's decisions into active and not rules, newest first", () => {
-    const sections = sectionsOf(status({ own: [own("a", "active", 60), own("b", "rejected", 5), own("c", "active", 1)] }));
-    expect(sections.own.map(d => d.id)).toEqual(["c", "a"]);
-    expect(sections.notRules.map(d => d.id)).toEqual(["b"]);
-  });
-
-  it("drops a finding being dismissed or undone at once, and keeps one being adopted in place, busy", () => {
-    const pending = new Map([["finding:talk-new", "dismiss"], ["finding:absorbed", "undo"], ["finding:review", "adopt"]]);
-    const sections = sectionsOf(status({ findings }), pending);
-    expect(sections.talk.map(f => f.id)).toEqual(["talk-old"]);
-    expect(sections.added.map(f => f.id)).toEqual(["adopted"]);
-    expect(sections.review).toEqual([expect.objectContaining({ id: "review", busy: true })]);
-    expect(sections.talk[0]!.busy).toBe(false);
-  });
-
-  it("moves a decision marked as not a rule to Not rules at once, and a restored one back", () => {
-    const pending = new Map([["candidate:a", "rejected"], ["candidate:b", "active"]]);
-    const sections = sectionsOf(status({ own: [own("a", "active"), own("b", "rejected")] }), pending);
-    expect(sections.own).toEqual([expect.objectContaining({ id: "b", state: "active", busy: true })]);
-    expect(sections.notRules).toEqual([expect.objectContaining({ id: "a", state: "rejected", busy: true })]);
-  });
-});
-
-describe("the sidebar's count", () => {
-  const findings = [finding("t", "talk", "open"), finding("r", "review", "open"), finding("a", "absorb", "applied")];
-
-  it("counts the findings that wait for the person: decided differently and needs review", () => {
-    expect(waitingCount(status({ findings }))).toBe(2);
-  });
-
-  it("is 0 while Merge Assist is off, before it loads, and leaves out a finding being dismissed", () => {
-    expect(waitingCount(status({ findings, enabled: false }))).toBe(0);
-    expect(waitingCount(null)).toBe(0);
-    expect(waitingCount(status({ findings }), new Map([["finding:t", "dismiss"]]))).toBe(1);
-  });
-});
-
-describe("who is behind a finding", () => {
-  it("names a pull request's author as GitHub reports it, never the one its decision file declares", () => {
-    const pullRequest = { ...finding("p", "review", "open"), peer: { ...finding("p", "review", "open").peer, kind: "pull-request" as const, number: 7, author: "outsider" } };
-    expect(authorOf({ ...pullRequest, candidate: { ...pullRequest.candidate, author: "tbelanger" } })).toEqual({ name: "outsider", declared: false });
-    expect(authorOf({ ...pullRequest, peer: { ...pullRequest.peer, author: null } })).toEqual({ name: null, declared: false });
-  });
-
-  it("names a local branch's author as its decision file declares it, marked as declared", () => {
-    expect(authorOf(finding("b", "review", "open"))).toEqual({ name: "jbarnes", declared: true });
-  });
 });
 
 describe("a peer's link", () => {
@@ -154,7 +62,7 @@ describe("a peer's link", () => {
 });
 
 describe("the status strip", () => {
-  it("names the judging CLI, or says none was found with why", () => {
+  it("names the summarising CLI, or says none was found with why", () => {
     expect(judgeText({ available: true, runner: "codex", problem: null })).toEqual({ ok: true, text: "Codex" });
     expect(judgeText({ available: false, runner: null, problem: "Neither claude nor codex is on PATH." }))
       .toEqual({ ok: false, text: "No agent CLI found", detail: "Neither claude nor codex is on PATH." });
@@ -172,14 +80,13 @@ describe("the status strip", () => {
     expect(budgetText({ used: 40, limit: 40, windowMinutes: 60 }).spent).toBe(true);
   });
 
-  it("sums up what a scan found that the page did not show before, not the totals", () => {
-    const findings = [finding("t", "talk", "open"), finding("r1", "review", "open"), finding("r2", "review", "open")];
-    expect(scanSummary(null, status({ findings }))).toBe("Scanned 3 local branches and 2 open pull requests. New: 1 decided differently, 2 need your review.");
-    // Nothing changed: the findings that still wait are not news.
-    expect(scanSummary(status({ findings }), status({ findings }))).toBe("Scanned 3 local branches and 2 open pull requests: nothing new.");
-    // A finding that moved section, or whose decision changed, is.
-    const moved = [finding("t", "talk", "open"), finding("r1", "absorb", "applied"), { ...finding("r2", "review", "open"), candidate: { ...finding("r2", "review", "open").candidate, decision: "Changed." } }];
-    expect(scanSummary(status({ findings }), status({ findings: moved }))).toBe("Scanned 3 local branches and 2 open pull requests. New: 1 needs your review, 1 added from other branches.");
+  it("sums up the open conflicts a scan found that the page did not show before, not the totals", () => {
+    const conflicts = [conflict("a"), conflict("b"), dismissed("c", at(3))];
+    expect(scanSummary(null, status({ conflicts }))).toBe("Scanned 3 local branches and 2 open pull requests. New: 2 conflicts.");
+    // Nothing changed: the conflicts that are still open are not news.
+    expect(scanSummary(status({ conflicts }), status({ conflicts }))).toBe("Scanned 3 local branches and 2 open pull requests: nothing new.");
+    expect(scanSummary(status({ conflicts }), status({ conflicts: [...conflicts, conflict("d")] })))
+      .toBe("Scanned 3 local branches and 2 open pull requests. New: 1 conflict.");
     expect(scanSummary(null, status({ lastScan: { at: at(0), peers: { branches: 1, pullRequests: 0 }, problems: ["gh: rate limited"] } })))
       .toBe("Scanned 1 local branch: nothing new. 1 thing could not be read; see Last scan.");
   });
@@ -192,31 +99,28 @@ describe("the status strip", () => {
 describe("the readiness checklist", () => {
   const text = (segments: Array<string | { code: string }>) => segments.map(s => (typeof s === "string" ? s : s.code)).join("");
 
-  it("names the supported CLIs when none is found, and says scans still apply exact checks", () => {
-    const checks = readinessChecks({ ...status().readiness, judge: { available: false, runner: null, problem: null } });
-    const judge = checks.find(c => c.key === "judge")!;
-    expect(judge.ok).toBe(false);
-    expect(text(judge.text)).toMatch(/need Claude Code or Codex on your PATH\. Without one, scans still apply exact checks\./u);
+  it("says the agent CLI is run for a one-line summary of each conflict, and names the supported CLIs when none is found", () => {
+    const ready = readinessChecks(status().readiness);
+    expect(ready.map(c => [c.key, c.ok])).toEqual([["judge", true], ["github", true]]);
+    expect(text(ready[0]!.text)).toBe("Your agent CLI: Claude Code. Rerail runs it for a one-line summary of each conflict.");
+    const missing = readinessChecks({ ...status().readiness, judge: { available: false, runner: null, problem: null } });
+    expect(missing[0]!.ok).toBe(false);
+    expect(text(missing[0]!.text)).toContain("need Claude Code or Codex on your PATH");
   });
 
-  it("says whether gh is signed in, the candidates folder ignored, and rules able to steer", () => {
-    const ready = readinessChecks(status().readiness);
-    expect(ready.map(c => [c.key, c.ok])).toEqual([["judge", true], ["github", true], ["ignored", true], ["rules", true]]);
-    expect(text(ready.find(c => c.key === "github")!.text)).toContain("gh is signed in as tbelanger");
-
-    const blocked = readinessChecks({ ...status().readiness, github: { state: "signed-out", login: null, repository: null }, candidatesIgnored: true, rulesActive: false });
-    expect(blocked.map(c => c.ok)).toEqual([true, false, false, false]);
-    expect(text(blocked.find(c => c.key === "github")!.text)).toContain("Run gh auth login");
-    expect(text(blocked.find(c => c.key === "ignored")!.text)).toContain("Git ignores .rerail/candidates/ here");
-    expect(blocked.find(c => c.key === "rules")).toMatchObject({ overview: true, text: ["Rerail isn't set up and started in this checkout, so decisions can't steer yet."] });
+  it("says whether gh is signed in, and how to sign in when it is not", () => {
+    expect(text(readinessChecks(status().readiness)[1]!.text)).toContain("gh is signed in as tbelanger");
+    const signedOut = readinessChecks({ ...status().readiness, github: { state: "signed-out", login: null, repository: null } });
+    expect(signedOut[1]!.ok).toBe(false);
+    expect(text(signedOut[1]!.text)).toContain("Run gh auth login");
   });
 });
 
 describe("a failed write's reason", () => {
   it("is the API's message when it answered one, else the error as sent", () => {
-    const refused = new Error('PUT /api/merge-assist/findings answered 409: {"error":"invalid-state","message":"This finding is no longer open."}');
-    expect(writeError(refused)).toBe("This finding is no longer open.");
-    expect(writeError(new Error("PUT /api/merge-assist/findings answered 500: oops"))).toBe("PUT /api/merge-assist/findings answered 500: oops");
+    const refused = new Error('POST /api/merge-assist/conflicts/dismiss answered 409: {"error":"invalid-state","message":"This conflict is no longer open."}');
+    expect(writeError(refused)).toBe("This conflict is no longer open.");
+    expect(writeError(new Error("POST /api/merge-assist/scan answered 500: oops"))).toBe("POST /api/merge-assist/scan answered 500: oops");
     expect(writeError(new Error("network down"))).toBe("network down");
   });
 });
@@ -225,73 +129,32 @@ describe("conflicts", () => {
   const conflicts = [
     conflict("logged-new", { level: "logged", detectedAt: at(1) }),
     conflict("ambient-old", { detectedAt: at(60) }),
-    resolved("theirs-taken", "theirs"),
+    dismissed("dismissed-1", at(2)),
+    conflict("stop", { level: "stop", detectedAt: at(90) }),
     conflict("ambient-new", { detectedAt: at(5) }),
-    conflict("dismissed", { status: "dismissed", resolution: { action: "dismiss", name: "tbelanger", rule: null, text: null, at: at(2) } }),
+    dismissed("dismissed-2", at(20)),
   ];
 
-  it("lists open conflicts that reach the session first, then logged ones, each newest first; closed ones as the status orders them", () => {
-    const { open, closed } = conflictSections(status({ conflicts }));
-    expect(open.map(c => c.id)).toEqual(["ambient-new", "ambient-old", "logged-new"]);
-    expect(closed.map(c => c.id)).toEqual(["theirs-taken", "dismissed"]);
-    expect(open.every(c => !c.busy)).toBe(true);
+  it("lists open conflicts loudest first, each level newest first; dismissed ones as the status orders them", () => {
+    const sections = conflictSections(status({ conflicts }));
+    expect(sections.open.map(c => c.id)).toEqual(["stop", "ambient-new", "ambient-old", "logged-new"]);
+    expect(sections.dismissed.map(c => c.id)).toEqual(["dismissed-1", "dismissed-2"]);
   });
 
-  it("hides a conflict marked as not a conflict at once and keeps one being resolved, busy", () => {
-    const pending = new Map([["conflict:ambient-old", "dismiss"], ["conflict:ambient-new", "theirs"]]);
-    const { open } = conflictSections(status({ conflicts }), pending);
-    expect(open.map(c => [c.id, c.busy])).toEqual([["ambient-new", true], ["logged-new", false]]);
+  it("drops a conflict being dismissed from the open list at once", () => {
+    const { open } = conflictSections(status({ conflicts }), new Set(["ambient-old"]));
+    expect(open.map(c => c.id)).toEqual(["stop", "ambient-new", "logged-new"]);
   });
 
-  it("opens on Conflicts while any is open, else Decisions, and keeps the tab the person chose", () => {
-    expect(tabOf(status({ conflicts }), null)).toBe("conflicts");
-    expect(tabOf(status({ conflicts: [resolved("r", "mine")] }), null)).toBe("decisions");
-    expect(tabOf(status({ conflicts }), "constructor")).toBe("conflicts");
-    expect(tabOf(status({ conflicts }), "decisions")).toBe("decisions");
+  it("counts every open conflict in the sidebar, logged ones included, and none while off or being dismissed", () => {
+    expect(openConflictCount(status({ conflicts }))).toBe(4);
+    expect(openConflictCount(status({ conflicts }), new Set(["stop"]))).toBe(3);
+    expect(openConflictCount(status({ conflicts, enabled: false }))).toBe(0);
+    expect(openConflictCount(null)).toBe(0);
   });
 
-  it("counts every open conflict in the sidebar as the Conflicts tab does, and a decided-differently finding only when no conflict carries it", () => {
-    const talk = [finding("carried", "talk", "open"), finding("alone", "talk", "open")];
-    const carrier = conflict("decisions", { kind: "decisions", theirs: side({ label: "jbarnes/x", decisionId: "candidate:carried" }) });
-    const all = status({ findings: talk, conflicts: [...conflicts, carrier] });
-    // ambient-old, ambient-new, the logged one, the decisions conflict, and the finding no conflict carries.
-    expect(conflictSections(all).open).toHaveLength(4);
-    expect(waitingCount(all)).toBe(conflictSections(all).open.length + 1);
-    expect(waitingCount(status({ conflicts, enabled: false }))).toBe(0);
-  });
-
-  it("says how a closed conflict ended, who decided, and the rule it saved", () => {
-    expect(resolutionText(resolved("t", "theirs"))).toMatchObject({
-      badge: "Resolved", how: "Took theirs (PR #398)", who: "by tbelanger", rule: ".rerail/candidates/t.json",
-    });
-    expect(resolutionText(resolved("m", "mine"))).toMatchObject({ badge: "Resolved", how: "Kept mine", who: "by tbelanger" });
-    expect(resolutionText(resolved("n", "new"))).toMatchObject({ how: "New decision" });
-    expect(resolutionText(conflicts[4]!)).toMatchObject({ badge: "Not a conflict", how: null, who: "by tbelanger", rule: null });
-  });
-
-  it("opens Keep mine and Take theirs on that side's summary, a new decision empty, and asks for 1 to 600 characters", () => {
-    const c = conflict("c");
-    expect(draftText(c, "mine")).toBe("Clones each matcher per rule copy.");
-    expect(draftText(c, "theirs")).toBe("Shares compiled matchers; no rule copy deep-copies them.");
-    expect(draftText(c, "new")).toBe("");
-    expect(draftProblem("   ")).toBe("Write the decision first.");
-    expect(draftProblem("x".repeat(600))).toBeNull();
-    expect(draftProblem("x".repeat(602))).toBe("2 characters over the 600-character limit.");
-  });
-
-  it("sends the conflict, the action and the trimmed text; Not a conflict sends no text", () => {
-    expect(resolveBody("conflict:q:ab", "theirs", "  Share matchers.  ")).toEqual({ conflictId: "conflict:q:ab", action: "theirs", text: "Share matchers." });
-    expect(resolveBody("conflict:q:ab", "new", "Both, behind a flag.")).toEqual({ conflictId: "conflict:q:ab", action: "new", text: "Both, behind a flag." });
-    expect(resolveBody("conflict:q:ab", "dismiss")).toEqual({ conflictId: "conflict:q:ab", action: "dismiss" });
-  });
-
-  it("says what a resolve did, and suggests committing only when Git does not ignore the candidates", () => {
-    const c = conflict("c");
-    expect(conflictToast(c, "theirs", "Share matchers.", false).done)
-      .toBe("Took theirs. Saved “Share matchers.” as a decision on this branch. It steers your coding agent from its next turn. Commit it to share it with teammates.");
-    expect(conflictToast(c, "mine", "Clone.", true).done).toBe("Kept mine. Saved “Clone.” as a decision on this branch. It steers your coding agent from its next turn.");
-    expect(conflictToast(c, "new", "Both.", true).fail).toBe("Couldn’t save the decision for “Shared matchers c”");
-    expect(conflictToast(c, "dismiss", "", false)).toEqual({
+  it("says what Dismiss did, and that it failed", () => {
+    expect(dismissToast(conflict("c"))).toEqual({
       done: "Marked “Shared matchers c” as not a conflict. It stays hidden for PR #398.",
       fail: "Couldn’t mark “Shared matchers c” as not a conflict",
     });
@@ -299,6 +162,13 @@ describe("conflicts", () => {
 
   it("colours a hunk's added, removed and header lines", () => {
     expect(hunkLines("@@ -1 +1 @@\n-old\n+new\n same\n").map(l => l.kind)).toEqual(["meta", "del", "add", "ctx"]);
+  });
+
+  it("says a conflict hook failed with its event and why, and nothing when it ran fine or never ran", () => {
+    const hook = { event: "detected" as const, ok: false, error: "exit code 2", note: null, status: null, at: at(1) };
+    expect(hookFailure(conflict("c", { hook }))).toBe("Conflict hook failed (detected): exit code 2");
+    expect(hookFailure(conflict("c", { hook: { ...hook, ok: true, error: null } }))).toBeNull();
+    expect(hookFailure(conflict("c"))).toBeNull();
   });
 });
 
@@ -328,12 +198,5 @@ describe("the settings", () => {
     for (const timeout of ["0", "61", "2.5", "ten"]) {
       expect(settingsChange(draft("[\"./hook.sh\"]", timeout))).toEqual({ problem: "The timeout must be a whole number of seconds from 1 to 60.", field: "timeout" });
     }
-  });
-
-  it("says a conflict hook failed with its event and why, and nothing when it ran fine or never ran", () => {
-    const hook = { event: "detected" as const, ok: false, error: "exit code 2", note: null, status: null, at: at(1) };
-    expect(hookFailure(conflict("c", { hook }))).toBe("Conflict hook failed (detected): exit code 2");
-    expect(hookFailure(conflict("c", { hook: { ...hook, ok: true, error: null } }))).toBeNull();
-    expect(hookFailure(conflict("c"))).toBeNull();
   });
 });

@@ -1,33 +1,14 @@
-import { existsSync, readFileSync, type Dirent } from "node:fs";
-import { opendir, readFile, stat } from "node:fs/promises";
-import { join, relative, resolve, sep } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { resolveModelPath } from "../runtime/session-paths.js";
 import { z } from "zod";
 import { libraryUpsertBodySchema } from "../api/repository-contracts.js";
 import { parseArguments } from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
-import {
-  AUDIT_MAX_FILES,
-  AUDIT_MAX_SOURCE_BYTES,
-  IGNORED_DIRECTORIES,
-  MAX_SOURCE_BYTES,
-  languageFor,
-  sourceFactsCache,
-  sourceFileFacts,
-  type SourceFactsCache,
-  type SourceFileFacts,
-} from "../engine/code-rule/code-rule-enforcer.js";
-import {
-  encodeCodeRuleWorkspaceRequest,
-  loadNativeBinding,
-  RESULT_PAGE_BYTES,
-  type NativeBinding,
-  type NativeCompiledCodeRuleDsl,
-  type NativeGitIgnoreMatcher,
-} from "../engine/native/native.js";
-import { bundledCodeRuleDslDirectory, CodeRuleCompileError, EngineUnavailableError } from "../engine/code-rule/code-rule-compile.js";
+import { checkCase, compileCheck, engineUnavailableMessage, repositoryPass, RuleCheckError, type CompiledCheck } from "../engine/code-rule/rule-check.js";
 import { CODE_RULE_FORMAT, codeRuleSchema, type CodeRule } from "../engine/code-rule/code-rule-schema.js";
+import { EngineUnavailableError } from "../engine/code-rule/code-rule-compile.js";
 import { ConversationRuleRegistry } from "../engine/catalog/registry.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
 import { normalizeFolder, type CheckoutContext, type EffectiveRule, type LibraryRule, type RuleCatalog } from "../engine/catalog/repository-model.js";
@@ -49,17 +30,9 @@ import {
 import { isApproved, ruleSubject } from "../engine/catalog/rule-approval.js";
 import { parseConversationRule, sampleSourceSchema, SAMPLE_BOUNDARIES, type ConversationRule } from "../engine/catalog/rule-schema.js";
 import { readRulesDashboard } from "../presentation/session-presentation.js";
-import { deniedByPathBoundary } from "../engine/path-boundary.js";
-import { stableJsonText } from "../engine/stable-json.js";
-import type { CodeRuleSourceLanguage } from "../engine/code-rule/code-rule.js";
-import { UNLISTED_TEXT_LANGUAGE } from "../engine/code-rule/code-rule-languages.js";
 
 /** How many repository matches and unchecked files the text report shows; the JSON report lists every one. */
 const REPOSITORY_SHOWN = 5;
-/** The batches an audit sends its files to the Engine in: at most this many files, or about this many bytes. */
-const BATCH_FILES = 32;
-const BATCH_BYTES = 1024 * 1024;
-const MATCH_TEXT_LENGTH = 200;
 const CASE_LABEL_LENGTH = 60;
 
 const codeRuleCaseSchema = z.strictObject({ path: z.string().min(1), content: z.string() });
@@ -234,152 +207,7 @@ function errorMessage(error: unknown): string {
 }
 
 function engineUnavailable(ruleId: string, reason: string): RuleDraftError {
-  return new RuleDraftError(`the Engine is unavailable, so rule ${ruleId} cannot be checked: ${reason}`);
-}
-
-/** Compile with the same source text and bundled capabilities the catalog's compile check uses, keeping the result to evaluate. */
-function compileCodeRule(rule: CodeRule): { binding: NativeBinding; compiled: NativeCompiledCodeRuleDsl } {
-  const sourceText = stableJsonText(rule);
-  if (sourceText === undefined) throw new RuleDraftError(new CodeRuleCompileError(rule.id, "the document is not JSON representable").message);
-  let binding: NativeBinding;
-  let capabilities: string;
-  try {
-    binding = loadNativeBinding();
-    capabilities = readFileSync(resolve(bundledCodeRuleDslDirectory(), "capabilities.json"), "utf8");
-  } catch (error) {
-    throw engineUnavailable(rule.id, errorMessage(error));
-  }
-  try {
-    return { binding, compiled: binding.CodeRuleDslRuntime.compile(sourceText, "json", capabilities) };
-  } catch (error) {
-    throw new RuleDraftError(new CodeRuleCompileError(rule.id, errorMessage(error)).message);
-  }
-}
-
-type SourceFile = { path: string; language: string; source: string } & SourceFileFacts;
-/** The part of a page of the Engine's results the report reads: where each violation starts (zero-based), and each failure. */
-const resultPageSchema = z.object({
-  cursor: z.number().int().nonnegative(),
-  done: z.boolean(),
-  violations: z.array(z.object({
-    path: z.string().optional(),
-    span: z.object({ startLine: z.number().int(), startColumn: z.number().int() }).optional(),
-  })),
-  failures: z.array(z.object({ code: z.string(), message: z.string(), path: z.string().optional() })),
-});
-type Evaluation = Pick<z.infer<typeof resultPageSchema>, "violations" | "failures">;
-
-/**
- * Violations and failures of `compiled` over `files`, in a private workspace with no content store attached. Import
- * targets resolve against the files below `root` the workspace does not hold, as in the daemon. The files go in the
- * batches an audit sends, with cross-file clauses held until a last empty apply sees them all; the whole result is
- * then read a page at a time, as an audit reads it.
- */
-async function evaluate(binding: NativeBinding, compiled: NativeCompiledCodeRuleDsl, root: string, files: readonly SourceFile[]): Promise<Evaluation> {
-  const workspace = new binding.CodeRuleDslWorkspace();
-  try {
-    workspace.addCodeRule(compiled);
-    workspace.setRoot(resolve(root));
-    const accepted = files.filter(file => workspace.acceptsPath(file.path));
-    if (accepted.length === 0) return { violations: [], failures: [] };
-    let revision = 0;
-    let batch: SourceFile[] = [];
-    let bytes = 0;
-    for (const [index, file] of accepted.entries()) {
-      batch.push(file);
-      bytes += Buffer.byteLength(file.source);
-      if (batch.length < BATCH_FILES && bytes < BATCH_BYTES && index < accepted.length - 1) continue;
-      revision += 1;
-      await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, files: batch, removed: [], deferGlobal: true }));
-      batch = [];
-      bytes = 0;
-    }
-    revision += 1;
-    await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, files: [], removed: [], quiet: true }));
-    const evaluation: Evaluation = { violations: [], failures: [] };
-    let cursor = 0;
-    while (true) {
-      const page = resultPageSchema.parse(JSON.parse(await workspace.resultPageAsync(cursor, RESULT_PAGE_BYTES)));
-      evaluation.violations.push(...page.violations);
-      evaluation.failures.push(...page.failures);
-      if (page.done) return evaluation;
-      if (page.cursor <= cursor) throw new Error("the Engine's result pages did not advance");
-      cursor = page.cursor;
-    }
-  } finally {
-    workspace.close();
-  }
-}
-
-/**
- * What some clause of the rule could not check: per path, the first such failure's message, and the distinct messages
- * of such failures that name no file (a cross-file query or a budget), which leave every file's verdict unknown. A
- * `source-partial` failure is neither: the clauses ran around syntax errors and what they found stands.
- */
-function uncheckedPlaces(failures: Evaluation["failures"]): { files: Map<string, string>; unattributed: string[] } {
-  const files = new Map<string, string>();
-  const unattributed = new Set<string>();
-  for (const failure of failures) {
-    if (failure.code === "source-partial") continue;
-    if (failure.path === undefined) unattributed.add(failure.message);
-    else if (!files.has(failure.path)) files.set(failure.path, failure.message);
-  }
-  return { files, unattributed: [...unattributed] };
-}
-
-async function policyCaseResult(
-  binding: NativeBinding,
-  compiled: NativeCompiledCodeRuleDsl,
-  root: string,
-  { expected, sample }: { expected: Expectation; sample: CodeRuleCase },
-): Promise<RuleDraftCaseResult> {
-  // An unlisted file is read as text, but only for a rule that reads text, as audits read it.
-  const language = languageFor(sample.path) ?? (compiled.readsText() ? UNLISTED_TEXT_LANGUAGE : undefined);
-  let caught = false;
-  let note = "";
-  if (!compiled.inScope(sample.path)) note = " (outside the files this rule covers)";
-  else if (language === undefined) note = " (not read: no language lists this file, and this rule has no regex or file clause)";
-  else {
-    // The graph reads the sample in place of the repository's file at its path.
-    const facts = await sourceFileFacts(root, sample.path, language, undefined, compiled.readsServerGraph(), { path: sample.path, source: sample.content });
-    const file = { path: sample.path, language, source: sample.content, ...facts };
-    const evaluation = await evaluate(binding, compiled, root, [file]);
-    caught = evaluation.violations.some(violation => violation.path === undefined || violation.path === sample.path);
-    // A violation stands whatever else failed; without one, a clause that could not check the file decides nothing.
-    const unchecked = caught ? undefined : uncheckedPlaces(evaluation.failures);
-    const notChecked = unchecked === undefined ? undefined : (unchecked.files.get(sample.path) ?? unchecked.unattributed[0]);
-    if (notChecked !== undefined) return { expected, caught, ok: false, label: sample.path, notChecked };
-  }
-  return { expected, caught, ok: caught === (expected === "caught"), label: `${sample.path}${note}` };
-}
-
-/**
- * One file a repository scan would read, with its size on disk; `"binary"` when it holds a NUL byte, and undefined
- * when it is over the byte bounds. Either way the scan skips it.
- */
-async function repositoryFile(
-  compiled: NativeCompiledCodeRuleDsl,
-  root: string,
-  path: string,
-  language: CodeRuleSourceLanguage,
-  bytesSoFar: number,
-  cache: SourceFactsCache,
-): Promise<{ file: SourceFile; size: number } | "binary" | undefined> {
-  const absolute = join(root, path);
-  const size = (await stat(absolute)).size;
-  if (size > MAX_SOURCE_BYTES || bytesSoFar + size > AUDIT_MAX_SOURCE_BYTES) return undefined;
-  const source = await readFile(absolute);
-  if (source.includes(0)) return "binary";
-  return {
-    file: { path, language, source: source.toString("utf8"), ...(await sourceFileFacts(root, path, language, cache, compiled.readsServerGraph())) },
-    size,
-  };
-}
-
-async function sortedEntries(directory: string): Promise<Dirent[]> {
-  const entries: Dirent[] = [];
-  for await (const entry of await opendir(directory)) entries.push(entry);
-  return entries.sort((left, right) => left.name.localeCompare(right.name));
+  return new RuleDraftError(engineUnavailableMessage(ruleId, reason));
 }
 
 /** Whether `root`'s repository follows `.gitignore`, read without recording anything: on where Rerail cannot tell. */
@@ -394,124 +222,6 @@ function repositoryFollowsGitignore(root: string, databasePath = defaultRerailDa
   } finally {
     database?.$client.close();
   }
-}
-
-/**
- * The repository pass's data boundary: whether it must not read the file or folder at `path`, since the lines it
- * matches go back to the agent that ran it. A hidden or sensitive path is always withheld, as is a checkout of its own
- * nested in this one (its files answer to its own ignore rules and setting, which this pass does not read). A path
- * Git ignores is withheld unless a person turned the repository's `followGitignore` off; a tracked file never is.
- * Where the pass follows `.gitignore` in a Git checkout but Git's rules cannot be read, nothing can be told apart, so
- * the pass refuses rather than read what may be ignored.
- */
-function repositoryBoundary(binding: NativeBinding, root: string): (path: string, directory: boolean) => boolean {
-  let ignored = (_path: string, _directory: boolean): boolean => false;
-  if (repositoryFollowsGitignore(root)) {
-    let matcher: NativeGitIgnoreMatcher | null;
-    try {
-      matcher = binding.openGitIgnoreMatcher(root);
-    } catch (error) {
-      throw new RuleDraftError(`Git's ignore rules for ${root} could not be read, so the repository pass was not run: ${errorMessage(error)}`);
-    }
-    if (matcher === null && existsSync(join(root, ".git"))) {
-      throw new RuleDraftError(`Git's ignore rules for ${root} could not be read, so the repository pass was not run`);
-    }
-    if (matcher !== null) {
-      const opened = matcher;
-      ignored = (path, directory) => {
-        try {
-          return opened.ignored(path, directory);
-        } catch {
-          return true;
-        }
-      };
-    }
-  }
-  return (path, directory) =>
-    deniedByPathBoundary(path) || (directory && existsSync(join(root, path, ".git"))) || ignored(path, directory);
-}
-
-/**
- * Every regular file under `root` a scan visits, as a `/`-separated path below it, depth-first in name order, skipping
- * ignored directories, symlinks and the folders `prune` refuses.
- */
-async function* repositoryPaths(root: string, prune: (path: string) => boolean): AsyncGenerator<string> {
-  const pending = [root];
-  while (pending.length > 0) {
-    const directory = pending.pop()!;
-    for (const entry of await sortedEntries(directory)) {
-      const absolute = join(directory, entry.name);
-      const path = relative(root, absolute).split(sep).join("/");
-      if (entry.isDirectory()) {
-        if (!IGNORED_DIRECTORIES.has(entry.name) && !prune(path)) pending.push(absolute);
-      } else if (entry.isFile()) yield path;
-    }
-  }
-}
-
-/**
- * The files a repository scan would hand `compiled` (the same ignored directories, file types and bounds) that the
- * data boundary lets the pass read, how many files and folders it left out, and how many in-scope files it skipped
- * as binary.
- */
-async function repositoryFiles(
-  binding: NativeBinding,
-  compiled: NativeCompiledCodeRuleDsl,
-  root: string,
-): Promise<{ files: SourceFile[]; leftOut: number; binary: number }> {
-  const withheld = repositoryBoundary(binding, root);
-  const readsText = compiled.readsText();
-  const files: SourceFile[] = [];
-  const cache = sourceFactsCache();
-  let bytes = 0;
-  let leftOut = 0;
-  let binary = 0;
-  const prune = (path: string): boolean => {
-    if (!withheld(path, true)) return false;
-    leftOut += 1;
-    return true;
-  };
-  for await (const path of repositoryPaths(root, prune)) {
-    if (files.length >= AUDIT_MAX_FILES) break;
-    // An unlisted file is read as text, but only for a rule that reads text, as audits read it.
-    const language = languageFor(path) ?? (readsText ? UNLISTED_TEXT_LANGUAGE : undefined);
-    if (language === undefined || !compiled.inScope(path)) continue;
-    if (withheld(path, false)) {
-      leftOut += 1;
-      continue;
-    }
-    const read = await repositoryFile(compiled, root, path, language, bytes, cache);
-    if (read === "binary") binary += 1;
-    if (read === undefined || read === "binary") continue;
-    bytes += read.size;
-    files.push(read.file);
-  }
-  return { files, leftOut, binary };
-}
-
-async function repositoryPass(
-  binding: NativeBinding,
-  compiled: NativeCompiledCodeRuleDsl,
-  root: string,
-): Promise<NonNullable<RuleDraftReport["repository"]>> {
-  const { files, leftOut, binary } = await repositoryFiles(binding, compiled, root);
-  const sources = new Map(files.map(file => [file.path, file.source]));
-  const lines = new Map<string, string[]>();
-  const evaluation = await evaluate(binding, compiled, root, files);
-  const matches: RuleDraftRepositoryMatch[] = evaluation.violations
-    .map(({ path = "", span }) => {
-      // A match on the file's path has no span: it is the whole file, with no line.
-      if (span === undefined) return { path };
-      if (!lines.has(path)) lines.set(path, sources.get(path)?.split("\n") ?? []);
-      const text = (lines.get(path)![span.startLine] ?? "").trim().slice(0, MATCH_TEXT_LENGTH);
-      return { path, line: span.startLine + 1, column: span.startColumn + 1, text };
-    })
-    .sort((left, right) => left.path.localeCompare(right.path) || (left.line ?? 0) - (right.line ?? 0) || (left.column ?? 0) - (right.column ?? 0));
-  const { files: uncheckedFiles, unattributed } = uncheckedPlaces(evaluation.failures);
-  const unchecked = [...uncheckedFiles]
-    .map(([path, message]) => ({ path, message }))
-    .sort((left, right) => left.path.localeCompare(right.path));
-  return { matches, unchecked: { files: unchecked, unattributed }, binary, leftOut };
 }
 
 function conversationCaseResults(rule: ConversationRule, cases: ReadonlyArray<{ expected: Expectation; sample: ConversationCase }>): RuleDraftCaseResult[] {
@@ -536,14 +246,25 @@ function conversationCaseResults(rule: ConversationRule, cases: ReadonlyArray<{ 
 }
 
 async function policyCaseResults(
-  binding: NativeBinding,
-  compiled: NativeCompiledCodeRuleDsl,
+  check: CompiledCheck,
   root: string,
   cases: ReadonlyArray<{ expected: Expectation; sample: CodeRuleCase }>,
 ): Promise<RuleDraftCaseResult[]> {
   const results: RuleDraftCaseResult[] = [];
-  for (const entry of cases) results.push(await policyCaseResult(binding, compiled, root, entry));
+  for (const { expected, sample } of cases) {
+    results.push(await checkCase(check, root, { expected, label: sample.path, path: sample.path, content: sample.content }));
+  }
   return results;
+}
+
+/** `run`, with a rule the Engine refuses, or a repository pass that cannot respect the data boundary, as `RuleDraftError`. */
+async function draftCheck<T>(run: () => Promise<T>): Promise<T> {
+  try {
+    return await run();
+  } catch (error) {
+    if (error instanceof RuleCheckError) throw new RuleDraftError(error.message);
+    throw error;
+  }
 }
 
 /**
@@ -552,8 +273,7 @@ async function policyCaseResults(
  */
 export async function testRuleDraftCases(draft: RuleDraft, root: string): Promise<RuleDraftCaseResult[]> {
   if (draft.kind === "conversation") return conversationCaseResults(draft.rule, draft.cases);
-  const { binding, compiled } = compileCodeRule(draft.rule);
-  return policyCaseResults(binding, compiled, root, draft.cases);
+  return draftCheck(async () => policyCaseResults(compileCheck(draft.rule), root, draft.cases));
 }
 
 /**
@@ -565,11 +285,21 @@ export async function testRuleDraft(draft: RuleDraft, repo: string): Promise<Rul
     const cases = conversationCaseResults(draft.rule, draft.cases);
     return { ok: cases.every(result => result.ok), valid: true, cases, repository: null };
   }
-  const { binding, compiled } = compileCodeRule(draft.rule);
-  const root = repositoryIdentityLocation(repo).workspaceRoot;
-  const cases = await policyCaseResults(binding, compiled, root, draft.cases);
-  const repository = await repositoryPass(binding, compiled, root);
-  return { ok: cases.every(result => result.ok), valid: true, cases, repository };
+  return draftCheck(async () => {
+    const check = compileCheck(draft.rule);
+    const root = repositoryIdentityLocation(repo).workspaceRoot;
+    const cases = await policyCaseResults(check, root, draft.cases);
+    const pass = await repositoryPass(check, root, { followGitignore: repositoryFollowsGitignore(root) });
+    const repository = {
+      matches: pass.matches.map(match => (match.line === undefined
+        ? { path: match.path }
+        : { path: match.path, line: match.line, column: match.column!, text: pass.matchedLine(match)! })),
+      unchecked: { files: [...pass.unchecked.files], unattributed: [...pass.unchecked.unattributed] },
+      binary: pass.binary,
+      leftOut: pass.leftOut,
+    };
+    return { ok: cases.every(result => result.ok), valid: true, cases, repository };
+  });
 }
 
 /**

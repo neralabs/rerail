@@ -7,7 +7,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { runGit } from "../git.js";
 import { quietFiles } from "./conflicts.js";
-import type { ConflictKind, ConflictSignals, LockInClass } from "./model.js";
+import type { ConflictSignals, LockInClass } from "./model.js";
 
 /** The most files in the base that count as callers. */
 export const MAX_CALLERS = 200;
@@ -49,8 +49,7 @@ const NOT_NAMES: Readonly<Record<string, true>> = {
 
 /** A conflict as the dimmer measures it. */
 export interface ContestedChange {
-  readonly kind: ConflictKind;
-  /** The contested files: an overlap's file, or both decisions' scope patterns. */
+  /** The contested files: the overlap's file. */
   readonly files: readonly string[];
   /** This branch's and theirs' contested hunks, as unified diff text clipped for display: their symbols count as callers. */
   readonly hunks: { readonly mine: string | null; readonly theirs: string | null };
@@ -61,8 +60,6 @@ export interface ContestedChange {
   readonly pullRequest: boolean;
   /** Other live refs that touch the contested files. */
   readonly otherRefs: number;
-  /** This checkout holds a resolution of a conflict on the same question. */
-  readonly verdict: boolean;
 }
 
 /** Where this checkout stands: the base branch's tip, where this branch's work starts, and its head. */
@@ -96,7 +93,6 @@ function exportedNames(hunk: string | null): { removed: Set<string>; added: Set<
  * had, or their tip no longer has one their own work started with.
  */
 function deletedFile(checkout: SignalCheckout, change: ContestedChange): boolean {
-  if (change.kind !== "overlap") return false;
   const has = (revision: string, file: string): boolean => runGit(checkout.root, ["cat-file", "-e", `${revision}:${file}`]).status === 0;
   const { own, sha } = change.theirs;
   return change.files.some(file => (has(checkout.start, file) && !existsSync(join(checkout.root, file)))
@@ -191,14 +187,14 @@ function hoursToMergeOf(checkout: SignalCheckout, change: ContestedChange): numb
  */
 export function measureSignals(checkout: SignalCheckout, change: ContestedChange): ConflictSignals {
   const { root, start, head, now } = checkout;
-  const specs = change.files.map(file => (change.kind === "overlap" ? `:(literal)${file}` : `:(glob)${file}`));
+  const specs = change.files.map(file => `:(literal)${file}`);
   const fork = Math.min(...[start, change.theirs.own ?? start].map(sha => commitTime(root, sha) ?? now));
   const windowHours = Math.max(1, (now - fork) / HOUR_MS);
   const linesTheirs = change.theirs.own === null ? 0 : linesAdded(root, `${change.theirs.own}..${change.theirs.sha}`, specs);
   const linesMine = linesAdded(root, `${start}..${head}`, specs) + workingLines(root, specs);
-  const callers = change.kind === "overlap" ? callersOf(checkout, contestedSymbols(change.hunks), change.files) : 0;
+  const callers = callersOf(checkout, contestedSymbols(change.hunks), change.files);
   return {
-    quiet: change.kind === "overlap" && quietFiles(change.files),
+    quiet: quietFiles(change.files),
     ...lockInOf(checkout, change),
     blastRadius: callers + change.otherRefs,
     callers,
@@ -210,6 +206,5 @@ export function measureSignals(checkout: SignalCheckout, change: ContestedChange
     pLose: EVEN_ODDS,
     hoursToMerge: hoursToMergeOf(checkout, change),
     pullRequest: change.pullRequest,
-    verdict: change.verdict,
   };
 }

@@ -9,24 +9,15 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach } from "vitest";
 import {
-  checkouts,
-  listRepositoryRules,
-  type CandidateSet,
-  loadRuleCatalog,
-  lookupCheckout,
   openRerailDatabase,
   recordCheckout,
-  serializeCandidate,
   setUpRepository,
-  type Candidate,
   type GithubReadiness,
   type RerailDatabase,
-  type RuleCatalog,
 } from "../../../../src/engine/index.js";
 import { setRepositoryStarted } from "../../../../src/runtime/index.js";
 import type { AgentJudge, JudgeOutcome, JudgeTask } from "../../../../src/runtime/merge-assist/agent-judge.js";
-import type { AuthorPermission, GithubClient, GithubRepository, PullRequestSummary } from "../../../../src/runtime/merge-assist/github.js";
-import type { CaptureVerdict, CompareVerdict } from "../../../../src/runtime/merge-assist/judge-prompts.js";
+import type { GithubClient, GithubRepository, PullRequestSummary } from "../../../../src/runtime/merge-assist/github.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../../../../src/runtime/merge-assist/service.js";
 
 /** The notes the session has not been handed, recorded as handed, as a delivery that takes them all would. */
@@ -36,10 +27,8 @@ export function takeNotes(service: MergeAssistRuntime, sessionId: string, checko
   return notes.map(note => note.content);
 }
 
-/** `src/api/orders.ts` as branch `mine` commits it: one call, no retry loop. */
+/** `src/api/orders.ts` as branch `mine` commits it. */
 export const ORDERS_CLEAN = "export const orders = () => client.get(\"/orders\");\n";
-/** The same file with the retry loop a teammate's decision forbids. */
-export const ORDERS_RETRY = "export const orders = () => retry(() => client.get(\"/orders\"));\n";
 
 const GIT_ENV: NodeJS.ProcessEnv = {
   ...process.env,
@@ -66,41 +55,6 @@ export function commit(root: string, files: Readonly<Record<string, string>>, me
   git(root, "add", "-A");
   git(root, "commit", "-q", "-m", message);
   return git(root, "rev-parse", "HEAD");
-}
-
-/** A candidate file's path and text, as `writeFiles` and `commit` take them. */
-export function candidateFiles(...candidates: Candidate[]): Record<string, string> {
-  return Object.fromEntries(candidates.map(candidate => [`.rerail/candidates/${candidate.id.slice("candidate:".length)}.json`, serializeCandidate(candidate)]));
-}
-
-/** A code rule forbidding `pattern` in `scope` (the candidate's scope), as a candidate carries it. */
-export function forbidRule(id: string, pattern: string, scope: readonly string[] = ["src/api/**"], message = "Retries live in the transport layer."): NonNullable<Candidate["rule"]> {
-  return {
-    format: "rerail.policy/v1",
-    id,
-    revision: 1,
-    mode: "steer",
-    scope: { include: [...scope], exclude: [] },
-    clauses: [{
-      id: "check",
-      forbid: { regex: { pattern, source: "file.content" } },
-      violation: { code: "MERGE_ASSIST_DECISION", anchor: "witness.span", message },
-    }],
-  } as unknown as NonNullable<Candidate["rule"]>;
-}
-
-export function candidate(overrides: Partial<Candidate> & Pick<Candidate, "id">): Candidate {
-  return {
-    format: "rerail.candidate/v1",
-    decision: "Retries live in the transport layer; callers don't wrap requests in retry loops.",
-    generality: "repository",
-    scope: ["src/api/**"],
-    author: "jbarnes",
-    createdAt: "2026-11-03T14:02:11Z",
-    state: "active",
-    supersedes: null,
-    ...overrides,
-  };
 }
 
 /** A judge that answers from `answer` (a value the task parses, or a failure) and records every task. */
@@ -132,49 +86,14 @@ export class FakeJudge implements AgentJudge {
 /** The quick call's answer for a conflict's status line. */
 export const SUMMARY = "They change the same lines as this branch.";
 
-/** What the default judge answers: a comparison, a summary, or a capture. */
-export function defaultAnswer(task: JudgeTask<unknown>): unknown {
-  if (task.kind === "compare") return compareAnswer(task);
-  return task.kind === "summary" ? { summary: SUMMARY } : captureVerdict();
-}
-
-export function captureVerdict(overrides: Partial<CaptureVerdict> = {}): CaptureVerdict {
-  return {
-    generality: "repository",
-    duplicateOf: null,
-    amends: null,
-    decision: "Retries live in the transport layer; callers don't wrap requests in retry loops.",
-    scope: ["src/api/**"],
-    check: { kind: "regex", pattern: String.raw`\bretry\(` },
-    message: "Retries live in the transport layer; call the client once.",
-    cases: {
-      caught: [{ path: "src/api/orders.ts", content: "export const orders = () => retry(() => client.get(\"/orders\"));\n" }],
-      passed: [{ path: "src/api/orders.ts", content: "export const orders = () => client.get(\"/orders\");\n" }],
-    },
-    signals: [],
-    ...overrides,
-  };
-}
-
-/** A comparison answer: each of theirs `compatible` unless `relations` says otherwise. */
-export function compareAnswer(
-  task: JudgeTask<unknown>,
-  relations: Readonly<Record<string, Partial<CompareVerdict["items"][number]>>> = {},
-): CompareVerdict {
-  // Theirs are the lines that name an author; this branch's do not.
-  const ids = [...new Set([...task.prompt.matchAll(/^- (candidate:[a-z0-9-]+) \(scope: [^;\n]*; author: /gmu)].map(match => match[1]!))];
-  return {
-    items: ids.map(candidateId => ({
-      candidateId, relation: "compatible", mineId: null, explanation: "They agree.", message: null, ...relations[candidateId],
-    })),
-  };
+/** What the default judge answers: the quick call's summary. */
+export function defaultAnswer(): unknown {
+  return { summary: SUMMARY };
 }
 
 export interface FakeGithubOptions {
   readiness?: GithubReadiness;
   pullRequests?: PullRequestSummary[];
-  candidates?: Readonly<Record<string, CandidateSet>>;
-  permissions?: Readonly<Record<string, AuthorPermission>>;
 }
 
 /** `gh` as a scan sees it, from fixed answers; it counts readiness reads. */
@@ -192,14 +111,6 @@ export class FakeGithub implements GithubClient {
   async openPullRequests(): Promise<PullRequestSummary[]> {
     return this.options.pullRequests ?? [];
   }
-
-  async candidatesAt(_repository: GithubRepository, commit: string): Promise<CandidateSet> {
-    return this.options.candidates?.[commit] ?? { candidates: [], problems: [], truncated: false };
-  }
-
-  async authorPermission(_repository: GithubRepository, login: string): Promise<AuthorPermission> {
-    return this.options.permissions?.[login] ?? "none";
-  }
 }
 
 export interface Workspace {
@@ -209,17 +120,11 @@ export interface Workspace {
   readonly repo: string;
   readonly database: RerailDatabase;
   readonly databasePath: string;
-  readonly ruleCatalog: RuleCatalog;
   readonly repositoryKey: string;
-  /**
-   * A Merge Assist over the workspace's database, with these stand-ins; experimental conflict verdicts only when
-   * `conflictVerdicts`.
-   */
-  service(options?: { judge?: AgentJudge; github?: GithubClient; now?: () => number; conflictVerdicts?: boolean }): MergeAssistRuntime;
+  /** A Merge Assist over the workspace's database, with these stand-ins. */
+  service(options?: { judge?: AgentJudge; github?: GithubClient; now?: () => number }): MergeAssistRuntime;
   /** A linked worktree of the repository at `<folder>/<name>`, on a new branch from `main`. */
   worktree(name: string, options?: { record?: boolean }): string;
-  /** The rule ids on in the checkout at `path`, as a session there would load them. */
-  rulesOn(path: string): string[];
 }
 
 /**
@@ -244,7 +149,6 @@ export function mergeAssistWorkspaces(): (options?: { setUp?: boolean; remote?: 
     commit(repo, { "src/api/orders.ts": ORDERS_CLEAN }, "orders");
     const databasePath = join(folder, "rerail.sqlite");
     const database = openRerailDatabase(databasePath);
-    const ruleCatalog = loadRuleCatalog();
     const { repositoryKey } = recordCheckout(database, repo);
     if (setUp) setUpRepository(database, repositoryKey, { packs: [] });
     setRepositoryStarted(database, repositoryKey, true);
@@ -260,16 +164,13 @@ export function mergeAssistWorkspaces(): (options?: { setUp?: boolean; remote?: 
       repo,
       database,
       databasePath,
-      ruleCatalog,
       repositoryKey,
       service: (options = {}) => {
         const service = createMergeAssistService({
           database,
-          ruleCatalog,
           judge: options.judge ?? new FakeJudge(defaultAnswer),
           github: options.github ?? new FakeGithub(),
           ...(options.now === undefined ? {} : { now: options.now }),
-          conflictVerdicts: options.conflictVerdicts ?? false,
         });
         services.push(service);
         return service;
@@ -279,15 +180,6 @@ export function mergeAssistWorkspaces(): (options?: { setUp?: boolean; remote?: 
         git(repo, "worktree", "add", "-q", "-b", name, path, "main");
         if (record) recordCheckout(database, path);
         return path;
-      },
-      rulesOn: path => {
-        const checkout = lookupCheckout(database, path)!;
-        // As a session there loads them: a parent checkout's settings apply unless this checkout's own say otherwise.
-        const parentCheckoutPaths = database.select().from(checkouts).all()
-          .filter(row => row.repositoryKey === checkout.repositoryKey && checkout.checkoutPath.startsWith(`${row.checkoutPath}/`))
-          .map(row => row.checkoutPath);
-        return listRepositoryRules(database, ruleCatalog, checkout.repositoryKey, { checkoutPath: checkout.checkoutPath, parentCheckoutPaths }).rules
-          .filter(rule => rule.on).map(rule => rule.document.rule.id).sort();
       },
     };
   };

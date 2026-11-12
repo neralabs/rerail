@@ -3,6 +3,7 @@ import type { MergeAssistStatus } from "../../src/engine/index.js";
 import { captureScope, refresh, setNeeds, writeMergeAssist } from "../../ui/poll.js";
 import { data, setScope, ui } from "../../ui/state.js";
 import { currentNeeds } from "../../ui/views/index.js";
+import { conflict } from "./support/merge-conflicts.js";
 
 /** A request the test answers itself: every Merge Assist write, and its reads while `holding`. */
 interface Held { method: string; url: URL; resolve: (response: Response) => void }
@@ -15,27 +16,22 @@ let mergeRead: () => Response;
 
 const json = (body: unknown, code = 200): Response => new Response(JSON.stringify(body), { status: code });
 
-/** Merge Assist on, with one finding needing review (`open`) or adopted (`applied`). */
-function status(findingStatus: "open" | "applied"): MergeAssistStatus {
+/** Merge Assist on, with one conflict open (`open`) or dismissed (`dismissed`). */
+function status(conflictStatus: "open" | "dismissed"): MergeAssistStatus {
   return {
     repositoryKey: "A", checkout: "/work/a", branch: "mine", baseBranch: "main", enabled: true,
-    experimental: { conflictVerdicts: false }, settings: { delivery: "both", hook: null },
+    settings: { delivery: "both", hook: null },
     readiness: {
       judge: { available: true, runner: "claude", problem: null },
       github: { state: "not-github", login: null, repository: null },
-      candidatesIgnored: false, rulesActive: true,
     },
     budget: { used: 0, limit: 40, windowMinutes: 60 },
     scanning: false,
     lastScan: null,
-    own: [],
-    findings: [{
-      id: "f1", tier: "review", status: findingStatus,
-      candidate: { id: "candidate:x-0a0b0c", decision: "Do x.", scope: [], level: "note", author: "jbarnes", createdAt: "2026-11-02T10:00:00Z" },
-      peer: { kind: "branch", ref: "jbarnes/x", commit: "abc", number: null, title: null, url: null, author: null, trusted: true },
-      reason: "r", evidence: { violations: [], conflicts: [], mine: null, judgment: null }, message: null, updatedAt: "2026-11-02T11:00:00Z",
-    }],
-    conflicts: [],
+    conflicts: [conflict("c1", {
+      status: conflictStatus,
+      dismissal: conflictStatus === "dismissed" ? { name: "tbelanger", at: "2026-11-02T11:00:00Z" } : null,
+    })],
   };
 }
 
@@ -51,7 +47,7 @@ function emptyDaemon(url: URL): Response {
 
 const reads = () => held.filter(r => r.method === "GET");
 const writes = () => held.filter(r => r.method !== "GET");
-const adopt = () => writeMergeAssist(captureScope(), "PUT", "/api/merge-assist/findings", { findingId: "f1", action: "adopt" });
+const dismiss = () => writeMergeAssist(captureScope(), "POST", "/api/merge-assist/conflicts/dismiss", { conflictId: "c1" });
 
 beforeEach(() => {
   requested = [];
@@ -87,48 +83,48 @@ describe("Merge Assist reads and writes", () => {
     const polling = refresh();
     await vi.waitFor(() => expect(reads()).toHaveLength(1));
 
-    const adopting = adopt();
+    const dismissing = dismiss();
     await vi.waitFor(() => expect(writes()).toHaveLength(1));
-    writes()[0]!.resolve(json(status("applied")));
-    expect((await adopting)!.findings[0]!.status).toBe("applied");
+    writes()[0]!.resolve(json(status("dismissed")));
+    expect((await dismissing)!.conflicts[0]!.status).toBe("dismissed");
 
     reads()[0]!.resolve(json(status("open")));
     await polling;
-    expect(data.mergeAssist!.findings[0]!.status).toBe("applied");
+    expect(data.mergeAssist!.conflicts[0]!.status).toBe("dismissed");
   });
 
   it("drops a read sent while a write is out, though it answers after the write", async () => {
-    const adopting = adopt();
+    const dismissing = dismiss();
     await vi.waitFor(() => expect(writes()).toHaveLength(1));
     holding = true;
     const polling = refresh();
     await vi.waitFor(() => expect(reads()).toHaveLength(1));
 
-    writes()[0]!.resolve(json(status("applied")));
-    await adopting;
+    writes()[0]!.resolve(json(status("dismissed")));
+    await dismissing;
     reads()[0]!.resolve(json(status("open")));
     await polling;
-    expect(data.mergeAssist!.findings[0]!.status).toBe("applied");
+    expect(data.mergeAssist!.conflicts[0]!.status).toBe("dismissed");
   });
 
   it("keeps the answer of the latest write when an earlier one answers last", async () => {
-    const first = adopt();
-    const second = adopt();
+    const first = dismiss();
+    const second = dismiss();
     await vi.waitFor(() => expect(writes()).toHaveLength(2));
-    writes()[1]!.resolve(json(status("applied")));
+    writes()[1]!.resolve(json(status("dismissed")));
     await second;
     writes()[0]!.resolve(json(status("open")));
     await first;
-    expect(data.mergeAssist!.findings[0]!.status).toBe("applied");
+    expect(data.mergeAssist!.conflicts[0]!.status).toBe("dismissed");
   });
 
   it("takes a read sent after the last write answered", async () => {
-    const adopting = adopt();
+    const dismissing = dismiss();
     await vi.waitFor(() => expect(writes()).toHaveLength(1));
-    writes()[0]!.resolve(json(status("applied")));
-    await adopting;
+    writes()[0]!.resolve(json(status("dismissed")));
+    await dismissing;
     await refresh();
-    expect(data.mergeAssist!.findings[0]!.status).toBe("open");
+    expect(data.mergeAssist!.conflicts[0]!.status).toBe("open");
   });
 
   it("reads the sidebar's count at most every 30 s while Merge Assist cannot be read, not on every poll", async () => {

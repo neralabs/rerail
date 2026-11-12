@@ -1,5 +1,5 @@
 /**
- * The summary handler (docs/merge-assist-v1-build.md §12.5, the quick call): when a conflict is first detected, one
+ * The summary handler (docs/merge-assist-v1-build.md §9.5, the quick call): when a conflict is first detected, one
  * short call through the person's agent CLI (`AgentJudge`, counted against the same hourly budget) puts it in at most
  * 90 characters: what the other side is doing and why it collides with this branch. It runs in the background; until
  * it answers, and when it cannot (the budget is used, no judge, an error), the status line keeps the deterministic
@@ -10,7 +10,7 @@ import type { ConflictSummary } from "../../engine/merge-assist/model.js";
 import { stableJsonText } from "../../engine/stable-json.js";
 import type { ConflictHandler } from "./conflict-hook.js";
 import { fallbackSummary } from "./conflict-delivery.js";
-import { newJudgeNonce, summaryJsonSchema, summaryPrompt, summaryVerdictSchema, type SummaryInput } from "./judge-prompts.js";
+import { newJudgeNonce, summaryJsonSchema, summaryPrompt, summaryAnswerSchema, type SummaryInput } from "./judge-prompts.js";
 import { isoSeconds } from "./state.js";
 
 /** The most quick calls one pass makes: the newest conflicts it found; the others keep their fallback line. */
@@ -38,7 +38,7 @@ export const summaryHandler: ConflictHandler = {
         repositoryKey: context.checkout.repositoryKey,
         prompt: summaryPrompt(input, newJudgeNonce()),
         jsonSchema: summaryJsonSchema,
-        parse: value => summaryVerdictSchema.parse(value),
+        parse: value => summaryAnswerSchema.parse(value),
         cacheKey: createHash("sha256").update(`summary\0${stableJsonText(input) ?? ""}`).digest("hex"),
       });
       summary = outcome.ok

@@ -3,44 +3,23 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { mergeAssistState } from "../../../src/engine/index.js";
-import type { AgentJudge, JudgeOutcome, JudgeTask } from "../../../src/runtime/merge-assist/agent-judge.js";
+import type { PullRequestSummary } from "../../../src/runtime/merge-assist/github.js";
 import { createMergeAssistService } from "../../../src/runtime/merge-assist/service.js";
-import {
-  candidate,
-  candidateFiles,
-  commit,
-  compareAnswer,
-  FakeGithub,
-  FakeJudge,
-  git,
-  mergeAssistWorkspaces,
-  writeFiles,
-} from "./support/merge-assist-workspace.js";
+import { commit, FakeGithub, FakeJudge, git, mergeAssistWorkspaces } from "./support/merge-assist-workspace.js";
 
 const workspace = mergeAssistWorkspaces();
 
-const MINE = candidate({ id: "candidate:errors-are-thrown-7a8b9c", decision: "API errors are thrown as exceptions.", author: "tbelanger" });
-const THEIRS = candidate({ id: "candidate:name-files-by-resource-2c3d4e", decision: "Name API files after their resource." });
-
-/** A judge whose comparisons wait until released, counting each. */
-class HeldJudge implements AgentJudge {
-  compares = 0;
+/** `gh` whose pull request listings wait until released, counting each. */
+class HeldGithub extends FakeGithub {
+  listings = 0;
   readonly #release = Promise.withResolvers<void>();
   readonly started = Promise.withResolvers<void>();
 
-  readiness() {
-    return { available: true, runner: "codex" as const, problem: null };
-  }
-
-  budget() {
-    return { used: this.compares, limit: 40, windowMinutes: 60 };
-  }
-
-  async judge<T>(task: JudgeTask<T>): Promise<JudgeOutcome<T>> {
-    this.compares += 1;
+  override async openPullRequests(): Promise<PullRequestSummary[]> {
+    this.listings += 1;
     this.started.resolve();
     await this.#release.promise;
-    return { ok: true, value: task.parse(compareAnswer(task as JudgeTask<unknown>)), runner: "codex", cached: false };
+    return await super.openPullRequests();
   }
 
   release(): void {
@@ -48,7 +27,7 @@ class HeldJudge implements AgentJudge {
   }
 }
 
-// Each test builds Git repositories and compiles rules in the Engine; under a full run that outlasts the default 5 s.
+// Each test builds Git repositories; under a full run that outlasts the default 5 s.
 describe("Merge Assist service", { timeout: 30_000 }, () => {
   it("reports a checkout's state without running a judge or a scan", async () => {
     const ws = await workspace();
@@ -64,19 +43,14 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
       branch: "mine",
       baseBranch: "main",
       enabled: false,
-      experimental: { conflictVerdicts: false },
       settings: { delivery: "both", hook: null },
       readiness: {
         judge: { available: true, runner: "claude", problem: null },
         github: { state: "not-github", login: null, repository: null },
-        candidatesIgnored: false,
-        rulesActive: true,
       },
       budget: { used: 0, limit: 40, windowMinutes: 60 },
       scanning: false,
       lastScan: null,
-      own: [],
-      findings: [],
       conflicts: [],
     });
     expect(judge.tasks).toEqual([]);
@@ -115,39 +89,79 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
       git(ws.folder, "init", "-q", "-b", "main", unrecorded);
       await expect(service.status(unrecorded)).rejects.toMatchObject({ code: "not-a-checkout" });
       expect(await service.setEnabled(unrecorded, true)).toMatchObject({ checkout: unrecorded, enabled: true });
-      expect((await service.status(unrecorded)).readiness.rulesActive).toBe(false);
+      expect(await service.status(unrecorded)).toMatchObject({ checkout: unrecorded, enabled: true });
     } finally {
       await rm(folder, { recursive: true, force: true });
     }
   });
 
-  it("refuses to scan or resolve a finding while Merge Assist is off", async () => {
+  it("refuses to scan while Merge Assist is off", async () => {
     const ws = await workspace();
     const service = ws.service();
     await expect(service.scan(ws.repo)).rejects.toMatchObject({ code: "disabled" });
-    await expect(service.resolveFinding(ws.repo, "ma-000000000000", "dismiss")).rejects.toMatchObject({ code: "disabled" });
+  });
+
+  it("records each scan: when, how many branches and pull requests it compared, and what it could not read", async () => {
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    const theirs = ws.worktree("jbarnes-orders");
+    const head = commit(theirs, { "src/api/orders.ts": "export const orders = () => client.get(\"/v2/orders\");\n" }, "Version the orders path");
+    commit(ws.worktree("jbarnes-docs"), { "README.md": "app\n" }, "Readme");
+    const pull: PullRequestSummary = {
+      number: 12, title: "Version the API", url: "https://github.com/acme/app/pull/12", headRefName: "jbarnes-orders", headCommit: head,
+      baseRefName: "main", author: "jbarnes", isDraft: false, updatedAt: "2026-11-03T14:00:00Z",
+    };
+    const now = Date.parse("2026-11-03T14:00:00Z");
+    const service = ws.service({ github: new FakeGithub({ pullRequests: [pull] }), now: () => now });
+    await service.setEnabled(ws.repo, true);
+
+    // A pull request's head counts once, as the pull request: the branch holding it is not counted again.
+    const status = await service.scan(ws.repo);
+    expect(status.lastScan).toEqual({ at: "2026-11-03T14:00:00Z", peers: { branches: 1, pullRequests: 1 }, problems: [] });
+    expect(status.conflicts).toEqual([expect.objectContaining({ theirs: expect.objectContaining({ label: "PR #12", ref: "refs/pull/12/head", author: "jbarnes" }) })]);
+
+    // gh failing leaves the branches compared, and says why the pull requests are not.
+    const failing = new class extends FakeGithub {
+      override async openPullRequests(): Promise<PullRequestSummary[]> {
+        throw new Error("HTTP 502");
+      }
+    }();
+    const failed = await ws.service({ github: failing, now: () => now }).scan(ws.repo);
+    expect(failed.lastScan).toEqual({
+      at: "2026-11-03T14:00:00Z", peers: { branches: 2, pullRequests: 0 }, problems: ["Rerail could not list open pull requests: HTTP 502"],
+    });
+  });
+
+  it("reports a checkout without a base branch as a problem of its scan, with no conflicts", async () => {
+    const ws = await workspace();
+    git(ws.repo, "branch", "-m", "main", "trunk");
+    const service = ws.service();
+    await service.setEnabled(ws.repo, true);
+    expect(await service.scan(ws.repo)).toMatchObject({
+      baseBranch: null,
+      lastScan: { peers: { branches: 0, pullRequests: 0 }, problems: [expect.stringMatching(/^No base branch found/u)] },
+      conflicts: [],
+    });
   });
 
   it("runs one scan of a checkout at a time, and reports it running", async () => {
-    const ws = await workspace();
-    writeFiles(ws.repo, candidateFiles(MINE));
-    commit(ws.worktree("jbarnes-files"), candidateFiles(THEIRS));
-    const judge = new HeldJudge();
-    const service = ws.service({ judge });
+    const ws = await workspace({ remote: "https://github.com/acme/app.git" });
+    commit(ws.worktree("jbarnes-orders"), { "src/api/orders.ts": "export const orders = () => client.get(\"/v2/orders\");\n" }, "Version the orders path");
+    const github = new HeldGithub();
+    const service = ws.service({ github });
     await service.setEnabled(ws.repo, true);
 
     const first = service.scan(ws.repo);
-    await judge.started.promise;
+    await github.started.promise;
     const second = service.scan(ws.repo);
     expect((await service.status(ws.repo)).scanning).toBe(true);
     // Another process sees the scan running and starts none of its own: it answers at once with what is there.
-    const elsewhere = createMergeAssistService({ database: ws.database, ruleCatalog: ws.ruleCatalog, judge, github: new FakeGithub() });
-    expect(await elsewhere.scan(ws.repo)).toMatchObject({ scanning: true, findings: [] });
-    judge.release();
+    const elsewhere = createMergeAssistService({ database: ws.database, judge: new FakeJudge(() => ({ summary: "x" })), github });
+    expect(await elsewhere.scan(ws.repo)).toMatchObject({ scanning: true, lastScan: null, conflicts: [] });
+    github.release();
     const statuses = await Promise.all([first, second]);
 
-    expect(judge.compares).toBe(1);
-    expect(statuses.map(status => status.findings.length)).toEqual([1, 1]);
+    expect(github.listings).toBe(1);
+    expect(statuses.map(status => status.conflicts.length)).toEqual([1, 1]);
     expect(statuses[0]!.scanning).toBe(false);
   });
 

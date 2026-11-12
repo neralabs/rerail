@@ -6,7 +6,7 @@
  * `#overview` (the default), `#pack/<packId>`, `#created` (rules created by you), `#packs` (the catalog),
  * `#packs?review=1` (the review before starting), `#create`, `#history` (`?rule=<id>` narrows it to one rule,
  * `?outcome=steered|logged` sets its chip), `#sessions` (`?filter=violations|in-progress` sets its chip), `#settings`,
- * `#merge` (Merge Assist; `?conflict=<id>` opens its Conflicts tab on that conflict, as the session's line links it),
+ * `#merge` (Merge Assist; `?conflict=<id>` brings that conflict into view, as the session's line links it),
  * and `#rule/<id>`: a rule's sheet over the current view (the coding agent's steer links here). Links from steers,
  * the CLI and the status line written before v8 keep working: `#rules` is Overview, `#activity` History,
  * `#rule-packs` the catalog and `#rule-packs?review=1` the review.

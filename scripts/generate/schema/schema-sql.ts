@@ -32,7 +32,6 @@ import {
   auditViolations,
   auditViolationsStaging,
   ruleViolationRollup,
-  mergeAssistItems,
   mergeAssistJudgments,
   mergeAssistState,
 } from "../../../src/engine/index.js";
@@ -74,7 +73,6 @@ export async function renderRerailSchemaStatements(): Promise<string[]> {
   ruleSettings,
   libraryRules,
   ruleApprovals,
-  mergeAssistItems,
   mergeAssistJudgments,
   mergeAssistState,
   schemaMigrations,

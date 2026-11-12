@@ -1,14 +1,13 @@
 /**
- * In-flight conflicts as Merge Assist reports them (CONTRACT: lane 2): their ids, the files the dimmer keeps quiet, the
- * order the status lists them in, and the record kept for one.
+ * In-flight conflicts as Merge Assist reports them (docs/merge-assist-v1-build.md §9): their questions and ids, the
+ * files the dimmer keeps quiet, and the order the status lists them in.
  * Pure: the runtime finds the conflicts and stores them.
  */
 import { createHash } from "node:crypto";
-import { CONFLICT_LEVELS, type Conflict, type ConflictSide } from "./model.js";
-import { type ConflictRecord, sanitizeIntent, type SideId } from "./conflict-record.js";
+import { CONFLICT_LEVELS, type Conflict } from "./model.js";
 
-/** How many resolved, and how many dismissed, conflicts the status lists; every open one is listed. */
-export const SETTLED_CONFLICTS_SHOWN = 20;
+/** How many dismissed conflicts the status lists; every open one is listed. */
+export const DISMISSED_CONFLICTS_SHOWN = 20;
 
 /** Files whose overlaps the dimmer keeps on the Conflicts page only: lockfiles, changelogs, generated output and docs. */
 const QUIET_FILES: readonly RegExp[] = [
@@ -18,12 +17,22 @@ const QUIET_FILES: readonly RegExp[] = [
   /^docs\//u,
 ];
 
+/**
+ * An overlap's question: its file and the content anchor of the base lines their overlapping change covers
+ * (`contestedAnchor`). Another overlap in the same file, or another change of theirs, is another question, so a
+ * dismissal of one never settles the other; lines added above it, or a base that moved, keep it.
+ */
+export function overlapQuestion(file: string, anchor: string): string {
+  const digest = createHash("sha256").update(JSON.stringify({ files: [file], symbols: [anchor] })).digest("hex");
+  return `overlap:${digest.slice(0, 24)}`;
+}
+
 /** A conflict's stable id: its question and a short hash of their ref, so the same overlap keeps its id. */
 export function conflictId(question: string, theirsRef: string): string {
   return `conflict:${question}:${createHash("sha256").update(theirsRef).digest("hex").slice(0, 8)}`;
 }
 
-/** The six hex characters a person types to name a conflict in chat (`#a1b2c3`). */
+/** The six hex characters a conflict's card names it by (`#a1b2c3`). */
 export function shortConflictId(id: string): string {
   return createHash("sha256").update(id).digest("hex").slice(0, 6);
 }
@@ -33,30 +42,16 @@ export function quietFiles(files: readonly string[]): boolean {
   return files.length > 0 && files.every(file => QUIET_FILES.some(pattern => pattern.test(file)));
 }
 
-/** A newly found conflict's dimmer fields before the dimmer has seen it: logged, unmeasured, not queued or snoozed. */
-export function undimmed(id: string): Pick<Conflict, "shortId" | "level" | "signals" | "score" | "reasons" | "queued" | "queuedFor" | "snooze"> {
-  return { shortId: shortConflictId(id), level: "logged", signals: null, score: 0, reasons: [], queued: false, queuedFor: null, snooze: null };
+/** A newly found conflict's dimmer fields before the dimmer has seen it: logged, unmeasured, not queued. */
+export function undimmed(id: string): Pick<Conflict, "shortId" | "level" | "signals" | "score" | "reasons" | "queued" | "queuedFor"> {
+  return { shortId: shortConflictId(id), level: "logged", signals: null, score: 0, reasons: [], queued: false, queuedFor: null };
 }
 
-/** Open conflicts first (loudest first, then newest), then the latest resolved, then the latest dismissed. */
+/** Open conflicts first (loudest first, then newest), then the latest dismissed. */
 export function orderConflicts(conflicts: readonly Conflict[]): Conflict[] {
   const latest = (status: Conflict["status"]): Conflict[] => conflicts
     .filter(conflict => conflict.status === status)
     .sort((left, right) => (status === "open" ? CONFLICT_LEVELS.indexOf(right.level) - CONFLICT_LEVELS.indexOf(left.level) : 0)
-      || (right.resolution?.at ?? right.detectedAt).localeCompare(left.resolution?.at ?? left.detectedAt));
-  return [...latest("open"), ...latest("resolved").slice(0, SETTLED_CONFLICTS_SHOWN), ...latest("dismissed").slice(0, SETTLED_CONFLICTS_SHOWN)];
-}
-
-/** A conflict's record, as the resolver reads one: both sides' refs, commits, sanitized intents and files, on `question`. */
-export function conflictRecord(
-  input: { repository: string; base: string; question: string },
-  sides: Readonly<Record<SideId, { side: ConflictSide; files: readonly string[] }>>,
-): ConflictRecord {
-  const recordSide = ({ side, files }: { side: ConflictSide; files: readonly string[] }) => ({
-    ref: side.ref,
-    sha: side.sha,
-    intent: sanitizeIntent(side.summary),
-    anchors: { files: [...files], symbols: [] },
-  });
-  return { repository: input.repository, base: input.base, question: input.question, sides: { a: recordSide(sides.a), b: recordSide(sides.b) } };
+      || (right.dismissal?.at ?? right.detectedAt).localeCompare(left.dismissal?.at ?? left.detectedAt));
+  return [...latest("open"), ...latest("dismissed").slice(0, DISMISSED_CONFLICTS_SHOWN)];
 }

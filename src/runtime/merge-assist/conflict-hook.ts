@@ -1,18 +1,12 @@
 /**
- * The conflict hook (docs/merge-assist-v1-build.md §12.5): an extensible point after detection. Each detection pass
- * fires `detected` (first seen in this checkout), `level-changed` (its level rose) and `closed` (dismissed, resolved, or
- * no longer found) once per conflict, and every registered handler hears each one in the background: the pass, the
- * session's boundary and the agent never wait for a handler. A handler that throws is logged and skipped.
- *
- * Built-in handlers are always registered: delivery, summary (the quick call) and the person's command. Experimental
- * handlers are registered only while their flag is on (`experimental-features.ts`): verdicts and chat answers. They
- * take part through {@link ConflictExperiment}: the shipped path reaches verdict and chat-answer code only through it.
+ * The conflict hook (docs/merge-assist-v1-build.md §9.5): an extensible point after detection. Each detection pass
+ * fires `detected` (first seen in this checkout), `level-changed` (its level rose) and `closed` (dismissed or no longer
+ * found) once per conflict, and every registered handler hears each one in the background: the pass, the session's
+ * boundary and the agent never wait for a handler. A handler that throws is logged and skipped. The handlers are
+ * delivery, summary (the quick call) and the person's command.
  */
 import type { RerailHost } from "../../engine/adapter-contract.js";
-import type { CheckoutContext } from "../../engine/catalog/repository-model.js";
-import type { ChatAnswer } from "../../engine/merge-assist/chat-answer.js";
 import { CONFLICT_LEVELS, type ConflictDelivery, type ConflictEvent, type ConflictHookOutcome, type ConflictSummary, type MergeAssistSettings } from "../../engine/merge-assist/model.js";
-import type { RerailDatabase } from "../../engine/storage/database.js";
 import type { AgentJudge } from "./agent-judge.js";
 import type { StoredConflict } from "./conflict-store.js";
 
@@ -45,46 +39,12 @@ export interface ConflictHandler {
   on(event: ConflictEvent, conflict: StoredConflict, context: ConflictHandlerContext): Promise<HandlerResult | void>;
   /** Whether the conflict's agent note waits for this handler's answer to `event`, so what it adds joins the note. */
   awaits?(event: ConflictEvent, context: ConflictHandlerContext): boolean;
-  /** The stages an experimental handler takes part in beyond events. */
-  readonly experiment?: ConflictExperiment;
 }
 
 /** One conflict event of a pass, with the conflict as the pass left it (as it was, for one no longer found). */
 export interface ConflictFire {
   readonly event: ConflictEvent;
   readonly conflict: StoredConflict;
-}
-
-/** A person's verdict on an open conflict. */
-export interface VerdictInput {
-  readonly database: RerailDatabase;
-  readonly checkout: CheckoutContext;
-  readonly now: () => number;
-  readonly stored: StoredConflict;
-  readonly action: "mine" | "theirs" | "new";
-  readonly text: string | undefined;
-  readonly name: string;
-}
-
-/** The person's prompt in a session, which may answer a card that session was handed. */
-export interface ChatInput {
-  readonly database: RerailDatabase;
-  readonly checkout: CheckoutContext;
-  readonly now: () => number;
-  readonly prompt: string;
-  readonly sessionId: string;
-  /** Record a verdict as the person's, as the dashboard does. */
-  readonly resolve: (conflictId: string, action: "mine" | "theirs" | "new", text: string | undefined) => Promise<void>;
-}
-
-/** The stages an experimental handler can take part in. */
-export interface ConflictExperiment {
-  /** Settle an open conflict with a person's verdict; the caller stores what it answers. */
-  resolve?(input: VerdictInput): Promise<StoredConflict>;
-  /** Read the person's prompt as an answer to a card; `none` when it is not one. */
-  answer?(input: ChatInput): Promise<ChatAnswer>;
-  /** The card offers the verdicts (keep mine, take theirs, new decision, later) instead of talking to the author. */
-  readonly verdictCards?: true;
 }
 
 /** The event between a conflict as the store held it (or did not) and as it holds it now; null when nothing happened. */
@@ -97,7 +57,7 @@ function eventOf(was: StoredConflict | undefined, entry: StoredConflict): Confli
 
 /**
  * The events between what the store held before a change and after it: `detected` for an open conflict it did not
- * hold, `level-changed` for an open one whose level rose, `closed` for an open one now settled or gone.
+ * hold, `level-changed` for an open one whose level rose, `closed` for an open one now dismissed or gone.
  */
 export function conflictEvents(before: readonly StoredConflict[], after: readonly StoredConflict[]): ConflictFire[] {
   const prior = new Map(before.map(entry => [entry.conflict.id, entry]));
@@ -130,6 +90,8 @@ export class ConflictHook {
   /** Who waits for a checkout's notes to wait for nothing, by checkout. */
   readonly #released = new Map<string, Array<() => void>>();
   readonly #running = new Set<Promise<void>>();
+  /** Each (checkout, conflict, handler)'s last queued run, which its next event waits for; dropped once it settles. */
+  readonly #chains = new Map<string, Promise<void>>();
 
   constructor(handlers: readonly ConflictHandler[], noteWaitMs = NOTE_WAIT_MS) {
     this.#handlers = handlers;
@@ -141,25 +103,28 @@ export class ConflictHook {
     return this.#handlers.map(handler => handler.name);
   }
 
-  /** The experiments registered, in order. */
-  get experiments(): ConflictExperiment[] {
-    return this.#handlers.flatMap(handler => (handler.experiment === undefined ? [] : [handler.experiment]));
-  }
-
   /**
    * Hand each event to every handler, in the background, and record what each answers with `apply`. Returns at once:
    * a conflict's agent note waits only for the handlers that `awaits` its event, as {@link awaiting} says, and for each
    * at most the note wait. Every wait is registered before any handler starts, so a handler that hands notes out at
-   * once (delivery) never hands out a note another handler (the command) is still to add to.
+   * once (delivery) never hands out a note another handler (the command) is still to add to. One handler hears one
+   * conflict's events in the order they were fired (`detected` before `level-changed` before `closed`), each after it
+   * finished the one before; other conflicts and other handlers run alongside.
    */
   fire(fires: readonly ConflictFire[], context: ConflictHandlerContext, apply: (conflictId: string, result: HandlerResult) => void): void {
     const jobs = fires.flatMap(({ event, conflict }) => this.#handlers.map(handler => ({
       event, conflict, handler, release: this.#awaits(handler, event, context) ? this.#hold(context, conflict.conflict.id) : undefined,
     })));
     for (const job of jobs) {
-      const work = this.#run(job, context, apply);
+      const key = `${context.checkout.path}\0${job.conflict.conflict.id}\0${job.handler.name}`;
+      // `#run` never rejects, so neither does a chain.
+      const work = (this.#chains.get(key) ?? Promise.resolve()).then(() => this.#run(job, context, apply));
+      this.#chains.set(key, work);
       this.#running.add(work);
-      void work.finally(() => this.#running.delete(work));
+      void work.finally(() => {
+        this.#running.delete(work);
+        if (this.#chains.get(key) === work) this.#chains.delete(key);
+      });
     }
   }
 

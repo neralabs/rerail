@@ -1,9 +1,8 @@
 /*
  * Merge Assist (views/merge.js): the heading, then off the consent card (what turning it on does, what Rerail found,
- * the button), or on the status strip, the Settings fold, the tabs and their panels: Conflicts (cards, then resolved and
- * dismissed ones folded) and Decisions (Decided differently, Needs your review, Added from other branches, Decisions on
- * this branch with Not rules folded under it). Sections reuse the shared heading, list card, badge and empty block
- * (base.css); rows, cards and tabs are this page's own (class names `m…`).
+ * the button), or on the status strip, the Settings fold and the Conflicts section (cards, then the dismissed ones
+ * folded). It reuses the shared heading, list card, badge and empty block (base.css); rows and cards are this page's
+ * own (class names `m…`).
  */
 
 .mpage{margin-top:16px;max-width:960px;--measure:72ch}
@@ -81,63 +80,37 @@
 .msetproblem{margin:0;font-size:12.5px;line-height:1.5;color:var(--danger-foreground)}
 .msetproblem[hidden]{display:none}
 
-/* ---- sections ---- */
+/* ---- the Conflicts section ---- */
 .msec{margin-bottom:32px}
 .msec[hidden]{display:none}
 .msec > .ghead h2 .n2{vertical-align:1px}
-.msec > .ghead p .mono,.msec > .ghead p code{font-size:11.5px}
 .msec > div:empty{display:none}
 .mlist[hidden]{display:none}
 .mrow{display:grid;gap:8px;padding:14px 16px;border-top:1px solid var(--border)}
 .mlist > .mrow:first-child{border-top:0}
-.mrow[aria-busy="true"]{opacity:.7}
-.mrow.off .mq{color:var(--muted-foreground)}
-/* The decision itself: someone's own words, so it reads as a quotation, plain and full width. */
-.mq{margin:0;font-size:14px;line-height:1.5;font-weight:500;color:var(--foreground);max-width:var(--measure);overflow-wrap:anywhere}
-/* The decision an amendment replaces, quoted under it. */
-.mamends{margin:0;font-size:12px;color:var(--muted-foreground);max-width:var(--measure);overflow-wrap:anywhere}
 .mmeta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;font-size:12px;color:var(--muted-foreground)}
 .mmeta .mauthor{font-weight:500;color:var(--foreground)}
-.mmeta .mtitle{color:var(--foreground);overflow-wrap:anywhere}
 .mlink{color:var(--brand-foreground);text-decoration:underline;text-underline-offset:3px}
 .mlink:hover{text-decoration-thickness:2px}
-.mscope{display:inline-flex;flex-wrap:wrap;gap:4px}
-.mscope .badge.mono{font-size:11px}
-.badge.mlevel.code{background:var(--brand-subtle);color:var(--brand-foreground)}
-.badge.mwarn{background:var(--warning-subtle);color:var(--warning-foreground)}
-.mreason{margin:0;font-size:12.5px;line-height:1.5;color:var(--muted-foreground);max-width:var(--measure)}
 .mev{display:grid;gap:10px;padding:10px 12px;background:var(--sheet-inset);border-radius:var(--radius-lg);font-size:12.5px;line-height:1.5}
-.mevb .k,.mside .k,.mmsg .k{display:block;margin-bottom:3px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
-.mevb p{margin:0;overflow-wrap:anywhere}
-.mviol{margin:0;padding:0;list-style:none;display:grid;gap:3px}
-.mviol li{overflow-wrap:anywhere}
+.mevb .k,.mside .k{display:block;margin-bottom:3px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
 .macts{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:2px}
 
-/* Decided differently: both decisions side by side, then the message to send their author. */
+/* Both sides of a conflict, side by side. */
 .mvs{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px}
 .mside{padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card);min-width:0}
 .mside.theirs{border-color:var(--outside-border)}
-.mmsg{padding:10px 12px;background:var(--panel-box);border-radius:var(--radius-lg);font-size:13px;line-height:1.5}
-.mmsg p{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;max-width:var(--measure)}
 
-/* Decisions marked as not a rule, folded under this branch's. */
+/* The dismissed conflicts, folded under the open ones. */
 .mfold{background:var(--card)}
 .msec .mfold > .in{padding:0;border-top:1px solid var(--border)}
 .msec .mfold > .in > .list{border:0;border-radius:0;box-shadow:none}
 
-/* ---- the sidebar's count of findings waiting: a filled pill, unlike the packs' muted on-counts ---- */
+/* ---- the sidebar's count of open conflicts: a filled pill, unlike the packs' muted on-counts ---- */
 .sn-item .n.due{align-self:center;min-width:20px;padding:0 6px;border-radius:var(--pill);background:var(--brand);color:var(--primary-foreground);font-weight:600;line-height:18px;text-align:center}
 .sn-item[aria-current="page"] .n.due{color:var(--primary-foreground);opacity:1}
 
-/* ---- the tabs: Conflicts · N, Decisions, Decision log ---- */
-.mtabs{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 20px}
-.mtabs[hidden],.mpanel[hidden]{display:none}
-.mtab{padding:5px 14px;border-radius:var(--pill);border:1px solid var(--border);background:var(--card);font-size:13px;font-weight:500;line-height:20px;color:var(--muted-foreground);white-space:nowrap}
-.mtab:hover{background:var(--hover);color:var(--foreground)}
-.mtab[aria-pressed="true"]{background:var(--header);border-color:var(--header);color:var(--background)}
-.mtab[disabled]{opacity:.6}
-
-/* ---- conflict cards: level, both sides, size, the evidence, the choices; logged ones muted ---- */
+/* ---- conflict cards: level, both sides, size, the evidence, Dismiss; logged ones muted ---- */
 .mcards{display:grid;gap:12px}
 .mcards[hidden]{display:none}
 .mcard{display:grid;gap:10px;padding:14px 16px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-xl);box-shadow:var(--card-shadow);min-width:0}
@@ -146,17 +119,14 @@
 .mcard.stop{border-left:3px solid var(--danger-foreground)}
 .mcard.logged{background:var(--sheet-inset);box-shadow:none}
 .mcard.logged .mctitle,.mcard.logged .msum{color:var(--muted-foreground)}
-.mcard[aria-busy="true"]{opacity:.7}
 .mchead{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;min-width:0}
 .mctitle{margin:0;flex:1 1 220px;min-width:0;font-size:14px;font-weight:600;line-height:1.4;color:var(--foreground);overflow-wrap:anywhere}
 .mcage{font-size:12px;color:var(--muted-foreground)}
 .mshort{font:12px var(--font-mono);color:var(--muted-foreground)}
-.badge.mkind.decisions{background:var(--warning-subtle);color:var(--warning-foreground)}
-.badge.mkind.overlap{background:var(--brand-subtle);color:var(--brand-foreground)}
 .badge.mlvl.stop{background:var(--danger-subtle);color:var(--danger-foreground)}
 .badge.mlvl.checkpoint{background:var(--brand-subtle);color:var(--brand-foreground)}
 .badge.mlvl.ambient{background:var(--warning-subtle);color:var(--warning-foreground)}
-.badge.mqueued,.badge.msnoozed{background:var(--sheet-inset);color:var(--muted-foreground)}
+.badge.mqueued{background:var(--sheet-inset);color:var(--muted-foreground)}
 .mstate{margin:0;font-size:12px;color:var(--muted-foreground)}
 .msize{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 10px;font-size:12.5px}
 .mreasons{display:flex;flex-wrap:wrap;gap:4px 12px;margin:0;padding:0;list-style:none;color:var(--foreground)}
@@ -181,27 +151,11 @@
 .mtalk .mauthor{font-weight:600}
 .mtalk .mono{font-size:12px}
 
-/* The decision text a choice opens: editable, 1 to 600 characters, then Confirm. */
-.meditslot:empty{display:none}
-.medit{display:grid;gap:6px;padding:10px 12px;background:var(--sheet-inset);border:1px solid var(--border);border-radius:var(--radius-lg)}
-.medit .k{font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
-.mdraft{width:100%;min-height:76px;resize:vertical;padding:8px 10px;font:inherit;font-size:13.5px;line-height:1.5;color:var(--foreground);background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg)}
-.mdraft[aria-invalid="true"]{border-color:var(--danger-foreground)}
-.mdraft[readonly]{opacity:.7}
-.meditfoot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 12px}
-.mhint{font-size:12px;color:var(--muted-foreground)}
-.mhint.bad{color:var(--danger-foreground)}
-.meditacts{display:flex;flex-wrap:wrap;gap:8px}
-/* Confirm waits for 1 to 600 characters: dimmed until then, so it never reads as ready. */
-.meditacts .btn:disabled{opacity:.45}
 .mnote2{margin:0;font-size:12px;line-height:1.5;color:var(--muted-foreground)}
 .mnote2 code{font-size:11.5px}
 
-/* Resolved and dismissed, folded: who decided and the rule it saved. */
-.badge.mres{background:var(--brand-subtle);color:var(--brand-foreground)}
+/* Dismissed, folded: who dismissed each and when. */
 .mclosed .mctitle{font-weight:500}
-.mclosed .mq{font-size:13px;font-weight:400}
-code.mrule{font-size:11.5px;overflow-wrap:anywhere}
 .mconf .mfold{margin-top:16px}
 
 /* Narrow screens: cards take less padding. */

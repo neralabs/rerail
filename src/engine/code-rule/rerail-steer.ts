@@ -206,19 +206,6 @@ export function subagentSteer(content: string, host: RerailHost): string {
     + "keep working on your own task.";
 }
 
-/**
- * A Merge Assist note (docs/in-session-surfaces.md, "Merge Assist notes"): `saved` once the background capture saved the
- * person's correction as a decision; `absorbed` once a teammate's decision that is a note, not a code rule, applies;
- * `talk` for a teammate's decision that contradicts one of this branch's; `review` for decisions waiting for the person.
- * `peer` is `<branch>` or `PR #<n>`. Decisions and names are other people's text: each is named on one line, a decision
- * is quoted with its quotes and backslashes escaped, and a teammate's is labelled as theirs.
- */
-export type MergeAssistNote =
-  | { readonly kind: "saved"; readonly decision: string; readonly candidateId: string }
-  | { readonly kind: "absorbed"; readonly decision: string; readonly author: string; readonly peer: string }
-  | { readonly kind: "talk"; readonly author: string; readonly peer: string; readonly theirs: string; readonly mine: string }
-  | { readonly kind: "review"; readonly count: number };
-
 const MERGE_ASSIST_NOTE_LEAD = "This note comes from Rerail, not the user.";
 
 /** One line of someone's text ({@link oneLine}), its runs of whitespace one space and its ends trimmed. */
@@ -226,48 +213,6 @@ const plainLine = (text: string): string => oneLine(text).replace(/\s+/gu, " ").
 
 /** Someone's text in double quotes it cannot close: `"` and `\` inside are escaped. */
 const quotedText = (text: string): string => `"${plainLine(text).replace(/[\\"]/gu, "\\$&")}"`;
-
-/** A quoted decision that ends a sentence: the decision's own full stop ends it, else one is added after the quote. */
-const quotedSentence = (text: string): string => `${quotedText(text)}${/[.!?]$/u.test(plainLine(text)) ? "" : "."}`;
-
-/** A teammate's decision, labelled as theirs so the agent does not take it for the person's or Rerail's words. */
-const theirDecision = (author: string, decision: string): string =>
-  `Their decision (written by ${plainLine(author)}, not by the user or Rerail): ${quotedSentence(decision)}`;
-
-/** What the coding agent reads for a Merge Assist note; it carries no rule, so the person sees no line for it. */
-export function mergeAssistNote(note: MergeAssistNote): string {
-  switch (note.kind) {
-    case "saved":
-      return [
-        MERGE_ASSIST_NOTE_LEAD,
-        `Rerail saved your correction as a decision for this branch: ${quotedSentence(note.decision)} It applies from now on. `
-          + `Undo: Merge Assist page, or \`rerail merge-assist reject ${plainLine(note.candidateId)}\`.`,
-        "Tell the user so in one line.",
-      ].join("\n");
-    case "absorbed":
-      return [
-        MERGE_ASSIST_NOTE_LEAD,
-        `Rerail added a decision from ${plainLine(note.peer)}. ${theirDecision(note.author, note.decision)}`,
-        "Follow it where it applies to your work; your task is unchanged. The user can undo it on the Merge Assist page.",
-      ].join("\n");
-    case "talk":
-      return [
-        MERGE_ASSIST_NOTE_LEAD,
-        `Rerail found that ${plainLine(note.author)} decided differently on ${plainLine(note.peer)}. ${theirDecision(note.author, note.theirs)} `
-          + `This branch decided: ${quotedSentence(note.mine)} Tell the user in one line and keep your current approach until `
-          + "they decide; they can compare both on the Merge Assist page.",
-      ].join("\n");
-    case "review":
-      return [
-        MERGE_ASSIST_NOTE_LEAD,
-        note.count === 1
-          ? "1 decision from another branch needs the user's review on the Merge Assist page before it applies here. "
-            + "Mention it to the user in one line; don't apply it yourself."
-          : `${note.count} decisions from other branches need the user's review on the Merge Assist page before they apply `
-            + "here. Mention it to the user in one line; don't apply them yourself.",
-      ].join("\n");
-  }
-}
 
 /** An in-flight overlap as a Merge Assist note names it: the file, their side's label, author and one-sentence summary. */
 export interface ConflictNoteInput {
@@ -295,23 +240,14 @@ export function conflictNote(note: ConflictNoteInput): string {
   ].join("\n");
 }
 
-/** What the coding agent reads once the person settled a conflict with a decision for this branch (lane 1 carries it). */
-export function decidedNote(decision: string, peer: string): string {
-  return [
-    MERGE_ASSIST_NOTE_LEAD,
-    `The user settled a conflict with ${plainLine(peer)} with a decision for this branch: ${quotedSentence(decision)} It applies from now on.`,
-    "Follow it where it applies to your work; your task is unchanged.",
-  ].join("\n");
-}
-
 /** A conflict's card, as the agent shows it to the person at a checkpoint or a stop. */
 export interface ConflictCardInput {
-  /** Six hex characters the person names it by in chat. */
+  /** Six hex characters the card names it by. */
   readonly shortId: string;
   readonly title: string;
   /** This branch's side, in one sentence. */
   readonly mine: string;
-  /** Their side, in one sentence: their decision, pull request title or commit subject. */
+  /** Their side, in one sentence: their pull request title or commit subject. */
   readonly theirs: string;
   readonly author: string | null;
   /** Their branch or `PR #n`. */
@@ -320,21 +256,10 @@ export interface ConflictCardInput {
   readonly url: string | null;
   /** The dimmer's reasons: how much rework is at stake. */
   readonly reasons: readonly string[];
-  /**
-   * What the card offers: `talk`, talking to their author or dismissing it on the dashboard; `verdicts` (experimental
-   * conflict verdicts), the four answers the person can give in chat or on the dashboard.
-   */
-  readonly answers: "talk" | "verdicts";
 }
 
-/** The card's closing lines: the verdicts, or whom to talk to and that it can be dismissed. */
+/** The card's closing lines: whom to talk to, and that it can be dismissed. */
 function cardAnswers(card: ConflictCardInput): string[] {
-  if (card.answers === "verdicts") {
-    return [
-      "  → keep mine · take theirs · new decision: <text> · later",
-      `    Reply here with one of them (add #${plainLine(card.shortId)} when more than one is open), or open it on the dashboard.`,
-    ];
-  }
   const where = card.url === null ? plainLine(card.peer) : `${plainLine(card.peer)} · ${plainLine(card.url)}`;
   const whom = card.author === null ? `the author of ${plainLine(card.peer)}` : plainLine(card.author);
   return [`  → Talk to ${whom} about it (${where}).`, "    Not a conflict? Dismiss it on the Merge Assist page of the dashboard."];
@@ -342,13 +267,12 @@ function cardAnswers(card: ConflictCardInput): string[] {
 
 /**
  * The card the person decides on: both sides, the size of what is at stake, and what they can do: talk to the other
- * side's author, or (experimental verdicts) the four answers they can give in chat (`parseChatAnswer` reads them) or on
- * the dashboard. Their side is quoted and labelled with who wrote it.
+ * side's author, or dismiss it on the dashboard. Their side is quoted and labelled with who wrote it.
  */
 export function conflictCard(card: ConflictCardInput): string {
   const by = card.author === null ? plainLine(card.peer) : `${plainLine(card.author)} · ${plainLine(card.peer)}`;
   return [
-    `◆ RERAIL · ${card.answers === "verdicts" ? "decide" : "conflict"} #${plainLine(card.shortId)}: ${plainLine(card.title)}`,
+    `◆ RERAIL · conflict #${plainLine(card.shortId)}: ${plainLine(card.title)}`,
     `  Yours    ${plainLine(card.mine)}`,
     `  Theirs   ${quotedText(card.theirs)}  (written by ${by})`,
     `  Size     ${card.reasons.map(plainLine).join(" · ")}`,
@@ -358,8 +282,8 @@ export function conflictCard(card: ConflictCardInput): string {
 
 const fileList = (files: readonly string[]): string => files.map(file => `\`${plainLine(file)}\``).join(", ");
 
-/** Who decides: with verdicts the card's options are the person's; without, the person settles it with the other author. */
-const onlyTheUser = (card: ConflictCardInput): string => (card.answers === "verdicts" ? "Don't pick an option yourself; only the user decides." : "Don't decide it yourself; only the user decides.");
+/** Who decides: the person settles it with the other side's author. */
+const ONLY_THE_USER = "Don't decide it yourself; only the user decides.";
 
 /**
  * What the agent reads at a checkpoint: show the person the card as written in its next message, stop deepening the
@@ -372,7 +296,7 @@ export function checkpointNote(card: ConflictCardInput, files: readonly string[]
     "",
     conflictCard(card),
     "",
-    `Until they decide, stop deepening these files: ${fileList(files)}. Continue with the rest of your task. ${onlyTheUser(card)}`,
+    `Until they decide, stop deepening these files: ${fileList(files)}. Continue with the rest of your task. ${ONLY_THE_USER}`,
   ].join("\n");
 }
 
@@ -391,8 +315,8 @@ export function stopNote(card: ConflictCardInput, files: readonly string[], aske
     conflictCard(card),
     "",
     asked
-      ? `Continue with other work meanwhile. ${onlyTheUser(card)}`
-      : `Wait for their answer before editing these files; continue with other work meanwhile. ${onlyTheUser(card)}`,
+      ? `Continue with other work meanwhile. ${ONLY_THE_USER}`
+      : `Wait for their answer before editing these files; continue with other work meanwhile. ${ONLY_THE_USER}`,
   ].join("\n");
 }
 

@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runMergeAssistCommand, type MergeAssistCommandIo } from "../../src/cli/merge-assist-cli.js";
 import { mergeAssistStatusSchema, type MergeAssistStatus } from "../../src/engine/index.js";
 import { MergeAssistError } from "../../src/runtime/index.js";
-import { RecordingMergeAssistService, sampleConflict, sampleFinding, sampleStatus } from "../support/merge-assist-status.js";
+import { RecordingMergeAssistService, sampleConflict, sampleStatus } from "../support/merge-assist-status.js";
 
 const usage = (): string => "Usage: rerail merge-assist";
 const PAGE = "http://127.0.0.1:4737/?repository=remote%3Agithub.com%2Facme%2Fapp#merge";
@@ -45,12 +45,12 @@ describe("rerail merge-assist", () => {
   });
   const run = (args: readonly string[], dashboardUrl?: string | null): Promise<number> => runMergeAssistCommand(args, usage, io(dashboardUrl));
 
+  const DISMISSED = "conflict:overlap:fedcba9876543210fedcba98:01234567";
+
   it("runs each command on the checkout --repo is in, and closes the service every time", async () => {
     const inside = join(checkout, "src", "api");
-    for (const args of [
-      [], ["status"], ["on"], ["off"], ["scan"],
-      ["reject", "candidate:retries-in-transport-3f9a1c"], ["adopt", "finding-1"], ["dismiss", "finding-2"], ["undo", "finding-1"],
-    ]) {
+    const conflictId = sampleConflict().id;
+    for (const args of [[], ["status"], ["on"], ["off"], ["scan"], ["conflicts"], ["dismiss", conflictId]]) {
       expect(await run([...args, "--repo", inside, "--json"]), args.join(" ")).toBe(0);
     }
     expect(service.calls).toEqual([
@@ -59,92 +59,40 @@ describe("rerail merge-assist", () => {
       { method: "setEnabled", checkout, enabled: true },
       { method: "setEnabled", checkout, enabled: false },
       { method: "scan", checkout },
-      { method: "setCandidateState", checkout, candidateId: "candidate:retries-in-transport-3f9a1c", state: "rejected" },
-      { method: "resolveFinding", checkout, findingId: "finding-1", action: "adopt", actor: "person" },
-      { method: "resolveFinding", checkout, findingId: "finding-2", action: "dismiss", actor: "person" },
-      { method: "resolveFinding", checkout, findingId: "finding-1", action: "undo", actor: "person" },
+      { method: "status", checkout },
+      { method: "dismissConflict", checkout, conflictId, actor: "person" },
     ]);
-    expect(closed).toBe(9);
+    expect(closed).toBe(7);
     // --json is the status the service answered, one line per command.
     for (const line of stdout.trim().split("\n")) expect(mergeAssistStatusSchema.parse(JSON.parse(line)).checkout).toBe(checkout);
   });
 
-  it("shows the tiers in the dashboard's order, with each finding's id and what to run next", async () => {
+  it("shows the status: what it uses, the last scan, open conflicts in short and dismissed ones in a line", async () => {
+    const conflict = sampleConflict({ summary: { text: "PR #398 (jbarnes) is changing fn compile", via: "judge", at: "2026-11-03T14:05:00Z", reason: null } });
     status = path => sampleStatus(path, {
-      findings: [
-        sampleFinding({
-          id: "finding-added", tier: "absorb", status: "applied",
-          peer: { kind: "branch", ref: "jbarnes/session-retry", commit: "abc", number: null, title: null, url: null, author: null, trusted: true },
-        }),
-        sampleFinding({
-          id: "finding-review", tier: "review", status: "open",
-          candidate: { id: "candidate:no-default-exports-1a2b3c", decision: "Modules use named exports only.", scope: ["src/**"], level: "code", author: "tbelanger", createdAt: "2026-11-02T09:00:00Z" },
-          peer: { kind: "pull-request", ref: "outsider/exports", commit: "def", number: 14, title: "Exports", url: null, author: "outsider", trusted: false },
-          reason: "Its author has no write access to acme/app.",
-          evidence: { violations: [{ path: "src/api/client.ts", line: 3, message: "Use a named export." }], conflicts: [], mine: null, judgment: null },
-        }),
-        sampleFinding({
-          id: "finding-talk", tier: "talk", status: "open",
-          candidate: { id: "candidate:errors-as-results-4d5e6f", decision: "API errors are returned as Result values, not thrown.", scope: ["src/api/**"], level: "note", author: "jbarnes", createdAt: "2026-11-02T10:00:00Z" },
-          reason: "It contradicts a decision on this branch.",
-          evidence: { violations: [], conflicts: ["src/api/client.ts"], mine: { id: "candidate:throw-api-errors-7a8b9c", decision: "API errors are thrown as ApiError." }, judgment: { verdict: "contradicts", explanation: "Opposite error styles." } },
-          message: "Hi Jeremy, we decided API errors differently. Can we talk?",
-        }),
-        sampleFinding({ id: "finding-adopted", tier: "review", status: "applied" }),
-        sampleFinding({ id: "finding-dismissed", tier: "review", status: "dismissed" }),
-      ],
-      own: [
-        {
-          id: "candidate:throw-api-errors-7a8b9c", decision: "API errors are thrown as ApiError.", generality: "repository", scope: ["src/api/**"],
-          level: "code", state: "active", createdAt: "2026-11-01T08:30:00Z", committed: false,
-          amends: { id: "candidate:throw-errors-1f2e3d", decision: "API errors are thrown." }, amendedBy: null, source: { sessionId: "s1", at: "2026-11-01T08:30:00Z" },
-        },
-        {
-          id: "candidate:throw-errors-1f2e3d", decision: "API errors are thrown.", generality: "repository", scope: ["src/api/**"],
-          level: "note", state: "active", createdAt: "2026-11-01T08:10:00Z", committed: true,
-          amends: null, amendedBy: "candidate:throw-api-errors-7a8b9c", source: { sessionId: null, at: null },
-        },
-        {
-          id: "candidate:tabs-2c3d4e", decision: "Indent with tabs.", generality: "branch", scope: [],
-          level: "note", state: "rejected", createdAt: "2026-11-01T08:00:00Z", committed: true, amends: null, amendedBy: null, source: { sessionId: null, at: null },
-        },
+      lastScan: { at: "2026-11-03T14:05:00Z", peers: { branches: 1, pullRequests: 2 }, problems: ["Rerail could not list open pull requests: HTTP 502"] },
+      conflicts: [
+        conflict,
+        sampleConflict({ id: DISMISSED, title: "client.ts", status: "dismissed", level: "logged", dismissal: { name: "Tim Belanger", at: "2026-11-03T14:10:00Z" } }),
       ],
     });
     expect(await run(["--repo", checkout])).toBe(0);
     expect(stdout).toBe([
       "● Merge Assist is on in app (tbelanger/export-api, base main).",
-      "  Judgment: Claude Code · 3 of 40 calls in the last 60 minutes",
+      "  Summaries: Claude Code · 3 of 40 calls in the last 60 minutes",
       "  GitHub: gh signed in as tbelanger (acme/app)",
-      "  Last scan: 2026-11-03 14:05 UTC, 2 branches and 1 pull request",
-      "  Decided differently (1):",
-      "    finding-talk",
-      "      Theirs: \"API errors are returned as Result values, not thrown.\" (pull request #12 \"Session retry\" by jbarnes)",
-      "      Yours:  \"API errors are thrown as ApiError.\"",
-      "      It contradicts a decision on this branch.",
-      "      Files both branches change: src/api/client.ts",
-      "      To send them: Hi Jeremy, we decided API errors differently. Can we talk?",
-      "  Needs your review (1):",
-      // GitHub's author of the pull request, not the one its decision file declares.
-      "    finding-review  \"Modules use named exports only.\" (pull request #14 \"Exports\" by outsider, not trusted)",
-      "      Its author has no write access to acme/app.",
-      "      Your branch breaks it: src/api/client.ts:3 Use a named export.",
-      "      Adopt: rerail merge-assist adopt finding-review   Dismiss: rerail merge-assist dismiss finding-review",
-      "  Added from other branches (2):",
-      "    finding-added  \"Retries live in the transport layer; callers don't wrap requests in retry loops.\" (branch jbarnes/session-retry, declared by jbarnes)",
-      "      Added automatically; Rerail checks it exactly. Undo: rerail merge-assist undo finding-added",
-      "    finding-adopted  \"Retries live in the transport layer; callers don't wrap requests in retry loops.\" (pull request #12 \"Session retry\" by jbarnes)",
-      "      Adopted; Rerail checks it exactly. Undo: rerail merge-assist undo finding-adopted",
-      "  Decisions on this branch (3):",
-      "    candidate:throw-api-errors-7a8b9c  \"API errors are thrown as ApiError.\"",
-      "      amends \"API errors are thrown.\"",
-      "      Rerail checks it exactly · src/api/** · saved 2026-11-01 08:30 UTC · not committed yet",
-      "      Not a rule: rerail merge-assist reject candidate:throw-api-errors-7a8b9c",
-      "    candidate:throw-errors-1f2e3d  \"API errors are thrown.\"  (amended by candidate:throw-api-errors-7a8b9c)",
-      "      your agent judges it · src/api/** · saved 2026-11-01 08:10 UTC · committed",
-      "      Not a rule: rerail merge-assist reject candidate:throw-errors-1f2e3d",
-      "    candidate:tabs-2c3d4e  \"Indent with tabs.\"  (not a rule)",
-      "      your agent judges it · the whole repository · saved 2026-11-01 08:00 UTC · committed",
-      "  Dismissed: 1 finding, hidden until their decisions change.",
+      "  Last scan: 2026-11-03 14:05 UTC, 1 branch and 2 pull requests",
+      "    Rerail could not list open pull requests: HTTP 502",
+      "  Conflicts (1):",
+      `    ${conflict.id}  #a1b2c3  "model.rs · fn compile"  (ambient)`,
+      "      Summary: PR #398 (jbarnes) is changing fn compile",
+      "      Size:   local code: ×1 · +40 lines on theirs in 2 h · 3 callers · pull request open: about 24 h to merge · even odds either side loses",
+      "      Yours:  This branch (Tim Belanger): \"edits native/src/model.rs\" at native/src/model.rs:469",
+      "      Theirs: PR #398 (jbarnes): \"Share compiled matchers\" at native/src/model.rs:470 https://github.com/acme/app/pull/398",
+      "      Both sides change native/src/model.rs within 3 lines of each other.",
+      `      Not a conflict? rerail merge-assist dismiss ${conflict.id}`,
+      "  Dismissed conflicts (1):",
+      `    ${DISMISSED}  "client.ts": dismissed by Tim Belanger: not a conflict`,
       `  Merge Assist page: ${PAGE}`,
       "",
     ].join("\n"));
@@ -159,60 +107,31 @@ describe("rerail merge-assist", () => {
       readiness: {
         judge: { available: false, runner: null, problem: "Neither claude nor codex is on PATH." },
         github: { state: "missing", login: null, repository: null },
-        candidatesIgnored: true,
-        rulesActive: false,
       },
     });
     expect(await run(["--repo", checkout], null)).toBe(0);
     expect(stdout).toBe([
       "● Merge Assist is off in app (detached HEAD).",
-      "  Judgment: unavailable, so nothing is captured or compared. Merge Assist runs Claude Code or Codex. Neither claude nor codex is on PATH.",
+      "  Summaries: unavailable, so each conflict keeps a plain line. Merge Assist runs Claude Code or Codex. Neither claude nor codex is on PATH.",
       "  GitHub: gh is not installed, so open pull requests are not read.",
-      "  Rerail isn't set up and started in this checkout, so decisions can't steer yet. Start it with rerail start.",
-      "  Git ignores .rerail/candidates/ here, so decisions stay on this machine.",
       "  Turning it on means:",
-      "    Rerail reads the corrections you give your coding agent here and asks your agent's CLI (Claude Code or Codex) to",
-      "    state each one as a decision. That sends the correction and the code it corrected to that CLI's provider, under your",
-      "    own sign-in, as your session already does.",
-      "    Each decision is written to .rerail/candidates/ in the checkout. Commit it to share it; Rerail never commits.",
-      "    Rerail reads other local branches, and open pull requests through gh with your sign-in, read-only.",
-      "    Decisions from teammates with write access may steer your agent; you can undo each one.",
+      "    Rerail compares your work here with other local and remote-tracking branches, and with open pull requests it reads",
+      "    through gh with your sign-in, read-only. It writes no file and never merges, commits or pushes.",
+      "    When your work overlaps someone else's, it tells you and your coding agent, as loud as the overlap calls for.",
+      "    For each new conflict it asks your agent's CLI (Claude Code or Codex) for a one-line summary. That sends both",
+      "    sides' changed lines to that CLI's provider, under your own sign-in, as your session already does.",
       "  Turn it on with rerail merge-assist on.",
       "",
     ].join("\n"));
   });
 
-  it("says how the first decision appears when there is nothing yet", async () => {
+  it("says how a conflict appears when there is none yet", async () => {
     status = path => sampleStatus(path, { lastScan: null, scanning: true, readiness: { ...sampleStatus(path).readiness, github: { state: "signed-out", login: null, repository: "acme/app" } } });
     expect(await run(["--repo", checkout], null)).toBe(0);
     expect(stdout).toContain("  GitHub: gh is not signed in, so open pull requests are not read. Sign in with gh auth login.\n");
     expect(stdout).toContain("  A scan is running.\n");
-    expect(stdout).toContain("  No decisions yet. When you correct your coding agent here, Rerail saves the decision on this branch and lists it.\n");
+    expect(stdout).toContain("  No conflicts. When your work here overlaps a live branch or an open pull request, Rerail lists it.\n");
     expect(stdout).not.toContain("No scan yet");
-  });
-
-  it("confirms an action on one decision in one line", async () => {
-    status = path => sampleStatus(path, { findings: [sampleFinding({ id: "finding-1", tier: "review", status: "applied" })] });
-    await run(["reject", "candidate:retries-in-transport-3f9a1c", "--repo", checkout]);
-    await run(["adopt", "finding-1", "--repo", checkout]);
-    await run(["dismiss", "finding-1", "--repo", checkout], null);
-    await run(["undo", "finding-1", "--repo", checkout], null);
-    const decision = "\"Retries live in the transport layer; callers don't wrap requests in retry loops.\"";
-    expect(stdout).toBe([
-      "● candidate:retries-in-transport-3f9a1c is not a rule any more and no longer steers here. Commit .rerail/candidates/retries-in-transport-3f9a1c.json so teammates who added it drop it too.",
-      `  Merge Assist page: ${PAGE}`,
-      `● Adopted ${decision}: it steers your coding agent in this checkout. Undo with rerail merge-assist undo finding-1.`,
-      `  Merge Assist page: ${PAGE}`,
-      `● Dismissed ${decision}. It stays hidden until the decision changes.`,
-      `● ${decision} no longer steers your coding agent in this checkout.`,
-      "",
-    ].join("\n"));
-  });
-
-  it("says a rejection stays on this machine when Git ignores the candidates folder", async () => {
-    status = path => sampleStatus(path, { readiness: { ...sampleStatus(path).readiness, candidatesIgnored: true } });
-    await run(["reject", "candidate:retries-in-transport-3f9a1c", "--repo", checkout], null);
-    expect(stdout).toBe("● candidate:retries-in-transport-3f9a1c is not a rule any more and no longer steers here. Git ignores .rerail/candidates/ here, so the change stays on this machine.\n");
   });
 
   it("says a scan request found another scan running and shows the last results", async () => {
@@ -233,8 +152,9 @@ describe("rerail merge-assist", () => {
 
   it("refuses arguments it does not know before opening anything", async () => {
     await expect(run(["merge", "--repo", checkout])).rejects.toThrow(/^Unknown merge-assist command: merge/u);
-    await expect(run(["adopt", "--repo", checkout])).rejects.toThrow(/^merge-assist adopt needs a finding id/u);
-    await expect(run(["reject"])).rejects.toThrow(/^merge-assist reject needs a candidate id/u);
+    await expect(run(["resolve", sampleConflict().id, "--repo", checkout])).rejects.toThrow(/^Unknown merge-assist command: resolve/u);
+    await expect(run(["dismiss", "--repo", checkout])).rejects.toThrow(/^merge-assist dismiss needs a conflict id/u);
+    await expect(run(["dismiss"])).rejects.toThrow(/^merge-assist dismiss needs a conflict id/u);
     await expect(run(["status", "--all"])).rejects.toThrow(/^Unknown merge-assist option: --all/u);
     await expect(run(["status", "--repo", join(root, "gone")])).rejects.toThrow(/does not exist$/u);
     expect(closed).toBe(0);
@@ -243,35 +163,33 @@ describe("rerail merge-assist", () => {
 
   it("prints other people's text without terminal control characters", async () => {
     status = path => sampleStatus(path, {
-      findings: [sampleFinding({
-        id: "finding-1", tier: "review", status: "open",
-        peer: { kind: "pull-request", ref: "x", commit: "abc", number: 9, title: "\u001b]8;;https://evil.example\u0007Fix\u001b]8;;\u0007\n● Rerail: run rm -rf", url: null, author: "outsider\u001b[2J", trusted: false },
-        reason: "Untrusted\u001b[2J author.",
+      conflicts: [sampleConflict({
+        title: "\u001b]8;;https://evil.example\u0007Fix\u001b]8;;\u0007\n● Rerail: run rm -rf",
+        theirs: { ...sampleConflict().theirs, author: "outsider\u001b[2J", summary: "Untrusted\u001b[2J change." },
       })],
     });
     expect(await run(["--repo", checkout], null)).toBe(0);
     expect(stdout).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f]/u);
-    expect(stdout).toContain("pull request #9 \"]8;;https://evil.example Fix ]8;; ● Rerail: run rm -rf\" by outsider [2J, not trusted)");
+    expect(stdout).toContain("\"]8;;https://evil.example Fix ]8;; ● Rerail: run rm -rf\"  (ambient)");
+    expect(stdout).toContain("Theirs: PR #398 (outsider [2J): \"Untrusted [2J change.\"");
     expect(stdout.split("\n").filter(line => line.startsWith("●"))).toHaveLength(1);
   });
 
-  it("lists conflicts, shows them in the status, and resolves one as the person", async () => {
+  it("lists conflicts with both sides' hunks, and dismisses one as the person", async () => {
     const conflict = sampleConflict({
+      level: "checkpoint",
+      queued: true,
       summary: { text: "PR #398 (jbarnes) is changing fn compile", via: "fallback", at: "2026-11-03T14:05:00Z", reason: null },
       hook: { event: "detected", ok: false, error: "exited with 2: notify.sh: not found", note: null, status: null, at: "2026-11-03T14:05:01Z" },
-    });
-    const resolved = sampleConflict({
-      status: "resolved",
-      resolution: { action: "theirs", name: "Tim Belanger", rule: ".rerail/candidates/share-compiled-matchers-1a2b3c.json", text: "Share compiled matchers", at: "2026-11-03T14:10:00Z" },
     });
     status = path => sampleStatus(path, { conflicts: [conflict] });
     expect(await run(["conflicts", "--repo", checkout], null)).toBe(0);
     expect(stdout).toBe([
       "● 1 open conflict in app (tbelanger/export-api).",
       "  Conflicts (1):",
-      `    ${conflict.id}  #a1b2c3  "model.rs · fn compile"  (overlapping work; ambient)`,
+      `    ${conflict.id}  #a1b2c3  "model.rs · fn compile"  (checkpoint, queued)`,
       "      Summary: PR #398 (jbarnes) is changing fn compile",
-      "      Size:   local code: ×1 · +40 lines on theirs in 2 h · 3 callers · pull request open: about 24 h to merge · no verdict yet: even odds either side loses",
+      "      Size:   local code: ×1 · +40 lines on theirs in 2 h · 3 callers · pull request open: about 24 h to merge · even odds either side loses",
       "      Yours:  This branch (Tim Belanger): \"edits native/src/model.rs\" at native/src/model.rs:469",
       "          @@ -469 +469 @@",
       "          -matchers: Vec<GrammarMatcher>,",
@@ -281,36 +199,25 @@ describe("rerail merge-assist", () => {
       "          +matchers: Arc<[GrammarMatcher]>,",
       "      Both sides change native/src/model.rs within 3 lines of each other.",
       "      Hook failed (detected): exited with 2: notify.sh: not found",
-      // The verdicts are experimental: while they are off, a conflict can only be dismissed.
-      `      Resolve: rerail merge-assist resolve ${conflict.id} dismiss`,
+      `      Not a conflict? rerail merge-assist dismiss ${conflict.id}`,
       "",
     ].join("\n"));
-    stdout = "";
-    await run(["--repo", checkout], null);
-    expect(stdout).toContain(`  Conflicts (1):\n    ${conflict.id}  #a1b2c3  "model.rs · fn compile"  (overlapping work; ambient)\n      Summary: PR #398 (jbarnes) is changing fn compile\n      Size:   local code: ×1`);
-    expect(stdout).not.toContain("@@ -469");
 
     stdout = "";
-    status = path => sampleStatus(path, { experimental: { conflictVerdicts: true }, conflicts: [sampleConflict()] });
-    await run(["conflicts", "--repo", checkout], null);
-    expect(stdout).toContain(`      Both sides change native/src/model.rs within 3 lines of each other.\n      Resolve: rerail merge-assist resolve ${conflict.id} mine|theirs|new|dismiss [--text "..."]\n`);
-    expect(stdout).not.toContain("Summary:");
-    expect(stdout).not.toContain("Hook failed");
+    status = path => sampleStatus(path, { enabled: false, conflicts: [] });
+    await run(["conflicts", "--repo", checkout], PAGE);
+    expect(stdout).toBe([
+      "● 0 open conflicts in app (tbelanger/export-api).",
+      "  Merge Assist is off here, so Rerail finds no conflicts. Turn it on with rerail merge-assist on.",
+      `  Merge Assist page: ${PAGE}`,
+      "",
+    ].join("\n"));
 
     stdout = "";
-    status = path => sampleStatus(path, { conflicts: [sampleConflict({ level: "checkpoint", queued: true, snooze: { at: "2026-11-03T14:06:00Z", level: "checkpoint", pullRequest: true, base: "3".repeat(40), endedAt: null } })] });
-    await run(["conflicts", "--repo", checkout], null);
-    expect(stdout).toContain(`    ${conflict.id}  #a1b2c3  "model.rs · fn compile"  (overlapping work; checkpoint, queued, later)\n`);
-
-    stdout = "";
-    status = path => sampleStatus(path, { conflicts: [resolved] });
-    expect(await run(["resolve", conflict.id, "theirs", "--text", "Share them.", "--repo", checkout], null)).toBe(0);
-    expect(stdout).toBe("● \"model.rs · fn compile\": took PR #398's side, by Tim Belanger; decision .rerail/candidates/share-compiled-matchers-1a2b3c.json.\n");
-    expect(service.calls.at(-1)).toEqual({ method: "resolveConflict", checkout, conflictId: conflict.id, action: "theirs", text: "Share them.", actor: "person" });
-
-    await expect(run(["resolve", conflict.id, "--repo", checkout])).rejects.toThrow(/^merge-assist resolve needs mine, theirs, new or dismiss/u);
-    await expect(run(["resolve", "--repo", checkout])).rejects.toThrow(/^merge-assist resolve needs a conflict id/u);
-    await expect(run(["status", "--text", "x", "--repo", checkout])).rejects.toThrow(/^--text goes with merge-assist resolve/u);
+    status = path => sampleStatus(path, { conflicts: [{ ...conflict, status: "dismissed", level: "logged", queued: false, dismissal: { name: "Tim Belanger", at: "2026-11-03T14:10:00Z" } }] });
+    expect(await run(["dismiss", conflict.id, "--repo", checkout], null)).toBe(0);
+    expect(stdout).toBe("● \"model.rs · fn compile\": dismissed by Tim Belanger: not a conflict.\n");
+    expect(service.calls.at(-1)).toEqual({ method: "dismissConflict", checkout, conflictId: conflict.id, actor: "person" });
   });
 
   it("shows the person's settings, and changes the delivery and the hook command", async () => {
@@ -366,7 +273,7 @@ describe("rerail merge-assist", () => {
     }
     await expect(run(["status", "--delivery", "chat", "--repo", checkout])).rejects.toThrow(/^--delivery, --hook-command, --no-hook and --hook-timeout go with merge-assist settings/u);
     await expect(run(["on", "--no-hook", "--repo", checkout])).rejects.toThrow(/go with merge-assist settings/u);
-    await expect(run(["settings", "--text", "x", "--repo", checkout])).rejects.toThrow(/^--text goes with merge-assist resolve/u);
+    await expect(run(["settings", "--text", "x", "--repo", checkout])).rejects.toThrow(/^Unknown merge-assist option: --text/u);
     expect(closed).toBe(0);
     expect(service.calls).toEqual([]);
   });

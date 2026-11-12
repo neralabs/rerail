@@ -49,7 +49,7 @@ export const pageModule = (key = pageKey()) => PAGES[key] ?? VIEWS[key];
 
 /**
  * The sidebar lists the repository's packs with how many of their rules are on, and Merge Assist with how many of
- * its findings wait, on every view.
+ * its conflicts are open, on every view.
  */
 const SIDEBAR_NEEDS = ["rules", "packs", "mergeAssistCount"];
 

@@ -13,7 +13,8 @@ import {
   rulePackRecommendationsSchema,
   DatabaseApiStores,
 } from "../../../src/api/index.js";
-import { fileEndings, globPattern, nearMiss, packLooksFor, scanRepository, signalEvidence, type RepositoryScan, type RulePackMatch } from "../../../src/engine/catalog/rule-pack-matcher.js";
+import { fileEndings, nearMiss, packLooksFor, scanRepository, signalEvidence, type RepositoryScan, type RulePackMatch } from "../../../src/engine/catalog/rule-pack-matcher.js";
+import { globPattern } from "../../../src/engine/glob-pattern.js";
 import {
   cachedRecommendRulePacks,
   RECOMMENDATION_CACHE_MS,

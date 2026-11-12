@@ -1,6 +1,6 @@
 /**
- * What Merge Assist asks Git about a checkout's branches: the current and base branch, local branches and their tips,
- * ancestry, the paths a branch changed, and the files two branches would conflict on. Every call goes through
+ * What Merge Assist asks Git about a checkout's branches: the current and base branch, local and remote-tracking
+ * branches and their tips, merge bases and ancestry, and the GitHub repository a key names. Every call goes through
  * `runGit`, so a repository's own config cannot run hooks or an fsmonitor; nothing here writes a ref or the index.
  */
 import { runGit, type RunGitOptions } from "../git.js";
@@ -8,8 +8,6 @@ import { runGit, type RunGitOptions } from "../git.js";
 /** Listing paths can be long on a large branch; this bounds what one call reads. */
 const LIST_OUTPUT_BYTES = 16 * 1024 * 1024;
 const LIST_OPTIONS: RunGitOptions = { maxBuffer: LIST_OUTPUT_BYTES };
-/** `merge-tree` merges whole trees; it gets longer than the default 10 s. */
-const MERGE_TREE_OPTIONS: RunGitOptions = { maxBuffer: LIST_OUTPUT_BYTES, timeout: 60_000 };
 
 export interface LocalBranch {
   readonly name: string;
@@ -63,7 +61,7 @@ export function baseBranch(root: string): { ref: string; name: string } | null {
     "refs/heads/main",
     "refs/heads/master",
   ];
-  const ref = refs.find(candidate => verifiedCommit(root, candidate) !== undefined);
+  const ref = refs.find(name => verifiedCommit(root, name) !== undefined);
   if (ref === undefined) return null;
   return { ref, name: ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref.slice("refs/remotes/".length) };
 }
@@ -123,48 +121,6 @@ export function isAncestor(root: string, ancestor: string, descendant: string): 
 /** Whether `commit` names a commit this repository holds. */
 export function commitExists(root: string, commit: string): boolean {
   return verifiedCommit(root, commit) !== undefined;
-}
-
-function splitNul(output: string): string[] {
-  return output.split("\0").filter(path => path !== "");
-}
-
-/**
- * Paths changed from the merge base of `base` and `head` to `head` (from `base` itself when they share no history);
- * with `workingTree`, plus the checkout's staged, unstaged and untracked (not ignored) paths. Renames count as a
- * deletion and an addition, so both paths are listed. Throws when Git cannot list them: no paths would read as a
- * branch that changed nothing.
- */
-export function changedPaths(root: string, base: string, head: string, options: { workingTree?: boolean } = {}): string[] {
-  const from = mergeBase(root, base, head) ?? verifiedCommit(root, base);
-  const to = verifiedCommit(root, head);
-  if (from === undefined || to === undefined) throw new Error(`Git cannot compare ${base} and ${head} in ${root}: one of them is not a commit here`);
-  const committed = gitOutput(root, ["diff", "--name-only", "-z", "--no-renames", "--no-ext-diff", "--no-textconv", from, to, "--"], LIST_OPTIONS);
-  if (committed === undefined) throw new Error(`Git could not list the paths changed between ${base} and ${head} in ${root}`);
-  const paths = new Set(splitNul(committed));
-  if (options.workingTree === true) {
-    const status = gitOutput(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--no-renames"], LIST_OPTIONS);
-    if (status === undefined) throw new Error(`Git could not list the working tree's changes in ${root}`);
-    // Each entry is `XY <path>`; paths are relative to the top of the working tree.
-    for (const entry of splitNul(status)) if (entry.length > 3) paths.add(entry.slice(3));
-  }
-  return [...paths].sort();
-}
-
-/**
- * The files a merge of `theirs` into `ours` would conflict on, from `git merge-tree --write-tree` (Git 2.38 or later);
- * an empty list for a clean merge. Null when either commit is missing or Git cannot merge the two trees (no shared
- * history, an older Git). It writes only unreachable objects, never a ref, the index or the working tree.
- */
-export function mergeTreeConflicts(root: string, ours: string, theirs: string): string[] | null {
-  const oursCommit = verifiedCommit(root, ours);
-  const theirsCommit = verifiedCommit(root, theirs);
-  if (oursCommit === undefined || theirsCommit === undefined) return null;
-  const result = runGit(root, ["merge-tree", "--write-tree", "--name-only", "--no-messages", "-z", oursCommit, theirsCommit], MERGE_TREE_OPTIONS);
-  if (result.error !== undefined || (result.status !== 0 && result.status !== 1)) return null;
-  // The merged tree's id comes first; the conflicted paths follow, each ended by NUL.
-  const [, ...conflicted] = splitNul(result.stdout);
-  return result.status === 0 ? [] : [...new Set(conflicted)].sort();
 }
 
 const GITHUB_HOST_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u;

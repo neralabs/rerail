@@ -189,11 +189,6 @@ export function refHunks(repo: string, base: string, own: string, sha: string, p
   return files;
 }
 
-/** The files `sha` changes from `own`, where its own work starts. */
-export function refFiles(repo: string, own: string, sha: string): string[] {
-  return (gitRead(repo, ["diff", "--name-only", "--no-renames", own, sha]) ?? "").split("\n").filter(path => path !== "");
-}
-
 /**
  * Where `sha`'s own work starts now: its merge base with the base branch's tip (`baseTip`), so mainline work it merged
  * in is not its own; or, when that is nearer, its merge base with `checkoutBase` (where this side's work starts), so
@@ -216,13 +211,6 @@ export function workspaceRanges(root: string, base: string): Map<string, RefHunk
   for (const [path, hunks] of diffHunks(root, base, null)) ranges.set(path, hunks.map(refHunk));
   const untracked = gitRead(root, ["ls-files", "--others", "--exclude-standard", "-z"]) ?? "";
   for (const path of untracked.split("\0").filter(item => item !== "")) ranges.set(path, [{ lo: 0.5, hi: 0.5, sig: "untracked", text: "(new file)" }]);
-  return ranges;
-}
-
-/** The changes between two commits, limited to `paths`, as base ranges. */
-export function commitRanges(repo: string, base: string, head: string, paths: readonly string[]): Map<string, LineRange[]> {
-  const ranges = new Map<string, LineRange[]>();
-  for (const [path, hunks] of diffHunks(repo, base, head, paths)) ranges.set(path, hunks.map(rangeOf));
   return ranges;
 }
 
@@ -284,9 +272,4 @@ export function identify<Range extends LineRange>(
     }
   }
   return conflicts;
-}
-
-/** A conflict's key in hook state and logs. */
-export function conflictKey(conflict: Pick<GitConflict, "ref" | "file">): string {
-  return `${conflict.ref}\u0000${conflict.file}`;
 }

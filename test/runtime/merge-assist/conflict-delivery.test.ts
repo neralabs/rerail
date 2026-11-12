@@ -7,7 +7,6 @@ import { SqliteSessionReader, SqliteSessionStore } from "../../../src/runtime/in
 import { RerailRuntime } from "../../../src/runtime/runtime.js";
 import type { AgentJudge, JudgeOutcome, JudgeTask } from "../../../src/runtime/merge-assist/agent-judge.js";
 import type { MergeAssistRuntime } from "../../../src/runtime/merge-assist/service.js";
-import { readConflicts, writeConflicts } from "../../../src/runtime/merge-assist/conflict-store.js";
 import { commit, defaultAnswer, FakeJudge, git, mergeAssistWorkspaces, SUMMARY, takeNotes, writeFiles, type Workspace } from "./support/merge-assist-workspace.js";
 
 const workspace = mergeAssistWorkspaces();
@@ -67,7 +66,7 @@ function heldJudge(): { judge: AgentJudge; release: () => void; asked: Array<Jud
     judge: async <T>(task: JudgeTask<T>): Promise<JudgeOutcome<T>> => {
       asked.push(task as JudgeTask<unknown>);
       await gate.promise;
-      return { ok: true, value: task.parse(defaultAnswer(task as JudgeTask<unknown>)), runner: "claude", cached: false };
+      return { ok: true, value: task.parse(defaultAnswer()), runner: "claude", cached: false };
     },
   };
   return { judge, release: () => gate.resolve(), asked };
@@ -76,7 +75,7 @@ function heldJudge(): { judge: AgentJudge; release: () => void; asked: Array<Jud
 /** A hook command for a test: its argv, and each call it got, as it logged it. */
 interface HookScript {
   readonly command: string[];
-  readonly calls: () => Array<{ argv: string[]; event: string; id: string; cwd: string; pid: number; stdin: Record<string, unknown> }>;
+  readonly calls: () => Array<{ argv: string[]; event: string; id: string; cwd: string; pid: number; at: number; stdin: Record<string, unknown> }>;
 }
 
 /**
@@ -93,7 +92,7 @@ function hookScript(ws: Workspace, mode: "answer" | "fail" | "hang" | "garbage" 
     "let input = '';",
     "process.stdin.on('data', chunk => { input += chunk; });",
     "process.stdin.on('end', () => {",
-    "  fs.appendFileSync(process.argv[2], JSON.stringify({ argv: process.argv.slice(2), event: process.env.RERAIL_CONFLICT_EVENT, id: process.env.RERAIL_CONFLICT_ID, cwd: process.cwd(), pid: process.pid, stdin: JSON.parse(input) }) + '\\n');",
+    "  fs.appendFileSync(process.argv[2], JSON.stringify({ argv: process.argv.slice(2), event: process.env.RERAIL_CONFLICT_EVENT, id: process.env.RERAIL_CONFLICT_ID, cwd: process.cwd(), pid: process.pid, at: Date.now(), stdin: JSON.parse(input) }) + '\\n');",
     `  const mode = ${JSON.stringify(mode)};`,
     "  if (mode === 'fail') { process.stderr.write('no channel'); process.exit(3); }",
     "  if (mode === 'hang') { setTimeout(() => undefined, 60000); return; }",
@@ -226,7 +225,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
 
     it("keeps the fallback, with why, when the budget is spent", async () => {
       const { ws } = await overlap(FILE, AMBIENT);
-      const judge = new FakeJudge(task => (task.kind === "summary" ? { ok: false, reason: "budget", detail: "40 judgment calls in the last hour" } : defaultAnswer(task)));
+      const judge = new FakeJudge(task => (task.kind === "summary" ? { ok: false, reason: "budget", detail: "40 judgment calls in the last hour" } : defaultAnswer()));
       const service = ws.service({ judge });
       await service.setEnabled(ws.repo, true);
       await service.scan(ws.repo);
@@ -270,7 +269,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       commit(theirs, { [FILE]: grown("retry", CHECKPOINT) }, "Grow retry further");
       expect(open((await service.scan(ws.repo)).conflicts)[0]).toMatchObject({ id: conflict!.id, level: "checkpoint" });
       await service.settled();
-      await service.resolveConflict(ws.repo, conflict!.id, "dismiss");
+      await service.dismissConflict(ws.repo, conflict!.id);
       await service.settled();
 
       const calls = hook.calls();
@@ -459,6 +458,24 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
     }
   });
 
+  describe("the order of a conflict's events", () => {
+    it("hands a command hook a dismissal right after a scan only once it has answered detected", async () => {
+      const { ws } = await overlap(FILE, AMBIENT);
+      const hook = hookScript(ws, "slow");
+      const service = ws.service();
+      await service.setEnabled(ws.repo, true);
+      await service.updateSettings(ws.repo, { hook: { command: hook.command, timeoutSeconds: 10 } });
+      const [conflict] = open((await service.scan(ws.repo)).conflicts);
+      await service.dismissConflict(ws.repo, conflict!.id);
+      await service.settled();
+      const calls = hook.calls();
+      expect(calls.map(call => [call.event, call.id])).toEqual([["detected", conflict!.id], ["closed", conflict!.id]]);
+      // The slow command answers 1.5 s after it starts: closed started only after detected's run ended.
+      expect(calls[1]!.at - calls[0]!.at).toBeGreaterThanOrEqual(1_400);
+      expect((await service.status(ws.repo)).conflicts[0]!.hook).toMatchObject({ event: "closed", ok: true });
+    });
+  });
+
   describe("a conflict's identity", () => {
     /** Main gains `count` lines at the top of `FILE`; this checkout (its edit committed) and theirs both merge it. */
     function mainGainsLinesAbove(ws: Workspace, theirs: string, count: number): void {
@@ -478,7 +495,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       await service.setEnabled(ws.repo, true);
       await service.updateSettings(ws.repo, { hook: { command: hook.command, timeoutSeconds: 10 } });
       const [conflict] = open((await service.scan(ws.repo)).conflicts);
-      await service.resolveConflict(ws.repo, conflict!.id, "dismiss");
+      await service.dismissConflict(ws.repo, conflict!.id);
       await service.settled();
       expect(hook.calls().map(call => [call.event, call.id])).toEqual([["detected", conflict!.id], ["closed", conflict!.id]]);
 
@@ -492,48 +509,10 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       await service.setEnabled(ws.repo, true);
       expect(open((await service.scan(ws.repo)).conflicts)).toEqual([expect.objectContaining({ id: conflict!.id, theirs: expect.objectContaining({ location: `${FILE}:23` }) })]);
     });
-
-    it("anchors a conflict stored under a line-number id once, keeping its dismissal, with no hook event", async () => {
-      const { ws } = await overlap(FILE, AMBIENT);
-      const hook = hookScript(ws);
-      const service = ws.service();
-      await service.setEnabled(ws.repo, true);
-      await service.updateSettings(ws.repo, { hook: { command: hook.command, timeoutSeconds: 10 } });
-      const [conflict] = open((await service.scan(ws.repo)).conflicts);
-      await service.resolveConflict(ws.repo, conflict!.id, "dismiss");
-      await service.settled();
-      // As a build before content anchors stored it: an id from base line numbers, and no anchor.
-      const legacyId = `conflict:overlap:${"0".repeat(24)}:${conflict!.id.slice(-8)}`;
-      writeConflicts(ws.database, ws.repo, readConflicts(ws.database, ws.repo).map(entry => ({
-        ...entry, anchor: null, conflict: { ...entry.conflict, id: legacyId, question: `overlap:${"0".repeat(24)}` },
-      })), Date.now());
-
-      const status = await service.scan(ws.repo);
-      await service.settled();
-      expect(status.conflicts).toEqual([expect.objectContaining({ id: conflict!.id, shortId: conflict!.shortId, status: "dismissed" })]);
-      expect(readConflicts(ws.database, ws.repo).map(entry => [entry.conflict.id, entry.anchor !== null])).toEqual([[conflict!.id, true]]);
-      expect(hook.calls()).toHaveLength(2);
-    });
   });
 
-  describe("experiments off (the default)", () => {
-    it("refuses mine, theirs and new with the experimental message, and dismisses", async () => {
-      const { ws } = await overlap(FILE, CHECKPOINT);
-      const service = ws.service();
-      await service.setEnabled(ws.repo, true);
-      const status = await service.scan(ws.repo);
-      expect(status.experimental).toEqual({ conflictVerdicts: false });
-      const [conflict] = open(status.conflicts);
-      for (const action of ["mine", "theirs", "new"] as const) {
-        await expect(service.resolveConflict(ws.repo, conflict!.id, action, "Share them.")).rejects.toMatchObject({
-          code: "invalid-state", message: "experimental: set RERAIL_EXPERIMENTAL_CONFLICT_VERDICTS=1",
-        });
-      }
-      expect(open((await service.status(ws.repo)).conflicts)).toHaveLength(1);
-      expect((await service.resolveConflict(ws.repo, conflict!.id, "dismiss")).conflicts[0]).toMatchObject({ status: "dismissed" });
-    });
-
-    it("cards offer no verdicts: what it is, whom to talk to, and that it can be dismissed; chat answers read nothing", async () => {
+  describe("the card", () => {
+    it("says what the conflict is, whom to talk to, and that it can be dismissed; only the person decides", async () => {
       const { ws } = await overlap(FILE, CHECKPOINT);
       const service = ws.service();
       await service.setEnabled(ws.repo, true);
@@ -544,11 +523,8 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       expect(card).toContain("  → Talk to Tim Belanger about it (jbarnes-1).");
       expect(card).toContain("    Not a conflict? Dismiss it on the Merge Assist page of the dashboard.");
       expect(card).toContain("Don't decide it yourself; only the user decides.");
-      expect(card).not.toMatch(/keep mine|take theirs|new decision|later/u);
-      // The card was handed to this session, and the answer is plain: still nothing is read or recorded.
-      expect(await service.answerFromChat(ws.repo, "take theirs", "session-1")).toEqual({ kind: "none" });
-      expect(await service.answerFromChat(ws.repo, "later", "session-1")).toEqual({ kind: "none" });
-      expect(open((await service.status(ws.repo)).conflicts)[0]).toMatchObject({ status: "open", snooze: null });
+      // Handed once to the session: a later boundary carries it no more.
+      expect(takeNotes(service, "session-1", ws.repo)).toEqual([]);
     });
   });
 });

@@ -11,7 +11,7 @@ import type { DimmerConfig } from "./policy.js";
 export const RISE_MARGIN = 1.2;
 /** Below `interruptCost` times this, a conflict is only logged. */
 export const AMBIENT_SHARE = 0.25;
-/** At or above `interruptCost` times this (and only with lock-in ×4, fast growth and no verdict), the line stops. */
+/** At or above `interruptCost` times this (and only with lock-in ×4 and fast growth), the line stops. */
 export const STOP_MULTIPLE = 4;
 /** Stops one session gets. */
 export const STOPS_PER_SESSION = 1;
@@ -61,7 +61,7 @@ export function expectedRework(signals: ConflictSignals): number {
 function wantedLevel(signals: ConflictSignals, score: number, previous: DimmerPrevious | null, config: DimmerConfig): ConflictLevel {
   if (signals.quiet) return "logged";
   const margin = (level: ConflictLevel): number => (previous === null || rank(level) <= rank(previous.level) ? 1 : RISE_MARGIN);
-  const stops = signals.lockIn === 4 && signals.growthPerHour > config.stopGrowthPerHour && !signals.verdict;
+  const stops = signals.lockIn === 4 && signals.growthPerHour > config.stopGrowthPerHour;
   if (stops && score >= config.interruptCost * STOP_MULTIPLE * margin("stop")) return "stop";
   if (score >= config.interruptCost * margin("checkpoint")) return "checkpoint";
   if (score >= config.interruptCost * AMBIENT_SHARE * margin("ambient")) return "ambient";
@@ -110,8 +110,5 @@ export function dimmerReasons(signals: ConflictSignals): string[] {
     ? `${plural(signals.callers, "caller", "callers")}, and ${plural(signals.otherRefs, "other branch touches", "other branches touch")} the same files`
     : plural(signals.callers, "caller", "callers");
   const merge = signals.pullRequest ? `pull request open: about ${hours(signals.hoursToMerge)} to merge` : `about ${hours(signals.hoursToMerge)} to merge`;
-  const odds = signals.verdict
-    ? "a verdict on this question exists"
-    : signals.pLose === 0.5 ? "no verdict yet: even odds either side loses" : `${Math.round(signals.pLose * 100)}% this side loses`;
-  return [`${LOCK_IN_TEXT[signals.lockInClass]}: ×${signals.lockIn}`, growth, blast, merge, odds];
+  return [`${LOCK_IN_TEXT[signals.lockInClass]}: ×${signals.lockIn}`, growth, blast, merge, "even odds either side loses"];
 }

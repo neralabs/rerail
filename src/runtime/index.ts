@@ -30,61 +30,6 @@ export {
 export { type HostRuntimePort, type HostRuntimeSessionState, RerailHostRuntime } from "./host-runtime.js";
 export { OmpMessageContentSource, type OmpSessionEntryLike, OmpWatermarkStore } from "./omp-semantic.js";
 export { SqlitePresentationPreferenceStore } from "./presentation-preference-store.js";
-export { type AgentJudge, createAgentJudge, type JudgeOutcome, type JudgeTask } from "./merge-assist/agent-judge.js";
-export {
-  type CheckRunner,
-  createLocalCheckRunner,
-  lastNumber,
-  type Resolution,
-  type ResolutionEvidence,
-  type ResolveInput,
-  resolveConflict,
-  type SideCheckOutcome,
-  type SideEvidence,
-} from "./merge-assist/resolver.js";
-export {
-  PANEL_PERSPECTIVES,
-  PANEL_PROMPT_VERSION,
-  panelAnswerSchema,
-  panelJsonSchema,
-  panelOrder,
-  panelPerspective,
-  panelPrompt,
-  type PanelDesign,
-  type PanelInput,
-  type PanelResult,
-  type PanelVote,
-  runPanel,
-} from "./merge-assist/panel.js";
-export { deriveSignals, draftDecision, type DraftOutcome, validateSignals } from "./merge-assist/capture.js";
-export {
-  type CaptureInput,
-  fenceData,
-  MAX_RANKED,
-  newJudgeNonce,
-  type RankInput,
-  rankJsonSchemaFor,
-  rankPrompt,
-  type RankVerdict,
-  rankVerdictSchema,
-  rankVerdictSchemaFor,
-  type SignalsInput,
-} from "./merge-assist/judge-prompts.js";
-export {
-  comparePositions,
-  type ComparisonOutcome,
-  type ConceptTree,
-  contestPositions,
-  extractPositions,
-  MAX_AREA_UNITS,
-  type OwnPosition,
-  type PositionContest,
-  type PositionsOutcome,
-  type PositionVerdict,
-  type RankedUnits,
-  rankUnits,
-  unitLine,
-} from "./merge-assist/alignment.js";
 export {
   createMergeAssistService,
   MERGE_ASSIST_ERROR_CODES,
@@ -94,7 +39,6 @@ export {
   type MergeAssistRuntime,
   type MergeAssistService,
   type MergeAssistServiceOptions,
-  type MergeAssistSession,
   type MergeAssistSettingsChange,
 } from "./merge-assist/service.js";
 export {

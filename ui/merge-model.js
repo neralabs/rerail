@@ -1,10 +1,9 @@
 /**
  * Merge Assist's page as pure derivations of `GET /api/merge-assist` (`MergeAssistStatus` in
- * `src/engine/merge-assist/model.ts`), without the DOM: the tabs, the sections and their order, the conflicts, what
- * the status strip and the readiness checklist say, who is behind a finding, the sidebar's count,
- * and which pull request links are safe to open.
+ * `src/engine/merge-assist/model.ts`), without the DOM: the conflicts and their order, what the status strip and the
+ * readiness checklist say, the Settings form, the sidebar's count, and which pull request links are safe to open.
  *
- * Decision text, authors, branch names, titles and links come from other people's branches. Every string here is
+ * Conflict titles, summaries, authors, branch names and links come from other people's work. Every string here is
  * plain text for a text node; `safePeerUrl` is the only way a peer's link becomes an `href`.
  */
 import { andList, fmt, plural } from "./format.js";
@@ -38,82 +37,14 @@ export function safePeerUrl(url, { repositoryKey = "", repository = null } = {})
   return parsed.href;
 }
 
-/** What a finding came from: "pull request #12" or "branch jbarnes/session-retry". */
-export function peerLabel(peer) {
-  return peer.kind === "pull-request" && peer.number !== null ? `pull request #${peer.number}` : `branch ${peer.ref}`;
-}
-
-/**
- * Who is behind a finding. A pull request's author is the one GitHub reports (`null` when it named none); a local
- * branch's is the one its decision file declares (`declared`), which nothing checks. A pull request's decision file
- * declares an author too, and that one is never shown: anyone can write any name there.
- */
-export function authorOf(finding) {
-  return finding.peer.kind === "pull-request"
-    ? { name: finding.peer.author, declared: false }
-    : { name: finding.candidate.author, declared: true };
-}
-
-/** The badge for how a decision is enforced: a code rule Rerail checks, or a note only the person's agent judges. */
-export const levelText = level => (level === "code" ? "Checked by Rerail" : "Judged by your agent");
-export const levelTitle = level => (level === "code"
-  ? "A code rule: Rerail's engine checks the code exactly and steers your agent when it breaks the decision."
-  : "A note: Rerail cannot check this exactly, so it is given to your coding agent as guidance.");
-
-/* ---------- sections ---------- */
-
-const pendingFinding = (pending, id) => pending.get(`finding:${id}`);
-const pendingCandidate = (pending, id) => pending.get(`candidate:${id}`);
-const newestFirst = field => (a, b) => (Date.parse(b[field]) || 0) - (Date.parse(a[field]) || 0);
-
-/**
- * The page's sections from the status and the writes still in flight (`pending`: `finding:<id>` → action,
- * `candidate:<id>` → state). A dismissed finding or an undone one leaves its section at once; an adopted one stays
- * in Needs your review, busy, until the daemon confirms it applies. A decision marked as not a rule moves to Not rules
- * at once, and a restored one back. Each item carries `busy` while its write is in flight.
- * - `talk`: open findings that contradict one of this branch's decisions;
- * - `review`: other open findings;
- * - `added`: findings applied here, absorbed or adopted;
- * - `own`: this branch's active decisions; `notRules`: the ones marked as not a rule.
- * Findings are newest first by `updatedAt`, decisions by `createdAt`.
- */
-export function sectionsOf(status, pending = new Map()) {
-  const talk = [], review = [], added = [];
-  for (const finding of [...status.findings].sort(newestFirst("updatedAt"))) {
-    const action = pendingFinding(pending, finding.id);
-    const item = { ...finding, busy: action !== undefined };
-    if (action === "dismiss" || action === "undo") continue;
-    if (finding.status === "applied") added.push(item);
-    else if (finding.status === "open") (finding.tier === "talk" ? talk : review).push(item);
-  }
-  const own = [], notRules = [];
-  for (const decision of [...status.own].sort(newestFirst("createdAt"))) {
-    const state = pendingCandidate(pending, decision.id) ?? decision.state;
-    const item = { ...decision, state, busy: pendingCandidate(pending, decision.id) !== undefined };
-    (state === "rejected" ? notRules : own).push(item);
-  }
-  return { talk, review, added, own, notRules };
-}
-
-/**
- * The sidebar's count: what waits for the person, 0 while off. Every open conflict, logged ones included, as the
- * Conflicts tab counts them; findings that need review; and decided-differently findings no conflict already carries
- * (each one also becomes a conflict of kind `decisions`).
- */
-export function waitingCount(status, pending = new Map()) {
+/** The sidebar's count: every open conflict, logged ones included, as the Conflicts section counts them; 0 while off. */
+export function openConflictCount(status, dismissing = new Set()) {
   if (status === null || status === undefined || !status.enabled) return 0;
-  const { talk, review } = sectionsOf(status, pending);
-  const carried = new Set(status.conflicts.filter(c => c.kind === "decisions").map(c => c.theirs.decisionId));
-  const open = conflictSections(status, pending).open;
-  return open.length + review.length + talk.filter(f => !carried.has(f.candidate.id)).length;
+  return conflictSections(status, dismissing).open.length;
 }
 
 /* ---------- conflicts ---------- */
 
-/** The longest decision text a person may save when resolving a conflict (the API's limit). */
-export const DECISION_MAX = 600;
-
-export const KIND_TEXT = { overlap: "Overlapping work", decisions: "Contradicting decisions" };
 /** What each level did in the session, as a card says it beside its age. */
 export const LEVEL_TEXT = {
   stop: "Asks you before an edit to these files",
@@ -129,35 +60,24 @@ const LEVEL_RANK = { stop: 0, checkpoint: 1, ambient: 2, logged: 3 };
 /** Why a queued conflict is quieter than its score calls for: today's checkpoints, or the session's one stop, are used. */
 export const QUEUED_TEXT = "Queued: over the interruption budget, so shown as ambient until it frees up";
 
-/** A snoozed conflict's chip: put off with "later" until it gets louder, theirs opens a pull request, or a merge. */
-export function snoozeText(conflict) {
-  if (conflict.snooze === null || conflict.snooze === undefined) return null;
-  if (conflict.snooze.endedAt !== null) return null;
-  return "Later: snoozed until it gets louder, theirs opens a pull request, or a merge";
-}
+const newestFirst = field => (a, b) => (Date.parse(b[field]) || 0) - (Date.parse(a[field]) || 0);
 
 /**
- * The Conflicts tab's lists from the status and the writes in flight (`conflict:<id>` → action). `open`: loudest
- * first (stop, checkpoint, ambient, logged), each newest first; one marked Not a conflict leaves at once. `closed`:
- * resolved and dismissed, as the status orders them. Each item carries `busy` while its write is in flight.
+ * The Conflicts section's lists from the status and the dismissals in flight (`dismissing`, conflict ids). `open`:
+ * loudest first (stop, checkpoint, ambient, logged), each newest first; one being dismissed leaves at once and comes
+ * back if the write fails. `dismissed`: as the status orders them.
  */
-export function conflictSections(status, pending = new Map()) {
-  const open = [], closed = [];
+export function conflictSections(status, dismissing = new Set()) {
+  const open = [], dismissed = [];
   for (const conflict of status.conflicts) {
-    const action = pending.get(`conflict:${conflict.id}`);
-    if (conflict.status === "open" && action === "dismiss") continue;
-    (conflict.status === "open" ? open : closed).push({ ...conflict, busy: action !== undefined });
+    if (conflict.status === "open") {
+      if (!dismissing.has(conflict.id)) open.push(conflict);
+    } else {
+      dismissed.push(conflict);
+    }
   }
   open.sort((a, b) => LEVEL_RANK[a.level] - LEVEL_RANK[b.level] || newestFirst("detectedAt")(a, b));
-  return { open, closed };
-}
-
-export const MERGE_TABS = ["conflicts", "decisions"];
-
-/** The tab shown: the one the person chose, else Conflicts while any is open, else Decisions. */
-export function tabOf(status, chosen, pending = new Map()) {
-  if (MERGE_TABS.includes(chosen)) return chosen;
-  return conflictSections(status, pending).open.length > 0 ? "conflicts" : "decisions";
+  return { open, dismissed };
 }
 
 /** A side's heading: "PR #398 · Tim", or the label alone when no author is known. */
@@ -173,56 +93,11 @@ export function hunkLines(hunk) {
   });
 }
 
-const RESOLVED_HOW = { mine: () => "Kept mine", theirs: c => `Took theirs (${c.theirs.label})`, new: () => "New decision", dismiss: () => null };
-
-/**
- * How a closed conflict ended, for its folded row: `badge` (Resolved, Not a conflict), `how` ("Took theirs (PR #398)";
- * `null` when the badge says it all), `who` ("by tbelanger"), and the decision's `text` and `rule` path.
- */
-export function resolutionText(conflict) {
-  const r = conflict.resolution;
-  if (r === null) return { badge: conflict.status === "dismissed" ? "Not a conflict" : "Resolved", how: null, who: null, text: null, rule: null, at: null };
+/** What Dismiss says once it is done, and when it fails. */
+export function dismissToast(conflict) {
   return {
-    badge: r.action === "dismiss" ? "Not a conflict" : "Resolved",
-    how: RESOLVED_HOW[r.action](conflict), who: `by ${r.name}`,
-    text: r.text, rule: r.rule, at: r.at,
-  };
-}
-
-/** The decision text an action opens with: that side's summary for Keep mine and Take theirs, empty for a new one. */
-export function draftText(conflict, action) {
-  if (action === "mine") return conflict.mine.summary;
-  if (action === "theirs") return conflict.theirs.summary;
-  return "";
-}
-
-/** Why a draft can't be saved yet, or `null`: it needs 1 to 600 characters. */
-export function draftProblem(text) {
-  const length = text.trim().length;
-  if (length === 0) return "Write the decision first.";
-  if (length > DECISION_MAX) return `${fmt(length - DECISION_MAX)} ${plural(length - DECISION_MAX, "character")} over the ${fmt(DECISION_MAX)}-character limit.`;
-  return null;
-}
-
-/** The body of `PUT /api/merge-assist/conflicts` (without the scope): Not a conflict carries no text. */
-export function resolveBody(conflictId, action, text = "") {
-  return action === "dismiss" ? { conflictId, action } : { conflictId, action, text: text.trim() };
-}
-
-const SAVED_LEAD = { mine: "Kept mine. ", theirs: "Took theirs. ", new: "" };
-
-/** What a conflict action says once it is done (`ignored`: Git ignores `.rerail/candidates/` here), and when it fails. */
-export function conflictToast(conflict, action, text, ignored) {
-  if (action === "dismiss") {
-    return {
-      done: `Marked ${quoted(conflict.title)} as not a conflict. It stays hidden for ${conflict.theirs.label}.`,
-      fail: `Couldn’t mark ${quoted(conflict.title)} as not a conflict`,
-    };
-  }
-  const share = ignored ? "" : " Commit it to share it with teammates.";
-  return {
-    done: `${SAVED_LEAD[action]}Saved ${quoted(text)} as a decision on this branch. It steers your coding agent from its next turn.${share}`,
-    fail: `Couldn’t save the decision for ${quoted(conflict.title)}`,
+    done: `Marked ${quoted(conflict.title)} as not a conflict. It stays hidden for ${conflict.theirs.label}.`,
+    fail: `Couldn’t mark ${quoted(conflict.title)} as not a conflict`,
   };
 }
 
@@ -349,34 +224,21 @@ export function budgetText(budget) {
   return { text: `${fmt(budget.used)} of ${fmt(budget.limit)} ${window}`, spent: budget.used >= budget.limit };
 }
 
-const FOUND_SECTIONS = ["talk", "review", "added"];
-
 /**
- * After Scan now, for its toast: what the scan read and what it found that the page did not show before (`before`, the
- * status at the click, or `null`), not the totals. A finding is new when it was not in that section, or its decision
- * changed. "Scanned 3 local branches. New: 1 decided differently, 2 need your review." or "Scanned 3 local branches:
- * nothing new." While another process's scan runs, the request started none, and the status holds the last results.
+ * After Scan now, for its toast: what the scan read and how many open conflicts it found that the page did not show
+ * before (`before`, the status at the click, or `null`), not the totals. "Scanned 3 local branches. New: 2 conflicts."
+ * or "Scanned 3 local branches: nothing new." While another process's scan runs, the request started none, and the
+ * status holds the last results.
  */
 export function scanSummary(before, after) {
   if (after.scanning) return "Another scan is running; showing the last results.";
   if (after.lastScan === null) return "Scan finished.";
-  const keyOf = (section, finding) => `${section}\u0000${finding.id}\u0000${JSON.stringify(finding.candidate)}`;
-  const shown = new Set();
-  if (before !== null) {
-    const sections = sectionsOf(before);
-    for (const section of FOUND_SECTIONS) for (const finding of sections[section]) shown.add(keyOf(section, finding));
-  }
-  const sections = sectionsOf(after);
-  const fresh = Object.fromEntries(FOUND_SECTIONS.map(section =>
-    [section, sections[section].filter(finding => !shown.has(keyOf(section, finding))).length]));
-  const found = [];
-  if (fresh.talk > 0) found.push(`${fmt(fresh.talk)} decided differently`);
-  if (fresh.review > 0) found.push(`${fmt(fresh.review)} ${plural(fresh.review, "needs", "need")} your review`);
-  if (fresh.added > 0) found.push(`${fmt(fresh.added)} added from other branches`);
+  const shown = new Set(before === null ? [] : conflictSections(before).open.map(c => c.id));
+  const fresh = conflictSections(after).open.filter(c => !shown.has(c.id)).length;
   const problems = after.lastScan.problems.length;
   const tail = problems === 0 ? "" : ` ${fmt(problems)} ${plural(problems, "thing")} could not be read; see Last scan.`;
   const what = scannedWhat(after.lastScan);
-  return `${found.length === 0 ? `Scanned ${what}: nothing new.` : `Scanned ${what}. New: ${found.join(", ")}.`}${tail}`;
+  return `${fresh === 0 ? `Scanned ${what}: nothing new.` : `Scanned ${what}. New: ${fmt(fresh)} ${plural(fresh, "conflict")}.`}${tail}`;
 }
 
 /* ---------- the readiness checklist ---------- */
@@ -386,11 +248,11 @@ export function scanSummary(before, after) {
  * for a command or path). The page renders each segment as a text node.
  */
 export function readinessChecks(readiness) {
-  const { judge, github, candidatesIgnored, rulesActive } = readiness;
+  const { judge, github } = readiness;
   const checks = [];
   checks.push(judge.available && judge.runner !== null
-    ? { key: "judge", ok: true, text: [`Your agent CLI: ${runnerName(judge.runner)}. Rerail runs it to summarise corrections and compare decisions.`] }
-    : { key: "judge", ok: false, text: [`No agent CLI found. Capturing corrections and comparing decisions need ${SUPPORTED_RUNNERS} on your PATH. Without one, scans still apply exact checks.`] });
+    ? { key: "judge", ok: true, text: [`Your agent CLI: ${runnerName(judge.runner)}. Rerail runs it for a one-line summary of each conflict.`] }
+    : { key: "judge", ok: false, text: [`No agent CLI found. One-line summaries of conflicts need ${SUPPORTED_RUNNERS} on your PATH. Without one, conflicts are still found and summed up from their files and lines.`] });
   switch (github.state) {
     case "signed-in":
       checks.push({ key: "github", ok: true, text: [{ code: "gh" }, ` is signed in${github.login ? ` as ${github.login}` : ""}. Open pull requests are read with your sign-in.`] });
@@ -404,12 +266,6 @@ export function readinessChecks(readiness) {
     default:
       checks.push({ key: "github", ok: false, text: ["This repository is not on GitHub, so only local branches are read."] });
   }
-  checks.push(candidatesIgnored
-    ? { key: "ignored", ok: false, text: ["Git ignores ", { code: ".rerail/candidates/" }, " here, so decisions stay on this machine and teammates don't see them."] }
-    : { key: "ignored", ok: true, text: [{ code: ".rerail/candidates/" }, " is not ignored, so committed decisions travel with your branch."] });
-  checks.push(rulesActive
-    ? { key: "rules", ok: true, text: ["Rerail is set up and started in this checkout, so decisions can steer."] }
-    : { key: "rules", ok: false, text: ["Rerail isn't set up and started in this checkout, so decisions can't steer yet."], overview: true });
   return checks;
 }
 
@@ -431,7 +287,7 @@ export function writeError(error) {
   return text;
 }
 
-/** A decision quoted in a toast: “…”, cut at 80 characters. */
+/** A conflict's title quoted in a toast: “…”, cut at 80 characters. */
 export function quoted(text) {
   const plain = String(text).replace(/\s+/gu, " ").trim();
   return `“${plain.length > 80 ? `${plain.slice(0, 79).trimEnd()}…` : plain}”`;

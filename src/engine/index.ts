@@ -12,7 +12,6 @@ export {
   type AdapterEvent,
   type AdapterSample,
   type AdapterSession,
-  type ConflictNotice,
   type RerailEventLoop,
   type RerailHost,
   RULE_MESSAGE_TYPE,
@@ -42,7 +41,7 @@ export {
   type RepositoryStartState,
   type RepositoryStatus,
 } from "./catalog/repository-model.js";
-export { adoptRemote, checkoutStatus, listRepositories, lookupCheckout, mergeAssistEnabled, recordCheckout } from "./catalog/repository-registry.js";
+export { adoptRemote, checkoutStatus, listRepositories, lookupCheckout, recordCheckout } from "./catalog/repository-registry.js";
 export { exportRulesDump, importRulesDump, RULES_DUMP_FILE, type RulesDump } from "./catalog/rule-bootstrap.js";
 export { offerSetupReview } from "./catalog/setup-review.js";
 export {
@@ -88,9 +87,7 @@ export {
 export { CODE_RULE_FORMAT, type CodeRule, codeRuleSchema, type CodeRuleScope } from "./code-rule/code-rule-schema.js";
 export { type CodeRuleAuditor, type CodeRuleSourceLanguage, type CodeRuleViolation, renderSteer, type RuleSteerDelivery } from "./code-rule/code-rule.js";
 export {
-  asLateSteer, checkpointNote, conflictCard, type ConflictCardInput, conflictLine, conflictNote, type ConflictNoteInput, conflictUrl, decidedNote,
-  headlineText, mergeAssistNote, type MergeAssistNote, messageSteer, stopNote,
-  SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, steerBlock, steerHeadlines,
+  asLateSteer, conflictNote, headlineText, messageSteer, SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, steerBlock, steerHeadlines,
   steerRules, type SteerFinding, type SteerTrigger,
 } from "./code-rule/rerail-steer.js";
 export { steerOrigin } from "./code-rule/steer-origin.js";
@@ -104,9 +101,8 @@ export {
   nativePlatformSuffix,
   resolveNativeBindingPath,
 } from "./native/native.js";
-export { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "./native/semantic-primitives.js";
+export { NativeSemanticEmbedder, SemanticWorkspace } from "./native/semantic-primitives.js";
 export { type SemanticEmbedder, type Watermark } from "./native/semantic-types.js";
-export { type GlobMatcher, globPattern } from "./glob-pattern.js";
 export { deniedByPathBoundary, SENSITIVE_FILE_NAMES } from "./path-boundary.js";
 export { agentTranscriptPayload, callNamesDeniedPath, WITHHELD_INPUT, WITHHELD_OUTPUT, WITHHELD_PAYLOAD } from "./transcript-boundary.js";
 export { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "./stable-json.js";
@@ -137,13 +133,8 @@ export {
   checkouts,
   events,
   libraryRules,
-  mergeAssistItems,
   mergeAssistJudgments,
   mergeAssistState,
-  type MergeAssistItemRow,
-  type MergeAssistJudgmentRow,
-  type MergeAssistStateRow,
-  type NewMergeAssistItemRow,
   policySessionOwners,
   presentationPreferences,
   repositories,
@@ -163,22 +154,6 @@ export {
 export { bundledModelPath, ENTRY_POINTS, PACKAGE_ROOT, REQUIRED_NODE_MAJOR } from "./package-root.js";
 export { RERAIL_HOSTS, type CodingAgentState } from "./adapter-contract.js";
 export { type ApiCaller } from "./catalog/repository-model.js";
-export * from "./merge-assist/candidate.js";
-export { type CandidateSet } from "./merge-assist/candidate-files.js";
-export { callSummary, correctionFamilies } from "./merge-assist/corrections.js";
 export * from "./merge-assist/model.js";
-export * from "./merge-assist/signals.js";
-export * from "./merge-assist/alignment/commits.js";
-export * from "./merge-assist/alignment/ledger.js";
-export * from "./merge-assist/alignment/symbols.js";
-export * from "./merge-assist/alignment/units.js";
-export { baseBranch, mergeBase, mergeTreeConflicts } from "./merge-assist/branch-git.js";
-export * from "./merge-assist/conflict-record.js";
 export * from "./merge-assist/policy.js";
-export * from "./merge-assist/commit-staging.js";
-export * from "./merge-assist/conflict-evidence.js";
-export * from "./merge-assist/overlap.js";
-export * from "./merge-assist/conflicts.js";
-export * from "./merge-assist/conflict-signals.js";
 export * from "./merge-assist/dimmer.js";
-export * from "./merge-assist/chat-answer.js";

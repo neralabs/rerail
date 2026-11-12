@@ -1,5 +1,5 @@
 /**
- * The command handler (docs/merge-assist-v1-build.md §12.5): the person's conflict hook command, run on every conflict
+ * The command handler (docs/merge-assist-v1-build.md §9.5): the person's conflict hook command, run on every conflict
  * event. It runs from the checkout's root as an argv array, never through a shell, with the person's environment plus
  * `RERAIL_CONFLICT_EVENT` and `RERAIL_CONFLICT_ID`; the conflict reaches it only on stdin, as one JSON object, never in
  * its arguments. It may answer on stdout with `{ "note"?: string, "status"?: string }` (at most 4 KiB): `note` joins

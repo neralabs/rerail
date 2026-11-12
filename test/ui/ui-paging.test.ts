@@ -53,7 +53,7 @@ function emptyDaemon(url: URL): unknown {
   if (url.pathname === "/api/sessions") return { sessions: [], total: 0, nextCursor: null };
   if (url.pathname === "/api/sessions/s1") return { session };
   if (url.pathname === "/api/sessions/s1/events") return { events: [], nextAfter: 0, pageLimit: 500 };
-  if (url.pathname === "/api/merge-assist") return { enabled: false, findings: [], own: [] };
+  if (url.pathname === "/api/merge-assist") return { enabled: false, conflicts: [] };
   throw new Error(`unexpected ${url.pathname}`);
 }
 

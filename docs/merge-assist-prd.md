@@ -1,16 +1,42 @@
-# PRD: Merge Assist — shared decisions between branches, before they merge
+# PRD: Merge Assist — work in flight, before it merges
 
-**Document type:** Product requirements and target design for an experimental feature.
+**Document type:** Product requirements, target design and evaluation record for an experimental feature.
 
-**Delivery status:** Design. A first version runs on the demo branch, specified in
-[merge-assist-v1-build.md](merge-assist-v1-build.md); [§14](#14-build-status) lists what it builds and what this
-design changes. Experimental and internal testing; off unless a person turns it on for a repository. This design
-builds on two features of `main` that the demo branch predates, a worktree's own rules (#340) and rule approval
-(#362); the branch is rebased onto `main` before any of it is built.
+**Delivery status:** Experimental and internal testing; off unless a person turns it on for a repository. What is
+delivered is in [Delivered scope](#delivered-scope) and specified in
+[merge-assist-v1-build.md](merge-assist-v1-build.md). Everything from §1 on is the design and evaluation record of
+sharing decisions between branches, which was built, evaluated and removed; its results stand as recorded.
 
 **Prior art:** [Amp comparison](branch-coordination-amp-comparison.md).
 
+## Delivered scope
+
+Merge Assist delivers **conflicts in flight**: it watches the branches and pull requests in flight and tells the person
+and their coding agent when their work collides with someone else's, before it merges.
+
+- **Detection:** overlapping hunks between this checkout's work and live local branches, remote-tracking branches and
+  open pull requests, one conflict per other ref and file
+  ([build §9.1](merge-assist-v1-build.md#91-detection)).
+- **Levels:** the dimmer's logged, ambient, checkpoint and stop, from what Git measures, with hysteresis and budgets
+  on interruptions; `.rerail/policy.yaml` sets only its three numbers.
+- **The conflict hook:** `detected`, `level-changed` and `closed` events, heard by the delivery, summary and command
+  handlers ([build §9.5](merge-assist-v1-build.md#95-the-conflict-hook)).
+- **Delivery modes:** `chat`, `terminal` or `both`, the person's line, the status line segment, and the stop before
+  an edit in every mode ([build §9.6](merge-assist-v1-build.md#96-the-delivery-setting)).
+- **Dismiss** ("Not a conflict"), the person's one action on a conflict; turning Merge Assist on and off; the person's
+  settings.
+
+**Removed.** Decision capture (corrections saved as decisions on the branch), decision delivery (the tiers, session
+focus, area ranking, coordination units, notes about decisions), the decision ledger (verdicts written as files that
+travelled with their branch) and the resolver (a policy that named the winning side) were built and evaluated as
+recorded below, then removed. Git history keeps them under the tags `merge-assist-capture-experiment` (capture,
+delivery, verdicts and the resolver, up to their removal) and `merge-assist-ledger-experiment` (the decision ledger).
+Sections below that present them as current carry a **Removed** line; their text and numbers are unchanged.
+
 ## 1. Summary
+
+> **Removed.** The decision-sharing design this section summarises is not delivered; see
+> [Delivered scope](#delivered-scope).
 
 When several people and their coding agents work on parallel branches, they remake the same decisions, and they find
 the ones they made differently only when the branches merge. Merge Assist makes each decision a **rule** that lives on
@@ -62,6 +88,8 @@ a merge, a hosted service, Git hosts other than GitHub for pull requests.
 
 ## 4. Principles
 
+> **Removed** where a principle is about decisions as rules; the rest holds for the delivered scope.
+
 - **Rules are the shared intent.** A decision is a rule document: the same format, checks, approval and settings as
   every other rule. No second format.
 - **Git is the sync layer and the source of truth.** Where a decision lives, who made it and how it changed come from
@@ -76,6 +104,9 @@ a merge, a hosted service, Git hosts other than GitHub for pull requests.
   their sign-in.
 
 ## 5. The model: a decision is a rule
+
+> **Removed.** Decisions as rules in `.rerail/rules/` were designed, never built; the demo build's candidate files that
+> stood in for them were removed (tag `merge-assist-capture-experiment`).
 
 ### 5.1 What a decision is
 
@@ -141,6 +172,10 @@ is the repository's `origin`; a remote-tracking branch whose last commit is by s
 request whose author has write access (`gh api repos/{o}/{r}/collaborators/{login}/permission`).
 
 ## 6. Experience
+
+> **Removed.** Every experience below (capture, decision delivery, tiers, landing checks, the decisions page, its
+> CLI and MCP tools, and the decision notes) was removed; the delivered experience is in
+> [build §5](merge-assist-v1-build.md#5-experience). The evaluations in §6.3 are kept as recorded.
 
 ### 6.1 Turning it on
 
@@ -457,8 +492,9 @@ seeds × both orders.
 A decision ledger was then built on that shape and evaluated: each verdict written as a file that travelled with its
 branch, read back as a view from Git, settling the same dispute in other checkouts by precedent and holding other
 branches' unmerged verdicts back from agents. It was removed, and with it the precedent step of the policy. A person's
-verdict now writes only the decision the branch follows (`.rerail/candidates/`) and settles the conflict in that
-checkout.
+verdict then wrote only the decision the branch follows (`.rerail/candidates/`) and settled the conflict in that
+checkout. **Removed** since: verdicts, the resolver and `.rerail/candidates/`; Dismiss is the only action on a
+conflict.
 
 #### 6.3.8 Coordination units from other pull requests, surfaced
 
@@ -619,6 +655,9 @@ labelled with its author.
 
 ## 7. Architecture
 
+> **Removed.** The worker, the decision index and the caches below were designed, not delivered. The delivered
+> modules are in [build §8](merge-assist-v1-build.md#8-technical-design).
+
 ```mermaid
 flowchart LR
   subgraph git["Git, the shared layer"]
@@ -683,7 +722,7 @@ one thread.
 
 The developer's Claude Code or Codex CLI, run headless with no tools, MCP servers included, in an empty `0700`
 temporary folder, with a JSON schema, a 120-second timeout and a 1 MiB output cap. The invocations are those of the
-v1 build ([v1 §9.4](merge-assist-v1-build.md#94-agent-cli-invocations)), each checked against a real run. OMP and Pi
+v1 build ([build §8.3](merge-assist-v1-build.md#83-agent-cli-invocations)), each checked against a real run. OMP and Pi
 are not judges: their MCP servers stay connected in print mode. At most one run at a time per machine, queued;
 40 runs an hour per repository by default. A comparison's schema names only the ids it was given.
 
@@ -703,6 +742,9 @@ dismiss, undo). `status()` is one database read; the dashboard's poll runs no pr
 
 ## 8. Security
 
+> **Removed** where a threat concerns decisions, rule files or approval; the delivered threat model is
+> [build §6](merge-assist-v1-build.md#6-security).
+
 Merge Assist reads what other people wrote (rule files, pull request metadata, branch names, logins) and passes some
 of it to the judge and, when applied, into the developer's agent session.
 
@@ -719,9 +761,12 @@ of it to the judge and, when applied, into the developer's agent session.
 | Runaway spending of the developer's tokens | Path relevance, pair caching, one run at a time, an hourly budget shown on the page |
 
 The v1 build's two security and correctness reviews, and their fixes, carry over
-([v1 §7](merge-assist-v1-build.md#7-security)).
+([build §6](merge-assist-v1-build.md#6-security)).
 
 ## 9. Privacy and data
+
+> **Removed** for capture, comparison and committed rules; the delivered scope sends only the summary call's inputs
+> and reads `gh` ([build §7](merge-assist-v1-build.md#7-privacy)).
 
 **What leaves the machine:**
 
@@ -745,6 +790,8 @@ For a session to stay entirely local, Merge Assist stays off: capture needs a mo
 developer's agent CLI. A local-model judge (Codex with `--oss`) is an open question.
 
 ## 10. Performance and scale budgets
+
+> **Removed.** Budgets for the decision index, not delivered.
 
 | Measure | Budget |
 | --- | --- |
@@ -787,6 +834,8 @@ decisions rather than lines, it works across coding agents, and its shared layer
 
 ## 13. Migration from the demo build
 
+> **Removed.** No migration runs: the demo build's candidate files and tables were removed with it.
+
 - `.rerail/candidates/*.json` files are converted once into rules in `.rerail/rules/` (the candidate's `rule`, or a
   guidance rule from its decision), in the working tree, for the person to commit.
 - The v1 activation (library rules with `~tag` ids, repository-off and checkout-on settings, explicit offs in nested
@@ -794,6 +843,9 @@ decisions rather than lines, it works across coding agents, and its shared layer
 - v1's tables are replaced by the index, queue and caches; v1 findings are re-derived.
 
 ## 14. Build status
+
+> **Removed.** This table compares two designs of decision sharing, both removed; the delivered scope is in
+> [Delivered scope](#delivered-scope).
 
 | Part | v1 demo build | This design |
 | --- | --- | --- |
@@ -812,6 +864,9 @@ decisions rather than lines, it works across coding agents, and its shared layer
 | Built and carried over | Judge runner and prompts with fences and repair; `gh` client; capture validation; tier model and its tests; notes' framing and escaping; agent guards; dashboard page structure | |
 
 ## 15. Plan and demo
+
+> **Removed.** This plan and demo are for decision sharing; the delivered demo is
+> [build §10](merge-assist-v1-build.md#10-demo).
 
 Order of work:
 
@@ -836,6 +891,9 @@ The demo, on two machines:
    team decision, and Jeremy's next branch sees it for review.
 
 ## 16. Open questions
+
+> **Removed** with decision sharing; open questions for the delivered scope are in
+> [build §11](merge-assist-v1-build.md#11-open-questions).
 
 - Should the approval policy for team decisions be on by default once Merge Assist is on?
 - A short `rationale` field in rule documents, so reviewers read why and not only what?

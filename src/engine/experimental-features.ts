@@ -22,16 +22,6 @@ export function steerStrategiesEnabled(env: NodeJS.ProcessEnv = process.env): bo
 }
 
 /**
- * Experimental: Merge Assist's conflict verdicts. A person resolves a conflict with keep mine, take theirs or a new
- * decision (the API, `rerail merge-assist resolve` and the dashboard), and answers a checkpoint card from chat (keep
- * mine, take theirs, new decision, later). Off, a conflict can only be dismissed ("not a conflict"), chat answers read
- * nothing, and the cards tell the person to talk to the other side's author.
- */
-export function conflictVerdictsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.RERAIL_EXPERIMENTAL_CONFLICT_VERDICTS === "1";
-}
-
-/**
  * Experimental: the first session in a checkout starts one full-repository audit in log mode. Off, a session audits
  * only what it changes; `rerail scan` still audits the repository when asked.
  */

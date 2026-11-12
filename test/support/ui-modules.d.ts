@@ -156,8 +156,7 @@ declare module "*/ui/state.js" {
   export function setScope(scope: { repository?: string; checkout?: string } | null): void;
   export const ui: {
     filter: string; query: string; range: number; actRule: string | null; histOutcome: "all" | "steered" | "logged"; view: string; settingUp: boolean;
-    selectedSession: string | null; panel: object | null; mergePending: Map<string, string>; mergeOpen: Set<string>; mergeSwitching: boolean; mergeScanning: boolean;
-    mergeTab: "conflicts" | "decisions" | null; mergeDraft: { id: string; action: "mine" | "theirs" | "new"; text: string } | null;
+    selectedSession: string | null; panel: object | null; mergeDismissing: Set<string>; mergeOpen: Set<string>; mergeSwitching: boolean; mergeScanning: boolean;
     mergeSettings: { delivery: import("../../src/engine/index.js").ConflictDelivery; command: string; timeout: string; problem: string | null; field: "command" | "timeout" | null } | null;
     mergeSaving: boolean;
   };
@@ -324,46 +323,28 @@ declare module "*/ui/first-open.js" {
 
 declare module "*/ui/merge-model.js" {
   type Status = import("../../src/engine/index.js").MergeAssistStatus;
-  type Finding = import("../../src/engine/index.js").Finding;
-  type OwnDecision = import("../../src/engine/index.js").OwnDecision;
+  type Conflict = import("../../src/engine/index.js").Conflict;
   type Segment = string | { code: string };
   export const RUNNER_NAMES: Record<string, string>;
   export function runnerName(id: string): string;
-  export function authorOf(finding: Finding): { name: string | null; declared: boolean };
   export function safePeerUrl(url: unknown, context?: { repositoryKey?: string; repository?: string | null }): string | null;
-  export function peerLabel(peer: Finding["peer"]): string;
-  export function levelText(level: "code" | "note"): string;
-  export interface Sections {
-    talk: Array<Finding & { busy: boolean }>;
-    review: Array<Finding & { busy: boolean }>;
-    added: Array<Finding & { busy: boolean }>;
-    own: Array<OwnDecision & { busy: boolean }>;
-    notRules: Array<OwnDecision & { busy: boolean }>;
-  }
-  export function sectionsOf(status: Status, pending?: Map<string, string>): Sections;
-  export function waitingCount(status: Status | null | undefined, pending?: Map<string, string>): number;
+  export function openConflictCount(status: Status | null | undefined, dismissing?: Set<string>): number;
   export function branchText(status: Status): { branch: string; base: string };
   export function judgeText(judge: Status["readiness"]["judge"]): { ok: boolean; text: string; detail?: string | null };
   export function githubText(github: Status["readiness"]["github"]): { ok: boolean; text: string };
   export function scannedWhat(lastScan: NonNullable<Status["lastScan"]>): string;
   export function budgetText(budget: Status["budget"]): { text: string; spent: boolean };
   export function scanSummary(before: Status | null, after: Status): string;
-  export function readinessChecks(readiness: Status["readiness"]): Array<{ key: string; ok: boolean; text: Segment[]; overview?: boolean }>;
+  export function readinessChecks(readiness: Status["readiness"]): Array<{ key: string; ok: boolean; text: Segment[] }>;
   export function writeError(error: unknown): string;
   export function quoted(text: string): string;
-  type Conflict = import("../../src/engine/index.js").Conflict;
-  type ConflictAction = import("../../src/engine/index.js").ConflictAction;
-  export const DECISION_MAX: number;
-  export function conflictSections(status: Status, pending?: Map<string, string>): { open: Array<Conflict & { busy: boolean }>; closed: Array<Conflict & { busy: boolean }> };
-  export function tabOf(status: Status, chosen: string | null, pending?: Map<string, string>): "conflicts" | "decisions";
+  export const LEVEL_TEXT: Record<Conflict["level"], string>;
+  export const LEVEL_BADGE: Record<Conflict["level"], string>;
+  export const QUEUED_TEXT: string;
+  export function conflictSections(status: Status, dismissing?: Set<string>): { open: Conflict[]; dismissed: Conflict[] };
+  export function sideHeading(side: Conflict["mine"]): string;
   export function hunkLines(hunk: string): Array<{ kind: "add" | "del" | "meta" | "ctx"; text: string }>;
-  export function resolutionText(conflict: Conflict): {
-    badge: string; how: string | null; who: string | null; text: string | null; rule: string | null; at: string | null;
-  };
-  export function draftText(conflict: Conflict, action: "mine" | "theirs" | "new"): string;
-  export function draftProblem(text: string): string | null;
-  export function resolveBody(conflictId: string, action: ConflictAction, text?: string): { conflictId: string; action: ConflictAction; text?: string };
-  export function conflictToast(conflict: Conflict, action: ConflictAction, text: string, ignored: boolean): { done: string; fail: string };
+  export function dismissToast(conflict: Conflict): { done: string; fail: string };
   export function hookFailure(conflict: Conflict): string | null;
   type ConflictDelivery = import("../../src/engine/index.js").ConflictDelivery;
   type MergeAssistSettings = import("../../src/engine/index.js").MergeAssistSettings;

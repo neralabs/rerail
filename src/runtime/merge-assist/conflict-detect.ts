@@ -1,30 +1,28 @@
 /**
- * Finding the checkout's in-flight conflicts (CONTRACT: Detection). Mine is this checkout's working changes, committed
- * and not, against the merge base of HEAD with the base branch. Theirs are the live branches: local branches,
- * remote-tracking branches, and open pull requests whose head this repository holds. An overlap is one conflict per
- * (their ref, file); a Talk finding (a teammate's decision contradicting one of this branch's) is one conflict too.
- * Every open one is levelled by the dimmer (`conflict-level.ts`). Reads Git only and writes no file; never merges.
+ * Detecting the checkout's in-flight conflicts (docs/merge-assist-v1-build.md §9.1). Mine is this checkout's working
+ * changes, committed and not, against the merge base of HEAD with the base branch. Theirs are the live branches: local
+ * branches, remote-tracking branches, and open pull requests whose head this repository holds. An overlap is one
+ * conflict per (their ref, file). Every open one is levelled by the dimmer (`conflict-level.ts`). Reads Git only and
+ * writes no file; never merges.
  */
 import { basename } from "node:path";
-import { and, eq, ne } from "drizzle-orm";
 import type { CheckoutContext } from "../../engine/catalog/repository-model.js";
 import { mergeAssistEnabled } from "../../engine/catalog/repository-registry.js";
 import { gitText, runGit } from "../../engine/git.js";
 import { baseBranch, commitExists, currentBranch, isAncestor, localBranches, mergeBase, remoteBranches } from "../../engine/merge-assist/branch-git.js";
-import { readWorktreeCandidates } from "../../engine/merge-assist/candidate-files.js";
-import { CANDIDATE_DIRECTORY, candidateFileName, type Candidate } from "../../engine/merge-assist/candidate.js";
-import { conflictId, conflictRecord, shortConflictId, undimmed } from "../../engine/merge-assist/conflicts.js";
+import { conflictId, overlapQuestion, undimmed } from "../../engine/merge-assist/conflicts.js";
 import type { Conflict, ConflictSide } from "../../engine/merge-assist/model.js";
 import { ADJACENT_LINES, clipLines, contestedAnchor, type GitConflict, HUNK_LINES, identify, ownBase, refHunks, type RefHunk, workspaceRanges } from "../../engine/merge-assist/overlap.js";
-import { questionOf } from "../../engine/merge-assist/conflict-record.js";
 import type { RerailDatabase } from "../../engine/storage/database.js";
-import { mergeAssistItems, type MergeAssistItemRow } from "../../engine/storage/schema.js";
 import { withSummary } from "./conflict-delivery.js";
 import { levelConflicts, saveBudget } from "./conflict-level.js";
 import { mergeDetected, readConflicts, type StoredConflict, writeConflicts } from "./conflict-store.js";
 import type { PullRequestSummary } from "./github.js";
 import { personName } from "./people.js";
 import { isoSeconds } from "./state.js";
+
+/** Why a checkout with no base branch has no conflicts. */
+export const NO_BASE_PROBLEM = "No base branch found (origin/HEAD, main or master), so Rerail cannot tell this branch's work from the base's.";
 
 export interface DetectContext {
   readonly database: RerailDatabase;
@@ -62,9 +60,7 @@ function mineView(root: string): MineView | null {
   const base = baseBranch(root);
   const start = head === undefined || base === null ? null : mergeBase(root, base.ref, head);
   if (head === undefined || base === null || start === null) return null;
-  // Rerail's own candidate files are decisions, not work that overlaps.
-  const ranges = new Map([...workspaceRanges(root, start)].filter(([path]) => !path.startsWith(`${CANDIDATE_DIRECTORY}/`)));
-  return { head, branch: currentBranch(root), base, start, person: personName(root), ranges };
+  return { head, branch: currentBranch(root), base, start, person: personName(root), ranges: workspaceRanges(root, start) };
 }
 
 /** Open pull requests whose head this repository holds and this branch does not already contain. */
@@ -78,12 +74,12 @@ function pullRefs(root: string, view: MineView, pulls: readonly PullRequestSumma
 function branchRefs(root: string, view: MineView, taken: Set<string>): LiveRef[] {
   const upstream = gitText(root, ["rev-parse", "--symbolic-full-name", "@{upstream}"]);
   const skip = new Set([view.base.ref, upstream, view.branch === null ? undefined : `refs/heads/${view.branch}`]);
-  const candidates = [
+  const tips = [
     ...localBranches(root).map(branch => ({ name: `refs/heads/${branch.name}`, commit: branch.commit })),
     ...remoteBranches(root).map(remote => ({ name: remote.ref, commit: remote.commit })),
   ];
   const refs: LiveRef[] = [];
-  for (const { name, commit } of candidates) {
+  for (const { name, commit } of tips) {
     if (skip.has(name) || taken.has(commit) || isAncestor(root, commit, view.base.ref) || isAncestor(root, commit, view.head)) continue;
     taken.add(commit);
     refs.push({ ref: name.replace(/^refs\/(?:heads|remotes)\//u, ""), label: name.replace(/^refs\/(?:heads|remotes)\//u, ""), sha: commit, author: null, url: null, title: null });
@@ -188,7 +184,7 @@ function theirSide(root: string, ref: LiveRef, own: string, overlap: GitConflict
   return {
     label: ref.label, ref: ref.ref, sha: ref.sha, author: ref.author ?? tip.author, tip: tipState(root, ref.sha, ref.ref, tip.at), url: ref.url,
     summary: subject ?? ref.title ?? `edits ${overlap.file}`,
-    location: `${overlap.file}:${lineOf(overlap.theirs)}`, hunk: hunkText(overlap.theirs), decisionId: null,
+    location: `${overlap.file}:${lineOf(overlap.theirs)}`, hunk: hunkText(overlap.theirs),
   };
 }
 
@@ -196,20 +192,11 @@ function theirSide(root: string, ref: LiveRef, own: string, overlap: GitConflict
 function mySide(root: string, view: MineView, file: string, ours: readonly RefHunk[]): ConflictSide {
   return {
     label: "This branch", ref: view.branch ?? view.head, sha: view.head, author: view.person, tip: null, url: null,
-    summary: contestedSubject(root, file, ours, view.start, view.head, true) ?? `edits ${file}`, location: `${file}:${lineOf(ours)}`, hunk: hunkText(ours), decisionId: null,
+    summary: contestedSubject(root, file, ours, view.start, view.head, true) ?? `edits ${file}`, location: `${file}:${lineOf(ours)}`, hunk: hunkText(ours),
   };
 }
 
-/**
- * An overlap's question: its file and the content anchor of the base lines their overlapping change covers
- * (`contestedAnchor`). Another overlap in the same file, or another change of theirs, is another question, so a
- * resolution of one never settles the other; lines added above it, or a base that moved, keep it.
- */
-function overlapQuestion(file: string, anchor: string): string {
-  return questionOf({ files: [file], symbols: [anchor] }, { files: [file], symbols: [anchor] });
-}
-
-/** One overlap with one ref as a stored conflict: the status's view of it, its file, and its log record. */
+/** One overlap with one ref as a stored conflict: the status's view of it, its file, its base lines and their anchor. */
 function overlapConflict(context: DetectContext, view: MineView, ref: LiveRef, own: string, overlap: GitConflict & { ours: readonly RefHunk[] }): StoredConflict {
   const { file } = overlap;
   const lines = overlap.theirs.map(hunk => ({ lo: hunk.lo, hi: hunk.hi }));
@@ -226,18 +213,21 @@ function overlapConflict(context: DetectContext, view: MineView, ref: LiveRef, o
       `Both sides change ${file} within ${ADJACENT_LINES} lines of each other: yours near line ${lineOf(overlap.ours)}, theirs near line ${lineOf(overlap.theirs)} of the base.`,
       `Only ${ref.label}'s own work since it left ${view.base.name} counts; Rerail merged nothing to find this.`,
     ],
-    detectedAt: isoSeconds(context.now()), resolution: null, summary: null, hook: null,
+    detectedAt: isoSeconds(context.now()), dismissal: null, summary: null, hook: null,
   };
-  const record = conflictRecord({ repository: context.checkout.repositoryKey, base: view.start, question }, { a: { side: mine, files: [file] }, b: { side: theirs, files: [file] } });
-  return { conflict, files: [file], lines, anchor, record };
+  return { conflict, files: [file], lines, anchor };
+}
+
+/** The live refs this checkout's work is compared with: open pull requests, then branches. */
+function liveRefs(root: string, view: MineView, pulls: readonly PullRequestSummary[]): { pulls: LiveRef[]; branches: LiveRef[] } {
+  const open = pullRefs(root, view, pulls);
+  return { pulls: open, branches: branchRefs(root, view, new Set(open.map(pull => pull.sha))) };
 }
 
 /** The overlaps of this branch's changes with each live ref; `touches` gets every changed file's refs that change it too. */
-function overlapConflicts(context: DetectContext, view: MineView, touches: Map<string, Set<string>>): StoredConflict[] {
+function overlapConflicts(context: DetectContext, view: MineView, refs: readonly LiveRef[], touches: Map<string, Set<string>>): StoredConflict[] {
   if (view.ranges.size === 0) return [];
   const root = context.checkout.checkoutPath;
-  const pulls = pullRefs(root, view, context.pulls);
-  const refs = [...pulls, ...branchRefs(root, view, new Set(pulls.map(pull => pull.sha)))];
   return refs.flatMap(ref => {
     const own = ownBase(root, ref.sha, view.base.ref, view.start);
     if (own === null) return [];
@@ -247,183 +237,47 @@ function overlapConflicts(context: DetectContext, view: MineView, touches: Map<s
   });
 }
 
-interface TalkEvidence {
-  readonly mine?: { id?: unknown; decision?: unknown };
-  readonly judgment?: { explanation?: unknown } | null;
-  readonly branch?: unknown;
-}
-
-/** A Talk finding's other side: its ref and how the person knows it. */
-function talkRef(item: MergeAssistItemRow): { ref: string; label: string } {
-  if (item.peerKind === "pull-request") return { ref: `refs/pull/${item.peerNumber}/head`, label: `PR #${item.peerNumber}` };
-  const branch = (item.evidence as TalkEvidence).branch;
-  const name = typeof branch === "string" ? branch : item.peerRef;
-  return { ref: name, label: name };
-}
-
-/** A decision's side of a contradiction. */
-function decisionSide(side: Pick<ConflictSide, "label" | "ref" | "sha" | "author" | "url">, decision: { id: string; decision: string }): ConflictSide {
-  return { ...side, tip: null, summary: decision.decision, location: `${CANDIDATE_DIRECTORY}/${candidateFileName(decision.id)}`, hunk: null, decisionId: decision.id };
-}
-
-/** The decision an amendment chain starts from: `supersedes` followed back while `supersedesOf` knows the next. */
-function chainRoot(id: string, supersedesOf: (id: string) => string | null | undefined): string {
-  const seen = new Set([id]);
-  let root = id;
-  for (let next = supersedesOf(root); next !== null && next !== undefined && !seen.has(next); next = supersedesOf(root)) {
-    seen.add(next);
-    root = next;
-  }
-  return root;
-}
-
 /**
- * A contradiction's question: the pair of decisions where each started, sorted, with their scopes. Both branches
- * compute the same one, and an amendment (Keep mine amends this branch's) leaves it settled.
+ * What a detection pass left in the store, and what it held just before (the conflict hook's events come from both);
+ * how many live branches and open pull requests it compared this checkout's work with, and what it could not read.
  */
-function talkQuestion(item: MergeAssistItemRow, mineId: string, own: ReadonlyMap<string, Candidate>, known: ReadonlyMap<string, Candidate>): string {
-  const mineRoot = chainRoot(mineId, id => own.get(id)?.supersedes);
-  const theirRoot = chainRoot(item.candidateId, id => (id === item.candidateId ? item.candidate : known.get(`${item.peerRef}\0${id}`))?.supersedes);
-  const symbols = [mineRoot, theirRoot].sort();
-  const theirRootScope = known.get(`${item.peerRef}\0${theirRoot}`)?.scope ?? item.candidate.scope;
-  return questionOf({ files: [...(own.get(mineRoot)?.scope ?? own.get(mineId)?.scope ?? [])], symbols }, { files: [...theirRootScope], symbols });
-}
-
-/** Both sides of a contradiction: this branch's decision, and theirs, by who wrote it (GitHub's author for a pull request). */
-function talkSides(view: MineView, item: MergeAssistItemRow & { peerCommit: string }, mine: { id: string; decision: string }): Pick<Conflict, "mine" | "theirs"> {
-  const peer = talkRef(item);
-  const author = item.peerKind === "pull-request" && item.peerAuthor !== null ? item.peerAuthor : item.candidate.author;
-  return {
-    mine: decisionSide({ label: "This branch", ref: view.branch ?? view.head, sha: view.head, author: view.person, url: null }, mine),
-    theirs: decisionSide({ label: peer.label, ref: peer.ref, sha: item.peerCommit, author, url: item.peerUrl }, item.candidate),
-  };
-}
-
-/** A contradiction's title (their decision, cut at 80 characters) and why it is one. */
-function talkText(item: MergeAssistItemRow, evidence: TalkEvidence): Pick<Conflict, "title" | "evidence"> {
-  const { decision } = item.candidate;
-  const explanation = typeof evidence.judgment?.explanation === "string" ? evidence.judgment.explanation : "Your agent's compare call found they contradict.";
-  return {
-    title: decision.length > 80 ? `${decision.slice(0, 79).trimEnd()}…` : decision,
-    evidence: [explanation, "Both decisions are in force on their branches, and no decision in force answers which one holds."],
-  };
-}
-
-/**
- * One Talk finding as a stored conflict, or null when it lacks this branch's decision or their commit. `theirs` holds
- * the other branches' candidates this checkout knows, by `<peer ref>\0<candidate id>`.
- */
-function talkConflict(context: DetectContext, view: MineView, item: MergeAssistItemRow, own: ReadonlyMap<string, Candidate>, known: ReadonlyMap<string, Candidate>): StoredConflict | null {
-  const evidence = item.evidence as TalkEvidence;
-  const mineId = evidence.mine?.id;
-  const mineDecision = evidence.mine?.decision;
-  const peerCommit = item.peerCommit;
-  if (typeof mineId !== "string" || typeof mineDecision !== "string" || peerCommit === null) return null;
-  const mineFiles = [...(own.get(mineId)?.scope ?? [])];
-  const question = talkQuestion(item, mineId, own, known);
-  const { mine, theirs } = talkSides(view, { ...item, peerCommit }, { id: mineId, decision: mineDecision });
-  const id = conflictId(question, theirs.ref);
-  const conflict: Conflict = {
-    id, kind: "decisions", status: "open", ...undimmed(id), question, ...talkText(item, evidence), mine, theirs,
-    detectedAt: isoSeconds(context.now()), resolution: null, summary: null, hook: null,
-  };
-  const files = [...new Set([...mineFiles, ...item.candidate.scope])];
-  const record = conflictRecord({ repository: context.checkout.repositoryKey, base: view.start, question }, { a: { side: mine, files: mineFiles }, b: { side: theirs, files: item.candidate.scope } });
-  return { conflict, files, lines: [], anchor: null, record };
-}
-
-/** Every Talk finding the person has not dismissed, as a conflict of kind `decisions`. */
-async function decisionConflicts(context: DetectContext, view: MineView): Promise<StoredConflict[]> {
-  const root = context.checkout.checkoutPath;
-  const items = context.database.select().from(mergeAssistItems).where(and(
-    eq(mergeAssistItems.checkoutPath, root), eq(mergeAssistItems.origin, "peer"), eq(mergeAssistItems.tier, "talk"), ne(mergeAssistItems.status, "dismissed"),
-  )).all();
-  if (items.length === 0) return [];
-  const own = new Map((await readWorktreeCandidates(root)).candidates.map(candidate => [candidate.id, candidate]));
-  const peers = context.database.select().from(mergeAssistItems).where(and(eq(mergeAssistItems.checkoutPath, root), eq(mergeAssistItems.origin, "peer"))).all();
-  const known = new Map(peers.map(peer => [`${peer.peerRef}\0${peer.candidateId}`, peer.candidate]));
-  return items.flatMap(item => talkConflict(context, view, item, own, known) ?? []);
-}
-
-/** What a detection pass left in the store, and what it held just before: the conflict hook's events come from both. */
 export interface DetectedConflicts {
   readonly before: StoredConflict[];
   readonly after: StoredConflict[];
-}
-
-/** An overlap stored before its id was anchored on content, under its content-anchored id: its state kept. */
-function anchoredOverlap(entry: StoredConflict, anchor: string): StoredConflict {
-  const question = overlapQuestion(entry.files[0]!, anchor);
-  const id = conflictId(question, entry.conflict.theirs.ref);
-  return { ...entry, anchor, record: { ...entry.record, question }, conflict: { ...entry.conflict, id, shortId: shortConflictId(id), question } };
-}
-
-/** Whether `entry` is an overlap stored before ids were anchored on content, with the base lines to anchor it on. */
-const unanchored = (entry: StoredConflict): boolean => entry.conflict.kind === "overlap" && entry.anchor === null && entry.lines.length > 0 && entry.files.length > 0;
-
-/**
- * `entries` with each overlap `anchors` names (by old id) under its content-anchored id. Two that anchor alike become
- * one, a settled one first, so a dismissal holds.
- */
-function withAnchors(entries: readonly StoredConflict[], anchors: ReadonlyMap<string, string>): StoredConflict[] {
-  const anchored = entries.map(entry => {
-    const anchor = anchors.get(entry.conflict.id);
-    return anchor === undefined || !unanchored(entry) ? entry : anchoredOverlap(entry, anchor);
-  });
-  const settledFirst = [...anchored.filter(entry => entry.conflict.status !== "open"), ...anchored.filter(entry => entry.conflict.status === "open")];
-  const seen = new Set<string>();
-  return settledFirst.filter(entry => !seen.has(entry.conflict.id) && Boolean(seen.add(entry.conflict.id)));
+  readonly peers: { readonly branches: number; readonly pullRequests: number };
+  readonly problems: string[];
 }
 
 /**
- * Overlaps stored before ids were anchored on content (an id from base line numbers) take their content-anchored id
- * once, before the pass reads the store, so a base that moved above them closes no open one and reopens no dismissed
- * one, and the hook hears no event for it. The anchor is read at the base the overlap was found at, over the base
- * lines it stored. One stored without those lines cannot be anchored: it keeps its old id until the pass finds it again
- * under the new one, a dismissal included.
- */
-function anchorStoredOverlaps(context: DetectContext): void {
-  const root = context.checkout.checkoutPath;
-  const anchors = new Map(readConflicts(context.database, root).filter(unanchored)
-    .map(entry => [entry.conflict.id, contestedAnchor(root, entry.record.base, entry.files[0]!, entry.lines)]));
-  if (anchors.size === 0) return;
-  context.database.transaction(tx => {
-    if (mergeAssistEnabled(tx, context.checkout.repositoryKey)) writeConflicts(tx, root, withAnchors(readConflicts(tx, root), anchors), context.now());
-  }, { behavior: "immediate" });
-}
-
-/**
- * Find the checkout's conflicts and store them with the ones already settled, give every open one its level from the
- * dimmer, and a new one its fallback summary for the status line. The dimmer's verdict signal is whether this checkout
- * holds a resolution on the question. A detection that finishes after Merge Assist was turned off stores nothing and
- * answers null.
+ * Find the checkout's conflicts and store them with the dismissed ones, give every open one its level from the dimmer,
+ * and a new one its fallback summary for the status line. A detection that finishes after Merge Assist was turned off
+ * stores nothing and answers null.
  */
 export async function detectConflicts(context: DetectContext): Promise<DetectedConflicts | null> {
   const root = context.checkout.checkoutPath;
   const view = mineView(root);
-  if (view === null) return null;
-  anchorStoredOverlaps(context);
+  if (view === null) return { before: [], after: [], peers: { branches: 0, pullRequests: 0 }, problems: [NO_BASE_PROBLEM] };
   const touches = new Map<string, Set<string>>();
-  const detected = [...overlapConflicts(context, view, touches), ...await decisionConflicts(context, view)];
+  const refs = liveRefs(root, view, context.pulls);
+  const detected = overlapConflicts(context, view, [...refs.pulls, ...refs.branches], touches);
   const known = readConflicts(context.database, root);
   const result = mergeDetected(known, detected);
-  const resolved = new Set(result.filter(({ conflict }) => conflict.status === "resolved").map(({ conflict }) => conflict.question));
   const now = context.now();
   const levelled = levelConflicts({
     db: context.database, root, base: view.base, start: view.start, head: view.head, person: view.person, sessionId: context.sessionId,
-    pulls: context.pulls, verdict: question => resolved.has(question), touches, now,
+    pulls: context.pulls, touches, now,
   }, result);
   const entries = levelled.entries.map(entry => (entry.conflict.status === "open" ? withSummary(entry, now) : entry));
   const examined = new Set([...known, ...entries].map(entry => entry.conflict.id));
   return context.database.transaction(tx => {
     if (!mergeAssistEnabled(tx, context.checkout.repositoryKey)) return null;
-    // A person's answer given while this ran stands, and an open conflict another pass stored meanwhile, which this
-    // one never examined, stays as it is: it was not found gone.
+    // A dismissal given while this ran stands, and an open conflict another pass stored meanwhile, which this one
+    // never examined, stays as it is: it was not found gone.
     const before = readConflicts(tx, root);
     const unexamined = before.filter(entry => entry.conflict.status === "open" && !examined.has(entry.conflict.id));
     const after = [...mergeDetected(before, entries), ...unexamined];
     writeConflicts(tx, root, after, now);
     saveBudget(tx, view.person, levelled.grants, now);
-    return { before, after };
+    return { before, after, peers: { branches: refs.branches.length, pullRequests: refs.pulls.length }, problems: [] };
   }, { behavior: "immediate" });
 }

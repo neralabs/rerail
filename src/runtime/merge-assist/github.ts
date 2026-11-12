@@ -1,27 +1,14 @@
 /**
- * Merge Assist's reads from GitHub, through the developer's own `gh` sign-in: whether `gh` is signed in, the open pull
- * requests, the candidate files at a pull request's head commit, and an author's permission on the repository.
+ * Merge Assist's reads from GitHub, through the developer's own `gh` sign-in: whether `gh` is signed in (and as whom), and
+ * the open pull requests.
  *
  * `gh` only ever runs `auth status`, `pr list` and `api` with GET, with no shell, prompts off, a timeout and an output
  * cap. Everything it prints is untrusted: each response is validated, and every value placed in an API path is checked
- * for shape first. See docs/merge-assist-v1-build.md §7.
+ * for shape first. See docs/merge-assist-v1-build.md §6.
  */
 import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
 import { z } from "zod";
-import {
-  CANDIDATE_DIRECTORY,
-  type Candidate,
-  isCandidateFileName,
-  MAX_CANDIDATE_BYTES,
-} from "../../engine/merge-assist/candidate.js";
-import {
-  CANDIDATE_NOT_REGULAR,
-  CANDIDATE_TOO_LARGE,
-  candidateFromText,
-  capCandidateNames,
-  type CandidateSet,
-} from "../../engine/merge-assist/candidate-files.js";
 import type { GithubReadiness } from "../../engine/merge-assist/model.js";
 import { resolveExecutable } from "../npm.js";
 
@@ -39,21 +26,11 @@ export interface PullRequestSummary {
   updatedAt: string;
 }
 
-export type AuthorPermission = "admin" | "maintain" | "write" | "triage" | "read" | "none" | "unknown";
-
 export interface GithubClient {
   /** `not-github` without a repository; `missing` without `gh`; `signed-out` when `gh auth status` fails for the host. */
   readiness(repository: GithubRepository | null): Promise<GithubReadiness>;
   /** Up to 50 open pull requests; entries that fail validation are left out. Throws `GithubError` when `gh` fails. */
   openPullRequests(repository: GithubRepository): Promise<PullRequestSummary[]>;
-  /**
-   * The candidate files in `.rerail/candidates/` at `commit`; none when the folder is not there. A file that is too
-   * large or does not parse is a problem, not an error. Throws `GithubError` when `gh` fails, so a failed read is never
-   * mistaken for a branch without candidates.
-   */
-  candidatesAt(repository: GithubRepository, commit: string): Promise<CandidateSet>;
-  /** The author's permission on the repository: `none` when GitHub does not know them, `unknown` when it will not say. */
-  authorPermission(repository: GithubRepository, login: string): Promise<AuthorPermission>;
 }
 
 export interface GithubClientOptions {
@@ -81,8 +58,6 @@ const STDERR_TAIL_CHARS = 2_000;
 const DETAIL_CHARS = 300;
 const PULL_REQUEST_LIMIT = 50;
 const MAX_TITLE_LENGTH = 256;
-/** How many candidate files are fetched at once. */
-const FETCH_CONCURRENCY = 4;
 const ACCEPT_HEADER = "Accept: application/vnd.github+json";
 
 const HOST_PATTERN = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*$/iu;
@@ -90,7 +65,6 @@ const OWNER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9-]{0,38}$/u;
 const NAME_PATTERN = /^[A-Za-z0-9._-]{1,100}$/u;
 const COMMIT_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/u;
 const LOGIN_PATTERN = /^[A-Za-z0-9-]{1,39}(?:\[bot\])?$/u;
-const BASE64_PATTERN = /^[A-Za-z0-9+/=\r\n]*$/u;
 
 function validRepository(repository: GithubRepository): boolean {
   return HOST_PATTERN.test(repository.host)
@@ -118,7 +92,7 @@ function validRefName(name: string): boolean {
     && name !== "@";
 }
 
-/** `gh pr list` names an app author `app/<slug>`; the REST API and candidate files call it `<slug>[bot]`. */
+/** `gh pr list` names an app author `app/<slug>`; the REST API calls it `<slug>[bot]`. */
 function loginOf(author: { login: string; is_bot?: boolean | undefined }): string | null {
   const login = author.login.startsWith("app/") ? `${author.login.slice("app/".length)}[bot]` : author.login;
   return LOGIN_PATTERN.test(login) ? login : null;
@@ -197,65 +171,7 @@ const pullRequestEntrySchema = z.object({
   updatedAt: z.iso.datetime(),
 });
 
-const listingEntrySchema = z.object({
-  name: z.string(),
-  path: z.string(),
-  type: z.string(),
-  size: z.number().int().nonnegative(),
-  sha: z.string().regex(COMMIT_PATTERN),
-});
-
-const blobSchema = z.object({
-  sha: z.string(),
-  size: z.number().int().nonnegative(),
-  encoding: z.string(),
-  content: z.string(),
-});
-
-const permissionSchema = z.object({
-  permission: z.string(),
-  role_name: z.string().optional(),
-});
-
 const userSchema = z.object({ login: z.string() });
-
-const ROLE_PERMISSIONS: Record<string, AuthorPermission> = { admin: "admin", maintain: "maintain", write: "write", triage: "triage" };
-const BASE_PERMISSIONS: Record<string, AuthorPermission> = { admin: "admin", write: "write", read: "read", none: "none" };
-
-/** `role_name` names a built-in role more precisely than `permission` (maintain, triage); a custom role falls back. */
-function permissionOf(value: z.infer<typeof permissionSchema>): AuthorPermission {
-  if (value.role_name !== undefined && Object.hasOwn(ROLE_PERMISSIONS, value.role_name)) return ROLE_PERMISSIONS[value.role_name] ?? "unknown";
-  return Object.hasOwn(BASE_PERMISSIONS, value.permission) ? BASE_PERMISSIONS[value.permission] ?? "unknown" : "unknown";
-}
-
-const utf8 = new TextDecoder("utf-8", { fatal: true });
-
-/** A candidate file's text from a blob's base64 content, or why it cannot be read. */
-function blobText(blob: z.infer<typeof blobSchema>): { ok: true; text: string } | { ok: false; problem: string } {
-  if (blob.size > MAX_CANDIDATE_BYTES) return { ok: false, problem: CANDIDATE_TOO_LARGE };
-  if (blob.encoding !== "base64" || !BASE64_PATTERN.test(blob.content)) return { ok: false, problem: "GitHub did not return its content" };
-  const bytes = Buffer.from(blob.content, "base64");
-  if (bytes.byteLength > MAX_CANDIDATE_BYTES) return { ok: false, problem: CANDIDATE_TOO_LARGE };
-  try {
-    return { ok: true, text: utf8.decode(bytes) };
-  } catch {
-    return { ok: false, problem: "not UTF-8 text" };
-  }
-}
-
-async function mapLimited<T, R>(items: readonly T[], limit: number, map: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = new Array<R>(items.length);
-  let next = 0;
-  const worker = async (): Promise<void> => {
-    while (next < items.length) {
-      const index = next;
-      next += 1;
-      results[index] = await map(items[index] as T);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return results;
-}
 
 export function createGithubClient(options: GithubClientOptions = {}): GithubClient {
   const spawnProcess = options.spawn ?? spawn;
@@ -348,10 +264,6 @@ export function createGithubClient(options: GithubClientOptions = {}): GithubCli
     return new GithubError("failed", `gh could not ${what}${result.detail === "" ? "." : `: ${result.detail}`}`, result.status);
   }
 
-  function repositoryPath(repository: GithubRepository): string {
-    return `repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.name)}`;
-  }
-
   async function readiness(repository: GithubRepository | null): Promise<GithubReadiness> {
     if (repository === null || !validRepository(repository)) return { state: "not-github", login: null, repository: null };
     const name = `${repository.owner}/${repository.name}`;
@@ -422,66 +334,5 @@ export function createGithubClient(options: GithubClientOptions = {}): GithubCli
     return pullRequests;
   }
 
-  async function candidatesAt(repository: GithubRepository, commit: string): Promise<CandidateSet> {
-    checkRepository(repository);
-    if (!COMMIT_PATTERN.test(commit)) throw new GithubError("invalid-input", "The commit is not a full Git object id.");
-    await requireSignedIn(repository.host);
-    const base = repositoryPath(repository);
-    const listing = await apiGet(repository.host, `${base}/contents/${CANDIDATE_DIRECTORY}?ref=${commit}`);
-    if (!listing.ok && listing.status === 404) return { candidates: [], problems: [], truncated: false };
-    if (!listing.ok) throw failed(`list ${CANDIDATE_DIRECTORY} at ${commit.slice(0, 12)}`, listing);
-    if (!Array.isArray(listing.value)) return { candidates: [], problems: [`${CANDIDATE_DIRECTORY}: not a folder`], truncated: false };
-
-    const problems: string[] = [];
-    const files = new Map<string, z.infer<typeof listingEntrySchema>>();
-    for (const entry of listing.value) {
-      const name = z.object({ name: z.string() }).safeParse(entry);
-      if (!name.success || !isCandidateFileName(name.data.name)) continue;
-      const parsed = listingEntrySchema.safeParse(entry);
-      if (!parsed.success || parsed.data.path !== `${CANDIDATE_DIRECTORY}/${parsed.data.name}`) {
-        problems.push(`${name.data.name}: GitHub listed it in a shape Rerail does not read`);
-      } else if (parsed.data.type !== "file") {
-        problems.push(`${name.data.name}: ${CANDIDATE_NOT_REGULAR}`);
-      } else {
-        files.set(parsed.data.name, parsed.data);
-      }
-    }
-    const capped = capCandidateNames([...files.keys()]);
-    problems.push(...capped.problems);
-
-    const read = capped.read.flatMap(name => files.get(name) ?? []);
-    const outcomes = await mapLimited(read, FETCH_CONCURRENCY, async (file): Promise<{ candidate: Candidate } | { problem: string }> => {
-      if (file.size > MAX_CANDIDATE_BYTES) return { problem: `${file.name}: ${CANDIDATE_TOO_LARGE}` };
-      const blob = await apiGet(repository.host, `${base}/git/blobs/${file.sha}`);
-      if (!blob.ok) throw failed(`read ${CANDIDATE_DIRECTORY}/${file.name} at ${commit.slice(0, 12)}`, blob);
-      const parsed = blobSchema.safeParse(blob.value);
-      if (!parsed.success || parsed.data.sha !== file.sha) throw new GithubError("invalid-response", `GitHub returned something other than ${CANDIDATE_DIRECTORY}/${file.name}.`);
-      const text = blobText(parsed.data);
-      return text.ok ? candidateFromText(file.name, text.text) : { problem: `${file.name}: ${text.problem}` };
-    });
-    const candidates: Candidate[] = [];
-    for (const outcome of outcomes) {
-      if ("candidate" in outcome) candidates.push(outcome.candidate);
-      else problems.push(outcome.problem);
-    }
-    return { candidates, problems, truncated: capped.truncated };
-  }
-
-  async function authorPermission(repository: GithubRepository, login: string): Promise<AuthorPermission> {
-    checkRepository(repository);
-    if (!LOGIN_PATTERN.test(login)) throw new GithubError("invalid-input", "The author is not a GitHub login.");
-    let result: ApiResult;
-    try {
-      await requireSignedIn(repository.host);
-      result = await apiGet(repository.host, `${repositoryPath(repository)}/collaborators/${encodeURIComponent(login)}/permission`);
-    } catch (error) {
-      if (error instanceof GithubError) return "unknown";
-      throw error;
-    }
-    if (!result.ok) return result.status === 404 ? "none" : "unknown";
-    const parsed = permissionSchema.safeParse(result.value);
-    return parsed.success ? permissionOf(parsed.data) : "unknown";
-  }
-
-  return { readiness, openPullRequests, candidatesAt, authorPermission };
+  return { readiness, openPullRequests };
 }
