@@ -817,8 +817,8 @@ fn remembered_kind(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>) -> Value {
     w
 }
 
-/// `LEAF`: its row (its kind with no field, its bytes, one record), the pending extras, the
-/// level's last node.
+/// `LEAF`: its row (its kind, with its field above it or none; its bytes; one record), the
+/// pending extras, the level's last node.
 fn leaf_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value, deferred: bool, extra: bool, end_at: EndAt, wrapping: bool) {
     let flags = MemFlags::trusted();
     let zero = f.ins().iconst(types::I64, 0);
@@ -854,7 +854,8 @@ fn leaf_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value, deferred
     (e.set)(f, Mem::Nodes, nodes);
 }
 
-/// `OPEN`: its row (its kind with no field, its start), open; with wraps, its frame.
+/// `OPEN`: its row (its kind, with its field above it or none, and its start), open; with wraps,
+/// its frame.
 fn open_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value, wrapping: bool) {
     let zero = f.ins().iconst(types::I64, 0);
     (e.set)(f, Mem::Pending, zero);
@@ -1163,6 +1164,17 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
     };
     field_set(f, ctx, Mem::Live, live);
     f.ins().return_(&[zero]);
+}
+
+/// `TOKEN`'s function (`WordFn::Token`), made where first called.
+fn token_fn<'a>(module: &mut JITModule, fns: &'a mut std::collections::HashMap<WordFn, (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)>, any_mark: Option<usize>, shape: TokenShape) -> Result<&'a (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function), Error> {
+    let key = WordFn::Token { any_mark };
+    if !fns.contains_key(&key) {
+        let name = format!("tempo_word_{}", fns.len());
+        let made = outline(module, &name, 1, 1, |g, q, _| take_token(g, q, any_mark, shape))?;
+        fns.insert(key, made);
+    }
+    Ok(&fns[&key])
 }
 
 /// A call of an outlined function (`outline`), from `f`.
@@ -2134,7 +2146,10 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             // A word's body: made here, or with a function a grammar rule, a function of its own
             // (`WordFn`) every place calls with its arguments, which gives back whether it refuses.
             macro_rules! word {
-                ($key:expr, $args:expr, $refuses:expr, $body:expr) => {{
+                ($key:expr, $args:expr, $refuses:expr, $body:expr) => {
+                    word!($key, $args, $refuses, $body, fall)
+                };
+                ($key:expr, $args:expr, $refuses:expr, $body:expr, $fall:expr) => {{
                     let body = $body;
                     if outlined {
                         let key = $key;
@@ -2154,9 +2169,18 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     } else {
                         body(&mut f, &env, $args);
                     }
-                    f.ins().jump(fall, &[]);
+                    f.ins().jump($fall, &[]);
                 }};
             }
+            // A node's field set by the next word (`NODE_FIELD` on the node just made), stored
+            // with its kind (one 32-bit store of both), the field word passed: as a call's
+            // argument, with a function a grammar rule.
+            let with_field = |kind: u16| -> (i64, Block) {
+                match words.get(pc + 1).map(|w| w.operation) {
+                    Some(Op::NodeField { field, on: On::Here }) if outlined => (i64::from(kind) | i64::from(field) << 16, goto(pc + 2)),
+                    _ => (i64::from(kind), fall),
+                }
+            };
             match w.operation {
                 Op::Token { any, .. } => {
                     // Any mark's mask (`TOKEN m=1+k`): its output.
@@ -2171,14 +2195,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                             f.ins().jump(fall, &[]);
                             continue;
                         }
-                        let key = WordFn::Token { any_mark };
                         let shape = TokenShape { bound, in_code, rest_bits, end_bits };
-                        if !word_fns.contains_key(&key) {
-                            let name = format!("tempo_word_{}", word_fns.len());
-                            let made = outline(&mut module, &name, 1, 1, |g, q, _| take_token(g, q, any_mark, shape))?;
-                            word_fns.insert(key, made);
-                        }
-                        let (id, sig, _) = &word_fns[&key];
+                        let (id, sig, _) = token_fn(&mut module, &mut word_fns, any_mark, shape)?;
                         let c = pinned(&mut f);
                         let r = call_own(&mut f, *id, sig, &[c])[0];
                         // A refusal: past the stream's end at this word, or out of room.
@@ -2435,12 +2453,14 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 Op::Word { string, test } => {
                     // The record's word: its code names the string (`records`), one compare.
                     let w = token_word(&mut f);
-                    let same = f.ins().icmp_imm(IntCC::Equal, w, i64::from(string) + 1);
                     if test {
+                        let same = f.ins().icmp_imm(IntCC::Equal, w, i64::from(string) + 1);
                         let skip = goto(pc + 2);
                         f.ins().brif(same, fall, &[], skip, &[]);
                     } else {
-                        let differs = f.ins().bxor_imm(same, 1);
+                        // One compare and a branch on it, as the lean parser's (no `bnot` of a
+                        // compare, which Cranelift makes a `cset`, an `eor` and a `uxtb`).
+                        let differs = f.ins().icmp_imm(IntCC::NotEqual, w, i64::from(string) + 1);
                         guard(&mut f, differs, pc);
                         f.ins().jump(fall, &[]);
                     }
@@ -2518,8 +2538,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     f.ins().brif(bit, fall, &[], skip, &[]);
                 }
                 Op::Open { kind } => {
-                    let k = f.ins().iconst(types::I64, i64::from(kind));
-                    word!(WordFn::Open, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| open_word(g, e, q[0], wrapping));
+                    let (code, next) = with_field(kind);
+                    let k = f.ins().iconst(types::I64, code);
+                    word!(WordFn::Open, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| open_word(g, e, q[0], wrapping), next);
                 }
                 Op::Close { this } => {
                     let end = end_at(pc);
@@ -2527,8 +2548,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 }
                 Op::Leaf { kind, deferred, extra } => {
                     let end = end_at(pc);
-                    let k = f.ins().iconst(types::I64, i64::from(kind));
-                    word!(WordFn::Leaf { deferred, extra, end }, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| leaf_word(g, e, q[0], deferred, extra, end, wrapping));
+                    let (code, next) = with_field(kind);
+                    let k = f.ins().iconst(types::I64, code);
+                    word!(WordFn::Leaf { deferred, extra, end }, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| leaf_word(g, e, q[0], deferred, extra, end, wrapping), next);
                 }
                 Op::Settle { .. } => {
                     // A token the grammar implies: no node; the extras pending stay where they are.
