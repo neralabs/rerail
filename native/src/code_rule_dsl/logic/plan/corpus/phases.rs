@@ -49,6 +49,7 @@ thread_local! {
 pub(super) const SOURCES: &str = "sources";
 
 /// What phase 1 handed on, for the run that ran it and every phase run inside that run: its documents are theirs.
+#[derive(Clone)]
 pub(super) struct PhaseOne {
     /// The tree it read, and its grammar: a run of another tree or grammar (phase 0's) does not take its documents.
     pub(super) root: PathBuf,
@@ -208,6 +209,42 @@ pub(crate) fn is_phased(rel: &str) -> bool {
     rel.split_once(SEP).is_some_and(|(p, e)| !p.is_empty() && !e.is_empty() && !p.starts_with("typing_") && !p.starts_with("rr_") && !e.contains(SEP))
 }
 
+/// A batch of policies run one after another over one tree (`tools::run_policies`): while it is held, phase 1's runs
+/// are kept by their inputs and taken again by a policy whose run has the same ones. Nothing is kept past it, so an
+/// edit between batches is never missed.
+pub struct Batch(());
+
+type BatchRuns = std::collections::HashMap<[u8; 32], (PhaseOne, Vec<(String, usize)>)>;
+
+static BATCH: std::sync::Mutex<Option<BatchRuns>> = std::sync::Mutex::new(None);
+
+impl Batch {
+    pub fn enter() -> Batch {
+        *BATCH.lock().expect("the batch's phase runs") = Some(BatchRuns::new());
+        Batch(())
+    }
+
+    fn active() -> bool {
+        BATCH.lock().expect("the batch's phase runs").is_some()
+    }
+
+    fn get(key: &[u8; 32]) -> Option<(PhaseOne, Vec<(String, usize)>)> {
+        BATCH.lock().expect("the batch's phase runs").as_ref().and_then(|runs| runs.get(key).cloned())
+    }
+
+    fn put(key: [u8; 32], run: (PhaseOne, Vec<(String, usize)>)) {
+        if let Some(runs) = BATCH.lock().expect("the batch's phase runs").as_mut() {
+            runs.insert(key, run);
+        }
+    }
+}
+
+impl Drop for Batch {
+    fn drop(&mut self) {
+        *BATCH.lock().expect("the batch's phase runs") = None;
+    }
+}
+
 /// One phase's run, as the reader's run reports it.
 pub struct PhaseRun {
     pub name: String,
@@ -340,6 +377,28 @@ pub(super) fn sources(
     let _running = Running::enter(NAME)?;
     let dir = options.get("phase_dir").and_then(|v| v.as_str()).map(PathBuf::from);
     let src = source(NAME, dir.as_deref())?.expect("sources.rr, a builtin phase program");
+    // Within a batch of policies (`Batch`), a run over the same files, tree, language and options as an earlier one
+    // is that one: phase 1 is a function of them (O-batch-phase-sources).
+    let key = Batch::active().then(|| {
+        use sha2::Digest as _;
+        let mut hash = sha2::Sha256::new();
+        for part in [src.as_str(), label, &root.display().to_string(), modes, &format!("{binding:?}"), &chunk_nodes.to_string(), &format!("{typing:?}"), &options.to_string()] {
+            hash.update(part.as_bytes());
+            hash.update(b"\0");
+        }
+        for (p, m, g, c) in files {
+            for part in [p, m, g, c] {
+                hash.update(part.as_bytes());
+                hash.update(b"\0");
+            }
+        }
+        <[u8; 32]>::from(hash.finalize())
+    });
+    if let Some(found) = key.and_then(|k| Batch::get(&k)) {
+        crate::code_rule_dsl::logic::profile::decision("phase 1 (sources.rr)", || "the batch's run of the same files, taken again".into());
+        let (one, exports) = found;
+        return Ok((one, PhaseRun { name: NAME.to_owned(), report: Report::default(), exports }));
+    }
     let program = crate::code_rule_dsl::logic::rr::parse(&src)?;
     let declared = declared(&program).ok_or_else(|| Error::Plan(format!("{NAME}.rr: no `.phase {NAME}`")))?;
     // Its documents are those it loads: it is given no file of its own, and its language is the run's.
@@ -375,8 +434,11 @@ pub(super) fn sources(
         .collect();
     libraries.sort();
     libraries.dedup_by(|a, b| a.0 == b.0);
-    let exports = declared.exports.iter().map(|e| (e.clone(), rows.get(e).map_or(0, Vec::len))).collect();
+    let exports: Vec<(String, usize)> = declared.exports.iter().map(|e| (e.clone(), rows.get(e).map_or(0, Vec::len))).collect();
     let one = PhaseOne { root: root.to_path_buf(), label: label.to_owned(), documents, libraries, rows };
+    if let Some(k) = key {
+        Batch::put(k, (one.clone(), exports.clone()));
+    }
     Ok((one, PhaseRun { name: NAME.to_owned(), report, exports }))
 }
 

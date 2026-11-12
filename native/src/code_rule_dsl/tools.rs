@@ -374,6 +374,8 @@ pub fn run_policies(
     if seeds.len() > 1 && !super::logic::plan::corpus::phase0::active() {
         let _ = super::logic::plan::corpus::phase0::graphs(&seeds);
     }
+    // What the batch's runs share is kept while it runs (phase 1's runs, by their inputs), and nothing past it.
+    let _batch = super::logic::plan::corpus::phases::Batch::enter();
     for (k, path) in paths.iter().enumerate() {
         let report = run_rr(path, root, &out.join(k.to_string()), options).map_err(|e| format!("{}: {e}", path.display()))?;
         diagnostics.extend(report["diagnostics"].as_array().cloned().unwrap_or_default());
