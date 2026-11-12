@@ -6,7 +6,7 @@
  * once, for every session watching it, and keeps what it saw as a snapshot; each session takes from a walk only the
  * sources that changed since the snapshot it took last (`CodeRuleBridge`).
  */
-import { gitHead, GitReads, gitUnmergedReader } from "../git.js";
+import { gitHead, gitModifiedOrUntrackedPaths, GitReads, gitUnmergedReader } from "../git.js";
 import type { ObservedSource, ScanError, Source, SourceScan } from "./code-rule-bridge.js";
 
 /**
@@ -35,6 +35,11 @@ export interface WorktreeFindings {
   readonly unmerged: ReadonlyMap<string, string> | undefined;
   /** The checkouts that own the files the walk found, each one whose `.git` entry it passed (the worktree's own first). */
   readonly checkouts: ReadonlySet<string>;
+  /**
+   * For each of `checkouts`, the files its Git lists as modified or untracked (`gitModifiedOrUntrackedPaths`), relative
+   * to it: listed once for every session that takes the worktree for the first time in this walk, and only then.
+   */
+  readonly listed: ReadonlyMap<string, readonly string[]>;
   /** Subtrees the walk could not read. */
   readonly failedRoots: ReadonlySet<string>;
   readonly errors: readonly ScanError[];
@@ -73,6 +78,8 @@ export interface WatcherWalk {
   readonly worktrees: ReadonlySet<string>;
   /** The checkout the session folder is in, physical; undefined when none is. */
   readonly checkout: string | undefined;
+  /** Those of `worktrees` the session takes for the first time, or had a subtree of it could not read. */
+  readonly firstSight: ReadonlySet<string>;
   /** When the session opened, on the filesystem's clock. */
   readonly startedAt: number;
   /**
@@ -176,6 +183,13 @@ function leftOut(roots: ReadonlySet<string>, walks: Iterable<WatcherWalk>): Set<
   const skip = new Set(roots);
   for (const walk of walks) if (walk.checkout !== undefined) skip.add(walk.checkout);
   return skip;
+}
+
+/** What Git lists as modified or untracked in each of `checkouts`, one Git process each. */
+async function listChanged(git: GitReads, checkouts: ReadonlySet<string>): Promise<Map<string, readonly string[]>> {
+  const listed = new Map<string, readonly string[]>();
+  for (const checkout of checkouts) listed.set(checkout, await git.run(signal => gitModifiedOrUntrackedPaths(checkout, { signal })));
+  return listed;
 }
 
 /**
@@ -400,8 +414,9 @@ export class WorktreeWalks {
       const scan = await walk.scan(request);
       if (scan === undefined) continue;
       const { snapshot, texts } = nextSnapshot(previous, scan);
+      const listed = watchers.some(watcher => watcher.firstSight.has(root)) ? await listChanged(this.#git, scan.checkouts) : new Map<string, readonly string[]>();
       return {
-        snapshot, texts, head: read.head, unmerged: read.unmerged, checkouts: scan.checkouts,
+        snapshot, texts, head: read.head, unmerged: read.unmerged, checkouts: scan.checkouts, listed,
         failedRoots: scan.failedRoots, errors: scan.errors, unread: scan.unread,
       };
     }
