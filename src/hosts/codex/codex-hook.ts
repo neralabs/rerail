@@ -1,7 +1,15 @@
 import { hookText } from "../../engine/adapter-contract.js";
 import { handleCodexEvent, supportsCodexHook } from "./codex-hook-adapter.js";
 import { serveHook, serveHookEntry, type HookInput, type HookOutput } from "../../harness/hook-adapter.js";
-import { DaemonUnreachableError, hookRerailStarted, runHostHook, withDaemonDeadline, type HookOptions } from "../../harness/hook-host.js";
+import {
+  autostartTurnedOff,
+  DaemonUnreachableError,
+  hookRerailStarted,
+  runHostHook,
+  withDaemonDeadline,
+  type HookOptions,
+} from "../../harness/hook-host.js";
+import { daemonNotRunningMessage } from "../../runtime/daemon-control.js";
 
 export { codexHookOutput, handleCodexEvent } from "./codex-hook-adapter.js";
 export { serveHook };
@@ -13,6 +21,11 @@ const { required: requiredText } = hookText("Codex");
  * shows the person (design N11, D8). Every later hook stays silent.
  */
 export const CODEX_NOT_RUNNING = "Rerail ✕ not running · start it with: rerail daemon start";
+
+/** The line for a session that starts with no daemon: why, and that nothing is recorded, when `RERAIL_AUTOSTART` kept one from starting. */
+function codexNotRunning(error: DaemonUnreachableError): string {
+  return autostartTurnedOff(error) ? daemonNotRunningMessage() : CODEX_NOT_RUNNING;
+}
 
 export async function runCodexHook(input: HookInput, options: HookOptions = {}): Promise<HookOutput> {
   if (!supportsCodexHook(input)) return {};
@@ -27,7 +40,7 @@ export async function runCodexHook(input: HookInput, options: HookOptions = {}):
   } catch (error) {
     if (!startsSession || !(error instanceof DaemonUnreachableError)) throw error;
     process.stderr.write(`rerail hook: ${error.message}\n`);
-    return { systemMessage: CODEX_NOT_RUNNING };
+    return { systemMessage: codexNotRunning(error) };
   }
 }
 

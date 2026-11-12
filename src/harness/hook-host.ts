@@ -9,6 +9,7 @@ import {
   autostartOff,
   AutostartOffError,
   daemonEngineEndpoint,
+  daemonNotRunningMessage,
   engineEndpointAt,
   HOOK_DAEMON_WAIT_MS,
   runningDaemonEngineEndpoint,
@@ -109,10 +110,21 @@ function unreachable(error: unknown): unknown {
 
 /**
  * The hook found no daemon because `RERAIL_AUTOSTART=0` kept it from starting one. That is what the person asked for,
- * so it is not a failure; `rerail status` says the daemon is not running and why (`daemonNotRunningMessage`).
+ * so it is not a failure; `rerail status` says the daemon is not running and why (`daemonNotRunningMessage`), and so
+ * does the session's start (`answerAutostartOff`).
  */
-function autostartTurnedOff(error: unknown): boolean {
+export function autostartTurnedOff(error: unknown): boolean {
   return error instanceof DaemonUnreachableError && error.cause instanceof AutostartOffError;
+}
+
+/**
+ * The session-start hook's answer when `RERAIL_AUTOSTART` kept it from starting a daemon and none runs (only that hook
+ * throws for it): `answer` given the line `rerail status` prints (`daemonNotRunningMessage`), so the person learns as
+ * the session starts that nothing in it is recorded or checked, and how to change that. Any other failure is rethrown.
+ */
+export function answerAutostartOff<Output>(error: unknown, answer: (line: string) => Output): Output {
+  if (!autostartTurnedOff(error)) throw error;
+  return answer(daemonNotRunningMessage());
 }
 
 /**
@@ -122,7 +134,8 @@ function autostartTurnedOff(error: unknown): boolean {
  * in the hook failure log and starts a daemon in the background. A daemon that cannot be reached throws
  * `DaemonUnreachableError`, so a coding agent without a footer can say so. Every failure, `event` named as the coding
  * agent names it, goes to the hook failure log (`hook-failures.ts`), which `rerail status` reads. Under
- * `RERAIL_AUTOSTART=0` a hook that finds no daemon logs nothing and starts none, since the person runs it themselves.
+ * `RERAIL_AUTOSTART=0` a hook that finds no daemon logs nothing and starts none, since the person runs it themselves;
+ * the session-start hook then throws, and its host answers with the line that says so (`answerAutostartOff`).
  */
 export async function runHostHook(
   host: HookHost,

@@ -168,6 +168,16 @@ function relayedSteer(content: string, rules: readonly SteerRule[]): string {
   return `${content}\n\nCursor shows the user none of this. Begin your next reply with these lines, exactly as written:\n${lines.join("\n")}`;
 }
 
+/**
+ * A session-start answer that tells the person `line` (`answerAutostartOff`'s, that Rerail records nothing in the
+ * session): Cursor shows the person nothing from a hook, so the model is asked to relay it, as it relays a steer.
+ */
+export function cursorRelayedLine(line: string): CursorHookOutput {
+  return {
+    additional_context: `Rerail checks nothing in this session, and Cursor shows the user nothing from Rerail. Begin your first reply with this line, exactly as written:\n${line}`,
+  };
+}
+
 /** `note` is the session-start note, which only the model sees. */
 export function cursorHookOutput(hook: string, deliveries: readonly AdapterDelivery[], note?: string): CursorHookOutput {
   const content = deliveryText(deliveries);
