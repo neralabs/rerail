@@ -3685,6 +3685,46 @@ impl Run<'_, '_> {
 
     /// `components` (`front::Native::Components`): each document's component and key from `edge`'s and `own`'s
     /// rows. Digests and keys are symbols: atoms (interned by `sym_atom`) or text, as the run stores them.
+    /// `components` on the native engine: `edge`'s and `own`'s rows read where the engine holds them (relations it ran,
+    /// or the run's bound inputs), the result retained as its own relation. No statement (decision 0104): a wave
+    /// reads no table. `None` when the run holds symbols as text, or either input only as a table.
+    fn native_components(&mut self, rel: &str, edge: &str, own: &str) -> Result<Option<usize>> {
+        use super::native::component;
+        if self.model.inputs.atoms.is_none() {
+            return Ok(None);
+        }
+        let held = |this: &Self, r: &str| -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+            if this.native_rels.contains(r) {
+                component::derived(this.db, r)
+            } else if this.prog.inputs.iter().any(|i| i == r) {
+                crate::code_rule_dsl::facts::vtab::bound_source(this.db, r)
+            } else {
+                None
+            }
+        };
+        let (Some(e), Some(o)) = (held(self, edge), held(self, own)) else { return Ok(None) };
+        let edges: Vec<(i64, i64)> = (0..e.len()).map(|r| (e.value(r, 0), e.value(r, 1))).collect::<BTreeSet<_>>().into_iter().collect();
+        let mut digests: Vec<(i64, String)> = Vec::with_capacity(o.len());
+        for (d, h) in (0..o.len()).map(|r| (o.value(r, 0), o.value(r, 1))).collect::<BTreeSet<_>>() {
+            digests.push((d, super::native::symbol_text(&self.db, h)?));
+        }
+        let rows = crate::code_rule_dsl::logic::native::components::components(&edges, &digests);
+        let ids = super::native::intern_batch(&self.db, rows.iter().map(|(_, _, k)| k.as_str()))?;
+        let values: Vec<Vec<i64>> = rows.iter().zip(ids).map(|((d, c, _), k)| vec![*d, *c, k]).collect();
+        component::retain(self.db, rel, values, vec![b'i'; self.prog.decls[rel].len()])?;
+        self.native_rels.insert(rel.to_owned());
+        let source = component::derived(self.db, rel).expect("just retained");
+        let stats = source.statistics().expect("retained relations own their statistics");
+        live_stats(&mut self.model, rel, LiveRel {
+            n: source.len() as i64,
+            delta: source.len() as i64,
+            ndv: stats.iter().map(|s| s.2).collect(),
+            sq: stats.iter().map(|s| s.3).collect(),
+            freq: Vec::new(),
+        });
+        Ok(Some(source.len()))
+    }
+
     fn components(&mut self, rel: &str, edge: &str, own: &str) -> Result<usize> {
         let atoms = self.model.inputs.atoms.is_some();
         let ident = crate::code_rule_dsl::logic::sql::ident;
@@ -4483,6 +4523,15 @@ impl<'a> Run<'a, '_> {
             match t {
                 Term::Var(v) => slots.contains_key(v).then(|| t.clone()),
                 Term::Int(_) | Term::Str(_) => Some(t.clone()),
+                // `@cat(a, b)` (what `@dot` lowers to) inside another term: the head's `Cat`, made into a slot first
+                // (`sym(f, @concat(@cat(q, x), …))`).
+                Term::Call(f, args) if f == "cat" && args.len() == 2 => {
+                    let made: Vec<Term> = args.iter().map(|a| expr(a, idx, slots, lines)).collect::<Option<_>>()?;
+                    let (a, b) = (tok(&made[0], slots)?, tok(&made[1], slots)?);
+                    let out = Term::Var(format!("rr_fn{idx}_{}", lines.len()));
+                    lines.push(JoinItem::Cat { out: tok(&out, slots)?, a, b });
+                    Some(out)
+                }
                 Term::Call(f, args) => {
                     let name = call_name(f, args.len())?;
                     let made: Vec<Term> = args.iter().map(|a| expr(a, idx, slots, lines)).collect::<Option<_>>()?;
@@ -7339,6 +7388,16 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             }
             let n = run.python_relation(rel, kind, input, &targets)?;
             super::profile::stratum(&skey, "native fact operator over retained demand relations", String::new);
+            super::profile::note(format!("{rel} rows"), || n.to_string());
+            outcome.native.insert(key);
+            continue;
+        }
+        // The import components (`components.rr`) from the rows the engine holds: no table read or written.
+        if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
+            && let Some(super::front::Native::Components { edge, own }) = prog.natives.get(*rel)
+            && let Some(n) = run.native_components(rel, edge, own)?
+        {
+            super::profile::stratum(&skey, "native fact operator over held relations", String::new);
             super::profile::note(format!("{rel} rows"), || n.to_string());
             outcome.native.insert(key);
             continue;

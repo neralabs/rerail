@@ -86,11 +86,11 @@ fn rule_files(programs: &[String]) -> Result<Vec<(String, String, String)>> {
     Ok(out)
 }
 
-fn encode_consulted(consulted: &[(String, String, String)]) -> String {
+pub(super) fn encode_consulted(consulted: &[(String, String, String)]) -> String {
     consulted.iter().map(|(w, p, d)| format!("{w}\t{p}\t{d}")).collect::<Vec<_>>().join("\n")
 }
 
-fn decode_consulted(text: &str) -> Vec<(String, String, String)> {
+pub(super) fn decode_consulted(text: &str) -> Vec<(String, String, String)> {
     text.lines()
         .filter_map(|l| {
             let mut f = l.splitn(3, '\t');

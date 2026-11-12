@@ -3649,3 +3649,14 @@ decision 0104 refuses. So the P3 benchmark aborts in strict mode before its firs
 
 **Closure:** the table is made by the store's schema or written through the store writer; the 54-file P3 run
 passes in strict mode.
+
+**Closed (2026-11-11).** Four things stood in the way, each fixed:
+- The constants are a run record of phase 0's observer (`constants:<key>`), read with its records before the run and
+  written behind it by its writer. The `.phases` file is gone.
+- The keeper's files changed by key (a run numbers its documents afresh), not only by content, are found before the
+  first wave. One asked and not found is held as not found, so the waves do not ask SQLite for it again.
+- `@cat` inside a computed head term is a native `Cat` step (`struct.rr`'s `sym(f, cat(@dot(q, x), cat("#", …)))`).
+- `components` runs on the native engine over the relations it holds. The constants' own run outputs the constants
+  alone, not `rr_cx_component`.
+
+The 54-file P3 run passes strict, 4,815 agree.

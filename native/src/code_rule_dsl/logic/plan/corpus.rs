@@ -2082,6 +2082,11 @@ fn run_observed(
     }
     if cross_declared.is_some() || reads_components {
         cross_memo::add(&mut prog)?;
+        // The constants' own run outputs the constants alone (`constants::as_outputs`): it runs over no documents, so
+        // it makes no components, and its prune drops their rules.
+        if options.get(constants::OWN).is_some() {
+            prog.outputs.retain(|o| o != cross_memo::COMPONENT);
+        }
     }
     // A run that reads the file system answers a load with the loaded documents' rows of each export its cone of
     // requests reads, found by the export's location column (decision 0065 §2a). Factorizing changes which relations
@@ -3100,22 +3105,31 @@ fn run_observed(
     });
     // The entries the statistics keeper counted for files changed or gone since (`keptstats`), found before the
     // first wave too: it counts them out in the waves, and reads none of them from SQLite there.
-    let counted_before: HashMap<String, memo::Found> = match (memo, keeper.borrow().as_ref()) {
+    let counted_before: HashMap<String, Option<memo::Found>> = match (memo, keeper.borrow().as_ref()) {
         (Some(memo @ memo::Memo::Stored(_)), Some(k)) if looking => {
             let _before = crate::code_rule_dsl::logic::profile::span(|| "memo lookup, before the first wave".into());
             let now = before.lock();
-            let changed: Vec<(String, memo::Content)> = k.counted_files().into_iter().filter(|(p, c, _)| now.get(p).is_none_or(|b| b.content != Some(*c))).map(|(p, c, _)| (p, c)).collect();
+            // Changed as the keeper sees it (`keptstats::same`): by content, or by the document's key, which a run
+            // numbers afresh (a load ahead of it shifts the rest), so an unchanged file may be counted out and in.
+            let keys: HashMap<&str, i64> = docs.iter().map(|(d, p)| (p.as_str(), *d)).collect();
+            let changed: Vec<(String, memo::Content)> = k
+                .counted_files()
+                .into_iter()
+                .filter(|(p, c, key)| now.get(p).is_none_or(|b| b.content != Some(*c)) || keys.get(p.as_str()) != Some(key))
+                .map(|(p, c, _)| (p, c))
+                .collect();
             drop(now);
             let keys: Vec<(memo::Content, &str)> = changed.iter().map(|(p, c)| (*c, world::store_path(p))).collect();
             let found = memo.found_all(&memo_program, &keys).map_err(|e| Error::Plan(e.to_string()))?;
-            changed.iter().map(|(p, _)| p.clone()).zip(found).filter_map(|(p, f)| f.map(|f| (p, f))).collect()
+            // A file asked and not found is held as such: the waves do not ask SQLite for it again.
+            changed.iter().map(|(p, _)| p.clone()).zip(found).collect()
         }
         _ => HashMap::new(),
     };
     // The entry a file was counted under: found before the first wave, else (a session's, in memory) looked up.
     let counted_entry = |path: &str, c: memo::Content, key: i64| -> Option<memo::Entry> {
         match counted_before.get(path) {
-            Some(found) => found.entry(key).ok().flatten(),
+            Some(found) => found.as_ref().and_then(|f| f.entry(key).ok().flatten()),
             None => memo.and_then(|m| m.lookup(c, world::store_path(path), key, &memo_program).ok().flatten()),
         }
     };
