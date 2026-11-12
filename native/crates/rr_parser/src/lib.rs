@@ -966,6 +966,10 @@ pub mod tests {
             // Each word's Cranelift instructions as lowered, a line a place.
             let insts: String = p.tier2.word_insts.iter().map(|n| format!("{n}\n")).collect();
             std::fs::write(format!("{dir}/tier2.insts"), insts).expect("writes");
+            let bytes: String = p.tier2.word_bytes.iter().map(|n| format!("{n}\n")).collect();
+            std::fs::write(format!("{dir}/tier2.bytes"), bytes).expect("writes");
+            let ranges: String = p.tier2.word_ranges.iter().map(|(pc, a, b)| format!("{pc} {a} {b}\n")).collect();
+            std::fs::write(format!("{dir}/tier2.ranges"), ranges).expect("writes");
             std::fs::write(format!("{dir}/tier2.machine"), &c.machine).expect("writes");
         }
         let mut batches: Vec<_> = ours.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()])).collect();
