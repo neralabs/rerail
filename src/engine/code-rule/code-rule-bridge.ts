@@ -388,8 +388,11 @@ interface WorktreeTake {
   readonly scan: SourceScan;
   /** The snapshot of each worktree the walk read, by its path relative to the session folder. */
   readonly snapshots: ReadonlyMap<string, WorktreeSnapshot>;
-  /** Sources the walk found that the session never saw and found gone as it read them: it takes them as gone. */
-  readonly unseen: ReadonlySet<string>;
+  /**
+   * Sources the take leaves to the next walk, each with what the session saw of it before: one the session could not
+   * read now, and one it never saw and found gone.
+   */
+  readonly views: ReadonlyMap<string, ObservedSource | undefined>;
 }
 
 /** The paths of `next` whose observation is not `base`'s: new, changed or gone. */
@@ -1685,8 +1688,10 @@ export class CodeRuleBridge {
       inSession: false, baseline: false, checkpoint: "edit", worktrees: new Set(snapshots.keys()), previous, versions: start.versions,
       heads, unmerged, observedAt,
     };
-    const unseen = await this.#readTakenTexts(discovery, walk, scan, found);
-    return { walk, scan, snapshots, unseen };
+    const views = await this.#readTakenTexts(discovery, walk, scan, found);
+    // Not this take's to record: the session keeps what it saw of them (`#takeSnapshots`).
+    for (const path of views.keys()) previous.delete(path);
+    return { walk, scan, snapshots, views };
   }
 
   /** The paths under each of `worktrees` (session-relative) where the session's own view differs from its snapshot. */
@@ -1744,41 +1749,45 @@ export class CodeRuleBridge {
    * Reads, off the lane, the text of each changed source the walk kept none of for this session (its snapshot was older
    * than the walk's last, or a tool call saw the source otherwise), as the session reads it now (`#reread`), and the
    * first-sight text of each source new to the session that its checkout's Git lists as changed, taken only while the
-   * source holds the digest observed. Returns the sources the session never saw that were gone as it read them.
+   * source holds the digest observed. Returns the sources it leaves to the next walk, with what it saw of each before
+   * (`WorktreeTake.views`).
    */
   async #readTakenTexts(
     discovery: SourceDiscovery,
     walk: WalkStart,
     scan: SourceScan,
     found: ReadonlyMap<string, WorktreeFindings>,
-  ): Promise<Set<string>> {
-    const unseen = new Set<string>();
+  ): Promise<Map<string, ObservedSource | undefined>> {
+    const kept = new Map<string, ObservedSource | undefined>();
     for (const [path, after] of scan.sources) {
-      if (this.#abandoned(discovery)) return unseen;
+      if (this.#abandoned(discovery)) return kept;
       if (!this.#textMissing(discovery, walk, after)) continue;
       const read = await this.#reread(discovery, after);
-      if (read !== undefined) scan.sources.set(path, read);
-      else {
-        scan.sources.delete(path);
-        if (!walk.previous.has(path)) unseen.add(path);
-      }
+      if (typeof read !== "string") scan.sources.set(path, read);
+      else scan.sources.delete(path);
+      if (read === "unread") kept.set(path, walk.previous.get(path));
+      else if (read === "gone" && !walk.previous.has(path)) kept.set(path, undefined);
     }
     const listed = await this.#firstSeenInWorktrees(discovery, walk, scan, found);
+    // A first sight Git lists puts the walk's observation back; the next walk shows these instead.
+    for (const path of kept.keys()) scan.sources.delete(path);
     await this.#takeFirstSeenTexts(discovery, listed, scan);
-    return unseen;
+    return kept;
   }
 
   /**
    * A changed source the walk kept no text of, as the session reads it now: with its text while it holds the digest the
    * walk observed. A file changed again since the walk read it is taken as the session reads it, as the session's own
-   * walk would have read it, so the change is recorded now, from what the session saw last, with its text; when the
-   * file is gone, undefined. Without the text, a later walk would record the next change from a digest the session
-   * holds no text of. A file the session does not read stays as the walk found it.
+   * walk would have read it, so the change is recorded now, from what the session saw last, with its text; `gone` once
+   * the file is. Without the text, a later walk would record the next change from a digest the session holds no text
+   * of. A file the session cannot read now (another process holds it) is `unread`: the next walk takes it, from what
+   * the session saw last. A file the session does not read stays as the walk found it.
    */
-  async #reread(discovery: SourceDiscovery, after: Source): Promise<Source | undefined> {
+  async #reread(discovery: SourceDiscovery, after: Source): Promise<Source | "gone" | "unread"> {
     const read = await this.#readSource(discovery.root, after.path);
     if (read === undefined) return after;
-    if (read.deleted === true) return undefined;
+    if (read.deleted === true) return "gone";
+    if (read.readError !== undefined) return "unread";
     if (read.digest === after.digest) return read.text === undefined ? after : { ...after, text: read.text };
     // Stamped as the walk found it: what was written since was written later still.
     const { modifiedAt, observedAt } = after;
@@ -1843,8 +1852,8 @@ export class CodeRuleBridge {
 
   /**
    * Moves the session's view of each worktree the walk read to the walk's snapshot. A source a tool call of the session
-   * touched while the walk ran is not the walk's to answer for: it keeps what the session saw of it before. One it never
-   * saw and found gone as it read it stays unseen (`WorktreeTake.unseen`).
+   * touched while the walk ran is not the walk's to answer for: it keeps what the session saw of it before. So does one
+   * the take leaves to the next walk (`WorktreeTake.views`).
    */
   #takeSnapshots(discovery: SourceDiscovery, take: WorktreeTake): void {
     for (const [worktree, snapshot] of take.snapshots) if (discovery.worktrees.roots.has(worktree)) this.#worktreeView.take(worktree, snapshot);
@@ -1852,10 +1861,10 @@ export class CodeRuleBridge {
     for (const path of new Set([...take.walk.previous.keys(), ...take.scan.sources.keys()])) {
       if (this.#toolChanged(discovery, take.walk, path, pendingPaths)) this.#keepToolView(path, take.walk.previous.get(path));
     }
-    for (const path of take.unseen) this.#keepToolView(path, undefined);
+    for (const [path, before] of take.views) this.#keepToolView(path, before);
   }
 
-  /** Keeps `before`, what the session saw of `path` before a tool call touched it, unless the call left a view of its own. */
+  /** Keeps `before`, what the session saw of `path` before this walk, unless it holds a view of its own of it. */
   #keepToolView(path: string, before: ObservedSource | undefined): void {
     if (this.#observed.has(path) || this.#worktreeView.isHidden(path)) return;
     if (before === undefined) this.#unobserve(path);

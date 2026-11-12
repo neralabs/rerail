@@ -11,17 +11,23 @@ import type * as Git from "../../../../src/engine/git.js";
 
 /**
  * How many times each file was read whole through `node:fs/promises`, by the path it was read at; the listings held back
- * until a test lets them go, by folder; and how many times Git listed each checkout's changed files.
+ * until a test lets them go, by folder; how many times Git listed each checkout's changed files; and the files whose
+ * next opening fails as one another process holds does.
  */
 const counted = vi.hoisted(() => ({
   reads: new Map<string, number>(),
   held: new Map<string, () => Promise<void>>(),
   listings: new Map<string, number>(),
+  busy: new Set<string>(),
 }));
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof FileSystem>();
   return {
     ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      if (counted.busy.delete(String(args[0]))) throw Object.assign(new Error("EBUSY: resource busy or locked, open"), { code: "EBUSY" });
+      return await actual.open(...args);
+    },
     readFile: async (...args: Parameters<typeof actual.readFile>) => {
       const path = String(args[0]);
       counted.reads.set(path, (counted.reads.get(path) ?? 0) + 1);
@@ -56,6 +62,7 @@ const releases: Array<() => void> = [];
 afterEach(async () => {
   releases.splice(0).forEach(release => release());
   counted.held.clear();
+  counted.busy.clear();
   await Promise.all(bridges.splice(0).map(bridge => bridge.close()));
   reads.clear();
   listings.clear();
@@ -332,27 +339,10 @@ describe("WorktreeWalks", () => {
     const walks = new WorktreeWalks({ gapMs: 0 });
     const first = await session(worktrees[0]!, checkouts, walks);
     const second = await session(worktrees[1]!, checkouts, walks);
-    // The second session's take of the next walk is held on its audit.
-    const entered = Promise.withResolvers<void>();
-    const held = Promise.withResolvers<void>();
-    releases.push(held.resolve);
-    const audit = second.auditGeneratedEdits.getMockImplementation()!;
-    second.auditGeneratedEdits.mockImplementationOnce(async (sessionId, batch) => {
-      entered.resolve();
-      await held.promise;
-      return await audit(sessionId, batch);
-    });
-    await shell(first.bridge, "shell-1", () => writeFile(join(worktrees[2]!, "src", "g.py"), "g = 1\n"));
-    await first.bridge.settleWorktreeWalk();
-    await entered.promise;
-    // One walk sees `a.py` change and the next sees nothing new; the second session, still taking the first, takes the last.
-    const path = join(worktrees[2]!, "src", "a.py");
-    await shell(first.bridge, "shell-2", () => writeFile(path, "old\nmine\n"));
-    await first.bridge.settleWorktreeWalk();
-    await turn(first);
+    const { path, release } = await heldTake(first, second, worktrees[2]!);
     // `a.py` changes again before the second session reads it.
     await writeFile(path, "old\nmine\nmore\n");
-    held.resolve();
+    release();
     await second.bridge.settleWorktreeWalk();
     await turn(first);
     await second.bridge.settleWorktreeWalk();
@@ -362,7 +352,50 @@ describe("WorktreeWalks", () => {
       [{ path: "../w3/src/a.py", language: "python", previousText: "old\n", generatedText: "old\nmine\nmore\n" }],
     ]);
   });
+
+  it("takes a file it cannot read as it takes a walk at the next walk, from the text it last recorded", async () => {
+    const { checkouts, worktrees } = await repository();
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const first = await session(worktrees[0]!, checkouts, walks);
+    const second = await session(worktrees[1]!, checkouts, walks);
+    const { path, release } = await heldTake(first, second, worktrees[2]!);
+    // Another process holds `a.py` as the second session reads it.
+    counted.busy.add(path);
+    release();
+    await second.bridge.settleWorktreeWalk();
+    await turn(first);
+    await second.bridge.settleWorktreeWalk();
+    expect(second.auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "../w3/src/g.py", language: "python", generatedText: "g = 1\n" }],
+      [{ path: "../w3/src/a.py", language: "python", previousText: "old\n", generatedText: "old\nmine\n" }],
+    ]);
+  });
 });
+
+/**
+ * Holds `second`'s take of the walk that finds `g.py` written in `worktree`, on its audit of it; then one walk sees
+ * `a.py` there change and the next sees nothing new, so `second`, still taking the first, takes only the last, which
+ * keeps no text of `a.py`. `release` lets the take go on.
+ */
+async function heldTake(first: Session, second: Session, worktree: string): Promise<{ path: string; release: () => void }> {
+  const entered = Promise.withResolvers<void>();
+  const held = Promise.withResolvers<void>();
+  releases.push(held.resolve);
+  const audit = second.auditGeneratedEdits.getMockImplementation()!;
+  second.auditGeneratedEdits.mockImplementationOnce(async (sessionId, batch) => {
+    entered.resolve();
+    await held.promise;
+    return await audit(sessionId, batch);
+  });
+  await shell(first.bridge, "shell-1", () => writeFile(join(worktree, "src", "g.py"), "g = 1\n"));
+  await first.bridge.settleWorktreeWalk();
+  await entered.promise;
+  const path = join(worktree, "src", "a.py");
+  await shell(first.bridge, "shell-2", () => writeFile(path, "old\nmine\n"));
+  await first.bridge.settleWorktreeWalk();
+  await turn(first);
+  return { path, release: held.resolve };
+}
 
 describe("the other worktrees of a session in a nested worktree", () => {
   it("records no change of its checkout's other files when a session in another worktree starts or closes", async () => {
