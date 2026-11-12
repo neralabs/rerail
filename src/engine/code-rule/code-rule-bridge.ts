@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { closeSync, constants, type Dirent, fstatSync, mkdirSync, openSync, type Stats, writeSync } from "node:fs";
+import { closeSync, constants, type Dirent, fstatSync, openSync, type Stats, writeSync } from "node:fs";
 import { type FileHandle, lstat, open, opendir, readFile, realpath, rename, unlink } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
@@ -27,6 +27,7 @@ import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
 import { ToolCallWindows } from "./tool-call-windows.js";
+import { makeRerailHome } from "../storage/private-files.js";
 import { defaultRerailHome } from "../storage/rerail-home.js";
 
 
@@ -443,10 +444,11 @@ function filesystemClock(): number {
 }
 
 /**
- * Opens `CLOCK_PROBE_FILE` to rewrite its byte, making it (private, as Rerail's other files are) and the Rerail home the
- * first time. The open makes the file when it is missing but never empties it, as `w` would: a sample needs only its one
- * byte rewritten. It refuses a link at the file's name, as the bridge's other opens do, so no sample writes into the
- * file a link names; the sample falls back to `Date.now()` while the link stays.
+ * Opens `CLOCK_PROBE_FILE` to rewrite its byte, making it the first time (private, as Rerail's other files are), and the
+ * Rerail home if that is missing, through `makeRerailHome` as Rerail's other writers make it. The open makes the file
+ * when it is missing but never empties it, as `w` would: a sample needs only its one byte rewritten. It refuses a link at
+ * the file's name, as the bridge's other opens do, so no sample writes into the file a link names; the sample falls back
+ * to `Date.now()` while the link stays.
  */
 function openClockProbe(): number {
   const home = defaultRerailHome();
@@ -456,7 +458,7 @@ function openClockProbe(): number {
     return openSync(path, flags, 0o600);
   } catch (error) {
     if (!hasErrorCode(error, "ENOENT")) throw error;
-    mkdirSync(home, { recursive: true, mode: 0o700 });
+    makeRerailHome(home);
     return openSync(path, flags, 0o600);
   }
 }

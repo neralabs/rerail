@@ -1860,4 +1860,20 @@ describe("the file system's clock", () => {
 
     expect(await readFile(elsewhere, "utf8")).toBe("kept\n");
   });
+
+  it("makes a missing Rerail home as Rerail's other writers do, with the probe in it", async () => {
+    const home = join(await workspace(), "home");
+    vi.stubEnv("RERAIL_HOME", home);
+    try {
+      const bridge = createBridge(await workspace(), auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))));
+      await bridge.openWorkspace("session-1");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+
+    const probe = await lstat(join(home, CLOCK_PROBE_FILE));
+    expect(probe.isFile()).toBe(true);
+    // Windows has no such modes.
+    if (process.platform !== "win32") expect([(await lstat(home)).mode & 0o777, probe.mode & 0o777]).toEqual([0o700, 0o600]);
+  });
 });
