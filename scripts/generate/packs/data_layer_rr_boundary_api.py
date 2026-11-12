@@ -18,7 +18,10 @@ def suffix(source):
     cli=next(n for n in ast.parse((source/'scripts/lint_async_sync_boundary.py').read_text()).body if isinstance(n,ast.FunctionDef) and n.name=='cli_main')
     parser=next(n for n in ast.walk(cli) if isinstance(n,ast.Call) and isinstance(n.func,ast.Attribute) and n.func.attr=='ArgumentParser')
     bodies=[cli.body]
-    for file,name in [('ratchet.py','add_ratchet_args'),('discovery.py','add_discovery_args')]:
+    helpers={'add_ratchet_args':'ratchet.py','add_discovery_args':'discovery.py'}
+    order=[n.value.func.id for n in cli.body if isinstance(n,ast.Expr) and isinstance(n.value,ast.Call) and isinstance(n.value.func,ast.Name) and n.value.func.id in helpers]
+    for name in order:
+        file=helpers[name]
         definition=next(n for n in ast.parse((source/'scripts/lint_lib'/file).read_text()).body if isinstance(n,ast.FunctionDef) and n.name==name);bodies.append(definition.body)
     calls=[n.value for body in bodies for n in body if isinstance(n,ast.Expr) and isinstance(n.value,ast.Call) and isinstance(n.value.func,ast.Attribute) and n.value.func.attr=='add_argument']
     arguments=[dict(names=[literal(v) for v in n.args],kwargs={k.arg:(k.value.id if isinstance(k.value,ast.Name) else literal(k.value)) for k in n.keywords}) for n in calls]

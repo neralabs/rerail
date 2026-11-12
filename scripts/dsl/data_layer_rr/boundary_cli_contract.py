@@ -49,12 +49,13 @@ def cases(_module):
 def exercise(module,case,scratch):
     scratch=scratch.resolve();root=scratch/'repo';root.mkdir();write_fixture(root,case['files'])
     discovery=importlib.import_module('scripts.lint_lib.discovery');ratchet=importlib.import_module('lint_lib.ratchet')
+    script_ratchet=importlib.import_module('scripts.lint_lib.ratchet')
     script=root/'scripts/lint_lib/discovery.py';script.parent.mkdir(parents=True);script.write_text('pass\n')
     path=root/BASELINE
     if 'baseline' in case or 'raw' in case:path.parent.mkdir(parents=True);path.write_text(case.get('raw',json.dumps(case.get('baseline'))))
     before=base64.b64encode(path.read_bytes()).decode() if path.exists() else None
     out=io.StringIO();err=io.StringIO();argv=['lint_async_sync_boundary.py',*([] if case.get('noRoot') else ['--root',str(root)]),*case.get('args',[])]
-    with patch.dict(os.environ,environment(case),clear=True),contextlib.chdir(root),patch.object(module,'__file__',str(root/'scripts/lint_async_sync_boundary.py')),patch.object(discovery,'__file__',str(script)),patch.object(ratchet,'get_repo_root',lambda:root),patch.object(ratchet,'datetime',FixedDatetime),patch.object(sys,'argv',argv),contextlib.redirect_stdout(out),contextlib.redirect_stderr(err):
+    with patch.dict(os.environ,environment(case),clear=True),contextlib.chdir(root),patch.object(module,'__file__',str(root/'scripts/lint_async_sync_boundary.py')),patch.object(discovery,'__file__',str(script)),patch.object(ratchet,'get_repo_root',lambda:root),patch.object(ratchet,'datetime',FixedDatetime),patch.object(script_ratchet,'get_repo_root',lambda:root),patch.object(script_ratchet,'datetime',FixedDatetime),patch.object(sys,'argv',argv),contextlib.redirect_stdout(out),contextlib.redirect_stderr(err):
         try:value=dict(status=module.cli_main())
         except BaseException as error:value=dict(error=dict(type=type(error).__name__,args=canonical(error.args,scratch)))
     after=base64.b64encode(path.read_bytes()).decode() if path.exists() else None
@@ -66,4 +67,4 @@ def install(backend,module,detectors=False):
     native_install(backend,module,detectors=detectors)
 
 
-if __name__=='__main__':main(CHECK,'rerail.boundary-cli/v1',cases,exercise,install,['boundary_cli_contract.py','boundary_production_contract.py','impl_direct_execution_ratchet_contract.py'],guard_modules=['lint_lib.ratchet','scripts.lint_lib.discovery'])
+if __name__=='__main__':main(CHECK,'rerail.boundary-cli/v1',cases,exercise,install,['boundary_cli_contract.py','boundary_production_contract.py','impl_direct_execution_ratchet_contract.py'],guard_modules=['lint_lib.ratchet','scripts.lint_lib.ratchet','scripts.lint_lib.discovery'])

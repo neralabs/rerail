@@ -4060,3 +4060,15 @@ Three baseline-writing cases expose a fixture defect: the source uses a second r
 The native baseline bytes differ only in timestamps. The fixture must freeze both aliases and keep exact byte comparisons.
 The complete first replay is retained in `rr-boundary-frontends-first-finalfcce.json.gz`.
 The rule remains a draft. No new engine feature is required by these failures.
+
+### 2026-11-12 — Boundary frontend discrepancies corrected
+
+The parser schema now follows the source's discovery-helper and ratchet-helper call order.
+Both ratchet module aliases use the same frozen fixture clock and repository root.
+Two independent source recordings produce identical results for all 37 CLI cases, including signed baseline bytes.
+All 37 final snapshot CLI cases pass. The workspace replay remains in progress.
+All 44 valid removal controls pass through both APIs: each native mutation changes its complete source witness.
+
+The remaining acceptance run covers the final rule revision across components, scanners, rendering, CLI, all seventeen historical inputs, and retained repository updates.
+It also replays all 295 earlier API cases and 158 earlier reporter cases.
+The rule remains a draft until the complete receipt, strict admission tests, and tooling suite pass.
