@@ -3162,6 +3162,7 @@ dependencies = [
  "cranelift-jit-wasm",
  "cranelift-module",
  "libc",
+ "rayon",
 ]
 
 [[package]]
