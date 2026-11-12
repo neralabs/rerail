@@ -771,6 +771,9 @@ mod literal {
 #[path = "logic"]
 pub(crate) mod logic {
     pub use rerail_logic::code_rule_dsl::logic::*;
+    #[cfg(test)]
+    #[path = "costs_tests.rs"]
+    mod costs_tests;
     pub mod convert;
     #[path = "front"]
     pub mod front {
