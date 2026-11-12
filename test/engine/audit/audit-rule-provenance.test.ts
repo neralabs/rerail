@@ -129,6 +129,28 @@ function move(path: string, options: RuleProvenanceMoveOptions = {}): Promise<nu
   return moveRuleProvenances(path, { pause: () => Promise.resolve(), ...options });
 }
 
+/**
+ * What `run` resolves to, and the longest time this thread ran no timer meanwhile: the longest gap between two ticks of
+ * a 10 ms timer, counting the gap that ends as `run` resolves, which a tick after it would come too late to see.
+ */
+async function withLongestStall<T>(run: () => Promise<T>): Promise<{ result: T; longest: number }> {
+  let longest = 0;
+  let last = performance.now();
+  const tick = (): void => {
+    const now = performance.now();
+    longest = Math.max(longest, now - last);
+    last = now;
+  };
+  const ticks = setInterval(tick, 10);
+  try {
+    const result = await run();
+    tick();
+    return { result, longest };
+  } finally {
+    clearInterval(ticks);
+  }
+}
+
 /** The step that keeps each provenance once, and what it adds to a file. */
 const STEP = RULE_PROVENANCE_STEP;
 
@@ -167,14 +189,17 @@ async function fileAtTheBaseline(): Promise<string> {
  * Upgrades a file of the build before that holds 30 audits' provenance inline and moves it, with what `prepare` sets up
  * (it returns how to undo it) in place during the move: the file's size before, and what the move wrote to stderr.
  */
-async function moveLogging(prepare: (path: string) => () => void): Promise<{ path: string; size: number; logged: string }> {
+async function moveLogging(
+  prepare: (path: string) => () => void,
+  pause?: () => Promise<void>,
+): Promise<{ path: string; size: number; logged: string }> {
   const path = await fileOfTheBuildBefore();
   writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
   const size = statSync(path).size;
   const release = prepare(path);
   const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
   try {
-    expect(await move(path)).toBe(30);
+    expect(await move(path, pause === undefined ? {} : { pause })).toBe(30);
     return { path, size, logged: stderr.mock.calls.map(([chunk]) => String(chunk)).join("") };
   } finally {
     stderr.mockRestore();
@@ -387,6 +412,20 @@ describe("audit rule provenance", () => {
     expect(logged).toContain("another connection was using it");
     expect(statSync(path).size).toBeGreaterThanOrEqual(size);
     expect(pageBytes(path).free).toBeGreaterThan(size / 2);
+  }, 30_000);
+
+  it("waits for another connection's read between tries, never inside SQLite, so its thread keeps running", async () => {
+    const { result: { logged }, longest } = await withLongestStall(() => moveLogging(path => {
+      // A read held through the move: the checkpoint before `VACUUM` finds it on every try.
+      const reader = new Database(path, { readonly: true });
+      reader.exec("BEGIN");
+      reader.prepare("SELECT count(*) FROM audits").get();
+      return () => reader.close();
+    }, () => new Promise(resolve => setTimeout(resolve, 20))));
+    expect(logged).toContain("another connection was using it");
+    // The daemon runs the move on its only thread, and a hook's health probe gives up after 2 s. Waiting inside SQLite,
+    // the checkpoint held the thread for its 5 s busy timeout.
+    expect(longest).toBeLessThan(2_000);
   }, 30_000);
 
   it("keeps the file's size, and says why, when the disk has less free space than the file", async () => {
