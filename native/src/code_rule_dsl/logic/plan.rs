@@ -1529,9 +1529,10 @@ impl Model {
             };
             if let Ok((plan, _)) = repriced
                 && self.valid_live_driver(&plan.0, body, first)
-                && near(&priced.sizes[cardinalities..], &sizes[cardinalities..])
-                && (plan.1 <= REPLAN * then.max(1.0) || plan.1 - then <= REPLAN_ROWS)
+                && ((plan.1 <= REPLAN_ROWS && std::env::var_os("RERAIL_REPLAN_CHEAP").is_none())
+                    || near(&priced.sizes[cardinalities..], &sizes[cardinalities..]) && (plan.1 <= REPLAN * then.max(1.0) || plan.1 - then <= REPLAN_ROWS))
             {
+                // Cheap as re-priced (`plan_rule_reused`'s rule): a search could save at most that work.
                 super::profile::decision("plan cache (decision 0038)", || "a live replan kept, re-priced: its work grew little".into());
                 let got = (plan, priced.got.1.clone());
                 PLANS.with(|p| {

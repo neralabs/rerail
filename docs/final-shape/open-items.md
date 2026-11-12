@@ -3781,7 +3781,9 @@ were all labelled "work per node grew 4x", which is the fall-through label, not 
 **First version (2026-11-12).** A kept plan re-priced at a work under `REPLAN_ROWS` is kept, whatever the sizes
 did: a search can save at most that work (`RERAIL_REPLAN_CHEAP` searches again). Step 02's replans fell from
 4,629 to 268. Steps 01-03: 276.0 G to 271.3 G (-1.7%). Ordering small-delta pieces greedily instead of searching
-was tried and changed nothing in instructions (266.5 G against 266.4 G), so it was dropped. In samples the search
+was tried and changed nothing in instructions (266.5 G against 266.4 G), so it was dropped. The same rule for live replans
+(`plan_rule_live`, replans inside a component's run): steps 01-03 276.6 G to 266.6 G instructions, 82.8 G to 79.0 G
+cycles (-4.6%), the same outputs as full runs. In samples the search
 is about 21% of a warm step's CPU, but in instructions planning is not a big rock.
 
 **Closure:** a stratum's plans are kept from step to step and are planned again only when a statistic they read
