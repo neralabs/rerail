@@ -6962,7 +6962,11 @@ fn run_observed(
         let waited = crate::code_rule_dsl::logic::profile::span(|| "the store's writer, the run's last writes".into());
         // The run's atoms still pending, appended by the writer with its last writes.
         store.queue_atoms_flush();
+        let drain = std::time::Instant::now();
         let outcome = store.written();
+        if std::env::var_os("RERAIL_WRITES").is_some() {
+            eprintln!("RERAIL_WRITES drain {:.3} s ({})", drain.elapsed().as_secs_f64(), phases::current().unwrap_or_else(|| "main".to_owned()));
+        }
         drop(waited);
         let w = store.written_so_far();
         let (by_what, peak, held) = store.written_by_what();

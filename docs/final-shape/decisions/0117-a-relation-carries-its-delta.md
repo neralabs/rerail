@@ -491,3 +491,38 @@ Of the 163 MB still read, 107 MB are the kept strata's frames (one space a root,
 The run reads the rows of 5,595 of their 9,152 relations; the others' frames are read and left undecoded.
 Tests: `only_protected_runs_keep_plans_and_a_dead_process_holds_nothing`,
 `a_memo_keeps_a_paths_newest_and_preloads_live_plans_only`.
+
+## Built: step 5 (2026-11-12): a frame found unchanged is confirmed, not written
+
+**Before**, an edit rewrote the reads of each unchanged relation whose reads' digests had moved
+(`queue_frames_retagged`): 3,589 frames, one `UPDATE` each, every edit. That was most of the end-of-run wait.
+
+**What it does.**
+- **Each space keeps one row of confirmations** (`frame_confirmed`): for each frame found unchanged under reads
+  other than its stored ones, the hash of the reads it was confirmed under (`confirm_key`, `reads_hash`). A retag is
+  now an entry in that row, written once per space and only if the map changed. The frame's own row is not touched.
+- **A frame is current** (`from_frame_snapshot`) if its stored reads are today's, or if its confirmation names
+  today's reads' hash. It is then taken with today's reads.
+- **A frame written whole, given a delta, or gone loses its confirmation.** This happens in memory and in the store
+  (`keep_frame_refs`, `keep_frames`).
+- **The confirmations are read with the frames before the first wave** (`preload_frames_for`), so no SQL runs in the
+  waves. They are kept current by the writes the process queues.
+- **A frame admitted later is checked by digest** (`admission_matches`): its rows are its digest's, and its reads
+  may be newer in what the run opened than as stored.
+- The trace settings `RERAIL_WRITES`, `RERAIL_STATS_KEEP_TRACE` and `RERAIL_JOURNAL_TRACE` are no longer part of the
+  run's key (`NOT_OUTPUTS`). A traced unchanged run was missing the whole-run cutoff.
+
+**Measured** (20 files, findings equal to the cold run's each time, load 16–67):
+
+| | Before | After |
+|---|---|---|
+| `UPDATE`s of unchanged frames an edit | 3,589 | 0; one row of confirmations |
+| Frames written an edit | 25.4 MB, 2.76 s | 22.9 MB (4,669 frames, all with changed rows), 1.85–3.1 s |
+| End-of-run wait (main) | 2.58 s | 1.9 s |
+| An unchanged run | — | 0.8 s, 11.4 G |
+
+**Open, found while measuring.** The remaining frame writes are mostly input granules: an edit rewrites all 65
+granules of about 70 `strtest_*` relations. In `write_frames`, about 1,100 of each one's owners alternate between 20
+rows and 19 rows from one edit to the next. In the same run, the kept-input patch (`patch_owners`) changes only 4
+owners. So the per-owner digests stored and those recomputed for the write disagree. Tests:
+`a_relations_deltas_are_read_after_its_frame` (confirmations in memory and stored).

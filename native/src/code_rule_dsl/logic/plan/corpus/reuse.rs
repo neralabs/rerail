@@ -35,7 +35,7 @@ pub(super) fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Opti
 /// The run's key: everything it is a function of besides what it consults.
 /// Switches that change how a run is measured or held, never what it outputs: left out of the key. A profile's path
 /// differs every run, so with it in the key no profiled run ever found the last run's record.
-const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WRITE_QUEUE_MB"];
+const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE"];
 
 fn key(programs: &[String], root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> String {
     let mut h = Sha256::new();

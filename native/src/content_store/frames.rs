@@ -20,7 +20,7 @@
 //! cross part, its loading cone) each mark what they used, and the space counts the run once.
 
 use super::{ContentStore, StoreResult};
-use rusqlite::params;
+use rusqlite::{OptionalExtension as _, params};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -41,6 +41,28 @@ const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS frames(space BLOB NOT NULL, rel
      part INTEGER NOT NULL, digest INTEGER NOT NULL, reads BLOB NOT NULL, width INTEGER NOT NULL, rows INTEGER NOT NULL, \
      types BLOB NOT NULL, data BLOB NOT NULL, used INTEGER NOT NULL, PRIMARY KEY (space, rel, ident, part)) WITHOUT ROWID; \
      CREATE TABLE IF NOT EXISTS frame_spaces(space BLOB PRIMARY KEY, runs INTEGER NOT NULL) WITHOUT ROWID;";
+
+/// The spaces' confirmations (decision 0117 step 5): made when a first retag needs it, so a store's other writes run
+/// no more statements than they did.
+const CONFIRM_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS frame_confirmed(space BLOB PRIMARY KEY, data BLOB NOT NULL) WITHOUT ROWID";
+
+/// Whether a store (by path) has its confirmations' table, as this process found or made it.
+fn confirm_table(t: &rusqlite::Connection, path: &std::path::Path, make: bool) -> rusqlite::Result<bool> {
+    static KNOWN: std::sync::OnceLock<std::sync::Mutex<HashMap<std::path::PathBuf, bool>>> = std::sync::OnceLock::new();
+    let key = super::atoms::key(path);
+    let known = KNOWN.get_or_init(Default::default);
+    if let Some(true) = known.lock().expect("the confirmations' tables").get(&key) {
+        return Ok(true);
+    }
+    let has = if make {
+        t.execute_batch(CONFIRM_SCHEMA)?;
+        true
+    } else {
+        t.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='frame_confirmed'", [], |r| r.get::<_, i64>(0))? > 0
+    };
+    known.lock().expect("the confirmations' tables").insert(key, has);
+    Ok(has)
+}
 
 /// A relation as its frame names it: its name and its identity.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -239,6 +261,15 @@ const READ_BATCH: usize = 128;
 /// Shared by the store's handles in this process, by its path.
 type Snapshot = HashMap<[u8; 32], HashMap<(Rel, i64), Arc<Admitted>>>;
 
+/// Each space's confirmations as this process holds them (`ContentStore::confirmed`), by store path, beside its
+/// snapshot: read with it, and kept current by every write this process queues.
+type Confirms = HashMap<[u8; 32], HashMap<u64, u64>>;
+
+fn confirms() -> &'static std::sync::Mutex<HashMap<std::path::PathBuf, Confirms>> {
+    static CONFIRMS: std::sync::OnceLock<std::sync::Mutex<HashMap<std::path::PathBuf, Confirms>>> = std::sync::OnceLock::new();
+    CONFIRMS.get_or_init(Default::default)
+}
+
 fn snapshots() -> &'static std::sync::Mutex<HashMap<std::path::PathBuf, Arc<std::sync::Mutex<Snapshot>>>> {
     static SNAPSHOTS: std::sync::OnceLock<std::sync::Mutex<HashMap<std::path::PathBuf, Arc<std::sync::Mutex<Snapshot>>>>> = std::sync::OnceLock::new();
     SNAPSHOTS.get_or_init(Default::default)
@@ -382,6 +413,19 @@ impl ContentStore {
                 snapshot.entry(space).or_default().insert(key, frame);
             }
             drop(st);
+            let mut confirmed = Confirms::new();
+            let has: i64 = connection.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='frame_confirmed'", [], |r| r.get(0))?;
+            if has > 0 {
+                let mut st = connection.prepare("SELECT space, data FROM frame_confirmed")?;
+                let rows = st.query_map([], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, Vec<u8>>(1)?)))?;
+                for row in rows {
+                    let (space, data) = row?;
+                    if let Ok(space) = <[u8; 32]>::try_from(space.as_slice()) {
+                        confirmed.insert(space, decode_confirmed(&data));
+                    }
+                }
+            }
+            confirms().lock().expect("the frames' confirmations").insert(super::atoms::key(&self.database_path), confirmed);
             drop(connection);
             for (space, held) in snapshot.iter_mut() {
                 compose_chains(held, chains.get(space))?;
@@ -394,6 +438,7 @@ impl ContentStore {
                 snapshot.entry(space).or_default().extend(got);
             }
         }
+        confirms().lock().expect("the frames' confirmations").entry(super::atoms::key(&self.database_path)).or_default();
         snapshots().lock().expect("the frames' snapshots").entry(super::atoms::key(&self.database_path)).or_insert_with(|| Arc::new(std::sync::Mutex::new(snapshot)));
         Ok((frames, bytes))
     }
@@ -405,6 +450,25 @@ impl ContentStore {
     }
 
     /// The stored frames of `rels` in `space`, partition `part`, without their rows.
+    /// The space's confirmations (decision 0117 step 5): each frame whose rows were found unchanged by a run that
+    /// read other digests than its stored reads name, with the hash of the reads it was confirmed under
+    /// (`reads_hash`). A frame is as current as its stored reads say, or as a confirmation says. Queued
+    /// confirmations are the snapshot's frames' reads (updated as they are queued), so the store's row serves.
+    pub fn confirmed(&self, space: &[u8; 32]) -> StoreResult<HashMap<u64, u64>> {
+        // With the frames read before the first wave, so are the confirmations: no SQL inside the waves.
+        if self.snapshot().is_some() {
+            let held = confirms().lock().expect("the frames' confirmations");
+            return Ok(held.get(&super::atoms::key(&self.database_path)).and_then(|h| h.get(space)).cloned().unwrap_or_default());
+        }
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        let has: i64 = connection.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='frame_confirmed'", [], |r| r.get(0))?;
+        if has == 0 {
+            return Ok(HashMap::new());
+        }
+        let row: Option<Vec<u8>> = connection.query_row("SELECT data FROM frame_confirmed WHERE space = ?1", [&space[..]], |r| r.get(0)).optional()?;
+        Ok(row.as_deref().map(decode_confirmed).unwrap_or_default())
+    }
+
     pub fn frames(&self, space: &[u8; 32], rels: &[Rel], part: i64) -> StoreResult<HashMap<Rel, Stored>> {
         let keys: Vec<_> = rels.iter().cloned().map(|r| (r, part)).collect();
         Ok(self.read_frame_parts(space, &keys, false)?.into_iter().map(|((r, _), f)| (r, f.stored.clone())).collect())
@@ -717,7 +781,7 @@ impl ContentStore {
         }
         let bytes: usize = puts.iter().map(|p| p.rows.rows.len() * 8).sum::<usize>() + delta_puts.iter().map(|p| p.rows.rows.len() * 8).sum::<usize>();
         // What a large write of frames holds, by relation (profiling only): what makes the store's writes large.
-        if bytes > 16 << 20 && std::env::var_os("RERAIL_PROFILE").is_some() {
+        if bytes > 4 << 20 && (std::env::var_os("RERAIL_PROFILE").is_some() || std::env::var_os("RERAIL_WRITES").is_some()) {
             let mut by: HashMap<&str, (usize, usize, usize)> = HashMap::new();
             for p in &puts {
                 let e = by.entry(p.rel.name.as_str()).or_default();
@@ -767,6 +831,26 @@ impl ContentStore {
             for key in &gone {
                 held.remove(key);
             }
+            drop(snapshot);
+            // The confirmations as the writer will leave them (`keep_frame_refs`).
+            if let Some(all) = confirms().lock().expect("the frames' confirmations").get_mut(&super::atoms::key(&self.database_path)) {
+                let map = all.entry(space).or_default();
+                for p in &puts {
+                    map.remove(&confirm_key(&p.rel, p.part));
+                }
+                for p in &delta_puts {
+                    map.remove(&confirm_key(&p.rel, p.part));
+                }
+                for (rel, _, _) in &heads {
+                    map.remove(&confirm_key(rel, 0));
+                }
+                for (rel, part) in &gone {
+                    map.remove(&confirm_key(rel, *part));
+                }
+                for r in &retags {
+                    map.insert(confirm_key(&r.rel, r.part), reads_hash(&r.reads));
+                }
+            }
         }
         self.write_back("frames", bytes, keys, Box::new(move |store| {
             // Attempted once: a busy store leaves these frames unwritten, and the next run derives them again.
@@ -783,6 +867,17 @@ impl ContentStore {
     pub fn keep_frames(&self, space: &[u8; 32], puts: &[Put], gone: &[(Rel, i64)], used: Option<(&[Rel], u64)>) -> StoreResult<()> {
         let mut gone = gone.to_vec();
         gone.extend(self.ended_deltas(space, puts.iter()));
+        // Written now, not queued: the confirmations this process holds lose these frames now too.
+        if let Some(all) = confirms().lock().expect("the frames' confirmations").get_mut(&super::atoms::key(&self.database_path))
+            && let Some(map) = all.get_mut(space)
+        {
+            for p in puts {
+                map.remove(&confirm_key(&p.rel, p.part));
+            }
+            for (rel, part) in &gone {
+                map.remove(&confirm_key(rel, *part));
+            }
+        }
         self.keep_frame_refs(space, &puts.iter().collect::<Vec<_>>(), &[], &[], &[], &gone, used)
     }
 
@@ -850,12 +945,31 @@ impl ContentStore {
                 t.prepare_cached("UPDATE frames SET digest = ?5, reads = ?6, used = ?7 WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?
                     .execute(rusqlite::params![&space[..], rel.name, &rel.ident[..], 0i64, *digest as i64, encode_reads(reads), run])?;
             }
-            // A retagged frame: its reads only; its rows, digest and the rest stay as stored, with the count of its
-            // deltas (`CHAIN`, the stored reads' last entry: 4 + 7 + 8 bytes).
-            for r in retags {
-                t.prepare_cached("UPDATE frames SET reads = CASE WHEN substr(reads, -19, 11) = ?7 THEN CAST(?5 || substr(reads, -19) AS BLOB) ELSE ?5 END, used = ?6 \
-                    WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?
-                    .execute(rusqlite::params![&space[..], r.rel.name, &r.rel.ident[..], r.part, encode_reads(&r.reads), run, chain_mark()])?;
+            // A retagged frame is not written (decision 0117 step 5): its rows, digest and stored reads stay, and the
+            // space's confirmations name it with its reads' hash now, one row for the space. A frame put, given a
+            // delta's head or forgotten here loses its confirmation in the same transaction: a confirmation never
+            // vouches for rows written after it.
+            if !(retags.is_empty() && puts.is_empty() && heads.is_empty() && gone.is_empty()) && confirm_table(t, &self.database_path, !retags.is_empty())? {
+                let was: Option<Vec<u8>> = t.query_row("SELECT data FROM frame_confirmed WHERE space = ?1", [&space[..]], |r| r.get(0)).optional()?;
+                if was.is_some() || !retags.is_empty() {
+                    let mut map = was.as_deref().map(decode_confirmed).unwrap_or_default();
+                    let before = map.clone();
+                    for p in puts.iter().chain(delta_puts.iter()) {
+                        map.remove(&confirm_key(&p.rel, p.part));
+                    }
+                    for (rel, _, _) in heads {
+                        map.remove(&confirm_key(rel, 0));
+                    }
+                    for (rel, part) in gone {
+                        map.remove(&confirm_key(rel, *part));
+                    }
+                    for r in retags {
+                        map.insert(confirm_key(&r.rel, r.part), reads_hash(&r.reads));
+                    }
+                    if map != before {
+                        t.prepare_cached("INSERT OR REPLACE INTO frame_confirmed(space, data) VALUES (?1, ?2)")?.execute(rusqlite::params![&space[..], encode_confirmed(&map)])?;
+                    }
+                }
             }
             for batch in gone.chunks(READ_BATCH) {
                 let values=(0..batch.len()).map(|i|format!("(?{},?{},?{})",2+3*i,3+3*i,4+3*i)).collect::<Vec<_>>().join(",");
@@ -880,6 +994,38 @@ impl ContentStore {
             Ok(())
         })
     }
+}
+
+/// A frame's key in its space's confirmations: its relation's name and identity, and its part.
+pub fn confirm_key(rel: &Rel, part: i64) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in rel.name.as_bytes().iter().chain(&[0]).chain(&rel.ident).chain(&part.to_le_bytes()) {
+        h = (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    h
+}
+
+/// The hash a confirmation keeps of a frame's reads (names and digests, in order; no `CHAIN` entry).
+pub fn reads_hash(reads: &[(String, u64)]) -> u64 {
+    let mut h: u64 = 0x84222325_cbf29ce4;
+    for (name, d) in reads {
+        for b in name.as_bytes().iter().chain(&[0]) {
+            h = (h ^ u64::from(*b)).wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        h = (h ^ d).wrapping_mul(0x0000_0100_0000_01b3);
+        h ^= h >> 31;
+    }
+    h
+}
+
+fn encode_confirmed(map: &HashMap<u64, u64>) -> Vec<u8> {
+    let mut pairs: Vec<(u64, u64)> = map.iter().map(|(k, v)| (*k, *v)).collect();
+    pairs.sort_unstable();
+    pairs.iter().flat_map(|(k, v)| k.to_le_bytes().into_iter().chain(v.to_le_bytes())).collect()
+}
+
+fn decode_confirmed(bytes: &[u8]) -> HashMap<u64, u64> {
+    bytes.chunks_exact(16).map(|c| (u64::from_le_bytes(c[..8].try_into().expect("8 bytes")), u64::from_le_bytes(c[8..].try_into().expect("8 bytes")))).collect()
 }
 
 fn encode_reads(reads: &[(String, u64)]) -> Vec<u8> {
@@ -1120,12 +1266,14 @@ mod tests {
         assert_eq!(got[&r].stored, Stored { digest: 3, reads: vec![("a".into(), 3)] });
         assert_eq!(sorted(got[&r].rows().unwrap().rows), vec![[3, 3], [4, 4], [5, 5]]);
         assert_eq!(got[&r].chain(), (2, 4));
-        // A frame retagged keeps its deltas.
+        // A frame retagged keeps its rows, deltas and stored reads; the space's confirmations name its reads now
+        // (decision 0117 step 5).
         store.queue_frames_retagged([1; 32], vec![], vec![Retag { rel: r.clone(), part: 0, reads: vec![("b".into(), 4)] }], vec![], vec![], None);
         drop(store);
         let store = ContentStore::open(&path).unwrap();
         let got = store.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
-        assert_eq!((got[&r].stored.reads.clone(), got[&r].chain()), (vec![("b".into(), 4)], (2, 4)));
+        assert_eq!((got[&r].stored.reads.clone(), got[&r].chain()), (vec![("a".into(), 3)], (2, 4)));
+        assert_eq!(store.confirmed(&[1; 32]).unwrap().get(&confirm_key(&r, 0)), Some(&reads_hash(&[("b".into(), 4)])));
         assert_eq!(sorted(got[&r].rows().unwrap().rows), vec![[3, 3], [4, 4], [5, 5]]);
         drop(store);
         // And from the frames read before the first wave.
@@ -1138,6 +1286,10 @@ mod tests {
         store.keep_frames(&[1; 32], &[Put { rel: r.clone(), part: 0, digest: 9, reads: vec![], rows: rows(&[9, 9]) }], &[], None).unwrap();
         let got = store.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
         assert_eq!((sorted(got[&r].rows().unwrap().rows), got[&r].chain()), (vec![[9, 9]], (0, 0)));
+        // A frame put whole is no longer confirmed: in memory (the snapshot's), and in the store.
+        assert_eq!(store.confirmed(&[1; 32]).unwrap().get(&confirm_key(&r, 0)), None);
+        forget_snapshot(path.to_str().unwrap());
+        assert_eq!(store.confirmed(&[1; 32]).unwrap().get(&confirm_key(&r, 0)), None);
         let left: i64 = store.connection.lock().unwrap().query_row("SELECT count(*) FROM frames WHERE part < 0", [], |r| r.get(0)).unwrap();
         assert_eq!(left, 0);
         forget_snapshot(path.to_str().unwrap());
@@ -1387,4 +1539,5 @@ mod tests {
 /// A store created at `path` (its schema new): a snapshot of an earlier file there is not this one's.
 pub fn forget_snapshot(path: &str) {
     snapshots().lock().expect("the frames' snapshots").remove(&super::atoms::key(std::path::Path::new(path)));
+    confirms().lock().expect("the frames' confirmations").remove(&super::atoms::key(std::path::Path::new(path)));
 }

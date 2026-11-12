@@ -1351,16 +1351,24 @@ impl Retained {
         let mut known: HashMap<String, u64> = bound.clone();
         known.extend(frames.inputs.iter().map(|(rel, (d, _))| (rel.clone(), *d)));
         let all_reads = Reads::of(prog);
+        // A frame a run found unchanged, under reads other than those it was stored with, is confirmed under them
+        // (decision 0117 step 5): its reads are not written again, the space's confirmations name their hash.
+        let confirmed = store.confirmed(&space).map_err(|e| Error::Plan(e.to_string()))?;
         for scc in sccs {
-            let current = scc.iter().all(|rel| {
-                let Some(at) = frames.names.get(rel).and_then(|n| stored.get(n)) else { return false };
-                at.reads.iter().all(|(read, d)| read_digest(read, &known, &derived, prog) == Some(*d))
-            });
-            if current {
-                for rel in scc {
-                    let at = &stored[&frames.names[rel]];
+            // Each relation's frame as current, its reads as they are now (a confirmed one's stored reads are older).
+            let current: Option<Vec<FrameStored>> = scc.iter().map(|rel| {
+                let n = frames.names.get(rel)?;
+                let at = stored.get(n)?;
+                let now: Vec<(String, u64)> = at.reads.iter().map(|(read, _)| read_digest(read, &known, &derived, prog).map(|d| (read.clone(), d))).collect::<Option<_>>()?;
+                if now == at.reads {
+                    return Some(at.clone());
+                }
+                (confirmed.get(&crate::content_store::frame_confirm_key(n, DOCS_PART)) == Some(&crate::content_store::frame_reads_hash(&now))).then(|| FrameStored { digest: at.digest, reads: now })
+            }).collect();
+            if let Some(current) = current {
+                for (rel, at) in scc.iter().zip(current) {
                     known.insert(rel.to_string(), at.digest);
-                    frames.derived.insert(rel.to_string(), at.clone());
+                    frames.derived.insert(rel.to_string(), at);
                 }
             } else {
                 let reads: Vec<String> = all_reads.of_scc(scc).into_iter().filter(|r| !scc.contains(r)).collect();
@@ -1641,6 +1649,12 @@ impl Retained {
             let mut changed: BTreeSet<i64> = docs.keys().filter(|d| differ(d)).map(|d| granule(*d)).collect();
             if let Some(o) = &old {
                 changed.extend(o.keys().filter(|d| !docs.contains_key(*d)).map(|d| granule(*d)));
+            }
+            if changed.len() > 8 && std::env::var_os("RERAIL_INPUT_TRACE").is_some() {
+                let differ_n = docs.keys().filter(|d| differ(d)).count();
+                let gone_n = old.as_ref().map_or(0, |o| o.keys().filter(|d| !docs.contains_key(*d)).count());
+                let ex: Vec<String> = docs.iter().filter(|(d, _)| differ(d)).take(3).map(|(d, v)| format!("{d}: {v:?} was {:?}", old.as_ref().and_then(|o| o.get(d)))).collect();
+                eprintln!("rerail: input {rel} (group col {g} of {width}): {} granules, {} owners of {} differ, {gone_n} gone; {}", changed.len(), differ_n, docs.len(), ex.join("; "));
             }
             let types = types_of(prog, rel);
             // Each changed granule's rows, grouped by owner, owners ascending (`kept_inputs` reads each owner's

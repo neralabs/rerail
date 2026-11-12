@@ -58,7 +58,9 @@ pub(super) fn admission_matches<'a, K: Eq + std::hash::Hash>(
     admitted: &HashMap<K, Arc<AdmittedFrame>>,
     expected: impl Fn(&K) -> Option<&'a FrameStored>,
 ) -> bool {
-    keys.iter().all(|k| admitted.get(k).map(|f| &f.stored) == expected(k))
+    // By digest: a frame's rows are its digest's. Its reads may be newer in what the run opened than as stored (a
+    // confirmed frame's, decision 0117 step 5).
+    keys.iter().all(|k| admitted.get(k).map(|f| f.stored.digest) == expected(k).map(|s| s.digest))
 }
 
 pub(in crate::code_rule_dsl) struct Kept<'s> {
