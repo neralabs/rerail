@@ -5262,7 +5262,9 @@ fn const_tok(t: &Term) -> Option<Tok> {
 /// run. The engine's relations and components it makes are the run's (they are kept by scope), and what it learnt
 /// goes back to the run when it retires (`Run::absorb`), in program order.
 /// A stratum's run off the run's thread, and the atoms' arena of its scope (whose new atoms it reserves).
-struct Strand<'a>(Run<'a, 'static>, Arc<crate::content_store::atoms::Atoms>);
+/// Its third part: the device waves its job flushed and the launches they held (`lanes::wave`), credited to the run's
+/// thread when the strand is taken back, as its relations are: a level's launches a job ran are the level's wave.
+struct Strand<'a>(Run<'a, 'static>, Arc<crate::content_store::atoms::Atoms>, (u64, u64));
 
 // SAFETY: a strand holds no connection (`Db::detached`, whose SQL is an error) and no answer hook (`strand` makes it
 // with neither). Its model, relations and maps are its own. What it shares with the run is read-only while it runs: the
@@ -5381,7 +5383,7 @@ impl<'a> Run<'a, '_> {
             answered: BTreeMap::new(),
             logging: None,
             answer_logs: HashMap::new(),
-        }, arena))
+        }, arena, (0, 0)))
     }
 
     /// A strand for a component of maintained forms (decision 0117): each form's pieces read `reads` (its
@@ -5415,13 +5417,14 @@ impl<'a> Run<'a, '_> {
             answered: BTreeMap::new(),
             logging: None,
             answer_logs: HashMap::new(),
-        }, arena))
+        }, arena, (0, 0)))
     }
 
     /// Takes back a component of forms' strand (`strand_forms`): per form, its relations `own` and what the strand
     /// learnt of them and of its rules.
     fn absorb_forms(&mut self, s: Strand<'a>, forms: &[(&Program, BTreeSet<String>, Vec<u64>)]) {
-        let Strand(mut run, _) = s;
+        let Strand(mut run, _, waves) = s;
+        super::lanes::wave::credit(waves);
         for (form, own, rules) in forms {
             self.model.absorb_with(&|r: &str| form.decls.get(r).map_or(0, Vec::len), &mut run.model, own, rules);
         }
@@ -5431,7 +5434,8 @@ impl<'a> Run<'a, '_> {
     /// Takes back a strand of the stratum `scc` that ran: its relations, and what its model learnt of them and of
     /// its rules (`rules`, their digests).
     fn absorb(&mut self, s: Strand<'a>, scc: &BTreeSet<String>, rules: &[u64]) {
-        let Strand(run, _) = s;
+        let Strand(run, _, waves) = s;
+        super::lanes::wave::credit(waves);
         self.model.absorb(self.prog, run.model, scc, rules);
         self.native_rels.extend(run.native_rels.into_iter().filter(|r| scc.contains(r)));
     }
@@ -8929,7 +8933,9 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                         let h = stream.submit(est, move || {
                             let _in = ambient.enter();
                             let mut strand = strand;
+                            let before = super::lanes::wave::flushed_now();
                             let (outs, reserved) = strand.run_forms(&data);
+                            strand.2 = super::lanes::wave::since(before);
                             (strand, outs, reserved)
                         });
                         issued_forms += group.len();
