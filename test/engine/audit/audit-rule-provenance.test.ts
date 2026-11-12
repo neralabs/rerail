@@ -396,6 +396,54 @@ describe("audit rule provenance", () => {
     expect(pageBytes(path).free).toBeGreaterThan(size / 2);
   });
 
+  it("says the file shrinks later when another connection reads it as the VACUUM ends", async () => {
+    const path = await fileOfTheBuildBefore();
+    writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
+    const readers: Database.Database[] = [];
+    let pauses = 0;
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    let logged = "";
+    try {
+      const moved = await move(path, {
+        pause: () => {
+          pauses += 1;
+          // Before the batch that finds nothing left: a read that begins on an empty WAL lets the checkpoint before
+          // `VACUUM` run, and keeps the one after it from writing the rewritten file into the database file.
+          if (pauses === 2) {
+            const checkpointer = new Database(path);
+            try {
+              checkpointer.pragma("wal_checkpoint(TRUNCATE)");
+            } finally {
+              checkpointer.close();
+            }
+            const reader = new Database(path, { readonly: true });
+            readers.push(reader);
+            reader.exec("BEGIN");
+            reader.prepare("SELECT count(*) FROM audits").get();
+          }
+          return Promise.resolve();
+        },
+      });
+      expect(moved).toBe(30);
+      logged = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
+    } finally {
+      stderr.mockRestore();
+      for (const reader of readers) reader.close();
+    }
+    expect(logged).toContain(`rerail: ${path} shrinks to `);
+    expect(logged).toContain("another connection was reading it as VACUUM ended");
+
+    // Once the read ends, a checkpoint writes the rewritten file into the database file, as the line says.
+    const later = new Database(path);
+    try {
+      later.pragma("wal_checkpoint(TRUNCATE)");
+    } finally {
+      later.close();
+    }
+    expect(pageBytes(path).free).toBe(0);
+    expect(statSync(path).size).toBe(bytesInUse(path));
+  }, 30_000);
+
   it("leaves nothing of a repository's provenance in the file once its history is reset", async () => {
     const path = await temporaryDatabase();
     const marker = "/checkouts/reset-marker";

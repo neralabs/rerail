@@ -123,15 +123,15 @@ function withFreedPagesKept<T>(client: RerailDatabase["$client"], work: () => T)
  * in use to a temporary file, then writes them through the WAL beside the database while it holds the write lock. It is
  * skipped, and stderr says why, when another connection keeps the WAL from being emptied first, when the database's
  * folder or the temporary folder has less free disk space than the file's size, or when `VACUUM` fails (another writer
- * past the busy timeout, a full disk), which leaves the file as it was. Never throws: the move has committed.
+ * past the busy timeout, a full disk), which leaves the file as it was. Stderr also says when the file shrinks only
+ * later (`sayShrinkWaits`). Never throws: the move has committed.
  */
 function giveBackFreedSpace(database: RerailDatabase, path: string): void {
   const [checkpoint] = database.$client.pragma("wal_checkpoint(TRUNCATE)") as Array<{ busy: number }>;
   let skipped = checkpoint?.busy === 0 ? shortOfDisk(path) : "another connection was using it";
   if (skipped === undefined) {
     try {
-      // A read that begins while `VACUUM` runs keeps the new copy in the WAL; the file shrinks at a later checkpoint.
-      eraseFreedPages(database);
+      if (!eraseFreedPages(database)) sayShrinkWaits(database, path);
       return;
     } catch (error) {
       skipped = `VACUUM failed (${errorText(error)})`;
@@ -145,6 +145,23 @@ function giveBackFreedSpace(database: RerailDatabase, path: string): void {
     // The reason matters more than the sizes.
   }
   process.stderr.write(`rerail: ${path} keeps its size${sizes} after this Rerail's upgrade: ${skipped}.\n`);
+}
+
+/**
+ * The line for a `VACUUM` that ended while another connection was reading: the checkpoint after it could not write the
+ * rewritten file from the WAL into the database file, so the file keeps its size, and the WAL the size of the new copy,
+ * until the first checkpoint after that read ends.
+ */
+function sayShrinkWaits(database: RerailDatabase, path: string): void {
+  let size = "";
+  try {
+    const pragma = (name: string): number => database.$client.pragma(name, { simple: true }) as number;
+    size = ` to ${megabytes(pragma("page_count") * pragma("page_size"))}`;
+  } catch {
+    // The reason matters more than the size.
+  }
+  process.stderr.write(`rerail: ${path} shrinks${size} at a later checkpoint, after this Rerail's upgrade: another `
+    + "connection was reading it as VACUUM ended, so the rewritten file waits in its WAL.\n");
 }
 
 /**
