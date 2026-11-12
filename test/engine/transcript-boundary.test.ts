@@ -153,8 +153,12 @@ describe("the transcript boundary for coding agents", () => {
       if (outside(String(path))) throw Object.assign(new Error(`ENOENT: no such file or directory, realpath '${String(path)}'`), { code: "ENOENT" });
       return lookUp(path, options);
     });
-    for (const input of [...NETWORK_INPUTS, { command: `cat ${join(tmpdir(), "notes.txt")}` }])
+    for (const input of [...NETWORK_INPUTS, { command: `cat ${join(tmpdir(), "notes.txt")}` }]) {
       expect(callNamesSecretPath(input, root), JSON.stringify(input)).toBe(false);
+      // A coding agent reading the session's events has each stored call judged in the same checkout.
+      const call = { toolName: "Bash", input };
+      expect(agentTranscriptPayload("call", call, root), JSON.stringify(input)).toBe(call);
+    }
     // A path in the checkout is still looked up, to see where it leads.
     expect(callNamesSecretPath({ command: "cat docs/guide.md" }, root)).toBe(false);
     expect(lookups.filter(outside)).toEqual([]);
