@@ -643,6 +643,49 @@ describe("CodeRuleBridge", () => {
     }
   });
 
+  it("waits for its own walk again once the pass a boundary gave up on has run, though a pass asked for behind it still runs", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "before\n");
+    await awaitClockAfter(path);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const audited = (file: string) => auditGeneratedEdits.mock.calls.some(([, batch]) => batch.edits.some(edit => edit.path === file));
+    const pending: string[] = [];
+    const bridge = createBridge(root, auditor(auditGeneratedEdits), { onDiscoveryPending: boundary => { pending.push(boundary); } });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      // The session's first walk, which the first shell result gives up on; the pass behind it, which holds that result's
+      // writes; and the pass a turn end asks for while that one runs.
+      const [slow, behind, running] = [holdDiscovery("directories", root), holdDiscovery("directories", root), holdDiscovery("directories", root)];
+      await bridge.openWorkspace("session-1");
+      await slow.entered;
+      await bridge.begin("shell-1", "Bash", { command: "./build.sh" });
+      await discoveryWaits(() => bridge.finish("shell-1"));
+      slow.release();
+      await behind.entered;
+      await discoveryWaits(() => bridge.checkpoint("turn"));
+      behind.release();
+      await running.entered;
+
+      // The next shell result comes while the turn end's pass runs: it waits for that pass and its own, and its write is
+      // audited before it answers.
+      await bridge.begin("shell-2", "Bash", { command: "./write.sh" });
+      await writeFile(join(root, "src", "b.py"), "shell write\n");
+      let answered = false;
+      const answer = bridge.finish("shell-2").then(() => {
+        answered = true;
+        return audited("src/b.py");
+      });
+      passes.push(answer.catch(() => undefined));
+      await ticksUntil(() => answered || vi.getTimerCount() > 0);
+      const waited = !answered;
+      running.release();
+      expect({ waited, auditedFirst: await answer, pending }).toEqual({ waited: true, auditedFirst: true, pending: ["command", "turn"] });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("discovers a command's shell write that races the startup snapshot read", async () => {
     const root = await workspace();
     const path = join(root, "src", "a.py");

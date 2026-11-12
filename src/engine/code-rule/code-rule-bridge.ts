@@ -383,11 +383,16 @@ interface SourceDiscovery {
   baselineRoots: Set<string>;
   readonly worktrees: WorktreeDiscovery;
   error: string | undefined;
-  /**
-   * A boundary answered while the current walk was running: later boundaries answer at once until it finishes, and
-   * closing before it finishes says so again.
-   */
+  /** A boundary answered while the current walk was running; closing before it finishes says so again. */
   pendingReported: boolean;
+  /** How many passes of the session folder's walk have started, and how many have finished (`#runDiscovery`). */
+  passesStarted: number;
+  passesFinished: number;
+  /**
+   * What `passesFinished` reaches once the pass holding the shell writes of the last boundary whose wait ran out has run.
+   * Until then that walk is overdue (`sessionWalkOverdue`).
+   */
+  overdueThrough: number;
   /**
    * The unlisted files the last walk found too large to read, by path, with their stamps. Each is reported as not
    * checked at one boundary only while its stamp holds (`reported`), not at every turn: it is no listed source.
@@ -531,8 +536,15 @@ function sameSource(left: ObservedSource | undefined, right: Source | undefined)
 function emptyResponse(revision: number): CodeRuleResponse {
   return { revision, disposition: "continue", violations: [], failures: [] };
 }
-/** The session folder's walk is still running after a boundary stopped waiting for it: it is overdue. */
+/**
+ * The pass holding the shell writes of the last boundary whose wait ran out has yet to finish: a boundary that comes now
+ * has its own pass behind that one, so it would spend its wait on a walk an earlier boundary already gave up on.
+ */
 function sessionWalkOverdue(discovery: SourceDiscovery): boolean {
+  return discovery.passesFinished < discovery.overdueThrough;
+}
+/** The session folder's walk is running after a boundary stopped waiting for it. */
+function sessionWalkAbandoned(discovery: SourceDiscovery): boolean {
   return discovery.idle !== undefined && discovery.pendingReported;
 }
 /** A worktree walk a boundary asked for has yet to finish, and there are worktrees for it to check. */
@@ -695,8 +707,8 @@ export function isCommandTool(toolName: string): boolean {
  * How long a turn checkpoint or a command result waits for a checkout-wide source walk, and a code-rule boundary
  * waits for the session's evaluator to open, before answering with what it has. The work goes on, and what it finds
  * is audited and delivered at a later boundary; waiting longer would hold the session's event lane past the host's
- * per-event timeout. Once a boundary's wait for a walk runs out, the boundaries that come while that walk still runs do
- * not wait for it.
+ * per-event timeout. Once a boundary's wait for a walk runs out, the boundaries that come before that walk has finished
+ * do not wait for it; the first one after it waits for its own walk again.
  */
 export const BOUNDARY_DISCOVERY_WAIT_MS = 10_000;
 /**
@@ -819,6 +831,7 @@ export class CodeRuleBridge {
       this.#lastResponse = emptyResponse(0);
       const discovery: SourceDiscovery = {
         startedAt, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
+        passesStarted: 0, passesFinished: 0, overdueThrough: 0,
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
         heads: new Map(), unmerged: new Map(), passedCheckouts: new Set(), readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
       };
@@ -1162,7 +1175,7 @@ export class CodeRuleBridge {
     discovery.cancelled = true;
     // A walk a boundary already gave up on is abandoned here: what it had not reached is never checked. No boundary waits
     // for the worktree walk, so one still due is always such a walk.
-    if (sessionWalkOverdue(discovery) || worktreeWalkAbandoned(discovery)) this.#reportDiscoveryPending("close");
+    if (sessionWalkAbandoned(discovery) || worktreeWalkAbandoned(discovery)) this.#reportDiscoveryPending("close");
     await this.#enqueue(async () => {
       if (this.#discovery !== discovery) return;
       this.#sessionId = undefined;
@@ -1236,8 +1249,10 @@ export class CodeRuleBridge {
 
   /**
    * A requested walk, waited for at most `#discoveryWaitMs`; a walk that outlasts it is reported pending at `boundary`.
-   * Passes run one after another, so while a walk an earlier boundary stopped waiting for still runs, this boundary's
-   * pass is behind it: the boundary asks for that pass and is reported pending at once rather than spend the wait again.
+   * Passes run one after another, so while the pass an earlier boundary stopped waiting for has yet to finish, this
+   * boundary's pass is behind it: the boundary asks for that pass and is reported pending at once rather than spend the
+   * wait again. Once that pass has run, a boundary waits again, though passes asked for behind it may still run: one
+   * slow walk does not stop later boundaries from waiting for walks that fit the wait.
    */
   async #awaitDiscovery(
     discovery: SourceDiscovery,
@@ -1255,6 +1270,8 @@ export class CodeRuleBridge {
       const walked = await Promise.race([idle.then(() => true), budget.promise]);
       if (!walked && !discovery.cancelled) {
         discovery.pendingReported = true;
+        // This boundary's writes are in the pass running now, or in the one queued behind it if its request is still there.
+        discovery.overdueThrough = discovery.passesStarted + (discovery.requested === undefined ? 0 : 1);
         this.#reportDiscoveryPending(boundary);
       }
     } finally {
@@ -1356,11 +1373,13 @@ export class CodeRuleBridge {
   async #runDiscovery(discovery: SourceDiscovery): Promise<void> {
     try {
       while (!discovery.cancelled && discovery.requested !== undefined) {
+        discovery.passesStarted += 1;
         try {
           await this.#discoveryPass(discovery);
         } catch (error) {
           this.#recordDiscoveryError(discovery, error);
         }
+        discovery.passesFinished += 1;
       }
     } finally {
       discovery.idle = undefined;
