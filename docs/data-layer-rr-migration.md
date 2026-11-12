@@ -10,6 +10,14 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 The current inventory has twenty-one admitted rules, seventy-eight drafts, and one absent translation.
 Draft policies do not count as completed migrations.
 
+## Unresolved forward references: component failures
+
+Fifty source-recorded contracts cover metadata, registered extraction, caller-supplied syntax trees, state, and raw plugin reporting.
+All fifty pass against the pinned Python linter. The first native run fails all fifty through the source-execution guard.
+The existing detector adapter does not replace these entry points. Its CLI also still copies and compiles Python linter code.
+These contracts must run through native rules before admission. The copied CLI must also be replaced.
+The [red receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-components-red.json.gz) preserves both runs without claiming migration acceptance.
+
 ## Active engine
 
 The latest registered root CLI is `f4db14313662e14c…`, built from native repair commit `4e0774680`.
