@@ -260,14 +260,18 @@ fn is_cat_of_rows(t: &Term) -> bool {
 
 /// The text functions the device makes (`metal_join::TEXTFN`), by the names the planner's terms and the native
 /// engine's steps give them.
-const DEVICE_TEXT_FUNCTIONS: [&str; 12] =
-    ["lower", "sql_lower", "sql_upper", "head", "dir", "substr", "rr_substr", "sql_substr", "slice", "to_string", "rr_to_string", "sql_replace"];
+const DEVICE_TEXT_FUNCTIONS: [&str; 14] = [
+    "lower", "sql_lower", "sql_upper", "head", "dir", "substr", "rr_substr", "sql_substr", "slice", "to_string", "rr_to_string", "sql_replace",
+    "replace_all", "rx_replace",
+];
 
 /// A text function of variables and constants (its text argument perhaps another's value): a text the device makes.
 fn is_text_fn_of_rows(t: &Term) -> bool {
     match t {
         Term::Call(f, args) if DEVICE_TEXT_FUNCTIONS.contains(&f.as_str()) && !args.is_empty() => {
-            (!matches!(args[0], Term::Call(..)) || is_text_fn_of_rows(&args[0])) && args[1..].iter().all(|a| !matches!(a, Term::Call(..)))
+            // A regex's and its replacement's texts are constants (the device's automaton is made before the run).
+            let constants = !matches!(f.as_str(), "replace_all" | "rx_replace") || args[1..].iter().all(|a| !matches!(a, Term::Var(_)));
+            constants && (!matches!(args[0], Term::Call(..)) || is_text_fn_of_rows(&args[0])) && args[1..].iter().all(|a| !matches!(a, Term::Call(..)))
         }
         _ => false,
     }

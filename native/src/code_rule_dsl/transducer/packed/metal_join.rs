@@ -84,15 +84,6 @@ pub(in crate::code_rule_dsl) const TEXT_SPLIT: u32 = 1 << 4;
 pub(in crate::code_rule_dsl) const OPND_SYM: u32 = 0;
 pub(in crate::code_rule_dsl) const OPND_DOT: u32 = 1;
 pub(in crate::code_rule_dsl) const OPND_PLAIN: u32 = 2;
-/// A text made of two names, a's and b's (keys 0 and 1) by the form `agg[1]`, into `bind_slot[0]` as a made value
-/// (`MADE`): the parts' symbols, not yet a symbol (the device makes none). Its counter word is set when a part is no
-/// symbol a made value holds (`MADE_PART`).
-pub(in crate::code_rule_dsl) const MAKE: u32 = 8;
-/// A made value: this bit, the form at `MADE_FORM`, a's symbol from bit 30, b's from bit 0.
-pub(in crate::code_rule_dsl) const MADE: i64 = 1 << 62;
-pub(in crate::code_rule_dsl) const MADE_FORM: u32 = 61;
-/// One past the greatest part a made value holds.
-pub(in crate::code_rule_dsl) const MADE_PART: i64 = 1 << 30;
 /// `cat`'s form: b's name alone when a's is empty, else a's, ".", b's.
 pub(in crate::code_rule_dsl) const CAT_DOT: u32 = 0;
 /// `str_concat`'s form: a's name then b's.
@@ -112,6 +103,11 @@ pub(in crate::code_rule_dsl) const TEXTFN_REPLACE: u32 = 6;
 pub(in crate::code_rule_dsl) const TEXTFN_SQL_SUBSTR: u32 = 7;
 pub(in crate::code_rule_dsl) const TEXTFN_ASCII_LOWER: u32 = 8;
 pub(in crate::code_rule_dsl) const TEXTFN_ASCII_UPPER: u32 = 9;
+/// X's text whole: a cat's (operand `OPND_DOT` or `OPND_PLAIN`), made for the head or a text function.
+pub(in crate::code_rule_dsl) const TEXTFN_COPY: u32 = 10;
+/// `replace_all` of a regex (its automaton, `text::table::Replacer`, bound where a join's sort is) and a literal
+/// replacement (Z).
+pub(in crate::code_rule_dsl) const TEXTFN_REGEX: u32 = 11;
 pub(in crate::code_rule_dsl) const TEXTFN_FULL: u32 = 1;
 pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
 /// An operand that is an arena text (a text function's value).
@@ -546,12 +542,55 @@ static inline uint txt_char_at(Txt x, uint c) {
     return n;
 }
 
+// The end of the match a regex's automaton G (`text::table::Replacer`) prefers from byte s of x (n bytes), NONE for
+// none. Its matches are a byte late: a match state after byte k is a match ending at k.
+static inline uint rx_end(device const uchar* G, Txt x, uint s, uint n) {
+    device const uint* h = (device const uint*)G;
+    uint classes = h[1], dead = h[4];
+    device const uchar* cls = G + 32;
+    device const ushort* next = (device const ushort*)(G + 288);
+    device const ushort* eoi = next + h[0] * classes;
+    device const uchar* acc = (device const uchar*)(eoi + h[0]);
+    uint st = s == 0 ? h[2] : h[3], last = NONE;
+    for (uint k = s; k < n; k++) {
+        st = next[st * classes + cls[txt_byte(x, k)]];
+        if (st == dead) return last;
+        if (acc[st] != 0) last = k;
+    }
+    return acc[eoi[st]] != 0 ? n : last;
+}
+
+// x with each match of G (leftmost first, not overlapping, from a character's first byte) replaced by z: its length,
+// and its bytes into o when `write`.
+static inline uint rx_replace(device const uchar* G, Txt x, Txt z, device uchar* o, bool write) {
+    uint n = txt_len(x), lz = txt_len(z), pos = 0, w = 0, s = 0;
+    while (s < n) {
+        if ((txt_byte(x, s) & 0xc0) != 0x80) {
+            uint e = rx_end(G, x, s, n);
+            if (e != NONE && e > s) {
+                if (write) {
+                    for (uint i = pos; i < s; i++) o[w + i - pos] = txt_byte(x, i);
+                    for (uint k = 0; k < lz; k++) o[w + s - pos + k] = txt_byte(z, k);
+                }
+                w += s - pos + lz;
+                pos = e;
+                s = e;
+                continue;
+            }
+        }
+        s++;
+    }
+    if (write) for (uint i = pos; i < n; i++) o[w + i - pos] = txt_byte(x, i);
+    return w + n - pos;
+}
+
 // Mode 9, a text function (agg[0]: `TEXTFN_*`) of X (keys 0, 1, kind agg[1] & 15), Y and Z (keys 2 and 4, symbols:
 // `replace_all`'s pattern and replacement) and numbers (keys 5 and 6): its text's bytes [from, from + len) of X
 // (`head`, `dir`, `substr`, `slice`), or made into the arena (`lower`, `to_string`, `replace_all`). Its value: an
 // arena text; -1 and a flag in the stage's counter word (1: the arena is full, its first word then says how much
 // was wanted; 2: `lower` of a name past ASCII, which the host's Unicode mapping makes) when it has none.
-static inline long textfn_value(constant Stage& s, device const long* L, uint t, device const long* R, device atomic_uint* A, device atomic_uint* counters) {
+static inline long textfn_value(constant Stage& s, device const long* L, uint t, device const long* R, device atomic_uint* A, device atomic_uint* counters,
+                                device const uchar* G) {
     Txt x = txt_of(s, L, t, R, A, 0, s.agg[1] & 15);
     uint n = txt_len(x), f = s.agg[0];
     long n0 = key_value(s, L, t, 5), n1 = key_value(s, L, t, 6);
@@ -609,6 +648,9 @@ static inline long textfn_value(constant Stage& s, device const long* L, uint t,
         do { digits[k++] = char('0' + u % 10); u /= 10; } while (u > 0);
         if (n0 < 0) digits[k++] = '-';
         made = k;
+    } else if (f == 11) {
+        z = txt_of(s, L, t, R, A, 4, 0);
+        made = rx_replace(G, x, z, (device uchar*)A, false);
     } else {
         // replace_all(s, p, r) of a literal p (not empty) and r: the leftmost matches, not overlapping.
         y = txt_of(s, L, t, R, A, 2, 0);
@@ -619,7 +661,8 @@ static inline long textfn_value(constant Stage& s, device const long* L, uint t,
         }
         made = n - hits * ly + hits * lz;
     }
-    if (f >= 1 && f <= 4 || f == 7) made = len;
+    if (f == 10) len = n;
+    if (f >= 1 && f <= 4 || f == 7 || f == 10) made = len;
     device atomic_uint* used = A;
     uint cap = ((device const uint*)A)[1];
     uint off = atomic_fetch_add_explicit(used, made, memory_order_relaxed);
@@ -634,6 +677,8 @@ static inline long textfn_value(constant Stage& s, device const long* L, uint t,
         for (uint i = 0; i < n; i++) { uchar c = txt_byte(x, i); o[i] = (c >= 'a' && c <= 'z') ? c - 32 : c; }
     } else if (f == 5) {
         for (uint i = 0; i < made; i++) o[i] = uchar(digits[made - 1 - i]);
+    } else if (f == 11) {
+        rx_replace(G, x, z, o, true);
     } else if (f == 6) {
         uint ly = txt_len(y), lz = txt_len(z), w = 0;
         for (uint i = 0; i < n;) {
@@ -646,15 +691,6 @@ static inline long textfn_value(constant Stage& s, device const long* L, uint t,
         for (uint i = 0; i < len; i++) o[i] = txt_byte(x, from + i);
     }
     return arena_value(off, made);
-}
-
-// Mode 8: the made value of a's and b's symbols by form agg[1] (`MADE`); -1 when a part is none a made value holds.
-static inline long make_value(constant Stage& s, device const long* L, uint t) {
-    long v[2];
-    for (uint k = 0; k < 2; k++) v[k] = s.key_kind[k] == 1 ? L[ulong(s.key_slot[k]) * s.cap_in + t] : s.key_const[k];
-    const long part = 1l << 30;
-    if (v[0] < 0 || v[0] >= part || v[1] < 0 || v[1] >= part) return -1;
-    return (1l << 62) | (long(s.agg[1] & 1) << 61) | (v[0] << 30) | v[1];
 }
 
 // Whether binding t's symbol in slot agg[0] has its verdict bit (mode 5), as agg[1] wants.
@@ -677,11 +713,6 @@ kernel void stage_count(device const long* L [[buffer(0)]], device const long* R
     if (s.mode == 6) { counts[t] = 1; return; }
     if (s.mode == 7) { counts[t] = uint(textop_pass(s, L, t, R, A)); return; }
     if (s.mode == 9) { counts[t] = 1; return; }
-    if (s.mode == 8) {
-        if (make_value(s, L, t) < 0 && s.counter != NONE) atomic_store_explicit(&counters[s.counter], 1u, memory_order_relaxed);
-        counts[t] = 1;
-        return;
-    }
     candidates(s, L, t, starts, rkeys, nruns, kv, lo, hi);
     if (s.mode == 4) {
         long v = 0;
@@ -751,13 +782,7 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
     if (s.mode == 9) {
         if (offsets[t + 1] <= at) return;
         write_row(s, L, t, R, 0, O, at);
-        O[ulong(s.bind_slot[0]) * s.cap_out + at] = textfn_value(s, L, t, R, A, counters);
-        return;
-    }
-    if (s.mode == 8) {
-        if (offsets[t + 1] <= at) return;
-        write_row(s, L, t, R, 0, O, at);
-        O[ulong(s.bind_slot[0]) * s.cap_out + at] = make_value(s, L, t);
+        O[ulong(s.bind_slot[0]) * s.cap_out + at] = textfn_value(s, L, t, R, A, counters, (device const uchar*)perm);
         return;
     }
     if (s.mode == 4) {
@@ -787,29 +812,6 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
         write_row(s, L, t, R, r, O, at);
         at++;
     }
-}
-
-// The texts of made values (mode 8's), one a thread: V's n values, each one's bytes into its `width` bytes of `out`
-// (its length into `lens`), from the parts' names in T. The host stores them as symbols; it makes no text.
-kernel void text_make(device const long* V [[buffer(0)]], device const long* T [[buffer(1)]], device uint* lens [[buffer(2)]],
-                      device uchar* out [[buffer(3)]], constant uint2& p [[buffer(4)]], uint t [[thread_position_in_grid]]) {
-    if (t >= p.x) return;
-    long v = V[t];
-    uint form = uint((v >> 61) & 1);
-    long a = (v >> 30) & ((1l << 30) - 1), b = v & ((1l << 30) - 1);
-    uint ao, al, bo, bl;
-    text_find(T, a, ao, al);
-    text_find(T, b, bo, bl);
-    device const uchar* c = text_chars(T);
-    device uchar* o = out + ulong(t) * p.y;
-    bool dot = form == 0 && al > 0;
-    uint n = al + (dot ? 1 : 0) + bl;
-    if (n > p.y) { lens[t] = 0xffffffffu; return; }
-    uint at = 0;
-    for (uint k = 0; k < al; k++) o[at++] = c[ao + k];
-    if (dot) o[at++] = uchar('.');
-    for (uint k = 0; k < bl; k++) o[at++] = c[bo + k];
-    lens[t] = n;
 }
 
 // A text test's verdicts, once per distinct term (decision 0038's chunked matching): a SIMD group per term walks it
@@ -1256,6 +1258,17 @@ impl Words {
     }
 }
 
+/// Bytes the device reads (a regex's automaton for `TEXTFN_REGEX`).
+pub(in crate::code_rule_dsl) struct DevBytes {
+    held: Held,
+}
+
+impl DevBytes {
+    pub(in crate::code_rule_dsl) fn upload(bytes: &[u8]) -> Result<DevBytes, Error> {
+        Ok(DevBytes { held: Held::of(bytes.iter().copied()).map_err(|_| Error::BackendCapacity)? })
+    }
+}
+
 /// A batch's text arena: the texts its text functions make (`TEXTFN`), shared by every job in the batch. Its first
 /// word is an atomic bump of the bytes given out, which counts on past the end, so a full arena says how much its
 /// jobs wanted (they then run again in one that big, or on the host); its second, its capacity.
@@ -1402,7 +1415,7 @@ impl Batch {
     /// scatter. `stage`'s sizes are set here.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::code_rule_dsl) fn stage(&mut self, mut stage: Stage, left: &Table, right: Option<(&DevRel, Option<&DevIndex>)>, in_slot: usize, out_slot: usize,
-                                          totals: &Words, counters: &Words, counter: Option<usize>, out: &Table) -> Result<(), Error> {
+                                          totals: &Words, counters: &Words, counter: Option<usize>, out: &Table, aux: Option<&DevBytes>) -> Result<(), Error> {
         let count = pipeline("join", "stage_count", || SOURCE.to_owned())?;
         let scatter = pipeline("join", "stage_scatter", || SOURCE.to_owned())?;
         stage.cap_in = left.cap as u32;
@@ -1427,6 +1440,8 @@ impl Batch {
         // Retained by the command buffer, which holds every buffer it binds until it completes.
         let (rbuf, perm, starts, rkeys, nruns): (metal::Buffer, metal::Buffer, metal::Buffer, metal::Buffer, metal::Buffer) =
             (rbuf.to_owned(), perm.to_owned(), starts.to_owned(), rkeys.to_owned(), nruns.to_owned());
+        // A text function's automaton, where a join's sort is.
+        let perm = aux.map_or(perm, |a| a.held.buffer.to_owned());
         if left.cap == 1 && stage.mode == JOIN && right.is_some() {
             // From one binding: a thread per candidate row (`scan_count`), its rows in the relation's order.
             let scount = pipeline("join", "scan_count", || SOURCE.to_owned())?;
@@ -1540,22 +1555,6 @@ impl Batch {
         Ok(())
     }
 
-    /// The texts of made values `vals` (`MAKE`'s), their parts' names in `text`: each one's length into `lens` (one
-    /// a row) and its bytes into `width` bytes of `out`.
-    pub(in crate::code_rule_dsl) fn make_texts(&mut self, vals: &DevRel, text: &DevText, width: usize, lens: &DevRel, out: &DevRel) -> Result<(), Error> {
-        if vals.rows == 0 {
-            return Ok(());
-        }
-        assert!(lens.rows * 2 >= vals.rows && out.rows * 8 >= vals.rows * width);
-        let kernel = pipeline("join", "text_make", || SOURCE.to_owned())?;
-        let p: [u32; 2] = [vals.rows as u32, width as u32];
-        // SAFETY: plain integers.
-        let bytes = unsafe { std::slice::from_raw_parts(p.as_ptr().cast::<u8>(), 8) };
-        let pass = self.pass(1)?;
-        pass.run_bytes(&kernel, &[&vals.buffer.buffer, &text.packed.buffer.buffer, &lens.buffer.buffer, &out.buffer.buffer], bytes, vals.rows.div_ceil(256));
-        Ok(())
-    }
-
     /// Sets slots of `table` in place (`stage`'s binds: program columns of the binding's slots, or parameters).
     pub(in crate::code_rule_dsl) fn map(&mut self, mut stage: Stage, table: &Table, in_slot: usize, totals: &Words) -> Result<(), Error> {
         let map = pipeline("join", "stage_map", || SOURCE.to_owned())?;
@@ -1621,7 +1620,7 @@ pub mod tests {
         scan.bind_slot[..2].copy_from_slice(&[0, 1]);
         scan.bind_kind[..2].copy_from_slice(&[BIND_RIGHT, BIND_RIGHT]);
         scan.bind_idx[..2].copy_from_slice(&[0, 1]);
-        batch.stage(scan, &t0, Some((&ra, None)), 0, 1, &totals, &counters, None, &t1).unwrap();
+        batch.stage(scan, &t0, Some((&ra, None)), 0, 1, &totals, &counters, None, &t1, None).unwrap();
         // Too small on purpose: the stage reports its true count.
         let t2 = Table::new(slots, 1000).unwrap();
         let mut join = Stage { mode: JOIN, nkeys: 1, nbinds: 1, nops: 1, ncols: 1, nparams: 1, noutputs: 1, last: 0, npassed: 1, ..Stage::default() };
@@ -1638,7 +1637,7 @@ pub mod tests {
         join.ops[0] = [OP_CMP, 0, RHS_PARAM, 2 | (64 << 8)];
         join.outputs[0] = 0;
         join.passed[0] = 0;
-        batch.stage(join, &t1, Some((&rb, Some(&ib))), 1, 2, &totals, &counters, Some(0), &t2).unwrap();
+        batch.stage(join, &t1, Some((&rb, Some(&ib))), 1, 2, &totals, &counters, Some(0), &t2, None).unwrap();
         batch.finish().unwrap();
         // The nested loops.
         let mut want2: Vec<[i64; 3]> = Vec::new();
@@ -1659,18 +1658,18 @@ pub mod tests {
         assert!(want2.len() > 1000, "the test overflows the first table: {}", want2.len());
         // Again with room for every row; then the anti-join and the semi-join.
         let t2 = Table::new(slots, want2.len()).unwrap();
-        batch.stage(join, &t1, Some((&rb, Some(&ib))), 1, 2, &totals, &counters, None, &t2).unwrap();
+        batch.stage(join, &t1, Some((&rb, Some(&ib))), 1, 2, &totals, &counters, None, &t2, None).unwrap();
         let t3 = Table::new(slots, want2.len()).unwrap();
         let mut anti = Stage { mode: ANTI, nkeys: 1, ..Stage::default() };
         anti.key_kind[0] = SLOT;
         anti.key_slot[0] = 2;
-        batch.stage(anti, &t2, Some((&rc, Some(&ic))), 2, 3, &totals, &counters, None, &t3).unwrap();
+        batch.stage(anti, &t2, Some((&rc, Some(&ic))), 2, 3, &totals, &counters, None, &t3, None).unwrap();
         let t4 = Table::new(slots, want2.len()).unwrap();
         let mut semi = Stage { mode: SEMI, nkeys: 1, ..Stage::default() };
         semi.key_kind[0] = SLOT;
         semi.key_slot[0] = 0;
         semi.key_rcol[0] = 1;
-        batch.stage(semi, &t3, Some((&rb, Some(&ib1))), 3, 4, &totals, &counters, None, &t4).unwrap();
+        batch.stage(semi, &t3, Some((&rb, Some(&ib1))), 3, 4, &totals, &counters, None, &t4, None).unwrap();
         batch.finish().unwrap();
         let got = |t: &Table, n: usize| (0..n).map(|r| [t.column(0, n)[r], t.column(1, n)[r], t.column(2, n)[r]]).collect::<Vec<_>>();
         assert_eq!(got(&t2, totals.get(2) as usize), want2, "the join's rows, in the bindings' order");
