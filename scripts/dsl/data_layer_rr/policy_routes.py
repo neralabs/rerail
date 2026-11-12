@@ -2,6 +2,8 @@
 
 
 def policy_filename(check, entry):
+    if check=='unresolved_forward_refs' and (entry=='cli_selection' or (entry or '').startswith('_uf_cli_')):
+        return 'unresolved-forward-refs-cli.rr'
     if check == 'serverplan_state_tripwires' and entry is not None:
         return 'serverplan-state-tripwires-source.rr'
     if check == 'legacy_execution_surfaces' and entry in {'scan_repo', '_iter_python_files'}:

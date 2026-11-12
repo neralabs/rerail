@@ -1747,7 +1747,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/unresolved-forward-refs.rr",
-      "sha256": "b84021dfba7bf9b62ce368e152249d9e0ed98958ef1f53831f709b4e7c2465dc",
+      "sha256": "df597b81a45b62c392669975704792df0fa9fb78c1582ce88ccc2b2d21616db7",
       "origin": "authored",
       "upstreamPath": "scripts/lint_unresolved_forward_refs.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -3120,6 +3120,13 @@
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_admin_async_purity.py"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/unresolved-forward-refs-cli.rr",
+      "sha256": "6952c424b33d8ec7bea9e29494f755f6c6f04b667974b8207f4410bce2d5caf6",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_unresolved_forward_refs.py"
     }
   ],
   "rules": [
@@ -3938,7 +3945,7 @@
       "legacySha256": "084da92045c5621c0305bfaeee185abc331c46a6e1ad45de61e89ee3c382d231",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/unresolved-forward-refs.rr",
-      "ruleSha256": "b84021dfba7bf9b62ce368e152249d9e0ed98958ef1f53831f709b4e7c2465dc"
+      "ruleSha256": "df597b81a45b62c392669975704792df0fa9fb78c1582ce88ccc2b2d21616db7"
     },
     {
       "check": "classvar_check",

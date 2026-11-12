@@ -21,9 +21,48 @@ The [red receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved
 All fifty now pass through snapshot and workspace execution, with no Python linter callbacks.
 Native rules supply extractor and plugin metadata, inspect supplied syntax trees, project fact paths, and report typed raw facts.
 The comparisons retain state, duplicate findings, Boolean and unbounded integer lines, malformed containers, and exact message and path ordering.
-The adapter no longer copies or compiles the original Python CLI. Its replacement remains open.
+The adapter no longer copies or compiles the original Python CLI. Its replacement was still open at that checkpoint.
 The [component receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-components-native.json.gz) preserves all hundred native comparisons.
 Four tooling tests enforce the recorded input coverage and exact results. This checkpoint does not admit the rule.
+
+## Unresolved forward references: native CLI and public contracts
+
+The CLI now uses a separate syntax-free native policy for root selection, directory expansion, file selection, output, and exit control.
+The host transports parsed arguments, filesystem observations, file batches, callback values, and ordered native output fragments.
+Its default detector path submits one file batch. Test callbacks remain callable so unchanged upstream assertions still observe their invocation.
+No linter Python is copied, compiled, or invoked by the native CLI.
+
+The first combined program failed with `no statistics for option.name`. Splitting the CLI isolated the syntax-free protocol but did not resolve that failure.
+Bisection isolated directory demand. Root-only and report-only probes passed; adding option-driven directory requests failed.
+Directory requests now use the existing batched `env` interface, as the other migrated CLIs do. Both interfaces pass after that change.
+No engine change or optional execution path was added.
+
+Both native APIs pass all 288 source-recorded supplemental cases: fifty components, thirty-two CLI cases, and 206 adversarial public cases.
+These comparisons retain positive findings, source bytes, callback calls, duplicate rows, supplied-tree state, output streams, raised status, and file-read errors.
+The [complete supplemental receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-public-cli-progress.json.gz) retains all 576 native comparisons.
+The [CLI receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-cli-native.json.gz) also supports focused tooling checks.
+
+All 119 owned original cases ran unchanged through each interface. Each run passes 117, with all 63 recorded detector observations retained.
+Two shared cases fail. `TransactionPatternFinding` lazily evaluates a passive type alias, which the foreign-code guard currently rejects.
+`_connection_file_violations` is a structural linter helper whose supplied-tree path remains unported.
+The [original receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-original-progress.json.gz) preserves both failures; no case is excluded or relabeled as passing.
+The native CLI also passes the regression for discovery callbacks supplied after installation.
+The full tooling suite passes 695 tests before three additional CLI receipt checks; the nine focused unresolved tests pass.
+
+Next, use TDD to correct passive declaration classification and port the complete shared structural helper, including positive witnesses.
+Then complete production facts and reports, retained updates, 74 historical inputs, effective removal controls, and strict admission.
+This checkpoint does not admit the rule. The inventory remains twenty-one admitted rules, seventy-eight drafts, and one absent translation.
+
+## Dynamic loading: complete original snapshot audit
+
+The complete owned corpus contains 315 original cases across five modules. Native snapshot execution passes 314.
+The remaining test runs the composition linter's application behavior probes. Its source callback is rejected, rather than treated as a passing native result.
+The modern composition policy already consumes externally observed fingerprint and reference-set artifacts. Choosing their producer remains open.
+The dedicated 115-case module and 199 shared cases pass unchanged. All 293 supplemental scanner, discovery, plugin, CLI, signing, and production contracts also pass.
+Upstream prevents joint collection of two shared modules because they own the same MCP marker. They ran separately, without changing tests.
+Two shared modules produce no detector observations. Their source tests pass; the recorder's separate zero-observation failure remains explicit.
+The [snapshot receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-dynamic-snapshot-progress-finalfcce.json.gz) retains these results and the failing probe.
+It does not certify workspace acceptance, retained updates, controls, or admission. The inventory remains twenty-one admitted rules.
 
 ## Active engine
 

@@ -133,7 +133,7 @@ def install(suite, module, detectors=False):
     names=['TYPE_INSPECTION_FUNCTIONS', 'RESOLVED_PATTERNS']
     for key in names:
         suite.replace(module, key, tables[key])
-    config={key:json.loads(next(iter(tables[key]))) for key in ['extractor','plugin','scope']}
+    config={key:json.loads(next(iter(tables[key]))) for key in ['extractor','plugin','scope','cli_schema']}
     spec=dict(config['extractor'])
     for key in ['source_triggers','project_input_facts']:spec[key]=tuple(spec[key])
     spec['source_trigger_groups']=tuple(tuple(group) for group in spec['source_trigger_groups'])
@@ -173,4 +173,7 @@ def install(suite, module, detectors=False):
                     bound=signature.bind(*args,**kwargs);bound.apply_defaults();return scan(suite,entry,module,bound.arguments)
                 return run
             suite.replace(owner,name,bind(entry,original,signature))
+    module.analyze_file._rerail_unresolved_file=True
+    from unresolved_cli_port import install as install_cli
+    install_cli(suite,module,config)
 

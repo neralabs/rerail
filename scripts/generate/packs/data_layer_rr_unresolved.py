@@ -4,6 +4,7 @@ from dataclasses import asdict
 from pathlib import Path
 from data_layer_rr_text import module, character_class
 from data_layer_rr_unresolved_graph import supplied_ast
+from data_layer_rr_unresolved_cli import suffix as cli_suffix
 
 
 def unresolved_forward_refs(source, target, header):
@@ -172,4 +173,4 @@ uf_cli_hidden(i) :- option_item("cliRelativePaths", i, path),
 CliFile(@place("cli", 1), i) :- option("entryPoint", "cli_selection"), option_item("cliModes", i, "direct").
 CliFile(@place("cli", 1), i) :- option("entryPoint", "cli_selection"), option_item("cliModes", i, "recursive"),
     option_item("cliNames", i, name), suffix(".py", name), !uf_cli_hidden(i).
-''' + supplied_ast() + '\n#include "data-layer/unresolved-api.rr"\n'
+''' + supplied_ast() + '\n#include "data-layer/unresolved-api.rr"\n' + cli_suffix(source)

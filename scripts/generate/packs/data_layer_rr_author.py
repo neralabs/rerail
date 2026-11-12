@@ -335,6 +335,15 @@ def main():
             index=next((i for i,file in enumerate(manifest['files']) if file['destination']==companion.as_posix()),None)
             if index is None:manifest['files'].append(item)
             else:manifest['files'][index]=dict(manifest['files'][index],**item)
+        if check=='unresolved_forward_refs':
+            from data_layer_rr_unresolved_cli import program
+            companion=path.with_name(path.stem+'-cli.rr');content=program(source,entry,header)
+            (ROOT/companion).write_text(content)
+            item=dict(destination=companion.as_posix(),sha256=sha(content.encode()),origin='authored',sourceCommit=PIN,
+                upstreamPath='scripts/lint_unresolved_forward_refs.py')
+            index=next((i for i,file in enumerate(manifest['files']) if file['destination']==companion.as_posix()),None)
+            if index is None:manifest['files'].append(item)
+            else:manifest['files'][index]=dict(manifest['files'][index],**item)
         if check=='plan_composition_architecture':
             companion=path.with_name(path.stem+'-source.rr');content=composition(source,entry,header)[1]
             (ROOT/companion).write_text(content)

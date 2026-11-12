@@ -1,0 +1,65 @@
+#include "data-layer/python-discovery-roots.rr"
+sgd_enabled() :- env("unresolved.paths","true").
+sgd_configured() :- env("unresolved.paths","true").
+
+.violation UnresolvedCliRoot(at:span,path:symbol) code "UF_CLI_ROOT" "CLI root"
+UnresolvedCliRoot(@place("",0),p) :- option("entryPoint","_uf_cli_root"),option("ufCliHasRoot","1"),option("ufCliRoot",p).
+UnresolvedCliRoot(@place("",0),@dir(@dir(@dir(p)))) :- option("entryPoint","_uf_cli_root"),option("ufCliHasRoot","0"),option("ufDiscoverySource",p).
+.violation UnresolvedCliArgument(at:span,ordinal:number,path:symbol) code "UF_CLI_ARG" "CLI directory argument"
+UnresolvedCliArgument(@place("",0),i,p) :- option("entryPoint","_uf_cli_root"),option("ufCliHasDirs","1"),option_item("ufCliDirs",i,p).
+UnresolvedCliArgument(@place("",0),i,p) :- option("entryPoint","_uf_cli_root"),option("ufCliHasDirs","0"),option("ufCliHasDefaults","1"),option_item("ufCliDefaults",i,p).
+UnresolvedCliArgument(@place("",0),0,"public") :- option("entryPoint","_uf_cli_root"),option("ufCliHasDirs","0"),option("ufCliHasDefaults","0").
+.violation UnresolvedCliDirectory(at:span,argument:number,rank:number,path:symbol) code "UF_CLI_DIR" "CLI directory"
+UnresolvedCliDirectory(@place("",0),i,r,p) :- option("entryPoint","_uf_cli_dirs"),sgd_chosen(i,r,p).
+.violation UnresolvedCliPath(at:span,ordinal:number,path:symbol) code "UF_CLI_PATH" "CLI scan path"
+UnresolvedCliPath(@place("",0),i,p) :- option("entryPoint","_uf_cli_paths"),option_item("ufCliPaths",i,p).
+UnresolvedCliPath(@place("",0),i,p) :- option("entryPoint","_uf_cli_paths"),!option_item("ufCliPaths",_,_),option_item("ufCliDefaultPaths",i,p).
+
+.decl ufc_hidden(i:number)
+ufc_hidden(i) :- option_item("cliNames",i,n),contains("test_",n).
+ufc_hidden(i) :- option_item("cliRelativePaths",i,p),(contains("/tests/",cat("/",p,"/"));contains("/__pycache__/",cat("/",p,"/"))).
+.violation CliFile(at:span,ordinal:number) code "UF_CLI_FILE" "File selected"
+CliFile(@place("cli",1),i) :- option("entryPoint","cli_selection"),option_item("cliModes",i,"direct").
+CliFile(@place("cli",1),i) :- option("entryPoint","cli_selection"),option_item("cliModes",i,"recursive"),option_item("cliNames",i,n),suffix(".py",n),!ufc_hidden(i).
+
+.decl ufc_path(i:number,value:symbol)
+.input ufc_path(IO=json,filename="unresolved-cli.json",path="/items/*/file",projection="python-str")
+.decl ufc_line(i:number,value:symbol)
+.input ufc_line(IO=json,filename="unresolved-cli.json",path="/items/*/line",projection="python-str")
+.decl ufc_integer(i:number,value:symbol,error_type:symbol,detail:symbol)
+.input ufc_integer(IO=json,filename="unresolved-cli.json",path="/items/*/line",projection="python-int")
+.decl ufc_function(i:number,value:symbol)
+.input ufc_function(IO=json,filename="unresolved-cli.json",path="/items/*/function",projection="python-str")
+.decl ufc_problem(i:number,value:symbol)
+.input ufc_problem(IO=json,filename="unresolved-cli.json",path="/items/*/problem",projection="python-str")
+.decl ufc_source(i:number,value:symbol)
+.input ufc_source(IO=json,filename="unresolved-cli.json",path="/items/*/source",projection="python-str")
+.decl ufc_file(path:symbol)
+ufc_file(p) :- ufc_path(_,p).
+.decl ufc_count(n:number,files:number)
+ufc_count(n,f) :- option("entryPoint","_uf_cli_report"),n=count:{ufc_path(_,_)} ,f=count:{ufc_file(_)}.
+sf_line(-3,i,v,v) :- option("entryPoint","_uf_cli_report"),ufc_integer(i,v,"",_).
+sf_path_input(-3,i,p) :- option("entryPoint","_uf_cli_report"),ufc_path(i,p).
+.decl ufc_relative(path:symbol,value:symbol)
+ufc_relative(p,".") :- sf_path(-3,_,p),option("ufCliReportRoot",p).
+ufc_relative(p,@slice(p,strlen(r)+1,strlen(p))) :- sf_path(-3,_,p),option("ufCliReportRoot",r),r!="/",r!="//",r!=".",prefix(cat(r,"/"),p).
+ufc_relative(p,@slice(p,1,strlen(p))) :- sf_path(-3,_,p),option("ufCliReportRoot","/"),p!="/",prefix("/",p),!prefix("//",p).
+ufc_relative(p,@slice(p,2,strlen(p))) :- sf_path(-3,_,p),option("ufCliReportRoot","//"),p!="//",prefix("//",p).
+ufc_relative(p,p) :- sf_path(-3,_,p),option("ufCliReportRoot","."),!prefix("/",p).
+.decl ufc_display(raw:symbol,value:symbol)
+ufc_display(raw,rel) :- ufc_path(i,raw),sf_path(-3,i,p),ufc_relative(p,rel).
+ufc_display(raw,p) :- ufc_path(i,raw),sf_path(-3,i,p),!ufc_relative(p,_).
+.decl ufc_first(i:number,path:symbol)
+ufc_first(i,p) :- ufc_path(i,p),i=min j:{ufc_path(j,p)}.
+.violation UnresolvedCliOutput(at:span,phase:number,path_key:symbol,sign:number,length:number,digits:symbol,ordinal:number,sub:number,text:symbol) code "UF_CLI_OUTPUT" "CLI output"
+UnresolvedCliOutput(@place("",0),0,"",0,0,"",0,0,"No unresolved forward reference issues found.\n") :- ufc_count(0,_).
+UnresolvedCliOutput(@place("",0),0,"",0,0,"",0,0,cat("\nFound ",to_string(n)," potential unresolved forward reference issues:\n\n","================================================================================","\n")) :- ufc_count(n,_),n>0.
+UnresolvedCliOutput(@place("",0),1,p,0,0,"",-1,0,cat("\n",relative,":\n")) :- option("entryPoint","_uf_cli_report"),ufc_first(_,p),ufc_display(p,relative).
+UnresolvedCliOutput(@place("",0),1,p,1+s,n,d,i,0,cat("  Line ",l," in ",f,"(): ",problem,"\n")) :- option("entryPoint","_uf_cli_report"),ufc_path(i,p),ufc_line(i,l),ufc_integer(i,v,"",_),sf_line_key(v,s,n,d),ufc_function(i,f),ufc_problem(i,problem).
+UnresolvedCliOutput(@place("",0),1,p,1+s,n,d,i,1,cat("    > ",source,"\n")) :- option("entryPoint","_uf_cli_report"),option("ufCliVerbose","1"),ufc_path(i,p),ufc_integer(i,v,"",_),sf_line_key(v,s,n,d),ufc_source(i,source),source!="".
+UnresolvedCliOutput(@place("",0),2,"",0,0,"",0,0,cat("\n","================================================================================","\n\nTotal: ",to_string(n)," issues in ",to_string(f)," files\n\nFix: Use typing.get_type_hints(model_cls) to resolve forward references before\n     performing type inspection on field annotations.\n")) :- ufc_count(n,f),n>0.
+UnresolvedCliOutput(@place("",0),3,"",0,0,"",0,0,cat("\nFAILED: ",to_string(n)," unresolved forward reference issues found\n")) :- ufc_count(n,_),n>0,option("ufCliCheck","1").
+.violation UnresolvedCliExit(at:span,status:number,raised:number) code "UF_CLI_EXIT" "CLI status"
+UnresolvedCliExit(@place("",0),0,1) :- ufc_count(0,_).
+UnresolvedCliExit(@place("",0),1,1) :- ufc_count(n,_),n>0,option("ufCliCheck","1").
+UnresolvedCliExit(@place("",0),0,0) :- ufc_count(n,_),n>0,!option("ufCliCheck","1").

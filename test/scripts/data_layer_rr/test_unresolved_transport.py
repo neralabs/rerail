@@ -7,7 +7,8 @@ import unittest
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / 'scripts/dsl/data_layer_rr'))
-from unresolved_port import identity_graph, transfer_cli
+from unresolved_port import identity_graph
+from unresolved_cli_port import install as install_cli
 
 
 class UnresolvedTransportTests(unittest.TestCase):
@@ -22,30 +23,28 @@ class UnresolvedTransportTests(unittest.TestCase):
         same = identity_graph(first, first)
         self.assertEqual(same['containerId'], same['targetId'])
 
-    def test_transferred_cli_observes_later_discovery_monkeypatches(self):
-        source = '''def cli_main():
-    root_dir, directories = resolve_root_and_dirs()
-    scan_paths = []
-    all_findings = []
-    for scan_path in scan_paths:
-        all_findings.extend(analyze_file(scan_path))
-    return root_dir, all_findings
-'''
+    def test_native_cli_observes_later_discovery_monkeypatches(self):
         module = types.ModuleType('fixture_cli')
         module.__file__ = '/fixture_cli.py'
-        module.resolve_root_and_dirs = lambda: (Path('/before'), [])
-        exec(source, module.__dict__)
+        module.resolve_root_and_dirs = lambda *_args,**_kwargs: (Path('/before'), [])
+        module.analyze_file = lambda path: self.fail('Empty native selection must not call a detector')
+        module.analyze_file._rerail_unresolved_file = True
         class Transport:
             def __init__(self):
                 self.entries = []
             def replace(self, owner, name, value):
                 setattr(owner, name, value)
             def native(self, check, entry, files, options):
-                self.entries.append(entry)
+                self.entries.append((entry,options))
+                if entry=='_uf_cli_report':return [dict(code='UF_CLI_EXIT',parameters=dict(status=0,raised=1))]
                 return []
         transport = Transport()
-        with patch('unresolved_port.inspect.getsource', return_value=source):
-            transfer_cli(transport, module)
-        module.resolve_root_and_dirs = lambda: (Path('/after'), [])
-        self.assertEqual((Path('/after'), []), module.cli_main())
-        self.assertEqual(['cli_selection', 'cli_scan'], transport.entries)
+        schema=dict(description='fixture',epilog='',arguments=[
+            dict(names=['paths'],kwargs=dict(nargs='*')),
+            *[dict(names=['--'+n],kwargs=dict(action='store_true'))for n in ['check','verbose']]])
+        install_cli(transport,module,dict(cli_schema=schema))
+        module.resolve_root_and_dirs = lambda *_args,**_kwargs: (Path('/after'), ['impl'])
+        with patch.object(sys,'argv',['fixture_cli.py']),self.assertRaises(SystemExit) as error:module.cli_main()
+        self.assertEqual(error.exception.code,0)
+        self.assertEqual(transport.entries[0],('_uf_cli_paths',dict(ufCliPaths=[],ufCliDefaultPaths=['/after/impl'])))
+        self.assertEqual([e for e,_ in transport.entries],['_uf_cli_paths','cli_selection','cli_scan','_uf_cli_report'])
