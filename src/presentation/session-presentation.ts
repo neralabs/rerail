@@ -389,12 +389,18 @@ export async function readRulesDashboard({ cwd }: RulesDashboardRequest): Promis
  * ask this first.
  */
 export async function readRepositoryState(cwd: string, host: RerailHost): Promise<RepositoryStartState | null> {
-  const answered = await answeredRepositoryState(cwd, host);
-  return answered === "not-answering" ? null : answered;
+  const state = await daemonRepositoryState(cwd, host);
+  return state === "not-answering" ? null : state;
 }
 
+/**
+ * What `/rerail` says of a repository without a session: its start state, `not-answering` where the live daemon gave no
+ * answer in time, or null where no daemon runs (`/rerail` says not running).
+ */
+export type SummaryState = RepositoryStartState | "not-answering" | null;
+
 /** Like `readRepositoryState`, but says `not-answering` when the live daemon took the read and gave no answer in time. */
-async function answeredRepositoryState(cwd: string, host: RerailHost): Promise<SummaryState> {
+async function daemonRepositoryState(cwd: string, host: RerailHost): Promise<SummaryState> {
   try {
     const daemon = await verifyDaemon(cwd);
     if (typeof daemon === "string" || !ownProcessAlive(daemon.state.pid)) return null;
@@ -415,7 +421,7 @@ const NOT_RUNNING = SILENCE_TEXT["not-running"];
  * answering) in a started checkout; elsewhere the caller's own reading of the start state says "not on here".
  */
 async function withoutDaemon(
-  startState: PresentationRequest["startState"], presence: PresentationPresence, onDemand: boolean, silence: Silence = "not-running",
+  startState: PresentationRequest["startState"], presence: PresentationPresence, onDemand: boolean, silence: Silence,
 ): Promise<SessionPresentation> {
   let state: RepositoryStartState | undefined;
   try {
@@ -431,26 +437,20 @@ async function withoutDaemon(
 }
 
 /**
- * What `/rerail` says of a repository without a session: its start state, `not-answering` where the live daemon gave no
- * answer in time, or null where no daemon runs (`/rerail` says not running).
- */
-export type SummaryState = RepositoryStartState | "not-answering" | null;
-
-/**
  * The repository state `/rerail` shows without a session: the live daemon's answer, else the caller's local
  * reading. A started checkout with no daemon answering stays null, or `not-answering` where the daemon is alive.
  */
 export async function readSummaryState(
   cwd: string, host: RerailHost, startState: NonNullable<PresentationRequest["startState"]>,
 ): Promise<SummaryState> {
-  const answered = await answeredRepositoryState(cwd, host);
-  if (answered !== null && answered !== "not-answering") return answered;
+  const fromDaemon = await daemonRepositoryState(cwd, host);
+  if (fromDaemon !== null && fromDaemon !== "not-answering") return fromDaemon;
   // In a started checkout, or one whose state cannot be read, what the daemon gave decides: nothing, or no answer in time.
   try {
     const local = await startState();
-    return local === undefined || local === "started" ? answered : local;
+    return local === undefined || local === "started" ? fromDaemon : local;
   } catch {
-    return answered;
+    return fromDaemon;
   }
 }
 
@@ -514,7 +514,7 @@ export async function readPresentation(request: PresentationRequest): Promise<Se
   let presence: PresentationPresence | undefined;
   try {
     const answer = await readLiveResponse(request);
-    if (answer === undefined) return await withoutDaemon(startState, "compact", onDemand);
+    if (answer === undefined) return await withoutDaemon(startState, "compact", onDemand, "not-running");
     presence = answer.response.presence;
     return await answeredPresentation(answer, request);
   } catch (error) {
