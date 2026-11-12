@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { createServer, type AddressInfo, type Socket } from "node:net";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, utimes, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -279,20 +279,21 @@ describe("Rerail daemon control", () => {
     expect(await withStartLock(home, async () => "the start lock is free")).toBe("the start lock is free");
   });
 
-  it("ends the autostart claim once a start leaves a daemon answering, and keeps it after a start that fails", async () => {
+  it("ends the autostart claim when its start ends, whether it fails or leaves a daemon answering", async () => {
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
     const control = { home, packageRoot, ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
     const claim = join(home, AUTOSTART_CLAIM_FILE);
-    await writeFile(claim, "");
+    // The claim names its launcher, here this process, which runs the start.
+    await writeFile(claim, String(process.pid));
     const failure = new Error("better-sqlite3 cannot load");
     await expect(startDaemon({ ...control, ensureSqlite: async () => { throw failure; } }, { dev: true, port: 0 })).rejects.toBe(failure);
-    // No daemon came up, so the claim still holds other processes off their own launches.
-    expect(existsSync(claim)).toBe(true);
+    // The launch is over and no daemon came up: the next process to find it down launches again at once.
+    expect(existsSync(claim)).toBe(false);
     try {
+      await writeFile(claim, String(process.pid));
       expect((await startDaemon(control, { dev: true, port: 0 })).started).toBe(true);
-      // The start the claim waited for is done: the next process to find the daemon gone starts it again.
       expect(existsSync(claim)).toBe(false);
-      await writeFile(claim, "");
+      await writeFile(claim, String(process.pid));
       // A launch that finds the daemon running ends its claim too.
       expect((await startDaemon(control, { dev: true, port: 0 })).started).toBe(false);
       expect(existsSync(claim)).toBe(false);
@@ -911,57 +912,80 @@ describe("autostartDaemon", () => {
   const daemonControlModule = pathToFileURL(join(packageRoot, "src", "runtime", "daemon-control.ts")).href;
 
   /**
-   * A process of its own, as every hook is, that finds no daemon in `home`: it prints `ready`, and on a line on stdin
-   * calls autostartDaemon and prints how many processes it launched. Its machine counts launches and starts nothing.
+   * A process of its own, as every hook is, that finds no daemon in `home`: it prints `ready`, and on each line on stdin
+   * calls autostartDaemon and prints how many processes it has launched, exiting after `calls` lines. Its machine counts
+   * launches and starts nothing; the launcher it reports is `launcher`, by default the test's own process, which runs for
+   * the whole test as a real launcher runs for its start, and null reports none. Its pid checks are real.
    */
-  function hookProcess(home: string): { child: ChildProcess; ready: Promise<void>; go: () => void; launches: Promise<number> } {
+  function hookProcess(home: string, { calls = 1, launcher = process.pid }: { calls?: number; launcher?: number | null } = {}): {
+    child: ChildProcess;
+    ready: Promise<void>;
+    go: () => void;
+    /** Sends one line and resolves with the launches counted after it. */
+    call: () => Promise<number>;
+    launches: Promise<number>;
+  } {
     const child = spawn(process.execPath, [
       "--import", "tsx", "--input-type=module", "-e",
       `import { EventEmitter } from "node:events";
+       import { createInterface } from "node:readline";
        const { autostartDaemon } = await import(${JSON.stringify(daemonControlModule)});
        let launches = 0;
+       const launcher = ${launcher ?? "undefined"};
        const started = () => {
          launches += 1;
-         return Object.assign(new EventEmitter(), { pid: 0, unref() {} });
+         return Object.assign(new EventEmitter(), { pid: launcher, unref() {} });
        };
        const machine = {
          platform: process.platform,
          env: process.env,
-         kill: () => { throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" }); },
+         kill: (pid, signal) => process.kill(pid, signal),
          pipes: () => [],
          holdsCapability: async () => false,
          forgetMainInstanceHolder: () => undefined,
          mainInstanceLockHeld: () => undefined,
          nodeExecutable: () => process.execPath,
-         spawnDetached: () => { launches += 1; return { pid: 0 }; },
+         spawnDetached: () => { launches += 1; return { pid: launcher }; },
          spawn: started,
          spawnShown: started,
        };
        process.stdout.write("ready\\n");
-       process.stdin.once("data", () => {
+       let calls = ${calls};
+       for await (const _line of createInterface({ input: process.stdin })) {
          autostartDaemon(machine);
          process.stdout.write("launches " + launches + "\\n");
-         process.exit(0);
-       });`,
+         if (--calls === 0) process.exit(0);
+       }`,
     ], { cwd: packageRoot, env: { ...process.env, RERAIL_HOME: home, RERAIL_AUTOSTART: "1" }, stdio: ["pipe", "pipe", "pipe"] });
     let output = "";
     let errors = "";
     child.stdout!.setEncoding("utf8").on("data", (chunk: string) => { output += chunk; });
     child.stderr!.setEncoding("utf8").on("data", (chunk: string) => { errors += chunk; });
     const exited = once(child, "exit");
+    const counts = (): number[] => [...output.matchAll(/launches (\d+)/gu)].map(match => Number(match[1]));
     const ready = (async () => {
       while (!output.includes("ready\n")) {
         if (child.exitCode !== null) throw new Error(`hook process exited before it was ready: ${errors}`);
         await new Promise(resolve => setTimeout(resolve, 10));
       }
     })();
+    let sent = 0;
+    const call = async (): Promise<number> => {
+      sent += 1;
+      child.stdin!.write("go\n");
+      while (counts().length < sent) {
+        if (child.exitCode !== null) throw new Error(`hook process exited before it answered: ${errors}`);
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      return counts()[sent - 1]!;
+    };
     const launches = exited.then(() => {
-      const counted = /launches (\d+)/u.exec(output)?.[1];
+      const counted = counts().at(-1);
       if (counted === undefined) throw new Error(`hook process printed no count: ${errors}`);
-      return Number(counted);
+      return counted;
     });
     launches.catch(() => undefined);
-    return { child, ready, go: () => child.stdin!.write("go\n"), launches };
+    return { child, ready, go: () => child.stdin!.write("go\n"), call, launches };
   }
 
   it("launches one `rerail daemon start` when several hooks find no daemon at the same moment", async () => {
@@ -974,30 +998,73 @@ describe("autostartDaemon", () => {
       for (const hook of hooks) hook.go();
       const launches = await Promise.all(hooks.map(async hook => await hook.launches));
       expect(launches.reduce((sum, count) => sum + count, 0)).toBe(1);
+      // The claim names the launcher, so it holds for as long as that launch runs and no longer.
+      expect(await readFile(join(home, AUTOSTART_CLAIM_FILE), "utf8")).toBe(String(process.pid));
     } finally {
       for (const { child } of hooks) if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       await removeFolder(home);
     }
   }, 60_000);
 
-  it("leaves the start to a launch claimed within 30 s, and launches past a claim more than 30 s from now either way", async () => {
-    const homes = await Promise.all(Array.from({ length: 3 }, async () => await mkdtemp(join(tmpdir(), "rerail-autostart-"))));
-    // The first home's claim is made now.
-    const [, expired, ahead] = homes as [string, string, string];
-    const minuteAgo = new Date(Date.now() - 60_000);
-    // Made before the clock moved back a minute: without the distance both ways it would hold until the clock caught up.
-    const minuteAhead = new Date(Date.now() + 60_000);
-    for (const home of homes) await writeFile(join(home, AUTOSTART_CLAIM_FILE), "");
-    await utimes(join(expired, AUTOSTART_CLAIM_FILE), minuteAgo, minuteAgo);
-    await utimes(join(ahead, AUTOSTART_CLAIM_FILE), minuteAhead, minuteAhead);
+  it("leaves the start to a launcher that runs, and launches past a claim whose launcher is gone or that is more than 30 s from now", async () => {
+    const claims: Array<{ content: string; at?: Date }> = [
+      { content: String(process.pid) },
+      // Just created, its launcher's pid not written yet.
+      { content: "" },
+      // Its launcher died, or was killed, without a daemon.
+      { content: String(DEAD_PID) },
+      // A pid alive now can be another process Windows gave a dead launcher's pid to.
+      { content: String(process.pid), at: new Date(Date.now() - 60_000) },
+      // Made before the clock moved back a minute: without the distance both ways it would hold until the clock caught up.
+      { content: String(process.pid), at: new Date(Date.now() + 60_000) },
+    ];
+    const homes = await Promise.all(claims.map(async () => await mkdtemp(join(tmpdir(), "rerail-autostart-"))));
+    for (const [index, { content, at }] of claims.entries()) {
+      const claim = join(homes[index]!, AUTOSTART_CLAIM_FILE);
+      await writeFile(claim, content);
+      if (at !== undefined) await utimes(claim, at, at);
+    }
     const hooks = homes.map(home => hookProcess(home));
     try {
       await Promise.all(hooks.map(async hook => await hook.ready));
       for (const hook of hooks) hook.go();
-      expect(await Promise.all(hooks.map(async hook => await hook.launches))).toEqual([0, 1, 1]);
+      expect(await Promise.all(hooks.map(async hook => await hook.launches))).toEqual([0, 0, 1, 1, 1]);
     } finally {
       for (const { child } of hooks) if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       await Promise.all(homes.map(async home => await removeFolder(home)));
+    }
+  }, 60_000);
+
+  it("launches at a later session start once the launch it left the start to has ended without a daemon", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rerail-autostart-"));
+    const claim = join(home, AUTOSTART_CLAIM_FILE);
+    // A long-lived process, as a Pi session running Rerail in-process is, that asks once per session start.
+    const session = hookProcess(home, { calls: 2 });
+    try {
+      await session.ready;
+      await writeFile(claim, String(process.pid));
+      expect(await session.call()).toBe(0);
+      // That launch failed and ended its claim; the daemon is still down.
+      await rm(claim);
+      expect(await session.call()).toBe(1);
+    } finally {
+      if (session.child.exitCode === null && session.child.signalCode === null) session.child.kill("SIGKILL");
+      await removeFolder(home);
+    }
+  }, 60_000);
+
+  it("ends its claim when the launch starts no process, so the next process to find the daemon down launches", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rerail-autostart-"));
+    // A launch that could not start reports no pid (Node's spawn on ENOENT or EAGAIN), and its error comes later.
+    const hook = hookProcess(home, { launcher: null });
+    try {
+      await hook.ready;
+      hook.go();
+      expect(await hook.launches).toBe(1);
+      expect(existsSync(join(home, AUTOSTART_CLAIM_FILE))).toBe(false);
+    } finally {
+      if (hook.child.exitCode === null && hook.child.signalCode === null) hook.child.kill("SIGKILL");
+      await removeFolder(home);
     }
   }, 60_000);
 });
