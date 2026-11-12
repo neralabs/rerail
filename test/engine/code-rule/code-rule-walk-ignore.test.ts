@@ -10,8 +10,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
  * ask the engine whether a language reads package manifests.
  */
 const asked = vi.hoisted(() => ({ paths: 0, folders: 0, engineLookups: 0, manifests: 0 }));
-/** Whether the engine's Git ignore matchers are those of an engine built before `ignoredEntries` and `reread`. */
-const engine = vi.hoisted(() => ({ older: false }));
+/**
+ * Whether the engine's Git ignore matchers are those of an engine built before `ignoredEntries` and `reread`, and
+ * whether their `reread` fails, as it does where an exclude file cannot be read.
+ */
+const engine = vi.hoisted(() => ({ older: false, rereadFails: false }));
 vi.mock("node:fs", async importOriginal => {
   const actual = await importOriginal<typeof FileSystem>();
   const existsSync = (path: FileSystem.PathLike): boolean => {
@@ -36,7 +39,10 @@ vi.mock("../../../src/engine/native/native.js", async importOriginal => {
       asked.folders += 1;
       return matcher.ignoredEntries(folder, names, directories);
     },
-    reread: () => matcher.reread(),
+    reread: () => {
+      if (engine.rereadFails) throw new Error("cannot read Git excludes: Could not read repository exclude: Permission denied");
+      matcher.reread();
+    },
   });
   return {
     ...actual,
@@ -331,6 +337,33 @@ describe("a walk of a session that follows .gitignore", () => {
     } finally {
       stderr.mockRestore();
       engine.older = false;
+    }
+  });
+
+  it("follows Git's rules as read before while a walk cannot read the ignore files again, and says so once", async () => {
+    const { root, databasePath } = await checkout(
+      { ".gitignore": "*.gen.py\nout/\n", "api/handler.py": "x = 1\n", "top.py": "x = 1\n" },
+      { "drop.gen.py": "x = 1\n", "api/new.py": "x = 1\n", "api/drop.gen.py": "x = 1\n", "out/x.py": "x = 1\n", "out/deep/y.py": "x = 1\n" },
+    );
+    const everyPythonFile = git(root, "ls-files", "-z", "--cached", "--others").split("\0").filter(path => path.endsWith(".py"));
+    const { router, bridge } = await session(root, databasePath);
+    await touchEveryPythonFile(bridge, root, everyPythonFile, "touch-1");
+    expect([...router.audited].sort()).toEqual(pythonGitKeeps(root));
+
+    // The walk reads Git's ignore files again at the session folder, its first: there it fails from now on.
+    engine.rereadFails = true;
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      for (const id of ["touch-2", "touch-3"]) {
+        router.audited.clear();
+        await touchEveryPythonFile(bridge, root, everyPythonFile, id);
+        expect([...router.audited].sort()).toEqual(pythonGitKeeps(root));
+      }
+      const lines = stderr.mock.calls.map(([text]) => String(text)).filter(text => text.includes("Git"));
+      expect(lines).toEqual([expect.stringContaining("cannot read Git's ignore files again for ., so walks follow them as read before")]);
+    } finally {
+      stderr.mockRestore();
+      engine.rereadFails = false;
     }
   });
 });

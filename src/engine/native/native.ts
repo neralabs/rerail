@@ -227,7 +227,7 @@ export interface NativeGitIgnoreMatcher {
    * folder again). From then on a path is ignored only where both the reading the matcher opened with and the latest
    * one ignore it, and `ignoredBy` names the latest one's pattern: a file those files stop ignoring is visible at once,
    * and one they start to ignore stays visible for the matcher's life. Throws when they cannot be read, and the matcher
-   * keeps answering as before.
+   * keeps answering as before (`rereadGitIgnore`).
    */
   reread(): void;
 }
@@ -447,6 +447,27 @@ export function openGitIgnoreMatcher(binding: Pick<NativeBinding, "openGitIgnore
 
 function answersFolders(matcher: OlderGitIgnoreMatcher): matcher is NativeGitIgnoreMatcher {
   return typeof matcher.ignoredEntries === "function" && typeof matcher.reread === "function";
+}
+
+/** The matchers whose `reread` has failed and said so, so each says it once, not at every walk. */
+const failedRereads = new WeakSet<NativeGitIgnoreMatcher>();
+
+/**
+ * `matcher.reread()`, as a walk asks it at the folder `path` it starts from. Where Git's ignore files cannot be read
+ * again (an exclude file the process may not open), the matcher keeps the rules it holds and the walk goes on following
+ * them: a caller that dropped the matcher, or answered "nothing ignored", would walk every folder Git ignores. The
+ * first failure of each matcher writes a stderr line.
+ */
+export function rereadGitIgnore(matcher: NativeGitIgnoreMatcher, path: string): void {
+  try {
+    matcher.reread();
+  } catch (error) {
+    if (failedRereads.has(matcher)) return;
+    failedRereads.add(matcher);
+    process.stderr.write(
+      `rerail: cannot read Git's ignore files again for ${path || "."}, so walks follow them as read before: ${error instanceof Error ? error.message : String(error)}\n`,
+    );
+  }
 }
 
 /** Whether `error` is a workspace task's refusal because another apply holds the engine's one slot. */

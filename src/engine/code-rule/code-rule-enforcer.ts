@@ -10,6 +10,7 @@ import {
   isWorkspaceBusy,
   loadNativeBinding,
   openGitIgnoreMatcher,
+  rereadGitIgnore,
   RESULT_PAGE_BYTES,
   type NativeCodeRuleDslWorkspace,
   type NativeGitIgnoreMatch,
@@ -736,7 +737,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const names = entries.map(entry => entry.name);
     const directories = entries.map(entry => entry.directory);
     return this.#askGitIgnore(folder, matcher => {
-      if (reread) matcher.reread();
+      if (reread) rereadGitIgnore(matcher, folder);
       return matcher.ignoredEntries(folder, names, directories);
     }) ?? entries.map(() => false);
   }
