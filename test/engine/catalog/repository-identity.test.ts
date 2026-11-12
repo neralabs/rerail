@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -248,6 +248,19 @@ describe("a checkout's identity location", () => {
     repository(nested);
     looks(nested);
     expect(repositoryIdentityLocation(nested).identityPath).not.toBe(repositoryIdentityLocation(path).identityPath);
+  });
+
+  it("answers as Git does when a link on the way to a checkout comes to lead to another repository", () => {
+    const root = folder();
+    const one = repository(join(root, "one"));
+    const two = repository(join(root, "two"));
+    const link = join(root, "link");
+    // A junction on Windows, which needs no privilege; elsewhere the type is ignored.
+    symlinkSync(one, link, "junction");
+    looks(link);
+    unlinkSync(link);
+    symlinkSync(two, link, "junction");
+    looks(link);
   });
 
   it("answers as Git does when core.bare takes the work tree away and gives it back", () => {

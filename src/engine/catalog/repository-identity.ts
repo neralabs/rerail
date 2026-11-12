@@ -12,9 +12,10 @@ import {
   readdirSync,
   readFileSync,
   readSync,
+  statSync,
   unlinkSync,
   writeFileSync,
-  type Stats,
+  type BigIntStats,
 } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { physicalPath, storedPath } from "./checkout-control.js";
@@ -56,7 +57,7 @@ const MAX_KEPT_LOCATIONS = 2_048;
  * linked worktree, or `.rerail/repository-id` outside Git (or when Git is not installed). Git answers; its answer is
  * kept and given again while the key of the files it read is unchanged. Only an answer whose three folders are those
  * the files lead to is kept, so a folder outside Git, a failed or timed-out Git, and a top level Git found by another
- * way (`core.worktree`, `GIT_DIR`, a link on the way) ask Git on every call.
+ * way (`core.worktree`, `GIT_DIR`, a link that takes Git to another `.git`) ask Git on every call.
  */
 export function repositoryIdentityLocation(workspace: string): RepositoryIdentityLocation {
   const requested = resolve(workspace);
@@ -118,15 +119,16 @@ const MAX_GIT_FILE_BYTES = 4_096;
  * The folders the files at and above `folder` lead to, followed as Git follows them, and the key of every file Git
  * reads on the way. The nearest folder at or above `folder` with a `.git` entry is the top level. The `.git` folder,
  * or the folder a `.git` file names (`gitdir: <path>`, relative to the top level), is the Git folder; the folder its
- * `commondir` file names (relative to it) is the common one, else the Git folder itself. The key holds the top level,
- * the `.git` entry (a folder, or the file's text), `commondir`'s text, whether the Git folder holds a `HEAD` Git
- * accepts and the common one `objects` and `refs` (Git refuses a folder without them), and the `core` and `extensions`
- * sections of the common `config` and the Git folder's `config.worktree` ({@link formatSections}): `core.worktree`
- * moves the top level, `core.bare` takes it away, and an extension this Git does not know makes it refuse the
- * repository. A remote, a branch or an upstream written to `config` leaves the key as it was. Each file is read by one
- * call that closes it before returning. Undefined where Git would read what the key leaves out: no `.git` entry up to
- * the root, a `.git` that is a link or a file naming no folder, a `config` that includes another file, or a file that
- * could not be read.
+ * `commondir` file names (relative to it) is the common one, else the Git folder itself. The key holds the top level;
+ * the file ids of the `.git` entry, the Git folder and the common one ({@link fileId}), which a link on the way that
+ * comes to lead elsewhere changes; the `.git` entry (a folder, or the file's text); `commondir`'s text; whether the
+ * Git folder holds a `HEAD` Git accepts and the common one `objects` and `refs` (Git refuses a folder without them);
+ * and the `core` and `extensions` sections of the common `config` and the Git folder's `config.worktree`
+ * ({@link formatSections}): `core.worktree` moves the top level, `core.bare` takes it away, and an extension this Git
+ * does not know makes it refuse the repository. A remote, a branch or an upstream written to `config` leaves the key
+ * as it was. Each file is read by one call that closes it before returning. Undefined where Git would read what the
+ * key leaves out: no `.git` entry up to the root, a `.git` that is a link or a file naming no folder, a `config` that
+ * includes another file, or a file that could not be read.
  */
 function discoveryOf(folder: string): (GitFolders & { readonly key: string }) | undefined {
   try {
@@ -141,7 +143,8 @@ function discoveryOf(folder: string): (GitFolders & { readonly key: string }) | 
     const worktreeConfig = formatSections(join(gitDirectory, "config.worktree"));
     if (config === undefined || worktreeConfig === undefined) return undefined;
     const holds = [acceptedHead(join(gitDirectory, "HEAD")), present(join(commonDirectory, "objects")), present(join(commonDirectory, "refs"))];
-    const key = [top, entry.text, common ?? "!ENOENT", holds.join(","), config, worktreeConfig].join("\0");
+    const ids = [fileId(nearest.entry), folderId(gitDirectory), folderId(commonDirectory)];
+    const key = [top, ids.join(","), entry.text, common ?? "!ENOENT", holds.join(","), config, worktreeConfig].join("\0");
     return { top, gitDirectory, commonDirectory, key };
   } catch {
     return undefined;
@@ -149,16 +152,16 @@ function discoveryOf(folder: string): (GitFolders & { readonly key: string }) | 
 }
 
 /** The nearest folder at or above `folder` holding a `.git` entry of any kind, and that entry; undefined when none does up to the root. */
-function nearestGitEntry(folder: string): { readonly top: string; readonly entry: Stats } | undefined {
+function nearestGitEntry(folder: string): { readonly top: string; readonly entry: BigIntStats } | undefined {
   for (let directory = folder; ; directory = dirname(directory)) {
-    const entry = lstatSync(join(directory, ".git"), { throwIfNoEntry: false });
+    const entry = lstatSync(join(directory, ".git"), { bigint: true, throwIfNoEntry: false });
     if (entry !== undefined) return { top: directory, entry };
     if (dirname(directory) === directory) return undefined;
   }
 }
 
 /** The `.git` entry of `top`: a folder, or a file naming the Git folder; undefined for a link, or a file naming none. */
-function gitEntry(top: string, entry: Stats): { readonly gitDirectory: string; readonly text: string } | undefined {
+function gitEntry(top: string, entry: BigIntStats): { readonly gitDirectory: string; readonly text: string } | undefined {
   const path = join(top, ".git");
   if (entry.isDirectory()) return { gitDirectory: path, text: "!EISDIR" };
   if (!entry.isFile()) return undefined;
@@ -199,6 +202,19 @@ function textOrAbsent(path: string, maxBytes = MAX_KEYED_FILE_BYTES): string | u
 
 function present(path: string): boolean {
   return lstatSync(path, { throwIfNoEntry: false }) !== undefined;
+}
+
+/**
+ * Which file or folder `info` describes: its device and file id, `!ENOENT` without one. Reached through a link on the
+ * way, the same path then names another folder with another id, though every file in it may read the same. Read as
+ * bigints: a Windows file id is 64 bits, more than a number holds exactly.
+ */
+function fileId(info: BigIntStats | undefined): string {
+  return info === undefined ? "!ENOENT" : `${info.dev}:${info.ino}`;
+}
+
+function folderId(path: string): string {
+  return fileId(statSync(path, { bigint: true, throwIfNoEntry: false }));
 }
 
 /** A `HEAD` Git accepts (`validate_headref` in Git's setup.c): a symbolic ref under `refs/`, or an object name. */
