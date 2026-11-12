@@ -3885,3 +3885,10 @@ Native execution passes twelve new cases but reports a finding for the bare file
 The source framework excludes that filename because its suffix is empty.
 The failing witness and complete source values are retained in `rr-async-pattern-bare-filename-red-finalfcce.json.gz`.
 The rule remains a draft. This evidence does not grant admission.
+
+The workspace replay exposes a separate direct-file transport defect.
+Five positive direct-file inputs lose their findings because temporary absolute input paths fail the policy's workspace include patterns.
+The same thirteen direct-file inputs pass through the snapshot API after bare-filename selection is corrected.
+Both APIs still pass all eleven original tests, including all eight positive observations.
+The failing workspace replay is retained in `rr-async-pattern-file-workspace-red-finalfcce.json.gz`.
+Final admission tests now require every family, retained edits, and effective controls. Their verifier is not implemented yet.
