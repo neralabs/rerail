@@ -158,6 +158,11 @@ interface Watched {
   changed: boolean;
   /** Folders whose watch may watch nothing now (the folder itself moved or went), watched again at the next read. */
   readonly stale: Set<string>;
+  /**
+   * Marks the worktree changed and stops watching it, when one of its watches fails or (Windows) names the worktree
+   * itself, gone: one function for all of a worktree's watches, which on Linux number one per folder.
+   */
+  readonly stop: () => void;
 }
 
 /** `WorktreeNotices` from `fs.watch`, one recursive watch per worktree or one watch per folder (see the module). */
@@ -207,7 +212,13 @@ export class WatchedWorktrees implements WorktreeNotices {
     if (failedAt !== undefined && Date.now() - failedAt < WATCH_RETRY_MS) return undefined;
     this.#failed.delete(root);
     if (!this.#watchable(root)) return this.#fail(root);
-    const watched: Watched = { watches: new Map(), seen: undefined, changed: true, stale: new Set() };
+    const watched: Watched = {
+      watches: new Map(), seen: undefined, changed: true, stale: new Set(),
+      stop: () => {
+        watched.changed = true;
+        if (this.#watched.get(root) === watched) this.#close(root);
+      },
+    };
     this.#watched.set(root, watched);
     if (!this.#recursive) {
       this.#stopLost ??= this.#queue.onLost(() => { for (const each of this.#watched.values()) each.changed = true; });
@@ -280,10 +291,7 @@ export class WatchedWorktrees implements WorktreeNotices {
   #watchFolder(root: string, folder: string, watched: Watched): Watch {
     const absolute = folder === "" ? root : join(root, ...folder.split("/"));
     const watch = this.#watch(absolute, { recursive: this.#recursive }, (event, name) => this.#notice(root, watched, folder, event, name));
-    watch.on("error", () => {
-      watched.changed = true;
-      if (this.#watched.get(root) === watched) this.#close(root);
-    });
+    watch.on("error", watched.stop);
     return watch;
   }
 
@@ -295,8 +303,7 @@ export class WatchedWorktrees implements WorktreeNotices {
     }
     // Windows names the watched folder itself, again and again until the watch closes, once it is removed.
     if (this.#recursive && isAbsolute(name)) {
-      watched.changed = true;
-      if (this.#watched.get(root) === watched) this.#close(root);
+      watched.stop();
       return;
     }
     // inotify names a watched folder itself when it is moved or removed; a child of the same name is watched again too.
