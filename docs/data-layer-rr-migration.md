@@ -3876,3 +3876,12 @@ The native engine and binary remain unchanged. Compilation time is zero.
 The rule remains a draft, with eighteen full admissions recorded overall.
 Final acceptance must replay all rule families on one final cohort, all 38 historical inputs, retained updates, and behavior-removal controls.
 The historical source recording and persistent-update harness are prepared for that next phase.
+
+### 2026-11-11 — Direct-file acceptance red
+
+Thirteen additional cases call `lint_file` directly, including excluded names, hidden files, non-Python suffixes, `tmp`, and `.venv`.
+The pinned source recording now contains 41 filesystem cases.
+Native execution passes twelve new cases but reports a finding for the bare filename `api/.py`.
+The source framework excludes that filename because its suffix is empty.
+The failing witness and complete source values are retained in `rr-async-pattern-bare-filename-red-finalfcce.json.gz`.
+The rule remains a draft. This evidence does not grant admission.
