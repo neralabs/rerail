@@ -533,10 +533,16 @@ pub fn check_shape(name: &str, c: &Compiled) {
             Step::Token | Step::Block | Step::Return => true,
             // The table's final pass (parents, extras), and the wraps' placing.
             Step::Node => true,
-            Step::File | Step::Bits | Step::Round => false,
+            // A local check's (`CHECK`), below.
+            Step::Bits => true,
+            Step::File | Step::Round => false,
         };
         assert!(ok, "{name}: tier 2 loops at {b} over {step:?}");
     }
+    // Over bits only in a local check (`CHECK`): its mask's bits in one token's bytes, one loop
+    // a check, in the check's own function.
+    let bits = heads.iter().filter(|h| h.1 == Step::Bits).count();
+    assert!(bits <= c.program.local_checks.len(), "{name}: tier 2 loops over bits {bits} times, with {} local checks", c.program.local_checks.len());
     // Each tier calls only its own outlined functions (`native_cpu_block::general`,
     // `native_cpu_stream::outline`).
     // An indirect jump only through a jump table of its own: tier 2's shared arms

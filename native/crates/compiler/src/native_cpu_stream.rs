@@ -965,6 +965,8 @@ enum WordFn {
     Token { any_mark: Option<usize>, extras: bool },
     /// A token mark's tokens (`Words::token_marks`, its index): 1 where they follow, else 0.
     TokenMark { index: u16 },
+    /// A local check over the token's bytes (`Words::local_checks`, its index): 1 where it holds.
+    Check { index: u16 },
 }
 
 /// What a word's body reads and writes, wherever it is made (`WordFn`): in its rule's function,
@@ -1016,6 +1018,144 @@ fn own_word(f: &mut FunctionBuilder<'_>, p: &[Value], refuses: bool, body: &dyn 
 /// Whether token mark `m`'s tokens follow at the token (`Words::token_marks`): each element's
 /// record, the records' codes from the one before `Next`, the extras (`extra_bit`) skipped; 1 or
 /// 0. Each turn of a skip is a record's: a stated `Token` loop.
+/// A local check over the token's bytes (`CHECK`): the mask's words from the token's start to its
+/// end, and in each its bits in turn (stated loops, `Step::Block` and `Step::Bits`); at each bit,
+/// the check's ops straight-line over the bytes around it. 1 where it holds at a bit, else 0.
+/// The token's start and end are passed: the state may be the caller's variables.
+fn check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::LocalCheck, output: usize, start: Value, limit: Value, heads: &mut Vec<(Block, Step)>) -> Value {
+    let (outputs_p, stride, lasts_stride) = ((e.ctx)(f, OUTPUTS), (e.ctx)(f, OUTPUT_STRIDE), (e.ctx)(f, LASTS_STRIDE));
+    let (bytes, len) = ((e.ctx)(f, BYTES), (e.ctx)(f, LEN));
+    let off = f.ins().imul_imm(stride, output as i64);
+    let base = f.ins().iadd(outputs_p, off);
+    let w0 = f.ins().ushr_imm(start, 6);
+    let l1 = f.ins().iadd_imm(limit, -1);
+    let wl = f.ins().ushr_imm(l1, 6);
+    let (words, bits, done) = (f.create_block(), f.create_block(), f.create_block());
+    f.append_block_param(words, types::I64);
+    f.append_block_param(bits, types::I64);
+    f.append_block_param(bits, types::I64);
+    f.append_block_param(done, types::I64);
+    f.ins().jump(words, &[BlockArg::from(w0)]);
+    // A word of the mask, cut to the token's bytes.
+    f.switch_to_block(words);
+    heads.push((words, Step::Block));
+    let w = f.block_params(words)[0];
+    let past = f.ins().icmp(IntCC::UnsignedGreaterThan, w, wl);
+    let (body, zero) = (f.create_block(), f.ins().iconst(types::I64, 0));
+    f.ins().brif(past, done, &[BlockArg::from(zero)], body, &[]);
+    f.switch_to_block(body);
+    let word = mask_word(f, base, lasts_stride, w);
+    let ones = f.ins().iconst(types::I64, -1);
+    let s = f.ins().band_imm(start, 63);
+    let lo = f.ins().ishl(ones, s);
+    let first = f.ins().icmp(IntCC::Equal, w, w0);
+    let lo = f.ins().select(first, lo, ones);
+    let t = f.ins().band_imm(l1, 63);
+    let t = f.ins().irsub_imm(t, 63);
+    let hi = f.ins().ushr(ones, t);
+    let last = f.ins().icmp(IntCC::Equal, w, wl);
+    let hi = f.ins().select(last, hi, ones);
+    let word = f.ins().band(word, lo);
+    let word = f.ins().band(word, hi);
+    f.ins().jump(bits, &[BlockArg::from(w), BlockArg::from(word)]);
+    // Its bits: at each, the check.
+    f.switch_to_block(bits);
+    heads.push((bits, Step::Bits));
+    let (w, word) = (f.block_params(bits)[0], f.block_params(bits)[1]);
+    let (at, next_word) = (f.create_block(), f.create_block());
+    f.ins().brif(word, at, &[], next_word, &[]);
+    f.switch_to_block(next_word);
+    let w1 = f.ins().iadd_imm(w, 1);
+    f.ins().jump(words, &[BlockArg::from(w1)]);
+    f.switch_to_block(at);
+    let tz = f.ins().ctz(word);
+    let j = f.ins().ishl_imm(w, 6);
+    let j = f.ins().iadd(j, tz);
+    let p = f.ins().iadd_imm(j, i64::from(c.delay));
+    let mut memo: std::collections::HashMap<(u16, i64), Value> = std::collections::HashMap::new();
+    let v = local_at(f, &c.ops, c.ops.len() as u16 - 1, 0, p, bytes, len, &mut memo);
+    let rest = f.ins().iadd_imm(word, -1);
+    let rest = f.ins().band(word, rest);
+    let one = f.ins().iconst(types::I64, 1);
+    let go_on = f.create_block();
+    f.ins().brif(v, done, &[BlockArg::from(one)], go_on, &[]);
+    f.switch_to_block(go_on);
+    f.ins().jump(bits, &[BlockArg::from(w), BlockArg::from(rest)]);
+    f.switch_to_block(done);
+    f.block_params(done)[0]
+}
+
+/// A local check's op `k` at stream place `p + off` (`program::local_value`): 0 or 1, each
+/// (op, offset) once.
+#[allow(clippy::too_many_arguments)]
+fn local_at(f: &mut FunctionBuilder<'_>, ops: &[crate::program::LocalOp], k: u16, off: i64, p: Value, bytes: Value, len: Value, memo: &mut std::collections::HashMap<(u16, i64), Value>) -> Value {
+    use crate::program::LocalOp as L;
+    if let Some(&v) = memo.get(&(k, off)) {
+        return v;
+    }
+    let q = f.ins().iadd_imm(p, off);
+    let v = match ops[usize::from(k)] {
+        L::Bytes(s) => {
+            // The byte, 0 outside the file.
+            let inside = f.ins().icmp(IntCC::UnsignedLessThan, q, len);
+            let zero = f.ins().iconst(types::I64, 0);
+            let safe = f.ins().select(inside, q, zero);
+            let a = f.ins().iadd(bytes, safe);
+            let b = f.ins().uload8(types::I64, MemFlags::trusted(), a, 0);
+            let b = f.ins().select(inside, b, zero);
+            let hi = f.ins().ushr_imm(b, 6);
+            let w = f.ins().iconst(types::I64, s[3] as i64);
+            let mut w = w;
+            for i in (0..3).rev() {
+                let is = f.ins().icmp_imm(IntCC::Equal, hi, i as i64);
+                let x = f.ins().iconst(types::I64, s[i] as i64);
+                w = f.ins().select(is, x, w);
+            }
+            let bit = f.ins().ushr(w, b);
+            f.ins().band_imm(bit, 1)
+        }
+        L::Const(pt) => {
+            let x = f.ins().iconst(types::I64, pt as i64);
+            let bit = f.ins().ushr(x, q);
+            let bit = f.ins().band_imm(bit, 1);
+            let neg = f.ins().icmp_imm(IntCC::SignedLessThan, q, 0);
+            let zero = f.ins().iconst(types::I64, 0);
+            f.ins().select(neg, zero, bit)
+        }
+        L::Within(d) => {
+            let x = f.ins().iadd_imm(q, -i64::from(d));
+            let inside = f.ins().icmp(IntCC::UnsignedLessThan, x, len);
+            f.ins().uextend(types::I64, inside)
+        }
+        L::Not(a) => {
+            let x = local_at(f, ops, a, off, p, bytes, len, memo);
+            f.ins().bxor_imm(x, 1)
+        }
+        L::And(a, b) | L::Or(a, b) | L::Xor(a, b) | L::AndNot(a, b) => {
+            let x = local_at(f, ops, a, off, p, bytes, len, memo);
+            let y = local_at(f, ops, b, off, p, bytes, len, memo);
+            match ops[usize::from(k)] {
+                L::And(..) => f.ins().band(x, y),
+                L::Or(..) => f.ins().bor(x, y),
+                L::Xor(..) => f.ins().bxor(x, y),
+                _ => {
+                    let ny = f.ins().bxor_imm(y, 1);
+                    f.ins().band(x, ny)
+                }
+            }
+        }
+        L::Prev(a, s) => {
+            // Nothing before the stream.
+            let x = local_at(f, ops, a, off - i64::from(s), p, bytes, len, memo);
+            let before = f.ins().icmp_imm(IntCC::SignedLessThan, q, i64::from(s));
+            let zero = f.ins().iconst(types::I64, 0);
+            f.ins().select(before, zero, x)
+        }
+    };
+    memo.insert((k, off), v);
+    v
+}
+
 fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::program::TokenMark, extra_bit: u8, heads: &mut Vec<(Block, Step)>) -> Value {
     let flags = MemFlags::trusted();
     let codes = (e.ctx)(f, CODES);
@@ -1890,7 +2030,7 @@ pub struct SharedRuns {
 fn plain(op: &Op) -> bool {
     matches!(
         op,
-        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::Settle { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. } | Op::Remember { .. } | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. } | Op::Count { .. }
+        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::Settle { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. } | Op::Remember { .. } | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. } | Op::Count { .. } | Op::Check { .. }
     )
 }
 
@@ -3243,6 +3383,50 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 Op::Remember { kind } => {
                     let k = f.ins().iconst(types::I64, i64::from(kind));
                     mset(&mut f, Mem::Word, k);
+                    f.ins().jump(fall, &[]);
+                }
+                Op::Check { check } => {
+                    let c = native.local_checks.get(usize::from(check)).cloned().ok_or(Error::UnsupportedBackend)?;
+                    let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(c.mask)).copied()).ok_or(Error::UnsupportedBackend)?;
+                    // Most tokens: no bit of the mask from the start on, in the start's word, and
+                    // the token ends in it. One load.
+                    let (start, limit) = (mget(&mut f, Mem::Start), mget(&mut f, Mem::Limit));
+                    let w = f.ins().ushr_imm(start, 6);
+                    let off = f.ins().imul_imm(output_stride, output as i64);
+                    let base = f.ins().iadd(outputs_p, off);
+                    let word = mask_word(&mut f, base, lasts_stride, w);
+                    let s = f.ins().band_imm(start, 63);
+                    let word = f.ins().ushr(word, s);
+                    let l1 = f.ins().iadd_imm(limit, -1);
+                    let wl = f.ins().ushr_imm(l1, 6);
+                    let other = f.ins().icmp(IntCC::NotEqual, wl, w);
+                    let any = f.ins().icmp_imm(IntCC::NotEqual, word, 0);
+                    let go = f.ins().bor(any, other);
+                    let slow = f.create_block();
+                    f.ins().brif(go, slow, &[], fall, &[]);
+                    f.switch_to_block(slow);
+                    // Always a function of its own, one a check: rare code, out of the arm's.
+                    let r = {
+                        let key = WordFn::Check { index: check };
+                        if !word_fns.contains_key(&key) {
+                            let name = format!("tempo_word_{}", word_fns.len());
+                            let made = outline(&mut module, &name, 3, 1, pinned_ctx, |g, q, hs| {
+                                let ctx = q[0];
+                                let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
+                                let set = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| field_set(f, ctx, k, x);
+                                let at = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, MemFlags::trusted(), ctx, at);
+                                let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a check returns whether it holds");
+                                let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
+                                let v = check_word(g, &env, &c, output, q[1], q[2], hs);
+                                g.ins().return_(&[v]);
+                            })?;
+                            word_fns.insert(key, made);
+                        }
+                        let (id, sig, _) = &word_fns[&key];
+                        let cv = pinned(&mut f);
+                        call_word(&mut f, *id, sig, pinned_ctx, cv, &[start, limit])[0]
+                    };
+                    guard(&mut f, r, pc);
                     f.ins().jump(fall, &[]);
                 }
                 Op::Count { count, up, max } => {
