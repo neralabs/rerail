@@ -502,18 +502,21 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <tr><td><span class="b">rust</span></td><td>rust</td><td><code>rust</code>: <code>.rs</code></td><td>rust</td></tr>
 <tr><td><span class="b">vue</span></td><td>vue</td><td><code>vue</code>: <code>.vue</code></td><td>vue</td></tr>
 <tr><td><span class="b">sql</span></td><td>sql</td><td><code>sql</code>: <code>.sql</code></td><td>sql</td></tr>
+<tr><td><span class="b">java</span></td><td>java</td><td><code>java</code>: <code>.java</code></td><td>java</td></tr>
 </tbody></table></div>
 <div class="table-wrap"><table>
-<thead><tr><th>Capability</th><th>Predicates</th><th>python</th><th>ecma</th><th>php</th><th>blade</th><th>rust</th><th>vue</th><th>sql</th></tr></thead>
+<thead><tr><th>Capability</th><th>Predicates</th><th>python</th><th>ecma</th><th>php</th><th>blade</th><th>rust</th><th>vue</th><th>sql</th><th>java</th></tr></thead>
 <tbody>
-<tr><td>Scope</td><td><code>resolves</code>, <code>binds</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
-<tr><td>Value</td><td><code>value</code>, <code>compare</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
-<tr><td>Arguments</td><td><code>arguments</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
-<tr><td>Calls</td><td><code>calls</code></td><td>yes</td><td>no</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>no</td></tr>
-<tr><td>Format arguments</td><td><code>formatArgs</code></td><td>yes</td><td>no</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>no</td></tr>
-<tr><td>Suppression</td><td><code>suppress</code></td><td><code>noqa</code>, <code>nosec</code></td><td><code>eslint</code>, <code>oxlint</code>, <code>biome</code></td><td><code>phpstan</code>, <code>psalm</code>, <code>phpcs</code></td><td>none</td><td><code>clippy</code></td><td><code>eslint</code></td><td><code>sqlfluff</code></td></tr>
+<tr><td>Scope</td><td><code>resolves</code>, <code>binds</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>not yet</td></tr>
+<tr><td>Value</td><td><code>value</code>, <code>compare</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>not yet</td></tr>
+<tr><td>Arguments</td><td><code>arguments</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>not yet</td></tr>
+<tr><td>Calls</td><td><code>calls</code></td><td>yes</td><td>no</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>no</td><td>not yet</td></tr>
+<tr><td>Format arguments</td><td><code>formatArgs</code></td><td>yes</td><td>no</td><td>yes</td><td>yes</td><td>yes</td><td>no</td><td>no</td><td>not yet</td></tr>
+<tr><td>Suppression</td><td><code>suppress</code></td><td><code>noqa</code>, <code>nosec</code></td><td><code>eslint</code>, <code>oxlint</code>, <code>biome</code></td><td><code>phpstan</code>, <code>psalm</code>, <code>phpcs</code></td><td>none</td><td><code>clippy</code></td><td><code>eslint</code></td><td><code>sqlfluff</code></td><td>none</td></tr>
 </tbody></table></div>
 <p>TypeScript rules also run on JavaScript with the JavaScript grammar; kinds unique to another dialect are <code>Never</code> there.</p>
+
+<p><b>Java.</b> Structural terms only, over tree-sitter-java 0.23.5: its files parse and <code>kind</code>, <code>pattern</code>, the relations, <code>count</code> and <code>layout</code> run. Every semantic capability is <i>not yet</i> supported: a rule naming <code>resolves</code>, <code>binds</code>, <code>value</code>, <code>compare</code> (in every text mode), <code>arguments</code>, <code>calls</code> or <code>formatArgs</code> is stored but refused with <code>language-not-supported</code>, and stays inactive until the engine reads it. <code>languageOptions</code>, <code>parse</code> and <code>suppress</code> are refused. The grammar does not parse a type-use annotation on an array or varargs type (<code>@Nullable Object @Nullable ... args</code>), nor Java 25&#39;s flexible constructor bodies and module imports: such a file is read around the syntax error.</p>
 
 <p><b>PHP.</b> PHP-only files; <code>.blade.php</code> templates use Blade.</p>
 <ul>
@@ -723,6 +726,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <tr><td><span class="b">rust</span></td><td><code>kind: "line_comment"</code> (<code>^//</code>), not doc</td><td><code>kind: "block_comment"</code> (<code>^/\*</code>), not doc</td><td><code>has: { kind: "outer_doc_comment_marker" }</code> (<code>///</code>, <code>/**</code>) or <code>has: { kind: "inner_doc_comment_marker" }</code> (<code>//!</code>, <code>/*!</code>); <code>////</code> and <code>/***</code> are no doc comments</td></tr>
 <tr><td><span class="b">vue</span></td><td>TypeScript's, under <code>ast.embedded</code></td><td><code>^&lt;!--</code> (the template's HTML); TypeScript's under <code>ast.embedded</code></td><td>TypeScript's, under <code>ast.embedded</code></td></tr>
 <tr><td><span class="b">sql</span></td><td><code>^--</code></td><td><code>^/\*</code> (nested, as PostgreSQL reads them)</td><td>none</td></tr>
+<tr><td><span class="b">java</span></td><td><code>kind: "line_comment"</code> (<code>^//</code>)</td><td><code>kind: "block_comment"</code> (<code>^/\*</code>), not doc</td><td><code>kind: "block_comment"</code> with <code>regex: "^/\\*\\*"</code> (Javadoc)</td></tr>
 </tbody></table></div>
 <p><b>Position.</b> A comment is a tree-sitter <i>extra</i>: a child of the node whose span holds it, in source order. A comment before a declaration is its preceding <b>sibling</b>, so use sibling relations, not <code>inside</code> or <code>has</code>:</p>
 <ul>
@@ -904,7 +908,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 </details>
 <details class="prod" id="g-Define" data-zod="codeRuleDefineSchema"><summary><span class="nt">Define</span><span class="about">A clause that reports nothing and holds shared utilities, options and config</span></summary>
 <ul class="keys" style="--kw:11ch">
-<li><span class="key"><a class="kl" href="#define"><b class="k">language</b></a><span class="q">?</span></span><span class="t"><span class="lit">"python"</span> | <span class="lit">"typescript"</span> | <span class="lit">"javascript"</span> | <span class="lit">"php"</span> | <span class="lit">"blade"</span> | <span class="lit">"rust"</span> | <span class="lit">"sql"</span> | <span class="lit">"vue"</span></span><span class="d">The language whose queries see the shared utilities; required with utils</span></li>
+<li><span class="key"><a class="kl" href="#define"><b class="k">language</b></a><span class="q">?</span></span><span class="t"><span class="lit">"python"</span> | <span class="lit">"typescript"</span> | <span class="lit">"javascript"</span> | <span class="lit">"php"</span> | <span class="lit">"blade"</span> | <span class="lit">"rust"</span> | <span class="lit">"sql"</span> | <span class="lit">"vue"</span> | <span class="lit">"java"</span></span><span class="d">The language whose queries see the shared utilities; required with utils</span></li>
 <li><span class="key"><a class="kl" href="#define"><b class="k">utils</b></a><span class="q">?</span></span><span class="t">map of <a class="nt" href="#g-UtilId">UtilId</a> to <a class="nt" href="#g-Utility">Utility</a></span><span class="d">Named rules every query of the define's language can call with matches</span></li>
 <li><span class="key"><a class="kl" href="#options"><b class="k">options</b></a><span class="q">?</span></span><span class="t">map of OptionName to <a class="nt" href="#g-OptionDecl">OptionDecl</a></span><span class="d">Typed options declared once for the whole document</span></li>
 <li><span class="key"><a class="kl" href="#config"><b class="k">config</b></a><span class="q">?</span></span><span class="t">map of OptionName to Json</span><span class="d">Values set for declared options; an unset option takes its default</span></li>
@@ -986,7 +990,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 </details>
 <details class="prod" id="g-AstQuery" data-zod="codeRuleQuerySchema.ast"><summary><span class="nt">AstQuery</span><span class="about">A rule object matched on a language's syntax tree, with the options around it</span></summary>
 <ul class="keys" style="--kw:18ch">
-<li><span class="key"><a class="kl" href="#ast-query"><b class="k">language</b></a></span><span class="t"><span class="lit">"python"</span> | <span class="lit">"typescript"</span> | <span class="lit">"javascript"</span> | <span class="lit">"php"</span> | <span class="lit">"blade"</span> | <span class="lit">"rust"</span> | <span class="lit">"sql"</span> | <span class="lit">"vue"</span></span><span class="d">The language whose files the query reads and parses</span></li>
+<li><span class="key"><a class="kl" href="#ast-query"><b class="k">language</b></a></span><span class="t"><span class="lit">"python"</span> | <span class="lit">"typescript"</span> | <span class="lit">"javascript"</span> | <span class="lit">"php"</span> | <span class="lit">"blade"</span> | <span class="lit">"rust"</span> | <span class="lit">"sql"</span> | <span class="lit">"vue"</span> | <span class="lit">"java"</span></span><span class="d">The language whose files the query reads and parses</span></li>
 <li><span class="key"><a class="kl" href="#ast-embedded"><b class="k">embedded</b></a><span class="q">?</span></span><span class="t"><a class="nt" href="#g-Via">Via</a></span><span class="d">Runs the query on the program a Blade or Vue file embeds</span></li>
 <li><span class="key"><a class="kl" href="#rule-objects"><b class="k">rule</b></a></span><span class="t"><a class="nt" href="#g-AstRule">AstRule</a></span><span class="d">The rule object matched on every candidate node</span></li>
 <li><span class="key"><a class="kl" href="#matches"><b class="k">utils</b></a><span class="q">?</span></span><span class="t">map of <a class="nt" href="#g-UtilId">UtilId</a> to <a class="nt" href="#g-Utility">Utility</a></span><span class="d">Named rules local to this query, called with matches</span></li>
