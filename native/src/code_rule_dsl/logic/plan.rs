@@ -309,6 +309,9 @@ pub struct Stats {
     pub obs: HashMap<u64, HashMap<Sig, [i64; 2]>>,
     /// The recursive component being planned (`atom_rows`).
     pub solving: BTreeSet<String>,
+    /// Members of `solving` that had rows when its component opened (a maintained stratum's survivors, rows SQL
+    /// wrote): a first scan of one reads its live rows, which its card holds, not the corpus (`atom_rows`; `sized`).
+    pub sized: BTreeSet<String>,
     /// `solving`'s digest, for plan keys (`plan_key`): set with it (`solve`), not made again at every lookup.
     solving_digest: u128,
     /// Input rel → index column lists.
@@ -335,6 +338,19 @@ impl Stats {
             scc.iter().for_each(|r| d.str(r));
         });
         self.solving = scc;
+        self.sized.clear();
+    }
+
+    /// `rels` of `solving` had rows when its component opened, measured (`live_stats`): the plans made from here
+    /// price a first scan of one by its rows. A part of the plans' keys, with `solving`.
+    pub fn sized(&mut self, rels: impl IntoIterator<Item = String>) {
+        self.sized.extend(rels);
+        self.solving_digest = super::derived::digest(|d| {
+            d.u64(self.solving.len() as u64);
+            self.solving.iter().for_each(|r| d.str(r));
+            d.u64(self.sized.len() as u64);
+            self.sized.iter().for_each(|r| d.str(r));
+        });
     }
 
     /// What the planner knows of `rel` (`RERAIL_DUMP_STATS`, a debugging aid): each column's (rows, distinct, sum of
@@ -380,6 +396,7 @@ impl Stats {
             dfreq: HashMap::new(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
+            sized: BTreeSet::new(),
             solving_digest: 0,
             indexes: Default::default(),
             docs: None,
@@ -547,6 +564,7 @@ impl Stats {
             dfreq: HashMap::new(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
+            sized: BTreeSet::new(),
             solving_digest: 0,
             indexes: Default::default(),
             docs: meta.get("docs").copied(),
@@ -686,6 +704,7 @@ impl Model {
             dfreq: HashMap::default(),
             obs: rules.iter().filter_map(|r| Some((*r, st.obs.get(r)?.clone()))).collect(),
             solving: BTreeSet::new(),
+            sized: BTreeSet::new(),
             solving_digest: 0,
             indexes: st.indexes.clone(),
             docs: st.docs,
@@ -1810,7 +1829,11 @@ impl Model {
             // The delta atom of a probe is not such a scan: it reads the last wave's rows, priced by the relation's
             // live size (an upper bound), not the corpus.
             let delta = first.is_some_and(|f| matches!(&body[f], Literal::Atom(d) if std::ptr::eq(d, a)));
-            if !delta && stats.solving.contains(a.rel.as_str()) && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v))) {
+            // A first scan (nothing bound yet) of a member that had rows when the component opened reads those rows
+            // once: its card, measured then (`Stats::sized`). A whole plan priced by the floor took `pv` (65 k rows)
+            // first, tied with `decfn` (1 k) at the corpus's 180 k, and read it in full (O125 step 07).
+            let sized = bound.is_empty() && stats.sized.contains(a.rel.as_str());
+            if !delta && !sized && stats.solving.contains(a.rel.as_str()) && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v))) {
                 let mut floor = stats.nodes;
                 for (c, t) in a.args.iter().enumerate() {
                     if constant(t).is_some() {
@@ -5564,6 +5587,39 @@ impl<'a> Run<'a, '_> {
         // Per probe (spec order), its CPU seconds, while profiling: the run's per-probe `ms:rows:cpu_ms` field.
         let timed: Vec<f64> = Vec::new();
         self.fx().open(&spec)?;
+        // Members that start with rows (a maintained stratum's survivors, rows SQL wrote): the whole plans run in the
+        // first wave, before the first chunk's live counts replan them, so they are planned again here from the
+        // members' rows as the component opened (`Stats::sized`). `RERAIL_SIZED_AT_OPEN=off` plans them as before.
+        if !(placed.gpu && not_taken.is_none()) && std::env::var("RERAIL_SIZED_AT_OPEN").map_or(true, |v| v != "off") {
+            let text_symbols = |i: usize, c: usize| self.model.inputs.atoms.is_none() && prog_types(prog, rels[i]).get(c) == Some(&"sym");
+            let live = self.fx().stats(&name, &text_symbols)?;
+            let started: Vec<(String, LiveRel)> = rels.iter().zip(live).filter(|(r, l)| l.n > 0 && !small_batches(r)).map(|(r, l)| ((*r).clone(), l)).collect();
+            if !started.is_empty() {
+                let names: Vec<String> = started.iter().map(|(r, _)| r.clone()).collect();
+                for (r, l) in started {
+                    live_stats(&mut self.model, &r, l);
+                }
+                self.model.stats.sized(names);
+                let mut whole: Vec<(*const Rule, Arc<JoinSpec>)> = Vec::new();
+                for k in 0..probes.len() {
+                    let r = probes[k].0;
+                    if sql_probe[k] || r.body[probes[k].1].atom().is_some_and(|a| small_batches(&a.rel)) {
+                        continue;
+                    }
+                    let spec = match whole.iter().find(|(p, _)| std::ptr::eq(*p, r)) {
+                        Some((_, w)) => w.clone(),
+                        None => {
+                            let _span = planning(r, "plan whole at open");
+                            let ((new, _, _), _) = self.model.plan_rule_live(prog, &r.head, &r.body, None)?;
+                            let Some(w) = self.whole_join_spec(&r.head, &new, None, &ri, scc, &native_rels) else { continue };
+                            whole.push((r, w.clone()));
+                            w
+                        }
+                    };
+                    self.fx().reprobe(&name, nseeds + k, &Reprobe::Whole(spec))?;
+                }
+            }
+        }
         let sql_views = sql_probe.iter().any(|p| *p);
         if sql_views {
             for r in &rels {
