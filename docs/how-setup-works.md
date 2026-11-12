@@ -551,10 +551,13 @@ A newer Rerail that first opens the file (the daemon, `rerail start`, set-up, or
 only reads) runs the pending migration steps in one transaction. A failing step leaves the file as it was. A process
 that cannot write the file gets an error naming those steps, and the file is left as it was.
 
-A step that frees much of the file, such as moving each audit's rule provenance to one shared copy, is followed by one
-`VACUUM`, which gives that space back to the disk. Rerail skips it, and says why on stderr, when another process is
-using the database, or when the database's folder or the temporary folder has less free space than the file. The file
-then keeps its size, and new history reuses the free space.
+Moving each audit's rule provenance to one shared copy is not part of a step: the step adds a table and a column, and
+the daemon moves the provenance once it starts, 100 audits per transaction with a pause between two, so the open that
+upgrades the file returns at once and other processes keep writing during the move. A daemon stopped partway goes on
+at its next start. Once the move ends, the daemon runs one `VACUUM`, which gives the space it freed back to the disk.
+It skips it, and says why in `daemon.log`, when another process is using the database, or when the database's folder
+or the temporary folder has less free space than the file. The file then keeps its size, and new history reuses the
+free space.
 
 Most steps add a column or a table, which older versions read correctly: the floor stays, an older Rerail still opens
 the file, and a hook or the status line runs such steps itself. A step an older version would misread raises the
@@ -564,7 +567,8 @@ run `rerail daemon start`.
 Moving each audit's rule provenance to one shared copy sets no floor, so coding agents on different Rerail versions
 keep sharing the file. An older Rerail reads an empty rule provenance for each audit a newer one wrote or moved, in
 its `audits_list`, its support bundle and what its remote sink sends. Its dashboard and steering never read the
-provenance, and work as before.
+provenance, and work as before. The audits it writes keep their provenance in their own row, where both versions read
+it, and the move leaves them there.
 
 An update that finds nothing newer, or fails, keeps the copy from the last version change. One that changes the
 version but cannot take a copy removes the old one, which no longer holds the database before the now-active version.

@@ -26,6 +26,7 @@ import { nativeHealth as loadNativeHealth, type NativeHealth } from "../engine/n
 import { modelStatus } from "../engine/native/model-status.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
+import { moveRuleProvenances } from "../engine/storage/rule-provenance-move.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { acquireMainInstance } from "../engine/native/main-instance.js";
 import { currentRerailBuild, isMainRerailBuild } from "../engine/native/rerail-build.js";
@@ -409,6 +410,7 @@ export class RerailDaemon {
   readonly #tlsFingerprint256: string | undefined;
   #closed = false;
   #remoteSink: RemoteSinkLoop | undefined;
+  #provenanceMove: { readonly stop: AbortController; readonly done: Promise<void> } | undefined;
 
   private constructor({
     server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken,
@@ -497,6 +499,7 @@ export class RerailDaemon {
         nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256,
       });
       await daemon.#announce(remembered);
+      daemon.#startProvenanceMove();
       return daemon;
     } catch (error) {
       await closeAfterFailedStart(started, stores);
@@ -512,6 +515,19 @@ export class RerailDaemon {
     if (options.remoteSink !== false) this.#remoteSink = startRemoteSink({ home: dirname(this.#databasePath), ...(options.remoteSink ?? {}) });
     // A start that asked for any free port (`0`) takes a throwaway one; it does not replace the port links point at.
     if (options.portFile !== undefined && options.port !== 0 && this.port !== remembered) await rememberPort(options.portFile, this.port);
+  }
+
+  /**
+   * Moves the rule provenance that audits an older Rerail recorded hold inline, a batch per short transaction while the
+   * daemon serves (`rule-provenance-move.ts`), so no open holds the write lock for the whole history. It finds nothing
+   * to move on a file it has already moved. A failure goes to the daemon log; the audits read the same either way.
+   */
+  #startProvenanceMove(): void {
+    const stop = new AbortController();
+    const done = moveRuleProvenances(this.#databasePath, { signal: stop.signal }).then(() => undefined, (error: unknown) => {
+      process.stderr.write(`rerail daemon: moving audit rule provenance stopped: ${error instanceof Error ? error.message : String(error)}\n`);
+    });
+    this.#provenanceMove = { stop, done };
   }
 
   state(): DaemonState {
@@ -557,6 +573,8 @@ export class RerailDaemon {
     if (this.#closed) return;
     this.#closed = true;
     try {
+      this.#provenanceMove?.stop.abort();
+      await this.#provenanceMove?.done;
       await this.#remoteSink?.stop();
       await closeHttpServer(this.#server);
     } finally {
