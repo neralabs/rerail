@@ -7,8 +7,7 @@ mod languages;
 #[path = "src/build_grammars.rs"]
 mod grammars;
 
-use grammars::{GRAMMARS, LFS_POINTER, LFS_REMEDY};
-
+use grammars::{GRAMMARS, LFS_POINTER, LFS_REMEDY, collect_sources};
 use identity::{grammar_build_id, hex};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -20,9 +19,13 @@ fn main() {
     }
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
     check_names_table(&manifest);
-    // The vendored grammars are built by `rerail-lang`, which declares them (`src/build_grammars.rs`); the engine
-    // links them through it.
     let omitted = omitted_languages();
+    // The crate that declares the grammars' symbols builds them: this one, until the crate split gives them to
+    // `rerail-lang` (tools/cratify sets this to false and writes that crate's build script).
+    const BUILDS_GRAMMARS: bool = false;
+    if BUILDS_GRAMMARS {
+        grammars::build_all(&manifest, &omitted);
+    }
     let registry = generate_languages(&omitted);
     configure_fixtures();
     build_identities(&registry);
@@ -50,6 +53,8 @@ fn generate_languages(omitted: &[String]) -> Vec<(String, Vec<u8>)> {
     languages::generate_registry(&manifest, omitted, &out)
 }
 
+
+/// The Unicode names table `include_bytes!` embeds (`value/names.rs`): it must be the table, not
 /// its Git LFS pointer, or every Python `\N{...}` escape fails at run time.
 fn check_names_table(manifest: &Path) {
     let relative = "src/code_rule_dsl/value/names/names.bin";
@@ -70,6 +75,11 @@ fn check_names_table(manifest: &Path) {
     }
 }
 
+
+/// Where the engine's tests read the conformance fixtures: `RERAIL_ORACLES_DIR` if set (relative
+/// to the repository root), else the repository's `fixtures/` directory. Only tests read them, so a
+/// build without them (a sparse checkout) goes on; the tests that need them then fail to compile,
+/// naming the fix.
 fn configure_fixtures() {
     println!("cargo:rerun-if-env-changed=RERAIL_ORACLES_DIR");
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
@@ -216,13 +226,3 @@ fn build_identities(registry: &[(String, Vec<u8>)]) {
     println!("cargo:rerun-if-changed={}", lock.display());
 }
 
-fn collect_sources(directory: &Path, sources: &mut Vec<PathBuf>) {
-    for entry in std::fs::read_dir(directory).expect("source directory is readable") {
-        let path = entry.expect("source entry").path();
-        if path.is_dir() {
-            collect_sources(&path, sources);
-        } else {
-            sources.push(path);
-        }
-    }
-}
