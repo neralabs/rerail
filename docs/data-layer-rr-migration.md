@@ -47,7 +47,8 @@ Two shared cases fail. `TransactionPatternFinding` lazily evaluates a passive ty
 `_connection_file_violations` is a structural linter helper whose supplied-tree path remains unported.
 The [original receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-original-progress.json.gz) preserves both failures; no case is excluded or relabeled as passing.
 The native CLI also passes the regression for discovery callbacks supplied after installation.
-The full tooling suite passes 695 tests before three additional CLI receipt checks; the nine focused unresolved tests pass.
+The full tooling suite passes all 698 tests in 53.398 seconds, including the three new CLI receipt checks.
+The nine focused unresolved tests also pass. Migration inventory verification passes with the new companion policy registered.
 
 Next, use TDD to correct passive declaration classification and port the complete shared structural helper, including positive witnesses.
 Then complete production facts and reports, retained updates, 74 historical inputs, effective removal controls, and strict admission.
