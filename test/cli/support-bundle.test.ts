@@ -8,7 +8,7 @@ import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { checkouts, defaultRerailDatabasePath, events, openRerailDatabase, PACKAGE_ROOT, policySessionOwners, sessions, SqliteAuditStore } from "../../src/engine/index.js";
-import { collectSupportBundle, runSupportBundleCommand, scrubText, type SupportBundle } from "../../src/cli/support-bundle.js";
+import { collectSupportBundle, type KnownValue, runSupportBundleCommand, scrubText, type SupportBundle } from "../../src/cli/support-bundle.js";
 import { startTestRepository } from "../support/started-repository.js";
 
 const directories: string[] = [];
@@ -223,6 +223,30 @@ async function slowDaemon(home: string, delayMs: number | undefined, onProbe?: (
       await Promise.all([closed(http), closed(engine)]);
     },
   };
+}
+
+/**
+ * Known values taken out of `text` one at a time, as Rerail's scrub did before one pattern found them: each form of each
+ * value in turn, longest first, over the whole text. Then the secret patterns, which `scrubText` with no known values
+ * applies alone.
+ */
+function scrubValueByValue(text: string, knownValues: readonly KnownValue[]): string {
+  const escape = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const pathForms = (value: string): string[] => {
+    if (!/[\\/]/u.test(value)) return [value];
+    const forward = value.replaceAll("\\", "/");
+    const backward = value.replaceAll("/", "\\");
+    return [...new Set([value, forward, backward, backward.replaceAll("\\", "\\\\"), forward.replaceAll("/", "\\/")])];
+  };
+  let scrubbed = text;
+  const forms = knownValues.flatMap(literal => pathForms(literal.value).map(value => ({ ...literal, value })));
+  for (const { value, label, word, pathOnly } of forms.sort((left, right) => right.value.length - left.value.length)) {
+    if (value.length < 2) continue;
+    if (pathOnly === true) scrubbed = scrubbed.replace(new RegExp(`(?<=[\\\\/])${escape(value)}(?![\\w-])`, "gu"), () => label);
+    else if (word === true) scrubbed = scrubbed.replace(new RegExp(`(?<![\\w-])${escape(value)}(?![\\w-])`, "gu"), () => label);
+    else scrubbed = scrubbed.replaceAll(value, () => label);
+  }
+  return scrubText(scrubbed, { knownValues: [] });
 }
 
 async function reportedWorld(): Promise<Fixture> {
@@ -621,6 +645,41 @@ describe("scrubText", () => {
   it("replaces a longer literal before a shorter one inside it", () => {
     const knownValues = [{ value: "/work", label: "<short>" }, { value: "/work/app", label: "<checkout>" }];
     expect(scrubText("/work/app/src", { knownValues })).toBe("<checkout>/src");
+  });
+
+  // The user name is the repository's owner, as on a personal account, so the home and the repository's name overlap.
+  const overlapping: KnownValue[] = [
+    { value: "alice", label: "<user>", word: true },
+    { value: "/home/alice", label: "~" },
+    { value: String.raw`C:\Users\alice`, label: "~" },
+    { value: "github.com/alice/secret-proj", label: "<repository>" },
+    { value: "alice/secret-proj", label: "<repository>" },
+    { value: "/home/alice/src/secret-proj", label: "<checkout>" },
+    { value: String.raw`C:\Users\alice\src\secret-proj`, label: "<checkout>" },
+  ];
+
+  it.each([
+    ["open /home/alice/secret-proj-old/notes.md failed", "open ~/notes.md failed"],
+    [String.raw`{"cwd":"\/home\/alice\/secret-proj-wt2"}`, String.raw`{"cwd":"~"}`],
+    [String.raw`open C:\Users\alice\secret-proj-wt2\a.ts`, String.raw`open ~\a.ts`],
+    ["git -C C:/Users/alice/secret-proj-wt2 status", "git -C ~ status"],
+  ])("takes the repository's name out of a folder under the home that starts with it: %s", (text, expected) => {
+    expect(scrubText(text, { knownValues: overlapping })).toBe(expected);
+  });
+
+  it("takes out all that a scrub of one value at a time takes out, wherever known values overlap", () => {
+    const homes = ["/home/alice", String.raw`C:\Users\alice`, "C:/Users/alice", String.raw`C:\\Users\\alice`, String.raw`\/home\/alice`, "c:/users/alice"];
+    const folders = ["secret-proj", "secret-proj-old", "secret-proj-wt2", "src/secret-proj", "src/secret-proj-2", "alice/secret-proj", "other"];
+    const texts = ["open ", "git -C ", '{"cwd":"', "at github.com/", ""].flatMap(before => homes.flatMap(home => ["/", "\\", "\\/"].flatMap(separator =>
+      folders.flatMap(folder => ["/notes.md failed", String.raw`\a.ts`, '"}', ""].map(after => `${before}${home}${separator}${folder}${after}`)))));
+    const differing = texts.filter(text => scrubText(text, { knownValues: overlapping }) !== scrubValueByValue(text, overlapping));
+    expect(differing).toEqual([]);
+  });
+
+  it("replaces a value that a label it put in completes, as a scrub of one value at a time does", () => {
+    const knownValues: KnownValue[] = [{ value: "alice/secret", label: "<repository>" }, { value: "repository", label: "<word>", word: true }];
+    expect(scrubText("x alice/secret y", { knownValues })).toBe(scrubValueByValue("x alice/secret y", knownValues));
+    expect(scrubText("x alice/secret y", { knownValues })).toBe("x <<word>> y");
   });
 
   it("ignores a home or checkout of /, as a container can have, which would eat every path", () => {

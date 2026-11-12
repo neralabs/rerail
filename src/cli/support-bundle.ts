@@ -236,30 +236,95 @@ function pathForms(value: string): string[] {
   return [...new Set([value, forward, backward, backward.replaceAll("\\", "\\\\"), forward.replaceAll("/", "\\/")])];
 }
 
-/** How one form of a known value is found: a user name only as a whole word, or only inside a path. */
-function knownPattern({ value, word, pathOnly }: KnownValue): string {
-  if (pathOnly === true) return `(?<=[\\\\/])${escapeRegExp(value)}(?![\\w-])`;
-  if (word === true) return `(?<![\\w-])${escapeRegExp(value)}(?![\\w-])`;
-  return escapeRegExp(value);
+/** One spelling of a known value ({@link pathForms}), as the scrub replaces it. */
+interface KnownForm extends KnownValue {
+  /** How it is found when not as it is spelled: a user name only as a whole word, or only inside a path. */
+  pattern: RegExp | undefined;
+  /** Its place in the order forms are replaced in: longest first, so a path goes before a folder inside it. */
+  rank: number;
 }
 
-/**
- * The scrub of `knownValues`, built once for every text it is given: each form of each value is one alternative of a
- * single pattern, longest first, so a path goes before a folder inside it and a text is read once however many values
- * there are. Then what looks like a secret goes. A bundle holds thousands of texts, and a database can record hundreds
- * of checkouts.
- */
-function scrubFor(knownValues: readonly KnownValue[]): (text: string) => string {
-  const forms = knownValues
+function knownPattern({ value, word, pathOnly }: KnownValue): RegExp | undefined {
+  if (pathOnly === true) return new RegExp(`(?<=[\\\\/])${escapeRegExp(value)}(?![\\w-])`, "gu");
+  if (word === true) return new RegExp(`(?<![\\w-])${escapeRegExp(value)}(?![\\w-])`, "gu");
+  return undefined;
+}
+
+function knownForms(knownValues: readonly KnownValue[]): KnownForm[] {
+  return knownValues
     .flatMap(literal => pathForms(literal.value).map(value => ({ ...literal, value })))
     // A home or checkout of `/`, as a container can have, would take every slash with it.
     .filter(({ value }) => value.length >= 2)
-    .sort((left, right) => right.value.length - left.value.length);
-  const labels = new Map<string, string>();
-  for (const { value, label } of forms) if (!labels.has(value)) labels.set(value, label);
-  const known = forms.length === 0 ? undefined : new RegExp([...new Set(forms.map(knownPattern))].join("|"), "gu");
+    .sort((left, right) => right.value.length - left.value.length)
+    .map((form, rank) => ({ ...form, pattern: knownPattern(form), rank }));
+}
+
+function replaceForm(text: string, { value, label, pattern }: KnownForm): string {
+  return pattern === undefined ? text.replaceAll(value, () => label) : text.replace(pattern, () => label);
+}
+
+/**
+ * The forms a replacement can bring into a text that did not hold them. A replacement leaves the text's own characters
+ * and the characters of labels, which are never empty, and a label's inner characters touch only labels' characters.
+ * So a form that a replacement brings in holds the first or last character of a label, or is made of labels'
+ * characters alone: a user or host name at most, or a short Windows path (`RUNNER~1`).
+ */
+function formsLabelsCanMake(forms: readonly KnownForm[]): KnownForm[] {
+  const labels = [...new Set(forms.map(form => form.label))];
+  if (labels.includes("")) return [...forms];
+  const edges = new Set(labels.map(label => [...label]).flatMap(characters => [characters[0], characters.at(-1)]));
+  const inLabels = new Set(labels.join(""));
+  return forms.filter(({ value }) => [...value].some(character => edges.has(character)) || [...value].every(character => inLabels.has(character)));
+}
+
+/** The forms that `found` starts with, itself included. */
+function formsStarting(found: string, byValue: ReadonlyMap<string, readonly KnownForm[]>): KnownForm[] {
+  const starting: KnownForm[] = [];
+  for (let length = 1; length <= found.length; length += 1) starting.push(...(byValue.get(found.slice(0, length)) ?? []));
+  return starting;
+}
+
+/** The place after the character at `index`: a match starts on a character, and one outside the BMP is two units. */
+function nextPlace(text: string, index: number): number {
+  return index + ((text.codePointAt(index) ?? 0) > 0xffff ? 2 : 1);
+}
+
+/**
+ * The forms a text holds, in the order they are replaced in. One pattern of every form, longest first, is tried at each
+ * place in the text, inside a form it found too, and finds the longest form there; the shorter forms found at the same
+ * place are the ones that form starts with. Forms a replacement can bring in ({@link formsLabelsCanMake}) are always in.
+ */
+function formFinder(forms: readonly KnownForm[]): (text: string) => KnownForm[] {
+  const byValue = Map.groupBy(forms, form => form.value);
+  if (byValue.size === 0) return () => [];
+  const anywhere = new RegExp([...byValue.keys()].map(escapeRegExp).join("|"), "gu");
+  const always = formsLabelsCanMake(forms);
+  const startingWith = new Map<string, KnownForm[]>();
   return text => {
-    let scrubbed = known === undefined ? text : text.replace(known, value => labels.get(value) ?? REDACTED);
+    const found = new Set(always);
+    anywhere.lastIndex = 0;
+    for (let match = anywhere.exec(text); match !== null; match = anywhere.exec(text)) {
+      const starting = startingWith.get(match[0]) ?? formsStarting(match[0], byValue);
+      startingWith.set(match[0], starting);
+      for (const form of starting) found.add(form);
+      anywhere.lastIndex = nextPlace(text, match.index);
+    }
+    return [...found].sort((left, right) => left.rank - right.rank);
+  };
+}
+
+/**
+ * The scrub of `knownValues`, built once for every text it is given. It replaces as a scrub of one value at a time
+ * does: each form of each value in turn, longest first, over the whole text, so a path goes before a folder inside it
+ * and a value that overlaps another still goes. But a text gets only the forms it holds, which one pattern finds in one
+ * read: a bundle holds thousands of texts, and a database can record hundreds of checkouts. Then what looks like a
+ * secret goes.
+ */
+function scrubFor(knownValues: readonly KnownValue[]): (text: string) => string {
+  const formsIn = formFinder(knownForms(knownValues));
+  return text => {
+    let scrubbed = text;
+    for (const form of formsIn(text)) scrubbed = replaceForm(scrubbed, form);
     for (const [pattern, replacement] of SECRET_PATTERNS) scrubbed = scrubbed.replace(pattern, replacement);
     return scrubbed;
   };
