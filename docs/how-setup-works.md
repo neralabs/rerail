@@ -484,8 +484,8 @@ store, except a file in `~/.cache/rerail/`: only the managed installation's daem
   `<checkout>/.rerail/content-v1.sqlite` (`.rerail/` is gitignored), so a checkout on a newer store schema never
   changes the store the installed version reads.
 - **Neither** (say, an `npx` copy, or a package `npm install` put in a folder of its own): no store, so no code rule
-  runs. The daemon reports its engine unavailable with the reason (`rerail status`, the session footer, the dashboard
-  header, `/healthz`, `daemon.log` and the support bundle's engine health).
+  runs. The daemon reports its engine unavailable with the reason (`rerail status`, the dashboard header, `/healthz`,
+  `daemon.log` and the support bundle's engine health), and the session footer says `engine unavailable`.
 
 The file name follows the store's compatibility floor (`v1` today) and changes when the floor rises.
 
