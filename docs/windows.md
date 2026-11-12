@@ -273,6 +273,12 @@ checkout writes that blob as the text, so a text with an LF and no CR before it,
 preimage recovered from Git keeps the CRLF line breaks the file held, so the diff lines up line by line. A shell
 command that rewrites an LF file with CRLF where Git would not is still the agent's edit.
 
+Those settings move a comparison only for a file whose bytes hold a blob in a CRLF form and not as stored
+(`heldOnlyInCrlf`), or whose text is the CRLF form of an LF blob the repository holds (`crlfSourceId`), so Rerail
+asks Git for them for those files alone, when a walk finds one. A walk of edits Git did not write starts no Git
+process for line endings. A walk that finds files Git wrote in a CRLF form asks Git as before, so each answer is the
+one Git gives at that moment, after any `.gitattributes` or configuration change.
+
 </details>
 
 <details>

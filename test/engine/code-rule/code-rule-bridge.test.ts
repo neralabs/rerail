@@ -29,8 +29,8 @@ const discovery = vi.hoisted(() => ({
   directories: new Map<string, Array<() => Promise<void>>>(),
 }));
 /**
- * The arguments of every Git process Rerail started without blocking, for the tests that pin what a pass costs, and a
- * Git command (`failing`) that is made to fail, by an option Git does not know, while it is set.
+ * The arguments of every Git process Rerail started without blocking, by `execFile` or `spawn`, for the tests that pin
+ * what a pass costs, and a Git command (`failing`) that is made to fail, by an option Git does not know, while it is set.
  */
 const asyncGitCalls = vi.hoisted(() => ({ args: [] as string[][], failing: undefined as string | undefined }));
 /** How many of the next Git reads run, in Git's place, a program that stays until it is ended, as a Git still at work does. */
@@ -53,8 +53,13 @@ vi.mock("node:child_process", async importOriginal => {
     }
     return (actual.execFile as (...forwarded: unknown[]) => ReturnType<typeof actual.execFile>)(...call);
   };
+  // Batch reads (`cat-file`, `check-attr`) start Git through `spawn`: recorded as they are, never changed.
+  const spawn = (...call: Parameters<typeof actual.spawn>) => {
+    if (/(?:^|[\\/])git(?:\.exe)?$/iu.test(call[0]) && Array.isArray(call[1])) asyncGitCalls.args.push([...(call[1] as readonly string[])]);
+    return (actual.spawn as (...forwarded: unknown[]) => ReturnType<typeof actual.spawn>)(...call);
+  };
   // `promisify(execFile)` resolves to `{ stdout, stderr }` through this symbol: the wrapper keeps it.
-  return { ...actual, execFile: Object.assign(execFile, { [promisify.custom]: (actual.execFile as unknown as Record<symbol, unknown>)[promisify.custom] }) };
+  return { ...actual, spawn, execFile: Object.assign(execFile, { [promisify.custom]: (actual.execFile as unknown as Record<symbol, unknown>)[promisify.custom] }) };
 });
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof FileSystem>();
@@ -1058,6 +1063,16 @@ async function gitReads(run: () => Promise<unknown>): Promise<{ heads: number; e
   return { heads: named("--verify"), entries: named("--unmerged") };
 }
 /**
+ * The Git processes `run` started to read what a checkout writes line breaks by: `check-attr`, and `config` for
+ * `core.autocrlf` or `core.eol`. Each is named by its command and arguments past `-C <folder>`.
+ */
+async function lineEndingReads(run: () => Promise<unknown>): Promise<string[]> {
+  asyncGitCalls.args.length = 0;
+  await run();
+  const commands = asyncGitCalls.args.map(args => args.slice(args.indexOf("-C") + 2).join(" "));
+  return commands.filter(command => /^check-attr |^config .*core\\?\.(?:autocrlf|eol)/u.test(command));
+}
+/**
  * A repository with a checkout in `lib` that owns its files: a repository of its own, or with `linked` a worktree of one
  * elsewhere, whose `.git` is a file. `lib` is on `ours`, which changed `src/gone.py`; `other` removed it, so merging
  * `other` stops on a modify/delete conflict that changes no file. With `both`, each branch also changed `src/both.py`
@@ -1465,6 +1480,73 @@ describe("CodeRuleBridge and Git's own writes under core.autocrlf", () => {
       await expect(shell(bridge, () => git(root, "checkout", "--quiet", "other")), setup.attributes).resolves.toEqual([]);
       expect(auditGeneratedEdits, setup.attributes).not.toHaveBeenCalled();
     }
+  });
+
+  it("asks Git nothing of line endings for a shell edit whose bytes, before and after it, hold no blob's CRLF form", async () => {
+    const root = await twoBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    expect(await lineEndingReads(() => shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nmine\n")))).toEqual([]);
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/a.py", language: "python", previousText: "old\n", generatedText: "old\nmine\n" }],
+    ]);
+  });
+
+  it("asks Git for a file's line-ending rule while its earlier bytes are a blob's CRLF form, and not once it measures from its own text", async () => {
+    const root = await crlfBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    // The file held the index blob in the CRLF form a checkout writes here: only the rule says Git wrote that.
+    const first = await lineEndingReads(() => shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\r\nmine\r\n")));
+    expect(first.filter(command => command.startsWith("check-attr "))).toHaveLength(1);
+    // The next edit is measured from the text the session left, and its bytes hold no blob's CRLF form.
+    expect(await lineEndingReads(() => shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\r\nmine\r\nmore\r\n")))).toEqual([]);
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/a.py", language: "python", previousText: "old\r\n", generatedText: "old\r\nmine\r\n" }],
+      [{ path: "src/a.py", language: "python", previousText: "old\r\nmine\r\n", generatedText: "old\r\nmine\r\nmore\r\n" }],
+    ]);
+  });
+
+  it("follows a .gitattributes change between two walks: CRLF bytes Git wrote by the old rule are the session's under the new one", async () => {
+    const root = await twoBranches();
+    git(root, "config", "core.eol", "lf");
+    await writeFile(join(root, ".gitattributes"), "*.py eol=crlf\n");
+    await rm(join(root, "src", "a.py"));
+    git(root, "checkout", "--", "src/a.py");
+    await awaitClockAfter(join(root, "src", "a.py"), join(root, ".gitattributes"));
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    const sourceEdits = () => auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits).filter(edit => edit.path.startsWith("src/"));
+    // Under eol=crlf the checkout writes `other`'s files with CRLF, and they are Git's.
+    await shell(bridge, () => git(root, "checkout", "--quiet", "other"));
+    expect(await readFile(join(root, "src", "a.py"), "utf8")).toBe("old\r\nviolation\r\n");
+    // Under -text Git writes each blob as stored.
+    await shell(bridge, async () => {
+      await writeFile(join(root, ".gitattributes"), "*.py -text\n");
+      await rm(join(root, "src", "a.py"));
+      git(root, "checkout", "--", "src/a.py");
+    });
+    expect(sourceEdits()).toEqual([]);
+    // No checkout writes the old rule's bytes now.
+    await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\r\nviolation\r\n"));
+    expect(sourceEdits()).toEqual([{ path: "src/a.py", language: "python", previousText: "old\nviolation\n", generatedText: "old\r\nviolation\r\n" }]);
+  });
+
+  it("takes the CRLF form of a blob holding a CRLF beside an LF for the session's, since text=auto writes that blob as stored", async () => {
+    const root = await twoBranches();
+    // Committed with no attribute, so the blob keeps its CRLF beside an LF.
+    git(root, "switch", "--quiet", "other");
+    await writeFile(join(root, "src", "a.py"), "old\r\nviolation\n");
+    git(root, "commit", "--quiet", "-am", "mixed line breaks");
+    git(root, "switch", "--quiet", "main");
+    git(root, "config", "core.eol", "crlf");
+    await writeFile(join(root, ".git", "info", "attributes"), "*.py text=auto\n");
+    await awaitClockAfter(join(root, "src", "a.py"));
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    await expect(shell(bridge, () => git(root, "checkout", "--quiet", "other"))).resolves.toEqual([]);
+    expect(await readFile(join(root, "src", "a.py"), "utf8")).toBe("old\r\nviolation\n");
+    // What `text` would write, and `text=auto` does not; `other~1` holds the all-LF blob it would come from.
+    await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\r\nviolation\r\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/a.py", language: "python", previousText: "old\r\nviolation\n", generatedText: "old\r\nviolation\r\n" }],
+    ]);
   });
 });
 

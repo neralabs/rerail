@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { blobIds, heldAs, textAs } from "../../../src/engine/code-rule/line-endings.js";
+import { blobIds, crlfSourceId, heldAs, heldOnlyInCrlf, textAs } from "../../../src/engine/code-rule/line-endings.js";
 import { gitCrlfPaths, type CrlfRule } from "../../../src/engine/git.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
@@ -129,6 +129,50 @@ describe("the ids of the blobs a file's text can come from", () => {
   });
 });
 
+describe("where a repository's line-ending rule can move a comparison", () => {
+  // Blobs and texts with every kind of line break: none, LF, CRLF, both, a lone CR, and binary data.
+  const SAMPLES = ["", "abc", "\n", "a\nb\n", "a\r\nb\r\n", "a\r\nb\n", "a\rb\n", "a\rb\r\n", "a\0\nb\n", "a\0\r\nb\r\n", "a\x01\nb\n", "é\r\n"];
+  const RULES = ["auto", "text"] as const;
+  const utf8 = (text: string): Buffer => Buffer.from(text, "utf8");
+  /** The bytes a file can hold for `stored`: the blob's own, each CRLF form, the blob with CRLFs made LF, and other bytes. */
+  const fileForms = (stored: string): string[] =>
+    [stored, textAs(utf8(stored), "text"), textAs(utf8(stored), "auto"), stored.replaceAll("\r\n", "\n"), `${stored}x`];
+
+  it("says a file holds a blob only in a CRLF form exactly where `text` finds it there, and wherever `auto` does", () => {
+    for (const stored of SAMPLES) {
+      for (const bytes of fileForms(stored)) {
+        const [held, digest] = [utf8(stored), digestOf(utf8(bytes))];
+        const named = JSON.stringify({ stored, bytes });
+        expect(heldOnlyInCrlf(held, digest), named).toBe(heldAs(held, digest, "text") === "text");
+        if (heldAs(held, digest, "auto") === "auto") expect(heldOnlyInCrlf(held, digest), named).toBe(true);
+      }
+    }
+    expect(heldOnlyInCrlf(undefined, digestOf("a\r\n"))).toBe(false);
+    expect(heldOnlyInCrlf(utf8("a\n"), undefined)).toBe(false);
+  });
+
+  it("moves no comparison by a rule where the file holds no blob only in a CRLF form", () => {
+    for (const stored of SAMPLES) {
+      for (const bytes of fileForms(stored)) {
+        const [held, digest] = [utf8(stored), digestOf(utf8(bytes))];
+        if (heldOnlyInCrlf(held, digest)) continue;
+        for (const rule of RULES) expect(heldAs(held, digest, rule), JSON.stringify({ stored, bytes, rule })).toBe(heldAs(held, digest, undefined));
+      }
+    }
+  });
+
+  it("names the one blob id any rule adds to a text's own, and none for a text no checkout writes", () => {
+    for (const text of SAMPLES.flatMap(fileForms)) {
+      const [own] = blobIds(text, "sha1", undefined);
+      for (const rule of RULES) {
+        const added = blobIds(text, "sha1", rule);
+        expect(added, JSON.stringify({ text, rule })).toEqual(added.length === 1 ? [own] : [own, crlfSourceId(text, "sha1")]);
+      }
+      if (blobIds(text, "sha1", "text").length === 1) expect(crlfSourceId(text, "sha1"), JSON.stringify(text)).toBeUndefined();
+    }
+  });
+});
+
 describe("each form against the bytes Git's own checkout writes", () => {
   // Blobs that tell Git's rules apart: what `auto` leaves as it is (a CR, a NUL, too many control bytes for its text)
   // and `text` still converts, and the bytes Git's binary test counts as text.
@@ -200,6 +244,8 @@ describe("each form against the bytes Git's own checkout writes", () => {
       expect(rules.get(path), path).toBe(rule);
       expect(textAs(stored, rule ?? "stored"), path).toBe(written.toString("utf8"));
       expect(heldAs(stored, digestOf(written), rule), path).toBe(written.equals(stored) ? "stored" : rule);
+      // The rule needs asking for exactly the files Git wrote in a CRLF form.
+      expect(heldOnlyInCrlf(stored, digestOf(written)), path).toBe(!written.equals(stored));
       // Of the blobs `text` writes as CRLF text, blobIds names the text's own and the all-LF one: not one that holds
       // a CRLF beside an LF, which `text` writes as it writes the all-LF one.
       if (rule === "text" && path === "mixed.txt") continue;

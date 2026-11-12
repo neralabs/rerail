@@ -4,7 +4,8 @@
  * attribute), the working tree does not hold a blob's bytes, so a comparison of the two by digest or blob id has to try
  * both forms, or every file Git writes reads as the session's own edit. Which rule a checkout follows for a path is the
  * repository's settings' answer (`gitCrlfPaths`); each function here takes that answer as `rule`, undefined where a
- * checkout writes the blob as stored.
+ * checkout writes the blob as stored. That answer costs Git processes, and moves a comparison only for a file that holds
+ * a blob in its CRLF form alone (`heldOnlyInCrlf`, `crlfSourceId`), so it is asked for those files only.
  */
 import { createHash } from "node:crypto";
 import type { CrlfRule } from "../git.js";
@@ -37,6 +38,18 @@ export function heldAs(blob: Buffer | undefined, digest: string | undefined, rul
   return written !== undefined && sha256(written) === digest ? rule : undefined;
 }
 
+/**
+ * Whether a file whose bytes have `digest` holds `blob` only in the CRLF form `text` writes, not as stored. Only then
+ * does the rule a repository follows change what {@link heldAs} answers: `auto` writes what `text` writes or the blob
+ * as stored, and no rule makes a file that holds neither form hold the blob. So no file of which this is false needs
+ * the rule asked for. A CRLF form always holds a CR, so a file without one never holds a blob only in it.
+ */
+export function heldOnlyInCrlf(blob: Buffer | undefined, digest: string | undefined): boolean {
+  if (blob === undefined || digest === undefined || sha256(blob) === digest) return false;
+  const written = crlfCheckout(blob, "text");
+  return written !== undefined && sha256(written) === digest;
+}
+
 /** `blob` as UTF-8 text in `form`, so it lines up line by line with a working tree that holds it that way. */
 export function textAs(blob: Buffer, form: LineForm): string {
   return (form === "stored" ? blob : crlfCheckout(blob, form) ?? blob).toString("utf8");
@@ -51,6 +64,16 @@ export function textAs(blob: Buffer, form: LineForm): string {
 export function blobIds(text: string, algorithm: BlobIdAlgorithm, rule: CrlfRule | undefined): string[] {
   const source = rule === undefined ? undefined : checkedOutFrom(text, rule);
   return source === undefined ? [blobId(text, algorithm)] : [blobId(text, algorithm), blobId(source, algorithm)];
+}
+
+/**
+ * The id of the LF blob a checkout by `text` writes as `text`, undefined where it writes none: the one id any rule adds
+ * to the text's own in {@link blobIds}, since `auto` writes what `text` writes or the blob as stored. Only where the
+ * repository holds that blob does the rule decide whether `text` can have been checked out from it.
+ */
+export function crlfSourceId(text: string, algorithm: BlobIdAlgorithm): string | undefined {
+  const source = checkedOutFrom(text, "text");
+  return source === undefined ? undefined : blobId(source, algorithm);
 }
 
 /** Git names a blob by the hash of a `blob <size>\0` header followed by its bytes. */

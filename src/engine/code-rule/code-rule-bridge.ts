@@ -33,7 +33,7 @@ import {
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { removeScratch, renameWithRetry } from "../file-replace.js";
-import { blobIds, heldAs, textAs } from "./line-endings.js";
+import { blobIds, crlfSourceId, heldAs, heldOnlyInCrlf, textAs } from "./line-endings.js";
 import { openNoFollow } from "../no-follow.js";
 import { sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
 import { IGNORED_DIRECTORIES } from "./code-rule-enforcer.js";
@@ -169,7 +169,10 @@ interface GitBlobs {
   readonly committed: boolean;
   /** `HEAD` as the last walk saw it, when it moved since. */
   readonly before: string | undefined;
-  /** The changes whose blobs a checkout writes with CRLF line breaks, each with the rule it writes them by (`gitCrlfPaths`). */
+  /**
+   * Of the changes whose verdict the rule can move (`crlfOfChanges`), those whose blobs a checkout writes with CRLF line
+   * breaks, each with the rule it writes them by (`gitCrlfPaths`).
+   */
   readonly crlf: ReadonlyMap<string, CrlfRule>;
   /** The index's unmerged entries now (`gitUnmergedReader`); undefined when Git could not list them. */
   readonly unmerged: ReadonlyMap<string, string> | undefined;
@@ -180,7 +183,9 @@ interface GitView extends GitBlobs {
   /** A merge, rebase or cherry-pick stopped on a conflict, having not moved `HEAD` for its work so far. */
   readonly stopped: boolean;
 }
-async function readGitView(discovery: SourceDiscovery, checkout: string, paths: readonly string[]): Promise<GitBlobs | undefined> {
+/** What Git holds for a walk's changes in one checkout, before the rules they are checked out by (`crlfOfChanges`). */
+type GitRead = Omit<GitBlobs, "crlf">;
+async function readGitView(discovery: SourceDiscovery, checkout: string, paths: readonly string[]): Promise<GitRead | undefined> {
   const { git } = discovery;
   const head = await git.run(signal => gitHead(checkout, { signal }));
   if (head === undefined) return undefined;
@@ -190,12 +195,54 @@ async function readGitView(discovery: SourceDiscovery, checkout: string, paths: 
   const moved = from !== head;
   const committed = moved && await git.run(signal => headMovedOnlyByCommits(checkout, from, { signal }));
   const before = from === head ? undefined : from;
-  const [blobs, crlf] = await Promise.all([
-    // A blob larger than a source could never match its digest: it is skipped, never read into memory.
-    git.run(signal => readGitBlobs(checkout, paths.flatMap(path => gitRevisions(path, before)), { maxBlobBytes: MAX_SOURCE_BYTES, signal })),
-    git.run(signal => gitCrlfPaths(checkout, paths, { signal })),
-  ]);
-  return { blobs, head, moved, committed, before, crlf, ...unmerged };
+  // A blob larger than a source could never match its digest: it is skipped, never read into memory.
+  const blobs = await git.run(signal => readGitBlobs(checkout, paths.flatMap(path => gitRevisions(path, before)), { maxBlobBytes: MAX_SOURCE_BYTES, signal }));
+  return { blobs, head, moved, committed, before, ...unmerged };
+}
+/** A change as a verdict compares it with Git's blobs: by the digests of its file's bytes now and before it. */
+interface ComparedChange {
+  readonly path: string;
+  /** Undefined for a file now gone, or whose bytes hold no CR and so no blob's CRLF form. */
+  readonly after: string | undefined;
+  readonly prior: string | undefined;
+}
+/**
+ * The rule by which a checkout writes CRLF (`gitCrlfPaths`) for each change whose verdict it can move, asked of Git for
+ * those alone: a file that now holds `HEAD`'s or the index's blob only in a CRLF form, or held the side a conflict kept
+ * (`:2:`) or the blob at `before` that way (`heldOnlyInCrlf`). Those are every comparison a verdict makes, and no rule
+ * changes any other, so a walk whose files hold no blob in a CRLF form alone starts no Git for line endings.
+ */
+async function crlfOfChanges(git: GitReads, checkout: string, read: GitRead, changes: readonly ComparedChange[]): Promise<ReadonlyMap<string, CrlfRule>> {
+  const decided = changes.filter(change => ruleCanDecide(read, change)).map(({ path }) => path);
+  return await git.run(signal => gitCrlfPaths(checkout, decided, { signal }));
+}
+function ruleCanDecide(read: GitRead, { path, after, prior }: ComparedChange): boolean {
+  const blob = (revision: string): Buffer | undefined => read.blobs.get(revision);
+  const before = read.before === undefined ? undefined : blob(`${read.before}:./${path}`);
+  return [blob(`HEAD:./${path}`), blob(`:./${path}`)].some(held => heldOnlyInCrlf(held, after))
+    || [blob(`:2:./${path}`), before].some(held => heldOnlyInCrlf(held, prior));
+}
+/**
+ * The ids of the blobs each change's text can have been checked out from (`blobIds`), by its path as the session names
+ * it, and those of them the repository holds, by one `cat-file --batch-check`. A rule adds at most one id, the LF blob
+ * that a checkout writes as the text (`crlfSourceId`), so the rule is asked of Git (`gitCrlfPaths`) only for a change
+ * whose LF blob the repository holds: for any other, that id names no blob a branch could hold.
+ */
+async function textIds(
+  git: GitReads,
+  checkout: string,
+  view: Pick<GitBlobs, "head">,
+  named: ReadonlyArray<{ edit: CodeRuleEdit; path: string }>,
+): Promise<{ ids: Map<string, string[]>; known: Map<string, string> }> {
+  // Git names a blob by the SHA-1, or in a SHA-256 repository the SHA-256, of its header and bytes; `HEAD`'s id says which.
+  const algorithm = view.head.length === 64 ? "sha256" : "sha1";
+  const own = named.flatMap(({ edit }) => blobIds(edit.generatedText!, algorithm, undefined));
+  const sources = new Map(named.map(({ edit }) => [edit.path, crlfSourceId(edit.generatedText!, algorithm)]));
+  const lf = [...sources.values()].filter((id): id is string => id !== undefined);
+  const known = await git.run(signal => readGitBlobIds(checkout, [...new Set([...own, ...lf])], { signal }));
+  const decided = named.filter(({ edit }) => known.has(sources.get(edit.path) ?? ""));
+  const crlf = await git.run(signal => gitCrlfPaths(checkout, decided.map(({ path }) => path), { signal }));
+  return { ids: new Map(named.map(({ edit, path }) => [edit.path, blobIds(edit.generatedText!, algorithm, crlf.get(path))])), known };
 }
 /**
  * A checkout's unmerged entries now (`SourceDiscovery.readUnmerged`), read through the session's Git reads, which `close`
@@ -701,7 +748,8 @@ function takeFirstSeen(scan: SourceScan, sources: ReadonlyArray<Source | undefin
 
 /**
  * Puts in `recovered` each of `paths` (owned by `checkout`) whose Git index or `HEAD` blob has the digest `uncaptured`
- * names for it.
+ * names for it. The rule a checkout writes CRLF by is asked of Git only for a file that held one of them in a CRLF form
+ * alone (`heldOnlyInCrlf`): for any other, no rule changes which blob it held.
  */
 async function recoverFromGit(
   discovery: SourceDiscovery,
@@ -712,14 +760,14 @@ async function recoverFromGit(
 ): Promise<void> {
   const named = paths.map(path => ({ path, inCheckout: sessionPath(checkout, resolve(discovery.root, path)) }));
   const revisions = named.flatMap(({ inCheckout }) => [`:./${inCheckout}`, `HEAD:./${inCheckout}`]);
-  const [blobs, crlf] = await Promise.all([
-    // A blob larger than a source could never match its digest: it is skipped, never read into memory.
-    discovery.git.run(signal => readGitBlobs(checkout, revisions, { maxBlobBytes: MAX_SOURCE_BYTES, signal })),
-    discovery.git.run(signal => gitCrlfPaths(checkout, named.map(({ inCheckout }) => inCheckout), { signal })),
-  ]);
+  // A blob larger than a source could never match its digest: it is skipped, never read into memory.
+  const blobs = await discovery.git.run(signal => readGitBlobs(checkout, revisions, { maxBlobBytes: MAX_SOURCE_BYTES, signal }));
+  const held = (inCheckout: string): Array<Buffer | undefined> => [blobs.get(`:./${inCheckout}`), blobs.get(`HEAD:./${inCheckout}`)];
+  const decided = named.filter(({ path, inCheckout }) => held(inCheckout).some(blob => heldOnlyInCrlf(blob, uncaptured.get(path))));
+  const crlf = await discovery.git.run(signal => gitCrlfPaths(checkout, decided.map(({ inCheckout }) => inCheckout), { signal }));
   for (const { path, inCheckout } of named) {
     const digest = uncaptured.get(path);
-    for (const blob of [blobs.get(`:./${inCheckout}`), blobs.get(`HEAD:./${inCheckout}`)]) {
+    for (const blob of held(inCheckout)) {
       const form = heldAs(blob, digest, crlf.get(inCheckout));
       if (blob === undefined || form === undefined) continue;
       // In the line breaks the file held it in, so the diff against the working tree lines up line by line.
@@ -1786,7 +1834,8 @@ export class CodeRuleBridge {
    * in the same walk so is one that holds its index blob or that the index no longer has. A later change to a file with
    * the same unmerged entries as the last walk is no longer Git's stop, even when the file held the blob of its side
    * before it. A file holds a blob in the CRLF line breaks as well where the repository's settings have a checkout write
-   * them (`gitCrlfPaths`, `line-endings.ts`); other filters' bytes never match, and stay the session's.
+   * them (`gitCrlfPaths`, `line-endings.ts`), which are asked for only where they can move a verdict (`crlfOfChanges`);
+   * other filters' bytes never match, and stay the session's.
    * Of the rest, a file restored from a branch is Git's too (`#restoredFromBranches`).
    */
   async #gitVerdicts(
@@ -1799,7 +1848,9 @@ export class CodeRuleBridge {
     const named = edits.map(edit => ({ edit, path: sessionPath(checkout, resolve(discovery.root, edit.path)), prior: uncaptured.get(edit.path) }));
     const read = await readGitView(discovery, checkout, named.map(({ path }) => path));
     if (read === undefined) return verdicts;
-    const view: GitView = { ...read, stopped: stoppedSince(read, named) };
+    const changes = named.map(({ edit, path, prior }) => ({ path, prior, after: this.#digestWithCr(edit) }));
+    const blobs: GitBlobs = { ...read, crlf: await crlfOfChanges(discovery.git, checkout, read, changes) };
+    const view: GitView = { ...blobs, stopped: stoppedSince(blobs, named) };
     for (const { edit, path, prior } of named) {
       const verdict = edit.readError === undefined ? this.#gitVerdict(view, edit, path, prior) : undefined;
       if (verdict !== undefined) verdicts.set(edit.path, verdict);
@@ -1834,6 +1885,15 @@ export class CodeRuleBridge {
   }
 
   /**
+   * The digest `#heldByGit` compares `edit`'s file by, where its bytes may hold a blob's CRLF form: undefined for a file
+   * gone, or whose text holds no CR.
+   */
+  #digestWithCr(edit: CodeRuleEdit): string | undefined {
+    if (edit.deleted === true || edit.generatedText?.includes("\r") === false) return undefined;
+    return this.#observed.get(edit.path)?.digest;
+  }
+
+  /**
    * The changes that now hold exactly the blob a branch or remote-tracking branch has at their path: restored from it
    * (`git show origin/main:f > f`, `git checkout main -- f`, `git restore --source main f`), not written. A branch whose
    * tip is one of the commits made since the last walk (`commitsMade`) is left out, so a file written, committed and pushed
@@ -1843,7 +1903,7 @@ export class CodeRuleBridge {
    * Each file's blob id is computed here, and only text the repository already holds as an object is looked for in the
    * branches: new text, which most edits write, costs one `cat-file --batch-check` and no branch is read. Text with CRLF
    * line breaks is also looked for as the LF text a checkout wrote it from, where the repository's settings have a
-   * checkout write CRLF.
+   * checkout write CRLF (`textIds`).
    */
   async #restoredFromBranches(
     git: GitReads,
@@ -1851,10 +1911,7 @@ export class CodeRuleBridge {
     view: GitBlobs,
     named: ReadonlyArray<{ edit: CodeRuleEdit; path: string }>,
   ): Promise<string[]> {
-    // Git names a blob by the SHA-1, or in a SHA-256 repository the SHA-256, of its header and bytes; `HEAD`'s id says which.
-    const algorithm = view.head.length === 64 ? "sha256" : "sha1";
-    const ids = new Map(named.map(({ edit, path }) => [edit.path, blobIds(edit.generatedText!, algorithm, view.crlf.get(path))]));
-    const known = await git.run(signal => readGitBlobIds(checkout, [...new Set([...ids.values()].flat())], { signal }));
+    const { ids, known } = await textIds(git, checkout, view, named);
     const candidates = named.filter(({ edit }) => ids.get(edit.path)!.some(id => known.has(id)));
     if (candidates.length === 0) return [];
     const excluded = await commitsMade(git, checkout, view);
