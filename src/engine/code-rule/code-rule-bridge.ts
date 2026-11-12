@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { closeSync, constants, type Dirent, fstatSync, openSync, type Stats, writeSync } from "node:fs";
+import { constants, type Dirent, type Stats } from "node:fs";
 import { type FileHandle, lstat, open, opendir, readFile, realpath, rename, unlink } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
@@ -27,8 +27,7 @@ import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
 import { ToolCallWindows } from "./tool-call-windows.js";
-import { makeRerailHome } from "../storage/private-files.js";
-import { defaultRerailHome } from "../storage/rerail-home.js";
+import { filesystemClock } from "./filesystem-clock.js";
 
 
 /** The name of the ignore files a walk observes whatever Git says of them. */
@@ -405,64 +404,6 @@ interface SourceDiscovery {
   readonly toolCalls: ToolCallWindows;
 }
 
-/**
- * The file in the Rerail home that `filesystemClock` writes one byte to for each sample. Each write stamps it with the
- * clock an edit stamps a source with, so a sample makes and removes no folder, and a process killed mid-sample leaves
- * nothing new behind.
- */
-export const CLOCK_PROBE_FILE = "clock-probe";
-const CLOCK_PROBE_BYTE = Buffer.from(".");
-
-/**
- * Samples the clock file timestamps are stamped with, as the stamp a write leaves on `CLOCK_PROBE_FILE`. `Date.now()`
- * is not that clock: on Linux file stamps advance per scheduler tick and lag it, so a write made right after session
- * start carries an earlier mtime, while on macOS stamps carry sub-millisecond precision that `Date.now()` truncates away.
- *
- * The four steps are synchronous calls, so a sample is taken whole when it is asked for: through `fs/promises` each step
- * would wait behind the walks' file reads in the thread pool, then for its turn of the event loop, which on a busy
- * machine put tens of milliseconds into the start and the end of every tool call. Taken at once, a sample holds the
- * event loop for a fraction of a millisecond.
- */
-function filesystemClock(): number {
-  try {
-    const probe = openClockProbe();
-    try {
-      writeSync(probe, CLOCK_PROBE_BYTE, 0, CLOCK_PROBE_BYTE.length, 0);
-      const info = fstatSync(probe);
-      return Math.min(info.mtimeMs, info.ctimeMs);
-    } finally {
-      // A failed close must not throw the sample away for `Date.now()`, the clock this function exists to avoid.
-      try {
-        closeSync(probe);
-      } catch {
-        // The sample was taken; there is nothing left to undo.
-      }
-    }
-  } catch {
-    return Date.now();
-  }
-}
-
-/**
- * Opens `CLOCK_PROBE_FILE` to rewrite its byte, making it the first time (private, as Rerail's other files are), and the
- * Rerail home if that is missing, through `makeRerailHome` as Rerail's other writers make it. The open makes the file
- * when it is missing but never empties it, as `w` would: a sample needs only its one byte rewritten. It refuses a link at
- * the file's name, as the bridge's other opens do, so no sample writes into the file a link names; the sample falls back
- * to `Date.now()` while the link stays.
- */
-function openClockProbe(): number {
-  const home = defaultRerailHome();
-  const path = join(home, CLOCK_PROBE_FILE);
-  const flags = constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW;
-  try {
-    return openSync(path, flags, 0o600);
-  } catch (error) {
-    if (!hasErrorCode(error, "ENOENT")) throw error;
-    makeRerailHome(home);
-    return openSync(path, flags, 0o600);
-  }
-}
-
 interface SourceScan {
   readonly sources: Map<string, Source>;
   readonly failedRoots: Set<string>;
@@ -756,6 +697,8 @@ export type IgnoredEdit = Omit<IgnoredEditMatch, "source"> & { path: string; sou
 /** Captures only changed source snapshots; the startup snapshot is discovery state, never evaluator input. */
 export class CodeRuleBridge {
   readonly #cwd: string;
+  /** The clock the files under `#cwd` are stamped with, sampled at once: what a tool call's window is measured on. */
+  readonly #clock: () => number;
   readonly #auditor: CodeRuleAuditor;
   readonly #onRevision: ((sessionId: string, revision: number, paths: readonly string[]) => void) | undefined;
   readonly #observations: SourceObservationCache | undefined;
@@ -818,6 +761,7 @@ export class CodeRuleBridge {
     } = {},
   ) {
     this.#cwd = resolve(cwd);
+    this.#clock = filesystemClock(this.#cwd);
     this.#auditor = auditor;
     this.#onRevision = options.onRevision;
     this.#observations = options.observations;
@@ -832,7 +776,7 @@ export class CodeRuleBridge {
   /** Resolves once the evaluator is open; the baseline walk runs behind it and delays only the next checkpoint or command result. */
   async openWorkspace(sessionId: string): Promise<void> {
     await this.#enqueue(async () => {
-      const startedAt = filesystemClock();
+      const startedAt = this.#clock();
       if (this.#discovery !== undefined) this.#discovery.cancelled = true;
       if (this.#sessionId !== undefined) {
         this.#sessionId = undefined;
@@ -872,7 +816,7 @@ export class CodeRuleBridge {
     restoredPreimages?: Readonly<Record<string, Preimage>>,
   ): Promise<Readonly<Record<string, Preimage>>> {
     const discovery = this.#requireDiscovery();
-    discovery.toolCalls.begin(toolCallId, filesystemClock());
+    discovery.toolCalls.begin(toolCallId, this.#clock());
     this.refreshCodeRules();
     const paths = generatedEditPaths(toolName, input);
     // What the ignore files a tool is about to write hold now is the baseline its edit is compared with.
@@ -899,12 +843,12 @@ export class CodeRuleBridge {
    * whose edit tool no hook shows opens one for each turn the same way, as its writes are seen by no call.
    */
   async unwatchedCall(toolCallId: string): Promise<void> {
-    (this.#discovery?.toolCalls ?? this.#unwatched).begin(toolCallId, filesystemClock());
+    (this.#discovery?.toolCalls ?? this.#unwatched).begin(toolCallId, this.#clock());
   }
 
   /** Ends the window `unwatchedCall` opened for the call, at its result. */
   async unwatchedResult(toolCallId: string): Promise<void> {
-    (this.#discovery?.toolCalls ?? this.#unwatched).finish(toolCallId, filesystemClock());
+    (this.#discovery?.toolCalls ?? this.#unwatched).finish(toolCallId, this.#clock());
   }
 
   /**
@@ -913,7 +857,7 @@ export class CodeRuleBridge {
    */
   async finish(toolCallId: string, failed = false, options: { rewindable?: boolean } = {}): Promise<readonly CodeRuleResponse[]> {
     const discovery = this.#requireDiscovery();
-    discovery.toolCalls.finish(toolCallId, filesystemClock());
+    discovery.toolCalls.finish(toolCallId, this.#clock());
     if (this.#commands.delete(toolCallId)) {
       const responses = await this.#reconcile(discovery);
       await this.#noteIgnoreRules([]);
@@ -1135,7 +1079,7 @@ export class CodeRuleBridge {
    */
   async checkpoint(checkpoint: Extract<CodeRuleCheckpoint, "turn" | "final">): Promise<CodeRuleResponse> {
     const discovery = this.#requireDiscovery();
-    discovery.toolCalls.finishAll(filesystemClock());
+    discovery.toolCalls.finishAll(this.#clock());
     await this.#awaitDiscovery(discovery, checkpoint, checkpoint);
     await this.#noteIgnoreRules([]);
     this.#assertDiscovery(discovery);
@@ -1474,7 +1418,7 @@ export class CodeRuleBridge {
       previous: new Map(this.#observed), versions: new Map(discovery.versions),
       // Read before the walk, so a move or conflict the walk only partly saw is still one to the next.
       ...await this.#readCheckouts(discovery, inSession ? undefined : worktrees),
-      observedAt: filesystemClock(),
+      observedAt: this.#clock(),
     };
     const scan = await this.#scanSources(discovery, walk, worktrees);
     if (this.#abandoned(discovery)) return;

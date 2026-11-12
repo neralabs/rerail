@@ -8,13 +8,13 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  CLOCK_PROBE_FILE,
   CodeRuleBridge,
   generatedEditPaths,
   isCommandTool,
   ledgerPreimage,
   type SourceObservationCache,
 } from "../../../src/engine/code-rule/code-rule-bridge.js";
+import { CLOCK_PROBE_FILE } from "../../../src/engine/code-rule/filesystem-clock.js";
 import { MAX_FINISHED_CALLS, ToolCallWindows } from "../../../src/engine/code-rule/tool-call-windows.js";
 import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
 import type { IgnoreRulesChange } from "../../../src/engine/code-rule/ignore-rule-files.js";
@@ -33,6 +33,17 @@ const discovery = vi.hoisted(() => ({
 const asyncGitCalls = vi.hoisted(() => ({ args: [] as string[][], failing: undefined as string | undefined }));
 /** Every folder made through `mkdtemp` or `mkdir`, or their synchronous forms, by the prefix or path asked for. */
 const madeFolders = vi.hoisted(() => [] as string[]);
+/**
+ * Another file system for the clock tests: `statSync` reports another device for each path in `paths`, and a file
+ * opened through `openSync` at a path `holds` takes its stamps through `stamp` (`fstatSync`), as a FAT drive or a file
+ * server stamps them.
+ */
+const otherFileSystem = vi.hoisted(() => ({
+  paths: new Set<string>(),
+  holds: (_path: string): boolean => false,
+  stamp: (ms: number): number => ms,
+  descriptors: new Set<number>(),
+}));
 vi.mock("node:child_process", async importOriginal => {
   const actual = await importOriginal<typeof ChildProcess>();
   const { promisify } = await import("node:util");
@@ -88,6 +99,26 @@ vi.mock("node:fs", async importOriginal => {
       madeFolders.push(String(args[0]));
       return actual.mkdirSync(...args);
     },
+    statSync: (...args: Parameters<typeof actual.statSync>) => {
+      const stats = actual.statSync(...args);
+      if (!(stats instanceof actual.Stats) || !otherFileSystem.paths.has(String(args[0]))) return stats;
+      return Object.create(stats, { dev: { value: stats.dev + 1 } }) as SyncFileSystem.Stats;
+    },
+    openSync: (...args: Parameters<typeof actual.openSync>) => {
+      const descriptor = actual.openSync(...args);
+      if (otherFileSystem.holds(String(args[0]))) otherFileSystem.descriptors.add(descriptor);
+      return descriptor;
+    },
+    fstatSync: (...args: Parameters<typeof actual.fstatSync>) => {
+      const stats = actual.fstatSync(...args);
+      if (!(stats instanceof actual.Stats) || !otherFileSystem.descriptors.has(args[0])) return stats;
+      const { stamp } = otherFileSystem;
+      return Object.create(stats, { mtimeMs: { value: stamp(stats.mtimeMs) }, ctimeMs: { value: stamp(stats.ctimeMs) } }) as SyncFileSystem.Stats;
+    },
+    closeSync: (...args: Parameters<typeof actual.closeSync>) => {
+      otherFileSystem.descriptors.delete(args[0]);
+      actual.closeSync(...args);
+    },
   };
 });
 
@@ -142,6 +173,9 @@ afterEach(async () => {
   discovery.reads.clear();
   discovery.directories.clear();
   discovery.opens.clear();
+  otherFileSystem.paths.clear();
+  otherFileSystem.holds = () => false;
+  otherFileSystem.stamp = ms => ms;
   await Promise.all(passes.splice(0));
   await Promise.all(bridges.splice(0).map(bridge => bridge.close()));
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
@@ -1806,7 +1840,11 @@ describe("ToolCallWindows", () => {
 });
 
 describe("the file system's clock", () => {
-  it("is sampled at each tool call without making a folder, and still credits each command with what it wrote", async () => {
+  /**
+   * Three command calls that each append a line to one source, in a session whose first walk is done; `walked` runs as
+   * that walk ends. The text each call's audit was given.
+   */
+  async function threeCommandWrites(walked: () => void = () => undefined): Promise<Array<Array<string | undefined>>> {
     const root = await workspace();
     const path = join(root, "src", "a.py");
     await writeFile(path, "old\n");
@@ -1815,7 +1853,7 @@ describe("the file system's clock", () => {
     const bridge = createBridge(root, auditor(auditGeneratedEdits));
     await bridge.openWorkspace("session-1");
     await bridge.checkpoint("turn");
-    const made = madeFolders.length;
+    walked();
 
     // A command's write is the session's only when it is stamped between the samples taken at the call's start and end.
     for (const call of ["shell-1", "shell-2", "shell-3"]) {
@@ -1823,11 +1861,52 @@ describe("the file system's clock", () => {
       await appendFile(path, `${call}\n`);
       await bridge.finish(call);
     }
+    return auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits.map(edit => edit.generatedText));
+  }
+  const EACH_COMMAND_CREDITED = [["old\nshell-1\n"], ["old\nshell-1\nshell-2\n"], ["old\nshell-1\nshell-2\nshell-3\n"]];
 
+  /** Runs `run` with the temporary folder moved to a folder of its own, which the test removes with what it holds. */
+  async function inOwnTemporaryFolder<T>(run: (temporary: string) => Promise<T>): Promise<T> {
+    const temporary = await workspace();
+    for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, temporary);
+    try {
+      return await run(temporary);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  }
+
+  it("is sampled at each tool call without making a folder, and still credits each command with what it wrote", async () => {
+    let made = 0;
+
+    expect(await threeCommandWrites(() => {
+      made = madeFolders.length;
+    })).toEqual(EACH_COMMAND_CREDITED);
     expect(madeFolders.slice(made)).toEqual([]);
-    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits.map(edit => edit.generatedText))).toEqual([
-      ["old\nshell-1\n"], ["old\nshell-1\nshell-2\n"], ["old\nshell-1\nshell-2\nshell-3\n"],
-    ]);
+  });
+
+  // A FAT drive keeps 2 s stamps; a file server stamps with its own clock, here 50 ms behind the checkout's.
+  it.each([
+    ["keeps 2 s stamps", (ms: number) => Math.floor(ms / 2_000) * 2_000],
+    ["runs 50 ms behind", (ms: number) => ms - 50],
+  ])("still credits each command with what it wrote when the Rerail home is on a file system that %s", async (_how, stamp) => {
+    const home = defaultRerailHome();
+    otherFileSystem.paths.add(home);
+    otherFileSystem.holds = path => path.startsWith(`${home}${sep}`);
+    otherFileSystem.stamp = stamp;
+
+    expect(await inOwnTemporaryFolder(async () => await threeCommandWrites())).toEqual(EACH_COMMAND_CREDITED);
+  });
+
+  it("reads the Rerail home's clock for a checkout on the home's file system, whatever the temporary folder's", async () => {
+    const writes = await inOwnTemporaryFolder(async temporary => {
+      otherFileSystem.paths.add(temporary);
+      otherFileSystem.holds = path => path.startsWith(`${temporary}${sep}`);
+      otherFileSystem.stamp = ms => ms - 50;
+      return await threeCommandWrites();
+    });
+
+    expect(writes).toEqual(EACH_COMMAND_CREDITED);
   });
 
   it("is sampled as a tool call starts, without waiting behind file work queued before it", async () => {

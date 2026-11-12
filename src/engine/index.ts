@@ -67,7 +67,7 @@ export {
 export { type ConversationRule, parseConversationRule } from "./catalog/rule-schema.js";
 export { engineRegexIssues, type RegexIssue } from "./catalog/rule-regexes.js";
 export { type RuleDocument, SqliteRuleStore } from "./catalog/rule-store.js";
-export { CLOCK_PROBE_FILE, CodeRuleBridge } from "./code-rule/code-rule-bridge.js";
+export { CodeRuleBridge } from "./code-rule/code-rule-bridge.js";
 export {
   bundledCodeRuleDslDirectory,
   CheckoutCatalogs,
@@ -86,6 +86,7 @@ export {
 } from "./code-rule/code-rule-languages.js";
 export { CODE_RULE_FORMAT, type CodeRule, codeRuleSchema, type CodeRuleScope } from "./code-rule/code-rule-schema.js";
 export { type CodeRuleAuditor, type CodeRuleSourceLanguage, type CodeRuleViolation, renderSteer, type RuleSteerDelivery } from "./code-rule/code-rule.js";
+export { CLOCK_PROBE_FILE } from "./code-rule/filesystem-clock.js";
 export {
   asLateSteer, headlineText, messageSteer, SESSION_NOTE_MESSAGE_TYPE, sessionStartNote, steerBlock, steerHeadlines, steerRules, type SteerFinding, type SteerTrigger,
 } from "./code-rule/rerail-steer.js";

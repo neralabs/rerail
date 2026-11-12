@@ -22,6 +22,11 @@ Set-up copies Rerail out of npm's ephemeral `npx` cache into a durable install i
 └── versions/<older>/…                                 the versions rerail update replaced
 ```
 
+A session's tool calls are timed on the clock that stamps its checkout's files, read from `clock-probe`. When the
+Rerail home is on a file system that is neither the checkout's nor the temporary folder's, such as a home folder on a
+file server or a home on a FAT drive, the file is in your own folder in the temporary folder instead: `rerail-<uid>` on
+Linux and macOS, `rerail` on Windows.
+
 ## Set-up step by step
 
 The steps match in a terminal and a coding agent; nothing reaches a repository, Git or the database before you say yes.

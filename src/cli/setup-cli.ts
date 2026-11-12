@@ -19,7 +19,7 @@ import {
 import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import { RULES_DUMP_FILE } from "../engine/catalog/rule-bootstrap.js";
 import { INSTALLED_PACKS_DIR, installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
-import { CLOCK_PROBE_FILE } from "../engine/code-rule/code-rule-bridge.js";
+import { CLOCK_PROBE_FILE } from "../engine/code-rule/filesystem-clock.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
 import { contentStoreOverride, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import {
