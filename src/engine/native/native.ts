@@ -296,6 +296,23 @@ export interface NativeCodeRuleDslRuntimeConstructor {
   /** Canonical CPython facts for a whole document demand batch; source is never executed. */
   pythonAstBatch(documentsJson: string): string;
   compile(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): NativeCompiledCodeRuleDsl;
+  /**
+   * The tests the `.rr` files under `pathsJson` (a JSON array of files and directories) carry, each run: a JSON array of
+   * `NativeRrTestResult` (`rerail-engine test-rr`).
+   */
+  testRr(pathsJson: string, filter?: string | null): string;
+}
+
+/** One test of a `.rr` file, as `testRr` reports it. */
+export interface NativeRrTestResult {
+  file: string;
+  test: string;
+  line: number;
+  status: "pass" | "fail";
+  /** Each failed `.expect`, with its line and what the run had instead. */
+  failures: string[];
+  /** The run's findings, as keys: `code at "path":line`. */
+  findings: string[];
 }
 
 /** A policy document for the first slice: its name (the file stem), source and format. */

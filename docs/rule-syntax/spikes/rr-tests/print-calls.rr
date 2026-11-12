@@ -11,13 +11,27 @@ print_call(c) :- kind(c, "call"), field(c, "function", f), text(f, "print").
 .violation P001(at: node) code "P001" "Use logging instead of print."
 P001(c) :- print_call(c).
 
-// Findings, by their keys: code, path and line.
-.test print_is_reported
+// The names each file calls, and the ones it should not: a unit test gives
+// `called` its rows (`.given`) and checks `banned_call` alone.
+.decl called(path: symbol, name: symbol)
+called(p, n) :- kind(c, "call"), field(c, "function", f), text(f, n), docof(c, d), doc(d, p, _).
+.decl banned(name: symbol)
+banned("print").
+banned("pprint").
+.decl banned_call(path: symbol, name: symbol)
+banned_call(p, n) :- called(p, n), banned(n).
+
+// A fixture set: files (and facts) the tests that name it read.
+.fixtures logging_app
     .fixture "app/main.py" ```
         import logging
         print("starting")
         logging.info("started")
         ```
+.end
+
+// Findings, by their keys: code, path and line. The file is the set's.
+.test print_is_reported uses logging_app
     .expect P001 at "app/main.py":2
     .expect no P001 at "app/main.py":3
     .expect count P001 = 1
@@ -43,4 +57,24 @@ P001(c) :- print_call(c).
 .test a_fixture_from_a_file exactly
     .fixture "legacy.py" from "legacy.py"
     .expect P001 at "legacy.py":2
+.end
+
+// A unit test: no files. `.given called` drops called's rule, so its rows
+// are these facts, and the test checks the rule that reads them.
+.test banned_names_are_found
+    .given called
+    called("a.py", "print").
+    called("a.py", "len").
+    called("b.py", "pprint").
+    // `only`: banned_call holds these rows and no others.
+    .expect only banned_call("a.py", "print")
+    .expect only banned_call("b.py", "pprint")
+.end
+
+// Facts in a file's run: `called` from the tape, and any finding (`_`).
+.test called_reads_the_tape uses logging_app
+    .expect called("app/main.py", "print")
+    .expect called("app/main.py", "logging.info")
+    .expect no banned_call("app/main.py", "logging.info")
+    .expect _ at "app/main.py"
 .end

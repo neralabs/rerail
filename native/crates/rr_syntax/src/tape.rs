@@ -41,6 +41,7 @@ kinds! {
     PolicyDocument = "policy_document",
     Setting = "setting",
     TestBlock = "test_block",
+    FixturesBlock = "fixtures_block",
     Clause = "clause",
     Head = "head",
     Conjunction = "conjunction",

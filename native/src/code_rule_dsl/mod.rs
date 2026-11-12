@@ -2323,6 +2323,16 @@ impl CodeRuleDslRuntime {
         serde_json::to_string(&response).map_err(json_error)
     }
 
+    /// The tests the `.rr` files under `paths_json` (a JSON array of files and directories) carry, each run (decision
+    /// 0119, `rerail-engine test-rr`): `[{file, test, line, status, failures, findings}]` as JSON. `rerail rules test`
+    /// calls it for a `.rr` file.
+    #[napi(catch_unwind)]
+    pub fn test_rr(paths_json: String, filter: Option<String>) -> Result<String> {
+        let paths: Vec<std::path::PathBuf> = serde_json::from_str(&paths_json).map_err(json::json_error)?;
+        let report = logic::rr::testing::report(&paths, filter.as_deref()).map_err(json::invalid)?;
+        serde_json::to_string(&report).map_err(json::json_error)
+    }
+
     #[napi(catch_unwind)]
     pub fn compile(
         source: String,

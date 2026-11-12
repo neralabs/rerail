@@ -1566,10 +1566,34 @@ fn close_beside(db: Connection) {
     rerail_accel::exec::drop_beside(db);
 }
 
+/// The store the process's runs use instead of the machine's while one is set (`use_store`): testing mode's
+/// (decision 0119), whose runs must not read what other runs left, nor wait behind their writes.
+static STORE: std::sync::RwLock<Option<std::path::PathBuf>> = std::sync::RwLock::new(None);
+
+/// While the guard lives, every run of the process (without `RERAIL_TAPE_CACHE`) uses the store at `path`.
+pub fn use_store(path: std::path::PathBuf) -> UsedStore {
+    let was = STORE.write().expect("the process's store").replace(path);
+    UsedStore(was)
+}
+
+/// `use_store`'s guard: the store before it comes back when it drops.
+pub struct UsedStore(Option<std::path::PathBuf>);
+
+impl Drop for UsedStore {
+    fn drop(&mut self) {
+        *STORE.write().expect("the process's store") = self.0.take();
+    }
+}
+
 /// The path `tape_cache` opens (`None`: `RERAIL_TAPE_CACHE=off`).
 pub fn tape_cache_path() -> Option<std::path::PathBuf> {
     #[cfg(any(test, feature = "test-hooks"))]
     if let Some(path) = TEST_TAPE_CACHE.with(|p| p.borrow().clone()) {
+        return Some(path);
+    }
+    if std::env::var_os("RERAIL_TAPE_CACHE").is_none()
+        && let Some(path) = STORE.read().expect("the process's store").clone()
+    {
         return Some(path);
     }
     match std::env::var("RERAIL_TAPE_CACHE") {

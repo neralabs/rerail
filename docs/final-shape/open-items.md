@@ -3694,7 +3694,13 @@ checked.
 **Closure:** a chunk's matchers intern their atoms before the first wave, or from what the run read then, and
 `run-rr` and `test-rr` pass under `RERAIL_SQL_STRICT=1`.
 
-## O-test-rr-busy. Back-to-back runs in one `test-rr` process can find the store's writer busy
+## O-test-rr-busy (closed 2026-11-12). Back-to-back runs in one `test-rr` process can find the store's writer busy
+
+**Closed.** The cause was the store, not the runs. `test-rr`, and the addon's `testRr`, used the machine's store
+(`$TMPDIR/rerail-tape-cache.sqlite`, 4.4 GB), which every engine run on the machine writes. Its WAL was being
+written by another process while the tests failed, and the addon's first test failed the same way. Testing mode now
+has a store of its own per build (decision 0119 §7). Then `test-rr docs/rule-syntax` passed six times in a row, and
+the addon's `testRr` three times.
 
 **Seen (2026-11-12), decision 0119.** `rerail-engine test-rr docs/rule-syntax` runs six tests, each a run, one
 after another in one process, on the CLI's default store. Once in four tries, one test failed with "a write queued

@@ -1080,7 +1080,7 @@ impl Parser<'_> {
             self.field(Field::Path);
             self.close();
             Ok(())
-        } else if self.is_p(DOT) && self.is_word_at(1, b"test") {
+        } else if self.is_p(DOT) && (self.is_word_at(1, b"test") || self.is_word_at(1, b"fixtures")) {
             self.test()
         } else if self.is_p(DOT) && self.is_word_at(1, b"end") {
             Err(())
@@ -1130,15 +1130,26 @@ impl Parser<'_> {
         self.is_id_at(k) && self.t.get(self.i + k).is_some_and(|t| &self.b[t.start as usize..t.end as usize] == w)
     }
 
-    /// `syntax::Parser::test`: `.test name [exactly]`, its statements, `.end`.
+    /// `syntax::Parser::test`: `.test name [exactly] [uses a, b]` or `.fixtures name`, its statements, `.end`.
     fn test(&mut self) -> R<()> {
-        self.open(Kind::TestBlock);
+        let test = self.is_word_at(1, b"test");
+        self.open(if test { Kind::TestBlock } else { Kind::FixturesBlock });
         self.i += 2;
         self.id()?;
         self.field(Field::Name);
-        if self.is_word_at(0, b"exactly") {
+        if test && self.is_word_at(0, b"exactly") {
             self.bump_as(Kind::Identifier);
             self.field(Field::Modifier);
+        }
+        if test && self.is_word_at(0, b"uses") {
+            self.i += 1;
+            self.id()?;
+            self.field(Field::Argument);
+            while self.is_p(COMMA) {
+                self.i += 1;
+                self.id()?;
+                self.field(Field::Argument);
+            }
         }
         loop {
             if self.kind() == EOF {
@@ -1148,7 +1159,7 @@ impl Parser<'_> {
                 self.i += 2;
                 break;
             }
-            if self.is_p(DOT) && self.is_word_at(1, b"test") {
+            if self.is_p(DOT) && (self.is_word_at(1, b"test") || self.is_word_at(1, b"fixtures")) {
                 return Err(());
             }
             self.statement()?;

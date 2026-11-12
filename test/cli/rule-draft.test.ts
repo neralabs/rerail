@@ -618,6 +618,47 @@ describe("rerail rules test", () => {
   });
 });
 
+/** A `.rr` rule with one test that passes and one that fails (decision 0119). */
+const RR_WITH_TESTS = [
+  '.policy "local:no-print" revision 1',
+  ".language python",
+  '.scope include "**/*.py"',
+  '.violation P(at: node) code "P1" "no print"',
+  'P(c) :- kind(c, "call"), field(c, "function", f), text(f, "print").',
+  ".test print_is_reported",
+  '    .fixture "a.py" ```',
+  '        print(1)',
+  "        ```",
+  '    .expect P1 at "a.py":1',
+  ".end",
+  ".test wrong_line",
+  '    .fixture "a.py" ```',
+  '        print(1)',
+  "        ```",
+  '    .expect P1 at "a.py":2',
+  ".end",
+  "",
+].join("\n");
+
+describe("rerail rules test on a .rr file", () => {
+  it("runs the tests the file carries, in the Engine, and fails when one fails", async () => {
+    const repo = await repository();
+    const file = join(repo, "no-print.rr");
+    writeFileSync(file, RR_WITH_TESTS);
+
+    const json = await run("test", [file, "--json"]);
+    const text = await run("test", [file]);
+
+    expect(json.exit).toBe(1);
+    expect(JSON.parse(json.stdout)).toMatchObject([
+      { test: "print_is_reported", line: 6, status: "pass", failures: [] },
+      { test: "wrong_line", line: 12, status: "fail", failures: ['line 16: .expect P1 at "a.py":2: reported P1 at "a.py":1'] },
+    ]);
+    expect(text.stdout).toContain("pass print_is_reported (line 6)");
+    expect(text.stdout).toContain("1 passed, 1 failed");
+  });
+});
+
 describe("rerail rules add", () => {
   it("stores the rule in the library and adds it, on, to the whole of a set-up repository", async () => {
     const repo = await repository();

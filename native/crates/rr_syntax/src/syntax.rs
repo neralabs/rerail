@@ -324,7 +324,10 @@ pub enum Item {
     /// `.test name [exactly]` … `.end` (decision 0119): a test of the file's rules, its statements (`.fixture`,
     /// `.expect`: settings; the test's own declarations and clauses) in order. Lowering never reads it; only testing
     /// mode does (`logic::rr::testing`).
-    Test { name: String, exactly: bool, items: Vec<Statement> },
+    Test { name: String, exactly: bool, uses: Vec<String>, items: Vec<Statement> },
+    /// `.fixtures name` … `.end` (decision 0119): what the tests that name it in `uses` read (`.fixture`s, `.given`s,
+    /// facts and rules). Like a test, never the program's.
+    Fixtures { name: String, items: Vec<Statement> },
 }
 
 /// A `.violation`'s code: a column's value (`code {c}`), or a constant (`code "E501"`).
@@ -793,10 +796,10 @@ impl<'s> Parser<'s> {
             self.field(Field::Path);
             self.close();
             Ok(Item::Include(path))
-        } else if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(d) if d == "test") {
+        } else if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(d) if d == "test" || d == "fixtures") {
             self.test()
         } else if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(d) if d == "end") {
-            self.fail("a `.test` before its `.end`")
+            self.fail("a `.test` or `.fixtures` before its `.end`")
         } else if self.is_p(".")
             && let Tok::Id(d) = self.peek_at(1).clone()
         {
@@ -844,17 +847,30 @@ impl<'s> Parser<'s> {
         }
     }
 
-    /// `.test name [exactly]`, its statements, `.end` (decision 0119). The kind implies `.test` and `.end`.
+    /// `.test name [exactly] [uses a, b]` or `.fixtures name`, its statements, `.end` (decision 0119). The kind
+    /// implies `.test` (`.fixtures`), `uses`, its commas and `.end`.
     fn test(&mut self) -> Result<Item, Error> {
-        self.open(Kind::TestBlock);
+        let test = matches!(self.peek_at(1), Tok::Id(d) if d == "test");
+        self.open(if test { Kind::TestBlock } else { Kind::FixturesBlock });
         self.implied();
         self.implied();
         let name = self.id()?;
         self.field(Field::Name);
-        let exactly = self.is_id("exactly");
+        let exactly = test && self.is_id("exactly");
         if exactly {
             self.bump_as(Kind::Identifier);
             self.field(Field::Modifier);
+        }
+        let mut uses = Vec::new();
+        if test && self.is_id("uses") {
+            self.implied();
+            uses.push(self.id()?);
+            self.field(Field::Argument);
+            while self.is_p(",") {
+                self.implied();
+                uses.push(self.id()?);
+                self.field(Field::Argument);
+            }
         }
         let mut items = Vec::new();
         loop {
@@ -866,8 +882,8 @@ impl<'s> Parser<'s> {
                 self.implied();
                 break;
             }
-            if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(d) if d == "test") {
-                return self.fail("`.end` (tests do not nest)");
+            if self.is_p(".") && matches!(self.peek_at(1), Tok::Id(d) if d == "test" || d == "fixtures") {
+                return self.fail("`.end` (tests and fixtures do not nest)");
             }
             let line = self.line();
             let item = self.statement(line)?;
@@ -875,7 +891,7 @@ impl<'s> Parser<'s> {
             items.push((item, line));
         }
         self.close();
-        Ok(Item::Test { name, exactly, items })
+        Ok(if test { Item::Test { name, exactly, uses, items } } else { Item::Fixtures { name, items } })
     }
 
     /// A directive's statement, after its `.word`.

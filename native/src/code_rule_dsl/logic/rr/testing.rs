@@ -1,24 +1,32 @@
-//! Testing mode (decision 0119): the tests a `.rr` file carries, each run as the file's policy over its fixtures.
+//! Testing mode (decision 0119): the tests a `.rr` file carries, each run as the file's program over its fixtures.
 //!
-//! A test is `.test name [exactly]` … `.end` (`syntax::Item::Test`). Lowering never reads one, so a file's program is
-//! the same with its tests or without them. Here a test's program is the file's statements with the test's own
-//! (declarations, clauses, facts) spliced in after them, read as `read_file` reads the file (`rr::lower_files`); its
-//! run is `run-rr`'s (`tools::run_program`) over a directory holding its fixtures; its `.expect`s are checked against
-//! the run's findings (finding keys: code, path, line, column) and the rows of the relations they name.
+//! A test is `.test name [exactly] [uses a, b]` … `.end` (`syntax::Item::Test`); a fixture set, `.fixtures name` …
+//! `.end` (`syntax::Item::Fixtures`), is what the tests that name it in `uses` read too. Lowering never reads either,
+//! so a file's program is the same with its tests or without them.
+//!
+//! Here a test's program is the file's statements with the test's own (declarations, clauses, facts) spliced in after
+//! them, read as `read_file` reads the file (`rr::lower_files`). A `.given r` drops every rule of `r` first, so `r`
+//! holds the test's facts and nothing else: a unit test of the rules that read it. The run is `run-rr`'s
+//! (`tools::run_program`) over a directory holding the test's fixture files (none, for a unit test). Its `.expect`s
+//! are checked against the run's findings (finding keys: code, path, line, column) and the rows of the relations they
+//! name.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use super::syntax::{self, Item, Statement, Tok};
 
-/// One test of a file.
+/// One test of a file, its fixture sets merged in.
 #[derive(Clone, Debug)]
 pub struct Test {
     pub name: String,
     /// The line of its `.test`.
     pub line: usize,
     pub exactly: bool,
-    /// Each fixture's path under the run's root, and its bytes.
+    /// Each fixture file's path under the run's root, and its bytes.
     pub fixtures: Vec<(String, Vec<u8>)>,
+    /// The relations whose rules the test drops (`.given`): their rows are the test's facts.
+    pub givens: Vec<(String, usize)>,
     /// The test's own declarations, clauses and facts.
     pub rules: Vec<Statement>,
     pub expects: Vec<Expect>,
@@ -32,12 +40,15 @@ pub struct Expect {
     pub what: Expected,
 }
 
+/// A value of a row assertion: as the run writes it, and whether it was written as a string.
+pub type Value = Option<(String, bool)>;
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Expected {
-    /// A finding: its code, and where (`at "path"[:line[:column]]`); what is left out matches anything.
+    /// A finding: its code (`_`: any), and where (`at "path"[:line[:column]]`); what is left out matches anything.
     Finding { code: String, path: Option<String>, line: Option<i64>, column: Option<i64> },
-    /// A row of a relation; `None` is `_`. Each value as the run writes it, and whether it was written as a string.
-    Row { relation: String, values: Vec<Option<(String, bool)>> },
+    /// A row of a relation; `None` is `_`. `only`: the relation's rows are the ones its `only` lines name.
+    Row { relation: String, values: Vec<Value>, only: bool },
     /// `count <code or relation> = n`: the findings of that code, or the relation's rows.
     Count { name: String, n: usize },
 }
@@ -59,19 +70,20 @@ impl std::fmt::Display for Expect {
                 }
                 Ok(())
             }
-            Expected::Row { relation, values } => {
-                let values = values
-                    .iter()
-                    .map(|v| match v {
-                        None => "_".to_owned(),
-                        Some((v, true)) => format!("{v:?}"),
-                        Some((v, false)) => v.clone(),
-                    })
-                    .collect::<Vec<_>>();
-                write!(f, "{no}{relation}({})", values.join(", "))
+            Expected::Row { relation, values, only } => {
+                let only = if *only { "only " } else { "" };
+                write!(f, "{no}{only}{relation}({})", values.iter().map(show).collect::<Vec<_>>().join(", "))
             }
             Expected::Count { name, n } => write!(f, "count {name} = {n}"),
         }
+    }
+}
+
+fn show(v: &Value) -> String {
+    match v {
+        None => "_".to_owned(),
+        Some((v, true)) => format!("{v:?}"),
+        Some((v, false)) => v.clone(),
     }
 }
 
@@ -79,29 +91,65 @@ fn bad<T>(path: &Path, line: usize, what: impl std::fmt::Display) -> Result<T, S
     Err(format!("{}:{line}: {what}", path.display()))
 }
 
-/// The tests of the `.rr` file at `path`, in order.
+/// What a test or a fixture set holds, read from its statements.
+#[derive(Default)]
+struct Block {
+    fixtures: Vec<(String, Vec<u8>)>,
+    givens: Vec<(String, usize)>,
+    rules: Vec<Statement>,
+    expects: Vec<Expect>,
+}
+
+fn block(path: &Path, items: Vec<Statement>, test: bool) -> Result<Block, String> {
+    let dir = path.parent().unwrap_or(Path::new("."));
+    let what = if test { "a test holds `.fixture`, `.given`, `.expect`, declarations and clauses" } else { "a fixture set holds `.fixture`, `.given`, declarations and clauses" };
+    let mut b = Block::default();
+    for (item, at) in items {
+        match item {
+            Item::Setting { key, text } if key == "fixture" => b.fixtures.push(fixture(path, dir, at, &text)?),
+            Item::Setting { key, text } if key == "given" => {
+                b.givens.extend(text.split(',').map(str::trim).filter(|r| !r.is_empty()).map(|r| (r.to_owned(), at)));
+            }
+            Item::Setting { key, text } if key == "expect" && test => b.expects.push(expect(path, at, &text)?),
+            Item::Setting { key, .. } if key != "input" && key != "output" => return bad(path, at, format!(".{key}: {what}")),
+            Item::Include(_) | Item::Policy(_) | Item::Violation { .. } => return bad(path, at, what),
+            item => b.rules.push((item, at)),
+        }
+    }
+    Ok(b)
+}
+
+/// The tests of the `.rr` file at `path`, in order, each with the fixture sets it uses merged in (theirs first).
 pub fn tests(path: &Path) -> Result<Vec<Test>, String> {
     let (statements, _) = super::read(path).map_err(|e| e.to_string())?;
-    let dir = path.parent().unwrap_or(Path::new("."));
+    let mut sets: BTreeMap<String, Block> = BTreeMap::new();
+    for (item, line) in &statements {
+        if let Item::Fixtures { name, items } = item {
+            if sets.insert(name.clone(), block(path, items.clone(), false)?).is_some() {
+                return bad(path, *line, format!("a second fixture set named {name}"));
+            }
+        }
+    }
     let mut out: Vec<Test> = Vec::new();
     for (item, line) in statements {
-        let Item::Test { name, exactly, items } = item else { continue };
+        let Item::Test { name, exactly, uses, items } = item else { continue };
         if out.iter().any(|t| t.name == name) {
             return bad(path, line, format!("a second test named {name}"));
         }
-        let mut test = Test { name, line, exactly, fixtures: Vec::new(), rules: Vec::new(), expects: Vec::new() };
-        for (item, at) in items {
-            match item {
-                Item::Setting { key, text } if key == "fixture" => test.fixtures.push(fixture(path, dir, at, &text)?),
-                Item::Setting { key, text } if key == "expect" => test.expects.push(expect(path, at, &text)?),
-                Item::Setting { key, .. } if key != "input" && key != "output" => {
-                    return bad(path, at, format!(".{key} in a test: a test holds `.fixture`, `.expect`, declarations and clauses"));
-                }
-                Item::Include(_) | Item::Policy(_) | Item::Violation { .. } => {
-                    return bad(path, at, "a test holds `.fixture`, `.expect`, declarations and clauses");
-                }
-                item => test.rules.push((item, at)),
-            }
+        let own = block(path, items, true)?;
+        let mut test = Test { name, line, exactly, fixtures: Vec::new(), givens: Vec::new(), rules: Vec::new(), expects: own.expects };
+        for set in &uses {
+            let Some(b) = sets.get(set) else { return bad(path, line, format!("no fixture set named {set}")) };
+            test.fixtures.extend(b.fixtures.iter().cloned());
+            test.givens.extend(b.givens.iter().cloned());
+            test.rules.extend(b.rules.iter().cloned());
+        }
+        test.fixtures.extend(own.fixtures);
+        test.givens.extend(own.givens);
+        test.rules.extend(own.rules);
+        let mut paths = BTreeSet::new();
+        if let Some((name, _)) = test.fixtures.iter().find(|(n, _)| !paths.insert(n.clone())) {
+            return bad(path, test.line, format!("two fixtures at {name:?}"));
         }
         if let Some(e) = test.expects.iter().find(|e| test.exactly && e.negated) {
             return bad(path, e.line, "`exactly` lists the findings a test has: no `.expect no` beside it");
@@ -157,7 +205,11 @@ fn expect(path: &Path, line: usize, text: &str) -> Result<Expect, String> {
     if negated {
         toks = &toks[1..];
     }
-    let usage = "`.expect [no] <code> [at \"<path>\"[:<line>[:<column>]]]`, `.expect [no] <relation>(<value>, …)` or `.expect count <name> = <n>`";
+    let only = !negated && toks.len() > 1 && word(toks[0], "only") && matches!(toks[1], Tok::Id(_));
+    if only {
+        toks = &toks[1..];
+    }
+    let usage = "`.expect [no] <code or _> [at \"<path>\"[:<line>[:<column>]]]`, `.expect [no | only] <relation>(<value>, …)` or `.expect count <name> = <n>`";
     if let [count, Tok::Id(name) | Tok::Str(name), Tok::P("="), Tok::Num(n)] = toks
         && word(count, "count")
         && !negated
@@ -180,7 +232,10 @@ fn expect(path: &Path, line: usize, text: &str) -> Result<Expect, String> {
                 _ => return bad(path, line, usage),
             }
         }
-        return Ok(Expect { line, negated, what: Expected::Row { relation: name, values } });
+        return Ok(Expect { line, negated, what: Expected::Row { relation: name, values, only } });
+    }
+    if only {
+        return bad(path, line, usage);
     }
     let (mut at, mut row, mut column) = (None, None, None);
     match rest {
@@ -234,13 +289,17 @@ impl std::fmt::Display for Finding {
 
 fn matches(e: &Expected, f: &Finding) -> bool {
     let Expected::Finding { code, path, line, column } = e else { return false };
-    *code == f.code
+    (code == "_" || *code == f.code)
         && path.as_ref().is_none_or(|p| *p == f.path)
         && line.is_none_or(|l| l == f.line)
         && column.is_none_or(|c| f.column.is_none_or(|fc| fc == c))
 }
 
-/// Runs `test` of the file at `path` in `work` (a directory of its own, made empty first): its fixtures under
+fn row_matches(values: &[Value], row: &[String]) -> bool {
+    row.len() == values.len() && row.iter().zip(values).all(|(have, want)| want.as_ref().is_none_or(|(w, _)| w == have))
+}
+
+/// Runs `test` of the file at `path` in `work` (a directory of its own, made empty first): its fixture files under
 /// `work/root`, the run's outputs under `work/out`.
 pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
     let root = work.join("root");
@@ -254,30 +313,45 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
         }
         std::fs::write(&file, bytes).map_err(|e| format!("{}: {e}", file.display()))?;
     }
-    // The file's program, the test's rules spliced in after the file's own statements.
+    let id = format!("{} test {}", path.display(), test.name);
+    // The file's program; each `.given` relation's rules dropped, wherever they are; the test's rules spliced in after
+    // the file's own statements.
     let (mut modules, files) = super::program(path).map_err(|e| e.to_string())?;
+    let given: BTreeSet<&str> = test.givens.iter().map(|(r, _)| r.as_str()).collect();
+    for (relation, line) in &test.givens {
+        if super::core_names().contains(relation) {
+            return bad(path, *line, format!(".given {relation}: a core relation is the engine's; give a `.fixture` file instead"));
+        }
+        let declared = modules.iter().flat_map(|(_, s)| s).chain(&test.rules).any(|(item, _)| matches!(item, Item::Decl { name, .. } if name == relation));
+        if !declared {
+            return bad(path, *line, format!(".given {relation}: no rule declares it"));
+        }
+    }
+    for (_, statements) in &mut modules {
+        statements.retain(|(item, _)| !matches!(item, Item::Clause { heads, .. } if heads.iter().any(|h| given.contains(h.rel.as_str()))));
+    }
     let own = path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?;
     let Some((_, statements)) = modules.iter_mut().find(|(p, _)| *p == own) else {
         return Err(format!("{}: not among its program's modules", path.display()));
     };
     statements.extend(test.rules.iter().cloned());
-    let mut program = super::lower_files(path, modules).map_err(|e| format!("{} test {}: {e}", path.display(), test.name))?;
+    let mut program = super::lower_files(path, modules).map_err(|e| format!("{id}: {e}"))?;
     // The relations the test's `.expect`s read are outputs of its run.
-    let named = |e: &Expect| match &e.what {
-        Expected::Row { relation, .. } => Some(relation.clone()),
-        Expected::Count { name, .. } if program.decls.contains_key(name) => Some(name.clone()),
-        _ => None,
-    };
-    for relation in test.expects.iter().filter_map(named).collect::<Vec<_>>() {
-        if !program.decls.contains_key(&relation) {
-            return Err(format!("{} test {}: `.expect` names {relation}, which no rule declares", path.display(), test.name));
+    let declared: BTreeSet<String> = program.decls.keys().cloned().collect();
+    for e in &test.expects {
+        let relation = match &e.what {
+            Expected::Row { relation, .. } => relation,
+            Expected::Count { name, .. } if declared.contains(name) => name,
+            _ => continue,
+        };
+        if !declared.contains(relation) {
+            return bad(path, e.line, format!("`.expect` names {relation}, which no rule declares"));
         }
-        if !program.outputs.contains(&relation) {
-            program.outputs.push(relation);
+        if !program.outputs.contains(relation) {
+            program.outputs.push(relation.clone());
         }
     }
-    let declared: std::collections::BTreeSet<String> = program.decls.keys().cloned().collect();
-    let report = crate::code_rule_dsl::tools::run_program(path, program, &files, &root, &out, &serde_json::Value::Null)?;
+    let report = crate::code_rule_dsl::tools::run_program(path, program, &files, &root, &out, &serde_json::Value::Null).map_err(|e| format!("{id}: {e}"))?;
     let findings: Vec<Finding> = report["diagnostics"]
         .as_array()
         .into_iter()
@@ -297,20 +371,20 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
         }
     };
     let mut outcome = Outcome { failures: Vec::new(), findings: findings.iter().map(ToString::to_string).collect() };
-    let reported = || if findings.is_empty() { "no findings".to_owned() } else { format!("reported {}", outcome_list(&findings)) };
+    let mut fail = |line: usize, what: String| outcome.failures.push(format!("line {line}: {what}"));
     for e in &test.expects {
         let failed = match &e.what {
             Expected::Finding { .. } => {
-                let hit: Vec<&Finding> = findings.iter().filter(|f| matches(&e.what, f)).collect();
+                let hit: Vec<Finding> = findings.iter().filter(|f| matches(&e.what, f)).cloned().collect();
                 match (e.negated, hit.is_empty()) {
-                    (false, true) => Some(reported()),
-                    (true, false) => Some(format!("reported {}", outcome_list(&hit.into_iter().cloned().collect::<Vec<_>>()))),
+                    (false, true) => Some(if findings.is_empty() { "no findings".to_owned() } else { format!("reported {}", list(&findings)) }),
+                    (true, false) => Some(format!("reported {}", list(&hit))),
                     _ => None,
                 }
             }
-            Expected::Row { relation, values } => {
+            Expected::Row { relation, values, .. } => {
                 let all = rows(relation)?;
-                let hit = all.iter().any(|row| row.len() == values.len() && row.iter().zip(values).all(|(have, want)| want.as_ref().is_none_or(|(w, _)| w == have)));
+                let hit = all.iter().any(|row| row_matches(values, row));
                 match (e.negated, hit) {
                     (false, false) => Some(format!("{relation} has {} rows{}", all.len(), sample(&all))),
                     (true, true) => Some(format!("{relation} has such a row{}", sample(&all))),
@@ -323,19 +397,35 @@ pub fn run(path: &Path, test: &Test, work: &Path) -> Result<Outcome, String> {
             }
         };
         if let Some(why) = failed {
-            outcome.failures.push(format!("line {}: .expect {e}: {why}", e.line));
+            fail(e.line, format!(".expect {e}: {why}"));
+        }
+    }
+    // `only r(…)`: r's rows are the ones its `only` lines name; the first such line reports the others.
+    let mut seen = BTreeSet::new();
+    for e in &test.expects {
+        let Expected::Row { relation, only: true, .. } = &e.what else { continue };
+        if !seen.insert(relation.clone()) {
+            continue;
+        }
+        let named: Vec<&Vec<Value>> = test.expects.iter().filter_map(|e| match &e.what {
+            Expected::Row { relation: r, values, only: true } if r == relation => Some(values),
+            _ => None,
+        }).collect();
+        let extra: Vec<Vec<String>> = rows(relation)?.into_iter().filter(|row| !named.iter().any(|v| row_matches(v, row))).collect();
+        if !extra.is_empty() {
+            fail(e.line, format!(".expect only {relation}: also {}{}", extra.len(), sample(&extra)));
         }
     }
     if test.exactly {
         let extra: Vec<Finding> = findings.iter().filter(|f| !test.expects.iter().any(|e| matches(&e.what, f))).cloned().collect();
         if !extra.is_empty() {
-            outcome.failures.push(format!("line {}: exactly: also reported {}", test.line, outcome_list(&extra)));
+            fail(test.line, format!("exactly: also reported {}", list(&extra)));
         }
     }
     Ok(outcome)
 }
 
-fn outcome_list(findings: &[Finding]) -> String {
+fn list(findings: &[Finding]) -> String {
     let all: Vec<String> = findings.iter().map(ToString::to_string).collect();
     if all.len() > 5 { format!("{} and {} more", all[..5].join(", "), all.len() - 5) } else { all.join(", ") }
 }
@@ -347,6 +437,78 @@ fn sample(rows: &[Vec<String>]) -> String {
     let shown: Vec<String> = rows.iter().take(3).map(|r| format!("({})", r.join(", "))).collect();
     format!(": {}{}", shown.join(", "), if rows.len() > 3 { ", …" } else { "" })
 }
+
+// ---------------------------------------------------------------- printing
+
+/// The text of each `.test` and `.fixtures` block of `src`, as written, in order: what a printer of the file's
+/// program (`flatten`) adds after it, so the file's tests go with it.
+pub fn blocks(src: &str) -> Vec<String> {
+    use super::tape::Kind;
+    let mut parser = syntax::Parser::taped(src);
+    let _ = parser.statements();
+    let (nodes, _) = parser.into_tape();
+    nodes
+        .iter()
+        .filter(|n| n.parent == Some(0) && !n.extra && (n.kind == Kind::TestBlock as u16 || n.kind == Kind::FixturesBlock as u16))
+        .map(|n| src[n.start as usize..n.end as usize].to_owned())
+        .collect()
+}
+
+/// A test as `.rr` text: its fixtures as fenced texts (each fence longer than any run of backticks it holds), then
+/// its `.expect` lines (as written after `.expect`).
+pub fn print_test(name: &str, exactly: bool, fixtures: &[(String, String)], expects: &[String]) -> String {
+    let mut out = format!(".test {name}{}\n", if exactly { " exactly" } else { "" });
+    for (path, text) in fixtures {
+        let run = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+        let fence = "`".repeat((run + 1).max(3));
+        out.push_str(&format!("    .fixture {} {fence}\n", syntax::quote(path)));
+        for line in text.strip_suffix('\n').unwrap_or(text).split('\n') {
+            if line.trim().is_empty() {
+                out.push('\n');
+            } else {
+                out.push_str(&format!("        {line}\n"));
+            }
+        }
+        out.push_str(&format!("        {fence}\n"));
+    }
+    for e in expects {
+        out.push_str(&format!("    .expect {e}\n"));
+    }
+    out.push_str(".end\n");
+    out
+}
+
+/// A test name from free text: lower-case words joined by `_`, starting with a letter.
+pub fn test_name(text: &str) -> String {
+    let mut name = String::new();
+    for c in text.chars() {
+        if c.is_ascii_alphanumeric() {
+            name.push(c.to_ascii_lowercase());
+        } else if !name.ends_with('_') && !name.is_empty() {
+            name.push('_');
+        }
+    }
+    let name = name.trim_end_matches('_').to_owned();
+    if name.starts_with(|c: char| c.is_ascii_alphabetic()) { name } else { format!("t_{name}") }
+}
+
+/// A rule draft's cases (`{ caught: [{path, content}], passed: [...] }`, `rerail rules test`'s envelope) as tests: a
+/// caught case is a test that its file has a finding (`.expect _ at "path"`), a passed case one that it has none.
+pub fn tests_of_cases(cases: &serde_json::Value) -> Result<String, String> {
+    let mut out = Vec::new();
+    for (group, negated) in [("caught", false), ("passed", true)] {
+        for (k, case) in cases[group].as_array().into_iter().flatten().enumerate() {
+            let path = case["path"].as_str().ok_or(format!("{group}[{k}] has no path"))?;
+            let content = case["content"].as_str().ok_or(format!("{group}[{k}] has no content"))?;
+            let name = format!("{group}_{}_{}", k + 1, test_name(path));
+            let expect = format!("{}_ at {}", if negated { "no " } else { "" }, syntax::quote(path));
+            out.push(print_test(&name, false, &[(path.to_owned(), content.to_owned())], &[expect]));
+        }
+    }
+    Ok(out.join("\n"))
+}
+
+// ---------------------------------------------------------------- the command
 
 /// Every `.rr` file under each of `paths` (a file, or a directory read recursively), sorted.
 pub fn rule_files(paths: &[PathBuf]) -> Vec<PathBuf> {
@@ -374,22 +536,10 @@ pub fn may_hold_tests(text: &str) -> bool {
     text.lines().any(|l| l.trim_start().starts_with(".test "))
 }
 
-/// `rerail-engine test-rr <file or directory>... [--filter <text>]`: each test of each file, one line each; an error
-/// (the exit status) when any failed.
-pub fn command(args: &[String]) -> Result<String, String> {
-    let (mut paths, mut filter) = (Vec::new(), None);
-    let mut args = args.iter();
-    while let Some(a) = args.next() {
-        if a == "--filter" {
-            filter = Some(args.next().ok_or("--filter <text>")?.clone());
-        } else {
-            paths.push(PathBuf::from(a));
-        }
-    }
-    if paths.is_empty() {
-        return Err("usage: rerail-engine test-rr <file or directory>... [--filter <text>]".into());
-    }
-    // The runs' directories, removed when the command ends.
+/// Each test of each `.rr` file under `paths` whose `<file>::<name>` contains `filter`: `[{file, test, line, status:
+/// "pass" | "fail", failures, findings}]`.
+pub fn report(paths: &[PathBuf], filter: Option<&str>) -> Result<serde_json::Value, String> {
+    // The runs' directories, removed when the report is made.
     struct Work(PathBuf);
     impl Drop for Work {
         fn drop(&mut self) {
@@ -398,36 +548,84 @@ pub fn command(args: &[String]) -> Result<String, String> {
     }
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     let work = Work(std::env::temp_dir().join(format!("rerail-test-rr-{}-{nanos}", std::process::id())));
-    let (mut text, mut passed, mut failed) = (String::new(), 0, 0);
-    for (k, file) in rule_files(&paths).into_iter().enumerate() {
+    // A store of testing mode's own (in the engine's tests, each test's: decision 0118).
+    let _store = (cfg!(not(any(test, feature = "test-hooks"))) && std::env::var_os("RERAIL_TAPE_CACHE").is_none())
+        .then(|| crate::code_rule_dsl::logic::plan::corpus::use_store(testing_store()));
+    let mut rows = Vec::new();
+    for (k, file) in rule_files(paths).into_iter().enumerate() {
         if !std::fs::read_to_string(&file).is_ok_and(|t| may_hold_tests(&t)) {
             continue;
         }
         for (j, test) in tests(&file)?.into_iter().enumerate() {
             let id = format!("{}::{}", file.display(), test.name);
-            if filter.as_ref().is_some_and(|f| !id.contains(f.as_str())) {
+            if filter.is_some_and(|f| !id.contains(f)) {
                 continue;
             }
-            match run(&file, &test, &work.0.join(format!("{k}-{j}"))) {
-                Ok(outcome) if outcome.passed() => {
-                    passed += 1;
-                    text.push_str(&format!("pass {id}\n"));
-                }
-                Ok(outcome) => {
-                    failed += 1;
-                    text.push_str(&format!("FAIL {id}\n"));
-                    for f in outcome.failures {
-                        text.push_str(&format!("    {f}\n"));
-                    }
-                }
-                Err(e) => {
-                    failed += 1;
-                    text.push_str(&format!("FAIL {id}\n    {e}\n"));
-                }
-            }
+            let (failures, findings) = match run(&file, &test, &work.0.join(format!("{k}-{j}"))) {
+                Ok(outcome) => (outcome.failures, outcome.findings),
+                Err(e) => (vec![e], Vec::new()),
+            };
+            rows.push(serde_json::json!({
+                "file": file, "test": test.name, "line": test.line,
+                "status": if failures.is_empty() { "pass" } else { "fail" },
+                "failures": failures, "findings": findings,
+            }));
         }
     }
-    text.push_str(&format!("{passed} passed, {failed} failed\n"));
+    Ok(serde_json::Value::Array(rows))
+}
+
+/// Testing mode's store, one per build of the engine, kept between runs: `$TMPDIR/rerail-test-rr-stores/<build>.sqlite`.
+/// The machine's store (`rerail-tape-cache.sqlite`) is every run's, so a test's run would read what others left there
+/// and wait behind their writes (O-test-rr-busy). Another build's store unused for a day is removed.
+fn testing_store() -> PathBuf {
+    let dir = std::env::temp_dir().join("rerail-test-rr-stores");
+    let _ = std::fs::create_dir_all(&dir);
+    let build = crate::code_rule_dsl::build_ids::engine();
+    let key = &build[..build.len().min(16)];
+    let day = std::time::Duration::from_secs(24 * 3600);
+    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > day);
+        if !name.starts_with(key) && old {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    dir.join(format!("{key}.sqlite"))
+}
+
+/// `rerail-engine test-rr <file or directory>... [--filter <text>] [--json]`: each test of each file, one line each
+/// (or the report as JSON); an error (the exit status) when any failed.
+pub fn command(args: &[String]) -> Result<String, String> {
+    let (mut paths, mut filter, mut json) = (Vec::new(), None, false);
+    let mut args = args.iter();
+    while let Some(a) = args.next() {
+        match a.as_str() {
+            "--filter" => filter = Some(args.next().ok_or("--filter <text>")?.clone()),
+            "--json" => json = true,
+            _ => paths.push(PathBuf::from(a)),
+        }
+    }
+    if paths.is_empty() {
+        return Err("usage: rerail-engine test-rr <file or directory>... [--filter <text>] [--json]".into());
+    }
+    let rows = report(&paths, filter.as_deref())?;
+    let rows = rows.as_array().expect("rows");
+    let failed = rows.iter().filter(|r| r["status"] == "fail").count();
+    let text = if json {
+        serde_json::to_string_pretty(rows).map_err(|e| e.to_string())? + "\n"
+    } else {
+        let mut text = String::new();
+        for r in rows {
+            let id = format!("{}::{}", r["file"].as_str().unwrap_or_default(), r["test"].as_str().unwrap_or_default());
+            text.push_str(&format!("{} {id}\n", if r["status"] == "pass" { "pass" } else { "FAIL" }));
+            for f in r["failures"].as_array().into_iter().flatten() {
+                text.push_str(&format!("    {}\n", f.as_str().unwrap_or_default()));
+            }
+        }
+        text.push_str(&format!("{} passed, {failed} failed\n", rows.len() - failed));
+        text
+    };
     if failed > 0 {
         print!("{text}");
         Err(format!("{failed} tests failed"))

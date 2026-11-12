@@ -336,7 +336,7 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
             Item::Policy(document) => l.prog.policies.push(document),
             // A test is never the program's (decision 0119): testing mode splices its statements into a program of
             // its own (`rr::testing`).
-            Item::Test { .. } => {}
+            Item::Test { .. } | Item::Fixtures { .. } => {}
             Item::Setting { key, text } => l.prog.settings.push((key, text)),
             Item::Violation { name, cols, code, code_in, tag, suppress, fixes, message, .. } => l.violation(name, cols, code, code_in, tag, suppress, fixes, message).map_err(at)?,
             Item::Clause { heads, body, edits } => {

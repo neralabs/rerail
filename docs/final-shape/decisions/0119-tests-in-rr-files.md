@@ -1,6 +1,6 @@
 # 0119. A rule file carries its own tests
 
-Status: spike built (2026-11-12): items 1 to 5, but not `rerail rules test`, and not item 6. See "What the spike built" below.
+Status: built (2026-11-12), but for the compiled grammar (O-rr-tests-bitlex). See "What is open".
 
 ## Intro
 
@@ -64,112 +64,119 @@ B101(a) :- kind(a, "assert_statement").
 
 ## The decision
 
-1. **Syntax.** A test is `.test <name> [exactly]`, then items, then `.end`. Its items:
+1. **Blocks.** Two blocks, each up to its `.end`; neither nests, and each name is unique in its file:
+   - `.test <name> [exactly] [uses <set>, …]`: a test.
+   - `.fixtures <name>`: a fixture set, which tests name with `uses`. What a set holds comes first in each test that
+     uses it, in the order `uses` names the sets.
+
+   A file may hold any number of them, after or between its rules, and a library module (no `.policy`, no
+   `.violation`) as well as a policy.
+
+2. **What a block holds.**
    - `.fixture "<path>" <text>`: a file of the test's run. `<text>` is a fenced literal (the lexer's backtick
      fence, which may span lines). The fence's body loses its first newline and the leading whitespace its
      lines share, and a final newline is added, so a fixture is written at the test's indent.
    - `.fixture "<path>" from "<file>"`: the file's bytes. `<file>` is relative to the `.rr` file, so binary inputs,
      large inputs and upstream cases can sit next to the rule.
-   - `.expect <finding>`, where `<finding>` is a code, `at "<path>"` and an optional `:<line>` or
-     `:<line>:<column>`. This is the findings contract: a set of finding keys, never a finding's exact shape or
-     message.
-   - `.expect no <finding>`: no finding matches. Without a line, none in the file; without `at`, none anywhere.
-   - `.expect <atom>` and `.expect no <atom>`: a row of any relation, the policy's or the test's. `_` matches
-     anything (`.expect no imported("os", _)`).
-   - `.expect count <code or relation> = <n>`.
+   - `.given <relation>, …`: every rule of the relation is dropped for the test, in the file and in what it
+     includes, so the relation holds the test's facts and nothing else. A core relation (`kind`, `node`, …) is the
+     engine's and is refused: its rows come from a `.fixture` file.
    - Declarations, clauses and facts (`seen("a.py").`): **testing rules**. They are the test's own and may read the
-     policy's relations. A test can name what a finding alone would not show, e.g. an intermediate relation, or a
-     fact the run should be given.
+     file's relations. A fact for a `.given` relation is one of its rows.
+   - In a test only, `.expect`:
+     - `.expect <code> [at "<path>"[:<line>[:<column>]]]`: a finding. This is the findings contract: a set of
+       finding keys, never a finding's shape or message. `_` is any code.
+     - `.expect no <finding>`: no finding matches. Without a line, none in the file; without `at`, none anywhere.
+     - `.expect <relation>(<value>, …)` and `.expect no <relation>(…)`: a row of any relation, the file's or the
+       test's. `_` matches any value (`.expect no imported("os", _)`).
+     - `.expect only <relation>(…)`: the relation's rows are the ones its `only` lines name, and no others.
+     - `.expect count <code or relation> = <n>`.
 
-   `exactly` on the header adds one assertion: the test's findings are exactly those its positive `.expect`s
-   name, keyed as they are written. A `.expect` with no line then matches every finding in that file.
+   `exactly` on a test adds one assertion: its findings are exactly those its positive `.expect`s name. A
+   `.expect` with no line then matches every finding in that file. `exactly` takes no `.expect no`.
 
-   A file may hold any number of tests, after or between its rules. Tests do not nest. A test's name is unique in
-   its file.
+3. **Unit tests.** A test with no fixture file reads no file: its run has an empty corpus, and its relations are
+   its rules over its facts. With `.given`, a test checks the rules that read a relation from rows it names, with no
+   parse and no tape. A test over files and a unit test are the same mechanism, so a test may mix them: a fixture
+   file for what the tape gives, `.given` for the step under test.
 
-2. **Parsing.** `syntax.rs` parses a test into its own tape node (`Kind::TestBlock`, with its items under it) and
-   `Item::Test { name, exactly, items }`. Without this, its clauses would parse as the policy's. Fenced fixture
-   bodies are already one token. `from_tape.rs` rebuilds `Item::Test`. The `.rr` printer prints it back, so the
-   converter and the formatter keep a file's tests.
+4. **Parsing.** Each block is a tape node of its own (`test_block`, `fixtures_block`: the name under `name`,
+   `exactly` under `modifier`, each set `uses` names under `argument`, the statements under `body`) and an item
+   (`syntax::Item::Test`, `Item::Fixtures`), in the engine's parser (`syntax.rs`), the lean parser (`lean.rs`) and
+   `from_tape.rs`. Without its own node, a block's clauses would parse as the file's. The Bitlex grammar does not
+   know the blocks yet (O-rr-tests-bitlex).
 
-3. **Dropped unless testing.** `rr::lower` skips `Item::Test` unless the reader asks for tests (a `tests: bool` on
-   the read options; `false` everywhere but testing mode). So a test never reaches `front::Program`, its program
-   facts (`program_facts.rs`) or any key made from them: plans, choices, prepared and combined programs, memos.
-   Two guards hold this:
-   - a test that lowers the library and the packs with and without their tests and asserts equal program facts;
-   - `front::Program` has no field for tests, so no later step can read one by accident.
+5. **Never the program's.** `rr::lower` skips both items, always: no option exists that could leak a test into a
+   program. So a test never reaches `front::Program`, its program facts or any key made from them (plans, choices,
+   prepared and combined programs, memos). The guard is `a_rule_files_tests_are_no_part_of_its_program`: each file
+   with tests lowers to the same program as with its blocks' lines blank. A block does change its file's text, and
+   so its tape: that is the parse, and it is right that it changes.
 
-   A test block does change its file's text, and so its tape. That is the parse, and it is right that it changes.
+6. **A test is an ordinary run** (`logic/rr/testing.rs`):
+   - its fixture files are written into a directory of its own, the run's root;
+   - its program is the file's statements, each `.given` relation's rules dropped, with the test's (and its sets')
+     rules spliced in after the file's own, read as `read_file` reads a file (`rr::lower_files`);
+   - its run is `run-rr`'s (`tools::run_program`), with the file's scope, suppressions and settings. The relations
+     its `.expect`s name are made outputs of the run;
+   - its assertions are checked against the run's findings and those relations' rows.
 
-4. **Testing mode runs each test as an ordinary run.** For each test:
-   - its fixtures are written into a directory of its own (under the test's store in the engine's tests,
-     decision 0118; a temporary directory from the CLI), and that directory is the run's root;
-   - its program is the policy's program, plus the test's testing rules if it has any. The rules are combined as
-     a library is (`combine_texts`), in the test's own namespace (`test.<name>.`), so two tests' relations never
-     meet;
-   - its run is `corpus::run_with_options` over that root, with the policy's scope, suppressions and settings;
-   - its assertions are checked against the run's findings and its relations' rows.
+   A test's rules are in its run alone, so tests need no namespace. A test with no rules and no `.given` has the
+   file's program, so it shares the file's plans with every such test and with real runs: testing mode is the same
+   engine, with nothing evaluated outside it.
 
-   A test with no testing rules has the policy's program. So it shares the policy's plans with every other such
-   test and with real runs. That keeps testing mode the same engine (phases, not new evaluators), with nothing
-   evaluated outside it.
+7. **A store of its own.** In the engine's tests each test has its own store (decision 0118). Elsewhere testing
+   mode uses `$TMPDIR/rerail-test-rr-stores/<build>.sqlite`, one per engine build, kept between invocations, unless
+   `RERAIL_TAPE_CACHE` names one (`corpus::use_store`, for the report's length). The machine's store is every run's:
+   a test's run would read what other runs left there, and wait behind their writes (O-test-rr-busy).
 
-   The runs of one file's tests are independent and may go in parallel.
+8. **Where testing mode is.**
+   - `rerail-engine test-rr <file or directory>... [--filter <text>] [--json]`: the tests of every `.rr` file named,
+     one line each (`pass`, or `FAIL` with each failed `.expect`, its line and what the run had instead), exit
+     status 1 on any failure. `--filter` keeps the tests whose `<file>::<name>` contains its text.
+   - `rerail rules test <rule.rr>` (the TypeScript CLI): the same, through the Engine's `CodeRuleDslRuntime.testRr`,
+     `--json` for the report. It does not reimplement anything.
+   - The engine's tests: `rule_files_pass_their_own_tests` runs every test under `docs/rule-syntax/`.
 
-5. **Where testing mode is.**
-   - `rerail-engine test-rr <file or directory>...`: runs the tests of every `.rr` file named, one line per test
-     (`pass`, `fail` with the assertions that failed and what was reported instead), exit status 1 on any failure.
-     `--filter <text>` keeps the tests whose `<file>::<name>` contains it.
-   - The engine's Rust tests: `rule_syntax_files_pass_their_tests` runs every test of `docs/rule-syntax/` and the
-     packs. Each `.rr` file is one test case, so a cargo filter selects files.
-   - `rerail rules test` (the TypeScript CLI) calls the engine's entry point for a `.rr` draft. It does not
-     reimplement it.
+   Nothing else runs tests. A scan, a library load (phase 0) and the product's engine read a file as they read one
+   with no tests.
 
-   Nothing else runs tests. A scan, a library load (phase 0) and the product's engine read the file as it reads
-   one with no tests.
+9. **Printing.** `flatten` keeps a file's text as written (`program_text`), so its blocks go with it. `rr::print`
+   prints a lowered program, which holds no test, so what it prints has none.
 
-6. **Today's cases move in by conversion, not by hand.** A `{ caught, passed }` envelope converts into one test
-   per case: a caught case becomes a fixture and `.expect <code> at "<path>"`; a passed case becomes a fixture and
-   `.expect no <code> at "<path>"`. The converter that prints `.rr` (rules are Soufflé `.rr` only) prints them. A
-   pack's upstream cases stay in their tool directory and its conformance gate. A rule may name some of them with
-   `.fixture … from`.
+10. **Today's cases move in by conversion.** `convert-rr` takes a draft (`{ kind, rule, cases }`) or, with
+    `--cases <cases.json>`, a rule and its cases file (`fixtures/rerail/<id>.cases.json`). Each case becomes one
+    test (`testing::tests_of_cases`): a caught case its file and `.expect _ at "<path>"`, a passed case its file and
+    `.expect no _ at "<path>"`. A case names no code, hence `_`. The tests are in the report's `tests`, and after the
+    program in its `program`; they are printed for a rule that needs a hand-written port too, ready for the port. A
+    printed fixture's fence is longer than any run of backticks in it (`print_test`), and reads back byte for byte
+    (`a_printed_test_reads_back_as_written`). A pack's upstream cases stay in their tool directory and its
+    conformance gate; a rule may name some of them with `.fixture … from`.
 
 ## What is open
 
-- **Typing facts in a test.** A test's run has the typing phase like any run. A test that needs a library's
-  stubs names it as a fixture. Whether a test can name a library module instead is open.
-- **Fixtures shared by a file's tests** (a `.fixtures` block that every test reads) are left out until a file
-  needs them.
+- **The compiled grammar** (O-rr-tests-bitlex).
+- **Strict SQL** (O-run-rr-strict): `run-rr`, and so `test-rr`, read atoms inside the waves.
+- **A fixture keeps its indent only in part.** A fixture whose lines all share an indent loses it (the fence's
+  dedent). Such a file is written `from` a file beside the rule.
+- **Typing facts in a test.** A test's run has the typing phase like any run. A test that needs a library's stubs
+  names them as fixture files. Whether a test can name a library module instead is open.
 - **Edits** (`.edit`, a fix's replacement): a `.expect fix <code> at …` that asserts the text after the fix is a
   natural next step. It is not designed here.
 
-## What the spike built
+## Samples
 
-- **Parsing** (item 2): `Item::Test`, the tape kind `test_block` (its name, `exactly` as a modifier, its statements
-  under `body`), in the engine's parser (`syntax.rs`), the lean parser (`lean.rs`) and `from_tape.rs`. The Bitlex
-  grammar does not know the block yet (O-rr-tests-bitlex).
-- **Dropped** (item 3), more simply than the read option above: `rr::lower` skips `Item::Test` always, so no
-  option exists that could leak a test into a program. Testing mode splices a test's statements into the file's own,
-  then lowers them as `read_file` does (`rr::lower_files`, split out of `read_file`). The guard is
-  `a_rule_files_tests_are_no_part_of_its_program`: each file with tests lowers to the same program as with its
-  tests' lines blank.
-- **Running** (item 4, `logic/rr/testing.rs`): each test is `run-rr`'s run (`tools::run_program`, split out of
-  `run_rr`) over a directory holding its fixtures. No namespace is needed: a test's rules are in its run alone. The
-  relations an `.expect` names are made outputs of the run.
-- **Where** (item 5): `rerail-engine test-rr <file or directory>... [--filter <text>]`, and the engine's tests
-  `rule_files_pass_their_own_tests`, `failed_expectations_say_what_the_run_had` and `test_blocks_parse_only_whole`.
-  `rerail rules test` does not call it yet.
-- **Samples:** `packs/python/bandit-b101-assert-used.rr` carries three tests. `spikes/rr-tests/print-calls.rr` uses
-  every form: inline and `from` fixtures, a testing rule, row and count assertions, and `exactly`.
-- **Not kept by the printer:** `rr::print` prints a lowered program, so `convert-rr` and `flatten` leave tests out.
-  A formatter that keeps them is still to be written.
+- `packs/python/bandit-b101-assert-used.rr`: three tests of a pack rule.
+- `spikes/rr-tests/print-calls.rr`: every form. Inline and `from` fixtures, a fixture set used by two tests, a
+  testing rule, row, `only` and count assertions, `exactly`, and a unit test (`.given called`) with no files.
 
 ## Measured
 
-`rerail-engine test-rr` on the two sample files: 6 tests pass. The same tests with wrong expectations fail, and
-each failure names its line and what the run had (`reported P001 at "app/main.py":2`,
-`printed_line has 2 rows: (2), (3)`, `counted 2`, `exactly: also reported …`). The engine's four tests take 7.3 s
-of wall time in all, with 4.3 s user and 4.2 s system CPU (62.9 G instructions). Under `RERAIL_SQL_STRICT=1`,
-`test-rr` stops as `run-rr` does (O-run-rr-strict).
-Once in four tries over `docs/rule-syntax/`, one test's run found the store's writer busy (O-test-rr-busy).
-
+- `rerail-engine test-rr docs/rule-syntax` (8 tests), six times in a row: all pass each time, with no busy writer.
+  The first run made testing mode's store: 16.3 s of wall time, 3.2 s of CPU, 29.6 G instructions. The other five
+  took 5.6 to 7.7 s of wall time, 1.7 to 2.5 s of CPU and 18.1 to 18.2 G instructions each (load 32 to 45). The
+  store is 4.4 MB, against the machine's 4.4 GB.
+- Wrong expectations fail, and each failure names its line and what the run had (`reported P001 at
+  "app/main.py":2`, `printed_line has 2 rows: (2), (3)`, `counted 2`, `.expect only reach: also 2: (a, c), (b, c)`,
+  `exactly: also reported …`).
+- The engine's nine tests of testing mode take 8.2 s of wall time together.
+- Under `RERAIL_SQL_STRICT=1`, `test-rr` stops as `run-rr` does (O-run-rr-strict).
