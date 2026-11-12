@@ -3671,7 +3671,21 @@ compiled only there.
 
 **Closure:** the target builds, and `base_tests` runs (O-p0-stats-flake's 20 runs).
 
-## O-rr-tests-bitlex. The compiled `.rr` grammar does not know `.test` blocks
+## O-rr-tests-bitlex (closed 2026-11-12). The compiled `.rr` grammar does not know `.test` blocks
+
+**Closed.** Step 22 of the ladder (`22-test-blocks.bitlex`), now `rerail-rr-parser`'s grammar, reads `.test` and
+`.fixtures` blocks to the engine's tape, as rules and as one machine, and refuses what the engine refuses
+(decision 0119 §4). `rule_files_with_tests_are_the_engines` checks the two files with tests; the ladder's step 22
+passes (`RERAIL_LADDER=22`). Two fixes outside the grammar came with it:
+- The reference (`tools/bitlex/src/tree.rs`) refused a file where a mark that is not hidden came after a nested
+  level's last token, though its caller takes it. It now ends the level there, as the machine does and as its
+  own comment says.
+- The one-machine shape refused a call that returns to state 0 ("extras with the root's start state entered
+  again"). For a `whole` root, state 0 is like any other state, so the guard now holds only for a root that is
+  not whole.
+
+The tier 2 ratchets rose: per rule, 371 states and 8,860 words to 380 and 9,348; one machine, 266 states and
+2,590 arms to 271 and 2,621.
 
 **Seen (2026-11-12), decision 0119.** The engine's parser (`syntax.rs`) and the lean parser (`lean.rs`) read a
 `.test` … `.end` block into a `test_block` node. The Bitlex grammar (`rr_syntax/bitlex_ladder/21-named-only.bitlex`,
@@ -3682,7 +3696,24 @@ file, so its tape differs from the engine's on a file with tests. The compiled p
 **Closure:** the grammar reads the block as the engine does, and `corpus_tapes_are_the_engines` passes on the
 files with tests (`packs/python/bandit-b101-assert-used.rr`, `spikes/rr-tests/print-calls.rr`).
 
-## O-run-rr-strict. `run-rr` reads atoms inside the waves under `RERAIL_SQL_STRICT`
+## O-run-rr-strict (closed 2026-11-12). `run-rr` reads atoms inside the waves under `RERAIL_SQL_STRICT`
+
+**Closed: the store, not `run-rr`.** Decision 0104 reads a store's atoms whole before the first wave when they
+are at most 64 MB of text, and has a larger store look them up by key during the run, "which the strict mode
+reports". The machine's default store (`$TMPDIR/rerail-tape-cache.sqlite`) holds 4.9 M atoms, 421 MB of text.
+On the same binary and rule, with a one-file corpus: on that store, strict stops (exit 134, at an
+`atom_segment` read inside the waves); on a new store, the run passes and reports B101. `test-rr` uses a store
+of its own (decision 0119 §7) and passes all 8 tests under strict. What remains is O-store-atoms-grow.
+
+## O-store-atoms-grow. The machine's default store's atoms only grow
+
+**Seen (2026-11-12).** `$TMPDIR/rerail-tape-cache.sqlite` is 4.4 GB, with 4,890,262 atoms in 343,213 segments,
+421 MB of text: about 20 times the full corpus's 21 MB (decision 0049). Every run on the machine, from every
+worktree and build, adds its strings, and nothing removes an atom. Past 64 MB a run finds atoms by key inside
+its waves (decision 0104), so `RERAIL_SQL_STRICT=1` stops any run on that store.
+
+**Closure:** a store's atoms stay near what its kept facts name (atoms no kept row names are collected), or the
+CLI's default store is per build as testing mode's is; then a strict run on the default store passes.
 
 **Seen (2026-11-12).** `rerail-engine run-rr docs/rule-syntax/packs/python/bandit-b101-assert-used.rr <a one-file
 corpus> <out>` with `RERAIL_SQL_STRICT=1` stops at `SELECT id FROM atom_key WHERE h IN rarray(?1)`. The read is

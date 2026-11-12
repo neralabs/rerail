@@ -1,6 +1,6 @@
 # 0119. A rule file carries its own tests
 
-Status: built (2026-11-12), but for the compiled grammar (O-rr-tests-bitlex). See "What is open".
+Status: built (2026-11-12).
 
 ## Intro
 
@@ -36,7 +36,7 @@ B101(a) :- kind(a, "assert_statement").
 .test asserts_are_reported
     // A fixture: a file of the test's run, by its path.
     // The fenced body is the file's text, less the
-    // indent its lines share.
+    // closing fence's indent.
     .fixture "app/views.py" ```
         def view(user):
             assert user.is_admin
@@ -74,8 +74,19 @@ B101(a) :- kind(a, "assert_statement").
 
 2. **What a block holds.**
    - `.fixture "<path>" <text>`: a file of the test's run. `<text>` is a fenced literal (the lexer's backtick
-     fence, which may span lines). The fence's body loses its first newline and the leading whitespace its
-     lines share, and a final newline is added, so a fixture is written at the test's indent.
+     fence, which may span lines). The fence's body loses its first newline, and a final newline is added.
+     The closing fence, on a line of its own, says the indent, as in Java's text blocks and Swift's multi-line
+     strings: each line loses that much leading whitespace, and keeps any more. So a fixture is written at the
+     test's indent, and a file whose lines are all indented is written one step further in than its fence:
+
+     ````
+     // Inside a test: the file is "    x = 1".
+     .fixture "a.py" ```
+             x = 1
+         ```
+     ````
+
+     A closing fence after text on its line says no indent: the lines lose the indent they share.
    - `.fixture "<path>" from "<file>"`: the file's bytes. `<file>` is relative to the `.rr` file, so binary inputs,
      large inputs and upstream cases can sit next to the rule.
    - `.given <relation>, …`: every rule of the relation is dropped for the test, in the file and in what it
@@ -103,8 +114,11 @@ B101(a) :- kind(a, "assert_statement").
 4. **Parsing.** Each block is a tape node of its own (`test_block`, `fixtures_block`: the name under `name`,
    `exactly` under `modifier`, each set `uses` names under `argument`, the statements under `body`) and an item
    (`syntax::Item::Test`, `Item::Fixtures`), in the engine's parser (`syntax.rs`), the lean parser (`lean.rs`) and
-   `from_tape.rs`. Without its own node, a block's clauses would parse as the file's. The Bitlex grammar does not
-   know the blocks yet (O-rr-tests-bitlex).
+   `from_tape.rs`. Without its own node, a block's clauses would parse as the file's. The compiled grammar
+   (`rr_syntax/bitlex_ladder/22-test-blocks.bitlex`, `rerail-rr-parser`) reads them too, to the same tape: the
+   setting opened at the `.` is the block, its statements a nested level read with a flag (`in_block`) under
+   which no block opens, and `.end`'s `.` is a mark that is not hidden, so a `.end` outside a block refuses the
+   file as the engine does.
 
 5. **Never the program's.** `rr::lower` skips both items, always: no option exists that could leak a test into a
    program. So a test never reaches `front::Program`, its program facts or any key made from them (plans, choices,
@@ -154,10 +168,6 @@ B101(a) :- kind(a, "assert_statement").
 
 ## What is open
 
-- **The compiled grammar** (O-rr-tests-bitlex).
-- **Strict SQL** (O-run-rr-strict): `run-rr`, and so `test-rr`, read atoms inside the waves.
-- **A fixture keeps its indent only in part.** A fixture whose lines all share an indent loses it (the fence's
-  dedent). Such a file is written `from` a file beside the rule.
 - **Typing facts in a test.** A test's run has the typing phase like any run. A test that needs a library's stubs
   names them as fixture files. Whether a test can name a library module instead is open.
 - **Edits** (`.edit`, a fix's replacement): a `.expect fix <code> at …` that asserts the text after the fix is a
@@ -179,4 +189,9 @@ B101(a) :- kind(a, "assert_statement").
   "app/main.py":2`, `printed_line has 2 rows: (2), (3)`, `counted 2`, `.expect only reach: also 2: (a, c), (b, c)`,
   `exactly: also reported …`).
 - The engine's nine tests of testing mode take 8.2 s of wall time together.
-- Under `RERAIL_SQL_STRICT=1`, `test-rr` stops as `run-rr` does (O-run-rr-strict).
+- Under `RERAIL_SQL_STRICT=1`, `test-rr docs/rule-syntax` passes all 8: testing mode's store is small enough to
+  read whole before the first wave. `run-rr` on the machine's store stops, by decision 0104's rule for a store
+  of more than 64 MB of atoms (O-store-atoms-grow).
+- The compiled grammar reads both files with tests as the engine does, as rules and as one machine
+  (`rule_files_with_tests_are_the_engines`), and refuses what the engine refuses: a nested block, a `.end`
+  outside a block, a block with no `.end` (`tape_is_the_engines`).
