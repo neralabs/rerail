@@ -5895,8 +5895,10 @@ fn run_observed(
                     if kept_frames.is_some() {
                         cross_kept = Some(cut.strata);
                     }
+                    // Decision 0117 step 4: a maintained run reads the kept rows where a stratum it reaches reads them.
+                    let drive = cross.program.gates.is_empty() && std::env::var_os("RERAIL_MAINTAIN_WHOLE").is_none();
                     if let Some(kept) = cell.as_mut().filter(|_| from_frames.is_some()) {
-                        if let Some((rels, rows)) = kept.load(store, &cut, &cross.program)? {
+                        if let Some((rels, rows)) = kept.load(store, &cut, &cross.program, drive)? {
                             crate::code_rule_dsl::logic::profile::decision("the kept part, from the frames (t33 K4)", || format!("{rels} relations' rows read ({rows} rows) for the strata that run"));
                         } else {
                             cut = retain::cut(None, ckey, &cross.program, &digests)?;
@@ -6040,7 +6042,7 @@ fn run_observed(
                     // Decision 0117 step 3: with a kept part, the run walks the base program and makes a stratum's
                     // maintained form when a changed read reaches it (`Driver`); the inputs' deltas are taken here.
                     // `RERAIL_MAINTAIN_WHOLE` rewrites the whole program first, as before.
-                    let driven = cell.is_some() && cross.program.gates.is_empty() && std::env::var_os("RERAIL_MAINTAIN_WHOLE").is_none();
+                    let driven = cell.is_some() && drive;
                     let mut seeds: Vec<String> = Vec::new();
                     let mut given_rels: BTreeSet<String> = BTreeSet::new();
                     let mut maintained = if driven {
@@ -6122,6 +6124,8 @@ fn run_observed(
                     let mut stats = cross_stats;
                     let s = span("bind and measure kept");
                     let clean = cell.as_ref().map(|kept| cut.sources(kept, &part.program)).unwrap_or_default();
+                    // The clean relations the part reads that are left stored: bound where a stratum reads them.
+                    let clean_reads: BTreeSet<String> = part.program.inputs.iter().filter(|r| cut.clean.contains(*r) && !clean.iter().any(|(c, _, _)| c == *r)).cloned().collect();
                     // Each kept relation bound as `r__old`, and its statistics kept by delta if a run kept them: this
                     // run's `r`, maintained from it, has them patched by its delta (decision 0096 step 4). The kept
                     // relations whose statistics are made when first planned with (decision 0101 §4), and
@@ -6166,9 +6170,19 @@ fn run_observed(
                         // Decision 0117 step 3: the base program, each stratum maintained by its own form when reached.
                         Some(()) => {
                             let kept = cell.as_ref().expect("a driven run has a kept part");
+                            // The clean reads left stored: known by their rows' count until a stratum reads them.
+                            let counts = kept.stored_rows(store, &clean_reads.iter().cloned().collect::<Vec<_>>());
+                            for rel in &clean_reads {
+                                let width = part.program.decls.get(rel).map_or(0, Vec::len);
+                                let rows = counts.get(rel).copied().unwrap_or(1);
+                                stats.lazily(rel, rows, Arc::new(crate::code_rule_dsl::logic::plan::Unbound { rel: rel.clone(), width, rows }));
+                            }
                             let mut driver = Driver {
                                 cross,
                                 kept,
+                                store,
+                                clean_reads,
+                                at_end: wanted.clone(),
                                 binder: &mut binder,
                                 modules: &modules,
                                 db: &db,
@@ -6184,6 +6198,13 @@ fn run_observed(
                             };
                             let hooks = crate::code_rule_dsl::logic::plan::Hooks { maintain: Some(&mut driver), ..Default::default() };
                             let got = super::run_atoms_native_hooked(part, &db, "main", stats, keep, modes, hooks)?;
+                            let (rows_read, rels_read) = kept.admitted();
+                            if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
+                                eprintln!("rerail: kept rows read where reached: {rels_read} relations ({rows_read} rows); {} relations left stored, unread", got.unread.len());
+                            }
+                            crate::code_rule_dsl::logic::profile::decision("the kept part, from the frames, where reached (decision 0117 step 4)", || {
+                                format!("{rels_read} relations' rows read ({rows_read} rows) for the strata reached; {} relations left stored, unread", got.unread.len())
+                            });
                             let (reached, quiet, of) = driver.walked;
                             (maintained.maintained, maintained.derived_again, maintained.recursive) = driver.counts;
                             maintained.again = std::mem::take(&mut driver.again);
@@ -6200,6 +6221,7 @@ fn run_observed(
                     let mut got = got;
                     // The relations whose rows are as they were (decision 0117 step 4): their frames are not written.
                     let unchanged_rels = std::mem::take(&mut got.unchanged);
+                    let run_deltas = std::mem::take(&mut got.deltas);
                     // Decision 0090 §4: the maintained strata the run chose to derive again, by their deltas' size.
                     let run_again = got.again;
                     step("ran");
@@ -6281,7 +6303,7 @@ fn run_observed(
                     // A view of one input is not kept (decision 0090): the next run reads it over the input's rows.
                     let rows = derived
                         .iter()
-                        .filter(|rel| !got.inlined.contains(rel.as_str()) && !maintained.views.contains(rel.as_str()))
+                        .filter(|rel| !got.inlined.contains(rel.as_str()) && !maintained.views.contains(rel.as_str()) && !got.unread.contains(rel.as_str()))
                         .map(|rel| (rel, part.program.decls[rel].len()))
                         .filter(|(_, width)| *width > 0)
                         .map(|(rel, width)| {
@@ -6366,7 +6388,7 @@ fn run_observed(
                         let rows: Vec<(String, Arc<crate::code_rule_dsl::logic::native::component::InRel>)> = read_back
                             .iter()
                             .filter(|o| cut.clean.contains(*o) && !clean_outputs.iter().any(|(r, _, _)| r == *o))
-                            .filter_map(|o| kept.kept(o).map(|(h, _)| (o.clone(), Arc::clone(h))))
+                            .filter_map(|o| kept.kept(o).map(|(h, _)| (o.clone(), h)))
                             .collect();
                         if !rows.is_empty() {
                             let (lines, nodes) = super::decode_kept(&db, &cross, rows)?;
@@ -6522,7 +6544,7 @@ fn run_observed(
                     }
                     let next = retain::after(cell.take(), ckey, digests.clone(), &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_stats, input_docs, (run_docs_held.lock().expect("the run's documents").clone(), memo_program), patched);
                     if let Some(was) = &was_frames {
-                        let written = next.write_frames(store, was, &cross.program, &cut, &cross_inputs, &digests, &unchanged_rels)?;
+                        let written = next.write_frames(store, was, &cross.program, &cut, &cross_inputs, &digests, &unchanged_rels, &run_deltas)?;
                         crate::code_rule_dsl::logic::profile::decision("the kept part, to the frames (t33 K4)", || format!("{written} rows of what changed queued to the store"));
                     }
                     drop(s);
@@ -6929,6 +6951,11 @@ pub(in crate::code_rule_dsl) struct Binder<'k> {
 struct Driver<'d, 'k> {
     cross: &'d lower::Lowered,
     kept: &'k retain::Retained,
+    store: &'d ContentStore,
+    /// The clean relations the part reads that are still stored (`need` binds them).
+    clean_reads: BTreeSet<String>,
+    /// What the caller reads after the run.
+    at_end: BTreeSet<String>,
     binder: &'d mut Binder<'k>,
     modules: &'d Modules,
     db: &'d rusqlite::Connection,
@@ -6951,7 +6978,35 @@ struct Driver<'d, 'k> {
 
 impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
     fn kept(&mut self, rel: &str) -> Option<Arc<crate::code_rule_dsl::logic::native::component::InRel>> {
-        self.kept.kept(rel).map(|(h, _)| Arc::clone(h))
+        self.kept.kept(rel).map(|(h, _)| h)
+    }
+
+    fn keeps(&self, rel: &str) -> bool {
+        self.kept.keeps(rel)
+    }
+
+    fn need(&mut self, rels: &[String], model: &mut crate::code_rule_dsl::logic::plan::Model) -> Result<()> {
+        if !self.kept.admit(self.store, &self.cross.program, rels)? {
+            return Err(Error::Plan("the kept part's frames changed during the run".into()));
+        }
+        // A clean relation the part reads, bound as an input is, with its statistics.
+        for rel in rels {
+            if !self.clean_reads.remove(rel) {
+                continue;
+            }
+            let Some((held, width)) = self.kept.kept(rel) else { continue };
+            let source = held.source((0..width).map(|c| super::sql_col(rel, c)).collect());
+            model.stats.lazy.0.remove(rel);
+            bind_kept(self.binder, self.modules, self.db, &mut model.stats, rel.clone(), source, Some(held), false)?;
+            if !model.stats.lazy.0.contains_key(rel) {
+                let _ = super::input_stats(&mut model.stats, &mut model.ndv, &self.cross.program, rel);
+            }
+        }
+        Ok(())
+    }
+
+    fn at_end(&self, rel: &str) -> bool {
+        self.at_end.contains(rel)
     }
 
     fn form(&mut self, base: &front::Program, scc: &BTreeSet<String>, rules: &[&front::Rule], moved: &BTreeSet<String>, model: &mut crate::code_rule_dsl::logic::plan::Model) -> Result<(front::Program, Vec<String>)> {
@@ -7008,8 +7063,8 @@ impl crate::code_rule_dsl::logic::plan::Maintain for Driver<'_, '_> {
         let one = maintain::One { has_delta: &|r| has_delta.contains(r), has_old: &|r| bound_olds.contains(r) };
         let mut given = |_: &str| None;
         let m = maintain::rewrite_with(&cut, Some(self.kept), &mini, &mut given, Some(&one))?;
+        // Its form derived again (decision 0090 §4) stays: the run chooses between the two by its input deltas.
         let mut form = m.program.program;
-        form.again.clear();
         if maintain::levels_wanted() {
             for rel in form.rules.iter().map(|r| r.head.rel.to_string()).collect::<BTreeSet<_>>() {
                 form.qualifiers.entry(rel).or_default().insert("levels".to_owned());

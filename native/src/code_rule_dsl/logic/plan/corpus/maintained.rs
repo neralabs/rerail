@@ -50,7 +50,7 @@ pub(in crate::code_rule_dsl) fn run(
     let cut = retain::cut(kept.as_ref(), key, &prog.program, &digests)?;
     // What the strata that run read of a part kept in the frames is read back now; the rest stays in the store.
     if let (Some(k), Some(store)) = (kept.as_mut(), store) {
-        k.load(store, &cut, &prog.program)?;
+        k.load(store, &cut, &prog.program, false)?;
     }
     let frames = kept.as_mut().and_then(retain::Retained::take_frames);
     let by_name: HashMap<&str, &Arc<dyn Source>> = inputs.iter().map(|(r, s, ..)| (r.as_str(), s)).collect();

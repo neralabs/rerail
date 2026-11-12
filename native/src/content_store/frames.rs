@@ -75,6 +75,18 @@ pub struct Retag {
     pub reads: Vec<(String, u64)>,
 }
 
+/// A relation's rows changed by a few (decision 0117 step 4): the rows gone and added since its frame, written after
+/// it as a delta frame, with the relation's digest and reads now. Read back, its frame is its rows after its deltas.
+#[derive(Clone, Debug)]
+pub struct Delta {
+    pub rel: Rel,
+    pub digest: u64,
+    pub reads: Vec<(String, u64)>,
+    pub types: Vec<u8>,
+    pub gone: Vec<i64>,
+    pub added: Vec<i64>,
+}
+
 /// A frame a run writes.
 pub struct Put {
     pub rel: Rel,
@@ -96,11 +108,92 @@ enum Data {
     Encoded { types: Vec<u8>, n: usize, bytes: Arc<Vec<u8>> },
     Queued(Arc<Put>),
     Metadata,
+    /// A relation's rows as its base frame (part 0) and the deltas written after it, oldest first (decision 0117
+    /// step 4): a run that changed a few rows of a large relation writes those, not the relation. `n`: the rows after
+    /// the last; `delta_rows`: the deltas' rows.
+    Chain { base: Box<Data>, deltas: Vec<Arc<Admitted>>, n: usize, delta_rows: usize },
+}
+
+/// The first type of a delta frame's (decision 0117 step 4): its first column is each row's sign (-1 gone, 1 added),
+/// its others the relation's.
+pub const DELTA: u8 = b'~';
+
+/// A frame's part for the `k`th delta (from 1) after a relation's base frame.
+fn delta_part(k: u32) -> i64 {
+    -(k as i64)
+}
+
+/// The rows of a relation after `deltas` (delta frames, oldest first) applied to `rows`.
+fn apply_deltas(mut rows: Rows, deltas: &[Arc<Admitted>]) -> StoreResult<Rows> {
+    let w = rows.types.len();
+    for d in deltas {
+        let got = d.rows()?;
+        if got.types.first() != Some(&DELTA) || got.types.len() != w + 1 || w == 0 {
+            return Err(super::StoreError::Invalid("a delta frame of another shape".into()));
+        }
+        let mut gone: std::collections::HashSet<&[i64]> = std::collections::HashSet::new();
+        let mut added: Vec<i64> = Vec::new();
+        for row in got.rows.chunks_exact(w + 1).take(got.n) {
+            if row[0] < 0 { gone.insert(&row[1..]); } else { added.extend_from_slice(&row[1..]); }
+        }
+        if !gone.is_empty() {
+            let mut kept = Vec::with_capacity(rows.rows.len());
+            let mut n = 0;
+            for row in rows.rows.chunks_exact(w).take(rows.n) {
+                if !gone.contains(row) {
+                    kept.extend_from_slice(row);
+                    n += 1;
+                }
+            }
+            rows.rows = kept;
+            rows.n = n;
+        }
+        rows.n += added.len() / w;
+        rows.rows.extend(added);
+    }
+    Ok(rows)
+}
+
+fn rows_of(data: &Data) -> StoreResult<Rows> {
+    match data {
+        Data::Queued(p) => Ok(p.rows.clone()),
+        Data::Encoded { types, n, bytes } => {
+            let width = types.len();
+            let mut cols = vec![Vec::new(); width];
+            super::cross_rows::decode(width, *n, bytes, &mut cols)?;
+            let mut rows = Vec::with_capacity(width * n);
+            for r in 0..if width == 0 { 0 } else { *n } {
+                rows.extend(cols.iter().map(|c| c[r]));
+            }
+            Ok(Rows { types: types.clone(), rows, n: *n })
+        }
+        Data::Metadata => Err(super::StoreError::Invalid("frame payload was not admitted".into())),
+        Data::Chain { base, deltas, .. } => apply_deltas(rows_of(base)?, deltas),
+    }
 }
 
 impl Admitted {
+    /// The deltas after its base frame (decision 0117 step 4): how many, and their rows.
+    pub fn chain(&self) -> (u32, usize) {
+        match &self.data {
+            Data::Chain { deltas, delta_rows, .. } => (deltas.len() as u32, *delta_rows),
+            _ => (0, 0),
+        }
+    }
+
+    /// Its base frame and deltas, with `delta` (a delta frame) after them.
+    fn with_delta(&self, stored: Stored, delta: Arc<Admitted>, gone: usize, added: usize) -> Admitted {
+        let (base, mut deltas, n, delta_rows) = match &self.data {
+            Data::Chain { base, deltas, n, delta_rows } => (base.clone(), deltas.clone(), *n, *delta_rows),
+            other => (Box::new(other.clone()), Vec::new(), self.len().unwrap_or(0), 0),
+        };
+        deltas.push(delta);
+        Admitted { stored, data: Data::Chain { base, deltas, n: (n + added).saturating_sub(gone), delta_rows: delta_rows + gone + added } }
+    }
+
     pub fn rows(&self) -> StoreResult<Rows> {
         match &self.data {
+            Data::Chain { .. } => rows_of(&self.data),
             Data::Queued(p) => Ok(p.rows.clone()),
             Data::Encoded { types, n, bytes } => {
                 let width = types.len();
@@ -116,9 +209,23 @@ impl Admitted {
         }
     }
 
+    /// Its rows' count, where its rows were admitted.
+    pub fn len(&self) -> Option<usize> {
+        match &self.data {
+            Data::Encoded { n, .. } => Some(*n),
+            Data::Queued(p) => Some(p.rows.n),
+            Data::Chain { n, .. } => Some(*n),
+            Data::Metadata => None,
+        }
+    }
+
     pub fn encoded_bytes(&self) -> usize {
         match &self.data {
             Data::Encoded { bytes, .. } => bytes.len(),
+            Data::Chain { base, deltas, .. } => {
+                let b = Admitted { stored: self.stored.clone(), data: (**base).clone() };
+                b.encoded_bytes() + deltas.iter().map(|d| d.encoded_bytes()).sum::<usize>()
+            }
             Data::Queued(_) | Data::Metadata => 0,
         }
     }
@@ -135,6 +242,46 @@ type Snapshot = HashMap<[u8; 32], HashMap<(Rel, i64), Arc<Admitted>>>;
 fn snapshots() -> &'static std::sync::Mutex<HashMap<std::path::PathBuf, Arc<std::sync::Mutex<Snapshot>>>> {
     static SNAPSHOTS: std::sync::OnceLock<std::sync::Mutex<HashMap<std::path::PathBuf, Arc<std::sync::Mutex<Snapshot>>>>> = std::sync::OnceLock::new();
     SNAPSHOTS.get_or_init(Default::default)
+}
+
+/// Whether `frame` is a delta frame (decision 0117 step 4).
+fn is_delta(part: i64, frame: &Admitted) -> bool {
+    part < 0 && matches!(&frame.data, Data::Encoded { types, .. } if types.first() == Some(&DELTA))
+}
+
+/// Each relation's base frame in `held` with the `k` delta frames its header names after it (oldest first); every
+/// delta frame is taken out of `held`.
+fn compose_chains(held: &mut HashMap<(Rel, i64), Arc<Admitted>>, chains: Option<&HashMap<Rel, u32>>) -> StoreResult<()> {
+    let named = chains;
+    let mut chains: HashMap<Rel, Vec<(i64, Arc<Admitted>)>> = HashMap::new();
+    let keys: Vec<(Rel, i64)> = held.iter().filter(|((_, p), f)| is_delta(*p, f)).map(|(k, _)| k.clone()).collect();
+    for key in keys {
+        let frame = held.remove(&key).expect("a delta frame");
+        chains.entry(key.0).or_default().push((key.1, frame));
+    }
+    for (rel, mut deltas) in chains {
+        let Some(base) = held.get(&(rel.clone(), 0)).cloned() else { continue };
+        let k = named.and_then(|c| c.get(&rel)).copied().unwrap_or(0);
+        deltas.retain(|(p, _)| *p >= delta_part(k));
+        if deltas.is_empty() {
+            continue;
+        }
+        deltas.sort_by_key(|(p, _)| std::cmp::Reverse(*p));
+        let mut whole = (*base).clone_frame();
+        for (_, d) in deltas {
+            let rows = d.rows()?;
+            let gone = rows.rows.chunks_exact(rows.types.len().max(1)).take(rows.n).filter(|r| r[0] < 0).count();
+            whole = whole.with_delta(base.stored.clone(), d, gone, rows.n - gone);
+        }
+        held.insert((rel, 0), Arc::new(whole));
+    }
+    Ok(())
+}
+
+impl Admitted {
+    fn clone_frame(&self) -> Admitted {
+        Admitted { stored: self.stored.clone(), data: self.data.clone() }
+    }
 }
 
 fn frame_key(space: &[u8; 32], rel: &Rel, part: i64) -> super::write_back::Key {
@@ -159,21 +306,31 @@ impl ContentStore {
         if self.frames_table()? {
             let connection = self.connection.lock().expect("content store mutex poisoned");
             let mut st = connection.prepare("SELECT space, rel, ident, part, digest, reads, rows, types, data FROM frames")?;
+            let mut chains: HashMap<[u8; 32], HashMap<Rel, u32>> = HashMap::new();
             let rows = st.query_map([], |row| {
                 let (space, ident): (Vec<u8>, Vec<u8>) = (row.get(0)?, row.get(2)?);
                 let space: [u8; 32] = space.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
                 let ident: [u8; 32] = ident.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
                 let data: Vec<u8> = row.get(8)?;
-                Ok((space, (Rel { name: row.get(1)?, ident }, row.get::<_, i64>(3)?), Arc::new(Admitted {
-                    stored: Stored { digest: row.get::<_, i64>(4)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(5)?) },
+                let (reads, k) = decode_reads_chain(&row.get::<_, Vec<u8>>(5)?);
+                Ok((space, (Rel { name: row.get(1)?, ident }, row.get::<_, i64>(3)?), k, Arc::new(Admitted {
+                    stored: Stored { digest: row.get::<_, i64>(4)? as u64, reads },
                     data: Data::Encoded { n: row.get::<_, i64>(6)? as usize, types: row.get(7)?, bytes: Arc::new(data) },
                 })))
             })?;
             for row in rows {
-                let (space, key, frame) = row?;
+                let (space, key, k, frame) = row?;
                 frames += 1;
                 bytes += frame.encoded_bytes();
+                if k > 0 && key.1 == 0 {
+                    chains.entry(space).or_default().insert(key.0.clone(), k);
+                }
                 snapshot.entry(space).or_default().insert(key, frame);
+            }
+            drop(st);
+            drop(connection);
+            for (space, held) in snapshot.iter_mut() {
+                compose_chains(held, chains.get(space))?;
             }
         }
         snapshots().lock().expect("the frames' snapshots").entry(super::atoms::key(&self.database_path)).or_insert_with(|| Arc::new(std::sync::Mutex::new(snapshot)));
@@ -231,6 +388,7 @@ impl ContentStore {
         if !self.frames_table()? { return Ok(out); }
         let connection = self.connection.lock().expect("content store mutex poisoned");
         let missing: Vec<_> = missing.into_iter().collect();
+        let mut chained: Vec<(Rel, u32)> = Vec::new();
         for batch in missing.chunks(READ_BATCH) {
             let values = (0..batch.len()).map(|i| format!("(?{}, ?{}, ?{})", 2 + 3*i, 3 + 3*i, 4 + 3*i)).collect::<Vec<_>>().join(",");
             let columns = if payload { ", f.rows, f.types, f.data" } else { "" };
@@ -244,14 +402,67 @@ impl ContentStore {
             let frames = st.query_map(rusqlite::params_from_iter(args), |row| {
                 let ident: Vec<u8> = row.get(1)?;
                 let ident: [u8; 32] = ident.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
-                Ok(((Rel { name: row.get(0)?, ident }, row.get(2)?), Arc::new(Admitted {
-                    stored: Stored { digest: row.get::<_, i64>(3)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(4)?) },
+                let (reads, k) = decode_reads_chain(&row.get::<_, Vec<u8>>(4)?);
+                Ok(((Rel { name: row.get(0)?, ident }, row.get(2)?), k, Arc::new(Admitted {
+                    stored: Stored { digest: row.get::<_, i64>(3)? as u64, reads },
                     data: if payload { Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes: Arc::new(row.get(7)?) } } else { Data::Metadata },
                 })))
             })?;
-            for frame in frames { let (key, frame) = frame?; out.insert(key, frame); }
+            for frame in frames {
+                let (key, k, frame) = frame?;
+                if k > 0 && key.1 == 0 {
+                    chained.push((key.0.clone(), k));
+                }
+                out.insert(key, frame);
+            }
+        }
+        // A base frame with deltas after it (decision 0117 step 4) is read with them: the deltas of a batch of such
+        // frames in one statement.
+        if payload && !chained.is_empty() {
+            let mut found: HashMap<Rel, Vec<(i64, Arc<Admitted>)>> = HashMap::new();
+            for batch in chained.chunks(READ_BATCH) {
+                let values = (0..batch.len()).map(|i| format!("(?{}, ?{}, ?{})", 2 + 3 * i, 3 + 3 * i, 4 + 3 * i)).collect::<Vec<_>>().join(",");
+                let sql = format!("WITH demanded(rel, ident, k) AS (VALUES {values}) \
+                    SELECT f.rel, f.ident, f.part, f.digest, f.reads, f.rows, f.types, f.data FROM demanded d \
+                    CROSS JOIN frames f ON f.space = ?1 AND f.rel = d.rel AND f.ident = d.ident AND f.part >= -d.k AND f.part < 0");
+                let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into()];
+                for (rel, k) in batch { args.extend([rel.name.clone().into(), rel.ident.to_vec().into(), (*k as i64).into()]); }
+                let mut st = connection.prepare_cached(&sql)?;
+                let rows = st.query_map(rusqlite::params_from_iter(args), |row| {
+                    let ident: Vec<u8> = row.get(1)?;
+                    let ident: [u8; 32] = ident.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
+                    Ok((Rel { name: row.get(0)?, ident }, row.get::<_, i64>(2)?, Arc::new(Admitted {
+                        stored: Stored { digest: row.get::<_, i64>(3)? as u64, reads: decode_reads(&row.get::<_, Vec<u8>>(4)?) },
+                        data: Data::Encoded { n: row.get::<_, i64>(5)? as usize, types: row.get(6)?, bytes: Arc::new(row.get(7)?) },
+                    })))
+                })?;
+                for row in rows {
+                    let (rel, part, frame) = row?;
+                    if is_delta(part, &frame) {
+                        found.entry(rel).or_default().push((part, frame));
+                    }
+                }
+            }
+            for (rel, mut deltas) in found {
+                deltas.sort_by_key(|(p, _)| std::cmp::Reverse(*p));
+                let deltas: Vec<Arc<Admitted>> = deltas.into_iter().map(|(_, f)| f).collect();
+                let base = Arc::clone(&out[&(rel.clone(), 0)]);
+                let mut whole = base.clone_frame();
+                for d in deltas {
+                    let rows = d.rows()?;
+                    let gone = rows.rows.chunks_exact(rows.types.len().max(1)).take(rows.n).filter(|r| r[0] < 0).count();
+                    whole = whole.with_delta(base.stored.clone(), d, gone, rows.n - gone);
+                }
+                out.insert((rel, 0), Arc::new(whole));
+            }
         }
         Ok(out)
+    }
+
+    /// The deltas after `rel`'s frame in `space` (decision 0117 step 4): how many, and their rows.
+    pub fn frame_chain(&self, space: &[u8; 32], rel: &Rel) -> (u32, usize) {
+        let key = (rel.clone(), 0);
+        self.read_frame_parts(space, std::slice::from_ref(&key), true).ok().and_then(|m| m.get(&key).map(|f| f.chain())).unwrap_or((0, 0))
     }
 
     /// The rows of `rel`'s frame `part` in `space`.
@@ -326,12 +537,47 @@ impl ContentStore {
 
     /// `keep_frames`, queued behind the run (decision 0102): encoded and written by the store's writer.
     pub fn queue_frames(&self, space: [u8; 32], puts: Vec<Put>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
-        self.queue_frames_retagged(space, puts, Vec::new(), gone, used)
+        self.queue_frames_retagged(space, puts, Vec::new(), Vec::new(), gone, used)
     }
 
-    /// `queue_frames`, and `retags`: frames whose rows stay, with their reads told again (no rows are written).
-    pub fn queue_frames_retagged(&self, space: [u8; 32], puts: Vec<Put>, retags: Vec<Retag>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
-        let bytes: usize = puts.iter().map(|p| p.rows.rows.len() * 8).sum();
+    /// `queue_frames`, with `retags` (frames whose rows stay, with their reads told again: no rows are written) and
+    /// `deltas` (a relation's rows gone and added, written after its frame: decision 0117 step 4). A frame put whole
+    /// (part 0) ends the deltas after it.
+    pub fn queue_frames_retagged(&self, space: [u8; 32], puts: Vec<Put>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
+        // Each delta after its relation's frame as it is now (in memory, queued or stored).
+        let mut delta_puts: Vec<Arc<Put>> = Vec::new();
+        let mut heads: Vec<(Rel, u64, Vec<(String, u64)>)> = Vec::new();
+        // A relation's deltas queued in this call so far (two of one relation follow each other).
+        let mut composed: Vec<(Rel, Arc<Admitted>)> = Vec::new();
+        for d in deltas {
+            let w = d.types.len();
+            let key = (d.rel.clone(), 0);
+            let Some(now) = self.read_frame_parts(&space, std::slice::from_ref(&key), true).ok().and_then(|mut m| m.remove(&key)) else { continue };
+            if w == 0 {
+                continue;
+            }
+            let (k, _) = now.chain();
+            let (ng, na) = (d.gone.len() / w, d.added.len() / w);
+            let mut rows = Vec::with_capacity((ng + na) * (w + 1));
+            for r in d.gone.chunks_exact(w) {
+                rows.push(-1);
+                rows.extend_from_slice(r);
+            }
+            for r in d.added.chunks_exact(w) {
+                rows.push(1);
+                rows.extend_from_slice(r);
+            }
+            let mut types = vec![DELTA];
+            types.extend_from_slice(&d.types);
+            let put = Arc::new(Put { rel: d.rel.clone(), part: delta_part(k + 1), digest: 0, reads: Vec::new(), rows: Rows { types, rows, n: ng + na } });
+            let frame = Arc::new(Admitted { stored: Stored { digest: 0, reads: Vec::new() }, data: Data::Queued(Arc::clone(&put)) });
+            composed.push((d.rel.clone(), Arc::new(now.with_delta(Stored { digest: d.digest, reads: d.reads.clone() }, frame, ng, na))));
+            let mut stored_reads = d.reads.clone();
+            stored_reads.push((CHAIN.to_owned(), (k + 1) as u64));
+            heads.push((d.rel, d.digest, stored_reads));
+            delta_puts.push(put);
+        }
+        let bytes: usize = puts.iter().map(|p| p.rows.rows.len() * 8).sum::<usize>() + delta_puts.iter().map(|p| p.rows.rows.len() * 8).sum::<usize>();
         // What a large write of frames holds, by relation (profiling only): what makes the store's writes large.
         if bytes > 16 << 20 && std::env::var_os("RERAIL_PROFILE").is_some() {
             let mut by: HashMap<&str, (usize, usize, usize)> = HashMap::new();
@@ -353,16 +599,22 @@ impl ContentStore {
                 let _ = std::fs::write(std::path::Path::new(&dir).join(format!("frames-{}.tsv", bytes)), tsv);
             }
         }
+        let mut gone = gone;
+        gone.extend(self.ended_deltas(&space, puts.iter()));
         let puts: Vec<_> = puts.into_iter().map(Arc::new).collect();
         let mut keys: Vec<(super::write_back::Key, Option<Arc<dyn std::any::Any + Send + Sync>>)> = puts.iter().map(|p| {
             let frame = Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Queued(Arc::clone(p)) });
             (frame_key(&space, &p.rel, p.part), Some(Arc::new(Some(frame)) as Arc<dyn std::any::Any + Send + Sync>))
         }).collect();
         keys.extend(gone.iter().map(|(rel, part)| (frame_key(&space, rel, *part), Some(Arc::new(None::<Arc<Admitted>>) as Arc<dyn std::any::Any + Send + Sync>))));
+        keys.extend(composed.iter().map(|(rel, f)| (frame_key(&space, rel, 0), Some(Arc::new(Some(Arc::clone(f))) as Arc<dyn std::any::Any + Send + Sync>))));
         // Memory is ahead of the store: the snapshot holds what is queued (`preload_frames`).
         if let Some(snapshot) = self.snapshot() {
             let mut snapshot = snapshot.lock().expect("the frames' snapshot");
             let held = snapshot.entry(space).or_default();
+            for (rel, f) in &composed {
+                held.insert((rel.clone(), 0), Arc::clone(f));
+            }
             // A retagged frame keeps its rows (shared) and digest, with its new reads.
             for r in &retags {
                 if let Some(was) = held.get(&(r.rel.clone(), r.part)).cloned() {
@@ -381,7 +633,8 @@ impl ContentStore {
         self.write_back("frames", bytes, keys, Box::new(move |store| {
             // Attempted once: a busy store leaves these frames unwritten, and the next run derives them again.
             let refs: Vec<_> = puts.iter().map(Arc::as_ref).collect();
-            let _ = store.keep_frame_refs(&space, &refs, &retags, &gone, used.as_ref().map(|(rels, run)| (rels.as_slice(), *run)));
+            let delta_refs: Vec<_> = delta_puts.iter().map(Arc::as_ref).collect();
+            let _ = store.keep_frame_refs(&space, &refs, &retags, &delta_refs, &heads, &gone, used.as_ref().map(|(rels, run)| (rels.as_slice(), *run)));
             Ok(())
         }));
     }
@@ -390,11 +643,31 @@ impl ContentStore {
     /// is over: the space counts the run if it has not yet, marks the relations the program used, and forgets those
     /// the last [`RUNS`] runs did not use.
     pub fn keep_frames(&self, space: &[u8; 32], puts: &[Put], gone: &[(Rel, i64)], used: Option<(&[Rel], u64)>) -> StoreResult<()> {
-        self.keep_frame_refs(space, &puts.iter().collect::<Vec<_>>(), &[], gone, used)
+        let mut gone = gone.to_vec();
+        gone.extend(self.ended_deltas(space, puts.iter()));
+        self.keep_frame_refs(space, &puts.iter().collect::<Vec<_>>(), &[], &[], &[], &gone, used)
     }
 
-    fn keep_frame_refs(&self, space: &[u8; 32], puts: &[&Put], retags: &[Retag], gone: &[(Rel, i64)], used: Option<(&[Rel], u64)>) -> StoreResult<()> {
+    /// The delta frames that `puts` end (decision 0117 step 4): those after a frame put whole, as the snapshot holds
+    /// them. Without a snapshot none is named; its reads name no deltas, so they are not read, and the next delta
+    /// writes over them.
+    fn ended_deltas<'p>(&self, space: &[u8; 32], puts: impl Iterator<Item = &'p Put>) -> Vec<(Rel, i64)> {
+        let Some(snapshot) = self.snapshot() else { return Vec::new() };
+        let snapshot = snapshot.lock().expect("the frames' snapshot");
+        let Some(held) = snapshot.get(space) else { return Vec::new() };
+        let mut out = Vec::new();
+        for p in puts.filter(|p| p.part == 0) {
+            if let Some(f) = held.get(&(p.rel.clone(), 0)) {
+                out.extend((1..=f.chain().0).map(|i| (p.rel.clone(), delta_part(i))));
+            }
+        }
+        out
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn keep_frame_refs(&self, space: &[u8; 32], puts: &[&Put], retags: &[Retag], delta_puts: &[&Put], heads: &[(Rel, u64, Vec<(String, u64)>)], gone: &[(Rel, i64)], used: Option<(&[Rel], u64)>) -> StoreResult<()> {
         let blocks: Vec<Vec<u8>> = puts.iter().map(|p| super::cross_rows::encode(p.rows.types.len(), &p.rows.rows)).collect();
+        let delta_blocks: Vec<Vec<u8>> = delta_puts.iter().map(|p| super::cross_rows::encode(p.rows.types.len(), &p.rows.rows)).collect();
         // The snapshot holds what is written (a write the writer runs was put there as it was queued: the same).
         if let Some(snapshot) = self.snapshot() {
             let mut snapshot = snapshot.lock().expect("the frames' snapshot");
@@ -416,9 +689,10 @@ impl ContentStore {
                     t.query_row("SELECT runs FROM frame_spaces WHERE space = ?1", [&space[..]], |r| r.get(0))?
                 }
             };
+            // A frame put whole has no deltas after it: its reads name none (`CHAIN`), so those left are not read.
             // Nine bound values per frame, plus shared space and run, stay below 999 parameters.
             // Each statement publishes a bounded batch. No frame launches its own SQL execution.
-            for batch in puts.iter().zip(&blocks).collect::<Vec<_>>().chunks(96) {
+            for batch in puts.iter().zip(&blocks).chain(delta_puts.iter().zip(&delta_blocks)).collect::<Vec<_>>().chunks(96) {
                 let values = (0..batch.len()).map(|i| {
                     let p=3+9*i;
                     format!("(?1,?{p},?{},?{},?{},?{},?{},?{},?{},?{},?2)",p+1,p+2,p+3,p+4,p+5,p+6,p+7,p+8)
@@ -433,10 +707,17 @@ impl ContentStore {
                 }
                 t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
             }
-            // A retagged frame: its reads only; its rows, digest and the rest stay as stored.
+            // A relation with a delta after its frame: the frame's digest and reads are the relation's now.
+            for (rel, digest, reads) in heads {
+                t.prepare_cached("UPDATE frames SET digest = ?5, reads = ?6, used = ?7 WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?
+                    .execute(rusqlite::params![&space[..], rel.name, &rel.ident[..], 0i64, *digest as i64, encode_reads(reads), run])?;
+            }
+            // A retagged frame: its reads only; its rows, digest and the rest stay as stored, with the count of its
+            // deltas (`CHAIN`, the stored reads' last entry: 4 + 7 + 8 bytes).
             for r in retags {
-                t.prepare_cached("UPDATE frames SET reads = ?5, used = ?6 WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?
-                    .execute(rusqlite::params![&space[..], r.rel.name, &r.rel.ident[..], r.part, encode_reads(&r.reads), run])?;
+                t.prepare_cached("UPDATE frames SET reads = CASE WHEN substr(reads, -19, 11) = ?7 THEN CAST(?5 || substr(reads, -19) AS BLOB) ELSE ?5 END, used = ?6 \
+                    WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?
+                    .execute(rusqlite::params![&space[..], r.rel.name, &r.rel.ident[..], r.part, encode_reads(&r.reads), run, chain_mark()])?;
             }
             for batch in gone.chunks(READ_BATCH) {
                 let values=(0..batch.len()).map(|i|format!("(?{},?{},?{})",2+3*i,3+3*i,4+3*i)).collect::<Vec<_>>().join(",");
@@ -503,7 +784,33 @@ fn admitted_part(row: &rusqlite::Row<'_>) -> rusqlite::Result<(i64, Arc<Admitted
     })))
 }
 
-fn decode_reads(mut bytes: &[u8]) -> Vec<(String, u64)> {
+/// The entry a base frame's stored reads end with when deltas follow it (decision 0117 step 4): how many. A frame
+/// put whole has none, so deltas a put left behind are not read.
+const CHAIN: &str = "~deltas";
+
+/// How `CHAIN`'s entry starts in stored reads: its name's length and its name.
+fn chain_mark() -> Vec<u8> {
+    let mut out = (CHAIN.len() as u32).to_le_bytes().to_vec();
+    out.extend(CHAIN.as_bytes());
+    out
+}
+
+/// A frame's stored reads, and how many deltas follow it.
+fn decode_reads_chain(bytes: &[u8]) -> (Vec<(String, u64)>, u32) {
+    let mut reads = decode_reads_all(bytes);
+    let k = match reads.last() {
+        Some((name, k)) if name == CHAIN => *k as u32,
+        _ => return (reads, 0),
+    };
+    reads.pop();
+    (reads, k)
+}
+
+fn decode_reads(bytes: &[u8]) -> Vec<(String, u64)> {
+    decode_reads_chain(bytes).0
+}
+
+fn decode_reads_all(mut bytes: &[u8]) -> Vec<(String, u64)> {
     let mut out = Vec::new();
     while bytes.len() >= 4 {
         let len = u32::from_le_bytes(bytes[..4].try_into().expect("4 bytes")) as usize;
@@ -614,7 +921,7 @@ mod tests {
         unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),
             rusqlite::ffi::SQLITE_TRACE_STMT | rusqlite::ffi::SQLITE_TRACE_PROFILE, Some(trace), (&counters as *const [AtomicUsize;2]).cast_mut().cast()); }
         let refs: Vec<_> = changed.iter().collect();
-        let result = store.keep_frame_refs(&[1;32], &refs, &[], &gone, Some((&used, 1)));
+        let result = store.keep_frame_refs(&[1;32], &refs, &[], &[], &[], &gone, Some((&used, 1)));
         unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),0,None,std::ptr::null_mut()); }
         result.unwrap();
         eprintln!("frame publication total: {} statements, {} VM",counters[0].load(Ordering::Relaxed),counters[1].load(Ordering::Relaxed));
@@ -648,6 +955,54 @@ mod tests {
         for p in puts.iter().step_by(64) { assert_eq!(got[&p.rel].rows().unwrap(), p.rows); }
         assert!(work.load(Ordering::Relaxed) < 100_000,
             "128 demands must use full-key probes, not scan 8192 stored frames: {} VM instructions", work.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn a_relations_deltas_are_read_after_its_frame() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("store.sqlite");
+        let r = rel("r", 1);
+        let rows = |v: &[i64]| Rows { types: vec![0, 0], rows: v.to_vec(), n: v.len() / 2 };
+        let sorted = |x: Vec<i64>| { let mut p: Vec<[i64; 2]> = x.chunks(2).map(|c| [c[0], c[1]]).collect(); p.sort(); p };
+        let delta = |digest, gone: &[i64], added: &[i64]| Delta { rel: rel("r", 1), digest, reads: vec![("a".into(), digest)], types: vec![0, 0], gone: gone.to_vec(), added: added.to_vec() };
+        {
+            let store = ContentStore::open(&path).unwrap();
+            store.queue_frames([1; 32], vec![Put { rel: r.clone(), part: 0, digest: 1, reads: vec![], rows: rows(&[1, 1, 2, 2, 3, 3]) }], vec![], None);
+            store.queue_frames_retagged([1; 32], vec![], vec![], vec![delta(2, &[2, 2], &[4, 4])], vec![], None);
+            // Queued, in memory: the rows after the delta.
+            let now = store.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+            assert_eq!(now[&r].stored.digest, 2);
+            assert_eq!(sorted(now[&r].rows().unwrap().rows), vec![[1, 1], [3, 3], [4, 4]]);
+            assert_eq!(now[&r].chain(), (1, 2));
+            store.queue_frames_retagged([1; 32], vec![], vec![], vec![delta(3, &[1, 1], &[5, 5])], vec![], None);
+        }
+        // Stored: read from SQL with its deltas, oldest first.
+        let store = ContentStore::open(&path).unwrap();
+        let got = store.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+        assert_eq!(got[&r].stored, Stored { digest: 3, reads: vec![("a".into(), 3)] });
+        assert_eq!(sorted(got[&r].rows().unwrap().rows), vec![[3, 3], [4, 4], [5, 5]]);
+        assert_eq!(got[&r].chain(), (2, 4));
+        // A frame retagged keeps its deltas.
+        store.queue_frames_retagged([1; 32], vec![], vec![Retag { rel: r.clone(), part: 0, reads: vec![("b".into(), 4)] }], vec![], vec![], None);
+        drop(store);
+        let store = ContentStore::open(&path).unwrap();
+        let got = store.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+        assert_eq!((got[&r].stored.reads.clone(), got[&r].chain()), (vec![("b".into(), 4)], (2, 4)));
+        assert_eq!(sorted(got[&r].rows().unwrap().rows), vec![[3, 3], [4, 4], [5, 5]]);
+        drop(store);
+        // And from the frames read before the first wave.
+        let store = ContentStore::open(&path).unwrap();
+        store.preload_frames().unwrap();
+        let got = store.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+        assert_eq!(sorted(got[&r].rows().unwrap().rows), vec![[3, 3], [4, 4], [5, 5]]);
+        assert_eq!(got[&r].chain(), (2, 4));
+        // A frame put whole ends its deltas.
+        store.keep_frames(&[1; 32], &[Put { rel: r.clone(), part: 0, digest: 9, reads: vec![], rows: rows(&[9, 9]) }], &[], None).unwrap();
+        let got = store.admit_frames(&[1; 32], &[r.clone()], 0).unwrap();
+        assert_eq!((sorted(got[&r].rows().unwrap().rows), got[&r].chain()), (vec![[9, 9]], (0, 0)));
+        let left: i64 = store.connection.lock().unwrap().query_row("SELECT count(*) FROM frames WHERE part < 0", [], |r| r.get(0)).unwrap();
+        assert_eq!(left, 0);
+        forget_snapshot(path.to_str().unwrap());
     }
 
     #[test]
