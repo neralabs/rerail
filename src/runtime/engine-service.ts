@@ -12,7 +12,7 @@ import {
 } from "./event-protocol.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
-import { WorktreeWalks } from "../engine/code-rule/worktree-walks.js";
+import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
 import { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
 
@@ -157,7 +157,7 @@ interface EngineRoutingState {
    * folder, so sessions in different worktrees of one repository run in different runtimes, and each walking every
    * worktree for itself held every file of every worktree once per session.
    */
-  worktreeWalks: WorktreeWalks;
+  worktreeWalks: RepositoryWorktreeWalks;
 }
 
 interface RuntimeRoute {
@@ -308,7 +308,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     runtimeKeysByConfiguration: new Map(),
     lanes: new SessionLanes(),
     pending: new Set(),
-    worktreeWalks: new WorktreeWalks(),
+    worktreeWalks: options.worktreeWalks ?? new RepositoryWorktreeWalks(),
   };
   const server = createServer(async (incoming, response) => {
     response.setHeader("Content-Type", "application/json");

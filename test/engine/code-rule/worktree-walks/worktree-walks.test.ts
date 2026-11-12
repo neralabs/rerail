@@ -8,23 +8,39 @@ import { CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridg
 import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/code-rule/code-rule.js";
 import { WorktreeWalks } from "../../../../src/engine/code-rule/worktree-walks.js";
 
-/** How many times each file was read whole through `node:fs/promises`, by the path it was read at. */
-const reads = vi.hoisted(() => new Map<string, number>());
+/**
+ * How many times each file was read whole through `node:fs/promises`, by the path it was read at, and the listings held
+ * back until a test lets them go, by folder.
+ */
+const counted = vi.hoisted(() => ({ reads: new Map<string, number>(), held: new Map<string, () => Promise<void>>() }));
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof FileSystem>();
   return {
     ...actual,
     readFile: async (...args: Parameters<typeof actual.readFile>) => {
       const path = String(args[0]);
-      reads.set(path, (reads.get(path) ?? 0) + 1);
+      counted.reads.set(path, (counted.reads.get(path) ?? 0) + 1);
       return await actual.readFile(...args);
+    },
+    opendir: async (...args: Parameters<typeof actual.opendir>) => {
+      const hold = counted.held.get(String(args[0]));
+      counted.held.delete(String(args[0]));
+      await hold?.();
+      return await actual.opendir(...args);
     },
   };
 });
+const { reads } = counted;
+
+// Each test opens several sessions and walks four or five checkouts many times over.
+vi.setConfig({ testTimeout: 60_000 });
 
 const bridges: CodeRuleBridge[] = [];
 const directories: string[] = [];
+const releases: Array<() => void> = [];
 afterEach(async () => {
+  releases.splice(0).forEach(release => release());
+  counted.held.clear();
   await Promise.all(bridges.splice(0).map(bridge => bridge.close()));
   reads.clear();
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
@@ -47,8 +63,8 @@ async function awaitClockAfter(path: string): Promise<void> {
   }
 }
 
-/** A repository at `main` holding `src/a.py`, with worktrees `w1` to `w3` beside it; physical paths. */
-async function repository(): Promise<{ main: string; worktrees: string[]; checkouts: string[] }> {
+/** A repository at `main` holding `src/a.py`, with worktrees named `names` beside it; physical paths, a list a test may add to. */
+async function repository(names = ["w1", "w2", "w3"]): Promise<{ main: string; worktrees: string[]; checkouts: string[] }> {
   const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-walks-")));
   directories.push(root);
   const main = join(root, "main");
@@ -59,14 +75,21 @@ async function repository(): Promise<{ main: string; worktrees: string[]; checko
   git(main, "config", "core.autocrlf", "false");
   git(main, "add", ".");
   git(main, "commit", "--quiet", "-m", "seed");
-  const worktrees = ["w1", "w2", "w3"].map(name => join(root, name));
+  const worktrees = names.map(name => join(root, name));
   for (const worktree of worktrees) git(main, "worktree", "add", "--quiet", "--detach", worktree);
-  await awaitClockAfter(join(worktrees[2]!, "src", "a.py"));
+  await awaitClockAfter(join(worktrees.at(-1) ?? main, "src", "a.py"));
   return { main, worktrees, checkouts: [main, ...worktrees] };
 }
 
-/** A session in `folder`, one of `checkouts`, watching the others through `walks`, and its auditor's calls. */
-async function session(folder: string, checkouts: readonly string[], walks: WorktreeWalks) {
+/** The innermost of `checkouts` that holds `absolute`, as the router names a file's checkout. */
+function innermost(checkouts: readonly string[], absolute: string): string | undefined {
+  return checkouts.filter(checkout => absolute === checkout || absolute.startsWith(`${checkout}${sep}`)).sort((a, b) => b.length - a.length)[0];
+}
+
+type Session = Awaited<ReturnType<typeof opened>>;
+
+/** A session opened in `folder`, watching the other `checkouts` (read as they are at each walk) through `walks`. */
+async function opened(folder: string, checkouts: readonly string[], walks: WorktreeWalks) {
   const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => ({
     revision: batch.revision, disposition: "continue" as const, violations: [], failures: [],
   }));
@@ -75,15 +98,54 @@ async function session(folder: string, checkouts: readonly string[], walks: Work
     acceptsPath: () => true,
     auditGeneratedEdits,
     close: async () => undefined,
-    sourceRoot: path => checkouts.find(checkout => resolve(folder, path).startsWith(`${checkout}${sep}`)),
-    worktreeRoots: () => [...checkouts],
+    sourceRoot: path => innermost(checkouts, resolve(folder, path)),
+    // As the router does: the session's own checkout is never one of the other worktrees.
+    worktreeRoots: () => checkouts.filter(checkout => checkout !== innermost(checkouts, folder)),
   };
   const bridge = new CodeRuleBridge(folder, auditor, { worktreeWalks: walks });
   bridges.push(bridge);
   await bridge.openWorkspace(`session-${bridges.length}`);
-  await bridge.checkpoint("turn");
-  await bridge.settleWorktreeWalk();
   return { bridge, auditGeneratedEdits };
+}
+
+/** A session whose first turn, and the walk of the other worktrees after it, are done. */
+async function session(folder: string, checkouts: readonly string[], walks: WorktreeWalks): Promise<Session> {
+  const opening = await opened(folder, checkouts, walks);
+  await turn(opening);
+  return opening;
+}
+
+async function turn(...sessions: Session[]): Promise<void> {
+  for (const { bridge } of sessions) {
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+  }
+}
+
+/** Every edit a session's auditor was given, with its mode, in order. */
+function audited({ auditGeneratedEdits }: Session): Array<[string[], string | undefined]> {
+  return auditGeneratedEdits.mock.calls.map(([, batch]) => [
+    batch.edits.map(edit => `${edit.deleted === true ? "deleted" : "written"} ${edit.path}`),
+    batch.mode,
+  ]);
+}
+
+async function shell(bridge: CodeRuleBridge, id: string, run: () => unknown): Promise<void> {
+  await bridge.begin(id, "shell", { command: "./run.sh" });
+  await run();
+  await bridge.finish(id);
+}
+
+/** Holds the next listing of `folder` until `release` is called; `entered` resolves as the listing starts. */
+function holdListing(folder: string): { entered: Promise<void>; release: () => void } {
+  const entered = Promise.withResolvers<void>();
+  const released = Promise.withResolvers<void>();
+  releases.push(released.resolve);
+  counted.held.set(folder, async () => {
+    entered.resolve();
+    await released.promise;
+  });
+  return { entered: entered.promise, release: released.resolve };
 }
 
 describe("WorktreeWalks", () => {
@@ -117,6 +179,22 @@ describe("WorktreeWalks", () => {
     expect(reads.get(path)).toBe(2);
   });
 
+  it("reads another worktree once for two sessions in the main checkout, and each still records a shell write there in Log", async () => {
+    const { main, checkouts, worktrees } = await repository(["w"]);
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const first = await session(main, checkouts, walks);
+    const second = await session(main, checkouts, walks);
+    const path = join(worktrees[0]!, "src", "a.py");
+    await shell(first.bridge, "shell-1", () => writeFile(path, "old\nmine\n"));
+    await turn(first);
+    // The other session runs a command that writes nothing.
+    await shell(second.bridge, "shell-2", () => undefined);
+    await turn(second, first);
+    // Both sessions' walks find the write in one read. Each session still files its own record of it.
+    expect(reads.get(path)).toBe(2);
+    expect([audited(first), audited(second)]).toEqual([[[["written ../w/src/a.py"], "log"]], [[["written ../w/src/a.py"], "log"]]]);
+  });
+
   it("reads through another session once the one it read through closes, and drops what no session watches", async () => {
     const { checkouts, worktrees } = await repository();
     const walks = new WorktreeWalks({ gapMs: 0 });
@@ -130,5 +208,86 @@ describe("WorktreeWalks", () => {
     expect(second.auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => edit.path))).toEqual(["../w3/src/a.py"]);
     await second.bridge.close();
     expect(walks.observations()).toBe(0);
+  });
+
+  it("keeps no snapshot from a walk whose sessions all closed while it read", async () => {
+    const { checkouts, worktrees } = await repository();
+    await mkdir(join(worktrees[2]!, "deep"));
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const first = await session(worktrees[0]!, checkouts, walks);
+    const second = await session(worktrees[1]!, checkouts, walks);
+    const hold = holdListing(join(worktrees[2]!, "deep"));
+    await first.bridge.checkpoint("turn");
+    await hold.entered;
+    await first.bridge.close();
+    await second.bridge.close();
+    hold.release();
+    await walks.idle();
+    // The walk had read `main` and `w2` when the sessions closed; with no session left to walk again, nothing would drop them.
+    expect(walks.observations()).toBe(0);
+  });
+});
+
+describe("the other worktrees of a session in a nested worktree", () => {
+  it("records no change of its checkout's other files when a session in another worktree starts or closes", async () => {
+    const { main, worktrees, checkouts } = await repository(["w1"]);
+    await mkdir(join(main, "lib"), { recursive: true });
+    await mkdir(join(main, "pkg"), { recursive: true });
+    await writeFile(join(main, "lib", "c.py"), "c = 1\n");
+    await writeFile(join(main, "pkg", "b.py"), "b = 1\n");
+    // The nested worktree is untracked in `main`, as a coding agent's worktrees in `.claude/worktrees` are.
+    await writeFile(join(main, ".gitignore"), "nested/\n");
+    git(main, "add", ".");
+    git(main, "commit", "--quiet", "-m", "more");
+    const nested = join(main, "nested");
+    git(main, "worktree", "add", "--quiet", "--detach", nested);
+    checkouts.push(nested);
+    await awaitClockAfter(join(nested, "lib", "c.py"));
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    // Opened in `nested/pkg`: its checkout is `nested`, which it does not watch, and `main` holds it.
+    const inner = await session(join(nested, "pkg"), checkouts, walks);
+    const steps: Array<[string, unknown]> = [];
+    const record = (step: string): void => {
+      steps.push([step, audited(inner)]);
+      inner.auditGeneratedEdits.mockClear();
+    };
+    const other = await session(worktrees[0]!, checkouts, walks);
+    await turn(inner, other, inner);
+    record("another session started");
+    await other.bridge.close();
+    await turn(inner, inner);
+    record("it closed");
+    const again = await session(worktrees[0]!, checkouts, walks);
+    await turn(inner, again, inner);
+    record("another started again");
+    await shell(inner.bridge, "shell-1", () => writeFile(join(main, "lib", "c.py"), "c = 1\nmain\n"));
+    await turn(inner, inner);
+    record("it wrote in main");
+    expect(steps).toEqual([
+      ["another session started", []],
+      ["it closed", []],
+      ["another started again", []],
+      ["it wrote in main", [[["written ../../lib/c.py"], "log"]]],
+    ]);
+  });
+
+  it("records its own edit of a file in the folder that holds its worktree once, as its tool call made it", async () => {
+    const { main, checkouts } = await repository([]);
+    await mkdir(join(main, ".agent"));
+    await writeFile(join(main, ".agent", "notes.py"), "n = 1\n");
+    git(main, "add", ".");
+    git(main, "commit", "--quiet", "-m", "notes");
+    const nested = join(main, ".agent", "worktrees", "a");
+    git(main, "worktree", "add", "--quiet", "--detach", nested);
+    checkouts.push(nested);
+    await awaitClockAfter(join(nested, "src", "a.py"));
+    const inA = await session(nested, checkouts, new WorktreeWalks({ gapMs: 0 }));
+    const path = join(main, ".agent", "notes.py");
+    await inA.bridge.begin("write-1", "write", { path });
+    await writeFile(path, "n = 1\nmine\n");
+    await inA.bridge.finish("write-1");
+    await turn(inA, inA);
+    // Its walk of `main` named the file `../../../.agent/notes.py`, and recorded the edit again under that name.
+    expect(audited(inA)).toEqual([[["written ../../notes.py"], undefined]]);
   });
 });

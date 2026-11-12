@@ -6,7 +6,6 @@
  * once, for every session watching it, and keeps what it saw as a snapshot; each session takes from a walk only the
  * sources that changed since the snapshot it took last (`CodeRuleBridge`).
  */
-import { sep } from "node:path";
 import { gitHead, gitUnmergedReader } from "../git.js";
 import type { ObservedSource, ScanError, Source, SourceScan } from "./code-rule-bridge.js";
 
@@ -59,7 +58,10 @@ export interface WorktreeScan {
   readonly startedAt: number;
   /** Filesystem-clock reading taken as the walk began. */
   readonly observedAt: number;
-  /** Folders the walk leaves out: the other worktrees it reads, and the folders of sessions inside this one. */
+  /**
+   * Folders the walk leaves out: every worktree it reads and the checkout of every session taking part, so a worktree
+   * reads the same whichever sessions take part.
+   */
   readonly skip: ReadonlySet<string>;
 }
 
@@ -67,6 +69,8 @@ export interface WorktreeScan {
 export interface WatcherWalk {
   /** The worktrees the session watches, physical. */
   readonly worktrees: ReadonlySet<string>;
+  /** The checkout the session folder is in, physical; undefined when none is. */
+  readonly checkout: string | undefined;
   /** When the session opened, on the filesystem's clock. */
   readonly startedAt: number;
   /**
@@ -80,8 +84,6 @@ export interface WatcherWalk {
 
 /** A session that watches the other worktrees of its repository. */
 export interface WorktreeWatcher {
-  /** The session folder, physical: a worktree around it is read without it. */
-  readonly root: string;
   /** The filesystem's clock (`filesystemClock`). */
   clock(): Promise<number>;
   /** Called as each walk begins, before it reads anything; undefined once the session has closed or cannot say. */
@@ -160,10 +162,22 @@ function errorMessage(error: unknown): string {
 }
 
 /**
- * The walks of the other worktrees of every session that watches them: one per engine service, shared by its runtimes, or
- * one per runtime or session where nothing shares it. Each walk reads each worktree once, through one session watching
- * it, and hands what it found to every session watching it; it keeps the last snapshot of each worktree some session
- * watches, and drops it once none does.
+ * What every read of a walk leaves out: the worktrees it reads, which are read on their own, and the checkout of each
+ * session taking part, which every other session watches. Each checkout of the repository is one or the other, so a
+ * worktree around another reads the same whichever sessions take part: a session never sees a nested worktree's files
+ * come and go from its snapshot as other sessions start and close.
+ */
+function leftOut(roots: ReadonlySet<string>, walks: Iterable<WatcherWalk>): Set<string> {
+  const skip = new Set(roots);
+  for (const walk of walks) if (walk.checkout !== undefined) skip.add(walk.checkout);
+  return skip;
+}
+
+/**
+ * The walks of a repository's other worktrees for every session that watches them: one per repository, shared by the
+ * runtimes of an engine service (`RepositoryWorktreeWalks`), or one per session where nothing shares it. Each walk reads
+ * each worktree once, through one session watching it, and hands what it found to every session watching it; it keeps
+ * the last snapshot of each worktree some session watches, and drops it once none does.
  */
 export class WorktreeWalks {
   readonly #gapMs: number;
@@ -197,6 +211,11 @@ export class WorktreeWalks {
     let count = 0;
     for (const snapshot of this.#snapshots.values()) count += snapshot.sources.size;
     return count;
+  }
+
+  /** Resolves once no walk is timed or running, whichever sessions it was for. */
+  async idle(): Promise<void> {
+    while (this.#walk !== undefined) await this.#walk.catch(() => undefined);
   }
 
   #request(watching: Watching): void {
@@ -296,23 +315,32 @@ export class WorktreeWalks {
     return walking;
   }
 
-  /** Reads every worktree the walk's sessions watch; a snapshot is kept only once the whole walk has read. */
+  /**
+   * Reads every worktree the walk's sessions watch; a snapshot is kept only once the whole walk has read, and only of a
+   * worktree some session still watches: one whose sessions all closed meanwhile is not held for nobody.
+   */
   async #read(walking: ReadonlyMap<Watching, WatcherWalk>): Promise<WorktreeWalk> {
     const roots = new Set([...walking.values()].flatMap(walk => [...walk.worktrees]));
     try {
       // Read before the walk, so a move or conflict the walk only partly saw is still one to the next.
       const checkouts = await this.#readCheckouts(roots);
       const observedAt = await [...walking.keys()][0]!.watcher.clock();
+      const skip = leftOut(roots, walking.values());
       const found = new Map<string, WorktreeFindings>();
       for (const root of roots) {
-        const findings = await this.#readWorktree(root, roots, walking, { ...checkouts.get(root)!, observedAt });
+        const findings = await this.#readWorktree(root, skip, walking, { ...checkouts.get(root)!, observedAt });
         if (findings !== undefined) found.set(root, findings);
       }
-      for (const [root, findings] of found) this.#snapshots.set(root, findings.snapshot);
+      for (const [root, findings] of found) if (this.#watched(root)) this.#snapshots.set(root, findings.snapshot);
       return { found, observedAt };
     } catch (error) {
       return { error: errorMessage(error) };
     }
+  }
+
+  /** Whether an open session watched `root` as the last walk began. */
+  #watched(root: string): boolean {
+    return this.#watching.some(watching => watching.worktrees.has(root));
   }
 
   async #readCheckouts(roots: ReadonlySet<string>): Promise<Map<string, Pick<WorktreeFindings, "head" | "unmerged">>> {
@@ -327,22 +355,21 @@ export class WorktreeWalks {
   /** One worktree, read through the first session watching it that stays open while it reads. */
   async #readWorktree(
     root: string,
-    roots: ReadonlySet<string>,
+    skip: ReadonlySet<string>,
     walking: ReadonlyMap<Watching, WatcherWalk>,
     read: Pick<WorktreeFindings, "head" | "unmerged"> & { readonly observedAt: number },
   ): Promise<WorktreeFindings | undefined> {
-    const watchers = [...walking].filter(([, walk]) => walk.worktrees.has(root));
+    const watchers = [...walking.values()].filter(walk => walk.worktrees.has(root));
     const previous = this.#snapshots.get(root);
     const request: WorktreeScan = {
       root,
       previous: previous?.sources ?? new Map(),
       captureChanges: previous !== undefined,
-      startedAt: Math.min(...watchers.map(([, walk]) => walk.startedAt)),
+      startedAt: Math.min(...watchers.map(walk => walk.startedAt)),
       observedAt: read.observedAt,
-      // A session inside this worktree walks its own folder.
-      skip: new Set([...roots, ...watchers.map(([watching]) => watching.watcher.root).filter(folder => folder.startsWith(`${root}${sep}`))]),
+      skip,
     };
-    for (const [, walk] of watchers) {
+    for (const walk of watchers) {
       const scan = await walk.scan(request);
       if (scan === undefined) continue;
       const { snapshot, texts } = nextSnapshot(previous, scan);
@@ -371,6 +398,31 @@ export class WorktreeWalks {
     } finally {
       watching.taking = undefined;
     }
+  }
+}
+
+/**
+ * One `WorktreeWalks` per repository, for the sessions of an engine service's runtimes or of one runtime. Sessions of
+ * one repository share its walk; sessions of two repositories never share one, so a slow walk of one repository's
+ * worktrees never holds back what another repository's sessions record.
+ */
+export class RepositoryWorktreeWalks {
+  readonly #options: { gapMs?: number };
+  /** Kept for the service's life: an idle walk holds no snapshot, and there is one per repository sessions opened in. */
+  readonly #walks = new Map<string, WorktreeWalks>();
+
+  constructor(options: { gapMs?: number } = {}) {
+    this.#options = options;
+  }
+
+  /** The walk of the repository `repository` names, the same for every checkout of it (its clone id). */
+  of(repository: string): WorktreeWalks {
+    let walks = this.#walks.get(repository);
+    if (walks === undefined) {
+      walks = new WorktreeWalks(this.#options);
+      this.#walks.set(repository, walks);
+    }
+    return walks;
   }
 }
 

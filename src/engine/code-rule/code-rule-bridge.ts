@@ -413,11 +413,24 @@ function takenSource(worktree: string, findings: WorktreeFindings, path: string)
   return text === undefined ? { ...found, path } : { ...found, path, text };
 }
 
-/** Puts into `scan` what a walk of `worktree` could not check, named as the session names it. */
-function takeGaps(worktree: string, findings: WorktreeFindings, scan: SourceScan): void {
-  for (const failed of findings.failedRoots) scan.failedRoots.add(inWorktree(worktree, failed));
-  for (const { path, readError } of findings.errors) scan.errors.push({ path: inWorktree(worktree, path), readError });
-  for (const [path, unread] of findings.unread) scan.unread.set(inWorktree(worktree, path), unread);
+/** Puts into `scan` what a walk of `worktree` could not check where the session takes it, named as the session names it. */
+function takeGaps(worktree: string, findings: WorktreeFindings, scan: SourceScan, takes: (path: string) => boolean): void {
+  for (const failed of findings.failedRoots) if (takes(failed)) scan.failedRoots.add(inWorktree(worktree, failed));
+  for (const { path, readError } of findings.errors) if (takes(path)) scan.errors.push({ path: inWorktree(worktree, path), readError });
+  for (const [path, unread] of findings.unread) if (takes(path)) scan.unread.set(inWorktree(worktree, path), unread);
+}
+
+/**
+ * Which paths of the worktree at `root` (relative to it) a session in `folder` takes from the shared walk: every one, but
+ * in a worktree around the folder, none in the folder on the way to it. The session names those files from its folder
+ * (`../x.py`), a path under no worktree's, and no walk records a change there; the snapshot names them from the worktree
+ * (`../../../a/x.py`), which would be a second name for a file the session's tool calls name the first way.
+ */
+function takenFrom(root: string, folder: string): (path: string) => boolean {
+  const inside = relative(root, folder);
+  if (inside === "" || inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside)) return () => true;
+  const aside = inside.split(sep)[0]!;
+  return path => path !== aside && !path.startsWith(`${aside}/`);
 }
 
 /** The innermost of `roots` (session-relative) that holds `path`; each folder above it is looked up once. */
@@ -857,8 +870,9 @@ export class CodeRuleBridge {
       /** `WORKTREE_WALK_GAP_MS` by default, for the bridge's own walk of the other worktrees. */
       worktreeWalkGapMs?: number;
       /**
-       * The walk of the other worktrees the bridge shares with the other sessions of its runtime or engine service; one
-       * of its own otherwise. Shared, each worktree is walked and held once however many sessions watch it.
+       * The walk of the other worktrees the bridge shares with the other sessions of its repository, in its runtime or
+       * engine service; one of its own otherwise. Shared, each worktree is walked and held once however many sessions
+       * watch it.
        */
       worktreeWalks?: WorktreeWalks;
       /** `FIRST_SIGHT_TEXT_BYTES` by default. */
@@ -1502,7 +1516,6 @@ export class CodeRuleBridge {
   #scheduleWorktreeWalk(discovery: SourceDiscovery): void {
     if (discovery.cancelled || this.#auditor.worktreeRoots === undefined) return;
     discovery.worktrees.watch ??= this.#sharedWorktreeWalks().watch({
-      root: discovery.root,
       clock: filesystemClock,
       start: () => this.#startWorktreeWalk(discovery),
     });
@@ -1530,6 +1543,7 @@ export class CodeRuleBridge {
     const start: WorktreeStart = { worktrees: new Set(discovery.worktrees.roots), versions: new Map(discovery.versions) };
     return {
       worktrees: new Set(worktrees),
+      checkout: this.#owningCheckout(discovery.root, ""),
       startedAt: discovery.startedAt,
       scan: request => this.#scanWorktree(discovery, request),
       take: walk => this.#takeWorktreeWalk(discovery, start, walk),
@@ -1655,7 +1669,7 @@ export class CodeRuleBridge {
       snapshots.set(worktree, findings.snapshot);
       if (findings.head !== undefined) heads.set(root, findings.head);
       if (findings.unmerged !== undefined) unmerged.set(root, findings.unmerged);
-      this.#takeFindings(discovery, worktree, findings, kept.get(worktree) ?? [], { previous, scan });
+      this.#takeFindings(discovery, { root, worktree }, findings, kept.get(worktree) ?? [], { previous, scan });
     }
     const walk: WalkStart = {
       inSession: false, baseline: false, checkpoint: "edit", worktrees: new Set(snapshots.keys()), previous, versions: start.versions,
@@ -1677,25 +1691,29 @@ export class CodeRuleBridge {
     return kept;
   }
 
-  /** Puts into `taken` what this session takes of one worktree's findings, named as the session names them. */
+  /**
+   * Puts into `taken` what this session takes of the findings in the worktree at `root` (physical; `worktree` as the
+   * session names it), named as the session names them.
+   */
   #takeFindings(
     discovery: SourceDiscovery,
-    worktree: string,
+    { root, worktree }: { readonly root: string; readonly worktree: string },
     findings: WorktreeFindings,
     kept: readonly string[],
     taken: { readonly previous: Map<string, ObservedSource>; readonly scan: SourceScan },
   ): void {
     const next = findings.snapshot;
+    const takes = takenFrom(root, discovery.root);
     const paths = discovery.worktrees.fresh.has(worktree)
       ? this.#firstSightPaths(discovery, next)
       : changedPaths(this.#worktreeView.snapshot(worktree), next);
-    for (const path of new Set([...paths.map(path => inWorktree(worktree, path)), ...kept])) {
+    for (const path of new Set([...paths.filter(takes).map(path => inWorktree(worktree, path)), ...kept])) {
       const before = this.#observedSource(path);
       if (before !== undefined) taken.previous.set(path, before);
       const after = takenSource(worktree, findings, path);
       if (after !== undefined) taken.scan.sources.set(path, after);
     }
-    takeGaps(worktree, findings, taken.scan);
+    takeGaps(worktree, findings, taken.scan, takes);
   }
 
   /**
