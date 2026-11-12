@@ -392,21 +392,26 @@ export function repositoryHistoryIds(repository: RepositoryListing): string[] {
 }
 
 /**
- * Whether git still lists `checkoutPath` as a worktree of its clone; true where git can't say (outside git, no git).
- * {@link worktreeRegistry} asks Git again only once the clone's registry has changed. Every worktree it names joins
- * `listed`, so a caller asking after the clone's other checkouts finds them there.
+ * Whether Git still lists a checkout as a worktree of its clone, for one pass over the recorded checkouts; true where
+ * Git can't say (outside Git, no Git). Every worktree a listing names is kept for the pass, so Git is asked once per
+ * clone whose checkouts it all lists, and {@link worktreeRegistry} asks Git again only once the clone's registry has
+ * changed.
  */
-function listedByGit(checkoutPath: string, listed: Set<string>): boolean {
-  let registry;
-  try {
-    registry = worktreeRegistry(checkoutPath);
-  } catch (error) {
-    if (error instanceof GitUnavailableError) return true;
-    throw error;
-  }
-  if (registry === undefined) return true;
-  for (const worktree of registry.worktrees) listed.add(storedPath(worktree));
-  return listed.has(checkoutPath);
+function gitWorktreeListing(): (checkoutPath: string) => boolean {
+  const listed = new Set<string>();
+  return checkoutPath => {
+    if (listed.has(checkoutPath)) return true;
+    let registry;
+    try {
+      registry = worktreeRegistry(checkoutPath);
+    } catch (error) {
+      if (error instanceof GitUnavailableError) return true;
+      throw error;
+    }
+    if (registry === undefined) return true;
+    for (const worktree of registry.worktrees) listed.add(storedPath(worktree));
+    return listed.has(checkoutPath);
+  };
 }
 
 /**
@@ -440,12 +445,12 @@ export interface PruneCheckoutsOptions {
  */
 export async function pruneCheckouts(db: RerailDatabase, { now = Date.now(), signal }: PruneCheckoutsOptions = {}): Promise<string[]> {
   const gone: string[] = [];
-  const listed = new Set<string>();
+  const listedByGit = gitWorktreeListing();
   for (const { path } of db.select({ path: checkouts.checkoutPath }).from(checkouts).all()) {
     const present = await folderPresent(path);
     // A folder on a share that does not answer can take the system's whole timeout; a stopping daemon waits for one.
     if (signal?.aborted === true) return [];
-    if (present === false || (present === true && !listed.has(path) && !listedByGit(path, listed))) gone.push(path);
+    if (present === false || (present === true && !listedByGit(path))) gone.push(path);
   }
   if (gone.length === 0) return gone;
   return db.transaction(tx => {
