@@ -1,0 +1,2857 @@
+{
+  "format": "rerail.rr-original-assertions/v1",
+  "sourcePin": "2b1504adc4291daaf080b2e932962b134da1a69a",
+  "oracle": false,
+  "engineSha256": "f4db14313662e14ca1e1924296c91acb48107035461e85db4a2977d61b6ce6e2",
+  "exitCode": 0,
+  "sourceFiles": {
+    "scripts/tests/test_lint_async_sync_boundary.py": "53c9f211e538582fce021034cbb6b01ef7c24689fb3ff5e5692f831bd48c572b",
+    "scripts/lint_async_sync_boundary.py": "f7c87e3410374991e60e0ee7304d86d667c445bf1534b6dd72f80c2a9b1e0c68"
+  },
+  "ruleRoot": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr",
+  "testTargets": [
+    "scripts/tests/test_lint_async_sync_boundary.py"
+  ],
+  "api": "workspace-cli",
+  "mode": "workspace",
+  "harnessFiles": {
+    "scripts/dsl/data_layer_audit/native_guard.py": "9de4f513c0855f77870f14a3de6723cc0f65ca933cb6df28a7f49c8ed53f68b8",
+    "scripts/dsl/data_layer_batch_eight.py": "b0aa06282577557f293ab4493adbca1d36eb7c3cd72bc32f11b98f5c706684d9",
+    "scripts/dsl/data_layer_batch_five.py": "c4bd8edcb10c65ddbac6eea03eca11bad9389a0ec727d77889334a554010d34d",
+    "scripts/dsl/data_layer_batch_four.py": "af190011454ce4c136164cb31813375f607f765ced3a13393fd0cbfebb816ef1",
+    "scripts/dsl/data_layer_batch_seven.py": "06b95e9a6d34683f68b15a67bc65bdac95cc532ba0e3f2ab282cddc6ee7f0951",
+    "scripts/dsl/data_layer_batch_six.py": "c696511c6b23941317878d5fa77322b860e0ee061ac0da6fb5318eb06823a3ad",
+    "scripts/dsl/data_layer_batch_three.py": "bb528abe50676159a06c3bfc071fdbeca0aae200db90945d187cccb412c9b7e8",
+    "scripts/dsl/data_layer_batch_two.py": "04835aa6befc2229b7d7de6c6d23f6cb17ee7dd546d90bc731f0377313b17df9",
+    "scripts/dsl/data_layer_probe_record.py": "24c6a5d37b67e2d7569224523b046bb64617179dfa1d881804a4694ce7fbb1db",
+    "scripts/dsl/data_layer_probe_three.py": "e46fa55d33f3888b97a694e81a3c370eb0cf2362d723bbfb65cb7095d9ed3f8c",
+    "scripts/dsl/data_layer_record.py": "7d32c79a7eda75b2c40e2be6bcae2dee08f3b02f8fa0a2226bf504b5e568af9e",
+    "scripts/dsl/data_layer_rr/ast_transport.py": "30b3c597ff7570dab6ebacaf806767ab268dc90adf3950fe0555fc9643781c8a",
+    "scripts/dsl/data_layer_rr/boundary_cli_port.py": "2a87db6c9840d6c1bce4829f8ad7a71d5b3d7f4f1b7b596fef6fd53fae0bc351",
+    "scripts/dsl/data_layer_rr/boundary_components_port.py": "8d452986abe97144084c6318426b78149df1d5c8993283bf0ae536423ce9b4e5",
+    "scripts/dsl/data_layer_rr/boundary_display_port.py": "53385e3518e925387edb45164392523dae127e88bf947589cece2ee498fec23c",
+    "scripts/dsl/data_layer_rr/boundary_port.py": "67add054200407e175a983c92ef9108018ec3d2023fece64008768cdfdfa15bc",
+    "scripts/dsl/data_layer_rr/dto.py": "086cdf3ed267e340c8e29ab33016d448590f10f8f074d277977ffa51a85cee4f",
+    "scripts/dsl/data_layer_rr/fact_transport.py": "ed88c12a4c01ab4c475dde76901f4d4a18c04d0af7e887b611324192fa4cddfa",
+    "scripts/dsl/data_layer_rr/framework_fixtures.py": "01eb634cc14db618cca8f837a62cd42477805af4eb4cb11428cb248fd4cc4bc1",
+    "scripts/dsl/data_layer_rr/migration.py": "e4cd1e3073f4a21ddab81d0dabe65361a65ac9a6e3e2a1f041dc645500bda305",
+    "scripts/dsl/data_layer_rr/native_ratchet.py": "af0c8173eb7980a92288fabb6337493fbe4587d7b9aa6093fd75edb24ba0a548",
+    "scripts/dsl/data_layer_rr/policy_routes.py": "4e7390039fd78720823f8424d308e39c4420a72d18d0e52dff733a1a03262f22",
+    "scripts/dsl/data_layer_rr/python_value_transport.py": "91e260760d5a586f4d0fb4076cfb3f10401bdc8d982f9834ab931451ab8e80ed",
+    "scripts/dsl/data_layer_rr/replay.py": "c1d4bbd11057736c7883c90660df690768302cd475cdb06b0a5ec649c129249b",
+    "scripts/dsl/data_layer_rr/suite.py": "e4dbd5dd708d558529733dacbce70661deaae400d104bf538651ee247b4f797a",
+    "scripts/dsl/data_layer_rr/typed_fact_transport.py": "b5d5d3c9bcb51ddae5715221e359de6a11bc6e8dedcf96301b0ed59a1a22300d",
+    "scripts/dsl/data_layer_rule_audit.py": "9a87c1d158f1f621f3a7b32bf46ff43228f4bf2c2e186894dcf160f16d1e80ef"
+  },
+  "policySha256": {
+    "async_sync_boundary": "6a7c6fc708cac8fc044cc6bdb6cea49c940273648900eb74e982f3f7579e5ff7"
+  },
+  "sourceFilesChecked": 1467,
+  "missingResults": [],
+  "collected": [
+    "scripts/tests/test_lint_async_sync_boundary.py::test_flags_asyncio_run_inside_sync_function",
+    "scripts/tests/test_lint_async_sync_boundary.py::test_flags_to_thread_inside_async_function",
+    "scripts/tests/test_lint_async_sync_boundary.py::test_flags_executor_escape_inside_async_function",
+    "scripts/tests/test_lint_async_sync_boundary.py::test_allows_ordinary_async_await",
+    "scripts/tests/test_lint_async_sync_boundary.py::test_invalid_python_is_tolerated"
+  ],
+  "part": 0,
+  "parts": 1,
+  "cases": {
+    "scripts/tests/test_lint_async_sync_boundary.py::test_flags_asyncio_run_inside_sync_function": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_async_sync_boundary.py::test_flags_to_thread_inside_async_function": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_async_sync_boundary.py::test_flags_executor_escape_inside_async_function": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_async_sync_boundary.py::test_allows_ordinary_async_await": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ],
+    "scripts/tests/test_lint_async_sync_boundary.py::test_invalid_python_is_tolerated": [
+      {
+        "phase": "setup",
+        "outcome": "passed"
+      },
+      {
+        "phase": "call",
+        "outcome": "passed"
+      },
+      {
+        "phase": "teardown",
+        "outcome": "passed"
+      }
+    ]
+  },
+  "calls": [
+    {
+      "test": "<native-configuration>",
+      "check": "async_sync_boundary",
+      "entry": "_bs_configuration",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "_bs_configuration"
+      },
+      "findings": 6,
+      "diagnostics": [
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "BoundaryConfiguration",
+          "code": "BS_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "boundary configuration",
+          "parameters": {
+            "key": "cli_schema",
+            "value": "{\"description\": \"Lint for async/sync boundary violations (ast-based)\", \"arguments\": [{\"names\": [\"--check\"], \"kwargs\": {\"action\": \"store_true\", \"help\": \"CI mode: exit 1 if actionable violations found\"}}, {\"names\": [\"--context\"], \"kwargs\": {\"action\": \"store_true\", \"help\": \"Show source context around each violation\"}}, {\"names\": [\"--show-allowlisted\"], \"kwargs\": {\"action\": \"store_true\", \"help\": \"Also show allowlisted violations\"}}, {\"names\": [\"--path\"], \"kwargs\": {\"type\": \"str\", \"action\": \"append\", \"default\": null, \"help\": \"(deprecated: use --root/--dirs) Restrict scan to specific path(s)\"}}, {\"names\": [\"--root\"], \"kwargs\": {\"type\": \"str\", \"default\": null, \"help\": \"Project root directory to scan (default: data layer repo root)\"}}, {\"names\": [\"--dirs\"], \"kwargs\": {\"type\": \"str\", \"nargs\": \"*\", \"default\": null, \"help\": \"Subdirectories under --root to scan (default: production roots for the detected layout)\"}}, {\"names\": [\"--update-baseline\"], \"kwargs\": {\"action\": \"store_true\", \"help\": \"Update ratchet baseline with current counts\"}}, {\"names\": [\"--sign\"], \"kwargs\": {\"action\": \"store_true\", \"help\": \"Sign baseline with NERA_SIGNING_KEY\"}}, {\"names\": [\"--reason\"], \"kwargs\": {\"type\": \"str\", \"default\": \"\", \"help\": \"Approval reason for baseline update\"}}, {\"names\": [\"--skip-signature-check\"], \"kwargs\": {\"action\": \"store_true\", \"help\": \"Skip baseline signature verification (remove once baseline is signed)\"}}, {\"names\": [\"--require-baseline\"], \"kwargs\": {\"action\": \"store_true\", \"help\": \"Require an existing ratchet baseline in CI mode\"}}]}"
+          }
+        },
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "BoundaryConfiguration",
+          "code": "BS_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "boundary configuration",
+          "parameters": {
+            "key": "collector_defaults",
+            "value": "{\"violations\": [], \"_func_stack\": []}"
+          }
+        },
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "BoundaryConfiguration",
+          "code": "BS_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "boundary configuration",
+          "parameters": {
+            "key": "constants",
+            "value": "{\"SOURCE_TRIGGERS\": {\"kind\": \"tuple\", \"value\": [\"asyncio.run\", \"to_thread\", \"run_in_executor\"]}, \"ALLOWLIST\": {\"kind\": \"set\", \"value\": [[\"conform/l7000_versioned/test_column_evolution_versioned_e2e.py\", \"test_versioned_column_evolution_e2e\"], [\"conform/l9800_rippling/test_async_handler_support.py\", \"_process_event_with_async_connection\"], [\"impl/browser/*\", \"*\"], [\"impl/common/l1000_cache/invalidation_broadcast.py\", \"_drain_loop\"], [\"impl/common/l2070_server_plan/base_server_plan.py\", \"_execute_query_execute_aggregate_async\"], [\"impl/common/l2070_server_plan/base_server_plan.py\", \"_execute_query_execute_windowed_async\"], [\"impl/common/l2070_server_plan/base_server_plan.py\", \"_execute_query_keyset_paginate_async\"], [\"impl/common/l2550_storage_backend/backend.py\", \"delete_async\"], [\"impl/common/l2550_storage_backend/backend.py\", \"exists_async\"], [\"impl/common/l2550_storage_backend/backend.py\", \"get_metadata_async\"], [\"impl/common/l2550_storage_backend/backend.py\", \"get_stats_async\"], [\"impl/common/l2550_storage_backend/backend.py\", \"iter_content_hashes_async\"], [\"impl/common/l2550_storage_backend/backend.py\", \"retrieve_async\"], [\"impl/common/l2550_storage_backend/backend.py\", \"store_async\"], [\"impl/l1570_llm_client/client.py\", \"_run_sync\"], [\"impl/mariadb/connection.py\", \"_common_close_resources\"], [\"impl/mariadb/connection.py\", \"close\"], [\"impl/postgres/connection.py\", \"_close_async_conn_sync\"], [\"impl/postgres/connection.py\", \"close\"], [\"impl/sqlite/native_async_wrapper.py\", \"*\"], [\"l2000_connection/async_executor.py\", \"_run_sync\"], [\"l2000_connection/connection_pool.py\", \"_cleanup_connection_state\"], [\"l2000_connection/connection_pool.py\", \"_create_connection\"], [\"l2050_transaction/transaction.py\", \"_execute_fragment_async\"], [\"l2050_transaction/transaction.py\", \"_execute_vector_query_async\"], [\"l2060_query_builder/query_builder.py\", \"_execute_aggregate_async\"], [\"l2060_query_builder/query_builder.py\", \"count_async\"], [\"l2060_query_builder/query_builder.py\", \"cursor_paginate_async\"], [\"l2060_query_builder/query_builder.py\", \"execute_async\"], [\"l2060_query_builder/query_builder.py\", \"execute_one_async\"], [\"l2060_query_builder/query_builder.py\", \"execute_raw_async\"], [\"l2060_query_builder/query_builder.py\", \"execute_with_meta_async\"], [\"l2060_query_builder/query_builder.py\", \"exists_async\"], [\"l2060_query_builder/query_builder.py\", \"first_async\"], [\"l2060_query_builder/tuple_query.py\", \"execute_async\"], [\"l2060_query_builder/tuple_query.py\", \"execute_one_async\"], [\"l2550_storage_backend/azure_backend.py\", \"*\"], [\"l2550_storage_backend/database_backend.py\", \"*\"], [\"l2550_storage_backend/dual_write.py\", \"*\"], [\"l2550_storage_backend/encryption.py\", \"*\"], [\"l2550_storage_backend/gcs_backend.py\", \"*\"], [\"l2550_storage_backend/local_backend.py\", \"*\"], [\"l2550_storage_backend/memory_backend.py\", \"*\"], [\"l2550_storage_backend/resilient_backend.py\", \"*\"], [\"l2550_storage_backend/s3_backend.py\", \"*\"], [\"l2550_storage_backend/tiered_backend.py\", \"*\"], [\"l4170_inbound_bridge/process.py\", \"_run_sync\"], [\"l4200_event_pipeline/persistent_metrics.py\", \"run_in_thread\"], [\"l4200_event_pipeline/persistent_metrics.py\", \"snapshot_now\"], [\"l4300_ipc/client.py\", \"*\"], [\"l4300_ipc/server_mixin.py\", \"*\"], [\"l5000_subscriptions/deferred_dispatch.py\", \"_run_async_callback_sync\"], [\"l5000_subscriptions/deferred_dispatch.py\", \"dispatch_queued_events\"], [\"l5000_subscriptions/dispatcher.py\", \"dispatch_branch_event\"], [\"l6600_cleanup/reaper.py\", \"cleanup_expired_data_async\"], [\"l8000_admin/tools/ipc_tools.py\", \"list_backends_handler\"]]}, \"INFORMATIONAL_DIRS\": {\"kind\": \"list\", \"value\": [\"tests/\", \"benchmarks/\", \"scripts/\", \"data_layer_testing/\", \"demos/\", \"examples/\", \"exploration/\", \"integration_tests/\"]}, \"CATEGORY_LABELS\": {\"kind\": \"dict\", \"value\": {\"SYNC_WRAPS_ASYNC\": \"sync wraps async (asyncio.run)\", \"ASYNC_WRAPS_SYNC\": \"async wraps sync (asyncio.to_thread)\", \"EXECUTOR_ESCAPE\": \"async wraps sync (run_in_executor)\"}}}"
+          }
+        },
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "BoundaryConfiguration",
+          "code": "BS_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "boundary configuration",
+          "parameters": {
+            "key": "extractor",
+            "value": "{\"extractor_id\": \"async_sync_boundary.violations\", \"schema_version\": \"1\", \"implementation_version\": \"async-sync-boundary-v2\", \"parser_mode\": \"ast_collect\", \"source_triggers\": [\"asyncio.run\", \"to_thread\", \"run_in_executor\"], \"source_trigger_groups\": [], \"cacheable\": true, \"workload_scope\": \"file\", \"project_input_facts\": [], \"project_input_scope\": null, \"implementation_digest\": \"f7c87e3410374991\", \"node_kinds\": [\"FunctionDef\", \"AsyncFunctionDef\", \"Call\"]}"
+          }
+        },
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "BoundaryConfiguration",
+          "code": "BS_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "boundary configuration",
+          "parameters": {
+            "key": "plugin",
+            "value": "{\"name\": \"async_sync_boundary\", \"enforcement\": \"ratchet\", \"description\": \"Async and sync execution boundaries must not hide blocking work\"}"
+          }
+        },
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "BoundaryConfiguration",
+          "code": "BS_CONFIG",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "boundary configuration",
+          "parameters": {
+            "key": "scope",
+            "value": "{\"directories\": [\"api\", \"impl\", \"conform\"], \"explicit_files\": [], \"include_tests\": true, \"broad_repo_scope\": false}"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-api.rr",
+          "sha256": "f484d3551881506ee4d7a75efa7d49b2516842ee9f2b493500a6091e17d0574e"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-cli.rr",
+          "sha256": "f33c4741fee3e29a48e6d9645081d15513e2622f76a15fb0394473bff7149088"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-display.rr",
+          "sha256": "49f5a821570fdfe00e9cb207a8f62b3654acb47abf20c907cc457ffaa3ef3366"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/lint-ratchet.rr",
+          "sha256": "d004be27216a724e1c7c184e52116e81808d0c9090dbc58d5ffb58bfb042840b"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/python-discovery-roots.rr",
+          "sha256": "1dffd3b6640897f15a9ac7fc513c9a24613ab9370dc3204f447e26b493a7427a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/signing.rr",
+          "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+          "sha256": "6a7c6fc708cac8fc044cc6bdb6cea49c940273648900eb74e982f3f7579e5ff7"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.09976499999999999,
+          "systemCpuSeconds": 0.004256000000000003,
+          "peakRssMB": 90.9312,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 4.000000000004e-06,
+          "systemCpuSeconds": 7.999999999994123e-06,
+          "peakRssMB": 138.067968,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 138.067968,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.14555800000000002,
+          "systemCpuSeconds": 0.0138,
+          "peakRssMB": 113.098752,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.12934500000000004,
+          "systemCpuSeconds": 0.005920999999999996,
+          "peakRssMB": 138.067968,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.05569399999999991,
+          "systemCpuSeconds": 0.002456,
+          "peakRssMB": 138.067968,
+          "submittedStatements": 64
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 0.0001340000000000785,
+          "systemCpuSeconds": 0.0046619999999999995,
+          "peakRssMB": 138.067968,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_async_sync_boundary.py::test_flags_asyncio_run_inside_sync_function",
+      "check": "async_sync_boundary",
+      "entry": "_bs_select",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "_bs_select",
+        "bsCandidatePaths": [
+          "impl/module.py"
+        ],
+        "bsCandidateIsFile": [
+          "1"
+        ]
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "BoundaryFile",
+          "code": "BS_FILE",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "selected boundary file",
+          "parameters": {
+            "ordinal": 0,
+            "path": "impl/module.py"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-api.rr",
+          "sha256": "f484d3551881506ee4d7a75efa7d49b2516842ee9f2b493500a6091e17d0574e"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-cli.rr",
+          "sha256": "f33c4741fee3e29a48e6d9645081d15513e2622f76a15fb0394473bff7149088"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-display.rr",
+          "sha256": "49f5a821570fdfe00e9cb207a8f62b3654acb47abf20c907cc457ffaa3ef3366"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/lint-ratchet.rr",
+          "sha256": "d004be27216a724e1c7c184e52116e81808d0c9090dbc58d5ffb58bfb042840b"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/python-discovery-roots.rr",
+          "sha256": "1dffd3b6640897f15a9ac7fc513c9a24613ab9370dc3204f447e26b493a7427a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/signing.rr",
+          "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+          "sha256": "6a7c6fc708cac8fc044cc6bdb6cea49c940273648900eb74e982f3f7579e5ff7"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.10000699999999998,
+          "systemCpuSeconds": 0.003969999999999994,
+          "peakRssMB": 59.293696,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 3.999999999948489e-06,
+          "systemCpuSeconds": 7.000000000000062e-06,
+          "peakRssMB": 102.137856,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 102.137856,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.14263770900000003,
+          "systemCpuSeconds": 0.016245000000000002,
+          "peakRssMB": 87.293952,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.04482599999999998,
+          "systemCpuSeconds": 0.006927999999999997,
+          "peakRssMB": 102.137856,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.050065000000000026,
+          "systemCpuSeconds": 0.003132999999999997,
+          "peakRssMB": 102.137856,
+          "submittedStatements": 65
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 8.299999999999974e-05,
+          "systemCpuSeconds": 0.00382600000000001,
+          "peakRssMB": 102.137856,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_async_sync_boundary.py::test_flags_asyncio_run_inside_sync_function",
+      "check": "async_sync_boundary",
+      "entry": "scan_tree",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [
+        {
+          "path": "api/_bs_buffers/0.py",
+          "sourceSha256": "b6a0515d00806921710df2269dc97c5d042c14d05c8a9dfbebd0ae2544804b6e"
+        }
+      ],
+      "options": {
+        "entryPoint": "scan_tree",
+        "checkedPaths": [
+          "impl/module.py"
+        ],
+        "hasReadError": "false"
+      },
+      "findings": 2,
+      "diagnostics": [
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "Count",
+          "code": "BS_COUNT",
+          "path": "<inventory>",
+          "line": 1,
+          "at": 0,
+          "tag": null,
+          "message": "1",
+          "parameters": {
+            "count": 1
+          }
+        },
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "Sync",
+          "code": "SYNC_WRAPS_ASYNC",
+          "path": "api/_bs_buffers/0.py",
+          "line": 3,
+          "at": 0,
+          "tag": null,
+          "message": "sync wraps async (asyncio.run): load: asyncio.run()",
+          "parameters": {
+            "function_name": "load",
+            "async_": 0,
+            "call_text": "asyncio.run()",
+            "column": 11,
+            "ordinal": 9,
+            "message": "sync wraps async (asyncio.run): load: asyncio.run()"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-api.rr",
+          "sha256": "f484d3551881506ee4d7a75efa7d49b2516842ee9f2b493500a6091e17d0574e"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-cli.rr",
+          "sha256": "f33c4741fee3e29a48e6d9645081d15513e2622f76a15fb0394473bff7149088"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-display.rr",
+          "sha256": "49f5a821570fdfe00e9cb207a8f62b3654acb47abf20c907cc457ffaa3ef3366"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/lint-ratchet.rr",
+          "sha256": "d004be27216a724e1c7c184e52116e81808d0c9090dbc58d5ffb58bfb042840b"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/python-discovery-roots.rr",
+          "sha256": "1dffd3b6640897f15a9ac7fc513c9a24613ab9370dc3204f447e26b493a7427a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/signing.rr",
+          "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+          "sha256": "6a7c6fc708cac8fc044cc6bdb6cea49c940273648900eb74e982f3f7579e5ff7"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.09529099999999999,
+          "systemCpuSeconds": 0.003928000000000001,
+          "peakRssMB": 59.457536,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 6.0000000000060005e-05,
+          "systemCpuSeconds": 4.900000000000737e-05,
+          "peakRssMB": 109.44512,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0002729999999999677,
+          "systemCpuSeconds": 9.900000000000186e-05,
+          "peakRssMB": 109.44512,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.14293375,
+          "systemCpuSeconds": 0.015885999999999997,
+          "peakRssMB": 88.129536,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.06971712300000016,
+          "systemCpuSeconds": 0.021294000000000007,
+          "peakRssMB": 109.44512,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 0.00023912499999989567,
+          "systemCpuSeconds": 0.0009099999999999941,
+          "peakRssMB": 109.44512,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.008660999999999974,
+          "systemCpuSeconds": 0.0008859999999999979,
+          "peakRssMB": 109.44512,
+          "submittedStatements": 24
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.055024999999999935,
+          "systemCpuSeconds": 0.0024370000000000086,
+          "peakRssMB": 109.44512,
+          "submittedStatements": 63
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 9.000000000014552e-05,
+          "systemCpuSeconds": 0.00402799999999999,
+          "peakRssMB": 109.44512,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_async_sync_boundary.py::test_flags_asyncio_run_inside_sync_function",
+      "check": "async_sync_boundary",
+      "entry": "category",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "category",
+        "categories": [
+          "SYNC_WRAPS_ASYNC"
+        ],
+        "category": "SYNC_WRAPS_ASYNC"
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "Category",
+          "code": "BS_CATEGORY",
+          "path": "<category>",
+          "line": 1,
+          "at": 0,
+          "tag": null,
+          "message": "category",
+          "parameters": {
+            "index": 0
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-api.rr",
+          "sha256": "f484d3551881506ee4d7a75efa7d49b2516842ee9f2b493500a6091e17d0574e"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-cli.rr",
+          "sha256": "f33c4741fee3e29a48e6d9645081d15513e2622f76a15fb0394473bff7149088"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-display.rr",
+          "sha256": "49f5a821570fdfe00e9cb207a8f62b3654acb47abf20c907cc457ffaa3ef3366"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/lint-ratchet.rr",
+          "sha256": "d004be27216a724e1c7c184e52116e81808d0c9090dbc58d5ffb58bfb042840b"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/python-discovery-roots.rr",
+          "sha256": "1dffd3b6640897f15a9ac7fc513c9a24613ab9370dc3204f447e26b493a7427a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/signing.rr",
+          "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+          "sha256": "6a7c6fc708cac8fc044cc6bdb6cea49c940273648900eb74e982f3f7579e5ff7"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.097185,
+          "systemCpuSeconds": 0.0033980000000000017,
+          "peakRssMB": 59.736064,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 2.9999999999752447e-06,
+          "systemCpuSeconds": 5.999999999999062e-06,
+          "peakRssMB": 106.545152,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 106.545152,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.14820300000000003,
+          "systemCpuSeconds": 0.011632,
+          "peakRssMB": 93.405184,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.046691999999999956,
+          "systemCpuSeconds": 0.006825999999999999,
+          "peakRssMB": 106.545152,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.052229000000000025,
+          "systemCpuSeconds": 0.0028929999999999997,
+          "peakRssMB": 106.545152,
+          "submittedStatements": 64
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 0.00010700000000002374,
+          "systemCpuSeconds": 0.004125000000000004,
+          "peakRssMB": 106.545152,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_async_sync_boundary.py::test_flags_asyncio_run_inside_sync_function",
+      "check": "async_sync_boundary",
+      "entry": "category",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "category",
+        "categories": [
+          "SYNC_WRAPS_ASYNC"
+        ],
+        "category": "SYNC_WRAPS_ASYNC"
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "Category",
+          "code": "BS_CATEGORY",
+          "path": "<category>",
+          "line": 1,
+          "at": 0,
+          "tag": null,
+          "message": "category",
+          "parameters": {
+            "index": 0
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-api.rr",
+          "sha256": "f484d3551881506ee4d7a75efa7d49b2516842ee9f2b493500a6091e17d0574e"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-cli.rr",
+          "sha256": "f33c4741fee3e29a48e6d9645081d15513e2622f76a15fb0394473bff7149088"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-display.rr",
+          "sha256": "49f5a821570fdfe00e9cb207a8f62b3654acb47abf20c907cc457ffaa3ef3366"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/lint-ratchet.rr",
+          "sha256": "d004be27216a724e1c7c184e52116e81808d0c9090dbc58d5ffb58bfb042840b"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/python-discovery-roots.rr",
+          "sha256": "1dffd3b6640897f15a9ac7fc513c9a24613ab9370dc3204f447e26b493a7427a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/signing.rr",
+          "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+          "sha256": "6a7c6fc708cac8fc044cc6bdb6cea49c940273648900eb74e982f3f7579e5ff7"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.092914,
+          "systemCpuSeconds": 0.004921000000000002,
+          "peakRssMB": 59.392,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 2.000000000002e-06,
+          "systemCpuSeconds": 4.9999999999980616e-06,
+          "peakRssMB": 109.068288,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 109.068288,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.13826500000000003,
+          "systemCpuSeconds": 0.015878999999999997,
+          "peakRssMB": 96.649216,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.043935999999999975,
+          "systemCpuSeconds": 0.006279,
+          "peakRssMB": 109.068288,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.04674099999999998,
+          "systemCpuSeconds": 0.002027000000000001,
+          "peakRssMB": 109.068288,
+          "submittedStatements": 64
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 8.80000000000325e-05,
+          "systemCpuSeconds": 0.0038589999999999944,
+          "peakRssMB": 109.068288,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_async_sync_boundary.py::test_flags_to_thread_inside_async_function",
+      "check": "async_sync_boundary",
+      "entry": "_bs_select",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "_bs_select",
+        "bsCandidatePaths": [
+          "impl/module.py"
+        ],
+        "bsCandidateIsFile": [
+          "1"
+        ]
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "BoundaryFile",
+          "code": "BS_FILE",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "selected boundary file",
+          "parameters": {
+            "ordinal": 0,
+            "path": "impl/module.py"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-api.rr",
+          "sha256": "f484d3551881506ee4d7a75efa7d49b2516842ee9f2b493500a6091e17d0574e"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-cli.rr",
+          "sha256": "f33c4741fee3e29a48e6d9645081d15513e2622f76a15fb0394473bff7149088"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-display.rr",
+          "sha256": "49f5a821570fdfe00e9cb207a8f62b3654acb47abf20c907cc457ffaa3ef3366"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/lint-ratchet.rr",
+          "sha256": "d004be27216a724e1c7c184e52116e81808d0c9090dbc58d5ffb58bfb042840b"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/python-discovery-roots.rr",
+          "sha256": "1dffd3b6640897f15a9ac7fc513c9a24613ab9370dc3204f447e26b493a7427a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/signing.rr",
+          "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+          "sha256": "6a7c6fc708cac8fc044cc6bdb6cea49c940273648900eb74e982f3f7579e5ff7"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.086249,
+          "systemCpuSeconds": 0.004285000000000001,
+          "peakRssMB": 59.55584,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 2.9999999999752447e-06,
+          "systemCpuSeconds": 4.999999999991123e-06,
+          "peakRssMB": 107.905024,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 107.905024,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.130399,
+          "systemCpuSeconds": 0.014537999999999995,
+          "peakRssMB": 95.0272,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.041237000000000024,
+          "systemCpuSeconds": 0.006281000000000002,
+          "peakRssMB": 107.905024,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.05239899999999997,
+          "systemCpuSeconds": 0.002713,
+          "peakRssMB": 107.905024,
+          "submittedStatements": 65
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 7.699999999999374e-05,
+          "systemCpuSeconds": 0.003389000000000003,
+          "peakRssMB": 107.905024,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_async_sync_boundary.py::test_flags_to_thread_inside_async_function",
+      "check": "async_sync_boundary",
+      "entry": "scan_tree",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [
+        {
+          "path": "api/_bs_buffers/0.py",
+          "sourceSha256": "4bf42e62a6116ee5c5f5d51a18ba3965dd03a2092778d6f30fde68f4e29e078c"
+        }
+      ],
+      "options": {
+        "entryPoint": "scan_tree",
+        "checkedPaths": [
+          "impl/module.py"
+        ],
+        "hasReadError": "false"
+      },
+      "findings": 2,
+      "diagnostics": [
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "Async",
+          "code": "ASYNC_WRAPS_SYNC",
+          "path": "api/_bs_buffers/0.py",
+          "line": 3,
+          "at": 0,
+          "tag": null,
+          "message": "async wraps sync (asyncio.to_thread): load: asyncio.to_thread()",
+          "parameters": {
+            "function_name": "load",
+            "async_": 1,
+            "call_text": "asyncio.to_thread()",
+            "column": 17,
+            "ordinal": 10,
+            "message": "async wraps sync (asyncio.to_thread): load: asyncio.to_thread()"
+          }
+        },
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "Count",
+          "code": "BS_COUNT",
+          "path": "<inventory>",
+          "line": 1,
+          "at": 0,
+          "tag": null,
+          "message": "1",
+          "parameters": {
+            "count": 1
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-api.rr",
+          "sha256": "f484d3551881506ee4d7a75efa7d49b2516842ee9f2b493500a6091e17d0574e"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-cli.rr",
+          "sha256": "f33c4741fee3e29a48e6d9645081d15513e2622f76a15fb0394473bff7149088"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-display.rr",
+          "sha256": "49f5a821570fdfe00e9cb207a8f62b3654acb47abf20c907cc457ffaa3ef3366"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/lint-ratchet.rr",
+          "sha256": "d004be27216a724e1c7c184e52116e81808d0c9090dbc58d5ffb58bfb042840b"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/python-discovery-roots.rr",
+          "sha256": "1dffd3b6640897f15a9ac7fc513c9a24613ab9370dc3204f447e26b493a7427a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/signing.rr",
+          "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+          "sha256": "6a7c6fc708cac8fc044cc6bdb6cea49c940273648900eb74e982f3f7579e5ff7"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.092761,
+          "systemCpuSeconds": 0.006148000000000001,
+          "peakRssMB": 59.179008,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 5.399999999992737e-05,
+          "systemCpuSeconds": 6.90000000000135e-05,
+          "peakRssMB": 106.233856,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0002449999999999987,
+          "systemCpuSeconds": 0.00022400000000000024,
+          "peakRssMB": 106.233856,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.12117733299999997,
+          "systemCpuSeconds": 0.016328999999999996,
+          "peakRssMB": 87.949312,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.05124129200000005,
+          "systemCpuSeconds": 0.017395999999999988,
+          "peakRssMB": 106.233856,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 0.0002563750000000309,
+          "systemCpuSeconds": 0.0008310000000000123,
+          "peakRssMB": 106.233856,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.009440999999999977,
+          "systemCpuSeconds": 0.0009539999999999965,
+          "peakRssMB": 106.233856,
+          "submittedStatements": 24
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.04938999999999999,
+          "systemCpuSeconds": 0.0024550000000000127,
+          "peakRssMB": 106.233856,
+          "submittedStatements": 63
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 0.00010999999999999899,
+          "systemCpuSeconds": 0.004364999999999994,
+          "peakRssMB": 106.233856,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_async_sync_boundary.py::test_flags_to_thread_inside_async_function",
+      "check": "async_sync_boundary",
+      "entry": "category",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "category",
+        "categories": [
+          "ASYNC_WRAPS_SYNC"
+        ],
+        "category": "ASYNC_WRAPS_SYNC"
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "Category",
+          "code": "BS_CATEGORY",
+          "path": "<category>",
+          "line": 1,
+          "at": 0,
+          "tag": null,
+          "message": "category",
+          "parameters": {
+            "index": 0
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-api.rr",
+          "sha256": "f484d3551881506ee4d7a75efa7d49b2516842ee9f2b493500a6091e17d0574e"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-cli.rr",
+          "sha256": "f33c4741fee3e29a48e6d9645081d15513e2622f76a15fb0394473bff7149088"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-display.rr",
+          "sha256": "49f5a821570fdfe00e9cb207a8f62b3654acb47abf20c907cc457ffaa3ef3366"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/lint-ratchet.rr",
+          "sha256": "d004be27216a724e1c7c184e52116e81808d0c9090dbc58d5ffb58bfb042840b"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/python-discovery-roots.rr",
+          "sha256": "1dffd3b6640897f15a9ac7fc513c9a24613ab9370dc3204f447e26b493a7427a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/signing.rr",
+          "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+          "sha256": "6a7c6fc708cac8fc044cc6bdb6cea49c940273648900eb74e982f3f7579e5ff7"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.088616,
+          "systemCpuSeconds": 0.005180000000000001,
+          "peakRssMB": 59.71968,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 2.000000000002e-06,
+          "systemCpuSeconds": 9.999999999996123e-06,
+          "peakRssMB": 106.921984,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 106.921984,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.12505199999999997,
+          "systemCpuSeconds": 0.012595999999999996,
+          "peakRssMB": 95.469568,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.040805000000000036,
+          "systemCpuSeconds": 0.006227000000000003,
+          "peakRssMB": 106.921984,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.04405100000000001,
+          "systemCpuSeconds": 0.0020719999999999975,
+          "peakRssMB": 106.921984,
+          "submittedStatements": 64
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 6.999999999995898e-05,
+          "systemCpuSeconds": 0.003048000000000002,
+          "peakRssMB": 106.921984,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_async_sync_boundary.py::test_flags_executor_escape_inside_async_function",
+      "check": "async_sync_boundary",
+      "entry": "_bs_select",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "_bs_select",
+        "bsCandidatePaths": [
+          "impl/module.py"
+        ],
+        "bsCandidateIsFile": [
+          "1"
+        ]
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "BoundaryFile",
+          "code": "BS_FILE",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "selected boundary file",
+          "parameters": {
+            "ordinal": 0,
+            "path": "impl/module.py"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-api.rr",
+          "sha256": "f484d3551881506ee4d7a75efa7d49b2516842ee9f2b493500a6091e17d0574e"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-cli.rr",
+          "sha256": "f33c4741fee3e29a48e6d9645081d15513e2622f76a15fb0394473bff7149088"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-display.rr",
+          "sha256": "49f5a821570fdfe00e9cb207a8f62b3654acb47abf20c907cc457ffaa3ef3366"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/lint-ratchet.rr",
+          "sha256": "d004be27216a724e1c7c184e52116e81808d0c9090dbc58d5ffb58bfb042840b"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/python-discovery-roots.rr",
+          "sha256": "1dffd3b6640897f15a9ac7fc513c9a24613ab9370dc3204f447e26b493a7427a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/signing.rr",
+          "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+          "sha256": "6a7c6fc708cac8fc044cc6bdb6cea49c940273648900eb74e982f3f7579e5ff7"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.098688,
+          "systemCpuSeconds": 0.004792000000000001,
+          "peakRssMB": 59.342848,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 3.999999999948489e-06,
+          "systemCpuSeconds": 7.000000000000062e-06,
+          "peakRssMB": 100.663296,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 100.663296,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.14499620900000004,
+          "systemCpuSeconds": 0.016377999999999997,
+          "peakRssMB": 88.080384,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.040406,
+          "systemCpuSeconds": 0.005824000000000003,
+          "peakRssMB": 100.663296,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.05057099999999998,
+          "systemCpuSeconds": 0.002570999999999997,
+          "peakRssMB": 100.663296,
+          "submittedStatements": 65
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 7.00000000000145e-05,
+          "systemCpuSeconds": 0.003167000000000003,
+          "peakRssMB": 100.663296,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_async_sync_boundary.py::test_flags_executor_escape_inside_async_function",
+      "check": "async_sync_boundary",
+      "entry": "scan_tree",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [
+        {
+          "path": "api/_bs_buffers/0.py",
+          "sourceSha256": "e30ee346d479085fa0c2b34b8d8f7c2d39b20ef95f0679c348265585dc3f7a9b"
+        }
+      ],
+      "options": {
+        "entryPoint": "scan_tree",
+        "checkedPaths": [
+          "impl/module.py"
+        ],
+        "hasReadError": "false"
+      },
+      "findings": 2,
+      "diagnostics": [
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "Count",
+          "code": "BS_COUNT",
+          "path": "<inventory>",
+          "line": 1,
+          "at": 0,
+          "tag": null,
+          "message": "1",
+          "parameters": {
+            "count": 1
+          }
+        },
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "Executor",
+          "code": "EXECUTOR_ESCAPE",
+          "path": "api/_bs_buffers/0.py",
+          "line": 2,
+          "at": 0,
+          "tag": null,
+          "message": "async wraps sync (run_in_executor): load: loop.run_in_executor()",
+          "parameters": {
+            "function_name": "load",
+            "async_": 1,
+            "call_text": "loop.run_in_executor()",
+            "column": 17,
+            "ordinal": 8,
+            "message": "async wraps sync (run_in_executor): load: loop.run_in_executor()"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-api.rr",
+          "sha256": "f484d3551881506ee4d7a75efa7d49b2516842ee9f2b493500a6091e17d0574e"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-cli.rr",
+          "sha256": "f33c4741fee3e29a48e6d9645081d15513e2622f76a15fb0394473bff7149088"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-display.rr",
+          "sha256": "49f5a821570fdfe00e9cb207a8f62b3654acb47abf20c907cc457ffaa3ef3366"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/lint-ratchet.rr",
+          "sha256": "d004be27216a724e1c7c184e52116e81808d0c9090dbc58d5ffb58bfb042840b"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/python-discovery-roots.rr",
+          "sha256": "1dffd3b6640897f15a9ac7fc513c9a24613ab9370dc3204f447e26b493a7427a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/signing.rr",
+          "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+          "sha256": "6a7c6fc708cac8fc044cc6bdb6cea49c940273648900eb74e982f3f7579e5ff7"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.091917,
+          "systemCpuSeconds": 0.0036960000000000014,
+          "peakRssMB": 59.523072,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 4.900000000002125e-05,
+          "systemCpuSeconds": 9.20000000000018e-05,
+          "peakRssMB": 107.872256,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.00025599999999997847,
+          "systemCpuSeconds": 0.00015199999999999936,
+          "peakRssMB": 107.872256,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.13674100000000003,
+          "systemCpuSeconds": 0.012055999999999997,
+          "peakRssMB": 95.633408,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.05143187499999996,
+          "systemCpuSeconds": 0.016870000000000003,
+          "peakRssMB": 107.872256,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 0.00011820899999998025,
+          "systemCpuSeconds": 0.0010519999999999974,
+          "peakRssMB": 107.872256,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.00948199999999999,
+          "systemCpuSeconds": 0.0010620000000000004,
+          "peakRssMB": 107.872256,
+          "submittedStatements": 24
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.048392000000000046,
+          "systemCpuSeconds": 0.002256000000000008,
+          "peakRssMB": 107.872256,
+          "submittedStatements": 63
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 7.899999999999574e-05,
+          "systemCpuSeconds": 0.0036769999999999997,
+          "peakRssMB": 107.872256,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_async_sync_boundary.py::test_flags_executor_escape_inside_async_function",
+      "check": "async_sync_boundary",
+      "entry": "category",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "category",
+        "categories": [
+          "EXECUTOR_ESCAPE"
+        ],
+        "category": "EXECUTOR_ESCAPE"
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "Category",
+          "code": "BS_CATEGORY",
+          "path": "<category>",
+          "line": 1,
+          "at": 0,
+          "tag": null,
+          "message": "category",
+          "parameters": {
+            "index": 0
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-api.rr",
+          "sha256": "f484d3551881506ee4d7a75efa7d49b2516842ee9f2b493500a6091e17d0574e"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-cli.rr",
+          "sha256": "f33c4741fee3e29a48e6d9645081d15513e2622f76a15fb0394473bff7149088"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-display.rr",
+          "sha256": "49f5a821570fdfe00e9cb207a8f62b3654acb47abf20c907cc457ffaa3ef3366"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/lint-ratchet.rr",
+          "sha256": "d004be27216a724e1c7c184e52116e81808d0c9090dbc58d5ffb58bfb042840b"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/python-discovery-roots.rr",
+          "sha256": "1dffd3b6640897f15a9ac7fc513c9a24613ab9370dc3204f447e26b493a7427a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/signing.rr",
+          "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+          "sha256": "6a7c6fc708cac8fc044cc6bdb6cea49c940273648900eb74e982f3f7579e5ff7"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.07339300000000001,
+          "systemCpuSeconds": 0.002753000000000002,
+          "peakRssMB": 59.080704,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 3.000000000030756e-06,
+          "systemCpuSeconds": 5.0000000000050004e-06,
+          "peakRssMB": 106.119168,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 106.119168,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.10872799999999999,
+          "systemCpuSeconds": 0.010273999999999998,
+          "peakRssMB": 95.223808,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.03551700000000002,
+          "systemCpuSeconds": 0.0051179999999999976,
+          "peakRssMB": 106.119168,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.04232399999999997,
+          "systemCpuSeconds": 0.0026470000000000035,
+          "peakRssMB": 106.119168,
+          "submittedStatements": 64
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 7.80000000000225e-05,
+          "systemCpuSeconds": 0.0034370000000000026,
+          "peakRssMB": 106.119168,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_async_sync_boundary.py::test_allows_ordinary_async_await",
+      "check": "async_sync_boundary",
+      "entry": "_bs_select",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "_bs_select",
+        "bsCandidatePaths": [
+          "impl/module.py"
+        ],
+        "bsCandidateIsFile": [
+          "1"
+        ]
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "BoundaryFile",
+          "code": "BS_FILE",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "selected boundary file",
+          "parameters": {
+            "ordinal": 0,
+            "path": "impl/module.py"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-api.rr",
+          "sha256": "f484d3551881506ee4d7a75efa7d49b2516842ee9f2b493500a6091e17d0574e"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-cli.rr",
+          "sha256": "f33c4741fee3e29a48e6d9645081d15513e2622f76a15fb0394473bff7149088"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-display.rr",
+          "sha256": "49f5a821570fdfe00e9cb207a8f62b3654acb47abf20c907cc457ffaa3ef3366"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/lint-ratchet.rr",
+          "sha256": "d004be27216a724e1c7c184e52116e81808d0c9090dbc58d5ffb58bfb042840b"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/python-discovery-roots.rr",
+          "sha256": "1dffd3b6640897f15a9ac7fc513c9a24613ab9370dc3204f447e26b493a7427a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/signing.rr",
+          "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+          "sha256": "6a7c6fc708cac8fc044cc6bdb6cea49c940273648900eb74e982f3f7579e5ff7"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.08057899999999998,
+          "systemCpuSeconds": 0.0034730000000000004,
+          "peakRssMB": 59.211776,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 4.000000000004e-06,
+          "systemCpuSeconds": 4.000000000004e-06,
+          "peakRssMB": 110.42816,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 110.42816,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.11587999999999998,
+          "systemCpuSeconds": 0.021845,
+          "peakRssMB": 95.19104,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.036948000000000036,
+          "systemCpuSeconds": 0.005748999999999997,
+          "peakRssMB": 110.42816,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.040039999999999965,
+          "systemCpuSeconds": 0.0017030000000000031,
+          "peakRssMB": 110.42816,
+          "submittedStatements": 65
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 7.80000000000225e-05,
+          "systemCpuSeconds": 0.003610000000000002,
+          "peakRssMB": 110.42816,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_async_sync_boundary.py::test_allows_ordinary_async_await",
+      "check": "async_sync_boundary",
+      "entry": "scan_tree",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [
+        {
+          "path": "api/_bs_buffers/0.py",
+          "sourceSha256": "2297840558003390c00e399376e16caf112112eafe8af27e8ae9ab2f19fc6990"
+        }
+      ],
+      "options": {
+        "entryPoint": "scan_tree",
+        "checkedPaths": [
+          "impl/module.py"
+        ],
+        "hasReadError": "false"
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "Count",
+          "code": "BS_COUNT",
+          "path": "<inventory>",
+          "line": 1,
+          "at": 0,
+          "tag": null,
+          "message": "1",
+          "parameters": {
+            "count": 1
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-api.rr",
+          "sha256": "f484d3551881506ee4d7a75efa7d49b2516842ee9f2b493500a6091e17d0574e"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-cli.rr",
+          "sha256": "f33c4741fee3e29a48e6d9645081d15513e2622f76a15fb0394473bff7149088"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-display.rr",
+          "sha256": "49f5a821570fdfe00e9cb207a8f62b3654acb47abf20c907cc457ffaa3ef3366"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/lint-ratchet.rr",
+          "sha256": "d004be27216a724e1c7c184e52116e81808d0c9090dbc58d5ffb58bfb042840b"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/python-discovery-roots.rr",
+          "sha256": "1dffd3b6640897f15a9ac7fc513c9a24613ab9370dc3204f447e26b493a7427a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/signing.rr",
+          "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+          "sha256": "6a7c6fc708cac8fc044cc6bdb6cea49c940273648900eb74e982f3f7579e5ff7"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.10530299999999998,
+          "systemCpuSeconds": 0.004187,
+          "peakRssMB": 59.359232,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 6.800000000010097e-05,
+          "systemCpuSeconds": 0.0001070000000000064,
+          "peakRssMB": 107.97056,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.00031799999999999884,
+          "systemCpuSeconds": 0.00028199999999999927,
+          "peakRssMB": 107.97056,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.15865500000000005,
+          "systemCpuSeconds": 0.014400000000000003,
+          "peakRssMB": 95.420416,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.06365399999999993,
+          "systemCpuSeconds": 0.020337999999999988,
+          "peakRssMB": 107.97056,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 0.000292208000000016,
+          "systemCpuSeconds": 0.0011769999999999975,
+          "peakRssMB": 107.97056,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.01050000000000001,
+          "systemCpuSeconds": 0.0011750000000000094,
+          "peakRssMB": 107.97056,
+          "submittedStatements": 24
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.05338399999999999,
+          "systemCpuSeconds": 0.002378000000000005,
+          "peakRssMB": 107.97056,
+          "submittedStatements": 63
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 9.500000000006725e-05,
+          "systemCpuSeconds": 0.003941,
+          "peakRssMB": 107.97056,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_async_sync_boundary.py::test_invalid_python_is_tolerated",
+      "check": "async_sync_boundary",
+      "entry": "_bs_select",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+      "files": 0,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [],
+      "options": {
+        "entryPoint": "_bs_select",
+        "bsCandidatePaths": [
+          "impl/module.py"
+        ],
+        "bsCandidateIsFile": [
+          "1"
+        ]
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "BoundaryFile",
+          "code": "BS_FILE",
+          "path": "",
+          "line": 0,
+          "at": 0,
+          "tag": null,
+          "message": "selected boundary file",
+          "parameters": {
+            "ordinal": 0,
+            "path": "impl/module.py"
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-api.rr",
+          "sha256": "f484d3551881506ee4d7a75efa7d49b2516842ee9f2b493500a6091e17d0574e"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-cli.rr",
+          "sha256": "f33c4741fee3e29a48e6d9645081d15513e2622f76a15fb0394473bff7149088"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-display.rr",
+          "sha256": "49f5a821570fdfe00e9cb207a8f62b3654acb47abf20c907cc457ffaa3ef3366"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/lint-ratchet.rr",
+          "sha256": "d004be27216a724e1c7c184e52116e81808d0c9090dbc58d5ffb58bfb042840b"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/python-discovery-roots.rr",
+          "sha256": "1dffd3b6640897f15a9ac7fc513c9a24613ab9370dc3204f447e26b493a7427a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/signing.rr",
+          "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+          "sha256": "6a7c6fc708cac8fc044cc6bdb6cea49c940273648900eb74e982f3f7579e5ff7"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.099744,
+          "systemCpuSeconds": 0.004540000000000002,
+          "peakRssMB": 59.260928,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 3.000000000030756e-06,
+          "systemCpuSeconds": 4.999999999991123e-06,
+          "peakRssMB": 106.807296,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.0,
+          "systemCpuSeconds": 0.0,
+          "peakRssMB": 106.807296,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.142417,
+          "systemCpuSeconds": 0.012406999999999994,
+          "peakRssMB": 96.043008,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.04110900000000001,
+          "systemCpuSeconds": 0.005712000000000002,
+          "peakRssMB": 106.807296,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.046580999999999984,
+          "systemCpuSeconds": 0.001920999999999999,
+          "peakRssMB": 106.807296,
+          "submittedStatements": 65
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 8.700000000000374e-05,
+          "systemCpuSeconds": 0.003724000000000005,
+          "peakRssMB": 106.807296,
+          "submittedStatements": 0
+        }
+      ]
+    },
+    {
+      "test": "scripts/tests/test_lint_async_sync_boundary.py::test_invalid_python_is_tolerated",
+      "check": "async_sync_boundary",
+      "entry": "scan_tree",
+      "policy": "/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity/gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+      "files": 1,
+      "status": "passed",
+      "executionMode": "workspace",
+      "inputFiles": [
+        {
+          "path": "api/_bs_buffers/0.py",
+          "sourceSha256": "e5c39b5d9e483c96898f2970978fee4d8e5a3814e685d9ab37365a5aa333b5ad"
+        }
+      ],
+      "options": {
+        "entryPoint": "scan_tree",
+        "checkedPaths": [
+          "impl/module.py"
+        ],
+        "hasReadError": "false"
+      },
+      "findings": 1,
+      "diagnostics": [
+        {
+          "policy": "data-layer-async-sync-boundary",
+          "clause": "Count",
+          "code": "BS_COUNT",
+          "path": "<inventory>",
+          "line": 1,
+          "at": 0,
+          "tag": null,
+          "message": "1",
+          "parameters": {
+            "count": 1
+          }
+        }
+      ],
+      "programInputs": [
+        {
+          "path": "docs/rule-syntax/lib/core.rr",
+          "sha256": "c3b6e0295060c3ff1be63d85387d77f0ca198aa6e30719c388976542d9df9112"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-api.rr",
+          "sha256": "f484d3551881506ee4d7a75efa7d49b2516842ee9f2b493500a6091e17d0574e"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-cli.rr",
+          "sha256": "f33c4741fee3e29a48e6d9645081d15513e2622f76a15fb0394473bff7149088"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/boundary-display.rr",
+          "sha256": "49f5a821570fdfe00e9cb207a8f62b3654acb47abf20c907cc457ffaa3ef3366"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/lint-ratchet.rr",
+          "sha256": "d004be27216a724e1c7c184e52116e81808d0c9090dbc58d5ffb58bfb042840b"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/plugin-production.rr",
+          "sha256": "2264cf750f91ec7b969f0de01c538b57155488c3faf68493ebd44c731648b2a6"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/python-discovery-roots.rr",
+          "sha256": "1dffd3b6640897f15a9ac7fc513c9a24613ab9370dc3204f447e26b493a7427a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/signing.rr",
+          "sha256": "1febd2ef9d290e65e67ee9ed62e0c8b2affede76cad1ec03b746d73bed78b553"
+        },
+        {
+          "path": "docs/rule-syntax/lib/data-layer/supplied-facts.rr",
+          "sha256": "ef9a71adf28400823dad5fd17030b9c7dfa0c880e22374fe94f8c74a69ba97d4"
+        },
+        {
+          "path": "docs/rule-syntax/lib/project.rr",
+          "sha256": "2d6fc22c01cdf4545e5e9c4446ab81dddd9488afa6811d9091638a779e4c928f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/ast.rr",
+          "sha256": "7b95e8236e9b1f3cf289649db47a554dd6c2ca92b272a1ee8c51e9435bab534a"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/flow.rr",
+          "sha256": "5e46ca06d35496c7928f4526107b473f5cb822eaa5943799e9633b10bbdaf73f"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/imports.rr",
+          "sha256": "d4b438b5e061aa964cfd9178b8197982b39a94e98ef93a1cefb7f34635d41d3d"
+        },
+        {
+          "path": "docs/rule-syntax/lib/python/names.rr",
+          "sha256": "7f354e4e686754c514f4e33497cf783f69309bbb9f99e6aac8e1c37d0c0e7e62"
+        },
+        {
+          "path": "gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
+          "sha256": "6a7c6fc708cac8fc044cc6bdb6cea49c940273648900eb74e982f3f7579e5ff7"
+        }
+      ],
+      "phases": [
+        {
+          "phase": "combine",
+          "userCpuSeconds": 0.07579,
+          "systemCpuSeconds": 0.003144000000000001,
+          "peakRssMB": 59.768832,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "parse (worker)",
+          "userCpuSeconds": 4.300000000001525e-05,
+          "systemCpuSeconds": 4.300000000000137e-05,
+          "peakRssMB": 105.971712,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "batch (worker)",
+          "userCpuSeconds": 0.00023099999999998122,
+          "systemCpuSeconds": 0.00023999999999999716,
+          "peakRssMB": 105.971712,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "constants",
+          "userCpuSeconds": 0.11037999999999998,
+          "systemCpuSeconds": 0.010025999999999997,
+          "peakRssMB": 93.601792,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "stats",
+          "userCpuSeconds": 0.04031345900000005,
+          "systemCpuSeconds": 0.013990000000000002,
+          "peakRssMB": 105.971712,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "wait",
+          "userCpuSeconds": 1.2489999999809598e-06,
+          "systemCpuSeconds": 0.000897000000000002,
+          "peakRssMB": 105.971712,
+          "submittedStatements": 0
+        },
+        {
+          "phase": "local",
+          "userCpuSeconds": 0.00634800000000002,
+          "systemCpuSeconds": 0.0006999999999999992,
+          "peakRssMB": 105.971712,
+          "submittedStatements": 24
+        },
+        {
+          "phase": "cross",
+          "userCpuSeconds": 0.036487999999999965,
+          "systemCpuSeconds": 0.001691999999999999,
+          "peakRssMB": 105.971712,
+          "submittedStatements": 63
+        },
+        {
+          "phase": "write",
+          "userCpuSeconds": 5.100000000002325e-05,
+          "systemCpuSeconds": 0.002797000000000001,
+          "peakRssMB": 105.971712,
+          "submittedStatements": 0
+        }
+      ]
+    }
+  ],
+  "assertionTranslations": [],
+  "configurationBindings": {
+    "async_sync_boundary": {
+      "nativeCall": 0,
+      "names": [
+        "SOURCE_TRIGGERS",
+        "ALLOWLIST",
+        "INFORMATIONAL_DIRS",
+        "CATEGORY_LABELS",
+        "ASYNC_SYNC_BOUNDARY_EXTRACTOR"
+      ]
+    }
+  },
+  "hostTransfers": [],
+  "originalRecordingSha256": "466c04b5bdbeeb648159c837cd0406ce1ab97061a327f66fc3f4276dccf00b39",
+  "detectorObservations": [
+    {
+      "test": "scripts/tests/test_lint_async_sync_boundary.py::test_flags_asyncio_run_inside_sync_function",
+      "check": "async_sync_boundary",
+      "entry": "scan_tree",
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "expectedSourceResult": {
+        "kind": "dataclass",
+        "type": "scripts.lint_async_sync_boundary.LintResult",
+        "fields": {
+          "violations": [
+            {
+              "kind": "dataclass",
+              "type": "scripts.lint_async_sync_boundary.Violation",
+              "fields": {
+                "file": "impl/module.py",
+                "line": 3,
+                "col": 11,
+                "category": "SYNC_WRAPS_ASYNC",
+                "function_name": "load",
+                "call_text": "asyncio.run()",
+                "is_async_ctx": false
+              }
+            }
+          ],
+          "files_checked": 1
+        }
+      },
+      "actualSourceResult": {
+        "kind": "dataclass",
+        "type": "scripts.lint_async_sync_boundary.LintResult",
+        "fields": {
+          "violations": [
+            {
+              "kind": "dataclass",
+              "type": "scripts.lint_async_sync_boundary.Violation",
+              "fields": {
+                "file": "impl/module.py",
+                "line": 3,
+                "col": 11,
+                "category": "SYNC_WRAPS_ASYNC",
+                "function_name": "load",
+                "call_text": "asyncio.run()",
+                "is_async_ctx": false
+              }
+            }
+          ],
+          "files_checked": 1
+        }
+      },
+      "expected": [
+        {
+          "path": "impl/module.py",
+          "line": 3,
+          "column": 11,
+          "code": "SYNC_WRAPS_ASYNC",
+          "message": "asyncio.run()",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ],
+      "actual": [
+        {
+          "path": "impl/module.py",
+          "line": 3,
+          "column": 11,
+          "code": "SYNC_WRAPS_ASYNC",
+          "message": "asyncio.run()",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ],
+      "status": "passed"
+    },
+    {
+      "test": "scripts/tests/test_lint_async_sync_boundary.py::test_flags_to_thread_inside_async_function",
+      "check": "async_sync_boundary",
+      "entry": "scan_tree",
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "expectedSourceResult": {
+        "kind": "dataclass",
+        "type": "scripts.lint_async_sync_boundary.LintResult",
+        "fields": {
+          "violations": [
+            {
+              "kind": "dataclass",
+              "type": "scripts.lint_async_sync_boundary.Violation",
+              "fields": {
+                "file": "impl/module.py",
+                "line": 3,
+                "col": 17,
+                "category": "ASYNC_WRAPS_SYNC",
+                "function_name": "load",
+                "call_text": "asyncio.to_thread()",
+                "is_async_ctx": true
+              }
+            }
+          ],
+          "files_checked": 1
+        }
+      },
+      "actualSourceResult": {
+        "kind": "dataclass",
+        "type": "scripts.lint_async_sync_boundary.LintResult",
+        "fields": {
+          "violations": [
+            {
+              "kind": "dataclass",
+              "type": "scripts.lint_async_sync_boundary.Violation",
+              "fields": {
+                "file": "impl/module.py",
+                "line": 3,
+                "col": 17,
+                "category": "ASYNC_WRAPS_SYNC",
+                "function_name": "load",
+                "call_text": "asyncio.to_thread()",
+                "is_async_ctx": true
+              }
+            }
+          ],
+          "files_checked": 1
+        }
+      },
+      "expected": [
+        {
+          "path": "impl/module.py",
+          "line": 3,
+          "column": 17,
+          "code": "ASYNC_WRAPS_SYNC",
+          "message": "asyncio.to_thread()",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ],
+      "actual": [
+        {
+          "path": "impl/module.py",
+          "line": 3,
+          "column": 17,
+          "code": "ASYNC_WRAPS_SYNC",
+          "message": "asyncio.to_thread()",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ],
+      "status": "passed"
+    },
+    {
+      "test": "scripts/tests/test_lint_async_sync_boundary.py::test_flags_executor_escape_inside_async_function",
+      "check": "async_sync_boundary",
+      "entry": "scan_tree",
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "expectedSourceResult": {
+        "kind": "dataclass",
+        "type": "scripts.lint_async_sync_boundary.LintResult",
+        "fields": {
+          "violations": [
+            {
+              "kind": "dataclass",
+              "type": "scripts.lint_async_sync_boundary.Violation",
+              "fields": {
+                "file": "impl/module.py",
+                "line": 2,
+                "col": 17,
+                "category": "EXECUTOR_ESCAPE",
+                "function_name": "load",
+                "call_text": "loop.run_in_executor()",
+                "is_async_ctx": true
+              }
+            }
+          ],
+          "files_checked": 1
+        }
+      },
+      "actualSourceResult": {
+        "kind": "dataclass",
+        "type": "scripts.lint_async_sync_boundary.LintResult",
+        "fields": {
+          "violations": [
+            {
+              "kind": "dataclass",
+              "type": "scripts.lint_async_sync_boundary.Violation",
+              "fields": {
+                "file": "impl/module.py",
+                "line": 2,
+                "col": 17,
+                "category": "EXECUTOR_ESCAPE",
+                "function_name": "load",
+                "call_text": "loop.run_in_executor()",
+                "is_async_ctx": true
+              }
+            }
+          ],
+          "files_checked": 1
+        }
+      },
+      "expected": [
+        {
+          "path": "impl/module.py",
+          "line": 2,
+          "column": 17,
+          "code": "EXECUTOR_ESCAPE",
+          "message": "loop.run_in_executor()",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ],
+      "actual": [
+        {
+          "path": "impl/module.py",
+          "line": 2,
+          "column": 17,
+          "code": "EXECUTOR_ESCAPE",
+          "message": "loop.run_in_executor()",
+          "tag": null,
+          "severity": null,
+          "is_fallback": false
+        }
+      ],
+      "status": "passed"
+    },
+    {
+      "test": "scripts/tests/test_lint_async_sync_boundary.py::test_allows_ordinary_async_await",
+      "check": "async_sync_boundary",
+      "entry": "scan_tree",
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "expectedSourceResult": {
+        "kind": "dataclass",
+        "type": "scripts.lint_async_sync_boundary.LintResult",
+        "fields": {
+          "violations": [],
+          "files_checked": 1
+        }
+      },
+      "actualSourceResult": {
+        "kind": "dataclass",
+        "type": "scripts.lint_async_sync_boundary.LintResult",
+        "fields": {
+          "violations": [],
+          "files_checked": 1
+        }
+      },
+      "expected": [],
+      "actual": [],
+      "status": "passed"
+    },
+    {
+      "test": "scripts/tests/test_lint_async_sync_boundary.py::test_invalid_python_is_tolerated",
+      "check": "async_sync_boundary",
+      "entry": "scan_tree",
+      "ordinal": 0,
+      "originalRetainedReason": null,
+      "expectedSourceResult": {
+        "kind": "dataclass",
+        "type": "scripts.lint_async_sync_boundary.LintResult",
+        "fields": {
+          "violations": [],
+          "files_checked": 1
+        }
+      },
+      "actualSourceResult": {
+        "kind": "dataclass",
+        "type": "scripts.lint_async_sync_boundary.LintResult",
+        "fields": {
+          "violations": [],
+          "files_checked": 1
+        }
+      },
+      "expected": [],
+      "actual": [],
+      "status": "passed"
+    }
+  ],
+  "pythonHashSeed": null,
+  "executionIsolation": "One owned persistent cache per assertion shard; shared-cache concurrency is tested separately",
+  "semanticFallbacks": [],
+  "hostProtocolCalls": [],
+  "casesWithoutNativeCalls": []
+}

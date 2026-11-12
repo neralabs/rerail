@@ -7,6 +7,8 @@ Keep rule logic in Datalog. Do not add SQL stages or rule-specific native detect
 The migration covers the **100 existing ports**, including their complete public contracts.
 The remaining 42 checks will use `.rr` when ported.
 The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
+The current inventory has twenty admitted rules, seventy-nine drafts, and one absent translation.
+Draft policies do not count as completed migrations.
 
 ## Active engine
 
@@ -4084,3 +4086,31 @@ Receipt assembly fails because it traverses source observations as execution rec
 The source reporter recording contains `programInputs: null`; source observations have no native program inputs.
 The fix must traverse native reports separately and still reject null program inputs in native evidence.
 A new regression test fails before that change. The rule remains a draft.
+
+### 2026-11-12 — Boundary receives full admission
+
+The complete boundary receipt passes validation after all 238 acceptance jobs finish successfully.
+Both APIs pass five unchanged original tests, including all three finding-positive observations.
+Each API also passes 173 component cases, 32 public scanner cases, 22 production cases, 31 rendering cases, and 37 CLI cases.
+All seventeen historical inputs and twenty-two retained update steps pass through both APIs.
+The complete earlier API and reporter corpora pass through snapshot execution: 295 and 158 cases respectively.
+All 44 valid removal controls demonstrate a semantic difference from the unchanged source witness.
+
+The receipt retains 2,252 actual rule executions and four native signing calls.
+Source metadata and aggregate program inventories do not count as native invocations.
+The admission validator requires consumed programs for every native invocation.
+Twenty-six regression tests cover incomplete evidence, changed results, source callbacks, mixed programs, invalid controls, and incorrect execution accounting.
+
+The source's `as_completed` scanner permits whole-file groups to arrive in either order.
+The full receipt retains twelve earlier source observations proving both permutations, plus both pinned source files.
+Admission uses the existing comparator for this API only. Every finding field, checked-file count, duplicate, group boundary, and within-file order remains exact.
+Both raw results remain in the receipt.
+
+All 666 Python tooling tests pass in 64.442 seconds.
+The manifest audit passes, and all twenty admitted entries pass `require_complete`.
+The complete hundred-rule gate still fails because eighty entries remain unadmitted.
+The current inventory has twenty admissions, seventy-nine drafts, and one absent translation.
+
+The receipt is `rr-boundary-complete-finalfcce.json.gz`; its original-suite replays are `rr-boundary-complete-native-snapshot.json` and `rr-boundary-complete-native-workspace.json`.
+The native engine is unchanged; compile time is zero.
+No repository-wide cold execution or additional Linear ticket was created.

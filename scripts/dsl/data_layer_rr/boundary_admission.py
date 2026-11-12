@@ -4,12 +4,14 @@ from collections import Counter
 import gzip
 import json
 from pathlib import Path
+import subprocess
 import boundary_scanner_checkpoint
 from boundary_controls import EDITS,SOURCES,mutate,library_path,invalid_result
 from boundary_updates import SEQUENCES
 from migration import ROOT,PIN,MANIFEST,read_json,write_json,sha,compare,require_complete
 from scanner_checkpoint import walk
 from validate_supplied_facts_checkpoint import require,equal
+from boundary_port import comparison_value
 
 CHECK='async_sync_boundary'
 FORMAT='rerail.boundary-admission/v1'
@@ -18,6 +20,26 @@ COUNTS=dict(display=31,cli=37,legacy=17)
 PARTS=dict(display=8,cli=37,legacy=4)
 SUPPLEMENTAL=dict(api=295,report=158)
 CORPORA=dict(api='rr-fresh-async-sync-boundary-cases.json',report='rr-async-sync-boundary-reporter-cases.json')
+
+
+def execution_reports(value):
+    """Source observations and corpus inputs are data, never native execution records."""
+    for section in ['groups','supplemental']:
+        for item in value.get(section,{}).values():
+            reports=item['reports']
+            if isinstance(reports,dict):
+                for shards in reports.values():yield from shards
+            else:yield from reports
+    for reports in value.get('updates',{}).values():yield from reports
+    yield from value.get('controls',[])
+
+
+def native_calls(report):
+    """Count actual calls, excluding a fresh-API report's aggregate program inventory."""
+    if 'cases' in report:
+        for case in report['cases']:yield from case['native']
+    elif 'calls' in report:yield from report['calls']
+    else:yield from report['results']
 
 
 def validate(value):
@@ -43,13 +65,25 @@ def validate(value):
     legacy=value['groups']['legacy']['source']['value']['cases']
     require(Counter(r['input']['corpus'] for r in legacy)=={'batch-02-recording.json':5,'batch-02-probes.json':12},'Missing earlier input family')
     for row in legacy:require(row['input']['corpusSha256']==value['legacyCorpora'][row['input']['corpus']]['sha256'],'Changed earlier corpus')
+    proof=value['sourceCompletionOrder'];api=value['supplemental']['api']['source']['value']
+    require(proof['sourcePin']==PIN and len(proof['runs'])==12,'Missing source completion-order evidence')
+    require(set(proof['sourceFiles'])=={'scripts/lint_async_sync_boundary.py','scripts/lint_lib/fact_engine.py'},'Missing source completion-order code')
+    require(proof['sourceFiles']['scripts/lint_async_sync_boundary.py']==api['sourceFiles']['scripts/lint_async_sync_boundary.py'],'Mixed source completion-order linter')
+    require(set(value['sourceCompletionCode'])==set(proof['sourceFiles']),'Missing source completion-order code snapshots')
+    for path,item in value['sourceCompletionCode'].items():require(sha(item['text'].encode())==item['sha256']==proof['sourceFiles'][path],'Changed source completion-order code')
+    orders=set(tuple(r['order']) for r in proof['runs'])
+    require(orders=={('api/a.py','impl/b.py'),('impl/b.py','api/a.py')} and proof['distinctOrders']==[list(order) for order in sorted(orders)],'Unproven source completion permutations')
+    default=next(r['value'] for r in api['results'] if r['id']=='default-inventory')
+    for run in proof['runs']:
+        require([r['fields']['file'] for r in run['value']['fields']['violations']]==run['order'],'Changed source completion-order observation')
+        require(equal(comparison_value(dict(result=run['value'])),comparison_value(default)),'Changed source completion-order value')
     for group,count in SUPPLEMENTAL.items():
         item=value['supplemental'][group];source=item['source'];oracle=source['value'];corpus=item['corpus']
         require(sha(source['text'].encode())==source['sha256'] and equal(json.loads(source['text']),oracle),'Changed supplemental source')
         require(oracle['sourcePin']==PIN and oracle['execution']=='offline-source' and oracle['totalCases']==count and len(oracle['results'])==count,'Incomplete supplemental source')
         require(oracle['sourceFiles']['scripts/lint_async_sync_boundary.py']==value['source']['sourceSha256'],'Mixed supplemental source module')
         require(sha(corpus['text'].encode())==corpus['sha256']==oracle['casesSha256'],'Changed supplemental corpus')
-        wanted={r['id']:r for r in oracle['results']};inputs=json.loads(corpus['text'])['cases']
+        wanted={r['id']:r for r in oracle['results']};inputs=json.loads(corpus['text'])['cases'];by_id={r['id']:r for r in inputs}
         require(len(wanted)==count and Counter(r['id'] for r in inputs)==Counter(wanted.keys()) and all(r['status']=='passed' for r in wanted.values()),'Missing supplemental source case')
         reports=item['reports'];rows=[r for report in reports for r in report['results']]
         require(Counter(r['id'] for r in rows)==Counter(wanted.keys()),'Missing or repeated supplemental case')
@@ -58,7 +92,10 @@ def validate(value):
             require(not report.get('semanticFallbacks') and not report.get('sourceDetectorModules'),'Supplemental source callback')
             if group=='api':require(report['status']=='completed' and report['sourceFiles']==oracle['sourceFiles'] and report['calls'] and all(c['status']=='passed' for c in report['calls']),'Incomplete supplemental API execution')
             else:require('activeCaseId' not in report and report['executionIsolation']=='One owned cache per reporter run; reused across all cases','Incomplete or non-isolated reporter execution')
-        for row in rows:require(row['status']=='passed' and equal(row['value'],wanted[row['id']]['value']),'Changed complete supplemental value')
+        for row in rows:
+            actual=row['value'];expected=wanted[row['id']]['value']
+            if group=='api' and by_id[row['id']]['entry']=='scan_tree':actual,expected=comparison_value(actual),comparison_value(expected)
+            require(row['status']=='passed' and equal(actual,expected),'Changed complete supplemental value')
     source=value['scanners']['production']['source'];production={r['input']['id']:r for r in source['value']['cases']}
     for mode in MODES:
         reports=value['updates'][mode];require(Counter(r['sequence'] for r in reports)==Counter(range(len(SEQUENCES))),'Missing retained update sequence')
@@ -89,21 +126,31 @@ def validate(value):
         require(row['programCopies']=={sha(t.encode()):t for t in [main,*extra]},'Unrelated removal mutation')
     extra=0;utilities=0
     for group in ['groups','supplemental','updates','controls']:
-        for row in walk(value[group]):
-            if row.get('utility')=='sign-ed25519':utilities+=1
-            for path,digest in row.get('harnessFiles',{}).items():require(value['harness'][path]['sha256']==digest,'Mixed admission harness')
-            if 'programInputs' not in row:continue
-            extra+=1
-            if group!='controls':require(any(p['path']==value['rulePath'] and p['sha256']==value['ruleSha256'] for p in row['programInputs']),'Mixed main rule revision')
-            for p in row['programInputs']:require(value['programs'][p['path']]['sha256']==p['sha256'],'Unbound consumed admission program')
+        for report in execution_reports({group:value[group]}):
+            for row in walk(report):
+                for path,digest in row.get('harnessFiles',{}).items():require(value['harness'][path]['sha256']==digest,'Mixed admission harness')
+                if 'programInputs' not in row:continue
+                require(isinstance(row['programInputs'],list) and row['programInputs'],'Missing consumed admission programs')
+                for p in row['programInputs']:require(value['programs'][p['path']]['sha256']==p['sha256'],'Unbound consumed admission program')
+            for row in native_calls(report):
+                if row.get('utility')=='sign-ed25519':utilities+=1;continue
+                inputs=row.get('programInputs')
+                require(isinstance(inputs,list) and inputs and isinstance(row.get('phases'),list),'Missing native invocation evidence')
+                extra+=1
+                if group!='controls':require(any(p['path']==value['rulePath'] and p['sha256']==value['ruleSha256'] for p in inputs),'Mixed main rule revision')
     rules=summary['nativeExecutions']+extra
     summary.update(admitted=True,fullRuleMigrationAcceptance=True,frontendCasesPerAPI=COUNTS,supplementalCasesSnapshot=SUPPLEMENTAL,persistentStepsPerAPI=sum(map(len,SEQUENCES)),controls=len(controls),nativeRuleExecutions=rules,nativeUtilityExecutions=utilities,nativeExecutions=rules+utilities)
     return summary
 
 
-def pack(work):
+def pack(work,source):
     value=boundary_scanner_checkpoint.pack(work)
+    with gzip.open(ROOT/'gate/data-layer/fixtures/host/data-layer-port/rr-async-sync-boundary-native-supplemental-contracts.json.gz','rt') as stream:order=json.load(stream)['sourceCompletionOrder']
+    code={}
+    for path in order['sourceFiles']:
+        data=subprocess.check_output(['git','-C',str(source),'show',PIN+':'+path]);code[path]=dict(text=data.decode(),sha256=sha(data))
     value.update(format=FORMAT,admitted=True,fullRuleMigrationAcceptance=True,remaining=[],groups={},supplemental={},
+        sourceCompletionOrder=order,sourceCompletionCode=code,
         updates={m:[read_json(work/f'updates-{m}-{i}.json') for i in range(len(SEQUENCES))] for m in MODES},controls=[read_json(work/f'controls-{m}-{i}.json') for m in MODES for i in range(len(EDITS))],
         legacyCorpora={n:dict(sha256=sha((ROOT/'gate/data-layer/fixtures/host/data-layer-port'/n).read_bytes())) for n in ['batch-02-recording.json','batch-02-probes.json']})
     for group in COUNTS:
@@ -112,8 +159,8 @@ def pack(work):
         text=(work/f'{group}-source.json').read_text();corpus=(ROOT/'gate/data-layer/fixtures/host/data-layer-port'/CORPORA[group]).read_text()
         value['supplemental'][group]=dict(source=dict(text=text,sha256=sha(text.encode()),value=json.loads(text)),corpus=dict(text=corpus,sha256=sha(corpus.encode())),reports=[read_json(work/f'{group}-final-{i}.json') for i in range(16)])
     mutations={d:t for report in value['controls'] for row in report['cases'] for d,t in row['programCopies'].items()}
-    for group in ['groups','supplemental','updates','controls']:
-        for row in walk(value[group]):
+    for report in execution_reports(value):
+        for row in walk(report):
             for p in row.get('programInputs',[]):
                 digest=p['sha256'];text=mutations.get(digest)
                 if text is None and digest is not None:text=(ROOT/p['path']).read_text()
@@ -145,9 +192,10 @@ def admit(path,value):
 
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser(description=__doc__);p.add_argument('command',choices=['pack','validate','admit']);p.add_argument('path',type=Path);p.add_argument('--work',type=Path);a=p.parse_args()
+    p=argparse.ArgumentParser(description=__doc__);p.add_argument('command',choices=['pack','validate','admit']);p.add_argument('path',type=Path);p.add_argument('--work',type=Path);p.add_argument('--source',type=Path);a=p.parse_args()
     if a.command=='pack':
-        value=pack(a.work);a.path.write_bytes(gzip.compress(json.dumps(value,ensure_ascii=False,separators=(',',':')).encode(),mtime=0))
+        if a.work is None or a.source is None:p.error('Packing requires --work and the pinned --source repository')
+        value=pack(a.work,a.source);a.path.write_bytes(gzip.compress(json.dumps(value,ensure_ascii=False,separators=(',',':')).encode(),mtime=0))
     else:
         with gzip.open(a.path,'rt') as f:value=json.load(f)
     if a.command=='admit':admit(a.path,value)

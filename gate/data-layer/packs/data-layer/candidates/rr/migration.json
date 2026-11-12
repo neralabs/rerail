@@ -4449,21 +4449,46 @@
       "batch": 2,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-async-sync-boundary.json",
       "legacySha256": "f342876eef567090dd1493a0a8411a057fb14915dca5d5184e023322f18a483a",
-      "status": "draft",
+      "status": "full-contract-passed",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
       "ruleSha256": "6a7c6fc708cac8fc044cc6bdb6cea49c940273648900eb74e982f3f7579e5ff7",
       "migrationProgress": {
-        "status": "native-scanner-progress",
-        "admitted": false,
-        "verifiedNativeExecutions": 640,
+        "status": "full-contract-passed",
+        "admitted": true,
+        "verifiedNativeExecutions": 2256,
         "checkpoint": {
-          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-boundary-scanners-finalfcce.json.gz",
-          "sha256": "8fac40b40f880e93702b9824f2b8f734f4c19b753d6cd347713201b2570c2b2a"
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-boundary-complete-finalfcce.json.gz",
+          "sha256": "85e0200e53bd3d8ffdffc800a82c16f2e8d8eb88969afc060903cc7cdca58f52"
         },
-        "remaining": [
-          "Native rendering and CLI/ratchet administration",
-          "Earlier inputs, retained edits, removal controls and full admission"
-        ]
+        "summary": {
+          "check": "async_sync_boundary",
+          "originalCasesPerAPI": 5,
+          "originalPositiveObservationsPerAPI": 3,
+          "nativeExecutions": 2256,
+          "admitted": true,
+          "fullMigrationAcceptance": false,
+          "recordedCasesPerAPI": 173,
+          "sourceFormat": "rerail.boundary-components/v1",
+          "scannerCasesPerAPI": {
+            "public": 32,
+            "production": 22
+          },
+          "fullRuleMigrationAcceptance": true,
+          "frontendCasesPerAPI": {
+            "display": 31,
+            "cli": 37,
+            "legacy": 17
+          },
+          "supplementalCasesSnapshot": {
+            "api": 295,
+            "report": 158
+          },
+          "persistentStepsPerAPI": 22,
+          "controls": 44,
+          "nativeRuleExecutions": 2252,
+          "nativeUtilityExecutions": 4
+        },
+        "remaining": []
       },
       "migrationProgressHistory": [
         {
@@ -4479,8 +4504,82 @@
             "Rendering, CLI and ratchet administration",
             "Earlier inputs, retained edits, removal controls and full admission"
           ]
+        },
+        {
+          "status": "native-scanner-progress",
+          "admitted": false,
+          "verifiedNativeExecutions": 640,
+          "checkpoint": {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-boundary-scanners-finalfcce.json.gz",
+            "sha256": "8fac40b40f880e93702b9824f2b8f734f4c19b753d6cd347713201b2570c2b2a"
+          },
+          "remaining": [
+            "Native rendering and CLI/ratchet administration",
+            "Earlier inputs, retained edits, removal controls and full admission"
+          ]
         }
-      ]
+      ],
+      "evidence": {
+        "assertions": 5,
+        "positives": 3,
+        "failures": 0,
+        "skipped": 0,
+        "semanticFallbacks": 0,
+        "ruleSha256": "6a7c6fc708cac8fc044cc6bdb6cea49c940273648900eb74e982f3f7579e5ff7",
+        "engineCommit": "4e07746800e7fb958a57c5208c1ea956bc8f7412",
+        "engineSha256": "f4db14313662e14ca1e1924296c91acb48107035461e85db4a2977d61b6ce6e2",
+        "corpusSha256": "466c04b5bdbeeb648159c837cd0406ce1ab97061a327f66fc3f4276dccf00b39",
+        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "originalInventory": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory-v2.json",
+          "sha256": "a3636d7f8dbb210cfec64aa05b20ff37a97899365b68b3ba2a4ab855ccdda0db"
+        },
+        "reports": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-boundary-complete-native-snapshot.json",
+            "sha256": "c5cca549daa5a0e58583fd7592a7dd6547c3e31d20cf8e5f26381bb252878e36"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-boundary-complete-native-workspace.json",
+            "sha256": "ff1e4621d1e303c5b04f5378b297f79acc2d505e024e66dcc9b3a45e3c1d7d55"
+          }
+        ],
+        "acceptanceCheckpoints": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-boundary-complete-finalfcce.json.gz",
+            "sha256": "85e0200e53bd3d8ffdffc800a82c16f2e8d8eb88969afc060903cc7cdca58f52"
+          }
+        ],
+        "supplemental": {
+          "check": "async_sync_boundary",
+          "originalCasesPerAPI": 5,
+          "originalPositiveObservationsPerAPI": 3,
+          "nativeExecutions": 2256,
+          "admitted": true,
+          "fullMigrationAcceptance": false,
+          "recordedCasesPerAPI": 173,
+          "sourceFormat": "rerail.boundary-components/v1",
+          "scannerCasesPerAPI": {
+            "public": 32,
+            "production": 22
+          },
+          "fullRuleMigrationAcceptance": true,
+          "frontendCasesPerAPI": {
+            "display": 31,
+            "cli": 37,
+            "legacy": 17
+          },
+          "supplementalCasesSnapshot": {
+            "api": 295,
+            "report": 158
+          },
+          "persistentStepsPerAPI": 22,
+          "controls": 44,
+          "nativeRuleExecutions": 2252,
+          "nativeUtilityExecutions": 4
+        },
+        "scope": "All five unchanged original assertions and three finding-positive observations. Components, public scanners, production, rendering, CLI, historical inputs, retained edits and valid removal controls pass through both APIs. The complete supplemental API and reporter corpora also pass."
+      }
     },
     {
       "check": "admin_async_purity",
