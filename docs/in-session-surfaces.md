@@ -224,12 +224,15 @@ In a large repository, Rerail indexes at session start before code rules can run
 - OMP's footer shows ` · indexing` while it lasts, only if it takes over half a second.
 - The dashboard timeline says code rules were not yet running at those steps.
 
-The daemon closes a session that sends nothing for 30 minutes, and frees a checkout's compiled rules 15 minutes after
-its last session ends. The session's next event opens it again, and its rules may compile again (about 12 s of CPU for
-a TypeScript repository's five packs on a Windows laptop). In Claude Code, Codex and Cursor, a reopened session's tool
-calls and turn end wait up to 20 seconds for its rules, so its first edit is checked and steered at its own result as
-every later one is. A daemon restart or a resumed session reopens the same way. Rules still not open after 20 seconds
+The daemon frees what a session that sends nothing for 30 minutes holds in memory, and a checkout's compiled rules 15
+minutes after no session there holds them. The session stays open, since its agent may be too: the dashboard shows it
+live, a scan asked for it runs, and its next event opens it again. Its rules may then compile again (about 12 s of CPU
+for a TypeScript repository's five packs on a Windows laptop). In Claude Code, Codex and Cursor, a reopened session's
+tool calls and turn end wait up to 20 seconds for its rules, so its first edit is checked and steered at its own result
+as every later one is. A daemon restart or a resumed session reopens the same way. Rules still not open after 20 seconds
 are not waited for further: that edit is checked by the first pass once they open.
+
+- Stopping the daemon ends the session, as it ends every open one.
 
 </details>
 

@@ -613,6 +613,54 @@ interface RuntimeSessionState {
   /** The results stored without their output (`withheldOutput`): their samples are recorded without text too. */
   withheldResults: Set<string>;
   closed: boolean;
+  /** Set as `closeIdleSession` lets the session go: its close keeps it open in the database, owned (`#markClosed`). */
+  suspending?: true;
+}
+
+/**
+ * What a session the engine service let go of while it was quiet (`closeIdleSession`) keeps until it opens again: the
+ * owner claim it still holds in the database, so it stays live, takes scan requests and reopens without interrupting
+ * them.
+ */
+export interface SessionSuspension {
+  readonly descriptor: AdapterSession;
+  readonly ownerClaim: PolicyOwnerClaim | undefined;
+}
+
+/** The suspended sessions a runtime opens again, by session id: an engine service keeps them across its runtimes. */
+export interface SuspendedSessions {
+  /** Ends the session's suspension as a runtime claims it again, and returns it; undefined once another has taken it. */
+  take(sessionId: string): SessionSuspension | undefined;
+}
+
+/** What `closeIdleSession` did with a quiet session. */
+export type IdleClose =
+  /** It still owes its agent something its ledger does not hold, and stays open. */
+  | { readonly kind: "owing" }
+  /** This runtime does not hold it open. */
+  | { readonly kind: "not-held" }
+  /** Its memory is freed; it stays open in the database until it opens again or its daemon stops. */
+  | { readonly kind: "suspended"; readonly suspension: SessionSuspension };
+
+/**
+ * Ends suspended sessions no runtime opened again, as `closeSession` ends an open one when its daemon stops: their queued
+ * scans are interrupted, their owner released and their record ended now.
+ */
+export function endSuspendedSessions(databasePath: string, suspensions: readonly SessionSuspension[]): void {
+  const sessions = new SqliteSessionStore(databasePath);
+  const controls = new SqliteAuditControlStore(databasePath);
+  try {
+    for (const { descriptor, ownerClaim } of suspensions) {
+      if (ownerClaim !== undefined) {
+        controls.interrupt(descriptor.sessionId);
+        controls.releaseOwner(descriptor.sessionId, ownerClaim);
+      }
+      sessions.closeSession(descriptor.sessionId);
+    }
+  } finally {
+    controls.close();
+    sessions.close();
+  }
 }
 
 /** A session's ledger as read back when the session opens. */
@@ -811,6 +859,8 @@ export interface RerailRuntimeOptions {
   discoveryWaitMs?: number;
   /** Receives the timing lines of session start and slow turn ends (the daemon passes its log); without it they are not written. */
   timingLog?: (line: string) => void;
+  /** The sessions an engine service suspended (`closeIdleSession`), which this runtime takes back as it opens one. */
+  suspendedSessions?: SuspendedSessions;
   nativeSession?: {
     registry: ConversationRuleRegistry;
     ruleSync?: LiveConversationRules;
@@ -835,8 +885,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #catalogs: CheckoutCatalogs;
   readonly #owners = new CheckoutOwners(() => this.#catalogs.recordedCheckoutsVersion());
   readonly #sessions = new Map<string, RuntimeSessionState>();
-  /** Kept past disposal for late receipts, with the repository each session was attributed to; the latest few only. */
-  readonly #closedSessions = new Map<string, { descriptor: AdapterSession; startedAt: number; endedAt: number; repositoryKey: string | null }>();
+  /**
+   * Kept past disposal for late receipts, with the repository each session was attributed to; the latest few only. A
+   * suspended session's `endedAt` is null: it is still open.
+   */
+  readonly #closedSessions = new Map<string, { descriptor: AdapterSession; startedAt: number; endedAt: number | null; repositoryKey: string | null }>();
   #sessionStoreClosed = false;
   readonly #routers = new Map<RerailHost, RerailHostRuntime>();
   readonly #nativeSession: RerailRuntimeOptions["nativeSession"];
@@ -852,9 +905,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #discoveryWaitMs: number | undefined;
   readonly #timingLog: ((line: string) => void) | undefined;
   readonly #startWatch: RepositoryStartWatch | undefined;
+  readonly #suspendedSessions: SuspendedSessions | undefined;
 
   constructor(options: RerailRuntimeOptions) {
     this.#storageRoot = options.storageRoot;
+    this.#suspendedSessions = options.suspendedSessions;
     this.#storageRootIsDefault = isDefaultStorageRoot(options.storageRoot, options.workspaceRoot);
     this.#modelPath = options.modelPath;
     this.#nativeSession = options.nativeSession;
@@ -1577,8 +1632,15 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     return { processedEventIds: [...opened.processed] };
   }
 
-  /** Claims the session for this runtime, which delivers its steers in the background when it can, else at the next event. */
+  /**
+   * Claims the session for this runtime, which delivers its steers in the background when it can, else at the next event.
+   * A suspended session takes back the claim it kept while this process still holds it, so the scans queued for it while
+   * it was suspended stay queued for it to run. Taking it ends the suspension, so a second runtime opening the session
+   * meanwhile registers as before, and is refused while this one owns it.
+   */
   #registerOwner(sessionId: string): PolicyOwnerClaim {
+    const kept = this.#suspendedSessions?.take(sessionId)?.ownerClaim;
+    if (kept !== undefined && this.#controls.holdsOwner(sessionId, kept)) return kept;
     return this.#controls.registerOwner(sessionId, this.#deliverBackground === undefined ? "next-event" : "background");
   }
 
@@ -1742,18 +1804,40 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * Closes a session that sent no end and has gone quiet, as its end would, without recording an event: its host router
-   * forgets it too, so its next event opens it again from its ledger. A session that still owes its agent something the
-   * ledger does not hold (`#owesAgent`) stays open, false then, unless `evenIfOwing`: the engine service closes it anyway
-   * once it has been quiet a day (`OWING_SESSION_IDLE_MS` in engine-service.ts), and what it owed is lost.
+   * Suspends a session that sent no end and has gone quiet: frees all it holds in memory, as its end would, without
+   * recording an event, and its host router forgets it too, so its next event opens it again from its ledger. Its agent
+   * may still be open, so it stays open in the database and keeps its owner claim: it reads as live, and a scan asked for
+   * it queues for it (`SessionSuspension`). A session that still owes its agent something the ledger does not hold
+   * (`#owesAgent`) stays as it is, unless `evenIfOwing`: the engine service suspends it anyway once it has been quiet a
+   * day (`OWING_SESSION_IDLE_MS` in engine-service.ts), and what it owed is lost.
    */
-  closeIdleSession(sessionId: string, options: { evenIfOwing?: boolean } = {}): Promise<boolean> {
-    return this.#ingestLanes.run(sessionId, async () => {
+  closeIdleSession(sessionId: string, options: { evenIfOwing?: boolean } = {}): Promise<IdleClose> {
+    return this.#ingestLanes.run(sessionId, async (): Promise<IdleClose> => {
       const state = this.#sessions.get(sessionId);
-      if (state === undefined) return true;
-      if (options.evenIfOwing !== true && this.#owesAgent(state)) return false;
+      if (state === undefined) return { kind: "not-held" };
+      if (options.evenIfOwing !== true && this.#owesAgent(state)) return { kind: "owing" };
+      const suspension = this.#suspension(state);
+      state.suspending = true;
       await this.#router(state.descriptor.host).stop(sessionId);
-      return true;
+      return { kind: "suspended", suspension };
+    });
+  }
+
+  /** What `state`'s session keeps while suspended: its owner claim. */
+  #suspension(state: RuntimeSessionState): SessionSuspension {
+    return { descriptor: state.descriptor, ownerClaim: state.ownerClaim };
+  }
+
+  /**
+   * Opens again a session the engine service suspended, as its next event would, so it claims the scans queued for it
+   * meanwhile; nothing is recorded. It opens in a repository stopped since too, as the open session it was would have
+   * run the scan there. A session already open is left as it is.
+   */
+  resumeSession(session: AdapterSession): Promise<void> {
+    return this.#ingestLanes.run(session.sessionId, async () => {
+      if (this.#sessions.has(session.sessionId)) return;
+      await this.#router(session.host).start(session);
+      this.#scheduleAuditRequests(session.sessionId);
     });
   }
 
@@ -1770,24 +1854,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async closeSession(sessionId: string): Promise<void> {
     const state = this.#sessions.get(sessionId);
     // Read or taken before any await: the cap may evict the closed entry while the close below awaits, which gave the
-    // session's row the time its close finished rather than its recorded end.
-    let endedAt = this.#closedSessions.get(sessionId)?.endedAt;
-    if (state !== undefined) {
-      state.closed = true;
-      state.pendingSteers = [];
-      state.missedFindings = [];
-      endedAt = Date.now();
-      this.#closedSessions.set(sessionId, {
-        descriptor: state.descriptor, startedAt: state.startedAt, endedAt, repositoryKey: this.#repositoryKey(state.checkout),
-      });
-      // A map keeps insertion order, and a session that opens again leaves it: the first key closed longest ago.
-      if (this.#closedSessions.size > CLOSED_SESSIONS_KEPT) this.#closedSessions.delete(this.#closedSessions.keys().next().value!);
-      if (state.ownerClaim !== undefined) {
-        this.#controls.interrupt(sessionId);
-        this.#controls.interruptRepositoryAudit(sessionId);
-        this.#controls.releaseOwner(sessionId, state.ownerClaim);
-      }
-    }
+    // session's row the time its close finished rather than its recorded end, and would end a suspended session's row.
+    const endedAt = state === undefined ? this.#closedSessions.get(sessionId)?.endedAt : this.#markClosed(sessionId, state);
     let bridge: CodeRuleBridge | undefined;
     try {
       // An evaluator still opening is not waited for: it finds the session closed once it has opened and releases itself,
@@ -1807,9 +1875,40 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         }
       } finally {
         this.#sessions.delete(sessionId);
-        this.#sessionStore.closeSession(sessionId, endedAt);
+        // A suspended session's record stays open: its agent may still be at work.
+        if (endedAt !== null) this.#sessionStore.closeSession(sessionId, endedAt);
       }
     }
+  }
+
+  /**
+   * Stops what `state`'s session delivers and what it runs, ends its ownership (`#endOwnership`) and returns the time its
+   * record ends at: null while it is being suspended (`closeIdleSession`), whose record stays open.
+   */
+  #markClosed(sessionId: string, state: RuntimeSessionState): number | null {
+    state.closed = true;
+    state.pendingSteers = [];
+    state.missedFindings = [];
+    const endedAt = state.suspending ? null : Date.now();
+    this.#closedSessions.set(sessionId, {
+      descriptor: state.descriptor, startedAt: state.startedAt, endedAt, repositoryKey: this.#repositoryKey(state.checkout),
+    });
+    // A map keeps insertion order, and a session that opens again leaves it: the first key closed longest ago.
+    if (this.#closedSessions.size > CLOSED_SESSIONS_KEPT) this.#closedSessions.delete(this.#closedSessions.keys().next().value!);
+    this.#endOwnership(sessionId, state);
+    return endedAt;
+  }
+
+  /**
+   * Interrupts the session's queued and running scans and releases its owner, unless it is being suspended, which keeps
+   * both for its next open. Its checkout audit is interrupted either way: the evaluator running it closes.
+   */
+  #endOwnership(sessionId: string, state: RuntimeSessionState): void {
+    if (state.ownerClaim === undefined) return;
+    this.#controls.interruptRepositoryAudit(sessionId);
+    if (state.suspending) return;
+    this.#controls.interrupt(sessionId);
+    this.#controls.releaseOwner(sessionId, state.ownerClaim);
   }
 
   /**

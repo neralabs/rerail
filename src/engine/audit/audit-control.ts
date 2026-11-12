@@ -293,6 +293,14 @@ export class SqliteAuditControlStore {
     });
     return { token };
   }
+  /**
+   * Whether `claim` still owns the session for this process: the claim a suspended session kept, which its next open
+   * takes back without interrupting the scans queued for it. False once its owner was released or replaced.
+   */
+  holdsOwner(sessionId: string, claim: PolicyOwnerClaim): boolean {
+    const owner = this.#owner(sessionId);
+    return owner?.active === true && owner.token === claim.token && owner.processId === process.pid;
+  }
   releaseOwner(sessionId: string, claim: PolicyOwnerClaim): void {
     this.#database.update(policySessionOwners).set({ active: false, updatedAt: Date.now() })
       .where(and(eq(policySessionOwners.sessionId, sessionId), eq(policySessionOwners.token, claim.token))).run();

@@ -491,10 +491,14 @@ export const operations: readonly Operation[] = [
     params: sessionId,
     body: auditRequestInputSchema,
     output: auditRequestSchema,
-    handler: (stores, input, caller) => {
+    handler: async (stores, input, caller) => {
       requireSession(stores, caller, input.sessionId);
       const { sessionId, ...request } = input;
-      return stores.auditControls().requestAudit(sessionId, request);
+      const created = stores.auditControls().requestAudit(sessionId, request);
+      // A session the daemon suspended while it was quiet keeps its owner, so its scan queues; it opens again to run it
+      // now, as an open session would.
+      if (created.status === "queued") await stores.resumeSession?.(sessionId);
+      return created;
     },
   }),
   defineOperation({
