@@ -54,7 +54,8 @@ export const IDLE_SESSION_MS = 30 * 60_000;
  * killed while its session owed it something, as Claude Code closed at a permission prompt is, sends no end and no
  * result: without a bound its session kept its source walk, its evaluator and its checkout's runtime until the daemon
  * stopped. The bound is a day, not `IDLE_SESSION_MS`, because an agent waiting on a person at a permission prompt can be
- * left for hours while they are away. The steers and findings the session holds wait in its ledger past the bound.
+ * left for hours while they are away. Past the bound, the steers and findings the session holds wait in its ledger, and
+ * the edit of the call it waited on is checked once its rules are open again (`#checkWhenOpen` in runtime.ts).
  */
 const OWING_SESSION_IDLE_MS = 24 * 60 * 60_000;
 /** How often the engine service looks for idle sessions. */
