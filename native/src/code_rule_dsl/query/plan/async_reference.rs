@@ -774,3 +774,7 @@ mod generated_shape;
 mod native_oracle;
 #[cfg(all(test, feature = "p-anchor-corpus"))]
 mod tests;
+
+#[cfg(all(test, feature = "p-anchor-corpus"))]
+#[path = "../../findings/tests/rr_comparison.rs"]
+mod rr_comparison;

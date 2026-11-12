@@ -1758,3 +1758,181 @@ after. Both execute eight core SQL statements over 5,725 files. Job wall time is
 poor estimate of the isolated speedup. Artifacts are in `cold-pair/baseline` and
 `cold-pair/candidate`. This check finds no cold CPU regression; the earlier quiet
 10.954-second result is not a valid baseline for today's loaded machine.
+
+
+### 2026-11-11: Remeasure the local integration hub
+
+Merged the local committed hub tip `20644b585` from `Final-shape-quality`.
+The merge fast-forwards this branch from `b335aa7ee`; the hub already contains our changes.
+The fetched GitHub tip is older and is not the comparison target.
+Uncommitted edits to `tape.rs` and `value/php_compare.rs` in the sibling remain outside this merge.
+
+This revision adds the crate split, scheduler changes, named-node tapes, and changes to cache storage.
+Qualification uses the pinned O125 step 07 replay and the same 5,725-file async corpus.
+The benchmark drivers and profiles are under
+`/Users/jeremy/orca/artifacts/async-family-comparison/merge-20644b585`.
+The preserved pre-merge binary and profiles are under `next-three-6f63c7af9/final`.
+The async driver supplies the rule directory explicitly after the crate split.
+
+The build uses only the optimized engine library test target, with incremental compilation disabled.
+This avoids rebuilding the CLI and accumulating incremental build snapshots.
+
+The first build fails under `p-anchor-corpus`: the native-oracle module lacks its
+`CompiledCodeRuleDsl` import after the split. Add the explicit import for measurement.
+This repair changes no execution code. The failed build log remains available.
+
+A baseline executable alone does not pin the workload. It reads the rule library
+and typing programs from disk. Discard the first baseline attempts, which mix
+the old executable with new runtime programs. Archive both program directories
+from `b335aa7ee` for the baseline. Temporarily mount the old typing programs at
+the executable's compiled path, then restore the hub's files before rebuilding.
+The source-tree diff confirms that the temporary program replacement was restored.
+
+The corrected baseline records 16.357 seconds cold CPU and 149.926 ms warm CPU.
+Warm memo replay takes 1.1 ms, lookup 10.8 ms, and decoding 7.8 ms.
+Core executions remain 8 cold and 20 warm. The pinned maintenance replay preserves
+633 insertion work and output parity, with 135 ms replanning CPU.
+
+
+The split also stops registering `rr_comparison.rs`. The old test filter runs zero
+tests. Restore that module under the engine's async reference tests. Restore its
+imports, use the library location for rule paths, and expose three helpers across
+crate boundaries. Omit two private report details from its JSON (`consulted` and
+round output rows); neither is a measurement below. These changes repair the
+harness. They change no runtime algorithm. The restored module's six tests pass,
+including 120 expected findings, with no missing or unexpected findings.
+
+#### Measured regressions
+
+These measurements compare `b335aa7ee` with local hub `20644b585`.
+Both use four workers and native execution. Timings below exclude rule flattening
+and the profile run unless stated. Core SQL counts exclude storage connections.
+
+| Measurement | Before | Local hub |
+| --- | ---: | ---: |
+| Async cold job CPU, 5,725 files | 16.357 s | 19.807 s |
+| Async cold job wall | 16.978 s | 9.787 s |
+| Async warm job CPU | 149.926 ms | 527.826 ms |
+| Async warm job wall | 653.715 ms | 1,245.473 ms |
+| Cold / warm core SQL executions | 8 / 20 | 0 / 0 |
+| Warm memo hits | 5,725 | 5,725 |
+| Warm memo lookup, profiled | 10.8 ms | 11.3 ms |
+| Warm memo replay, profiled | 1.1 ms | 0.9 ms |
+| O125 maintenance recorded work | 7,945,858 | 12,058,157 |
+| O125 maintenance phase CPU | 4.3 s | 6.3 s |
+| O125 cross-file maintenance CPU | 3.1 s | 4.8 s |
+| O125 replanning CPU, own spans summed | 135.0 ms | 248.4 ms |
+| Targeted `ifn` insertion work | 633 | 633 |
+
+The machine has other active builds. The cold wall-time improvement is not an
+isolated speedup measurement. Work counts establish a regression independently
+of timing. The warm CPU regression repeats at 444.811 ms in a second unprofiled
+run. Its preparation/statistics phase remains 259.1 ms, against 43.0 ms before.
+The first merged run spends 267.6 ms there. Cross-file warm execution improves
+from 17.3 ms to 2.4 ms. Lookup, decoding, and replay remain small.
+
+The cold worker phases account for most of the measured CPU increase. Parse
+worker CPU rises from 10.607 to 12.818 seconds. Batch worker CPU rises from 1.221
+to 2.165 seconds. Stored nodes fall from 19,007,630 to 13,481,389; chunks fall
+from 71 to 53. Fewer stored nodes and fewer SQL executions have not reduced CPU.
+These phase measurements locate the increase; they do not isolate its introducing
+commit or distinguish all parser and scheduler costs.
+
+The warm profile attributes much less CPU than the job and phase timers.
+Its structural analysis reports no supported hazard. This means the current
+analysis does not explain the preparation regression. A short sampling attempt
+captures no stacks before exit, so it supplies no causal evidence. Do not label
+the missing cost as memo reconstruction, compilation, or a crate-inlining loss.
+The next measurement must cover startup and store preparation across threads.
+Rule flattening is separate: 47.6 ms before and 151.7 ms in the first merged warm
+run. It is outside the job CPU numbers above.
+
+#### A confirmed join-order regression
+
+The largest increase by maintenance head is `join pfn__ins`: 149,283 to 1,365,453
+recorded work units. The diagnostic EXPLAIN trace confirms this change:
+
+```text
+before: pv(o, "inst", k) -> pcall__ins(c, o, m) -> fv(k, m, "fn", f)
+after:  pv(o, "inst", k) -> fv(k, m, "fn", f) -> pcall__ins(c, o, m)
+```
+
+The initial merged plan estimates the `fv` lookup at 0.20 rows per binding;
+the earlier plan estimates 1.05. In execution, 21,935 bindings expand to 405,390
+rows before the empty `pcall__ins` rejects them. The source probe records 427,349
+work units instead of 21,959. Annotation probes repeat this expansion twice.
+Together, these probes add exactly 1,216,170 work units, 29.6% of the total increase.
+The diagnostic replay reproduces those exact probe counts.
+
+Live replanning later moves `pcall__ins` earlier. The final profile displays that
+later order beside positional counters accumulated under both orders. Reading
+those counters as if they all used the final order would blame the wrong join.
+The EXPLAIN trace is necessary here.
+
+The immediate repair target is the first executable plan: price held inputs from
+their actual cardinalities, preserve empty-input restrictions, and test the
+filtered `fv` lookup estimate against its observed fanout. Skip a probe with an
+empty required input only under correct fixpoint scheduling. If that input can
+later grow, the scheduler must still process the resulting delta. Do not replace
+this with another forced relation-name order or loosen the 633-work ceiling.
+Commit `5e9c2a507` changes constant selectivity and held fanout estimates in this
+merge range. It is a candidate for isolation, not a proven first bad commit.
+
+Other maintenance increases include `bv__redo` (32,342 to 369,310 work),
+`vopen__ins` (133,702 to 349,494), and `decval__ins` (55,152 to 241,650).
+The main recursive component's engine-join CPU rises from 198.3 to 581.1 ms.
+These costs overlap the head measurements; do not add them as independent savings.
+
+Replanning search count rises only from 5,547 to 5,800. Search CPU rises from
+68.1 to 105.0 ms; repricing rises from 26.0 to 43.0 ms. Parent replanning overhead
+rises from 34.2 to 76.8 ms, and EXPLAIN recording from 4.9 to 21.4 ms.
+The dependency watch remains present. More searches alone do not explain the increase.
+
+#### What still passes, and what the gates reject
+
+The original O125 runs both preserve incremental/full parity. The raw output
+comparison fails because the hub changes granule allocation. Commit `731f8b841`
+reserves extra span slots, changing the hash modulus used for node slots.
+A separate diagnostic exports node identities and compares result multisets using
+`(file, kind, start, end)` instead of slot numbers:
+
+| Output | Rows in each version | Added | Removed |
+| --- | ---: | ---: | ---: |
+| `call_target` | 4,004 | 0 | 0 |
+| `call_open` | 2,092 | 0 | 0 |
+| `type_of` | 21,438 | 0 | 0 |
+| `possible_type` | 42,549 | 0 | 0 |
+
+Every referenced node maps, with no ambiguous ID mappings. All captured result
+files match their primary run exactly before normalization. The diagnostic
+changes neither version's four outputs. It does add materialization, so its
+CPU is not a benchmark result.
+
+The first identity-export attempt fails on a base-relation output column name.
+The replacement uses a declared derived relation. Its old-version run captures
+the required session outputs, then fails during full recomputation with
+`content store writer is busy`. The original baseline's full-parity run passes.
+The merged identity-export run passes full parity too. These failed diagnostic
+logs remain available; they are not counted as successful test runs.
+
+The existing performance gate still fails, and its ceilings remain unchanged.
+Changed-scope walks rise from 6,397 to 7,518 work each; removed-scope seeds rise
+from 2,714 to 3,050. EXPLAIN still shows changed demands before the large walk.
+The late-kind seed rises from 1 to 275 work. It still starts from `kind__plus`:
+137 rows now reach its next input, which rejects them. This is a changed input
+population, not restoration of the former late-kind ordering error.
+The merge also changes retained base inputs: 14 relations and 29.9 MB become
+15 relations and 39.2 MB. Changed input relations rise from 187 to 208.
+
+Prioritize the confirmed `pfn__ins` expansion, then the unaccounted warm
+preparation cost and cold worker increase. Retain the narrow memo projection,
+633-work insertion plan, and changed-scope-first plans. No runtime regression
+fix is claimed in this measurement commit.
+
+Artifacts: `baseline-exact` and `full-native` hold the cold/warm reports;
+`baseline-o125` and `o125` hold the primary replay profiles. `gate.json` records
+the failed work gate. `baseline-semantic2`, `hub-semantic2`, and
+`semantic-parity.json` hold the identity comparison and initial EXPLAIN traces.
+`warm-check` holds the repeat measurement. `focused.log` and `positive.json`
+record the six restored tests and the 120 positive findings. The artifact drivers
+preserve environment settings and test filters. All runs use nice level 19.
