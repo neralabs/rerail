@@ -354,18 +354,7 @@ impl ContentStore {
 
     fn keep_frame_refs(&self, space: &[u8; 32], puts: &[&Put], gone: &[(Rel, i64)], used: Option<(&[Rel], u64)>) -> StoreResult<()> {
         let blocks: Vec<Vec<u8>> = puts.iter().map(|p| super::cross_rows::encode(p.rows.types.len(), &p.rows.rows)).collect();
-        // The snapshot holds what is written (a write the writer runs was put there as it was queued: the same).
-        if let Some(snapshot) = self.snapshot() {
-            let mut snapshot = snapshot.lock().expect("the frames' snapshot");
-            let held = snapshot.entry(*space).or_default();
-            for (p, block) in puts.iter().zip(&blocks) {
-                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Encoded { types: p.rows.types.clone(), n: p.rows.n, bytes: block.clone() } }));
-            }
-            for key in gone {
-                held.remove(key);
-            }
-        }
-        self.immediate_transaction_once(|t| {
+        let written = self.immediate_transaction_once(|t| {
             t.execute_batch(SCHEMA)?;
             // A run's first program counts it: what it writes and marks is of the new run.
             let run = match used {
@@ -413,7 +402,21 @@ impl ContentStore {
                 t.execute("DELETE FROM frames WHERE space = ?1 AND used <= ?2", params![&space[..], run - RUNS])?;
             }
             Ok(())
-        })
+        });
+        // The snapshot holds what is written, the blocks moved into it once written (a write the writer runs was put
+        // there as it was queued: the same rows). Cloned into it before the write, the blocks were held twice while
+        // the transaction ran: 167 MB more at public_api_triples' peak.
+        if let Some(snapshot) = self.snapshot() {
+            let mut snapshot = snapshot.lock().expect("the frames' snapshot");
+            let held = snapshot.entry(*space).or_default();
+            for (p, block) in puts.iter().zip(blocks) {
+                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Encoded { types: p.rows.types.clone(), n: p.rows.n, bytes: block } }));
+            }
+            for key in gone {
+                held.remove(key);
+            }
+        }
+        written
     }
 }
 
