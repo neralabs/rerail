@@ -963,6 +963,9 @@ pub mod tests {
             std::fs::write(format!("{dir}/tier2.s"), &p.tier2.disassembly).expect("writes");
             std::fs::write(format!("{dir}/tier2.bin"), &p.tier2.code_bytes).expect("writes");
             std::fs::write(format!("{dir}/tier2.words"), &c.words).expect("writes");
+            // Each word's Cranelift instructions as lowered, a line a place.
+            let insts: String = p.tier2.word_insts.iter().map(|n| format!("{n}\n")).collect();
+            std::fs::write(format!("{dir}/tier2.insts"), insts).expect("writes");
             std::fs::write(format!("{dir}/tier2.machine"), &c.machine).expect("writes");
         }
         let mut batches: Vec<_> = ours.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()])).collect();
