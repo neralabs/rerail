@@ -1101,7 +1101,15 @@ impl Model {
         Some(values.into_iter().map(|((_, v), _)| v).collect())
     }
 
-    /// Positive joins whose keys cannot occur in the forced first atom's values. Only that atom is a binding
+    /// A maintenance delta (`__ins`, `__redo`, `__del`) of the component being solved: it fills in the same waves
+    /// as the delta that probes it, from the same change, so its keys follow the delta's, and what is measured of
+    /// it before the fixpoint is a snapshot. Neither an absence proof nor a containment share holds against it.
+    fn changes_with_the_delta(&self, rel: &str) -> bool {
+        self.stats.solving.contains(rel) && ["__ins", "__redo", "__del"].iter().any(|s| rel.ends_with(s))
+    }
+
+    /// Positive joins whose keys cannot occur in the forced first atom's values. Not a maintenance delta of the
+    /// component being solved (`changes_with_the_delta`). Only that atom is a binding
     /// source: a later predicate whose variables happen to be bound has not yet restricted the demand.
     pub fn delta_misses(&self, body: &[Literal], first: Option<usize>) -> Vec<usize> {
         let first = first.or_else(|| body.iter().position(|l| matches!(l, Literal::Atom(a) if !a.neg && a.rel.contains("rr_demand_agg_"))));
@@ -1110,7 +1118,7 @@ impl Model {
         let values: Vec<_> = delta.args.iter().enumerate().map(|(c, _)| self.small_values(&delta.rel, c)).collect();
         body.iter().enumerate().filter_map(|(i, l)| {
             let Literal::Atom(a) = l else { return None };
-            if i == first || a.neg { return None; }
+            if i == first || a.neg || self.changes_with_the_delta(&a.rel) { return None; }
             delta.args.iter().enumerate().any(|(c, t)| {
                 let Term::Var(v) = t else { return false };
                 let Some(from) = &values[c] else { return false };
@@ -1435,24 +1443,35 @@ impl Model {
         let delta_vars = first.and_then(|f| body[f].atom()).map(Atom::vars);
         let delta_size = first.and_then(|f| body[f].atom()).and_then(|a| self.stats.delta_rows.get(a.rel.as_str())).copied();
         let starts = |i: usize| first.is_none_or(|f| f == i || self.smaller_change(body, f, i));
+        // Which rule priced the atom last (`atom_rows`), and the containment share it applied: the explain record
+        // names it per step, so a misprediction shows the rule that made it.
+        let basis: std::cell::Cell<&'static str> = std::cell::Cell::new("");
+        let basis_hit = std::cell::Cell::new(1.0f64);
+        let probed_by_delta = first.is_some();
         let atom_rows_ = |a: &Atom, bound: &BTreeSet<String>| -> f64 {
-            if delta_vars.as_ref().is_some_and(|v| v.is_subset(bound))
-                && delta_misses.iter().any(|&i| body[i].atom() == Some(a)) {
-                return 0.01;
-            }
+            basis_hit.set(1.0);
             // An atom that shares no bound variable, read after bindings exist, is a cross product: its fanout
             // observed in one wave or chunk is the relation's size then (none before a guest round makes the rows),
-            // not a property of the join, so it is priced from the relation's own estimate (below).
+            // not a property of the join, so it is priced from the relation's own estimate (below). What was
+            // observed comes before any rule that estimates: an absence proof from a snapshot was kept over 733,692
+            // rows seen (`pfn`'s `pcall__ins`).
             let crossed = !bound.is_empty() && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v)));
             if !crossed
                 && let Some(seen) = stats.obs.get(&rule).and_then(|o| o.get(&atom_sig(a, bound)))
                 && seen[0] >= OBS_MIN
             {
+                basis.set("observed");
                 return (seen[1] as f64 / seen[0] as f64).max(0.01);
+            }
+            if delta_vars.as_ref().is_some_and(|v| v.is_subset(bound))
+                && delta_misses.iter().any(|&i| body[i].atom() == Some(a)) {
+                basis.set("absence proof");
+                return 0.01;
             }
             if a.rel == "kind"
                 && let Some(k) = a.args.get(1).and_then(constant)
             {
+                basis.set("kind frequency");
                 if matches!(&a.args[0], Term::Var(v) if bound.contains(v)) {
                     return 1.0;
                 }
@@ -1466,8 +1485,10 @@ impl Model {
                 .filter(|&c| constant(&a.args[c]).is_some() || matches!(&a.args[c], Term::Var(v) if bound.contains(v)))
                 .collect();
             if cols.is_empty() {
+                basis.set("relation size");
                 return self.card(&a.rel);
             }
+            basis.set("postings");
             // The most selective bound column gives its expected postings (exact for a constant on an input); the
             // other bound columns divide by their NDV.
             let postings = |c: usize| -> f64 {
@@ -1533,7 +1554,11 @@ impl Model {
             // values (containment): its distinct values over the binding's, where both are measured (live counts),
             // the binding's by the fewest distinct values of an atom of bound variables that holds it, capped
             // by its constant filters. This also applies to restrictive inputs outside the recursive component.
-            {
+            // Not for a maintenance delta of the component being solved (`changes_with_the_delta`): its rows are the
+            // ones this change makes, as the delta's are, so the delta's values are the ones it holds, and its
+            // distinct values measured mid-fixpoint are a snapshot of a relation still filling. `pfn`'s
+            // `pcall__ins` by `$o`, probed by `pv`'s delta, was priced at 0.01 rows a binding and gave 20.8.
+            if !probed_by_delta || !self.changes_with_the_delta(&a.rel) {
                 let mut hit = 1.0f64;
                 for &c in &cols {
                     let Term::Var(v) = &a.args[c] else { continue };
@@ -1550,9 +1575,11 @@ impl Model {
                     }
                 }
                 rows *= hit;
+                basis_hit.set(hit);
             }
             // Every column bound: a membership test, at most one row of a set.
             if cols.len() == a.args.len() && !prog.lattice.contains_key(a.rel.as_str()) {
+                if rows > 1.0 { basis.set("membership"); }
                 rows = rows.min(1.0);
                 // A text test (decision 0037) probed by a string an input binds keeps the share of that column's
                 // distinct strings it holds: both are measured per chunk. Priced at 1, a test of every identifier's
@@ -1579,14 +1606,15 @@ impl Model {
         let atom_rows = |a: &Atom, bound: &BTreeSet<String>| -> f64 {
             let mut rows = atom_rows_(a, bound);
             if first.is_some_and(|f| body[f].atom().is_some_and(|d| std::ptr::eq(d, a))) {
-                if let Some(n) = delta_size { rows = rows.min(n.max(0.01)); }
+                if let Some(n) = delta_size && n.max(0.01) < rows { rows = n.max(0.01); basis.set("delta size"); }
             }
             // A cross product never filters a binding: each one reads every matching row, and a relation empty
             // where the plan was priced is not empty where it is reused. At least one row per binding, so a connected
             // atom of fanout one is never ordered after it.
             let delta_atom = first.is_some_and(|f| matches!(&body[f], Literal::Atom(d) if std::ptr::eq(d, a)));
-            if !delta_atom && !a.neg && !bound.is_empty() && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v))) {
-                rows = rows.max(1.0);
+            if !delta_atom && !a.neg && !bound.is_empty() && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v))) && rows < 1.0 {
+                rows = 1.0;
+                basis.set("cross product");
             }
             // No variable bound on a relation of the component being solved: a scan of it per binding, priced as a
             // pass over the corpus (shared among its constants' values) at least.
@@ -1600,9 +1628,15 @@ impl Model {
                         floor /= self.ndv_or_1(&a.rel, c);
                     }
                 }
-                rows = rows.max(floor);
+                if floor > rows { rows = floor; basis.set("scan of the component"); }
             }
             rows
+        };
+        // The rule `atom_rows` priced `a` by, as the explain record prints it.
+        let basis_of = |a: &Atom, bound: &BTreeSet<String>| -> String {
+            let _ = atom_rows(a, bound);
+            let hit = basis_hit.get();
+            if hit < 1.0 { format!("{}, containment {hit:.3}", basis.get()) } else { basis.get().to_owned() }
         };
         // (column, rows) if `a` can be read as a range inside one document: a body literal `docof($v, $d)` has $d
         // bound and $v unbound, $v is `a`'s column, and an input index on `a` is the bound column then that column.
@@ -2061,12 +2095,12 @@ impl Model {
             for s in &order {
                 // The joins the search could have taken here instead, each priced as it was: rows a binding. A probe's
                 // delta comes first by construction, not by choice: nothing was passed over for it.
-                let passed: Vec<(String, f64)> = if is_join(&s.lit) && first != Some(s.at) {
+                let passed: Vec<(String, f64, String)> = if is_join(&s.lit) && first != Some(s.at) {
                     joins
                         .iter()
                         .filter(|&&j| j != s.at && !placed.contains(&j))
                         .filter_map(|&j| match &body[j] {
-                            Literal::Atom(a) if !a.neg => Some((a.to_string(), atom_rows(a, &bound))),
+                            Literal::Atom(a) if !a.neg => Some((a.to_string(), atom_rows(a, &bound), basis_of(a, &bound))),
                             _ => None,
                         })
                         .collect()
@@ -2090,6 +2124,10 @@ impl Model {
                     } else {
                         "derived".into()
                     }
+                };
+                let basis = match &s.lit {
+                    Literal::Atom(a) if !a.neg => basis_of(a, &bound),
+                    _ => String::new(),
                 };
                 let (access, src) = match &s.lit {
                     Literal::Atom(a) if !a.neg => {
@@ -2128,7 +2166,7 @@ impl Model {
                     }
                 };
                 bound.extend(s.lit.vars());
-                steps.push(super::profile::StepPlan { literal: s.lit.to_string(), access, source: src, rows: r, passed });
+                steps.push(super::profile::StepPlan { literal: s.lit.to_string(), access, source: src, rows: r, passed, basis });
             }
             super::profile::RulePlan { work, rows, subsets, candidates, steps }
         });
@@ -3783,6 +3821,24 @@ fn observe(stats: &mut Stats, rule: u64, order: &[Step], counts: &[(i64, i64)]) 
     }
 }
 
+/// The fanouts observed for each step of `order` (`observe`), where at least `OBS_MIN` bindings were counted:
+/// the prices `atom_rows` takes first, so a probe is replanned when one appears or moves (`replanning::Watch`).
+fn observed_fans(stats: &Stats, rule: u64, order: &[Step]) -> Vec<Option<f64>> {
+    let seen = stats.obs.get(&rule);
+    let mut bound = BTreeSet::new();
+    order.iter().enumerate().map(|(i, s)| {
+        let fan = match &s.lit {
+            Literal::Atom(l) if i > 0 && !l.neg => seen.and_then(|o| o.get(&atom_sig(l, &bound)))
+                .filter(|n| n[0] >= OBS_MIN).map(|n| n[1] as f64 / n[0] as f64),
+            _ => None,
+        };
+        if !matches!(&s.lit, Literal::Atom(l) if l.neg) {
+            bound.extend(s.lit.vars());
+        }
+        fan
+    }).collect()
+}
+
 /// A relation's column types (T's `prog_types`).
 /// A column's type in the native store's spec: `s`, a symbol it reads as text, only where symbols are text. Over
 /// atoms every column is an integer (a name, kind or field atom), as the planner's SQL holds it (O13).
@@ -5378,6 +5434,10 @@ impl<'a> Run<'a, '_> {
             let steps = self.fx().steps(&name)?;
             for ((o, &rule), line) in orders.iter().chain(probes.iter().map(|p| &p.2)).zip(&order_rules).zip(&steps) {
                 observe(&mut self.model.stats, rule, o, line);
+            }
+            // A step whose fanout was observed, or moved, is priced by it now: its probe is planned again.
+            for (k, p) in probes.iter().enumerate() {
+                replanned_at.observed(k, observed_fans(&self.model.stats, obs_rule(&p.0.head, &p.0.body), &p.2));
             }
             for (k, line) in steps.iter().enumerate() {
                 if counted.len() <= k {

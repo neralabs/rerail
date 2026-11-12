@@ -279,7 +279,10 @@ pub struct StepPlan {
     pub access: String,
     pub source: String,
     pub rows: f64,
-    pub passed: Vec<(String, f64)>,
+    pub passed: Vec<(String, f64, String)>,
+    /// The rule the step's rows a binding were priced by (`plan_search`'s `atom_rows`): postings, observed,
+    /// absence proof, membership, and the containment share applied, so a misprediction names its rule.
+    pub basis: String,
 }
 
 /// A rule's plan as the planner chose it: estimated work and rows, and its search (subsets kept, candidates priced).
@@ -1205,9 +1208,11 @@ pub fn explain(r: &mut String, state: &State) {
                 } else {
                     String::new()
                 };
-                let _ = writeln!(r, "       {:>2}. {:<44} {:<30} {:<20} est {:>11}  {actual}", i + 1, short(&st.literal, 44), short(&st.access, 30), short(&st.source, 20), rows(st.rows));
-                for (lit, per) in &st.passed {
-                    let _ = writeln!(r, "           passed over {:<44} {per:.1} rows a binding", short(lit, 44));
+                let basis = if st.basis.is_empty() { String::new() } else { format!("  [{}]", st.basis) };
+                let _ = writeln!(r, "       {:>2}. {:<44} {:<30} {:<20} est {:>11}  {actual}{basis}", i + 1, short(&st.literal, 44), short(&st.access, 30), short(&st.source, 20), rows(st.rows));
+                for (lit, per, why) in &st.passed {
+                    let why = if why.is_empty() { String::new() } else { format!("  [{why}]") };
+                    let _ = writeln!(r, "           passed over {:<44} {per:.1} rows a binding{why}", short(lit, 44));
                 }
             }
         }
@@ -1440,8 +1445,8 @@ pub mod tests {
             subsets: 4,
             candidates: 6,
             steps: vec![
-                StepPlan { literal: "a($x)".into(), access: "scan".into(), source: "input".into(), rows: 5.0, passed: Vec::new() },
-                StepPlan { literal: "b($x)".into(), access: "lookup on (c0)".into(), source: "derived".into(), rows: 2.0, passed: vec![("c($x)".into(), 7.0)] },
+                StepPlan { literal: "a($x)".into(), access: "scan".into(), source: "input".into(), rows: 5.0, passed: Vec::new(), basis: "relation size".into() },
+                StepPlan { literal: "b($x)".into(), access: "lookup on (c0)".into(), source: "derived".into(), rows: 2.0, passed: vec![("c($x)".into(), 7.0, "postings".into())], basis: "postings, containment 0.500".into() },
             ],
         };
         planned("xstratum", "seed xrule", Some(3), &plan, 0.01, 0, Some(&[(1, 5), (5, 2)]), None);
@@ -1481,7 +1486,8 @@ pub mod tests {
         assert!(!report.contains("xbefore") && !report.contains("xafter") && !report.contains("xbehind"), "{report}");
         assert!(report.contains("xsql: aggregate join (string concatenation)"), "{report}");
         assert!(report.contains("rule #0003 (seed xrule)") && report.contains("loops=2 replans=1"));
-        assert!(report.contains("passed over c($x)") && report.contains("7.0 rows a binding"), "the joins a step passed over: {report}");
+        assert!(report.contains("passed over c($x)") && report.contains("7.0 rows a binding  [postings]"), "the joins a step passed over: {report}");
+        assert!(report.contains("[postings, containment 0.500]"), "the rule a step was priced by: {report}");
         // Actual rows add over the loops.
         assert!(report.contains("actual 9 -> 3"), "{report}");
         assert!(report.contains("xkernel  (xspan)"));
