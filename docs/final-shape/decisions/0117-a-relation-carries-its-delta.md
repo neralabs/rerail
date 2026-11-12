@@ -135,6 +135,7 @@ unchanged. Then the step is measured on the data layer's 9,010 files.
 | 2 | Deltas as side structures of the relation (dead rows, appended rows); `__plus`/`__minus` views, not relations | Strata opened and indexed for deltas (part of 1.0–2.0 s) |
 | 3 | The driver: rewrite per stratum when reached; base-program passes kept | Rewrite 0.5–1.7 s; whole-program passes about 1.8 s; strata split 0.4–2.0 s |
 | 4 | Old rows read back only for strata reached | Kept part read 0.6–1.0 s; part of the 5.5 GB peak |
+| 5 | A reached stratum's component kept across steps (amended 2026-11-12, below) | About 13 M instructions per opened component; 53% of an O125 edit step |
 
 **The end target** stays 0090's: an edit of one function costs under 5% of a cold cross part. On the 20-file corpus,
 the joins are about 0.7 s of an edit's 26 s of CPU today. The target is a run whose cost is mostly its joins.
@@ -265,3 +266,34 @@ derived again), with 148 inputs changed. That is steps 3's and 4's work, not thi
 **The deletion costs more than a cold run** (1089.5 G against 922.2 G). Deleting 100 lines changes nearly every row of
 that file (its nodes move), so the deltas are most of the file's rows, and maintaining from deltas that large costs
 more than deriving again. The driver of step 3 should choose between the two by the size of the delta.
+
+## Amendment (2026-11-12): step 5, a reached stratum's component kept across steps
+
+**Why.** Steps 3 and 4 remove the work on strata an edit does not reach. What is left is the cost of each stratum it
+does reach. On O125 (74 files, one or two files edited per step, debug build, strict):
+
+- A component costs about 13 M instructions even when it moves no rows. Measured by opening the strata held empty
+  (`RERAIL_KEEP_EMPTY_JOINS=1`): steps 01-03 went from 270.3 G to 355.4 G for about 2,000-2,400 more components a
+  step.
+- About 1,858 components open a step, so that fixed cost is some 24 G of a step's 90 G.
+- Sampled over steps 02-03, components are 53% of the CPU and their joins 13%. The rest of a component's cost is:
+
+| Part | Share of the steps' CPU |
+|---|---|
+| opening (spec parsed, joins compiled, inputs indexed) | 8% |
+| planning before the run, kept plans looked up and re-priced | 7% |
+| observed fanouts recorded (`observe`, `observed_fans`) | 4% |
+| statistics before the run (`prior_stats`) | 4% |
+| planning during the run (live replans) | 4% |
+| spec written, close, live statistics | 4% |
+
+- None of these is a big rock alone. Removing join-order search entirely (every delta-driven piece ordered
+  greedily) saved 4.4% of the steps' instructions; merging a stratum's pieces into one component (0101 §3) can save
+  about 6%.
+
+**The step.** A reached stratum's component is kept with the session: its plans, its spec, its compiled joins and
+the indexes of its kept relations. A later step that reaches the stratum binds its deltas and runs it. It is planned
+again only when a statistic its plans read leaves its bucket (decision 0038's rule). Its relations carry their deltas
+as in step 2, so the kept component's relations are updated in place, not copied.
+
+**Target.** A reached stratum costs its joins. At O125 that is the components' 53% toward their joins' 13%.
