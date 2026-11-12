@@ -35,9 +35,10 @@ const HEARTBEAT_MS = MINUTE_MS;
 /** How long the owner file of a run from another place may go untouched before that run counts as ended. */
 const QUIET_MS = 10 * MINUTE_MS;
 const VARIABLES = ["TMPDIR", "TEMP", "TMP"] as const;
-/** Where a run folder goes when the temp folder leaves no room below it for the sockets, unless the variable names another folder. */
-const SHORT_TEMP_VARIABLE = "RERAIL_TEST_SHORT_TEMP";
+/** Where a run folder goes when the temp folder leaves no room below it for the sockets. */
 const SHORT_TEMP = "/tmp";
+/** The variable that names another folder for that. */
+const SHORT_TEMP_VARIABLE = "RERAIL_TEST_SHORT_TEMP";
 /** The longest Unix socket path in bytes, the terminating NUL aside, as src/runtime/engine-service.ts counts it. */
 const SOCKET_PATH_BYTES = process.platform === "linux" || process.platform === "android" ? 107 : 103;
 /**
@@ -228,7 +229,10 @@ async function ownFolder(path: string): Promise<Stats | undefined> {
   return info?.isDirectory() === true && (uid === undefined || info.uid === uid) ? info : undefined;
 }
 
-/** The owner of the run folder at `path`; undefined for a folder of another name, or a run folder with no owner file to read. */
+/**
+ * The owner of the run folder at `path`; undefined for a folder of another name, or a run folder with no owner file to
+ * read.
+ */
 async function readOwner(path: string): Promise<Owner | undefined> {
   const pid = RUN_FOLDER.exec(basename(path))?.[1];
   if (pid === undefined) return undefined;
