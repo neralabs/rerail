@@ -6,7 +6,7 @@ one can only stay with its file.
     python3 tools/cratify/extract_tests.py <source root> FILE:NAME...    (FILE under the root)
 
 A relative `include_str!`/`include_bytes!` path gains a `../`. Prints each file made, or why a module was left."""
-import os, re, sys
+import os, re, subprocess, sys
 
 
 def block_end(text, open_at):
@@ -75,5 +75,11 @@ for arg in sys.argv[2:]:
     body = re.sub(r'(include_(?:str|bytes)!\(\s*")(?![/])', r'\1../', body)
     os.makedirs(os.path.dirname(root + target), exist_ok=True)
     open(root + target, 'w').write(body + '\n')
-    open(root + rel, 'w').write(text[:head.start()] + head.group(1) + head.group(2) + ';' + text[end + 1:])
+    # a file mounted by #[path] finds its children beside it, as a mod.rs does: name the file made
+    mounted = subprocess.run(['grep', '-rlE', r'#\[path = "([^"]*/)?' + re.escape(os.path.basename(rel)) + '"', root],
+                             capture_output=True, text=True).stdout.split()
+    decl = head.group(2) + ';'
+    if mounted and not rel.endswith('mod.rs'):
+        decl = f'#[path = "{os.path.relpath(target, os.path.dirname(rel))}"]\n' + head.group(1) + decl
+    open(root + rel, 'w').write(text[:head.start()] + head.group(1) + decl + text[end + 1:])
     print('made', target)
