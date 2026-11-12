@@ -499,7 +499,8 @@ export const repositoryOperations: readonly Operation[] = [
         checkout: target.checkout === undefined ? null : {
           checkoutPath: target.checkout.checkoutPath,
           folder: target.folder,
-          state: stateOf(stateAt(target.checkout.checkoutPath).status),
+          // As the runtime reads it: the row at its path decides, even one another repository recorded there.
+          state: stateOf(effectiveStatus(stores.database(), target.checkout)),
         },
       };
     },
