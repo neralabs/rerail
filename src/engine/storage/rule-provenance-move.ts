@@ -285,11 +285,11 @@ function moveBatch(
  * its size, mostly free pages (1.3 GB of 1.4 GB for 4,000 audits). It runs `eraseFreedPages`' three steps (`database.ts`)
  * one by one, each through `free`: empty the WAL into the file, `VACUUM`, which copies the pages in use to a temporary
  * file and writes them back through the WAL while it holds the write lock, and empty the WAL again. `VACUUM` is skipped,
- * and stderr says why, when another connection keeps the WAL from being emptied first, when the database's folder or the
- * temporary folder has less free disk space than the file's size, or when `VACUUM` fails (another writer holding the
- * lock through every try, a full disk), which leaves the file as it was. Stderr also says when a read keeps the WAL
- * full after `VACUUM` (`sayWalInUse`). Throws only what a checkpoint throws other than a busy WAL; the move has
- * committed.
+ * and stderr says why, when the WAL cannot be emptied first (another connection keeps it busy through every try, or the
+ * checkpoint fails), when the database's folder or the temporary folder has less free disk space than the file's size,
+ * or when `VACUUM` fails (another writer holding the lock through every try, a full disk), which leaves the file as it
+ * was. Stderr also says when the WAL stays full after `VACUUM` (`sayWalInUse`, `sayWalNotEmptied`). Never throws: the
+ * move has committed, and a step that fails here only leaves the file larger than it could be.
  */
 async function giveBackFreedSpace(client: Client, path: string, free: Free): Promise<void> {
   const skipped = await vacuumSkipped(client, path, free);
@@ -300,26 +300,30 @@ async function giveBackFreedSpace(client: Client, path: string, free: Free): Pro
   try {
     await free(() => emptyWal(client));
   } catch (error) {
-    if (!(error instanceof WalInUse)) throw error;
-    sayWalInUse(client, path, error.checkpoint);
+    if (error instanceof WalInUse) sayWalInUse(client, path, error.checkpoint);
+    else sayWalNotEmptied(client, path, error);
   }
 }
 
 /** Empties the WAL into the file, then runs `VACUUM`; why it did not, or undefined once it ran. */
 async function vacuumSkipped(client: Client, path: string, free: Free): Promise<string | undefined> {
-  try {
-    await free(() => emptyWal(client));
-  } catch (error) {
-    if (error instanceof WalInUse) return "another connection was using it";
-    throw error;
-  }
-  const short = shortOfDisk(path);
-  if (short !== undefined) return short;
+  const before = (await walNotEmptied(client, free)) ?? shortOfDisk(path);
+  if (before !== undefined) return before;
   try {
     await free(() => client.exec("VACUUM"));
     return undefined;
   } catch (error) {
     return `VACUUM failed (${errorText(error)})`;
+  }
+}
+
+/** Empties the WAL into the file: why it could not, or undefined once it did. */
+async function walNotEmptied(client: Client, free: Free): Promise<string | undefined> {
+  try {
+    await free(() => emptyWal(client));
+    return undefined;
+  } catch (error) {
+    return error instanceof WalInUse ? "another connection was using it" : `its WAL could not be emptied (${errorText(error)})`;
   }
 }
 
@@ -338,7 +342,7 @@ function sayKeepsItsSize(client: Client, path: string, skipped: string): void {
  * until the last connection to the file closes.
  */
 function sayWalInUse(client: Client, path: string, checkpoint: Checkpoint | undefined): void {
-  const size = sizesOr(() => ` to ${megabytes(pragmaNumber(client, "page_count") * pragmaNumber(client, "page_size"))}`);
+  const size = rewrittenSize(client);
   if (checkpoint !== undefined && checkpoint.log > 0 && checkpoint.checkpointed === checkpoint.log) {
     const wal = sizesOr(() => ` at ${megabytes(statSync(`${path}-wal`).size)}`);
     process.stderr.write(`rerail: ${path} shrank${size} after this Rerail's upgrade, but its WAL stays${wal} until the last `
@@ -347,6 +351,20 @@ function sayWalInUse(client: Client, path: string, checkpoint: Checkpoint | unde
   }
   process.stderr.write(`rerail: ${path} shrinks${size} at a later checkpoint, after this Rerail's upgrade: another `
     + "connection was reading it as VACUUM ended, so the rewritten file waits in its WAL.\n");
+}
+
+/**
+ * The line for a checkpoint after `VACUUM` that failed rather than found the WAL busy: the rewritten file waits in the
+ * WAL, and SQLite's next checkpoint writes it into the database file.
+ */
+function sayWalNotEmptied(client: Client, path: string, error: unknown): void {
+  process.stderr.write(`rerail: ${path} shrinks${rewrittenSize(client)} at a later checkpoint, after this Rerail's upgrade: `
+    + `emptying its WAL after VACUUM failed (${errorText(error)}).\n`);
+}
+
+/** " to <size>", the size of the file `VACUUM` rewrote, or nothing when it cannot be read. */
+function rewrittenSize(client: Client): string {
+  return sizesOr(() => ` to ${megabytes(pragmaNumber(client, "page_count") * pragmaNumber(client, "page_size"))}`);
 }
 
 /** What `describe` returns, or nothing when it cannot read the sizes: the reason matters more than the sizes. */

@@ -505,6 +505,26 @@ describe("audit rule provenance", () => {
     expect(pageBytes(path).free).toBeGreaterThan(size / 2);
   });
 
+  it.each([
+    ["before", 1, "keeps its size", "its WAL could not be emptied (disk I/O error)"],
+    ["after", 2, "shrinks to ", "emptying its WAL after VACUUM failed (disk I/O error)"],
+  ])("ends the move it committed, and says why, when emptying the WAL %s VACUUM fails", async (_, failing, line, reason) => {
+    const pragma = Database.prototype.pragma;
+    let checkpoints = 0;
+    const { path, logged } = await moveLogging(() => {
+      // A checkpoint that throws rather than reports busy, as one that cannot truncate the WAL on a full disk does.
+      const spy = vi.spyOn(Database.prototype, "pragma").mockImplementation(function (this: Database.Database, source: string, options?: Database.PragmaOptions) {
+        if (source === "wal_checkpoint(TRUNCATE)" && (checkpoints += 1) === failing) throw new Database.SqliteError("disk I/O error", "SQLITE_IOERR");
+        return pragma.call(this, source, options);
+      });
+      return () => spy.mockRestore();
+    });
+    expect(checkpoints).toBe(failing);
+    expect(logged).toContain(`rerail: ${path} ${line}`);
+    expect(logged).toContain(reason);
+    expect(inlineAudits(path)).toBe(0);
+  });
+
   it("says the file shrinks later when another connection reads it as the VACUUM ends", async () => {
     const path = await fileOfTheBuildBefore();
     writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
