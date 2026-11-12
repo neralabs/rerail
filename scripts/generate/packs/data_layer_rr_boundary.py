@@ -10,7 +10,7 @@ def async_sync_boundary(source, target, header):
         text+=f'.decl {relation}(text: symbol)\n'+''.join(f'{relation}({q(v)}).\n' for v in sorted(values))
     text+='.decl bs_static_allow(file: symbol, function: symbol)\n'+''.join(f'bs_static_allow({q(p)}, {q(f)}).\n' for p,f in sorted(original.ALLOWLIST))
     text+='.decl bs_label(category: symbol, text: symbol)\n'+''.join(f'bs_label({q(k)}, {q(v)}).\n' for k,v in sorted(original.CATEGORY_LABELS.items()))
-    return text + r'''
+    text += r'''
 .violation Count(at: span, count: number) code "BS_COUNT" "{count}"
 Count(@place("<inventory>", 1), n) :- option("entryPoint", "scan_tree"), n = count : { option_item("checkedPaths", _, _) }.
 .violation Category(at: span, index: number) code "BS_CATEGORY" "category"
@@ -51,12 +51,14 @@ bs_document(d, p) :- doc(d, p, _), !option("entryPoint", _), file_name(d, nm), s
 bs_hidden(d) :- path_part(d, part), (part = ".git" ; part = ".venv" ; part = "venv" ; part = "__pycache__" ; part = "tmp").
 .decl bs_source_enabled(d: number)
 bs_source_enabled(d) :- bs_document(d, _), !option("hasReadError", "true"), source(d, span), text(span, source), bs_trigger(trigger), contains(trigger, source).
+.decl bs_enabled(c:node)
+bs_enabled(c) :- bs_call(c,_),docof(c,d),bs_source_enabled(d).
 .decl bs_detect(c: node, category: symbol, name: symbol, async_: number, call_text: symbol)
-bs_detect(c, "SYNC_WRAPS_ASYNC", fn, 0, cat(name, "()")) :- bs_call(c, f), docof(c, d), bs_source_enabled(d), bs_name(f, name),
+bs_detect(c, "SYNC_WRAPS_ASYNC", fn, 0, cat(name, "()")) :- bs_call(c, f), bs_enabled(c), bs_name(f, name),
  (name = "asyncio.run" ; name = "asyncio.run_coroutine_threadsafe"), bs_context(c, fn, 0).
-bs_detect(c, "ASYNC_WRAPS_SYNC", fn, 1, cat(name, "()")) :- bs_call(c, f), docof(c, d), bs_source_enabled(d), bs_name(f, name),
+bs_detect(c, "ASYNC_WRAPS_SYNC", fn, 1, cat(name, "()")) :- bs_call(c, f), bs_enabled(c), bs_name(f, name),
  (name = "asyncio.to_thread" ; name = "to_thread"), bs_context(c, fn, 1).
-bs_detect(c, "EXECUTOR_ESCAPE", fn, 1, cat(name, "()")) :- bs_call(c, f), docof(c, d), bs_source_enabled(d), bs_name(f, name),
+bs_detect(c, "EXECUTOR_ESCAPE", fn, 1, cat(name, "()")) :- bs_call(c, f), bs_enabled(c), bs_name(f, name),
  suffix("run_in_executor", name), bs_context(c, fn, 1).
 
 .decl bs_allowed_pairs(file: symbol, function: symbol)
@@ -105,3 +107,5 @@ Allow(@place("<allow>", 1)) :- option("entryPoint", "_is_allowlisted"), option("
 .violation Info(at: span) code "BS_INFO" "informational"
 Info(@place("<info>", 1)) :- option("entryPoint", "_is_informational"), option("file_rel", p), bs_informational(p).
 '''
+    from data_layer_rr_boundary_api import suffix
+    return text+suffix(source)

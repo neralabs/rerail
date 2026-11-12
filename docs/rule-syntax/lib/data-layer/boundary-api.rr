@@ -1,0 +1,103 @@
+#include "project.rr"
+#include "data-layer/supplied-facts.rr"
+.decl pp_config(key:symbol,value:symbol)
+.decl bs_config(key:symbol,value:symbol)
+.violation BoundaryConfiguration(at:span,key:symbol,value:symbol) code "BS_CONFIG" "boundary configuration"
+BoundaryConfiguration(@place("",0),k,v) :- option("entryPoint","_bs_configuration"),bs_config(k,v).
+
+// The registered framework owns its source prefilter. Collection consumes its entire supplied tree.
+bs_api_helper() :- option("entryPoint","_bs_ast_collect").
+bs_call(n,f) :- option("entryPoint","_bs_ast_collect"),bs_graph_kind(n,"Call"),bs_graph_edge(n,"func",f).
+bs_callee(f) :- option("entryPoint","_bs_ast_collect"),bs_call(_,f).
+bs_enabled(c) :- option("entryPoint","_bs_ast_collect"),bs_call(c,_).
+.decl bsc_function(n:node,name:symbol,async_:number)
+bsc_function(n,name,0) :- bs_graph_kind(n,"FunctionDef"),option_item("astNames",n,name).
+bsc_function(n,name,1) :- bs_graph_kind(n,"AsyncFunctionDef"),option_item("astNames",n,name).
+.decl bsc_scope(n:node,owner:node)
+bsc_scope(n,p) :- bs_graph_edge(p,_,n),bsc_function(p,_,_).
+bsc_scope(n,f) :- bs_graph_edge(p,_,n),!bsc_function(p,_,_),bsc_scope(p,f).
+bs_context(c,name,a) :- option("entryPoint","_bs_ast_collect"),bs_call(c,_),bsc_scope(c,f),bsc_function(f,name,a).
+bs_context(c,"<module>",0) :- option("entryPoint","_bs_ast_collect"),bs_call(c,_),!bsc_scope(c,_).
+.decl bsc_boolean(value:number,json:symbol)
+bsc_boolean(0,"false"). bsc_boolean(1,"true").
+.violation BoundaryValue(at:span,bundle:number,ordinal:number,value_json:symbol) code "BS_VALUE" "boundary value"
+BoundaryValue(@place("",0),0,c,cat("{\"file\":",@json_str(p),",\"line\":",l,",\"col\":",col,",\"category\":",@json_str(code),",\"function_name\":",@json_str(fn),",\"call_text\":",@json_str(text),",\"is_async_ctx\":",flag,"}")) :- option("entryPoint","_bs_ast_collect"),bs_detect(c,code,fn,a,text),option("bsCollectorPath",p),option_item("astLines",c,l),option_item("astColumns",c,col),bsc_boolean(a,flag).
+BoundaryValue(@place("",0),0,0,"[\"<module>\",false]") :- option("entryPoint","_bs_current_function"),!option_item("bsStackNames",_,_).
+BoundaryValue(@place("",0),0,0,cat("[",name,",",flag,"]")) :- option("entryPoint","_bs_current_function"),n=count:{option_item("bsStackNames",i,_)},n>0,option_item("bsStackNames",n-1,name),option_item("bsStackFlags",n-1,flag).
+
+// Tagged primitive inputs retain type and field order. Shared native readers implement Python coercion.
+.decl bsv_container(b:number,kind:symbol)
+.input bsv_container(IO=json,filename="boundary-values.json",path="/bundles/*/kind",projection="python-str")
+.decl bsv_shape(b:number,r:number,kind:symbol)
+.input bsv_shape(IO=json,filename="boundary-values.json",path="/bundles/*/rows/*/kind",projection="python-str")
+.decl bsv_member(b:number,r:number,f:number,key:symbol)
+.input bsv_member(IO=json,filename="boundary-values.json",path="/bundles/*/rows/*/fields/*/key",projection="python-str")
+.decl bsv_text(b:number,r:number,f:number,value:symbol)
+.input bsv_text(IO=json,filename="boundary-values.json",path="/bundles/*/rows/*/fields/*/encoded",projection="python-value-str")
+.decl bsv_int(b:number,r:number,f:number,value:symbol,error_type:symbol,detail:symbol)
+.input bsv_int(IO=json,filename="boundary-values.json",path="/bundles/*/rows/*/fields/*/encoded",projection="python-value-int")
+.decl bsv_tag(b:number,r:number,f:number,kind:symbol)
+.input bsv_tag(IO=json,filename="boundary-values.json",path="/bundles/*/rows/*/fields/*/encoded/0",projection="python-str")
+.decl bsv_scalar(b:number,r:number,f:number,value:symbol)
+.input bsv_scalar(IO=json,filename="boundary-values.json",path="/bundles/*/rows/*/fields/*/encoded/1",projection="python-str")
+.decl bsv_child(b:number,r:number,f:number,i:number,value:symbol)
+.input bsv_child(IO=json,filename="boundary-values.json",path="/bundles/*/rows/*/fields/*/encoded/1/*",projection="json")
+.decl bsv_field(b:number,r:number,key:symbol,value:symbol)
+bsv_field(b,r,k,v) :- bsv_member(b,r,f,k),bsv_text(b,r,f,v).
+.decl bsv_number(b:number,r:number,key:symbol,value:symbol)
+bsv_number(b,r,k,v) :- bsv_member(b,r,f,k),bsv_int(b,r,f,v,"",_).
+.decl bsv_valid(b:number,r:number)
+bsv_valid(b,r) :- bsv_container(b,"array"),bsv_shape(b,r,"object"),bsv_field(b,r,"file",_),bsv_number(b,r,"line",_),bsv_number(b,r,"col",_),bsv_field(b,r,"category",_),bsv_field(b,r,"function_name",_),bsv_field(b,r,"call_text",_),bsv_member(b,r,_,"is_async_ctx").
+.decl bsv_true(b:number,r:number,key:symbol)
+bsv_true(b,r,k) :- bsv_member(b,r,f,k),bsv_tag(b,r,f,"bool"),bsv_scalar(b,r,f,"True").
+bsv_true(b,r,k) :- bsv_member(b,r,f,k),bsv_tag(b,r,f,"int"),bsv_scalar(b,r,f,v),v!="0".
+bsv_true(b,r,k) :- bsv_member(b,r,f,k),bsv_tag(b,r,f,"float"),bsv_scalar(b,r,f,v),v!="0000000000000000",v!="8000000000000000".
+bsv_true(b,r,k) :- bsv_member(b,r,f,k),bsv_tag(b,r,f,"str"),bsv_scalar(b,r,f,v),v!="".
+bsv_true(b,r,k) :- bsv_member(b,r,f,k),bsv_tag(b,r,f,t),(t="list";t="dict";t="tuple"),bsv_child(b,r,f,_,_).
+.decl bsv_flag(b:number,r:number,value:symbol)
+bsv_flag(b,r,"true") :- bsv_valid(b,r),bsv_true(b,r,"is_async_ctx").
+bsv_flag(b,r,"false") :- bsv_valid(b,r),!bsv_true(b,r,"is_async_ctx").
+BoundaryValue(@place("",0),b,r,cat("{\"file\":",@json_str(p),",\"line\":",l,",\"col\":",col,",\"category\":",@json_str(c),",\"function_name\":",@json_str(fn),",\"call_text\":",@json_str(text),",\"is_async_ctx\":",flag,"}")) :- option("entryPoint","_bs_from_fact"),bsv_valid(b,r),bsv_field(b,r,"file",p),bsv_number(b,r,"line",l),bsv_number(b,r,"col",col),bsv_field(b,r,"category",c),bsv_field(b,r,"function_name",fn),bsv_field(b,r,"call_text",text),bsv_flag(b,r,flag).
+BoundaryValue(@place("",0),b,r,"null") :- option("entryPoint","_bs_from_fact"),bsv_shape(b,r,_),!bsv_valid(b,r).
+.decl bsv_error(b:number,r:number,stage:number,detail:symbol)
+bsv_error(b,r,0,m) :- bsv_container(b,"array"),bsv_shape(b,r,"object"),bsv_field(b,r,"file",_),bsv_member(b,r,f,"line"),bsv_int(b,r,f,_,"OverflowError",m).
+bsv_error(b,r,1,m) :- bsv_container(b,"array"),bsv_shape(b,r,"object"),bsv_field(b,r,"file",_),bsv_number(b,r,"line",_),bsv_member(b,r,f,"col"),bsv_int(b,r,f,_,"OverflowError",m).
+.violation BoundaryValueError(at:span,bundle:number,ordinal:number,stage:number,detail:symbol) code "BS_VALUE_ERROR" "boundary conversion error"
+BoundaryValueError(@place("",0),b,r,s,m) :- option("entryPoint",e),(e="_bs_from_fact";e="_report_facts"),bsv_error(b,r,s,m).
+
+// Filtering uses the original file string; Path normalization is only for the final finding.
+bs_target(p,f) :- bsv_valid(b,r),bsv_field(b,r,"file",p),bsv_field(b,r,"function_name",f).
+bs_info_path(p) :- bsv_valid(b,r),bsv_field(b,r,"file",p).
+sf_container(b,k) :- bsv_container(b,k).
+sf_shape(b,r,k) :- bsv_shape(b,r,k).
+sf_line(b,r,l,l) :- bsv_valid(b,r),bsv_number(b,r,"line",l).
+sf_bad(b,r) :- bsv_valid(b,r),bsv_field(b,r,"file",p),bs_informational(p).
+sf_bad(b,r) :- bsv_valid(b,r),bsv_field(b,r,"file",p),bsv_field(b,r,"function_name",f),bs_allowed(p,f).
+sf_path_input(b,r,p) :- bsv_valid(b,r),bsv_field(b,r,"file",p),prefix("/",p).
+sf_path_input(b,r,cat(root,"/",p)) :- bsv_valid(b,r),bsv_field(b,r,"file",p),!prefix("/",p),option("bsOwnerRoot",root),!suffix("/",root).
+sf_path_input(b,r,cat(root,p)) :- bsv_valid(b,r),bsv_field(b,r,"file",p),!prefix("/",p),option("bsOwnerRoot",root),suffix("/",root).
+sf_code(b,r,c) :- sf_active(b,r),bsv_field(b,r,"category",c).
+.decl bsv_label(code:symbol,label:symbol)
+bsv_label(c,label) :- bsv_field(_,_,"category",c),bs_label(c,label).
+bsv_label(c,c) :- bsv_field(_,_,"category",c),!bs_label(c,_).
+sf_message(b,r,cat(label,": ",fn,": ",text)) :- sf_active(b,r),bsv_field(b,r,"category",c),bsv_label(c,label),bsv_field(b,r,"function_name",fn),bsv_field(b,r,"call_text",text).
+sf_config("strict_line","true"). sf_config("order","code").
+pp_config("findingSeverity","hard-fail").
+
+// Projection transports the caller's dataclass values without coercing or normalizing them.
+.decl bsj_file(i:number,value:symbol)
+.input bsj_file(IO=json,filename="boundary-project.json",path="/rows/*/file",projection="json")
+.decl bsj_line(i:number,value:symbol)
+.input bsj_line(IO=json,filename="boundary-project.json",path="/rows/*/line",projection="json")
+.decl bsj_col(i:number,value:symbol)
+.input bsj_col(IO=json,filename="boundary-project.json",path="/rows/*/col",projection="json")
+.decl bsj_category(i:number,value:symbol)
+.input bsj_category(IO=json,filename="boundary-project.json",path="/rows/*/category",projection="json")
+.decl bsj_function_name(i:number,value:symbol)
+.input bsj_function_name(IO=json,filename="boundary-project.json",path="/rows/*/function_name",projection="json")
+.decl bsj_call_text(i:number,value:symbol)
+.input bsj_call_text(IO=json,filename="boundary-project.json",path="/rows/*/call_text",projection="json")
+.decl bsj_is_async_ctx(i:number,value:symbol)
+.input bsj_is_async_ctx(IO=json,filename="boundary-project.json",path="/rows/*/is_async_ctx",projection="json")
+BoundaryValue(@place("",0),0,i,cat("{","\"file\":",v0,",","\"line\":",v1,",","\"col\":",v2,",","\"category\":",v3,",","\"function_name\":",v4,",","\"call_text\":",v5,",","\"is_async_ctx\":",v6," }")) :- option("entryPoint","_bs_to_fact"),bsj_file(i,v0),bsj_line(i,v1),bsj_col(i,v2),bsj_category(i,v3),bsj_function_name(i,v4),bsj_call_text(i,v5),bsj_is_async_ctx(i,v6).
+

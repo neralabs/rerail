@@ -545,7 +545,7 @@ class Suite:
                 from plan_ownership_port import install
                 install(self,module)
             if check == 'async_sync_boundary':
-                from boundary_port import install
+                from boundary_components_port import install
                 install(self, module)
             if check == 'unresolved_forward_refs':
                 from unresolved_port import install

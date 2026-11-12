@@ -3989,3 +3989,15 @@ The red receipt is `rr-boundary-components-source-red-finalfcce.json.gz`.
 It retains the source recording, complete failed native results, unchanged original replays, and consumed harness and policy snapshots.
 The rule remains a draft. Full native component implementation, production, CLI, history, retained edits, and valid controls remain required.
 The migration count remains nineteen admissions, eighty drafts, and one absent translation.
+
+### 2026-11-11 — Native boundary components expose a scope defect
+
+Native configuration now supplies constants, extractor metadata, plugin scope, constructor defaults, and the CLI parser schema.
+Native relations also handle complete supplied AST collection, current-function queries, fact projection, typed conversion, and raw reporting.
+The adapter only transports inputs, filesystem paths, and passive DTOs. It does not call source linter semantics.
+
+The first complete replay passes 171 of 173 cases through each API.
+Two supplied-tree cases produce an extra module-scope finding alongside the correct function-scope finding.
+The native parser's default scope clause also matches supplied graph nodes. It needs a native-parser gate.
+Both failures and all complete results are retained in `rr-boundary-collection-scope-red-finalfcce.json.gz`.
+The rule remains a draft. No engine feature or additional Linear ticket is required by this failure.

@@ -67,17 +67,8 @@ def exercise(module,case,scratch):
 
 
 def install(backend,module,detectors=False):
-    from boundary_port import install as existing_install
-    from boundary_port import scan
-    import inspect
-    existing_install(backend,module)
-    for entry in ['scan_tree','_get_call_name','_is_allowlisted','_is_informational']:
-        signature=inspect.signature(getattr(module,entry))
-        def bind(entry,signature):
-            def run(*args,**kwargs):
-                bound=signature.bind(*args,**kwargs);bound.apply_defaults();return scan(backend,entry,module,bound.arguments)
-            return run
-        backend.replace(module,entry,bind(entry,signature))
+    from boundary_components_port import install as native_install
+    native_install(backend,module,detectors=detectors)
 
 
 if __name__=='__main__':main(CHECK,'rerail.boundary-components/v1',cases,exercise,install,['boundary_components_contract.py','async_pattern_components_contract.py'])
