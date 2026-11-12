@@ -673,6 +673,82 @@ What is left, by Cranelift instructions in the rule functions:
 - **Fewer words,** from the two steps above:
   a leaf of its token's own kind, and code shared across rules.
 
+## Built: cheaper calls, fewer words
+
+Each word's machine code is now measured where it sits:
+the dump maps every instruction to its word (Cranelift's source locations),
+so a word's cost is its own bytes, not its share of the IR.
+
+- **A rule that returns one way gives back 0.**
+  412 of the 559 calls go to a rule whose `RETURN`s are all alike,
+  and the caller tests the result once (`cbnz`), as a `Result`'s.
+- **The calls open are an argument.**
+  Within one call of a rule function the count of calls open never changes,
+  so it is the function's last argument:
+  a call passes one more, a `RETURN` tests it against zero,
+  and `TOKEN`'s function takes it for its room check.
+  No load or store of the count is left around a call.
+- **The stream's end is a token kind of its own.**
+  At the end, `TOKEN` sets the token to a kind past the records' kinds,
+  so a switch on kinds sends it to its end target in the same compare tree,
+  as the lean parser's end token. The separate end test is gone from every switch.
+- **A call goes to any rule's code that behaves the same as its callee's.**
+  The word merge (`merge_words`) also finds which words behave the same across rules,
+  and a call's `GOTO` goes to the first such place in any rule.
+  Rules that are copies, whole or from where a call enters, become one function,
+  as the lean parser's rules call one helper.
+  No word reaches another rule except by a call.
+
+| | Words as calls | Now | Lean parser |
+|---|---|---|---|
+| Words | 8,563 | 8,144 | |
+| Machine instructions | 43,654 | 38,750 | 10,008 |
+| Code bytes | 174,616 | 155,000 | |
+| Tier 2, instructions | 354.2M | 335.1M | 356.9M |
+| Tier 2, cycles | 72.3M | 63.9M | 69.6M |
+
+The load average was about 30 for the last measurement.
+
+Where the machine code is now, by word:
+
+| Word | Words | Instructions each | Share |
+|---|---|---|---|
+| `SWITCH` | 322 | 27 | 28% |
+| `PUSH` | 530 | 10 | 18% |
+| `ROW` | 351 | 7 | 8% |
+| `MARK` | 337 | 6 | 7% |
+
+A switch already has the lean parser's shape:
+rustc compiles its `match`es as compare trees too, with no jump table.
+What differs is how many switches there are:
+the lean parser has 1,198 compares, tier 2 has 5,102.
+
+### Tried and dropped: code shared from the middle of rules
+
+Beyond whole callees, rules share tails:
+code from some state onwards that behaves the same in two rules.
+Sharing those as well would save about 6,200 instructions,
+through 196 places where one rule goes into another's code.
+
+- **As tail calls** (`return_call`), it saved nothing:
+  each one restores every callee-saved register first,
+  six `ldp`s and an `add`, at each of 587 places.
+- **As a call whose result is passed on**,
+  as the lean parser's `return self.helper()`, it still lost:
+  - in the largest functions, the register allocator then keeps `ctx` on the stack
+    and reloads it at each use: 5,700 stack loads, from 260;
+  - regalloc2 splits a value at most twice before it cuts it into one piece a use;
+  - the cliff stayed with the platform calling convention,
+    with copies at the calls, and with the calls-open count back in memory.
+
+Since the kept copy of shared code is in the earliest rule that has it,
+a rule only goes into earlier rules' code,
+so such calls nest no deeper than there are rules.
+What would make it pay is `ctx` outside the allocation,
+in a register of its own for the whole run (Cranelift's pinned register, x21).
+`tempo_stream` would save the host's x21 and restore it,
+and calls would no longer pass `ctx` at all.
+
 ## The order
 
 1. One symbol a token: rows and keywords in the record, one switch a state.
@@ -680,7 +756,8 @@ What is left, by Cranelift instructions in the rule functions:
 2. Marks in the record. Built: the record pass writes them into the code.
 3. A cheaper `TOKEN`, and the state as the lean parser's.
    Built: no select, nothing held across calls, the tape in rows, one exit a function,
-   the state as locals, a token taken for good, words as calls (and so the frame-free path).
-   Next: cheaper calls, then fewer words.
+   the state as locals, a token taken for good, words as calls (and so the frame-free path),
+   cheaper calls, callees shared across rules.
+   Next: `ctx` in a register of its own, then code shared from the middle of rules.
 4. Keyword marks from the records. Built for the marks of one word.
 5. Tier 1's primitives: the picked hash, then nibble fingerprints.
