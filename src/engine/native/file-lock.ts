@@ -23,6 +23,7 @@ import { mkdir, readdir, readFile, rm, rmdir, unlink, writeFile } from "node:fs/
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { heldOnWindows, removeWithRetry, renameWithRetry, replaceFile } from "../file-replace.js";
+import { processState } from "../process-liveness.js";
 import { keepFolderPrivate, type PrivateMachine } from "../storage/private-files.js";
 import { loadNativeBinding, type NativeBinding } from "./native.js";
 
@@ -126,16 +127,6 @@ async function take(locks: string, request: LockRequest): Promise<Taken> {
   return await takeOsLock(engine, locks, request);
 }
 
-function isRunning(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    // EPERM: it runs, as another user.
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
-
 function parseHolder(text: string): LockHolder | undefined {
   try {
     const value: unknown = JSON.parse(text);
@@ -203,7 +194,7 @@ function runningHolder(record: string): LockHolder | undefined {
     return undefined;
   }
   const holder = parseHolder(text);
-  return holder !== undefined && isRunning(holder.pid) ? holder : undefined;
+  return holder !== undefined && processState(holder.pid) !== "gone" ? holder : undefined;
 }
 
 /**
@@ -217,8 +208,10 @@ function runningHolder(record: string): LockHolder | undefined {
  *   a later holder's; one that finds the file gone tries again. It then removes the folder only if it is empty.
  * - A folder with no owner in it has no holder, and any taker may remove it.
  *
- * A process running on this machine never reads as gone, so a live holder is never cleared. A dead one whose pid the
- * system has given to another process reads as running: its lock stays until a person removes the folder.
+ * Whether a holder runs is `processState`'s answer, as everywhere in Rerail. A process running on this machine never
+ * reads as gone, so a live holder is never cleared; one that exited and that nothing reaped (a zombie, in a container
+ * without an init process) reads as gone, as it holds no lock. A dead one whose pid the system has given to another
+ * process reads as running: its lock stays until a person removes the folder.
  */
 async function takeFolderLock(folder: string, wait: Wait): Promise<Taken> {
   const token = randomUUID();
@@ -280,7 +273,7 @@ async function folderOwner(folder: string): Promise<FolderOwner> {
   if (file === undefined) return { kind: "empty" };
   if (entries.length > 1 || !OWNER_FILE.test(file)) return { kind: "held", holder: undefined };
   const holder = parseHolder(await readFile(join(folder, file), "utf8").catch(() => ""));
-  if (holder === undefined || isRunning(holder.pid)) return { kind: "held", holder };
+  if (holder === undefined || processState(holder.pid) !== "gone") return { kind: "held", holder };
   return { kind: "dead", file, holder };
 }
 
