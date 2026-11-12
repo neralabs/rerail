@@ -77,7 +77,14 @@ impl SpanEnds {
     fn metal(&self) -> Option<(Vec<Vec<u64>>, RanOn)> {
         use super::metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
         let natives: Vec<&super::native_ir::BlockNative> = self.filters.iter().map(|f| &f.native).collect();
-        let run = run_split(&natives, &self.batch(), LaneWidth::W64, Executor::Generated(ClassStrategy::Lookup), 64).ok()?;
+        // Each set of patterns is a kernel of its own: until its compile (on a thread of its own) is done, the
+        // interpreter's pipeline runs the batch, so no launch waits on the compiler.
+        let executor = if super::metal_program_backend::block_program::generated_ready(&natives, LaneWidth::W64) {
+            Executor::Generated(ClassStrategy::Lookup)
+        } else {
+            Executor::Interpreter
+        };
+        let run = run_split(&natives, &self.batch(), LaneWidth::W64, executor, 64).ok()?;
         Some((run.files.into_iter().map(|mut r| r.outputs.swap_remove(0)).collect(), RanOn::Metal))
     }
 }
@@ -578,5 +585,41 @@ mod tests {
                 assert_eq!(*got, filters[*f].ends(sources[*d].as_bytes()), "program {f} on {ran:?}");
             }
         }
+    }
+
+    /// A new set of patterns runs on the GPU's interpreter while its own kernel compiles on another thread, then on
+    /// that kernel: the same marks both times, and the first launch never waits on the compiler.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_new_pattern_set_runs_on_the_interpreter_while_its_kernel_compiles() {
+        use super::super::metal_program_backend::block_program::{LaneWidth, generated_ready};
+        use std::sync::Arc;
+        let ex = crate::code_rule_dsl::logic::lanes::executor_for(true);
+        if !ex.lanes().contains(&rerail_accel::Lane::Gpu) {
+            return;
+        }
+        // Patterns no other test uses: the set's kernel is not compiled yet in this process.
+        let filters: Vec<Arc<SpanPrefilter>> = ["QZV\\d{2}k", "(?m)^def\\s+qzv_\\w+"].iter().map(|re| Arc::new(SpanPrefilter::compile(re, false).unwrap())).collect();
+        let natives: Vec<&super::super::native_ir::BlockNative> = filters.iter().map(|f| &f.native).collect();
+        let long = "QZV12k = 1\ndef qzv_a():\n    QZV9k\n".repeat(300);
+        let sources: Vec<Arc<String>> = TEXTS.iter().copied().chain([long.as_str()]).map(|t| Arc::new(t.to_owned())).collect();
+        let files: Vec<(usize, usize)> = (0..sources.len()).flat_map(|d| (0..filters.len()).map(move |f| (d, f))).collect();
+        let check = |what: &str| {
+            let (got, ran) = super::ends_on(ex, &filters, &sources, &files, true, Some(rerail_accel::Lane::Gpu)).unwrap();
+            assert_eq!(ran, RanOn::Metal, "{what}");
+            for ((d, f), got) in files.iter().zip(&got) {
+                assert_eq!(*got, filters[*f].ends(sources[*d].as_bytes()), "program {f}, {what}");
+            }
+        };
+        let asked = std::time::Instant::now();
+        check("on the interpreter, the kernel compiling");
+        assert!(asked.elapsed() < std::time::Duration::from_secs(20), "the first launch waited {:?}", asked.elapsed());
+        // The kernel's compile, on its own thread: bounded.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
+        while !generated_ready(&natives, LaneWidth::W64) {
+            assert!(std::time::Instant::now() < deadline, "the set's kernel did not compile within 90 s");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        check("on the set's own kernel");
     }
 }

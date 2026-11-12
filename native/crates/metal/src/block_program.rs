@@ -190,6 +190,13 @@ pub fn run_split(
     }
 }
 
+/// Whether generated MSL's pipeline for `programs` at `width` (classes by lookups) is compiled; when it is not, its
+/// compile starts on a thread of its own and this is false at once: the caller runs the batch on the interpreter's
+/// pipeline (compiled once for every program) meanwhile, never waiting on the compiler (`runtime::pipeline_ready`).
+pub fn generated_ready(programs: &[&BlockNative], width: LaneWidth) -> bool {
+    crate::runtime::pipeline_ready(&generate_forms(programs, width), "tempo_batch").is_some()
+}
+
 /// The bindings of a batch's slabs (`MAX_SLABS`): 0, then past the interpreter's 12–15.
 const SLAB_BUFFERS: [u64; crate::slabs::MAX_SLABS] = [0, 16, 17, 18];
 
