@@ -691,6 +691,100 @@ fn random_texts(r: &Rels, n: usize, seed: u64) -> Vec<Case> {
         .collect()
 }
 
+/// Random strata of text and integer steps mixed: everything `random_texts` makes, integer arithmetic and filters of
+/// the numbers, aggregates keyed by a name or a made text (over the names) and by a number, and string joins: atoms
+/// over the names keyed by a slot holding a name or a made text (positive and negated), and integer joins.
+fn random_mixed(r: &Rels, n: usize, seed: u64) -> Vec<Case> {
+    let mut g = Rng(seed);
+    let tests = crate::code_rule_dsl::logic::strings::TESTS;
+    let pats = ["foo", "src", ".ts", "αβ", "a", "_", "x9", "TODO", "/"];
+    let fns = ["sql_lower", "sql_upper", "head", "dir"];
+    let ints = [&r.ia, &r.ib, &r.ie];
+    let ops = ["rr_add", "rr_sub", "rr_mul", "mod", "rr_max", "rr_min"];
+    (0..n)
+        .map(|_| {
+            // Start from the names, or from names and numbers joined by a number.
+            let mut steps = vec![format!("pos {} v0 v1", r.sn)];
+            let (mut texts, mut nums, mut next) = (vec![0usize], vec![1usize], 2usize);
+            if g.chance(30) {
+                steps.push(format!("pos {} v1 v2", g.pick(&ints)));
+                nums.push(2);
+                next = 3;
+            }
+            for _ in 0..1 + g.next(5) {
+                let t = *g.pick(&texts);
+                let k = *g.pick(&nums);
+                let p = *g.pick(&pats);
+                let mut fresh = |pool: &mut Vec<usize>| {
+                    pool.push(next);
+                    next += 1;
+                    next - 1
+                };
+                let s = match g.next(14) {
+                    0 => format!("test {} v{t} {} {}", g.pick(&tests), sym(p), g.next(2)),
+                    1 => {
+                        let v = fresh(&mut texts);
+                        format!("func {} v{v} v{t}", g.pick(&fns))
+                    }
+                    2 => {
+                        let v = fresh(&mut texts);
+                        if g.chance(50) { format!("cat v{v} v{t} {}", sym(p)) } else { format!("func str_concat v{v} {} v{t}", sym(p)) }
+                    }
+                    3 => {
+                        let v = fresh(&mut texts);
+                        format!("func rr_to_string v{v} v{k}")
+                    }
+                    4 => {
+                        let v = fresh(&mut texts);
+                        format!("func rr_substr v{v} v{t} i:{} v{k}", g.next(4) as i64 - 1)
+                    }
+                    5 => {
+                        let v = fresh(&mut nums);
+                        format!("func rr_strlen v{v} v{t}")
+                    }
+                    6 => {
+                        let rhs = if g.chance(60) { format!("v{}", g.pick(&nums)) } else { format!("i:{}", g.pick(&INTS)) };
+                        let v = fresh(&mut nums);
+                        format!("func {} v{v} v{k} {rhs}", g.pick(&ops))
+                    }
+                    7 => format!("{} v{k} i:{}", g.pick(&["lt", "le", "ne"]), g.next(120) as i64 - 20),
+                    // Aggregates keyed by a text (over the names) or by a number (over the integers).
+                    8 => {
+                        let v = fresh(&mut nums);
+                        match g.next(4) {
+                            0 => format!("count {} v{t} _ v{v}", r.sn),
+                            1 => format!("min {} v{t} _ 1 v{v}", r.sn),
+                            2 => format!("max {} v{t} _ 1 v{v}", r.sn),
+                            _ => format!("count {} v{k} _ v{v}", g.pick(&ints)),
+                        }
+                    }
+                    // String joins: an atom over the names keyed by a text slot.
+                    9 => {
+                        let v = fresh(&mut nums);
+                        format!("pos {} v{t} v{v}", r.sn)
+                    }
+                    10 => format!("pos {} v{t}", r.sm),
+                    11 => match g.next(2) {
+                        0 => format!("neg {} v{t}", r.sm),
+                        _ => format!("neg {} v{t} _", r.sn),
+                    },
+                    // An integer join from a number.
+                    12 => {
+                        let v = fresh(&mut nums);
+                        format!("pos {} v{k} v{v}", g.pick(&ints))
+                    }
+                    _ => format!("{} v{t} {}", g.pick(&["eq", "ne"]), if g.chance(50) { sym(p) } else { format!("v{}", g.pick(&texts)) }),
+                };
+                steps.push(s);
+            }
+            steps.push(format!("head v{} v{}", g.pick(&texts), g.pick(&nums)));
+            // A random shape may hold a form the device has not by design (a made text read as an atom's or an
+            // aggregate's key: the arena's texts are no symbols): its rows the same.
+            case("random mixed", "si", steps.join("\n"), false)
+        })
+        .collect()
+}
+
 macro_rules! parity_test {
     ($name:ident, $what:literal, $cases:expr) => {
         #[test]
@@ -717,6 +811,7 @@ parity_test!(parity_row_texts, "texts made per row: tests, replacements, cats", 
 parity_test!(parity_combinators, "unions and recursion", combinators);
 parity_test!(parity_random_integers, "random integer strata", |r: &Rels| [0xa11ce, 0x1d, 0xfeed].into_iter().flat_map(|s| random_integers(r, 400, s)).collect());
 parity_test!(parity_random_texts, "random text strata", |r: &Rels| [0xb0b, 0x7e47, 0xc0de].into_iter().flat_map(|s| random_texts(r, 400, s)).collect());
+parity_test!(parity_random_mixed, "random mixed text and integer strata", |r: &Rels| [0x31, 0x5157, 0xab1e].into_iter().flat_map(|s| random_mixed(r, 400, s)).collect());
 
 
 /// Cats made per row past the arena's first size: the stage runs again from the first made text, at the size wanted,
