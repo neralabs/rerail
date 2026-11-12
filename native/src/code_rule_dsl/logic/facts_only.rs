@@ -269,6 +269,11 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "HANDLES"),
     ("code_rule_dsl/logic/plan/choices.rs", "DURABLE"),
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
+    // A test's own store, the template's path and the threads said to ask off a test's (`test_store`): which files
+    // the tests' stores are, not results.
+    ("code_rule_dsl/logic/plan/corpus/test_store.rs", "OWN"),
+    ("code_rule_dsl/logic/plan/corpus/test_store.rs", "PATH"),
+    ("code_rule_dsl/logic/plan/corpus/test_store.rs", "SAID"),
     // Profiling totals, consumed and cleared by each report; no reusable results.
     ("code_rule_dsl/logic/plan/corpus/memo.rs", "SIZES"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),

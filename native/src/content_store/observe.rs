@@ -1007,6 +1007,16 @@ pub fn written() {
     }
 }
 
+/// Drops the observer of the P0 store at `store`, its queued writes written first: its store is being deleted (a
+/// test's own). Every run's end waits on each observer the process holds (`written`), so one kept past its store's
+/// life is a cost to every later run.
+pub fn forget(store: &Path) {
+    let gone = OBSERVERS.get().and_then(|all| all.lock().unwrap_or_else(|e| e.into_inner()).remove(&Some(store.to_path_buf())));
+    if let Some(observer) = gone {
+        observer.written();
+    }
+}
+
 /// Runs `f` with the observer of the P0 store at `store` (`None`: in memory, for the process). One observer per
 /// store, for the process.
 pub fn with<T>(store: Option<&Path>, f: impl FnOnce(&mut Observer) -> T) -> T {

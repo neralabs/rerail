@@ -1516,6 +1516,9 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
+pub mod test_store;
+
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// A test's own store, so that another test's collection in the shared default store does not evict its rows.
     pub static TEST_TAPE_CACHE: std::cell::RefCell<Option<std::path::PathBuf>> = const { std::cell::RefCell::new(None) };
@@ -1554,7 +1557,11 @@ pub fn observe<T>(f: impl FnOnce(&mut crate::content_store::observe::Observer) -
     // one's journal, after which it answers for this test's edits until the next flush (decision 0105).
     #[cfg(any(test, feature = "test-hooks"))]
     let store = store.map(|p| {
-        if TEST_TAPE_CACHE.with(|t| t.borrow().is_some()) || std::env::var_os("RERAIL_TAPE_CACHE").is_some() {
+        // An explicit workload cache keeps production observer semantics; a test's own store is its alone.
+        if TEST_TAPE_CACHE.with(|t| t.borrow().is_some())
+            || std::env::var_os("RERAIL_TAPE_CACHE").is_some()
+            || tape_cache_path().is_some_and(|own| test_store::is_own(&own))
+        {
             return p;
         }
         let thread: String = format!("{:?}", std::thread::current().id()).chars().filter(char::is_ascii_digit).collect();
@@ -1578,16 +1585,17 @@ pub fn tape_cache_path() -> Option<std::path::PathBuf> {
     match std::env::var("RERAIL_TAPE_CACHE") {
         Ok(v) if v == "off" => None,
         Ok(v) => Some(std::path::PathBuf::from(v)),
+        // A test's own store, a copy of the template (`test_store`); the process's only off a test's thread.
         #[cfg(any(test, feature = "test-hooks"))]
-        Err(_) => Some(test_tape_cache().clone()),
+        Err(_) => Some(test_store::own().unwrap_or_else(|| test_tape_cache().clone())),
         #[cfg(not(any(test, feature = "test-hooks")))]
         Err(_) => Some(std::env::temp_dir().join("rerail-tape-cache.sqlite")),
     }
 }
 
-/// A test process's own tape cache: the machine's is written by every other run on it, so a test's writes could wait
-/// out its busy deadline behind them. Removed when the process exits; one a killed process left is removed by the
-/// next test process to start.
+/// The process's store, for what asks off a test's thread (a test's is its own, `test_store`): the machine's is
+/// written by every other run on it, so a test's writes could wait out its busy deadline behind them. Removed when
+/// the process exits; one a killed process left is removed by the next test process to start.
 #[cfg(any(test, feature = "test-hooks"))]
 fn test_tape_cache() -> &'static std::path::PathBuf {
     static PATH: std::sync::LazyLock<std::path::PathBuf> = std::sync::LazyLock::new(|| {

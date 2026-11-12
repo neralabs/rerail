@@ -626,3 +626,44 @@ fn libraries_are_held_once_and_equal_requests_share_one_cone() {
     assert_ne!(one, three);
     assert_eq!(reads("p3_quiet"), ["cmp_same"]);
 }
+
+/// Each test's store is its own: a copy of the template (the library's phase 0 in it), with an identity of its own,
+/// and closed and removed when the test ends (`test_store`). Two tests at once have two stores.
+#[test]
+fn a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test() {
+    if std::env::var_os("RERAIL_TAPE_CACHE").is_some() {
+        return;
+    }
+    let template = super::test_store::template().to_path_buf();
+    let count = |path: &std::path::Path, sql: &str| -> i64 { rusqlite::Connection::open(path).unwrap().query_row(sql, [], |r| r.get(0)).unwrap() };
+    let tapes = count(&template, "SELECT count(*) FROM tape_objects");
+    assert!(tapes > 0, "the template holds the library's tapes");
+    let identity = count(&template, "SELECT id FROM store_identity");
+    let probe = |n: usize| {
+        let template = template.clone();
+        // A thread named as the harness names a test's.
+        std::thread::Builder::new().name(format!("corpus::tests::probe{n}")).spawn(move || {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(dir.path().join("a.py"), "def f():\n    return 1\n").unwrap();
+            let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse("#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n").unwrap()).unwrap();
+            let out = dir.path().join("out");
+            super::run(&text, dir.path(), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+            assert_eq!(std::fs::read_to_string(out.join("defs.csv")).unwrap().trim(), "f");
+            let path = super::tape_cache_path().unwrap();
+            assert_ne!(path, template);
+            assert!(path.to_string_lossy().contains("rerail-test-store-"), "{}", path.display());
+            let count = |sql: &str| -> i64 { rusqlite::Connection::open(&path).unwrap().query_row(sql, [], |r| r.get(0)).unwrap() };
+            assert!(count("SELECT count(*) FROM tape_objects") > tapes, "the library's tapes and the test's own");
+            assert_ne!(count("SELECT id FROM store_identity"), identity, "a copy is a store of its own");
+            path.parent().unwrap().to_path_buf()
+        }).unwrap()
+    };
+    let (a, b) = (probe(0), probe(1));
+    let (a, b) = (a.join().unwrap(), b.join().unwrap());
+    assert_ne!(a, b, "two tests, two stores");
+    for dir in [a, b] {
+        assert!(!dir.exists(), "{} is removed with its test", dir.display());
+        #[cfg(target_vendor = "apple")]
+        assert_eq!(super::test_store::open_under(&dir), 0, "nothing of {} is held open after its test", dir.display());
+    }
+}
