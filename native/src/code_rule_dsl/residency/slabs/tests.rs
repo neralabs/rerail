@@ -1,6 +1,6 @@
 use super::*;
 use crate::code_rule_dsl::language::{self, GrammarDialect};
-use crate::code_rule_dsl::prefilter::tests::{document, temp};
+use crate::code_rule_dsl::fixtures::{document, temp};
 use crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION;
 
 const SOURCES: [(&str, GrammarDialect); 3] = [

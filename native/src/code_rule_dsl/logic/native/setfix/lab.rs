@@ -319,8 +319,8 @@ mod tests {
         let mut device = Device::default();
         println!("{:>9} {:>9} {:>10}  {:<5} capture", "cpu ms", "solve ms", "rows", "rows");
         for path in captures {
-            let store = crate::code_rule_dsl::prefilter::tests::temp();
-            drop(crate::code_rule_dsl::prefilter::tests::open(&store));
+            let store = crate::code_rule_dsl::fixtures::temp();
+            drop(crate::code_rule_dsl::fixtures::open(&store));
             let db = Connection::open(&store).unwrap();
             crate::code_rule_dsl::logic::native::register(&db).unwrap();
             crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();

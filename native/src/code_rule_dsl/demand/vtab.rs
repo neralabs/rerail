@@ -2386,8 +2386,8 @@ mod tests {
 
     /// A connection to a new content store: the relations run where their statistics live.
     fn store_connection() -> Connection {
-        let path = crate::code_rule_dsl::prefilter::tests::temp();
-        drop(crate::code_rule_dsl::prefilter::tests::open(&path));
+        let path = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&path));
         Connection::open(path).expect("content store connection")
     }
 

@@ -161,7 +161,7 @@ fn compare(rule: &std::path::Path, adjust: &Adjust, files: &[(String, String)], 
 /// `reference_rows`, which its relational stages read.
 #[test]
 fn reference_edge_is_ws_reference_graph_on_the_fixtures() {
-    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("references");
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("references");
     let mut seen = Seen::default();
     let mut skipped = 0;
     for (k, event) in events().into_iter().enumerate().filter(|(_, e)| CHECKS.contains(&e.check.as_str())) {
@@ -264,7 +264,7 @@ fn reference_edge_is_ws_reference_graph_on_projects() {
         }
     }
     let package: Vec<(String, String)> = PACKAGE.iter().map(|(p, s)| ((*p).to_owned(), (*s).to_owned())).collect();
-    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("reference-projects");
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("reference-projects");
     let mut seen = Seen::default();
     for check in CHECKS {
         let rule = rule_file(check).expect("the policy's file");

@@ -737,8 +737,8 @@ mod tests {
         if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
             return;
         }
-        let store = crate::code_rule_dsl::prefilter::tests::temp();
-        drop(crate::code_rule_dsl::prefilter::tests::open(&store));
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&store));
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();

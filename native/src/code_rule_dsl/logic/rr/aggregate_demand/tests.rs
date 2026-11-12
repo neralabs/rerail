@@ -126,7 +126,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
         .map(|r| r.head.rel.to_string())
         .collect();
     p.outputs.extend(helpers.iter().cloned());
-    let file = crate::code_rule_dsl::prefilter::tests::temp();
+    let file = crate::code_rule_dsl::fixtures::temp();
     let dump = zstd::decode_all(
         std::fs::File::open(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -176,7 +176,7 @@ absent(w,s,x) :- wanted(w,s,x), count : { ancestor(w,s,p), binding(w,p,x,v) } = 
     assert_eq!(native.outputs, result.outputs);
     // Measure the production atom-backed engine, not the frozen legacy extension above.
     crate::code_rule_dsl::logic::profile::reset();
-    let path = crate::code_rule_dsl::prefilter::tests::temp();
+    let path = crate::code_rule_dsl::fixtures::temp();
     let store = crate::content_store::ContentStore::open(&path).unwrap();
     let db = rusqlite::Connection::open(&path).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
@@ -331,7 +331,7 @@ ref(10,1,"a"). ref(11,1,"b"). ref(20,2,"a").
 hit(f) :- fn(f), count : { ident(x), count : { ref(n,f,x) } = 0 } > 0.
 "#).unwrap();
     for modes in ["", "program"] {
-        let path = crate::code_rule_dsl::prefilter::tests::temp();
+        let path = crate::code_rule_dsl::fixtures::temp();
         let store = crate::content_store::ContentStore::open(&path).unwrap();
         let db = rusqlite::Connection::open(&path).unwrap();
         native::register(&db).unwrap();

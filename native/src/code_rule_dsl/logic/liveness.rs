@@ -212,7 +212,7 @@ out(a, b) :- path(a, b), a = 1.
         let prog = crate::code_rule_dsl::logic::rr::parse(src).unwrap();
         let live = super::program(&prog);
         let text = format!("{src}\n{}", crate::code_rule_dsl::logic::rr::print(&live).unwrap());
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("liveness");
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("liveness");
         std::fs::create_dir_all(&dir).unwrap();
         let root = dir.join("root");
         std::fs::create_dir_all(&root).unwrap();

@@ -328,7 +328,7 @@ use crate::code_rule_dsl::facts::producers::python::families as py;
     };
     #[test]
     fn selective_batches_cache_only_admitted_nodes_and_preserve_document_identity() {
-        let store_path = crate::code_rule_dsl::prefilter::tests::temp();
+        let store_path = crate::code_rule_dsl::fixtures::temp();
         let store = ContentStore::open(&store_path).unwrap();
         let sources = [
             "import requests as r\nasync def f():\n r.get('url')\n irrelevant(1,2,3)\n",

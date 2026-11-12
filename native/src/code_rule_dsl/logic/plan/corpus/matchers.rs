@@ -319,7 +319,7 @@ c(n, x) :- ast(d, n, {"language": "python", "rule": {"pattern": "f($X)"}}, X: x)
     /// a file its path passes, by that branch, and elsewhere only by the other.
     #[test]
     fn a_nested_file_path_is_the_documents() {
-        let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("nested-file-path");
+        let root = crate::code_rule_dsl::fixtures::temp().with_extension("nested-file-path");
         std::fs::create_dir_all(root.join("a")).unwrap();
         std::fs::create_dir_all(root.join("b")).unwrap();
         std::fs::write(root.join("a/x.py"), "f()\n").unwrap();

@@ -2,7 +2,7 @@
 //! batch's node records they replace (decision 0032): every node of a batch of stored fixtures.
 use super::*;
 use crate::code_rule_dsl::language::{self, GrammarDialect};
-use crate::code_rule_dsl::prefilter::tests::{document, temp};
+use crate::code_rule_dsl::fixtures::{document, temp};
 use crate::code_rule_dsl::residency::slabs::{self, DocTable, DocView};
 use crate::code_rule_dsl::tape::{Grammar, TAPE_FORMAT_VERSION};
 use crate::content_store::ContentStore;

@@ -100,7 +100,7 @@ posts(n,q) :- python_qualified(n,q,wanted,post_target).
 "#,
         )
         .unwrap();
-        let path = crate::code_rule_dsl::prefilter::tests::temp();
+        let path = crate::code_rule_dsl::fixtures::temp();
         let store = ContentStore::open(&path).unwrap();
         let db = rusqlite::Connection::open(&path).unwrap();
         native::register(&db).unwrap();

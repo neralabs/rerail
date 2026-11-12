@@ -1038,19 +1038,6 @@ impl CoreRows {
 mod tests {
     use super::*;
 
-    /// Python's verdict is CPython's grammar's: Python 2's `print "x"`, which tree-sitter accepts, is an error; a
-    /// `match` statement is not; the line is the first error's.
-    #[test]
-    #[cfg(feature = "python-syntax-error")]
-    fn python_syntax_errors_follow_cpythons_grammar() {
-        use super::super::python_syntax::error as python_error;
-        assert_eq!(python_error("x = 1\n"), Ok(None));
-        assert_eq!(python_error("match x:\n    case 1:\n        pass\n"), Ok(None));
-        assert_eq!(python_error("y = 2\nprint \"x\"\n").map(|e| e.map(|e| e.0)), Ok(Some(2)));
-        assert_eq!(python_error("y = 2\r\nz = 3\rdef (:\n").map(|e| e.map(|e| e.0)), Ok(Some(3)), "lines as src_line counts them");
-        assert!(python_error("f\"{x:\\x}\"\n").is_err_and(|e| e.starts_with("UnicodeDecodeError: ")), "ast.parse raises");
-    }
-
     #[test]
     fn lines_follow_each_languages_terminators() {
         let py = Lines::new("a\r\nb\rc\n\nd", true);

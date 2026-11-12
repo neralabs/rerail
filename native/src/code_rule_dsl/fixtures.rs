@@ -30,8 +30,8 @@ macro_rules! __rerail_oracle {
     };
 }
 
-pub(crate) use crate::__rerail_fixtures_dir as fixtures_dir;
-pub(crate) use crate::__rerail_oracle as oracle;
+pub use crate::__rerail_fixtures_dir as fixtures_dir;
+pub use crate::__rerail_oracle as oracle;
 
 /// `source`'s tape in `lang`, restored, and its bytes.
 pub(in crate::code_rule_dsl) fn document(source: &str, lang: GrammarDialect) -> (TapeDoc, Vec<u8>) {
@@ -51,3 +51,7 @@ pub(in crate::code_rule_dsl) fn temp() -> PathBuf {
     std::env::temp_dir().join(format!("rerail-prefilter-{}-{nonce}-{n}.sqlite", std::process::id()))
 }
 
+/// The store at `path`, opened (created if it is not there).
+pub(in crate::code_rule_dsl) fn open(path: &std::path::Path) -> crate::content_store::ContentStore {
+    crate::content_store::ContentStore::open(path).unwrap()
+}

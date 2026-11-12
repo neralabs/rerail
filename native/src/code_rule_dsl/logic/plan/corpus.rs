@@ -7461,7 +7461,7 @@ mod tests {
     #[test]
     fn cross_file_rows_are_memoised_per_import_component() {
         let marker = format!("# {:?}\n", std::time::SystemTime::now());
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("cross-memo");
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("cross-memo");
         std::fs::create_dir_all(&dir).unwrap();
         let write = |file: &str, body: &str| std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
         write("a.py", "def f():\n    pass\n");
@@ -7540,7 +7540,7 @@ uses(n, f) :- imp(n, q), def(f, q).
     fn an_export_handed_on_as_its_parts_finds_the_same_and_a_changed_choice_misses_the_memo() {
         use serde_json::{Value, json};
         let marker = format!("# {:?}\n", std::time::SystemTime::now());
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("factorized");
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("factorized");
         std::fs::create_dir_all(&dir).unwrap();
         let body = "def f():\n    x = 1\n    y = 2\n    print(x, y)\n    def g():\n        print(x, y)\n        z = x\n    return y\n";
         std::fs::write(dir.join("a.py"), format!("{marker}{body}")).unwrap();
@@ -7754,7 +7754,7 @@ outer(f, x) :- named(x), encl(f, p), bound(p, x).
     #[test]
     fn cross_file_strata_are_kept_across_runs_in_the_tape_cache() {
         let marker = format!("# {:?}\n", std::time::SystemTime::now());
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("kept-strata");
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("kept-strata");
         std::fs::create_dir_all(&dir).unwrap();
         let write = |file: &str, body: &str| std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
         write("a.py", "def f():\n    pass\n");
@@ -7810,7 +7810,7 @@ unused(f) :- def(f, _), !used(f).
     /// change, runs it, and the documents loaded are those a run with nothing kept loads.
     #[test]
     fn the_cone_of_requests_is_kept_while_its_reads_and_answers_are() {
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("cone-kept");
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("cone-kept");
         let _ = std::fs::remove_dir_all(&dir);
         let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
         std::fs::create_dir_all(&ws).unwrap();
@@ -7863,7 +7863,7 @@ unused(f) :- def(f, _), !used(f).
     /// not asked again), and a library file that goes.
     #[test]
     fn the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads() {
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("cone-rounds");
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("cone-rounds");
         let _ = std::fs::remove_dir_all(&dir);
         let (ws, lib) = (dir.join("ws"), dir.join("ts/stdlib"));
         std::fs::create_dir_all(ws.join("pkg")).unwrap();
@@ -7921,7 +7921,7 @@ unused(f) :- def(f, _), !used(f).
     #[test]
     fn a_new_process_maintains_the_cross_file_part_from_the_kept_rows() {
         let marker = format!("# {:?}\n", std::time::SystemTime::now());
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("kept-part");
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("kept-part");
         std::fs::create_dir_all(&dir).unwrap();
         let write = |file: &str, body: &str| std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
         write("a.py", "def f():\n    pass\ndef k():\n    pass\n");
@@ -7972,7 +7972,7 @@ unused(f) :- def(f, _), !used(f).
     #[test]
     fn a_relation_two_programs_share_is_kept_once_and_a_rule_edit_reaches_only_its_readers() {
         let marker = format!("# {:?}\n", std::time::SystemTime::now());
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("frames-shared");
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("frames-shared");
         std::fs::create_dir_all(&dir).unwrap();
         let write = |file: &str, body: &str| std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
         write("a.py", "def f():\n    pass\n");
