@@ -705,6 +705,184 @@ fn outline(module: &mut JITModule, name: &str, params: usize, returns: usize, bu
     Ok((id, signature, func))
 }
 
+/// Where an outlined word reads its token's end (`Lowering::token_end`).
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum EndAt {
+    /// After its `SPAN`: its record's.
+    Taken,
+    /// Before: its start, or at the stream's end the last record's.
+    Untaken,
+    /// A program whose `TOKEN` has both phases: the field.
+    Field,
+}
+
+/// A word made as a function of its own (`outline`), which every place of it calls: the lean
+/// parser's helpers (`push`, `bump_as`), called from the grammar's functions. The state is in
+/// `ctx` (`Ctx::state`), as the lean parser's in `self`.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+enum WordFn {
+    /// `LEAF`, its kind an argument.
+    Leaf { deferred: bool, extra: bool, end: EndAt },
+    /// `TOKEN`, taking a token: 0, or 1 past the stream's end, or `OVERFLOW` out of room.
+    Token { any_mark: Option<usize> },
+}
+
+/// A state field of `ctx`, loaded or stored, in an outlined word.
+fn field_get(f: &mut FunctionBuilder<'_>, ctx: Value, k: Mem) -> Value {
+    f.ins().load(types::I64, MemFlags::trusted(), ctx, STATE + 8 * k as i32)
+}
+
+fn field_set(f: &mut FunctionBuilder<'_>, ctx: Value, k: Mem, x: Value) {
+    f.ins().store(MemFlags::trusted(), x, ctx, STATE + 8 * k as i32);
+}
+
+/// `LEAF`'s body (`WordFn::Leaf`): params `ctx` and the kind. As the inline word: its row (kind
+/// with no field, its bytes, one record), the pending extras, the level's last node.
+fn leaf_word(f: &mut FunctionBuilder<'_>, p: &[Value], deferred: bool, extra: bool, end_at: EndAt, wrapping: bool) {
+    let (ctx, kind) = (p[0], p[1]);
+    let flags = MemFlags::trusted();
+    let zero = f.ins().iconst(types::I64, 0);
+    let pending = if deferred {
+        // The first pending leaf keeps the end of the token before it.
+        let (q, keep, last_end) = (field_get(f, ctx, Mem::Pending), field_get(f, ctx, Mem::Keep), field_get(f, ctx, Mem::LastEnd));
+        let keep = f.ins().select(q, keep, last_end);
+        field_set(f, ctx, Mem::Keep, keep);
+        f.ins().iadd_imm(q, 1)
+    } else {
+        zero
+    };
+    field_set(f, ctx, Mem::Pending, pending);
+    let (nodes, start) = (field_get(f, ctx, Mem::Nodes), field_get(f, ctx, Mem::Start));
+    let end = match end_at {
+        EndAt::Taken => field_get(f, ctx, Mem::Limit),
+        EndAt::Field => field_get(f, ctx, Mem::End),
+        EndAt::Untaken => {
+            let (at_end, limit) = (field_get(f, ctx, Mem::AtEnd), field_get(f, ctx, Mem::Limit));
+            f.ins().select(at_end, limit, start)
+        }
+    };
+    let one = f.ins().iconst(types::I64, 1);
+    let rows = f.ins().load(types::I64, flags, ctx, ROWS);
+    let row = NodeCol::row(f, rows, nodes);
+    f.ins().istore32(flags, kind, row, AT_KIND);
+    NodeCol::of(rows, AT_START).put_row(f, row, start);
+    NodeCol::of(rows, AT_END).put_row(f, row, end);
+    NodeCol::of(rows, AT_SIZE).put_row(f, row, one);
+    if wrapping {
+        let head = f.ins().load(types::I64, flags, ctx, HEAD);
+        let off = f.ins().ishl_imm(nodes, 2);
+        let at = f.ins().iadd(head, off);
+        f.ins().istore32(flags, zero, at, 0);
+        if !deferred && !extra {
+            // The last node made at the innermost open node's level.
+            let n1 = f.ins().iadd_imm(nodes, 1);
+            field_set(f, ctx, Mem::LastMade, n1);
+            field_set(f, ctx, Mem::LastBase, nodes);
+        }
+    }
+    let nodes = f.ins().iadd_imm(nodes, 1);
+    field_set(f, ctx, Mem::Nodes, nodes);
+    f.ins().return_(&[]);
+}
+
+/// What `TOKEN` reads besides `ctx`: the room each token's path may need, and the marks.
+#[derive(Clone, Copy)]
+struct TokenShape {
+    bound: Bounds,
+    in_code: usize,
+    rest_bits: i64,
+    end_bits: i64,
+}
+
+/// `TOKEN`'s body (`WordFn::Token`), taking a token: param `ctx`. The room for the path to the
+/// next token, then the next record, or the stream's end. 0, or 1 where the stream had ended
+/// already, or `OVERFLOW` out of room.
+fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>, t: TokenShape) {
+    let ctx = p[0];
+    let flags = MemFlags::trusted();
+    let load = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, flags, ctx, at);
+    let open_calls = field_get(f, ctx, Mem::Ret);
+    let over = f.create_block();
+    let counts = [field_get(f, ctx, Mem::Nodes), field_get(f, ctx, Mem::Supers), open_calls];
+    let rooms = [load(f, ROOM_NODES), load(f, ROOM_SUPERS), load(f, ROOM_PUSHES)];
+    for (at, (room, (most, per_call))) in counts.into_iter().zip(rooms.into_iter().zip([(t.bound.nodes, t.bound.pop_nodes), (t.bound.supers, t.bound.pop_supers), (t.bound.pushes, 0)])) {
+        let at = if per_call > 0 {
+            let popped = f.ins().imul_imm(open_calls, per_call as i64);
+            f.ins().iadd(at, popped)
+        } else {
+            at
+        };
+        let reach = f.ins().iadd_imm(at, most as i64);
+        let past = f.ins().icmp(IntCC::UnsignedGreaterThan, reach, room);
+        let fits = f.create_block();
+        f.ins().brif(past, over, &[], fits, &[]);
+        f.switch_to_block(fits);
+    }
+    let fits = f.current_block().expect("in a block");
+    f.switch_to_block(over);
+    f.set_cold_block(over);
+    let overflow = f.ins().iconst(types::I64, OVERFLOW as i64);
+    f.ins().return_(&[overflow]);
+    f.switch_to_block(fits);
+    let (ended, go) = (f.create_block(), f.create_block());
+    let at_end = field_get(f, ctx, Mem::AtEnd);
+    f.ins().brif(at_end, ended, &[], go, &[]);
+    f.switch_to_block(ended);
+    f.set_cold_block(ended);
+    let one = f.ins().iconst(types::I64, 1);
+    f.ins().return_(&[one]);
+    f.switch_to_block(go);
+    let (next, end) = (field_get(f, ctx, Mem::Next), field_get(f, ctx, Mem::Limit));
+    field_set(f, ctx, Mem::LastEnd, end);
+    let zero = f.ins().iconst(types::I64, 0);
+    let nstarts = load(f, NSTARTS);
+    let is_end = f.ins().icmp(IntCC::Equal, next, nstarts);
+    let (last, token) = (f.create_block(), f.create_block());
+    f.ins().brif(is_end, last, &[], token, &[]);
+    f.switch_to_block(last);
+    f.set_cold_block(last);
+    let one = f.ins().iconst(types::I64, 1);
+    field_set(f, ctx, Mem::AtEnd, one);
+    let at_end_live = f.ins().iconst(types::I64, t.end_bits);
+    field_set(f, ctx, Mem::Live, at_end_live);
+    f.ins().return_(&[zero]);
+    // The token's record: its first byte, last byte and code, from three columns.
+    f.switch_to_block(token);
+    let off = f.ins().ishl_imm(next, 2);
+    let column = |f: &mut FunctionBuilder<'_>, at: i32| {
+        let c = load(f, at);
+        let a = f.ins().iadd(c, off);
+        f.ins().uload32(flags, a, 0)
+    };
+    let (s, l, c) = (column(f, STARTS), column(f, LASTS), column(f, CODES));
+    let l1 = f.ins().iadd_imm(l, 1);
+    let after = f.ins().iadd_imm(next, 1);
+    field_set(f, ctx, Mem::Start, s);
+    field_set(f, ctx, Mem::Next, after);
+    field_set(f, ctx, Mem::Limit, l1);
+    field_set(f, ctx, Mem::Taken, c);
+    let live = match any_mark {
+        _ if t.in_code > 0 => {
+            let marks = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT));
+            if t.rest_bits == 0 { marks } else { f.ins().bor_imm(marks, t.rest_bits) }
+        }
+        Some(output) => {
+            let (outputs_p, output_stride, lasts_stride) = (load(f, OUTPUTS), load(f, OUTPUT_STRIDE), load(f, LASTS_STRIDE));
+            let w = f.ins().ushr_imm(s, 6);
+            let o = f.ins().imul_imm(output_stride, output as i64);
+            let base = f.ins().iadd(outputs_p, o);
+            let word = mask_word(f, base, lasts_stride, w);
+            let sh = f.ins().band_imm(s, 63);
+            let bit = f.ins().ushr(word, sh);
+            let bit = f.ins().band_imm(bit, 1);
+            f.ins().ineg(bit)
+        }
+        None => f.ins().iconst(types::I64, -1),
+    };
+    field_set(f, ctx, Mem::Live, live);
+    f.ins().return_(&[zero]);
+}
+
 /// A call of an outlined function (`outline`), from `f`.
 fn call_own(f: &mut FunctionBuilder<'_>, id: cranelift_module::FuncId, signature: &cranelift_codegen::ir::Signature, args: &[Value]) -> Vec<Value> {
     let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(0, id.as_u32()));
@@ -1227,6 +1405,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     let mut fctx = FunctionBuilderContext::new();
     // The node table's passes, outlined (`outline`): made where first called, by any cluster.
     let mut reorder_fn = None;
+    // The words made as functions of their own (`WordFn`), with a function a grammar rule.
+    let outlined = !native.rules.is_empty() && cut.calls;
+    let mut word_fns: std::collections::HashMap<WordFn, (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)> = std::collections::HashMap::new();
     let mut table_fn: Option<(cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)> = None;
     let mut lowered: Vec<Lowered> = Vec::new();
     let mut word_insts: Vec<u32> = vec![0; words.len()];
@@ -1669,6 +1850,33 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         None => None,
                     };
                     heads.push((wb[pc].expect("its own place"), Step::Token));
+                    if outlined && !flagged {
+                        if phase_of[pc] != crate::stream::TAKEN {
+                            // No token to take: the state switches on the one it has.
+                            f.ins().jump(fall, &[]);
+                            continue;
+                        }
+                        let key = WordFn::Token { any_mark };
+                        let shape = TokenShape { bound, in_code, rest_bits, end_bits };
+                        if !word_fns.contains_key(&key) {
+                            let name = format!("tempo_word_{}", word_fns.len());
+                            let made = outline(&mut module, &name, 1, 1, |g, q, _| take_token(g, q, any_mark, shape))?;
+                            word_fns.insert(key, made);
+                        }
+                        let (id, sig, _) = &word_fns[&key];
+                        let c = pinned(&mut f);
+                        let r = call_own(&mut f, *id, sig, &[c])[0];
+                        // A refusal: past the stream's end at this word, or out of room.
+                        let no = f.create_block();
+                        f.ins().brif(r, no, &[], fall, &[]);
+                        f.switch_to_block(no);
+                        f.set_cold_block(no);
+                        let past = f.ins().icmp_imm(IntCC::Equal, r, 1);
+                        let here = f.ins().iconst(types::I64, pc as i64 + 1);
+                        let at = f.ins().select(past, here, r);
+                        f.ins().jump(refuse, &[BlockArg::from(at)]);
+                        continue;
+                    }
                     // The path from here to the next token word writes at most `bound`'s nodes,
                     // supertypes and returns: past the tape's room, the run stops for a bigger
                     // tape. Three compares a token, not one a write.
@@ -2054,6 +2262,20 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     let size = f.ins().isub(nodes, base);
                     let size = f.ins().isub(size, pending);
                     size_c.put_row(&mut f, at_row, size);
+                    f.ins().jump(fall, &[]);
+                }
+                Op::Leaf { kind, deferred, extra } if outlined => {
+                    let end = if flagged { EndAt::Field } else if taken(pc) { EndAt::Taken } else { EndAt::Untaken };
+                    let key = WordFn::Leaf { deferred, extra, end };
+                    if !word_fns.contains_key(&key) {
+                        let name = format!("tempo_word_{}", word_fns.len());
+                        let made = outline(&mut module, &name, 2, 0, |g, q, _| leaf_word(g, q, deferred, extra, end, wrapping))?;
+                        word_fns.insert(key, made);
+                    }
+                    let (id, sig, _) = &word_fns[&key];
+                    let c = pinned(&mut f);
+                    let k = f.ins().iconst(types::I64, i64::from(kind));
+                    call_own(&mut f, *id, sig, &[c, k]);
                     f.ins().jump(fall, &[]);
                 }
                 Op::Leaf { kind, deferred, extra } => {
@@ -2773,7 +2995,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     if times {
         eprintln!("tier 2: lowered {:.2?}", phase.elapsed());
     }
-    let own: Vec<_> = reorder_fn.into_iter().chain(table_fn).collect();
+    let mut word_fns: Vec<_> = word_fns.into_values().collect();
+    word_fns.sort_by_key(|w| w.0.as_u32());
+    let own: Vec<_> = reorder_fn.into_iter().chain(table_fn).chain(word_fns).collect();
     let names: Vec<_> = own.iter().map(|(id, _, _)| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())).collect();
     let crossings: usize = lowered.iter().map(|l| l.tails).sum();
     if clustered {
