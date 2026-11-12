@@ -3761,14 +3761,18 @@ the whole batch: `label_settle` 1044, `label_micro_8` 912, `label_micro` 526, `c
 **Closure:** the label passes' launches bounded by the plan (settle and micro passes batched over clauses), or
 a new bound decided by the user. The bound is not raised here.
 
-## O-device-step-counts. The device's per-step counts of a cross join are not the CPU's
+## O-device-step-counts (closed 2026-11-12). The device's per-step counts of a cross join are not the CPU's
 
 **Seen (2026-11-12),** now that `rerail-device-metal`'s test target builds (O-device-metal-tests):
 `setfix::device::tests::text_tests_on_the_device_are_the_cpus` and `text_functions_on_the_device_are_the_cpus`.
-The rows are the CPU's; the counts differ only at a step that joins `m` (60 rows) with `n` (2000 rows): the
-CPU counts the product, 120000, the device 78733 to 80169, a different count per rule. `stage_count`'s
-counters are atomic; its `p0` counts the candidates in `lo..hi`, so the device seems to probe `n` by a key
-the CPU's walk does not have.
+The rows were the same; the counts differed only at a step that joins `m` (60 rows) with `n` (2000 rows).
+The first reading had the sides backwards: the device counted the product, 120000; the CPU 78733 to 80169.
+The CPU's walk factors rows: a step whose key it has already seen fail (`Ctx.failed`) is skipped, and the
+skipped rows never reached the step counts.
 
-**Closure:** find which candidates the device's stage reads, then decide what a step's count is (the planner's
-actual rows): the product as the CPU walks it, or the probe's candidates, with the test following.
+**Decided:** a step's count is the join's cardinality, the rows the plan's step sees, whatever a backend skips.
+That is what the planner estimates and what the device reports. The CPU now keeps, with each failed key, what
+its walk added to the counts of the steps below it, and adds that again when it skips the key. The saving is
+kept apart: `JoinRow` is charged for the skipped rows and `setfix::passed_over` gives them per join probe.
+`a_late_test_rejects_once_per_group_of_what_it_reads` asserts both (10000 counted, 8955 passed over).
+The device-metal target passes 22 of 22.
