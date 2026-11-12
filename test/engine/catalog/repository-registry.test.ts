@@ -236,9 +236,45 @@ describe("the repository registry", () => {
     checkoutSetting(database, main);
     git(main, "worktree", "remove", worktree);
 
-    expect(pruneCheckouts(database)).toEqual([worktree]);
+    expect(await pruneCheckouts(database)).toEqual([worktree]);
     expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath)).toEqual([main]);
     expect(settingOwners(database)).toEqual([{ owner_kind: "checkout", owner_id: main }]);
+  });
+
+  it("keeps a removed checkout seen again since the prune began, and forgets it at the next one", async () => {
+    const root = await temporary("rerail-registry-prune-seen-");
+    const database = open(join(root, "rerail.sqlite"));
+    const main = gitRepository(join(root, "main"));
+    const worktree = join(root, "feature");
+    git(main, "worktree", "add", "-q", "-b", "feature", worktree);
+    recordCheckout(database, main, 1_000);
+    recordCheckout(database, worktree, 3_000);
+    git(main, "worktree", "remove", worktree);
+
+    // A session that starts in a worktree made again at the path while the prune looks at the folders records it after then.
+    expect(await pruneCheckouts(database, 2_000)).toEqual([]);
+    expect(await pruneCheckouts(database, 4_000)).toEqual([worktree]);
+    expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath)).toEqual([main]);
+  });
+
+  it("keeps the last checkout of a removed clone whose id names a session, so the session stays in its repository's history", async () => {
+    const root = await temporary("rerail-registry-prune-history-");
+    const database = open(join(root, "rerail.sqlite"));
+    const named = gitRepository(join(root, "named"), "git@github.com:acme/web.git");
+    const worktree = join(root, "named-feature");
+    git(named, "worktree", "add", "-q", "-b", "feature", worktree);
+    const other = gitRepository(join(root, "other"), "git@github.com:acme/web.git");
+    const { cloneId } = recordCheckout(database, named, 1_000);
+    recordCheckout(database, worktree, 2_000);
+    recordCheckout(database, other, 1_000);
+    // A session recorded under the clone id, as sessions were before they carried the repository key.
+    database.$client.prepare("INSERT INTO sessions (session_id, host, cwd, repository_id, started_at) VALUES ('s', 'claude-code', ?, ?, 1)")
+      .run(named, cloneId);
+    for (const path of [worktree, named, other]) rmSync(path, { recursive: true, force: true });
+
+    expect((await pruneCheckouts(database, 5_000)).sort()).toEqual([named, other].sort());
+    // History reads take the clone ids of the recorded checkouts (repositoryHistoryIds), so the session's id stays one.
+    expect(listRepositories(database)[0]?.checkouts.map(row => [row.checkoutPath, row.cloneId])).toEqual([[worktree, cloneId]]);
   });
 
   it.skipIf(!caseInsensitiveFilesystem())("keeps a worktree Git registered under a path typed in another case than the folder has", async () => {
@@ -251,7 +287,7 @@ describe("the repository registry", () => {
     const worktree = recordCheckout(database, join(root, "elsewhere", "feature")).checkoutPath;
     expect(worktree).toBe(join(root, "elsewhere", "feature"));
 
-    expect(pruneCheckouts(database)).toEqual([]);
+    expect(await pruneCheckouts(database)).toEqual([]);
   });
 
   it("looks a checkout up without writing anything or creating a clone id", async () => {

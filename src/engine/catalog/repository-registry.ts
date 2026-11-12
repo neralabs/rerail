@@ -3,13 +3,13 @@
  * physical git top-level, and belongs to one repository: the repository of another checkout of the same clone, else
  * the one its `origin` (or sole) remote names, else a repository of its own keyed by its clone id.
  */
-import { existsSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, parse } from "node:path";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { physicalPath, storedPath, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
-import { gitExecutable, GitUnavailableError, runGit } from "../git.js";
+import { gitExecutable, GitUnavailableError } from "../git.js";
 import type { CheckoutContext, CheckoutRecord, RepositoryKey, RepositoryRecord, RepositoryStatus } from "./repository-model.js";
 import {
   normalizeRemoteAddress,
@@ -21,7 +21,7 @@ import {
   worktreeRegistry,
   type RepositoryIdentityLocation,
 } from "./repository-identity.js";
-import { checkouts, repositories, ruleSettings } from "../storage/schema.js";
+import { checkouts, repositories, ruleSettings, sessions } from "../storage/schema.js";
 
 type Reader = Pick<RerailDatabase, "select">;
 type Writer = Pick<RerailDatabase, "select" | "insert" | "update" | "delete">;
@@ -391,31 +391,82 @@ export function repositoryHistoryIds(repository: RepositoryListing): string[] {
   return [...new Set([repository.repositoryKey, ...repository.aliases, ...repository.checkouts.map(row => row.cloneId)])];
 }
 
-/** Whether git still lists `checkoutPath` as a worktree of its clone; true where git can't say (outside git, no git). */
-function listedByGit(checkoutPath: string): boolean {
-  let listed;
+/**
+ * Whether git still lists `checkoutPath` as a worktree of its clone; true where git can't say (outside git, no git).
+ * {@link worktreeRegistry} asks Git again only once the clone's registry has changed. Every worktree it names joins
+ * `listed`, so a caller asking after the clone's other checkouts finds them there.
+ */
+function listedByGit(checkoutPath: string, listed: Set<string>): boolean {
+  let registry;
   try {
-    listed = runGit(checkoutPath, ["worktree", "list", "--porcelain"], { timeout: 10_000 });
+    registry = worktreeRegistry(checkoutPath);
   } catch (error) {
     if (error instanceof GitUnavailableError) return true;
     throw error;
   }
-  if (listed.status !== 0) return true;
-  return listed.stdout.split("\n").filter(line => line.startsWith("worktree "))
-    .some(line => storedPath(line.slice("worktree ".length)) === checkoutPath);
+  if (registry === undefined) return true;
+  for (const worktree of registry.worktrees) listed.add(storedPath(worktree));
+  return listed.has(checkoutPath);
 }
 
-/** Forget checkouts whose folder is gone or that git no longer lists as a worktree, with their own settings. */
-export function pruneCheckouts(db: RerailDatabase): string[] {
-  const gone = db.select({ path: checkouts.checkoutPath }).from(checkouts).all()
-    .map(row => row.path)
-    .filter(path => !existsSync(path) || !listedByGit(path));
+/**
+ * Whether a folder is at `path`: false where the filesystem says nothing is, undefined where it gives no answer (a
+ * network share that is down, a folder Rerail may not read). Asked without blocking, so a share that does not answer
+ * holds a pool thread and not the caller's.
+ */
+async function folderPresent(path: string): Promise<boolean | undefined> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    const code = error instanceof Error && "code" in error ? error.code : undefined;
+    return code === "ENOENT" || code === "ENOTDIR" ? false : undefined;
+  }
+}
+
+/**
+ * Forget the recorded checkouts whose folder is gone or that Git no longer lists as a worktree, with their own
+ * settings, and return their paths. The folders are looked at one by one, without blocking, and Git is asked once per
+ * clone whose worktrees it all lists. Two stay: a checkout recorded or seen again since `now`, as when a session
+ * starts in a folder made again while the others are looked at; and the last checkout of a clone whose id names a
+ * recorded session, so that session stays in its repository's history ({@link repositoryHistoryIds}).
+ */
+export async function pruneCheckouts(db: RerailDatabase, now = Date.now()): Promise<string[]> {
+  const gone: string[] = [];
+  const listed = new Set<string>();
+  for (const { path } of db.select({ path: checkouts.checkoutPath }).from(checkouts).all()) {
+    const present = await folderPresent(path);
+    if (present === false || (present === true && !listed.has(path) && !listedByGit(path, listed))) gone.push(path);
+  }
   if (gone.length === 0) return gone;
-  db.transaction(tx => {
-    deleteCheckoutSettings(tx, gone);
-    tx.delete(checkouts).where(inArray(checkouts.checkoutPath, gone)).run();
+  return db.transaction(tx => {
+    const forgotten = forgettable(tx, gone, now);
+    if (forgotten.length > 0) {
+      deleteCheckoutSettings(tx, forgotten);
+      tx.delete(checkouts).where(inArray(checkouts.checkoutPath, forgotten)).run();
+    }
+    return forgotten;
   }, { behavior: "immediate" });
-  return gone;
+}
+
+/**
+ * The `gone` checkouts {@link pruneCheckouts} forgets: those not seen since `now`, except, for a clone whose id names
+ * a recorded session and none of whose checkouts would stay, the one of them seen last.
+ */
+function forgettable(tx: Writer, gone: readonly string[], now: number): string[] {
+  const stale = tx.select({ path: checkouts.checkoutPath, cloneId: checkouts.cloneId, lastSeenAt: checkouts.lastSeenAt })
+    .from(checkouts).where(inArray(checkouts.checkoutPath, [...gone])).all()
+    .filter(row => row.lastSeenAt < now);
+  const forgotten = new Set(stale.map(row => row.path));
+  for (const cloneId of new Set(stale.map(row => row.cloneId))) {
+    const recorded = tx.select({ path: checkouts.checkoutPath }).from(checkouts).where(eq(checkouts.cloneId, cloneId)).all();
+    if (recorded.some(row => !forgotten.has(row.path))) continue;
+    const named = tx.select({ id: sessions.sessionId }).from(sessions).where(eq(sessions.repositoryId, cloneId)).limit(1).get();
+    if (named === undefined) continue;
+    const ofClone = stale.filter(row => row.cloneId === cloneId);
+    forgotten.delete(ofClone.reduce((last, row) => (row.lastSeenAt > last.lastSeenAt ? row : last)).path);
+  }
+  return [...forgotten];
 }
 
 /**
