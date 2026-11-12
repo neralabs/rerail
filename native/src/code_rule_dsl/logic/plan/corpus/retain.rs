@@ -555,14 +555,15 @@ impl Retained {
         }
         let _span = crate::code_rule_dsl::logic::profile::span(|| format!("{} relations' kept rows, from the frames", wanted.len()));
         let keys: Vec<_> = wanted.iter().map(|r| (frames.names[*r].clone(), DOCS_PART)).collect();
-        let admitted = store.admit_frame_parts(&frames.space, &keys).map_err(|e| Error::Plan(e.to_string()))?;
+        // Their levels, where stored (decision 0090), in the same batch: a recursive stratum reached is maintained by
+        // levels only if its kept relations have them. Not a key of the admission's check: a relation may have none.
+        let mut with_level_keys = keys.clone();
+        with_level_keys.extend(wanted.iter().map(|r| (frames.names[*r].clone(), LEVELS_PART)));
+        let admitted = store.admit_frame_parts(&frames.space, &with_level_keys).map_err(|e| Error::Plan(e.to_string()))?;
         if !super::kept_strata::admission_matches(&keys, &admitted, |(r, _)| frames.derived.get(&r.name)) {
             return Ok(false);
         }
-        // Their levels, where stored (decision 0090): a recursive stratum reached is maintained by levels only if its
-        // kept relations have them.
-        let level_keys: Vec<_> = wanted.iter().map(|r| (frames.names[*r].clone(), LEVELS_PART)).collect();
-        let levels = store.admit_frame_parts(&frames.space, &level_keys).map_err(|e| Error::Plan(e.to_string()))?;
+        let levels = &admitted;
         let mut late = self.late.borrow_mut();
         let (mut rows, mut n) = self.admitted.get();
         for (rel, key) in wanted.into_iter().zip(&keys) {
@@ -573,7 +574,7 @@ impl Retained {
             }
             rows += got.n;
             n += 1;
-            let Some(kept) = with_levels(frames, &levels, rel, key, got) else { return Ok(false) };
+            let Some(kept) = with_levels(frames, levels, rel, key, got) else { return Ok(false) };
             late.insert(rel.clone(), Kept { rel: kept, width, output: None });
         }
         self.admitted.set((rows, n));
@@ -1450,10 +1451,11 @@ impl Retained {
         if kept_stats::on() {
             keys.extend(wanted.iter().map(|r| (frames.names[r].clone(), kept_stats::PART)));
         }
+        // Their levels, where stored, in the same batch: not a key of the admission's check, as a relation may have
+        // none.
+        keys.extend(wanted.iter().map(|r| (frames.names[r].clone(), LEVELS_PART)));
         let admitted = store.admit_frame_parts(&frames.space, &keys).map_err(|e| Error::Plan(e.to_string()))?;
-        // Their levels, where stored: not a key of the admission's check, as a relation may have none.
-        let level_keys: Vec<_> = wanted.iter().map(|r| (frames.names[r].clone(), LEVELS_PART)).collect();
-        let levels = store.admit_frame_parts(&frames.space, &level_keys).map_err(|e| Error::Plan(e.to_string()))?;
+        let levels = &admitted;
         // Prepare all rows before publishing any of them into the retained part. Failed admission is a cache
         // miss, and the caller must recompute its cut before maintenance can run.
         let decoded = (|| -> Option<_> {
@@ -1466,7 +1468,7 @@ impl Retained {
                 let width = prog.decls.get(rel)?.len();
                 if got.types.len() != width { return None; }
                 rows += got.n;
-                let rel_ = with_levels(frames, &levels, rel, key, got)?;
+                let rel_ = with_levels(frames, levels, rel, key, got)?;
                 rels.push((rel.clone(), Kept { rel: rel_, width, output: None }));
             }
             for (rel, keys) in &input_parts {

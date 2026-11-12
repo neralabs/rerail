@@ -7431,7 +7431,7 @@ pub trait Maintain {
 }
 
 /// Holds `rel`'s kept rows `o` as the run's relation, with its cardinality (a quiet stratum's, decision 0117 step 3).
-fn hold_kept(run: &mut Run, prog: &Program, db: &Connection, rel: &String, o: Arc<super::native::component::InRel>) {
+fn hold_quiet(run: &mut Run, prog: &Program, db: &Connection, rel: &String, o: Arc<super::native::component::InRel>) {
     let seeded = (o.rows() as f64).max(1.0);
     let card = prior_stats(&mut run.model, prog, rel).map_or(seeded, |n| n.max(seeded));
     run.model.stats.card.insert(rel.clone(), card);
@@ -8678,7 +8678,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                         let placed = match in_memory.filter(|_| no_facts) {
                             Some(kept) => {
                                 for (r, o) in kept {
-                                    hold_kept(&mut run, prog, db, r, o);
+                                    hold_quiet(&mut run, prog, db, r, o);
                                 }
                                 true
                             }
@@ -8721,7 +8721,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                 m.need(&need, &mut run.model)?;
                 for r in need.iter().filter(|r| unread.contains(*r)) {
                     let Some(o) = m.kept(r) else { return Err(Error::Plan(format!("{r}: its kept rows were not read"))) };
-                    hold_kept(&mut run, prog, db, r, o);
+                    hold_quiet(&mut run, prog, db, r, o);
                 }
                 unread.retain(|r| !need.contains(r));
                 for &j in &base_strata {
@@ -8920,42 +8920,62 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                         }
                     }
                     run.prog = form;
-                    for (piece, piece_rules) in &pieces[from..] {
+                    // Its form derives it again from its reads as they are (no old rows, no delta read or made): the
+                    // base program's rules for it.
+                    let delta_rel = |r: &str| r.ends_with("__old") || r.ends_with("__minus") || r.ends_with("__plus");
+                    let plain = again || pieces.iter().all(|(_, rs)| rs.iter().all(|r| !delta_rel(&r.head.rel) && !r.body.iter().any(|l| l.atom().is_some_and(|a| delta_rel(&a.rel)))));
+                    let mut base = false;
+                    for (k, (piece, piece_rules)) in pieces.iter().enumerate().skip(from) {
                         let ok = run.native_stratum_now(piece, piece_rules);
                         if !matches!(ok, Ok(true)) {
                             run.prog = prog;
                             let why = run.why_not.take().unwrap_or_default();
+                            // Derived again with nothing of it run yet (a head the engine has no native form for,
+                            // `@place`): made as the base program makes it, by its SQL fallback below; its readers
+                            // move with no delta.
+                            if plain && k == 0 && matches!(ok, Ok(false)) {
+                                super::profile::decision("a stratum derived again, run as the base program runs it", || format!("{key}: {why}"));
+                                base = true;
+                                break;
+                            }
                             return Err(ok.err().unwrap_or_else(|| Error::Plan(format!("{piece:?}, of the maintained form of {key}: the native engine declined: {why}"))));
                         }
                     }
                     run.prog = prog;
-                    // Its relations' deltas: one that is not empty moves its readers; one not made (no old rows to diff
-                    // against) moves them with no delta, so they derive again.
-                    for r in scc {
-                        if m.has_delta(r) {
-                            let minus = super::native::component::held(db, &format!("{r}__minus"));
-                            let plus = super::native::component::held(db, &format!("{r}__plus"));
-                            if minus.as_ref().map_or(0, |h| h.rows()) + plus.as_ref().map_or(0, |h| h.rows()) > 0 {
-                                moved_rels.insert(r.clone());
-                                if let (Some(gone), Some(added)) = (minus.and_then(|h| h.live_rows()), plus.and_then(|h| h.live_rows())) {
-                                    outcome.deltas.insert(r.clone(), (gone, added));
-                                }
-                            } else {
-                                outcome.unchanged.insert(r.clone());
-                            }
-                        } else {
+                    if base {
+                        for r in scc {
                             m.no_delta(r);
                             moved_rels.insert(r.clone());
                         }
+                    } else {
+                        // Its relations' deltas: one that is not empty moves its readers; one not made (no old rows to diff
+                        // against) moves them with no delta, so they derive again.
+                        for r in scc {
+                            if m.has_delta(r) {
+                                let minus = super::native::component::held(db, &format!("{r}__minus"));
+                                let plus = super::native::component::held(db, &format!("{r}__plus"));
+                                if minus.as_ref().map_or(0, |h| h.rows()) + plus.as_ref().map_or(0, |h| h.rows()) > 0 {
+                                    moved_rels.insert(r.clone());
+                                    if let (Some(gone), Some(added)) = (minus.and_then(|h| h.live_rows()), plus.and_then(|h| h.live_rows())) {
+                                        outcome.deltas.insert(r.clone(), (gone, added));
+                                    }
+                                } else {
+                                    outcome.unchanged.insert(r.clone());
+                                }
+                            } else {
+                                m.no_delta(r);
+                                moved_rels.insert(r.clone());
+                            }
+                        }
+                        // What the form made for itself goes; its relations, their deltas and old rows stay.
+                        let done: Vec<String> = pieces.iter().flat_map(|(p, _)| p.iter()).filter(|r| !scc.contains(*r) && !r.ends_with("__minus") && !r.ends_with("__plus") && !r.ends_with("__old")).cloned().collect();
+                        if !done.is_empty() {
+                            super::native::component::release(db, &done);
+                            done.iter().for_each(|r| { run.native_rels.remove(r); });
+                        }
+                        outcome.native.insert(key);
+                        continue;
                     }
-                    // What the form made for itself goes; its relations, their deltas and old rows stay.
-                    let done: Vec<String> = pieces.iter().flat_map(|(p, _)| p.iter()).filter(|r| !scc.contains(*r) && !r.ends_with("__minus") && !r.ends_with("__plus") && !r.ends_with("__old")).cloned().collect();
-                    if !done.is_empty() {
-                        super::native::component::release(db, &done);
-                        done.iter().for_each(|r| { run.native_rels.remove(r); });
-                    }
-                    outcome.native.insert(key);
-                    continue;
                 }
             }
         }
@@ -9559,7 +9579,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             m.need(&wanted, &mut run.model)?;
             for r in &wanted {
                 let Some(o) = m.kept(r) else { return Err(Error::Plan(format!("{r}: its kept rows were not read"))) };
-                hold_kept(&mut run, prog, db, r, o);
+                hold_quiet(&mut run, prog, db, r, o);
                 unread.remove(r);
             }
         }
