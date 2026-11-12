@@ -295,7 +295,7 @@ pub struct PrivateInputUpload {
 impl PrivateInputUpload {
     pub fn new(device: &Device) -> Result<Self, Error> {
         Ok(Self {
-            queue: device.new_command_queue(),
+            queue: crate::queue()?,
             staging: MappedBuffer::zeroed::<u8>(device, METAL_UPLOAD_CHUNK_BYTES)?,
             used: 0,
             copies: Vec::new(),
@@ -521,7 +521,7 @@ impl MappedBuffer {
             reservation,
             MTLResourceOptions::StorageModePrivate,
         )?;
-        let queue = device.new_command_queue();
+        let queue = crate::queue()?;
         for (chunk, input) in bytes.chunks(METAL_UPLOAD_CHUNK_BYTES).enumerate() {
             metal::objc::rc::autoreleasepool(|| -> Result<(), Error> {
                 let staging = Self::new(device, input)?;
@@ -679,7 +679,7 @@ pub fn pipeline_named_constant(
     name: &str,
     constant: Option<u32>,
 ) -> Result<ComputePipelineState, Error> {
-    let device = Device::system_default().ok_or(Error::UnsupportedBackend)?;
+    let device = crate::device()?;
     let mut digest = Sha256::new();
     digest.update(device.registry_id().to_le_bytes());
     digest.update(name.as_bytes());

@@ -26,7 +26,7 @@ Every coding agent gets the same commands:
 
 - `/rerail` or `/rerail-help`: what Rerail is doing here, and every command.
 - `/rerail-manage`: open the dashboard.
-- `/rerail-create`: create a rule in your own words.
+- `/rerail-create`: create a rule in your own words, or change one, where it applies included.
 - `/rerail-start`, `/rerail-stop`, `/rerail-update`.
 - `/rerail-uninstall`: remove Rerail from this computer; rules and history are kept in a backup.
 - `/rerail-show-me`: a demo that breaks a throwaway rule, gets steered, fixes it and cleans up.

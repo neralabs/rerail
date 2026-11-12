@@ -2,7 +2,18 @@
 //! device interfaces (`logic::device::SolverDevice`, `transducer::packed::device::MatcherDevice`) over the Metal
 //! code, registered as the engine loads (`crate::install_devices`). macOS only; the core never names it.
 use crate::code_rule_dsl::logic::device::{JoinPlan, Refused, Report, SolverDevice, lattice, nearest};
-use crate::code_rule_dsl::logic::native::setfix::{Fresh, JoinRule, Store, device as joins};
+use crate::code_rule_dsl::logic::native::setfix::{Fresh, Interner, JoinRule, Store, device as joins};
+
+/// Each rule's plan as Metal made it.
+fn plans<'a>(rules: &[(&'a JoinPlan, &'a JoinRule, usize)]) -> Result<Vec<(&'a joins::Plan, &'a JoinRule, usize)>, String> {
+    rules
+        .iter()
+        .map(|(plan, join, head)| {
+            let plan = plan.0.downcast_ref::<joins::Plan>().ok_or_else(|| "a join plan of another device".to_owned())?;
+            Ok((plan, *join, *head))
+        })
+        .collect()
+}
 use crate::code_rule_dsl::transducer::packed::{self, Error};
 
 /// The Metal device.
@@ -38,15 +49,24 @@ impl SolverDevice for Metal {
         joins::refuse(why);
     }
 
-    fn run_joins(&self, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
-        let rules = rules
-            .iter()
-            .map(|(plan, join, head)| {
-                let plan = plan.0.downcast_ref::<joins::Plan>().ok_or_else(|| "a join plan of another device".to_owned())?;
-                Ok((plan, *join, *head))
-            })
-            .collect::<Result<Vec<_>, String>>()?;
-        joins::run(&rules, store, fresh)
+    fn run_joins(&self, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+        joins::run(&plans(rules)?, store, names, fresh)
+    }
+
+    fn reads_own(&self, plan: &JoinPlan) -> bool {
+        plan.0.downcast_ref::<joins::Plan>().is_some_and(joins::reads_own)
+    }
+
+    fn submit(&self, rules: &[(&JoinPlan, &JoinRule, usize)], names: &Interner) -> Result<Option<u64>, String> {
+        joins::submit(&plans(rules)?, names)
+    }
+
+    fn resume(&self, ticket: u64, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+        joins::resume(ticket, &plans(rules)?, store, names, fresh)
+    }
+
+    fn fixpoint(&self, seeds: &[(&JoinPlan, &JoinRule, usize)], deltas: &[(&JoinPlan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+        joins::fixpoint(&plans(seeds)?, &plans(deltas)?, heads, store, names, fresh)
     }
 
     fn take_report(&self) -> Option<Report> {

@@ -1,9 +1,9 @@
 {
   "format": "rerail.policy/v1",
   "id": "ruff-b010-set-attr-with-constant",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
-  "description": "Use plain attribute assignment instead of setattr() with a constant attribute name; it is no safer and harder to read.",
+  "description": "Use plain attribute assignment instead of setattr() with a constant name only where the object's type declares the attribute; elsewhere setattr() keeps type checkers satisfied.",
   "scope": {
     "include": [
       "**/*"
@@ -205,7 +205,7 @@
       "violation": {
         "anchor": "witness.span",
         "code": "B010",
-        "message": "Replace this `setattr` call with a plain assignment, such as `obj.name = value`.",
+        "message": "If the object's type declares this attribute, use `obj.name = value`; if not (a marker on a function, a patched method), keep `setattr` rather than an assignment with `# type: ignore`.",
         "suppress": {
           "noqa": {
             "codes": [

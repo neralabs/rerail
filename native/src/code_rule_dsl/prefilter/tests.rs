@@ -8,6 +8,24 @@ use std::path::Path;
 
 pub(in crate::code_rule_dsl) use crate::code_rule_dsl::fixtures::{document, temp};
 
+/// Removes the stores `temp` made for processes that have exited.
+fn sweep() {
+    let me = std::process::id();
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else { return };
+    for e in entries.flatten() {
+        let name = e.file_name();
+        let Some(rest) = name.to_str().and_then(|n| n.strip_prefix("rerail-prefilter-")) else { continue };
+        let Some(pid) = rest.split('-').next().and_then(|p| p.parse::<i32>().ok()) else { continue };
+        // SAFETY: signal 0 sends nothing; it only asks whether the process exists.
+        let alive = pid as u32 == me || unsafe { libc::kill(pid, 0) } == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH);
+        if alive {
+            continue;
+        }
+        let path = e.path();
+        let _ = if path.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
+    }
+}
+
 /// Stores `source` and its tape, publishes the tape's prefilter rows, and returns both.
 pub(in crate::code_rule_dsl) fn put(store: &ContentStore, source: &str, lang: GrammarDialect) -> (TapeId, TapeDoc) {
     let (doc, bytes) = document(source, lang);

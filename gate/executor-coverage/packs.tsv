@@ -1,0 +1,58 @@
+# Executor gaps by the shipped programs that meet them (plan/coverage.rs, from matrix.tsv; RERAIL_BLESS_COVERAGE=1 writes this).
+# programs	probe	gap	programs by pack
+235	text test match: a bound pattern	not on the device: refused: a cat's text read by rx has no device form	lib 63, python 50, data-layer 30, javascript 30, typescript 18, next 8, node 6, react 6, vue 6, php 4, sql 4, engine 3, blade 2, rule-syntax 2, rust 2, rr 1
+77	text test contains: a bound pattern	not on the device: refused: the text test @contains of a pattern that is not a constant has no device form	data-layer 25, lib 25, python 11, next 3, rust 3, sql 3, engine 2, vue 2, node 1, react 1, typescript 1
+72	function @replace_all/3	not on the device: no computed term	lib 27, python 13, javascript 9, data-layer 6, typescript 5, react 3, engine 2, next 2, node 2, rust 1, sql 1, vue 1
+72	functor @replace_all/3	not on the device: no computed term	lib 27, python 13, javascript 9, data-layer 6, typescript 5, react 3, engine 2, next 2, node 2, rust 1, sql 1, vue 1
+56	text test glob: a bound pattern	not on the device: refused: the text test @glob of a pattern that is not a constant has no device form	data-layer 23, lib 14, rust 4, next 3, react 3, javascript 2, python 2, sql 2, data-layer (engine) 1, php 1, rule-syntax 1
+26	builtin to_number/1	not on the device: no computed term	lib 12, python 7, javascript 4, data-layer 2, typescript 1
+26	function @to_number/1	not on the device: no computed term	lib 12, python 7, javascript 4, data-layer 2, typescript 1
+25	aggregate join	not on the device: no string join	lib 8, data-layer 6, javascript 3, python 3, node 2, typescript 2, next 1
+18	shipped functor @rx_matches/2	not native: sqlite: function @rx (the native engine declined: rule #0000: $v = @rx($a, $b) has no native step)	data-layer (engine) 18
+13	text test iglob: a bound pattern	not on the device: refused: the text test @iglob of a pattern that is not a constant has no device form	sql 4, data-layer 3, lib 3, php 3
+10	shipped functor @trim/1	not on the device: no computed term	data-layer (engine) 10
+10	shipped functor @trim/2	not on the device: no computed term	data-layer (engine) 10
+9	shipped functor @instr/2	not on the device: no computed term	data-layer (engine) 9
+9	text test icontains: a bound pattern	not on the device: refused: the text test @icontains of a pattern that is not a constant has no device form	data-layer 7, lib 2
+8	function @rx_extract/3	not on the device: no computed term	data-layer (engine) 8
+7	arithmetic of floats	not on the device: no computed term	lib 3, python 2, javascript 1, typescript 1
+7	function @count_matches/2	not on the device: no computed term	lib 3, data-layer 2, python 2
+7	function @pkg_up/2	not on the device: no computed term	engine 3, lib 3, typing 1
+7	function @to_float/1	not on the device: no computed term	lib 3, python 2, javascript 1, typescript 1
+7	shipped functor @length/1	not on the device: no computed term	data-layer (engine) 7
+6	function @qname/2	not on the device: no computed term	lib 4, node 1, rule-syntax 1
+6	function @semver_subset/2	not on the device: no computed term	node 5, lib 1
+6	shipped functor @printf/2	not native: sqlite: error: the SQL for p($v) :- Step { at: 1, lit: Atom(Atom { rel: "t", args: [Var("b")], neg: false, gated: false }), mode: None }, Step { at: 0, …	data-layer (engine) 6
+6	shipped functor @printf/3	not native: sqlite: error: the SQL for p($v) :- Step { at: 2, lit: Atom(Atom { rel: "t", args: [Var("c")], neg: false, gated: false }), mode: None }, Step { at: 1, …	data-layer (engine) 6
+6	shipped functor @printf/4	not native: sqlite: error: the SQL for p($v) :- Step { at: 3, lit: Atom(Atom { rel: "t", args: [Var("a")], neg: false, gated: false }), mode: None }, Step { at: 0, …	data-layer (engine) 6
+6	shipped functor @printf/5	not native: sqlite: error: the SQL for p($v) :- Step { at: 4, lit: Atom(Atom { rel: "t", args: [Var("b")], neg: false, gated: false }), mode: None }, Step { at: 1, …	data-layer (engine) 6
+5	function @rx_replace/3	not on the device: no computed term	data-layer (engine) 5
+5	functor @rx_replace/3	not on the device: no computed term	data-layer (engine) 5
+5	lattice relation (shortest)	not native: sqlite: a lattice relation (the native engine declined: a lattice relation: the native set engine holds sets only)	data-layer (engine) 5
+4	shipped functor @cast_int/1	not on the device: no computed term	data-layer (engine) 4
+3	function @ed25519_ok/3	not on the device: no computed term	data-layer 2, lib 1
+3	function @join/2	not on the device: no computed term	lib 3
+3	functor @ed25519_ok/3	not on the device: no computed term	data-layer 2, lib 1
+2	function @json_str/1	not on the device: no computed term	data-layer 1, lib 1
+2	function @nfkc/1	not on the device: no computed term	data-layer 1, lib 1
+2	function @semver_valid/1	not on the device: no computed term	lib 1, node 1
+2	function @sha256/1	not on the device: no computed term	data-layer 1, lib 1
+2	functor @json_str/1	not on the device: no computed term	data-layer 1, lib 1
+2	functor @nfkc/1	not on the device: no computed term	data-layer 1, lib 1
+2	shipped functor @class_path/1	not native: sqlite: error: the SQL for p($v) :- Step { at: 0, lit: Atom(Atom { rel: "t", args: [Var("a")], neg: false, gated: false }), mode: None }, Step { at: 1, …	data-layer (engine) 2
+2	shipped functor @drop_components/2	not native: sqlite: error: the SQL for p($v) :- Step { at: 1, lit: Atom(Atom { rel: "t", args: [Var("b")], neg: false, gated: false }), mode: None }, Step { at: 0, …	data-layer (engine) 2
+2	shipped functor @join_nonempty/4	not native: sqlite: error: the SQL for p($v) :- Step { at: 3, lit: Atom(Atom { rel: "t", args: [Var("a")], neg: false, gated: false }), mode: None }, Step { at: 0, …	data-layer (engine) 2
+2	shipped functor @ltrim/2	not on the device: no computed term	data-layer (engine) 2
+2	text test iprefix: a bound pattern	not on the device: refused: the text test @iprefix of a pattern that is not a constant has no device form	javascript 1, react 1
+1	aggregate product	not native: sqlite: aggregate product (the native engine declined: rule #0000: $c = product $v : { p($a, $v) } has no native step)	lib 1
+1	function @convert/3	not on the device: no computed term	vue 1
+1	function @glob_sub/3	not on the device: no computed term	lib 1
+1	function @package_of/1	not on the device: no computed term	lib 1
+1	function @to_precision/2	not on the device: no computed term	lib 1
+1	shipped functor @char/1	not on the device: no computed term	data-layer (engine) 1
+1	shipped functor @class_prefix/1	not native: sqlite: error: the SQL for p($v) :- Step { at: 0, lit: Atom(Atom { rel: "t", args: [Var("a")], neg: false, gated: false }), mode: None }, Step { at: 1, …	data-layer (engine) 1
+1	shipped functor @like/2	not on the device: no computed term	data-layer (engine) 1
+1	shipped functor @qualdepth/1	not native: sqlite: error: the SQL for p($v) :- Step { at: 0, lit: Atom(Atom { rel: "t", args: [Var("a")], neg: false, gated: false }), mode: None }, Step { at: 1, …	data-layer (engine) 1
+1	shipped functor @qualname/1	not native: sqlite: error: the SQL for p($v) :- Step { at: 0, lit: Atom(Atom { rel: "t", args: [Var("a")], neg: false, gated: false }), mode: None }, Step { at: 1, …	data-layer (engine) 1
+1	shipped functor @substr_bytes/3	not on the device: no computed term	data-layer (engine) 1
+1	text test isuffix: a bound pattern	not on the device: refused: the text test @isuffix of a pattern that is not a constant has no device form	python 1

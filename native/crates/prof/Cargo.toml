@@ -80,6 +80,7 @@ bitlex = { path = "../../../tools/bitlex", default-features = false }
 unicode-normalization = "=0.1.26"
 zstd = "=0.14.3"
 rerail-rr-syntax = { path = "../rr_syntax" }
+rerail-accel = { path = "../../../accel" }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }

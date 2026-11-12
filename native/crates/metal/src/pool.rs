@@ -138,13 +138,9 @@ fn clear(block: Block, bytes: usize) -> Result<Block, Error> {
 }
 
 /// The command queue for solves over blocks: the process's one (`rerail_accel::gpu::shared`, decision 0100 §2), so
-/// the engine's programs and the executor's lanes submit in one order; a queue of its own only without it.
-pub fn queue(device: &Device) -> Result<metal::CommandQueue, Error> {
-    if let Some(shared) = rerail_accel::gpu::shared::get() {
-        return Ok(shared.queue.clone());
-    }
-    let mut pool = POOL.lock().map_err(|_| Error::BackendFailure)?;
-    Ok(pool.queue.get_or_insert_with(|| device.new_command_queue()).clone())
+/// the engine's programs and the executor's lanes submit in one order.
+pub fn queue(_device: &Device) -> Result<metal::CommandQueue, Error> {
+    crate::queue()
 }
 
 /// The bytes of idle blocks kept.

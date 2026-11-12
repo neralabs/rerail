@@ -7,7 +7,8 @@ every disagreement declared in `divergences.json` (55 today, across 15 shipped r
 fixtures and Rerail's probes, and B406 on a Django sample, where Bandit is wrong). Every port honours its tool's
 suppression comment, as the tool does: Ruff's `# noqa` (`suppress.noqa`) and Bandit's `# nosec` (`suppress.nosec`);
 PGH004, which reports `noqa` comments, is the one exception, as in Ruff (`suppressionExemptions` in
-`conformance.json`). 219 Ruff rules that Ruff's default selection leaves off ship off (`"on": false` in `pack.json`).
+`conformance.json`). 219 Ruff rules that Ruff's default selection leaves off ship off (`"on": false` in `pack.json`),
+and so do B009 and B010, which that selection keeps on (their sections say why).
 The conformance check ([conformance/README.md](../../conformance/README.md#the-gate)) gates the shipped rules. The
 rename variants that test the ECMAScript packs against fitting to their tests (`holds-under-rename`) do not exist for
 Python yet, so the real-code samples are the pack's only such evidence.
@@ -141,9 +142,13 @@ Port of Ruff's B007 (unused-loop-control-variable) with the default `dummy-varia
 
 Port of Ruff's B009 (getattr-with-constant): `getattr(obj, "name")` with exactly two positional arguments and no keyword arguments, `obj` not starred, the second a str literal (not bytes, an f- or t-string; escapes decoded, implicit concatenations joined) whose value is a Python identifier (Unicode XID, not a keyword) and not a mangled private name (`__x` without a trailing `__`). The callee (parentheses transparent) resolves to the builtin `getattr` (Ruff's `match_builtin_expr`): the unshadowed name, or `getattr` of the `builtins` module through the file's imports. Reported on the call.
 
+It ships off, though Ruff's default selection turns B009 on, for the reason B010 does. The rule cannot see types, and under mypy or pyright the two forms differ: `obj.name` is checked and fails where `obj`'s type does not declare `name` (a marker on a function, a method patched onto a class, an attribute a mixin's host class defines), while `getattr()` is the usual way to read such an attribute. The steer asks for the plain read only where the type declares the attribute, and to keep `getattr` otherwise rather than add a `# type: ignore`.
+
 ### `ruff-b010-set-attr-with-constant`
 
 Port of Ruff's B010 (set-attr-with-constant): `setattr(obj, "name", value)` used as an expression statement, with exactly three positional arguments and no keyword arguments, `obj` not starred, the name a str literal (not bytes, an f- or t-string; escapes decoded, implicit concatenations joined) whose value is a Python identifier (Unicode XID, not a keyword), not `__debug__` and not a mangled private name. The callee (parentheses transparent) resolves to the builtin `setattr` (Ruff's `match_builtin_expr`): the unshadowed name, or `setattr` of the `builtins` module through the file's imports. Reported on the call.
+
+It ships off, though Ruff's default selection turns B010 on. The rule cannot see types, and under mypy or pyright the two forms differ: `obj.name = value` is checked and fails where `obj`'s type does not declare `name` (a marker on a function, a method patched onto a class), while `setattr()` is the usual way to set such an attribute. Agents told to swap every such call for an assignment added `# type: ignore[attr-defined]` instead. The steer now asks for the assignment only where the type declares the attribute, and to keep `setattr` otherwise.
 
 ### `ruff-b011-assert-false`
 

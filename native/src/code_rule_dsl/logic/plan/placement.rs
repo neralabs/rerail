@@ -21,7 +21,7 @@
 use super::{Mode, Step};
 use crate::code_rule_dsl::logic::front::{AggOp, Literal, Term};
 use std::cell::Cell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// A relational form a stratum's plans use: what a backend must be able to run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -70,8 +70,12 @@ impl Form {
 
 /// The forms the Metal backend runs (`setfix::device`, `metal_join`): joins of atoms by their keys (or whole),
 /// negated atoms and atoms that bind nothing (anti- and semi-joins by the same keys), and comparisons, `in` and
-/// document tests as row programs. A stratum that needs any other form stays on the CPU, named in the profile.
-const DEVICE_FORMS: &[Form] = &[Form::Join, Form::Negation, Form::Comparison];
+/// document tests as row programs, recursion (a recursive stratum's rounds to its fixpoint on the device,
+/// `device::fixpoint`; one that keeps levels is refused at open, named), and aggregates (count, sum, min, max folded
+/// per binding over the relation's sort by the keys), and text tests with constant patterns of a slot an input
+/// relation's column binds (verdicts per distinct symbol by the test's automaton, `text::table`; any other text test
+/// is refused at open, named). A stratum that needs any other form stays on the CPU, named in the profile.
+const DEVICE_FORMS: &[Form] = &[Form::Join, Form::Negation, Form::Comparison, Form::Recursion, Form::Aggregate, Form::TextTest];
 
 /// A join step as the planner estimates it: the bindings it reads, the rows of the relation it reads, the rows it
 /// makes, its key columns, and whether it reads a range inside a document (`Mode::Range`).
@@ -155,19 +159,50 @@ const GPU_PER_SUBMISSION: f64 = 0.15e-3;
 /// The GPU is chosen only when it is this much cheaper: the estimates are rough.
 const MARGIN: f64 = 2.0;
 
+/// Where a thread's run may place strata: the CPU only, the device where it is the cheaper (the Metal binding), or
+/// the device wherever it has every form (`Always`: what the device can run, apart from what it should; the
+/// executor coverage gate's, and `RERAIL_DEVICE=always`'s).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Binding {
+    Cpu,
+    Metal,
+    Always,
+}
+
 thread_local! {
-    /// Whether this thread's run may use the device (the run's binding, `typing::file_local::Binding::Metal`).
-    static DEVICE: Cell<bool> = const { Cell::new(false) };
+    /// This thread's run's binding (`typing::file_local::Binding::Metal` is `Metal`).
+    static DEVICE: Cell<Binding> = const { Cell::new(Binding::Cpu) };
 }
 
 /// Whether this thread's run may use the device.
 pub(in crate::code_rule_dsl) fn device() -> bool {
+    DEVICE.with(Cell::get) != Binding::Cpu
+}
+
+/// Sets whether this thread's run may place strata on the device; the previous value, to restore. `RERAIL_DEVICE=always`
+/// makes a Metal binding `Always`.
+pub(in crate::code_rule_dsl) fn set_device(on: bool) -> bool {
+    let b = match on {
+        false => Binding::Cpu,
+        true if always_env() => Binding::Always,
+        true => Binding::Metal,
+    };
+    set_binding(b) != Binding::Cpu
+}
+
+/// This thread's binding.
+pub fn binding() -> Binding {
     DEVICE.with(Cell::get)
 }
 
-/// Sets whether this thread's run may place strata on the device; the previous value, to restore.
-pub(in crate::code_rule_dsl) fn set_device(on: bool) -> bool {
-    DEVICE.with(|d| d.replace(on))
+/// Sets this thread's binding; the previous one, to restore.
+pub fn set_binding(b: Binding) -> Binding {
+    DEVICE.with(|d| d.replace(b))
+}
+
+fn always_env() -> bool {
+    static ALWAYS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ALWAYS.get_or_init(|| std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "always"))
 }
 
 /// A stratum's shape: its forms, and its planned work.
@@ -182,63 +217,153 @@ pub(in crate::code_rule_dsl) struct Shape {
     pub(in crate::code_rule_dsl) steps: usize,
     /// The rows its rules' last steps make (the planner's estimate): what the device reads back.
     pub(in crate::code_rule_dsl) rows: f64,
+    /// For each form the device lacks, the operations that use it (`@sql_instr in a comparison`, `aggregate
+    /// sum`): what the profile's hazards name.
+    pub(in crate::code_rule_dsl) uses: BTreeMap<Form, BTreeSet<String>>,
 }
 
-/// Whether a term is row code on the device: a variable, a constant, `@doc(x)` of a variable, or a set of constants
-/// (`@in(x, {…})`). Anything else computes a value the device has no form for.
+/// The first call in `t` that is no row code: the operation a computed term needs (`@concat`).
+fn not_row(t: &Term) -> Option<String> {
+    match t {
+        Term::Call(f, args) if !row_term(t) => Some(args.iter().find_map(not_row).unwrap_or_else(|| format!("@{f}"))),
+        // Row code as a whole (a cat inside `str_cmp` is read from its parts).
+        Term::Call(..) => None,
+        _ => None,
+    }
+}
+
+/// Whether a term is row code on the device: a variable, a constant, `@doc(x)` of a variable, a set of constants
+/// (`@in(x, {…})`), integer arithmetic of row code (`setfix::device`'s arithmetic binds), or `str_cmp` of variables
+/// and constants (the device compares the names). Anything else computes
+/// a value the device has no form for.
 fn row_term(t: &Term) -> bool {
     match t {
         Term::Call(f, args) if f == "doc" => matches!(args.as_slice(), [Term::Var(_)]),
         Term::Call(f, args) if f == crate::code_rule_dsl::logic::strings::SET => args.iter().all(|a| !matches!(a, Term::Call(..))),
+        Term::Call(f, args) if DEVICE_ARITHMETIC.contains(&f.as_str()) && args.len() == 2 => args.iter().all(row_term),
+        // The order of two symbols' names (`<` of symbols lowers to it): their texts are the device's.
+        // Of names or cats' texts (compared from their parts, never made).
+        Term::Call(f, args) if f == "str_cmp" && args.len() == 2 => args.iter().all(|a| !matches!(a, Term::Call(..)) || is_cat_of_rows(a) || is_text_fn_of_rows(a)),
+        // A name's characters (or a cat's text's): counted over the device's names.
+        Term::Call(f, args) if (f == "strlen" || f == "rr_strlen") && args.len() == 1 => !matches!(args[0], Term::Call(..)) || is_cat_of_rows(&args[0]) || is_text_fn_of_rows(&args[0]),
+        // A text function the device makes into its text arena (`setfix::device`'s `TEXTFN`).
+        Term::Call(f, _) if DEVICE_TEXT_FUNCTIONS.contains(&f.as_str()) => is_text_fn_of_rows(t),
         Term::Call(..) => false,
         _ => true,
     }
 }
 
+/// `cat(a, b)` (lowered, `concat`) of variables and constants: a text the device compares where it is read.
+fn is_cat_of_rows(t: &Term) -> bool {
+    matches!(t, Term::Call(f, args) if (f == "cat" || f == "concat") && args.len() == 2 && args.iter().all(|a| !matches!(a, Term::Call(..))))
+}
+
+/// The text functions the device makes (`metal_join::ROW_MAP`), by the names the planner's terms and the native
+/// engine's steps give them.
+const DEVICE_TEXT_FUNCTIONS: [&str; 14] = [
+    "lower", "sql_lower", "sql_upper", "head", "dir", "substr", "rr_substr", "sql_substr", "slice", "to_string", "rr_to_string", "sql_replace",
+    "replace_all", "rx_replace",
+];
+
+/// A text function of variables and constants (its text argument perhaps another's value): a text the device makes.
+fn is_text_fn_of_rows(t: &Term) -> bool {
+    match t {
+        Term::Call(f, args) if DEVICE_TEXT_FUNCTIONS.contains(&f.as_str()) && !args.is_empty() => {
+            // A regex's and its replacement's texts are constants (the device's automaton is made before the run).
+            let constants = !matches!(f.as_str(), "replace_all" | "rx_replace") || args[1..].iter().all(|a| !matches!(a, Term::Var(_)));
+            constants && (!matches!(args[0], Term::Call(..)) || is_text_fn_of_rows(&args[0])) && args[1..].iter().all(|a| !matches!(a, Term::Call(..)))
+        }
+        _ => false,
+    }
+}
+
+/// The first text function in `t` (`@lower`): a text the device makes into its arena, which a recursive stratum's
+/// rounds and an atom's keys cannot read.
+fn text_fn_in(t: &Term) -> Option<String> {
+    match t {
+        Term::Call(f, _) if DEVICE_TEXT_FUNCTIONS.contains(&f.as_str()) => Some(format!("@{f}")),
+        Term::Call(_, args) => args.iter().find_map(text_fn_in),
+        _ => None,
+    }
+}
+
+/// The integer functions the device computes (`.rr`'s `+ - * / %`, Soufflé's `max` and `min`).
+const DEVICE_ARITHMETIC: [&str; 7] = ["add", "sub", "mul", "div", "mod", "max", "min"];
+
 impl Shape {
+    /// Notes form `f`, and where the device lacks it, the operation that uses it.
+    fn note(&mut self, f: Form, what: impl FnOnce() -> String) {
+        self.forms.insert(f);
+        if !DEVICE_FORMS.contains(&f) {
+            self.uses.entry(f).or_default().insert(what());
+        }
+    }
+
     /// Adds one planned rule: its steps in order, its head's terms and its planned work.
     pub(in crate::code_rule_dsl) fn add(&mut self, order: &[Step], head: &[Term], work: f64, recursive: bool) {
         self.rules += 1;
         self.steps += order.len();
         self.work += work.max(0.0);
         if recursive {
-            self.forms.insert(Form::Recursion);
+            self.note(Form::Recursion, || "recursion".into());
         }
-        if head.iter().any(|t| matches!(t, Term::Call(..))) {
-            self.forms.insert(Form::Computed);
+        // A cat of row terms in a head is made on the device (`mj::MAKE`), its text stored as a symbol after the run;
+        // not in a recursive stratum, whose rounds would join it before it is one.
+        // A text function's text, likewise (the device's arena; never in a recursive stratum).
+        let arena = |t: &Term| if recursive { text_fn_in(t) } else { None };
+        if let Some(op) = head.iter().filter(|t| recursive || !is_cat_of_rows(t)).find_map(|t| not_row(t).or_else(|| arena(t))) {
+            self.note(Form::Computed, || format!("{op} in a head"));
         }
         for step in order {
-            if matches!(step.mode, Some(Mode::Range | Mode::Climb | Mode::Descend)) {
-                self.forms.insert(Form::TreeAxis);
+            if let Some(m @ (Mode::Range | Mode::Climb | Mode::Descend)) = step.mode {
+                self.note(Form::TreeAxis, || format!("a tree axis read as a {}", m.name()));
             }
             match &step.lit {
                 Literal::Atom(a) => {
                     self.forms.insert(if a.neg { Form::Negation } else { Form::Join });
                     if a.rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) {
-                        self.forms.insert(Form::TextTest);
+                        self.note(Form::TextTest, || format!("text test {}", a.rel));
                     }
-                    if a.args.iter().any(|t| matches!(t, Term::Call(..))) {
-                        self.forms.insert(Form::Computed);
+                    if let Some(op) = a.args.iter().find_map(|t| not_row(t).or_else(|| text_fn_in(t))) {
+                        self.note(Form::Computed, || format!("{op} in an atom's argument"));
                     }
                 }
-                Literal::Cmp { l, r, .. } => {
-                    let computed = [l, r].iter().any(|t| !row_term(t));
-                    self.forms.insert(if computed { Form::Computed } else { Form::Comparison });
+                // A text test as a comparison (`@contains(s, p) = 1`, `rx`'s search): a text test, not a value.
+                Literal::Cmp { l: Term::Call(f, _), .. } | Literal::Cmp { r: Term::Call(f, _), .. } if crate::code_rule_dsl::logic::strings::TESTS.contains(&f.as_str()) => {
+                    self.note(Form::TextTest, || format!("text test @{f}"));
                 }
+                // A cat's text compared with a name (`=`, `!=`): the device compares the names' bytes (`CATEQ`).
+                // The other side a constant or a variable: a comparison of names, or (a variable no atom binds) the
+                // text bound, made on the device when the head alone reads it; not in a recursive stratum.
+                Literal::Cmp { l, op: "=" | "!=", r } if [(l, r), (r, l)].iter().any(|(c, o)| is_cat_of_rows(c) && match o {
+                    Term::Var(v) => !recursive || order.iter().any(|s| matches!(&s.lit, Literal::Atom(a) if !a.neg && a.args.iter().any(|t| matches!(t, Term::Var(w) if w == v)))),
+                    Term::Call(..) => false,
+                    _ => true,
+                }) => {
+                    self.note(Form::Comparison, String::new);
+                }
+                Literal::Cmp { l, r, .. } => match [l, r].iter().find_map(|t| not_row(t).or_else(|| arena(t))) {
+                    Some(op) => self.note(Form::Computed, || format!("{op} in a comparison")),
+                    None => self.note(Form::Comparison, String::new),
+                },
                 Literal::Agg { op, atom, .. } => {
-                    self.forms.insert(if matches!(op, AggOp::Join { .. }) { Form::StringJoin } else { Form::Aggregate });
+                    match op {
+                        AggOp::Join { .. } => self.note(Form::StringJoin, || "string join".into()),
+                        op => self.note(Form::Aggregate, || format!("aggregate {}", format!("{op:?}").to_lowercase())),
+                    }
                     if atom.rel.starts_with(crate::code_rule_dsl::logic::strings::RELATION) {
-                        self.forms.insert(Form::TextTest);
+                        self.note(Form::TextTest, || format!("text test {} in an aggregate", atom.rel));
                     }
                 }
-                Literal::Nearest { .. } => {
-                    self.forms.insert(Form::Nearest);
-                }
-                Literal::Ast { .. } => {
-                    self.forms.insert(Form::Matcher);
-                }
+                Literal::Nearest { .. } => self.note(Form::Nearest, || "nearest".into()),
+                Literal::Ast { .. } => self.note(Form::Matcher, || "an ast matcher".into()),
             }
         }
+    }
+
+    /// The operations behind the forms the device lacks, each `form: operation`.
+    pub(in crate::code_rule_dsl) fn lacking(&self) -> Vec<String> {
+        self.uses.iter().flat_map(|(f, ops)| ops.iter().map(move |o| format!("{}: {o}", f.name()))).collect()
     }
 }
 
@@ -290,9 +415,80 @@ pub(in crate::code_rule_dsl) fn price_join(j: &JoinEst, sorted: bool) -> JoinCho
     JoinChoice { rel: j.rel.clone(), form, index_s, probe_s, tile_s }
 }
 
+/// Where a native stratum ran, as the executor coverage gate reads it (`plan::coverage`): the device, or the CPU and
+/// why (the forms the device lacks, else its refusal). Kept only while `recording` is on, for every thread.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Ran {
+    pub device: bool,
+    pub why: String,
+}
+
+static RECORDING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+static RECORDED: std::sync::Mutex<Vec<(String, Ran)>> = std::sync::Mutex::new(Vec::new());
+
+/// While the guard lives, every native stratum's placement is kept (`recorded`); for the coverage gate, in the
+/// engine's tests (another crate, so not `cfg(test)` here).
+pub fn recording() -> impl Drop {
+    struct On;
+    impl Drop for On {
+        fn drop(&mut self) {
+            RECORDING.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+    RECORDING.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    On
+}
+
+/// The kept placements of strata whose key starts with `prefix` (taken).
+pub fn recorded(prefix: &str) -> Vec<(String, Ran)> {
+    let mut all = RECORDED.lock().unwrap_or_else(|e| e.into_inner());
+    let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut *all).into_iter().partition(|(k, _)| k.starts_with(prefix));
+    *all = rest;
+    mine
+}
+
+/// Keeps a native stratum's placement while recording: `refused`, the device's report's refusal (`Some(None)`: it ran
+/// there).
+pub(in crate::code_rule_dsl) fn record(key: &str, placed: &Placement, refused: Option<Option<String>>) {
+    {
+        use crate::code_rule_dsl::logic::profile;
+        let (ran, device): (&'static str, Vec<String>) = match (placed.gpu, &refused) {
+            (true, Some(None)) => ("Metal", Vec::new()),
+            (true, Some(Some(why))) => ("native CPU", vec![format!("refused at run time: {why}")]),
+            (true, None) => ("native CPU", vec!["placed, no device report".into()]),
+            (false, _) if !placed.lacking.is_empty() => ("native CPU", placed.lacking.clone()),
+            (false, _) if !placed.device => ("native CPU", vec!["the run's binding is the CPU".into()]),
+            (false, _) => ("native CPU", vec!["price: the CPU is cheaper".into()]),
+        };
+        profile::executor(key, ran, None, device);
+    }
+    if RECORDING.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+        return;
+    }
+    let ran = match (placed.gpu, refused) {
+        (true, Some(None)) => Ran { device: true, why: "device".into() },
+        (true, Some(Some(why))) => Ran { device: false, why: format!("refused: {why}") },
+        (true, None) => Ran { device: false, why: "placed, no device report".into() },
+        (false, _) if !placed.missing.is_empty() => Ran { device: false, why: format!("no {}", placed.missing.iter().map(|f| f.name()).collect::<Vec<_>>().join(", no ")) },
+        (false, _) => Ran { device: false, why: placed.why() },
+    };
+    RECORDED.lock().unwrap_or_else(|e| e.into_inner()).push((key.to_owned(), ran));
+}
+
+/// Keeps a stratum that fell back to SQLite while recording: the class of literal the native engine had no step
+/// for, and its explanation.
+/// `lacking`: the device's hazards for the stratum besides (`Shape::lacking`).
+pub(in crate::code_rule_dsl) fn record_fallback(key: &str, class: &str, why: &str, lacking: Vec<String>) {
+    crate::code_rule_dsl::logic::profile::executor(key, "SQLite", Some(format!("{class} ({why})")), lacking);
+    if RECORDING.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+        return;
+    }
+    RECORDED.lock().unwrap_or_else(|e| e.into_inner()).push((key.to_owned(), Ran { device: false, why: format!("sqlite: {class} ({why})") }));
+}
+
 /// Whether this thread's run may place strata on the device.
 pub(in crate::code_rule_dsl) fn device_on() -> bool {
-    DEVICE.with(Cell::get)
+    device()
 }
 
 /// Where a stratum runs, and what the choice weighed.
@@ -311,6 +507,8 @@ pub(in crate::code_rule_dsl) struct Placement {
     pub(in crate::code_rule_dsl) device: bool,
     /// Each join step's prices and form, in the stratum's order: the form each would take on the device.
     pub(in crate::code_rule_dsl) joins: Vec<JoinChoice>,
+    /// The operations behind `missing` (`Shape::lacking`).
+    pub(in crate::code_rule_dsl) lacking: Vec<String>,
 }
 
 impl Placement {
@@ -361,9 +559,11 @@ pub(in crate::code_rule_dsl) fn place(shape: &Shape) -> Placement {
         + GPU_PER_WORK * (shape.work - join_work).max(0.0) + DEVICE_ROW_BACK * shape.rows.min(1e12);
     let gpu_s = CPU_PER_STRATUM + device_s;
     let missing: Vec<Form> = shape.forms.iter().copied().filter(|f| !DEVICE_FORMS.contains(f)).collect();
-    let device = DEVICE.with(Cell::get);
+    let binding = DEVICE.with(Cell::get);
+    let device = binding != Binding::Cpu;
     let gpu_cheaper = device_s * MARGIN < CPU_PER_WORK * shape.work;
-    Placement { gpu: device && gpu_cheaper && missing.is_empty(), gpu_cheaper, missing, cpu_s, gpu_s, device, joins }
+    let gpu = missing.is_empty() && (binding == Binding::Always || device && gpu_cheaper);
+    Placement { gpu, gpu_cheaper, missing, cpu_s, gpu_s, device, joins, lacking: shape.lacking() }
 }
 
 #[cfg(test)]
@@ -377,15 +577,17 @@ pub mod tests {
 
     #[test]
     fn a_stratum_is_placed_by_its_price_and_named_by_the_forms_the_device_lacks() {
-        // A large join with a negation and a text test: the GPU's price is lower, and every form is missing.
+        // A large join with a negation, a text test and a computed head: the GPU's price is lower, and the computed
+        // term is the form it lacks.
         let mut big = Shape::default();
-        big.add(&[atom("kind", false), atom("strtest_3", false), atom("within", true)], &[Term::Var("x".into())], 4e6, false);
-        assert_eq!(big.forms, [Form::Join, Form::Negation, Form::TextTest].into_iter().collect());
+        let len = Term::Call("sha256".into(), vec![Term::Var("x".into())]);
+        big.add(&[atom("kind", false), atom("strtest_3", false), atom("within", true)], &[len], 4e6, false);
+        assert_eq!(big.forms, [Form::Join, Form::Negation, Form::Computed, Form::TextTest].into_iter().collect());
         let p = place(&big);
         assert!(p.gpu_cheaper && !p.gpu, "{p:?}");
-        assert_eq!(p.missing, vec![Form::TextTest]);
-        assert!(p.why().contains("no text test"), "{}", p.why());
-        // Without the text test, under the Metal binding, the device takes it; under the CPU binding it does not.
+        assert_eq!(p.missing, vec![Form::Computed]);
+        assert!(p.why().contains("no computed term"), "{}", p.why());
+        // Without the computed head, under the Metal binding, the device takes it; under the CPU binding it does not.
         let mut plain = Shape::default();
         plain.add(&[atom("kind", false), atom("within", true)], &[Term::Var("x".into())], 4e6, false);
         assert!(plain.missing_none());
@@ -394,15 +596,31 @@ pub mod tests {
         set_device(was);
         assert!(p.gpu && p.missing.is_empty(), "{p:?}");
         assert!(!place(&plain).gpu, "the CPU binding keeps it");
-        // `@doc(x) = @doc(y)` and `@in(x, {…})` are row code; `@cat(x, y)` is not.
+        // `@doc(x) = @doc(y)` and `@in(x, {…})` are row code, and so is `z = cat(x, y)` (a text the device makes);
+        // `sha256(x)` is not, nor a cat or `lower(x)` in a recursive stratum (its rounds would join the text before it
+        // is a symbol); `lower(x)` is (a text the device makes into its arena).
         let cmp = |l: Term, r: Term| Step { at: 0, lit: Literal::Cmp { l, op: "=", r }, mode: None };
         let doc = |v: &str| Term::Call("doc".into(), vec![Term::Var(v.into())]);
         let mut docs = Shape::default();
         docs.add(&[atom("kind", false), cmp(doc("x"), doc("y"))], &[], 1.0, false);
         assert!(docs.forms.contains(&Form::Comparison) && !docs.forms.contains(&Form::Computed));
+        let made = || cmp(Term::Var("z".into()), Term::Call("cat".into(), vec![Term::Var("x".into()), Term::Var("y".into())]));
         let mut cat = Shape::default();
-        cat.add(&[atom("kind", false), cmp(Term::Var("z".into()), Term::Call("cat".into(), vec![Term::Var("x".into()), Term::Var("y".into())]))], &[], 1.0, false);
-        assert!(cat.forms.contains(&Form::Computed));
+        cat.add(&[atom("kind", false), made()], &[], 1.0, false);
+        assert!(cat.forms.contains(&Form::Comparison) && !cat.forms.contains(&Form::Computed), "{:?}", cat.forms);
+        let mut rec = Shape::default();
+        rec.add(&[atom("kind", false), made()], &[], 1.0, true);
+        assert!(rec.forms.contains(&Form::Computed));
+        let lower = || cmp(Term::Var("z".into()), Term::Call("lower".into(), vec![Term::Var("x".into())]));
+        let mut len = Shape::default();
+        len.add(&[atom("kind", false), cmp(Term::Var("z".into()), Term::Call("sha256".into(), vec![Term::Var("x".into())]))], &[], 1.0, false);
+        assert!(len.forms.contains(&Form::Computed));
+        let mut low = Shape::default();
+        low.add(&[atom("kind", false), lower()], &[], 1.0, false);
+        assert!(!low.forms.contains(&Form::Computed), "{:?}", low.forms);
+        let mut low_rec = Shape::default();
+        low_rec.add(&[atom("kind", false), lower()], &[], 1.0, true);
+        assert!(low_rec.forms.contains(&Form::Computed));
         // A tiny stratum stays on the CPU: the submission costs more than the work, even under the Metal binding.
         let mut small = Shape::default();
         small.add(&[atom("kind", false)], &[], 10.0, false);

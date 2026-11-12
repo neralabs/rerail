@@ -172,6 +172,7 @@ function usage(): string {
     "  rerail packs recommend [--repo <dir>]",
     "  rerail rules export [--output <rules.json>]",
     "  rerail rules import <rules.json> [--approve]",
+    "  rerail rules show <rule id> [--repo <dir>]",
     "  rerail rules test <draft.json | rule.json> [--repo <dir>] [--json]",
     "  rerail rules add <draft.json> [--repo <dir>]",
     "  rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]",
@@ -753,7 +754,7 @@ async function runAccountCommand(command: string, args: readonly string[], conte
 /** `rerail rules` and its subcommands. */
 async function runRulesFamilyCommand(args: readonly string[]): Promise<number> {
   const [subcommand] = args;
-  if (subcommand === "test" || subcommand === "add") return await runRuleDraftCommand(subcommand, args.slice(1), usage);
+  if (subcommand === "show" || subcommand === "test" || subcommand === "add") return await runRuleDraftCommand(subcommand, args.slice(1), usage);
   if (subcommand === "evidence") return await runRuleEvidenceCommand(args.slice(1), usage);
   if (subcommand === "approve") return runRuleApproveCommand(args.slice(1), usage);
   return runRulesCommand(args, usage);

@@ -43,9 +43,14 @@ describe("lifecycle event adapters", () => {
       "codex-1:assistant:turn-1",
       "codex-1:turn:turn-1",
     ]);
-    expect(codexHookEvents({ ...input, stop_hook_active: true }).map(event => event.eventId)).toEqual([
-      "codex-1:assistant:turn-1:continued",
-      "codex-1:turn:turn-1:continued",
-    ]);
+    // Each continuation (`stop_hook_active`) is its own turn: told apart by the message it ended on, so the same Stop
+    // delivered twice keeps one id.
+    const continued = (message: string) => codexHookEvents({ ...input, stop_hook_active: true, last_assistant_message: message }).map(event => event.eventId);
+    const [assistant, turnEnd] = continued("Fixed the test.");
+    expect(assistant).toMatch(/^codex-1:assistant:turn-1:continued:/);
+    expect(turnEnd).toMatch(/^codex-1:turn:turn-1:continued:/);
+    expect(turnEnd!.slice("codex-1:turn:turn-1".length)).toBe(assistant!.slice("codex-1:assistant:turn-1".length));
+    expect(continued("Goal met.")[1]).not.toBe(turnEnd);
+    expect(continued("Fixed the test.")).toEqual([assistant, turnEnd]);
   });
 });

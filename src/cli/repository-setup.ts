@@ -22,7 +22,7 @@ import {
   workspaceSetUp,
 } from "../runtime/repository-start.js";
 import { recordSetUp } from "../engine/catalog/rule-configuration.js";
-import { loadRulePacks, packIdOfPackage, recommendRulePacks, RERAIL_PUBLISHER, rulePackShortName, type RulePack, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
+import { loadRulePacks, packIdOfPackage, recommendRulePacks, RERAIL_PUBLISHER, rulePackShortName, type NoFitExplanation, type RulePack, type RulePackRecommendation } from "../engine/catalog/rule-packs.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { readRepositoryLintConfig } from "../engine/catalog/lint-config/repository-lint-config.js";
@@ -704,6 +704,8 @@ interface Offering {
   readonly withoutRules: readonly string[];
   /** The catalog the offered packs' rules come from, for the lint config's settings. */
   readonly catalog: RuleCatalog;
+  /** Why no pack fits, when discovery scanned the repository and had packs to offer. */
+  readonly nothingFits?: NoFitExplanation;
 }
 
 const onRules = (pack: RulePack): number => pack.rules.filter(rule => rule.on).length;
@@ -728,6 +730,7 @@ function discoveryOffering(discovery: PackDiscovery): Offering {
     unavailable: discovery.problems,
     withoutRules: discovery.withoutRules.flatMap(found => found.match === undefined ? [] : [found.pack.name]),
     catalog: discovery.catalog,
+    ...(discovery.nothingFits === undefined ? {} : { nothingFits: discovery.nothingFits }),
   };
 }
 
@@ -788,6 +791,7 @@ function packsInput(run: Run, repository: Repository, offering: Offering): Recom
     agentsFound: codingAgents(connecting),
     ...(run.request.setupCommand === undefined ? {} : { setupCommand: run.request.setupCommand }),
     lintConfig: readRepositoryLintConfig(repository.root, offering.catalog, offering.offers.map(({ recommendation }) => recommendation.pack.id)),
+    ...(offering.nothingFits === undefined ? {} : { nothingFits: offering.nothingFits }),
   };
 }
 

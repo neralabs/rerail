@@ -5,16 +5,11 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Set-up fetches rule packs through the fake environment's store: this repository's TypeScript pack.
-// Passed through, and watched: a run that must read no code never matches packs against the repository.
+// The pack matcher's scan, passed through and watched: a run that must read no code never scans the repository.
 const readsRepository = vi.hoisted(() => vi.fn<(root: string) => void>());
-vi.mock("../../src/engine/catalog/rule-packs.js", async (importOriginal) => {
-  type Match = (root: string, packs?: readonly unknown[]) => unknown;
-  const actual = await importOriginal<{ recommendRulePacks: Match; rulePacksThatFit: Match }>();
-  const watched = (match: Match): Match => (root, packs) => {
-    readsRepository(root);
-    return match(root, packs);
-  };
-  return { ...actual, recommendRulePacks: watched(actual.recommendRulePacks), rulePacksThatFit: watched(actual.rulePacksThatFit) };
+vi.mock("../../src/engine/catalog/rule-pack-matcher.js", async (importOriginal) => {
+  const actual = await importOriginal<{ scanRepository: (root: string) => unknown }>();
+  return { ...actual, scanRepository: (root: string) => (readsRepository(root), actual.scanRepository(root)) };
 });
 import { openRerailDatabase } from "../../src/engine/index.js";
 import { recordCheckout } from "../../src/engine/index.js";

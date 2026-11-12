@@ -582,6 +582,11 @@ struct Prepared {
 /// or more documents, joined by values), `same-unit` (every atom on one document), `config` (no document at all).
 /// A relation inherits the worst class of the relations its rules read.
 fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file_local::Programs) {
+    // The two parts' rules beside it, a line each, and the exports.
+    let rules = |p: &crate::code_rule_dsl::logic::front::Program| p.rules.iter().map(|r| format!("{r}\n")).collect::<String>();
+    let _ = std::fs::write(path.with_extension("local.rr"), rules(&split.local));
+    let _ = std::fs::write(path.with_extension("cross.rr"), rules(&split.cross));
+    let _ = std::fs::write(path.with_extension("exports.txt"), split.exports.join("\n"));
     use front::{Literal, Term};
     use std::io::Write;
     const ORDER: [&str; 10] = ["config", "same-unit", "union", "recursive-local", "lookup", "exists", "grouped", "total", "recursive", "-"];
@@ -1458,7 +1463,7 @@ fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store
                 return Ok(());
             }
             let path = path.clone();
-            let _ = tx.send(Some(std::thread::spawn(move || {
+            let _ = tx.send(Some(rerail_accel::exec::service("rerail-collect", None, move || {
         // Collection works behind the run, as the writer does: on its own connection, beside the waves, which read
         // nothing it writes and wait for none of it (decision 0053). Its statements are not a wave's.
         crate::code_rule_dsl::logic::profile::behind_the_run();
@@ -1489,7 +1494,7 @@ fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store
         })()
         .map_err(|e| e.to_string());
         (passes, outcome)
-            })));
+            }).expect("a collection thread")));
             Ok(())
         }),
     );
@@ -1538,10 +1543,10 @@ pub fn observe<T>(f: impl FnOnce(&mut crate::content_store::observe::Observer) -
     crate::content_store::observe::with(store.as_deref(), f)
 }
 
-/// Closes a run's connection on a thread of its own: its close frees what the process kept for it (the bound
+/// Closes a run's connection beside the run (a job on the pool): its close frees what the process kept for it (the bound
 /// sources, the engine's relations: `vtab::connection_scope`), which is no step's work. Idle, it holds no lock.
 fn close_beside(db: Connection) {
-    let _ = std::thread::Builder::new().name("rerail-close".into()).spawn(move || drop(db));
+    rerail_accel::exec::drop_beside(db);
 }
 
 /// The path `tape_cache` opens (`None`: `RERAIL_TAPE_CACHE=off`).
@@ -1623,13 +1628,15 @@ pub fn run_with_options(
     options: &serde_json::Value,
 ) -> Result<Report> {
     // Whether the native strata may be placed on the device (`plan::placement`, decision 0095), for this run.
-    struct Device(bool);
+    struct Device(super::placement::Binding);
     impl Drop for Device {
         fn drop(&mut self) {
-            super::placement::set_device(self.0);
+            super::placement::set_binding(self.0);
         }
     }
-    let _device = Device(super::placement::set_device(binding == Binding::Metal));
+    let was = super::placement::binding();
+    super::placement::set_device(binding == Binding::Metal);
+    let _device = Device(was);
     // The corpus root and the rule library are watched (decision 0105): what the journal says is unchanged under
     // them is not statted.
     let library = crate::code_rule_dsl::logic::rr::library();
@@ -2226,6 +2233,12 @@ fn run_observed(
             // An export that is a join of parts meeting at a key it projects away is handed on as its parts (decision 0099).
             let _step = crate::code_rule_dsl::logic::profile::span(|| "factorize the exports".into());
             let factorized = if factorizing { crate::code_rule_dsl::typing::file_local::factorize_exports(&mut lowered.program) } else { Vec::new() };
+            drop(_step);
+            // Each export cut to what its cross-file readers can use: their demand, made file-local.
+            let _step = crate::code_rule_dsl::logic::profile::span(|| "cut the exports to their readers' demand".into());
+            for line in crate::code_rule_dsl::typing::file_local::demand_exports(&mut lowered.program) {
+                crate::code_rule_dsl::logic::profile::decision("export demand", || line.clone());
+            }
             drop(_step);
             // Every relation the chunks hand on names its document per row, so a file's rows can be memoised (decision 0052).
             let _step = crate::code_rule_dsl::logic::profile::span(|| "locate the chunks' rows".into());

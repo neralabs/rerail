@@ -34,6 +34,10 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
                 rows: d.rows,
                 distinct: d.distinct,
                 bindings: d.bindings,
+                made: d.made,
+                waved: u64::from(d.waved),
+                arena_reruns: u64::from(d.arena_reruns),
+                sized: u64::from(d.sized),
             });
             true
         }
@@ -258,6 +262,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     r.push('\n');
     r.push_str(&analysis_text);
     fallbacks(&mut r, &state);
+    executors(&mut r, &state);
     hazards(&mut r, &state);
     placements(&mut r, &state);
     explain(&mut r, &state);

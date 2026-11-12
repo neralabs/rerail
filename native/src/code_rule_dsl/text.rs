@@ -33,6 +33,7 @@ pub mod plan;
 pub mod productions;
 pub mod scan;
 pub mod source;
+pub mod table;
 pub mod vocabulary;
 #[cfg(test)]
 pub mod tests;

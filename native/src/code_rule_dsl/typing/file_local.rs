@@ -184,6 +184,8 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
 }
 
 pub mod split_memo;
+pub mod export_demand;
+pub use export_demand::demand_exports;
 pub use split_memo::forget as forget_splits;
 // cratify: `tests` is rerail-device-metal's (it mounts it)
 

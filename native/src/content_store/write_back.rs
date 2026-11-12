@@ -10,7 +10,7 @@
 //! - **Read your writes.** A job names the keys it writes. A read of a key still queued is served
 //!   from the value the job left in memory (`pending`), or waits for that job alone (`settle`);
 //!   any other read goes to SQLite without waiting.
-//! - **Bounded lag.** Jobs carry their size; past `CAP_BYTES` queued, the next job waits for the
+//! - **Bounded lag.** Jobs carry their size; past `cap_bytes()` queued, the next job waits for the
 //!   writer to catch up (back-pressure, 0024 §5), so memory holds at most that much unwritten.
 //! - **Durable at the end.** `written` waits for the queue and gives the first error a job met; a
 //!   handle's drop waits too, so no queued write is lost when the process ends.
@@ -30,7 +30,13 @@ use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 /// The most bytes queued and unwritten: within the 1 GB budget, a few chunks' memo entries.
-const CAP_BYTES: usize = 192 << 20;
+const CAP_BYTES_DEFAULT: usize = 192 << 20;
+
+/// The queue's cap: 192 MB, or `RERAIL_WRITE_QUEUE_MB` (a measurement aid: how far behind the writer may fall).
+fn cap_bytes() -> usize {
+    static CAP: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *CAP.get_or_init(|| std::env::var("RERAIL_WRITE_QUEUE_MB").ok().and_then(|v| v.parse::<usize>().ok()).map_or(CAP_BYTES_DEFAULT, |mb| mb << 20))
+}
 
 /// The first wait before a busy job runs again: a writer that held the store is often done at once.
 pub const JOB_BACKOFF_FIRST: Duration = Duration::from_micros(50);
@@ -140,10 +146,10 @@ enum Run {
 const BATCH_IDLE: Duration = Duration::from_millis(500);
 
 /// The bytes a batch holds before it commits: half the queue's cap, so the back-pressure is never waiting on it.
-const BATCH_BYTES: usize = CAP_BYTES / 2;
+const BATCH_BYTES: usize = CAP_BYTES_DEFAULT / 2;
 
 /// The bytes under which a job is queued past the cap (back-pressure holds only a job of this size or more).
-const SMALL_JOB: usize = CAP_BYTES / 64;
+const SMALL_JOB: usize = CAP_BYTES_DEFAULT / 64;
 
 struct Lane {
     tx: mpsc::Sender<Queued>,
@@ -187,8 +193,15 @@ fn unregister(path: &Path, w: &Arc<Writer>) {
     }
     let lane = w.lane.lock().expect("the writer").take();
     if let Some(Lane { tx, thread }) = lane {
+        let (jobs, bytes) = w.shared.state.lock().map(|s| (s.jobs, s.bytes)).unwrap_or_default();
+        let t = std::time::Instant::now();
         drop(tx);
         let _ = thread.join();
+        // What the end of the run waited for: the queue the waves left behind them.
+        let waited = t.elapsed().as_secs_f64();
+        if waited > 0.05 && std::env::var_os("RERAIL_PROFILE").is_some() {
+            eprintln!("rerail: the writer drained {jobs} jobs, {:.1} MB, in {waited:.3} s after the run's last handle", bytes as f64 / 1048576.0);
+        }
     }
     if let Some(e) = w.shared.state.lock().ok().and_then(|mut s| s.error.take()) {
         eprintln!("rerail: a write queued behind the run failed: {e}");
@@ -286,10 +299,10 @@ impl ContentStore {
             let mut s = w.shared.state.lock().expect("the writer's state");
             // Back-pressure: past the cap, wait for the writer (never for an empty queue). A small job never waits:
             // its wait frees next to nothing, and holds the wave behind a large job the writer is writing.
-            let full = |s: &State| bytes >= SMALL_JOB && s.jobs > 0 && s.bytes + bytes > CAP_BYTES;
+            let full = |s: &State| bytes >= SMALL_JOB && s.jobs > 0 && s.bytes + bytes > cap_bytes();
             // A cache's write gives way at half the cap: the other half is for the writes that may not go missing
             // (frames, memo entries), so they find room rather than wait behind tapes.
-            if droppable && s.jobs > 0 && s.bytes + bytes > CAP_BYTES / 2 {
+            if droppable && s.jobs > 0 && s.bytes + bytes > cap_bytes() / 2 {
                 s.dropped = (s.dropped.0 + 1, s.dropped.1 + bytes);
                 return false;
             }
@@ -344,9 +357,7 @@ impl ContentStore {
         let (tx, rx) = mpsc::channel::<Queued>();
         let w = Arc::clone(w);
         let store = self.sibling();
-        let thread = std::thread::Builder::new()
-            .name("rerail-store-writer".into())
-            .spawn(move || {
+        let thread = rerail_accel::exec::service("rerail-store-writer", None, move || {
                 // What this thread sends to SQLite no wave waits for.
                 super::hazards::behind_the_run();
                 let mut next: Option<Queued> = None;
@@ -632,7 +643,7 @@ mod tests {
         let (dir, store) = store("drop");
         let (open, gate) = std::sync::mpsc::channel::<()>();
         let gate = Mutex::new(gate);
-        store.write_back("slow", CAP_BYTES, vec![], Box::new(move |_| {
+        store.write_back("slow", super::cap_bytes(), vec![], Box::new(move |_| {
             let _ = gate.lock().unwrap().recv();
             Ok(())
         }));

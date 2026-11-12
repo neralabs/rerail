@@ -486,6 +486,52 @@ impl Flight<'_> {
     }
 }
 
+/// A thread of the process's own that is no job: a service that waits (a writer on its queue, a sampler on its
+/// clock, a watcher on a signal, a device lane's worker on its batches), so it may not hold one of the pool's threads
+/// (decision 0100 §12: nothing that waits for another long job may itself be a job). Every thread the process makes
+/// outside the one pool is made here, named, and listed while it lives ([`services`]); the engine's source guard
+/// (`executors_are_shared`) refuses a thread made anywhere else. `stack`: its stack's bytes, else the default.
+pub fn service<T: Send + 'static>(name: &str, stack: Option<usize>, f: impl FnOnce() -> T + Send + 'static) -> std::io::Result<std::thread::JoinHandle<T>> {
+    let mut b = std::thread::Builder::new().name(name.to_owned());
+    if let Some(s) = stack {
+        b = b.stack_size(s);
+    }
+    let named = name.to_owned();
+    b.spawn(move || {
+        struct Listed(String);
+        impl Drop for Listed {
+            fn drop(&mut self) {
+                let mut l = SERVICES.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(i) = l.iter().position(|n| *n == self.0) {
+                    l.swap_remove(i);
+                }
+            }
+        }
+        SERVICES.lock().unwrap_or_else(|e| e.into_inner()).push(named.clone());
+        let _listed = Listed(named);
+        f()
+    })
+}
+
+/// Runs `f` on scoped threads of the caller's (`std::thread::scope`), each one a [`service`]'s kind: a device's
+/// worker per unit (SME's, the Neural Engine's predictor) that waits on its device, not a job of the pool's.
+pub fn scoped<'env, T>(f: impl for<'scope> FnOnce(&'scope std::thread::Scope<'scope, 'env>) -> T) -> T {
+    std::thread::scope(f)
+}
+
+static SERVICES: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// The names of the [`service`] threads alive now.
+pub fn services() -> Vec<String> {
+    SERVICES.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Drops `x` beside the caller, as a job on the pool: freeing what it holds is no step's work, and a drop waits for
+/// nothing.
+pub fn drop_beside<T: Send + 'static>(x: T) {
+    rayon::spawn(move || drop(x));
+}
+
 /// The worker of a device lane, until the executor drops: two submissions deep (decision 0100 §11).
 ///
 /// It keeps every batch it is sent while that batch has a launch it may yet take. Its next submission is the
@@ -496,9 +542,7 @@ impl Flight<'_> {
 fn worker(backend: Arc<dyn Backend>, board: Arc<Scoreboard>) -> std::sync::mpsc::Sender<Task> {
     use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
     let (send, take) = std::sync::mpsc::channel::<Task>();
-    std::thread::Builder::new()
-        .name(format!("rerail-accel {}", backend.lane().name()))
-        .spawn(move || {
+    service(&format!("rerail-accel {}", backend.lane().name()), None, move || {
             let lane = backend.lane();
             let mut open: std::collections::VecDeque<Arc<Claims>> = Default::default();
             let mut flight: Option<Flight<'_>> = None;
@@ -819,6 +863,18 @@ impl Executor {
     /// The scoreboard now: every job this executor ran or runs, by lane and by form.
     pub fn score(&self) -> Score {
         self.board.score()
+    }
+
+    /// Runs `f` on the caller's thread as one job of `lane`, under `form`: queued, started and finished on the
+    /// scoreboard as a worker's job is, its thread CPU and phases ([`crate::score::add`]) its own. For work a caller
+    /// encodes and submits itself to the lane's one queue (a device stratum's command buffers), so the lane's
+    /// scoreboard holds every job it ran (decision 0100: no executor beside it).
+    pub fn inline<R, E>(&self, lane: Lane, form: &'static str, units: f64, f: impl FnOnce() -> Result<R, E>) -> Result<R, E> {
+        let mut ticket = self.board.queue(lane, vec![Item { form, units, estimate: 0.0, host: 0.0 }]);
+        self.board.start(&mut ticket);
+        let r = f();
+        self.board.finish(ticket, r.is_ok());
+        r
     }
 
     /// Appends the scoreboard to the trace (`RERAIL_SCOREBOARD`) under `title`.

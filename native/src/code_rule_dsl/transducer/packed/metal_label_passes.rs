@@ -1186,8 +1186,7 @@ fn encode(
         crate::code_rule_dsl::prof::count("gpu.kept", 1);
     }
     mark("before pipelines");
-    let queue = device.new_command_queue();
-    queue.set_label("Rerail label passes");
+    let queue = rerail_metal::queue()?;
     let command = queue.new_command_buffer().to_owned();
     command.set_label("Rerail label passes");
     let mut runner = Runner {

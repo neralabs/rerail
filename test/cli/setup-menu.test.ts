@@ -39,17 +39,21 @@ describe("the set-up menu's keys", () => {
   });
 });
 
-/** A terminal's stdin that delivers `chunks` one at a time, each time set-up reads. */
-function fakeStdin(chunks: readonly string[], { ends = true } = {}): TerminalInputStream & { raw: boolean[] } {
+/**
+ * A terminal's stdin that delivers `chunks` one at a time, each time set-up reads. `held` is what the terminal holds
+ * from before: keys pressed while set-up was busy, delivered first unless something drops them.
+ */
+function fakeStdin(chunks: readonly string[], { ends = true, held = [] as string[] } = {}): TerminalInputStream & { raw: boolean[]; held: string[] } {
   const left = [...chunks];
   const stream = Object.assign(new EventEmitter(), {
     raw: [] as boolean[],
+    held: [...held],
     setRawMode(raw: boolean) { stream.raw.push(raw); },
     setEncoding() {},
     pause() {},
     resume() {
       queueMicrotask(() => {
-        const chunk = left.shift();
+        const chunk = stream.held.shift() ?? left.shift();
         if (chunk !== undefined) stream.emit("data", chunk);
         else if (ends) stream.emit("end");
       });
@@ -100,8 +104,8 @@ describe("the terminal's input", () => {
     expect(displayWidth("e\u0301")).toBe(1);
   });
 
-  it("ends a line typed ahead at CR, as raw mode sends Enter, at LF, and at CRLF split across reads", async () => {
-    const input = new TerminalInput(fakeStdin(["1\r~/proj\r"]), () => {});
+  it("ends a line at CR, as raw mode sends Enter, at LF, and at CRLF split across reads", async () => {
+    const input = new TerminalInput(fakeStdin(["1\r", "~/proj\r"]), () => {});
     expect(await input.choose(menu)).toBe(0);
     expect(await input.line("Which folder? ")).toBe("~/proj");
     expect(await input.line("Which folder? ")).toBeUndefined();
@@ -118,18 +122,39 @@ describe("the terminal's input", () => {
     expect(await input.choose(menu)).toBe(1);
   });
 
-  it("takes a digit then Enter, and keeps what follows for the next prompt", async () => {
+  it("takes a digit then Enter, then reads the next prompt's line", async () => {
     const input = new TerminalInput(fakeStdin(["3\r", "my-app\n"]), () => {});
     expect(await input.choose(menu)).toBe(2);
     expect(await input.line("Which folder? ")).toBe("my-app");
   });
 
-  it("reads lines typed ahead of a menu as keys, and the lines after it as lines", async () => {
-    const input = new TerminalInput(fakeStdin(["2\n~/code/app\n1\n"]), () => {});
+  it("answers a question only with what is typed once it is on screen, not with what was left of an earlier read", async () => {
+    // A second Enter in the read that answered the first question does not answer the next one.
+    const input = new TerminalInput(fakeStdin(["2\r\r", "\u001b[B", "\r", "3\rmy-app\n", "~/code/app\n"]), () => {});
     expect(await input.choose(menu)).toBe(1);
+    expect(await input.choose(menu)).toBe(1);
+    expect(await input.choose(menu)).toBe(2);
     expect(await input.line("Which folder? ")).toBe("~/code/app");
-    expect(await input.choose(menu)).toBe(0);
-    expect(await input.line("Which folder? ")).toBeUndefined();
+  });
+
+  it("drops the keys the terminal holds before a menu or prompt is drawn, with the terminal in raw mode", async () => {
+    // An Enter pressed while set-up was busy, held by the terminal until set-up reads.
+    const stdin = fakeStdin(["\u001b[B", "\r", "~/code/app\n"], { held: ["\r"] });
+    const written: string[] = [];
+    const drops: { raw: boolean | undefined; drawn: number }[] = [];
+    const input = new TerminalInput(stdin, text => { written.push(text); }, () => {}, () => undefined, () => {
+      drops.push({ raw: stdin.raw.at(-1), drawn: written.length });
+      stdin.held.length = 0;
+    });
+    expect(await input.choose(menu)).toBe(1);
+    // A folder typed while set-up was busy again.
+    stdin.held.push("~/typed-early\n");
+    expect(await input.line("Which folder? ")).toBe("~/code/app");
+    // Each drop came before anything of its question was drawn: the menu's frame, then the prompt after the menu's
+    // frame, redraw and closing line break.
+    expect(drops).toEqual([{ raw: true, drawn: 0 }, { raw: true, drawn: 3 }]);
+    // The prompt is in raw mode only while it drops them.
+    expect(stdin.raw).toEqual([true, false, true, false]);
   });
 
   it("cancels at Ctrl-D or end of input, and puts the terminal back", async () => {

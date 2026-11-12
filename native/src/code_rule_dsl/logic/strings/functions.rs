@@ -110,6 +110,13 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     // `.rr`'s `substr(s, i, n)`: n characters from the i-th, counted from 0, as SQL's `substr(s, i + 1, n)` gives
     // them (`substr`).
     ("rr_substr", &[Text, Number, Number], Text),
+    // `core.rr`'s semver functors, as node-semver reads ranges (`semver::Range`): `semver_valid` 1 or 0;
+    // `semver_subset` none unless both are ranges (an evaluation error in W, which gives no row).
+    ("semver_valid", &[Text], Number),
+    ("semver_subset", &[Text, Text], Number),
+    // Python's `repr` of a string (`cpython::value::str_repr`), and an Ed25519 signature's check (`crypto`).
+    ("py_repr", &[Text], Text),
+    ("ed25519_ok", &[Text, Text, Text], Number),
 ];
 
 /// The function the native engine computes `.rr`'s call `f` with: `f` itself when it is one of these, or its
@@ -119,6 +126,34 @@ pub fn native_call(f: &str) -> Option<(&'static str, &'static [Kind], Kind)> {
         "add" | "sub" | "mul" | "div" | "max" | "min" | "strlen" | "to_string" | "substr" => signature(&format!("rr_{f}")),
         _ => signature(f),
     }
+}
+
+/// The function a data-layer program's SQL builtin `@f` with `n` arguments is (decision 0107: t17's catalogue, the
+/// names its SQL stages used), and whether its first two arguments swap (`@like(x, pattern)` is SQLite's
+/// `like(pattern, x)`). `@lower` and `@substr` are not here: `.rr` has its own of those names.
+pub fn catalogue(f: &str, n: usize) -> Option<(&'static str, bool)> {
+    Some(match (f, n) {
+        ("instr", 2) => ("sql_instr", false),
+        ("length", 1) => ("sql_length", false),
+        ("trim", 1) => ("sql_trim", false),
+        ("trim", 2) => ("sql_trim2", false),
+        ("ltrim", 1) => ("sql_ltrim", false),
+        ("ltrim", 2) => ("sql_ltrim2", false),
+        ("rtrim", 2) => ("sql_rtrim2", false),
+        ("upper", 1) => ("sql_upper", false),
+        ("replace", 3) => ("sql_replace", false),
+        ("like", 2) => ("sql_like", true),
+        ("cast_int", 1) => ("sql_cast_int", false),
+        ("char", 1) => ("sql_char", false),
+        ("substr_bytes", 3) => ("sql_substr_bytes", false),
+        ("rx_matches", 2) => ("rx", false),
+        _ => return None,
+    })
+}
+
+/// Every function: its name, arguments and result (the executor coverage gate probes each, `plan::coverage`).
+pub fn all() -> &'static [(&'static str, &'static [Kind], Kind)] {
+    FUNCTIONS
 }
 
 /// A function's name (as SQL names it), arguments and result, if `name` is one of these.
@@ -186,6 +221,21 @@ pub fn install_to_precision(to: fn(f64, u32) -> String) {
     let _ = TO_PRECISION.set(to);
 }
 
+/// Python's `repr` of a string (`@py_repr`) and an Ed25519 signature's check (`@ed25519_ok`), registered at load by
+/// the crates that hold them (`cpython::value`, `crypto`): this crate is below both.
+static PY_REPR: std::sync::OnceLock<fn(&str) -> String> = std::sync::OnceLock::new();
+static ED25519_OK: std::sync::OnceLock<fn(&str, &str, &str) -> bool> = std::sync::OnceLock::new();
+
+/// Registers `@py_repr` (once, at load).
+pub fn install_py_repr(to: fn(&str) -> String) {
+    let _ = PY_REPR.set(to);
+}
+
+/// Registers `@ed25519_ok` (once, at load).
+pub fn install_ed25519_ok(to: fn(&str, &str, &str) -> bool) {
+    let _ = ED25519_OK.set(to);
+}
+
 pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
     let t = |i: usize| text[i];
     let out = match name {
@@ -236,6 +286,17 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         "rr_to_string" => Some(numbers[0].to_string()),
         "rr_node_text" => crate::code_rule_dsl::facts::vtab::syntax::long_node_text(numbers[0]),
         "rr_substr" => Some(substr(t(0), numbers[0], numbers[1])),
+        "semver_valid" => return Value::Integer(i64::from(crate::code_rule_dsl::semver::Range::parse(t(0)).is_some())),
+        "semver_subset" => {
+            use crate::code_rule_dsl::semver::Range;
+            return match (Range::parse(t(0)), Range::parse(t(1))) {
+                (Some(a), Some(b)) => Value::Integer(i64::from(a.is_subset_of(&b))),
+                _ => Value::Null,
+            };
+        }
+        // No value where the crate that knows them registered none (`install_py_repr`, `install_ed25519_ok`).
+        "py_repr" => PY_REPR.get().map(|f| f(t(0))),
+        "ed25519_ok" => return ED25519_OK.get().map_or(Value::Null, |f| Value::Integer(i64::from(f(t(0), t(1), t(2))))),
         "to_float" => return t(0).trim().parse::<f64>().ok().filter(|f| !f.is_nan()).map_or(Value::Null, |f| Value::Integer(float_key(f))),
         "float_add" | "float_sub" | "float_mul" | "float_div" => {
             let (a, b) = (float_of(numbers[0]), float_of(numbers[1]));
