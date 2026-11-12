@@ -1,0 +1,39 @@
+#include "data-layer/allowlist-admin.rr"
+.decl ap_cli_setting(key:symbol,value:symbol)
+.decl ap_cli_piece(i:number,kind:symbol,value:symbol)
+.violation AdminCliAction(at:span,value:symbol) code "AP_CLI_ACTION" "CLI action"
+AdminCliAction(@place("",0),"sign") :- option("entryPoint","_ap_cli_start"),option("apCliSign","1").
+AdminCliAction(@place("",0),"verify") :- option("entryPoint","_ap_cli_start"),option("apCliSign","0").
+AdminCliAction(@place("",0),"scan") :- option("entryPoint","_ap_cli_verified"),option("apCliResult","1").
+.violation AdminCliRoot(at:span,path:symbol) code "AP_CLI_ROOT" "CLI root"
+AdminCliRoot(@place("",0),@dir(@dir(path))) :- option("entryPoint","_ap_cli_start"),option("apCliSource",path).
+.violation AdminCliAllowed(at:span,ordinal:number,value:symbol) code "AP_CLI_ALLOW" "CLI allowlist entries"
+AdminCliAllowed(@place("",0),i,value) :- option("entryPoint","_ap_cli_start"),option_item("apCliAllowed",i,value).
+.violation AdminCliExit(at:span,status:number) code "AP_CLI_EXIT" "CLI status"
+AdminCliExit(@place("",0),0) :- option("entryPoint","_ap_cli_signed"),option("apCliResult","1").
+AdminCliExit(@place("",0),1) :- option("entryPoint","_ap_cli_signed"),option("apCliResult","0").
+AdminCliExit(@place("",0),1) :- option("entryPoint","_ap_cli_verified"),option("apCliResult","0").
+.violation AdminCliOutput(at:span,phase:number,ordinal:number,part:number,text:symbol) code "AP_CLI_OUTPUT" "CLI output"
+AdminCliOutput(@place("",0),0,0,0,text) :- option("entryPoint","_ap_cli_verified"),option("apCliResult","0"),ap_cli_setting("failure",text).
+.decl ap_cli_file(i:number,value:symbol)
+.input ap_cli_file(IO=json,filename="admin-cli-values.json",path="/rows/*/file",projection="python-str")
+.decl ap_cli_line(i:number,value:symbol)
+.input ap_cli_line(IO=json,filename="admin-cli-values.json",path="/rows/*/line",projection="python-str")
+.decl ap_cli_pattern(i:number,value:symbol)
+.input ap_cli_pattern(IO=json,filename="admin-cli-values.json",path="/rows/*/pattern",projection="python-str")
+.decl ap_cli_text(i:number,value:symbol)
+.input ap_cli_text(IO=json,filename="admin-cli-values.json",path="/rows/*/text",projection="python-str")
+.decl ap_cli_field(i:number,key:symbol,value:symbol)
+ap_cli_field(i,"file",value) :- ap_cli_file(i,value).
+ap_cli_field(i,"line",value) :- ap_cli_line(i,value).
+ap_cli_field(i,"pattern",value) :- ap_cli_pattern(i,value).
+ap_cli_field(i,"text",value) :- ap_cli_text(i,value).
+.decl ap_cli_count(n:number)
+ap_cli_count(n) :- option("entryPoint","_ap_cli_report"),n=count:{ap_cli_file(_,_)}.
+AdminCliOutput(@place("",0),0,0,0,cat(prefix,to_string(n),suffix)) :- ap_cli_count(n),n>0,ap_cli_setting("header_prefix",prefix),ap_cli_setting("header_suffix",suffix).
+AdminCliOutput(@place("",0),0,0,0,text) :- ap_cli_count(0),ap_cli_setting("clean",text).
+AdminCliOutput(@place("",0),1,i,j,text) :- option("entryPoint","_ap_cli_report"),ap_cli_file(i,_),ap_cli_piece(j,"literal",text).
+AdminCliOutput(@place("",0),1,i,j,text) :- option("entryPoint","_ap_cli_report"),ap_cli_piece(j,"field",key),ap_cli_field(i,key,text).
+AdminCliOutput(@place("",0),2,0,0,text) :- ap_cli_count(n),n>0,ap_cli_setting("footer",text).
+AdminCliExit(@place("",0),0) :- ap_cli_count(n),(n=0;option("apCliCheck","0")).
+AdminCliExit(@place("",0),1) :- ap_cli_count(n),n>0,option("apCliCheck","1").

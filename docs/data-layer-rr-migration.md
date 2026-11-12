@@ -4202,3 +4202,15 @@ The red receipt is `rr-admin-cli-source-red-finalfcce.json.gz`.
 The admin rule remains a draft with explicit scanner progress in the manifest.
 All 125 original assertions still require full native acceptance. Production, CLI, earlier corpora, retained updates, and valid removal controls also remain open.
 The inventory remains twenty admissions, seventy-nine drafts, and one absent translation.
+
+### 2026-11-12 — Admin CLI native control flow exposes a scan-context defect
+
+The CLI now uses native root selection, action selection, rendering, verification, signing, and exit decisions.
+It reuses the shared allowlist service through the source module's `lint_signing` attribute.
+The original-suite harness now rejects original admin `cli_main` execution.
+
+The first four-case native ladder passes three cases and fails the positive custom-directory case.
+The lexical detector also scans the JSON rendering envelope, which contains forbidden-call text as data.
+Detection needs a scan-context gate. The guard reports no original semantic callbacks.
+The complete failed ladder is `rr-admin-cli-scan-gate-red-finalfcce.json.gz`.
+The rule remains a draft, and no missing engine feature is established.

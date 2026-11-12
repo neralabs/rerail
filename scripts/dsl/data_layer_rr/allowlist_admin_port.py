@@ -4,8 +4,8 @@ from types import SimpleNamespace
 import sys
 
 
-def install(backend,module,check):
-    proxy=SimpleNamespace(**vars(module.signing))
+def install(backend,module,check,*,signing_attribute='signing'):
+    proxy=SimpleNamespace(**vars(getattr(module,signing_attribute)))
     def emit(rows):
         for row in rows:
             if row['code']=='ADMIN_OUTPUT':
@@ -29,4 +29,4 @@ def install(backend,module,check):
         if p['write_file']:path.write_text(p['updated_source'],encoding='utf-8')
         sys.stdout.write(p['stdout']);sys.stderr.write(p['stderr']);return bool(p['ok'])
     proxy.verify_allowlist=verify;proxy.sign_and_update_allowlist=sign
-    backend.replace(module,'signing',proxy)
+    backend.replace(module,signing_attribute,proxy)

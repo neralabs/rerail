@@ -315,6 +315,9 @@ class Suite:
         return files
 
     def scan(self, check, entry, module, arguments):
+        if check=='admin_async_purity':
+            from admin_public_port import scan
+            return scan(self,entry,module,arguments)
         if check=='async_executor':
             from executor_port import scan
             return scan(self,entry,module,arguments)
@@ -493,6 +496,9 @@ class Suite:
             shared = importlib.import_module('scripts.lint_lib.serverplan_facts')
             originals.update(codes({'serverplan_facts': shared}))
         for check, module in self.modules.items():
+            if check == 'admin_async_purity':
+                from admin_components_port import install
+                install(self,module)
             if check == 'async_patterns':
                 from async_pattern_port import install
                 install(self,module)
@@ -617,8 +623,7 @@ class Suite:
                     raise AssertionError('Unselected original linter executed: '+self.semantic_fallbacks[-1])
                 return
             check, name, passive = originals[frame.f_code]
-            host = {'admin_async_purity': {'cli_main'},
-                    'data_layer_compat_aliases': {'cli_main', '_print_results'},
+            host = {'data_layer_compat_aliases': {'cli_main', '_print_results'},
                     'data_layer_facade_purity': {'cli_main', '_print_results'},
                     'backend_coupling': {'cli_main', 'get_project_root'},
                     'connection_caches': {'cli_main'}}
