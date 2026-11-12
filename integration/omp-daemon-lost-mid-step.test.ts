@@ -82,9 +82,9 @@ test("a shell command that writes many sources costs no session events", async (
     { content: ["Done."] },
   ]);
   try {
-    // One command result or turn end waits its 10 s for the shell-write walk of the 8,000 outputs, and one for their
-    // audits; while those still run, the later ones answer at once, so even a slow runner's run fits the host harness's
-    // default minute. A run that still overruns says where the daemon spent the time.
+    // A command result or turn end waits up to 10 s for the shell-write walk of the 8,000 outputs; until the walk it gave
+    // up on has run, the later ones answer at once. On 2 busy CPUs the prompt took 53 s, inside the host harness's default
+    // minute. A run that still overruns says where the daemon spent the time.
     try {
       await host.prompt("Run the tests, then look at one output.");
     } catch (error) {
