@@ -157,8 +157,8 @@ Rerail runs Git for Windows' own `git.exe`, not its launcher, and reads Git's gl
 - `findGit` tries the candidates one at a time and stops at the first Git that runs, so the `PATH` entries after it
   are never resolved; the status line, a process of its own every few seconds, pays for the entries up to its Git
   only. On Windows a candidate spelled twice in different case is probed once.
-- A Git laid out otherwise, such as a scoop shim, runs as found. When a batch reader (`readGitBlobs`, `readGitBlobIds`,
-  `gitCrlfPaths`) times out, it ends the shim and the Git it started (`endProcessTree`), and answers 500 ms later
+- A Git laid out otherwise, such as a scoop shim, runs as found. When a batch reader (`GitReads`' `blobs`, `blobIds`,
+  `crlfPaths`) times out, it ends the shim and the Git it started (`endProcessTree`), and answers 500 ms later
   (`settleWhenDone`) should the pipe still be open.
 - After `PATH`, Git is looked for in Program Files on `C:` and on the drive of the account's home (Windows installed on
   another drive), then in the per-user installs under the account's home: `AppData\Local\Programs\Git` and scoop.

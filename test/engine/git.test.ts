@@ -9,9 +9,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 vi.mock("node:child_process", { spy: true });
 
 import {
-  findGit, gitBehindLauncher, gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitCrlfPaths, gitExcludeFiles, gitExecutable, gitHead, gitHome,
-  gitInstalled, gitModifiedOrUntrackedPaths, GitReads, GitUnavailableError, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds,
-  readGitBlobs, runGit, searchGitFrom,
+  findGit, gitBehindLauncher, gitCandidates, gitExecutable, gitHome, gitInstalled, GitReads, GitUnavailableError, runGit,
+  searchGitFrom,
 } from "../../src/engine/git.js";
 import { processState } from "../../src/engine/process-liveness.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
@@ -20,6 +19,8 @@ import { removeFolder } from "../support/platform/remove-folder.js";
 const actualChildProcess = await vi.importActual<typeof import("node:child_process")>("node:child_process");
 
 const roots: string[] = [];
+/** The reads of tests that never stop them. */
+const reads = new GitReads();
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => removeFolder(root))); });
 
 function git(cwd: string, ...args: string[]): string {
@@ -46,19 +47,19 @@ async function partialClone(): Promise<{ clone: string; oid: string }> {
   return { clone, oid: git(clone, "rev-parse", "HEAD:a.py").trim() };
 }
 
-describe("readGitBlobs", () => {
+describe("GitReads.blobs", () => {
   it("keeps every blob it was asked for when another in the batch is larger than the limit", async () => {
     const root = await repository({ "big.py": "x".repeat(5_000), "small.py": "print(1)\n" });
     await writeFile(join(root, "small.py"), "print(2)\n");
     git(root, "add", "small.py");
-    const blobs = await readGitBlobs(root, [":./big.py", ":./small.py", "HEAD:./small.py", ":./missing.py"], { maxBlobBytes: 1_000 });
+    const blobs = await reads.blobs(root, [":./big.py", ":./small.py", "HEAD:./small.py", ":./missing.py"], { maxBlobBytes: 1_000 });
     expect(Object.fromEntries([...blobs].map(([revision, blob]) => [revision, blob.toString("utf8")])))
       .toEqual({ ":./small.py": "print(2)\n", "HEAD:./small.py": "print(1)\n" });
   });
 
   it.skipIf(!honoursNoLazyFetch())("never fetches a blob a partial clone does not hold", async () => {
     const { clone, oid } = await partialClone();
-    expect(await readGitBlobs(clone, ["HEAD:./a.py"], { maxBlobBytes: 1_000 })).toEqual(new Map());
+    expect(await reads.blobs(clone, ["HEAD:./a.py"], { maxBlobBytes: 1_000 })).toEqual(new Map());
     expect(partialCloneLacks(clone, oid)).toBe(true);
   });
 });
@@ -71,7 +72,7 @@ describe("readGitBlobIds", () => {
     git(root, "add", ".");
     git(root, "commit", "--quiet", "-m", "more");
     const spaced = git(root, "rev-parse", "HEAD:a b.py").trim();
-    const ids = await readGitBlobIds(root, [
+    const ids = await reads.blobIds(root, [
       "HEAD:./a b.py", "HEAD:./x blob", "HEAD:./dir", "HEAD:./gone blob", spaced, "0".repeat(40), "HEAD:./dir/c.py",
     ]);
     expect(Object.fromEntries(ids)).toEqual({
@@ -85,35 +86,35 @@ describe("readGitBlobIds", () => {
   it("names nothing outside a repository", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-git-ids-"));
     roots.push(root);
-    await expect(readGitBlobIds(root, ["HEAD:./a.py"])).resolves.toEqual(new Map());
+    await expect(reads.blobIds(root, ["HEAD:./a.py"])).resolves.toEqual(new Map());
   });
 });
 
 describe("gitBranchTips and gitCommitsBetween", () => {
   it("lists each commit a branch or remote-tracking branch points at once, and no tag", async () => {
     const root = await repository({ "a.py": "1\n" });
-    const seed = (await gitHead(root))!;
+    const seed = (await reads.head(root))!;
     git(root, "branch", "same");
     git(root, "tag", "v1");
     git(root, "switch", "--quiet", "-c", "other");
     git(root, "commit", "--quiet", "--allow-empty", "-m", "two");
-    const other = (await gitHead(root))!;
+    const other = (await reads.head(root))!;
     git(root, "update-ref", "refs/remotes/origin/main", seed);
     git(root, "tag", "v2", other);
     git(root, "switch", "--quiet", "--detach", seed);
     git(root, "commit", "--quiet", "--allow-empty", "-m", "detached");
-    expect((await gitBranchTips(root)).sort()).toEqual([seed, other].sort());
+    expect((await reads.branchTips(root)).sort()).toEqual([seed, other].sort());
   });
 
   it("lists the commits a move added, and none where Git cannot say", async () => {
     const root = await repository({ "a.py": "1\n" });
-    const seed = (await gitHead(root))!;
+    const seed = (await reads.head(root))!;
     git(root, "commit", "--quiet", "--allow-empty", "-m", "two");
     git(root, "commit", "--quiet", "--allow-empty", "-m", "three");
-    const head = (await gitHead(root))!;
-    expect(await gitCommitsBetween(root, seed, head)).toEqual([head, git(root, "rev-parse", "HEAD~1").trim()]);
-    expect(await gitCommitsBetween(root, head, seed)).toEqual([]);
-    expect(await gitCommitsBetween(root, "0".repeat(40), head)).toEqual([]);
+    const head = (await reads.head(root))!;
+    expect(await reads.commitsBetween(root, seed, head)).toEqual([head, git(root, "rev-parse", "HEAD~1").trim()]);
+    expect(await reads.commitsBetween(root, head, seed)).toEqual([]);
+    expect(await reads.commitsBetween(root, "0".repeat(40), head)).toEqual([]);
   });
 });
 
@@ -129,48 +130,48 @@ describe("gitHead and headMovedOnlyByCommits", () => {
   it("names no commit outside a repository, or where nothing is committed yet", async () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-git-head-"));
     roots.push(root);
-    await expect(gitHead(root)).resolves.toBeUndefined();
+    await expect(reads.head(root)).resolves.toBeUndefined();
     git(root, "init", "--quiet");
-    await expect(gitHead(root)).resolves.toBeUndefined();
+    await expect(reads.head(root)).resolves.toBeUndefined();
   });
 
   it("tells commits from anything else that moved HEAD since a commit", async () => {
     const root = await repository({ "a.py": "1\n" });
-    const seed = (await gitHead(root))!;
+    const seed = (await reads.head(root))!;
     git(root, "commit", "--quiet", "--allow-empty", "-m", "two");
     git(root, "commit", "--quiet", "--allow-empty", "--amend", "-m", "two again");
-    expect(await headMovedOnlyByCommits(root, seed)).toBe(true);
-    const committed = (await gitHead(root))!;
+    expect(await reads.movedOnlyByCommits(root, seed)).toBe(true);
+    const committed = (await reads.head(root))!;
     git(root, "reset", "--quiet", "--hard", seed);
-    expect(await headMovedOnlyByCommits(root, committed)).toBe(false);
+    expect(await reads.movedOnlyByCommits(root, committed)).toBe(false);
     // A commit after the move does not hide it.
     git(root, "commit", "--quiet", "--allow-empty", "-m", "three");
-    expect(await headMovedOnlyByCommits(root, committed)).toBe(false);
+    expect(await reads.movedOnlyByCommits(root, committed)).toBe(false);
   });
 
   it("goes by HEAD's newest move for a checkout not seen before, and takes a commit it cannot find as moved", async () => {
     const root = await repository({ "a.py": "1\n" });
-    expect(await headMovedOnlyByCommits(root, undefined)).toBe(true);
+    expect(await reads.movedOnlyByCommits(root, undefined)).toBe(true);
     git(root, "switch", "--quiet", "-c", "other");
-    expect(await headMovedOnlyByCommits(root, undefined)).toBe(false);
-    expect(await headMovedOnlyByCommits(root, "0".repeat(40))).toBe(false);
+    expect(await reads.movedOnlyByCommits(root, undefined)).toBe(false);
+    expect(await reads.movedOnlyByCommits(root, "0".repeat(40))).toBe(false);
   });
 });
 
 describe("GitReads", () => {
   it("answers a read it stopped as without Git, and starts no Git once stopped", async () => {
     const root = await repository({ "a.py": "1\n" });
-    const reads = new GitReads();
-    const running = reads.run(signal => gitHead(root, { signal }));
-    await reads.stop();
+    const stopped = new GitReads();
+    const running = stopped.head(root);
+    await stopped.stop();
 
     await expect(running).resolves.toBeUndefined();
-    await expect(reads.run(signal => gitHead(root, { signal }))).resolves.toBeUndefined();
-    await expect(reads.run(signal => readGitBlobs(root, ["HEAD:./a.py"], { maxBlobBytes: 1_000, signal }))).resolves.toEqual(new Map());
-    await expect(new GitReads().run(signal => gitHead(root, { signal }))).resolves.toMatch(/^[0-9a-f]{40}/u);
+    await expect(stopped.head(root)).resolves.toBeUndefined();
+    await expect(stopped.blobs(root, ["HEAD:./a.py"], { maxBlobBytes: 1_000 })).resolves.toEqual(new Map());
+    await expect(new GitReads().head(root)).resolves.toMatch(/^[0-9a-f]{40}/u);
     await writeFile(join(root, "b.py"), "untracked\n");
-    await expect(reads.run(signal => gitModifiedOrUntrackedPaths(root, { signal }))).resolves.toEqual([]);
-    await expect(new GitReads().run(signal => gitModifiedOrUntrackedPaths(root, { signal }))).resolves.toEqual(["b.py"]);
+    await expect(stopped.modifiedOrUntracked(root)).resolves.toEqual([]);
+    await expect(new GitReads().modifiedOrUntracked(root)).resolves.toEqual(["b.py"]);
   });
 
   /**
@@ -192,12 +193,12 @@ describe("GitReads", () => {
   it("stops a read still streaming from its Git at once, with the blobs it had read", async () => {
     const root = await repository({ "a.py": "1\n" });
     const printed = streamingGitThatStays(`${"a".repeat(40)} blob 2\n1\n\n`);
-    const reads = new GitReads();
+    const session = new GitReads();
     // A timeout this long never ends the read here: only the stop does.
-    const read = reads.run(signal => readGitBlobs(root, ["HEAD:./a.py", "HEAD:./b.py"], { maxBlobBytes: 1_000, timeout: 60_000, signal }));
+    const read = session.blobs(root, ["HEAD:./a.py", "HEAD:./b.py"], { maxBlobBytes: 1_000, timeout: 60_000 });
     await printed;
 
-    const stopped = reads.stop().then(() => "stopped");
+    const stopped = session.stop().then(() => "stopped");
     await expect(Promise.race([stopped, delay(3_000, "still running", { ref: false })])).resolves.toBe("stopped");
     await expect(read).resolves.toEqual(new Map([["HEAD:./a.py", Buffer.from("1\n")]]));
   });
@@ -232,13 +233,13 @@ describe("GitReads", () => {
       actualChildProcess.execFile(process.execPath, ["-e", LAUNCHER, "--", headPid, ...(args ?? [])], options, callback));
     vi.mocked(spawn).mockImplementationOnce((_git, args, options) =>
       actualChildProcess.spawn(process.execPath, ["-e", LAUNCHER, "--", blobsPid, ...args], options));
-    const reads = new GitReads();
+    const session = new GitReads();
     const answers = Promise.all([
-      reads.run(signal => gitHead(root, { signal })),
-      reads.run(signal => readGitBlobs(root, ["HEAD:./a.py"], { maxBlobBytes: 1_000, timeout: 60_000, signal })),
+      session.head(root),
+      session.blobs(root, ["HEAD:./a.py"], { maxBlobBytes: 1_000, timeout: 60_000 }),
     ]);
     const gits = await Promise.all([launchedGit(headPid), launchedGit(blobsPid)]);
-    await reads.stop();
+    await session.stop();
 
     // Each read settles only once its whole tree has exited, so neither Git is waited for here.
     const running = gits.filter(pid => processState(pid) !== "gone");
@@ -268,32 +269,32 @@ describe("gitExcludeFiles", () => {
 
   it("names the checkout's info/exclude and Git's default excludes file while core.excludesFile is unset", async () => {
     const { root, home } = await isolatedRepository();
-    expect(await gitExcludeFiles(root)).toEqual([join(root, ".git", "info", "exclude"), join(home, ".config", "git", "ignore")]);
+    expect(await reads.excludeFiles(root)).toEqual([join(root, ".git", "info", "exclude"), join(home, ".config", "git", "ignore")]);
     vi.stubEnv("XDG_CONFIG_HOME", join(home, "xdg"));
-    expect((await gitExcludeFiles(root))[1]).toBe(join(home, "xdg", "git", "ignore"));
+    expect((await reads.excludeFiles(root))[1]).toBe(join(home, "xdg", "git", "ignore"));
   });
 
   it("follows core.excludesFile, with `~` read as the home, and gives a linked worktree the common info/exclude", async () => {
     const { root, home } = await isolatedRepository();
     git(root, "config", "core.excludesFile", "~/ignores");
     git(root, "worktree", "add", "--quiet", join(home, "linked"));
-    expect(await gitExcludeFiles(join(home, "linked"))).toEqual([join(root, ".git", "info", "exclude"), join(home, "ignores")]);
+    expect(await reads.excludeFiles(join(home, "linked"))).toEqual([join(root, ".git", "info", "exclude"), join(home, "ignores")]);
   });
 
   it("names none outside a Git checkout", async () => {
     const { home } = await isolatedRepository();
-    expect(await gitExcludeFiles(home)).toEqual([]);
+    expect(await reads.excludeFiles(home)).toEqual([]);
   });
 
   it("names the configuration files that can set core.excludesFile: the repository's, the worktree's and the global ones", async () => {
     const { root, home } = await isolatedRepository();
     vi.stubEnv("GIT_CONFIG_GLOBAL", "");
-    expect(await gitConfigFiles(root)).toEqual([
+    expect(await reads.configFiles(root)).toEqual([
       join(root, ".git", "config"), join(root, ".git", "config.worktree"), join(home, ".gitconfig"), join(home, ".config", "git", "config"),
     ]);
     vi.stubEnv("GIT_CONFIG_GLOBAL", join(home, "global"));
-    expect((await gitConfigFiles(root)).slice(2)).toEqual([join(home, "global")]);
-    expect(await gitConfigFiles(home)).toEqual([]);
+    expect((await reads.configFiles(root)).slice(2)).toEqual([join(home, "global")]);
+    expect(await reads.configFiles(home)).toEqual([]);
   });
 
   it("finds the global files in Git's own home, which on Windows without HOME is HOMEDRIVE and HOMEPATH", async () => {
@@ -303,11 +304,11 @@ describe("gitExcludeFiles", () => {
     await mkdir(share);
     const globals = [join(share, ".gitconfig"), join(share, ".config", "git", "config")];
     // Git's home, not the account's: HOME here names another folder than the one homedir() answers.
-    expect((await gitConfigFiles(root, { env: { ...process.env, HOME: share } })).slice(2)).toEqual(globals);
+    expect((await reads.configFiles(root, { env: { ...process.env, HOME: share } })).slice(2)).toEqual(globals);
     if (process.platform === "win32") {
       const { HOME: _home, ...withoutHome } = process.env;
       const drive = share.slice(0, 2);
-      expect((await gitConfigFiles(root, { env: { ...withoutHome, HOMEDRIVE: drive, HOMEPATH: share.slice(2) }, platform: "win32" })).slice(2)).toEqual(globals);
+      expect((await reads.configFiles(root, { env: { ...withoutHome, HOMEDRIVE: drive, HOMEPATH: share.slice(2) }, platform: "win32" })).slice(2)).toEqual(globals);
     }
   });
 });
@@ -347,13 +348,13 @@ describe("gitCrlfPaths", () => {
     await writeFile(join(root, ".git", "info", "attributes"), "*.py text\n*.bin -text eol=crlf\n*.txt eol=crlf\n*.ts text=auto\n");
     const paths = ["a.py", "b.bin", "c.txt", "d.md", "e.ts"];
     // A text file takes core.eol, whose default (native) is CRLF on Windows alone; -text is never converted.
-    expect(Object.fromEntries(await gitCrlfPaths(root, paths, { platform: "win32" }))).toEqual({ "a.py": "text", "c.txt": "text", "e.ts": "auto" });
-    expect(Object.fromEntries(await gitCrlfPaths(root, paths, { platform: "linux" }))).toEqual({ "c.txt": "text" });
+    expect(Object.fromEntries(await reads.crlfPaths(root, paths, { platform: "win32" }))).toEqual({ "a.py": "text", "c.txt": "text", "e.ts": "auto" });
+    expect(Object.fromEntries(await reads.crlfPaths(root, paths, { platform: "linux" }))).toEqual({ "c.txt": "text" });
     // core.autocrlf=true converts every file with no text attribute too, by Git's guess; input converts none on checkout.
     git(root, "config", "core.autocrlf", "true");
-    expect(Object.fromEntries(await gitCrlfPaths(root, paths, { platform: "linux" }))).toEqual({ "a.py": "text", "c.txt": "text", "d.md": "auto", "e.ts": "auto" });
+    expect(Object.fromEntries(await reads.crlfPaths(root, paths, { platform: "linux" }))).toEqual({ "a.py": "text", "c.txt": "text", "d.md": "auto", "e.ts": "auto" });
     git(root, "config", "core.autocrlf", "input");
-    expect(Object.fromEntries(await gitCrlfPaths(root, paths, { platform: "win32" }))).toEqual({ "c.txt": "text" });
+    expect(Object.fromEntries(await reads.crlfPaths(root, paths, { platform: "win32" }))).toEqual({ "c.txt": "text" });
   });
 
   it("reads core.autocrlf from the person's global settings, which tests otherwise keep from every repository", async () => {
@@ -361,7 +362,7 @@ describe("gitCrlfPaths", () => {
     const global = join(root, ".git", "person.gitconfig");
     await writeFile(global, "[core]\n\tautocrlf = true\n");
     vi.stubEnv("GIT_CONFIG_GLOBAL", global);
-    expect(Object.fromEntries(await gitCrlfPaths(root, ["a.py"], { platform: "linux" }))).toEqual({ "a.py": "auto" });
+    expect(Object.fromEntries(await reads.crlfPaths(root, ["a.py"], { platform: "linux" }))).toEqual({ "a.py": "auto" });
   });
 });
 
@@ -378,9 +379,9 @@ describe("gitHome", () => {
 describe("gitUnmergedReader", () => {
   /** A reader whose every read must list the entries: a read Git could not answer fails the test. */
   function reader(): (cwd: string) => Promise<ReadonlyMap<string, string>> {
-    const read = gitUnmergedReader();
+    const own = new GitReads();
     return async cwd => {
-      const entries = await read(cwd);
+      const entries = await own.unmerged(cwd);
       if (entries === undefined) throw new Error(`Git listed no unmerged entries in ${cwd}`);
       return entries;
     };
@@ -402,19 +403,17 @@ describe("gitUnmergedReader", () => {
 
   it("answers a read its signal stopped as one Git could not answer, starting no Git, and lists the entries next time", async () => {
     const root = await conflicted();
-    const read = gitUnmergedReader();
     const stopped = new GitReads();
     await stopped.stop();
 
-    await expect(stopped.run(signal => read(root, { signal }))).resolves.toBeUndefined();
+    await expect(stopped.unmerged(root)).resolves.toBeUndefined();
     expect([...(await reader()(root)).keys()]).toEqual(["a.py"]);
-    expect([...((await read(root)) ?? new Map()).keys()]).toEqual(["a.py"]);
   });
 
   it("cannot say outside a repository, and has nothing where nothing is unmerged", async () => {
     const outside = await mkdtemp(join(tmpdir(), "rerail-git-unmerged-"));
     roots.push(outside);
-    expect(await gitUnmergedReader()(outside)).toBeUndefined();
+    expect(await new GitReads().unmerged(outside)).toBeUndefined();
     expect(await gitUnmerged(await repository({ "a.py": "1\n" }))).toEqual(new Map());
   });
 
@@ -470,9 +469,9 @@ describe("gitUnmergedReader", () => {
     const root = await conflicted();
     const read = reader();
     const first = await read(root);
-    await gitHead(root);
-    await readGitBlobs(root, [":2:./a.py", ":3:./a.py", "HEAD:./a.py"], { maxBlobBytes: 1024 });
-    await headMovedOnlyByCommits(root, undefined);
+    await reads.head(root);
+    await reads.blobs(root, [":2:./a.py", ":3:./a.py", "HEAD:./a.py"], { maxBlobBytes: 1024 });
+    await reads.movedOnlyByCommits(root, undefined);
     expect(await read(root)).toBe(first);
   });
 
@@ -516,7 +515,8 @@ describe("gitUnmergedReader", () => {
     const root = await conflicted();
     const index = join(root, ".git", "index");
     const intact = await readFile(index);
-    const read = gitUnmergedReader();
+    const own = new GitReads();
+    const read = (cwd: string) => own.unmerged(cwd);
     const first = await read(root);
     expect([...first!.keys()]).toEqual(["a.py"]);
     await writeFile(index, "not an index");

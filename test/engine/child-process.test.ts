@@ -11,7 +11,7 @@ vi.mock("node:child_process", { spy: true });
 
 import { assertProgramPath, endProcessTree, execFile, execFileSync, spawn, spawnShown, spawnSync, withHiddenWindow } from "../../src/engine/child-process.js";
 import { processState } from "../../src/engine/process-liveness.js";
-import { gitExecutable, gitHead, readGitBlobIds, readGitBlobs, runGit } from "../../src/engine/git.js";
+import { gitExecutable, GitReads, runGit } from "../../src/engine/git.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
 /** Whether a recorded child_process call passed `windowsHide: true` in its options. */
@@ -172,12 +172,12 @@ describe("Git runs with its window hidden", () => {
   const gitCalls = (start: (...args: never[]) => unknown): unknown[][] =>
     (vi.mocked(start).mock.calls as unknown as unknown[][]).filter(call => call[0] === gitExecutable());
 
-  it("in runGit, gitHead, readGitBlobIds and readGitBlobs", async () => {
+  it("in runGit and in GitReads' head, blobIds and blobs", async () => {
     const root = await repository();
     expect(runGit(root, ["status", "--porcelain"]).status).toBe(0);
-    expect(await gitHead(root)).toMatch(/^[0-9a-f]{40}/u);
-    expect((await readGitBlobIds(root, ["HEAD:a.txt"])).size).toBe(1);
-    expect((await readGitBlobs(root, ["HEAD:a.txt"], { maxBlobBytes: 1024 })).get("HEAD:a.txt")?.toString()).toBe("a\n");
+    expect(await new GitReads().head(root)).toMatch(/^[0-9a-f]{40}/u);
+    expect((await new GitReads().blobIds(root, ["HEAD:a.txt"])).size).toBe(1);
+    expect((await new GitReads().blobs(root, ["HEAD:a.txt"], { maxBlobBytes: 1024 })).get("HEAD:a.txt")?.toString()).toBe("a\n");
     const calls = [childProcess.spawnSync, childProcess.execFile, childProcess.spawn].map(gitCalls);
     expect(calls.map(list => list.length)).toEqual([1, 1, 2]);
     expect(calls.flat().every(hidesWindow)).toBe(true);
@@ -209,15 +209,15 @@ describe("Git runs with its window hidden", () => {
   it("and a read whose Git exits by itself waits for the rest of its output", async () => {
     const root = await repository();
     vi.mocked(childProcess.spawn).mockImplementationOnce(gitWhoseOutputTrailsItsExit);
-    expect(await readGitBlobIds(root, ["HEAD:a.txt"])).toEqual(new Map([["HEAD:a.txt", "0123456789abcdef0123456789abcdef01234567"]]));
+    expect(await new GitReads().blobIds(root, ["HEAD:a.txt"])).toEqual(new Map([["HEAD:a.txt", "0123456789abcdef0123456789abcdef01234567"]]));
   }, 10_000);
 
   it("and a read whose launcher exits answers soon after, without waiting for the Git it left running", async () => {
     const root = await repository();
     vi.mocked(childProcess.spawn).mockImplementationOnce(launcherWhoseGitOutlivesIt).mockImplementationOnce(launcherWhoseGitOutlivesIt);
     const started = performance.now();
-    expect((await readGitBlobs(root, ["HEAD:a.txt"], { maxBlobBytes: 1024 })).size).toBe(0);
-    expect((await readGitBlobIds(root, ["HEAD:a.txt"])).size).toBe(0);
+    expect((await new GitReads().blobs(root, ["HEAD:a.txt"], { maxBlobBytes: 1024 })).size).toBe(0);
+    expect((await new GitReads().blobIds(root, ["HEAD:a.txt"])).size).toBe(0);
     expect(performance.now() - started).toBeLessThan(3_000);
   }, 10_000);
 });

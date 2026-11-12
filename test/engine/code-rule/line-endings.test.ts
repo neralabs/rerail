@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { blobIds, heldAs, textAs } from "../../../src/engine/code-rule/line-endings.js";
-import { gitCrlfPaths, type CrlfRule } from "../../../src/engine/git.js";
+import { GitReads, type CrlfRule } from "../../../src/engine/git.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 /** A file's digest as a walk records it: the SHA-256 of its bytes. */
@@ -193,7 +193,7 @@ describe("each form against the bytes Git's own checkout writes", () => {
     await writeFile(join(root, ".git", "info", "attributes"), `${attributes}\n`);
     await Promise.all(paths.map(path => rm(join(root, path))));
     git("checkout", "--", ".");
-    const rules = await gitCrlfPaths(root, paths);
+    const rules = await new GitReads().crlfPaths(root, paths);
     for (const [path, text] of Object.entries(BLOBS)) {
       const stored = Buffer.from(text, "utf8");
       const written = await readFile(join(root, path));

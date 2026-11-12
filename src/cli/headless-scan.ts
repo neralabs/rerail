@@ -29,7 +29,7 @@ import { isWorktreePack, WORKTREE_PACK_ID, WORKTREE_RULES_FOLDER, worktreeRuleCa
 import { CheckoutCodeRuleRouter } from "../engine/code-rule/checkout-code-rule-router.js";
 import type { CodeRuleViolation } from "../engine/code-rule/code-rule.js";
 import { CheckoutCatalogs, startingCheckout } from "../engine/code-rule/code-rule-dsl-catalog.js";
-import { readGitBlobs, runGit } from "../engine/git.js";
+import { GitReads, runGit } from "../engine/git.js";
 import { defaultRerailDatabasePath, openRerailDatabase, openRerailDatabaseAsIs, type RerailDatabase } from "../engine/storage/database.js";
 import { repositories } from "../engine/storage/schema.js";
 import { tableColumns } from "../engine/storage/table-probe.js";
@@ -169,7 +169,8 @@ async function rulesAtRef(root: string, ref: string, scratch: string): Promise<R
     const [, mode, type, object, name] = match as unknown as [string, string, string, string, string];
     return name.includes("/") || name === "." || name === ".." ? [] : [{ mode, type, object, name }];
   });
-  const blobs = await readGitBlobs(root, entries.filter(entry => entry.type === "blob").map(entry => entry.object), { maxBlobBytes: MAX_REF_RULE_BYTES });
+  // A scan has no session whose end must stop this read, so its GitReads is never stopped.
+  const blobs = await new GitReads().blobs(root, entries.filter(entry => entry.type === "blob").map(entry => entry.object), { maxBlobBytes: MAX_REF_RULE_BYTES });
   for (const { mode, type, object, name } of entries) {
     const target = join(folder, name);
     const blob = blobs.get(object);
