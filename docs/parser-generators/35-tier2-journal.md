@@ -28,21 +28,24 @@ How the numbers are taken:
 
 ## The best to date
 
-Tier 2 at `2b46b2e8b`: the best in shape and in the benchmark.
+Tier 2 at `cebf1c631`: the best in shape and in the benchmark.
 
 | | Tier 2 | Lean parser |
 |---|---|---|
-| Machine instructions | 26,575 | 10,008 |
+| Machine instructions | 24,375 | 10,008 |
 | Functions for rules | 56 | 45 |
 | Words | 6,441 | |
 | A rule call | `mov`, `bl`, `cbnz` | `mov`, `bl`, a load |
-| Stores | 737 | |
+| Stores | 713 | |
 | Stack reloads | 10 | 0 |
-| Compares | 3,972 | 1,198 |
-| Benchmark, instructions | 331.1M | 356.4M |
-| Benchmark, cycles | 64.0M | 68.3M |
+| Compares | 3,004 | 1,198 |
+| Benchmark, instructions | 330.9M | 356.6M |
+| Benchmark, cycles | 64.0M (at `2b46b2e8b`) | 68.3M |
 
-The biggest gap left is the switches: 36% of the machine code, 28 instructions each.
+The switches are 31% of the machine code, 21.5 instructions each;
+what is left there is mostly arms that call different rules.
+The next gap: functions with many entries (a rule shared from the middle of another),
+each picked by a compare tree where the lean parser's functions have one entry.
 
 Its structure:
 
@@ -74,6 +77,11 @@ Its structure:
   gives back the values it was entered with at its one exit.
 - **The stream's end is a token kind of its own**, so a switch tests it in its compare tree.
 - **Switches are compare trees**, as rustc compiles `match`: no jump table.
+  As LLVM lowers a switch: a default target, a tree over the other cases with known ranges,
+  a test at each leaf, and bit tests for cases of up to three targets within 64 values.
+- **A keyword's leaf takes its kind from the token's word** (`WORD_KIND`),
+  the keywords' strings numbered in kind order: one add, as `Kind::DotDecl + (d - W_DECL)`.
+  Keyword arms that differed only in the kind are one.
 
 ## Tried and dropped
 
@@ -94,6 +102,7 @@ Each line gives what the machine code showed, and what could change the verdict.
 | The calls open as a passed field, given back with the result | Wrong tapes (no file matched), more stack stores (929) | Never debugged: may be worth fixing |
 | A helper function for each set of rules sharing code | 84 functions, not 56, and 1,700 more instructions; three loop values spilled | Helpers are small and called from few places |
 | Tail calls into shared code, `ctx` pinned | An epilogue at each of 198 places: 785 restores, against 170 | Epilogues get cheaper |
+| The word → kind map over strings in first-use order | A 40-leaf compare tree in the leaf (kinds scattered over the strings) | Never: the strings are numbered in kind order now |
 | One tail-call block a function gone to, the index its argument | The index constants folded into values live through the function, and spilled | Each place's own block is built; no reason to go back |
 
 ## The journal
@@ -119,3 +128,6 @@ Numbers are tier 2's for `.rr`. Each step's commit is listed.
 | The word and flags callee-saved | `2b46b2e8b` | 27,433 | |
 | One way by the place a call enters | `2b46b2e8b` | 27,314 | |
 | The callee takes its caller's token: one `cbnz` a call | `2b46b2e8b` | 26,575 | 331.1M (64.0M) |
+| Switches with a default target and known ranges | `73aed4adc` | 26,092 | |
+| A keyword's leaf kind from the token's word | `cebf1c631` | 24,828 | |
+| Switch cases as bit tests | `cebf1c631` | 24,375 | 330.9M (cycles not taken: load 58) |

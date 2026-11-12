@@ -907,6 +907,74 @@ It stays as the fallback where the callee cannot take the token.
 What is left is mostly the switches: 36% of the machine code, 28 instructions each,
 and 3,972 compares against the lean parser's 1,198.
 
+## Built: switches as rustc lowers a `match`
+
+A switch was a binary tree over every run of one target, gaps included.
+rustc hands a `match` to LLVM, whose switch lowering does three things this did not:
+
+- **A default target.**
+  The tree splits only the cases that are not the default,
+  and each side knows the range its value is in.
+  So a case at a leaf is one test (an equality, a bound or a range),
+  and a switch that expects one kind is one compare, as `expect(kind)`.
+- **A keyword's kind is a value, not a branch.**
+  The lean parser maps a keyword to its node kind (`Kind::DotDecl + (d - W_DECL)`)
+  and then runs one code path.
+  Here, a switch over 30 keywords had 30 arms that differed only in the leaf's kind.
+  Now a leaf of a keyword's own kind names `WORD_KIND`,
+  and takes its kind from the token's word through the program's `wordkind` rows.
+  The keywords' strings are numbered in the order of their kinds, as the lean parser's words are,
+  so the map is one add over each run of kinds.
+  The arms are then the same words, and the lowering keeps one copy.
+- **Bit tests.**
+  Cases of at most three targets within 64 values
+  are a shift and a mask per target, as LLVM makes them when they save enough compares.
+
+```
+// One keyword switch, before: a compare per keyword (30 targets)
+ldrb  w6, [x25, #353]   // the token's word
+cmp   x6, #28
+b.lo  ...
+cmp   x6, #36
+b.lo  ...               // ... 30 more
+
+// After: the words of one arm are one range; the kind is an add in the leaf
+ldrb  w6, [x27, #353]
+cmp   x6, #21
+b.lo  ...
+sub   x8, x6, #3
+cmp   x8, #10
+b.lo  arm
+
+// A bit test: three targets over values 24..32
+sub   x8, x2, #24
+mov   x7, #1
+lsl   x7, x7, x8
+mov   x8, #89           // the first target's values
+and   x8, x7, x8
+cbnz  x8, first
+tbnz  w7, #7, second    // one value: one bit
+b     default
+```
+
+| | Before | A default | Keyword kinds as values | Bit tests | Lean parser |
+|---|---|---|---|---|---|
+| Machine instructions | 26,575 | 26,092 | 24,828 | 24,375 | 10,008 |
+| `SWITCH`, instructions | 8,123 | 7,371 | 6,734 | 6,147 | |
+| Compares | 3,972 | 3,755 | 3,439 | 3,004 | 1,198 |
+| Tier 2, instructions | 331.1M | | | 330.9M | 356.6M |
+
+The code is smaller, but tier 2 runs about as many instructions as before:
+the paths files take were short already, and the cases cut were mostly ones they rarely reach.
+(Cycles are not given: the load average was 58.)
+
+What is left in the switches is mostly inherent:
+switches whose arms call different rules, as the lean parser's `match` does too.
+The largest compare tree left is not a token's switch:
+it picks where a call enters a function of 21 entries,
+since a rule shared from the middle of another is entered there.
+The lean parser's functions have one entry each.
+
 ## The order
 
 1. One symbol a token: rows and keywords in the record, one switch a state.
@@ -917,7 +985,7 @@ and 3,972 compares against the lean parser's 1,198.
    the state as locals, a token taken for good, words as calls (and so the frame-free path),
    cheaper calls, callees shared across rules,
    `ctx` in a register of its own, code shared from the middle of rules,
-   a call's bookkeeping as the lean parser's.
-   Next: fewer compares.
+   a call's bookkeeping as the lean parser's, switches as rustc lowers a `match`.
+   Next: one entry a function, as the lean parser's.
 4. Keyword marks from the records. Built for the marks of one word.
 5. Tier 1's primitives: the picked hash, then nibble fingerprints.
