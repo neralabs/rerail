@@ -3099,8 +3099,10 @@ fn run_observed(
         _ => HashMap::new(),
     });
     // The entries the statistics keeper counted for files changed or gone since (`keptstats`), found before the
-    // first wave too: it counts them out in the waves, and reads none of them from SQLite there.
-    let counted_before: HashMap<String, memo::Found> = match (memo, keeper.borrow().as_ref()) {
+    // first wave too: it counts them out in the waves, and reads none of them from SQLite there. One the memo no
+    // longer holds is kept as missing (`None`), not looked up again in the waves: a keeper kept in a tape cache
+    // shared by runs over other roots counts files this run never sees, whose entries may be gone.
+    let counted_before: HashMap<String, Option<memo::Found>> = match (memo, keeper.borrow().as_ref()) {
         (Some(memo @ memo::Memo::Stored(_)), Some(k)) if looking => {
             let _before = crate::code_rule_dsl::logic::profile::span(|| "memo lookup, before the first wave".into());
             let now = before.lock();
@@ -3108,14 +3110,14 @@ fn run_observed(
             drop(now);
             let keys: Vec<(memo::Content, &str)> = changed.iter().map(|(p, c)| (*c, world::store_path(p))).collect();
             let found = memo.found_all(&memo_program, &keys).map_err(|e| Error::Plan(e.to_string()))?;
-            changed.iter().map(|(p, _)| p.clone()).zip(found).filter_map(|(p, f)| f.map(|f| (p, f))).collect()
+            changed.iter().map(|(p, _)| p.clone()).zip(found).collect()
         }
         _ => HashMap::new(),
     };
     // The entry a file was counted under: found before the first wave, else (a session's, in memory) looked up.
     let counted_entry = |path: &str, c: memo::Content, key: i64| -> Option<memo::Entry> {
         match counted_before.get(path) {
-            Some(found) => found.entry(key).ok().flatten(),
+            Some(found) => found.as_ref()?.entry(key).ok().flatten(),
             None => memo.and_then(|m| m.lookup(c, world::store_path(path), key, &memo_program).ok().flatten()),
         }
     };
