@@ -164,6 +164,10 @@ pub(crate) struct Writer {
     lane: Mutex<Option<Lane>>,
     /// The handles and holds of the store.
     handles: std::sync::atomic::AtomicUsize,
+    /// The identity of the store its handles opened (`store_identity`); unset while only a `Hold` keeps it. A store
+    /// created again at the path has a writer of its own: its jobs name its own atoms, and the old store's handles
+    /// still write theirs.
+    identity: std::sync::OnceLock<i64>,
 }
 
 /// The process's writers, by store path.
@@ -172,10 +176,20 @@ fn writers() -> &'static Mutex<HashMap<PathBuf, Arc<Writer>>> {
     WRITERS.get_or_init(Default::default)
 }
 
-/// The writer of the store at `path`, counted as one more of its handles.
-pub(super) fn register(path: &Path) -> Arc<Writer> {
+/// The writer of the store at `path` (of `identity`, for a handle; a `Hold` takes the path's), counted as one more of
+/// its handles. The path's writer is another store's when that store's identity differs: then this one gets its own,
+/// which the path names from now on.
+pub(super) fn register(path: &Path, identity: Option<i64>) -> Arc<Writer> {
     let mut all = writers().lock().expect("the writers");
-    let w = Arc::clone(all.entry(path.to_path_buf()).or_default());
+    let entry = all.entry(path.to_path_buf()).or_default();
+    if let Some(identity) = identity
+        && *entry.identity.get_or_init(|| identity) != identity
+    {
+        let fresh = Writer::default();
+        let _ = fresh.identity.set(identity);
+        *entry = Arc::new(fresh);
+    }
+    let w = Arc::clone(entry);
     w.handles.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     w
 }
@@ -218,9 +232,9 @@ impl Drop for Hold {
     }
 }
 
-/// `Hold` of the store at `path`.
+/// `Hold` of the store at `path`: the writer of the store a handle opens there next, or has open.
 pub fn hold(path: &Path) -> Hold {
-    Hold(path.to_path_buf(), register(path))
+    Hold(path.to_path_buf(), register(path, None))
 }
 
 /// Each kind of job's count, bytes and CPU on the writer's thread, in this process (the profile's write-back).
@@ -690,6 +704,40 @@ mod tests {
         let again = ContentStore::open(&path).unwrap();
         assert_eq!(again.stat_blob([1; 32]).unwrap().as_deref(), Some(&b"kept"[..]));
         drop(again);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A store deleted and created again at its path while a handle of the old one lives has a writer of its own: its
+    /// jobs run on a handle of the new store (its atoms), not queued behind the old store's.
+    #[test]
+    fn a_store_created_again_at_its_path_has_its_own_writer() {
+        let (dir, old) = store("again");
+        let path = old.database_path.clone();
+        let (go_tx, go_rx) = mpsc::channel::<()>();
+        let order = Arc::new(Mutex::new(Vec::new()));
+        let o = Arc::clone(&order);
+        old.write_back("old", 0, vec![], Box::new(move |_| {
+            go_rx.recv().unwrap();
+            o.lock().unwrap().push("old");
+            Ok(())
+        }));
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        let new = ContentStore::open(&path).unwrap();
+        assert!(!Arc::ptr_eq(old.writer().unwrap(), new.writer().unwrap()));
+        let (o, atoms) = (Arc::clone(&order), Arc::clone(&new.atoms));
+        new.write_back("new", 0, vec![], Box::new(move |s| {
+            assert!(Arc::ptr_eq(&s.atoms, &atoms), "the new store's atoms");
+            o.lock().unwrap().push("new");
+            Ok(())
+        }));
+        // Written while the old store's job still waits.
+        new.written().unwrap();
+        go_tx.send(()).unwrap();
+        old.written().unwrap();
+        assert_eq!(*order.lock().unwrap(), ["new", "old"]);
+        drop((old, new));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
