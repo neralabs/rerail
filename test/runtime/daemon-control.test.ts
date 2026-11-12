@@ -512,18 +512,21 @@ describe("autostartDaemon", () => {
     }
   }, 60_000);
 
-  it("leaves the start to a launch claimed within 30 s, and launches past a claim older than that", async () => {
-    const homes = await Promise.all([mkdtemp(join(tmpdir(), "rerail-autostart-")), mkdtemp(join(tmpdir(), "rerail-autostart-"))]);
-    const [recent, expired] = homes as [string, string];
+  it("leaves the start to a launch claimed within 30 s, and launches past a claim more than 30 s from now either way", async () => {
+    const homes = await Promise.all(Array.from({ length: 3 }, async () => await mkdtemp(join(tmpdir(), "rerail-autostart-"))));
+    // The first home's claim is made now.
+    const [, expired, ahead] = homes as [string, string, string];
     const minuteAgo = new Date(Date.now() - 60_000);
-    await writeFile(join(recent, AUTOSTART_CLAIM_FILE), "");
-    await writeFile(join(expired, AUTOSTART_CLAIM_FILE), "");
+    // Made before the clock moved back a minute: without the distance both ways it would hold until the clock caught up.
+    const minuteAhead = new Date(Date.now() + 60_000);
+    for (const home of homes) await writeFile(join(home, AUTOSTART_CLAIM_FILE), "");
     await utimes(join(expired, AUTOSTART_CLAIM_FILE), minuteAgo, minuteAgo);
+    await utimes(join(ahead, AUTOSTART_CLAIM_FILE), minuteAhead, minuteAhead);
     const hooks = homes.map(home => hookProcess(home));
     try {
       await Promise.all(hooks.map(async hook => await hook.ready));
       for (const hook of hooks) hook.go();
-      expect(await Promise.all(hooks.map(async hook => await hook.launches))).toEqual([0, 1]);
+      expect(await Promise.all(hooks.map(async hook => await hook.launches))).toEqual([0, 1, 1]);
     } finally {
       for (const { child } of hooks) if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
       await Promise.all(homes.map(async home => await rm(home, { recursive: true, force: true })));
