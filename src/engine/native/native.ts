@@ -201,7 +201,35 @@ export interface NativeRepositoryIndexOptions {
   followGitignore: boolean;
 }
 
-/** Git's exclude stack for paths below the root it was opened for; see `openGitIgnoreMatcher`. */
+/**
+ * What Rerail's Git reports about the config files it reads outside any repository (`git-access.ts` asks it): `git
+ * version`'s output; `git var GIT_CONFIG_SYSTEM`, absent on a Git before 2.42 or where it failed; and `git config
+ * --list --show-origin --show-scope -z --name-only --no-includes` outside any repository, absent where it failed.
+ */
+export interface NativeGitInstallation {
+  version: string;
+  systemConfig?: string | null;
+  configOrigins?: string | null;
+}
+
+/**
+ * The process's one owner of the engine's in-process Git reads. Made from what Rerail's Git reported, it names the
+ * config files that Git reads to every read in the process, so the engine starts no Git of its own to find them.
+ */
+export interface NativeGitAccess {
+  /** The system config file the engine's reads take, as Rerail's Git named it; null where it named none. */
+  readonly systemConfig: string | null;
+  /** A config file the reads take besides the system one (Apple Git's); null where there is none. */
+  readonly installationConfig: string | null;
+  /**
+   * Git's exclude stack for the worktree around `root`, re-reading the index as it changes; null outside any Git
+   * worktree. Throws where Git refuses the repository (another user's, outside `safe.directory`; a config file Git
+   * cannot parse), as it does where the rules cannot be read.
+   */
+  openGitIgnoreMatcher(root: string): NativeGitIgnoreMatcher | null;
+}
+
+/** Git's exclude stack for paths below the root it was opened for; see `NativeGitAccess.openGitIgnoreMatcher`. */
 export interface NativeGitIgnoreMatcher {
   /**
    * Whether Git ignores `relativePath` (to the matcher's root, `/`-separated): `git check-ignore`'s answer, so a tracked
@@ -345,8 +373,8 @@ export interface NativeBinding {
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */
   tryLockExclusive(path: string): NativeExclusiveFileLock | null;
-  /** Git's exclude stack for the worktree around `root`, re-reading the index as it changes; null outside any Git worktree. */
-  openGitIgnoreMatcher(root: string): NativeGitIgnoreMatcher | null;
+  /** The owner of the engine's in-process Git reads; make it through `nativeGitAccess` (`git-access.ts`), once per process. */
+  GitAccess: new (installation: NativeGitInstallation) => NativeGitAccess;
   ConversationEngine: NativeConversationEngineConstructor;
   PackageFactsReader: new (root: string) => NativePackageFactsReader;
   CodeRuleDslRuntime: NativeCodeRuleDslRuntimeConstructor;

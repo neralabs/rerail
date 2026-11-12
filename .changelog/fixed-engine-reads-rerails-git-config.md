@@ -1,0 +1,1 @@
+On Windows the engine's in-process Git reads (ignore rules, the code-rule store) now take the config of the Git Rerail runs, such as Git for Windows' `core.autocrlf=true`, and start no Git from `PATH`. On every system they give no answer in a repository Git refuses, and run no filter program a repository configures.

@@ -26,6 +26,7 @@ import {
   type NativeCompiledCodeRuleDsl,
   type NativeGitIgnoreMatcher,
 } from "../engine/native/native.js";
+import { nativeGitAccess } from "../engine/native/git-access.js";
 import { bundledCodeRuleDslDirectory, CodeRuleCompileError, EngineUnavailableError } from "../engine/code-rule/code-rule-compile.js";
 import { CODE_RULE_FORMAT, codeRuleSchema, type CodeRule } from "../engine/code-rule/code-rule-schema.js";
 import { ConversationRuleRegistry } from "../engine/catalog/registry.js";
@@ -409,7 +410,7 @@ function repositoryBoundary(binding: NativeBinding, root: string): (path: string
   if (repositoryFollowsGitignore(root)) {
     let matcher: NativeGitIgnoreMatcher | null;
     try {
-      matcher = binding.openGitIgnoreMatcher(root);
+      matcher = nativeGitAccess(binding).openGitIgnoreMatcher(root);
     } catch (error) {
       throw new RuleDraftError(`Git's ignore rules for ${root} could not be read, so the repository pass was not run: ${errorMessage(error)}`);
     }

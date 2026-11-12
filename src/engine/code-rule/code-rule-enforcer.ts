@@ -56,6 +56,7 @@ import { DEFAULT_AUDIT_SETTINGS } from "../audit/audit-control-schema.js";
 import { RULE_MODES, steers } from "../catalog/rule-mode.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { removeScratch } from "../file-replace.js";
+import { nativeGitAccess } from "../native/git-access.js";
 import { assertContentStoreOwner } from "../native/main-instance.js";
 import { contentStorePath } from "../native/rerail-build.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
@@ -740,7 +741,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   #askGitIgnore<T>(path: string, ask: (matcher: NativeGitIgnoreMatcher) => T): T | undefined {
     if (!this.#followGitignore) return undefined;
     try {
-      this.#gitIgnore ??= loadNativeBinding().openGitIgnoreMatcher(this.#workspaceRoot);
+      this.#gitIgnore ??= nativeGitAccess().openGitIgnoreMatcher(this.#workspaceRoot);
       return this.#gitIgnore === null ? undefined : ask(this.#gitIgnore);
     } catch (error) {
       this.#gitIgnore ??= null;
@@ -1034,7 +1035,10 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     // This build's own store; only the main daemon may open the machine-wide one.
     const storePath = contentStorePath();
     assertContentStoreOwner(storePath);
-    const workspace = new (loadNativeBinding().CodeRuleDslWorkspace)();
+    const binding = loadNativeBinding();
+    // The storage attach discovers the checkout in the engine, which reads the config files Rerail's Git names.
+    nativeGitAccess(binding);
+    const workspace = new binding.CodeRuleDslWorkspace();
     let storage: Promise<boolean>;
     try {
       for (const codeRule of snapshot.codeRules) workspace.addCodeRule(codeRule.executable, JSON.stringify(codeRule.placement));

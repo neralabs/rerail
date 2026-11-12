@@ -332,6 +332,8 @@ export interface GitResult {
 export interface RunGitOptions {
   maxBuffer?: number;
   timeout?: number;
+  /** Variables set over Rerail's Git environment ({@link gitEnvironment}); an undefined value removes one. */
+  env?: Readonly<Record<string, string | undefined>>;
 }
 
 /** A repository's own config can't run programs through Rerail's git calls: no fsmonitor, no hooks. */
@@ -357,7 +359,7 @@ export function runGit(cwd: string, args: readonly string[], options: RunGitOpti
     encoding: "utf8",
     timeout: DEFAULT_TIMEOUT_MS,
     ...options,
-    env: gitEnvironment(),
+    env: { ...gitEnvironment(), ...options.env },
   });
   return { status: result.status, stdout: result.stdout ?? "", stderr: result.stderr ?? "", ...(result.error === undefined ? {} : { error: result.error }) };
 }

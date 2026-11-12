@@ -633,31 +633,107 @@ impl GitWorkspace {
     }
 }
 
-/// Whether `gix::discover` failed because no repository encloses the path, rather than because one could not be read.
-pub(crate) fn is_no_repository(error: &gix::Error) -> bool {
-    matches!(
-        error.downcast_any_ref::<gix::discover::upwards::Error>(),
-        Some(
-            gix::discover::upwards::Error::NoGitRepository { .. }
-                | gix::discover::upwards::Error::NoGitRepositoryWithinCeiling { .. }
-                | gix::discover::upwards::Error::NoGitRepositoryWithinFs { .. }
-        )
-    )
+/// The attribute stack that tells which files a size-preserving conversion applies to: gix's
+/// global attribute files with the system file Rerail's Git reads in front, which the opener keeps
+/// out of gix's own stack since finding it starts a Git on Windows. `None` where that file cannot
+/// be named, so no file takes the stat shortcut.
+fn conversion_attributes<'repository>(
+    repository: &'repository gix::Repository,
+    index: &gix::index::State,
+) -> Result<Option<gix::AttributeStack<'repository>>, DiscoveryError> {
+    let Ok(system) = crate::git_access::opener::system_attributes() else {
+        return Ok(None);
+    };
+    let read = |error: &dyn fmt::Display| discovery_error("cannot read Git attributes", error);
+    let mut files = system.into_iter().collect::<Vec<_>>();
+    files.extend(
+        repository
+            .attribute_global_paths()
+            .map_err(|error| read(&error))?,
+    );
+    for file in &files {
+        crate::git_access::opener::check_size(file).map_err(|error| read(&error))?;
+    }
+    let mut buf = Vec::new();
+    let mut collection = gix::attrs::search::MetadataCollection::default();
+    let globals = gix::attrs::Search::new_globals(files, &mut buf, &mut collection)
+        .map_err(|error| read(&error))?;
+    let state = gix::worktree::stack::State::AttributesStack(
+        gix::worktree::stack::state::Attributes::new(
+            globals,
+            Some(repository.common_dir().join("info").join("attributes")),
+            gix::worktree::stack::state::attributes::Source::IdMapping,
+            collection,
+        ),
+    );
+    let case = if repository
+        .filesystem_options()
+        .map_err(|error| discovery_error("cannot read core.ignoreCase", error))?
+        .ignore_case
+    {
+        gix::glob::pattern::Case::Fold
+    } else {
+        gix::glob::pattern::Case::Sensitive
+    };
+    let id_mappings = state.id_mappings_from_index(index, index.path_backing(), case);
+    let root = repository.workdir().unwrap_or(repository.git_dir());
+    Ok(Some(gix::AttributeStack::new(
+        gix::worktree::Stack::new(root, state, case, buf, id_mappings),
+        repository,
+    )))
+}
+
+/// Gives each base file whose index entry is not racy, is compared with the worktree and has no
+/// size-preserving conversion the stat of that entry (`BaseFile::checkout`).
+fn record_checkout_stats(
+    attributes: &mut gix::AttributeStack<'_>,
+    index: &gix::index::State,
+    base_files: &mut [BaseFile],
+) -> Result<(), DiscoveryError> {
+    let mut conversions = attributes.selected_attribute_matches(SIZE_PRESERVING_CONVERSIONS);
+    let index_written = index.timestamp();
+    for file in base_files {
+        let Some(entry) = index.entry_by_path(file.path.as_bytes().as_bstr()) else {
+            continue;
+        };
+        if entry.stat.is_racy(index_written, RESTORE_STAT)
+            || entry
+                .flags
+                .intersects(UNCOMPARED_INDEX_ENTRY.union(gix::index::entry::Flags::INTENT_TO_ADD))
+        {
+            continue;
+        }
+        attributes
+            .at_entry(file.path.as_str(), Some(gix::index::entry::Mode::FILE))
+            .map_err(|error| discovery_error("cannot read Git attributes", error))?
+            .matching_attributes(&mut conversions);
+        if conversions.iter_selected().all(|found| {
+            matches!(
+                found.assignment.state,
+                gix::attrs::StateRef::Unspecified | gix::attrs::StateRef::Unset
+            )
+        }) {
+            file.checkout = Some(entry.stat);
+        }
+    }
+    Ok(())
 }
 
 /// Discover one repository without an external `git` process.
 ///
-/// The result is sorted by path and object identity. The caller can use the
-/// Git object IDs as aliases only after it compares them with evaluated bytes.
+/// The repository opens through the engine's one opener (`git_access::opener`), so a repository
+/// Git refuses is not discovered, and its status runs no filter driver: a file under one whose
+/// stat changed reads as changed. The result is sorted by path and object identity. The caller
+/// can use the Git object IDs as aliases only after it compares them with evaluated bytes.
 pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
-    let repository = gix::discover(root).map_err(|error| {
-        let message = format!("cannot discover Git repository: {error}");
-        if is_no_repository(&error) {
+    let mut repository = crate::git_access::opener::discover(root).map_err(|error| match error {
+        crate::git_access::opener::OpenError::NoRepository(message) => {
             DiscoveryError::NoRepository(message)
-        } else {
-            DiscoveryError::Failed(message)
         }
+        crate::git_access::opener::OpenError::Failed(message) => DiscoveryError::Failed(message),
     })?;
+    crate::git_access::opener::without_filter_programs(&mut repository)
+        .map_err(DiscoveryError::Failed)?;
     let worktree = repository
         .workdir()
         .ok_or_else(|| {
@@ -768,38 +844,10 @@ pub fn discover(root: &Path) -> Result<GitWorkspace, DiscoveryError> {
     // The index entry stat of each base file a restore may verify by one `lstat`. A racy entry
     // (written in the same timestamp tick as the index) proves nothing about later writes, and a
     // size-preserving conversion makes the checkout bytes differ from the blob's at equal size:
-    // both leave the file to be hashed when restored.
-    let mut attributes = repository
-        .attributes_only(
-            &index,
-            gix::worktree::stack::state::attributes::Source::IdMapping,
-        )
-        .map_err(|error| discovery_error("cannot read Git attributes", error))?;
-    let mut conversions = attributes.selected_attribute_matches(SIZE_PRESERVING_CONVERSIONS);
-    let index_written = index.timestamp();
-    for file in &mut base_files {
-        let Some(entry) = index.entry_by_path(file.path.as_bytes().as_bstr()) else {
-            continue;
-        };
-        if entry.stat.is_racy(index_written, RESTORE_STAT)
-            || entry
-                .flags
-                .intersects(UNCOMPARED_INDEX_ENTRY.union(gix::index::entry::Flags::INTENT_TO_ADD))
-        {
-            continue;
-        }
-        attributes
-            .at_entry(file.path.as_str(), Some(gix::index::entry::Mode::FILE))
-            .map_err(|error| discovery_error("cannot read Git attributes", error))?
-            .matching_attributes(&mut conversions);
-        if conversions.iter_selected().all(|found| {
-            matches!(
-                found.assignment.state,
-                gix::attrs::StateRef::Unspecified | gix::attrs::StateRef::Unset
-            )
-        }) {
-            file.checkout = Some(entry.stat);
-        }
+    // both leave the file to be hashed when restored, as does every file where the system
+    // attributes file cannot be named.
+    if let Some(mut attributes) = conversion_attributes(&repository, &index)? {
+        record_checkout_stats(&mut attributes, &index, &mut base_files)?;
     }
 
     let mut overlays: Vec<WorkspaceOverlay> = flags

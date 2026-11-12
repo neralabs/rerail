@@ -5,7 +5,8 @@ import { and, asc, gte, inArray } from "drizzle-orm";
 import { parseArguments } from "../daemon/daemon.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
 import { followsGitignore, listRepositories, lookupCheckout } from "../engine/catalog/repository-registry.js";
-import { loadNativeBinding, type NativeGitIgnoreMatcher } from "../engine/native/native.js";
+import { nativeGitAccess } from "../engine/native/git-access.js";
+import type { NativeGitIgnoreMatcher } from "../engine/native/native.js";
 import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
 import { events, sessions } from "../engine/storage/schema.js";
 import { callNamesDeniedPath } from "../engine/transcript-boundary.js";
@@ -259,7 +260,7 @@ function gitIgnoredUnder(root: string, follows: boolean): (path: string) => bool
   if (!follows) return () => false;
   let matcher: NativeGitIgnoreMatcher | null;
   try {
-    matcher = loadNativeBinding().openGitIgnoreMatcher(root);
+    matcher = nativeGitAccess().openGitIgnoreMatcher(root);
   } catch {
     return () => true;
   }

@@ -14,7 +14,8 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { storedPath } from "../catalog/checkout-control.js";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
 import { worktreeRegistry } from "../catalog/repository-identity.js";
-import { loadNativeBinding, type NativeGitIgnoreMatcher } from "../native/native.js";
+import { nativeGitAccess } from "../native/git-access.js";
+import type { NativeGitIgnoreMatcher } from "../native/native.js";
 import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
 import type {
   AuditorCloseOptions,
@@ -183,7 +184,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     try {
       let matcher = this.#gitIgnore.get(owner.checkoutRoot);
       if (matcher === undefined) {
-        matcher = loadNativeBinding().openGitIgnoreMatcher(owner.checkoutRoot);
+        matcher = nativeGitAccess().openGitIgnoreMatcher(owner.checkoutRoot);
         this.#gitIgnore.set(owner.checkoutRoot, matcher);
       }
       return matcher?.ignored(owner.path, directory) ?? false;

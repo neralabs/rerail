@@ -233,8 +233,13 @@ without hooks or network.
     going first, but not every route (T11).
   - Every call sets `core.fsmonitor=false` and `core.hooksPath=/dev/null`, `GIT_TERMINAL_PROMPT=0` and
     `GIT_NO_LAZY_FETCH=1` where relevant, and a 10 s timeout.
-  - No network commands; `cat-file --batch` runs no textconv. The native side runs no git process and no
-    `.gitattributes` filter drivers.
+  - No network commands; `cat-file --batch` runs no textconv.
+- **Git read in process** (`native/src/git_access/`): the engine opens every repository it reads through one opener.
+  It starts no Git process and runs no filter driver a repository or user configures: the config files outside the
+  repository are the ones Rerail's Git names, and the reads drop every `filter.*` section before they convert a file.
+  It refuses a repository Git refuses (another user's outside `safe.directory`, a config file Git cannot parse) and,
+  before reading it, any config, exclude or attribute file it can name that holds more than 100 MiB. Each read runs on
+  four threads of its own under a 10 s limit, and a panic in one is an error for that read only.
 - **SQL** uses bound parameters (Drizzle, `better-sqlite3`, `rusqlite`); raw SQL is only constants and quoted
   migration DDL.
 - **Embedding model** SHA-256 is checked against `model/manifest.json` before loading (`native/src/model.rs`).
