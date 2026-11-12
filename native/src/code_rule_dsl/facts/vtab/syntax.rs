@@ -79,6 +79,9 @@ pub struct Projection {
     /// Source/line spans whose complete text a rule reads, traced through copied relation columns.
     /// None is the unprojected test/export interface; AST subtree text keeps its independent bound.
     pub text_spans: Option<BTreeSet<crate::code_rule_dsl::logic::front::ast::SpanIn>>,
+    /// Whether a rule reads a token's text (`first_token(n, t), text(t, "(")`: a span of `first_token`, `last_token`,
+    /// `token_before` or `token_after`; `span_text_demand`). A token that is no node has text only where one does.
+    pub token_text: bool,
     /// The node kinds whose text a rule reads (`text_kind_demand`): their nodes' `text` is made at any length. Any
     /// other node's is made up to `core_rr::TEXT_INLINE` bytes, unless it is token-like, or `long_text_any`: some rule
     /// reads the text of a node of any kind.
@@ -101,7 +104,7 @@ pub struct Projection {
 
 impl Projection {
     pub fn core() -> Self {
-        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), ast_patterns: Vec::new(), text_spans: None, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: BTreeSet::new(), verdict: false, derived: BTreeSet::new() }
+        Projection { shape: Shape::Core, reads: None, rx_spans: Vec::new(), ast_patterns: Vec::new(), text_spans: None, token_text: true, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: BTreeSet::new(), verdict: false, derived: BTreeSet::new() }
     }
     fn wants(&self, rel: &str) -> bool {
         self.reads.as_ref().is_none_or(|r| r.contains(rel))
@@ -113,6 +116,8 @@ impl Projection {
     /// `core.rr`'s shape for a program that includes `core.rr` (declares every relation it declares as an input),
     /// T's for one that declares its base relations itself (T's programs, the converter's, O74).
     pub fn of(program: &crate::code_rule_dsl::logic::front::ast::Program, reads: BTreeSet<String>) -> Self {
+        let (spans, token_text) = span_text_demand(program);
+        crate::code_rule_dsl::logic::profile::decision("text of tokens", || if token_text { "made (a rule reads a token's text)".into() } else { "none (no rule reads a token's text)".into() });
         crate::code_rule_dsl::logic::profile::projection_plan(program, &reads);
         let core = crate::code_rule_dsl::facts::core::core_names();
         let shape = if !core.is_empty() && core.iter().all(|r| program.decls.contains_key(r)) { Shape::Core } else { Shape::T };
@@ -123,7 +128,7 @@ impl Projection {
         let verdict = shape == Shape::T && program.decls.get("syntax_error").is_some_and(|cols| cols.len() == 3);
         let derived: BTreeSet<String> = program.rules.iter().map(|r| r.head.rel.to_string()).collect();
         let reads = reads.into_iter().filter(|r| !derived.contains(r)).collect();
-        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect(), text_spans: Some(span_text_demand(program)), long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: partial.collect(), verdict, derived }
+        Projection { shape, reads: Some(reads), rx_spans: program.rx_spans.iter().cloned().collect(), ast_patterns: program.ast_patterns.iter().cloned().collect(), text_spans: Some(spans), token_text, long_text: BTreeSet::new(), long_text_any: false, text_nodes: None, partial: partial.collect(), verdict, derived }
     }
 
     /// This projection, with `text` made at any length for the node kinds whose text the program's rules read
@@ -485,9 +490,13 @@ pub fn text_kind_demand(program: &crate::code_rule_dsl::logic::front::ast::Progr
 
 /// Plan-time provenance, not a per-file scan. Only copying a span (including variable equality)
 /// carries its origin. Regex captures have their own bounded ranges and do not demand the container text.
-fn span_text_demand(program: &crate::code_rule_dsl::logic::front::ast::Program) -> BTreeSet<crate::code_rule_dsl::logic::front::ast::SpanIn> {
+fn span_text_demand(program: &crate::code_rule_dsl::logic::front::ast::Program) -> (BTreeSet<crate::code_rule_dsl::logic::front::ast::SpanIn>, bool) {
     use crate::code_rule_dsl::logic::front::ast::{Literal, SpanIn, Term};
-    let mut columns: HashMap<(String, usize), u8> = [( ("source".to_owned(), 1), 1), (("src_line".to_owned(), 2), 2)].into();
+    // Bit 1 the source, 2 a line, 4 a token (the second column of the four token relations).
+    let mut columns: HashMap<(String, usize), u8> = [( ("source".to_owned(), 1), 1), (("src_line".to_owned(), 2), 2)]
+        .into_iter()
+        .chain(["first_token", "last_token", "token_before", "token_after"].map(|rel| ((rel.to_owned(), 1), 4)))
+        .collect();
     let mut requested = 0;
     loop {
         let mut changed = false;
@@ -532,7 +541,7 @@ fn span_text_demand(program: &crate::code_rule_dsl::logic::front::ast::Program) 
         }
         if !changed { break; }
     }
-    [(SpanIn::Source, 1), (SpanIn::Line, 2)].into_iter().filter_map(|(span, bit)| (requested & bit != 0).then_some(span)).collect()
+    ([(SpanIn::Source, 1), (SpanIn::Line, 2)].into_iter().filter_map(|(span, bit)| (requested & bit != 0).then_some(span)).collect(), requested & 4 != 0)
 }
 
 /// The relation a program's guest settings are facts of (`.guests`, `.on guest_error`; decision 0055):
@@ -2212,6 +2221,7 @@ impl Batch {
             spread: !projection.wants("spread"),
             name: !projection.wants("name"),
             literal: !wants_any(&["str", "strprefix", "value", "static_value", "value_type", "text"]),
+            literal_rows: !wants_any(&["str", "strprefix", "value", "static_value", "value_type"]),
             structural: !wants_any(&["structural_before", "structural_after"]),
         };
         c.long_text = projection.long_text.clone();
@@ -2423,6 +2433,9 @@ impl Batch {
                 // A guest's nodes have their places in its file (`Locs::place`); W's values, f-string trees and CPython's
                 // verdicts are a file's, read off its tape.
                 extra.nodes(&p, &mut string);
+                if let Some(dialect) = dialect {
+                    tree.operators(&p, dialect, &mut string);
+                }
             }
             // A guest's are read only by a producer of guests' rows (string annotations); the others' are its file's.
             for (own, run) in &mut produced {
