@@ -7,6 +7,7 @@
 import { resolve as resolvePath } from "node:path";
 import { setFlagsFromString } from "node:v8";
 import { runInNewContext } from "node:vm";
+import { z } from "zod/v4";
 import type { AdapterDelivery, AdapterEvent } from "../engine/adapter-contract.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";
@@ -52,14 +53,20 @@ export interface RuntimeLifetimes {
   idleRuntimeMs?: number;
 }
 
-/** The runtime a request names for its event, in place of the engine service's own. */
-export interface RuntimeConfiguration {
-  readonly storageRoot: string;
-  readonly modelPath: string;
-  /** Absent selects the engine service's own database. */
-  readonly databasePath?: string | undefined;
-  readonly workspaceRoot?: string | undefined;
-}
+/**
+ * The runtime a request names for its event, in place of the engine service's own. The service checks a request
+ * against it, and the pool reads what passes as the type it infers, so the two cannot disagree on a field.
+ */
+export const RuntimeConfigurationSchema = z
+  .object({
+    storageRoot: z.string().min(1),
+    modelPath: z.string().min(1),
+    /** Absent selects the engine service's own database. */
+    databasePath: z.string().min(1).optional(),
+    workspaceRoot: z.string().min(1).optional(),
+  })
+  .strict();
+export type RuntimeConfiguration = z.infer<typeof RuntimeConfigurationSchema>;
 
 interface RuntimeRoute {
   runtimeKey: string;

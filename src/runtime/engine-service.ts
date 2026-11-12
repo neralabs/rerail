@@ -13,7 +13,13 @@ import {
 import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
 import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./engine-proof.js";
 import { isNamedPipe } from "./engine-pipe.js";
-import { RuntimePool, type RuntimeConfiguration, type RuntimeDefaults, type RuntimeLifetimes } from "./runtime-pool.js";
+import {
+  RuntimeConfigurationSchema,
+  RuntimePool,
+  type RuntimeConfiguration,
+  type RuntimeDefaults,
+  type RuntimeLifetimes,
+} from "./runtime-pool.js";
 
 export interface EngineService {
   /** Where it listens: the socket path it was given, or its `pipeFallback` when another process held that pipe. */
@@ -35,20 +41,11 @@ export interface EngineService {
 /** How often the engine service looks for idle sessions (`RuntimePool.closeIdleSessions`). */
 const IDLE_SWEEP_MS = 60_000;
 
-/** A request's configuration, checked against the type the runtime pool reads it as. */
-const ConfigurationSchema: z.ZodType<RuntimeConfiguration> = z
-  .object({
-    storageRoot: z.string().min(1),
-    modelPath: z.string().min(1),
-    databasePath: z.string().min(1).optional(),
-    workspaceRoot: z.string().min(1).optional(),
-  })
-  .strict();
 export type EngineRuntimeConfiguration = RuntimeConfiguration;
 const RequestSchema = z
   .object({
     event: AdapterEventSchema,
-    configuration: ConfigurationSchema.optional(),
+    configuration: RuntimeConfigurationSchema.optional(),
   })
   .strict();
 
