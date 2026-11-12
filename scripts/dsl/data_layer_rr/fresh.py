@@ -19,6 +19,17 @@ from dto import canonical
 from migration import ROOT, PIN, git, sha, compare, read_json, write_json
 
 
+
+def recorded_program_inputs(inputs):
+    """Retain each consumed file once; reject inconsistent revisions across policies."""
+    files={}
+    for rows in inputs.values():
+        for item in rows:
+            previous=files.setdefault(item['path'],dict(item))
+            if previous!=item:raise ValueError('Program changed across supplemental policies: '+item['path'])
+    return sorted(files.values(),key=lambda item:item['path'])
+
+
 def selected_cases(cases, part, parts):
     """Partition by corpus position while retaining indices into the complete source oracle."""
     if not 0 <= part < parts <= len(cases):
@@ -364,7 +375,7 @@ def run(args):
                             compare(original['value'], actual)
                     except AssertionError:
                         report['results'].append(dict(id=case['id'], value=actual, expected=original['value'], status='failed'))
-                        report.update(calls=backend.calls, programInputs=backend.inputs)
+                        report.update(calls=backend.calls, programInputs=recorded_program_inputs(backend.inputs))
                         write_json(args.out, report)
                         os.chdir(source)
                         continue
@@ -382,7 +393,7 @@ def run(args):
         if sha(engine.read_bytes()) != report['engineSha256']:
             raise ValueError('Engine changed during fresh contracts')
         report['calls'] = backend.calls
-        report['programInputs'] = backend.inputs
+        report['programInputs'] = recorded_program_inputs(backend.inputs)
     for imported in tuple(sys.modules.values()):
         filename = getattr(imported, '__file__', None)
         if filename and Path(filename).suffix == '.py':

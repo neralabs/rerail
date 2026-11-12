@@ -1773,7 +1773,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/async-patterns.rr",
-      "sha256": "fe6b7af32dd297534bc2947ae494d86d3529a482a11738a51562cb591d4c4227",
+      "sha256": "5184d59a2f00cdd45daaa3b8dd3295615eaa1408d15ed889adf697b0a764ddc6",
       "origin": "authored",
       "upstreamPath": "scripts/lint_async_patterns.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -4211,7 +4211,35 @@
       "legacySha256": "1c3b5cae27b159d4c71665594c0978c02333725e41cba8e006a734859438bb5d",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/async-patterns.rr",
-      "ruleSha256": "fe6b7af32dd297534bc2947ae494d86d3529a482a11738a51562cb591d4c4227"
+      "ruleSha256": "5184d59a2f00cdd45daaa3b8dd3295615eaa1408d15ed889adf697b0a764ddc6",
+      "migrationProgress": {
+        "status": "native-production-and-supplemental-progress",
+        "admitted": false,
+        "verifiedNativeExecutions": 414,
+        "checkpoint": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-async-pattern-owner-progress-finalfcce.json.gz",
+          "sha256": "fbbfde6c6822860d34c1fcd9038cb3ff30c52e1b5f58e508c65a69a0a4778ad5"
+        },
+        "summary": {
+          "check": "async_patterns",
+          "originalCasesPerAPI": 11,
+          "originalPositiveObservationsPerAPI": 8,
+          "nativeExecutions": 414,
+          "admitted": false,
+          "fullMigrationAcceptance": false,
+          "recordedCasesPerAPI": 19,
+          "sourceFormat": "rerail.async_patterns-production/v1",
+          "supplementalCasesSnapshot": {
+            "api": 158,
+            "report": 136
+          }
+        },
+        "remaining": [
+          "Collector callbacks, registry and complete helper APIs remain required.",
+          "Complete raw supplied-fact and CLI/ratchet contracts remain required.",
+          "Historical inputs, retained updates, behavior-removal controls and strict full admission remain required."
+        ]
+      }
     },
     {
       "check": "async_sync_boundary",

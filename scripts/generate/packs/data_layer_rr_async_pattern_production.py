@@ -17,8 +17,8 @@ def production(source,text):
     text+=''.join(f'pp_trigger({q(p)}).\n' for p in spec.source_triggers)
     text+='''
 ap_document(d,p) :- pp_run(), pp_doc(d,p), pp_fact_present(d).
-pp_report(p,l,code,message,p,l,code,0,ordinal,rank,0) :- pp_run(), ap_issue(c,code,message,0,rank), ap_call_doc(c,_,p), ap_call_line(c,l), ap_order(c,ordinal).
+pp_report(p,l,code,message,p,l,code,0,ordinal,rank,0) :- pp_run(), ap_issue(c,p,code,message,0,rank), ap_call_doc(c,_,p), ap_call_line(c,l), ap_order(c,ordinal).
 .violation AsyncPatternProductionFact(at:span,path:symbol,path_order:symbol,order0:number,order1:number,order2:number,f_path:symbol,f_line:number,f_code:symbol,f_message:symbol,f_context:symbol,f_is_fallback:number) code "DL_FACT" "async pattern production fact"
-AsyncPatternProductionFact(@place(p,l),p,@replace_all(p,"/","\\u0000"),ordinal,rank,0,p,l,code,message,context,fallback) :- option("entryPoint","_production_contract"),ap_issue(c,code,message,fallback,rank),ap_call_doc(c,_,p),ap_call_line(c,l),ap_context(c,context),ap_order(c,ordinal).
+AsyncPatternProductionFact(@place(p,l),p,@replace_all(p,"/","\\u0000"),ordinal,rank,0,p,l,code,message,context,fallback) :- option("entryPoint","_production_contract"),ap_issue(c,p,code,message,fallback,rank),ap_call_doc(c,_,p),ap_call_line(c,l),ap_context(c,context),ap_order(c,ordinal).
 '''
     return text

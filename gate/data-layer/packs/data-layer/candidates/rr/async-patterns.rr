@@ -179,28 +179,28 @@ ap_document(d, p) :- pp_doc(d,p), option("entryPoint", "lint_file"), file_name(d
 ap_hidden(d) :- path_part(d, p), (p = ".git" ; p = ".venv" ; p = "venv" ; p = "__pycache__" ; p = "tmp").
 .decl ap_source_triggered(d: number)
 ap_source_triggered(d) :- source(d, sp), text(sp, text), ap_trigger(trigger), contains(trigger, text).
-.decl ap_path(d: number, path: symbol)
-ap_path(d, path) :- ap_document(d, _), option("originalPath", path).
-ap_path(d, cat(root, "/", path)) :- ap_document(d, path), !option("originalPath", _), workspace_root(root).
+.decl ap_path(d: number, owner: symbol, path: symbol)
+ap_path(d, owner, path) :- ap_document(d, owner), option("originalPath", path).
+ap_path(d, path, cat(root, "/", path)) :- ap_document(d, path), !option("originalPath", _), workspace_root(root).
 .decl ap_excluded_path(path: symbol)
-ap_excluded_path(path) :- ap_path(_, path), ap_exclude_pattern(pattern), contains(pattern, path).
+ap_excluded_path(path) :- ap_path(_, _, path), ap_exclude_pattern(pattern), contains(pattern, path).
 ap_excluded_path(path) :- option("originalPath", path), ap_exclude_pattern(pattern), contains(pattern, path).
-.decl ap_in_scope(d: number)
-ap_in_scope(d) :- ap_path(d, p), !ap_excluded_path(p),
+.decl ap_in_scope(d: number, owner: symbol)
+ap_in_scope(d, owner) :- ap_path(d, owner, p), !ap_excluded_path(p),
     (contains("impl/", p) ; contains("impl\\", p) ; contains("api/", p) ; contains("api\\", p) ; contains("conform/", p) ; contains("conform\\", p)).
-.decl ap_api(d: number)
-ap_api(d) :- ap_path(d, p), (contains("api/", p) ; contains("api\\", p)).
-.decl ap_impl(d: number)
-ap_impl(d) :- ap_path(d, p), (contains("impl/", p) ; contains("impl\\", p)).
+.decl ap_api(d: number, owner: symbol)
+ap_api(d, owner) :- ap_path(d, owner, p), (contains("api/", p) ; contains("api\\", p)).
+.decl ap_impl(d: number, owner: symbol)
+ap_impl(d, owner) :- ap_path(d, owner, p), (contains("impl/", p) ; contains("impl\\", p)).
 .decl ap_line(d: number, line: number, text: symbol)
 ap_line(d, l, text) :- ap_native_enabled(), ap_document(d, _), split_line(d, l, text).
 .decl ap_call_doc(c: node, d: number, path: symbol)
-ap_call_doc(c, d, path) :- ap_call(c, _), ap_native_enabled(), docof(c, d), ap_document(d, path), ap_in_scope(d), ap_source_triggered(d).
+ap_call_doc(c, d, path) :- ap_call(c, _), ap_native_enabled(), docof(c, d), ap_document(d, path), ap_in_scope(d, path), ap_source_triggered(d).
 // The supplied tree and original source are independent inputs. Its printer buffer is never a detector input.
 ap_document(0, path) :- option("entryPoint", "analyze_source"), option("analysisPath", path), option("providedTree", "true").
 ap_line(0, i + 1, text) :- option("entryPoint", "analyze_source"), option_item("sourceLines", i, text).
 ap_source_triggered(0) :- option("entryPoint", "analyze_source"), option("providedSource", text), ap_trigger(trigger), contains(trigger, text).
-ap_call_doc(c, 0, path) :- option("entryPoint", "analyze_source"), ap_call(c, _), ap_document(0, path), ap_in_scope(0), ap_source_triggered(0).
+ap_call_doc(c, 0, path) :- option("entryPoint", "analyze_source"), ap_call(c, _), ap_document(0, path), ap_in_scope(0, path), ap_source_triggered(0).
 
 .decl ap_write_decorator(f: node)
 ap_write_decorator(f) :- ap_decorator(f, e), ap_call_expr(e, fn), ap_attr(fn, _, "write_async").
@@ -246,60 +246,60 @@ ap_transaction_receiver(c, obj) :- ap_tracked_query(c, obj).
 ap_connection_receiver(c, obj) :- ap_async_call(c, _, _), ap_attr(obj, base, a), ap_name(base, "self"), (a = "_conn" ; a = "conn" ; a = "connection" ; a = "_connection").
 ap_connection_receiver(c, obj) :- ap_async_call(c, f, _), ap_receiver_root(obj, name), ap_alias(f, name, "session", at), ap_order(c, i), at <= i.
 
-.decl ap_abstract(c: node, d: number)
-ap_abstract(c, d) :- ap_class_base(c, b), ap_name(b, "ABC"), docof(c, d), ap_native_enabled().
-ap_abstract(c, d) :- ap_class_base(c, b), ap_attr(b, _, "ABC"), docof(c, d), ap_native_enabled().
-ap_abstract(c, 0) :- ap_class_base(c, b), (ap_name(b, "ABC") ; ap_attr(b, _, "ABC")), option("entryPoint", "analyze_source").
-ap_abstract(c, d) :- ap_class(c, name), ap_api(d),
+.decl ap_abstract(c: node, d: number, owner: symbol)
+ap_abstract(c, d, owner) :- ap_class_base(c, b), ap_name(b, "ABC"), docof(c, d), ap_document(d, owner), ap_native_enabled().
+ap_abstract(c, d, owner) :- ap_class_base(c, b), ap_attr(b, _, "ABC"), docof(c, d), ap_document(d, owner), ap_native_enabled().
+ap_abstract(c, 0, owner) :- ap_document(0, owner), ap_class_base(c, b), (ap_name(b, "ABC") ; ap_attr(b, _, "ABC")), option("entryPoint", "analyze_source").
+ap_abstract(c, d, owner) :- ap_class(c, name), ap_api(d, owner),
     (contains("Transaction", name) ; contains("Connection", name) ; contains("Query", name) ; contains("Handle", name) ; contains("Version", name)).
 .decl ap_window_query(radius: number, fragment: symbol)
 ap_window_query(5, "ASYNC_FALLBACK:"). ap_window_query(5, "TODO: Implement").
 ap_window_query(5, "native async"). ap_window_query(15, "_wrap_for_executor").
 .decl ap_window_contains(c: node, radius: number, fragment: symbol)
 ap_window_contains(c, radius, fragment) :- ap_window_query(radius, fragment), ap_call_doc(c, d, _), ap_call_line(c, line), ap_line(d, l, text), l >= line - radius, l <= line + radius, contains(fragment, text).
-.decl ap_fallback(c: node)
-ap_fallback(c) :- ap_call_doc(c, d, _), ap_api(d), ap_in_class(c, cls), ap_abstract(cls, d).
-ap_fallback(c) :- ap_window_contains(c, 5, "ASYNC_FALLBACK:").
-ap_fallback(c) :- ap_window_contains(c, 5, "TODO: Implement"), ap_window_contains(c, 5, "native async").
-.decl ap_fallback_value(c: node, flag: number)
-ap_fallback_value(c, 1) :- ap_call(c, _), ap_fallback(c).
-ap_fallback_value(c, 0) :- ap_call(c, _), !ap_fallback(c).
-.decl ap_executor_fallback(c: node, flag: number)
-ap_executor_fallback(c, 1) :- ap_fallback(c).
-ap_executor_fallback(c, 1) :- ap_call_doc(c, d, _), !ap_impl(d), ap_window_contains(c, 15, "_wrap_for_executor").
-ap_executor_fallback(c, 0) :- ap_call_doc(c, d, _), !ap_fallback(c), (ap_impl(d) ; !ap_window_contains(c, 15, "_wrap_for_executor")).
+.decl ap_fallback(c: node, owner: symbol)
+ap_fallback(c, owner) :- ap_call_doc(c, d, owner), ap_api(d, owner), ap_in_class(c, cls), ap_abstract(cls, d, owner).
+ap_fallback(c, owner) :- ap_call_doc(c, _, owner), ap_window_contains(c, 5, "ASYNC_FALLBACK:").
+ap_fallback(c, owner) :- ap_call_doc(c, _, owner), ap_window_contains(c, 5, "TODO: Implement"), ap_window_contains(c, 5, "native async").
+.decl ap_fallback_value(c: node, owner: symbol, flag: number)
+ap_fallback_value(c, owner, 1) :- ap_call_doc(c, _, owner), ap_fallback(c, owner).
+ap_fallback_value(c, owner, 0) :- ap_call_doc(c, _, owner), !ap_fallback(c, owner).
+.decl ap_executor_fallback(c: node, owner: symbol, flag: number)
+ap_executor_fallback(c, owner, 1) :- ap_fallback(c, owner).
+ap_executor_fallback(c, owner, 1) :- ap_call_doc(c, d, owner), !ap_impl(d, owner), ap_window_contains(c, 15, "_wrap_for_executor").
+ap_executor_fallback(c, owner, 0) :- ap_call_doc(c, d, owner), !ap_fallback(c, owner), (ap_impl(d, owner) ; !ap_window_contains(c, 15, "_wrap_for_executor")).
 .decl ap_context_line(d: number, l: number, text: symbol)
 ap_context_line(d, l, cat("  ", @slice("    ", 0, 4 - strlen(to_string(l))), to_string(l), " | ", text)) :- ap_line(d, l, text), l < 1000.
 ap_context_line(d, l, cat("  ", to_string(l), " | ", text)) :- ap_line(d, l, text), l >= 1000.
 .decl ap_context(c: node, context: symbol)
 ap_context(c, context) :- ap_call_doc(c, d, _), ap_call_line(c, line),
     context = join text by l sep "\n" : { ap_context_line(d, l, text), l >= line - 2, l <= line + 2 }.
-.decl ap_issue(c: node, code: symbol, message: symbol, fallback: number, rank: number)
-ap_issue(c, "ASYNC001", message, flag, 1) :- ap_call_doc(c, _, _), ap_call(c, fn), ap_attr(fn, _, "to_thread"), ap_fixed_ASYNC001(message), ap_fallback_value(c, flag).
-ap_issue(c, "ASYNC002", message, flag, 2) :- ap_call_doc(c, _, _), ap_call(c, fn), ap_attr(fn, _, "run_in_executor"), ap_fixed_ASYNC002(message), ap_executor_fallback(c, flag).
-ap_issue(c, "ASYNC004", cat("Use ", async_method, "() instead of ", method, "() in async transaction"), 0, 4) :- ap_call_doc(c, _, _), ap_call(c, fn), ap_attr(fn, _, method), ap_scope(c, f), ap_flags(f, 1, _), ap_write(method, async_method).
-ap_issue(c, "ASYNC004", cat("Use ", async_method, "() instead of ", method, "() in async transaction"), 0, 4) :- ap_call_doc(c, _, _), ap_call(c, fn), ap_attr(fn, _, method), ap_scope(c, f), ap_flags(f, w, r), (w = 1 ; r = 1), ap_read(method, async_method).
-ap_issue(c, "ASYNC005", cat("Sync I/O '", method, "()' in async function '", name, "' - use ", async_method, "()"), flag, 5) :- ap_call_doc(c, _, _), ap_async_call(c, _, name), ap_call(c, fn), ap_attr(fn, _, method), ap_internal(method, async_method), ap_fallback_value(c, flag).
-ap_issue(c, "ASYNC006", cat("Sync method '", printed, ".", method, "()' in async function - use ", async_method, "()"), flag, 6) :- ap_call_doc(c, _, _), ap_async_call(c, f, _), ap_flags(f, 0, 0), ap_call(c, fn), ap_attr(fn, obj, method), ap_transaction(method, async_method), ap_transaction_receiver(c, obj), ap_receiver_print(c, printed), ap_fallback_value(c, flag).
-ap_issue(c, "ASYNC007", cat("Sync '", printed, ".", method, "()' in async function - use await ", printed, ".", async_method, "()"), 0, 7) :- ap_call_doc(c, _, _), ap_async_call(c, _, _), ap_call(c, fn), ap_attr(fn, obj, method), ap_connection(method, async_method), ap_connection_receiver(c, obj), ap_receiver_print(c, printed).
-ap_issue(c, "ASYNC008", cat("Sync polymorphic metadata helper '", printed, ".", method, "()' in async function - use await ", printed, ".", async_method, "()"), 0, 8) :- ap_call_doc(c, _, _), ap_async_call(c, _, _), ap_call(c, fn), ap_attr(fn, _, method), ap_metadata(method, async_method), ap_receiver_print(c, printed).
-.decl ap_visible(c: node, code: symbol, message: symbol, fallback: number, rank: number)
-ap_visible(c, code, message, fallback, rank) :- ap_issue(c, code, message, fallback, rank), option("entryPoint", e), (e = "lint_file" ; e = "analyze_source").
-ap_visible(c, code, message, 0, rank) :- ap_issue(c, code, message, 0, rank), pp_run().
+.decl ap_issue(c: node, owner: symbol, code: symbol, message: symbol, fallback: number, rank: number)
+ap_issue(c, owner, "ASYNC001", message, flag, 1) :- ap_call_doc(c, _, owner), ap_call(c, fn), ap_attr(fn, _, "to_thread"), ap_fixed_ASYNC001(message), ap_fallback_value(c, owner, flag).
+ap_issue(c, owner, "ASYNC002", message, flag, 2) :- ap_call_doc(c, _, owner), ap_call(c, fn), ap_attr(fn, _, "run_in_executor"), ap_fixed_ASYNC002(message), ap_executor_fallback(c, owner, flag).
+ap_issue(c, owner, "ASYNC004", cat("Use ", async_method, "() instead of ", method, "() in async transaction"), 0, 4) :- ap_call_doc(c, _, owner), ap_call(c, fn), ap_attr(fn, _, method), ap_scope(c, f), ap_flags(f, 1, _), ap_write(method, async_method).
+ap_issue(c, owner, "ASYNC004", cat("Use ", async_method, "() instead of ", method, "() in async transaction"), 0, 4) :- ap_call_doc(c, _, owner), ap_call(c, fn), ap_attr(fn, _, method), ap_scope(c, f), ap_flags(f, w, r), (w = 1 ; r = 1), ap_read(method, async_method).
+ap_issue(c, owner, "ASYNC005", cat("Sync I/O '", method, "()' in async function '", name, "' - use ", async_method, "()"), flag, 5) :- ap_call_doc(c, _, owner), ap_async_call(c, _, name), ap_call(c, fn), ap_attr(fn, _, method), ap_internal(method, async_method), ap_fallback_value(c, owner, flag).
+ap_issue(c, owner, "ASYNC006", cat("Sync method '", printed, ".", method, "()' in async function - use ", async_method, "()"), flag, 6) :- ap_call_doc(c, _, owner), ap_async_call(c, f, _), ap_flags(f, 0, 0), ap_call(c, fn), ap_attr(fn, obj, method), ap_transaction(method, async_method), ap_transaction_receiver(c, obj), ap_receiver_print(c, printed), ap_fallback_value(c, owner, flag).
+ap_issue(c, owner, "ASYNC007", cat("Sync '", printed, ".", method, "()' in async function - use await ", printed, ".", async_method, "()"), 0, 7) :- ap_call_doc(c, _, owner), ap_async_call(c, _, _), ap_call(c, fn), ap_attr(fn, obj, method), ap_connection(method, async_method), ap_connection_receiver(c, obj), ap_receiver_print(c, printed).
+ap_issue(c, owner, "ASYNC008", cat("Sync polymorphic metadata helper '", printed, ".", method, "()' in async function - use await ", printed, ".", async_method, "()"), 0, 8) :- ap_call_doc(c, _, owner), ap_async_call(c, _, _), ap_call(c, fn), ap_attr(fn, _, method), ap_metadata(method, async_method), ap_receiver_print(c, printed).
+.decl ap_visible(c: node, owner: symbol, code: symbol, message: symbol, fallback: number, rank: number)
+ap_visible(c, owner, code, message, fallback, rank) :- ap_issue(c, owner, code, message, fallback, rank), option("entryPoint", e), (e = "lint_file" ; e = "analyze_source").
+ap_visible(c, owner, code, message, 0, rank) :- ap_issue(c, owner, code, message, 0, rank), pp_run().
 .violation AsyncASYNC001(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code "ASYNC001" "{message}"
-AsyncASYNC001(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, "ASYNC001", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
+AsyncASYNC001(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, "ASYNC001", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
 .violation AsyncASYNC002(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code "ASYNC002" "{message}"
-AsyncASYNC002(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, "ASYNC002", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
+AsyncASYNC002(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, "ASYNC002", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
 .violation AsyncASYNC004(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code "ASYNC004" "{message}"
-AsyncASYNC004(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, "ASYNC004", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
+AsyncASYNC004(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, "ASYNC004", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
 .violation AsyncASYNC005(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code "ASYNC005" "{message}"
-AsyncASYNC005(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, "ASYNC005", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
+AsyncASYNC005(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, "ASYNC005", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
 .violation AsyncASYNC006(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code "ASYNC006" "{message}"
-AsyncASYNC006(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, "ASYNC006", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
+AsyncASYNC006(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, "ASYNC006", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
 .violation AsyncASYNC007(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code "ASYNC007" "{message}"
-AsyncASYNC007(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, "ASYNC007", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
+AsyncASYNC007(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, "ASYNC007", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
 .violation AsyncASYNC008(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code "ASYNC008" "{message}"
-AsyncASYNC008(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, "ASYNC008", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
+AsyncASYNC008(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, path, "ASYNC008", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
 
  .violation Excluded(at: span) code "AP_EXCLUDED" "excluded"
 Excluded(@place("input.py", 1)) :- option("entryPoint", "should_exclude"), option("originalPath", path), ap_excluded_path(path).
@@ -378,6 +378,6 @@ pp_trigger("to_thread").
 pp_trigger("run_in_executor").
 
 ap_document(d,p) :- pp_run(), pp_doc(d,p), pp_fact_present(d).
-pp_report(p,l,code,message,p,l,code,0,ordinal,rank,0) :- pp_run(), ap_issue(c,code,message,0,rank), ap_call_doc(c,_,p), ap_call_line(c,l), ap_order(c,ordinal).
+pp_report(p,l,code,message,p,l,code,0,ordinal,rank,0) :- pp_run(), ap_issue(c,p,code,message,0,rank), ap_call_doc(c,_,p), ap_call_line(c,l), ap_order(c,ordinal).
 .violation AsyncPatternProductionFact(at:span,path:symbol,path_order:symbol,order0:number,order1:number,order2:number,f_path:symbol,f_line:number,f_code:symbol,f_message:symbol,f_context:symbol,f_is_fallback:number) code "DL_FACT" "async pattern production fact"
-AsyncPatternProductionFact(@place(p,l),p,@replace_all(p,"/","\u0000"),ordinal,rank,0,p,l,code,message,context,fallback) :- option("entryPoint","_production_contract"),ap_issue(c,code,message,fallback,rank),ap_call_doc(c,_,p),ap_call_line(c,l),ap_context(c,context),ap_order(c,ordinal).
+AsyncPatternProductionFact(@place(p,l),p,@replace_all(p,"/","\u0000"),ordinal,rank,0,p,l,code,message,context,fallback) :- option("entryPoint","_production_contract"),ap_issue(c,p,code,message,fallback,rank),ap_call_doc(c,_,p),ap_call_line(c,l),ap_context(c,context),ap_order(c,ordinal).

@@ -5,9 +5,11 @@ This covers snapshot reporting. It does not certify the production frontend or p
 import argparse
 import importlib
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
+from unittest.mock import patch
 
 from migration import ROOT, PIN, git, sha, read_json, write_json, compare
 from replay import execute_native
@@ -20,6 +22,13 @@ def reporter_file_groups(rows):
 
 
 def run(args):
+    if args.command!='native':return _run(args)
+    with tempfile.TemporaryDirectory(prefix='rerail-reporter-cache-') as cache:
+        with patch.dict(os.environ,{'RERAIL_TAPE_CACHE':str(Path(cache)/'store.sqlite')}):
+            return _run(args)
+
+
+def _run(args):
     harness_root = ROOT / 'scripts/dsl'
     harness_before = {p.resolve(): sha(p.read_bytes()) for p in harness_root.rglob('*.py')}
     corpus = read_json(args.cases)
@@ -36,6 +45,7 @@ def run(args):
     if native:
         engine = args.engine.resolve()
         report['engineSha256'] = sha(engine.read_bytes())
+        report['executionIsolation']='One owned cache per reporter run; reused across all cases'
         report['oracleSha256'] = sha(args.oracle.read_bytes())
         if oracle['sourcePin'] != PIN or oracle['casesSha256'] != report['casesSha256'] or oracle['execution'] != 'offline-source':
             raise ValueError('Reporter oracle belongs to different source or cases')

@@ -3752,3 +3752,56 @@ The rule shares the parse correctly, but its fallback relation loses the alias p
 The complete failing values and consumed programs are retained in `rr-async-pattern-production-alias-red-finalfcce.json.gz`.
 The next repair carries the owner path through scope and fallback inference.
 Async patterns remains a draft. The admission count remains eighteen.
+
+### 2026-11-11 — Async-pattern aliases and supplemental harness repairs
+
+The owner path now remains part of scope, abstract-class, fallback, and finding relations.
+All nineteen production cases pass through both APIs, including the shared API and implementation alias.
+Both APIs also pass all eleven original assertions and twelve complete detector observations.
+The original recording includes eight finding-positive observations.
+
+Supplemental replay exposed a separate report serialization defect.
+The assertion backend indexes consumed programs by rule and companion filename tuples.
+The supplemental runner tried to write those tuples as JSON object keys.
+The runner now records a sorted file list, preserves shared dependencies, and rejects conflicting revisions.
+Four new regression tests cover serialization, companions, conflicts, and missing optional programs.
+
+Reporter replays also exposed cache contention in the harness.
+Process inspection shows the reporter commands opening the same machine-wide SQLite cache.
+Its main database occupies 4,459,749,376 bytes. Its file database occupies 672,833,536 bytes.
+A native process sample places the main thread in `Atoms::intern_all`, sleeping between file-lock attempts.
+The sampled Rayon workers remain idle.
+An isolated excluded-path case takes 44.82 seconds wall time and 1.76 seconds CPU, with 1,030,356,992 bytes peak RSS.
+
+Each reporter invocation now owns one temporary cache and reuses it across all cases in that invocation.
+Three regression tests cover cache scope, cleanup after failure, and restoration of the caller's environment.
+The same isolated case takes 2.09 seconds wall time and 1.17 seconds CPU, with 121,126,912 bytes peak RSS.
+These measurements describe harness cache isolation only. They do not establish a repository-wide engine improvement.
+The machine-wide cache remains intact because other worktrees use it.
+
+The interrupted and timed-out reporter runs cannot support acceptance.
+The complete supplemental corpus is rerunning with owned caches and smaller bounded shards.
+The new progress gate requires that cache scope and cannot grant admission.
+Collector callbacks, complete helpers, raw supplied facts, CLI and ratchet behavior, historical inputs, updates, and controls still require acceptance.
+
+### 2026-11-11 — Coherent async-pattern owner and production checkpoint
+
+All nineteen production cases pass through both APIs on the repaired rule revision.
+Both APIs pass all eleven original assertions and all twelve recorded detector observations, including eight finding-positive observations.
+All 158 supplemental API cases and 136 configured reporter cases pass through the snapshot interface.
+Those supplemental results include complete DTOs, messages, contexts, fallback flags, exceptions, and finding values.
+
+The progress receipt retains 414 native executions and complete source, program, input, and adapter snapshots.
+Its validator rejects missing cases, false clean results, mixed revisions, incomplete runs, and shared reporter caches.
+All eight progress tests pass. All 581 Python tooling tests pass.
+The generator reproduces the rule exactly, and the manifest inventory audit passes.
+
+The progress receipt is `rr-async-pattern-owner-progress-finalfcce.json.gz`.
+The harness repair receipt is `rr-supplemental-harness-repairs-finalfcce.json.gz`.
+It retains the process sample, complete timing logs, old and new harness text, regression results, and measured native outputs.
+The machine-wide cache remains intact. Reporter-owned caches are removed after each invocation.
+
+This checkpoint cannot admit the rule.
+Collector callbacks, complete helper APIs, raw supplied facts, CLI and ratchet behavior, historical inputs, retained updates, and controls remain required.
+The manifest records eighteen full admissions, eighty-one drafts, and one absent translation.
+The native engine source and binary remain unchanged. Compilation time is zero.

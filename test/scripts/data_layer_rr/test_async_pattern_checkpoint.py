@@ -45,6 +45,9 @@ class Progress(unittest.TestCase):
         value=copy.deepcopy(self.value)
         item=value['supplemental']['api']['reports'][0]['results'][0];item['value']={'result':[]};self.rejected(value)
 
+    def test_shared_reporter_cache(self):
+        value=copy.deepcopy(self.value);value['supplemental']['report']['reports'][0].pop('executionIsolation');self.rejected(value)
+
     def test_unfinished_supplemental_run(self):
         value=copy.deepcopy(self.value);value['supplemental']['api']['reports'][0]['status']='started';self.rejected(value)
 
