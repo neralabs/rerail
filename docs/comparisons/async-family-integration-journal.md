@@ -2378,3 +2378,141 @@ the counters alone do not prove the cause of its variation. Do not claim a stabl
 Artifacts: `stats-red-integration.log`, `stats-green.log`, `stats-engine-build.log`, `stats-gate.json`,
 `stats-o125`, `stats-after`, and `stats-comparison`, beside the preceding repair's artifacts.
 The production path has one sampling policy and no opt-in switch.
+
+### 2026-11-12 — Repair join-planning statistics at their source
+
+Treat the join-work increase as a planner defect, separate from the sampling budget.
+Compare `accepted-o125` with `stats-o125`: full work grows by 104,760.
+The embed-request seed contributes 81,384 of that increase (78%).
+Its new order starts from 23,500 candidates instead of 12,714 in one execution.
+Both orders produce the same 250 results. Type-resolution seeds also move a 15-row restriction after a 4,424-row seed.
+
+Two mechanisms discard better information. The executor retains exact frequencies only through 64 distinct values.
+Kind domains can exceed that limit. Even when a current histogram exists, special kind estimation reads sampled tree priors first.
+The same precedence error affects seed costs, binding domains, and plan-cache signatures.
+
+Add bounded exact histograms for compact integer label domains.
+Promote a 64-value list to a 4,096-counter page only for labels in the bounded low integer range.
+Each insertion updates its counter, distinct count, and squared count in constant time.
+The extra counter page is 16 KiB. A value outside the page discards exactness and retains the existing sketch fallback.
+Publish only nonzero frequencies. No row rescan is required to reconstruct counts during planning.
+
+Use current complete kind frequencies before priors in all three planning paths.
+An absent value in a complete histogram means zero; an unavailable histogram means unknown.
+Keep that distinction when selecting a fallback and when invalidating cached prices.
+
+`kind-red.log` first exposes a standalone-test link issue from invoking the language parser.
+The replacement constructs an empty program directly and fails on the intended prior-over-live assertion.
+`histogram-red.log` fails on a 200-label domain while the existing sketch accuracy test passes.
+The fixes must pass both mechanism tests and then restore work ceilings on the real replay.
+
+The dense implementation restores the embed-request seed: 141,009 work becomes 59,625.
+Its first candidate set is narrow again. Full work falls from 10,734,169 to 10,644,202.
+The two type-resolution seeds remain at 5,955 each, so dense counts alone do not solve their missing metadata.
+
+Add sparse exact label counts, capped at 1,024 entries. Large identity domains retain the sketch fallback.
+The first sparse implementation limits label values to 16 bits. This is a mistake:
+atom IDs grow as the arena grows, while their meaning and cardinality do not change.
+A 600,000-based label fixture reproduces that loss of exactness.
+The 32-bit label implementation passes that fixture, sparse-domain bounds, dense counts, and the original sketch test.
+A domain that exceeds its counter budget or leaves the label representation returns to sketches.
+
+EXPLAIN now prints cardinality, NDV, fanout, histogram availability, requested constants, current frequencies, and priors.
+These are reads of held metadata, not extra queries or row scans.
+The real trace confirms a 483-value attribute histogram and a current frequency of 15.
+Both type-resolution seeds return from 5,955 work to 980.
+`label-gate.json` passes with full work 10,633,124 and incremental work 7,146,343.
+Cold work is 10,495,636. The insertion check remains 633. Output parity passes.
+
+A separate fallback formula also needs correction. When a literal has no measured frequency,
+`postings` falls through to the row-weighted fanout (sum of squared frequencies divided by rows).
+A literal is not drawn from this relation's rows. Its unmeasured prior should be rows divided by distinct values.
+The former prior favors hot values and overprices uncommon literal keys, such as the attribute restriction above.
+Exact current counts and measured constant frequencies still take precedence.
+The new mechanism test gives a 10,000-row, 100-key relation a weighted fanout of 1,000.
+It requires the unmeasured literal's estimate to be 100, while retaining exact-count precedence.
+
+The literal-prior regression test fails with 1,000 instead of 100 and then passes with the corrected formula.
+`constant-red.log` and `constant-green.log` retain that evidence.
+The combined implementation passes the engine's 11 integration checks and `final-planner-gate.json` without changed ceilings:
+
+| Recorded work | Sampling commit | Planner repair |
+|---|---:|---:|
+| Cold replay | 10,584,698 | 10,494,609 |
+| Incremental replay | 7,251,458 | 7,143,870 |
+| Full recomputation | 10,734,169 | 10,632,596 |
+| Embed-request seed | 141,009 | 59,625 |
+| Each affected type-resolution seed | 5,955 | 980 |
+
+The insertion check remains 633. Incremental/full parity and comparison with the previous outputs pass.
+About 97% of the 104,760-work increase is removed. Full work remains 3,187 above the preceding repair's 10,629,409 (0.03%).
+Smaller plan differences remain in `typeof_var` long-text fallbacks, decorated-definition walks, and parameter annotations.
+Those plans need conditional selectivity and partial-scalar-domain information beyond these marginal histograms.
+Do not describe this change as an exact optimizer or as restoration of every previous order.
+The per-plan trace rows aggregate calls; their input/output counts are not necessarily one individual execution.
+
+The paired whole-job comparison uses the preserved sampling-commit binary and identical rule libraries.
+It runs two alternating trials per binary, each cold and twice warm, on all 5,725 files with four workers.
+Execution CPU medians are 13,412.8 versus 12,810.5 ms cold and 137.3 versus 110.2 ms warm.
+Including rule loading, they are 13,476.3 versus 12,879.4 ms cold and 164.3 versus 128.6 ms warm.
+Cold CPU ranges overlap widely: 11,986.7–14,839.0 ms baseline, 10,949.9–14,671.1 ms candidate.
+Thus these timings support qualification, not a stable speedup percentage on the shared host.
+Cold process instructions fall from 175.019 to 174.345 billion; warm instructions rise slightly, from 2.040 to 2.054 billion.
+These include startup and loading, and are distinct from SQL VM instructions.
+Local sampling stays bounded: the final cold profile records 10.4 ms and 17,321,080 allocated bytes in its measurement spans.
+
+Mechanism validation: four histogram tests, including the original sketch test, pass against the production source.
+The model test checks current-over-prior precedence, complete-zero versus unknown, and the unmeasured-literal prior.
+No rule-name preference, statement loop, or sampling-limit increase was introduced.
+The collector chooses its representation automatically within fixed memory bounds.
+Artifacts: `final-planner-o125`, `final-planner-after`, `final-planner-comparison`, and their gate and build logs.
+
+## Bounded statistical-planning spike
+
+Implemented the requested experiment in `scripts/profiling/statistical_planning`.
+The production engine remains at `fbc6814d5`; this change adds a capture wrapper, offline planner, tests, and measured results.
+A fresh O125 native-lab capture provides six immutable snapshots from three affected strata.
+Every tested connected join order matches native output. Three synthetic cases and historical poor-order controls supplement these inputs.
+The experiment uses 32 seeds, with one shared 2 MiB / 512-seed / 50,000-work budget per job and policy.
+Retained statistics, probe observations, and planning scratch peak at 286,976 bytes.
+Prepared source indexes and exhaustive oracle costs are separate and explicitly reported.
+
+The current captured orders are already optimal among the tested positive-join orders.
+There is no current-engine speedup demonstrated by this experiment.
+Exact demanded-key counters and the marginal estimator repair the historical controls; correlated tuple samples add no measured improvement here.
+Cold conservative probes make no changes to those controls and add 3.2% work.
+Prior measured current-order work on the same relation revisions enables a 17.3% reduction, including probe work.
+Its acquisition is a prior execution cost, not free oracle evidence.
+Synthetic stress tests show larger benefits, but their baselines are authored orders rather than production decisions.
+
+Collection groups watched keys by column mask. A test verifies that 1,000 keys require one lookup per row, not 1,000 comparisons.
+Summaries and probe observations share immutable revisions across rules.
+Missing counters and censored probes remain unknown. Stale revisions cannot reuse evidence.
+Nine focused tests cover these contracts, budgets, tuple correlation, and safe improvement selection.
+The raw artifacts include the initial red tests and the final passing log.
+
+Failures informed the spike: an early heavy-tail fixture repeated identical tuples, so set deduplication removed the intended tail.
+It now uses distinct tuples. Early optimistic pilot results are superseded.
+Tests also caught double-charged seed costs and missing revision validation.
+A separate selector test caught an uncertain alternative blocking a demonstrated improvement over the current order.
+The fix requires evidence of improvement over current, rather than proof that the challenger dominates every alternative.
+
+The actionable direction is bounded demanded counters during existing ingestion, followed by selective revision-keyed probes where evidence can pay for them.
+Blanket collection adds overhead: Python collection takes about 99 ms on the current snapshots in the final run, before planning.
+No additional production collection pass or automatic probing path is justified by these results.
+Retained statistics should follow normal typed facts and rule-defined caches, with population/revision keys and global limits.
+The README records supported semantics, index prerequisites, measurements, reproduction commands, and remaining heavy-tail limitations.
+
+## 2026-11-12 — Record the statistics result and overall status
+
+Recorded the bounded-statistics outcome in [the workplan status](workplan-status-2026-11-12.md).
+The experiment is complete. Production integration of random probing is not accepted by its results.
+Demanded-key counters are the strongest next candidate, subject to a demonstrated remaining bad plan and measured collection cost.
+The current captured plans are already optimal within the spike's supported orders.
+Cold probes add work on historical controls. Prior measurements help only with matching relation revisions and an explicit acquisition cost.
+
+The status separates completed production repairs, the latest qualification, and unfinished work.
+Selective replanning still lacks the requested 40–50 ms result.
+Conditional and scalar-domain estimates remain incomplete. Cold input processing still dominates much of the complete job.
+The latest qualified engine includes local integration `20644b585`, not every current sibling tip.
+No production code or acceptance ceiling changes in this documentation update.

@@ -1814,10 +1814,10 @@ pub fn stats(conn: &Connection, name: &str) -> Result<String> {
         let mut line = std::iter::once(r.n).chain(cols.iter().map(Sketch::ndv))
             .chain(cols.iter().map(|sk| sk.sq() as usize))
             .map(|n| n.to_string()).collect::<Vec<_>>().join(" ");
-        // Each value's postings in a column of at most FREQ_NDV values (a kind tag), as `|col:hexvalue=n,..`: a
+        // Each value's postings while the bounded histogram remains exact, as `|col:hexvalue=n,..`: a
         // constant there is priced exactly, as stat_val prices an input's.
         for (c, sk) in cols.iter().enumerate() {
-            let Some(small) = sk.small().filter(|s| s.len() <= FREQ_NDV) else { continue };
+            let Some(small) = sk.exact_counts() else { continue };
             let vals: Vec<String> = small.iter().map(|&(v, n)| {
                 let text = if r.types[c] == b's' { syms.name(v) } else { v.to_string() };
                 format!("{}={}", text.bytes().map(|b| format!("{b:02x}")).collect::<String>(), n)
@@ -1965,7 +1965,7 @@ pub fn step_counts(conn: impl Scoped, name: &str) -> Result<Vec<Vec<(i64, i64)>>
 }
 
 /// A relation's live statistics (`stats`): rows, then per column its distinct values and sum of squared postings,
-/// and for a column of at most `FREQ_NDV` values each value's postings.
+/// and each value's postings when a bounded exact histogram is available.
 pub struct Live { pub n: i64, pub delta: i64, pub ndv: Vec<i64>, pub sq: Vec<i64>, pub freq: Vec<(usize, Vec<(i64, i64)>)> }
 pub fn live(conn: impl Scoped, name: &str) -> Result<Vec<Live>> {
     let conn = conn.db();
@@ -1975,7 +1975,7 @@ pub fn live(conn: impl Scoped, name: &str) -> Result<Vec<Live>> {
     Ok(store.rels.iter().map(|r| {
         probed::note(&format!("{} [stats]", r.table), std::iter::empty());
         let cols = &r.sketches;
-        let freq = cols.iter().enumerate().filter_map(|(c, sk)| sk.small().filter(|s| s.len() <= FREQ_NDV).map(|s| (c, s.iter().map(|&(v, n)| (v, i64::from(n))).collect())))
+        let freq = cols.iter().enumerate().filter_map(|(c, sk)| sk.exact_counts().map(|s| (c, s.iter().map(|&(v, n)| (v, i64::from(n))).collect())))
             .collect();
         Live {
             n: r.n as i64,
@@ -3109,7 +3109,6 @@ pub fn tables_built() -> (u64, u64, u64) {
 static DERIVED: LazyLock<Mutex<HashMap<(usize, String), Arc<InRel>>>> = LazyLock::new(Default::default);
 const SEED: usize = usize::MAX;
 /// Columns with at most this many values report each value's postings (`stats`).
-const FREQ_NDV: usize = 64;
 
 /// A native relation's rows, in place (for a caller that keeps an output in the engine): a source of columns
 /// `c0`, `c1`, ….
