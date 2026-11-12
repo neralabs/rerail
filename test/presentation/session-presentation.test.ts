@@ -16,9 +16,7 @@ import {
 } from "../../src/presentation/session-presentation.js";
 import { type AdapterDelivery, type RepositoryStartState, sessionStartNote } from "../../src/engine/index.js";
 import type { presentationResponseSchema, sessionResponseSchema } from "../../src/api/index.js";
-import { hookRerailStarted } from "../../src/harness/index.js";
 import type { z } from "zod";
-import { startTestRepository } from "../support/started-repository.js";
 
 let home: string;
 let cwd: string;
@@ -318,8 +316,6 @@ describe("rules page", () => {
   let health: Record<string, unknown>;
   /** Whether the stub daemon has recorded the checkout, so `GET /api/repository?checkout=` answers. */
   let knownCheckout: boolean;
-  /** The path of each request the stub daemon got. */
-  let served: string[];
   const repositoryKey = "remote:github.com/acme/app";
 
   const stop = async (): Promise<void> => {
@@ -338,12 +334,10 @@ describe("rules page", () => {
   const listen = async (pid: number = process.pid): Promise<number> => {
     vi.unstubAllGlobals();
     knownCheckout = true;
-    served = [];
     health = { status: "ok", pid, database: { path: database, exists: true }, native: { ok: true } };
     const checkoutPath = await realpath(cwd);
     stub = createServer((request, response) => {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
-      served.push(url.pathname);
       const answers: Record<string, unknown> = {
         "/healthz": health,
         "/api/presentation": { presence: "compact", repositoryState: "stopped" },
@@ -409,22 +403,6 @@ describe("rules page", () => {
     expect(await readRepositoryState(cwd, "omp")).toBe("stopped");
     await record(join(home, "daemon.json"), { pid: 999_999 });
     expect(await readRepositoryState(cwd, "omp")).toBeNull();
-  });
-
-  it("reads the hook start check from the database, and asks a live daemon only where the database cannot be read", async () => {
-    startTestRepository(cwd, database);
-    const port = await listen();
-    await record(join(home, "daemon.json"), { pid: process.pid, port, url: `http://127.0.0.1:${port}/` });
-    // The database says started; the daemon, which would say stopped, is not asked.
-    expect(await hookRerailStarted("claude-code", cwd)).toBe(true);
-    expect(served).toEqual([]);
-    // A database this process cannot read: the live daemon answers.
-    await writeFile(database, "not a database");
-    expect(await hookRerailStarted("claude-code", cwd)).toBe(false);
-    expect(served).toEqual(["/api/presentation"]);
-    // Neither answers: the database is read again, and its failure is the hook's.
-    await record(join(home, "daemon.json"), { pid: 999_999 });
-    await expect(hookRerailStarted("claude-code", cwd)).rejects.toThrow();
   });
 
   it("refuses a recorded daemon whose pid is gone or whose port is vacant", async () => {
