@@ -463,7 +463,7 @@ sign-off to add.
 Do not paste code, data or rules from another project without recording it. Only permissively licensed material is
 accepted, anywhere in the repository: every licence must be on the allowlist in
 [scripts/check/licence-allowlist.json](scripts/check/licence-allowlist.json) (Apache-2.0, MIT, BSD-2-Clause,
-BSD-3-Clause, CC0-1.0, ISC, Zlib, 0BSD, Unicode-3.0, PostgreSQL), so no copyleft file can be committed or published.
+BSD-3-Clause, CC0-1.0, ISC, Zlib, 0BSD, Unicode-3.0, PostgreSQL, PSF-2.0), so no copyleft file can be committed or published.
 An SPDX licence expression passes when some way to satisfy it uses only listed licences: `A OR B` when either side is
 on the list, `A AND B` only when both are, with `AND` binding tighter than `OR`; a malformed one is refused.
 
