@@ -3737,3 +3737,18 @@ The complete receipt is `rr-executor-complete-finalfcce.json.gz`.
 The inventory now records eighteen full admissions, eighty-one drafts, and one absent translation.
 The engine binary and source remain unchanged. Compilation time is zero.
 No full-repository cold run or new Linear issue forms part of this admission.
+
+### 2026-11-11 — Async-pattern production integration exposes an alias defect
+
+Fresh source recordings pass all eleven original assertions, 158 supplemental API cases, and 136 reporter cases.
+Nineteen new production cases retain complete selection, fact, finding, and plugin values.
+The original native rule emits no production metadata. The first new production assertion fails on that missing contract.
+The source and red receipt is `rr-async-pattern-production-source-red-finalfcce.json.gz`.
+
+The first production implementation passes eighteen cases and fails the shared-file alias case.
+The API alias correctly receives a fallback fact.
+The implementation alias incorrectly receives that fallback classification and loses its actionable finding.
+The rule shares the parse correctly, but its fallback relation loses the alias path.
+The complete failing values and consumed programs are retained in `rr-async-pattern-production-alias-red-finalfcce.json.gz`.
+The next repair carries the owner path through scope and fallback inference.
+Async patterns remains a draft. The admission count remains eighteen.

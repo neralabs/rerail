@@ -1773,7 +1773,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/async-patterns.rr",
-      "sha256": "50d0edb59f5e671e7eb99a8b6e3bf5add3538f5717d750a1461cf08da3445682",
+      "sha256": "fe6b7af32dd297534bc2947ae494d86d3529a482a11738a51562cb591d4c4227",
       "origin": "authored",
       "upstreamPath": "scripts/lint_async_patterns.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -4211,7 +4211,7 @@
       "legacySha256": "1c3b5cae27b159d4c71665594c0978c02333725e41cba8e006a734859438bb5d",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/async-patterns.rr",
-      "ruleSha256": "50d0edb59f5e671e7eb99a8b6e3bf5add3538f5717d750a1461cf08da3445682"
+      "ruleSha256": "fe6b7af32dd297534bc2947ae494d86d3529a482a11738a51562cb591d4c4227"
     },
     {
       "check": "async_sync_boundary",

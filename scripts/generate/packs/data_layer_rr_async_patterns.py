@@ -206,4 +206,5 @@ ParseWarning(@place("input.py", 1)) :- option("entryPoint", "lint_file"), option
 .violation MissingTree(at: span) code "AP_AST_REQUIRED" "AST tree is required; parsing is owned by the fact framework"
 MissingTree(@place("input.py", 1)) :- option("entryPoint", "analyze_source"), option("providedTree", "false"), ap_source_triggered(0).
 '''
-    return text+supplied_ast()
+    from data_layer_rr_async_pattern_production import production
+    return production(source,text+supplied_ast())

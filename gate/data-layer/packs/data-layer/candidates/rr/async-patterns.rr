@@ -174,8 +174,7 @@ ap_call_line(n, l) :- ap_native_enabled(), ap_call(n, _), line(n, l).
 ap_receiver_print(c, printed) :- ap_native_enabled(), call_receiver_text(c, printed).
 
 .decl ap_document(d: number, path: symbol)
-ap_document(d, p) :- doc(d, p, _), option("entryPoint", "lint_file"), file_name(d, n), suffix(".py", n), !syntax_error(d, _, _).
-ap_document(d, p) :- doc(d, p, _), !option("entryPoint", _), ap_scan_root(root), prefix(cat(root, "/"), p), file_name(d, n), suffix(".py", n), !ap_hidden(d), !syntax_error(d, _, _).
+ap_document(d, p) :- pp_doc(d,p), option("entryPoint", "lint_file"), file_name(d, n), suffix(".py", n), !syntax_error(d, _, _).
 .decl ap_hidden(d: number)
 ap_hidden(d) :- path_part(d, p), (p = ".git" ; p = ".venv" ; p = "venv" ; p = "__pycache__" ; p = "tmp").
 .decl ap_source_triggered(d: number)
@@ -286,21 +285,21 @@ ap_issue(c, "ASYNC007", cat("Sync '", printed, ".", method, "()' in async functi
 ap_issue(c, "ASYNC008", cat("Sync polymorphic metadata helper '", printed, ".", method, "()' in async function - use await ", printed, ".", async_method, "()"), 0, 8) :- ap_call_doc(c, _, _), ap_async_call(c, _, _), ap_call(c, fn), ap_attr(fn, _, method), ap_metadata(method, async_method), ap_receiver_print(c, printed).
 .decl ap_visible(c: node, code: symbol, message: symbol, fallback: number, rank: number)
 ap_visible(c, code, message, fallback, rank) :- ap_issue(c, code, message, fallback, rank), option("entryPoint", e), (e = "lint_file" ; e = "analyze_source").
-ap_visible(c, code, message, 0, rank) :- ap_issue(c, code, message, 0, rank), !option("entryPoint", _).
+ap_visible(c, code, message, 0, rank) :- ap_issue(c, code, message, 0, rank), pp_run().
 .violation AsyncASYNC001(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code "ASYNC001" "{message}"
-AsyncASYNC001(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, "ASYNC001", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal).
+AsyncASYNC001(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, "ASYNC001", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
 .violation AsyncASYNC002(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code "ASYNC002" "{message}"
-AsyncASYNC002(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, "ASYNC002", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal).
+AsyncASYNC002(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, "ASYNC002", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
 .violation AsyncASYNC004(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code "ASYNC004" "{message}"
-AsyncASYNC004(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, "ASYNC004", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal).
+AsyncASYNC004(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, "ASYNC004", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
 .violation AsyncASYNC005(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code "ASYNC005" "{message}"
-AsyncASYNC005(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, "ASYNC005", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal).
+AsyncASYNC005(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, "ASYNC005", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
 .violation AsyncASYNC006(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code "ASYNC006" "{message}"
-AsyncASYNC006(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, "ASYNC006", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal).
+AsyncASYNC006(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, "ASYNC006", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
 .violation AsyncASYNC007(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code "ASYNC007" "{message}"
-AsyncASYNC007(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, "ASYNC007", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal).
+AsyncASYNC007(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, "ASYNC007", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
 .violation AsyncASYNC008(at: span, message: symbol, context: symbol, fallback: number, ordinal: number, rank: number) code "ASYNC008" "{message}"
-AsyncASYNC008(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, "ASYNC008", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal).
+AsyncASYNC008(@place(path, line), message, context, fallback, ordinal, rank) :- ap_visible(c, "ASYNC008", message, fallback, rank), ap_call_doc(c, _, path), ap_call_line(c, line), ap_context(c, context), ap_order(c, ordinal), !option("entryPoint","_production_contract").
 
  .violation Excluded(at: span) code "AP_EXCLUDED" "excluded"
 Excluded(@place("input.py", 1)) :- option("entryPoint", "should_exclude"), option("originalPath", path), ap_excluded_path(path).
@@ -354,3 +353,31 @@ ap_order(n, n) :- ap_graph_kind(n, _).
 ap_call_line(n, to_number(line)) :- ap_graph_kind(n, "Call"), option_item("astLines", n, line).
 ap_receiver_print(c, printed) :- option("entryPoint", "analyze_source"), ap_graph_kind(c, "Call"),
     sig_param(_, _, nm, _, _, ann, _), text(nm, name), prefix("call", name), c = to_number(@slice(name, 4, strlen(name))), annotation_text(ann, printed).
+
+#include "data-layer/plugin-production.rr"
+pp_config("name","async_patterns").
+pp_config("description","Sync-in-async fallback patterns must not appear in actionable code").
+pp_config("enforcement","hard-fail").
+pp_config("findingSeverity","hard-fail").
+pp_config("extractor","async_patterns.violations").
+pp_config("parser","ast_collect").
+pp_config("scope","static").
+pp_config("include_tests","true").
+pp_config("fact_kind","list").
+pp_static_root("impl/sqlite").
+pp_static_root("impl/postgres").
+pp_static_root("impl/mariadb").
+pp_static_root("impl/doltdb").
+pp_static_root("impl/mongodb").
+pp_static_root("impl/neo4j").
+pp_static_root("impl/common").
+pp_static_root("api").
+pp_static_root("conform").
+pp_trigger("async def").
+pp_trigger("to_thread").
+pp_trigger("run_in_executor").
+
+ap_document(d,p) :- pp_run(), pp_doc(d,p), pp_fact_present(d).
+pp_report(p,l,code,message,p,l,code,0,ordinal,rank,0) :- pp_run(), ap_issue(c,code,message,0,rank), ap_call_doc(c,_,p), ap_call_line(c,l), ap_order(c,ordinal).
+.violation AsyncPatternProductionFact(at:span,path:symbol,path_order:symbol,order0:number,order1:number,order2:number,f_path:symbol,f_line:number,f_code:symbol,f_message:symbol,f_context:symbol,f_is_fallback:number) code "DL_FACT" "async pattern production fact"
+AsyncPatternProductionFact(@place(p,l),p,@replace_all(p,"/","\u0000"),ordinal,rank,0,p,l,code,message,context,fallback) :- option("entryPoint","_production_contract"),ap_issue(c,code,message,fallback,rank),ap_call_doc(c,_,p),ap_call_line(c,l),ap_context(c,context),ap_order(c,ordinal).
