@@ -70,7 +70,7 @@ async function repositoryWith(rows: ReadonlyArray<{ readonly path: (main: string
       checkoutPath: row.path(main, root), repositoryKey, cloneId, started: row.started, createdAt: 1, lastSeenAt: 1,
     }))).run();
   }
-  return { stores, db, main, repositoryKey, app: createRerailApi(stores, operations, { version: "0.0.0-test" }) };
+  return { stores, db, main, repositoryKey, cloneId, app: createRerailApi(stores, operations, { version: "0.0.0-test" }) };
 }
 
 /** A Git worktree of `main` at `path`, which no row records yet, as `git worktree add` leaves one. */
@@ -203,5 +203,21 @@ describe("a repository's context", () => {
     db.insert(checkouts).values({ checkoutPath: reused, repositoryKey: other, cloneId: "old-clone", started: false, createdAt: 1, lastSeenAt: 1 }).run();
     addWorktree(main, reused);
     expect(await shownStates(app, reused)).toEqual({ listed: null, dashboard: "stopped", statusLine: "stopped" });
+  });
+
+  it("picks the same containing checkout as the runtime when two recorded ones differ only in letter case, whichever came first", async () => {
+    for (const order of [["wt", "WT"], ["WT", "wt"]] as const) {
+      const { db, main, repositoryKey, cloneId, app } = await repositoryWith([]);
+      // One folder on Windows, recorded under two spellings: stopped as wt, started as WT. Elsewhere two folders.
+      for (const segment of order) {
+        db.insert(checkouts).values({ checkoutPath: join(main, segment), repositoryKey, cloneId, started: segment === "WT", createdAt: 1, lastSeenAt: 1 }).run();
+      }
+      const inner = join(main, "wt", "inner");
+      addWorktree(main, inner);
+      db.insert(checkouts).values({ checkoutPath: inner, repositoryKey, cloneId, started: null, createdAt: 1, lastSeenAt: 1 }).run();
+      // Of one folder's spellings the one first in path order holds the checkout: upper case comes before lower case.
+      const [state, parent] = process.platform === "win32" ? ["started", join(main, "WT")] : ["stopped", join(main, "wt")];
+      expect(await shownStates(app, inner), order.join(" then ")).toEqual({ listed: [state, parent], dashboard: state, statusLine: state });
+    }
   });
 });
