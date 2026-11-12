@@ -3801,6 +3801,23 @@ and replanned at another, run after run, is churn, not a size that moved. Next
 step: print one such rule's kept and new work per node (`RERAIL_PLAN_CACHE_WHY`),
 and find whether the replan's result is kept under the key the next run reads.
 
+**Mostly closed (2026-11-12).** The cause was not work growth. `RERAIL_PLAN_CACHE_WHY` printed "distributions
+near false" for each replan: a rule planned for a chunk (22,146 nodes) and for the cross part (61,997) shares one
+kept plan (0116 keys the scale by powers of 4), and its distinct values were compared as they were. So each scale
+replanned what the other had kept. Now `near_distributions` takes an entry as near either as it was (a column of
+few values) or in proportion to the nodes (a column of node ids).
+
+Measured, at steady state:
+- replans per edit: 3,350 → 935;
+- kept plans re-priced instead of searched: 228 → 2,710;
+- planning CPU: 1.6 s either way (search 0.87 → 0.74 s, strata 0.77 → 0.89 s), at load 80, with 638 first sights
+  against 186.
+
+Open:
+- why the time did not fall;
+- the 935 replans left;
+- why the profile's line names "work per node" whatever the cause (it is the guard's fallthrough).
+
 ## O-cutoff-phases. The whole-run cutoff never applies to a phased program
 
 `RERAIL_REUSE_TRACE` on an unchanged P3 run:
@@ -3818,6 +3835,14 @@ of `calls_p3` costs 5.5 s of CPU, where a single-phase program costs 0.71 s
 requests, so a record over the union of every phase's consulted things would be
 exact. Next step: record the outermost run with its phases' consulted things,
 and check each phase's requests in `changes` as for a phase-free program.
+
+**Closed (2026-11-12).**
+- `reuse::record` keeps a run of any phase, with every phase's consulted things, one `doc` entry a document.
+- `rule_files` names every phase program a program reads, transitively, with its includes (`phases::phase_files`).
+- `changes` compares only the workspace's documents with the file list; a library document (an absolute path) is
+  checked by its digest.
+- On the P3 bench, an unchanged run took the cutoff: 1.47 s user + 0.17 s sys, against 5.5 + 1.0 s, and 2,987
+  agree. An edit of one file was not cut off ("1 documents changed").
 
 ## O-kept-inputs-stale. A run in a new process keeps an edited file's old rows (kept inputs, 0117)
 
@@ -3841,3 +3866,11 @@ memo keys. The test passed once right after the merge, under heavy load, so the 
 a run with an empty store; it too passes with `RERAIL_KEPT_INPUTS=off`. Both tests are ignored with this item's name. Next step: dump the full run's
 `impmod` (or the reach index's edge relation) rows for c.py with and without kept inputs, and find
 the owner range that was not marked dead.
+
+**Closed (2026-11-12).** `RERAIL_KEPT_INPUTS_TRACE` showed the cause. A chunk evaluates its unchanged
+files with the changed one (e.py with c.py), so this run's rows of an input hold e.py's too. e.py has no old entry,
+so `patch_owners` took its kept rows plus this run's: twice. The same sum kept rows a changed file's old entry
+did not hold (c.py's old entry had no `line` rows), and those included `line(…, 2)`. Now a real
+document's rows come from its own file alone (`memo::document_of`), so for every document this run evaluated,
+its rows are this run's. The count arithmetic is kept for value documents, which several files hold. Both tests
+pass again.

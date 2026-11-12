@@ -291,8 +291,10 @@ pub(crate) fn changes(programs: &[&str], root: &Path, typing: &Typing, options: 
     let with_settings: Vec<String> = programs.iter().map(|p| crate::code_rule_dsl::logic::settings::with_settings(p, &settings)).collect();
     let programs: Vec<&str> = with_settings.iter().map(String::as_str).collect();
     let prog = combine(&programs, "")?;
-    if prog.decls.contains_key("declared_ret") || !phases::wanted(&prog, None)?.is_empty() {
-        trace(format!("not comparable: declared_ret {}, phases {:?}", prog.decls.contains_key("declared_ret"), phases::wanted(&prog, None)?.iter().map(|p| format!("{p:?}").chars().take(60).collect::<String>()).collect::<Vec<_>>()));
+    // A program reading earlier phases is comparable: its record names every phase's program and what each phase
+    // consulted (`reuse::record`, O-cutoff-phases).
+    if prog.decls.contains_key("declared_ret") {
+        trace("not comparable: declared_ret".to_owned());
         return Ok(None);
     }
     let language = prog.settings.iter().find(|(key, _)| key == "language").map(|(_, value)| value.trim().trim_matches('"').to_owned());
@@ -300,8 +302,11 @@ pub(crate) fn changes(programs: &[&str], root: &Path, typing: &Typing, options: 
     let label = corpus_language(language.as_deref(), typing, &found);
     let files = if none_named { Default::default() } else { found.of(label) };
     let docs: Vec<&(String, String, String)> = consulted.iter().filter(|c| c.0 == "doc").collect();
-    if files.len() != docs.len() || files.iter().zip(&docs).any(|(f, d)| *f != d.1) {
-        trace(format!("the documents differ: {} files, {} kept", files.len(), docs.len()));
+    // The workspace's documents are listed by their path from the root; a library document a phase loaded is named
+    // by its absolute path, and is checked by its digest below, as every document is (O-cutoff-phases).
+    let workspace: Vec<&&(String, String, String)> = docs.iter().filter(|d| !Path::new(&d.1).is_absolute()).collect();
+    if files.len() != workspace.len() || files.iter().zip(&workspace).any(|(f, d)| *f != d.1) {
+        trace(format!("the documents differ: {} files, {} kept", files.len(), workspace.len()));
         return Ok(None);
     }
     // A document listed without a digest was not read (none of the run's rules reads a document): its edit changes nothing.
@@ -5280,6 +5285,9 @@ fn run_observed(
                 let no_holders = rustc_hash::FxHashMap::default();
                 let mut changed = 0usize;
                 let mut results: Vec<(String, usize, bool, Vec<String>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, OwnerPatch)> = Vec::new();
+                // Each input's old rows (the changed files' entries) and this run's, before any is patched.
+                #[allow(clippy::type_complexity)]
+                let mut staged: Vec<(&String, usize, Option<&Vec<String>>, Vec<String>, Vec<Vec<Vec<i64>>>, Vec<Vec<i64>>)> = Vec::new();
                 for rel in &rels {
                     let k = &kept[rel];
                     let width = prog.decls[rel].len();
@@ -5342,8 +5350,27 @@ fn run_observed(
                             }
                         },
                     };
+                    staged.push((rel, g, base, names, old, new));
+                }
+                // The documents this run evaluated: every real document a changed file's old entry or this run's rows
+                // name. A chunk evaluates its unchanged files with its changed ones, so this is more than the files
+                // the keeper counted as changed. Each such document's rows are this run's (`patch_owners`).
+                let values = crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS as i64;
+                let evaluated: BTreeSet<i64> = staged
+                    .iter()
+                    .flat_map(|(_, g, _, _, old, new)| old.iter().flatten().chain(new.iter()).map(move |r| retain::owner_of(r, *g)))
+                    .filter(|o| *o < values)
+                    .collect();
+                for (rel, g, base, names, old, new) in staged {
+                    let k = &kept[rel];
+                    let width = prog.decls[rel].len();
                     let holders = base.is_none().then(|| keeper.as_ref().and_then(|k| k.holders(rel)).unwrap_or(&no_holders));
-                    let mut patch = patch_owners(rel, k, g, holders, &old, new)?;
+                    // `RERAIL_KEPT_INPUTS_TRACE`: each input's old and new rows of the changed files, and its patch.
+                    let trace_rows = std::env::var_os("RERAIL_KEPT_INPUTS_TRACE").is_some().then(|| (old.clone(), new.clone()));
+                    let mut patch = patch_owners(rel, k, g, holders, &evaluated, &old, new)?;
+                    if let Some((o, n)) = trace_rows.filter(|(o, n)| !o.iter().all(Vec::is_empty) || !n.is_empty() || !patch.changed.is_empty()) {
+                        eprintln!("rerail: kept input {rel} (owner column {g}, {} kept rows): old {o:?}; new {n:?}; owners changed {:?}; minus {:?}; plus {:?}", k.source.len(), patch.changed.iter().map(|(o, r)| (*o, r.len())).collect::<Vec<_>>(), patch.minus, patch.plus);
+                    }
                     let bound: Vec<String> = match base {
                         None => (0..width).map(|c| format!("c{c}")).collect(),
                         Some(_) => names.clone(),
@@ -8350,7 +8377,7 @@ struct OwnerPatch {
 ///   rows while another file holds it (a value document: the keeper's `holders`), else none. A value document's
 ///   rows are the same in every file that holds it, which is checked.
 /// `Err` when the kept rows do not hold what the old entries say (the run then decodes its hits whole).
-fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&rustc_hash::FxHashMap<i64, i64>>, old: &[Vec<Vec<i64>>], new: Vec<Vec<i64>>) -> std::result::Result<OwnerPatch, String> {
+fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&rustc_hash::FxHashMap<i64, i64>>, evaluated: &BTreeSet<i64>, old: &[Vec<Vec<i64>>], new: Vec<Vec<i64>>) -> std::result::Result<OwnerPatch, String> {
     use rustc_hash::FxHashMap;
     let width = kept.source.columns().len();
     let values = crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS as i64;
@@ -8372,7 +8399,9 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
     for r in new {
         by_new.entry(retain::owner_of(&r, g)).or_default().push(r);
     }
-    let touched: BTreeSet<i64> = by_old.keys().chain(by_new.keys()).copied().collect();
+    // Every owner a changed file's old rows or this run's name, and every evaluated document the kept rows hold: an
+    // evaluated file that has no rows of this input now has its kept ones removed.
+    let touched: BTreeSet<i64> = by_old.keys().chain(by_new.keys()).copied().chain(evaluated.iter().copied().filter(|o| kept.ranges.contains_key(o))).collect();
     let all: Vec<usize> = (0..width).collect();
     let mut docs: Option<retain::DocDigests> = None;
     let (mut changed, mut plus, mut minus) = (Vec::new(), Vec::new(), Vec::new());
@@ -8398,6 +8427,23 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
         let old_rows = by_old.remove(&o).unwrap_or_default();
         let new_rows = by_new.remove(&o);
         let now: Vec<Vec<i64>> = match holders {
+            // A real document's rows are its own file's alone (`memo::document_of`): evaluated this run, they are this
+            // run's rows. Taking the kept rows less the old entry's instead counted a chunk's unchanged file twice
+            // (it has no old entry here), and kept rows an old entry did not hold (O-kept-inputs-stale).
+            None if o < values && evaluated.contains(&o) => {
+                let mut count: FxHashMap<&[i64], i64> = FxHashMap::default();
+                for r in &was {
+                    *count.entry(r).or_default() += 1;
+                }
+                for r in old_rows.iter().flatten() {
+                    let n = count.entry(r).or_default();
+                    *n -= 1;
+                    if *n < 0 {
+                        return Err(format!("{rel}: a changed file's old row is not kept ({r:?})"));
+                    }
+                }
+                sorted(new_rows.unwrap_or_default())
+            }
             None => {
                 let mut count: FxHashMap<&[i64], i64> = FxHashMap::default();
                 for r in &was {

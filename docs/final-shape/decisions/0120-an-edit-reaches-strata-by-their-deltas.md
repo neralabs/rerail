@@ -160,13 +160,15 @@ whole edit is not compared: at loads of 45–70 it varied by more than the savin
 
 ## 4. What else was found
 
-- **O-kept-inputs-stale.** After the merge, both reach-index invalidation tests fail: after an edit that shortens
+- **O-kept-inputs-stale** (closed the same day: an evaluated document's rows are this run's). After the merge,
+  both reach-index invalidation tests failed: after an edit that shortens
   c.py, a run without a session keeps c.py's old line-2 rows. They pass with `RERAIL_KEPT_INPUTS=off`, so the fault
   is in 0117 steps 1–2's kept inputs. Both tests are ignored with the item's name.
-- **O-replan-churn.** Each edit replans about 3,350 rules whose kept order "grew over 4x, by over 10000 rows", in
+- **O-replan-churn** (mostly closed: distributions compared in proportion to the nodes; 3,350 → 935). Each edit
+  replanned about 3,350 rules whose kept order "grew over 4x, by over 10000 rows", in
   a new process every time. Plans are kept across processes (0116 step 2), but these are searched again on every
   edit. It is 1.6 s of the second edit.
-- **O-cutoff-phases.** The whole-run cutoff refuses any program that reads an earlier phase. So an unchanged run of
+- **O-cutoff-phases** (closed: an unchanged P3 run is 1.6 s of CPU). The whole-run cutoff refused any program that reads an earlier phase. So an unchanged run of
   `calls_p3` costs 5.5 s, where a single-phase program costs 0.71 s.
 - **The cold run is cheaper after the merge**: 49.8 s of CPU against 77.6 s, and 571 MB at peak against 925 MB.
   The loads differed (66 and 38), so the instruction counts of a quiet machine are the check still to make.

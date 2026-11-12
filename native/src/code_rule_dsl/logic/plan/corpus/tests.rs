@@ -367,7 +367,6 @@ pub(super) const REACH_EDITS: [(&str, &str, &str); 10] = [
 /// The reach index read again after each edit: from a store a new process reads (the frames), every run's findings
 /// those of a run with an empty store, whether the edit changed a cycle, joined two parts or split them.
 #[test]
-#[ignore = "O-kept-inputs-stale: after the c.py edit the run keeps c.py's old line-2 rows (kept inputs, 0117); passes with RERAIL_KEPT_INPUTS=off"]
 fn the_reach_index_is_derived_again_when_cycles_and_connections_change_in_a_new_process() {
     use crate::code_rule_dsl::typing::file_local::Binding;
     let _watchdog = watchdog("reach", std::time::Duration::from_secs(90));

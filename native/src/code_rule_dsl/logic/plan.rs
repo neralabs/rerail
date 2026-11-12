@@ -1109,6 +1109,20 @@ struct Priced {
 pub const PRICE_DRIFT: f64 = 2.0;
 
 /// Whether sizes `now` are within `PRICE_DRIFT` of `then`, each counted as at least one row.
+/// Whether a kept plan's distributions (`live_sizes` after its cardinalities) are near this pricing's, at another
+/// scale: an entry is near as it was (a column of few values, as `kind`'s) or in proportion to the nodes (a column
+/// of node ids, whose distinct values grow with the corpus). The last `literals` entries, a bit per literal, are
+/// compared as they are. A rule planned for a chunk of 22,146 nodes and for the cross part's 61,997 compared its
+/// distributions as they were, so each scale replanned what the other kept, every run (O-replan-churn).
+pub fn near_distributions(then: &[f64], now: &[f64], scale: f64, literals: usize) -> bool {
+    let bits = then.len().saturating_sub(literals);
+    then.len() == now.len()
+        && then.iter().zip(now).enumerate().all(|(i, (a, b))| {
+            let one = |a: f64| near(&[a], &[*b]);
+            one(*a) || (i < bits && *a > 0.0 && *b > 0.0 && one(a * scale))
+        })
+}
+
 pub fn near(then: &[f64], now: &[f64]) -> bool {
     then.len() == now.len()
         && then.iter().zip(now).all(|(a, b)| {
@@ -1375,7 +1389,8 @@ impl Model {
                 }
                 Ok(got) if self.valid_live_driver(&got.0.0, body, first) && previous.as_ref().is_some_and(|p| {
                     let cards = 1 + usize::from(first.is_some()) + body.iter().filter(|l| matches!(l, Literal::Atom(_) | Literal::Agg { .. })).count();
-                    near(&p.sizes[cards..], &sizes[cards..])
+                    let scale = sizes[0] / p.sizes.first().copied().unwrap_or(1.0).max(1.0);
+                    p.sizes.len() >= cards && sizes.len() >= cards && near_distributions(&p.sizes[cards..], &sizes[cards..], scale, body.len())
                 }) && (got.0.1 / nodes <= REPLAN * per_node.max(1e-12) || got.0.1 - per_node * nodes <= REPLAN_ROWS) => {
                     super::profile::decision("plan cache (decision 0038)", || "a kept plan reused, re-priced with this chunk's statistics".into());
                     plan_cache(3);
