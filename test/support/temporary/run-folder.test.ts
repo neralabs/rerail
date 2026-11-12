@@ -1,4 +1,4 @@
-import { spawn, spawnSync, type ChildProcessByStdio } from "node:child_process";
+import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -6,11 +6,17 @@ import type { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { OWNER_FILE, thisPlace } from "./run-folder.js";
 
 /** This checkout, whose vitest.config.ts every run below uses. */
 const CHECKOUT = fileURLToPath(new URL("../../../", import.meta.url));
 const VITEST = join(CHECKOUT, "node_modules", "vitest", "vitest.mjs");
-const DAY_MS = 24 * 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
+const DAY_MS = 24 * 60 * MINUTE_MS;
+/** A pid no process has: above Linux's highest pid, and not one Windows gives. */
+const NO_PROCESS = 2147483644;
+/** Where this worker's pid means something, as a run folder's owner file names it: the runs below share it. */
+const HERE = thisPlace() ?? "";
 /** What the `stuck` and `locked` test files write next to themselves: the pid of the process in the folder, or the folder. */
 const NOTE = "note.txt";
 const IMPORTS = [
@@ -159,9 +165,20 @@ async function waitForFolder(folder: string, prefix: string, run: Run): Promise<
   }
 }
 
-/** The pid of a process that has ended. */
-function endedPid(): number {
-  return spawnSync(process.execPath, ["-e", ""]).pid;
+/**
+ * Makes a run folder at `path` with a folder inside and an owner file that names `place`, last touched `agoMs` ago, as
+ * a run there left it.
+ */
+async function ownedFolder(path: string, owner: { place: string; agoMs: number }): Promise<void> {
+  await mkdir(join(path, "inside"), { recursive: true });
+  await writeFile(join(path, OWNER_FILE), owner.place);
+  await backdate(join(path, OWNER_FILE), owner.agoMs);
+}
+
+/** Sets the times of the file or folder at `path` to `agoMs` ago. */
+async function backdate(path: string, agoMs: number): Promise<void> {
+  const then = (Date.now() - agoMs) / 1000;
+  await utimes(path, then, then);
 }
 
 /** Resolves once no process has `pid`; signal 0 only checks. */
@@ -205,23 +222,46 @@ async function takeNote(path: string): Promise<string | undefined> {
 describe("a test run's temporary folders", () => {
   it("are all gone after the run, with the folders of ended runs, and a running run's folder stays", async () => {
     const { temp, tests } = await scratch();
-    const endedRun = `rerail-vitest-${endedPid()}-a1b2c3`;
+    const endedRun = `rerail-vitest-${NO_PROCESS}-a1b2c3`;
     const runningRun = `rerail-vitest-${process.pid}-d4e5f6`;
     // Each test file's home and store from before the run folder, made straight in the temp folder.
     const olderRunsDayOld = "rerail-vitest-home-g7h8i9";
     const olderRunsRecent = "rerail-vitest-store-j1k2l3";
     // A running Rerail's own folder, of a family the sweep never removes.
     const notATestFolder = "rerail-clock-m4n5o6";
-    for (const name of [endedRun, runningRun, olderRunsDayOld, olderRunsRecent, notATestFolder]) {
+    for (const name of [endedRun, runningRun]) await ownedFolder(join(temp, name), { place: HERE, agoMs: 0 });
+    for (const name of [olderRunsDayOld, olderRunsRecent, notATestFolder]) {
       await mkdir(join(temp, name, "inside"), { recursive: true });
     }
-    const twoDaysAgo = (Date.now() - 2 * DAY_MS) / 1000;
-    for (const name of [olderRunsDayOld, notATestFolder]) await utimes(join(temp, name), twoDaysAgo, twoDaysAgo);
+    for (const name of [olderRunsDayOld, notATestFolder]) await backdate(join(temp, name), 2 * DAY_MS);
 
     const run = await startRun(join(tests, "leaves"), temp).ended;
 
     expect(run.code, run.output).toBe(0);
     expect((await readdir(temp)).sort()).toEqual([notATestFolder, olderRunsRecent, runningRun].sort());
+  }, 120_000);
+
+  it("of a run from another place stay until it stops touching its owner file, and any run's go a day after it stopped", async () => {
+    const { temp, tests } = await scratch();
+    // A run in a container or sandbox with a pid namespace of its own, or on another host, that shares this temp
+    // folder: its pid names no process here, so only its owner file tells whether it still runs.
+    const elsewhereRunning = `rerail-vitest-${NO_PROCESS}-p1q2r3`;
+    const elsewhereQuiet = `rerail-vitest-${NO_PROCESS}-s4t5u6`;
+    await ownedFolder(join(temp, elsewhereRunning), { place: "host elsewhere\n", agoMs: 9 * MINUTE_MS });
+    await ownedFolder(join(temp, elsewhereQuiet), { place: "host elsewhere\n", agoMs: 11 * MINUTE_MS });
+    // A run from here that stopped a day ago, whose pid a running process has since been given.
+    const pidTakenSince = `rerail-vitest-${process.pid}-v7w8x9`;
+    await ownedFolder(join(temp, pidTakenSince), { place: HERE, agoMs: 2 * DAY_MS });
+    // A run between making its folder and writing its owner file, or killed in between: its age decides.
+    const noOwnerYet = `rerail-vitest-${NO_PROCESS}-y1z2a3`;
+    const noOwnerDayOld = `rerail-vitest-${NO_PROCESS}-b4c5d6`;
+    for (const name of [noOwnerYet, noOwnerDayOld]) await mkdir(join(temp, name, "inside"), { recursive: true });
+    await backdate(join(temp, noOwnerDayOld), 2 * DAY_MS);
+
+    const run = await startRun(join(tests, "leaves"), temp).ended;
+
+    expect(run.code, run.output).toBe(0);
+    expect((await readdir(temp)).sort()).toEqual([elsewhereRunning, noOwnerYet].sort());
   }, 120_000);
 
   it("left by a run killed before its teardown are gone after the next run", async () => {
@@ -244,6 +284,11 @@ describe("a test run's temporary folders", () => {
     const { temp, tests } = await scratch();
     const stuck = await startRun(join(tests, "stuck"), temp).ended;
     const afterStuck = await readdir(temp);
+    // The removal that left the folder kept its owner file, which says whose the folder is. Backdated a day, it ends
+    // the stuck run for the runs below whatever process has its pid by then.
+    const leftInside = await readdir(join(temp, afterStuck[0] ?? ""));
+    expect(leftInside).toContain(OWNER_FILE);
+    await backdate(join(temp, afterStuck[0] ?? "", OWNER_FILE), 2 * DAY_MS);
     // The next run finds the stuck run ended but cannot remove its folder either.
     const blocked = await startRun(join(tests, "leaves"), temp).ended;
     const afterBlocked = await readdir(temp);

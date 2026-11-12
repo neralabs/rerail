@@ -4,22 +4,36 @@
  * vitest.config.ts loads this module as a global setup, in vitest's own process before the first test file: it points
  * TMPDIR, TEMP and TMP at the folder, which `os.tmpdir()` reads, and the workers and every process they start inherit.
  *
- * A run killed before it ends (a closed terminal, a tool call's time limit) leaves its folder behind. The next run
- * removes it, once no process has the pid in its name. Any other `rerail-vitest-*` folder goes once it is a day old:
- * test runs made each test file's home and store (`rerail-vitest-home-*`, `rerail-vitest-store-*`) straight in the
- * temp folder before there was a run folder, and a checkout on an older commit may still be running its tests in one.
- * A run picks those folders at its start and removes them while its tests run, so its first test file waits for none
- * of them; its end waits for that removal.
+ * A run killed before it ends (a closed terminal, a tool call's time limit) leaves its folder behind, and a later run
+ * removes it once that run has ended. The pid in a run folder's name tells that only where the pid means the same
+ * process: a container or sandbox with a pid namespace of its own, or another host, may share the temp folder. So each
+ * run folder holds an owner file that names where its run's pid means something (the host and, on Linux, the pid
+ * namespace and the boot), and the run touches the file every minute while it runs. A run removes a run folder from
+ * its own place once no process has the pid, one from another place once its owner file has gone ten minutes
+ * untouched, and any run folder once its owner file has gone a day untouched, since the pid may by then belong to
+ * another process. A removal that leaves part of a run folder puts its owner file back as it was. Any other
+ * `rerail-vitest-*` folder goes once it is a day old: test runs made each test file's home and store
+ * (`rerail-vitest-home-*`, `rerail-vitest-store-*`) straight in the temp folder before there was a run folder, and a
+ * checkout on an older commit may still be running its tests in one. A run picks those folders at its start and
+ * removes them while its tests run, so its first test file waits for none of them; its end waits for that removal.
  */
-import { chmod, lstat, mkdtemp, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFileSync, readlinkSync, type Stats } from "node:fs";
+import { chmod, lstat, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { hostname, tmpdir } from "node:os";
 import { basename, join, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 const PREFIX = "rerail-vitest-";
 /** A run folder's name: the prefix, the pid of the vitest process that made it, then mkdtemp's six characters. */
 const RUN_FOLDER = /^rerail-vitest-(\d+)-[A-Za-z0-9]{6}$/u;
-const DAY_MS = 24 * 60 * 60 * 1000;
+/** The file in a run folder that names where its run's pid means something, and that the run touches while it runs. */
+export const OWNER_FILE = ".owner";
+const MINUTE_MS = 60 * 1000;
+const DAY_MS = 24 * 60 * MINUTE_MS;
+/** How often a run touches its owner file. */
+const HEARTBEAT_MS = MINUTE_MS;
+/** How long the owner file of a run from another place may go untouched before that run counts as ended. */
+const QUIET_MS = 10 * MINUTE_MS;
 const VARIABLES = ["TMPDIR", "TEMP", "TMP"] as const;
 /** The longest Unix socket path in bytes, the terminating NUL aside, as src/runtime/engine-service.ts counts it. */
 const SOCKET_PATH_BYTES = process.platform === "linux" || process.platform === "android" ? 107 : 103;
@@ -36,21 +50,39 @@ const HELD = new Set(["EBUSY", "EPERM", "ENOTEMPTY", "EACCES"]);
 const DENIED = new Set(["EPERM", "EACCES"]);
 
 /**
- * Makes this run's folder and points the temp folder variables at it, and starts removing ended runs' folders, which
- * it picks before its own folder exists. The run's end removes its folder and waits for the others.
+ * A run folder's owner: the pid of the vitest process the folder's name gives, where that pid means something, and when
+ * the run last touched its owner file.
+ */
+interface Owner {
+  readonly pid: number;
+  readonly place: string;
+  readonly touchedMs: number;
+}
+
+/** A folder to remove, with its owner when it is a run folder whose owner file was read. */
+interface Folder {
+  readonly path: string;
+  readonly owner: Owner | undefined;
+}
+
+/**
+ * Makes this run's folder, with its owner file, points the temp folder variables at it, and starts removing ended runs'
+ * folders. The run's end removes its folder and waits for the others.
  */
 export default async function setUpRunFolder(): Promise<() => Promise<void>> {
   const parent = runFolderParent();
-  const ended = removeAll(await endedRuns(parent, Date.now()));
   const folder = await mkdtemp(join(parent, `${PREFIX}${process.pid}-`));
-  const prior = VARIABLES.map(name => [name, process.env[name]] as const);
-  for (const name of VARIABLES) process.env[name] = folder;
+  const place = thisPlace();
+  const owner: Owner = { pid: process.pid, place: place ?? "", touchedMs: Date.now() };
+  await writeOwner(folder, owner);
+  const stopHeartbeat = startHeartbeat(join(folder, OWNER_FILE), HEARTBEAT_MS);
+  const ended = removeFolders(await endedFolders(parent, basename(folder), place));
+  const restoreVariables = pointVariablesAt(folder);
   return async () => {
-    for (const [name, value] of prior) {
-      if (value === undefined) delete process.env[name];
-      else process.env[name] = value;
-    }
-    const [endedLeft, ownLeft] = await Promise.all([ended, removeAll([folder])]);
+    restoreVariables();
+    await stopHeartbeat();
+    const own: Folder = { path: folder, owner: { ...owner, touchedMs: Date.now() } };
+    const [endedLeft, ownLeft] = await Promise.all([ended, removeFolders([own])]);
     warnLeft("could not remove the folders of ended test runs", endedLeft);
     warnLeft("could not remove its temporary folder", ownLeft);
   };
@@ -71,26 +103,118 @@ function runFolderParent(): string {
   return deepestSocket <= SOCKET_PATH_BYTES ? temp : "/tmp";
 }
 
-/** The folders in `parent` that no running test run uses. */
-async function endedRuns(parent: string, now: number): Promise<string[]> {
-  const paths = (await readdir(parent)).filter(name => name.startsWith(PREFIX)).map(name => join(parent, name));
-  const ended = await Promise.all(paths.map(async path => await isEnded(path, now)));
-  return paths.filter((_, index) => ended[index]);
+/**
+ * Where this process's pid means something, as a run folder's owner file names it: the host, and on Linux the pid
+ * namespace and the boot, since a container or sandbox with a pid namespace of its own may share the temp folder.
+ * Undefined when this process cannot read its own namespace, so that no run folder's pid is checked.
+ */
+export function thisPlace(): string | undefined {
+  const host = `host ${hostname()}\n`;
+  if (process.platform !== "linux" && process.platform !== "android") return host;
+  try {
+    const boot = readFileSync("/proc/sys/kernel/random/boot_id", "utf8").trim();
+    return `${host}pid namespace ${readlinkSync("/proc/self/ns/pid")}\nboot ${boot}\n`;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
- * Whether no running test run uses the folder at `path`: a run folder whose process has ended, or another
- * `rerail-vitest-*` folder that is a day old. A folder named for this process's pid can only be an ended process's,
- * since this run picks the ended runs before it makes its own. A folder that cannot be read stays, and another user's
- * folder, in a shared /tmp, is never this run's to remove.
+ * Writes `owner` into the run folder at `folder`, touched when it says. A folder already gone, or one this user may not
+ * write, keeps none: a later run then goes by the folder's age.
  */
-async function isEnded(path: string, now: number): Promise<boolean> {
+async function writeOwner(folder: string, owner: Owner): Promise<void> {
+  const file = join(folder, OWNER_FILE);
+  const touched = new Date(owner.touchedMs);
+  await writeFile(file, owner.place)
+    .then(async () => await utimes(file, touched, touched))
+    .catch(() => undefined);
+}
+
+/**
+ * Touches `file` every `everyMs`, so that a run in another place sees this one still runs; returns what stops it, which
+ * resolves once the touch in flight is done. The timer never keeps vitest's process alive.
+ */
+function startHeartbeat(file: string, everyMs: number): () => Promise<void> {
+  let touches = Promise.resolve();
+  const timer = setInterval(() => {
+    touches = touches.then(async () => {
+      const now = new Date();
+      await utimes(file, now, now).catch(() => undefined);
+    });
+  }, everyMs);
+  timer.unref();
+  return async () => {
+    clearInterval(timer);
+    await touches;
+  };
+}
+
+/** Points TMPDIR, TEMP and TMP at `folder`; returns what gives them back the values they had. */
+function pointVariablesAt(folder: string): () => void {
+  const prior = VARIABLES.map(name => [name, process.env[name]] as const);
+  for (const name of VARIABLES) process.env[name] = folder;
+  return () => {
+    for (const [name, value] of prior) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  };
+}
+
+/** The folders in `parent` that no running test run uses, this run's own (named `own`) aside. */
+async function endedFolders(parent: string, own: string, place: string | undefined): Promise<Folder[]> {
+  const names = await readdir(parent).catch((): string[] => []);
+  const paths = names.filter(name => name.startsWith(PREFIX) && name !== own).map(name => join(parent, name));
+  const now = Date.now();
+  const folders = await Promise.all(paths.map(async path => await endedFolder(path, place, now)));
+  return folders.filter(folder => folder !== undefined);
+}
+
+/**
+ * The folder at `path` when no running test run uses it, undefined while one may: a run folder goes by its owner file,
+ * and any other `rerail-vitest-*` folder once it is a day old, a run folder whose run has not yet written its owner file
+ * among them. A folder that cannot be read stays, and another user's folder, in a shared /tmp, is never this run's to
+ * remove.
+ */
+async function endedFolder(path: string, place: string | undefined, now: number): Promise<Folder | undefined> {
+  const info = await ownFolder(path);
+  if (info === undefined) return undefined;
+  const owner = await readOwner(path);
+  const ended = owner === undefined ? now - info.mtimeMs > DAY_MS : runEnded(owner, place, now);
+  return ended ? { path, owner } : undefined;
+}
+
+/** This user's folder at `path`; undefined for a file, a link, another user's folder or one that cannot be read. */
+async function ownFolder(path: string): Promise<Stats | undefined> {
   const info = await lstat(path).catch(() => undefined);
   const uid = process.getuid?.();
-  if (info === undefined || !info.isDirectory() || (uid !== undefined && info.uid !== uid)) return false;
+  return info?.isDirectory() === true && (uid === undefined || info.uid === uid) ? info : undefined;
+}
+
+/** The owner of the run folder at `path`; undefined for a folder of another name, or a run folder with no owner file to read. */
+async function readOwner(path: string): Promise<Owner | undefined> {
   const pid = RUN_FOLDER.exec(basename(path))?.[1];
-  if (pid === undefined) return now - info.mtimeMs > DAY_MS;
-  return Number(pid) === process.pid || !isRunning(Number(pid));
+  if (pid === undefined) return undefined;
+  const file = join(path, OWNER_FILE);
+  try {
+    const [place, info] = await Promise.all([readFile(file, "utf8"), lstat(file)]);
+    return { pid: Number(pid), place, touchedMs: info.mtimeMs };
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Whether a run has ended, by its folder's owner file. From this place its pid tells: the run ended once no process has
+ * the pid, or this process does, which makes the folder an earlier process's. From another place the pid names some
+ * other process or none here, so the run ended once its owner file went ten minutes untouched. A day untouched ends a
+ * run from either place, since its pid may since belong to another process.
+ */
+function runEnded(owner: Owner, place: string | undefined, now: number): boolean {
+  const untouched = now - owner.touchedMs;
+  if (owner.place !== place) return untouched > QUIET_MS;
+  return untouched > DAY_MS || owner.pid === process.pid || !isRunning(owner.pid);
 }
 
 /** Whether a process with `pid` runs. Signal 0 only checks; EPERM is another user's process. */
@@ -103,10 +227,21 @@ function isRunning(pid: number): boolean {
   }
 }
 
-/** Removes each of `paths`; returns why each one that stays did. */
-async function removeAll(paths: readonly string[]): Promise<string[]> {
-  const left = await Promise.all(paths.map(remove));
+/** Removes each of `folders`; returns why each one that stays did. */
+async function removeFolders(folders: readonly Folder[]): Promise<string[]> {
+  const left = await Promise.all(folders.map(removeFolder));
   return left.filter(reason => reason !== undefined);
+}
+
+/**
+ * Removes `folder`; returns why it stays, or undefined once it is gone. When part of a run folder stays, its owner file
+ * goes back as it was: the removal may have taken it with the rest, and without it a later run would keep the folder
+ * for a day once the process holding it let go.
+ */
+async function removeFolder(folder: Folder): Promise<string | undefined> {
+  const left = await remove(folder.path);
+  if (left !== undefined && folder.owner !== undefined) await writeOwner(folder.path, folder.owner);
+  return left;
 }
 
 /**
