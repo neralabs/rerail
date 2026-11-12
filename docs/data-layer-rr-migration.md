@@ -4001,3 +4001,16 @@ Two supplied-tree cases produce an extra module-scope finding alongside the corr
 The native parser's default scope clause also matches supplied graph nodes. It needs a native-parser gate.
 Both failures and all complete results are retained in `rr-boundary-collection-scope-red-finalfcce.json.gz`.
 The rule remains a draft. No engine feature or additional Linear ticket is required by this failure.
+
+### 2026-11-11 — Boundary components pass through both APIs
+
+The native-parser scope clauses now exclude the supplied-AST helper path.
+Both APIs pass all 173 component cases and all five unchanged original tests, including all three positive observations.
+Native configuration is installed in the original suite. No source linter callback supplies component decisions.
+
+The checkpoint `rr-boundary-components-finalfcce.json.gz` retains 398 native executions and their complete source results, programs, and harness snapshots.
+Ten regression tests reject missing positives, changed values, missing collection, source fallback, altered programs, and engine mismatches.
+All 632 Python tooling tests pass.
+
+This checkpoint does not admit the rule. Production, file selection, rendering, CLI, earlier inputs, retained edits, and removal controls remain required.
+The global inventory remains nineteen admitted rules, eighty drafts, and one absent translation.

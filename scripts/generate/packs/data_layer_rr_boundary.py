@@ -40,9 +40,9 @@ bs_component(n, @nfkc(name), depth) :- !bs_api_helper(), unparen(n, e), kind(e, 
 bs_name(n, name) :- bs_part(n, p), bs_component(p, _, _),
     name = join piece by -depth sep "." : { bs_part(n, part), bs_component(part, piece, depth) }.
 .decl bs_context(c: node, name: symbol, async_: number)
-bs_context(c, @nfkc(name), 1) :- bs_call(c, _), def_frame(c, f), def_name(f, name), op(f, "async").
-bs_context(c, @nfkc(name), 0) :- bs_call(c, _), def_frame(c, f), def_name(f, name), !op(f, "async").
-bs_context(c, "<module>", 0) :- bs_call(c, _), !def_frame(c, _).
+bs_context(c, @nfkc(name), 1) :- !bs_api_helper(), bs_call(c, _), def_frame(c, f), def_name(f, name), op(f, "async").
+bs_context(c, @nfkc(name), 0) :- !bs_api_helper(), bs_call(c, _), def_frame(c, f), def_name(f, name), !op(f, "async").
+bs_context(c, "<module>", 0) :- !bs_api_helper(), bs_call(c, _), !def_frame(c, _).
 .decl bs_document(d: number, path: symbol)
 bs_document(d, p) :- doc(d, p, _), option("entryPoint", "scan_tree"), file_name(d, nm), suffix(".py", nm), !syntax_error(d, _, _).
 bs_document(d, p) :- doc(d, p, _), !option("entryPoint", _), file_name(d, nm), suffix(".py", nm),

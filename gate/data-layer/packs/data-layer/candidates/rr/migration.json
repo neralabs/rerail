@@ -1780,7 +1780,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
-      "sha256": "9d382f82578780b70848eb6c96391f5ab46a6a03e9f90f792a290a35bc827c8d",
+      "sha256": "07cf07d7361319613d1bf103dbd8ee785f29c55c4fecb7273dea6c38cecb90cc",
       "origin": "authored",
       "upstreamPath": "scripts/lint_async_sync_boundary.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -4437,7 +4437,21 @@
       "legacySha256": "f342876eef567090dd1493a0a8411a057fb14915dca5d5184e023322f18a483a",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
-      "ruleSha256": "9d382f82578780b70848eb6c96391f5ab46a6a03e9f90f792a290a35bc827c8d"
+      "ruleSha256": "07cf07d7361319613d1bf103dbd8ee785f29c55c4fecb7273dea6c38cecb90cc",
+      "migrationProgress": {
+        "status": "native-component-progress",
+        "admitted": false,
+        "verifiedNativeExecutions": 398,
+        "checkpoint": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-boundary-components-finalfcce.json.gz",
+          "sha256": "26821a6bd80cf24c0a76682ac4951ddec82ed29292c60ea910464a36cad3dbbb"
+        },
+        "remaining": [
+          "Production and file selection",
+          "Rendering, CLI and ratchet administration",
+          "Earlier inputs, retained edits, removal controls and full admission"
+        ]
+      }
     },
     {
       "check": "admin_async_purity",
