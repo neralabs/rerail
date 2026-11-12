@@ -559,9 +559,10 @@ database, the move tries again for up to 5 s. A daemon stopped partway goes on a
 finds nothing left to move with one read and takes no write lock. Once the move ends, the daemon runs one `VACUUM`,
 which gives the space it freed back to the disk; other writers wait for it as for any write. It skips the `VACUUM`,
 and says why in `daemon.log`, when another process is still using the database after those tries, when emptying the
-WAL into the file fails, or when the database's folder or the temporary folder has less free space than the file. The
-file then keeps its size, and new history reuses the free space. The audits stay moved whatever happens to the
-`VACUUM`.
+WAL into the file fails, or when a disk has less free space than `VACUUM` writes to it. `VACUUM` writes a copy of the
+database's pages in use, not its free ones, to the temporary folder, and another through the WAL beside the database,
+so the disk of each folder needs room for one copy, and a disk that holds both folders room for two. The file then
+keeps its size, and new history reuses the free space. The audits stay moved whatever happens to the `VACUUM`.
 
 Most steps add a column or a table, which older versions read correctly: the floor stays, an older Rerail still opens
 the file, and a hook or the status line runs such steps itself. A step an older version would misread raises the

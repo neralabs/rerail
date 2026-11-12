@@ -286,10 +286,10 @@ function moveBatch(
  * one by one, each through `free`: empty the WAL into the file, `VACUUM`, which copies the pages in use to a temporary
  * file and writes them back through the WAL while it holds the write lock, and empty the WAL again. `VACUUM` is skipped,
  * and stderr says why, when the WAL cannot be emptied first (another connection keeps it busy through every try, or the
- * checkpoint fails), when the database's folder or the temporary folder has less free disk space than the file's size,
- * or when `VACUUM` fails (another writer holding the lock through every try, a full disk), which leaves the file as it
- * was. Stderr also says when the WAL stays full after `VACUUM` (`sayWalInUse`, `sayWalNotEmptied`). Never throws: the
- * move has committed, and a step that fails here only leaves the file larger than it could be.
+ * checkpoint fails), when a disk has less free space than the copies `VACUUM` writes to it (`shortOfDisk`), or when
+ * `VACUUM` fails (another writer holding the lock through every try, a full disk), which leaves the file as it was.
+ * Stderr also says when the WAL stays full after `VACUUM` (`sayWalInUse`, `sayWalNotEmptied`). Never throws: the move
+ * has committed, and a step that fails here only leaves the file larger than it could be.
  */
 async function giveBackFreedSpace(client: Client, path: string, free: Free): Promise<void> {
   const skipped = await vacuumSkipped(client, path, free);
@@ -307,7 +307,7 @@ async function giveBackFreedSpace(client: Client, path: string, free: Free): Pro
 
 /** Empties the WAL into the file, then runs `VACUUM`; why it did not, or undefined once it ran. */
 async function vacuumSkipped(client: Client, path: string, free: Free): Promise<string | undefined> {
-  const before = (await walNotEmptied(client, free)) ?? shortOfDisk(path);
+  const before = (await walNotEmptied(client, free)) ?? shortOfDisk(client, path);
   if (before !== undefined) return before;
   try {
     await free(() => client.exec("VACUUM"));
@@ -382,22 +382,37 @@ function pragmaNumber(client: Client, name: string): number {
 }
 
 /**
- * Why `VACUUM` may run out of disk space for the file at `path`, or undefined when it has room. It writes a copy of the
- * pages in use to the temporary folder and another through the WAL beside the file; the file's size bounds each.
+ * Why `VACUUM` may run out of disk space for the database at `path`, or undefined when it has room. `VACUUM` copies the
+ * pages in use, not the free ones, to a temporary file in the temporary folder, then writes them back through the WAL
+ * beside the database: the disk of each folder needs room for one copy of the pages in use, and a disk that holds both
+ * folders room for two. Right after the move most of the file is free pages (1.3 GB of 1.4 GB for 4,000 audits), so the
+ * file's size would ask several times the room `VACUUM` takes.
  */
-function shortOfDisk(path: string): string | undefined {
+function shortOfDisk(client: Client, path: string): string | undefined {
   try {
-    const size = statSync(path).size;
-    for (const folder of new Set([dirname(path), tmpdir()])) {
+    const inUse = (pragmaNumber(client, "page_count") - pragmaNumber(client, "freelist_count")) * pragmaNumber(client, "page_size");
+    for (const { folder, copies } of disksOf([dirname(path), tmpdir()])) {
       const { bavail, bsize } = statfsSync(folder);
-      if (bavail * bsize < size) {
-        return `${folder} has ${megabytes(bavail * bsize)} of free disk space, less than the file's size, which VACUUM may need`;
+      if (bavail * bsize < copies * inUse) {
+        return `${folder} has ${megabytes(bavail * bsize)} of free disk space, less than the ${megabytes(copies * inUse)} `
+          + "VACUUM writes to its disk";
       }
     }
     return undefined;
   } catch (error) {
     return `its free disk space could not be read (${errorText(error)})`;
   }
+}
+
+/** The disks that hold `folders`: each once, named by its first folder, with how many of `folders` it holds. */
+function disksOf(folders: readonly string[]): { folder: string; copies: number }[] {
+  const disks = new Map<number, { folder: string; copies: number }>();
+  for (const folder of folders) {
+    const { dev } = statSync(folder);
+    const disk = disks.get(dev);
+    disks.set(dev, { folder: disk?.folder ?? folder, copies: (disk?.copies ?? 0) + 1 });
+  }
+  return [...disks.values()];
 }
 
 function errorText(error: unknown): string {

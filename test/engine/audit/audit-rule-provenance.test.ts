@@ -127,6 +127,18 @@ function freePages(path: string, bytes: number): void {
 }
 
 /**
+ * Makes every disk report `times` the bytes of the file's pages in use as free (`statfsSync`), read each time the move
+ * asks; how to undo it.
+ */
+function diskOfPagesInUse(path: string, times: number): () => void {
+  vi.mocked(statfsSync).mockImplementation(() => {
+    const bavail = Math.floor((times * bytesInUse(path)) / 4096);
+    return { type: 0, bsize: 4096, frsize: 4096, blocks: 1 << 20, bfree: bavail, bavail, files: 0, ffree: 0 };
+  });
+  return () => vi.mocked(statfsSync).mockReset();
+}
+
+/**
  * The daemon's move of the provenance audits hold inline, without its pause between batches, and timed by a clock that
  * never moves: each batch then takes twice the audits of the one before, up to `perBatch`, however loaded the machine.
  */
@@ -494,7 +506,7 @@ describe("audit rule provenance", () => {
     expect(longest).toBeLessThan(2_000);
   }, 30_000);
 
-  it("keeps the file's size, and says why, when the disk has less free space than the file", async () => {
+  it("keeps the file's size, and says why, when the disk has less free space than the pages VACUUM copies", async () => {
     const { path, size, logged } = await moveLogging(() => {
       vi.mocked(statfsSync).mockImplementation(() => ({ type: 0, bsize: 4096, frsize: 4096, blocks: 1 << 20, bfree: 16, bavail: 16, files: 0, ffree: 0 }));
       return () => vi.mocked(statfsSync).mockReset();
@@ -503,6 +515,25 @@ describe("audit rule provenance", () => {
     expect(logged).toContain("free disk space");
     expect(statSync(path).size).toBeGreaterThanOrEqual(size);
     expect(pageBytes(path).free).toBeGreaterThan(size / 2);
+  });
+
+  it("runs VACUUM when the disk has room for the pages in use, though less than the file's size", async () => {
+    // Three times the pages in use: room for the copy in the temporary folder and the one through the WAL, on one disk.
+    const { path, size, logged } = await moveLogging(path => diskOfPagesInUse(path, 3));
+    expect(logged).not.toContain("keeps its size");
+    expect(pageBytes(path).free).toBe(0);
+    expect(statSync(path).size).toBe(bytesInUse(path));
+    expect(statSync(path).size).toBeLessThan(size / 5);
+  });
+
+  it("skips VACUUM when one disk holds the database's folder and the temporary folder and has room for one copy only", async () => {
+    const { path, size, logged } = await moveLogging(path => {
+      expect(statSync(dirname(path)).dev).toBe(statSync(tmpdir()).dev);
+      return diskOfPagesInUse(path, 1.5);
+    });
+    expect(logged).toContain(`rerail: ${path} keeps its size`);
+    expect(logged).toContain("free disk space");
+    expect(statSync(path).size).toBeGreaterThanOrEqual(size);
   });
 
   it.each([
