@@ -518,10 +518,7 @@ async function runSessionCommand(rawArgs: readonly string[]): Promise<number> {
     ? null
     : await readPresentation({ host: host as RerailHost, sessionId, cwd, onDemand: true, startState });
   const repositoryState = presentation === null ? await readSummaryState(cwd, host as RerailHost, startState) : presentation.repositoryState;
-  // A daemon that just gave no answer in time is not asked again for the dashboard link: that read would wait out its
-  // own 2 seconds, and the summary shows no link then, so `--open` has no page to open.
-  const notAnswering = (presentation === null ? repositoryState : presentation.status) === "not-answering";
-  const rulesUrl = notAnswering ? null : (await readRulesDashboard({ cwd })).url;
+  const rulesUrl = (await readRulesDashboard({ cwd })).url;
   const counts = presentation === null && repositoryState === "started" ? repositoryRuleCounts(cwd) : null;
   process.stdout.write(`${renderRerailSummary({
     presentation,
