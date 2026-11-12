@@ -184,10 +184,18 @@ describe("a checkout's identity location", () => {
     return vi.mocked(spawnSync).mock.calls.slice(before).filter(([file]) => file === executable).length;
   };
 
-  /** Looks at `folder` `times` times, each answer checked against Git's own; the Git processes Rerail started. */
-  const looks = (folder: string, times = 3): number => syncGitProcesses(() => {
-    for (let call = 0; call < times; call += 1) expect(repositoryIdentityLocation(folder)).toEqual(gitsAnswer(folder));
-  });
+  /**
+   * Looks at `folder` `times` times, each answer checked against Git's own, read once since nothing changes between the
+   * looks; the Git processes Rerail started.
+   */
+  const looks = (folder: string, times = 3): number => {
+    const expected = gitsAnswer(folder);
+    return syncGitProcesses(() => {
+      for (let call = 0; call < times; call += 1) expect(repositoryIdentityLocation(folder)).toEqual(expected);
+    });
+  };
+  /** These tests start dozens of Git processes, which cost tens of milliseconds each on Windows. */
+  const GIT_TEST_TIMEOUT_MS = 30_000;
 
   it("asks Git once for ten looks at a main checkout, a folder in it, a linked worktree and a submodule", () => {
     const root = folder();
@@ -208,7 +216,7 @@ describe("a checkout's identity location", () => {
     const ofSubmodule = repositoryIdentityLocation(join(main, "vendor", "library"));
     expect(ofSubmodule.main).toBe(true);
     expect(ofSubmodule.identityPath).not.toBe(ofMain.identityPath);
-  });
+  }, GIT_TEST_TIMEOUT_MS);
 
   it("answers as Git does after a worktree is removed and added again at its path, from its repository or another", () => {
     const root = folder();
@@ -248,7 +256,7 @@ describe("a checkout's identity location", () => {
     repository(nested);
     looks(nested);
     expect(repositoryIdentityLocation(nested).identityPath).not.toBe(repositoryIdentityLocation(path).identityPath);
-  });
+  }, GIT_TEST_TIMEOUT_MS);
 
   it("answers as Git does when a link on the way to a checkout comes to lead to another repository", () => {
     const root = folder();
@@ -261,7 +269,7 @@ describe("a checkout's identity location", () => {
     unlinkSync(link);
     symlinkSync(two, link, "junction");
     looks(link);
-  });
+  }, GIT_TEST_TIMEOUT_MS);
 
   it("answers as Git does when core.bare takes the work tree away and gives it back", () => {
     const checkout = repository(join(folder(), "web"));
@@ -272,7 +280,7 @@ describe("a checkout's identity location", () => {
     git(join(checkout, ".git"), "config", "core.bare", "false");
     looks(checkout);
     expect(repositoryIdentityLocation(checkout).git).toBe(true);
-  });
+  }, GIT_TEST_TIMEOUT_MS);
 
   it("reads a remote that changes after the checkout was located, and asks Git for no location again", () => {
     const checkout = repository(join(folder(), "web"));
@@ -286,7 +294,7 @@ describe("a checkout's identity location", () => {
     expect(readRemoteAddress(repositoryIdentityLocation(checkout).workspaceRoot)).toEqual({ name: "origin", url: "git@github.com:acme/renamed.git" });
     git(checkout, "remote", "remove", "origin");
     expect(readRemoteAddress(repositoryIdentityLocation(checkout).workspaceRoot)).toEqual({ name: "upstream", url: "https://github.com/acme/upstream.git" });
-  });
+  }, GIT_TEST_TIMEOUT_MS);
 
   it("reads the legacy id from Git's config only for a checkout that has no identity file yet", () => {
     const checkout = repository(join(folder(), "web"));
@@ -296,5 +304,5 @@ describe("a checkout's identity location", () => {
       for (let call = 0; call < 10; call += 1) resolved.push(resolveCloneId(checkout).cloneId);
     })).toBe(2);
     expect(resolved).toEqual(Array(10).fill("legacy-id.1"));
-  });
+  }, GIT_TEST_TIMEOUT_MS);
 });
