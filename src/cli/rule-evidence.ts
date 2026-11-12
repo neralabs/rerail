@@ -354,27 +354,34 @@ interface EvidenceTally {
   /** Sessions whose first prompt, the task, has been read. */
   tasked: Set<string>;
   prompts: number;
-  /** The current session's last calls, oldest first. */
-  recentCalls: string[];
+  /**
+   * The current session's last calls, oldest first, as stored. A call is summarized only when a correction quotes it,
+   * and parsed only then or when it falls in the window: most calls are neither, above all a long session's before it.
+   */
+  recentCalls: StoredEvent[];
 }
 
-function tallyCall(tally: EvidenceTally, event: StoredEvent, payload: Record<string, unknown>): void {
-  tally.recentCalls = [...tally.recentCalls, callSummary(payload)].slice(-CALLS_BEFORE);
+function tallyCall(tally: EvidenceTally, event: StoredEvent): void {
+  tally.recentCalls = [...tally.recentCalls, event].slice(-CALLS_BEFORE);
   if (event.observedAt < tally.since) return;
+  const payload = payloadOf(event);
   const input = typeof payload.input === "object" && payload.input !== null ? payload.input as Record<string, unknown> : {};
   // A risky command's example is quoted to the agent; one over a path outside the boundary is not.
   if (typeof input.command === "string" && !callNamesDeniedPath(input.command)) countRisky(tally.risky, input.command);
 }
 
-function tallySteer(tally: EvidenceTally, event: StoredEvent, payload: Record<string, unknown>): void {
+function tallySteer(tally: EvidenceTally, event: StoredEvent): void {
   if (event.observedAt < tally.since) return;
+  const payload = payloadOf(event);
   const ruleIds = Array.isArray(payload.ruleIds) ? payload.ruleIds : [];
   for (const ruleId of ruleIds) {
     if (typeof ruleId === "string") tally.steers.set(ruleId, (tally.steers.get(ruleId) ?? 0) + 1);
   }
 }
 
-function tallyPrompt(tally: EvidenceTally, event: StoredEvent, text: string, host: string): void {
+function tallyPrompt(tally: EvidenceTally, event: StoredEvent, host: string): void {
+  const { text } = payloadOf(event);
+  if (typeof text !== "string") return;
   // A session's first prompt states the task; corrections come after the agent has done something.
   const followUp = tally.tasked.has(event.sessionId);
   tally.tasked.add(event.sessionId);
@@ -389,7 +396,7 @@ function tallyPrompt(tally: EvidenceTally, event: StoredEvent, text: string, hos
     text: clip(text, TEXT_LENGTH),
     families,
     standing: CORRECTION_FAMILIES.some(family => family.standing && families.includes(family.name)),
-    before: tally.recentCalls,
+    before: tally.recentCalls.map(call => callSummary(payloadOf(call))),
   });
 }
 
@@ -405,10 +412,9 @@ function readEvents(stored: readonly StoredEvent[], hostOf: ReadonlyMap<string, 
       currentSession = event.sessionId;
       tally.recentCalls = [];
     }
-    const payload = payloadOf(event);
-    if (event.kind === "call") tallyCall(tally, event, payload);
-    else if (event.kind === "steering-delivered") tallySteer(tally, event, payload);
-    else if (typeof payload.text === "string") tallyPrompt(tally, event, payload.text, hostOf.get(event.sessionId) ?? "unknown");
+    if (event.kind === "call") tallyCall(tally, event);
+    else if (event.kind === "steering-delivered") tallySteer(tally, event);
+    else tallyPrompt(tally, event, hostOf.get(event.sessionId) ?? "unknown");
   }
   // Standing instructions first, then the newest: they are the ones most likely to be rules.
   const corrections = tally.corrections.sort((left, right) => Number(right.standing) - Number(left.standing) || right.at.localeCompare(left.at));
