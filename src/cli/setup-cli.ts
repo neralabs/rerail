@@ -19,6 +19,7 @@ import {
 import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import { RULES_DUMP_FILE } from "../engine/catalog/rule-bootstrap.js";
 import { INSTALLED_PACKS_DIR, installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
+import { LOCKS_DIR } from "../engine/native/home-daemon-lock.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
 import { contentStoreOverride, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import {
@@ -372,6 +373,7 @@ const RERAIL_HOME_ENTRIES: readonly string[] = [
   DAEMON_STATE_FILE,
   DAEMON_PORT_FILE,
   DAEMON_ACCESS_TOKEN_FILE,
+  LOCKS_DIR,
   START_LOCK_DIR,
   AUTOSTART_CLAIM_FILE,
   RULES_DUMP_FILE,

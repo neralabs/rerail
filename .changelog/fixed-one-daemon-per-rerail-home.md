@@ -1,0 +1,1 @@
+A Rerail home runs one daemon: a second daemon started there stops at once and names the first. A running daemon whose `daemon.json` was removed writes it back within a second, and `rerail daemon start` and `rerail daemon stop` wait for it, where before they started a daemon that refused to run, or found none to stop.

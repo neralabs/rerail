@@ -27,6 +27,7 @@ import { modelStatus } from "../engine/native/model-status.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { holdHomeDaemonLock } from "../engine/native/home-daemon-lock.js";
 import { acquireMainInstance } from "../engine/native/main-instance.js";
 import { currentRerailBuild, isMainRerailBuild } from "../engine/native/rerail-build.js";
 
@@ -34,6 +35,8 @@ export const DEFAULT_DAEMON_HOST = "127.0.0.1";
 export const DEFAULT_DAEMON_PORT = 4737;
 /** In the Rerail home: the port the daemon last listened on, which the next start without `--port` prefers. */
 export const DAEMON_PORT_FILE = "daemon-port.json";
+/** How often the daemon of a home checks that daemon.json still names it (`RerailDaemonOptions.recordCheckMs`). */
+const RECORD_CHECK_MS = 1_000;
 
 /**
  * The largest body `/api` and `/mcp` take. Their largest legitimate request is a rule document (a library rule
@@ -84,6 +87,12 @@ export interface RerailDaemonOptions {
   dev?: boolean;
   /** Written once the server is listening and removed on close. */
   stateFile?: string;
+  /**
+   * How often the daemon checks that `stateFile` still names it, and writes it again when it is gone or names another
+   * process. The daemon of a Rerail home passes it (`runRerailDaemon`), since it alone holds the home's lock; omitted,
+   * the state file is written once.
+   */
+  recordCheckMs?: number;
   nativeHealth?: () => NativeHealth;
   /** Local IPC endpoint for the engine service; mainly useful for isolated embedding and tests. */
   kernelSocketPath?: string;
@@ -208,6 +217,17 @@ async function writePrivateFile(file: string, content: string): Promise<void> {
 }
 
 const errorText = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+/** The pid a state file's text names; undefined for text that is not a state file. */
+function recordedPid(text: string): number | undefined {
+  try {
+    const value: unknown = JSON.parse(text);
+    const pid = typeof value === "object" && value !== null && "pid" in value ? value.pid : undefined;
+    return typeof pid === "number" && Number.isInteger(pid) ? pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Remembering the port is a convenience: a failed write leaves the daemon running and is only reported. */
 async function rememberPort(portFile: string, port: number): Promise<void> {
@@ -409,6 +429,9 @@ export class RerailDaemon {
   readonly #tlsFingerprint256: string | undefined;
   #closed = false;
   #remoteSink: RemoteSinkLoop | undefined;
+  #recordCheck: NodeJS.Timeout | undefined;
+  /** The check of the state file in flight, which a close waits for before it removes the file. */
+  #recordChecked: Promise<void> = Promise.resolve();
 
   private constructor({
     server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken,
@@ -507,11 +530,44 @@ export class RerailDaemon {
   /** What a started daemon leaves behind for others: its state file, its remote sink and the port links point at. */
   async #announce(remembered: number | undefined): Promise<void> {
     const options = this.#options;
-    if (options.stateFile !== undefined) await writePrivateFile(options.stateFile, `${JSON.stringify(this.state(), null, 2)}\n`);
+    if (options.stateFile !== undefined) {
+      await writePrivateFile(options.stateFile, this.#stateText());
+      if (options.recordCheckMs !== undefined) this.#keepRecord(options.stateFile, options.recordCheckMs);
+    }
     // Internal testing: the remote sink sends nothing until a remote is added (`rerail remote add`).
     if (options.remoteSink !== false) this.#remoteSink = startRemoteSink({ home: dirname(this.#databasePath), ...(options.remoteSink ?? {}) });
     // A start that asked for any free port (`0`) takes a throwaway one; it does not replace the port links point at.
     if (options.portFile !== undefined && options.port !== 0 && this.port !== remembered) await rememberPort(options.portFile, this.port);
+  }
+
+  #stateText(): string {
+    return `${JSON.stringify(this.state(), null, 2)}\n`;
+  }
+
+  /**
+   * Every `ms`, checks that `stateFile` still names this daemon, and writes it again when it is gone or names another
+   * process. Hooks, starts and stops find the daemon only through that file, and it can go while the daemon runs: a
+   * lookup that takes a live daemon for a dead one removes it, as does the close of a daemon from an earlier build that
+   * shared the home. Nothing finds a daemon no file names, and every start beside it refuses to run. The check reads
+   * one small file and writes only when it differs.
+   */
+  #keepRecord(stateFile: string, ms: number): void {
+    this.#recordCheck = setInterval(() => {
+      this.#recordChecked = this.#recordChecked.then(async () => await this.#restoreRecord(stateFile));
+    }, ms);
+    this.#recordCheck.unref();
+  }
+
+  async #restoreRecord(stateFile: string): Promise<void> {
+    if (this.#closed) return;
+    const recorded = await readFile(stateFile, "utf8").then(recordedPid, () => undefined);
+    if (recorded === process.pid) return;
+    try {
+      await writePrivateFile(stateFile, this.#stateText());
+      process.stderr.write(`rerail daemon: ${stateFile} ${recorded === undefined ? "was gone" : `named pid ${recorded}`}; it names this daemon (pid ${process.pid}) again\n`);
+    } catch (error) {
+      process.stderr.write(`rerail daemon: could not write ${stateFile} again: ${errorText(error)}\n`);
+    }
   }
 
   state(): DaemonState {
@@ -556,6 +612,9 @@ export class RerailDaemon {
   async close(): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
+    clearInterval(this.#recordCheck);
+    // A write in flight lands before the state file is removed below, never after.
+    await this.#recordChecked;
     try {
       await this.#remoteSink?.stop();
       await closeHttpServer(this.#server);
@@ -777,9 +836,14 @@ export type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents">;
 
 export async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
   const arguments_ = parseDaemonArguments(argv);
+  // Before anything opens a store or binds a socket or a port: a Rerail home has one daemon, and a second one stops
+  // here naming the first, whatever the build. Two starts at once, or a start whose wait for a slow daemon ran out,
+  // could otherwise leave two, one holding the port and the other the one daemon.json names.
+  const home = defaultRerailHome();
+  const homeLock = await holdHomeDaemonLock(home);
   const tls = arguments_.tls === undefined ? undefined : await loadDaemonTls(arguments_.tls);
   // Before anything opens a store: the main daemon is the machine's one main instance, and a second one stops
-  // here naming the first. A checkout's daemon is a dev build with its own content store and takes no lock.
+  // here naming the first. A checkout's daemon is a dev build with its own content store and takes no such lock.
   const build = isMainRerailBuild() ? currentRerailBuild() : undefined;
   const mainInstance = build?.kind === "main" ? acquireMainInstance(build) : undefined;
   // `--dev` serves the committed page straight from `ui/`, so an edit needs only a reload.
@@ -797,12 +861,14 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
     host: arguments_.host,
     publicHosts: arguments_.publicHosts,
     ...(arguments_.port === undefined ? {} : { port: arguments_.port }),
-    portFile: join(defaultRerailHome(), DAEMON_PORT_FILE),
-    accessTokenFile: join(defaultRerailHome(), DAEMON_ACCESS_TOKEN_FILE),
+    portFile: join(home, DAEMON_PORT_FILE),
+    accessTokenFile: join(home, DAEMON_ACCESS_TOKEN_FILE),
     uiRoot,
     dev,
     ...services,
     ...(arguments_.stateFile === undefined ? {} : { stateFile: arguments_.stateFile }),
+    // Only the holder of the home keeps its state file: two daemons that each did would write over each other.
+    ...(homeLock === undefined ? {} : { recordCheckMs: RECORD_CHECK_MS }),
     ...(tls === undefined ? {} : { tls }),
   });
   const health = daemon.health();
@@ -828,6 +894,7 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
     daemon.close().then(
       () => {
         mainInstance?.release();
+        homeLock?.release();
         process.exit(0);
       },
       (error) => {

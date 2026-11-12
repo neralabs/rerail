@@ -7,6 +7,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { Readable, type Duplex } from "node:stream";
 import { connect as tlsConnect, type ConnectionOptions } from "node:tls";
 import { setTimeout as sleep } from "node:timers/promises";
+import { homeDaemonHolder, homeDaemonLockHeld } from "../engine/native/home-daemon-lock.js";
 import { loadNativeBinding } from "../engine/native/native.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { resolveExecutable } from "./npm.js";
@@ -575,9 +576,32 @@ async function startUnderLock(home: string, start: () => Promise<StartDaemonResu
   return result;
 }
 
+/**
+ * The daemon a start or a stop acts on in `home`: the one daemon.json records, else the one that holds the home
+ * (`homeDaemonLockHeld`) once it has recorded itself again. The daemon of a home writes daemon.json back within a
+ * second of finding it gone or naming another process, so it is waited for, never started beside: a second daemon
+ * would refuse to run beside it, as would every start after it, and `rerail daemon stop` would find none to stop.
+ */
+async function lookupHomeDaemon(home: string): Promise<DaemonLookup> {
+  const deadline = Date.now() + START_TIMEOUT_MS;
+  for (;;) {
+    const lookup = await lookupDaemon(home);
+    if (lookup.status !== "absent" || homeDaemonLockHeld(home) !== true) return lookup;
+    if (Date.now() >= deadline) throw new Error(unrecordedDaemonProblem(home));
+    await sleep(POLL_INTERVAL_MS);
+  }
+}
+
+/** What to tell the person when a daemon holds `home` and never records itself: which process to end. */
+function unrecordedDaemonProblem(home: string): string {
+  const pid = homeDaemonHolder(home);
+  return `A Rerail daemon${pid === undefined ? "" : ` (pid ${pid})`} holds ${home} but has not written ${DAEMON_STATE_FILE} `
+    + `within ${START_TIMEOUT_MS / 1_000}s; end that process, then run rerail daemon start.`;
+}
+
 export async function startDaemon(control: DaemonControl, options: DaemonLaunchOptions): Promise<StartDaemonResult> {
   return await startUnderLock(control.home, async () => {
-    const lookup = await lookupDaemon(control.home);
+    const lookup = await lookupHomeDaemon(control.home);
     if (lookup.status === "running") return { started: false, daemon: { state: lookup.state, health: lookup.health } };
     if (lookup.status === "unresponsive" || lookup.status === "refused") throw new Error(liveDaemonProblem(lookup));
     return await spawnDaemon(control, options);
@@ -591,7 +615,7 @@ export async function startDaemon(control: DaemonControl, options: DaemonLaunchO
  */
 export async function startDaemonForPackage(control: DaemonControl, options: DaemonLaunchOptions): Promise<StartDaemonResult> {
   return await startUnderLock(control.home, async () => {
-    const lookup = await lookupDaemon(control.home);
+    const lookup = await lookupHomeDaemon(control.home);
     if (lookup.status === "running") {
       if (await daemonUsesPackageRoot(lookup.state, control.packageRoot)) {
         return { started: false, daemon: { state: lookup.state, health: lookup.health } };
@@ -794,7 +818,7 @@ export function autostartDaemon(): void {
 export type StopDaemonResult = "stopped" | "not-running";
 
 export async function stopDaemon(home: string): Promise<StopDaemonResult> {
-  const lookup = await lookupDaemon(home);
+  const lookup = await lookupHomeDaemon(home);
   if (lookup.status === "absent") return "not-running";
   const pid = lookup.state.pid;
   process.kill(pid, "SIGTERM");
