@@ -42,21 +42,23 @@ its place, such as a junction or a named pipe. The helpers sit in `test/support/
 
 ## Child processes
 
-Every child process in `src/` starts through `src/engine/child-process.ts`, which sets `windowsHide: true`.
+Every child process in `src/` starts through `src/engine/child-process.ts`, which sets `windowsHide: true`, except in a
+process whose console has no window, such as the daemon ([The daemon's console](#the-daemons-console)).
 `npm run check:owned-builtins` fails on any other way to load `node:child_process` there.
 
 Node starts a child with `windowsHide: false` unless told otherwise. A console program (Git, node, npm, PowerShell)
 started by a process that has no console of its own gets a new console with a window, and Windows 11 opens that
 console in Windows Terminal, which takes focus. Rerail 0.1.3's daemon had no console and ran Git for every edit it
 checked, so a window opened every few seconds while an agent worked. With `windowsHide: true`, libuv starts the child
-with `SW_HIDE`, and with `CREATE_NO_WINDOW` when it inherits no stdio. The option does nothing on macOS and Linux.
+with `SW_HIDE`, and with `CREATE_NO_WINDOW` when it inherits no stdio: a console of the child's own with no window,
+for which Windows starts a console host (`conhost.exe`). The option does nothing on macOS and Linux.
 
 <details>
 <summary>What the helper and the check cover</summary>
 
 - The helper wraps `spawn`, `spawnSync`, `execFile` (its `promisify` form included) and `execFileSync`. It sets
-  `windowsHide: true` where Node reads the options, after an argument list passed as `undefined` too
-  (`withHiddenWindow`).
+  `windowsHide` where Node reads the options, after an argument list passed as `undefined` too
+  (`withHiddenWindow`): `true`, or `false` in a process that shares its console (`sharesConsole`).
 - `spawnShown` starts the one program whose window a person is meant to see: the browser opener. A Windows GUI program
   passes the show state it was started with to the window it opens, so `windowsHide` would hide the browser. It takes
   no console program.
@@ -65,7 +67,8 @@ with `SW_HIDE`, and with `CREATE_NO_WINDOW` when it inherits no stdio. The optio
   - Only the helper loads `node:child_process` as a value, by any import or export, `require`, `import()`, a
     `createRequire` result under any name, `module.require` or `process.getBuiltinModule`. A type-only use passes.
   - `test/engine/child-process.test.ts` checks that every starter the helper exports hides the window, and on Windows
-    refuses a program named without its folder.
+    refuses a program named without its folder, starts Git with no console host of its own from a process started
+    as the daemon is, and keeps `windowsHide` in a process with no console.
   - `program-path`: see [Programs by absolute path](#programs-by-absolute-path).
 - Scripts outside `src/` (build, check and test scripts) are not in the package and may load `node:child_process`
   themselves.
@@ -81,6 +84,14 @@ never starts without a console.
 `detached: true` adds `DETACHED_PROCESS` on Windows, so Rerail starts the daemon through the native `spawn_detached`
 (`native/src/process.rs`) with `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP`. A child started without `windowsHide`,
 by a library Rerail does not control for example, then shares the hidden console and opens no window either.
+
+`launchDetached` sets `RERAIL_WINDOWLESS_CONSOLE=1` in the environment of the process it starts there, and in a
+process with that variable and a console the child-process helper starts every child without `windowsHide`, so the
+children share the console. `windowsHide` would give each one a console of its own and a console host to start: on a
+Windows 11 desktop that took a short Git run from 13 ms to 19 ms. The helper keeps `windowsHide` in a process with
+no console (Windows opens `CONOUT$` only in one that has a console), where a child would otherwise get a console
+with a window, and in a process without the variable, such as the CLI in a terminal: there a child would share a
+console a person sees, and could write to it or read what they type.
 
 <details>
 <summary>The launch, its handles, and its folder</summary>

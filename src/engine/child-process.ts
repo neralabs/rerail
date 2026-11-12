@@ -1,21 +1,68 @@
 /**
- * Every child process Rerail starts goes through this module, which starts it with `windowsHide: true`.
+ * Every child process Rerail starts goes through this module, which starts it with `windowsHide: true`, unless it is
+ * to share this process's console, which has no window ({@link sharesConsole}).
  *
  * Node defaults `windowsHide` to false. On Windows, a console program (git, node, npm, PowerShell) started by a
- * process that has no console of its own, such as the daemon or the session-start autostart, then gets a new console
- * with a visible window, and Windows 11 hands each one to Windows Terminal, which takes focus. With `windowsHide: true`
- * libuv starts the child with SW_HIDE and, when no stdio is inherited, with CREATE_NO_WINDOW, so it opens no window.
- * The option does nothing on macOS and Linux. `npm run check:owned-builtins` fails on any other `node:child_process`
- * import in `src/`.
+ * process that has no console of its own then gets a new console with a visible window, and Windows 11 hands each one
+ * to Windows Terminal, which takes focus. With `windowsHide: true` libuv starts the child with SW_HIDE and, when no
+ * stdio is inherited, with CREATE_NO_WINDOW: a console of its own with no window, so it opens none, but Windows starts
+ * a console host (conhost.exe) for it. A child started without it in a process that has a console shares that console
+ * and starts no console host; the daemon's console has no window, so its Git runs that way. The option does nothing on
+ * macOS and Linux. `npm run check:owned-builtins` fails on any other `node:child_process` import in `src/`.
  *
  * On Windows it also refuses a program named by anything but an absolute path (`assertProgramPath`).
  */
 import * as childProcess from "node:child_process";
+import { closeSync, openSync } from "node:fs";
 import { win32 } from "node:path";
 import { promisify } from "node:util";
 import { windowsSystemProgram } from "./system-programs.js";
 
-const HIDDEN = { windowsHide: true } as const;
+/**
+ * Set to `1` in the environment of a process that runs in a console with no window: `launchDetached` sets it for the
+ * process it starts through the native spawn on Windows, the daemon and the `rerail daemon start` a session's
+ * autostart runs. A process this module starts inherits it, and its console has no window either: it shares this one,
+ * or has one of its own with none.
+ */
+export const WINDOWLESS_CONSOLE = "RERAIL_WINDOWLESS_CONSOLE";
+
+/**
+ * Whether this process has a console. Windows opens `CONOUT$`, the screen buffer of the process's console, only in a
+ * process that has one; in one started with DETACHED_PROCESS the open fails with EBADF.
+ */
+export function hasConsole(): boolean {
+  try {
+    closeSync(openSync(String.raw`\\.\CONOUT$`, "r+"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether this process's children share its console instead of each getting one of its own: on Windows, when `env`
+ * says the console has no window ({@link WINDOWLESS_CONSOLE}) and the process has a console (`attached`). A child that
+ * shares a console opens no window and starts no console host. Everywhere else children keep `windowsHide`. A process
+ * with no console can still carry the variable, when a program outside Rerail started it with DETACHED_PROCESS, and a
+ * child started there without `windowsHide` would get a new console with a window. In a process whose console a person
+ * sees, such as the CLI in a terminal or an agent host, a child sharing it could write there, as PowerShell draws its
+ * progress, and read what the person types.
+ */
+export function sharesConsole(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  attached: () => boolean = hasConsole,
+): boolean {
+  return platform === "win32" && env[WINDOWLESS_CONSOLE] === "1" && attached();
+}
+
+let shared: boolean | undefined;
+
+/** {@link sharesConsole} for this process, asked at its first child: a process keeps the console it started with. */
+function childrenShareConsole(): boolean {
+  shared ??= sharesConsole();
+  return shared;
+}
 
 /**
  * Where a child_process call's options are, as Node reads them: after the argument array, or after an argument list
@@ -26,15 +73,17 @@ function optionsAt(args: readonly unknown[]): 1 | 2 {
 }
 
 /**
- * `args`, the arguments of a child_process call, with `windowsHide: true` set in its options object, where Node reads
- * it ({@link optionsAt}). A callback in that place moves one along.
+ * `args`, the arguments of a child_process call, with `windowsHide` set in its options object, where Node reads it
+ * ({@link optionsAt}): true, or false when `hide` is, for a child that shares this process's console. A callback in
+ * that place moves one along.
  */
-export function withHiddenWindow(args: readonly unknown[]): unknown[] {
+export function withHiddenWindow(args: readonly unknown[], hide = true): unknown[] {
+  const window = { windowsHide: hide };
   const at = optionsAt(args);
   const options = args[at];
-  if (typeof options === "function") return [...args.slice(0, at), HIDDEN, ...args.slice(at)];
+  if (typeof options === "function") return [...args.slice(0, at), window, ...args.slice(at)];
   // Options are an object, or absent (undefined or null); spreading either keeps what the caller set.
-  return [...args.slice(0, at), { ...(options as object | null | undefined), ...HIDDEN }, ...args.slice(at + 1)];
+  return [...args.slice(0, at), { ...(options as object | null | undefined), ...window }, ...args.slice(at + 1)];
 }
 
 /**
@@ -61,7 +110,7 @@ function hidden<Name extends Starter>(name: Name): (typeof childProcess)[Name] {
   // Reflect.apply returns any; the cast restores the overloads of the function it calls.
   return ((...args: unknown[]) => {
     assertProgramPath(args);
-    return Reflect.apply(childProcess[name], undefined, withHiddenWindow(args));
+    return Reflect.apply(childProcess[name], undefined, withHiddenWindow(args, !childrenShareConsole()));
   }) as (typeof childProcess)[Name];
 }
 
@@ -80,7 +129,7 @@ export const execFile: typeof childProcess.execFile = Object.assign(hidden("exec
       else reject(Object.assign(error, { stdout, stderr }));
     };
     assertProgramPath(args);
-    Reflect.apply(childProcess.execFile, undefined, [...withHiddenWindow(args), settle]);
+    Reflect.apply(childProcess.execFile, undefined, [...withHiddenWindow(args, !childrenShareConsole()), settle]);
   }),
 });
 

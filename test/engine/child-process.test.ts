@@ -1,15 +1,21 @@
 import * as childProcess from "node:child_process";
 import { EventEmitter, once } from "node:events";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import { PassThrough } from "node:stream";
+import { setTimeout as sleep } from "node:timers/promises";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:child_process", { spy: true });
 
-import { assertProgramPath, endProcessTree, execFile, execFileSync, spawn, spawnShown, spawnSync, withHiddenWindow } from "../../src/engine/child-process.js";
+import {
+  assertProgramPath, endProcessTree, execFile, execFileSync, sharesConsole, spawn, spawnShown, spawnSync, WINDOWLESS_CONSOLE, withHiddenWindow,
+} from "../../src/engine/child-process.js";
+import { loadNativeBinding } from "../../src/engine/native/native.js";
+import { PACKAGE_ROOT } from "../../src/engine/package-root.js";
 import { processState } from "../../src/engine/process-liveness.js";
 import { gitExecutable, gitHead, readGitBlobIds, readGitBlobs, runGit } from "../../src/engine/git.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -33,6 +39,9 @@ describe("withHiddenWindow", () => {
     expect(withHiddenWindow(["git", ["status"], callback])).toEqual(["git", ["status"], { windowsHide: true }, callback]);
     expect(withHiddenWindow(["git", ["status"], undefined, callback])).toEqual(["git", ["status"], { windowsHide: true }, callback]);
     expect(withHiddenWindow(["git", ["status"], { windowsHide: false }])).toEqual(["git", ["status"], { windowsHide: true }]);
+    // A child that shares this process's console, which has no window.
+    expect(withHiddenWindow(["git", ["status"], { windowsHide: true }], false)).toEqual(["git", ["status"], { windowsHide: false }]);
+    expect(withHiddenWindow(["git", ["status"], callback], false)).toEqual(["git", ["status"], { windowsHide: false }, callback]);
   });
 
   it("keeps the options after an argument list given as undefined or null, where Node reads them", () => {
@@ -220,4 +229,139 @@ describe("Git runs with its window hidden", () => {
     expect((await readGitBlobIds(root, ["HEAD:a.txt"])).size).toBe(0);
     expect(performance.now() - started).toBeLessThan(3_000);
   }, 10_000);
+});
+
+interface ProbeAnswer {
+  attached?: boolean;
+  shares?: boolean;
+  gits: number[];
+}
+
+/**
+ * A script for `node --import tsx <probe> <answer> <done> <mode>`. It writes to `<answer>` whether this module sees a
+ * console and shares it (mode `console`), or (mode `gits`) the pids of two Git processes that wait for their input: one
+ * started through this module, one with Node's `windowsHide: true`, as this module starts a child in a process that
+ * does not share its console. It ends them, and itself, once `<done>` exists.
+ */
+async function writeConsoleProbe(folder: string): Promise<string> {
+  const source = (path: string): string => JSON.stringify(pathToFileURL(join(PACKAGE_ROOT, "src", "engine", path)).href);
+  const probe = join(folder, "console-probe.mts");
+  await writeFile(probe, `
+import { spawn as nodeSpawn } from "node:child_process";
+import { existsSync, writeFileSync } from "node:fs";
+import { setTimeout as sleep } from "node:timers/promises";
+import * as helper from ${source("child-process.ts")};
+import { gitExecutable } from ${source("git.ts")};
+const [answer, done, mode] = process.argv.slice(2);
+const gits = [];
+if (mode === "gits") {
+  // hash-object --stdin runs outside a repository and waits for the end of its input.
+  const args = ["hash-object", "--stdin"];
+  gits.push(helper.spawn(gitExecutable(), args, { stdio: ["pipe", "ignore", "ignore"] }));
+  gits.push(nodeSpawn(gitExecutable(), args, { stdio: ["pipe", "ignore", "ignore"], windowsHide: true }));
+}
+const seen = mode === "console" ? { attached: helper.hasConsole(), shares: helper.sharesConsole() } : {};
+writeFileSync(answer, JSON.stringify({ ...seen, gits: gits.map(git => git.pid) }));
+while (!existsSync(done)) await sleep(50);
+for (const git of gits) git.stdin.end();
+`);
+  return probe;
+}
+
+/** What the probe wrote to `answer`, once it has; its output says why when it never does. */
+async function probeAnswer(answer: string, output: () => string | Promise<string>): Promise<ProbeAnswer> {
+  const deadline = Date.now() + 40_000;
+  while (Date.now() < deadline) {
+    try {
+      return JSON.parse(await readFile(answer, "utf8")) as ProbeAnswer;
+    } catch {
+      // Not written yet, or not whole yet.
+      await sleep(100);
+    }
+  }
+  throw new Error(`the probe did not answer: ${await output()}`);
+}
+
+/** Waits up to 10 s for `ended`, so a probe that hangs fails its test rather than outliving it. */
+async function untilEnded(ended: () => boolean): Promise<void> {
+  const deadline = Date.now() + 10_000;
+  while (!ended() && Date.now() < deadline) await sleep(50);
+}
+
+/** How many console hosts (conhost.exe) run under each of `pids`, from one read of the process table. */
+function consoleHostsUnder(pids: readonly number[]): number[] {
+  const powershell = win32.join(process.env.SystemRoot ?? String.raw`C:\Windows`, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+  const rows = childProcess.execFileSync(powershell, [
+    "-NoProfile", "-NonInteractive", "-Command",
+    "Get-CimInstance Win32_Process | ForEach-Object { '{0} {1} {2}' -f $_.ProcessId, $_.ParentProcessId, $_.Name }",
+  ], { encoding: "utf8", windowsHide: true });
+  const processes = new Map<number, { parent: number; name: string }>();
+  for (const row of rows.split(/\r?\n/u)) {
+    const [pid, parent, ...name] = row.trim().split(" ");
+    if (pid !== undefined && pid !== "") processes.set(Number(pid), { parent: Number(parent), name: name.join(" ") });
+  }
+  return pids.map(root => {
+    const tree = new Set([root]);
+    for (let grew = true; grew;) {
+      grew = false;
+      for (const [pid, { parent }] of processes) {
+        if (tree.has(pid) || !tree.has(parent)) continue;
+        tree.add(pid);
+        grew = true;
+      }
+    }
+    return [...tree].filter(pid => processes.get(pid)?.name === "conhost.exe").length;
+  });
+}
+
+describe("a process whose console has no window", () => {
+  it("shares that console with what it starts, on Windows and while it has a console", () => {
+    const told = { [WINDOWLESS_CONSOLE]: "1" };
+    const attached = (): boolean => true;
+    expect(sharesConsole(told, "win32", attached)).toBe(true);
+    // Untold, the console may be one a person sees, as the CLI's in a terminal: each child keeps a console of its own.
+    expect(sharesConsole({}, "win32", attached)).toBe(false);
+    expect(sharesConsole({ [WINDOWLESS_CONSOLE]: "0" }, "win32", attached)).toBe(false);
+    // With no console, a child started without windowsHide would get a new one with a window.
+    expect(sharesConsole(told, "win32", () => false)).toBe(false);
+    // windowsHide does nothing on macOS and Linux.
+    expect(sharesConsole(told, "linux", attached)).toBe(false);
+    expect(sharesConsole(told, "darwin", attached)).toBe(false);
+  });
+
+  it.runIf(process.platform === "win32")("starts Git in it on Windows, where Windows then starts no console host for that Git", async () => {
+    const folder = await mkdtemp(join(tmpdir(), "rerail-console-"));
+    roots.push(folder);
+    const [probe, answer, done, log] = [await writeConsoleProbe(folder), join(folder, "answer.json"), join(folder, "done"), join(folder, "probe.log")];
+    // Started as the daemon is: the native spawn gives it a console with no window, and launchDetached says so.
+    const native = loadNativeBinding();
+    const env = Object.fromEntries(Object.entries({ ...process.env, [WINDOWLESS_CONSOLE]: "1" }).filter((entry): entry is [string, string] => entry[1] !== undefined));
+    const pid = native.spawnDetached(process.execPath, ["--import", "tsx", probe, answer, done, "gits"], PACKAGE_ROOT, env, log);
+    try {
+      const { gits } = await probeAnswer(answer, async () => await readFile(log, "utf8"));
+      // Node's windowsHide gives the second Git a console of its own, so its console host shows the count is read.
+      expect(consoleHostsUnder(gits)).toEqual([0, 1]);
+    } finally {
+      await writeFile(done, "");
+      await untilEnded(() => native.detachedExitCode?.(pid) !== null);
+    }
+  }, 60_000);
+
+  it.runIf(process.platform === "win32")("keeps windowsHide on Windows in a process that carries the variable but has no console, so no child gets a window", async () => {
+    const folder = await mkdtemp(join(tmpdir(), "rerail-console-"));
+    roots.push(folder);
+    const [probe, answer, done] = [await writeConsoleProbe(folder), join(folder, "answer.json"), join(folder, "done")];
+    // Node's detached adds DETACHED_PROCESS on Windows: a process with no console at all.
+    const child = childProcess.spawn(process.execPath, ["--import", "tsx", probe, answer, done, "console"], {
+      cwd: PACKAGE_ROOT, env: { ...process.env, [WINDOWLESS_CONSOLE]: "1" }, detached: true, stdio: ["ignore", "ignore", "pipe"], windowsHide: true,
+    });
+    let stderr = "";
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr += chunk; });
+    try {
+      expect(await probeAnswer(answer, () => stderr)).toEqual({ attached: false, shares: false, gits: [] });
+    } finally {
+      await writeFile(done, "");
+      await untilEnded(() => child.exitCode !== null || child.signalCode !== null);
+    }
+  }, 60_000);
 });

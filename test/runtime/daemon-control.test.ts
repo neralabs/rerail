@@ -712,8 +712,10 @@ describe("launching the daemon", () => {
     const daemon = launchDetached({ args: ["cli.js", "daemon", "start"], cwd: undefined, env: { A: "1", B: undefined }, logFile: log }, machine);
     expect(daemon.pid).toBe(process.pid);
     expect(daemon.exitReason()).toBe("exited");
+    // The variable tells the child its console has no window, so its own children share that console.
     expect(launched).toEqual([{
-      program: String.raw`C:\Program Files\nodejs\node.exe`, args: ["cli.js", "daemon", "start"], cwd: null, env: { A: "1" }, logFile: log,
+      program: String.raw`C:\Program Files\nodejs\node.exe`, args: ["cli.js", "daemon", "start"], cwd: null,
+      env: { A: "1", RERAIL_WINDOWLESS_CONSOLE: "1" }, logFile: log,
     }]);
   });
 

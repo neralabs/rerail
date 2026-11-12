@@ -1,0 +1,1 @@
+On Windows, the Git commands the daemon runs share the daemon's hidden console instead of each starting a console host process of its own, so each one starts sooner and the daemon starts half as many processes.

@@ -8,7 +8,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { Readable, type Duplex } from "node:stream";
 import { connect as tlsConnect, type ConnectionOptions } from "node:tls";
 import { setTimeout as sleep } from "node:timers/promises";
-import { spawn, spawnShown } from "../engine/child-process.js";
+import { spawn, spawnShown, WINDOWLESS_CONSOLE } from "../engine/child-process.js";
 import { programOnPath, windowsSystemProgram } from "../engine/system-programs.js";
 import { loadNativeBinding } from "../engine/native/native.js";
 import { forgetMainInstanceHolder, mainInstanceLockHeld } from "../engine/native/main-instance.js";
@@ -886,6 +886,8 @@ function detachedExitReason(launched: NativeProcess, kill: ProcessSignal): strin
  * for two reasons. Node's `detached: true` there adds DETACHED_PROCESS, so the child has no console, and every console
  * program it starts (Git, node, npm) without windowsHide gets a console window of its own, which Windows 11 hands to
  * Windows Terminal; the native spawn uses CREATE_NO_WINDOW instead, a console with no window that those programs share.
+ * The child's environment says so ({@link WINDOWLESS_CONSOLE}), and the child-process helper then starts them in it,
+ * not each in a console of its own, which would cost a console host start per Git run.
  * And Node's spawn hands the child every inheritable handle in this process, not just its stdio: a Rust launcher such
  * as `just` leaves its own stdout inheritable, so a daemon started below it held the caller's output pipe open and a
  * captured `rerail setup | tee` never finished. The native spawn passes only NUL stdin and the log, and keeps the
@@ -896,6 +898,7 @@ export function launchDetached(launch: DetachedLaunch, machine: DaemonMachine = 
   const program = machine.nodeExecutable();
   if (machine.platform === "win32") {
     const env = Object.fromEntries(Object.entries(launch.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
+    env[WINDOWLESS_CONSOLE] = "1";
     const launched = machine.spawnDetached({ program, args: [...launch.args], cwd: launch.cwd ?? null, env, logFile: launch.logFile });
     return { pid: launched.pid, exitReason: () => detachedExitReason(launched, machine.kill) };
   }
