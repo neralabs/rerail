@@ -175,6 +175,10 @@ export interface EvidenceCommand {
 
 export interface RuleEvidence {
   repository: { name: string; known: boolean; checkouts: number };
+  /**
+   * The last `days` days: `sessions` (and `hosts`, by coding agent) counts those active in them, which started in them
+   * or whose last event came in them; `prompts` and everything below count only what was written in them.
+   */
   window: { days: number; sessions: number; hosts: Record<string, number>; prompts: number };
   corrections: EvidenceCorrection[];
   correctionCount: number;
