@@ -916,13 +916,7 @@ mod tests {
             .source_alias("native/build.rs", &source)
             .expect("unchanged source has Git alias");
 
-        let database = std::env::temp_dir().join(format!(
-            "rerail-gix-discovery-{}-{}.sqlite",
-            std::process::id(),
-            workspace.base_files.len()
-        ));
-        let _ = std::fs::remove_file(&database);
-        let store = ContentStore::open(&database).unwrap();
+        let (_database, store) = temporary_store("discovery");
         let registration = published_workspace();
         let published = workspace
             .publish_snapshot(&store, 1, HashKey::sha256(b"grammar"), 1, &registration)
@@ -935,10 +929,6 @@ mod tests {
         );
         let source_id = workspace.store_source(&store, "native/build.rs").unwrap();
         assert_eq!(store.source_by_alias(alias).unwrap(), Some(source_id));
-        drop(store);
-        for suffix in ["", "-shm", "-wal"] {
-            let _ = std::fs::remove_file(format!("{}{suffix}", database.display()));
-        }
     }
 
     fn run_git(directory: &Path, arguments: &[&str]) {
