@@ -241,6 +241,52 @@ describe("the hook failure log", () => {
     expect(readHookFailures(rerailHome, 0).failures).toHaveLength(full + 1);
   });
 
+  // A failure line, as the source of a string, for the programs below.
+  const lineSource = (at: number, reason: string): string => JSON.stringify(`${JSON.stringify({ at, host: "codex", event: "Stop", reason })}\n`);
+  // The reasons of the failures the log keeps past the full log's.
+  const reasonsAfterTheFullLog = (rerailHome: string): string[] => readHookFailures(rerailHome, 0).failures.slice(full).map(entry => entry.reason);
+
+  // A hook opens the log to append and is held up before it writes, as a busy machine can hold a process. Meanwhile
+  // another hook moves the full log aside and begins the next part, and a hook that found the log full before that takes
+  // the new part, finds it small and gives it back. The held-up hook writes as its process ends.
+  it("keeps the failure a held-up hook writes into the log another hook took and gave back", async () => {
+    const rerailHome = await home();
+    writeFullLog(rerailHome);
+    await recordWithRename(rerailHome, 2, `rename => (from, to) => {
+      if (to.endsWith(".old") && fs.statSync(from).size > 256 * 1024) {
+        rename(from, from + ".1");
+        fs.appendFileSync(from, ${lineSource(3, "began the next part")});
+        const heldUp = fs.openSync(from, "a");
+        process.on("exit", () => fs.writeSync(heldUp, ${lineSource(4, "held up")}));
+      }
+      rename(from, to);
+    }`);
+    expect(logFiles(rerailHome)).toEqual([HOOK_FAILURES_FILE, `${HOOK_FAILURES_FILE}.1`]);
+    expect(reasonsAfterTheFullLog(rerailHome)).toEqual(["the daemon did not answer", "began the next part", "held up"]);
+  });
+
+  // As above, but another hook begins a live log before the part goes back, so its lines go back instead, and the
+  // held-up hook writes after the give-back has read them.
+  it("gives back what a held-up hook writes into the log after the give-back read it", async () => {
+    const rerailHome = await home();
+    writeFullLog(rerailHome);
+    await recordWithRename(rerailHome, 2, `rename => (from, to) => {
+      if (!to.endsWith(".old") || fs.statSync(from).size <= 256 * 1024) return rename(from, to);
+      rename(from, from + ".1");
+      fs.appendFileSync(from, ${lineSource(3, "began the next part")});
+      const heldUp = fs.openSync(from, "a");
+      rename(from, to);
+      fs.appendFileSync(from, ${lineSource(4, "began a live log")});
+      globalThis.heldUp = heldUp;
+    }`, `append => (path, data, options) => {
+      if (globalThis.heldUp !== undefined) fs.writeSync(globalThis.heldUp, ${lineSource(5, "held up")});
+      globalThis.heldUp = undefined;
+      return append(path, data, options);
+    }`);
+    expect(logFiles(rerailHome)).toEqual([HOOK_FAILURES_FILE, `${HOOK_FAILURES_FILE}.1`]);
+    expect(reasonsAfterTheFullLog(rerailHome)).toEqual(["the daemon did not answer", "began the next part", "began a live log", "held up"]);
+  });
+
   // `rerail status` can read the log while a hook moves it aside. The log holds the full log's failures until the hook
   // writes its own, then one more, so every read must count one of those two.
   it("counts every failure once when status reads the log while a hook moves it aside", async () => {
@@ -325,12 +371,14 @@ async function stopHookProcesses(hooks: readonly HookProcess[]): Promise<void> {
 /**
  * Records one failure at `at` (the clock's time when undefined) into `rerailHome` in a process of its own whose
  * `fs.renameSync` is the function that `wrapRename`, a function's source, makes of the real one: a hook stopped, or a
- * rename refused, at one step of a move. Resolves with what the process wrote to its standard output, once it has ended.
+ * rename refused, at one step of a move. `wrapAppend` does the same for `fs.appendFileSync`. Resolves with what the
+ * process wrote to its standard output, once it has ended.
  */
-async function recordWithRename(rerailHome: string, at: number | undefined, wrapRename: string): Promise<string> {
+async function recordWithRename(rerailHome: string, at: number | undefined, wrapRename: string, wrapAppend = "append => append"): Promise<string> {
   const program = `import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 fs.renameSync = (${wrapRename})(fs.renameSync);
+fs.appendFileSync = (${wrapAppend})(fs.appendFileSync);
 syncBuiltinESMExports();
 const { recordHookFailure } = await import(${JSON.stringify(sourceModule("src/harness/hook-failures.ts"))});
 recordHookFailure({ host: "claude-code", event: "PostToolUse", reason: "the daemon did not answer" }, { home: ${JSON.stringify(rerailHome)}, now: ${at}, env: {} });

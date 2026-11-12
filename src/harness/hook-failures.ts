@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, closeSync, fstatSync, openSync, readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { appendFileSync, closeSync, fstatSync, linkSync, openSync, readdirSync, readFileSync, readSync, statSync, unlinkSync, type BigIntStats } from "node:fs";
 import { join } from "node:path";
 import { renameWithRetrySync } from "../engine/file-replace.js";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
@@ -103,9 +103,9 @@ const TAKEN_LOG = new RegExp(`^${HOOK_FAILURES_FILE.replaceAll(".", "\\.")}\\.(\
  * Moves the full log at `path` to `<name>.1`, and says whether this hook did. Hooks that fail at once each find the log
  * full, and a rename straight to `.1` made the later ones fail on a log already moved, losing their own line, or move
  * the new log another hook had just begun over the full one. So a hook first takes the log under a name of its own, and
- * moves it to `.1` only when what it took is full; a hook that took the new log another hook began gives its lines
- * back. A hook stopped between those steps, as a coding agent stops a hook past its time limit, leaves the log under
- * its own name, where `readHookFailures` still counts it.
+ * moves it to `.1` only when what it took is full; a hook that took the new log another hook began gives it back. A
+ * hook stopped between those steps, as a coding agent stops a hook past its time limit, leaves the log under its own
+ * name, where `readHookFailures` still counts it.
  *
  * On Windows a rename opens the file by name, then renames what it opened: a hook that opened the log before this one
  * took it still moves it on, out from under this hook's name. So each step gives up once the file is gone from that
@@ -134,19 +134,87 @@ function moveAside(path: string, movedAside: string): boolean {
   return false;
 }
 
-/** Appends the lines of the log taken as `taken` to the live log at `path`. */
+/**
+ * Puts the log taken as `taken` back at the live name `path`. A hook that opened the log to append before this one took
+ * it writes into that file whenever it is next scheduled, so the file itself goes back, under a second name and then
+ * under that name alone. When another hook has begun a live log since the take, or the file system has no hard links,
+ * its lines go back instead.
+ */
 function giveBack(taken: string, path: string): void {
   try {
-    const lines = readFileSync(taken);
-    // Gone from its name before the lines go back, so a hook that moves it on finds nothing to give back twice.
+    linkSync(taken, path);
+  } catch (error) {
+    // Gone from its name: another hook moved it on, and gives it back or moves it aside.
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") copyBack(taken, path);
+    return;
+  }
+  try {
     unlinkSync(taken);
-    appendFileSync(path, lines, { mode: 0o600 });
+  } catch {
+    // Moved on by another hook, which moves it aside or, finding it is the live log, removes only its own name. Refused
+    // for another reason: status counts the file once under both names, and a later move removes this one.
+  }
+}
+
+/** Appends the lines of the log taken as `taken` to the live log at `path`, and removes it. */
+function copyBack(taken: string, path: string): void {
+  let descriptor: number;
+  try {
+    descriptor = openSync(taken, "r");
+  } catch {
+    return;
+  }
+  try {
+    copyLines(descriptor, taken, path);
   } catch {
     // Gone from its name: another hook moved it on, and gives it back or moves it aside. A read or removal refused for
     // any other reason leaves the lines under this hook's name, where status still counts them until a later move
     // removes the file. An append that fails after the removal loses the lines, as the same failure loses this hook's
     // own line.
+  } finally {
+    closeSync(descriptor);
   }
+}
+
+/** {@link copyBack}, through `descriptor`, the log taken as `taken` opened for reading. */
+function copyLines(descriptor: number, taken: string, path: string): void {
+  // Already the live log under a second name, as when another hook gave it back while this one moved it on: only this
+  // name goes, as the lines are there.
+  if (isLiveLog(descriptor, taken, path)) {
+    unlinkSync(taken);
+    return;
+  }
+  const lines = readFrom(descriptor, 0);
+  // Gone from its name before the lines go back, so a hook that moves it on finds nothing to give back twice.
+  unlinkSync(taken);
+  appendFileSync(path, lines, { mode: 0o600 });
+  // A hook that opened the log to append before this one took it can write after the read above: that goes back too.
+  // One that writes later still, after this read, loses its line.
+  const later = readFrom(descriptor, lines.length);
+  if (later.length > 0) appendFileSync(path, later, { mode: 0o600 });
+}
+
+/** Whether the live log at `path` is the file open as `descriptor`, the log taken as `taken`. */
+function isLiveLog(descriptor: number, taken: string, path: string): boolean {
+  try {
+    return fileId(statSync(path, { bigint: true }), path) === fileId(fstatSync(descriptor, { bigint: true }), taken);
+  } catch {
+    return false;
+  }
+}
+
+/** The bytes of the open file `descriptor` from `start` to its end. */
+function readFrom(descriptor: number, start: number): Buffer {
+  const bytes = Buffer.alloc(Math.max(0, fstatSync(descriptor).size - start));
+  return bytes.length === 0 ? bytes : bytes.subarray(0, readSync(descriptor, bytes, 0, bytes.length, start));
+}
+
+/**
+ * An id that stays the same under every name a file moves to: its device and file number. A file system with no file
+ * numbers gives 0, and the file's name `name` stands in, so each name counts as a file of its own.
+ */
+function fileId({ dev, ino }: BigIntStats, name: string): string {
+  return ino === 0n ? name : `${dev}:${ino}`;
 }
 
 /**
@@ -209,9 +277,9 @@ export function hookFailureLines({ failures, keptSince }: HookFailureLog, lastRe
 export function readHookFailures(home: string, since: number): HookFailureLog {
   // A hook moves the log from the live name to its own and on to `.1` by renames, which keep the file. Read in that
   // order, a log moved during this read is met again under a later name: the read under that name stands, so its
-  // failures count once, as the part it became. A give-back copies a taken log's lines to the live one, against that
-  // order: a read it overlaps can miss them, or, when the live log they went back to also moves to `.1` before the read
-  // gets there, count them twice.
+  // failures count once, as the part it became. A give-back puts a taken log back at the live name, or copies its lines
+  // to the live log, against that order: a read it overlaps can miss them, or, when it copied them and that live log
+  // also moves to `.1` before the read gets there, count them twice.
   const parts = new Map<string, LogPart>();
   const read = (name: string): void => {
     const part = readLogFile(join(home, name));
@@ -279,11 +347,7 @@ function takenLogs(home: string): TakenLog[] {
   });
 }
 
-/**
- * What the file at `path` holds, with an id that stays the same under every name the file moves to (its device and file
- * number); null when it is missing or unreadable. A file system with no file numbers gives 0, and each name then counts
- * as a file of its own.
- */
+/** What the file at `path` holds, with its {@link fileId}; null when it is missing or unreadable. */
 function readLogFile(path: string): { id: string; log: LogText } | null {
   let descriptor: number;
   try {
@@ -292,8 +356,7 @@ function readLogFile(path: string): { id: string; log: LogText } | null {
     return null;
   }
   try {
-    const { dev, ino } = fstatSync(descriptor, { bigint: true });
-    return { id: ino === 0n ? path : `${dev}:${ino}`, log: parseLog(readFileSync(descriptor, "utf8")) };
+    return { id: fileId(fstatSync(descriptor, { bigint: true }), path), log: parseLog(readFileSync(descriptor, "utf8")) };
   } catch {
     return null;
   } finally {
