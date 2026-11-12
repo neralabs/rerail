@@ -34,6 +34,7 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
                 rows: d.rows,
                 distinct: d.distinct,
                 bindings: d.bindings,
+                made: d.made,
             });
             true
         }
@@ -194,6 +195,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     r.push('\n');
     r.push_str(&analysis_text);
     fallbacks(&mut r, &state);
+    executors(&mut r, &state);
     hazards(&mut r, &state);
     placements(&mut r, &state);
     explain(&mut r, &state);
@@ -474,7 +476,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use super::super::{
-        behind_the_run, decision, device, fallback, one_run, planned, reset, set, span, sql_in_wave, stratum, waves,
+        behind_the_run, decision, device, executor, fallback, one_run, planned, reset, set, span, sql_in_wave, stratum, waves,
         RulePlan, StepPlan,
     };
 
@@ -506,6 +508,9 @@ mod tests {
         stratum("xsql", "SQL wave kernel", || "the native engine declined".into());
         fallback("xsql", "aggregate join (string concatenation)".into());
         drop(span(|| "stratum xsql".into()));
+        executor("xsql", "SQLite", Some("aggregate join (string concatenation)".into()), vec!["string join: string join".into()]);
+        executor("xstratum", "native CPU", None, vec!["computed term: @sql_instr in a comparison".into()]);
+        executor("xstratum", "Metal", None, Vec::new());
         // SQL before the waves is the run's beginning; inside them, from a wave's thread, a hazard; from the store's
         // writer (behind the run), none.
         sql_in_wave("run", "SELECT 1 FROM xbefore", 1_000);
@@ -532,6 +537,10 @@ mod tests {
         assert!(report.contains("a write to the store on a wave's thread") && report.contains("xwave"), "{report}");
         assert!(!report.contains("xbefore") && !report.contains("xafter") && !report.contains("xbehind"), "{report}");
         assert!(report.contains("xsql: aggregate join (string concatenation)"), "{report}");
+        // Other tests' strata may be recorded beside these (the profile is the process's): the heading alone.
+        assert!(report.contains("== Executor hazards: what kept each stratum off Metal and off the native engine ("), "{report}");
+        assert!(report.contains("native: aggregate join (string concatenation)") && report.contains("metal: computed term: @sql_instr in a comparison"), "{report}");
+        assert!(report.contains("xstratum: Metal x1, native CPU x1; metal: computed term: @sql_instr in a comparison"), "{report}");
         assert!(report.contains("rule #0003 (seed xrule)") && report.contains("loops=2 replans=1"));
         assert!(report.contains("passed over c($x)") && report.contains("7.0 rows a binding"), "the joins a step passed over: {report}");
         // Actual rows add over the loops.

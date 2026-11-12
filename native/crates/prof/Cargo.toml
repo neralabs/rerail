@@ -36,6 +36,7 @@ libc = "0.2.189"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
 [dependencies]
+rerail-accel = { path = "../../../accel" }
 base64 = "=0.22.1"
 ed25519-dalek = { version = "=2.2.0", default-features = false, features = ["std"] }
 ast-grep-core = "=0.51.0"

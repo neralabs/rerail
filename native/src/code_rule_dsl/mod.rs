@@ -942,6 +942,8 @@ pub(crate) mod logic {
         }
         #[cfg(test)]
         pub mod tests;
+        #[cfg(test)]
+        pub mod coverage;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::logic::front::{AggOp, Atom, Literal, Program, Rule, Term, Value, cmp_binds, strata};
         #[allow(unused_imports)]
@@ -2648,6 +2650,8 @@ pub(crate) fn install_languages() {
     matcher::install_number_text(&value::ecma::Numbers);
     // `@to_precision`'s formatting (ECMAScript's), for the string functions below the languages.
     logic::strings::functions::install_to_precision(value::ecma::to_precision);
+    // `@py_repr`'s formatting (Python's), likewise.
+    logic::strings::functions::install_py_repr(|s| cpython::value::str_repr(&cpython::value::PyStr::Text(s.to_owned())));
     // The canonical AST stage's producer (Python's CPython `ast`).
     residency::install_ast_producer(&residency::admission::relational::python_ast::PythonAst);
     // What ECMAScript's import targets resolve among (`resolution`).

@@ -256,7 +256,7 @@ impl Sme {
             rr_sme_worker_init();
             rr_sme_run(tiles.0.as_ptr(), tiles.0.len() as i64, next.as_ptr())
         };
-        let (ops, worker_cpu): (i64, f64) = std::thread::scope(|s| {
+        let (ops, worker_cpu): (i64, f64) = crate::exec::scoped(|s| {
             let hs: Vec<_> = (1..workers)
                 .map(|_| {
                     s.spawn(move || {

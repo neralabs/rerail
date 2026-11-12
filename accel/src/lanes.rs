@@ -51,7 +51,7 @@ pub fn sme2() -> bool {
 fn gpu() -> bool {
     #[cfg(target_os = "macos")]
     {
-        metal::Device::system_default().is_some()
+        crate::gpu::shared::get().is_some()
     }
     #[cfg(not(target_os = "macos"))]
     {

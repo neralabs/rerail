@@ -132,6 +132,7 @@ pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> R
             device.new_compute_pipeline_state_with_function(&f).map_err(|e| format!("{name}: {e}"))
         })
     })
+    .inspect_err(|e| eprintln!("rerail: the Metal pipeline {variant} {name} is not made: {e}"))
 }
 
 /// The library of a variant's source, compiled the first time (a thread that asks meanwhile waits for it).
@@ -144,7 +145,10 @@ fn library(variant: &str, source: impl FnOnce() -> String) -> Result<metal::Libr
         return Ok(l.clone());
     }
     let device = device()?;
-    let l = objc::rc::autoreleasepool(|| device.new_library_with_source(&source(), &metal::CompileOptions::new()).map_err(|e| format!("compiling {variant}: {e}")))?;
+    // A shipped kernel that does not compile is a bug: its message is said here, where callers that keep only an
+    // error's kind (`rerail_compiler::Error::BackendFailure`) would lose it.
+    let l = objc::rc::autoreleasepool(|| device.new_library_with_source(&source(), &metal::CompileOptions::new()).map_err(|e| format!("compiling {variant}: {e}")))
+        .inspect_err(|e| eprintln!("rerail: a Metal library does not compile: {e}"))?;
     *s = Some(l.clone());
     Ok(l)
 }

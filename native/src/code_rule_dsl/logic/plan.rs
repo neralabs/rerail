@@ -2792,9 +2792,10 @@ impl Model {
         delta_at: Option<usize>,
         tables: Option<&HashMap<String, (String, String)>>,
     ) -> Result<Query> {
-        // A rule whose SQL cannot be built says which rule and body it is, not only the variable.
+        // A rule whose SQL cannot be built says which rule and body it is, not only the variable: the cause first
+        // (what a one-line reader, the executor coverage ledger, keeps), the rule after.
         let query = self.sql_query(prog, head, order, delta_at, tables).map_err(|e| match e {
-            Error::Plan(m) => Error::Plan(format!("the SQL for {head} :- {}: {m}", order.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>().join(", "))),
+            Error::Plan(m) => Error::Plan(format!("{m}, in the SQL for {head} :- {}", order.iter().map(|s| format!("{s:?}")).collect::<Vec<_>>().join(", "))),
             e => e,
         })?;
         query.check(&|relation| self.declared(prog, relation)).map_err(|e| Error::Plan(format!("the SQL for {head}: {e}")))?;
@@ -4265,7 +4266,7 @@ struct Ambient {
     plans: Option<SharedPlans>,
     memo: Option<super::derived::Shared>,
     observed: keeps::SharedObserved,
-    device: bool,
+    device: placement::Binding,
     explain: bool,
 }
 
@@ -4273,19 +4274,19 @@ impl Ambient {
     fn here() -> Self {
         let explain = explaining(false);
         explaining(explain);
-        Ambient { plans: share_plans(), memo: super::derived::share(), observed: keeps::share_observed(), device: placement::device(), explain }
+        Ambient { plans: share_plans(), memo: super::derived::share(), observed: keeps::share_observed(), device: placement::binding(), explain }
     }
 
     /// While the guard lives, this thread works in the run's ambient.
     fn enter(&self) -> impl Drop {
-        struct Entered(bool, bool, Box<dyn Drop>, Box<dyn Drop>, Box<dyn Drop>);
+        struct Entered(placement::Binding, bool, Box<dyn Drop>, Box<dyn Drop>, Box<dyn Drop>);
         impl Drop for Entered {
             fn drop(&mut self) {
-                placement::set_device(self.0);
+                placement::set_binding(self.0);
                 explaining(self.1);
             }
         }
-        Entered(placement::set_device(self.device), explaining(self.explain), Box::new(enter_plans(self.plans.clone())), Box::new(super::derived::enter(self.memo.clone())), Box::new(keeps::enter_observed(self.observed.clone())))
+        Entered(placement::set_binding(self.device), explaining(self.explain), Box::new(enter_plans(self.plans.clone())), Box::new(super::derived::enter(self.memo.clone())), Box::new(keeps::enter_observed(self.observed.clone())))
     }
 }
 
@@ -5410,15 +5411,15 @@ impl<'a> Run<'a, '_> {
         }
         let started = std::time::Instant::now();
         // Where it runs (decision 0095 §7, §8). A stratum the placement puts on the device says so in its spec
-        // (`device`): its seed joins run there, in one submission, unless the device refuses one of them, which the
-        // profile then names. Only a stratum of seeds alone can go: recursion, gates and requests are forms the device
-        // lacks.
+        // (`device`): its seed joins run there, in one submission, and a recursive one's rounds to its fixpoint
+        // (`device::fixpoint`), unless the device refuses one of them, which the profile then names. Gates and
+        // requests are forms the device lacks.
         let placed = placement::place(&shape);
         // Placed there but a shape the device's run does not take: named, as a refusal.
         let not_taken = if !placed.gpu {
             None
-        } else if !probes.is_empty() {
-            Some("a recursive component")
+        } else if sql_probe.iter().any(|p| *p) {
+            Some("a recursive component with a SQL probe")
         } else if !gates.is_empty() || answering {
             Some("a component with gates or requests")
         } else if orders.is_empty() {
@@ -5654,6 +5655,14 @@ impl<'a> Run<'a, '_> {
         let device = super::native::component::device_report().or_else(|| {
             not_taken.map(|why| super::native::component::DeviceReport { refused: Some(why.to_owned()), ..Default::default() })
         });
+        #[cfg(not(target_os = "macos"))]
+        let _ = not_taken;
+        #[cfg(not(target_os = "macos"))]
+        let device: Option<()> = None;
+        #[cfg(target_os = "macos")]
+        placement::record(&stratum_key(scc), &placed, device.as_ref().map(|d| d.refused.clone()));
+        #[cfg(not(target_os = "macos"))]
+        placement::record(&stratum_key(scc), &placed, None);
         if profiling {
             let (u, s) = corpus::thread_usage();
             let work: u64 = counted.iter().flatten().map(|(a, _)| *a).sum();
@@ -7684,7 +7693,19 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         if !ran_native {
             let n=sql_kernel::component(&mut run,scc,&rules,&planned,recursive)?;
             super::profile::stratum(&skey,"SQL wave kernel",||format!("{why}; {n} waves"));
-            super::profile::fallback(&skey, run.why_class.take().unwrap_or_else(|| if native.contains("program") { "no reason given".into() } else { "the native engine is off".into() }));
+            let class = run.why_class.take().unwrap_or_else(|| if native.contains("program") { "no reason given".into() } else { "the native engine is off".into() });
+            // The device's hazards too: a stratum the native engine declines is never placed, so its shape is read here.
+            let lacking = if super::profile::on() {
+                let mut shape = placement::Shape::default();
+                for (h, order) in &planned {
+                    shape.add(order, &h.args, 0.0, recursive);
+                }
+                shape.lacking()
+            } else {
+                Vec::new()
+            };
+            placement::record_fallback(&skey, &class, &why, lacking);
+            super::profile::fallback(&skey, class);
             if recursive {outcome.iterations.insert(key,n as usize);}
             for (((h,_),rule),(x,took)) in planned.iter().zip(&rules).zip(&explained){
                 if let Some(x)=x{super::profile::planned(&skey,&format!("sql wave {}",h.rel),Some(rule_no(rule)),x,*took,0,None,None);}

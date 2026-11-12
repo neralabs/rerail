@@ -24,6 +24,8 @@ pub mod aggregate_demand {
 }
 pub mod from_tape;
 pub use rerail_rr::code_rule_dsl::logic::rr::lower;
+/// The text tests `.rr` names, and the engine's test each lowers to (the coverage gate probes each).
+pub use rerail_rr::code_rule_dsl::logic::rr::lower::TESTS as RR_TESTS;
 pub use rerail_rr::code_rule_dsl::logic::rr::print;
 // The parser and the tape's tree, the `.rr` parser crate's (`rerail_rr_syntax`).
 use rerail_rr_syntax::syntax;

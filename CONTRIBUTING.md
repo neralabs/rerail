@@ -188,7 +188,7 @@ for the dev recipes (`just rerail-dev`, `just nuke-rerail`). `rust-toolchain.tom
 installs and selects it on first use.
 
 ```sh
-npm ci
+npm ci                    # also installs the pre-commit hook (below)
 npm run build:native      # compile the native kernel into native/
 npm run build             # clean build: native kernel, runtime, host bundles, UI
 npm run check:all         # TypeScript, rustfmt + clippy, UI token and reference checks
@@ -196,6 +196,11 @@ npm run test:all          # build, unit, conformance, reference, native, and int
 npm run test:conformance  # the language conformance gate, offline
 npm run package:check     # build and dry-run the npm pack
 ```
+
+`npm ci` and `npm install` (`prepare`) install a Git pre-commit hook that runs `scripts/check/pre-commit.sh`, the
+checks of CI's "Lint and type-check" job: the Justfile's format, the release notes your branch adds against your local
+`origin/main`, `npm run check`, `check:ui-tokens` and `check:reference`. It checks the working tree, not only what is
+staged; `git commit --no-verify` skips it. A `pre-commit` hook of your own is left in place.
 
 The pack tests also need the pack test data: run `npm run fixtures:pull` ([Pack test data](#pack-test-data)).
 

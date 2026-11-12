@@ -27,7 +27,7 @@
 //! `write(dir)` writes `profile.txt` (the report: spans by CPU, statements by time with their query plans, native
 //! steps by work, the roofline, and warnings) and the tables `spans.tsv`, `sql.tsv` and `native.tsv`. Off, a span costs one load.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -138,6 +138,16 @@ pub struct State {
     /// SQL inside the waves (`sql_in_wave`, `wait_in_wave`), by (hazard class, span path, connection and statement):
     /// runs and nanoseconds.
     pub hazards: BTreeMap<(&'static str, String, String), (u64, u64)>,
+    /// What kept each stratum off the device and off the native engine (`executor`), by stratum.
+    pub blocked: BTreeMap<String, Blocked>,
+}
+
+/// A stratum's executors: where it ran, the native engine's reason to decline it, what kept it off the device.
+#[derive(Default)]
+pub struct Blocked {
+    pub ran: BTreeMap<&'static str, u64>,
+    pub native: BTreeSet<String>,
+    pub device: BTreeSet<String>,
 }
 
 /// A stratum's placements, summed over its runs (chunks, guests, the cross-file part).
@@ -187,6 +197,8 @@ pub struct GpuTotal {
     pub rows: u64,
     pub distinct: u64,
     pub bindings: u64,
+    /// Texts made on the device into heads, stored as symbols.
+    pub made: u64,
 }
 
 impl GpuTotal {
@@ -211,6 +223,7 @@ impl GpuTotal {
         self.rows += o.rows;
         self.distinct += o.distinct;
         self.bindings += o.bindings;
+        self.made += o.made;
     }
 
     /// The host's CPU on the device's work: encoding, uploads, waiting, reading back.
@@ -668,6 +681,15 @@ pub fn behind_the_run() {
     BEHIND.with(|b| b.set(true));
 }
 
+/// Runs `f` behind the run on this thread, which is then as it was: work after the command's end (its cost
+/// samples written) on a thread that otherwise is the run's.
+pub fn behind<T>(f: impl FnOnce() -> T) -> T {
+    let was = BEHIND.with(|b| b.replace(true));
+    let out = f();
+    BEHIND.with(|b| b.set(was));
+    out
+}
+
 fn in_waves() -> bool {
     on() && WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0 && !BEHIND.with(std::cell::Cell::get)
 }
@@ -903,8 +925,8 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
         ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns);
     let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, uploads {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
         ms(sum.host()), ms(sum.encode), ms(sum.upload), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
-    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device)",
-        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.resident, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct);
+    let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device); texts made {}",
+        sum.uploads, sum.upload_bytes as f64 / 1e6, sum.resident, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.made);
     let mut top = ran.clone();
     top.sort_by(|a, b| b.1.cpu.total_cmp(&a.1.cpu));
     let _ = writeln!(r, "{:>8} {:>8} {:>8} {:>8} {:>5} {:>6} {:>6} {:>10}  stratum (costliest 25 on the GPU)", "cpu ms", "host ms", "gpu ms", "est ms", "runs", "rules", "subm", "rows");
@@ -992,6 +1014,69 @@ pub fn fallbacks(r: &mut String, state: &State) {
     let _ = writeln!(r, "{:>9} {:>6} {:>14}  stratum: declined", "cpu s", "runs", "SQLite VM");
     for (cpu, vm, calls, key, class) in rows.iter().take(20) {
         let _ = writeln!(r, "{cpu:>9.3} {calls:>6} {vm:>14}  {}: {class}", short(key, 90));
+    }
+}
+
+/// Where stratum `key` ran (`"Metal"`, `"native CPU"`, `"SQLite"`), the native engine's reason to decline it
+/// (SQLite's strata), and every hazard that kept it off the device: a form it lacks with the operation that needs
+/// it, its refusal at run time, the price, the run's binding (`placement::record`, `record_fallback`).
+pub fn executor(key: &str, ran: &'static str, native: Option<String>, device: Vec<String>) {
+    if !on() {
+        return;
+    }
+    let mut state = state();
+    let b = state.blocked.entry(key.to_owned()).or_default();
+    *b.ran.entry(ran).or_default() += 1;
+    b.native.extend(native);
+    b.device.extend(device);
+}
+
+/// Every stratum's executors and hazards: by hazard, costliest first (a stratum counts under each of its hazards),
+/// then the strata. What to build next, on the device and in the native engine, by what it costs.
+pub fn executors(r: &mut String, state: &State) {
+    let cpu_of = |key: &str| -> f64 {
+        let name = format!("stratum {key}");
+        state.spans.iter().filter(|(p, _)| **p == name || p.ends_with(&format!("/{name}"))).map(|(_, t)| t.total).sum()
+    };
+    let rows: Vec<(f64, &String, &Blocked)> = state.blocked.iter().map(|(k, b)| (cpu_of(k), k, b)).collect();
+    let mut ran: BTreeMap<&str, u64> = BTreeMap::new();
+    for (_, _, b) in &rows {
+        for (e, n) in &b.ran {
+            *ran.entry(e).or_default() += n;
+        }
+    }
+    let _ = writeln!(
+        r,
+        "\n== Executor hazards: what kept each stratum off Metal and off the native engine ({} strata; runs: {})",
+        rows.len(),
+        ran.iter().map(|(e, n)| format!("{n} {e}")).collect::<Vec<_>>().join(", ")
+    );
+    if rows.is_empty() {
+        return;
+    }
+    let mut by: BTreeMap<String, (usize, f64)> = BTreeMap::new();
+    for (cpu, _, b) in &rows {
+        for h in b.native.iter().map(|n| format!("native: {n}")).chain(b.device.iter().map(|d| format!("metal: {d}"))) {
+            let e = by.entry(h).or_default();
+            e.0 += 1;
+            e.1 += cpu;
+        }
+    }
+    let mut by: Vec<_> = by.into_iter().collect();
+    by.sort_by(|a, b| b.1.1.total_cmp(&a.1.1).then(b.1.0.cmp(&a.1.0)));
+    let _ = writeln!(r, "By hazard (every one; a stratum counts under each of its hazards):");
+    let _ = writeln!(r, "{:>9} {:>7}  hazard", "cpu s", "strata");
+    for (h, (n, cpu)) in &by {
+        let _ = writeln!(r, "{cpu:>9.3} {n:>7}  {h}");
+    }
+    let mut rows = rows;
+    rows.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let _ = writeln!(r, "Strata, costliest first (ran: where its runs went):");
+    let _ = writeln!(r, "{:>9}  stratum: ran; hazards", "cpu s");
+    for (cpu, key, b) in rows.iter().take(40) {
+        let ran = b.ran.iter().map(|(e, n)| format!("{e} x{n}")).collect::<Vec<_>>().join(", ");
+        let hazards: Vec<String> = b.native.iter().map(|n| format!("native: {n}")).chain(b.device.iter().map(|d| format!("metal: {d}"))).collect();
+        let _ = writeln!(r, "{cpu:>9.3}  {}: {ran}; {}", short(key, 70), if hazards.is_empty() { "none".into() } else { hazards.join("; ") });
     }
 }
 
@@ -1456,6 +1541,10 @@ pub struct Report {
     /// Rows the heads made (before the store's set), and bindings the stages made.
     pub rows: u64,
     pub bindings: u64,
+    /// Texts made on the device (`cat` into a head) and stored as symbols.
+    pub made: u64,
+    /// The rounds a recursive component ran on the device (`fixpoint`; 0 for seeds alone).
+    pub rounds: u32,
     /// Why the device refused the stratum (at open, or at run time: a table past its budget), which then ran on the
     /// CPU; `None` when it ran here.
     pub refused: Option<String>,

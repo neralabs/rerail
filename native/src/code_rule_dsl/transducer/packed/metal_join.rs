@@ -58,6 +58,34 @@ pub(in crate::code_rule_dsl) const JOIN: u32 = 0;
 pub(in crate::code_rule_dsl) const SEMI: u32 = 1;
 pub(in crate::code_rule_dsl) const ANTI: u32 = 2;
 pub(in crate::code_rule_dsl) const FILTER: u32 = 3;
+/// An aggregate over the rows that match each binding's keys (`Stage::agg`): one row out per binding with a value.
+pub(in crate::code_rule_dsl) const AGG: u32 = 4;
+pub(in crate::code_rule_dsl) const AGG_COUNT: u32 = 0;
+pub(in crate::code_rule_dsl) const AGG_SUM: u32 = 1;
+pub(in crate::code_rule_dsl) const AGG_MIN: u32 = 2;
+pub(in crate::code_rule_dsl) const AGG_MAX: u32 = 3;
+/// A text test of a slot (`Stage::agg`: `[slot, want]`): a binding passes when its symbol's verdict bit (the right
+/// relation, a bitset of 64 bits a row, by symbol) is `want`.
+pub(in crate::code_rule_dsl) const TEXT: u32 = 5;
+/// `str_cmp` of two symbols, each a slot or a constant (keys 0 and 1), their texts the right relation's (a
+/// `DevText`): the order into `bind_slot[0]`.
+pub(in crate::code_rule_dsl) const STRCMP: u32 = 6;
+/// Whether symbol x's name is made of a's and b's (keys 0, 1, 2: a, b, x), as `agg[0]` wants (1: equal), by the
+/// form `agg[1]`.
+pub(in crate::code_rule_dsl) const CATEQ: u32 = 7;
+/// A text made of two names, a's and b's (keys 0 and 1) by the form `agg[1]`, into `bind_slot[0]` as a made value
+/// (`MADE`): the parts' symbols, not yet a symbol (the device makes none). Its counter word is set when a part is no
+/// symbol a made value holds (`MADE_PART`).
+pub(in crate::code_rule_dsl) const MAKE: u32 = 8;
+/// A made value: this bit, the form at `MADE_FORM`, a's symbol from bit 30, b's from bit 0.
+pub(in crate::code_rule_dsl) const MADE: i64 = 1 << 62;
+pub(in crate::code_rule_dsl) const MADE_FORM: u32 = 61;
+/// One past the greatest part a made value holds.
+pub(in crate::code_rule_dsl) const MADE_PART: i64 = 1 << 30;
+/// `cat`'s form: b's name alone when a's is empty, else a's, ".", b's.
+pub(in crate::code_rule_dsl) const CAT_DOT: u32 = 0;
+/// `str_concat`'s form: a's name then b's.
+pub(in crate::code_rule_dsl) const CAT_PLAIN: u32 = 1;
 
 /// A program column's or a bind's source: a candidate's column, or the binding's slot.
 pub(in crate::code_rule_dsl) const RIGHT: u32 = 0;
@@ -66,6 +94,20 @@ pub(in crate::code_rule_dsl) const LEFT: u32 = 1;
 pub(in crate::code_rule_dsl) const BIND_COLUMN: u32 = 0;
 pub(in crate::code_rule_dsl) const BIND_PARAM: u32 = 1;
 pub(in crate::code_rule_dsl) const BIND_RIGHT: u32 = 2;
+/// A bind's value computed by integer arithmetic (`Stage::arith[bind_idx]`): a row where it has no value (an
+/// overflow, a zero divisor) is dropped, as the CPU's `Func` step drops it.
+pub(in crate::code_rule_dsl) const BIND_ARITH: u32 = 3;
+/// The most arithmetic binds a stage holds.
+pub(in crate::code_rule_dsl) const MAX_ARITH: usize = 8;
+/// An arithmetic bind's operation (`Stage::arith[j][0]`), and its operands' sources (`[j][3]`: bit 0 the first is a
+/// parameter, else a program column; bit 1 the second).
+pub(in crate::code_rule_dsl) const ARITH_ADD: u32 = 0;
+pub(in crate::code_rule_dsl) const ARITH_SUB: u32 = 1;
+pub(in crate::code_rule_dsl) const ARITH_MUL: u32 = 2;
+pub(in crate::code_rule_dsl) const ARITH_DIV: u32 = 3;
+pub(in crate::code_rule_dsl) const ARITH_MOD: u32 = 4;
+pub(in crate::code_rule_dsl) const ARITH_MAX: u32 = 5;
+pub(in crate::code_rule_dsl) const ARITH_MIN: u32 = 6;
 /// A key's or a parameter's source: a slot of the binding, or a constant.
 pub(in crate::code_rule_dsl) const SLOT: u32 = 1;
 pub(in crate::code_rule_dsl) const CONST: u32 = 0;
@@ -122,10 +164,14 @@ pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) outputs: [u32; MAX_OUTPUTS],
     pub(in crate::code_rule_dsl) noutputs: u32,
     pub(in crate::code_rule_dsl) ncols: u32,
-    pub(in crate::code_rule_dsl) pad: [u32; 2],
+    /// An aggregate stage's fold (mode `AGG`): `[kind | bind << 8, column]` (`AGG_*`; the column `NONE` for none).
+    /// Its value's slot is `bind_slot[0]`; its counter word is set when a sum passes 64 bits.
+    pub(in crate::code_rule_dsl) agg: [u32; 2],
+    /// The arithmetic binds: `[operation, first operand, second operand, sources]` (`ARITH_*`).
+    pub(in crate::code_rule_dsl) arith: [[u32; 4]; MAX_ARITH],
 }
 
-const _: () = assert!(std::mem::size_of::<Stage>() == 2160 && std::mem::size_of::<Stage>() % 16 == 0);
+const _: () = assert!(std::mem::size_of::<Stage>() == 2288 && std::mem::size_of::<Stage>() % 16 == 0);
 
 impl Default for Stage {
     fn default() -> Self {
@@ -158,7 +204,8 @@ struct Stage {
     uint par_kind[16]; uint par_slot[16]; uint par_doc[16];
     uint bind_slot[16]; uint bind_kind[16]; uint bind_idx[16];
     uint passed[16]; uint outputs[16];
-    uint noutputs; uint ncols; uint pad[2];
+    uint noutputs; uint ncols; uint agg[2];
+    uint4 arith[8];
 };
 
 constant uint NONE = 0xffffffffu;
@@ -181,6 +228,50 @@ static inline long colval(constant Stage& s, uint k, device const long* L, uint 
 static inline long parval(constant Stage& s, uint k, device const long* L, uint t) {
     long v = s.par_kind[k] == 0 ? s.par_const[k] : L[ulong(s.par_slot[k]) * s.cap_in + t];
     return s.par_doc[k] != 0 ? (v >> 32) : v;
+}
+
+// Arithmetic bind j's value for one row, as the CPU's checked arithmetic gives it: false where it has none (an
+// overflow, a zero divisor). Wrapping operations on ulong, then the overflow tested, so nothing is undefined.
+static inline bool arith(constant Stage& s, uint j, device const long* L, uint t, device const long* R, uint r, thread long& out) {
+    uint4 a = s.arith[j];
+    long x = (a.w & 1u) != 0 ? parval(s, a.y, L, t) : colval(s, a.y, L, t, R, r);
+    long y = (a.w & 2u) != 0 ? parval(s, a.z, L, t) : colval(s, a.z, L, t, R, r);
+    ulong ux = as_type<ulong>(x), uy = as_type<ulong>(y);
+    bool min_by_neg = x == long(0x8000000000000000ul) && y == -1;
+    bool ok = true;
+    long v = 0;
+    if (a.x == 0u) {
+        v = as_type<long>(ux + uy);
+        ok = ((x ^ v) & (y ^ v)) >= 0;
+    } else if (a.x == 1u) {
+        v = as_type<long>(ux - uy);
+        ok = ((x ^ y) & (x ^ v)) >= 0;
+    } else if (a.x == 2u) {
+        v = as_type<long>(ux * uy);
+        ok = mulhi(x, y) == (v >> 63);
+    } else if (a.x == 3u) {
+        ok = y != 0 && !min_by_neg;
+        v = ok ? x / y : 0;
+    } else if (a.x == 4u) {
+        ok = y != 0 && !min_by_neg;
+        v = ok ? x % y : 0;
+    } else if (a.x == 5u) {
+        v = max(x, y);
+    } else {
+        v = min(x, y);
+    }
+    out = v;
+    return ok;
+}
+
+// Whether every arithmetic bind of the stage has a value for this row.
+static inline bool defined(constant Stage& s, device const long* L, uint t, device const long* R, uint r) {
+    for (uint b = 0; b < s.nbinds && b < 16; b++) {
+        if (s.bind_kind[b] != 3) continue;
+        long v = 0;
+        if (!arith(s, s.bind_idx[b], L, t, R, r, v)) return false;
+    }
+    return true;
 }
 
 // The row program's operations for one row: bit x of the result is operation x's value.
@@ -241,6 +332,115 @@ static inline bool matches(constant Stage& s, device const long* R, uint r, thre
     return true;
 }
 
+// An aggregate's value over the binding's matching rows (mode 4, `Stage::agg`): 0 with `v`, 1 when it has none (a min
+// or max of no rows, or a tested value that differs), 2 when a sum passes 64 bits.
+static inline uint aggregate(constant Stage& s, device const long* L, uint t, device const long* R, device const uint* perm,
+                             uint lo, uint hi, thread const long* kv, thread long& v) {
+    bool keyed = s.nkeys > 0;
+    uint kind = s.agg[0] & 0xff;
+    long cnt = 0, sum = 0, mn = 0, mx = 0;
+    bool any = false, over = false;
+    for (uint q = lo; q < hi; q++) {
+        uint r = keyed ? perm[q] : q;
+        if (!matches(s, R, r, kv)) continue;
+        cnt++;
+        if (s.agg[1] == NONE) continue;
+        long x = R[ulong(s.agg[1]) * s.nr + r];
+        long y = as_type<long>(as_type<ulong>(sum) + as_type<ulong>(x));
+        if ((sum < 0) == (x < 0) && (y < 0) != (sum < 0)) over = true;
+        sum = y;
+        if (!any || x < mn) mn = x;
+        if (!any || x > mx) mx = x;
+        any = true;
+    }
+    if (kind == 1 && over) return 2;
+    if ((kind == 2 || kind == 3) && !any) return 1;
+    v = kind == 0 ? cnt : (kind == 1 ? sum : (kind == 2 ? mn : mx));
+    if (((s.agg[0] >> 8) & 1) == 0 && L[ulong(s.bind_slot[0]) * s.cap_in + t] != v) return 1;
+    return 0;
+}
+
+// A text buffer (`DevText`): its terms' count, their symbols ascending, each one's offset into its bytes, the bytes.
+static inline uint text_count(device const long* T) { return uint(T[0]); }
+static inline device const uint* text_offs(device const long* T) { return (device const uint*)(T + 1 + T[0]); }
+static inline device const uchar* text_chars(device const long* T) { return (device const uchar*)(text_offs(T) + T[0] + 1); }
+
+// Symbol `id`'s text in T (none: the empty text, as a name the store does not hold).
+static inline void text_find(device const long* T, long id, thread uint& off, thread uint& len) {
+    uint n = text_count(T), a = 0, b = n;
+    for (uint k = 0; k < 40 && a < b; k++) { uint m = (a + b) / 2; if (T[1 + m] < id) a = m + 1; else b = m; }
+    if (a < n && T[1 + a] == id) { device const uint* o = text_offs(T); off = o[a]; len = o[a + 1] - o[a]; }
+    else { off = 0; len = 0; }
+}
+
+// Eight bytes of a text from `at`, big-endian, zero past `end`: a window compared at once.
+static inline ulong text_word(device const uchar* p, uint at, uint end) {
+    ulong w = 0;
+    for (uint k = 0; k < 8; k++) w = (w << 8) | ((at + k) < end ? ulong(p[at + k]) : 0ul);
+    return w;
+}
+
+// The order of two texts by their bytes (-1, 0, 1), as Rust's `str::cmp`: a word of eight bytes at a time over the
+// shorter's length, then the lengths.
+static inline long text_cmp(device const uchar* p, uint a, uint alen, uint b, uint blen) {
+    uint m = min(alen, blen);
+    for (uint at = 0; at < m; at += 8) {
+        ulong x = text_word(p + a, at, m), y = text_word(p + b, at, m);
+        if (x != y) return x < y ? -1 : 1;
+    }
+    return alen == blen ? 0 : (alen < blen ? -1 : 1);
+}
+
+// `str_cmp` of two symbols (mode 6): each a slot or a constant (`key_kind`, `key_slot`, `key_const` 0 and 1), their
+// texts in R; the order into `bind_slot[0]`.
+static inline long strcmp_value(constant Stage& s, device const long* L, uint t, device const long* R) {
+    long v[2];
+    for (uint k = 0; k < 2; k++) v[k] = s.key_kind[k] == 1 ? L[ulong(s.key_slot[k]) * s.cap_in + t] : s.key_const[k];
+    uint ao, al, bo, bl;
+    text_find(R, v[0], ao, al);
+    text_find(R, v[1], bo, bl);
+    return text_cmp(text_chars(R), ao, al, bo, bl);
+}
+
+// Whether `len` bytes at p+a are those at p+b: a word of eight at a time.
+static inline bool text_same(device const uchar* p, uint a, uint b, uint len) {
+    for (uint at = 0; at < len; at += 8) if (text_word(p + a, at, len) != text_word(p + b, at, len)) return false;
+    return true;
+}
+
+// Mode 7: whether x's name is made of a's and b's, as agg[0] wants: by agg[1] 0 (`cat`), b's alone when a's is empty,
+// else a's, ".", b's; by 1 (`str_concat`), a's then b's.
+static inline bool cateq_pass(constant Stage& s, device const long* L, uint t, device const long* R) {
+    long v[3];
+    for (uint k = 0; k < 3; k++) v[k] = s.key_kind[k] == 1 ? L[ulong(s.key_slot[k]) * s.cap_in + t] : s.key_const[k];
+    uint ao, al, bo, bl, xo, xl;
+    text_find(R, v[0], ao, al);
+    text_find(R, v[1], bo, bl);
+    text_find(R, v[2], xo, xl);
+    device const uchar* p = text_chars(R);
+    bool eq;
+    if (s.agg[1] == 1) eq = xl == al + bl && text_same(p, xo, ao, al) && text_same(p, xo + al, bo, bl);
+    else if (al == 0) eq = xl == bl && text_same(p, xo, bo, bl);
+    else eq = xl == al + 1 + bl && p[xo + al] == uchar('.') && text_same(p, xo, ao, al) && text_same(p, xo + al + 1, bo, bl);
+    return eq == (s.agg[0] != 0);
+}
+
+// Mode 8: the made value of a's and b's symbols by form agg[1] (`MADE`); -1 when a part is none a made value holds.
+static inline long make_value(constant Stage& s, device const long* L, uint t) {
+    long v[2];
+    for (uint k = 0; k < 2; k++) v[k] = s.key_kind[k] == 1 ? L[ulong(s.key_slot[k]) * s.cap_in + t] : s.key_const[k];
+    const long part = 1l << 30;
+    if (v[0] < 0 || v[0] >= part || v[1] < 0 || v[1] >= part) return -1;
+    return (1l << 62) | (long(s.agg[1] & 1) << 61) | (v[0] << 30) | v[1];
+}
+
+// Whether binding t's symbol in slot agg[0] has its verdict bit (mode 5), as agg[1] wants.
+static inline bool text_pass(constant Stage& s, device const long* L, uint t, device const long* R) {
+    long v = L[ulong(s.agg[0]) * s.cap_in + t];
+    bool bit = v >= 0 && ulong(v >> 6) < ulong(s.nr) && ((R[v >> 6] >> (v & 63)) & 1) != 0;
+    return bit == (s.agg[1] != 0);
+}
+
 kernel void stage_count(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]], device const uint* perm [[buffer(2)]],
                         device const uint* starts [[buffer(3)]], device const uint* rkeys [[buffer(4)]], device const uint* nruns [[buffer(5)]],
                         device const uint* totals [[buffer(6)]], device atomic_uint* counters [[buffer(7)]], device uint* counts [[buffer(8)]],
@@ -250,7 +450,22 @@ kernel void stage_count(device const long* L [[buffer(0)]], device const long* R
     if (t >= n) { counts[t] = 0; return; }
     long kv[8];
     uint lo, hi;
+    if (s.mode == 5) { counts[t] = uint(text_pass(s, L, t, R)); return; }
+    if (s.mode == 6) { counts[t] = 1; return; }
+    if (s.mode == 7) { counts[t] = uint(cateq_pass(s, L, t, R)); return; }
+    if (s.mode == 8) {
+        if (make_value(s, L, t) < 0 && s.counter != NONE) atomic_store_explicit(&counters[s.counter], 1u, memory_order_relaxed);
+        counts[t] = 1;
+        return;
+    }
     candidates(s, L, t, starts, rkeys, nruns, kv, lo, hi);
+    if (s.mode == 4) {
+        long v = 0;
+        uint st = aggregate(s, L, t, R, perm, lo, hi, kv, v);
+        if (st == 2 && s.counter != NONE) atomic_store_explicit(&counters[s.counter], 1u, memory_order_relaxed);
+        counts[t] = uint(st == 0);
+        return;
+    }
     bool keyed = s.mode != 3 && s.nkeys > 0;
     bool exists = s.mode == 1 || s.mode == 2;
     uint c = 0, p0 = 0;
@@ -262,9 +477,10 @@ kernel void stage_count(device const long* L [[buffer(0)]], device const long* R
         if (s.mode != 3 && !matches(s, R, r, kv)) continue;
         if (exists) { found = true; break; }
         p0++;
+        bool ok = defined(s, L, t, R, r);
         ulong v = s.nops > 0 ? eval(s, L, t, R, r) : 0;
-        for (uint m = 0; m < s.npassed && m < 16; m++) q_counts[m] += s.passed[m] == NONE ? 1u : uint(out_bit(s, v, s.passed[m]));
-        if (s.last != NONE && !out_bit(s, v, s.last)) continue;
+        for (uint m = 0; m < s.npassed && m < 16; m++) q_counts[m] += s.passed[m] == NONE ? uint(ok) : uint(ok && out_bit(s, v, s.passed[m]));
+        if (!ok || (s.last != NONE && !out_bit(s, v, s.last))) continue;
         c++;
     }
     if (exists) c = uint(found != (s.mode == 2));
@@ -279,7 +495,9 @@ static inline void write_row(constant Stage& s, device const long* L, uint t, de
     for (uint k = 0; k < s.nslots; k++) O[ulong(k) * s.cap_out + at] = L[ulong(k) * s.cap_in + t];
     for (uint b = 0; b < s.nbinds && b < 16; b++) {
         uint kind = s.bind_kind[b];
-        long v = kind == 0 ? colval(s, s.bind_idx[b], L, t, R, r) : (kind == 1 ? parval(s, s.bind_idx[b], L, t) : R[ulong(s.bind_idx[b]) * s.nr + r]);
+        long v = 0;
+        if (kind == 3) arith(s, s.bind_idx[b], L, t, R, r, v);
+        else v = kind == 0 ? colval(s, s.bind_idx[b], L, t, R, r) : (kind == 1 ? parval(s, s.bind_idx[b], L, t) : R[ulong(s.bind_idx[b]) * s.nr + r]);
         O[ulong(s.bind_slot[b]) * s.cap_out + at] = v;
     }
 }
@@ -295,6 +513,31 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
     if (at >= s.cap_out) return;
     long kv[8];
     uint lo, hi;
+    if (s.mode == 5 || s.mode == 7) {
+        if (offsets[t + 1] > at) write_row(s, L, t, R, 0, O, at);
+        return;
+    }
+    if (s.mode == 6) {
+        if (offsets[t + 1] <= at) return;
+        write_row(s, L, t, R, 0, O, at);
+        O[ulong(s.bind_slot[0]) * s.cap_out + at] = strcmp_value(s, L, t, R);
+        return;
+    }
+    if (s.mode == 8) {
+        if (offsets[t + 1] <= at) return;
+        write_row(s, L, t, R, 0, O, at);
+        O[ulong(s.bind_slot[0]) * s.cap_out + at] = make_value(s, L, t);
+        return;
+    }
+    if (s.mode == 4) {
+        if (offsets[t + 1] <= at) return;
+        candidates(s, L, t, starts, rkeys, nruns, kv, lo, hi);
+        long v = 0;
+        aggregate(s, L, t, R, perm, lo, hi, kv, v);
+        write_row(s, L, t, R, 0, O, at);
+        if ((s.agg[0] >> 8) & 1) O[ulong(s.bind_slot[0]) * s.cap_out + at] = v;
+        return;
+    }
     if (s.mode == 1 || s.mode == 2) {
         // The count pass decided: a row out is the binding as it is.
         if (offsets[t + 1] > at) write_row(s, L, t, R, 0, O, at);
@@ -305,12 +548,108 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
     for (uint q = lo; q < hi && at < s.cap_out; q++) {
         uint r = keyed ? perm[q] : q;
         if (s.mode != 3 && !matches(s, R, r, kv)) continue;
+        if (!defined(s, L, t, R, r)) continue;
         if (s.last != NONE) {
             ulong v = eval(s, L, t, R, r);
             if (!out_bit(s, v, s.last)) continue;
         }
         write_row(s, L, t, R, r, O, at);
         at++;
+    }
+}
+
+// The texts of made values (mode 8's), one a thread: V's n values, each one's bytes into its `width` bytes of `out`
+// (its length into `lens`), from the parts' names in T. The host stores them as symbols; it makes no text.
+kernel void text_make(device const long* V [[buffer(0)]], device const long* T [[buffer(1)]], device uint* lens [[buffer(2)]],
+                      device uchar* out [[buffer(3)]], constant uint2& p [[buffer(4)]], uint t [[thread_position_in_grid]]) {
+    if (t >= p.x) return;
+    long v = V[t];
+    uint form = uint((v >> 61) & 1);
+    long a = (v >> 30) & ((1l << 30) - 1), b = v & ((1l << 30) - 1);
+    uint ao, al, bo, bl;
+    text_find(T, a, ao, al);
+    text_find(T, b, bo, bl);
+    device const uchar* c = text_chars(T);
+    device uchar* o = out + ulong(t) * p.y;
+    bool dot = form == 0 && al > 0;
+    uint n = al + (dot ? 1 : 0) + bl;
+    if (n > p.y) { lens[t] = 0xffffffffu; return; }
+    uint at = 0;
+    for (uint k = 0; k < al; k++) o[at++] = c[ao + k];
+    if (dot) o[at++] = uchar('.');
+    for (uint k = 0; k < bl; k++) o[at++] = c[bo + k];
+    lens[t] = n;
+}
+
+// A text test's verdicts, once per distinct term (decision 0038's chunked matching): a SIMD group per term walks it
+// 32 bytes at a time, each lane one byte's transition function (a row of the table), the group composing them (a
+// reduction of compositions, its scratch in device memory: 32 rows of `states` bytes a group); the chunk's function
+// takes the state on. A term whose final state, after the end of text, accepts sets its symbol's bit. The groups are
+// persistent: `groups` of them over the terms.
+struct TextParams { uint nterms; uint states; uint classes; uint start; uint groups; uint pad0; uint pad1; uint pad2; };
+
+kernel void text_verdicts(device const long* T [[buffer(0)]], device const uchar* table [[buffer(1)]], device atomic_uint* bits [[buffer(2)]],
+                          device uchar* scratch [[buffer(3)]], constant TextParams& p [[buffer(4)]], uint t [[thread_position_in_grid]],
+                          uint lane [[thread_index_in_simdgroup]]) {
+    device const long* ids = T + 1;
+    device const uint* offs = text_offs(T);
+    device const uchar* bytes = text_chars(T);
+    uint sg = t / 32;
+    if (sg >= p.groups) return;
+    uint S = p.states, C = p.classes;
+    device const uchar* cls = table;
+    device const uchar* next = table + 256;
+    device const uchar* eoi = next + S * C;
+    device const uchar* acc = eoi + S;
+    device uchar* f = scratch + ulong(sg) * 32 * S;
+    for (uint term = sg; term < p.nterms; term += p.groups) {
+        uint lo = offs[term], hi = offs[term + 1];
+        uint state = p.start;
+        for (uint base = lo; base < hi; base += 32) {
+            uint at = base + lane;
+            bool has = at < hi;
+            uint c = has ? uint(cls[bytes[at]]) : 0;
+            for (uint q = 0; q < S; q++) f[lane * S + q] = has ? next[q * C + c] : uchar(q);
+            simdgroup_barrier(mem_flags::mem_device);
+            for (uint d = 1; d < 32; d <<= 1) {
+                uint tasks = (32 / (2 * d)) * S;
+                // The earlier block's function, then the later's, into the earlier's row; then copied to the later's.
+                for (uint k = lane; k < tasks; k += 32) {
+                    uint right = (k / S) * 2 * d + 2 * d - 1, left = right - d, q = k % S;
+                    f[left * S + q] = f[right * S + f[left * S + q]];
+                }
+                simdgroup_barrier(mem_flags::mem_device);
+                for (uint k = lane; k < tasks; k += 32) {
+                    uint right = (k / S) * 2 * d + 2 * d - 1, left = right - d, q = k % S;
+                    f[right * S + q] = f[left * S + q];
+                }
+                simdgroup_barrier(mem_flags::mem_device);
+            }
+            state = f[31 * S + state];
+            simdgroup_barrier(mem_flags::mem_device);
+        }
+        state = eoi[state];
+        if (lane == 0 && acc[state] != 0) {
+            long id = ids[term];
+            if (id >= 0) atomic_fetch_or_explicit(&bits[ulong(id) >> 5], 1u << uint(id & 31), memory_order_relaxed);
+        }
+    }
+}
+
+// Rows copied between column-major buffers (a binding table, a relation): `n` rows of `ncols` columns, column k of
+// the destination from source column `src[k]` (or the constant `konst[k]` where it is NONE), at `dst_off`.
+struct Copy {
+    long konst[16];
+    uint src[16];
+    uint n, ncols, src_stride, dst_stride, dst_off, pad0, pad1, pad2;
+};
+
+kernel void rows_copy(device const long* S [[buffer(0)]], device long* D [[buffer(1)]], constant Copy& c [[buffer(2)]],
+                      uint t [[thread_position_in_grid]]) {
+    if (t >= c.n) return;
+    for (uint k = 0; k < c.ncols && k < 16; k++) {
+        long v = c.src[k] == NONE ? c.konst[k] : S[ulong(c.src[k]) * c.src_stride + t];
+        D[ulong(k) * c.dst_stride + c.dst_off + t] = v;
     }
 }
 
@@ -435,7 +774,7 @@ kernel void rel_hash(device const long* R [[buffer(0)]], device uint* out [[buff
 "#;
 
 /// Whether this machine has the Metal device the stages run on.
-pub(in crate::code_rule_dsl) fn available() -> bool {
+pub fn available() -> bool {
     rerail_accel::gpu::join::device().is_ok()
 }
 
@@ -471,7 +810,123 @@ impl DevRel {
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
         8 * self.cols * self.rows
     }
+
+    /// A relation of `cols` columns and `rows` rows that the device fills (`Batch::copy_rows`).
+    pub(in crate::code_rule_dsl) fn empty(cols: usize, rows: usize) -> Result<DevRel, Error> {
+        Ok(DevRel { buffer: Held::new((8 * cols * rows).max(8))?, rows, cols })
+    }
+
+    /// Column `c`'s values, once the command buffer that wrote them completed.
+    pub(in crate::code_rule_dsl) fn column(&self, c: usize) -> &[i64] {
+        // SAFETY: the buffer holds `rows` values per column; the writer completed.
+        unsafe { std::slice::from_raw_parts(self.buffer.buffer.contents().cast::<i64>().add(c * self.rows), self.rows) }
+    }
 }
+
+/// Distinct symbols and their names' bytes on the device, in one buffer: their count, the symbols ascending (a
+/// symbol's text is found by search), each one's offset into the bytes, the bytes. The terms a text test's verdicts
+/// are made for, and the texts `str_cmp` orders.
+pub(in crate::code_rule_dsl) struct DevText {
+    packed: std::rc::Rc<DevRel>,
+    pub(in crate::code_rule_dsl) terms: usize,
+    /// One past the greatest symbol: the verdicts' bits.
+    pub(in crate::code_rule_dsl) span: usize,
+    /// The longest name's bytes.
+    pub(in crate::code_rule_dsl) longest: usize,
+}
+
+impl DevText {
+    /// The distinct symbols `ids` (in any order), each named by `name` (copied to the device: the host evaluates
+    /// nothing).
+    pub(in crate::code_rule_dsl) fn upload(ids: &[i64], mut name: impl FnMut(i64, &mut Vec<u8>)) -> Result<DevText, Error> {
+        let mut ids = ids.to_vec();
+        ids.sort_unstable();
+        ids.dedup();
+        let n = ids.len();
+        let mut chars = Vec::new();
+        let mut offs = Vec::with_capacity(n + 1);
+        offs.push(0u32);
+        for &id in &ids {
+            name(id, &mut chars);
+            offs.push(u32::try_from(chars.len()).map_err(|_| Error::BackendCapacity)?);
+        }
+        let mut out: Vec<u8> = Vec::with_capacity(8 * (n + 1) + 4 * (n + 1) + chars.len() + 1);
+        out.extend_from_slice(&(n as i64).to_le_bytes());
+        for id in &ids {
+            out.extend_from_slice(&id.to_le_bytes());
+        }
+        for o in &offs {
+            out.extend_from_slice(&o.to_le_bytes());
+        }
+        out.extend_from_slice(&chars);
+        out.push(0);
+        let span = ids.last().map_or(0, |&m| m.max(0) as usize + 1);
+        let rows = out.len().div_ceil(8);
+        let held = Held::of(out.into_iter()).map_err(|_| Error::BackendCapacity)?;
+        let longest = offs.windows(2).map(|w| (w[1] - w[0]) as usize).max().unwrap_or(0);
+        Ok(DevText { packed: std::rc::Rc::new(DevRel { buffer: held, rows, cols: 1 }), terms: n, span, longest })
+    }
+
+    pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
+        self.packed.buffer.buffer.length() as usize
+    }
+
+    /// The text as a stage's right relation (`STRCMP` reads it).
+    pub(in crate::code_rule_dsl) fn rel(&self) -> std::rc::Rc<DevRel> {
+        self.packed.clone()
+    }
+}
+
+/// A text test's automaton on the device (`text::table`).
+pub(in crate::code_rule_dsl) struct DevTable {
+    table: Held,
+    states: u32,
+    classes: u32,
+    start: u32,
+}
+
+impl DevTable {
+    pub(in crate::code_rule_dsl) fn upload(t: &crate::code_rule_dsl::text::table::Table) -> Result<DevTable, Error> {
+        Ok(DevTable { table: Held::of(t.bytes.iter().copied()).map_err(|_| Error::BackendCapacity)?, states: t.states, classes: t.classes, start: t.start })
+    }
+}
+
+/// Rows a copy reads or writes: a binding table's (its stride its capacity) or a relation's (its rows).
+pub(in crate::code_rule_dsl) enum Rows<'a> {
+    Table(&'a Table),
+    Rel(&'a DevRel),
+}
+
+impl Rows<'_> {
+    fn of(&self) -> (&BufferRef, usize) {
+        match self {
+            Rows::Table(t) => (&t.buffer.buffer, t.cap),
+            Rows::Rel(r) => (&r.buffer.buffer, r.rows.max(1)),
+        }
+    }
+}
+
+/// A destination column of a copy: a source column, or a constant.
+#[derive(Clone, Copy)]
+pub(in crate::code_rule_dsl) enum Col {
+    From(usize),
+    Const(i64),
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CopyParams {
+    konst: [i64; 16],
+    src: [u32; 16],
+    n: u32,
+    ncols: u32,
+    src_stride: u32,
+    dst_stride: u32,
+    dst_off: u32,
+    pad: [u32; 3],
+}
+
+const _: () = assert!(std::mem::size_of::<CopyParams>() == 224);
 
 /// A relation sorted on the device by the hash of key columns: the sorted order (`perm`), the runs of equal hashes
 /// and their count, and the hash's mask.
@@ -736,6 +1191,71 @@ impl Batch {
         scan.encode(pass, &counts)?;
         pass.run_bytes(&scatter, &[t, &totals.buffer.buffer, &counts, &out.buffer.buffer], bytes, groups(n));
         self.keep.push(p);
+        Ok(())
+    }
+
+    /// `n` rows of `src` into `dst` at row `dst_off`, column k of `dst` as `cols[k]` says (a column of `src`, or a
+    /// constant): a head's rows into its union, a union's new rows onto its relation.
+    pub(in crate::code_rule_dsl) fn copy_rows(&mut self, src: Rows<'_>, n: usize, cols: &[Col], dst: Rows<'_>, dst_off: usize) -> Result<(), Error> {
+        if n == 0 {
+            return Ok(());
+        }
+        assert!(cols.len() <= 16);
+        let copy = pipeline("join", "rows_copy", || SOURCE.to_owned())?;
+        let (s, src_stride) = src.of();
+        let (d, dst_stride) = dst.of();
+        assert!(dst_off + n <= dst_stride, "a copy of {n} rows at {dst_off} into a destination of {dst_stride}");
+        let mut p = CopyParams { konst: [0; 16], src: [NONE; 16], n: n as u32, ncols: cols.len() as u32, src_stride: src_stride as u32, dst_stride: dst_stride as u32, dst_off: dst_off as u32, pad: [0; 3] };
+        for (k, c) in cols.iter().enumerate() {
+            match *c {
+                Col::From(c) => p.src[k] = c as u32,
+                Col::Const(v) => p.konst[k] = v,
+            }
+        }
+        // SAFETY: `CopyParams` is `repr(C)` integers with no padding (its size asserted above).
+        let bytes = unsafe { std::slice::from_raw_parts((&p as *const CopyParams).cast::<u8>(), std::mem::size_of::<CopyParams>()) };
+        let (s, d) = (s.to_owned(), d.to_owned());
+        let pass = self.pass(1)?;
+        pass.run_bytes(&copy, &[&s, &d], bytes, groups(n));
+        Ok(())
+    }
+
+    /// Keeps `table` until the batch's work completes (its verdicts read it).
+    pub(in crate::code_rule_dsl) fn hold_table(&mut self, table: DevTable) {
+        self.keep.push(table.table);
+    }
+
+    /// The verdicts of `table` for `text`'s terms, as bits by symbol into `bits` (zeroed, at least `text.span` bits).
+    pub(in crate::code_rule_dsl) fn verdicts(&mut self, text: &DevText, table: &DevTable, bits: &DevRel) -> Result<(), Error> {
+        if text.terms == 0 {
+            return Ok(());
+        }
+        assert!(bits.rows * 64 >= text.span);
+        let kernel = pipeline("join", "text_verdicts", || SOURCE.to_owned())?;
+        let groups = text.terms.min(1024);
+        let scratch = Held::new(groups * 32 * table.states as usize)?;
+        let p: [u32; 8] = [text.terms as u32, table.states, table.classes, table.start, groups as u32, 0, 0, 0];
+        // SAFETY: plain integers.
+        let bytes = unsafe { std::slice::from_raw_parts(p.as_ptr().cast::<u8>(), 32) };
+        let pass = self.pass(1)?;
+        pass.run_bytes(&kernel, &[&text.packed.buffer.buffer, &table.table.buffer, &bits.buffer.buffer, &scratch.buffer], bytes, (groups * 32).div_ceil(256));
+        self.keep.push(scratch);
+        Ok(())
+    }
+
+    /// The texts of made values `vals` (`MAKE`'s), their parts' names in `text`: each one's length into `lens` (one
+    /// a row) and its bytes into `width` bytes of `out`.
+    pub(in crate::code_rule_dsl) fn make_texts(&mut self, vals: &DevRel, text: &DevText, width: usize, lens: &DevRel, out: &DevRel) -> Result<(), Error> {
+        if vals.rows == 0 {
+            return Ok(());
+        }
+        assert!(lens.rows * 2 >= vals.rows && out.rows * 8 >= vals.rows * width);
+        let kernel = pipeline("join", "text_make", || SOURCE.to_owned())?;
+        let p: [u32; 2] = [vals.rows as u32, width as u32];
+        // SAFETY: plain integers.
+        let bytes = unsafe { std::slice::from_raw_parts(p.as_ptr().cast::<u8>(), 8) };
+        let pass = self.pass(1)?;
+        pass.run_bytes(&kernel, &[&vals.buffer.buffer, &text.packed.buffer.buffer, &lens.buffer.buffer, &out.buffer.buffer], bytes, vals.rows.div_ceil(256));
         Ok(())
     }
 

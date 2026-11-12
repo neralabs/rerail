@@ -207,7 +207,7 @@ fn train(path: PathBuf, samples: Vec<rerail_accel::score::Sample>) {
     }
     WRITTEN.store(0, Ordering::Relaxed);
     *TRAINED_AT.lock().unwrap_or_else(|p| p.into_inner()) = Some(std::time::Instant::now());
-    let spawned = std::thread::Builder::new().name("rerail-cost-model".into()).spawn(move || {
+    let spawned = rerail_accel::exec::service("rerail-cost-model", None, move || {
         crate::code_rule_dsl::logic::profile::behind_the_run();
         rerail_accel::cost_model::set_background_qos();
         let pool = rayon::ThreadPoolBuilder::new()
@@ -298,7 +298,7 @@ pub(in crate::code_rule_dsl) fn start() {
             return;
         }
         rerail_accel::score::keep_samples(true);
-        let _ = std::thread::Builder::new().name("rerail-costs".into()).spawn(|| {
+        let _ = rerail_accel::exec::service("rerail-costs", None, || {
             crate::code_rule_dsl::logic::profile::behind_the_run();
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(1));
@@ -312,7 +312,8 @@ pub(in crate::code_rule_dsl) fn start() {
 
 /// Writes what is left: a run's end.
 pub fn flush() {
-    write();
+    // The command's end: its samples go to the statistics store as the writer thread's would, behind the run.
+    crate::code_rule_dsl::logic::profile::behind(write);
 }
 
 /// For the profile: the samples read, the rates fitted and the rates in place.

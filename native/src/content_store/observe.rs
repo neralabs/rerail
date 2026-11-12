@@ -931,9 +931,7 @@ impl Writer {
     fn open(path: &Path) -> Writer {
         let (jobs, queued) = std::sync::mpsc::channel::<Box<dyn FnOnce(&mut Connection) + Send>>();
         let path = path.to_owned();
-        let thread = std::thread::Builder::new()
-            .name("rerail-observer-writer".into())
-            .spawn(move || {
+        let thread = rerail_accel::exec::service("rerail-observer-writer", None, move || {
                 super::hazards::behind_the_run();
                 let db = (|| {
                     let db = Connection::open(&path).ok()?;

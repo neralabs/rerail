@@ -148,7 +148,7 @@ pub(super) fn sample() {
     STARTED.call_once(|| {
         let every_ms = std::env::var("RERAIL_PROF_MEMORY_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(5u64).max(1);
         SAMPLED.lock().unwrap().every_ms = every_ms;
-        let _ = std::thread::Builder::new().name("profile memory".into()).spawn(move || {
+        let _ = rerail_accel::exec::service("profile memory", None, move || {
             let start = std::time::Instant::now();
             let mut last_max = footprint().1;
             loop {

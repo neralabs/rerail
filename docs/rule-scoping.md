@@ -268,7 +268,7 @@ The HTTP API (`/api`) is for people; MCP callers (`/mcp`) are coding agents. The
 
 Anything else is refused with `403 agent-not-permitted` and the dashboard URL where a person can make the change. Only a person links repository addresses, starts and stops a whole repository, or approves a rule's content ([approval](#approval)). A rule a coding agent writes runs in Log until then.
 
-**Copy on edit.** Writing a By Rerail rule's id through `library_rules_upsert` stores an edited copy in the library instead (`<id>-copy`, `-copy-2`, …).
+**Copy on edit.** Writing a By Rerail rule's id through `library_rules_upsert` stores an edited copy in the library instead (`<id>-copy`, `-copy-2`, …). The CLI does the same for every coding agent, MCP or not: `rerail rules show <id>` prints the rule as a draft, and `rerail rules add` of a draft that keeps its id stores the copy. `rules add` refuses a second copy where one is already added, and naming the copy is how to change it again.
 
 <details>
 <summary>How the copy replaces the original</summary>

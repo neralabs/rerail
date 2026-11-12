@@ -1477,7 +1477,7 @@ fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store
                 return Ok(());
             }
             let path = path.clone();
-            let _ = tx.send(Some(std::thread::spawn(move || {
+            let _ = tx.send(Some(rerail_accel::exec::service("rerail-collect", None, move || {
         // Collection works behind the run, as the writer does: on its own connection, beside the waves, which read
         // nothing it writes and wait for none of it (decision 0053). Its statements are not a wave's.
         crate::code_rule_dsl::logic::profile::behind_the_run();
@@ -1508,7 +1508,7 @@ fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store
         })()
         .map_err(|e| e.to_string());
         (passes, outcome)
-            })));
+            }).expect("a collection thread")));
             Ok(())
         }),
     );
@@ -1557,10 +1557,10 @@ pub fn observe<T>(f: impl FnOnce(&mut crate::content_store::observe::Observer) -
     crate::content_store::observe::with(store.as_deref(), f)
 }
 
-/// Closes a run's connection on a thread of its own: its close frees what the process kept for it (the bound
+/// Closes a run's connection beside the run (a job on the pool): its close frees what the process kept for it (the bound
 /// sources, the engine's relations: `vtab::connection_scope`), which is no step's work. Idle, it holds no lock.
 fn close_beside(db: Connection) {
-    let _ = std::thread::Builder::new().name("rerail-close".into()).spawn(move || drop(db));
+    rerail_accel::exec::drop_beside(db);
 }
 
 /// The path `tape_cache` opens (`None`: `RERAIL_TAPE_CACHE=off`).
@@ -1642,13 +1642,15 @@ pub fn run_with_options(
     options: &serde_json::Value,
 ) -> Result<Report> {
     // Whether the native strata may be placed on the device (`plan::placement`, decision 0095), for this run.
-    struct Device(bool);
+    struct Device(super::placement::Binding);
     impl Drop for Device {
         fn drop(&mut self) {
-            super::placement::set_device(self.0);
+            super::placement::set_binding(self.0);
         }
     }
-    let _device = Device(super::placement::set_device(binding == Binding::Metal));
+    let was = super::placement::binding();
+    super::placement::set_device(binding == Binding::Metal);
+    let _device = Device(was);
     // The corpus root and the rule library are watched (decision 0105): what the journal says is unchanged under
     // them is not statted.
     let library = crate::code_rule_dsl::logic::rr::library();

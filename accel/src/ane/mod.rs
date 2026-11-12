@@ -676,7 +676,7 @@ impl Tiler<'_, '_> {
     fn pipeline(&self, model: &coreml::Obj, slots: &[Slot], tiles: usize, counts: &mut [u32], split: &mut Split) -> Result<(), String> {
         use std::sync::mpsc::sync_channel;
         type Done = (usize, usize, Result<(f64, f64), String>);
-        std::thread::scope(|s| {
+        crate::exec::scoped(|s| {
             let (jobs, job_rx) = sync_channel::<(usize, usize)>(slots.len());
             let (done_tx, done) = sync_channel::<Done>(slots.len());
             s.spawn(move || {

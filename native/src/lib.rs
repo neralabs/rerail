@@ -15,6 +15,8 @@ mod build_languages;
 // Each test's time limit, enforced inside the test binary (`RERAIL_TEST_TIMEOUT`).
 #[cfg(test)]
 mod test_watchdog;
+#[cfg(test)]
+mod executors_guard_tests;
 mod code_rule_dsl;
 /// The engine's tools without Node (`rerail-engine dump` / `asm`).
 pub use code_rule_dsl::tools;

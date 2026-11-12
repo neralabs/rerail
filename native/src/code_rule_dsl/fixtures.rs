@@ -44,10 +44,37 @@ pub fn document(source: &str, lang: GrammarDialect) -> (TapeDoc, Vec<u8>) {
 
 /// A fresh store path: the clock alone is not unique across parallel tests (macOS reads it in
 /// microseconds), so a counter disambiguates.
+///
+/// No test removes its store (many keep it open to the end, and a failing one panics first), so the
+/// first call of a run sweeps the stores of test processes that have exited: their files and
+/// directories named `rerail-prefilter-<pid>-…`, whose process is no longer alive.
 pub fn temp() -> PathBuf {
+    static SWEPT: std::sync::Once = std::sync::Once::new();
+    SWEPT.call_once(sweep);
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     std::env::temp_dir().join(format!("rerail-prefilter-{}-{nonce}-{n}.sqlite", std::process::id()))
+}
+
+/// Removes the stores `temp` made for processes that have exited.
+fn sweep() {
+    #[cfg(unix)]
+    {
+        let me = std::process::id();
+        let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else { return };
+        for e in entries.flatten() {
+            let name = e.file_name();
+            let Some(rest) = name.to_str().and_then(|n| n.strip_prefix("rerail-prefilter-")) else { continue };
+            let Some(pid) = rest.split('-').next().and_then(|p| p.parse::<i32>().ok()) else { continue };
+            // SAFETY: signal 0 sends nothing; it only asks whether the process exists.
+            let alive = pid as u32 == me || unsafe { libc::kill(pid, 0) } == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH);
+            if alive {
+                continue;
+            }
+            let path = e.path();
+            let _ = if path.is_dir() { std::fs::remove_dir_all(&path) } else { std::fs::remove_file(&path) };
+        }
+    }
 }
 
