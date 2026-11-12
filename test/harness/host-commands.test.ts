@@ -2,12 +2,13 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-const mocks = vi.hoisted(() => ({ presentation: vi.fn(), rulesDashboard: vi.fn(), openDashboard: vi.fn() }));
-// `readSummaryState` stays real: with an empty Rerail home no daemon answers, which is the case under test.
-vi.mock("../../src/presentation/session-presentation.js", async () => ({
-  readSummaryState: (await vi.importActual<typeof import("../../src/presentation/session-presentation.js")>("../../src/presentation/session-presentation.js")).readSummaryState,
-  readPresentation: mocks.presentation, readRulesDashboard: mocks.rulesDashboard,
-}));
+const mocks = vi.hoisted(() => ({ presentation: vi.fn(), rulesDashboard: vi.fn(), openDashboard: vi.fn(), summaryState: vi.fn() }));
+// `readSummaryState` stays real unless a test says otherwise: with an empty Rerail home no daemon answers.
+vi.mock("../../src/presentation/session-presentation.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/presentation/session-presentation.js")>("../../src/presentation/session-presentation.js");
+  mocks.summaryState.mockImplementation(actual.readSummaryState);
+  return { readSummaryState: mocks.summaryState, readPresentation: mocks.presentation, readRulesDashboard: mocks.rulesDashboard };
+});
 vi.mock("../../src/runtime/daemon-control.js", async () => ({
   ...await vi.importActual<Record<string, unknown>>("../../src/runtime/daemon-control.js"),
   openDashboard: mocks.openDashboard,
@@ -167,6 +168,26 @@ describe("/rerail", () => {
       "○ Rerail is on in acme-web, which is not set up yet: no rules are checked.",
       "  Set it up with /rerail-start (rerail start).",
     ]);
+  });
+
+  it("says a daemon that did not answer in time is running, and does not ask it again for the dashboard link", async () => {
+    mocks.presentation.mockResolvedValue({
+      status: "not-answering", text: "R E R A I L ● not answering", url: null, parts: [], presence: "compact", repositoryState: null, counts: null,
+    });
+    mocks.rulesDashboard.mockResolvedValue({ url: null, reason: "daemon unavailable" });
+    const withSession = commandHarness();
+    await withSession.run("rerail");
+    mocks.summaryState.mockResolvedValueOnce("not-answering");
+    const withoutSession = commandHarness({ sessionId: () => undefined });
+    await withoutSession.run("rerail");
+    for (const { notices } of [withSession, withoutSession]) {
+      expect(notices[0]?.message.split("\n").slice(0, 2)).toEqual([
+        "● Rerail is running, but its daemon did not answer in time.",
+        "  Ask again in a moment; if it keeps happening, run `rerail status` in a terminal.",
+      ]);
+    }
+    // The dashboard read would wait out its own 2 seconds too, for a link these lines do not show.
+    expect(mocks.rulesDashboard).not.toHaveBeenCalled();
   });
 
   it("hands the session read the launcher's start state for when no daemon answers", async () => {

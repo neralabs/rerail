@@ -184,12 +184,15 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
       : await readPresentation({ sessionId, host, cwd, onDemand: true, startState });
     // No session is attached where Rerail is stopped or never started.
     const repositoryState = presentation === null ? await readSummaryState(cwd, host, startState) : presentation.repositoryState;
+    // A daemon that just gave no answer in time is not asked again for the dashboard link: that read would wait out its
+    // own 2 seconds, and the summary shows no link then.
+    const notAnswering = (presentation === null ? repositoryState : presentation.status) === "not-answering";
     ctx.ui.notify(renderRerailSummary({
       presentation,
       repositoryState,
       ruleCount: null,
       awaitingApproval: null,
-      rulesUrl: (await readRulesDashboard({ cwd })).url,
+      rulesUrl: notAnswering ? null : (await readRulesDashboard({ cwd })).url,
       repositoryName: repositoryName(cwd),
       sigil: "/",
     }), "info");
