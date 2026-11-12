@@ -4,6 +4,7 @@ import Database from "better-sqlite3";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { BLOCK_STEERS_NOTE } from "../engine/catalog/rule-mode.js";
 import type { UpdateResult } from "../setup/updater.js";
+import { NO_PROGRESS, type Progress } from "../runtime/progress.js";
 import { parseArguments } from "../daemon/daemon.js";
 import { defaultRerailDatabasePath, eraseFreedPages, openRerailDatabase, resetRepositoryHistoryIn } from "../engine/storage/database.js";
 import { parseJsonWithoutDuplicateKeys } from "../engine/json-duplicate-keys.js";
@@ -17,7 +18,7 @@ export function preUpdateSnapshotPath(databasePath: string): string {
 
 /** What `rerail update` asks of the managed updater. */
 export interface SnapshotUpdater {
-  update(channel?: string): Promise<UpdateResult>;
+  update(channel?: string, progress?: Progress): Promise<UpdateResult>;
 }
 
 /**
@@ -75,11 +76,16 @@ function discardSnapshot(databasePath: string): void {
  * place. A version change without a copy (the copy, or keeping it, failed) removes the last one: it is not the
  * database as it was before the change that is now active.
  */
-export async function updateWithSnapshot(updater: SnapshotUpdater, databasePath: string, channel: string | undefined): Promise<UpdateResult> {
+export async function updateWithSnapshot(
+  updater: SnapshotUpdater,
+  databasePath: string,
+  channel: string | undefined,
+  progress: Progress = NO_PROGRESS,
+): Promise<UpdateResult> {
   const staged = stageSnapshot(databasePath);
   let result: UpdateResult;
   try {
-    result = await updater.update(channel);
+    result = await updater.update(channel, progress);
   } catch (error) {
     if (staged !== undefined) removeQuietly(staged);
     throw error;

@@ -2,7 +2,7 @@ import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanCommandError, environmentForNode, resolveExecutable, runNpm } from "../../src/runtime/npm.js";
+import { cleanCommandError, CommandTimeoutError, environmentForNode, resolveExecutable, runCommand, runNpm } from "../../src/runtime/npm.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -85,6 +85,19 @@ describe("cleanCommandError", () => {
   });
 });
 
+describe("runCommand", () => {
+  it("stops a command that runs past its timeout", async () => {
+    const started = Date.now();
+    const failure = runCommand(process.execPath, ["-e", "setTimeout(() => {}, 30_000)"], { timeoutMs: 200 });
+    await expect(failure).rejects.toThrow(CommandTimeoutError);
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+
+  it("leaves a command that finishes in time alone", async () => {
+    await expect(runCommand(process.execPath, ["-e", "process.stdout.write('ok')"], { timeoutMs: 30_000 })).resolves.toEqual({ stdout: "ok", stderr: "" });
+  });
+});
+
 describe.skipIf(process.platform === "win32")("runNpm", () => {
   it("passes arguments through after quick fetch retries, without adding a registry, userconfig or registry environment", async () => {
     const bin = await fakeNpm('printf "%s\\n" "$@"; printf "registry=%s\\n" "$npm_config_registry"');
@@ -113,6 +126,15 @@ describe.skipIf(process.platform === "win32")("runNpm", () => {
     await expect(runNpm(["view", "@neralabs/rerail"], { env: { PATH: bin } })).rejects.toThrow(
       `could not reach the npm registry (http://127.0.0.1:9, ${why}): check your network, proxy, or registry in ~/.npmrc`,
     );
+  });
+
+  it("stops npm once it runs past its timeout, and says which npm command was stopped", async () => {
+    const bin = await fakeNpm("exec sleep 30");
+    const started = Date.now();
+    const failure = runNpm(["install", "--prefix", "/nowhere", "@neralabs/rerail@1.0.0"], { env: { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` }, timeoutMs: 1_000 });
+    await expect(failure).rejects.toThrow(CommandTimeoutError);
+    await expect(failure).rejects.toThrow("npm install did not finish within 1 s and was stopped");
+    expect(Date.now() - started).toBeLessThan(10_000);
   });
 
   it("leaves other npm failures unchanged", async () => {

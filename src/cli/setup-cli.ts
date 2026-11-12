@@ -59,6 +59,7 @@ import { colourDepth } from "../presentation/rerail-mark.js";
 import type { SetupStep } from "../harness/setup-step.js";
 import { CURRENT_LINK, LAUNCHER_DIR, LAUNCHER_HEADER, UPDATE_LOCK_DIR, UPDATE_STATE_FILE, VERSIONS_DIR, type ManagedUpdater } from "../setup/updater.js";
 import { requireLfsContent } from "../setup/lfs-pointers.js";
+import { streamProgress } from "../runtime/progress.js";
 import { SCRUB_HINT_FILE, scrubHintOnce } from "./scrub-cli.js";
 
 export interface SetupContext {
@@ -909,7 +910,8 @@ async function install(context: SetupContext, parsed: SetupArguments, cwd: strin
   if (active === running) return undefined;
   const answering = parsed.answer !== undefined || parsed.repo !== undefined;
   if (active !== undefined && (answering || origin === "start")) return undefined;
-  await context.updater.install();
+  // A line per install step, never redrawn in place: set-up's questions share the terminal.
+  await context.updater.install(undefined, streamProgress({ write: text => process.stderr.write(text) }));
   if (answering || workspaceStartState(cwd, parsed.databasePath) === "started") return undefined;
   return renderInstalled(lane).replace(/\n$/u, "");
 }

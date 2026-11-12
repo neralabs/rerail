@@ -3,6 +3,7 @@ import { accessSync, constants, existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, isAbsolute, join } from "node:path";
+import { formatDuration } from "./progress.js";
 
 export interface CommandResult {
   stdout: string;
@@ -12,6 +13,16 @@ export interface CommandResult {
 export interface CommandOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  /** Stops the command once it has run this long, failing with a `CommandTimeoutError`; by default it runs until it ends. */
+  timeoutMs?: number;
+}
+
+/** A command `runCommand` stopped because it ran past its `timeoutMs`. */
+export class CommandTimeoutError extends Error {
+  constructor(readonly command: string, readonly timeoutMs: number) {
+    super(`${command} did not finish within ${formatDuration(timeoutMs)} and was stopped`);
+    this.name = "CommandTimeoutError";
+  }
 }
 
 export interface NpmOptions extends CommandOptions {
@@ -32,6 +43,11 @@ export async function runCommand(command: string, args: readonly string[], optio
   });
   let stdout = "";
   let stderr = "";
+  let timedOut = false;
+  const timeout = options.timeoutMs === undefined ? undefined : setTimeout(() => {
+    timedOut = true;
+    child.kill();
+  }, options.timeoutMs);
   child.stdout.setEncoding("utf8");
   child.stderr.setEncoding("utf8");
   child.stdout.on("data", (chunk) => {
@@ -40,8 +56,16 @@ export async function runCommand(command: string, args: readonly string[], optio
   child.stderr.on("data", (chunk) => {
     stderr += chunk;
   });
-  child.once("error", reject);
+  child.once("error", (error) => {
+    clearTimeout(timeout);
+    reject(error);
+  });
   child.once("exit", (code, signal) => {
+    clearTimeout(timeout);
+    if (timedOut) {
+      reject(new CommandTimeoutError(command, options.timeoutMs!));
+      return;
+    }
     if (code === 0) {
       resolveCommand({ stdout, stderr });
       return;
@@ -133,6 +157,12 @@ const NPM_FETCH_URL = /(?:request to|network timeout at:) (https?:\/\/[^\s,]+)/u
  */
 const FETCH_RETRY_OPTIONS = ["--fetch-retries=1", "--fetch-retry-mintimeout=2000", "--fetch-retry-maxtimeout=10000"];
 
+/**
+ * How long an npm request that downloads no package (a version, signing keys) may run before it is stopped. npm's own
+ * fetch timeout covers one request; a registry or proxy that stalls between requests has none.
+ */
+export const NPM_QUERY_TIMEOUT_MS = 3 * 60_000;
+
 /** npm's 401 detail is a wall of text; the fix is always the same, so lead with it and keep the one line that proves it. */
 function unauthorizedError(error: unknown): Error | undefined {
   if (!(error instanceof Error)) return undefined;
@@ -167,10 +197,18 @@ async function spawnNpm(args: readonly string[], options: NpmOptions): Promise<C
   return await runCommand("npm", npmArgs, node === undefined ? command : { ...command, env: environmentForNode(node, command.env) });
 }
 
+/** npm's subcommand in `args`, the first argument that is not an option: what a timeout names. */
+const npmSubcommand = (args: readonly string[]): string | undefined => args.find(argument => !argument.startsWith("-"));
+
 export const runNpm: NpmRunner = async (args, options = {}) => {
   try {
     return await spawnNpm(args, options);
   } catch (error) {
+    // Named as a person runs it (`npm install`), not as spawned: on Windows that is node running npm's script.
+    if (error instanceof CommandTimeoutError) {
+      const subcommand = npmSubcommand(args);
+      throw new CommandTimeoutError(subcommand === undefined ? "npm" : `npm ${subcommand}`, error.timeoutMs);
+    }
     throw unauthorizedError(error) ?? unreachableError(error) ?? error;
   }
 };
@@ -197,7 +235,7 @@ export async function outsideAnyProject<T>(operation: (directory: string) => Pro
 export async function checkRegistry(spec: string, npm: NpmRunner = runNpm): Promise<void> {
   await outsideAnyProject(async (directory) => {
     try {
-      await npm(["view", spec, "version", "--cache", join(directory, "cache"), "--fetch-timeout=30000"], { cwd: directory });
+      await npm(["view", spec, "version", "--cache", join(directory, "cache"), "--fetch-timeout=30000"], { cwd: directory, timeoutMs: NPM_QUERY_TIMEOUT_MS });
     } catch (error) {
       if (!(error instanceof Error) || !/\bENOTCACHED\b/u.test(error.message)) throw error;
     }
@@ -214,7 +252,7 @@ const NPM_NO_SIGNING_KEYS = /found no dependencies to audit that were installed 
  */
 export async function auditSignatures(prefix: string, npm: NpmRunner = runNpm): Promise<"verified" | "no-signing-keys"> {
   try {
-    await npm(["audit", "signatures", "--prefix", prefix]);
+    await npm(["audit", "signatures", "--prefix", prefix], { timeoutMs: NPM_QUERY_TIMEOUT_MS });
     return "verified";
   } catch (error) {
     if (error instanceof Error && NPM_NO_SIGNING_KEYS.test(error.message)) return "no-signing-keys";

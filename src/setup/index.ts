@@ -25,6 +25,7 @@ export {
   installedPackagesOf,
   installedPackVersion,
   installPackVersions,
+  newerPackVersions,
   npmPackStore,
   packsLeftOutByCore,
   parsePackVersions,

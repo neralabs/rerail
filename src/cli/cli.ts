@@ -59,7 +59,8 @@ import { runResetCommand, runRulesCommand, updateWithSnapshot } from "./project-
 import { runScrubCommand } from "./scrub-cli.js";
 import { lookupCheckout, parentCheckouts, recordCheckout } from "../engine/catalog/repository-registry.js";
 import { listRepositoryRules, setUpRepository } from "../engine/catalog/rule-configuration.js";
-import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
+import { installedPackDirectories, loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
+import { RERAIL_PUBLISHER, rulePackPublisher, rulePackShortName } from "../engine/catalog/rule-packs.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES, seedRerailDatabase } from "./seed.js";
 import { runAuditCommand } from "./audit-cli.js";
 import { describeRemoteStatus, runRemoteCommand } from "./remote-cli.js";
@@ -82,7 +83,8 @@ import {
   type UpdateResult,
   type UpdateStatus,
 } from "../setup/updater.js";
-import { packsLeftOutByCore } from "../setup/rule-pack-store.js";
+import { newerPackVersions, packsLeftOutByCore, type PackUpdateCheck } from "../setup/rule-pack-store.js";
+import { formatDuration, streamProgress, type Progress } from "../runtime/progress.js";
 
 const MANAGED_CHILD_ARGUMENT = "--rerail-managed-child";
 
@@ -122,12 +124,14 @@ function printStatus(status: UpdateStatus): void {
 }
 
 /**
- * What an update did, and, when it changed the active core, the installed rule packs that version leaves
- * out by their core range: every repository that adds one runs none of its rules until a version that fits is in.
+ * What an update did and how long it took, and, when it changed the active core, the installed rule packs that
+ * version leaves out by their core range: every repository that adds one runs none of its rules until a version that
+ * fits is in.
  */
-function printUpdateResult(result: UpdateResult, home: string): void {
+function printUpdateResult(result: UpdateResult, home: string, tookMs: number): void {
+  const from = result.previous === undefined ? "" : `${result.previous.version} → `;
   process.stdout.write(result.changed
-    ? `Activated Rerail ${result.current.version}; new harness sessions will use it.\n`
+    ? `Updated Rerail ${from}${result.current.version} in ${formatDuration(tookMs)}; new harness sessions will use it.\n`
     : `Rerail ${result.current.version} is current for channel ${result.channel}.\n`);
   if (!result.changed) return;
   const leftOut = packsLeftOutByCore(home, result.current.version, result.previous?.version);
@@ -135,8 +139,50 @@ function printUpdateResult(result: UpdateResult, home: string): void {
   process.stdout.write([
     `Rerail ${result.current.version} leaves out ${leftOut.length === 1 ? "this rule pack" : `these ${leftOut.length} rule packs`}, so repositories that add ${leftOut.length === 1 ? "it run none of its" : "them run none of their"} rules:`,
     ...leftOut.map(line => `  ${line}`),
-    "Install a version that fits with `rerail packs add <package>`.",
+    // A pack is pinned to the version installed, so a bare package name keeps it: the tag moves it.
+    `Install a version that fits with \`rerail packs add <package>@${result.channel}\`.`,
   ].join("\n") + "\n");
+}
+
+/**
+ * The installed rule packs with a newer version on the update's channel that fits the core it left active, each with
+ * the version to move to, and the one command that installs them all; nothing when there is none. A third party's new
+ * version waits for a person's approval again, so it says so.
+ */
+function packUpdateLines({ updates }: PackUpdateCheck, channel: string): string[] {
+  if (updates.length === 0) return [];
+  const name = (packageName: string) => rulePackShortName(packageName);
+  return [
+    `Newer versions of ${updates.length === 1 ? "a rule pack" : `${updates.length} rule packs`} you installed are on ${channel}:`,
+    ...updates.map(pack => `  ${name(pack.packageName)} ${pack.installed} → ${pack.available}${rulePackPublisher(pack.packageName) === RERAIL_PUBLISHER
+      ? ""
+      : ` (Rerail has not reviewed it: its rules run in Log until you approve this version, rerail rules approve ${pack.packageName})`}`),
+    `A pack's new version changes the rules of every repository that adds it. To update ${updates.length === 1 ? "it" : "them"}:`,
+    `  rerail packs add ${updates.map(pack => `${name(pack.packageName)}@${pack.available}`).join(" ")}`,
+  ];
+}
+
+/**
+ * After an update, whether or not it changed core, since packs are released without it: suggests the newer versions
+ * of the installed rule packs, installing none. The update is done by then, so a check that fails only says so.
+ */
+async function suggestPackUpdates(home: string, result: UpdateResult, progress: Progress): Promise<void> {
+  if (installedPackDirectories(home).length === 0) return;
+  let check: PackUpdateCheck;
+  try {
+    check = await progress.step(
+      "Checking your rule packs for newer versions",
+      async () => await newerPackVersions(home, result.channel, result.current.version),
+      { afterMs: 30_000, hint: "npm may be slow or stuck; each pack's check stops at 1 min, and the update itself is done." },
+    );
+  } catch (error) {
+    check = { updates: [], problems: [error instanceof Error ? error.message : String(error)] };
+  }
+  if (check.problems.length > 0) {
+    process.stderr.write(`warning: could not check every rule pack for a newer version: ${check.problems.join("; ")}\n`);
+  }
+  const lines = packUpdateLines(check, result.channel);
+  if (lines.length > 0) process.stdout.write(`${lines.join("\n")}\n`);
 }
 
 function selectedChannel(args: readonly string[]): string | undefined {
@@ -423,18 +469,25 @@ async function runUpdateCommand(
     return 0;
   }
   if (action !== undefined && action !== "--channel") throw new Error(`Unknown update action: ${action}`);
-  printUpdateResult(await updateWithSnapshot(updater, join(home, RERAIL_DATABASE_FILE), channel), home);
+  // Each step on stderr as it starts, with how long it has run: npm is silent while it downloads.
+  const progress = streamProgress(process.stderr);
+  const started = Date.now();
+  const result = await updateWithSnapshot(updater, join(home, RERAIL_DATABASE_FILE), channel, progress);
+  printUpdateResult(result, home, Date.now() - started);
   // Newer version or not, the version `current` names registers itself again, as its own CLI, with every coding agent
   // already connected (`install --refresh`): its commands, skills and hooks arrive and the ones it retired go. A failure
   // leaves that version active and exits non-zero, naming the command to run once the configuration is fixed. Reading
   // the Claude Code status-line record loads `node:sqlite`, whose experimental warning is not the update's to report.
-  return await runChild(process.execPath, [
+  const refreshed = await runChild(process.execPath, [
     "--disable-warning=ExperimentalWarning",
     join(updater.currentLink, ENTRY_POINTS.cli),
     MANAGED_CHILD_ARGUMENT,
     "install",
     "--refresh",
   ]);
+  // The refresh's failure stays the last thing said.
+  if (refreshed === 0) await suggestPackUpdates(home, result, progress);
+  return refreshed;
 }
 
 /**

@@ -22,7 +22,8 @@ import { dirname, isAbsolute, join, relative, resolve, sep, win32 as windowsPath
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
-import { auditSignatures, checkRegistry, outsideAnyProject, runNpm, type NpmRunner } from "../runtime/npm.js";
+import { auditSignatures, checkRegistry, NPM_QUERY_TIMEOUT_MS, outsideAnyProject, runNpm, type NpmRunner } from "../runtime/npm.js";
+import { formatDuration, NO_PROGRESS, type Progress, type StallWarning } from "../runtime/progress.js";
 import { ensureSqlite, type SqliteRepairResult } from "../runtime/sqlite-repair.js";
 import { CURRENT_LINK, defaultRerailHome, LAUNCHER_DIR, UPDATE_STATE_FILE, VERSIONS_DIR } from "../engine/storage/rerail-home.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
@@ -38,7 +39,32 @@ const UPDATE_STATE_VERSION = 1;
 const LOCK_LEASE_MS = 15 * 60 * 1_000;
 const LOCK_RENEWAL_MS = LOCK_LEASE_MS / 3;
 const EVENT_HEALTH_TIMEOUT_MS = 15_000;
+/** Loading the staged engine in a child takes seconds; one that hangs is stopped. */
+const NATIVE_HEALTH_TIMEOUT_MS = 2 * 60_000;
 const STAGING_RENAME_RETRY_MS = 10_000;
+/**
+ * Installing core downloads about 300 MB, which takes minutes on a slow line, so the install warns at 3 minutes and is
+ * stopped at 15, under the update lock's lease, which is renewed while it runs.
+ */
+const NPM_INSTALL_STALL_MS = 3 * 60_000;
+const NPM_INSTALL_TIMEOUT_MS = 15 * 60_000;
+/** An npm request that downloads no package answers in seconds. */
+const NPM_QUERY_STALL_MS = 30_000;
+/** Checking that a version starts takes seconds; each of its children is stopped well before this would repeat. */
+const VALIDATION_STALL_MS = 60_000;
+
+/** What to check when npm seems stuck, and when it is stopped. */
+function npmStall(afterMs: number, stopsAtMs: number): StallWarning {
+  return {
+    afterMs,
+    hint: `npm may be stuck: check your network or proxy, and the registry npm uses (\`npm config get registry\`). Rerail stops it at ${formatDuration(stopsAtMs)}.`,
+  };
+}
+
+const VALIDATION_STALL: StallWarning = {
+  afterMs: VALIDATION_STALL_MS,
+  hint: "It usually takes seconds; a part of it that hangs is stopped within 2 min.",
+};
 
 export interface Installation {
   version: string;
@@ -71,7 +97,8 @@ export interface UpdateResult extends UpdateStatus {
 
 export interface PackageRegistry {
   resolveVersion(channel: string): Promise<string>;
-  installVersion(version: string, prefix: string): Promise<void>;
+  /** Installs `version` into `prefix`, reporting each of its steps to `progress`. */
+  installVersion(version: string, prefix: string, progress?: Progress): Promise<void>;
 }
 
 export interface ManagedUpdaterOptions {
@@ -176,7 +203,10 @@ export class NpmPackageRegistry implements PackageRegistry {
 
   /** Asked from a scratch folder: `rerail update` runs inside repositories, and one's `.npmrc` must not pick the answer. */
   async resolveVersion(channel: string): Promise<string> {
-    const result = await outsideAnyProject(async cwd => await this.npm(["view", `${RERAIL_PACKAGE_NAME}@${channel}`, "version", "--json"], { cwd }));
+    const result = await outsideAnyProject(async cwd => await this.npm(
+      ["view", `${RERAIL_PACKAGE_NAME}@${channel}`, "version", "--json"],
+      { cwd, timeoutMs: NPM_QUERY_TIMEOUT_MS },
+    ));
     const parsed = JSON.parse(result.stdout) as unknown;
     if (typeof parsed !== "string") {
       throw new TypeError(`npm returned no single version for ${RERAIL_PACKAGE_NAME}@${channel}`);
@@ -190,22 +220,22 @@ export class NpmPackageRegistry implements PackageRegistry {
    * registry signatures of everything installed before the caller runs any of it. `--prefix` also keeps a project
    * `.npmrc` in the caller's folder out of the install.
    */
-  async installVersion(version: string, prefix: string): Promise<void> {
+  async installVersion(version: string, prefix: string, progress: Progress = NO_PROGRESS): Promise<void> {
     const spec = `${RERAIL_PACKAGE_NAME}@${version}`;
-    // npm installs without a word, and a large package on a slow line takes a while: say what is coming first.
-    process.stderr.write(`Downloading ${spec} from npm…\n`);
-    await checkRegistry(spec, this.npm);
-    await this.npm([
-      "install",
-      "--prefix",
-      prefix,
-      "--ignore-scripts",
-      "--omit=dev",
-      "--no-audit",
-      "--no-fund",
-      spec,
-    ]);
-    if (await auditSignatures(prefix, this.npm) === "no-signing-keys") {
+    // npm installs without a word, and a large package on a slow line takes a while: the step says it is still going.
+    await progress.step(`Downloading ${spec} from npm`, async () => {
+      await checkRegistry(spec, this.npm);
+      await this.npm(
+        ["install", "--prefix", prefix, "--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund", spec],
+        { timeoutMs: NPM_INSTALL_TIMEOUT_MS },
+      );
+    }, npmStall(NPM_INSTALL_STALL_MS, NPM_INSTALL_TIMEOUT_MS));
+    const audited = await progress.step(
+      `Checking the registry signatures of ${spec} and its dependencies`,
+      async () => await auditSignatures(prefix, this.npm),
+      npmStall(NPM_QUERY_STALL_MS, NPM_QUERY_TIMEOUT_MS),
+    );
+    if (audited === "no-signing-keys") {
       const registry = (await installedFromRegistry(prefix)) ?? "the registry in your npm configuration";
       process.stderr.write(
         `warning: ${registry} publishes no signing keys, so npm could not check the registry signatures of ${spec} and its dependencies.\n`,
@@ -355,6 +385,7 @@ export async function validateManagedInstallation(installation: Installation): P
   try {
     const { stdout } = await promisify(execFile)(process.execPath, ["--input-type=module", "--eval", healthScript], {
       env: { ...process.env, RERAIL_AUTOSTART: "0" },
+      timeout: NATIVE_HEALTH_TIMEOUT_MS,
     });
     health = JSON.parse(stdout.slice(stdout.lastIndexOf("\n") + 1));
   } catch (error) {
@@ -682,7 +713,7 @@ export class ManagedUpdater {
    * either way, and return its package root. Staging keeps a failed install
    * out of the versions directory.
    */
-  private async materializeVersion(version: string): Promise<Installation> {
+  private async materializeVersion(version: string, progress: Progress): Promise<Installation> {
     await mkdir(this.versionsRoot, { recursive: true, mode: 0o700 });
     const finalPrefix = join(this.versionsRoot, version);
     const installation: Installation = {
@@ -690,13 +721,14 @@ export class ManagedUpdater {
       packageRoot: join(finalPrefix, "node_modules", "@neralabs", "rerail"),
     };
     if (existsSync(installation.packageRoot)) {
-      await this.validateOrRepair(installation);
+      await this.validateOrRepair(installation, progress);
       return installation;
     }
     const stagingPrefix = join(this.versionsRoot, `.${version}.${randomUUID()}.staging`);
     try {
-      await this.registry.installVersion(version, stagingPrefix);
-      await this.validate({ version, packageRoot: join(stagingPrefix, "node_modules", "@neralabs", "rerail") });
+      await this.registry.installVersion(version, stagingPrefix, progress);
+      const staged = { version, packageRoot: join(stagingPrefix, "node_modules", "@neralabs", "rerail") };
+      await progress.step(`Checking that Rerail ${version} starts`, async () => await this.validate(staged), VALIDATION_STALL);
       await this.renameStaging(stagingPrefix, finalPrefix);
     } catch (error) {
       await rm(stagingPrefix, { recursive: true, force: true, maxRetries: 10 });
@@ -729,13 +761,19 @@ export class ManagedUpdater {
    * An installed version fails validation after a Node upgrade because its SQLite binding was built for the old
    * ABI. Rebuild it once and validate again; when the binding was never the problem, the original failure stands.
    */
-  private async validateOrRepair(installation: Installation): Promise<void> {
+  private async validateOrRepair(installation: Installation, progress: Progress): Promise<void> {
+    // The repair writes its own lines, so it runs outside any step.
+    const validate = async () => await progress.step(
+      `Checking that Rerail ${installation.version} starts`,
+      async () => await this.validate(installation),
+      VALIDATION_STALL,
+    );
     try {
-      await this.validate(installation);
+      await validate();
     } catch (error) {
       const { rebuilt } = await this.repair(installation.packageRoot);
       if (!rebuilt) throw error;
-      await this.validate(installation);
+      await validate();
     }
   }
 
@@ -745,7 +783,8 @@ export class ManagedUpdater {
     return path !== "" && path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path);
   }
 
-  async update(channel?: string): Promise<UpdateResult> {
+  /** Installs and activates the newest version on `channel` (the recorded one by default), reporting each step to `progress`. */
+  async update(channel?: string, progress: Progress = NO_PROGRESS): Promise<UpdateResult> {
     return await this.withLock(async () => {
       const state = await this.readState();
       const selectedChannel = channel ?? state.channel;
@@ -753,25 +792,29 @@ export class ManagedUpdater {
       const checkedAt = this.now().toISOString();
       let next: Installation;
       try {
-        const availableVersion = await this.registry.resolveVersion(selectedChannel);
+        const availableVersion = await progress.step(
+          `Checking npm for the newest Rerail on ${selectedChannel}`,
+          async () => await this.registry.resolveVersion(selectedChannel),
+          npmStall(NPM_QUERY_STALL_MS, NPM_QUERY_TIMEOUT_MS),
+        );
         if (compareSemver(availableVersion, state.current.version) <= 0) {
           // The installed version stays current while Node's ABI may not have: repair it in place rather than skip it.
-          await this.validateOrRepair(state.current);
+          await this.validateOrRepair(state.current, progress);
           await this.writeState({ ...state, channel: selectedChannel, lastCheckAt: checkedAt });
           return { ...(await this.status()), changed: false };
         }
-        next = await this.materializeVersion(availableVersion);
+        next = await this.materializeVersion(availableVersion, progress);
       } catch (error) {
         await this.writeState({ ...state, channel: selectedChannel, lastCheckAt: checkedAt }).catch(() => undefined);
         throw error;
       }
-      await this.writeState({
+      await progress.step(`Switching to Rerail ${next.version}`, async () => await this.writeState({
         schemaVersion: 1,
         channel: selectedChannel,
         current: next,
         previous: state.current,
         lastCheckAt: checkedAt,
-      });
+      }));
       return { ...(await this.status()), changed: true };
     });
   }
@@ -807,13 +850,13 @@ export class ManagedUpdater {
    * what is active now. This is how `npx @neralabs/rerail setup` turns the
    * ephemeral npx copy it runs from into a durable install under `versions/`.
    */
-  async install(version = this.packageVersion): Promise<UpdateResult> {
+  async install(version = this.packageVersion, progress: Progress = NO_PROGRESS): Promise<UpdateResult> {
     parseSemver(version);
     // A failed install leaves no folder of its own behind (set-up says nothing was changed): `versions/`, and the
     // home itself on a first install, go again when this run made them and they are still empty.
     const created = [this.versionsRoot, this.home].filter(path => !existsSync(path));
     try {
-      return await this.withLock(async () => await this.adopt(await this.materializeVersion(version)));
+      return await this.withLock(async () => await this.adopt(await this.materializeVersion(version, progress)));
     } catch (error) {
       for (const path of created) await rmdir(path).catch(() => undefined);
       throw error;
