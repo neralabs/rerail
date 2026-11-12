@@ -174,8 +174,6 @@ export interface UnavailableReference {
 export interface CheckoutRuleSet {
   readonly checkout: CheckoutContext;
   readonly status: RepositoryStatus;
-  /** Changes whenever anything that could change `rulesFor` / `conversationRules` changes. */
-  readonly signature: string;
   /** Code rules for one path relative to the checkout root. */
   rulesFor(relativePath: string): readonly EffectiveRule[];
   /** Conversation rules for the session's starting folder (relative to the checkout root). */

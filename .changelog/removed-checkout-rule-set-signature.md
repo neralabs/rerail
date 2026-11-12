@@ -1,0 +1,1 @@
+The exported `CheckoutRuleSet` type no longer has a `signature` field, which nothing read. No function the package exports returns a `CheckoutRuleSet`, so only code that builds one of its own changes: it leaves the field out.

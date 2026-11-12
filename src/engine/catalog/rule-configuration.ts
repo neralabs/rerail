@@ -163,7 +163,7 @@ function readRows(db: RerailDatabase, ruleCatalog: RuleCatalog, repositoryKey: R
   return { configuredAt: repository?.configuredAt ?? null, attachments, settings, library, approvals: readApprovals(db) };
 }
 
-/** What {@link signatureOf} hashes: {@link ConfigurationRows}, or the fields of them that one statement reads. */
+/** What {@link signatureOf} hashes: the fields of {@link ConfigurationRows} that {@link signatureStatement} reads. */
 interface SignatureRows {
   readonly configuredAt: number | null;
   readonly attachments: readonly Pick<AttachmentRow, "folder" | "sourceKind" | "sourceId">[];
@@ -220,7 +220,10 @@ function tuples<Tuple extends readonly unknown[]>(json: string): Tuple[] {
   return JSON.parse(json) as Tuple[]; // Built by json_group_array over the table's own columns.
 }
 
-/** {@link SignatureRows} from {@link signatureStatement}'s row: the same rows {@link readRows} gives the signature. */
+/**
+ * {@link SignatureRows} from {@link signatureStatement}'s row, with the checkout's own rules and the library rules that
+ * count picked as {@link readRows} picks them, so the signature changes whenever a load would read other rows.
+ */
 function signatureRowsOf(read: SignatureRead, ruleCatalog: RuleCatalog, repositoryKey: RepositoryKey): SignatureRows {
   const attachments = [
     ...tuples<[string, AttachmentRow["sourceKind"], string]>(read.attachments).map(([folder, sourceKind, sourceId]) => ({ folder, sourceKind, sourceId })),
@@ -510,7 +513,7 @@ function ownersOf(repositoryKey: RepositoryKey, checkoutPaths: readonly string[]
 /**
  * The effective configuration for one checkout. `rulesFor` and `conversationRules` list every present rule, off ones
  * included (`on: false`); both are empty unless the checkout is started and its repository set up. Every row is read
- * here, once; lookups never query. The signature covers the configuration and the start state.
+ * here, once; lookups never query. {@link ruleConfigurationSignature} tells whether the configuration changed.
  */
 export function loadCheckoutRuleSet(
   db: RerailDatabase,
@@ -521,7 +524,6 @@ export function loadCheckoutRuleSet(
 ): CheckoutRuleSet {
   const ownerCheckoutPaths = [checkout.checkoutPath, ...parentCheckoutPaths];
   const rows = readRows(db, ruleCatalog, checkout.repositoryKey, ownerCheckoutPaths);
-  const signature = `${signatureOf(ruleCatalog.digest, ownerCheckoutPaths, rows)}:${status.started ? "started" : "stopped"}:${status.setUp ? "set-up" : "not-set-up"}`;
   const active = status.started && status.setUp;
   const resolver = new ConfigurationResolver(ruleCatalog, rows, ownersOf(checkout.repositoryKey, ownerCheckoutPaths));
   const codeRules = new Map<string, readonly EffectiveRule[]>();
@@ -538,7 +540,6 @@ export function loadCheckoutRuleSet(
   return {
     checkout,
     status,
-    signature,
     rulesFor: relativePath => memoised(codeRules, normalizeFolder(relativePath), "code"),
     conversationRules: startFolder => memoised(conversationRules, normalizeFolder(startFolder), "conversation"),
     unavailable: active ? resolver.unavailable : [],

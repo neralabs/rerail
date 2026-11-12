@@ -92,7 +92,6 @@ export function testCodeRuleCatalog(
     const ruleSet: CheckoutRuleSet = {
       checkout,
       status: { started: true, setUp: true, startedBy: "repository" },
-      signature: stableJsonText(current()) ?? "",
       rulesFor: () => rules,
       conversationRules: () => [],
       unavailable: [],
