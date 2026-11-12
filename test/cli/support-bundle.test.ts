@@ -2,19 +2,23 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
+import { createServer as createHttpServer } from "node:http";
+import { createServer as createSocketServer, type AddressInfo, type Server } from "node:net";
 import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { checkouts, defaultRerailDatabasePath, events, openRerailDatabase, policySessionOwners, sessions, SqliteAuditStore } from "../../src/engine/index.js";
-import { runSupportBundleCommand, scrubText, type SupportBundle } from "../../src/cli/support-bundle.js";
+import { checkouts, defaultRerailDatabasePath, events, openRerailDatabase, PACKAGE_ROOT, policySessionOwners, sessions, SqliteAuditStore } from "../../src/engine/index.js";
+import { collectSupportBundle, runSupportBundleCommand, scrubText, type SupportBundle } from "../../src/cli/support-bundle.js";
 import { startTestRepository } from "../support/started-repository.js";
 
 const directories: string[] = [];
+const daemons: Array<() => Promise<void>> = [];
 const fileRerailHome = process.env.RERAIL_HOME;
 
 afterEach(async () => {
   if (fileRerailHome === undefined) delete process.env.RERAIL_HOME;
   else process.env.RERAIL_HOME = fileRerailHome;
+  await Promise.all(daemons.splice(0).map(close => close()));
   await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
 });
 
@@ -184,6 +188,35 @@ function busyHistory(world: Fixture, count: number): void {
   }
 }
 
+/** A daemon recorded in `home` that answers its health probe `delayMs` late, or never when `delayMs` is undefined. */
+async function slowDaemon(home: string, delayMs: number | undefined): Promise<{ close: () => Promise<void> }> {
+  const health = {
+    status: "ok", pid: process.pid, version: "9.9.9", ui: "bundled", uptimeMs: 60_000, database: { path: join(home, "rerail.sqlite"), exists: true },
+    native: { ok: true, kernelVersion: "1.0.0" }, model: { ok: true }, healthy: true, workspaceRoot: home, installedAt: null,
+  };
+  const http = createHttpServer((_request, response) => {
+    if (delayMs === undefined) return;
+    setTimeout(() => response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(health)), delayMs);
+  });
+  await new Promise<void>(resolve => http.listen(0, "127.0.0.1", () => resolve()));
+  const { port } = http.address() as AddressInfo;
+  // A live daemon holds its engine socket; Rerail may check that it is there before it probes the daemon.
+  const kernelSocketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-bundle-test-${process.pid}-${port}` : join(home, "engine.sock");
+  const engine = createSocketServer(socket => socket.destroy());
+  await new Promise<void>(resolve => engine.listen(kernelSocketPath, () => resolve()));
+  writeFileSync(join(home, "daemon.json"), JSON.stringify({
+    pid: process.pid, host: "127.0.0.1", port, url: `http://127.0.0.1:${port}/`, version: "9.9.9", databasePath: join(home, "rerail.sqlite"),
+    kernelSocketPath, ui: "bundled", startedAt: 1, packageRoot: home, accessToken: "fake-daemon-capability-0123456789",
+  }));
+  const closed = async (server: Server): Promise<void> => await new Promise(resolve => server.close(() => resolve()));
+  return {
+    close: async () => {
+      http.closeAllConnections();
+      await Promise.all([closed(http), closed(engine)]);
+    },
+  };
+}
+
 async function reportedWorld(): Promise<Fixture> {
   const world = await fixture();
   recordSession(world, SESSION, 1_000);
@@ -343,6 +376,26 @@ describe("rerail support-bundle", () => {
     const { bundle } = await runFrom(world, current);
     expect(bundle.rerail.managedInstall).toBe(true);
     expect(bundle.problems).toEqual([]);
+  });
+
+  it("waits out a busy daemon that misses the first health probe, and says how long it took to answer", { timeout: 30_000 }, async () => {
+    const world = await fixture();
+    const daemon = await slowDaemon(world.home, 2_500);
+    daemons.push(daemon.close);
+    const { bundle } = await run(world);
+    expect(bundle.daemon).toMatchObject({ status: "running", version: "9.9.9", engine: { ok: true, version: "1.0.0" } });
+    expect(bundle.daemon.answeredInMs).toBeGreaterThanOrEqual(2_500);
+  });
+
+  it("still calls a daemon that never answers unresponsive once the wait is over", { timeout: 30_000 }, async () => {
+    const world = await fixture();
+    const daemon = await slowDaemon(world.home, undefined);
+    daemons.push(daemon.close);
+    const { bundle } = await collectSupportBundle({
+      repo: world.repo, home: world.home, databasePath: defaultRerailDatabasePath(), sessionId: undefined, packageVersion: "9.9.9",
+      packageRoot: PACKAGE_ROOT, busyDaemonWaitMs: 500,
+    });
+    expect(bundle.daemon).toEqual({ status: "unresponsive" });
   });
 
   describe("where set-up never finished: a database, and this checkout not recorded in it", () => {

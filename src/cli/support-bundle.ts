@@ -39,7 +39,9 @@ import {
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
+  type DaemonLookup,
   lookupDaemon,
+  probeDaemon,
 } from "../runtime/daemon-control.js";
 import { workspaceStartState } from "../runtime/repository-start.js";
 import { defaultStorageRoot } from "../runtime/session-paths.js";
@@ -62,6 +64,11 @@ const MAX_AUDIT_ENTRIES = 100;
 const MAX_LOG_LINES = 200;
 const MAX_LOG_LINE_CHARACTERS = 2000;
 const MAX_LOG_BYTES = 1024 * 1024;
+/**
+ * How long the bundle waits for a daemon that is alive but missed its first 2 s health probe, as one does while an
+ * audit or a long garbage collection holds its one event loop.
+ */
+const BUSY_DAEMON_WAIT_MS = 10_000;
 
 export interface KnownValue {
   value: string;
@@ -157,6 +164,8 @@ export interface SupportBundle {
     version?: string;
     ui?: string;
     uptimeMs?: number;
+    /** How long the daemon took to answer its health probe, a first probe it missed included. */
+    answeredInMs?: number;
     engine?: { ok: boolean; version?: string; error?: string };
   };
   codingAgents: string[] | null;
@@ -484,8 +493,22 @@ function readLogTail(home: string): { lines: string[]; omitted: number } {
   }
 }
 
-async function readDaemon(home: string): Promise<SupportBundle["daemon"]> {
+/**
+ * The daemon recorded in `home` as `lookupDaemon` finds it, with a busy daemon waited for: one that is alive but missed
+ * the 2 s probe is probed once more, for up to `busyWaitMs`, and is running only when the recorded pid answers. One 2 s
+ * probe called the same daemon running in one bundle and unresponsive in the next.
+ */
+async function patientLookup(home: string, busyWaitMs: number): Promise<DaemonLookup> {
   const lookup = await lookupDaemon(home);
+  if (lookup.status !== "unresponsive") return lookup;
+  const probe = await probeDaemon(lookup.state, undefined, busyWaitMs);
+  if (probe.status === "refused") return { status: "refused", state: lookup.state };
+  return probe.status === "ok" && probe.health.pid === lookup.state.pid ? { status: "running", state: lookup.state, health: probe.health } : lookup;
+}
+
+async function readDaemon(home: string, busyWaitMs: number): Promise<SupportBundle["daemon"]> {
+  const started = performance.now();
+  const lookup = await patientLookup(home, busyWaitMs);
   if (lookup.status !== "running") return { status: lookup.status };
   const { version, ui, uptimeMs, native } = lookup.health;
   return {
@@ -493,6 +516,7 @@ async function readDaemon(home: string): Promise<SupportBundle["daemon"]> {
     version,
     ui,
     uptimeMs,
+    answeredInMs: Math.round(performance.now() - started),
     engine: native.ok ? { ok: true, version: native.kernelVersion } : { ok: false, error: native.error },
   };
 }
@@ -509,13 +533,16 @@ interface CollectInput {
   packageVersion: string;
   /** The package this command runs from; the bundle says whether it is the managed installation. */
   packageRoot: string;
+  /** How long to wait for a busy daemon (`patientLookup`); `BUSY_DAEMON_WAIT_MS` unless a test shortens it. */
+  busyDaemonWaitMs?: number;
 }
 
 /**
  * Everything but the session is read section by section, and a section that fails says why in `problems`: the bundle
  * matters most when Rerail cannot start, its database is damaged or set-up never finished.
  */
-export async function collectSupportBundle({ repo, home, databasePath, sessionId, packageVersion, packageRoot }: CollectInput): Promise<{ bundle: SupportBundle; ownRules: string[] }> {
+export async function collectSupportBundle(input: CollectInput): Promise<{ bundle: SupportBundle; ownRules: string[] }> {
+  const { repo, home, databasePath, sessionId, packageVersion, packageRoot, busyDaemonWaitMs = BUSY_DAEMON_WAIT_MS } = input;
   const problems: string[] = [];
   const attempt = <T>(section: string, read: () => T, fallback: T): T => {
     try {
@@ -544,7 +571,7 @@ export async function collectSupportBundle({ repo, home, databasePath, sessionId
   }
 
   const { lines, omitted } = attempt("daemon log", () => readLogTail(home), { lines: [], omitted: 0 });
-  const daemon = await readDaemon(home).catch((error: unknown) => {
+  const daemon = await readDaemon(home, busyDaemonWaitMs).catch((error: unknown) => {
     problems.push(`daemon: ${error instanceof Error ? error.message : String(error)}`);
     return { status: "unknown" };
   });
