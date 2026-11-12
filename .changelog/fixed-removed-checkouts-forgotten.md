@@ -1,0 +1,1 @@
+Rerail now forgets a worktree or clone whose folder is gone, or that Git no longer lists, with that checkout's own settings: the daemon looks when it starts and every hour. Before, it kept every checkout it had seen, so checkout counts kept growing and each read of a repository's checkouts got slower.
