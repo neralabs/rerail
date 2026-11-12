@@ -10,7 +10,9 @@ import type { AuditInput, AuditRuleProvenance, LegacyAuditRuleProvenance, Reposi
 import { openRerailDatabase, resetRepositoryHistory } from "../../../src/engine/storage/database.js";
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "../../../src/engine/storage/baseline-schema.js";
 import { RERAIL_BASELINE_SCHEMA_VERSION, RULE_PROVENANCE_STEP } from "../../../src/engine/storage/migrations.js";
-import { moveRuleProvenances, type RuleProvenanceMoveOptions } from "../../../src/engine/storage/rule-provenance-move.js";
+import {
+  moveRuleProvenances, moveRuleProvenancesInWorker, type RuleProvenanceMoveOptions,
+} from "../../../src/engine/storage/rule-provenance-move.js";
 import { tableColumns } from "../../../src/engine/storage/table-probe.js";
 
 // Every export calls the real one; a test that needs a disk with little free space overrides `statfsSync`.
@@ -404,6 +406,29 @@ describe("audit rule provenance", () => {
     }
   }, 15_000);
 
+  it("moves on a thread of its own, which a stop ends before its first batch, and a later run moves the rest", async () => {
+    const path = await fileOfTheBuildBefore();
+    const written = writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
+
+    const stop = new AbortController();
+    const stopped = moveRuleProvenancesInWorker(path, stop.signal);
+    stop.abort();
+    expect(await stopped).toBe(0);
+    expect(inlineAudits(path)).toBe(30);
+
+    expect(await moveRuleProvenancesInWorker(path)).toBe(30);
+    expect(inlineAudits(path)).toBe(0);
+    expect(pageBytes(path).free).toBe(0);
+    const store = new SqliteAuditStore(path);
+    try {
+      for (const { auditId, text } of written) expect(JSON.stringify(store.get(auditId)?.ruleProvenance), auditId).toBe(text);
+    } finally {
+      store.close();
+    }
+    // Nothing is left: the next run reads that and starts no thread.
+    expect(await moveRuleProvenancesInWorker(path)).toBe(0);
+  }, 30_000);
+
   it("leaves the free space in the file when there is no provenance to move", async () => {
     const path = await fileOfTheBuildBefore();
     writeInlineAudits(path, [[], []]);
@@ -439,8 +464,8 @@ describe("audit rule provenance", () => {
       return () => reader.close();
     }, () => new Promise(resolve => setTimeout(resolve, 20))));
     expect(logged).toContain("another connection was using it");
-    // The daemon runs the move on its only thread, and a hook's health probe gives up after 2 s. Waiting inside SQLite,
-    // the checkpoint held the thread for its 5 s busy timeout.
+    // The thread running the move takes a stop between two tries, and the daemon's close waits for that. Waiting inside
+    // SQLite, the checkpoint held the thread for its 5 s busy timeout.
     expect(longest).toBeLessThan(2_000);
   }, 30_000);
 

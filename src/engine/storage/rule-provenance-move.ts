@@ -1,17 +1,19 @@
 /**
  * Moves the rule provenance that audits recorded before `audit-rule-provenance-once` hold inline
  * (`rule_provenance_json`) to the one copy `audit_rule_provenances` keeps. It runs after the open, never inside it:
- * the daemon starts it once it serves (`daemon.ts`). Each batch of audits is one short write transaction, with a pause
- * before it, so other writers keep recording while it runs; a process stopped partway loses at most one batch, and the
- * next run goes on from what is left. Until an audit moves, the audit store reads its provenance inline. The move runs
- * on the daemon's only thread, so it never waits inside SQLite for another connection: it awaits a pause and tries
- * again (`whenFree`), and the daemon answers in the meantime.
+ * the daemon starts it once it serves (`daemon.ts`), on a worker thread of its own (`moveRuleProvenancesInWorker`), so
+ * none of its SQLite work holds the thread that answers requests. Each batch of audits is one short write transaction,
+ * with a pause before it, so other writers keep recording while it runs; a process stopped partway loses at most one
+ * batch, and the next run goes on from what is left. Until an audit moves, the audit store reads its provenance
+ * inline. The move never waits inside SQLite for another connection: it awaits a pause and tries again (`whenFree`),
+ * so a stop reaches it between two tries.
  */
 import { createHash } from "node:crypto";
 import { existsSync, statfsSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { Worker } from "node:worker_threads";
 import Database from "better-sqlite3";
 import { openRerailDatabase, type RerailDatabase } from "./database.js";
 import { RULE_PROVENANCE_STEP } from "./migrations.js";
@@ -58,7 +60,7 @@ export async function moveRuleProvenances(path: string, options: RuleProvenanceM
   if (!existsSync(path) || !leftToMove(path)) return 0;
   const database = openRerailDatabase(path);
   try {
-    // From here SQLite reports another connection's lock at once, and `whenFree` waits for it off the thread.
+    // From here SQLite reports another connection's lock at once, and `whenFree` waits for it between tries.
     database.$client.pragma("busy_timeout = 0");
     const free: Free = step => whenFree(step, pause, signal);
     const upTo = stepAppliedAt(database);
@@ -80,6 +82,50 @@ export async function moveRuleProvenances(path: string, options: RuleProvenanceM
   } finally {
     database.$client.close();
   }
+}
+
+/**
+ * Runs `moveRuleProvenances` on a worker thread with a connection of its own, and resolves to how many audits it moved
+ * once that thread ends. Its batches, checkpoints and `VACUUM` then never hold the calling thread, which in the daemon
+ * answers the requests hooks send: on a loaded Windows machine one batch of 100 audits took 3.6 s, and the `VACUUM` of
+ * 4,000 audits 8.9 s, past the 2 s a hook's health probe waits. `signal` stops the move before its next step, as
+ * `moveRuleProvenances` stops. A file with nothing to move, read on the calling thread, starts no thread.
+ */
+export async function moveRuleProvenancesInWorker(path: string, signal?: AbortSignal): Promise<number> {
+  if (signal?.aborted === true || !existsSync(path) || !leftToMove(path)) return 0;
+  const worker = moveWorker(path);
+  const stop = (): void => worker.postMessage("stop");
+  signal?.addEventListener("abort", stop, { once: true });
+  try {
+    return await movedBy(worker);
+  } finally {
+    signal?.removeEventListener("abort", stop);
+  }
+}
+
+/**
+ * The worker beside this module (`rule-provenance-move-worker.ts`): its JavaScript as the package ships it, or, where
+ * this module runs from its TypeScript source as the tests run it, that source through `tsx`.
+ */
+function moveWorker(path: string): Worker {
+  const fromSource = new URL(import.meta.url).pathname.endsWith(".ts");
+  const entry = new URL(`./rule-provenance-move-worker.${fromSource ? "ts" : "js"}`, import.meta.url);
+  return new Worker(entry, { workerData: path, ...(fromSource ? { execArgv: ["--import", "tsx"] } : {}) });
+}
+
+/** How many audits `worker` moved, once it ends; what it threw, when it fails. */
+function movedBy(worker: Worker): Promise<number> {
+  return new Promise((resolve, reject) => {
+    let moved = 0;
+    worker.on("message", (count: number) => {
+      moved = count;
+    });
+    worker.once("error", reject);
+    worker.once("exit", code => {
+      if (code === 0) resolve(moved);
+      else reject(new Error(`the thread moving audit rule provenance exited with code ${code}`));
+    });
+  });
 }
 
 /**

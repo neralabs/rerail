@@ -26,7 +26,7 @@ import { nativeHealth as loadNativeHealth, type NativeHealth } from "../engine/n
 import { modelStatus } from "../engine/native/model-status.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
-import { moveRuleProvenances } from "../engine/storage/rule-provenance-move.js";
+import { moveRuleProvenancesInWorker } from "../engine/storage/rule-provenance-move.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { acquireMainInstance } from "../engine/native/main-instance.js";
 import { currentRerailBuild, isMainRerailBuild } from "../engine/native/rerail-build.js";
@@ -519,12 +519,14 @@ export class RerailDaemon {
 
   /**
    * Moves the rule provenance that audits an older Rerail recorded hold inline, a batch per short transaction while the
-   * daemon serves (`rule-provenance-move.ts`), so no open holds the write lock for the whole history. It finds nothing
-   * to move on a file it has already moved. A failure goes to the daemon log; the audits read the same either way.
+   * daemon serves (`rule-provenance-move.ts`), so no open holds the write lock for the whole history. The move runs on
+   * a worker thread, so this thread keeps answering through its batches and its `VACUUM`. It finds nothing to move on a
+   * file it has already moved, and starts no thread then. A failure goes to the daemon log; the audits read the same
+   * either way.
    */
   #startProvenanceMove(): void {
     const stop = new AbortController();
-    const done = moveRuleProvenances(this.#databasePath, { signal: stop.signal }).then(() => undefined, (error: unknown) => {
+    const done = moveRuleProvenancesInWorker(this.#databasePath, stop.signal).then(() => undefined, (error: unknown) => {
       process.stderr.write(`rerail daemon: moving audit rule provenance stopped: ${error instanceof Error ? error.message : String(error)}\n`);
     });
     this.#provenanceMove = { stop, done };
