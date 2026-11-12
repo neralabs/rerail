@@ -51,19 +51,35 @@ describe("what rerail status says of hook failures", () => {
     expect(hookFailureLines(whole(failure(2_000)), null)[0]).toMatch(/^Hooks run but nothing was recorded since /u);
   });
 
-  it("names the failures without that lead when events were recorded after some of them, and says nothing without any", () => {
-    expect(hookFailureLines(whole(failure(2_000), failure(4_000, "Stop")), 3_000)).toEqual([
+  it("names the failures without that lead when events were recorded after all of them, and says nothing without any", () => {
+    expect(hookFailureLines(whole(failure(2_000), failure(4_000, "Stop")), 5_000)).toEqual([
       "Hooks: 2 hook events could not be recorded in the last 24 hours; the last, Stop from claude-code_2-1-311_harness "
         + "with Rerail 0.1.3 at 1970-01-01T00:00:04.000Z: Claude hook omitted index.",
     ]);
     expect(hookFailureLines(whole(), 3_000)).toEqual([]);
   });
 
+  it("leads with the failures since the last recorded event, then counts the period, when events were recorded between failures", () => {
+    expect(hookFailureLines(whole(failure(2_000), failure(4_000, "Stop"), failure(5_000, "Stop")), 3_000)).toEqual([
+      "Hooks run but nothing was recorded since 1970-01-01T00:00:04.000Z: 2 hook events failed, of 3 that could not be "
+        + "recorded in the last 24 hours; the last, Stop from claude-code_2-1-311_harness with Rerail 0.1.3 at "
+        + "1970-01-01T00:00:05.000Z: Claude hook omitted index.",
+    ]);
+  });
+
   it("says since when it counts when the log no longer holds the failures before that", () => {
-    expect(hookFailureLines({ failures: [failure(2_000), failure(4_000, "Stop")], keptSince: 2_000 }, 3_000)).toEqual([
+    const log = { failures: [failure(2_000), failure(4_000, "Stop")], keptSince: 2_000 };
+    expect(hookFailureLines(log, 5_000)).toEqual([
       "Hooks: 2 hook events could not be recorded since 1970-01-01T00:00:02.000Z, as far back as the log goes; the last, Stop "
         + "from claude-code_2-1-311_harness with Rerail 0.1.3 at 1970-01-01T00:00:04.000Z: Claude hook omitted index.",
     ]);
+    expect(hookFailureLines(log, 3_000)[0]).toMatch(
+      /^Hooks run but nothing was recorded since 1970-01-01T00:00:04\.000Z: 1 hook event failed, of 2 that could not be recorded since 1970-01-01T00:00:02\.000Z, as far back as the log goes; the last, Stop /u,
+    );
+    // Every failure the log holds came after the last recorded event, and hooks may have failed before the oldest.
+    expect(hookFailureLines(log, 1_000)[0]).toMatch(
+      /^Hooks run but nothing was recorded since 1970-01-01T00:00:02\.000Z, as far back as the log goes: 2 hook events failed; the last, Stop /u,
+    );
   });
 });
 
@@ -94,6 +110,8 @@ describe("the hook failure log", () => {
   };
   const statusSays = (rerailHome: string, since: number, lastRecordedAt: number): string[] =>
     hookFailureLines(readHookFailures(rerailHome, since), lastRecordedAt);
+  // An event recorded after every failure below: the line counts them without the lead.
+  const afterEveryFailure = 60_000;
 
   it("counts the failures it moved aside with the newest ones, over the whole period when those reach back that far", async () => {
     const rerailHome = await home();
@@ -101,8 +119,19 @@ describe("the hook failure log", () => {
     for (const at of [1_000, 5_000, 6_000]) recordLarge(rerailHome, at);
     recordLast(rerailHome, 7_000);
     expect(existsSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`))).toBe(true);
-    expect(statusSays(rerailHome, 2_000, 5_500)).toEqual([expect.stringMatching(
+    expect(statusSays(rerailHome, 2_000, afterEveryFailure)).toEqual([expect.stringMatching(
       /^Hooks: 3 hook events could not be recorded in the last 24 hours; the last, PostToolUse from claude-code with Rerail \S+ at 1970-01-01T00:00:07\.000Z: the daemon did not answer\.$/u,
+    )]);
+  });
+
+  // Hooks failed earlier in the period and events were recorded after that; then the daemon stopped answering, and the
+  // first failure of that outage moved the earlier failures aside.
+  it("leads with an outage that began after the last recorded event once older failures moved aside", async () => {
+    const rerailHome = await home();
+    for (const at of [1_000, 2_000, 3_000]) recordLarge(rerailHome, at);
+    recordLast(rerailHome, 4_000);
+    expect(statusSays(rerailHome, 2_000, 3_500)).toEqual([expect.stringMatching(
+      /^Hooks run but nothing was recorded since 1970-01-01T00:00:04\.000Z: 1 hook event failed, of 3 that could not be recorded in the last 24 hours; the last, PostToolUse .* at 1970-01-01T00:00:04\.000Z: the daemon did not answer\.$/u,
     )]);
   });
 
@@ -111,7 +140,7 @@ describe("the hook failure log", () => {
     // The log moves aside at the 4th, 7th and 10th failure; the 1st to 6th are gone.
     for (let second = 1; second <= 9; second += 1) recordLarge(rerailHome, second * 1_000);
     recordLast(rerailHome, 10_000);
-    expect(statusSays(rerailHome, 0, 8_500)).toEqual([expect.stringMatching(
+    expect(statusSays(rerailHome, 0, afterEveryFailure)).toEqual([expect.stringMatching(
       /^Hooks: 4 hook events could not be recorded since 1970-01-01T00:00:07\.000Z, as far back as the log goes; the last, PostToolUse .* at 1970-01-01T00:00:10\.000Z: the daemon did not answer\.$/u,
     )]);
   });
@@ -129,7 +158,7 @@ describe("the hook failure log", () => {
     recordLast(rerailHome, 6_500);
     for (const at of [9_000, 10_000, 11_000]) recordLarge(rerailHome, at);
     recordLast(rerailHome, 12_000);
-    expect(statusSays(rerailHome, 0, 8_500)).toEqual([expect.stringMatching(
+    expect(statusSays(rerailHome, 0, afterEveryFailure)).toEqual([expect.stringMatching(
       /^Hooks: 5 hook events could not be recorded since 1970-01-01T00:00:08\.000Z, as far back as the log goes; /u,
     )]);
   });
@@ -221,7 +250,7 @@ describe("the hook failure log", () => {
     // The log moves aside at the 7th and the 10th failure; the 4th to 6th are gone, and the stopped hook's log is older.
     for (let second = 4; second <= 9; second += 1) recordLarge(rerailHome, second * 1_000);
     recordLast(rerailHome, 10_000);
-    expect(statusSays(rerailHome, 0, 8_500)).toEqual([expect.stringMatching(
+    expect(statusSays(rerailHome, 0, afterEveryFailure)).toEqual([expect.stringMatching(
       /^Hooks: 4 hook events could not be recorded since 1970-01-01T00:00:07\.000Z, as far back as the log goes; /u,
     )]);
   });

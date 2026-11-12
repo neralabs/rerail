@@ -252,22 +252,40 @@ export interface HookFailureLog {
   keptSince: number | null;
 }
 
+const iso = (at: number): string => new Date(at).toISOString();
+
+/** The period a log's failures cover ({@link HookFailureLog.keptSince}), as the line names it. */
+const periodOf = (keptSince: number | null): string =>
+  keptSince === null ? "in the last 24 hours" : `since ${iso(keptSince)}, as far back as the log goes`;
+
 /**
  * What `rerail status` says of the log's failures from the last `HOOK_FAILURE_WINDOW_MS`, given when the newest
- * recorded event was observed (`lastRecordedAt`, epoch ms; null when nothing was ever recorded). When every failure is
- * newer than the last recorded event, hooks run but nothing is recorded, and the line leads with that.
+ * recorded event was observed (`lastRecordedAt`, epoch ms; null when nothing was ever recorded). When hooks failed
+ * after the last recorded event, hooks run but nothing is recorded, and the line leads with that.
  */
 export function hookFailureLines({ failures, keptSince }: HookFailureLog, lastRecordedAt: number | null): string[] {
   const last = failures.at(-1);
   if (last === undefined) return [];
-  const since = lastRecordedAt === null ? failures : failures.filter(failure => failure.at > lastRecordedAt);
+  const unrecorded = lastRecordedAt === null ? failures : failures.filter(failure => failure.at > lastRecordedAt);
   const from = last.agent ?? last.host;
-  const detail = `the last, ${last.event} from ${from} with Rerail ${last.rerail} at ${new Date(last.at).toISOString()}: ${last.reason}`;
-  if (since.length === failures.length) {
-    return [`Hooks run but nothing was recorded since ${new Date(failures[0]!.at).toISOString()}: ${plural(failures.length, "hook event", "hook events")} failed; ${detail}.`];
+  const detail = `the last, ${last.event} from ${from} with Rerail ${last.rerail} at ${iso(last.at)}: ${last.reason}`;
+  const first = unrecorded[0];
+  if (first === undefined) {
+    return [`Hooks: ${plural(failures.length, "hook event", "hook events")} could not be recorded ${periodOf(keptSince)}; ${detail}.`];
   }
-  const period = keptSince === null ? "in the last 24 hours" : `since ${new Date(keptSince).toISOString()}, as far back as the log goes`;
-  return [`Hooks: ${plural(failures.length, "hook event", "hook events")} could not be recorded ${period}; ${detail}.`];
+  return [`${unrecordedSince(first, unrecorded.length, { total: failures.length, keptSince })}; ${detail}.`];
+}
+
+/**
+ * The lead of the line when `count` hooks failed after the last recorded event, the first of them `first`: nothing was
+ * recorded since that one. When failures from before the last recorded event add to them, the count of the whole log
+ * follows, `total`, with its period. When every failure the log holds came after it and older ones may be gone, hooks
+ * may have failed before `first`, and the lead says so.
+ */
+function unrecordedSince(first: HookFailure, count: number, { total, keptSince }: { total: number; keptSince: number | null }): string {
+  const reach = count === total && keptSince !== null ? ", as far back as the log goes" : "";
+  const lead = `Hooks run but nothing was recorded since ${iso(first.at)}${reach}: ${plural(count, "hook event", "hook events")} failed`;
+  return count === total ? lead : `${lead}, of ${total} that could not be recorded ${periodOf(keptSince)}`;
 }
 
 /**
