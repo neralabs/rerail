@@ -1,11 +1,11 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { EventEmitter, once } from "node:events";
 import { createServer, type AddressInfo, type Socket } from "node:net";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, utimes, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { defaultEngineSocketPath, RerailDaemon } from "../../src/daemon/index.js";
 import {
@@ -13,6 +13,7 @@ import {
   type DaemonState,
   type NativeLaunch,
   type StartedChild,
+  AUTOSTART_CLAIM_FILE,
   AutostartOffError,
   autostartDaemon,
   autostartOff,
@@ -883,4 +884,95 @@ describe("autostartDaemon", () => {
       await removeFolder(home);
     }
   });
+
+  const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+  const daemonControlModule = pathToFileURL(join(packageRoot, "src", "runtime", "daemon-control.ts")).href;
+
+  /**
+   * A process of its own, as every hook is, that finds no daemon in `home`: it prints `ready`, and on a line on stdin
+   * calls autostartDaemon and prints how many processes it launched. Its machine counts launches and starts nothing.
+   */
+  function hookProcess(home: string): { child: ChildProcess; ready: Promise<void>; go: () => void; launches: Promise<number> } {
+    const child = spawn(process.execPath, [
+      "--import", "tsx", "--input-type=module", "-e",
+      `import { EventEmitter } from "node:events";
+       const { autostartDaemon } = await import(${JSON.stringify(daemonControlModule)});
+       let launches = 0;
+       const started = () => {
+         launches += 1;
+         return Object.assign(new EventEmitter(), { pid: 0, unref() {} });
+       };
+       const machine = {
+         platform: process.platform,
+         env: process.env,
+         kill: () => { throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" }); },
+         pipes: () => [],
+         holdsCapability: async () => false,
+         forgetMainInstanceHolder: () => undefined,
+         mainInstanceLockHeld: () => undefined,
+         nodeExecutable: () => process.execPath,
+         spawnDetached: () => { launches += 1; return { pid: 0 }; },
+         spawn: started,
+         spawnShown: started,
+       };
+       process.stdout.write("ready\\n");
+       process.stdin.once("data", () => {
+         autostartDaemon(machine);
+         process.stdout.write("launches " + launches + "\\n");
+         process.exit(0);
+       });`,
+    ], { cwd: packageRoot, env: { ...process.env, RERAIL_HOME: home, RERAIL_AUTOSTART: "1" }, stdio: ["pipe", "pipe", "pipe"] });
+    let output = "";
+    let errors = "";
+    child.stdout!.setEncoding("utf8").on("data", (chunk: string) => { output += chunk; });
+    child.stderr!.setEncoding("utf8").on("data", (chunk: string) => { errors += chunk; });
+    const exited = once(child, "exit");
+    const ready = (async () => {
+      while (!output.includes("ready\n")) {
+        if (child.exitCode !== null) throw new Error(`hook process exited before it was ready: ${errors}`);
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    })();
+    const launches = exited.then(() => {
+      const counted = /launches (\d+)/u.exec(output)?.[1];
+      if (counted === undefined) throw new Error(`hook process printed no count: ${errors}`);
+      return Number(counted);
+    });
+    launches.catch(() => undefined);
+    return { child, ready, go: () => child.stdin!.write("go\n"), launches };
+  }
+
+  it("launches one `rerail daemon start` when several hooks find no daemon at the same moment", async () => {
+    const home = await mkdtemp(join(tmpdir(), "rerail-autostart-"));
+    // After a daemon stops, every hook in flight finds it gone; each is its own process, so a flag in a process
+    // cannot keep the others from launching.
+    const hooks = Array.from({ length: 6 }, () => hookProcess(home));
+    try {
+      await Promise.all(hooks.map(async hook => await hook.ready));
+      for (const hook of hooks) hook.go();
+      const launches = await Promise.all(hooks.map(async hook => await hook.launches));
+      expect(launches.reduce((sum, count) => sum + count, 0)).toBe(1);
+    } finally {
+      for (const { child } of hooks) if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      await removeFolder(home);
+    }
+  }, 60_000);
+
+  it("leaves the start to a launch claimed within 30 s, and launches past a claim older than that", async () => {
+    const homes = await Promise.all([mkdtemp(join(tmpdir(), "rerail-autostart-")), mkdtemp(join(tmpdir(), "rerail-autostart-"))]);
+    const [recent, expired] = homes as [string, string];
+    const minuteAgo = new Date(Date.now() - 60_000);
+    await writeFile(join(recent, AUTOSTART_CLAIM_FILE), "");
+    await writeFile(join(expired, AUTOSTART_CLAIM_FILE), "");
+    await utimes(join(expired, AUTOSTART_CLAIM_FILE), minuteAgo, minuteAgo);
+    const hooks = homes.map(home => hookProcess(home));
+    try {
+      await Promise.all(hooks.map(async hook => await hook.ready));
+      for (const hook of hooks) hook.go();
+      expect(await Promise.all(hooks.map(async hook => await hook.launches))).toEqual([0, 1]);
+    } finally {
+      for (const { child } of hooks) if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      await Promise.all(homes.map(async home => await removeFolder(home)));
+    }
+  }, 60_000);
 });

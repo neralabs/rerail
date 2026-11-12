@@ -33,7 +33,7 @@ import {
 import { ACTIVE_PROFILE_FILE, DEVICE_SECRETS_DIR, PROFILES_DIR } from "../../src/activation/index.js";
 import { DAEMON_PORT_FILE } from "../../src/daemon/index.js";
 import { INSTALLED_PACKS_DIR, LOCKS_DIR, openRerailDatabase, RERAIL_DATABASE_FILE, RULES_DUMP_FILE } from "../../src/engine/index.js";
-import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, START_LOCK_DIR } from "../../src/runtime/index.js";
+import { AUTOSTART_CLAIM_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, START_LOCK_DIR } from "../../src/runtime/index.js";
 import { POSIX_MODES } from "../support/platform/file-mode.js";
 import { stubUserHome } from "../support/user-home.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -390,7 +390,7 @@ describe("rerail install --root", () => {
     await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
     const folders = [PROFILES_DIR, DEVICE_SECRETS_DIR, LOCKS_DIR, START_LOCK_DIR, UPDATE_LOCK_DIR, VERSIONS_DIR, INSTALLED_PACKS_DIR, LAUNCHER_DIR];
     const files = [
-      CONSENT_FILE, SEEN_AGENTS_FILE, LAUNCHER_PATH_FILE, DAEMON_STATE_FILE, DAEMON_PORT_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE,
+      CONSENT_FILE, SEEN_AGENTS_FILE, LAUNCHER_PATH_FILE, DAEMON_STATE_FILE, DAEMON_PORT_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, AUTOSTART_CLAIM_FILE,
       RULES_DUMP_FILE, ACTIVE_PROFILE_FILE, UPDATE_STATE_FILE, RERAIL_DATABASE_FILE, `${RERAIL_DATABASE_FILE}-wal`, `${RERAIL_DATABASE_FILE}.pre-update`,
       CLAUDE_STATUS_DATABASE_FILE, `${CLAUDE_STATUS_DATABASE_FILE}-shm`, `${DAEMON_ACCESS_TOKEN_FILE}.4242.tmp`, `${CURRENT_LINK}.4242.0b8f6a3e-6d1c.old`,
     ];

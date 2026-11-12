@@ -26,6 +26,7 @@ import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
 import { LOCKS_DIR } from "../engine/native/file-lock.js";
 import { contentStoreOverride, legacyWindowsContentStoreDirectory, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import {
+  AUTOSTART_CLAIM_FILE,
   autostartOff,
   browserOff,
   DAEMON_ACCESS_TOKEN_FILE,
@@ -401,6 +402,7 @@ const RERAIL_HOME_ENTRIES: readonly string[] = [
   DAEMON_ACCESS_TOKEN_FILE,
   LOCKS_DIR,
   START_LOCK_DIR,
+  AUTOSTART_CLAIM_FILE,
   RULES_DUMP_FILE,
   PROFILES_DIR,
   ACTIVE_PROFILE_FILE,
