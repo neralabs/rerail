@@ -1650,11 +1650,16 @@ impl Retained {
             if let Some(o) = &old {
                 changed.extend(o.keys().filter(|d| !docs.contains_key(*d)).map(|d| granule(*d)));
             }
+            if std::env::var_os("RERAIL_INPUT_TRACE").is_some() && changed.len() <= 8 && source.len() > 20_000 {
+                let differ_n: Vec<(i64, Option<(u64, u64)>, Option<(u64, u64)>)> = docs.iter().filter(|(d, _)| differ(d)).take(4).map(|(d, v)| (*d, Some(*v), old.as_ref().and_then(|o| o.get(d)).copied())).collect();
+                eprintln!("rerail: input {rel} {:?} (group col {g} of {width}, {} rows, {} owners): granules {changed:?}; owners differ {differ_n:?}", prog.decls.get(rel), source.len(), docs.len());
+            }
             if changed.len() > 8 && std::env::var_os("RERAIL_INPUT_TRACE").is_some() {
                 let differ_n = docs.keys().filter(|d| differ(d)).count();
                 let gone_n = old.as_ref().map_or(0, |o| o.keys().filter(|d| !docs.contains_key(*d)).count());
                 let ex: Vec<String> = docs.iter().filter(|(d, _)| differ(d)).take(3).map(|(d, v)| format!("{d}: {v:?} was {:?}", old.as_ref().and_then(|o| o.get(d)))).collect();
-                eprintln!("rerail: input {rel} (group col {g} of {width}): {} granules, {} owners of {} differ, {gone_n} gone; {}", changed.len(), differ_n, docs.len(), ex.join("; "));
+                let hit = self.input_docs.get(rel).is_some_and(|d| digest_of_docs(d) == digest);
+                eprintln!("rerail: input {rel} (group col {g} of {width}, {} rows, docs {}, phase {:?}, layered {}): {} granules, {} owners of {} differ, {gone_n} gone; {}", source.len(), if hit { "the run's" } else { "recomputed" }, super::phases::current(), source.as_any().and_then(|a| a.downcast_ref::<Layered>()).is_some(), changed.len(), differ_n, docs.len(), ex.join("; "));
             }
             let types = types_of(prog, rel);
             // Each changed granule's rows, grouped by owner, owners ascending (`kept_inputs` reads each owner's

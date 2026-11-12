@@ -46,22 +46,46 @@ const SCHEMA: &str = "CREATE TABLE IF NOT EXISTS frames(space BLOB NOT NULL, rel
 /// no more statements than they did.
 const CONFIRM_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS frame_confirmed(space BLOB PRIMARY KEY, data BLOB NOT NULL) WITHOUT ROWID";
 
-/// Whether a store (by path) has its confirmations' table, as this process found or made it.
-fn confirm_table(t: &rusqlite::Connection, path: &std::path::Path, make: bool) -> rusqlite::Result<bool> {
-    static KNOWN: std::sync::OnceLock<std::sync::Mutex<HashMap<std::path::PathBuf, bool>>> = std::sync::OnceLock::new();
-    let key = super::atoms::key(path);
+/// Each run's use of a space (what a run of it used, decision 0117 step 5): the relations its programs used, as sorted
+/// keys (`used_key`), one row a run, the last [`RUNS`] runs'. A frame keeps the run that put it (`used`); it is
+/// collected once that run is [`RUNS`] runs old and no run since used its relation. Marking a relation used writes
+/// one row a run, not every one of its frames.
+const USED_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS frame_used(space BLOB NOT NULL, run INTEGER NOT NULL, rels BLOB NOT NULL, PRIMARY KEY (space, run)) WITHOUT ROWID";
+
+/// Whether a store (by path) has table `name` (made by `schema`), as this process found or made it: made when a write
+/// first needs it, so a store's other writes run no more statements than they did.
+fn lazy_table(t: &rusqlite::Connection, path: &std::path::Path, name: &str, schema: &str, make: bool) -> rusqlite::Result<bool> {
+    static KNOWN: std::sync::OnceLock<std::sync::Mutex<HashMap<(std::path::PathBuf, String), bool>>> = std::sync::OnceLock::new();
+    let key = (super::atoms::key(path), name.to_owned());
     let known = KNOWN.get_or_init(Default::default);
-    if let Some(true) = known.lock().expect("the confirmations' tables").get(&key) {
+    if let Some(true) = known.lock().expect("the lazy tables").get(&key) {
         return Ok(true);
     }
     let has = if make {
-        t.execute_batch(CONFIRM_SCHEMA)?;
+        t.execute_batch(schema)?;
         true
     } else {
-        t.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='frame_confirmed'", [], |r| r.get::<_, i64>(0))? > 0
+        t.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1", [name], |r| r.get::<_, i64>(0))? > 0
     };
-    known.lock().expect("the confirmations' tables").insert(key, has);
+    known.lock().expect("the lazy tables").insert(key, has);
     Ok(has)
+}
+
+fn confirm_table(t: &rusqlite::Connection, path: &std::path::Path, make: bool) -> rusqlite::Result<bool> {
+    lazy_table(t, path, "frame_confirmed", CONFIRM_SCHEMA, make)
+}
+
+/// A relation's key in a run's use of its space (`USED_SCHEMA`).
+fn used_key(rel: &Rel) -> u64 {
+    confirm_key(rel, i64::MIN)
+}
+
+fn encode_keys(keys: &[u64]) -> Vec<u8> {
+    keys.iter().flat_map(|k| k.to_le_bytes()).collect()
+}
+
+fn decode_keys(data: &[u8]) -> Vec<u64> {
+    data.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().expect("8 bytes"))).collect()
 }
 
 /// A relation as its frame names it: its name and its identity.
@@ -912,7 +936,10 @@ impl ContentStore {
                 held.remove(key);
             }
         }
+        let timed = std::env::var_os("RERAIL_WRITES").is_some();
         self.immediate_transaction_once(|t| {
+            let mut at = std::time::Instant::now();
+            let mut lap = |what: &str| if timed { eprintln!("RERAIL_WRITES frames {what}: {:.3} s", at.elapsed().as_secs_f64()); at = std::time::Instant::now(); };
             t.execute_batch(SCHEMA)?;
             // A run's first program counts it: what it writes and marks is of the new run.
             let run = match used {
@@ -940,6 +967,7 @@ impl ContentStore {
                 }
                 t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
             }
+            lap(&format!("{} puts, {} deltas", puts.len(), delta_puts.len()));
             // A relation with a delta after its frame: the frame's digest and reads are the relation's now.
             for (rel, digest, reads) in heads {
                 t.prepare_cached("UPDATE frames SET digest = ?5, reads = ?6, used = ?7 WHERE space = ?1 AND rel = ?2 AND ident = ?3 AND part = ?4")?
@@ -971,6 +999,7 @@ impl ContentStore {
                     }
                 }
             }
+            lap(&format!("{} heads, {} retags", heads.len(), retags.len()));
             for batch in gone.chunks(READ_BATCH) {
                 let values=(0..batch.len()).map(|i|format!("(?{},?{},?{})",2+3*i,3+3*i,4+3*i)).collect::<Vec<_>>().join(",");
                 let sql=format!("WITH demanded(rel,ident,part) AS (VALUES {values}) \
@@ -979,17 +1008,46 @@ impl ContentStore {
                 for (rel,part) in batch { args.extend([rel.name.clone().into(),rel.ident.to_vec().into(),(*part).into()]); }
                 t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
             }
+            lap(&format!("{} gone", gone.len()));
             if let Some((used, _)) = used {
-                for batch in used.chunks(READ_BATCH) {
-                    let values=(0..batch.len()).map(|i|format!("(?{},?{})",3+2*i,4+2*i)).collect::<Vec<_>>().join(",");
-                    // Row-value membership selects primary-key prefixes, including every partition of a relation.
-                    let sql=format!("WITH demanded(rel,ident) AS (VALUES {values}) \
-                        UPDATE frames SET used=?2 WHERE (space,rel,ident) IN (SELECT ?1,rel,ident FROM demanded)");
-                    let mut args: Vec<rusqlite::types::Value>=vec![space.to_vec().into(),run.into()];
-                    for rel in batch { args.extend([rel.name.clone().into(),rel.ident.to_vec().into()]); }
+                // The run's use of the space: what its programs used, one row (decision 0117 step 5).
+                lazy_table(t, &self.database_path, "frame_used", USED_SCHEMA, true)?;
+                let runs: Vec<(i64, Vec<u64>)> = {
+                    let mut st = t.prepare_cached("SELECT run, rels FROM frame_used WHERE space = ?1")?;
+                    st.query_map([&space[..]], |r| Ok((r.get::<_, i64>(0)?, decode_keys(&r.get::<_, Vec<u8>>(1)?))))?.collect::<Result<_, _>>()?
+                };
+                let was = runs.iter().find(|(r, _)| *r == run).map(|(_, k)| k);
+                let mut keys: Vec<u64> = used.iter().map(used_key).collect();
+                keys.extend(was.into_iter().flatten().copied());
+                keys.sort_unstable();
+                keys.dedup();
+                if was != Some(&keys) {
+                    t.prepare_cached("INSERT OR REPLACE INTO frame_used(space, run, rels) VALUES (?1, ?2, ?3)")?.execute(params![&space[..], run, encode_keys(&keys)])?;
+                }
+                if runs.iter().any(|(r, _)| *r <= run - RUNS) {
+                    t.prepare_cached("DELETE FROM frame_used WHERE space = ?1 AND run <= ?2")?.execute(params![&space[..], run - RUNS])?;
+                }
+                lap(&format!("{} used", used.len()));
+                // Collected: a frame put [`RUNS`] runs ago or before, whose relation no run since used.
+                let live: HashSet<u64> = runs.iter().filter(|(r, _)| *r > run - RUNS).flat_map(|(_, k)| k.iter().copied()).chain(keys.iter().copied()).collect();
+                let old: Vec<(String, Vec<u8>)> = {
+                    let mut st = t.prepare_cached("SELECT DISTINCT rel, ident FROM frames WHERE space = ?1 AND used <= ?2")?;
+                    st.query_map(params![&space[..], run - RUNS], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?
+                };
+                let dead: Vec<(String, Vec<u8>)> = old.into_iter().filter(|(name, ident)| {
+                    <[u8; 32]>::try_from(ident.as_slice()).map_or(true, |ident| !live.contains(&used_key(&Rel { name: name.clone(), ident })))
+                }).collect();
+                for batch in dead.chunks(READ_BATCH) {
+                    let values = (0..batch.len()).map(|i| format!("(?{},?{})", 3 + 2 * i, 4 + 2 * i)).collect::<Vec<_>>().join(",");
+                    let sql = format!("WITH dead(rel,ident) AS (VALUES {values}) \
+                        DELETE FROM frames WHERE (space,rel,ident) IN (SELECT ?1,rel,ident FROM dead) AND used <= ?2");
+                    let mut args: Vec<rusqlite::types::Value> = vec![space.to_vec().into(), (run - RUNS).into()];
+                    for (name, ident) in batch {
+                        args.extend([name.clone().into(), ident.clone().into()]);
+                    }
                     t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
                 }
-                t.execute("DELETE FROM frames WHERE space = ?1 AND used <= ?2", params![&space[..], run - RUNS])?;
+                lap(&format!("{} relations' old frames collected", dead.len()));
             }
             Ok(())
         })

@@ -5371,8 +5371,10 @@ fn run_observed(
                 // name. A chunk evaluates its unchanged files with its changed ones, so this is more than the files
                 // the keeper counted as changed. Each such document's rows are this run's (`patch_owners`).
                 let values = crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS as i64;
+                // Of the relations owned by a node: a string's owner (`memo::Owner::Text`) is no document.
                 let evaluated: BTreeSet<i64> = staged
                     .iter()
+                    .filter(|(rel, ..)| matches!(memo::owner(rel), memo::Owner::Node(_)))
                     .flat_map(|(_, g, _, _, old, new)| old.iter().flatten().chain(new.iter()).map(move |r| retain::owner_of(r, *g)))
                     .filter(|o| *o < values)
                     .collect();
@@ -8551,6 +8553,28 @@ impl Own {
 
 #[cfg(test)]
 pub mod tests {
+    /// A string's test rows (`strtest_<k>`, `memo::Owner::Text`) are held once by each file whose text holds the
+    /// string: a changed file that holds it still keeps the other files' copies, though the string's id is also a
+    /// number the evaluated documents may hold (O-text-owner-evaluated).
+    #[test]
+    fn a_strings_rows_keep_the_other_files_copies() {
+        use super::*;
+        let string = 5i64;
+        let source = crate::code_rule_dsl::logic::native::component::columns_source(vec!["c0".into()], vec![Some(vec![string; 3])]);
+        let hash = retain::row_hash(&[string]);
+        let docs: retain::DocDigests = [(string, (hash.wrapping_mul(3), 3))].into_iter().collect();
+        let ranges: retain::Ranges = [(string, (0u32, 3u32))].into_iter().collect();
+        let kept = retain::KeptInput { source, digest: retain::digest_of_docs(&docs), docs: Arc::new(docs), ranges: Arc::new(ranges) };
+        let evaluated: BTreeSet<i64> = [string].into_iter().collect();
+        // The changed file held the string, and holds it still.
+        let patch = patch_owners("strtest_1", &kept, 0, None, &evaluated, &[vec![vec![string]]], vec![vec![string]]).unwrap();
+        assert!(patch.changed.is_empty() && patch.docs.is_none(), "three files hold it, as before: {:?}", patch.changed);
+        // The changed file no longer holds it: two files' copies are left.
+        let patch = patch_owners("strtest_1", &kept, 0, None, &evaluated, &[vec![vec![string]]], Vec::new()).unwrap();
+        assert_eq!(patch.changed, vec![(string, vec![vec![string]; 2])]);
+        assert!(patch.minus.is_empty() && patch.plus.is_empty(), "the string is still held: no row gone from the set");
+    }
+
     #[test]
     fn constant_demands_reach_projected_input_columns() {
         let p=crate::code_rule_dsl::logic::rr::parse(".decl raw(d:number,n:number,k:number)\n.input raw\n.decl tags(n:number,k:number)\ntags(n,k) :- raw(_,n,k).\n.decl alias(n:number,k:number)\nalias(n,k) :- tags(n,k).\n.decl out(n:number)\nout(n) :- alias(n,9).\n").unwrap();
@@ -8805,6 +8829,9 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
     use rustc_hash::FxHashMap;
     let width = kept.source.columns().len();
     let values = crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS as i64;
+    // A string's rows (`memo::Owner::Text`): its owner is the string, held once by each file whose text holds it, never
+    // a document evaluated.
+    let text = matches!(memo::owner(rel), memo::Owner::Text(_));
     if width == 0 {
         // A relation of no columns is its rows' count (`write_frames`): none of its rows names an owner.
         return if old.iter().all(Vec::is_empty) && new.is_empty() { Ok(OwnerPatch { changed: Vec::new(), plus: Vec::new(), minus: Vec::new(), docs: None, digest: kept.digest }) } else { Err(format!("{rel}: a relation of no columns changed")) };
@@ -8854,7 +8881,7 @@ fn patch_owners(rel: &str, kept: &retain::KeptInput, g: usize, holders: Option<&
             // A real document's rows are its own file's alone (`memo::document_of`): evaluated this run, they are this
             // run's rows. Taking the kept rows less the old entry's instead counted a chunk's unchanged file twice
             // (it has no old entry here), and kept rows an old entry did not hold (O-kept-inputs-stale).
-            None if o < values && evaluated.contains(&o) => {
+            None if o < values && !text && evaluated.contains(&o) => {
                 let mut count: FxHashMap<&[i64], i64> = FxHashMap::default();
                 for r in &was {
                     *count.entry(r).or_default() += 1;

@@ -521,8 +521,42 @@ Tests: `only_protected_runs_keep_plans_and_a_dead_process_holds_nothing`,
 | End-of-run wait (main) | 2.58 s | 1.9 s |
 | An unchanged run | — | 0.8 s, 11.4 G |
 
-**Open, found while measuring.** The remaining frame writes are mostly input granules: an edit rewrites all 65
-granules of about 70 `strtest_*` relations. In `write_frames`, about 1,100 of each one's owners alternate between 20
-rows and 19 rows from one edit to the next. In the same run, the kept-input patch (`patch_owners`) changes only 4
-owners. So the per-owner digests stored and those recomputed for the write disagree. Tests:
-`a_relations_deltas_are_read_after_its_frame` (confirmations in memory and stored).
+Tests: `a_relations_deltas_are_read_after_its_frame` (confirmations in memory and stored).
+
+### A string's rows keep every holder's copy
+
+A string test's input (`strtest_<k>(s)`, `memo::Owner::Text`) holds a string once for each file whose text holds it.
+`patch_owners` gathered the owners it treats as "documents evaluated this run" from every staged input, the string
+inputs included. Their owners are strings, so a string the changed file holds passed as an evaluated document. Its
+rows became this run's single copy: 20 copies became 1, and later edits flipped between counts.
+- **Why it matters.** Each flip rewrote every granule of about 70 relations. And the count no longer said how many
+  files hold the string: once the changed file dropped it, the string would go though 19 files still hold it.
+- **Fix.** Only node-owned inputs name evaluated documents, and a string's owner is never one.
+- Test: `a_strings_rows_keep_the_other_files_copies`.
+
+### A run's use is one row, not a stamp on every frame
+
+After the above, the end-of-run wait was mostly the `used` stamp. That `UPDATE` covered every frame of the 16,481
+relations a run used, 2.5 s of a 3.25 s wait. SQLite rewrites a whole record, blob included, to change one column.
+- **Each run's use of a space is one row** (`frame_used`): the relations its programs used, as sorted 8-byte keys,
+  kept for the last `RUNS` runs. A frame's `used` stays the run that put it.
+- **A frame is collected** once its put run is `RUNS` runs old and no run since names its relation. That is the
+  rule as before, and a relation used every run without being put again is kept
+  (`a_relation_no_run_used_for_four_runs_is_collected`).
+- **The switch-over collects early.** The first run under it collects the relations of earlier builds that no row
+  names yet (10,717 on the bench store), instead of after `RUNS` runs. That happens once, and frames are a cache.
+
+### The corpus had grown
+
+Each edit of the bench appended an `x_edit_probe` line to `connection_helpers.py`: 259 of them on a 787-line file.
+Each one added about 300 rows to the module-level `pyi` joins, so cold runs had reached 3.09 T and edits 310–420 G.
+The file is now its original lines plus one probe line, whose value an edit changes (`edit1.sh`).
+
+**Measured** (20 files, findings equal to the cold run's every time, load 20–34):
+
+| | Grown file, before these two | Grown file, after | Original file, after |
+|---|---|---|---|
+| End-of-run wait (main) | 2.6–3.3 s | 0.33–0.85 s | 0.03–0.06 s |
+| An edit | 12–26 s wall | 15–27 s wall (load 27–30) | 7.6–9.0 s wall, 13–14.6 s CPU, 171–197 G |
+| Cold | 3,090 G | 3,084 G | 2,107 G |
+| Unchanged | | | 1.1–1.8 s wall, 11.4 G |
