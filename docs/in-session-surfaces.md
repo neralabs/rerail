@@ -289,7 +289,7 @@ R E R A I L ● 26 rules · steered 3×
 | Footer | Meaning |
 | --- | --- |
 | `R E R A I L ○ not set up · rerail start` | Started, but no rules set up |
-| `R E R A I L ✕ not running` | No daemon is running |
+| `R E R A I L ✕ not running` | No daemon answers as Rerail: none is recorded, its process is gone, or it refused the read |
 | `R E R A I L ● not answering` | The daemon is running but gave no answer within 2 seconds, as when it is busy |
 | `R E R A I L ● starting` | Session not recorded yet: Rerail is still starting it |
 | `R E R A I L ● session unavailable` | The session could not be read |
@@ -387,7 +387,7 @@ Preferences live in the Rerail database and survive `rerail reset`.
 
 - `repository` is an absolute path; symlinked spellings (`/tmp`, `/private/tmp`) match.
 - Changes show at the footer's next refresh.
-- Preferences are read through the daemon, so without one the footer shows `not running` even if `silent` is stored.
+- Preferences are read through the daemon, so without one, or while it does not answer, the footer shows `not running` or `not answering` even if `silent` is stored.
 
 </details>
 
