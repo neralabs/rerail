@@ -896,6 +896,13 @@ pub(crate) mod logic {
         pub mod corpus {
             pub use rerail_logic::code_rule_dsl::logic::plan::corpus::*;
             pub mod references;
+            /// The session's tests, hosted here (`tools/cratify/test-hosts.tsv`): the logic crate's own test target
+            /// does not build.
+            pub mod session {
+                pub use rerail_logic::code_rule_dsl::logic::plan::corpus::session::*;
+                #[cfg(test)]
+                pub mod tests;
+            }
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::plan::{Error, Outcome, Result, lower};
             #[allow(unused_imports)]
