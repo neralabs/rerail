@@ -29,7 +29,7 @@ system-allocator = []
 code-rule-profile = []
 p-anchor-corpus = []
 metal-tests = []
-test-hooks = ["dep:tempfile"]
+test-hooks = ["rerail-store/test-hooks", "rerail-compiler/test-hooks", "dep:tempfile"]
 
 [dependencies]
 base64 = "=0.22.1"

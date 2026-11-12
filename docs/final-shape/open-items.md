@@ -3632,9 +3632,11 @@ After the crate split, `rerail-logic`'s test target did not build: its tests nam
 an inline test module, and the engine mounts none for it.
 
 **Found on the hub (2026-11-11), after the More-ergonomic and Cratification merges.** `rerail-logic`'s test
-target builds only together with the engine (`cargo build --tests -p rerail-engine -p rerail-logic`): alone,
-without the engine's `test-hooks` features, it fails on 16 errors (`tempfile`, `fixtures`, `drop_unread_core`).
-Built so, 272 pass and 38 fail. Every failing test reads what the engine registers as it loads, through a
+target built only together with the engine: nothing turned on its own `test-hooks` (16 errors: `tempfile`,
+`fixtures`, `drop_unread_core`). It now has the engine's self dev-dependency (`rerail-logic = { path = ".",
+features = ["test-hooks"] }`, the same in `rerail-device-metal`), and `rerail-lang`'s `test-hooks` turns on
+`rerail-store`'s and `rerail-compiler`'s, which no crate's list named. Built alone, 269 pass and 41 fail.
+Every failing test reads what the engine registers as it loads, through a
 registry that no static read shows, so `hosts.py` leaves them in `rerail-logic`:
 
 - the Rr language pack (`no language registered for Rr`, from `rr::stored_statements`);
@@ -3643,7 +3645,9 @@ registry that no static read shows, so `hosts.py` leaves them in `rerail-logic`:
 
 They are the corpus, session, phases, prepared, reuse, cache and `typing::phase_tests` modules, and
 `waves::owner::tests`. Registering the Rr pack alone in `logic::test_load` (with a `rerail-w` dev-dependency)
-clears 6 of them and leaves the rest on the libraries. Copying the engine's `install_languages` into the crate
+clears 6 of them and leaves the rest on the libraries. `rerail-device-metal`'s test target still fails
+(24 errors): `corpus::base_tests` and the device tests read the engine (`prefilter`, `evaluate_file`,
+`CAPABILITIES`), so they too belong to the engine. Copying the engine's `install_languages` into the crate
 would be a second loader, so they are left for the hosting step. A test that reads through a load-time registry
 reads the crate that registers it, and goes to the engine.
 
