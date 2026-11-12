@@ -1604,6 +1604,12 @@ thread_local! {
 /// submission's space (the stratum then runs on its own, `run`).
 pub(in crate::code_rule_dsl) fn submit(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Option<u64>, String> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device joins (to the wave)".into());
+    // A wave holds its strata's buffers to the level's end: with the budget's headroom gone (the wave's own leases
+    // count, `device_bytes_left`), this stratum runs in a submission of its own, whose buffers go back when it ends.
+    if mj::device_bytes_left() < HEADROOM {
+        crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "strata run apart: the wave's budget was spent", 1);
+        return Ok(None);
+    }
     let c0 = thread_cpu();
     let mut rep = Report { rules: rules.len() as u32, stages: rules.iter().map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
     let opened = WAVE.with_borrow(Option::is_none);

@@ -61,6 +61,15 @@ pub fn reserved() -> usize {
     pool().load(Ordering::Acquire)
 }
 
+/// The bytes of `METAL_BUFFER_LIMIT` relational work (the logic engine's device joins) may still lease: past the
+/// buffer pool's reservations and what relational work holds itself, leased and kept idle in its pool. Its leases
+/// reserve nothing in the pool's ledger, so a check of `reserved` alone never saw them: a wave encoded strata until
+/// it held 400 MB.
+pub fn relational_bytes_left() -> usize {
+    let (live, idle) = rerail_accel::gpu::shared::held_bytes();
+    METAL_BUFFER_LIMIT.saturating_sub(pool().load(Ordering::Acquire) + live + idle)
+}
+
 pub fn buffer_free() -> usize {
     METAL_BUFFER_LIMIT.saturating_sub(pool().load(Ordering::Acquire))
 }
@@ -815,6 +824,20 @@ mod execution_lock_tests {
 #[cfg(test)]
 mod memory_budget_tests {
     use super::*;
+
+    /// What relational work may still lease counts its own leases (held and idle in the pool), not only the
+    /// buffer pool's reservations: a wave of device joins that checks it stops once its leases fill it.
+    #[test]
+    fn the_budget_left_counts_relational_leases() {
+        if rerail_accel::gpu::join::device().is_err() {
+            return;
+        }
+        let before = relational_bytes_left();
+        let held = rerail_accel::gpu::shared::lease(32 << 20).unwrap();
+        let during = relational_bytes_left();
+        assert!(before - during >= 32 << 20 || during == 0, "a 32 MB lease leaves {} MB of {} MB", during >> 20, before >> 20);
+        drop(held);
+    }
 
     #[test]
     fn operation_allocation_observation_excludes_unrelated_retirement() {
