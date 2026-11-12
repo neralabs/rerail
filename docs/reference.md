@@ -105,7 +105,7 @@ A conversation rule file:
 | `sample.boundary` (inspection boundary) | `sentence`, `message`, `turn`, `tool-call` |
 | `repeat` | `once`, `always`, `{ "mode": "after-gap", "gapTurns": 3 }` |
 
-A turn, for `sample.boundary: "turn"` and `gapTurns`, is counted at each turn end the coding agent reports. In Claude Code and Codex that is each `Stop`, including each one after a Stop hook kept the turn going; in OMP and Pi it is each model call.
+A turn, for `sample.boundary: "turn"` and `gapTurns`, is counted at each turn end Rerail records. In OMP and Pi that is each model call. In Claude Code and Codex it is each `Stop`, including one after a Stop hook kept the turn going, with one limit: two or more such `Stop`s of the same turn that end on the same final message (or on none) count as one turn end. Neither agent numbers its `Stop`s, so the final message is all that tells a new `Stop` from the same one delivered twice. The turn-end check of code rules runs at every `Stop` either way.
 
 </details>
 
@@ -764,7 +764,7 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 A draft is `{ kind, rule, folder?, cases: { caught: [...], passed: [...] } }`. `rerail rules test --help` prints the format; [Writing rules](writing-rules.md#testing-a-draft) explains each field.
 
 - `rerail rules show <rule id> [--repo <dir>]` prints a rule as a draft: one of yours, or a By Rerail rule as this repository runs it (the option values and mode the repository's settings give it, not a checkout's). A note on stderr, so stdout saves as a draft file, says where saving changes it: your rule here and in which other repositories, or that it is not added here; for a By Rerail rule, your copy, the copy this repository already has, or that the rule is not added or is off here (a copy would run on).
-- `rerail rules test` validates a draft, runs its cases and a repository pass, and writes nothing.
+- `rerail rules test` validates a draft, runs its cases and a repository pass over the folders `rules add` would add the rule at, and writes nothing. It says where `rules add` would refuse the draft.
 - `rerail rules add` stores the draft in your library and adds it, on, to this repository (or the draft's `folder`). A draft that keeps a By Rerail rule's id is stored as your copy (`<id>-copy`), added where the original is in this repository; approving the copy turns the original off there ([copy on edit](rule-scoping.md#coding-agents)).
 - The rule runs in Log until `rerail rules approve [<rule id | package> …] [--repo <dir>]` approves it as it is now ([approval](rule-scoping.md#approval)).
 

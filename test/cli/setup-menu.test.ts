@@ -40,23 +40,40 @@ describe("the set-up menu's keys", () => {
 });
 
 /**
- * A terminal's stdin that delivers `chunks` one at a time, each time set-up reads. `held` is what the terminal holds
- * from before: keys pressed while set-up was busy, delivered first unless something drops them.
+ * A terminal's stdin. `held` is what the terminal holds from before: keys pressed while set-up was busy, handed over
+ * as soon as stdin reads. `chunks` are what the person types, one at a time while stdin reads, each after a delay
+ * longer than a turn of the event loop; then the end of input when `ends`. Pausing stdin stops the reading.
  */
 function fakeStdin(chunks: readonly string[], { ends = true, held = [] as string[] } = {}): TerminalInputStream & { raw: boolean[]; held: string[] } {
   const left = [...chunks];
+  let reading = false;
+  let typing: NodeJS.Timeout | undefined;
+  // A real timer, not a fake clock: the drop waits real turns of the event loop (setImmediate from node:timers), and
+  // what this models is a key that comes after those turns, as a person's does.
+  const type = (): void => {
+    typing = setTimeout(() => {
+      const chunk = left.shift();
+      if (chunk !== undefined) stream.emit("data", chunk);
+      else if (ends) stream.emit("end");
+      if (reading) type();
+    }, 10);
+  };
   const stream = Object.assign(new EventEmitter(), {
     raw: [] as boolean[],
     held: [...held],
     setRawMode(raw: boolean) { stream.raw.push(raw); },
     setEncoding() {},
-    pause() {},
+    pause() {
+      reading = false;
+      clearTimeout(typing);
+    },
     resume() {
+      if (reading) return;
+      reading = true;
       queueMicrotask(() => {
-        const chunk = stream.held.shift() ?? left.shift();
-        if (chunk !== undefined) stream.emit("data", chunk);
-        else if (ends) stream.emit("end");
+        for (const chunk of stream.held.splice(0)) stream.emit("data", chunk);
       });
+      type();
     },
   });
   return stream;
@@ -140,19 +157,26 @@ describe("the terminal's input", () => {
   it("drops the keys the terminal holds before a menu or prompt is drawn, with the terminal in raw mode", async () => {
     // An Enter pressed while set-up was busy, held by the terminal until set-up reads.
     const stdin = fakeStdin(["\u001b[B", "\r", "~/code/app\n"], { held: ["\r"] });
-    const written: string[] = [];
-    const drops: { raw: boolean | undefined; drawn: number }[] = [];
-    const input = new TerminalInput(stdin, text => { written.push(text); }, () => {}, () => undefined, () => {
-      drops.push({ raw: stdin.raw.at(-1), drawn: written.length });
-      stdin.held.length = 0;
-    });
+    // What stdin read, in raw mode or not, and what was written, in order.
+    const seen: string[] = [];
+    stdin.on("data", (chunk: string) => { seen.push(`read ${JSON.stringify(chunk)}${stdin.raw.at(-1) === true ? " in raw mode" : ""}`); });
+    const input = new TerminalInput(stdin, text => { seen.push(`wrote ${JSON.stringify(text)}`); });
     expect(await input.choose(menu)).toBe(1);
     // A folder typed while set-up was busy again.
     stdin.held.push("~/typed-early\n");
     expect(await input.line("Which folder? ")).toBe("~/code/app");
-    // Each drop came before anything of its question was drawn: the menu's frame, then the prompt after the menu's
-    // frame, redraw and closing line break.
-    expect(drops).toEqual([{ raw: true, drawn: 0 }, { raw: true, drawn: 3 }]);
+    // Each held key was read, and dropped, before anything of its question was drawn; the keys that answer came after.
+    expect(seen).toEqual([
+      'read "\\r" in raw mode',
+      `wrote ${JSON.stringify(menu.frame(0))}`,
+      'read "\\u001b[B" in raw mode',
+      `wrote ${JSON.stringify(`\r\u001b[4A\u001b[J${menu.frame(1)}`)}`,
+      'read "\\r" in raw mode',
+      'wrote "\\n"',
+      'read "~/typed-early\\n" in raw mode',
+      'wrote "Which folder? "',
+      'read "~/code/app\\n"',
+    ]);
     // The prompt is in raw mode only while it drops them.
     expect(stdin.raw).toEqual([true, false, true, false]);
   });

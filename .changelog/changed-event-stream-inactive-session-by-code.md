@@ -1,1 +1,0 @@
-An event loop given to `serveRerailEventStream` reports an inactive session by throwing `InactiveSessionError`, now exported from the package, or any error whose `code` is `inactive-session`. An error whose message only starts with `Inactive session:` is now answered as `invalid-event`.
