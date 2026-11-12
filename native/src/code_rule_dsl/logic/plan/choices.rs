@@ -29,7 +29,7 @@ use super::super::front::{Program, Value};
 use super::super::program_facts::{self, Facts};
 use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, StoreResult};
 use sha2::{Digest as _, Sha256};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
 /// The entry's schema: bumped when its encoding or meaning changes.
@@ -68,7 +68,37 @@ pub(super) fn key(prog: &Program) -> [u8; 32] {
         hash.0.update(b"\0");
         hash.0.update(std::env::var(switch).unwrap_or_default().as_bytes());
     }
-    let _ = std::fmt::Write::write_fmt(&mut hash, format_args!("\0{prog:?}"));
+    // The rules (and each derived-again group's), most of a program, digested by their structure: formatting the whole
+    // program as text was 0.32 s of a 20-file edit's run (decision 0116, step 4). Every other field as its text. The
+    // fields are named, not `..`: a field added to `Program` is a compile error here until it is digested.
+    let Program {
+        decls, nullary, lattice, facts, rules, inputs, outputs, kindsets, demand, demand_dropped, magic_extras, magic_report, gates, policies,
+        settings, natives, rx_spans, ast_patterns, doc_scopes, answers, text_globs, qualifiers, tapes, again,
+    } = prog;
+    let rules_digest = super::super::derived::digest(|d| {
+        let mut rules_of = |rules: &[super::super::front::Rule]| {
+            d.u64(rules.len() as u64);
+            for r in rules {
+                super::digest_atom(d, &r.head);
+                d.u64(r.body.len() as u64);
+                r.body.iter().for_each(|l| super::digest_literal(d, l));
+            }
+        };
+        rules_of(rules);
+        for g in again {
+            rules_of(&g.rules);
+            rules_of(&g.deltas);
+        }
+    });
+    hash.0.update(b"\0rules\0");
+    hash.0.update(rules_digest.to_le_bytes());
+    let again_names: Vec<(&BTreeSet<String>, &BTreeSet<String>, &Vec<String>, &Vec<String>)> = again.iter().map(|g| (&g.scc, &g.owned, &g.reads, &g.olds)).collect();
+    let _ = std::fmt::Write::write_fmt(
+        &mut hash,
+        format_args!(
+            "\0{decls:?}\0{nullary:?}\0{lattice:?}\0{facts:?}\0{inputs:?}\0{outputs:?}\0{kindsets:?}\0{demand:?}\0{demand_dropped:?}\0{magic_extras:?}\0{magic_report:?}\0{gates:?}\0{policies:?}\0{settings:?}\0{natives:?}\0{rx_spans:?}\0{ast_patterns:?}\0{doc_scopes:?}\0{answers:?}\0{text_globs:?}\0{qualifiers:?}\0{tapes:?}\0{again_names:?}"
+        ),
+    );
     hash.0.finalize().into()
 }
 

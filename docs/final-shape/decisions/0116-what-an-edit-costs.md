@@ -193,6 +193,39 @@ cold run, and its one-file part has not been planned at one file's scale.
 `RERAIL_PLAN_CACHE_COUNTS` prints each run's counts, now with "taken from the store". `RERAIL_PLAN_CACHE_WHY` prints
 the first rejections of a kept plan over 1,000 nodes, with the sizes on both sides.
 
+## Built: steps 3 and 4, first parts
+
+**The kept choices' key (step 4).** The key was the whole program formatted as text through SHA-256 (0.32 s). Now
+the rules, which are most of a program, are digested by their structure (`digest_atom`, `digest_literal`). Every
+other field is still digested as text. The fields are named, not elided with `..`, so a field added to `Program`
+does not compile until the key reads it.
+
+**The prepared program's decode (step 4).** Its four programs were read off the facts with four scans of every
+row. Now one pass groups the rows by program. The reader also no longer clones a kind string per term, or each
+relation's rows per lookup, and it hashes literals and fact values instead of sorting them under `String` keys. On
+an edit the change is within the noise (about 1% of instructions). The decode is still about 0.4 s of CPU, because
+it builds every term's strings.
+
+**The statistics keeper counted every file of a load as changed (found for step 3).** A phase's files are a load:
+they are known only in the waves, where the store is not read. So each file was read, hashed and named by its
+digest (`Content::Unstored`), while the keeper had counted it under its stored source (`Content::Stored`). The two
+never compare equal, so every edit counted all 20 files out and in again ("20 files counted in, 20 out"). Now a
+file that the stat index knows is that source in the waves too, as it is before the first wave:
+- an edit counts "1 in, 1 out";
+- the findings are 62 cold, after two edits and unchanged;
+- instructions are about the same (289.6 G and 235.3 G), since counting was cheap.
+
+`RERAIL_STATS_KEEP_TRACE` now prints each file counted out, with both contents, and where each window's files were
+looked up.
+
+**What step 3 still needs.** The 19 unchanged entries (135.3 MB) are still replayed. A hit is left unreplayed only
+when the keeper's counted exports hold its rows (0096 step 3). Those exports are a session's, in memory. The
+keeper's blob in the store holds the files and the statistics, not the exports. So a command-line run always
+starts with none, and replays every hit. The kept part's frames already hold the cross part's inputs as the last
+run had them. What is missing is the route that takes each input as its kept rows plus the changed files' entry
+deltas (`input_delta`, today only for a session's memo), not rebuilt from every entry. That is the relation with a
+delta beside it, which the core maintenance design needs too.
+
 ## Not resolved
 
 - **7,303 rows "gone".** The rewrite's own count says 7,303 rows of maintained relations are gone, though nothing

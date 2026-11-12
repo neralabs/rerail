@@ -148,7 +148,12 @@ impl Keeper {
                 }
                 return;
             }
-            Some((c, k)) => match old(c, k) {
+            Some((c, k)) => match {
+                if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
+                    eprintln!("statkeep {path}: counted under {:?}, now {:?}", (c, k), now);
+                }
+                old(c, k)
+            } {
                 Some(before) => {
                     self.count(&before, -1);
                     if !self.building {
