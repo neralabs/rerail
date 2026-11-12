@@ -135,11 +135,11 @@ again every 30 seconds.
 ### Set-up or `rerail update` says npm may be stuck
 
 ```text
-Downloading @neralabs/rerail@<version> from npm has taken 3 min. npm may be stuck: check your network or proxy, and the registry npm uses (`npm config get registry`). Rerail stops it at 15 min.
+Downloading @neralabs/rerail@<version> from npm has taken 3 min. npm may be stuck: check your network or proxy, and the registry npm uses (`npm config get registry`). Rerail stops it at 20 min.
 ```
 
 npm prints nothing while it downloads, so Rerail times each step. On a slow line the download can take this long; wait
-or press Ctrl-C. A download still running at 15 minutes, or an npm request at 3, is stopped: the update fails, its
+or press Ctrl-C. A download still running at 20 minutes, or an npm request at 3, is stopped: the update fails, its
 staged files are removed and the version that was active stays active. Check the settings in
 [npm cannot reach the registry](#npm-cannot-reach-the-registry), then run it again.
 

@@ -584,14 +584,14 @@ describe("NpmPackageRegistry", () => {
     expect(steps).toEqual([
       "Checking npm for the newest Rerail on latest (warns at 30 s)",
       "Downloading @neralabs/rerail@1.1.0 from npm (warns at 180 s)",
-      "Checking the registry signatures of @neralabs/rerail@1.1.0 and its dependencies (warns at 30 s)",
+      "Checking the registry signatures of @neralabs/rerail@1.1.0 (warns at 30 s)",
       "Checking that Rerail 1.1.0 starts (warns at 60 s)",
       "Switching to Rerail 1.1.0",
     ]);
     expect(calls.map(call => [call.args[0], call.timeoutMs])).toEqual([
       ["view", 180_000],
       ["view", 180_000],
-      ["install", 900_000],
+      ["install", 1_200_000],
       ["audit", 180_000],
     ]);
 

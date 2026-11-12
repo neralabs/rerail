@@ -228,8 +228,9 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
 
   register("rerail-update", async ctx => {
     const result = await runLauncher(options, ["update"]);
+    // The steps it went through (stderr) come before what it did (stdout), as in a terminal.
     notifyResult(ctx, "rerail-update", result.code === 0
-      ? { ...result, stdout: `${result.stdout.trimEnd()}\nNew sessions use the new version.\n` }
+      ? { ...result, stdout: `${result.stderr}${result.stdout.trimEnd()}\nNew sessions use the new version.\n`, stderr: "" }
       : result);
   });
 

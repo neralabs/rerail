@@ -256,6 +256,8 @@ export async function auditSignatures(prefix: string, npm: NpmRunner = runNpm): 
     return "verified";
   } catch (error) {
     if (error instanceof Error && NPM_NO_SIGNING_KEYS.test(error.message)) return "no-signing-keys";
+    // Stopped is not unverified: it says so as it is.
+    if (error instanceof CommandTimeoutError) throw error;
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`npm could not verify the registry signatures of the packages in ${prefix}: ${detail}`, { cause: error });
   }

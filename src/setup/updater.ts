@@ -43,11 +43,12 @@ const EVENT_HEALTH_TIMEOUT_MS = 15_000;
 const NATIVE_HEALTH_TIMEOUT_MS = 2 * 60_000;
 const STAGING_RENAME_RETRY_MS = 10_000;
 /**
- * Installing core downloads about 300 MB, which takes minutes on a slow line, so the install warns at 3 minutes and is
- * stopped at 15, under the update lock's lease, which is renewed while it runs.
+ * Installing core downloads about 200 MB (about 300 MB installed): seconds on a fast line, minutes on a slow one. It
+ * warns at 3 minutes and is stopped at 20, which a line of about 1.5 Mbit/s still finishes within; the update lock's
+ * lease is renewed while it runs.
  */
 const NPM_INSTALL_STALL_MS = 3 * 60_000;
-const NPM_INSTALL_TIMEOUT_MS = 15 * 60_000;
+const NPM_INSTALL_TIMEOUT_MS = 20 * 60_000;
 /** An npm request that downloads no package answers in seconds. */
 const NPM_QUERY_STALL_MS = 30_000;
 /** Checking that a version starts takes seconds; each of its children is stopped well before this would repeat. */
@@ -231,7 +232,7 @@ export class NpmPackageRegistry implements PackageRegistry {
       );
     }, npmStall(NPM_INSTALL_STALL_MS, NPM_INSTALL_TIMEOUT_MS));
     const audited = await progress.step(
-      `Checking the registry signatures of ${spec} and its dependencies`,
+      `Checking the registry signatures of ${spec}`,
       async () => await auditSignatures(prefix, this.npm),
       npmStall(NPM_QUERY_STALL_MS, NPM_QUERY_TIMEOUT_MS),
     );

@@ -2,9 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { formatDuration, streamProgress, type ProgressStream } from "../../src/runtime/progress.js";
 
 /** A stream that keeps what was written, as a terminal (`isTTY`) or as a pipe. */
-function recording(isTTY: boolean): ProgressStream & { text: () => string } {
+function recording(isTTY: boolean, columns?: number): ProgressStream & { text: () => string } {
   const chunks: string[] = [];
-  return { isTTY, write: (text: string) => chunks.push(text), text: () => chunks.join("") };
+  return { isTTY, ...(columns === undefined ? {} : { columns }), write: (text: string) => chunks.push(text), text: () => chunks.join("") };
 }
 
 /** A step that ends when the test says so. */
@@ -67,6 +67,21 @@ describe("streamProgress", () => {
       "\r\u001B[2KInstalling… 2 s",
       "\n",
     ].join(""));
+  });
+
+  it("on a narrow terminal, cuts the step's label so its line and elapsed time fit one row", async () => {
+    const stream = recording(true, 20);
+    const step = pending<void>();
+    const running = streamProgress(stream).step("Checking the registry signatures", step.run);
+
+    await vi.advanceTimersByTimeAsync(12_000);
+    step.finish();
+    await running;
+
+    const rows = stream.text().split(/\r\u001B\[2K|\n/u).filter(row => row !== "");
+    expect(rows.at(0)).toBe("Checking the regis…");
+    expect(rows.at(-1)).toBe("Checking the… 12 s");
+    for (const row of rows) expect(row.length).toBeLessThan(20);
   });
 
   it("rejects as the step does, and stops reporting it", async () => {

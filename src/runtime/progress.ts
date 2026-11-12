@@ -7,6 +7,8 @@
 export interface ProgressStream {
   write(text: string): unknown;
   readonly isTTY?: boolean;
+  /** A terminal's width: a redrawn line must fit one row, since clearing it clears only the row the cursor is on. */
+  readonly columns?: number;
 }
 
 /** When a step has run long enough to look stuck, and what the person should check. */
@@ -45,6 +47,16 @@ const DEFAULT_HEARTBEAT_MS = 30_000;
 const CLEAR_LINE = "\r\u001B[2K";
 
 /**
+ * A step's line on a terminal, `<label>…<suffix>`, its label cut short to fit one row `columns` wide so the elapsed
+ * time in `suffix` stays in view; whole when the width is unknown. The last column stays free: some terminals wrap
+ * with the cursor there.
+ */
+function terminalLine(label: string, suffix: string, columns: number | undefined): string {
+  const room = columns === undefined ? label.length : Math.max(columns - 2 - suffix.length, 0);
+  return `${label.slice(0, room).trimEnd()}…${suffix}`;
+}
+
+/**
  * Progress written to `stream`. On a terminal a step is one line whose elapsed time counts up in place, ended when the
  * step ends. Elsewhere every write is a whole line: the step as it starts, then "still running" every `heartbeatMs`,
  * so a caller reading the stream line by line sees each as it comes.
@@ -55,17 +67,18 @@ export function streamProgress(stream: ProgressStream, options: StreamProgressOp
     async step(label, run, stall) {
       const started = Date.now();
       const elapsed = (): string => formatDuration(Date.now() - started);
-      stream.write(terminal ? `${label}…` : `${label}…\n`);
+      const line = (suffix: string): string => terminalLine(label, suffix, stream.columns);
+      stream.write(terminal ? line("") : `${label}…\n`);
       const timers = [
         setInterval(() => {
-          stream.write(terminal ? `${CLEAR_LINE}${label}… ${elapsed()}` : `${label}… still running after ${elapsed()}\n`);
+          stream.write(terminal ? `${CLEAR_LINE}${line(` ${elapsed()}`)}` : `${label}… still running after ${elapsed()}\n`);
         }, terminal ? TERMINAL_TICK_MS : options.heartbeatMs ?? DEFAULT_HEARTBEAT_MS),
       ];
       if (stall !== undefined) {
         timers.push(setTimeout(() => {
           const warning = `${label} has taken ${formatDuration(stall.afterMs)}. ${stall.hint}\n`;
           // On a terminal the warning takes a line of its own, and the step's line is drawn again below it.
-          stream.write(terminal ? `\n${warning}${label}… ${elapsed()}` : warning);
+          stream.write(terminal ? `\n${warning}${line(` ${elapsed()}`)}` : warning);
         }, stall.afterMs));
       }
       try {
