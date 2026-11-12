@@ -2213,6 +2213,23 @@ fn run_observed(
             prog = front::prune(prog);
             // Tests a rule negates of the nodes it has bound, computed for those nodes only, not every node (magic sets).
             let (mut prog, demanded) = crate::code_rule_dsl::logic::magic::demand_negated_tests(prog);
+            // The program's own demand (`.pragma "magic-transform" "r, …"`): adornments over the columns its readers bind (decision 0108).
+            // `RERAIL_DEMAND=off` computes the listed relations in full.
+            if !prog.demand.is_empty() && std::env::var("RERAIL_DEMAND").map_or(true, |v| v != "off") {
+                let listed = prog.demand.join(", ");
+                match crate::code_rule_dsl::logic::magic::demand_bound_columns(prog.clone(), &Default::default()) {
+                    Ok(p) => {
+                        let report = p.magic_report.as_ref().map(|r| format!("adornments {}; computed in full where demand would not hold: {}; {} magic rules", r.adornments.join(", "), if r.full_for_negation.is_empty() { "none".to_owned() } else { r.full_for_negation.join(", ") }, r.magic_rules)).unwrap_or_default();
+                        crate::code_rule_dsl::logic::profile::decision("the program's demand (decision 0108)", || format!("{listed}: {report}"));
+                        prog = front::prune(p);
+                        // A measurement aid: `RERAIL_DEMAND_DUMP=<file>` writes the rules as demand left them.
+                        if let Some(path) = std::env::var_os("RERAIL_DEMAND_DUMP") {
+                            let _ = std::fs::write(path, prog.rules.iter().map(|r| format!("{r}\n")).collect::<String>());
+                        }
+                    }
+                    Err(e) => crate::code_rule_dsl::logic::profile::decision("the program's demand (decision 0108)", || format!("{listed}: not applied ({e}); computed in full")),
+                }
+            }
             drop(preparing);
             // The `ast` atoms become relations the transducer's matchers fill per chunk (decision 0106).
             // A Python program's tree-shaped parts become matchers first (decision 0106 §4), unless `RERAIL_AST_PARTS=off`.
