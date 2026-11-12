@@ -126,9 +126,12 @@ function freePages(path: string, bytes: number): void {
   }
 }
 
-/** The daemon's move of the provenance audits hold inline, without its pause between batches. */
+/**
+ * The daemon's move of the provenance audits hold inline, without its pause between batches, and timed by a clock that
+ * never moves: each batch then takes twice the audits of the one before, up to `perBatch`, however loaded the machine.
+ */
 function move(path: string, options: RuleProvenanceMoveOptions = {}): Promise<number> {
-  return moveRuleProvenances(path, { pause: () => Promise.resolve(), ...options });
+  return moveRuleProvenances(path, { pause: () => Promise.resolve(), now: () => 0, ...options });
 }
 
 /**
@@ -339,6 +342,28 @@ describe("audit rule provenance", () => {
     }
   });
 
+  it("sizes each batch from how long the one before held the write lock", async () => {
+    /** How many audits each batch of a move of 30 moved, timed by `now`. */
+    const batchSizes = async (now: () => number): Promise<number[]> => {
+      const path = await fileOfTheBuildBefore();
+      writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 20)));
+      const left: number[] = [];
+      const pause = (): Promise<void> => {
+        left.push(inlineAudits(path));
+        return Promise.resolve();
+      };
+      expect(await move(path, { now, pause })).toBe(30);
+      return left.slice(1).map((count, index) => left[index]! - count);
+    };
+
+    // Each batch takes 200 ms by this clock, twice the 100 ms a batch aims for: the next one moves half as many audits,
+    // and at least one.
+    let clock = 0;
+    expect(await batchSizes(() => (clock += 200))).toEqual([10, 5, 2, ...Array.from({ length: 13 }, () => 1)]);
+    // Each batch takes no time: the next one moves twice as many.
+    expect(await batchSizes(() => 0)).toEqual([10, 20]);
+  });
+
   it("zeroes the pages the move frees, so none keeps a copy of what it moved when no VACUUM follows", async () => {
     const path = await fileOfTheBuildBefore();
     const marker = "/home/dev/zeroed-by-the-move";
@@ -484,16 +509,14 @@ describe("audit rule provenance", () => {
     const path = await fileOfTheBuildBefore();
     writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
     const readers: Database.Database[] = [];
-    let pauses = 0;
     const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     let logged = "";
     try {
       const moved = await move(path, {
         pause: () => {
-          pauses += 1;
           // Before the batch that finds nothing left: a read that begins on an empty WAL lets the checkpoint before
           // `VACUUM` run, and keeps the one after it from writing the rewritten file into the database file.
-          if (pauses === 2) {
+          if (readers.length === 0 && inlineAudits(path) === 0) {
             const checkpointer = new Database(path);
             try {
               checkpointer.pragma("wal_checkpoint(TRUNCATE)");

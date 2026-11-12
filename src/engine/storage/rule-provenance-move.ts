@@ -2,9 +2,9 @@
  * Moves the rule provenance that audits recorded before `audit-rule-provenance-once` hold inline
  * (`rule_provenance_json`) to the one copy `audit_rule_provenances` keeps. It runs after the open, never inside it:
  * the daemon starts it once it serves (`daemon.ts`), on a worker thread of its own (`moveRuleProvenancesInWorker`), so
- * none of its SQLite work holds the thread that answers requests. Each batch of audits is one short write transaction,
- * with a pause before it, so other writers keep recording while it runs; a process stopped partway loses at most one
- * batch, and the next run goes on from what is left. Until an audit moves, the audit store reads its provenance
+ * none of its SQLite work holds the thread that answers requests. Each batch of audits is one write transaction sized
+ * to hold the lock about 100 ms (`moveInBatches`), with a pause before it, so other writers keep recording while it
+ * runs; a process stopped partway loses at most one batch, and the next run goes on from what is left. Until an audit moves, the audit store reads its provenance
  * inline. The move never waits inside SQLite for another connection: it awaits a pause and tries again (`whenFree`),
  * so a stop reaches it between two tries.
  */
@@ -18,8 +18,18 @@ import Database from "better-sqlite3";
 import { openRerailDatabase, type RerailDatabase } from "./database.js";
 import { RULE_PROVENANCE_STEP } from "./migrations.js";
 
-/** How many audits one transaction moves: it bounds the memory the move holds and how long it keeps the write lock. */
+/** The most audits one transaction moves: it bounds the memory the move holds. */
 const MOVED_PER_BATCH = 100;
+
+/** How many audits the first batch moves. Each later one is sized from how long the one before held the write lock. */
+const FIRST_BATCH = 10;
+
+/**
+ * How long one batch aims to hold the write lock. Every other writer waits for it, the daemon's own stores among them,
+ * which wait on the thread that answers hooks: on a loaded Windows machine one batch of 100 audits held it 3.6 s, past
+ * the 2 s a hook's health probe waits.
+ */
+const BATCH_MS = 100;
 
 /**
  * The pause before each batch, and between two tries while another connection is in the move's way. It is longer than
@@ -35,12 +45,22 @@ const PAUSE_MS = 150;
 const BUSY_TRIES = Math.ceil(5_000 / PAUSE_MS);
 
 export interface RuleProvenanceMoveOptions {
-  /** Audits per write transaction. */
+  /** The most audits per write transaction. */
   readonly perBatch?: number;
   /** Waits before each batch, and between tries while another connection is in the way; tests pass their own. */
   readonly pause?: () => Promise<void>;
+  /** The milliseconds that time each batch; tests pass their own. */
+  readonly now?: () => number;
   /** Stops the move before its next batch; what it moved stays moved. */
   readonly signal?: AbortSignal;
+}
+
+/** What the batches of one move take from its options. */
+interface Batching {
+  readonly most: number;
+  readonly pause: () => Promise<void>;
+  readonly now: () => number;
+  readonly signal: AbortSignal | undefined;
 }
 
 type Client = RerailDatabase["$client"];
@@ -55,8 +75,10 @@ type Free = <T>(step: () => T) => Promise<T>;
  * nothing to move, and the move does not create it. Resolves to how many audits it moved.
  */
 export async function moveRuleProvenances(path: string, options: RuleProvenanceMoveOptions = {}): Promise<number> {
-  const { perBatch = MOVED_PER_BATCH, signal } = options;
+  const { signal } = options;
   const pause = options.pause ?? (() => sleep(PAUSE_MS, undefined, { signal }).catch(() => undefined));
+  const now = options.now ?? (() => performance.now());
+  const batching: Batching = { most: options.perBatch ?? MOVED_PER_BATCH, pause, now, signal };
   if (!existsSync(path) || !leftToMove(path)) return 0;
   const database = openRerailDatabase(path);
   try {
@@ -65,23 +87,57 @@ export async function moveRuleProvenances(path: string, options: RuleProvenanceM
     const free: Free = step => whenFree(step, pause, signal);
     const upTo = stepAppliedAt(database);
     if (upTo === undefined) return 0;
-    let moved = 0;
-    let after = Number.MIN_SAFE_INTEGER;
-    for (;;) {
-      await pause();
-      if (signal?.aborted === true) return moved;
-      const batch = await free(() => moveBatch(database, { after, upTo, limit: perBatch }));
-      if (batch === undefined) break;
-      moved += batch.moved;
-      after = batch.last;
-    }
+    const { moved, ended } = await moveInBatches(database, upTo, free, batching);
     // A run stopped before the end skips this, and the run that moves the rest gives the space back. One stopped after
     // its last batch leaves the free pages to new history.
-    if (moved > 0) await giveBackFreedSpace(database.$client, path, free);
+    if (ended && moved > 0) await giveBackFreedSpace(database.$client, path, free);
     return moved;
   } finally {
     database.$client.close();
   }
+}
+
+/**
+ * Moves the audits that started no later than `upTo`, a batch per write transaction with a pause before each, until
+ * none is left or `signal` stops it: how many it moved, and whether none is left. The first batch takes `FIRST_BATCH`
+ * audits, and each later one as many as the batch before moved in `BATCH_MS` (`nextBatchSize`), so a batch holds the
+ * write lock about that long however loaded the machine and however large each audit's provenance.
+ */
+async function moveInBatches(
+  database: RerailDatabase,
+  upTo: number,
+  free: Free,
+  { most, pause, now, signal }: Batching,
+): Promise<{ moved: number; ended: boolean }> {
+  let moved = 0;
+  let after = Number.MIN_SAFE_INTEGER;
+  let size = Math.min(FIRST_BATCH, most);
+  for (;;) {
+    await pause();
+    if (signal?.aborted === true) return { moved, ended: false };
+    let took = 0;
+    const batch = await free(() => {
+      const began = now();
+      try {
+        return moveBatch(database, { after, upTo, limit: size });
+      } finally {
+        took = now() - began;
+      }
+    });
+    if (batch === undefined) return { moved, ended: true };
+    moved += batch.moved;
+    after = batch.last;
+    size = nextBatchSize(size, took, most);
+  }
+}
+
+/**
+ * How many audits the batch after one of `size` that held the write lock `took` ms takes: as many as fit in `BATCH_MS`
+ * at that pace, at least one, at most twice `size`, so one quick batch does not make the next one long, and at most
+ * `most`.
+ */
+function nextBatchSize(size: number, took: number, most: number): number {
+  return Math.max(1, Math.min(most, 2 * size, Math.floor((size * BATCH_MS) / Math.max(took, 1))));
 }
 
 /**
