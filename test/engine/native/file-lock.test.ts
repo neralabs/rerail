@@ -1,9 +1,12 @@
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LOCKS_DIR, withHomeLock, type LockHolder, type LockRequest } from "../../../src/engine/native/file-lock.js";
+import { processState } from "../../../src/engine/process-liveness.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { raceForLock, raceSize, sourceModule } from "../../support/processes/lock-race.js";
@@ -150,6 +153,25 @@ describe("the folder lock, without the engine", () => {
     await mkdir(folderOf(home), { recursive: true });
 
     await expect(withHomeLock(home, withoutEngine, async () => "ran")).resolves.toBe("ran");
+  });
+
+  it.runIf(process.platform === "linux")("takes over the lock of a holder that exited and that nothing reaped", async () => {
+    // `sh` backgrounds a child, then becomes `sleep`, which never reaps it: a holder that dies where PID 1 is no init
+    // stays a zombie, which still answers signal 0.
+    const parent = spawn("sh", ["-c", "sleep 0.2 & echo $!; exec sleep 30"], { stdio: ["ignore", "pipe", "ignore"] });
+    try {
+      const [output] = await once(parent.stdout, "data") as [Buffer];
+      const zombie = Number(output.toString());
+      // The child exits on the OS's schedule and signals nothing this process can await, so its state is polled.
+      await vi.waitFor(() => expect(processState(zombie)).toBe("gone"), { timeout: 5_000, interval: 20 });
+      expect(() => process.kill(zombie, 0)).not.toThrow();
+      const home = await temporaryHome();
+      const owner = await folderHeldBy(home, zombie);
+
+      await expect(withHomeLock(home, withoutEngine, async () => existsSync(owner))).resolves.toBe(false);
+    } finally {
+      parent.kill("SIGKILL");
+    }
   });
 
   it("leaves alone the lock of a running holder", async () => {
