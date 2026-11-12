@@ -72,6 +72,10 @@ enum Kind {
     /// A stage that reads names (`str_cmp`, a cat compared): the texts of the columns that bound its slots and of its
     /// constants, on the device together.
     Names { cols: Vec<(Arc<InRel>, usize)>, consts: Vec<i64> },
+    /// `replace_all` of regex `pattern` by `with` (symbols) over the distinct symbols of column `col` of `rel`: their
+    /// replaced texts, made on the device a SIMD group a symbol, 32 bytes at a time (`mj::Batch::replace`), kept
+    /// with the relation; the stage copies a binding's into the arena.
+    Replaced { rel: Arc<InRel>, col: usize, pattern: i64, with: i64 },
 }
 
 /// The texts of `keys` (slots an input column bound, or constants), for a stage that reads names: the columns and
@@ -101,7 +105,6 @@ fn text_function(name: &str) -> Option<(u32, usize, usize)> {
         "slice" => (mj::TEXTFN_SLICE, 1, 2),
         "rr_to_string" => (mj::TEXTFN_TO_STRING, 0, 1),
         "sql_replace" => (mj::TEXTFN_REPLACE, 3, 0),
-        "replace_all" | "rx_replace" => (mj::TEXTFN_REGEX, 3, 0),
         _ => return None,
     })
 }
@@ -576,6 +579,40 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
                 stages.push(st);
                 i += 1;
             }
+            Step::Func { name: name @ ("replace_all" | "rx_replace"), args, out, bind: true, .. } if args.len() == 3 => {
+                // A regex's replacement: made once per distinct symbol of the input column that bound the text (a
+                // SIMD group a symbol, 32 bytes at a time), each binding's copied into the arena.
+                let konst = |k: Key| match k {
+                    Key::Const(c) => Some(c),
+                    Key::Slot(x) => known.get(&x).copied(),
+                };
+                let (Some(pattern), Some(with)) = (konst(args[1]), konst(args[2])) else {
+                    return Err(format!("the function {name} of a regex or replacement that is not a constant has no device form"));
+                };
+                let Key::Slot(x) = args[0] else { return Err(format!("the function {name} of a constant text has no device form")) };
+                let Some((rel, col)) = (!is_arena(x) && !deferred.contains_key(&x)).then(|| origin.get(x).cloned().flatten()).flatten() else {
+                    return Err(format!("the function {name} of a text no input relation's column bound has no device form (it is made per distinct name)"));
+                };
+                let later: Vec<&Step> = j.steps[i + 1..].iter().filter(|s| mentions(s, *out)).collect();
+                if let Some(s) = later.iter().find(|s| !arena_reader(s, *out)) {
+                    return Err(format!("the function {name}'s text read by {} has no device form", step_name(s)));
+                }
+                if j.out.iter().any(|t| matches!(*t, Term::Cat(a, b) if a == *out || b == *out)) {
+                    return Err(format!("cat of the function {name}'s text has no device form"));
+                }
+                let mut d = mj::Stage { mode: mj::TEXTFN, ..mj::Stage::default() };
+                d.key_kind[0] = mj::SLOT;
+                d.key_slot[0] = x as u32;
+                d.agg = [mj::TEXTFN_COPY, mj::OPND_SYM];
+                d.bind_slot[0] = *out as u32;
+                if *out >= bound.len() {
+                    bound.resize(*out + 1, false);
+                }
+                bound[*out] = true;
+                ARENA.with_borrow_mut(|a| a.push(*out));
+                stages.push(PStage { first: i, span: 1, kind: Kind::Replaced { rel, col, pattern, with }, desc: d, npassed: 0 });
+                i += 1;
+            }
             Step::Func { name, args, out, bind: true, .. } if text_function(name).is_some() => {
                 // A text function: its text made into the batch's arena (or a range of its argument's), its value
                 // where the text is. Read by text tests, `str_cmp`, `strlen`, other text functions and the head (as a
@@ -608,9 +645,6 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
                             keys[1] = pb;
                             xk = if form == mj::CAT_PLAIN { mj::OPND_PLAIN } else { mj::OPND_DOT };
                         }
-                    }
-                    if f == mj::TEXTFN_REGEX && args[1..3].iter().any(|k| matches!(k, Key::Slot(x) if !known.contains_key(x))) {
-                        return Err(format!("the function {name} of a regex or replacement that is not a constant has no device form"));
                     }
                     if args[1..ntexts].iter().any(|k| matches!(k, Key::Slot(x) if is_arena(*x) || deferred.contains_key(x))) {
                         return Err(format!("the function {name}'s pattern or replacement made by the rule has no device form"));
@@ -821,25 +855,6 @@ fn arena_reader(step: &Step, x: usize) -> bool {
     }
 }
 
-/// The automaton of a `TEXTFN_REGEX` stage's regex (key 2's constant), on the device once per regex; refused (the
-/// stratum runs on the CPU) for a regex it has none for, or a replacement naming groups (`$`).
-fn regex_automaton(d: &mj::Stage, names: &Interner) -> Result<Rc<mj::DevBytes>, String> {
-    thread_local! {
-        static UPLOADED: RefCell<HashMap<String, Rc<mj::DevBytes>>> = RefCell::new(HashMap::new());
-    }
-    if names.name(d.key_const[4]).contains('$') {
-        return Err("replace_all with a replacement naming a group ($) has no device form".into());
-    }
-    let pattern = names.name(d.key_const[2]).to_string();
-    if let Some(b) = UPLOADED.with_borrow(|u| u.get(&pattern).cloned()) {
-        return Ok(b);
-    }
-    let r = crate::code_rule_dsl::text::table::replacer(&pattern).map_err(|e| format!("replace_all has no device form: {e}"))?;
-    let b = Rc::new(mj::DevBytes::upload(&r.bytes).map_err(|e| format!("{e:?}"))?);
-    UPLOADED.with_borrow_mut(|u| u.insert(pattern, b.clone()));
-    Ok(b)
-}
-
 /// A `TEXTFN_COPY` stage: the text of `a` and `b` by `form` (`cat`'s or `str_concat`'s) made into the arena, its
 /// value into slot `out`.
 fn copy_stage(first: usize, out: usize, a: Key, b: Key, form: u32, origin: &[Option<(Arc<InRel>, usize)>], known: &HashMap<usize, i64>) -> Result<PStage, String> {
@@ -858,6 +873,8 @@ struct Entry {
     /// Per column a text test read, its distinct symbols' names; per (column, test), the test's verdicts.
     texts: Vec<(usize, Rc<mj::DevText>)>,
     verdicts: Vec<((usize, String), Rc<mj::DevRel>)>,
+    /// Per (column, regex, replacement), the column's symbols' texts replaced (`replaced`).
+    replaced: Vec<((usize, String, String), Rc<mj::DevRel>)>,
     bytes: usize,
     used: u64,
 }
@@ -1023,7 +1040,7 @@ fn resident(rel: &Arc<InRel>, cols: &[usize], batch: &mut mj::Batch, rep: &mut R
                 rep.upload_bytes += dev.bytes() as u64;
                 rep.upload_cpu += thread_cpu() - c0;
                 let bytes = dev.bytes();
-                res.entries.push(Entry { rel: weak, dev: Rc::new(dev), indexes: Vec::new(), texts: Vec::new(), verdicts: Vec::new(), bytes, used: clock });
+                res.entries.push(Entry { rel: weak, dev: Rc::new(dev), indexes: Vec::new(), texts: Vec::new(), verdicts: Vec::new(), replaced: Vec::new(), bytes, used: clock });
                 res.bytes += bytes;
                 res.entries.len() - 1
             }
@@ -1046,6 +1063,62 @@ fn resident(rel: &Arc<InRel>, cols: &[usize], batch: &mut mj::Batch, rep: &mut R
     })
 }
 
+/// The names of column `col`'s distinct symbols on the device, kept with the relation's entry `e` (copied once).
+fn column_text(e: &mut Entry, rel: &InRel, col: usize, rep: &mut Report, names: &Interner) -> Result<Rc<mj::DevText>, String> {
+    if let Some((_, t)) = e.texts.iter().find(|(c, _)| *c == col) {
+        return Ok(t.clone());
+    }
+    let c0 = thread_cpu();
+    let ids = column_symbols(rel, col);
+    let t = Rc::new(mj::DevText::upload(&ids, |v, out| out.extend_from_slice(names.name(v).as_bytes())).map_err(|e| format!("{e:?}: the names of {} symbols", ids.len()))?);
+    rep.uploads += 1;
+    rep.upload_bytes += t.bytes() as u64;
+    rep.upload_cpu += thread_cpu() - c0;
+    e.bytes += t.bytes();
+    e.texts.push((col, t.clone()));
+    Ok(t)
+}
+
+/// `replace_all` of regex `pattern` by `with` (symbols) over the distinct symbols of column `col` of `rel`: their
+/// replaced texts as a text buffer by symbol (`DevText`'s), made on the device (`Batch::replace`: a SIMD group a
+/// symbol, 32 bytes at a time) the first time a stage asks, and kept with the relation. Refused (the stratum runs on
+/// the CPU) for a regex the device has no automata for, or a replacement naming a group (`$`).
+fn replaced(rel: &Arc<InRel>, col: usize, pattern: i64, with: i64, batch: &mut mj::Batch, rep: &mut Report, names: &Interner) -> Result<Rc<mj::DevRel>, String> {
+    thread_local! {
+        /// Each regex's automata on the device, kept while the thread runs (a command buffer may read them).
+        static AUTOMATA: RefCell<HashMap<String, (Rc<mj::DevBytes>, u32)>> = RefCell::new(HashMap::new());
+    }
+    let (pattern, with) = (names.name(pattern), names.name(with));
+    if with.contains('$') {
+        return Err("replace_all with a replacement naming a group ($) has no device form".into());
+    }
+    let (automata, states) = match AUTOMATA.with_borrow(|a| a.get(&pattern).cloned()) {
+        Some(a) => a,
+        None => {
+            let r = crate::code_rule_dsl::text::table::replacer(&pattern).map_err(|e| format!("replace_all has no device form: {e}"))?;
+            let a = (Rc::new(mj::DevBytes::upload(&r.bytes).map_err(|e| format!("{e:?}"))?), r.states);
+            AUTOMATA.with_borrow_mut(|m| m.insert(pattern.clone(), a.clone()));
+            a
+        }
+    };
+    resident(rel, &[], batch, rep)?;
+    RESIDENT.with_borrow_mut(|res| {
+        let weak = Arc::downgrade(rel);
+        let e = res.entries.iter_mut().find(|e| Weak::ptr_eq(&e.rel, &weak)).expect("the relation made resident");
+        let key = (col, pattern, with);
+        if let Some((_, v)) = e.replaced.iter().find(|(k, _)| *k == key) {
+            rep.sort_hits += 1;
+            return Ok(v.clone());
+        }
+        let text = column_text(e, rel, col, rep, names)?;
+        let out = batch.replace(&text, &automata, states, key.2.as_bytes()).map_err(|e| format!("{e:?}: replace_all over {} names", text.terms))?;
+        rep.sorts += 1;
+        e.bytes += out.bytes();
+        e.replaced.push((key, out.clone()));
+        Ok(out)
+    })
+}
+
 /// The verdicts of text test `table` (keyed `key`) for the distinct symbols of column `col` of `rel`: a bitset by
 /// symbol, 64 a row, made on the device (`Batch::verdicts`) the first time a stage asks and kept with the relation.
 /// The column's symbols' names are copied to the device once (the host evaluates nothing).
@@ -1060,20 +1133,7 @@ fn verdicts(rel: &Arc<InRel>, col: usize, table: &Arc<crate::code_rule_dsl::text
             rep.sort_hits += 1;
             return Ok(v.clone());
         }
-        let text = match e.texts.iter().find(|(c, _)| *c == col) {
-            Some((_, t)) => t.clone(),
-            None => {
-                let c0 = thread_cpu();
-                let ids = column_symbols(rel, col);
-                let t = Rc::new(mj::DevText::upload(&ids, |v, out| out.extend_from_slice(names.name(v).as_bytes())).map_err(|e| format!("{e:?}: the names of {} symbols", ids.len()))?);
-                rep.uploads += 1;
-                rep.upload_bytes += t.bytes() as u64;
-                rep.upload_cpu += thread_cpu() - c0;
-                e.bytes += t.bytes();
-                e.texts.push((col, t.clone()));
-                t
-            }
-        };
+        let text = column_text(e, rel, col, rep, names)?;
         let dt = mj::DevTable::upload(table).map_err(|e| format!("{e:?}"))?;
         let words = text.span.div_ceil(64).max(1);
         let bits = Rc::new(mj::DevRel::upload(1, words, |v| v.fill(0)).map_err(|e| format!("{e:?}: verdicts of {} symbols", text.span))?);
@@ -1138,7 +1198,7 @@ impl<'p> Run<'p> {
         for s in &plan.stages {
             match s.kind {
                 Kind::Pass | Kind::Map => io.push((slot, slot)),
-                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } | Kind::Names { .. } => {
+                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } | Kind::Names { .. } | Kind::Replaced { .. } => {
                     io.push((slot, slot + 1));
                     slot += 1;
                 }
@@ -1201,7 +1261,7 @@ impl<'p> Run<'p> {
                     let t = self.tables[i].as_ref().expect("the map's table");
                     batch.map(s.desc, t, i, &self.totals).map_err(|e| format!("{e:?}"))?;
                 }
-                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } | Kind::Names { .. } => {
+                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } | Kind::Names { .. } | Kind::Replaced { .. } => {
                     match (&s.kind, &self.rels[k]) {
                         (Kind::Names { cols, consts }, None) => {
                             let t = texts(cols, consts, rep, names)?;
@@ -1212,6 +1272,7 @@ impl<'p> Run<'p> {
                         }
                         (Kind::Atom { rel, cols }, None) => self.rels[k] = Some(resident(rel, cols, batch, rep)?),
                         (Kind::Text { rel, col, table, key }, None) => self.rels[k] = Some((verdicts(rel, *col, table, key, batch, rep, names)?, None)),
+                        (Kind::Replaced { rel, col, pattern, with }, None) => self.rels[k] = Some((replaced(rel, *col, *pattern, *with, batch, rep, names)?, None)),
                         (Kind::Own { rel, delta, cols }, None) => {
                             self.rels[k] = Some(own.get(*rel, *delta, cols, batch, rep)?.ok_or("an own relation with no rows")?);
                         }
@@ -1237,8 +1298,7 @@ impl<'p> Run<'p> {
                         self.arena = Some(batch.arena().map_err(|e| format!("{e:?}"))?);
                     }
                     let left = self.tables[i].as_ref().expect("the stage's input");
-                    let aux = if s.desc.mode == mj::TEXTFN && s.desc.agg[0] == mj::TEXTFN_REGEX { Some(regex_automaton(&s.desc, names)?) } else { None };
-                    batch.stage(s.desc, left, right, i, o, &self.totals, &self.counters, self.counter[k], &out, aux.as_deref())
+                    batch.stage(s.desc, left, right, i, o, &self.totals, &self.counters, self.counter[k], &out)
                         .map_err(|e| format!("{e:?}: a stage's space for {cap_in} rows"))?;
                     self.tables[o] = Some(out);
                 }
@@ -1781,7 +1841,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
                     d.nkeys = k as u32;
                     let fresh_rows = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
                     let counters = mj::Words::zeroed(1).map_err(|e| format!("{e:?}"))?;
-                    batch.stage(d, &distinct, Some((&total, ix.as_deref())), 1, 2, &words, &counters, None, &fresh_rows, None).map_err(|e| format!("{e:?}"))?;
+                    batch.stage(d, &distinct, Some((&total, ix.as_deref())), 1, 2, &words, &counters, None, &fresh_rows).map_err(|e| format!("{e:?}"))?;
                     news.push((h, fresh_rows, words, true));
                     hold.push(distinct);
                 }
@@ -2270,6 +2330,8 @@ mod tests {
             // Regex replacements: leftmost first, anchored, multibyte classes.
             format!("pos {n} v0 v1\nfunc replace_all v2 v0 {} {}\nhead v2 v1", sym("_+|\\.ts$"), sym("-")),
             format!("pos {n} v0 v1\nfunc replace_all v2 v0 {} {}\nhead v2 v1", sym("^[A-Za-z]+|[0-9]"), sym("#")),
+            // Matches past a chunk of 32 bytes (long names, long runs), their ends and starts found across chunks.
+            format!("pos {n} v0 v1\nfunc replace_all v2 v0 {} {}\nhead v2 v1", sym("[A-Za-z_./αβ]{3,}"), sym("~")),
             format!("pos {n} v0 v1\nlt v1 i:900\nfunc rx_replace v2 v0 {} {}\nfunc rr_strlen v3 v2\nhead v2 v3", sym("[αβé]+"), sym("<u>")),
             // Unicode's lower of ASCII names.
             format!("pos {a} v0 v1\nfunc lower v2 v0\nhead v2 v1"),

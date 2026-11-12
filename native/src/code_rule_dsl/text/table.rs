@@ -148,22 +148,24 @@ fn build(plans: &[Arc<Lowered>]) -> Result<Table, String> {
     Ok(Table { states: n as u32, classes: nc as u32, start: 0, bytes })
 }
 
-/// The most states a replacement's automaton holds (a state is a 16-bit word).
-pub(in crate::code_rule_dsl) const MAX_REPLACE_STATES: usize = 4096;
-
-/// A regex's anchored, leftmost-first automaton, for `replace_all` on the device (`metal_join`'s `TEXTFN_REGEX`):
-/// from a start, the end of the match Rust's `regex` prefers there. `bytes`: a header of eight words (states,
-/// classes, the start at the text's start, the start elsewhere, the dead state), the byte classes (256), the
-/// transitions (`states` rows of `classes` 16-bit states), the end-of-text transition per state, then whether each
-/// state is a match (the DFA's matches are a byte late: a match state after byte k is a match ending at k).
+/// A regex's automata for `replace_all` on the device (`metal_join`'s `text_replace`, decision 0038's chunked
+/// matching), as `regex_automata`'s DFA regex finds matches: a forward unanchored leftmost-first automaton whose last
+/// match before it dies is a match's end, and a reverse anchored automaton (every match) run back from that end whose
+/// furthest match is its start. Their states are bytes, at most `MAX_STATES`. `bytes`: a header of sixteen words
+/// (forward states, classes, start at the text's start, start elsewhere, dead; reverse states, classes, start at the
+/// text's end, start elsewhere, dead; the two tables' offsets), then each table as `Table`'s: byte classes, the
+/// transitions, the end-of-text transition per state, whether each state is a match (a byte late: a match state after
+/// byte k is a match ending, or in reverse starting, at k).
 #[derive(Debug)]
 pub(in crate::code_rule_dsl) struct Replacer {
     pub(in crate::code_rule_dsl) bytes: Vec<u8>,
+    /// The larger table's states: a SIMD group's scratch holds two rows of them per lane.
+    pub(in crate::code_rule_dsl) states: u32,
 }
 
-/// The replacement automaton of regex `pattern`, made once per pattern. Refused (the replacement runs on the
-/// CPU): a pattern that may match the empty text (Rust's rules for empty matches are not the device's), a look
-/// other than the text's start and end, an automaton past `MAX_REPLACE_STATES`.
+/// The replacement automata of regex `pattern`, made once per pattern. Refused (the replacement runs on the CPU): a
+/// pattern that may match the empty text (Rust's rules for empty matches are not the device's), a look other than the
+/// text's start and end, an automaton past `MAX_STATES`.
 pub(in crate::code_rule_dsl) fn replacer(pattern: &str) -> Result<Arc<Replacer>, String> {
     static MADE: LazyLock<Mutex<HashMap<String, Result<Arc<Replacer>, String>>>> = LazyLock::new(Default::default);
     if let Some(r) = MADE.lock().expect("replacers").get(pattern) {
@@ -172,6 +174,67 @@ pub(in crate::code_rule_dsl) fn replacer(pattern: &str) -> Result<Arc<Replacer>,
     let made = build_replacer(pattern).map(Arc::new);
     MADE.lock().expect("replacers").insert(pattern.to_owned(), made.clone());
     made
+}
+
+/// One direction's automaton as a dense table: its starts (at the text's edge, elsewhere), dead state and bytes.
+fn dense_table(dfa: &dense::DFA<Vec<u32>>, anchored: Anchored) -> Result<(u32, u32, u32, u32, u32, Vec<u8>), String> {
+    let at = |behind: Option<u8>| dfa.start_state(&start::Config::new().anchored(anchored).look_behind(behind)).map_err(|e| format!("its start: {e}"));
+    let edge = at(None)?;
+    let elsewhere = at(Some(b'a'))?;
+    for b in 0..=255u8 {
+        if at(Some(b))? != elsewhere {
+            return Err("a regex whose start depends on the byte beside it".into());
+        }
+    }
+    let mut ids = vec![edge];
+    let mut index: HashMap<regex_automata::util::primitives::StateID, usize> = HashMap::from([(edge, 0)]);
+    let mut see = |to, ids: &mut Vec<_>| {
+        let n = index.len();
+        *index.entry(to).or_insert_with(|| {
+            ids.push(to);
+            n
+        })
+    };
+    let mid = see(elsewhere, &mut ids);
+    let (mut next, mut eoi): (Vec<[usize; 256]>, Vec<usize>) = (Vec::new(), Vec::new());
+    let mut at = 0;
+    while at < ids.len() {
+        let id = ids[at];
+        if dfa.is_quit_state(id) {
+            return Err("its automaton quits on some bytes".into());
+        }
+        let mut row = [0usize; 256];
+        for b in 0..=255u8 {
+            row[b as usize] = see(dfa.next_state(id, b), &mut ids);
+        }
+        eoi.push(see(dfa.next_eoi_state(id), &mut ids));
+        next.push(row);
+        if ids.len() > MAX_STATES {
+            return Err(format!("its automaton has more than {MAX_STATES} states"));
+        }
+        at += 1;
+    }
+    let n = ids.len();
+    // A state for the dead one even when none is reached (it is never entered then).
+    let dead = ids.iter().position(|&id| dfa.is_dead_state(id)).unwrap_or(n.min(MAX_STATES - 1));
+    let mut class_of: HashMap<Vec<usize>, u8> = HashMap::new();
+    let mut classes = [0u8; 256];
+    let mut columns: Vec<Vec<usize>> = Vec::new();
+    for b in 0..256 {
+        let column: Vec<usize> = (0..n).map(|s| next[s][b]).collect();
+        let k = class_of.len();
+        classes[b] = *class_of.entry(column.clone()).or_insert_with(|| {
+            columns.push(column);
+            k as u8
+        });
+    }
+    let mut bytes = classes.to_vec();
+    for s in 0..n {
+        bytes.extend(columns.iter().map(|col| col[s] as u8));
+    }
+    bytes.extend(eoi.iter().map(|&e| e as u8));
+    bytes.extend(ids.iter().map(|&id| u8::from(dfa.is_match_state(id))));
+    Ok((n as u32, columns.len() as u32, 0, mid as u32, dead as u32, bytes))
 }
 
 fn build_replacer(pattern: &str) -> Result<Replacer, String> {
@@ -185,115 +248,84 @@ fn build_replacer(pattern: &str) -> Result<Replacer, String> {
     if !props.look_set().subtract(ends).is_empty() {
         return Err("a regex with a look other than the text's start and end".into());
     }
-    let nfa = thompson::Compiler::new().build_from_hir(&hir).map_err(|e| format!("its automaton: {e}"))?;
-    let dfa = dense::Builder::new()
-        .configure(dense::Config::new().match_kind(MatchKind::LeftmostFirst).start_kind(StartKind::Anchored))
-        .build_from_nfa(&nfa)
+    let forward = thompson::Compiler::new().build_from_hir(&hir).map_err(|e| format!("its automaton: {e}"))?;
+    let fdfa = dense::Builder::new()
+        .configure(dense::Config::new().match_kind(MatchKind::LeftmostFirst).start_kind(StartKind::Unanchored))
+        .build_from_nfa(&forward)
         .map_err(|e| format!("its automaton: {e}"))?;
-    let at = |behind: Option<u8>| dfa.start_state(&start::Config::new().anchored(Anchored::Yes).look_behind(behind)).map_err(|e| format!("its start: {e}"));
-    let first = at(None)?;
-    let elsewhere = at(Some(b'a'))?;
-    for b in 0..=255u8 {
-        if at(Some(b))? != elsewhere {
-            return Err("a regex whose start depends on the byte before".into());
-        }
-    }
-    let mut ids = vec![first];
-    let mut index: HashMap<regex_automata::util::primitives::StateID, usize> = HashMap::from([(first, 0)]);
-    let mut see = |to, ids: &mut Vec<_>| {
-        let n = index.len();
-        *index.entry(to).or_insert_with(|| {
-            ids.push(to);
-            n
-        })
-    };
-    let start1 = see(elsewhere, &mut ids);
-    let mut next: Vec<[usize; 256]> = Vec::new();
-    let mut eoi: Vec<usize> = Vec::new();
-    let mut at = 0;
-    while at < ids.len() {
-        let id = ids[at];
-        if dfa.is_quit_state(id) {
-            return Err("its automaton quits on some bytes".into());
-        }
-        let mut row = [0usize; 256];
-        for b in 0..=255u8 {
-            row[b as usize] = see(dfa.next_state(id, b), &mut ids);
-        }
-        eoi.push(see(dfa.next_eoi_state(id), &mut ids));
-        next.push(row);
-        if ids.len() > MAX_REPLACE_STATES {
-            return Err(format!("its automaton has more than {MAX_REPLACE_STATES} states"));
-        }
-        at += 1;
-    }
-    let n = ids.len();
-    let dead = ids.iter().position(|&id| dfa.is_dead_state(id)).unwrap_or(u32::MAX as usize);
-    let accept: Vec<u8> = ids.iter().map(|&id| u8::from(dfa.is_match_state(id))).collect();
-    let mut class_of: HashMap<Vec<usize>, u8> = HashMap::new();
-    let mut classes = [0u8; 256];
-    let mut columns: Vec<Vec<usize>> = Vec::new();
-    for b in 0..256 {
-        let column: Vec<usize> = (0..n).map(|s| next[s][b]).collect();
-        let k = class_of.len();
-        classes[b] = *class_of.entry(column.clone()).or_insert_with(|| {
-            columns.push(column);
-            k as u8
-        });
-    }
-    let nc = columns.len();
-    let mut bytes = Vec::new();
-    for w in [n as u32, nc as u32, 0, start1 as u32, dead as u32, 0, 0, 0] {
+    let reverse = thompson::Compiler::new()
+        .configure(thompson::Config::new().reverse(true).which_captures(thompson::WhichCaptures::None))
+        .build_from_hir(&hir)
+        .map_err(|e| format!("its reverse automaton: {e}"))?;
+    let rdfa = dense::Builder::new()
+        .configure(dense::Config::new().match_kind(MatchKind::All).start_kind(StartKind::Anchored))
+        .build_from_nfa(&reverse)
+        .map_err(|e| format!("its reverse automaton: {e}"))?;
+    let (fs, fc, f0, f1, fd, ft) = dense_table(&fdfa, Anchored::No)?;
+    let (rs, rc, r0, r1, rd, rt) = dense_table(&rdfa, Anchored::Yes)?;
+    let foff = 64;
+    let roff = foff + ft.len();
+    let mut bytes = Vec::with_capacity(roff + rt.len());
+    for w in [fs, fc, f0, f1, fd, rs, rc, r0, r1, rd, foff as u32, roff as u32, 0, 0, 0, 0] {
         bytes.extend(w.to_le_bytes());
     }
-    bytes.extend(classes);
-    for s in 0..n {
-        for col in &columns {
-            bytes.extend((col[s] as u16).to_le_bytes());
-        }
-    }
-    for &e in &eoi {
-        bytes.extend((e as u16).to_le_bytes());
-    }
-    bytes.extend(accept);
-    Ok(Replacer { bytes })
+    bytes.extend(ft);
+    bytes.extend(rt);
+    Ok(Replacer { bytes, states: fs.max(rs) })
 }
 
 impl Replacer {
-    /// `text` with every match replaced by `with` (a literal), as the device does it (tests only).
+    /// `text` with every match replaced by `with` (a literal), walking the automata as the device does, a byte at a
+    /// time (tests only; the device composes 32 bytes' transitions at once).
     #[cfg(test)]
     pub(in crate::code_rule_dsl) fn replace(&self, text: &str, with: &str) -> String {
         let w = |i: usize| u32::from_le_bytes(self.bytes[4 * i..4 * i + 4].try_into().unwrap()) as usize;
-        let (n, nc, dead) = (w(0), w(1), w(4));
-        let cls = &self.bytes[32..288];
-        let half = |at: usize| u16::from_le_bytes([self.bytes[at], self.bytes[at + 1]]) as usize;
-        let next = |s: usize, c: usize| half(288 + 2 * (s * nc + c));
-        let eoi = |s: usize| half(288 + 2 * (n * nc + s));
-        let accept = |s: usize| self.bytes[288 + 2 * (n * nc + n) + s] != 0;
+        struct Dir<'a> { t: &'a [u8], s: usize, c: usize, edge: usize, mid: usize, dead: usize }
+        impl Dir<'_> {
+            fn next(&self, q: usize, b: u8) -> usize { self.t[256 + q * self.c + self.t[b as usize] as usize] as usize }
+            fn eoi(&self, q: usize) -> usize { self.t[256 + self.s * self.c + q] as usize }
+            fn accept(&self, q: usize) -> bool { self.t[256 + self.s * self.c + self.s + q] != 0 }
+        }
+        let f = Dir { t: &self.bytes[w(10)..w(11)], s: w(0), c: w(1), edge: w(2), mid: w(3), dead: w(4) };
+        let r = Dir { t: &self.bytes[w(11)..], s: w(5), c: w(6), edge: w(7), mid: w(8), dead: w(9) };
         let t = text.as_bytes();
-        let end = |from: usize| {
-            let (mut st, mut last) = (if from == 0 { w(2) } else { w(3) }, None);
-            for (k, &b) in t.iter().enumerate().skip(from) {
-                st = next(st, cls[b as usize] as usize);
-                if st == dead {
-                    return last;
+        let n = t.len();
+        let (mut out, mut pos) = (Vec::new(), 0);
+        while pos < n {
+            let (mut st, mut last, mut dead) = (if pos == 0 { f.edge } else { f.mid }, None, false);
+            for (k, &b) in t.iter().enumerate().skip(pos) {
+                st = f.next(st, b);
+                if st == f.dead {
+                    dead = true;
+                    break;
                 }
-                if accept(st) {
+                if f.accept(st) {
                     last = Some(k);
                 }
             }
-            if accept(eoi(st)) { Some(t.len()) } else { last }
-        };
-        let (mut out, mut pos, mut s) = (Vec::new(), 0, 0);
-        while s < t.len() {
-            if t[s] & 0xc0 != 0x80 && let Some(e) = end(s).filter(|&e| e > s) {
-                out.extend_from_slice(&t[pos..s]);
-                out.extend_from_slice(with.as_bytes());
-                pos = e;
-                s = e;
-                continue;
+            if !dead && f.accept(f.eoi(st)) {
+                last = Some(n);
             }
-            s += 1;
+            let Some(e) = last else { break };
+            let lo = pos.saturating_sub(1);
+            let (mut st, mut first, mut dead) = (if e == n { r.edge } else { r.mid }, None, false);
+            for k in (lo..e).rev() {
+                st = r.next(st, t[k]);
+                if st == r.dead {
+                    dead = true;
+                    break;
+                }
+                if r.accept(st) {
+                    first = Some(k + 1);
+                }
+            }
+            if !dead && pos == 0 && r.accept(r.eoi(st)) {
+                first = Some(0);
+            }
+            let Some(s) = first.filter(|&s| s >= pos) else { break };
+            out.extend_from_slice(&t[pos..s]);
+            out.extend_from_slice(with.as_bytes());
+            pos = e;
         }
         out.extend_from_slice(&t[pos..]);
         String::from_utf8(out).unwrap()
@@ -306,8 +338,8 @@ mod tests {
     /// word-boundary ones are refused.
     #[test]
     fn a_replacers_automaton_replaces_as_regex_does() {
-        let texts = ["", "  a b  ", "x\tsrc/lib.ts  ", "node:fs", "__init__", "#x\n#y", "tURt", "a%2Cb%2cc", "@ts-ignore here", "αβ  γ", "n", "nn", "a.b.c", "x*y"];
-        let patterns = ["^\\s+|\\s+$", "\\s+", "#[^\\n]*", "_", "n$", "^node:", "^_+", "[rtU]", "%2[Cc]", "\\*", "\\.", "/", "@ts-ignore", "\\s"];
+        let texts = ["", "  a b  ", "x\tsrc/lib.ts  ", "node:fs", "__init__", "#x\n#y", "tURt", "a%2Cb%2cc", "@ts-ignore here", "αβ  γ", "n", "nn", "a.b.c", "x*y", "`a${b}`", "q&display=x&y", "aabbc abbbc", "abcd abc", "xαβy é xαy", "\u{2003}a\u{2003}"];
+        let patterns = ["^\\s+|\\s+$", "\\s+", "#[^\\n]*", "_", "n$", "^node:", "^_+", "[rtU]", "%2[Cc]", "\\*", "\\.", "/", "@ts-ignore", "\\s", "^`|\\$\\{[\\s\\S]*$|`$", "&display[=&][\\s\\S]*", "a+b|ab+c", "(ab|a)(c|bcd)", "x[αβ]+y|é"];
         for p in patterns {
             let r = super::replacer(p).unwrap_or_else(|e| panic!("{p}: {e}"));
             let re = regex::Regex::new(p).unwrap();
