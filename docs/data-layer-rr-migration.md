@@ -54,6 +54,17 @@ Next, use TDD to correct passive declaration classification and port the complet
 Then complete production facts and reports, retained updates, 74 historical inputs, effective removal controls, and strict admission.
 This checkpoint does not admit the rule. The inventory remains twenty-one admitted rules, seventy-eight drafts, and one absent translation.
 
+## Shared type-alias guard repair
+
+The shared transaction DTO assertion now passes through both native APIs. Each focused shard passes all four unchanged tests.
+The guard had classified Python's lazy type-alias evaluator as a linter function.
+It now recognizes only module-level aliases whose expressions contain builtin names, generic subscripts, tuples, and unions.
+Referenced names must still resolve to the actual builtins. Calls, attributes, nonliteral expressions, shadowed builtins, and ordinary functions remain rejected.
+Six TDD tests enforce this boundary. Alias evaluation is recorded in `passiveDeclarationCalls`, separately from detector and host protocol calls.
+This evaluates a passive DTO declaration for the unchanged Pydantic assertion; it does not execute a rule algorithm or remove an assertion.
+The [focused receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-alias-guard.json.gz) preserves both runs and the recorded declaration.
+The shared structural helper remains unported, so this repair does not admit unresolved references or transaction patterns.
+
 ## Dynamic loading: complete original snapshot audit
 
 The complete owned corpus contains 315 original cases across five modules. Native snapshot execution passes 314.

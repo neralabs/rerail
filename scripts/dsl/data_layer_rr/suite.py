@@ -591,6 +591,7 @@ class Suite:
 
         foreign_prefix=str(self.source/'scripts')+'/'
         foreign_codes={}
+        self.passive_declaration_calls=[]
         def guard(frame, event, arg):
             if event != 'call':
                 return
@@ -602,6 +603,12 @@ class Suite:
                         and name.startswith('lint_') and name.endswith('.py') and '/' not in name
                         and code.co_flags & inspect.CO_NEWLOCALS else None)
                 if foreign_codes[code]:
+                    from data_layer_audit.passive_declarations import passive_type_alias
+                    if passive_type_alias(frame):
+                        self.passive_declaration_calls.append(dict(test=self.item.nodeid if self.item else '<metadata>',
+                            declaration=code.co_qualname,kind='builtin-type-alias',
+                            source=code.co_filename.removeprefix(str(self.source)+'/'),line=code.co_firstlineno))
+                        return
                     self.semantic_fallbacks.append(foreign_codes[code]+':'+code.co_qualname)
                     raise AssertionError('Unselected original linter executed: '+self.semantic_fallbacks[-1])
                 return
@@ -869,6 +876,7 @@ def main():
         executionIsolation='One owned persistent cache per assertion shard; shared-cache concurrency is tested separately',
         semanticFallbacks=backend.semantic_fallbacks,
         hostProtocolCalls=backend.host_protocol_calls,
+        passiveDeclarationCalls=backend.passive_declaration_calls,
         casesWithoutNativeCalls=[case for case in backend.cases if not any(c['test'] == case for c in backend.calls)]))
     raise SystemExit(code)
 
