@@ -41,8 +41,8 @@ found. You are not the approver: the person is. You make sure they know what the
    question. A command rule that fires on every command, or one whose action is a long instruction, deserves one too.
 4. **Check that it is what it says.** The description, title and id should match what the clauses catch. A pack's
    `package.json` name and publisher: one installed from a folder that calls itself `@neralabs/…` is not Rerail's.
-5. **Test it, when you can**: `rerail rules test <file> --json` validates a rule file and counts its matches in the repo, where the rule runs.
-   Read the matches it shows.
+5. **Test it, when you can**: `rerail rules test <file> --json` validates a rule file and counts its matches where the rule
+   runs in the repo. Read the matches it shows.
 
 ## Ask, in this form
 

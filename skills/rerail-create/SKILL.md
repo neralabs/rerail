@@ -126,7 +126,7 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
      Applies to       All of <this repo's name> | This worktree only (<its folder name>)
      What happens     Steer: I'm told in the session and fix it. I'm not stopped.
      How often        Every time | The first time only
-     Tested           Would have caught <N> places in this repo
+     Tested           Would have caught <N> places in this repo | Would have caught <N> places under <folder>/
 
    Add this rule?
      1. Yes, add it
@@ -140,8 +140,10 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
      excludes that matter: "When I edit a file under src/ (not src/scripts/ or tests)". How often is "Every time" for a code
      rule; for a command rule it follows `repeat.mode` (`always`: Every time, `once`: The first time only). Tested names the
      places: "Would have caught 2 places in this repo (src/api/refunds.ts:2, …)"; with none, "Matches nothing in this repo
-     today: the code already follows it". A command rule gets no repo pass, so its Tested row gives the cases: "Caught 4 of 4 cases,
-     let 5 of 5 through". That alone is no reason for `Not sure`.
+     today: the code already follows it". Where `repository.folders` is not `[""]`, the count covers only those folders, so
+     name them in place of "in this repo": "Would have caught 2 places under src/, web/ (…)". A command rule gets no repo
+     pass, so its Tested row gives the cases: "Caught 4 of 4 cases, let 5 of 5 through". That alone is no reason for
+     `Not sure`.
    - **Log rules.** The What happens row reads "Log: Rerail keeps a record. I'm not told."
    - **Rows you are unsure of.** Mark the row `Not sure`. Below the card, show one line from this repo that the rule catches and
      one that it misses, and set the rule to Log.
@@ -241,7 +243,8 @@ commands, not a new rule.
    still in scope is `caught`; a path the change leaves out is `passed`. Run `rerail rules test <tmp>/draft.json --json`
    once. Every case must come out right; a left-out path reads "(outside the files this rule covers)". Count
    `repository.matches` for the card; do not review them. The repo pass covers only the folders the rule runs in
-   (`repository.folders`), so the count is what the saved rule will catch.
+   (`repository.folders`), so the count is what the saved rule will catch. Where they are not `[""]`, the Tested row
+   names them in place of "in this repo": "Would catch 2 places under src/, web/".
 4. **Show the change, in this form, and ask once:**
 
    ```text
@@ -252,7 +255,7 @@ commands, not a new rule.
 
      Still checked  src/app/models.py, scripts/sync.py
      Left out now   tests/test_api.py, conftest.py
-     Tested         Would catch <N> places in this repo
+     Tested         Would catch <N> places in this repo | Would catch <N> places under <folder>/
      Unchanged      What it checks, its message, <Steer|Log>
      Saved as       Your copy of <id>; the original turns off where the copy is added | <id>, revision <n>, here
                     (and in <other repositories>)
