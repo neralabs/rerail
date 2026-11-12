@@ -36,6 +36,11 @@ class AssertionShardsTests(unittest.TestCase):
         for i,row in enumerate(self.reports):row['hostTransfers']=[dict(part=i)]
         self.assertEqual([dict(part=0),dict(part=1)],merge(self.reports)['hostTransfers'])
 
+    def test_passive_declaration_calls_from_later_shards_are_retained(self):
+        self.reports[0]['passiveDeclarationCalls']=[]
+        self.reports[1]['passiveDeclarationCalls']=[dict(test='b',declaration='Finding')]
+        self.assertEqual(self.reports[1]['passiveDeclarationCalls'],merge(self.reports)['passiveDeclarationCalls'])
+
 
 class ProductionShardsTests(unittest.TestCase):
     def setUp(self):
@@ -75,6 +80,11 @@ class SeparateModulesTests(unittest.TestCase):
         value=merge_modules(self.rows)
         self.assertEqual({'primary','shared'},set(value['cases']))
         self.assertEqual(2,len(value['calls']));self.assertEqual(2,len(value['sourceFiles']))
+
+    def test_passive_declaration_calls_from_all_modules_are_retained(self):
+        from assertion_shards import merge_modules
+        for row in self.rows:row['passiveDeclarationCalls']=[dict(test=row['collected'][0],declaration='Finding')]
+        self.assertEqual([dict(test=n,declaration='Finding')for n in ['primary','shared']],merge_modules(self.rows)['passiveDeclarationCalls'])
 
     def test_incomplete_module_is_rejected(self):
         from assertion_shards import merge_modules
