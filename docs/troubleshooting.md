@@ -552,7 +552,7 @@ read it first and replace anything you'd rather not post with `<redacted>`.
 
 | In the file | Left out |
 | --- | --- |
-| Rerail, Node and OS versions; daemon and engine health; connected agents | Your prompts and the agent's replies |
+| Rerail, Node and OS versions; whether Rerail runs from its managed install; daemon and engine health; connected agents | Your prompts and the agent's replies |
 | Installed packs and load failures; the repository's state; rule ids and modes | Tool input and output; source code |
 | Session timeline: event kinds, tool names, times, what it dropped or could not check | Rule text; a violation's message, captures and fix |
 | Steers as the agent got them; violations by rule, file and line | Paths named like secrets |

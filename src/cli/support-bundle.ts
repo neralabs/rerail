@@ -28,9 +28,11 @@ import {
 } from "../engine/catalog/repository-registry.js";
 import { activeCoreVersion, loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { listRepositoryRules } from "../engine/catalog/rule-configuration.js";
+import { resolveRerailBuild } from "../engine/native/rerail-build.js";
+import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { sensitiveByName } from "../engine/path-boundary.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
-import { CURRENT_LINK, defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { events, policySessionOwners, sessions } from "../engine/storage/schema.js";
 import {
   DAEMON_ACCESS_PARAM,
@@ -505,13 +507,15 @@ interface CollectInput {
   databasePath: string;
   sessionId: string | undefined;
   packageVersion: string;
+  /** The package this command runs from; the bundle says whether it is the managed installation. */
+  packageRoot: string;
 }
 
 /**
  * Everything but the session is read section by section, and a section that fails says why in `problems`: the bundle
  * matters most when Rerail cannot start, its database is damaged or set-up never finished.
  */
-export async function collectSupportBundle({ repo, home, databasePath, sessionId, packageVersion }: CollectInput): Promise<{ bundle: SupportBundle; ownRules: string[] }> {
+export async function collectSupportBundle({ repo, home, databasePath, sessionId, packageVersion, packageRoot }: CollectInput): Promise<{ bundle: SupportBundle; ownRules: string[] }> {
   const problems: string[] = [];
   const attempt = <T>(section: string, read: () => T, fallback: T): T => {
     try {
@@ -544,6 +548,9 @@ export async function collectSupportBundle({ repo, home, databasePath, sessionId
     problems.push(`daemon: ${error instanceof Error ? error.message : String(error)}`);
     return { status: "unknown" };
   });
+  // The managed installation is a version under the home's `versions/`, which `current` usually points at; `current`
+  // can also point at a checkout or another package, and one that is neither has no content store, so no rule runs.
+  const build = attempt("install", () => resolveRerailBuild(packageRoot, { ...process.env, RERAIL_HOME: home }), undefined);
   const bundle: SupportBundle = {
     format: SUPPORT_BUNDLE_FORMAT,
     createdAt: Date.now(),
@@ -551,7 +558,7 @@ export async function collectSupportBundle({ repo, home, databasePath, sessionId
     rerail: {
       version: packageVersion,
       activeVersion: attempt("active version", () => activeCoreVersion(home), null),
-      managedInstall: existsSync(join(home, CURRENT_LINK)),
+      managedInstall: build?.kind === "main",
       installedPacks: [...(catalog?.packs.values() ?? [])].map(pack => ({ id: pack.id, version: pack.version })),
       skippedPacks: (catalog?.skipped ?? []).map(pack => ({ package: pack.packageName, version: pack.version, reason: pack.reason })),
     },
@@ -682,6 +689,8 @@ function writeBundle(output: string, bundle: SupportBundle): void {
 
 export interface SupportBundleCommandIo {
   packageVersion: string;
+  /** The package this command runs from: this one's unless a test names another. */
+  packageRoot?: string;
   stdout?: Pick<NodeJS.WriteStream, "write">;
   stderr?: Pick<NodeJS.WriteStream, "write">;
 }
@@ -702,6 +711,7 @@ export async function runSupportBundleCommand(args: readonly string[], usage: ()
       databasePath: defaultRerailDatabasePath(),
       sessionId: options.get("--session"),
       packageVersion: io.packageVersion,
+      packageRoot: io.packageRoot ?? PACKAGE_ROOT,
     });
     writeBundle(output, bundle);
     const summary = summaryOf(output, bundle, ownRules);

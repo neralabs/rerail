@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { homedir, hostname, tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
@@ -108,16 +108,41 @@ function writeLedger(world: Fixture, sessionId: string): void {
 
 /** Runs the command with its output kept, and reads back the file it wrote. */
 async function run(world: Fixture, ...args: string[]): Promise<{ exit: number; stdout: string; stderr: string; text: string; bundle: SupportBundle }> {
+  return await runFrom(world, undefined, ...args);
+}
+
+/** `run`, as the package at `packageRoot` runs it; undefined runs it as this checkout's build. */
+async function runFrom(world: Fixture, packageRoot: string | undefined, ...args: string[]): Promise<{ exit: number; stdout: string; stderr: string; text: string; bundle: SupportBundle }> {
   let stdout = "";
   let stderr = "";
   const exit = await runSupportBundleCommand(
     ["--repo", world.repo, "--output", world.output, ...args],
     () => "usage",
-    { packageVersion: "9.9.9", stdout: { write: text => { stdout += text; return true; } }, stderr: { write: text => { stderr += text; return true; } } },
+    {
+      packageVersion: "9.9.9",
+      ...(packageRoot === undefined ? {} : { packageRoot }),
+      stdout: { write: text => { stdout += text; return true; } },
+      stderr: { write: text => { stderr += text; return true; } },
+    },
   );
   if (exit !== 0) return { exit, stdout, stderr, text: "", bundle: {} as SupportBundle };
   const text = readFileSync(world.output, "utf8");
   return { exit, stdout, stderr, text, bundle: JSON.parse(text) as SupportBundle };
+}
+
+/** A Rerail package folder at `path`, with nothing in it: the bundle only asks where it is. */
+function packageAt(path: string): string {
+  mkdirSync(path, { recursive: true });
+  writeFileSync(join(path, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "9.9.9" }));
+  return path;
+}
+
+/** `world`'s Rerail home pointing `current` at `target`, as set-up activates a version or a checkout. */
+function activate(world: Fixture, target: string): string {
+  const current = join(world.home, "current");
+  // A junction needs no privilege on Windows; elsewhere the type is ignored.
+  symlinkSync(target, current, "junction");
+  return current;
 }
 
 /**
@@ -302,6 +327,22 @@ describe("rerail support-bundle", () => {
     const none = await elapsed(0);
     const thousand = await elapsed(1_000);
     expect(thousand, `${none.toFixed(0)} ms with none, ${thousand.toFixed(0)} ms with a thousand`).toBeLessThan(3 * none + 2_000);
+  });
+
+  it("says Rerail is not the managed install when it runs from a package outside the home's versions, and why it has no content store", async () => {
+    const world = await fixture();
+    const elsewhere = activate(world, packageAt(join(world.root, "install", "node_modules", "@neralabs", "rerail")));
+    const { bundle } = await runFrom(world, elsewhere);
+    expect(bundle.rerail.managedInstall).toBe(false);
+    expect(bundle.problems).toEqual([expect.stringMatching(/^install: Rerail at .+ is neither the managed installation .+ so it has no content store$/u)]);
+  });
+
+  it("says Rerail is the managed install when it runs from a version under the home", async () => {
+    const world = await fixture();
+    const current = activate(world, packageAt(join(world.home, "versions", "9.9.9", "node_modules", "@neralabs", "rerail")));
+    const { bundle } = await runFrom(world, current);
+    expect(bundle.rerail.managedInstall).toBe(true);
+    expect(bundle.problems).toEqual([]);
   });
 
   describe("where set-up never finished: a database, and this checkout not recorded in it", () => {
