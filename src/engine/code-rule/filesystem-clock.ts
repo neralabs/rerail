@@ -1,4 +1,4 @@
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, statSync, writeSync } from "node:fs";
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, type Stats, statSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { makeRerailHome } from "../storage/private-files.js";
@@ -103,13 +103,15 @@ function makePrivateFolder(folder: string, uid: number | undefined): void {
 }
 
 /**
- * One reading of the clock: the probe's byte rewritten, then its stamp read from the open file. Any failure falls back to
- * `Date.now()`, but a failed close keeps the reading: the sample was taken.
+ * One reading of the clock: the probe's byte rewritten, then its stamp read from the open file. Nothing is written to a
+ * file the probe's name shares with another (`isOwnFile`). Any failure falls back to `Date.now()`, but a failed close
+ * keeps the reading: the sample was taken.
  */
 function sample(probe: ClockProbe): number {
   try {
     const descriptor = openProbe(probe);
     try {
+      if (!isOwnFile(fstatSync(descriptor))) return Date.now();
       writeSync(descriptor, CLOCK_PROBE_BYTE, 0, CLOCK_PROBE_BYTE.length, 0);
       const info = fstatSync(descriptor);
       return Math.min(info.mtimeMs, info.ctimeMs);
@@ -124,9 +126,8 @@ function sample(probe: ClockProbe): number {
 /**
  * Opens the probe to rewrite its byte, making it the first time (`0600`, private as Rerail's other files are) and the
  * folder that holds it when that is missing. The open never empties the file, as `w` would: a sample needs only its one
- * byte rewritten. It refuses a link at the name, as the bridge's other opens do, so no sample writes into the file a
- * link names; the sample falls back to `Date.now()` while the link stays. Windows has no `O_NOFOLLOW`, so there this
- * open follows one as those do.
+ * byte rewritten. It refuses a symbolic link at the name, as the bridge's other opens do, and the sample falls back to
+ * `Date.now()` while the link stays. Windows has no `O_NOFOLLOW`, so there this open follows one as those do.
  */
 function openProbe(probe: ClockProbe): number {
   const flags = constants.O_RDWR | constants.O_CREAT | constants.O_NOFOLLOW;
@@ -137,6 +138,15 @@ function openProbe(probe: ClockProbe): number {
     probe.makeFolder();
     return openSync(probe.path, flags, 0o600);
   }
+}
+
+/**
+ * Whether the open probe is a regular file that no other name shares. A hard link at the probe's name is the file it was
+ * made from under a second name, which `O_NOFOLLOW` does not refuse: written through, each sample would overwrite that
+ * file's first byte. A link like that stays, and the samples fall back to `Date.now()` while it does.
+ */
+function isOwnFile(info: Stats): boolean {
+  return info.isFile() && info.nlink <= 1;
 }
 
 /** Closes `descriptor`; a failed close must not throw a sample away for `Date.now()`, the clock this module avoids. */

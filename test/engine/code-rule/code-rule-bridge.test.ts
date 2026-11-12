@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
 import { createHash } from "node:crypto";
 import type * as SyncFileSystem from "node:fs";
-import { appendFile, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { appendFile, link, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import type * as FileSystem from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
@@ -1921,13 +1921,13 @@ describe("the file system's clock", () => {
     expect(await Promise.race([begun.then(() => "answered"), held.entered.then(() => "waited for the open")])).toBe("answered");
   });
 
-  // Windows has no O_NOFOLLOW for the open to refuse a link with, and making a link there takes a privilege.
-  it.skipIf(process.platform === "win32")("writes nothing through a link planted at the probe's name", async () => {
+  /** What a command call leaves in a file outside the workspace that `plant` linked at the probe's name. */
+  async function fileLinkedAtProbe(plant: (target: string, path: string) => Promise<void>): Promise<string> {
     const elsewhere = join(await workspace(), "notes.txt");
     await writeFile(elsewhere, "kept\n");
     const probe = join(defaultRerailHome(), CLOCK_PROBE_FILE);
     await rm(probe, { force: true });
-    await symlink(elsewhere, probe);
+    await plant(elsewhere, probe);
     try {
       const bridge = createBridge(await workspace(), auditor(vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch))));
       await bridge.openWorkspace("session-1");
@@ -1936,8 +1936,17 @@ describe("the file system's clock", () => {
     } finally {
       await rm(probe, { force: true });
     }
+    return await readFile(elsewhere, "utf8");
+  }
 
-    expect(await readFile(elsewhere, "utf8")).toBe("kept\n");
+  // Windows has no O_NOFOLLOW for the open to refuse a symbolic link with, and making one there takes a privilege.
+  it.skipIf(process.platform === "win32")("writes nothing through a symbolic link planted at the probe's name", async () => {
+    expect(await fileLinkedAtProbe(async (target, path) => await symlink(target, path))).toBe("kept\n");
+  });
+
+  // A hard link shares the file it was made from under a second name, which O_NOFOLLOW lets through.
+  it("writes nothing through a hard link planted at the probe's name", async () => {
+    expect(await fileLinkedAtProbe(async (target, path) => await link(target, path))).toBe("kept\n");
   });
 
   it("makes a missing Rerail home as Rerail's other writers do, with the probe in it", async () => {
