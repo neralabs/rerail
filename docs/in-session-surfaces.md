@@ -98,7 +98,7 @@ In a terminal: rerail status · rerail version · rerail update · rerail daemon
 
 - **Not started:** says so and points at `/rerail-start`.
 - **No daemon:** says `✕ Rerail is not running.` and how to start it.
-- **Daemon not answering:** the daemon runs but gave no answer within 2 seconds, so it says to ask again, and to run `rerail status` if that keeps happening, rather than how to start it.
+- **Daemon not answering:** the daemon runs but gave no answer within 2 seconds, so it says to ask again, and to run `rerail status` if that keeps happening, rather than how to start it. It does not wait on the daemon a second time for the dashboard link.
 - **Cursor:** shows the repository's rule count and a link to its rules.
 
 ## Steer
