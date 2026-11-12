@@ -122,12 +122,21 @@ async function remove(path: string): Promise<string | undefined> {
       await rm(path, { recursive: true, force: true });
       return undefined;
     } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code ?? "";
-      if (attempt === REMOVAL_TRIES || !HELD.has(code)) return String(error);
-      if (attempt === 1 && DENIED.has(code)) await unlock(path);
-      await delay(100 * attempt);
+      if (!(await readyToRetry(path, (error as NodeJS.ErrnoException).code ?? "", attempt))) return String(error);
     }
   }
+}
+
+/**
+ * Whether the removal of `path`, refused with `code` at try `attempt`, gets another try, and readies it: after the
+ * first refusal for want of permission it makes every folder in the tree writable, and it waits a little longer after
+ * each try.
+ */
+async function readyToRetry(path: string, code: string, attempt: number): Promise<boolean> {
+  if (attempt === REMOVAL_TRIES || !HELD.has(code)) return false;
+  if (attempt === 1 && DENIED.has(code)) await unlock(path);
+  await delay(100 * attempt);
+  return true;
 }
 
 /**
