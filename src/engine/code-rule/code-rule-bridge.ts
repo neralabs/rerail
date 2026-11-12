@@ -526,6 +526,11 @@ interface WalkStart {
   readonly unmerged: ReadonlyMap<string, ReadonlyMap<string, string>>;
   /** Filesystem-clock reading taken as the walk started. */
   readonly observedAt: number;
+  /**
+   * What the walk asks of each file and folder it finds (`SourceWalk.view`), and of the checkout of each file it found or
+   * found gone, from its scan to its audit: the auditor's `walkView` for this walk, or the auditor.
+   */
+  readonly view: WalkView;
 }
 /**
  * Each walk answers for what it covers: a path a tool wrote elsewhere is never observed missing here. A worktree that
@@ -1520,6 +1525,7 @@ export class CodeRuleBridge {
       // Read before the walk, so a move or conflict the walk only partly saw is still one to the next.
       ...await this.#readCheckouts(discovery, inSession ? undefined : worktrees),
       observedAt: await filesystemClock(),
+      view: this.#auditor.walkView?.() ?? this.#auditor,
     };
     const scan = await this.#scanSources(discovery, walk, worktrees);
     if (this.#abandoned(discovery)) return;
@@ -1535,17 +1541,16 @@ export class CodeRuleBridge {
   async #scanSources(discovery: SourceDiscovery, walk: WalkStart, worktrees: readonly string[]): Promise<SourceScan> {
     // An earlier session's baseline of this workspace lets unchanged sources skip the read.
     const seed = walk.baseline || (!walk.inSession && discovery.worktrees.fresh.size > 0) ? this.#observations?.get(this.#cwd) : undefined;
-    const view = this.#auditor.walkView?.() ?? this.#auditor;
     const scan = await this.#observeSources({
       discovery, observedAt: walk.observedAt,
       previousSources: seed === undefined ? walk.previous : new Map([...seed, ...walk.previous]),
       captureChanges: !walk.baseline,
       scan: { sources: new Map(), failedRoots: new Set(), errors: [], unread: new Map(), firstSeen: new Map(), checkouts: new Set(), unmerged: new Map() },
       stack: walk.inSession ? [discovery.root] : [...worktrees], roots: new Set([discovery.root, ...worktrees]),
-      view,
+      view: walk.view,
     });
     // Read off the lane, as the scan is, so tool calls are not held up behind it.
-    await this.#readFirstSeenTexts(discovery, walk, scan, view);
+    await this.#readFirstSeenTexts(discovery, walk, scan);
     await this.#readPassedCheckouts(discovery, walk, scan);
     return scan;
   }
@@ -1579,7 +1584,7 @@ export class CodeRuleBridge {
     const checkpoints = discoveryCheckpoints(strongerCheckpoint(walk.checkpoint, discovery.requested));
     try {
       if (notOwn.length > 0) await this.#auditEdits(discovery, notOwn, checkpoints, new Map(), "log");
-      if (own.length > 0) await this.#auditEdits(discovery, own, checkpoints, uncaptured, walk.inSession ? undefined : "log");
+      if (own.length > 0) await this.#auditEdits(discovery, own, checkpoints, uncaptured, walk.inSession ? undefined : "log", walk.view);
     } catch (error) {
       // A rejected evaluator submission is not an observation we have enforced.
       // Restore these baselines so the next requested scan can retry the changes.
@@ -1708,7 +1713,7 @@ export class CodeRuleBridge {
   ): Promise<{ own: CodeRuleEdit[]; notOwn: CodeRuleEdit[] }> {
     const unwritten: CodeRuleEdit[] = [];
     const notOwn: CodeRuleEdit[] = [];
-    const { owned, unowned } = this.#byOwningCheckout(discovery.root, edits, edit => edit.path);
+    const { owned, unowned } = this.#byOwningCheckout(discovery.root, edits, edit => edit.path, walk.view);
     unwritten.push(...unowned);
     for (const [checkout, group] of owned) {
       const verdicts = await this.#gitVerdicts(discovery, checkout, group, uncaptured);
@@ -2095,15 +2100,17 @@ export class CodeRuleBridge {
     return { path: location.path, language: location.language, readError: errorMessage(error) };
   }
 
+  /** `asked` names the checkouts of the files `uncaptured` holds: the auditor, or a walk's view for the files it found. */
   async #auditEdits(
     discovery: SourceDiscovery,
     captured: CodeRuleEditBatch["edits"],
     checkpoints: CodeRuleCheckpoint[],
     uncaptured: ReadonlyMap<string, string>,
     mode?: AuditMode,
+    asked: Pick<CodeRuleAuditor, "sourceRoot"> = this.#auditor,
   ): Promise<CodeRuleResponse> {
     const sessionId = this.#requireSession();
-    const edits = await this.#recoverPreimages(discovery, captured, uncaptured);
+    const edits = await this.#recoverPreimages(discovery, captured, uncaptured, asked);
     for (const edit of edits) {
       this.#forgetText(edit.path);
       if (edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText, "edit");
@@ -2127,11 +2134,12 @@ export class CodeRuleBridge {
     discovery: SourceDiscovery,
     edits: CodeRuleEditBatch["edits"],
     uncaptured: ReadonlyMap<string, string>,
+    asked: Pick<CodeRuleAuditor, "sourceRoot">,
   ): Promise<CodeRuleEditBatch["edits"]> {
     if (uncaptured.size === 0) return edits;
     const recovered = new Map<string, string>();
     const unresolved = this.#recoverFromTexts(uncaptured, recovered);
-    for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, unresolved, path => path).owned)
+    for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, unresolved, path => path, asked).owned)
       await recoverFromGit(discovery, checkout, paths, uncaptured, recovered);
     return edits.map(edit => {
       const previousText = recovered.get(edit.path);
@@ -2193,8 +2201,8 @@ export class CodeRuleBridge {
    * index nor its `HEAD` blob is the preimage of the session's next shell write to it. Each is read again, while the
    * session's first-sight budget lasts, and taken only while it still has the digest the scan observed.
    */
-  async #readFirstSeenTexts(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan, view: WalkView): Promise<void> {
-    const listed = await this.#firstSeenModifiedOrUntracked(discovery, walk, scan, view);
+  async #readFirstSeenTexts(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): Promise<void> {
+    const listed = await this.#firstSeenModifiedOrUntracked(discovery, walk, scan);
     let bytes = this.#firstSightBytes;
     while (listed.length > 0 && bytes < this.#firstSightTextBytes && !this.#abandoned(discovery)) {
       const wave = listed.splice(0, OBSERVATION_CONCURRENCY);
@@ -2203,14 +2211,14 @@ export class CodeRuleBridge {
   }
 
   /**
-   * The sources `walk` saw first that their checkout's Git lists as modified or untracked. The scan's `view` gives each
+   * The sources `walk` saw first that their checkout's Git lists as modified or untracked. The walk's view gives each
    * source its folder's checkout, which it looked up as it walked, so the sources cost no lookup of their own: the
    * first walk of a worktree sees every one of its files first.
    */
-  async #firstSeenModifiedOrUntracked(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan, view: WalkView): Promise<string[]> {
+  async #firstSeenModifiedOrUntracked(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): Promise<string[]> {
     const firstSeen = [...scan.sources.keys()].filter(path => this.#firstSeen(discovery, walk, path));
     const listed: string[] = [];
-    for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, firstSeen, path => path, view).owned) {
+    for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, firstSeen, path => path, walk.view).owned) {
       const seen = new Set(paths);
       for (const path of await discovery.git.run(signal => gitModifiedOrUntrackedPaths(checkout, { signal }))) {
         const inSession = sessionPath(discovery.root, resolve(checkout, path));

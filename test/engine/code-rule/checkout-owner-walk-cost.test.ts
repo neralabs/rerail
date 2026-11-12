@@ -159,4 +159,28 @@ describe("checkout lookups of a session's walks", () => {
 
     expect(await cost(() => walks(bridge))).toEqual(before);
   });
+
+  it("look up no changed file's checkout but to route its audit, however many the walks find", { timeout: 120_000 }, async () => {
+    const costs = [];
+    for (const files of [1, 6]) {
+      const { main, worktrees, bridge } = await sessionWithWorktrees(files);
+      await bridge.openWorkspace("session");
+      await walks(bridge);
+      await walks(bridge);
+      // Every file of every checkout changes, as a branch switch or a pull leaves them.
+      for (const checkout of [main, ...worktrees]) {
+        for (const folder of FOLDERS) {
+          for (let index = 0; index < files; index += 1) await writeFile(join(checkout, folder, `f${index}.py`), `y = ${index}\n`);
+        }
+      }
+      const audits = vi.spyOn(CheckoutCodeRuleRouter.prototype, "auditGeneratedEdits");
+      const { lookups } = await cost(() => walks(bridge));
+      // The router routes each edit it audits to its checkout's lane with a lookup of its own, as for a tool call's edit.
+      const routed = audits.mock.calls.reduce((sum, [, batch]) => sum + batch.edits.length, 0);
+      audits.mockRestore();
+      costs.push({ files, routed, others: lookups - routed });
+    }
+    expect(costs[1]!.routed).toBeGreaterThan(costs[0]!.routed);
+    expect(costs[1]!.others).toBe(costs[0]!.others);
+  });
 });
