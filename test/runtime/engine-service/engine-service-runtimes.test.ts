@@ -2,10 +2,12 @@ import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CheckoutCatalogs, codeRuleSchema, type AdapterEvent } from "../../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
+import { RerailRuntime } from "../../../src/runtime/runtime.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { setUpTestRepository, type TestRepositoryRules } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
@@ -133,6 +135,35 @@ describe("the engine service's runtimes", () => {
     expect(service.openRuntimes()).toBe(0);
     // Nothing in this test collects: the service does, once the runtime closed.
     await vi.waitFor(() => expect(compiled.deref()).toBeUndefined(), { timeout: 5_000 });
+  });
+
+  // A runtime closing after its last session ended still has its checkout's database open: a daemon that stopped
+  // before it was done would leave that work cut short.
+  it("waits, as it closes, for a runtime still closing after its last session ended", async () => {
+    const { service, first, start, end } = await twoCheckouts(0);
+    // This test closes the service itself.
+    services.splice(services.indexOf(service), 1);
+    const disposing = Promise.withResolvers<void>();
+    const order: string[] = [];
+    const dispose = RerailRuntime.prototype.dispose;
+    const disposal = vi.spyOn(RerailRuntime.prototype, "dispose").mockImplementationOnce(async function (this: RerailRuntime) {
+      await disposing.promise;
+      await dispose.call(this);
+      order.push("runtime closed");
+    });
+    try {
+      await start("a", first);
+      await end("a", first);
+      const closing = service.close().then(() => order.push("service closed"));
+      // Long enough for a close that does not wait to have returned.
+      await sleep(200);
+      disposing.resolve();
+      await closing;
+    } finally {
+      disposal.mockRestore();
+    }
+
+    expect(order).toEqual(["runtime closed", "service closed"]);
   });
 });
 

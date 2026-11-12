@@ -1689,7 +1689,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * Closes a session that sent no end and has gone quiet, as its end would, without recording an event: its host router
    * forgets it too, so its next event opens it again from its ledger. A session that still owes its agent something the
    * ledger does not hold (`#owesAgent`) stays open, false then, unless `evenIfOwing`: the engine service closes it anyway
-   * once it has been quiet a day (`OWING_SESSION_IDLE_MS` in engine-service.ts), and what it owed is lost.
+   * once it has been quiet a day (`OWING_SESSION_IDLE_MS` in runtime-pool.ts), and what it owed is lost.
    */
   closeIdleSession(sessionId: string, options: { evenIfOwing?: boolean } = {}): Promise<boolean> {
     return this.#ingestLanes.run(sessionId, async () => {
