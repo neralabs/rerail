@@ -113,6 +113,9 @@ pub struct Lowered {
     pub rules: Vec<u16>,
     /// The marks of one word: (order, string), rising (`Words::mark_words`).
     pub mark_words: Vec<(u8, u16)>,
+    /// The token marks (`Mark::tokens`), rising by order: each element's offset, its kinds'
+    /// names and its words (strings). The kinds become the records' (`Words::token_marks`).
+    pub token_marks: Vec<(u8, Vec<(i8, Vec<String>, Vec<u16>)>)>,
 }
 
 /// A mark (a token of no width) as tier 2 tests it: its kind, the mask of its bits at token
@@ -130,6 +133,8 @@ pub struct Mark {
     /// The bytes a token it holds at can begin with (`bitlex_prove::never` of its mask and the
     /// other rows' starts).
     pub first: ByteSet,
+    /// A token mark (decision 0129): the token before (none: any), then the run from the mark's.
+    pub tokens: Option<(Vec<::bitlex::syntax::TokenElem>, Vec<Vec<::bitlex::syntax::TokenElem>>)>,
 }
 
 struct Emit<'a> {
@@ -143,6 +148,8 @@ struct Emit<'a> {
     /// where an extra opens the root (`grammar::with_extras`).
     token_extras: bool,
     whole: bool,
+    /// The counts of tokens (`COUNT`): each one's ups' and downs' kinds.
+    counts: Vec<(Vec<u16>, Vec<u16>)>,
     /// The rows each state can meet (`bitlex_compile::row_modes`).
     meets: &'a [Vec<bool>],
     /// A first lowering, to find the rows `ROW` tests: their masks are not given yet.
@@ -275,6 +282,17 @@ impl Emit<'_> {
             _ if self.arms[arm].call => {}
             Span::Len(n) => self.push("SPAN", 0, Arg::Num(n)),
             Span::Last => self.push("SPAN", 1, Arg::Num(LASTS)),
+        }
+        // A token a count counts, taken here: once a token, as only an arm takes one.
+        if !self.arms[arm].call {
+            let token = self.arms[arm].token;
+            for i in 0..self.counts.len() {
+                if self.counts[i].0.contains(&token) {
+                    self.push("COUNT", 0, Arg::Num(i as u16));
+                } else if self.counts[i].1.contains(&token) {
+                    self.push("COUNT", 1, Arg::Num(i as u16));
+                }
+            }
         }
         match &pre {
             Pre::None => {}
@@ -933,8 +951,9 @@ fn tests_of(states: &[StateRow], arms: &[ArmRow], marks: &[Mark]) -> Vec<Vec<usi
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark], any_mark: Option<u16>, meets: &[Vec<bool>], empties: u16, whole: bool, survey: bool, rules: bool, token_extras: bool) -> Result<Lowered, String> {
+pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark], any_mark: Option<u16>, meets: &[Vec<bool>], empties: u16, whole: bool, survey: bool, rules: bool, token_extras: bool, counts: &[(Vec<u16>, Vec<u16>)]) -> Result<Lowered, String> {
     let mut e = Emit {
+        counts: counts.to_vec(),
         token_extras,
         whole,
         rule_of: Vec::new(),
@@ -978,6 +997,24 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
     keywords.sort();
     for (_, w) in &keywords {
         e.string(w);
+    }
+    // The token marks' words, and their elements by offset.
+    let mut token_marks = Vec::new();
+    for (k, m) in marks.iter().enumerate() {
+        let Some((before, seq)) = &m.tokens else { continue };
+        let mut elems = Vec::new();
+        let at = std::iter::once((-1i8, before)).filter(|(_, b)| !b.is_empty()).chain(seq.iter().enumerate().map(|(i, x)| (i as i8, x)));
+        for (offset, choices) in at {
+            let (mut kinds, mut words) = (Vec::new(), Vec::new());
+            for c in choices {
+                match c {
+                    ::bitlex::syntax::TokenElem::Kind(name) => kinds.push(name.clone()),
+                    ::bitlex::syntax::TokenElem::Word(w) => words.push(e.string(w)),
+                }
+            }
+            elems.push((offset, kinds, words));
+        }
+        token_marks.push((k as u8, elems));
     }
     for t in 0..empties {
         e.push("EMPTY", 0, Arg::Num(t));
@@ -1090,7 +1127,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
     if let Some(at) = std::env::var_os("RR_LOWERED_TEXT") {
         let _ = std::fs::write(at, &text);
     }
-    Ok(Lowered { text, switches: e.switches, strings: e.strings, tested: e.tested.into_iter().collect(), rules: firsts, mark_words })
+    Ok(Lowered { text, switches: e.switches, strings: e.strings, tested: e.tested.into_iter().collect(), rules: firsts, mark_words, token_marks })
 }
 
 /// The words laid out as compiled code is, with no jump a layout can spare (the lean parser's

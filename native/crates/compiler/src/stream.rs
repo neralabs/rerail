@@ -13,7 +13,7 @@ pub use crate::stream_ir::{ByteSwitch, DEAD, GONE, KEEP, REFUSE, REMEMBERED, Rea
 
 /// Whether a word is one of tier 2's.
 pub fn is_stream(opcode: u8) -> bool {
-    (TOKEN..=FLAG).contains(&opcode)
+    (TOKEN..=COUNT).contains(&opcode)
 }
 
 /// The operand rules of tier 2's words, and of the words a tier-2 program may hold besides
@@ -67,6 +67,7 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         REMEMBER if operand == WORD_KIND => mode == 0 && !program.word_kinds.is_empty() && records.is_some_and(|r| r.words == program.strings),
         REMEMBER => mode == 0 && operand != 0 && operand != REMEMBERED,
         FLAG => mode <= 2 && operand < 16,
+        COUNT => mode <= 1 && usize::from(operand) < program.counts.len(),
         CLOSE => mode <= 1 && operand == 0,
         // `m`: the flag the call runs with (`push_flag`), of 16.
         PUSH => mode <= 32 && usize::from(operand) < words,
@@ -366,6 +367,8 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
     let mut word: u16 = 0;
     // The level's flags (`FLAG`), a bit each: the caller's come back where a call returns.
     let mut flags: u16 = 0;
+    // The counts of tokens (`COUNT`).
+    let mut counts: Vec<u32> = vec![0; program.counts.len()];
     let refuse = |pc: usize, why: &'static str| Err(Refused { pc, why });
     loop {
         seen(pc);
@@ -462,6 +465,8 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 } else {
                     mask_bit(operand, start) && word_ok()
                 };
+                // A token mark (`Words::token_marks`): its tokens follow too.
+                let here = here && (at_end || program.token_marks.iter().find(|m| u32::from(m.order) == k).is_none_or(|m| token_mark_holds(m, &tier1.codes, next, u32::from(program.extras.first().map_or(0, |e| e.0)))));
                 if live >> k & 1 == 1 && here {
                     // Taken: it and the marks before it are done at this token. Kept: its arm
                     // calls the level that takes it.
@@ -682,6 +687,13 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 }
             }
             REMEMBER => word = operand,
+            COUNT if mode == 0 => {
+                counts[usize::from(operand)] += 1;
+                if counts[usize::from(operand)] > u32::from(program.counts[usize::from(operand)]) {
+                    return refuse(pc - 1, "a count past its most");
+                }
+            }
+            COUNT => counts[usize::from(operand)] = counts[usize::from(operand)].saturating_sub(1),
             FLAG if mode == 0 => flags |= 1 << operand,
             FLAG if mode == 1 => flags &= !(1 << operand),
             FLAG => {
@@ -777,7 +789,53 @@ pub fn validate_tier2(program: &Words) -> Result<(), Error> {
     validate_mark_words(program)?;
     validate_word_kinds(program)?;
     validate_extras(program)?;
+    validate_token_marks(program)?;
     validate_rules(program)
+}
+
+/// The token marks (`Words::token_marks`): rising by mark, each a mark in the records' codes
+/// (its bit gates it), with extras taken in the token step (they are skipped by their bit);
+/// its elements rising by offset, the mark's own (0) among them, the words the program's.
+pub fn validate_token_marks(program: &Words) -> Result<(), Error> {
+    let marks = program.block_programs.first().and_then(|b| b.records.as_ref()).map_or(0, |r| r.marks.len());
+    for (i, m) in program.token_marks.iter().enumerate() {
+        let rising = i == 0 || program.token_marks[i - 1].order < m.order;
+        let offsets = m.elems.windows(2).all(|w| w[0].offset < w[1].offset) && m.elems.iter().any(|e| e.offset == 0) && m.elems.first().is_some_and(|e| e.offset >= -1);
+        let words = m.elems.iter().flat_map(|e| &e.words).all(|&s| usize::from(s) < program.strings.len());
+        if !rising || !offsets || !words || usize::from(m.order) >= marks || program.extras.is_empty() {
+            return Err(Error::InvalidOperand(i));
+        }
+    }
+    Ok(())
+}
+
+/// Whether token mark `m` holds at the record before `next` (`Words::token_marks`): each element
+/// at its offset among the records that are no extra (`extra_bit`, the code's bit).
+pub fn token_mark_holds(m: &TokenMark, codes: &[u32], next: usize, extra_bit: u32) -> bool {
+    let is_extra = |c: u32| c >> (crate::records::MARK_SHIFT + extra_bit) & 1 == 1;
+    let Some(here) = next.checked_sub(1) else { return false };
+    m.elems.iter().all(|e| {
+        let at = match e.offset {
+            0 => Some(here),
+            o if o > 0 => {
+                // The `o`th record after, past the extras.
+                let (mut j, mut left) = (here + 1, o);
+                loop {
+                    match codes.get(j) {
+                        None => break None,
+                        Some(&c) if is_extra(c) => j += 1,
+                        Some(_) if left == 1 => break Some(j),
+                        Some(_) => {
+                            left -= 1;
+                            j += 1;
+                        }
+                    }
+                }
+            }
+            _ => (0..here).rev().find(|&j| !is_extra(codes[j])),
+        };
+        at.is_some_and(|j| e.takes(codes[j]))
+    })
 }
 
 /// The extras a `TOKEN` takes (`Words::extras`): rising by bit, each a mark the records' codes

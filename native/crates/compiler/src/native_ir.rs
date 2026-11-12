@@ -133,7 +133,8 @@ pub enum StructuralOperation {
     /// if not yet taken nor passed: take it and run the next word; else skip that word.
     /// `word`: the string the token's record must name too (`Words::mark_words`).
     /// `keep`: on the mark, its arm, the mark left for the callee the arm calls.
-    Mark { mask: u16, order: u8, end: bool, keep: bool, word: Option<u16> },
+    /// `pattern`: a token mark's (`Words::token_marks`, its index there).
+    Mark { mask: u16, order: u8, end: bool, keep: bool, word: Option<u16>, pattern: Option<u16> },
     /// The token starts at a bit of mask `mask`: run the next word; else skip it.
     Row { mask: u16 },
     /// A node becomes a `kind`: the innermost open node, or another (`On`).
@@ -158,6 +159,9 @@ pub enum StructuralOperation {
     /// The level's flag `flag`: set, clear, or a test that runs the next word where it is set
     /// (`FLAG m=0, 1, 2`).
     Flag { flag: u16, op: FlagOp },
+    /// `COUNT`: a count of tokens (`Words::counts`, its index), one more (`up`, refused past
+    /// `max`) or one less.
+    Count { count: u16, up: bool, max: u16 },
     /// To switch on this token again (`again`), or to take the next.
     Return { again: bool },
     Accept,
@@ -226,6 +230,7 @@ impl StructuralOperation {
             Self::Push { target, flag } => (PUSH, flag.map_or(0, |(k, set)| push_flag(k, set)), target),
             Self::Remember { kind } => (REMEMBER, 0, kind),
             Self::Flag { flag, op } => (FLAG, op as u8, flag),
+            Self::Count { count, up, .. } => (crate::program::COUNT, u8::from(!up), count),
             Self::Return { again } => (RETURN, u8::from(again), 0),
             Self::Accept => (ACCEPT, 0, 0),
             Self::Text { .. } | Self::Assert { .. } => {
@@ -355,6 +360,8 @@ pub struct Structure {
     pub word_kinds: Vec<(u16, u16)>,
     /// The extras a `TOKEN` takes (`Words::extras`): a code's mark bit and the leaf's kind.
     pub extras: Vec<(u8, u16)>,
+    /// The token marks (`Words::token_marks`).
+    pub token_marks: Vec<crate::program::TokenMark>,
     pub rules: Vec<u16>,
     /// The block programs, lowered (`BlockNative`).
     pub block_programs: Vec<BlockNative>,
@@ -453,7 +460,14 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             CLOSE => StructuralOperation::Close { this: mode != 0 },
             LEAF if mode == 3 => StructuralOperation::Settle { kind: operand },
             LEAF => StructuralOperation::Leaf { kind: operand, deferred: mode == 1, extra: mode == 2 },
-            MARK => StructuralOperation::Mark { mask: operand, order: mode % 32, end: mode & 32 != 0, keep: mode & MARK_KEEP != 0, word: program.mark_words.iter().find(|&&(k, _)| k == mode % 32).map(|&(_, s)| s) },
+            MARK => StructuralOperation::Mark {
+                mask: operand,
+                order: mode % 32,
+                end: mode & 32 != 0,
+                keep: mode & MARK_KEEP != 0,
+                word: program.mark_words.iter().find(|&&(k, _)| k == mode % 32).map(|&(_, s)| s),
+                pattern: program.token_marks.iter().position(|m| m.order == mode % 32).map(|i| i as u16),
+            },
             ROW => StructuralOperation::Row { mask: operand },
             RETAG if mode == 3 => StructuralOperation::Reread { reading: operand },
             RETAG => StructuralOperation::Retag { kind: operand, on: On::of(mode) },
@@ -471,6 +485,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
                     _ => FlagOp::Test,
                 },
             },
+            crate::program::COUNT => StructuralOperation::Count { count: operand, up: mode == 0, max: program.counts[usize::from(operand)] },
             RETURN => StructuralOperation::Return { again: mode != 0 },
             ACCEPT => StructuralOperation::Accept,
             _ => {
@@ -518,6 +533,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
         rules: program.rules.clone(),
         word_kinds: program.word_kinds.clone(),
         extras: program.extras.clone(),
+        token_marks: program.token_marks.clone(),
         block_programs: program.block_programs.iter().map(BlockNative::lower).collect(),
         output: FunctionRef::Output,
         reduction: FunctionRef::Reduction,

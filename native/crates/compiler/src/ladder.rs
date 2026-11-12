@@ -114,7 +114,7 @@ impl Lang {
         let mut marks = Vec::new();
         for s in stmts {
             match s {
-                Stmt::Mark { kind, .. } => marks.push(kind.clone()),
+                Stmt::Mark { kind, .. } | Stmt::TokenMark { kind, .. } => marks.push(kind.clone()),
                 Stmt::Class(n, r) => {
                     classes.insert(n.clone(), r.clone());
                 }

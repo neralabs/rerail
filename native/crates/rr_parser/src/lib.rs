@@ -313,6 +313,10 @@ pub mod tests {
             assert!(super::compiled_tape(src).is_some(), "the grammar refuses {src:?}");
             assert_eq!(super::tape(src), super::engine_columns(&super::rr::tape(src)), "{src:?}");
         }
+        // 127 deep, the most (tier 2's count, `COUNT`), is taken; 128 deep is not.
+        let most = format!(".policy {{\"a\": {}{}}}", "[".repeat(126), "]".repeat(126));
+        assert!(super::compiled_tape(&most).is_some(), "127 deep is taken");
+        assert_eq!(super::tape(&most), super::engine_columns(&super::rr::tape(&most)));
         let deep = format!(".policy {{\"a\": {}{}}}", "[".repeat(127), "]".repeat(127));
         let refused = [
             "r(x) :- x ~ ````a````.",
@@ -1066,6 +1070,31 @@ pub mod tests {
         eprintln!("{tokens} tokens");
         for ((op, mode), (n, ins)) in rows.iter().take(25) {
             eprintln!("  op {op:#04x} m={mode:<3} runs {:>6.2} a token, instructions (at most) {:>6.1} a token", *n as f64 / tokens as f64, *ins as f64 / tokens as f64);
+        }
+    }
+
+    /// A token mark (decision 0129), `no_value`: an aggregate's word, then `(`, `)`, `:`, with
+    /// comments between or none, is refused by every shape and the interpreter; with a value,
+    /// taken, as the engine's tape.
+    #[test]
+    fn token_marks_refuse_and_take() {
+        let c = crate::compiled().expect("compiles");
+        let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        let head = ".decl a(n: number, j: number)\n.decl d(n: number, k: number)\n";
+        let rule = |agg: &str| format!("{head}d(n, k) :- a(n, _), k = {agg} : {{ a(n, j) }}.\n");
+        for (agg, taken) in [("max j", true), ("max (j)", true), ("max ()", false), ("min /* c */ ( /* d */ )", false), ("join ()", false), ("count", true)] {
+            let src = rule(agg);
+            let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
+            assert_eq!(interp.is_ok(), taken, "{agg}: the interpreter");
+            for p in [&c.parser, &machine.parser] {
+                match p.columns(src.as_bytes()) {
+                    Ok(t) => {
+                        assert!(taken, "{agg}: taken");
+                        assert_eq!(t, crate::engine_columns(&crate::rr::tape(&src)), "{agg}: the engine's tape");
+                    }
+                    Err(_) => assert!(!taken, "{agg}: refused"),
+                }
+            }
         }
     }
 

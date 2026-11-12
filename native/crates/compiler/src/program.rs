@@ -87,6 +87,11 @@ pub const REMEMBER: u8 = 0x63;
 /// `PUSH` (the called level's; the caller's come back where it returns); `m=2` a test, which
 /// runs the next word where the flag is set and skips it where it is clear.
 pub const FLAG: u8 = 0x64;
+/// A count of tokens, the file refused past its most (`Words::counts`, operand its index): `m=0`
+/// one more (the token is an up's, as `{`), `m=1` one less where above 0 (a down's, `}`).
+/// Tier 1's `count(up, down) max M` where its ups and downs are tokens' starts, at the arms
+/// that take them, as the lean parser counts a depth as it parses.
+pub const COUNT: u8 = 0x65;
 
 pub const NAMED: u8 = 1;
 pub const GREEDY: u8 = 1;
@@ -141,4 +146,36 @@ pub struct Words {
     /// record's code has mark bit `B` (`records::MARK_SHIFT + B`) is an extra of kind `K`. Rising
     /// by bit.
     pub extras: Vec<(u8, u16)>,
+    /// The token marks (decision 0129; `tokenmark K oO kK sW …`): mark `K` holds where its
+    /// record's bit does and its tokens follow, each element one record (the extras between
+    /// skipped). Rising by mark.
+    pub token_marks: Vec<TokenMark>,
+    /// The counts of tokens (`COUNT`; `tokencount N max M`): each one's most.
+    pub counts: Vec<u16>,
+}
+
+/// A token mark (`Words::token_marks`): its order, and its elements.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct TokenMark {
+    pub order: u8,
+    pub elems: Vec<TokenElem>,
+}
+
+/// One token of a token mark: its offset from the mark's token (-1 the one before), and what
+/// the token's record may be: a kind of `kinds` (bit `k`: the records' kind `k`), or a word of
+/// `words` (strings).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct TokenElem {
+    pub offset: i8,
+    pub kinds: u64,
+    pub words: Vec<u16>,
+}
+
+impl TokenElem {
+    /// Whether a record's code is one of the element's.
+    pub fn takes(&self, code: u32) -> bool {
+        let kind = code & 0xff;
+        let word = crate::records::word_of(code);
+        (kind < 64 && self.kinds >> kind & 1 == 1) || (word > 0 && self.words.contains(&((word - 1) as u16)))
+    }
 }
