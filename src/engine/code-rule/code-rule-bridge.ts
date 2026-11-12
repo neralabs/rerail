@@ -19,6 +19,7 @@ import { fileStamp } from "../file-stamp.js";
 import {
   gitBranchTips, gitCommitsBetween, gitHead, gitModifiedOrUntrackedPaths, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
 } from "../git.js";
+import { inGitBackground } from "../git-start-turns.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
@@ -1393,7 +1394,8 @@ export class CodeRuleBridge {
       return;
     }
     const delay = Math.max(0, worktrees.nextWalkAt - Date.now());
-    worktrees.walk = this.#walkWorktrees(discovery, delay).finally(() => {
+    // Nothing waits for this walk, so its Git processes start after a hook's own (`inGitBackground`).
+    worktrees.walk = inGitBackground(async () => await this.#walkWorktrees(discovery, delay)).finally(() => {
       worktrees.walk = undefined;
       if (worktrees.requested) this.#scheduleWorktreeWalk(discovery);
     });
