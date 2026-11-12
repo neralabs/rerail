@@ -322,23 +322,28 @@ fn waves_with(lease: &impl SqlOwner, program: &Program, token: Option<i64>, max_
             let _cpu = crate::code_rule_dsl::logic::profile::span(||format!("cold rule {output}"));
             let replacement = before(*id as usize)?;
             let text = replacement.as_ref().unwrap_or(text);
-            let mut statement = lease.prepare_step(text)?;
-            if empty && token.is_none() && statement.parameter_index(":batch")?.is_some() {
-                continue;
-            }
-            if let Some(i) = statement.parameter_index(":batch")? {
-                let token = token.ok_or_else(|| StoreError::Invalid(format!("{}: a step reads demand(batch) without a batch", program.name)))?;
-                statement.raw_bind_parameter(i, token)?;
-            }
-            // Each statement's time, by its output (`RERAIL_PROF`); `RERAIL_PROF_SLOW_MS=<ms>` prints the
-            // SQL of each statement slower than that.
-            let started = std::time::Instant::now();
-            crate::code_rule_dsl::prof::time(&format!("step.{output}"), || statement.raw_execute())?;
-            if let Some(slow) = std::env::var("RERAIL_PROF_SLOW_MS").ok().and_then(|ms| ms.parse::<u128>().ok()) {
-                if started.elapsed().as_millis() >= slow {
-                    eprintln!("slow step {output} ({:?}): {text}", started.elapsed());
-                }
-            }
+            let executed=crate::code_rule_dsl::logic::lanes::sql_executor().local(
+                rerail_accel::Lane::Sql,"SQL cold rule",0.0,|| -> StoreResult<bool> {
+                    let mut statement = lease.prepare_step(text)?;
+                    if empty && token.is_none() && statement.parameter_index(":batch")?.is_some() {
+                        return Ok(false);
+                    }
+                    if let Some(i) = statement.parameter_index(":batch")? {
+                        let token = token.ok_or_else(|| StoreError::Invalid(format!("{}: a step reads demand(batch) without a batch", program.name)))?;
+                        statement.raw_bind_parameter(i, token)?;
+                    }
+                    // Each statement's time, by its output (`RERAIL_PROF`); `RERAIL_PROF_SLOW_MS=<ms>` prints the
+                    // SQL of each statement slower than that.
+                    let started = std::time::Instant::now();
+                    crate::code_rule_dsl::prof::time(&format!("step.{output}"), || statement.raw_execute())?;
+                    if let Some(slow) = std::env::var("RERAIL_PROF_SLOW_MS").ok().and_then(|ms| ms.parse::<u128>().ok()) {
+                        if started.elapsed().as_millis() >= slow {
+                            eprintln!("slow step {output} ({:?}): {text}", started.elapsed());
+                        }
+                    }
+                    Ok(true)
+            })?;
+            if !executed {continue;}
             lease.storage().borrow_mut().written(&format!("new_{output}"), true);
             written.insert(output.as_str());
         }
@@ -376,7 +381,7 @@ fn waves_with(lease: &impl SqlOwner, program: &Program, token: Option<i64>, max_
 /// Executes a lowered fact/rule program on an existing owner connection. Inputs may be virtual
 /// tables or SQL relations; outputs and wave diagnostics remain queryable on this connection.
 /// AST matching stays outside this loop and supplies relations like any other producer.
-pub(in crate::code_rule_dsl) fn execute_sql(db: &Database, program: &Program, max_waves: u32) -> StoreResult<u32> {
+pub fn execute_sql(db: &Database, program: &Program, max_waves: u32) -> StoreResult<u32> {
     execute_sql_with(db, program, max_waves, || Ok(()))
 }
 pub fn declare_sql(db:&Database,program:&Program)->StoreResult<()> {
@@ -391,7 +396,7 @@ pub fn execute_declared_with(db:&Database, program:&Program, max_waves:u32,
     waves_with(db,program,None,max_waves,false,&mut before)
 }
 
-pub(in crate::code_rule_dsl) fn execute_sql_with(db: &Database, program: &Program, max_waves: u32, setup: impl FnOnce() -> rusqlite::Result<()>) -> StoreResult<u32> {
+pub fn execute_sql_with(db: &Database, program: &Program, max_waves: u32, setup: impl FnOnce() -> rusqlite::Result<()>) -> StoreResult<u32> {
     declare(db, program,false)?;
     setup()?;
     waves(db, program, None, max_waves, false)

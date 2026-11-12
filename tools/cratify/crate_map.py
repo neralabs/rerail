@@ -32,8 +32,9 @@ def closure():
 ALLOW = closure()
 def load_map():
     M = {}
-    # crate-map.tsv, then the generated test hosts (hosts.py), which override it
-    files = [os.path.join(HERE, 'crate-map.tsv')] + [p for p in [os.path.join(HERE, 'test-hosts.tsv')] if os.path.exists(p)]
+    # crate-map.tsv, then the generated test hosts (hosts.py), which override it,
+    # then the runtime hosts (runtime_hosts.py: tests needing what the engine installs as it loads), which override both
+    files = [os.path.join(HERE, 'crate-map.tsv')] + [p for p in [os.path.join(HERE, 'test-hosts.tsv'), os.path.join(HERE, 'runtime-hosts.tsv')] if os.path.exists(p)]
     for line in (l for f in files for l in open(f)):
         line = line.split('#')[0].rstrip('\n')
         if not line.strip(): continue

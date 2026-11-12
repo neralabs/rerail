@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 /// The view oracle's directory.
 fn root() -> PathBuf {
-    PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("vue/language/view")
+    PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("vue/language/view")
 }
 
 /// The oracle fixture `path` and its tree-sitter-vue tree.

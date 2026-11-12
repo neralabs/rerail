@@ -348,7 +348,7 @@ pub(super) fn execute(
     if grid.blocks.is_empty() {
         return super::metal_output_pages::SavedOutput::empty(resident);
     }
-    let device = Device::system_default().ok_or(Error::UnsupportedBackend)?;
+    let device = rerail_metal::device()?;
     let code = metal_register_codegen::compile(resident)?;
     let constant = super::metal_constant_output::ConstantOutput::new(resident, &code)?;
     let pipelines = Pipelines::new(&code.source)?;
@@ -356,7 +356,7 @@ pub(super) fn execute(
     let roots = MappedBuffer::zeroed::<u32>(&device, grid.roots.len())?;
     let progress = MappedBuffer::zeroed::<u32>(&device, grid.evaluation_spans.len())?;
     let partitions = partitions(resident, &code, span_limit, constant.as_ref())?;
-    let queue = device.new_command_queue();
+    let queue = rerail_metal::queue()?;
     let predicate_programs =
         super::metal_capture_predicates::PredicatePrograms::new(&device, &queue, resident, &input)?;
     let separate_completed = metal_initial_range_codegen::mixed_classes(resident, plan)?;

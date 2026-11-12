@@ -29,6 +29,8 @@ pub struct BlockNative {
     /// The fixed points (`block::BlockProgram::rounds`): each group's members and its carries
     /// with their nexts.
     pub groups: Vec<crate::block::Group>,
+    /// The token records (`block::BlockProgram::records`): the record pass after the passes.
+    pub records: Option<crate::records::Records>,
 }
 
 /// An instruction of a block body.
@@ -143,6 +145,7 @@ impl BlockNative {
             delay: program.delay,
             output_delays: (0..program.outputs.len()).map(|k| program.output_delay(k)).collect(),
             groups: crate::block::groups(&program.ops, &program.rounds).expect("a verified program"),
+            records: program.records.clone(),
         }
     }
 
@@ -212,6 +215,7 @@ impl BlockNative {
             masks: self.masks.clone(),
             delay: self.delay,
             output_delays: self.output_delays.clone(),
+            records: self.records.clone(),
             groups: self
                 .groups
                 .iter()
@@ -458,6 +462,7 @@ impl BlockNative {
                 masks: if last { self.masks.clone() } else { Vec::new() },
                 delay: self.delay,
                 groups: groups.clone(),
+                records: if last { self.records.clone() } else { None },
             };
             if p == last {
                 let outputs = self.outputs.iter().map(|&v| local[usize::from(v)].expect("loaded or made")).collect();

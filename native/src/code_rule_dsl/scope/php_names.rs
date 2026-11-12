@@ -46,7 +46,7 @@ const BUILTIN_TYPES: &[&str] = &[
 
 /// What a reference names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum NameKind {
+pub enum NameKind {
     Class,
     Function,
     Constant,
@@ -54,7 +54,7 @@ pub(crate) enum NameKind {
 
 /// What a reference resolves to.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Resolved {
+pub enum Resolved {
     /// A fully qualified name, without the leading backslash, spelled as the source and the `use`
     /// statement that aliased it spell it.
     Name(Box<str>),
@@ -72,15 +72,15 @@ pub(crate) enum Resolved {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Reference {
+pub struct Reference {
     /// `None` for a name whose position an error region hides.
-    pub(crate) kind: Option<NameKind>,
-    pub(crate) resolved: Resolved,
+    pub kind: Option<NameKind>,
+    pub resolved: Resolved,
 }
 
 /// The name references of one PHP file, by byte range, and the constants and classes it declares.
 #[derive(Debug, Default)]
-pub(crate) struct PhpNames {
+pub struct PhpNames {
     references: HashMap<(usize, usize), Reference>,
     /// The names `use` statements import, by the byte range of the name a clause writes (its
     /// alias aside): what each imports, fully qualified without the leading backslash.
@@ -93,7 +93,7 @@ pub(crate) struct PhpNames {
     /// one declared more than once.
     classes: Declared,
     /// Nodes visited to build it, charged to a clause's `maxVisitedNodes`.
-    pub(crate) cost: usize,
+    pub cost: usize,
 }
 
 /// Declarations by name: the node of the one declaration, or `None` for a name declared more than
@@ -117,7 +117,7 @@ impl PhpNames {
     }
 
     /// Reads the references of `root`'s file, visiting at most `cap` nodes.
-    pub(crate) fn build<D: Doc>(
+    pub fn build<D: Doc>(
         root: Node<'_, D>,
         cap: usize,
         deadline: &dyn Fn() -> bool,
@@ -152,19 +152,19 @@ impl PhpNames {
     }
 
     /// The reference at `range`, if a name there is one.
-    pub(crate) fn reference(&self, range: &Range<usize>) -> Option<&Reference> {
+    pub fn reference(&self, range: &Range<usize>) -> Option<&Reference> {
         self.references.get(&(range.start, range.end))
     }
 
     /// What the `use` clause name at `range` imports, if a name there is one.
-    pub(crate) fn import(&self, range: &Range<usize>) -> Option<(NameKind, &str)> {
+    pub fn import(&self, range: &Range<usize>) -> Option<(NameKind, &str)> {
         self.imports
             .get(&(range.start, range.end))
             .map(|(kind, name)| (*kind, &**name))
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn imports(&self) -> impl Iterator<Item = (Range<usize>, NameKind, &str)> {
+    pub fn imports(&self) -> impl Iterator<Item = (Range<usize>, NameKind, &str)> {
         self.imports
             .iter()
             .map(|(&(start, end), (kind, name))| (start..end, *kind, &**name))
@@ -357,7 +357,7 @@ impl PhpNames {
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn references(&self) -> impl Iterator<Item = (Range<usize>, &Reference)> {
+    pub fn references(&self) -> impl Iterator<Item = (Range<usize>, &Reference)> {
         self.references
             .iter()
             .map(|(&(start, end), reference)| (start..end, reference))
@@ -1092,5 +1092,4 @@ fn builtin_constant(name: &str) -> bool {
     is_special_constant(name) || BUILTINS.constants.contains(name)
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

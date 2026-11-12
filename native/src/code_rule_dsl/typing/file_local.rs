@@ -184,6 +184,8 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
 }
 
 pub mod split_memo;
+pub mod export_demand;
+pub use export_demand::demand_exports;
 pub use split_memo::forget as forget_splits;
 // cratify: `tests` is rerail-device-metal's (it mounts it)
 
@@ -736,9 +738,9 @@ pub struct Programs {
     pub exports: Vec<String>,
     pub base: Vec<String>,
     /// Each derived relation's location columns (`split_located`).
-    pub(crate) locations: std::collections::BTreeMap<String, Vec<usize>>,
+    pub locations: std::collections::BTreeMap<String, Vec<usize>>,
     /// The same-document columns of each file-local or base relation (`split_located`): what a cross-file hop reads.
-    pub(crate) same_doc: std::collections::BTreeMap<String, Vec<usize>>,
+    pub same_doc: std::collections::BTreeMap<String, Vec<usize>>,
 }
 
 pub fn programs(prog: &crate::code_rule_dsl::logic::front::Program) -> Programs {

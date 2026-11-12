@@ -402,6 +402,8 @@ impl<'a> Ev<'a> {
             Stmt::Provisional(fields) => self.tree.get_or_insert_with(TreeDecl::default).provisional.extend(fields.iter().cloned()),
             Stmt::Flags(names) => self.tree.get_or_insert_with(TreeDecl::default).flags.extend(names.iter().cloned()),
             Stmt::Remember(names) => self.tree.get_or_insert_with(TreeDecl::default).remember.extend(names.iter().cloned()),
+            // Applied by the parser (`A as IMPLIED` in the rule's body).
+            Stmt::Implied { .. } => {}
             Stmt::Mark { kind, at, end } => {
                 let m = self.mask(at)?;
                 self.marks.push((kind.clone(), m, *end));

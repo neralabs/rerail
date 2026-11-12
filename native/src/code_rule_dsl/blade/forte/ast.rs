@@ -39,7 +39,7 @@ use std::ops::Range;
 
 /// The class `Document` wraps an element in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ElementClass {
+pub enum ElementClass {
     Element,
     Component,
     Slot,
@@ -53,47 +53,47 @@ pub(crate) enum ElementClass {
         reason = "the oracle's AST reads, which only the tests compare"
     )
 )]
-pub(crate) struct Component<'a> {
+pub struct Component<'a> {
     /// `type`.
-    pub(crate) kind: Cow<'a, [u8]>,
-    pub(crate) prefix: Cow<'a, [u8]>,
+    pub kind: Cow<'a, [u8]>,
+    pub prefix: Cow<'a, [u8]>,
     /// `componentName`.
-    pub(crate) name: Cow<'a, [u8]>,
-    pub(crate) slot_name: Option<Cow<'a, [u8]>>,
+    pub name: Cow<'a, [u8]>,
+    pub slot_name: Option<Cow<'a, [u8]>>,
 }
 
 /// What `ElementNode` reads.
 #[cfg(any(test, feature = "test-hooks"))]
-pub(crate) struct Element<'a> {
-    pub(crate) class: ElementClass,
+pub struct Element<'a> {
+    pub class: ElementClass,
     /// `tagNameText()`.
-    pub(crate) tag: Cow<'a, [u8]>,
+    pub tag: Cow<'a, [u8]>,
     /// `isVoid()`.
-    pub(crate) void: bool,
+    pub void: bool,
     /// `isSelfClosing()`.
-    pub(crate) self_closing: bool,
+    pub self_closing: bool,
     /// `isPaired()`.
-    pub(crate) paired: bool,
+    pub paired: bool,
     /// `ComponentNode::getMetadata()`, for components and slots.
-    pub(crate) component: Option<Component<'a>>,
+    pub component: Option<Component<'a>>,
 }
 
 /// What `Attribute` reads.
 #[cfg(any(test, feature = "test-hooks"))]
-pub(crate) struct Attribute<'a> {
-    pub(crate) index: usize,
+pub struct Attribute<'a> {
+    pub index: usize,
     /// `type()`.
-    pub(crate) kind: &'static str,
-    pub(crate) raw_name: Cow<'a, [u8]>,
-    pub(crate) name: Cow<'a, [u8]>,
-    pub(crate) value: Option<Cow<'a, [u8]>>,
-    pub(crate) quote: Option<u8>,
+    pub kind: &'static str,
+    pub raw_name: Cow<'a, [u8]>,
+    pub name: Cow<'a, [u8]>,
+    pub value: Option<Cow<'a, [u8]>>,
+    pub quote: Option<u8>,
 }
 
 /// What `DirectiveBlockNode` reads.
-pub(crate) struct Block {
-    pub(crate) start: Option<usize>,
-    pub(crate) end: Option<usize>,
+pub struct Block {
+    pub start: Option<usize>,
+    pub end: Option<usize>,
     #[cfg_attr(
         not(any(test, feature = "test-hooks")),
         expect(
@@ -101,13 +101,13 @@ pub(crate) struct Block {
             reason = "the oracle's AST reads, which only the tests compare"
         )
     )]
-    pub(crate) mid: Vec<usize>,
+    pub mid: Vec<usize>,
 }
 
 /// `PhpTagNode::phpType()`.
 #[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PhpTagType {
+pub enum PhpTagType {
     Php,
     Echo,
 }
@@ -138,7 +138,7 @@ pub mod attribute_type {
 }
 
 /// A parsed template, read as Forte's AST API reads its `Document`.
-pub(crate) struct Ast<'a> {
+pub struct Ast<'a> {
     source: &'a [u8],
     tokens: &'a [Token],
     nodes: &'a [FlatNode],
@@ -305,7 +305,7 @@ fn is_standalone_attribute_kind(kind: NodeKind) -> bool {
 }
 
 impl<'a> Ast<'a> {
-    pub(crate) fn new(source: &'a [u8], tokens: &'a [Token], nodes: &'a [FlatNode]) -> Self {
+    pub fn new(source: &'a [u8], tokens: &'a [Token], nodes: &'a [FlatNode]) -> Self {
         Self {
             source,
             tokens,
@@ -314,12 +314,12 @@ impl<'a> Ast<'a> {
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn source(&self) -> &'a [u8] {
+    pub fn source(&self) -> &'a [u8] {
         self.source
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn nodes(&self) -> &'a [FlatNode] {
+    pub fn nodes(&self) -> &'a [FlatNode] {
         self.nodes
     }
 
@@ -531,7 +531,7 @@ impl<'a> Ast<'a> {
 
     /// What `ElementNode` (or `ComponentNode`/`SlotNode`) reads for an element node.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn element(&self, index: usize) -> Element<'a> {
+    pub fn element(&self, index: usize) -> Element<'a> {
         let Some(flat) = self.nodes.get(index) else {
             return Element {
                 class: ElementClass::Element,
@@ -609,7 +609,7 @@ impl<'a> Ast<'a> {
     /// `ElementNode::attributes()->all()` (`Attributes::ensureLoaded`), each attribute read as
     /// the oracle reads it.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn attributes(&self, element: usize) -> Vec<Attribute<'a>> {
+    pub fn attributes(&self, element: usize) -> Vec<Attribute<'a>> {
         let mut items = Vec::new();
         let opening_tag_end_pos = self.find_opening_tag_end_position(element);
         for (child_index, child) in self.child_links(element) {
@@ -766,7 +766,7 @@ impl<'a> Ast<'a> {
     }
 
     /// `DirectiveBlockNode::startDirective`, `endDirective` and `getIntermediateDirectives`.
-    pub(crate) fn block(&self, index: usize) -> Block {
+    pub fn block(&self, index: usize) -> Block {
         let Some(flat) = self.nodes.get(index) else {
             return Block {
                 start: None,
@@ -802,7 +802,7 @@ impl<'a> Ast<'a> {
 
     /// `EchoNode::content()`, as a range of the template.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn echo_content(&self, index: usize) -> Range<usize> {
+    pub fn echo_content(&self, index: usize) -> Range<usize> {
         let raw = self.get_document_content(index);
         // `stripBraces`.
         let (open, close): (&[u8], &[u8]) = match self.nodes.get(index).map(|flat| flat.kind) {
@@ -817,7 +817,7 @@ impl<'a> Ast<'a> {
 
     /// `PhpBlockNode::content()` (`HasDelimitedContent`), as a range of the template.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn php_block_content(&self, index: usize) -> Range<usize> {
+    pub fn php_block_content(&self, index: usize) -> Range<usize> {
         let raw = self.get_document_content(index);
         let raw = strip_start(self.source, raw, b"@php");
         strip_end(self.source, raw, b"@endphp")
@@ -825,7 +825,7 @@ impl<'a> Ast<'a> {
 
     /// `PhpTagNode::phpType()` and `content()`, as a range of the template.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn php_tag(&self, index: usize) -> (PhpTagType, Range<usize>) {
+    pub fn php_tag(&self, index: usize) -> (PhpTagType, Range<usize>) {
         let raw = self.get_document_content(index);
         let text = &self.source[raw.clone()];
         let kind = if text.starts_with(b"<?=") {

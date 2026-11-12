@@ -99,7 +99,7 @@ pub const TEXT_COLUMNS: [(&str, &[usize]); 31] = [
 /// One test over a set of patterns, compiled once: each pattern lowered by the text layer to its canonical plan (an
 /// exact set, an affix set, an automaton), equal patterns' plans shared by key.
 pub struct Matcher {
-    pub(in crate::code_rule_dsl) plans: Vec<Arc<Lowered>>,
+    pub plans: Vec<Arc<Lowered>>,
 }
 
 /// The words of a phrase: runs of ASCII letters, digits and `_`.

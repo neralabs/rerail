@@ -501,20 +501,35 @@ launch on every lane that can run it; where the model gave a cost it replaces th
 stay. The model prices only a lane and name it saw at least 8 warm samples of.
 
 It is put in place only when it wins. Each training holds out the newest fifth of the samples, trains on the rest,
-and compares the errors on the held-out jobs. On this machine's 14,945 samples (2026-11-10), as the factor of the
-root mean square log error:
+and compares the errors on the held-out jobs. On this machine's newest 20,000 samples (2026-11-11), as the factor of
+the root mean square log error:
 
 | Held-out jobs | Model | Medians | Prices when run |
 |---|---|---|---|
-| Wall, with a learned rate (1,450) | ×2.08 | ×7.13 | ×8.18 |
-| Wall, all (2,989) | ×2.58 | — | ×20.5 |
-| Host CPU, all (2,989) | ×1.84 | — | ×4.93 |
+| Wall, with a learned rate (3,459) | ×1.94 | ×3.29 | ×6.50 |
+| Wall, all (4,000) | ×2.14 | — | ×12.1 |
+| Host CPU, all (4,000) | ×2.11 | — | ×10.0 |
 
 A model that wins is trained again on every sample, put in place and saved (table `models` in the store, one
 for each machine); the next run puts the saved one in place at once. One that loses is taken out with the saved
-one. Training runs on a thread of its own at the background quality of service, in a pool of two threads apart
-from the engine's (25 s wall, about 1.2 s CPU on a loaded machine), and again once 2,000 more samples are written,
-at most every ten minutes. A batch of up to 4 jobs is predicted on the host, a larger one on the GPU.
+one. Training runs on a thread of its own at the utility quality of service, in a pool of two threads apart from
+the engine's, and again once 2,000 more samples are written, at most every ten minutes. A comparison on 20,000
+samples takes 0.48 s wall and 0.16 s CPU (debug build). The host does nothing per row per tree: each tree's bag is
+drawn on the GPU (a hash of the bag and the example, kept with the sampling's proportion and counted Poisson(1)
+times; not upstream's Mersenne Twister draws, as diverse), the root's total summed there, each launch replayed
+from a plan made once, and each tree built flat from the GPU's splits. Each tree's kernels write its splits
+into one of six result slots kept by the trainer (no buffer a tree, no copy of the pool); a command buffer keeps
+one encoder open across its launches; the flat tree is built from the splits in place through an open-addressed
+table by partition. One forest of 100 trees on 12,000 rows: 380 → 37 ms CPU, 76 ms wall (the GPU's). The
+background quality of service was
+tried first and refused: it holds the threads to the efficiency cores and the GPU's lowest priority, 4–10× the
+wall and twice the GPU seconds on an idle machine, 22 s under load. The prediction kernels are compiled on the
+training thread before a model is put in place; placement no longer uses them. A placement's prediction
+is found without strings or trees: each thread keeps, for the model in place, each (kernel name, lane)'s job key
+by the name's address, and a memo of predictions by the job's buckets (the forests see only those, and a batch's
+jobs share all but their units'). A launch is a lookup by address, a binary search for its units' bucket and a
+memo lookup; the forests are walked on the host only for buckets not seen. Prediction for one launch, debug
+build: 10.4 → 0.3 µs; 16 launches 43–53 → 3.2 µs; 1,024 launches 549–586 → 195 µs, none of it on the GPU.
 
 ## Order of work
 

@@ -4,7 +4,7 @@
 pub use super::logic::profile::watch::watch;
 pub use super::sql_executor::CodeRuleSqlExecutor;
 pub use super::logic::settings::{program_text, program_texts, settings, with_settings};
-pub(crate) use super::logic::settings::process_counters;
+pub use super::logic::settings::process_counters;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::transducer::packed::rir;
 
@@ -61,6 +61,8 @@ fn sql_request(store: &std::path::Path, request: &str) -> Result<String, String>
         indexes: Vec<Index>,
         #[serde(default)]
         queries: Vec<Query>,
+        #[serde(default)]
+        query_plans: Vec<serde_json::Value>,
         #[serde(default)]
         changes: Vec<Vec<serde_json::Value>>,
         #[serde(default)]
@@ -161,7 +163,14 @@ fn sql_request(store: &std::path::Path, request: &str) -> Result<String, String>
             .map(|s| serde_json::from_str::<serde_json::Value>(&s))
             .transpose()
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        Ok(serde_json::json!({"execution": execution, "updates":updates, "queries": queries}))
+        let query_plans=request.query_plans.into_iter().map(|plan| {
+            let result=session.query_plan(plan.to_string())?;
+            serde_json::from_str::<serde_json::Value>(&result)
+                .map_err(|e|napi::Error::from_reason(e.to_string()))
+        }).collect::<napi::Result<Vec<_>>>()?;
+        let mut result=serde_json::json!({"execution": execution, "updates":updates, "queries": queries});
+        if !query_plans.is_empty() {result["query_plans"]=serde_json::json!(query_plans);}
+        Ok(result)
     })()
     .map_err(|e| e.to_string())?;
     serde_json::to_string_pretty(&result)
@@ -265,7 +274,8 @@ pub fn run_rr(
             None,
             dir,
             "program",
-            Binding::Cpu,
+            // The device as `logic --metal` places it: `RERAIL_DEVICE=metal` (by price) or `always` (wherever it can).
+            if std::env::var("RERAIL_DEVICE").is_ok_and(|v| v == "metal" || v == "always") { Binding::Metal } else { Binding::Cpu },
             1 << 18,
             &Default::default(),
             &with_reuse(options),

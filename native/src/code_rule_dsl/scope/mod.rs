@@ -378,7 +378,7 @@ pub struct Reference {
 /// index (`ScopeTable::annotations`) above the low 24 bits, which hold the offset into its text.
 /// No source position has them. On wasm32 (the browser build) the bit is bit 30 and the offset keeps 16 bits,
 /// so 16,384 annotations of up to 64 KiB each, below 1 GiB of source.
-pub(crate) const ANNOTATION_RANGE: usize = 1 << (usize::BITS - 2);
+pub const ANNOTATION_RANGE: usize = 1 << (usize::BITS - 2);
 const ANNOTATION_SHIFT: u32 = if usize::BITS == 32 { 16 } else { 24 };
 
 /// Where the names of the annotation with this index start.

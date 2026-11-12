@@ -2,7 +2,7 @@
 use std::sync::Arc;
 
 #[derive(Clone)]
-pub(super) enum Roots {
+pub enum Roots {
     All,
     Sparse(Arc<[u32]>),
     Bitmap(Arc<[u64]>),
@@ -31,7 +31,7 @@ impl Roots {
             Self::Bitmap(words) => words.len() * 8,
         }
     }
-    pub(super) fn ordinals(&self) -> Option<Arc<[u32]>> {
+    pub fn ordinals(&self) -> Option<Arc<[u32]>> {
         match self {
             Self::All => None,
             Self::Sparse(roots) => Some(Arc::clone(roots)),
@@ -52,7 +52,7 @@ impl Roots {
 
 /// Unordered SQL transport stays bounded by one file's compact candidate representation.
 /// Promotion avoids retaining repository-sized uncompressed ordinal vectors.
-pub(super) struct Builder {
+pub struct Builder {
     nodes: usize,
     sparse: Vec<u32>,
     words: Option<Vec<u64>>,

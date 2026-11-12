@@ -18,9 +18,9 @@ pub mod waves;
 pub mod working_set;
 
 #[derive(Clone)]
-struct Set {
-    name: String,
-    exact: bool,
+pub struct Set {
+    pub name: String,
+    pub exact: bool,
 }
 #[derive(serde::Serialize)]
 pub struct Admission {
@@ -50,7 +50,7 @@ impl Statement {
         self.schedule.actions.iter().filter(|a|matches!(a,lifetime::Action::Prepare(i) if !(covered&&self.stages[*i].covering))).count()
     }
 
-    fn own(&mut self) {
+    pub fn own(&mut self) {
         let compiled = ownership::compile(
             &self
                 .stages
@@ -76,7 +76,7 @@ impl Statement {
         self.ownership = compiled.layout;
     }
     #[cfg(any(test, feature = "test-hooks"))]
-    fn reschedule(&mut self) {
+    pub fn reschedule(&mut self) {
         self.schedule = lifetime::Schedule::new(
             &self
                 .stages
@@ -91,16 +91,16 @@ impl Statement {
         );
     }
 }
-struct Lower {
-    ctes: Vec<String>,
-    parameters: Vec<Value>,
+pub struct Lower {
+    pub ctes: Vec<String>,
+    pub parameters: Vec<Value>,
     utilities: HashMap<(usize, String), Set>,
     lang: u32,
     roots: HashMap<BTreeSet<u16>, Set>,
     limit: usize,
-    indexed: BTreeSet<String>,
+    pub indexed: BTreeSet<String>,
     reuse: Reuse,
-    decoding: HashMap<String, decode::Demand>,
+    pub decoding: HashMap<String, decode::Demand>,
     predicates: HashMap<String, (String, String)>,
     producers: crate::code_rule_dsl::producers::Registry<u32>,
     consumer: usize,
@@ -124,7 +124,7 @@ struct Reuse {
 }
 
 impl Lower {
-    fn new(lang: u32) -> Self {
+    pub fn new(lang: u32) -> Self {
         Self {
             ctes: Vec::new(),
             parameters: Vec::new(),
@@ -167,7 +167,7 @@ impl Lower {
         self.parameters.push(value);
         format!("?{}", self.parameters.len())
     }
-    fn relation(&mut self, body: String, exact: bool) -> Result<Set, ()> {
+    pub fn relation(&mut self, body: String, exact: bool) -> Result<Set, ()> {
         if let Some(name) = self.reuse.bodies.get(&body) {
             return Ok(Set {
                 name: name.clone(),
@@ -183,13 +183,13 @@ impl Lower {
         self.reuse.bodies.insert(body, name.clone());
         Ok(Set { name, exact })
     }
-    fn all(&self) -> Set {
+    pub fn all(&self) -> Set {
         Set {
             name: "all_nodes".into(),
             exact: true,
         }
     }
-    fn combine(&mut self, left: &Set, right: &Set, operator: &str, exact: bool) -> Result<Set, ()> {
+    pub fn combine(&mut self, left: &Set, right: &Set, operator: &str, exact: bool) -> Result<Set, ()> {
         let kinds = match (
             self.reuse.kinds.get(&left.name),
             self.reuse.kinds.get(&right.name),
@@ -308,7 +308,7 @@ impl Lower {
         Ok(selected)
     }
     /// Records that `set` was selected from `scope`'s rows.
-    pub(super) fn narrowed(&mut self, set: Set, scope: &Set) -> Set {
+    pub fn narrowed(&mut self, set: Set, scope: &Set) -> Set {
         if set.name != scope.name && scope.name != "all_nodes" {
             let containing = self.containing(&scope.name);
             self.reuse
@@ -397,7 +397,7 @@ impl Lower {
         self.combine(&base, &kinds, "INTERSECT", exact).map(Some)
     }
     /// One compound UNION: a chain of binary unions materializes and deduplicates every prefix.
-    fn union(&mut self, branches: Vec<Set>) -> Result<Set, ()> {
+    pub fn union(&mut self, branches: Vec<Set>) -> Result<Set, ()> {
         let empty = self.reuse.bodies.get("SELECT 0,0 WHERE 0").cloned();
         let exact = branches.iter().all(|set| set.exact);
         if branches.iter().any(|set| set.name == "all_nodes") {
@@ -850,7 +850,7 @@ pub fn batch_files(plans: &[&AnchorPlan], lang: u32, files: &[i64]) -> Statement
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
-pub(super) fn batch(
+pub fn batch(
     plans: &[&AnchorPlan],
     lang: u32,
     fid: Option<i64>,
@@ -1119,7 +1119,7 @@ pub struct Stage {
 /// SQLite expands CTE references during preparation, including AS MATERIALIZED CTEs.
 /// Cut shared dependencies into real SQL tables before that expansion becomes exponential.
 #[cfg(any(test, feature = "test-hooks"))]
-pub(super) fn finish(
+pub fn finish(
     ctes: Vec<String>,
     query: String,
     parameters: Vec<Value>,
@@ -1129,7 +1129,7 @@ pub(super) fn finish(
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
-fn finish_decoded(
+pub fn finish_decoded(
     ctes: Vec<String>,
     queries: Vec<String>,
     parameters: Vec<Value>,
@@ -1363,6 +1363,4 @@ fn prepare_decoded(
     }
 }
 
-#[cfg(test)]
-#[path = "lower_tests.rs"]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

@@ -28,7 +28,7 @@ use std::{
     time::Instant,
 };
 
-const POLICIES: [&str; 4] = [
+pub const POLICIES: [&str; 4] = [
     include_str!(
         "../../../../../packs/python/rules/ruff-async210-blocking-http-call-in-async-function.json"
     ),
@@ -42,7 +42,7 @@ const POLICIES: [&str; 4] = [
         "../../../../../packs/python/rules/ruff-async230-blocking-open-call-in-async-function.json"
     ),
 ];
-const SELECT_TARGETS: &str = r#"
+pub const SELECT_TARGETS: &str = r#"
 WITH sites AS MATERIALIZED (SELECT * FROM call_sites),
      refs AS MATERIALIZED (SELECT * FROM qualified),
      wanted AS MATERIALIZED (SELECT * FROM wanted_symbol),
@@ -54,7 +54,7 @@ UNION
 SELECT 3,s.doc,s.report,s.call,2
 FROM sites s JOIN x ON x.doc=s.doc AND x.callee=s.report
 "#;
-const COMPOSE: &str = r#"
+pub const COMPOSE: &str = r#"
 WITH c AS MATERIALIZED (SELECT * FROM candidates),
      q AS MATERIALIZED (SELECT * FROM qualified_values),
      o AS MATERIALIZED (SELECT * FROM value_origin),
@@ -90,42 +90,42 @@ impl Atoms {
     }
 }
 #[derive(Default, Debug, serde::Serialize)]
-struct Metrics {
-    documents: usize,
-    syntax_nodes: usize,
-    calls: usize,
-    async_calls: usize,
-    scope_builds: usize,
-    primary_refs: usize,
-    admitted_primary_refs: usize,
-    semantic_requests: usize,
-    qualified_lookups: usize,
-    binding_lookups: usize,
-    candidates: usize,
-    origin_rows: usize,
-    argument_calls: usize,
-    argument_rows: usize,
-    arguments_ns: u64,
-    sql_executions: usize,
-    vm_steps: i32,
-    fullscan_steps: i32,
-    autoindex_rows: i32,
-    preparation_ns: u64,
-    diagnostics_ns: u64,
-    diagnostics_wall_ns: u64,
-    execution_ns: u64,
-    structure_ns: u64,
-    scope_ns: u64,
-    projection_ns: u64,
-    sql_ns: u64,
-    wall_ns: u64,
-    filters: BTreeMap<String, u64>,
-    rows: BTreeMap<String, usize>,
-    explain: Vec<String>,
+pub struct Metrics {
+    pub documents: usize,
+    pub syntax_nodes: usize,
+    pub calls: usize,
+    pub async_calls: usize,
+    pub scope_builds: usize,
+    pub primary_refs: usize,
+    pub admitted_primary_refs: usize,
+    pub semantic_requests: usize,
+    pub qualified_lookups: usize,
+    pub binding_lookups: usize,
+    pub candidates: usize,
+    pub origin_rows: usize,
+    pub argument_calls: usize,
+    pub argument_rows: usize,
+    pub arguments_ns: u64,
+    pub sql_executions: usize,
+    pub vm_steps: i32,
+    pub fullscan_steps: i32,
+    pub autoindex_rows: i32,
+    pub preparation_ns: u64,
+    pub diagnostics_ns: u64,
+    pub diagnostics_wall_ns: u64,
+    pub execution_ns: u64,
+    pub structure_ns: u64,
+    pub scope_ns: u64,
+    pub projection_ns: u64,
+    pub sql_ns: u64,
+    pub wall_ns: u64,
+    pub filters: BTreeMap<String, u64>,
+    pub rows: BTreeMap<String, usize>,
+    pub explain: Vec<String>,
 }
-struct Run {
-    findings: Findings,
-    metrics: Metrics,
+pub struct Run {
+    pub findings: Findings,
+    pub metrics: Metrics,
 }
 /// S's bound `Relation`: the merged vtab's binding (whose `scans` counter is S's `filters`) and its rows.
 struct Bound {
@@ -382,14 +382,14 @@ fn origins<'t>(
     out
 }
 
-fn execute<'t>(
+pub fn execute<'t>(
     roots: &[(u32, Node<'t, TapeDoc>)],
     modules: &BTreeMap<u32, ModulePath>,
     copies: usize,
 ) -> Run {
     execute_sql(roots, modules, copies, &[SELECT_TARGETS, COMPOSE])
 }
-fn execute_sql<'t>(
+pub fn execute_sql<'t>(
     roots: &[(u32, Node<'t, TapeDoc>)],
     modules: &BTreeMap<u32, ModulePath>,
     copies: usize,
@@ -782,17 +782,10 @@ fn execute_sql<'t>(
     Run { findings, metrics }
 }
 
-// The oracles read the engine's compiled rules: only this crate's own tests build them (the engine mounts its own,
-// `query::plan::async_reference`).
-#[cfg(test)]
-pub mod native_oracle;
-#[cfg(test)]
-pub mod s_native_oracle;
-#[cfg(test)]
-pub mod tests;
+// cratify: `native_oracle` is rerail-engine's (it mounts it)
+// cratify: `s_native_oracle` is rerail-engine's (it mounts it)
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
-#[cfg(test)]
-pub mod compiler_admission;
+// compiler_admission: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
-#[cfg(test)]
-pub mod rr_comparison;
+// rr_comparison: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

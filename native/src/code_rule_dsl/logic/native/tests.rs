@@ -3,8 +3,8 @@ use rusqlite::Connection;
 
 /// A connection to a new content store, whose `atoms` table holds the symbols.
 fn connection() -> Connection {
-    let path = crate::code_rule_dsl::prefilter::tests::temp();
-    drop(crate::code_rule_dsl::prefilter::tests::open(&path));
+    let path = crate::code_rule_dsl::fixtures::temp();
+    drop(crate::code_rule_dsl::fixtures::open(&path));
     let db = Connection::open(path).unwrap();
     register(&db).unwrap();
     db
@@ -40,7 +40,7 @@ fn computed_sql_inputs_do_not_reenter_a_held_symbol_lock() {
 #[test]
 fn a_store_created_again_at_its_path_gives_a_run_its_symbols() {
     use crate::content_store::ContentStore;
-    let (path, elsewhere) = (crate::code_rule_dsl::prefilter::tests::temp(), crate::code_rule_dsl::prefilter::tests::temp());
+    let (path, elsewhere) = (crate::code_rule_dsl::fixtures::temp(), crate::code_rule_dsl::fixtures::temp());
     // A run interns its symbols (catching up with the store's atoms), then reads them.
     let run = |sql: &[&str]| -> Vec<String> {
         let store = ContentStore::open(&path).unwrap();
@@ -68,7 +68,7 @@ fn a_store_created_again_at_its_path_gives_a_run_its_symbols() {
 #[test]
 fn a_fresh_arena_reads_the_stores_atoms() {
     use crate::content_store::ContentStore;
-    let (path, elsewhere) = (crate::code_rule_dsl::prefilter::tests::temp(), crate::code_rule_dsl::prefilter::tests::temp());
+    let (path, elsewhere) = (crate::code_rule_dsl::fixtures::temp(), crate::code_rule_dsl::fixtures::temp());
     {
         let other = ContentStore::open(&elsewhere).unwrap();
         assert_eq!(other.intern_atoms(&["a", "b"]).unwrap(), [1, 2]);
@@ -523,6 +523,39 @@ fn a_count_many_bindings_reach_reads_its_count_table() {
     assert!(after.1 > before.1, "counts per row were built");
     assert!(after.0 > before.0, "a histogram was built");
     super::setfix::count_tables_at_once(false);
+}
+
+/// A triangle (`pfn`'s shape: `p(c, o, m)`, `d(o, k)`, `f(k, m)`), in the order that rejects late: `p` by `$o` binds
+/// `$c`, read by the head alone, and `$m`, which `f` tests. Once `f` fails for an `($o, $m)`, `p`'s other rows with it are
+/// passed over (`setfix::factored`): `f` is entered once per failing group and once per row that joins, not once per
+/// row of `p`, and the rows are those SQL gives.
+#[test]
+fn a_late_test_rejects_once_per_group_of_what_it_reads() {
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    let db = connection();
+    db.execute_batch(
+        "CREATE TABLE d(c0, c1); CREATE TABLE p(c0, c1, c2); CREATE TABLE f(c0, c1); CREATE TABLE r(c0, c1);
+         WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 9) INSERT INTO d SELECT i, i FROM n;
+         WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i < 9999) INSERT INTO p SELECT i, i % 10, (i / 10) % 5 FROM n;
+         INSERT INTO f VALUES (0, 4), (2, 4), (4, 4), (6, 4), (8, 4), (1, 9);",
+    )
+    .unwrap();
+    let src = |t: &str, cols: &str, types: &str| format!("t:b:{}:{}:{types}", hex(t), hex(cols));
+    let (d, p, f) = (src("d", "c0, c1", "ii"), src("p", "c0, c1, c2", "iii"), src("f", "c0, c1", "ii"));
+    let join = format!("pos {d} v0 v1\npos {p} v2 v0 v3\npos {f} v1 v3\nhead v2 v0");
+    super::setfix::open(&db, &format!("name tri\nrel r ii empty\nseed 0 {}", hex(&join))).unwrap();
+    let report = super::setfix::run(&db, "tri", 0).unwrap();
+    assert!(report.ends_with(" 1"), "{report}");
+    let steps = super::setfix::steps(&db, "tri").unwrap();
+    super::setfix::close(&db, "tri").unwrap();
+    let rows = |sql: &str| db.prepare(sql).unwrap().query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))).unwrap().map(Result::unwrap).collect::<Vec<_>>();
+    let got = rows("SELECT c0, c1 FROM r ORDER BY 1, 2");
+    let want = rows("SELECT DISTINCT p.c0, p.c1 FROM d JOIN p ON p.c1 = d.c0 JOIN f ON f.c0 = d.c1 AND f.c1 = p.c2 ORDER BY 1, 2");
+    assert_eq!(want.len(), 1000);
+    assert!(got == want, "the rows SQL gives: {} against {}", got.len(), want.len());
+    // `f` is entered by the 1,000 rows that join and once by each of the 45 failing (o, m) groups, of 10,000 rows.
+    let into_f: u64 = steps.lines().next().unwrap().split(',').nth(2).unwrap().split(':').next().unwrap().parse().unwrap();
+    assert_eq!(into_f, 1045, "{steps}");
 }
 
 /// `shortlex_min` keeps the shorter symbol, then the lesser by bytes; `TOP` and an atom the run does not hold absorb.

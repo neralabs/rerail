@@ -1,7 +1,7 @@
 use super::*;
 use crate::code_rule_dsl::{
     language::{self, GrammarDialect},
-    prefilter::tests::{document, matcher, open, put, temp},
+    fixtures::{document, open, temp}, prefilter::tests::{matcher, put},
     tape::TAPE_FORMAT_VERSION,
 };
 use crate::content_store::ContentStore;

@@ -118,7 +118,8 @@ pub fn report(state: &State) -> (String, serde_json::Value) {
 
 /// Explain scalar inputs using actual dependency edges, including native contracts.
 /// Keep one shortest consumer path per requested scalar relation, with cycle guards.
-pub(super) fn projection(
+/// Public for the report's tests, which sit in the crate above (`logic::profile::report`).
+pub fn projection(
     prog: &crate::code_rule_dsl::logic::front::Program,
     reads: &BTreeSet<String>,
 ) {
@@ -200,31 +201,5 @@ pub mod tests {
             1,
         );
         assert!(!report(&s).0.contains("UNREQUESTED_SCALARS"));
-    }
-    #[test]
-    fn projection_reason_traces_real_consumers_and_ignores_dead_scalars() {
-        let _lock = super::super::one_run();
-        super::super::reset();
-        super::super::set(true);
-        let p = crate::code_rule_dsl::logic::rr::parse(
-            r#"
-#include "core.rr"
-.decl selected(n:node)
-selected(n) :- text(n,"request").
-.decl result(n:node)
-result(n) :- selected(n).
-.output result
-"#,
-        )
-        .unwrap();
-        projection(&p, &BTreeSet::from(["text".into()]));
-        let decisions = super::super::decisions();
-        super::super::set(false);
-        assert!(
-            decisions
-                .keys()
-                .any(|(topic, text)| topic == "projection provenance"
-                    && text == "text <- selected <- result")
-        );
     }
 }

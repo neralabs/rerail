@@ -108,4 +108,13 @@ pub struct Words {
     pub switches: Vec<ByteSwitch>,
     /// Tier 2's readings (`RETAG m=3`) and provisional fields.
     pub readings: Readings,
+    /// Tier 2's rules, when it has them (`rule N @P`): each rule's first place, from 0 up; a rule
+    /// is the places from its first to the next rule's. Each rule is a function (a grammar
+    /// rule's), its calls (`PUSH`) native calls: only a call's `GOTO`, the word after its
+    /// `PUSH`, goes to another rule (`stream::validate_rules`). Empty: one state machine.
+    pub rules: Vec<u16>,
+    /// Tier 2's marks that hold only at a token of one word (`markword K sW`): mark `K` (its
+    /// order) holds where its mask does and the token's record names string `W`, as a parser
+    /// tests the next token's word. Rising by mark.
+    pub mark_words: Vec<(u8, u16)>,
 }

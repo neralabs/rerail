@@ -34,11 +34,11 @@ impl IdentityDomain for UtilityDefinitionDomain {
     const NAME: &'static str = "utility-definition";
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) struct RelationDomain;
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 impl IdentityDomain for RelationDomain {
     const TAG: u8 = 3;
     const NAME: &'static str = "relation";
@@ -86,22 +86,22 @@ impl IdentityDomain for DocumentDomain {
 
 pub(super) type ScopeRecipeId = SemanticId<ScopeRecipeDomain>;
 pub(super) type ScopeInstanceId = SemanticId<ScopeInstanceDomain>;
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 pub(super) type RelationId = SemanticId<RelationDomain>;
 pub(super) type ClausePlanId = SemanticId<ClausePlanDomain>;
 pub(super) type EffectProfileId = SemanticId<EffectProfileDomain>;
 pub(super) type DocumentMapGenerationId = SemanticId<DocumentMapGenerationDomain>;
 pub(super) type SnapshotId = SemanticId<SnapshotDomain>;
 pub(super) type DocumentId = SemanticId<DocumentDomain>;
-pub type UtilityDefinitionId = SemanticId<UtilityDefinitionDomain>;
+pub(in crate::code_rule_dsl::demand::driver::catalog) type UtilityDefinitionId = SemanticId<UtilityDefinitionDomain>;
 
-pub fn utility_definition_id(
+pub(in crate::code_rule_dsl::demand::driver::catalog) fn utility_definition_id(
     origin_digest: &[u8; 32],
 ) -> UtilityDefinitionId {
     UtilityDefinitionId::builder().bytes(origin_digest).finish()
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 macro_rules! identity_domain {
     ($domain:ident, $identity:ident, $tag:literal, $name:literal) => {
         #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -116,27 +116,27 @@ macro_rules! identity_domain {
     };
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 identity_domain!(
     LanguageContractDomain,
     LanguageContractId,
     10,
     "language-contract"
 );
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 identity_domain!(UtilityDemandDomain, UtilityDemandId, 12, "utility-demand");
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 identity_domain!(FrameDomain, FrameId, 13, "frame");
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 identity_domain!(ExclusionDomain, ExclusionId, 14, "exclusion");
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 identity_domain!(
     SemanticContextDomain,
     SemanticContextId,
     15,
     "semantic-context"
 );
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 identity_domain!(LogicalFillDomain, LogicalFillId, 16, "logical-fill");
 
 #[derive(Clone, Copy, Eq, Ord, PartialEq, PartialOrd)]
@@ -220,7 +220,7 @@ impl<D: IdentityDomain> IdentityBuilder<D> {
         self.field(5, &value.to_be_bytes())
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub(super) fn boolean(self, value: bool) -> Self {
         self.field(6, &[u8::from(value)])
     }

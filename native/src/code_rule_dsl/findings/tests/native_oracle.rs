@@ -1,7 +1,17 @@
 //! Native-only oracle on the reference's existing tapes. Index publication is
 //! construction; candidate selection and matching are execution. Scope/memo slots
 //! span every clause of a file, as in a complete production file evaluation.
-use crate::code_rule_dsl::{language::GrammarDialect, matcher::{self, FileAnchorIndex, FileGates, FileScopeSlot, Selection, Stopped}, model::{Anchor, ClauseKind, FileInput, Query}, module_path::ModulePath, origin::InFile, phase_clock, soundness::SyntaxErrors, tape::TapeDoc};
+use crate::code_rule_dsl::{
+    CompiledCodeRuleDsl,
+    language::GrammarDialect,
+    matcher::{self, FileAnchorIndex, FileGates, FileScopeSlot, Selection, Stopped},
+    model::{Anchor, ClauseKind, FileInput, Query},
+    module_path::ModulePath,
+    origin::InFile,
+    phase_clock,
+    soundness::SyntaxErrors,
+    tape::TapeDoc,
+};
 use ast_grep_core::{AstGrep, Doc};
 use std::{
     collections::{BTreeMap, BTreeSet},

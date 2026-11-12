@@ -222,13 +222,13 @@ pub struct Template {
 }
 
 /// The prefix of the transform variables that carry a braced ast fix's literal text.
-pub(super) const FIX_TEXT_PREFIX: &str = "__RERAIL_FIX_TEXT_";
+pub const FIX_TEXT_PREFIX: &str = "__RERAIL_FIX_TEXT_";
 
 impl Template {
     /// Splits `$NAME` / `$$$NAME` exactly as ast-grep-core 0.45.3's `create_template` does:
     /// a name is one or more of `A-Z`, `0-9`, `_`; a `$` that starts no name is literal text.
     /// Rerail also reads `${NAME}` and `$$${NAME}`, which end the name at the brace.
-    pub(super) fn parse(template: &str) -> Self {
+    pub fn parse(template: &str) -> Self {
         Self::split(template, false)
     }
 
@@ -332,7 +332,7 @@ impl Template {
         Some((text, literals))
     }
 
-    pub(super) fn is_literal(&self) -> bool {
+    pub fn is_literal(&self) -> bool {
         self.vars().next().is_none()
     }
 
@@ -348,7 +348,7 @@ impl Template {
     }
 
     /// Each referenced metavariable and whether it is referenced as `$$$NAME`.
-    pub(super) fn vars(&self) -> impl Iterator<Item = (&str, bool)> {
+    pub fn vars(&self) -> impl Iterator<Item = (&str, bool)> {
         self.segments.iter().filter_map(|segment| match segment {
             Segment::Var { name, multi } => Some((name.as_str(), *multi)),
             Segment::Text(_) => None,
@@ -356,7 +356,7 @@ impl Template {
     }
 
     /// Renders the template; `lookup` returns a capture's text, `None` for an unbound one.
-    pub(super) fn render<'a>(&self, lookup: impl Fn(&str, bool) -> Option<Cow<'a, str>>) -> String {
+    pub fn render<'a>(&self, lookup: impl Fn(&str, bool) -> Option<Cow<'a, str>>) -> String {
         let mut rendered = String::new();
         for segment in &self.segments {
             match segment {
@@ -492,7 +492,7 @@ impl FactQuery {
 /// A staged, cycle-safe closure over authored relation fields. Earlier sets may seed later sets;
 /// later edges never feed back into an earlier stage.
 #[derive(Clone, Debug)]
-pub(super) struct NameClosure {
+pub struct NameClosure {
     pub(super) name: String,
     pub(super) seeds: Vec<String>,
     pub(super) seed_field: Option<String>,
@@ -538,7 +538,7 @@ pub struct RegexLines {
 }
 
 #[derive(Clone)]
-pub(super) struct RegexLineState {
+pub struct RegexLineState {
     pub(super) initial: usize,
     pub(super) emit: Vec<bool>,
     pub(super) transitions: Vec<RegexLineTransition>,
@@ -556,7 +556,7 @@ pub(super) struct RegexLineTransition {
 }
 
 #[derive(Clone)]
-pub(super) struct RegexIndentation {
+pub struct RegexIndentation {
     pub(super) exclude_under: Regex,
     pub(super) reset: Regex,
     pub(super) ignore: Vec<Regex>,
@@ -980,7 +980,7 @@ pub struct Snapshot {
 
 pub struct Metrics {
     pub(super) files: usize,
-    pub(super) visited_nodes: usize,
+    pub visited_nodes: usize,
     pub(super) witnesses: usize,
     pub(super) python_ast_parses: usize,
     pub(super) python_ast_module_walks: usize,

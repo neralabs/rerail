@@ -5,8 +5,21 @@ use super::*;
 use crate::code_rule_dsl::logic::front::{self, Literal, Term};
 use std::collections::BTreeSet;
 
+#[test]
+fn include_seed_ignores_quoted_directives_and_preserves_real_includes() {
+    let quoted = parse(r##".decl x(s:symbol)
+x("#include \"absent.rr\"").
+// #include "absent.rr"
+"##).unwrap();
+    assert_eq!(quoted.facts["x"].len(),1);
+    let included = parse("#include \"core.rr\"\n.decl answer(n:node)\nanswer(n) :- kind(n, \"call\").\n").unwrap();
+    assert!(included.decls.contains_key("doc"), "a real include still supplies its declarations");
+    assert!(parse("#unknown \"x.rr\"\n").is_err());
+    assert!(parse(".decl broken(\n").is_err(), "the lexical shortcut does not bypass compilation errors");
+}
+
 fn finding_contract(source: &str, program: &str) -> Vec<serde_json::Value> {
-    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-contract");
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("rr-contract");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.py"), source).unwrap();
     let rule = root.join("rule.rr");
@@ -109,7 +122,7 @@ RawText(@place(p, 1)) :- doc(d, p, _), source(d, sp), text(sp, t), contains("mar
 
 #[test]
 fn public_rr_report_preserves_compiled_policy_metadata() {
-    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-metadata");
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("rr-metadata");
     std::fs::create_dir_all(&root).unwrap();
     let rule = root.join("rule.rr");
     std::fs::write(&rule, r#"
@@ -377,6 +390,28 @@ fn a_context_leaves_out_the_clause_head() {
     assert!(ctx.iter().all(|r| !r.contains("cb(")), "{ctx:?}");
 }
 
+/// A context keeps a group of literals that ties two asked variables, even where other groups bind each:
+/// pyi047's `unread_comp_var`, asked for c, v and x, binds c by `in_stub(a), within(c, a)` and v, x by `kind(v, …),
+/// text(v, x)`. Only `child(c, fc, _), field(fc, "left", t), (v = t ; within(v, t))` ties c to v. Left out, the
+/// context is every node of a stub file times every identifier (122 M rows on the ruff fixtures).
+#[test]
+fn a_context_keeps_the_group_tying_its_variables() {
+    let p = parse(concat!(
+        ".decl within(n: node, a: node)\n.decl kind(n: node, k: symbol)\n.decl text(n: node, x: symbol)\n",
+        ".decl child(p: node, c: node, i: number)\n.decl field(p: node, f: symbol, c: node)\n.decl in_stub(n: node)\n",
+        ".input within, kind, text, child, field, in_stub\n",
+        ".decl unread(a: node, v: node, x: symbol)\n.output unread\n",
+        "unread(a, v, x) :- in_stub(a), within(c, a), child(c, fc, _), kind(fc, \"for_in_clause\"),\n",
+        "    field(fc, \"left\", t), (v = t ; within(v, t)), kind(v, \"identifier\"), text(v, x),\n",
+        "    count : { within(r, c), kind(r, \"identifier\"), text(r, x), r != v } = 0.\n",
+    ))
+    .unwrap();
+    let ctx: Vec<String> = p.rules.iter().filter(|r| r.head.rel.starts_with("rr_ctx")).map(|r| r.to_string()).collect();
+    assert!(!ctx.is_empty(), "{:#?}", p.rules.iter().map(|r| r.to_string()).collect::<Vec<_>>());
+    // Every rule of the context reaches v from c through the comprehension's target t.
+    assert!(ctx.iter().all(|r| r.contains("child($c, $fc") && r.contains("field($fc, \"left\", $t)")), "{ctx:#?}");
+}
+
 /// A helper's context (here the demand of strings `parsed` parses) keeps only the literals tied to its variables:
 /// `root(a)`, tied to `s` only through a disjunction the context leaves out, would test that some root exists in any document (`ann_root(_)`), making
 /// every row depend on every file.
@@ -535,7 +570,7 @@ fn violation_codes_suppressions_and_places_lower() {
 /// decimals, their arithmetic and order), and an aggregate inside a term.
 #[test]
 fn souffle_builtins_run() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("builtins");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("builtins");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "x = 1\ny = 2\n").unwrap();
     let program = r#"
@@ -583,7 +618,7 @@ prod(p, e) :- kv(4, _), p = product k : { kv(k, _) }, e = product k : { kv(k, _)
 /// the rules the SQL executor ran before, with the same rows.
 #[test]
 fn native_aggregates_and_text_functions_run() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("native-agg");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("native-agg");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
     let program = r#"
@@ -619,7 +654,7 @@ up(p, k, u) :- q(p, k), u = @pkg_up(p, k).
 /// The axes over a relation of nodes (climbs up the tree), and a negated conjunction (a helper relation).
 #[test]
 fn node_sets_and_negated_conjunctions_run() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("nodesets");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("nodesets");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "def outer():\n    for x in y:\n        def inner():\n            g()\n        f()\nh()\n").unwrap();
     let program = r#"
@@ -1159,7 +1194,7 @@ fn programs_are_kept_by_the_hashes_of_what_they_read() {
 /// `must, may` (core.rr 3): two sides, negation reading the other one, and what reads them three-valued too.
 #[test]
 fn must_may_relations_run() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("mustmay");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("mustmay");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
     let program = r#"
@@ -1193,7 +1228,7 @@ seen(x) :- p(x).
 /// `precedes_stop(a, b, S)`: siblings in order with no child of S between them.
 #[test]
 fn precedes_stop_runs() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("precstop");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("precstop");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "def f():\n    a()\n    b()\n    return\n    c()\n").unwrap();
     let program = r#"
@@ -1220,7 +1255,7 @@ by_set(x, y) :- node(_, a, "expression_statement", x, _), node(_, b, _, y, _), p
 /// `!nearest(n, s, set)` with s named, two aggregates compared, and `unset` (its text is "").
 #[test]
 fn negated_nearest_and_compared_aggregates_run() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("negnearest");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("negnearest");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "def outer():\n    def inner():\n        g()\n    f()\n").unwrap();
     let program = r#"
@@ -1256,7 +1291,7 @@ given(x) :- node(_, n, "call", x, _), !unset(n).
 /// Keep both contracts, including long lines, empty lines and CRLF as one separator.
 #[test]
 fn python_split_lines_are_lossless_and_document_local() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("splitlines");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("splitlines");
     std::fs::create_dir_all(&dir).unwrap();
     let long = "x".repeat(400);
     let src = format!("{long}\u{000b}two\u{000c}\u{001c}four\u{001d}five\u{001e}six\u{0085}seven\u{2028}eight\u{2029}nine\r\nten\releven\n");
@@ -1287,7 +1322,7 @@ seen(p, l, t) :- doc(d, p, _), split_line(d, l, t).
 /// Empty scopes still run global absence checks; they must not become a planning error or an early return.
 #[test]
 fn empty_corpora_run_global_absence_findings() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("emptyrr");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("emptyrr");
     let corpus = dir.join("corpus");
     std::fs::create_dir_all(&corpus).unwrap();
     let policy = dir.join("rule.rr");
@@ -1306,7 +1341,7 @@ Missing(@place("required.py", 1)) :- !doc(_, "required.py", _).
 /// Direct scanner APIs select buffers, including hidden paths and nonstandard extensions.
 #[test]
 fn explicit_input_files_preserve_the_callers_document_batch() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rrinputs");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrinputs");
     let root = dir.join("corpus");
     std::fs::create_dir_all(root.join(".hidden")).unwrap();
     std::fs::write(root.join(".hidden/a.txt"), "hidden text").unwrap();
@@ -1331,7 +1366,7 @@ Seen(@place(p, l), t) :- doc(d, p, _), split_line(d, l, t).
 /// async_executor uses str.split('\n'), not physical lines or Python splitlines.
 #[test]
 fn lf_lines_keep_other_separators_and_the_trailing_empty_line() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rrlf");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrlf");
     let root = dir.join("corpus");
     std::fs::create_dir_all(&root).unwrap();
     let first = format!("{}\rtwo\u{2028}three\u{b}four", "x".repeat(400));
@@ -1372,7 +1407,7 @@ Verified(@place("allowlist.json", 1), name) :- candidate(name, message),
 /// One repository document can feed several typed selectors without rebuilding per rule or source file.
 #[test]
 fn repository_json_selectors_preserve_typed_rows_and_wildcard_keys() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rrjson");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrjson");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("policy.json"), r#"{"counts":{"a":2,"b":3},"groups":{"g":{"entries":[{"name":"one","limit":4},{"name":"two","limit":5}]}},"title":"kept"}"#).unwrap();
     let rule = dir.join("rule.rr");
@@ -1430,7 +1465,7 @@ Let(d, x) :- kind(d, "variable_declarator"), field(d, "name", n), text(n, x).
 /// A malformed row must not leak an earlier prefix of a policy input into rule execution.
 #[test]
 fn repository_inputs_report_missing_and_malformed_without_partial_rows() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rrinputerrors");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrinputerrors");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("bad.json"), r#"[1,"wrong type"]"#).unwrap();
     let rule = dir.join("rule.rr");
@@ -1471,7 +1506,7 @@ Status(@place("allowlist.json", 1), name, status) :- allow_status(name, status).
 /// `@ed25519_ok` through a rule: an existing signature verifies, a tampered message does not.
 #[test]
 fn signatures_verify_through_rules() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("signatures");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("signatures");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
     let program = r#"
@@ -1494,7 +1529,7 @@ verified(name) :- candidate(name, message),
 /// parenthesized expression as what it holds, literals by value. Equal right-hand sides pair up; others do not.
 #[test]
 fn tree_digests_compare_subtrees_without_positions() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("digest");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("digest");
     std::fs::create_dir_all(&dir).unwrap();
     let source = "a = (1, 2)\nb = (1, 2,)\nc = 'x'\nd = \"x\"\ne = 16\nf = 0x10\ng = (h)\nh = h  # note\ni = [1, 2]\n";
     std::fs::write(dir.join("a.py"), source).unwrap();
@@ -1518,7 +1553,7 @@ same(l, m) :- rhs(l, r), rhs(m, s), l < m, @tree_digest(r) = @tree_digest(s).
 /// changes the method's digest alone, not its class's or its module's.
 #[test]
 fn def_digests_hash_each_definitions_own_code() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("defdigest");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("defdigest");
     let digests = |source: &str| -> std::collections::BTreeMap<String, String> {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -1556,7 +1591,7 @@ unit(x, s) :- def_digest(n, s), field(n, "name", i), text(i, x).
 /// `parent` rows as output (`path:id`); run once under each scheme (the scheme is the process's).
 #[test]
 fn definition_ids_keep_other_definitions_rows_across_a_body_edit() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("defids");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("defids");
     let rows = |source: &str| -> std::collections::BTreeSet<String> {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
@@ -1587,7 +1622,7 @@ fn definition_ids_keep_other_definitions_rows_across_a_body_edit() {
 /// its text and line (`rx_span`); over a symbol, `match_all` gives a row per match with its groups' text.
 #[test]
 fn match_all_captures_spans_over_source_text_and_symbols_over_symbols() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("matchall");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("matchall");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "x = 1  # SEC1 SEC22\nclass Foo:\n    pass\nclass Bar: pass\n").unwrap();
     let rule = dir.join("m.rr");
@@ -1639,7 +1674,7 @@ NQ(m, c) :- hit(m, c).
 /// match("…", w)` over a string's content (RUF001's words). It once tested the span's id as a text, and never held.
 #[test]
 fn a_text_test_of_a_capture_in_its_own_body_tests_the_captured_text() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("capturetest");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("capturetest");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "a = \"x\u{211d}y plain\"\nb = \"2\u{211d}6789\"\n").unwrap();
     let rule = dir.join("m.rr");
@@ -1670,7 +1705,7 @@ odd(x) :- piece(t), match_all("(?<w>[a-z0-9ℝ]+)", t), !match(".*ℝ.*", w), te
 /// A capture inside `count : { … }` reads its text from the rule.
 #[test]
 fn match_all_over_nodes_of_a_kind_and_over_captures_gives_spans() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("matchkinds");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("matchkinds");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "a = \"/x/{id}/{name}\"\nb = \"/x/{id}/{name}\"\nc = 'k9 zz'\n# note AB12 CD3\n").unwrap();
     let rule = dir.join("m.rr");
@@ -1707,7 +1742,7 @@ ndig(t, n) :- wd(w), text(w, t), n = count : { match_all("(?<d>[0-9])", w) }.
 /// strings is matched once and placed at each.
 #[test]
 fn match_all_captures_spans_over_a_nodes_text_and_over_captures() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("matchnode");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("matchnode");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "x = 'ab1 cd22'\ny = 'ab1 cd22'  # ef3\n").unwrap();
     let rule = dir.join("m.rr");
@@ -1774,7 +1809,7 @@ in_text(t, k) :- kind(n, "argument_list"), text(n, t), k = count : { match_all("
 /// SEC code on a suppression line counts, inside the comment or not.
 #[test]
 fn noqa_sec_ratchet_counts_every_sec_code_on_suppression_lines() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("noqa");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("noqa");
     std::fs::create_dir_all(dir.join("impl")).unwrap();
     std::fs::write(dir.join("impl/a.py"), "x = \"SEC1\"  # noqa: SEC2\ny = 1  # noqa: E501, SEC3 SEC44\nz = \"SEC9\"\n").unwrap();
     let rule = crate::code_rule_dsl::logic::rr::library().join("../data-layer/noqa-sec-ratchet.rr");
@@ -1788,7 +1823,7 @@ fn noqa_sec_ratchet_counts_every_sec_code_on_suppression_lines() {
 /// Error directives report rejected syntax while raw-source consumers keep their document views.
 #[test]
 fn syntax_error_directives_preserve_raw_source_relations() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("withheld");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("withheld");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("good.py"), "x = 1\n").unwrap();
     std::fs::write(dir.join("bad.py"), "y = 2\ndef (:\n").unwrap();
@@ -1821,7 +1856,7 @@ err(d) :- syntax_error(d, _, _).
 /// ones too.
 #[test]
 fn outputs_do_not_depend_on_the_chunk_size() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("chunks");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("chunks");
     std::fs::create_dir_all(&dir).unwrap();
     for i in 0..6 {
         std::fs::write(dir.join(format!("m{i}.py")), format!("def f{i}(x):\n    return g{}(x) + len(x)\n\ndef g{i}(y):\n    return f{i}(y)\n", (i + 1) % 6)).unwrap();
@@ -1879,7 +1914,7 @@ UNKNOWN(c, x) :- kind(c, "call"), field(c, "function", f), text(f, x), !defined(
 /// root's edge that starts the path, and the memo variant over its roots in order.
 #[test]
 fn dfs_first_runs_through_rules() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("dfs");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("dfs");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
     let program = r#"
@@ -1914,7 +1949,7 @@ none(r) :- e(r, _, _), !dfs_first(r, _, _, e, t).
 /// over equal closures.
 #[test]
 fn components_run_through_rules() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("components");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("components");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
     let program = r#"
@@ -2050,7 +2085,7 @@ Subtree(n) :- kind(n, "module"), text(n, _).
 
 /// Decision 0055's guests: a run of `rule` over `files`, each output's sorted rows.
 fn guests_run(name: &str, files: &[(&str, &str)], rule: &str, outputs: &[&str]) -> Vec<Vec<String>> {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
     std::fs::create_dir_all(&dir).unwrap();
     for (path, text) in files {
         std::fs::write(dir.join(path), text).unwrap();
@@ -2284,7 +2319,7 @@ Found(@place("a.py", 1), i) :- sample(s), match_all("{pattern}", s, i, _, _).
 
 /// Printed engine programs use reserved helper names; run through the internal text boundary used by run_rr.
 fn complete_rule(program: &str) -> String {
-    let path = crate::code_rule_dsl::prefilter::tests::temp().with_extension("public.rr");
+    let path = crate::code_rule_dsl::fixtures::temp().with_extension("public.rr");
     std::fs::write(&path, program).unwrap();
     let (program, _) = read_file(&path).unwrap();
     std::fs::remove_file(path).unwrap();
@@ -2292,7 +2327,7 @@ fn complete_rule(program: &str) -> String {
 }
 
 fn lowered_findings(program: &str) -> Vec<serde_json::Value> {
-    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("lowered-findings");
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("lowered-findings");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.py"), "").unwrap();
     let out = root.join("out");
@@ -2351,7 +2386,7 @@ objects(n, x) :- q(s, x0), t = @parse("sql", x0), tape_of(d, t), node(d, n, "obj
 .output tables, objects
 "#;
     let run = |name: &str| {
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
         std::fs::create_dir_all(&dir).unwrap();
         for (path, text) in &files {
             std::fs::write(dir.join(path), text).unwrap();
@@ -2399,7 +2434,7 @@ through(x) :- doc_role(g, "code"), node(g, i, "import_statement", _, _), text(i,
 "#
         )
     };
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("combined_guests");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("combined_guests");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), py).unwrap();
     let printed: Vec<String> = [program(".guests off"), program("")]
@@ -2450,7 +2485,7 @@ outer(k) :- kind(n, "call"), nearest(n, a, clauses), node(_, a, k, _, _).
 /// part with `tests false`, is dropped; `.scope given` (files a test gives) keeps them all.
 #[test]
 fn scope_drops_findings_outside_the_policy_files() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("scope");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("scope");
     for p in ["impl/a.py", "impl/tests/test_a.py", "other/b.py"] {
         std::fs::create_dir_all(dir.join(p).parent().unwrap()).unwrap();
         std::fs::write(dir.join(p), "f()\n").unwrap();
@@ -2486,7 +2521,7 @@ Call(c) :- node(_, c, "call", _, _).
 /// facts still come from the whole scope, and `embedded false` is `.guests off`.
 #[test]
 fn scope_takes_option_dirs_text_documents_and_report_dirs() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("scope-forms");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("scope-forms");
     for (p, text) in [("impl/a.py", "f()\n"), ("app/x/c.py", "g()\n"), ("other/b.py", "h()\n"), ("docs/d.md", "intro\nTODO one\n"), ("docs/e.txt", "TODO two\n"), ("tools/t.py", "k()\n")] {
         std::fs::create_dir_all(dir.join(p).parent().unwrap()).unwrap();
         std::fs::write(dir.join(p), text).unwrap();
@@ -2531,7 +2566,7 @@ Todo(@place(p, l)) :- doc(d, p, _), src_line(d, l, sp), contains("TODO", sp).
 /// a slice with a start is another pattern's, and a negated pattern holds where none matches.
 #[test]
 fn pattern_literals_match_and_bind_their_metavariables() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("pattern");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("pattern");
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("src/a.py"), "t = name[:-4]\nu = name[1:-7]\nv = other[:-13]\n").unwrap();
     let rule = dir.join("rule.rr");
@@ -2639,7 +2674,7 @@ one(x) :- ident(_, x), (x = "alpha" ; x = "beta").
 /// `.global` shares a policy's own relation when the definitions are alike, and refuses it when they differ.
 #[test]
 fn library_relations_are_shared_and_each_policy_reads_its_own_scope() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("fact-spaces");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("fact-spaces");
     for (p, text) in [("a/x.py", "def f():\n    pass\n"), ("b/y.py", "def f():\n    pass\n"), ("b/z.py", "def g():\n    pass\n")] {
         std::fs::create_dir_all(dir.join("src").join(p).parent().unwrap()).unwrap();
         std::fs::write(dir.join("src").join(p), text).unwrap();
@@ -2686,7 +2721,7 @@ def_at(f, s) :- kind(f, "function_definition"), field(f, "name", n), text(n, s).
 /// one name) would join a call only A's scope reads if the library's rows reached it unguarded.
 #[test]
 fn a_library_held_once_is_read_by_each_policy_in_its_own_scope() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("held-once");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("held-once");
     for (p, text) in [("a/x.py", "f()\n"), ("b/y.py", "f()\n"), ("b/z.py", "g()\n")] {
         std::fs::create_dir_all(dir.join("src").join(p).parent().unwrap()).unwrap();
         std::fs::write(dir.join("src").join(p), text).unwrap();
@@ -2716,7 +2751,7 @@ fn a_library_held_once_is_read_by_each_policy_in_its_own_scope() {
 #[test]
 fn a_grammar_the_registry_does_not_have_is_refused() {
     let lower = |text: &str| {
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("grammar");
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("grammar");
         std::fs::create_dir_all(&dir).unwrap();
         let rule = dir.join("g.rr");
         std::fs::write(&rule, text).unwrap();
@@ -2752,7 +2787,7 @@ fn a_nested_aggregate_keeps_the_rules_variables_it_reads() {
 /// keys. Each pair `x` before `x` and the last `x` are by line, under either numbering.
 #[test]
 fn ordering_nodes_follows_preorder_across_granules() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("nodeorder");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("nodeorder");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "x = 1\nprint(x)\ndef f():\n    return x\nclass C:\n    y = x\nz = [x]\nx = 2\ndef g():\n    return x\n").unwrap();
     let program = r#"

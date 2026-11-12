@@ -99,11 +99,11 @@ impl<'a> Tree<'a> {
 
     fn ty(&self, n: u32) -> Result<String, Error> {
         let name = self.name(n, Field::Name)?;
-        if !self.has_token(n, "<") {
-            return Ok(name);
+        // `T<a>`: the argument says it (its `<` and `>` are implied); `T<>` stores them.
+        if let Some(a) = self.get(n, Field::Argument) {
+            return Ok(format!("{name}<{}>", self.text(a)));
         }
-        let inner = self.get(n, Field::Argument).map_or("", |a| self.text(a));
-        Ok(format!("{name}<{inner}>"))
+        Ok(if self.has_token(n, "<") { format!("{name}<>") } else { name })
     }
 
     fn statement(&self, s: u32) -> Result<Item, Error> {
@@ -135,12 +135,15 @@ impl<'a> Tree<'a> {
                 let (mut names, mut params) = (Vec::new(), Vec::new());
                 for r in self.all(s, Field::Relation) {
                     let name = self.name(r, Field::Name)?;
-                    let tokens = &self.children[r as usize];
-                    let open = tokens.iter().copied().find(|&c| self.text(c) == "(" && self.kind(c) >= super::tape::FIRST_ANONYMOUS);
-                    let close = tokens.iter().copied().rev().find(|&c| self.text(c) == ")" && self.kind(c) >= super::tape::FIRST_ANONYMOUS);
-                    if let (Some(open), Some(close)) = (open, close) {
-                        let (from, to) = (self.nodes[open as usize].end as usize, self.nodes[close as usize].start as usize);
+                    // `r(…)`: the parameters' text, from the byte after the name's `(` to its `)`. The parentheses
+                    // around parameters are implied; `r()` stores them.
+                    let open = self.nodes[self.one(r, Field::Name)? as usize].end as usize;
+                    if let Some(p) = self.get(r, Field::Parameters) {
+                        let from = self.src[open..].find('(').map_or(open, |k| open + k + 1);
+                        let to = self.src[..self.nodes[r as usize].end as usize].rfind(')').unwrap_or(self.nodes[p as usize].end as usize);
                         params.push((name.clone(), self.src[from..to].to_owned()));
+                    } else if self.has_token(r, "(") {
+                        params.push((name.clone(), String::new()));
                     }
                     names.push(name);
                 }
@@ -304,7 +307,8 @@ impl<'a> Tree<'a> {
             k if k == Kind::UnaryExpression as u16 => Term::Bin { op: "-", l: Box::new(Term::Num(0)), r: Box::new(self.term(self.one(t, Field::Operand)?)?) },
             k if k == Kind::ParenthesizedExpression as u16 => self.term(self.one(t, Field::Expression)?)?,
             k if k == Kind::Aggregate as u16 => Term::Agg {
-                op: self.text(self.one(t, Field::Operator)?).to_owned(),
+                // `count` is implied: the aggregate with a body alone.
+                op: self.get(t, Field::Operator).map_or("count", |o| self.text(o)).to_owned(),
                 over: self.get(t, Field::Value).map(|v| self.term(v).map(Box::new)).transpose()?,
                 by: self.all(t, Field::Key).map(|k| self.term(k)).collect::<Result<_, _>>()?,
                 sep: self.get(t, Field::Separator).map(|s| self.string(s)).transpose()?,

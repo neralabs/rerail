@@ -34,6 +34,10 @@ pub(in crate::code_rule_dsl) fn placed(key: &str, p: &crate::code_rule_dsl::logi
                 rows: d.rows,
                 distinct: d.distinct,
                 bindings: d.bindings,
+                made: d.made,
+                waved: u64::from(d.waved),
+                arena_reruns: u64::from(d.arena_reruns),
+                sized: u64::from(d.sized),
             });
             true
         }
@@ -165,7 +169,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
         let _ = writeln!(sql_tsv, "{p}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{text}", s.runs, s.ns as f64 / 1e6, s.vm, s.scan, s.sort, s.autoindex);
     }
     std::fs::write(dir.join("sql.tsv"), sql_tsv)?;
-    let work = |steps: &Vec<(u64, u64)>| steps.iter().map(|(a, _)| a).sum::<u64>();
+    let work = |steps: &Vec<(u64, u64)>| super::plan_work(steps);
     let mut native: Vec<_> = state.native.iter().collect();
     native.sort_by_key(|(_, s)| std::cmp::Reverse(work(s)));
     let mut native_tsv = String::from("span\twork\tsteps_in_out\tplan\tcpu_s\n");
@@ -194,6 +198,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     r.push('\n');
     r.push_str(&analysis_text);
     fallbacks(&mut r, &state);
+    executors(&mut r, &state);
     hazards(&mut r, &state);
     placements(&mut r, &state);
     explain(&mut r, &state);
@@ -467,3 +472,6 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     }
     std::fs::write(dir.join("profile.txt"), r)
 }
+
+// Its tests (the report over what a run recorded, and the projection's provenance over a parsed program) run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
+// engine registers as it loads (the languages, their `.rr` libraries).

@@ -6,13 +6,14 @@ use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::model::{RegexLines, RegexOptions};
 // cratify: a re-export of rerail-engine's, which its facades of this module make
 use crate::code_rule_dsl::typing::file_local::Binding;
+use crate::code_rule_dsl::test_support::{CAPABILITIES, clause_document, compile_document_with, evaluate_file, violation};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 /// `files` (path, source) written under a fresh directory named for `name`.
 fn corpus(name: &str, files: &[(&str, &str)]) -> PathBuf {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(format!("base-{name}"));
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(format!("base-{name}"));
     let _ = std::fs::remove_dir_all(&dir);
     for (path, source) in files {
         let p = dir.join(path);

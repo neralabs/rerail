@@ -15,7 +15,7 @@ fn checked_u32(value: usize) -> Result<u32, Error> {
 }
 
 #[derive(Clone, Debug, Default)]
-pub(super) struct PackedValueTables {
+pub struct PackedValueTables {
     pub values: Vec<ValueRecord>,
     pub nfa_states: Vec<NfaStateRecord>,
     pub nfa_data: Vec<u32>,

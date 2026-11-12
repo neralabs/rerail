@@ -15,12 +15,36 @@ pub fn set(engine: &'static str, grammar: &'static str) {
 
 /// The engine's build identity.
 pub fn engine() -> &'static str {
+    #[cfg(any(test, feature = "test-hooks"))]
+    if ENGINE.get().is_none() {
+        set_for_tests();
+    }
     ENGINE.get().copied().expect("the engine sets its build identity as it loads")
 }
 
 /// The parser and grammar build identity.
 pub fn grammar() -> &'static str {
+    #[cfg(any(test, feature = "test-hooks"))]
+    if GRAMMAR.get().is_none() {
+        set_for_tests();
+    }
     GRAMMAR.get().copied().expect("the engine sets its build identity as it loads")
+}
+
+/// A crate's own test binary, which the engine does not load: identities of that binary (its path and when it was
+/// built), so that nothing a store kept under another build is taken as this one's.
+#[cfg(any(test, feature = "test-hooks"))]
+fn set_for_tests() {
+    use std::hash::{Hash, Hasher};
+    let exe = std::env::current_exe().unwrap_or_default();
+    let built = std::fs::metadata(&exe).and_then(|m| m.modified()).ok();
+    let id = |salt: &str| {
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        (salt, &exe, built).hash(&mut h);
+        h.finish()
+    };
+    let hex = |salt: &str| format!("{:016x}{:016x}", id(salt), id(&format!("{salt}+")));
+    set(Box::leak(hex("engine").into_boxed_str()), Box::leak(hex("grammar").into_boxed_str()));
 }
 
 /// The grammars' build identity as a number: its first 15 hex digits.

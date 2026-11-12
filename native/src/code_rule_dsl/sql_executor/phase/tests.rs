@@ -1,5 +1,88 @@
 use super::*;
 
+#[test]
+fn native_insert_preserves_conflicts_ignore_and_atomic_publication() {
+    let db=rusqlite::Connection::open_in_memory().unwrap();
+    let store=versions::Store::default();
+    for name in ["insert_a","insert_b"] {
+        store.create_readonly(&db,name,versions::Schema::integers(2,1)).unwrap();
+        store.load_rows(name,vec![vec![Some(1),Some(7)]],false).unwrap();
+    }
+    let pool=scratch::Pool::default();
+    let mut w=Work::new(&db,&pool);w.versions=Some(&store);
+    let before=store.version("insert_a");
+    let mut phase=Phase::default();
+    let valid=phase.view(2,"SELECT 2,9");
+    let invalid=phase.view(2,"SELECT 1,11");
+    phase.insert(&store,"insert_a",&valid,false).unwrap();
+    phase.insert(&store,"insert_b",&invalid,false).unwrap();
+    assert!(phase.execute(&w).is_err());
+    assert!(before.same(&store.version("insert_a")));
+    assert!(before.same(&store.version("insert_b")));
+    let mut phase=Phase::default();
+    let rows=phase.view(2,"SELECT 1,11 UNION ALL SELECT 2,9 UNION ALL SELECT 2,10 UNION ALL SELECT NULL,12");
+    phase.insert(&store,"insert_a",&rows,true).unwrap();
+    let counts=phase.execute(&w).unwrap();
+    assert_eq!(counts["insert_a"].rows,1);
+    assert_eq!(store.version("insert_a").rows(),vec![vec![Some(1),Some(7)],vec![Some(2),Some(9)]]);
+    let after=store.version("insert_a");
+    let mut phase=Phase::default();
+    let duplicate=phase.view(2,"SELECT 3,13 UNION ALL SELECT 3,14");
+    phase.insert(&store,"insert_a",&duplicate,false).unwrap();
+    assert!(phase.execute(&w).is_err());
+    assert!(after.same(&store.version("insert_a")));
+}
+
+#[test]
+fn dense_updates_preserve_ids_indexes_and_atomic_multi_root_publication() {
+    use crate::code_rule_dsl::logic::analysis::storage::Publication;
+    let db = rusqlite::Connection::open_in_memory().unwrap();
+    let store = versions::Store::default();
+    let rows = (0..1024).map(|i|vec![Some(i),Some(i*2)]).collect::<Vec<_>>();
+    for name in ["dense_a", "dense_b"] {
+        store.create(&db,name,versions::Schema::integers(2,1)).unwrap();
+        store.load_rows(name,rows.clone(),false).unwrap();
+    }
+    let before_a = store.version("dense_a");
+    let before_b = store.version("dense_b");
+    let pool = scratch::Pool::default();
+    let mut w = Work::new(&db,&pool);
+    w.versions = Some(&store);
+    assert!(!w.preparing);
+    for invalid in [true,false] {
+        let mut phase = Phase::default();
+        let keys = phase.relation(1,"SELECT c0 FROM dense_a WHERE c0<768");
+        let next = phase.relation(2,"SELECT c0,c1+5 FROM dense_a WHERE c0<768");
+        let other = if invalid {phase.relation(2,"SELECT c0,CASE WHEN c0=767 THEN NULL ELSE c1+5 END FROM dense_b WHERE c0<768")}
+            else {next.clone()};
+        phase.patch_computed(&store,"dense_a",&keys,&next).unwrap();
+        phase.patch_computed(&store,"dense_b",&keys,&other).unwrap();
+        if invalid {
+            assert!(phase.execute(&w).is_err());
+            assert!(before_a.same(&store.version("dense_a")));
+            assert!(before_b.same(&store.version("dense_b")));
+        } else {
+            let counts = phase.execute(&w).unwrap();
+            assert_eq!(counts["dense_a"].strategy,Publication::BulkDense);
+            assert_eq!(counts["dense_b"].strategy,Publication::BulkDense);
+        }
+    }
+    let expected = (0..1024).map(|i|vec![Some(i),Some(i*2+if i<768 {5}else{0})]).collect::<Vec<_>>();
+    for name in ["dense_a","dense_b"] {
+        assert_eq!(store.version(name).rows(),expected);
+        let ids = db.prepare(&format!("SELECT c0,rowid FROM {name} ORDER BY c0")).unwrap()
+            .query_map([],|r|Ok((r.get::<_,i64>(0)?,r.get::<_,i64>(1)?))).unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>().unwrap();
+        assert!(ids.iter().all(|&(key,id)| id==key+1));
+        assert_eq!(db.query_row(&format!("SELECT c0 FROM {name} WHERE c1=205"),[],|r|r.get::<_,i64>(0)).unwrap(),100);
+    }
+    let mut sparse = Phase::default();
+    let keys=sparse.relation(1,"SELECT 4");
+    let next=sparse.relation(2,"SELECT 4,99");
+    sparse.patch_computed(&store,"dense_a",&keys,&next).unwrap();
+    assert_eq!(sparse.execute(&w).unwrap()["dense_a"].strategy,Publication::SparsePatch);
+}
+
 fn initialize(db: &rusqlite::Connection, store: &versions::Store, name: &str) {
     store
         .create(db, name, versions::Schema::integers(2, 1))

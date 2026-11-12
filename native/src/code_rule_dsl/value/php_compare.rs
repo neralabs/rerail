@@ -18,7 +18,7 @@ use ast_grep_core::{Doc, Node};
 
 /// What a `use` clause imports.
 #[derive(Clone, Copy, PartialEq)]
-pub(crate) enum ImportKind {
+pub enum ImportKind {
     Class,
     Function,
     Constant,
@@ -27,7 +27,7 @@ pub(crate) enum ImportKind {
 /// What a `use` clause imports: classes, unless its own keyword or its statement's says
 /// `function` or `const`. `use function a\f, b\g;` types every clause with the first one's
 /// keyword, which the grammar gives that clause; a group statement carries its keyword itself.
-pub(crate) fn import_kind<D: Doc>(clause: &Node<'_, D>) -> ImportKind {
+pub fn import_kind<D: Doc>(clause: &Node<'_, D>) -> ImportKind {
     let keyword = clause.field("type").or_else(|| {
         let parent = clause.parent()?;
         if parent.kind() == "namespace_use_group" {

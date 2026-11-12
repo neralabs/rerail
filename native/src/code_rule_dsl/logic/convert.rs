@@ -68,7 +68,7 @@
 //!   clause the run leaves out (the replay's `keep`) is dropped from both. The merge, less what `violation` does not
 //!   reach, is printed with `rr::print`.
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 use super::front::{self, Literal, Program, Term};
 use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog};
 use crate::code_rule_dsl::matcher::{AstMatcher, Axis, Semantic, StopBy};
@@ -131,7 +131,7 @@ impl Emitter {
 
     /// Converts one clause with `f`. Where it fails, all it emitted is taken back (rules, declarations, kind sets,
     /// utilities, approximations): a clause is converted whole or leaves nothing.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub(in crate::code_rule_dsl) fn clause(&mut self, f: impl FnOnce(&mut Self) -> Res<()>) -> Res<()> {
         let saved = self.clone();
         let out = f(self);
@@ -763,7 +763,7 @@ impl Emitter {
     }
 
     /// Adds a rule `head :- body` and its head's declaration.
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub(in crate::code_rule_dsl) fn rule(&mut self, head: &str, columns: &str, body: Body) {
         let name = head.split('(').next().unwrap_or(head).to_owned();
         self.decls.insert(name, columns.to_owned());
@@ -880,7 +880,7 @@ const DOC: [&str; 2] = ["doc(_, $s, _)", "doc(_, _, $s)"];
 
 /// `prog` less what its outputs do not reach: the rules (`front::prune`), then the declarations, inputs, facts and
 /// kind sets no rule left reads or derives.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 pub(in crate::code_rule_dsl) fn reachable(prog: Program) -> Program {
     let mut prog = front::prune(prog);
     let mut used: BTreeSet<String> = prog.outputs.iter().cloned().collect();
@@ -908,7 +908,7 @@ pub(in crate::code_rule_dsl) fn reachable(prog: Program) -> Program {
 }
 
 /// Where a clause's rules come from.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::code_rule_dsl) enum Origin {
     /// The converter's, from the clause's matcher.
@@ -918,15 +918,15 @@ pub(in crate::code_rule_dsl) enum Origin {
 }
 
 /// The columns of `violation(rule, clause, code, path, line)`.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 const VIOLATION: [&str; 5] = ["sym", "sym", "sym", "sym", "int"];
 
 /// What the converter gives an authored file to read: the scope, the report gate, the options and the tape's verdict.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 pub(in crate::code_rule_dsl) use super::plan::corpus::GIVEN;
 
 /// The column types of what the converter gives (`GIVEN`), where `rel` is one.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 fn given_types(rel: &str) -> Option<Vec<String>> {
     let types: &[&str] = match rel {
         "in_scope" | "out_scope" | "report_when_gt" | "tape_syntax_error" => &["int"],
@@ -940,7 +940,7 @@ fn given_types(rel: &str) -> Option<Vec<String>> {
 }
 
 /// A base relation's column types (`BASE`), where `rel` is one.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 fn base_types(rel: &str) -> Option<Vec<String>> {
     BASE.lines().find_map(|line| {
         let columns = line.strip_prefix(".decl ")?.strip_prefix(rel)?.strip_prefix('(')?.strip_suffix(')')?;
@@ -949,7 +949,7 @@ fn base_types(rel: &str) -> Option<Vec<String>> {
 }
 
 /// The names the converter makes: an authored file declares none of them, but for reading the scope.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 fn converter_name(rel: &str) -> bool {
     let numbered = |stem: &str| rel.strip_prefix(stem).is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
     ["m", "u", "t", "k", "blocked"].into_iter().any(numbered)
@@ -958,13 +958,13 @@ fn converter_name(rel: &str) -> bool {
         || ["strtest_", "matchall_", "matchgroup_", "magic_", "done_", "inside_", "nearest_"].iter().any(|p| rel.starts_with(p))
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 fn types(columns: &[(String, String)]) -> Vec<&str> {
     columns.iter().map(|(_, t)| t.as_str()).collect()
 }
 
 /// Column types in `.rr` spellings, for the errors.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 fn spelled<'a>(types: impl IntoIterator<Item = &'a str>) -> String {
     let spell = |t: &'a str| match t {
         "int" => "number",
@@ -975,7 +975,7 @@ fn spelled<'a>(types: impl IntoIterator<Item = &'a str>) -> String {
 }
 
 /// The rule and clause a `violation` rule derives, where both are constants.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 fn violation_of(r: &front::Rule) -> Option<(&str, &str)> {
     match r.head.args.as_slice() {
         [Term::Str(rule), Term::Str(clause), ..] if r.head.rel == "violation" => Some((rule, clause)),
@@ -983,7 +983,7 @@ fn violation_of(r: &front::Rule) -> Option<(&str, &str)> {
     }
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 fn push_new(list: &mut Vec<String>, items: impl IntoIterator<Item = String>) {
     for item in items {
         if !list.contains(&item) {
@@ -995,7 +995,7 @@ fn push_new(list: &mut Vec<String>, items: impl IntoIterator<Item = String>) {
 /// The authored overlay (module doc): rule `rule`'s authored program over its converted one. `clauses`: the policy's
 /// clause ids; `keep`: the clauses this run keeps (the replay's, per event). The merged program, with only what
 /// `violation` reaches, and the clauses the authored program derives (kept or not).
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 pub(in crate::code_rule_dsl) fn overlay(mut converted: Program, mut authored: Program, rule: &str, clauses: &[String], keep: &dyn Fn(&str) -> bool) -> Result<(Program, BTreeSet<String>), String> {
     let err = |m: String| Err(format!("authored {rule}: {m}"));
     // The prelude's declarations the file does not use are core.rr's, not the file's (`rr::drop_unread_core`).

@@ -145,7 +145,7 @@ fn write_cache(path: &std::path::Path, roofs: &BTreeMap<Unit, Option<f64>>) {
 
 fn measure(units: &[Unit]) -> BTreeMap<Unit, Option<f64>> {
     let units = units.to_vec();
-    std::thread::spawn(move || {
+    rerail_accel::exec::service("profile roofline", None, move || {
         // What the memory sampler names while the loops run (not a span: `write` holds the profile's records).
         let _doing = super::memory::Doing::new("profile: the machine's roofs measured (roofline, not the run's work)");
         #[cfg(target_os = "macos")]
@@ -158,7 +158,8 @@ fn measure(units: &[Unit]) -> BTreeMap<Unit, Option<f64>> {
         }
         units.iter().map(|&u| (u, roof(u))).collect()
     })
-    .join()
+    .ok()
+    .and_then(|t| t.join().ok())
     .unwrap_or_default()
 }
 

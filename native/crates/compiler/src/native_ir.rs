@@ -104,7 +104,8 @@ pub enum StructuralOperation {
     Emit { label: u16, output: FunctionRef },
     // Tier 2's words over the token stream (decision 0087, `stream`).
     /// The next start of tier 1's extract `extract`.
-    Token { extract: u16 },
+    /// `any`: the mask of any mark (`TOKEN m=1+k`).
+    Token { extract: u16, any: Option<u8> },
     Switch { table: u16 },
     /// The token's end: `len` bytes, or (`last`) one past the next position of extract `len`.
     Span { last: bool, len: u16 },
@@ -120,9 +121,13 @@ pub enum StructuralOperation {
     /// node (docs/parser-generators/24-rr-and-bitlex-plan.md §2.3).
     /// `extra`: an extra's leaf placed now, never the node made last at its level.
     Leaf { kind: u16, deferred: bool, extra: bool },
+    /// A token the grammar implies (`implied`, `LEAF m=3`): no node; the extras pending stay
+    /// where they are, as a leaf's would.
+    Settle { kind: u16 },
     /// Mark `order` (its bit in mask `mask` at the token's start; at the stream's end, `end`),
     /// if not yet taken nor passed: take it and run the next word; else skip that word.
-    Mark { mask: u16, order: u8, end: bool },
+    /// `word`: the string the token's record must name too (`Words::mark_words`).
+    Mark { mask: u16, order: u8, end: bool, word: Option<u16> },
     /// The token starts at a bit of mask `mask`: run the next word; else skip it.
     Row { mask: u16 },
     /// A node becomes a `kind`: the innermost open node, or another (`On`).
@@ -194,7 +199,7 @@ impl StructuralOperation {
             Self::Fork { greedy, target } => (FORK, u8::from(greedy), target),
             Self::Goto { target } => (GOTO, 0, target),
             Self::Emit { label, .. } => (EMIT, 0, label),
-            Self::Token { extract } => (TOKEN, 0, extract),
+            Self::Token { extract, any } => (TOKEN, any.map_or(0, |k| k + 1), extract),
             Self::Empty { total } => (EMPTY, 0, total),
             Self::Switch { table } => (SWITCH, 0, table),
             Self::Span { last, len } => (SPAN, u8::from(last), len),
@@ -202,7 +207,8 @@ impl StructuralOperation {
             Self::Open { kind } => (OPEN, 0, kind),
             Self::Close { this } => (CLOSE, u8::from(this), 0),
             Self::Leaf { kind, deferred, extra } => (LEAF, if extra { 2 } else { u8::from(deferred) }, kind),
-            Self::Mark { mask, order, end } => (MARK, order | if end { 32 } else { 0 }, mask),
+            Self::Settle { kind } => (LEAF, 3, kind),
+            Self::Mark { mask, order, end, .. } => (MARK, order | if end { 32 } else { 0 }, mask),
             Self::Row { mask } => (ROW, 0, mask),
             Self::Retag { kind, on } => (RETAG, on as u8, kind),
             Self::Reread { reading } => (RETAG, 3, reading),
@@ -337,6 +343,8 @@ pub struct Structure {
     /// Tier 2's switch tables (`SWITCH`).
     pub switches: Vec<crate::stream_ir::ByteSwitch>,
     pub readings: crate::stream_ir::Readings,
+    /// Tier 2's rules (`Words::rules`): each rule's first place.
+    pub rules: Vec<u16>,
     /// The block programs, lowered (`BlockNative`).
     pub block_programs: Vec<BlockNative>,
     pub output: FunctionRef,
@@ -425,15 +433,16 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
                 label: operand,
                 output: FunctionRef::Output,
             },
-            TOKEN => StructuralOperation::Token { extract: operand },
+            TOKEN => StructuralOperation::Token { extract: operand, any: mode.checked_sub(1) },
             EMPTY => StructuralOperation::Empty { total: operand },
             SWITCH => StructuralOperation::Switch { table: operand },
             SPAN => StructuralOperation::Span { last: mode != 0, len: operand },
             WORD_IS => StructuralOperation::Word { string: operand, test: mode != 0 },
             OPEN => StructuralOperation::Open { kind: operand },
             CLOSE => StructuralOperation::Close { this: mode != 0 },
+            LEAF if mode == 3 => StructuralOperation::Settle { kind: operand },
             LEAF => StructuralOperation::Leaf { kind: operand, deferred: mode == 1, extra: mode == 2 },
-            MARK => StructuralOperation::Mark { mask: operand, order: mode % 32, end: mode & 32 != 0 },
+            MARK => StructuralOperation::Mark { mask: operand, order: mode % 32, end: mode & 32 != 0, word: program.mark_words.iter().find(|&&(k, _)| k == mode % 32).map(|&(_, s)| s) },
             ROW => StructuralOperation::Row { mask: operand },
             RETAG if mode == 3 => StructuralOperation::Reread { reading: operand },
             RETAG => StructuralOperation::Retag { kind: operand, on: On::of(mode) },
@@ -495,6 +504,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
         strings: program.strings.clone(),
         switches: program.switches.clone(),
         readings: program.readings.clone(),
+        rules: program.rules.clone(),
         block_programs: program.block_programs.iter().map(BlockNative::lower).collect(),
         output: FunctionRef::Output,
         reduction: FunctionRef::Reduction,

@@ -25,6 +25,7 @@ pub mod price;
 pub mod rows;
 pub mod score;
 pub mod stream;
+pub mod sql;
 
 #[cfg(all(feature = "sme", target_os = "macos", target_arch = "aarch64"))]
 pub mod sme;

@@ -46,7 +46,7 @@ pub(in crate::code_rule_dsl) fn execute_outcomes(
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
-pub(super) fn execute(
+pub fn execute(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],

@@ -64,7 +64,7 @@ impl ScopeRecipe {
 }
 
 /// The typed logical information needed before physical statement planning.
-pub struct ClauseLogicalPlan {
+pub(in crate::code_rule_dsl::demand::driver::catalog) struct ClauseLogicalPlan {
     ordinal: usize,
     source: ClauseId,
     identity: ClausePlanId,
@@ -74,7 +74,7 @@ pub struct ClauseLogicalPlan {
 }
 
 impl ClauseLogicalPlan {
-    pub fn new(
+    pub(in crate::code_rule_dsl::demand::driver::catalog) fn new(
         ordinal: usize,
         source: ClauseId,
         rule_id: &str,
@@ -97,12 +97,12 @@ impl ClauseLogicalPlan {
         }
     }
 
-    pub fn utility_definitions(&self) -> &[UtilityDefinitionId] {
+    pub(in crate::code_rule_dsl::demand::driver::catalog) fn utility_definitions(&self) -> &[UtilityDefinitionId] {
         &self.utility_definitions
     }
 }
 
-pub fn exact_scope_groups(
+pub(in crate::code_rule_dsl::demand::driver::catalog) fn exact_scope_groups(
     files: &[PackedFileInput],
     clauses: &[ClauseLogicalPlan],
 ) -> Result<Vec<Vec<usize>>, String> {

@@ -471,6 +471,9 @@ pub struct BlockProgram {
     /// operations; it reads no bytes, has no delay, carries nothing from word to word and
     /// writes no tier-2 masks. Its extract pass writes row numbers: a filter's survivors.
     pub rows: Option<RowShape>,
+    /// Tier 1's token records (`records`): two extracts zipped by index, the tokens' first and
+    /// last bytes, and a code a token, written by the record pass.
+    pub records: Option<crate::records::Records>,
 }
 
 /// A rounds group's layout: its members in order (the values on a way from one of its carries
@@ -587,6 +590,9 @@ pub struct BlockRun {
     pub outputs: Vec<Vec<u64>>,
     pub positions: Vec<Vec<u32>>,
     pub totals: Vec<u64>,
+    /// With records, each token's code (`records`); the totals' flag is set too where the
+    /// record pass refuses the streams.
+    pub codes: Vec<u32>,
 }
 
 impl BlockProgram {
@@ -635,7 +641,19 @@ impl BlockProgram {
         let delay = self.delay <= 63
             && self.output_delays.len() <= self.outputs.len()
             && self.output_delays.iter().all(|&d| d == u8::MAX || d <= self.delay);
-        if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay {
+        // Records: two extracts, a kind a byte, words a table can hold, and the totals' flag
+        // to refuse a file by.
+        let records = self.records.as_ref().is_none_or(|r| {
+            usize::from(r.starts) < self.extracts.len()
+                && usize::from(r.lasts) < self.extracts.len()
+                && r.starts != r.lasts
+                && r.kinds.len() == 256
+                && !self.totals.is_empty()
+                && crate::records::WordTable::new(&r.words).is_ok()
+                && r.marks.len() <= crate::records::MARKS
+                && r.marks.iter().all(|&(o, w)| usize::from(o) < self.outputs.len() && usize::from(w) <= r.words.len())
+        });
+        if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay || !records {
             return Err(Error::InvalidTarget(0));
         }
         groups(&self.ops, &self.rounds).map_err(|_| Error::InvalidTarget(0))?;
@@ -710,6 +728,25 @@ impl BlockProgram {
             out.extend_from_slice(b"odelay");
             out.extend((0..self.outputs.len()).map(|k| self.output_delay(k)));
         }
+        // The records, tagged.
+        if let Some(r) = &self.records {
+            out.extend_from_slice(b"records");
+            out.extend_from_slice(&r.starts.to_le_bytes());
+            out.extend_from_slice(&r.lasts.to_le_bytes());
+            out.extend_from_slice(&r.kinds);
+            out.extend_from_slice(&(r.words.len() as u32).to_le_bytes());
+            for w in &r.words {
+                out.extend_from_slice(&(w.len() as u32).to_le_bytes());
+                out.extend_from_slice(w);
+            }
+            if !r.marks.is_empty() {
+                out.extend_from_slice(b"marks");
+                for &(o, w) in &r.marks {
+                    out.extend_from_slice(&o.to_le_bytes());
+                    out.extend_from_slice(&w.to_le_bytes());
+                }
+            }
+        }
         out
     }
 
@@ -755,12 +792,13 @@ impl BlockProgram {
     /// `run` over several files at once (`interpret_files`).
     pub fn run_files(&self, files: &[&[u8]]) -> Vec<BlockRun> {
         let (extracts, totals) = (self.extract_outputs(), self.total_outputs());
+        let table = self.records.as_ref().map(|r| crate::records::WordTable::new(&r.words).expect("verified: the words fit a table"));
         self.interpret_files(files)
             .into_iter()
-            .map(|outputs| {
-                let any = totals.iter().any(|&k| outputs[k].iter().any(|&w| w != 0));
-                let totals = if totals.is_empty() { Vec::new() } else { vec![u64::from(any)] };
-                let positions = extracts
+            .zip(files)
+            .map(|(outputs, bytes)| {
+                let mut any = totals.iter().any(|&k| outputs[k].iter().any(|&w| w != 0));
+                let positions: Vec<Vec<u32>> = extracts
                     .iter()
                     .map(|&k| {
                         let words = &outputs[k];
@@ -768,7 +806,16 @@ impl BlockProgram {
                         extract::positions(words, count)
                     })
                     .collect();
-                BlockRun { outputs, positions, totals }
+                let codes = match (&self.records, &table) {
+                    (Some(r), Some(t)) => {
+                        let (codes, bad) = crate::records::pass(r, t, bytes, &positions[usize::from(r.starts)], &positions[usize::from(r.lasts)], &outputs);
+                        any |= bad;
+                        codes
+                    }
+                    _ => Vec::new(),
+                };
+                let totals = if totals.is_empty() { Vec::new() } else { vec![u64::from(any)] };
+                BlockRun { outputs, positions, totals, codes }
             })
             .collect()
     }
@@ -1407,5 +1454,17 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
     }
     if block.delay != 0 {
         let _ = writeln!(out, "  block {at} delay {}", block.delay);
+    }
+    // `block N records S L kinds=…` then a `block N word "…"` a word: the records' extracts,
+    // each byte's kind, and the words.
+    if let Some(r) = &block.records {
+        let _ = writeln!(out, "  block {at} records {} {} kinds={}", r.starts, r.lasts, hex(&r.kinds));
+        for w in &r.words {
+            let _ = writeln!(out, "  block {at} word {}", crate::rir_text::quote(w));
+        }
+        // `block N recmark O W` a mark: its output, its word's code (0 for any).
+        for &(o, w) in &r.marks {
+            let _ = writeln!(out, "  block {at} recmark {o} {w}");
+        }
     }
 }

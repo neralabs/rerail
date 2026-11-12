@@ -53,13 +53,40 @@ CPU time a pass on one thread, GPU time from the command buffers:
 | compiled grammar, file by file, CPU | 106 to 125 ms |
 | tier 1 alone, one CPU batch | 55 to 73 ms |
 | tier 1 alone, Metal, GPU time | 19.3 to 20.2 ms (0.44 to 0.46 GB/s) |
-| tier 1 alone, Metal, host CPU | 36 to 55 ms |
+| tier 1 alone, Metal, host CPU | 6.4 ms (was 36 to 55 ms: §2.1) |
 
 - **Batch size does not matter.** A budget raised from 256 to 512 MB, to run the corpus as one
   batch, gave 19.3 ms against 20.2 ms. The corpus twice over gave 48 ms. GPU time grows with
   the bytes, about 2.2 ms a MB. Launch overhead is not the cost.
 - **The host's CPU is now small.** Before the files were admitted once a run, it was 205 ms a
   run, most of it SHA-256 of every file at each of the five passes.
+
+### 2.1 Where the host's CPU went
+
+Instruments' Time Profiler, over the timed runs only:
+
+| | host CPU a run |
+|---|---|
+| before | 26 ms (36 to 55 ms at a higher load) |
+| the slots' buffer kept from run to run | 13 ms |
+| the levels' shape kept by source; no learning once settled | 10 ms |
+| idle blocks give way to the budget, not all at once | 6.4 ms |
+
+- **The slots' buffer was made again every run.** The pool kept 32 MiB of idle blocks, and a
+  batch's slots take 64 to 128 MiB. So each run mapped a fresh buffer, the host wrote every page
+  to back it, then zeroed it again: 60% of the host's time.
+- **Now:**
+  - the pool keeps up to the whole budget;
+  - a lease takes an idle block one class larger too;
+  - the slots are zeroed by the device (a blit's fill);
+  - idle blocks give way to any buffer the budget would refuse, the largest first, and only when
+    that makes room. Each run first tries the whole batch, too large for the budget: that try
+    used to empty the pool.
+- **`pool::made()`** counts the blocks made. The benchmark prints it a run; a warm run makes
+  none.
+- **What is left, 6.4 ms,** is a debug build's bookkeeping a pass: the planes form, the
+  programs' hashes, the residency's lookups, 30 command buffers. The wall time, 31 ms against
+  19.4 ms of GPU time, is mostly the 30 command buffers waited for one after another (§5.3).
 
 ## 3. The tooling
 

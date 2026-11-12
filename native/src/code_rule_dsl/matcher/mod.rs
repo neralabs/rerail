@@ -40,8 +40,7 @@ pub mod relation;
 pub mod resolve;
 pub mod run;
 pub mod semantic;
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 pub mod transform;
 pub mod util;
 pub mod value;
@@ -145,7 +144,7 @@ pub struct GrammarMatcher {
     /// nothing is required or the matcher can be unknown, which a file without a match still reports.
     pub text: Option<Arc<RequiredText>>,
     /// Whether witnesses outside syntax-error regions stay sound; see `sound_under_errors`.
-    pub(super) sound_under_errors: bool,
+    pub sound_under_errors: bool,
     /// Explicit whole-file syntax gate (P's `ast.syntax`); true admits invalid files and their
     /// error regions.
     pub invalid_syntax: Option<bool>,
@@ -154,10 +153,10 @@ pub struct GrammarMatcher {
     pub(super) import_target: bool,
     /// Keeps the query's utility rules alive (`AstMatcher::Util` holds only a weak reference)
     /// and lets violation compilation walk them.
-    pub(super) utils: Arc<UtilTable>,
+    pub utils: Arc<UtilTable>,
     /// The query's utilities in `utils`, by index: every one of a table of its own, the ones it
     /// reaches of a document's shared table, which holds other queries' too.
-    pub(super) query_utils: Arc<[usize]>,
+    pub query_utils: Arc<[usize]>,
     /// The query's `file` condition: a file whose module path fails it gets no matcher.
     pub file: Option<Arc<crate::code_rule_dsl::language::FileCondition>>,
     /// Whether the query's `when` gate holds. A query outside it is compiled in full, so its
@@ -171,7 +170,7 @@ pub struct GrammarMatcher {
     /// query's scope does, rather than its own.
     pub(super) package_type_gate: bool,
     /// Whether the matcher can reach an unknown verdict; see `reads_values`.
-    pub(super) three_valued: bool,
+    pub three_valued: bool,
     /// The query's `transform`, applied to each match after its rule and constraints.
     pub transform: Option<Arc<Transform>>,
     /// The query's content digest and this matcher's dialect: what its lowered fact labels are
@@ -639,7 +638,7 @@ impl AstMatcher {
 /// Whether a matcher can reach an unknown verdict: it holds a `value` predicate or a comparison over
 /// values or property names, directly or through a composite, relation, stop rule, count,
 /// constraint or utility. Clauses without one never touch the `UNKNOWN` flag.
-pub(super) fn reads_values(
+pub fn reads_values(
     matcher: &AstMatcher,
     seen: &mut std::collections::BTreeSet<usize>,
 ) -> bool {
@@ -706,7 +705,7 @@ pub(super) fn reads_values(
 /// binding of the same kind in `target`: their texts must be equal. An existing binding is kept;
 /// otherwise, of equal nodes, the one first in the source is bound, so the order the `from`
 /// variables come in never selects the result. `None` where they differ.
-fn unify_capture<'tree, 'name, D: Doc>(
+pub fn unify_capture<'tree, 'name, D: Doc>(
     source: &MetaVarEnv<'tree, D>,
     from: impl Iterator<Item = &'name str> + Clone,
     target: &mut MetaVarEnv<'tree, D>,
@@ -803,22 +802,22 @@ fn leave_util_level(depth: u32) {
 }
 
 /// The utility levels this thread is inside.
-fn util_level() -> u32 {
+pub fn util_level() -> u32 {
     UTIL_DEPTH.get()
 }
 
 /// Sets the deepest utility level reached to `peak`, returning what it was.
-fn swap_util_peak(peak: u32) -> u32 {
+pub fn swap_util_peak(peak: u32) -> u32 {
     UTIL_PEAK.replace(peak)
 }
 
 /// Whether `levels` more utility levels fit under the depth limit from here.
-fn util_levels_fit(levels: u32) -> bool {
+pub fn util_levels_fit(levels: u32) -> bool {
     UTIL_DEPTH.get() + levels <= MAX_UTIL_DEPTH
 }
 
 /// Spends one step of the file's utility and count budget (`maxVisitedNodes`); false once spent.
-pub(super) fn spend_util_step() -> bool {
+pub fn spend_util_step() -> bool {
     if UTIL_EXCEEDED.get().is_some() {
         return false;
     }
@@ -832,7 +831,7 @@ pub(super) fn spend_util_step() -> bool {
 
 /// Spends `steps` of the budget at once, as that many `spend_util_step` calls would: false (with
 /// the budget spent) where it runs out.
-fn spend_util_steps(steps: usize) -> bool {
+pub fn spend_util_steps(steps: usize) -> bool {
     if steps == 0 {
         return true;
     }
@@ -853,13 +852,13 @@ fn spend_util_steps(steps: usize) -> bool {
 }
 
 /// Remaining utility/count budget for a memoization replay.
-fn utility_steps_left() -> usize {
+pub fn utility_steps_left() -> usize {
     UTIL_STEPS_LEFT.get()
 }
 
 /// Whether a term of the clause in progress hit a utility limit: its verdicts since are not the
 /// matcher's, so nothing may remember them.
-fn util_limit_hit() -> bool {
+pub fn util_limit_hit() -> bool {
     UTIL_EXCEEDED.get().is_some()
 }
 
@@ -902,7 +901,7 @@ thread_local! {
 /// How many clauses this thread has begun (`begin_clause`): a clause begun within a computation
 /// (a `calls` seed's query) resets the budget and levels it reads, so what the computation spent
 /// or reached is not its own.
-fn clauses_begun() -> u64 {
+pub fn clauses_begun() -> u64 {
     CLAUSES_BEGUN.get()
 }
 
@@ -914,7 +913,7 @@ thread_local! {
 /// usage, a parent's counted siblings), counting the steps it spends apart
 /// (`fill_steps`): a memoized verdict whose computation filled one replays only the rest, which
 /// is what computing it again would spend.
-fn filling<T>(fill: impl FnOnce() -> T) -> T {
+pub fn filling<T>(fill: impl FnOnce() -> T) -> T {
     let (steps, fills) = (UTIL_STEPS_LEFT.get(), FILL_STEPS.get());
     let result = fill();
     // Fills within this one are part of it.
@@ -928,7 +927,7 @@ fn filled(steps: usize) {
 }
 
 /// Steps cache fills have spent on this thread (`filling`).
-fn fill_steps() -> usize {
+pub fn fill_steps() -> usize {
     FILL_STEPS.get()
 }
 
@@ -940,12 +939,12 @@ thread_local! {
 /// terms (`nthChild`'s counted siblings, a same-key walk's classes) or a file table charged to
 /// each clause once (scopes, usage, PHP names). What a computation spends then depends on the
 /// clause, so its verdict is that clause's alone (`memo`).
-fn read_clause_state() {
+pub fn read_clause_state() {
     CLAUSE_STATE_READS.set(CLAUSE_STATE_READS.get() + 1);
 }
 
 /// How many reads of a clause's own state this thread has noted (`read_clause_state`).
-fn clause_state_reads() -> u64 {
+pub fn clause_state_reads() -> u64 {
     CLAUSE_STATE_READS.get()
 }
 

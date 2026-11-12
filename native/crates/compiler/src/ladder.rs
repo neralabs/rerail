@@ -599,15 +599,15 @@ pub fn check_ladder(
             if let Ok(cols) = c.parser.columns(&bytes) {
                 let mut open: Vec<usize> = Vec::new();
                 let bad = (0..cols.len()).find(|&i| {
-                    while open.last().is_some_and(|&t| t + cols.size[t] as usize <= i) {
+                    while open.last().is_some_and(|&t| t + cols.rows[t].size as usize <= i) {
                         open.pop();
                     }
                     let parent = open.last().map_or(crate::native_cpu_stream::NO_PARENT, |&t| t as u32);
                     open.push(i);
-                    cols.parent[i] != parent || cols.extra[i] != u8::from(extra_ids.contains(&(cols.kind[i] as u16)))
+                    cols.rows[i].parent != parent || cols.rows[i].extra != u8::from(extra_ids.contains(&cols.rows[i].kind))
                 });
                 if let Some(i) = bad {
-                    differ.push(format!("{}: record {i}'s parent {} or extra {} is not the table's", show(), cols.parent[i], cols.extra[i]));
+                    differ.push(format!("{}: record {i}'s parent {} or extra {} is not the table's", show(), cols.rows[i].parent, cols.rows[i].extra));
                     break;
                 }
             }

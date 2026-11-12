@@ -67,15 +67,15 @@ impl super::Families for Families {
 
 /// The batch's `py.*` families: the producer's grammar, the atoms of its names, and the rows, made on the first read.
 pub(crate) struct Py {
-    pub(crate) grammar: py::Grammar,
+    pub grammar: py::Grammar,
     pub(crate) contexts: [i64; 5],
     pub(crate) spreads: [i64; 3],
     rows: std::sync::OnceLock<Vec<Relation>>,
-    pub(crate) argument_rows: std::sync::OnceLock<Relation>,
+    pub argument_rows: std::sync::OnceLock<Relation>,
     /// Per batch document (in the batch's order), its imports' screen, made on its first read.
     imports: Vec<std::sync::OnceLock<crate::code_rule_dsl::facts::producers::python::import_screen::Imports>>,
     /// Per batch document, its scopes for semantic demands (`python_demand`), made on the first that needs them.
-    pub(crate) semantics: Vec<std::sync::Mutex<Option<super::python_demand::Semantics>>>,
+    pub semantics: Vec<std::sync::Mutex<Option<super::python_demand::Semantics>>>,
 }
 
 impl Py {

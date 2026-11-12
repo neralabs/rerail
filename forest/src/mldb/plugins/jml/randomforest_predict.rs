@@ -166,15 +166,32 @@ impl FlatForest {
     }
 
     pub fn new(forest: &Forest) -> Result<Self, String> {
-        let nf = forest.fs.column_info.len();
-        let feature_bits = (0..nf).map(|i| forest.fs.column(i).map_or(0, prediction_bucket_bits)).collect();
-        let mut f = FlatForest { num_features: nf, feature_bits, ..Default::default() };
-        for (t, &w) in forest.trees.iter().zip(&forest.weights) {
-            let root = f.flatten(&forest.fs, t, t.root, 0)?;
-            f.roots.push(root);
-            f.weights.push(w);
+        let trees = forest.trees.iter().map(|t| FlatTree::from_tree(&forest.fs, t)).collect::<Result<Vec<_>, _>>()?;
+        Ok(FlatForest::from_trees(&forest.fs, trees, forest.weights.clone()))
+    }
+
+    /// The forest of flat trees (each tree's arrays after the last's), each with its weight.
+    pub fn from_trees(fs: &DatasetFeatureSpace, trees: Vec<FlatTree>, weights: Vec<f32>) -> Self {
+        let nf = fs.column_info.len();
+        let feature_bits = (0..nf).map(|i| fs.column(i).map_or(0, prediction_bucket_bits)).collect();
+        let mut f = FlatForest { num_features: nf, feature_bits, weights, ..Default::default() };
+        for t in trees {
+            let (node, leaf, set) = (f.nodes.len() as i32, (f.leaf_preds.len() / 2) as i32, (f.subsets.len() / 16) as u32);
+            let moved = |c: i32| if c >= 0 { c + node } else { c - leaf };
+            f.roots.push(moved(t.root));
+            f.nodes.extend(t.nodes.into_iter().map(|mut n| {
+                n.child_true = moved(n.child_true);
+                n.child_false = moved(n.child_false);
+                if n.ordinal == 2 {
+                    n.split_bucket += set;
+                }
+                n
+            }));
+            f.leaf_preds.extend(t.leaf_preds);
+            f.subsets.extend(t.subsets);
+            f.max_depth = f.max_depth.max(t.depth);
         }
-        Ok(f)
+        f
     }
 
     fn flatten(&mut self, fs: &DatasetFeatureSpace, tree: &Tree, p: Ptr, depth: u32) -> Result<i32, String> {
@@ -233,6 +250,53 @@ impl FlatForest {
     /// there).
     pub fn predict_device(&self, rows: &RowBuckets) -> Result<Vec<[f32; 2]>, String> {
         DeviceForest::new(self)?.predict(rows)
+    }
+}
+
+/// One tree flattened (`FlatForest`'s layout, its indexes its own): its nodes, leaves' distributions and subsets,
+/// its root, and its deepest walk.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FlatTree {
+    pub nodes: Vec<PredictNode>,
+    pub leaf_preds: Vec<f32>,
+    pub subsets: Vec<u32>,
+    pub root: i32,
+    pub depth: u32,
+}
+
+impl FlatTree {
+    /// A tree flattened (preorder: a node, then its true side, then its false side).
+    pub fn from_tree(fs: &DatasetFeatureSpace, tree: &Tree) -> Result<FlatTree, String> {
+        let mut f = FlatForest::default();
+        let root = f.flatten(fs, tree, tree.root, 0)?;
+        Ok(FlatTree { nodes: f.nodes, leaf_preds: f.leaf_preds, subsets: f.subsets, root, depth: f.max_depth })
+    }
+}
+
+/// What a flat node needs of each trainer feature (by its index among the trainer's features), found once: its
+/// column, its bucket bits at prediction, and its split's kind (`PredictNode::ordinal`).
+#[derive(Clone, Debug, Default)]
+pub struct FlatColumns {
+    pub column: Vec<u16>,
+    pub bits: Vec<u8>,
+    pub kind: Vec<u8>,
+}
+
+impl FlatColumns {
+    pub fn new(features: &[crate::randomforest_types::Feature], fs: &DatasetFeatureSpace) -> Result<FlatColumns, String> {
+        let mut c = FlatColumns::default();
+        for f in features {
+            let (column, bits) = match f.info.and_then(|h| fs.column_info.get(&h)) {
+                Some(info) if info.index <= u16::MAX as _ => (info.index as u16, prediction_bucket_bits(info) as u8),
+                Some(_) => return Err("a feature past 65535 columns".into()),
+                // A feature with no column is never split on (`get_node` refuses it).
+                None => (u16::MAX, 0),
+            };
+            c.column.push(column);
+            c.bits.push(bits);
+            c.kind.push(if f.ordinal { 1 } else if f.subsets { 2 } else { 0 });
+        }
+        Ok(c)
     }
 }
 

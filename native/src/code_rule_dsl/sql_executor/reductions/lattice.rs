@@ -2,14 +2,14 @@
 use super::*;
 
 #[derive(Clone)]
-pub(super) struct Lattice {
+pub struct Lattice {
     pub keys: usize,
     pub top: i64,
     pub aggregate: Option<String>,
     pub tree: Option<super::join_tree::JoinTree>,
 }
 
-pub(super) fn apply(state: &Retained, w: &mut Work<'_>, changed: &str) -> Result<(Delta, u64)> {
+pub fn apply(state: &Retained, w: &mut Work<'_>, changed: &str) -> Result<(Delta, u64)> {
     let lattice = state.lattice.as_ref().unwrap();
     let k = lattice.keys;
     let keys = w.table(k)?;
@@ -33,7 +33,9 @@ pub(super) fn apply(state: &Retained, w: &mut Work<'_>, changed: &str) -> Result
     // The primary key starts with the lattice key, then value. SQLite can find extrema with
     // one indexed probe. Opaque registered joins scan only the affected key's candidates.
     let folded = if let Some(tree) = &lattice.tree {
-        tree.apply(w.db, changed)?;
+        let operation=w.profiler.map(|p|p.operation("registered lattice support index",("sql-extension",0),0,vec![]));
+        tree.apply(w.db, changed,w.versions)?;
+        if let Some(operation)=operation {operation.finish_unobserved();}
         format!(
             "(SELECT h.summary FROM {} h WHERE {})",
             quote(&tree.roots),
@@ -56,6 +58,13 @@ pub(super) fn apply(state: &Retained, w: &mut Work<'_>, changed: &str) -> Result
         ),
     )?;
     let delta = w.difference(&next, &old, state.width)?;
+    if let Some(store) = w.versions.filter(|s| s.contains(&state.output)) {
+        let mut phase = phase::Phase::default();
+        let values = phase.view(state.width, &format!("SELECT * FROM {next}"));
+        phase.patch(store, &state.output, &keys, &values)?;
+        phase.execute(w)?;
+        return Ok((delta, touched));
+    }
     execute(
         w.db,
         &format!(

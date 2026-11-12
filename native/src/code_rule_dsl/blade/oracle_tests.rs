@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 fn oracle_root() -> PathBuf {
-    PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("blade/blade")
+    PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("blade/blade")
 }
 
 fn expected() -> Json {

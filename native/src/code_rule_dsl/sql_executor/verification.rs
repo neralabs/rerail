@@ -2,6 +2,19 @@
 use super::*;
 
 impl CodeRuleSqlExecutor {
+    /// Development comparison only. Published results and retained maintenance are unchanged.
+    #[doc(hidden)]
+    pub fn compare_recursive_components(&mut self,max_waves:Option<u32>,sql_first:bool)->Result<String> {
+        self.profiled("recursive component comparison",|this| {
+            let run=this.executions.last().cloned().ok_or_else(||error("component comparison requires a completed program"))?;
+            let limits=this.limits.clone();
+            let budget=limits.enter(this.db.connection_mut())?;
+            let result=component_loop::compare(&this.db,&run,max_waves.unwrap_or(run.max_waves),sql_first);
+            budget.leave(this.db.connection_mut());
+            serde_json::to_string(&result?).map_err(error)
+        })
+    }
+
     #[doc(hidden)]
     pub fn use_cold_oracle(&mut self) {
         self.cold_oracle = true;
@@ -29,7 +42,7 @@ impl CodeRuleSqlExecutor {
     pub fn verification_relations(&self) -> Result<Vec<(String, usize)>> {
         let mut relations = BTreeMap::new();
         for run in &self.executions {
-            relations.extend(run.emitted.program.relations.iter().cloned());
+            relations.extend(run.logical_relations.iter().cloned());
             for (name, _) in &run.emitted.views {
                 let width = self
                     .db
@@ -75,14 +88,25 @@ impl CodeRuleSqlExecutor {
             if self.mutable_inputs.contains(name) {
                 continue;
             }
+            // Compiler-introduced native inputs need domains too, even without
+            // an explicit declaration in the user's program.
+            types.entry(name.clone()).or_insert_with(|| vec!["int".into();source.columns().len()]);
             for (column, field) in source.columns().iter().enumerate() {
                 let domain = if field == "d" {
                     Some("document")
-                } else if matches!(
-                    (name.as_str(), column),
-                    ("node", 2) | ("kind", 1) | ("field", 1)
-                ) {
-                    Some("int")
+                } else if name == "tape" && column < 2 {
+                    // Native tape identities are packed nodes, even when the
+                    // compiler introduces this input without a user declaration.
+                    // verification_cell preserves the negative root sentinel.
+                    Some("node")
+                } else if name == "node_order" {
+                    // Both columns pack a store-local document atom in their high word.
+                    // The low word of k is a preorder index, independent of node numbering.
+                    Some(if column == 0 { "node" } else { "node_order" })
+                } else if matches!((name.as_str(), column), ("node", 2) | ("kind", 1)) {
+                    Some("kind")
+                } else if (name.as_str(), column) == ("field", 1) {
+                    Some("field")
                 } else {
                     None
                 };
@@ -224,6 +248,7 @@ impl CodeRuleSqlExecutor {
         Ok(match ty {
             "sym" | "symbol" => json!({"symbol":atom(value)?}),
             "document" => json!({"document":atom(value)?}),
+            "node_order" => json!({"nodeOrder":[atom(value >> 32)?,(value as u32).to_string()]}),
             "node" | "loc" if value >= 0 => {
                 json!({"node":[atom(value >> 32)?,(value as u32).to_string()]})
             }
@@ -253,46 +278,4 @@ impl CodeRuleSqlExecutor {
 }
 
 #[cfg(test)]
-pub mod tests {
-    use super::*;
-    #[test]
-    fn document_and_symbol_cells_compare_across_different_store_local_ids() {
-        let a = tempfile::tempdir().unwrap();
-        let b = tempfile::tempdir().unwrap();
-        let mut one =
-            CodeRuleSqlExecutor::new(a.path().join("s.sqlite").to_string_lossy().into()).unwrap();
-        let mut two =
-            CodeRuleSqlExecutor::new(b.path().join("s.sqlite").to_string_lossy().into()).unwrap();
-        let file =
-            |path: &str, source: &str| json!({"path":path,"language":"python","source":source});
-        let first = file("a.py", "alpha = 1\n");
-        let second = file("b.py", "beta = 2\n");
-        two.bind_snapshot(json!({"files":[file("z.py","reserved = 9\n")]}).to_string())
-            .unwrap();
-        let p = ".decl doc(d:number,path:symbol,module:symbol)\n.decl name(n:node,s:symbol)\n.decl node(d:number,n:node,k:symbol,start:number,end:number)\n.decl kind(n:node,k:symbol)\n.input doc,name,node,kind\n.decl seen(d:number,p:symbol)\nseen(d,p) :- doc(d,p,_).\n.decl names(n:node,s:symbol)\nnames(n,s) :- name(n,s).\n.decl kinds(k:symbol)\nkinds(k) :- kind(_,k).\n.output seen,names,kinds\n";
-        for e in [&mut one, &mut two] {
-            e.bind_snapshot(json!({"files":[first,second]}).to_string())
-                .unwrap();
-            e.run(p.into(), "python".into(), None).unwrap();
-        }
-        for relation in ["doc", "seen", "names", "kind", "kinds"] {
-            let read = |e: &CodeRuleSqlExecutor| {
-                let types = e.verification_types();
-                let mut rows = e
-                    .verification_rows(&format!("SELECT * FROM {relation}"))
-                    .unwrap()
-                    .into_iter()
-                    .map(|r| {
-                        r.into_iter()
-                            .enumerate()
-                            .map(|(c, v)| e.verification_cell(&types[relation][c], v).unwrap())
-                            .collect::<Vec<_>>()
-                    })
-                    .collect::<Vec<_>>();
-                rows.sort_by_key(|r| serde_json::to_string(r).unwrap());
-                rows
-            };
-            assert_eq!(read(&one), read(&two), "{relation}");
-        }
-    }
-}
+pub mod tests;

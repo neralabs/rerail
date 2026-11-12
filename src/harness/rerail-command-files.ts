@@ -149,9 +149,9 @@ function createBody(agent: CommandFileAgent, { cli, packageRoot }: CommandFileCo
   return {
     text: createRuleInstructions({ cli, packageRoot, request: typedWords(agent, "rerail-create") }),
     // `rules export --output` writes any path, so Claude Code asks before it runs; the others only read or propose a
-    // rule. `rules approve` and `rules import` (whose `--approve` approves a whole dump) are never pre-approved: the host
-    // asks the person, whose approval it is, before it runs.
-    allowed: [`${cli} rules evidence *`, `${cli} rules test *`, `${cli} rules add *`],
+    // rule (`rules show` prints one). `rules approve` and `rules import` (whose `--approve` approves a whole dump) are
+    // never pre-approved: the host asks the person, whose approval it is, before it runs.
+    allowed: [`${cli} rules evidence *`, `${cli} rules show *`, `${cli} rules test *`, `${cli} rules add *`],
   };
 }
 

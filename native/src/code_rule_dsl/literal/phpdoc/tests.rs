@@ -1,7 +1,7 @@
 use super::parser::{self, Prop};
 use super::*;
-// cratify: a re-export of rerail-engine's, which its facades of this module make
-// cratify: a re-export of rerail-engine's, which its facades of this module make
+use crate::code_rule_dsl::fixtures::oracle;
+use crate::code_rule_dsl::test_support::php_lossy;
 use serde_json::{Value as Json, json};
 
 /// A parsed comment as `phpdoc_tree.php` records it.

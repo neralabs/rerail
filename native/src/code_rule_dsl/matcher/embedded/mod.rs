@@ -79,7 +79,7 @@ impl Drop for Hosted {
 /// bounds`: a node's range, an interval, holds them all exactly when it holds that), by the
 /// half-open rule (`segments::holds`: a zero-width range at a boundary is the node's starting
 /// there; the file's end, the node's ending there).
-fn innermost<'r, D: Doc>(root: Node<'r, D>, at: &Range<usize>) -> Node<'r, D> {
+pub fn innermost<'r, D: Doc>(root: Node<'r, D>, at: &Range<usize>) -> Node<'r, D> {
     let end = root.range().end;
     let mut node = root;
     loop {
@@ -224,5 +224,4 @@ pub(super) fn document_host<D: Doc>(
     }))
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

@@ -28,7 +28,7 @@ pub mod parser;
 use super::{Grammar, PNode};
 use crate::code_rule_dsl::value::Value;
 
-pub(crate) const KINDS: &[&str] = &[
+pub const KINDS: &[&str] = &[
     "php_doc",
     "php_doc_text",
     "php_doc_tag",
@@ -105,7 +105,7 @@ pub(crate) const KINDS: &[&str] = &[
 const G: Grammar = GRAMMAR;
 
 /// Whether PHP lexes a comment's text as a doc comment (`T_DOC_COMMENT`: `/**` and white space).
-pub(crate) fn is_doc_comment(text: &str) -> bool {
+pub fn is_doc_comment(text: &str) -> bool {
     let bytes = text.as_bytes();
     bytes.len() >= 6
         && bytes.starts_with(b"/**")
@@ -114,7 +114,7 @@ pub(crate) fn is_doc_comment(text: &str) -> bool {
 }
 
 /// The tree of a doc comment; `None` past the nesting or backtracking bound.
-pub(crate) fn parse(text: &str) -> Option<PNode> {
+pub fn parse(text: &str) -> Option<PNode> {
     let (parser, root) = parser::parse(text);
     if parser.exhausted() {
         return None;
@@ -197,8 +197,7 @@ fn tree(parser: &parser::Parser<'_>, id: parser::Id, parent: usize, depth: usize
     Some(out)
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 /// The `phpDoc` grammar (`literal::LiteralGrammar`).
 pub(crate) struct PhpDocGrammar;

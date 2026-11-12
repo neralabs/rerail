@@ -11,7 +11,7 @@ fn tape(source: &str) -> TapeDoc {
     let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
     TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap()
 }
-pub(super) fn program() -> Program {
+pub fn program() -> Program {
     let lang = SupportLang::Python.get_ts_language();
     let kind = |name| lang.id_for_node_kind(name, true);
     Program::new(
@@ -102,23 +102,6 @@ fn capture_runs_execute_zero_capture_joins_and_preserve_complete_results_and_raw
     eprintln!("CAPTURE_RUN_REPORT {:?}", actual.report);
 }
 
-thread_local! {
-    static TASK_LIMIT: std::cell::Cell<usize> = const { std::cell::Cell::new(MAX_WORK_PER_TASK) };
-}
-pub(super) fn task_work_limit() -> usize {
-    TASK_LIMIT.with(std::cell::Cell::get)
-}
-pub(super) struct TaskLimit(usize);
-impl TaskLimit {
-    pub(super) fn enter(limit: usize) -> Self {
-        Self(TASK_LIMIT.with(|value| value.replace(limit)))
-    }
-}
-impl Drop for TaskLimit {
-    fn drop(&mut self) {
-        TASK_LIMIT.with(|value| value.set(self.0));
-    }
-}
 
 #[test]
 fn capture_runs_preserve_work_failures_before_joins_and_suppress_work_after_duplicate_joins() {
