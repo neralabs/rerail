@@ -93,6 +93,18 @@ pub(in crate::code_rule_dsl) const CAT_PLAIN: u32 = 1;
 /// `agg[0]`. A value with none (the arena full, or `lower` past ASCII) sets the stage's counter word (`TEXTFN_FULL`,
 /// `TEXTFN_HOST`).
 pub(in crate::code_rule_dsl) const TEXTFN: u32 = 9;
+/// Mode 10: a made text per row by a SIMD group a row (`row_text`): agg[0] & 15 one of `ROW_*`, agg[0] bit 8 a test's
+/// wanted verdict; X (keys 0, 1) and Y (keys 2, 3) of kinds agg[1] & 15 and agg[1] >> 4 (`OPND_*`); its value into
+/// `bind_slot[0]`.
+pub(in crate::code_rule_dsl) const ROWTEXT: u32 = 10;
+/// `cat`'s text of X and Y ("." between when X is not empty).
+pub(in crate::code_rule_dsl) const ROW_CAT: u32 = 0;
+/// `str_concat`'s text of X and Y.
+pub(in crate::code_rule_dsl) const ROW_CONCAT: u32 = 1;
+/// `replace_all` of a regex (its automata) in X by Y.
+pub(in crate::code_rule_dsl) const ROW_REPLACE: u32 = 2;
+/// A text test of X by its table.
+pub(in crate::code_rule_dsl) const ROW_TEST: u32 = 3;
 pub(in crate::code_rule_dsl) const TEXTFN_LOWER: u32 = 0;
 pub(in crate::code_rule_dsl) const TEXTFN_HEAD: u32 = 1;
 pub(in crate::code_rule_dsl) const TEXTFN_DIR: u32 = 2;
@@ -846,14 +858,14 @@ kernel void text_verdicts(device const long* T [[buffer(0)]], device const uchar
 // The states after each of m (at most 32) bytes of x, lane l's after byte `first + step * l`, from state `st`: the
 // bytes' transition functions (rows of table `tab`, S states of C classes) composed by a prefix over the lanes in
 // device scratch `f` (two rows of S bytes a lane), Hillis and Steele's: five steps of a row a lane.
-static inline uint chunk_states(device const uchar* tab, uint S, uint C, device const uchar* x, int first, int step, uint m, uint st,
+static inline uint chunk_states(device const uchar* tab, uint S, uint C, Txt x, int first, int step, uint m, uint st,
                                 device uchar* f, uint lane) {
     device const uchar* cls = tab;
     device const uchar* next = tab + 256;
     device uchar* a = f;
     device uchar* b = f + 32 * S;
     bool has = lane < m;
-    uint c = has ? uint(cls[x[first + step * int(lane)]]) : 0;
+    uint c = has ? uint(cls[txt_byte(x, uint(first + step * int(lane)))]) : 0;
     for (uint q = 0; q < S; q++) a[lane * S + q] = has ? next[q * C + c] : uchar(q);
     simdgroup_barrier(mem_flags::mem_device);
     for (uint d = 1; d < 32; d <<= 1) {
@@ -867,11 +879,93 @@ static inline uint chunk_states(device const uchar* tab, uint S, uint C, device 
     return r;
 }
 
+// A text's bytes as a text operand.
+static inline Txt txt_raw(device const uchar* p, uint n) {
+    Txt x;
+    x.a = p;
+    x.al = n;
+    x.b = p;
+    x.bl = 0;
+    x.dot = 0;
+    return x;
+}
+
+// `replace_all` of a regex over x (its automata G, `text::table::Replacer`) by z, by a SIMD group 32 bytes at a time:
+// each match's end by the forward automaton (the last match before it dies), its start by the reverse one run back
+// from the end (the furthest match). The replaced text's length; written to o when `write`. f: the group's scratch
+// (64 rows of the automata's states).
+static inline uint rx_replace_txt(device const uchar* G, Txt x, Txt z, bool write, device uchar* o, device uchar* f, uint lane) {
+    device const uint* h = (device const uint*)G;
+    uint fS = h[0], fC = h[1], fdead = h[4], rS = h[5], rC = h[6], rdead = h[9];
+    device const uchar* ft = G + h[10];
+    device const uchar* rt = G + h[11];
+    device const uchar* feoi = ft + 256 + fS * fC;
+    device const uchar* facc = feoi + fS;
+    device const uchar* reoi = rt + 256 + rS * rC;
+    device const uchar* racc = reoi + rS;
+    uint n = txt_len(x), lz = txt_len(z);
+    uint pos = 0, w = 0;
+    while (pos < n) {
+        // The match's end: the forward automaton's last match before it dies (or at the end of the text).
+        uint st = pos == 0 ? h[2] : h[3], last = NONE;
+        bool dead = false;
+        for (uint k = pos; k < n && !dead; k += 32) {
+            uint m = min(32u, n - k);
+            uint q = chunk_states(ft, fS, fC, x, int(k), 1, m, st, f, lane);
+            uint d = simd_min(lane < m && q == fdead ? lane : 32u);
+            int lm = simd_max(lane < m && lane < d && facc[q] != 0 ? int(lane) : -1);
+            if (lm >= 0) last = k + uint(lm);
+            if (d < 32) dead = true;
+            else st = simd_shuffle(q, ushort(m - 1));
+        }
+        if (!dead && facc[feoi[st]] != 0) last = n;
+        if (last == NONE) break;
+        uint e = last;
+        // Its start: the reverse automaton's furthest match back from the end, down to the byte before `pos`.
+        uint lo = pos > 0 ? pos - 1 : 0, first = NONE;
+        uint rs = e == n ? h[7] : h[8];
+        bool rd = false;
+        for (uint k = e; k > lo && !rd;) {
+            uint m = min(32u, k - lo);
+            uint q = chunk_states(rt, rS, rC, x, int(k) - 1, -1, m, rs, f, lane);
+            uint d = simd_min(lane < m && q == rdead ? lane : 32u);
+            int lm = simd_max(lane < m && lane < d && racc[q] != 0 ? int(lane) : -1);
+            if (lm >= 0) first = k - uint(lm);
+            if (d < 32) rd = true;
+            else rs = simd_shuffle(q, ushort(m - 1));
+            k -= m;
+        }
+        if (!rd && pos == 0 && racc[reoi[rs]] != 0) first = 0;
+        if (first == NONE || first < pos) break;
+        if (write) {
+            for (uint i = lane; i < first - pos; i += 32) o[w + i] = txt_byte(x, pos + i);
+            for (uint i = lane; i < lz; i += 32) o[w + first - pos + i] = txt_byte(z, i);
+        }
+        w += first - pos + lz;
+        pos = e;
+    }
+    if (write) for (uint i = lane; i < n - pos; i += 32) o[w + i] = txt_byte(x, pos + i);
+    return w + n - pos;
+}
+
+// Whether text test table `tab` (`text::table::Table`: S states of C classes, from `start`) accepts x, walked by a
+// SIMD group 32 bytes at a time (`chunk_states`), the state after the end of text accepting.
+static inline bool txt_verdict(device const uchar* tab, uint S, uint C, uint start, Txt x, device uchar* f, uint lane) {
+    device const uchar* eoi = tab + 256 + S * C;
+    device const uchar* acc = eoi + S;
+    uint n = txt_len(x), st = start;
+    for (uint k = 0; k < n; k += 32) {
+        uint m = min(32u, n - k);
+        uint q = chunk_states(tab, S, C, x, int(k), 1, m, st, f, lane);
+        st = simd_shuffle(q, ushort(m - 1));
+    }
+    return acc[eoi[st]] != 0;
+}
+
 // `replace_all` of a regex, once per distinct term (decision 0038's chunked matching), its automata G
-// (`text::table::Replacer`): a SIMD group per term finds each match 32 bytes at a time, its end by the forward
-// automaton (the last match before it dies), its start by the reverse one run back from the end (the furthest match),
-// and replaces it by Z (`lz` bytes). Pass 0 counts each term's replaced length into `lens`; after their scan (the
-// offsets), pass 1 writes O as a text buffer (`DevText`'s: the terms' ids, offsets, bytes). Groups are persistent.
+// (`text::table::Replacer`): a SIMD group per term (`rx_replace_txt`), the replacement Z (`lz` bytes). Pass 0 counts
+// each term's replaced length into `lens`; after their scan (the offsets), pass 1 writes O as a text buffer
+// (`DevText`'s: the terms' ids, offsets, bytes). Groups are persistent.
 struct ReplaceParams { uint nterms; uint groups; uint lz; uint write; uint states; uint pad0; uint pad1; uint pad2; };
 
 kernel void text_replace(device const long* T [[buffer(0)]], device const uchar* G [[buffer(1)]], device const uchar* Z [[buffer(2)]],
@@ -886,72 +980,85 @@ kernel void text_replace(device const long* T [[buffer(0)]], device const uchar*
         }
     }
     if (sg >= p.groups) return;
-    device const uint* h = (device const uint*)G;
-    uint fS = h[0], fC = h[1], fdead = h[4], rS = h[5], rC = h[6], rdead = h[9];
-    device const uchar* ft = G + h[10];
-    device const uchar* rt = G + h[11];
-    device const uchar* feoi = ft + 256 + fS * fC;
-    device const uchar* facc = feoi + fS;
-    device const uchar* reoi = rt + 256 + rS * rC;
-    device const uchar* racc = reoi + rS;
     device const long* ids = T + 1;
     device const uint* offs = text_offs(T);
     device const uchar* bytes = text_chars(T);
     device uchar* f = scratch + ulong(sg) * 64 * p.states;
     device uint* ooffs = (device uint*)(O + 1 + p.nterms);
     device uchar* obytes = (device uchar*)(ooffs + p.nterms + 1);
+    Txt z = txt_raw(Z, p.lz);
     for (uint term = sg; term < p.nterms; term += p.groups) {
-        device const uchar* x = bytes + offs[term];
-        uint n = offs[term + 1] - offs[term];
-        device uchar* o = obytes + (p.write != 0 ? lens[term] : 0);
-        uint pos = 0, w = 0;
-        while (pos < n) {
-            // The match's end: the forward automaton's last match before it dies (or at the end of the text).
-            uint st = pos == 0 ? h[2] : h[3], last = NONE;
-            bool dead = false;
-            for (uint k = pos; k < n && !dead; k += 32) {
-                uint m = min(32u, n - k);
-                uint q = chunk_states(ft, fS, fC, x, int(k), 1, m, st, f, lane);
-                uint d = simd_min(lane < m && q == fdead ? lane : 32u);
-                int lm = simd_max(lane < m && lane < d && facc[q] != 0 ? int(lane) : -1);
-                if (lm >= 0) last = k + uint(lm);
-                if (d < 32) dead = true;
-                else st = simd_shuffle(q, ushort(m - 1));
-            }
-            if (!dead && facc[feoi[st]] != 0) last = n;
-            if (last == NONE) break;
-            uint e = last;
-            // Its start: the reverse automaton's furthest match back from the end, down to the byte before `pos`.
-            uint lo = pos > 0 ? pos - 1 : 0, first = NONE;
-            uint rs = e == n ? h[7] : h[8];
-            bool rd = false;
-            for (uint k = e; k > lo && !rd;) {
-                uint m = min(32u, k - lo);
-                uint q = chunk_states(rt, rS, rC, x, int(k) - 1, -1, m, rs, f, lane);
-                uint d = simd_min(lane < m && q == rdead ? lane : 32u);
-                int lm = simd_max(lane < m && lane < d && racc[q] != 0 ? int(lane) : -1);
-                if (lm >= 0) first = k - uint(lm);
-                if (d < 32) rd = true;
-                else rs = simd_shuffle(q, ushort(m - 1));
-                k -= m;
-            }
-            if (!rd && pos == 0 && racc[reoi[rs]] != 0) first = 0;
-            if (first == NONE || first < pos) break;
-            if (p.write != 0) {
-                for (uint i = lane; i < first - pos; i += 32) o[w + i] = x[pos + i];
-                for (uint i = lane; i < p.lz; i += 32) o[w + first - pos + i] = Z[i];
-            }
-            w += first - pos + p.lz;
-            pos = e;
-        }
-        if (p.write != 0) {
-            for (uint i = lane; i < n - pos; i += 32) o[w + i] = x[pos + i];
-            if (lane == 0) {
+        Txt x = txt_raw(bytes + offs[term], offs[term + 1] - offs[term]);
+        bool write = p.write != 0;
+        uint len = rx_replace_txt(G, x, z, write, obytes + (write ? lens[term] : 0), f, lane);
+        if (lane == 0) {
+            if (write) {
                 O[1 + term] = ids[term];
                 ooffs[term] = lens[term];
-            }
-        } else if (lane == 0) lens[term] = w + n - pos;
+            } else lens[term] = len;
+        }
     }
+}
+
+// Mode 10, a made text per row, by a SIMD group a row (decision 0038's chunked matching, per binding): before its
+// scatter, `row_text` gives each row t of L its keep bit (counts[t]) and its value (V[t]), by op agg[0] & 15 of X
+// (keys 0, 1, kind agg[1] & 15) and Y (keys 2, 3, kind agg[1] >> 4): 0 `cat`'s text of X and Y ("." between when X
+// is not empty), 1 `str_concat`'s, 2 `replace_all` of regex G in X by Y, made into the arena (a bump of the group's
+// lane 0; full: the stage's counter word's bit 1, the value -1); 3 a text test of X by table G (P: its states,
+// classes, start), kept as agg[0] bit 8 wants. P[0]: the groups (persistent), P[1]: the states a group's scratch holds.
+kernel void row_text(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]], device atomic_uint* A [[buffer(2)]],
+                     device const uint* totals [[buffer(3)]], device atomic_uint* counters [[buffer(4)]], device uint* counts [[buffer(5)]],
+                     device long* V [[buffer(6)]], device const uchar* G [[buffer(7)]], device uchar* scratch [[buffer(8)]],
+                     device const uint* P [[buffer(9)]], constant Stage& s [[buffer(10)]], uint t [[thread_position_in_grid]],
+                     uint lane [[thread_index_in_simdgroup]]) {
+    uint n = min(totals[s.in_slot], s.cap_in);
+    uint groups = P[0];
+    for (uint r = n + t; r <= s.cap_in; r += groups * 32) counts[r] = 0;
+    uint sg = t / 32;
+    if (sg >= groups) return;
+    device uchar* f = scratch + ulong(sg) * 64 * P[1];
+    uint op = s.agg[0] & 15;
+    bool want = ((s.agg[0] >> 8) & 1) != 0;
+    for (uint row = sg; row < n; row += groups) {
+        Txt x = txt_of(s, L, row, R, A, 0, s.agg[1] & 15);
+        if (op == 3) {
+            bool v = txt_verdict(G, P[2], P[3], P[4], x, f, lane);
+            if (lane == 0) counts[row] = uint(v == want);
+            continue;
+        }
+        Txt y = txt_of(s, L, row, R, A, 2, s.agg[1] >> 4);
+        uint lx = txt_len(x), ly = txt_len(y);
+        uint dot = op == 0 && lx > 0 ? 1 : 0;
+        uint len = op == 2 ? rx_replace_txt(G, x, y, false, (device uchar*)A, f, lane) : lx + dot + ly;
+        uint off = 0;
+        if (lane == 0) off = atomic_fetch_add_explicit(A, len, memory_order_relaxed);
+        off = simd_shuffle(off, ushort(0));
+        uint cap = ((device const uint*)A)[1];
+        bool full = ulong(off) + len > cap;
+        if (!full) {
+            device uchar* o = (device uchar*)A + 16 + off;
+            if (op == 2) rx_replace_txt(G, x, y, true, o, f, lane);
+            else for (uint i = lane; i < len; i += 32) o[i] = i < lx ? txt_byte(x, i) : (i < lx + dot ? uchar('.') : txt_byte(y, i - lx - dot));
+        }
+        if (lane == 0) {
+            if (full && s.counter != NONE) atomic_fetch_or_explicit(&counters[s.counter], 1u, memory_order_relaxed);
+            V[row] = full ? -1 : arena_value(off, len);
+            counts[row] = 1;
+        }
+    }
+}
+
+// Mode 10's rows out: those `row_text` kept, each its value (V's) in `bind_slot[0]` but for a test's.
+kernel void row_scatter(device const long* L [[buffer(0)]], device const long* V [[buffer(1)]], device uint* totals [[buffer(2)]],
+                        device const uint* offsets [[buffer(3)]], device long* O [[buffer(4)]], constant Stage& s [[buffer(5)]],
+                        uint t [[thread_position_in_grid]]) {
+    uint n = min(totals[s.in_slot], s.cap_in);
+    if (t == 0) totals[s.out_slot] = offsets[n];
+    if (t >= n) return;
+    uint at = offsets[t];
+    if (offsets[t + 1] <= at || at >= s.cap_out) return;
+    for (uint k = 0; k < s.nslots; k++) O[ulong(k) * s.cap_out + at] = L[ulong(k) * s.cap_in + t];
+    if ((s.agg[0] & 15) != 3) O[ulong(s.bind_slot[0]) * s.cap_out + at] = V[t];
 }
 
 // The byte of character c of x (n bytes; n when it has fewer), 32 bytes at a time: each chunk's characters' first
@@ -1691,6 +1798,41 @@ impl Batch {
         pass.run_bytes(&count, &count_bufs, stage.bytes(), groups(n));
         scan.encode(pass, &counts)?;
         pass.run_bytes(&scatter, &scatter_bufs, stage.bytes(), groups(n));
+        Ok(())
+    }
+
+    /// A mode 10 stage (`ROWTEXT`) from `left` into `out`: `row_text` (a SIMD group a row, over the names `names`,
+    /// with automaton `auto`: a replacement's automata, or a test's table and its states, classes and start) gives
+    /// each row its keep bit and value, then a scan and `row_scatter`.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::code_rule_dsl) fn row_stage(&mut self, mut stage: Stage, left: &Table, names: &DevRel, auto: Option<(&DevBytes, [u32; 4])>, in_slot: usize, out_slot: usize,
+                                              totals: &Words, counters: &Words, counter: Option<usize>, out: &Table) -> Result<(), Error> {
+        let text = pipeline("join", "row_text", || SOURCE.to_owned())?;
+        let scatter = pipeline("join", "row_scatter", || SOURCE.to_owned())?;
+        stage.cap_in = left.cap as u32;
+        stage.cap_out = out.cap as u32;
+        stage.in_slot = in_slot as u32;
+        stage.out_slot = out_slot as u32;
+        stage.counter = counter.map_or(NONE, |c| c as u32);
+        stage.nslots = left.slots as u32;
+        let n = left.cap + 1;
+        let ngroups = left.cap.clamp(1, 1024);
+        // [scratch states, states, classes, start]: a replacement's scratch holds its larger automaton's states.
+        let [kept, states, classes, start] = auto.map_or([1, 0, 0, 0], |a| a.1);
+        let work = Held::new(ngroups * 64 * kept.max(1) as usize)?;
+        let p = Held::of([ngroups as u32, kept, states, classes, start, 0, 0, 0].into_iter()).map_err(|_| Error::BackendCapacity)?;
+        let counts = scratch(FREE, 4 * n)?;
+        let values = Held::new(8 * n)?;
+        let scan = Scan::new(n)?;
+        let arena = self.arena()?.buffer.buffer.to_owned();
+        let g: metal::Buffer = auto.map_or_else(|| self.dummy.buffer.to_owned(), |a| a.0.held.buffer.to_owned());
+        let pass = self.pass(4)?;
+        let lbuf: &BufferRef = &left.buffer.buffer;
+        pass.run_bytes(&text, &[lbuf, &names.buffer.buffer, &arena, &totals.buffer.buffer, &counters.buffer.buffer, &counts, &values.buffer, &g, &work.buffer, &p.buffer],
+                       stage.bytes(), (ngroups * 32).div_ceil(256));
+        scan.encode(pass, &counts)?;
+        pass.run_bytes(&scatter, &[lbuf, &values.buffer, &totals.buffer.buffer, &counts, &out.buffer.buffer], stage.bytes(), groups(n));
+        self.keep.extend([work, p, values]);
         Ok(())
     }
 

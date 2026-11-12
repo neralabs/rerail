@@ -464,6 +464,39 @@ fn text_functions(r: &Rels) -> Vec<Case> {
     v
 }
 
+/// Texts made per row read a SIMD group a row (`ROWTEXT`): text tests by automaton, regex replacements and cats of
+/// cats, of text functions' texts and of numbers' texts, long ones past a chunk of 32 bytes among them.
+fn row_texts(r: &Rels) -> Vec<Case> {
+    let mut v = Vec::new();
+    let sn = &r.sn;
+    // The made texts: a cat held, a cat made (then in the head), a text function's of a row's number, a number's.
+    let makers = [
+        format!("cat v2 v0 {}", sym("Long_Suffix/with.parts_and_more_than_32_bytes")),
+        format!("func str_concat v2 {} v0", sym("pre/")),
+        "func rr_substr v2 v0 i:1 v1".to_owned(),
+        "func rr_to_string v2 v1".to_owned(),
+        format!("func sql_upper v3 v0\ncat v2 v3 {}", sym("x")),
+    ];
+    for m in &makers {
+        for op in crate::code_rule_dsl::logic::strings::TESTS {
+            for p in ["foo", "a", "αβ", "1"] {
+                let p = if op.ends_with("rx") { format!("{p}[a-z_]*$") } else if op.ends_with("glob") { format!("*{p}*") } else { p.to_owned() };
+                v.push(case("row test", "si", format!("pos {sn} v0 v1\n{m}\ntest {op} v2 {} 1\nhead v2 v1", sym(&p)), true));
+            }
+            v.push(case("row test", "si", format!("pos {sn} v0 v1\n{m}\ntestset {op} v2 0 {} {}\nhead v0 v1", sym("o"), sym("_")), true));
+        }
+        for (p, w) in [("_+", "~"), ("[0-9]+", ""), ("^[A-Za-z]", "<>"), ("s$", "S"), ("[A-Za-z_./αβ]{3,}", "#"), ("(ab|a)(c|bcd)", "!"), ("\\.", ".."), ("[αβé]", "")] {
+            v.push(case("row replace", "si", format!("pos {sn} v0 v1\n{m}\nfunc replace_all v4 v2 {} {}\nhead v4 v1", sym(p), sym(w)), true));
+        }
+        v.push(case("row replace", "si", format!("pos {sn} v0 v1\n{m}\nfunc replace_all v4 v2 {} {}\nfunc rx_replace v5 v4 {} {}\nfunc rr_strlen v6 v5\nhead v5 v6", sym("o"), sym("0"), sym("0+"), sym("-")), true));
+        v.push(case("row cat", "si", format!("pos {sn} v0 v1\n{m}\ncat v4 v2 v0\nhead v4 v1"), true));
+        v.push(case("row cat", "si", format!("pos {sn} v0 v1\n{m}\nfunc str_concat v4 v0 v2\ncat v5 v4 {}\ntest contains v5 {} 1\nhead v5 v1", sym("z"), sym(".p")), true));
+        v.push(case("row cat", "si", format!("pos {sn} v0 v1\n{m}\ncat v4 {} v2\nfunc head v5 v4\neq v5 {}\nhead v4 v1", sym(""), sym("pre/foo")), true));
+        v.push(case("row cat", "si", format!("pos {} v9\npos {sn} v0 v1\n{m}\ncat v4 v2 v9\nfunc str_cmp v5 v4 v9\nlt v5 i:1\nhead v4 v1", r.sm), true));
+    }
+    v
+}
+
 /// Unions of rules in one stratum (several seeds into one head), and recursion: closures, joins of the relation with
 /// itself, with filters, arithmetic and negation of an input.
 fn combinators(r: &Rels) -> Vec<Case> {
@@ -624,9 +657,7 @@ fn random_texts(r: &Rels, n: usize, seed: u64) -> Vec<Case> {
                 steps.push(s);
             }
             steps.push(format!("head v{} v{}", g.pick(&texts), g.pick(&nums)));
-            // A random shape may read a made text where the device has no form (a test by automaton of a function's
-            // text, a cat of one): refused, its rows the same.
-            case("random texts", "si", steps.join("\n"), false)
+            case("random texts", "si", steps.join("\n"), true)
         })
         .collect()
 }
@@ -653,7 +684,28 @@ parity_test!(parity_aggregates, "aggregates", aggregates);
 parity_test!(parity_text_tests, "text tests", text_tests);
 parity_test!(parity_names, "names: order, length, cats, equalities", names);
 parity_test!(parity_text_functions, "text functions and replacements", text_functions);
+parity_test!(parity_row_texts, "texts made per row: tests, replacements, cats", row_texts);
 parity_test!(parity_combinators, "unions and recursion", combinators);
 parity_test!(parity_random_integers, "random integer strata", |r: &Rels| [0xa11ce, 0x1d, 0xfeed].into_iter().flat_map(|s| random_integers(r, 400, s)).collect());
 parity_test!(parity_random_texts, "random text strata", |r: &Rels| [0xb0b, 0x7e47, 0xc0de].into_iter().flat_map(|s| random_texts(r, 400, s)).collect());
 
+
+/// Cats made per row past the arena's first size: the stage runs again from the first made text, at the size wanted,
+/// the rows the CPU's.
+#[test]
+fn parity_row_texts_past_the_arena() {
+    if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+        return;
+    }
+    let fx = fixture();
+    let r = rels();
+    let c = case("row cat", "si", format!("pos {} v9\npos {} v0 v1\nfunc rr_to_string v2 v1\ncat v3 v2 v0\ncat v4 v3 v9\ntest contains v4 {} 0\nhead v4 v1", r.sm, r.sn, sym("zz")), true);
+    let (drows, dcounts, report) = run(&fx, &c, 0, true).unwrap();
+    let (crows, ccounts, _) = run(&fx, &c, 0, false).unwrap();
+    let report = report.expect("a device report");
+    assert!(report.refused.is_none(), "{report:?}");
+    assert!(report.arena_reruns >= 1, "the cats fill the arena's first size: {report:?}");
+    assert!(crows.len() > 10_000, "{} rows", crows.len());
+    assert_eq!(drows, crows, "the device's rows are the CPU's");
+    assert_eq!(dcounts, ccounts);
+}
