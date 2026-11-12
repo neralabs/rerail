@@ -1651,10 +1651,16 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     if clustered && !cut.pass.is_empty() {
         flags.push(("enable_multi_ret_implicit_sret", "true"));
     }
-    let mut builder = if cut.unsigned {
+    // A crossing between clusters is a tail call (`return_call`), and x86-64's Cranelift makes
+    // one only over a frame pointer (aarch64's needs none).
+    if clustered && cfg!(target_arch = "x86_64") {
+        flags.push(("preserve_frame_pointers", "true"));
+    }
+    let mut builder = if cut.unsigned && cfg!(all(target_os = "macos", target_arch = "aarch64")) {
         // `Cut::unsigned`: return addresses not signed (Cranelift signs them on every macOS
         // target; an arm64 process, not arm64e, does not need it). The JIT's own flags, as
-        // `JITBuilder::with_flags` sets them.
+        // `JITBuilder::with_flags` sets them. Elsewhere the host's ISA signs none already
+        // (and this build has no other target's backend).
         use cranelift_codegen::settings::Configurable;
         let mut shared = cranelift_codegen::settings::builder();
         for (k, v) in flags.iter().copied().chain([("use_colocated_libcalls", "false"), ("is_pic", "false")]) {
