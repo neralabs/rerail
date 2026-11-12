@@ -160,6 +160,8 @@ interface GitVerdict {
 }
 /** What Git holds for a walk's changes in one checkout, read once (`#gitVerdicts`). */
 interface GitBlobs {
+  /** The changes' paths in the checkout, whose blobs `blobs` holds as Git answered: a blob it lacks Git did not have. */
+  readonly asked: ReadonlySet<string>;
   /** Each change's index blob, its conflict stages, its `HEAD` blob and, when `HEAD` moved, its blob at `before`. */
   readonly blobs: ReadonlyMap<string, Buffer>;
   /** Of the ids of the blobs each change's text can have been checked out from (`textBlobIds`), those the repository holds. */
@@ -234,7 +236,7 @@ async function readGitView(discovery: SourceDiscovery, checkout: string, changes
   const { ids, lfSources } = textBlobIds(changes, blobIdAlgorithm(head));
   // A blob larger than a source could never match its digest: it is skipped, never read into memory.
   const { blobs, held } = await git.run(signal => readGitObjects(checkout, revisions, ids, { maxBlobBytes: MAX_SOURCE_BYTES, signal }));
-  return { blobs, held, lfSources, head, moved, committed, before, ...unmerged };
+  return { asked: new Set(changes.map(({ path }) => path)), blobs, held, lfSources, head, moved, committed, before, ...unmerged };
 }
 /** A change as a verdict compares it with Git's blobs: by the digests of its file's bytes now and before it. */
 interface ComparedChange {
@@ -766,30 +768,30 @@ function takeFirstSeen(scan: SourceScan, sources: ReadonlyArray<Source | undefin
 
 /**
  * Puts in `recovered` each of `paths` (owned by `checkout`) whose Git index or `HEAD` blob has the digest `uncaptured`
- * names for it. The rule a checkout writes CRLF by is asked of Git only for a file that held one of them in a CRLF form
- * alone (`heldOnlyInCrlf`): for any other, no rule changes which blob it held.
+ * names for it, as stored or in the CRLF form a `text` checkout writes. The digest proves the bytes, so no rule of the
+ * repository's is asked: a file that held that form held that text, whoever wrote it. A path the walk's verdict already
+ * read (`walked`) takes its blobs from that read; only the others start a Git process.
  */
 async function recoverFromGit(
   discovery: SourceDiscovery,
   checkout: string,
   paths: readonly string[],
   uncaptured: ReadonlyMap<string, string>,
-  recovered: Map<string, string>,
+  { recovered, walked }: { readonly recovered: Map<string, string>; readonly walked: GitRead | undefined },
 ): Promise<void> {
   const named = paths.map(path => ({ path, inCheckout: sessionPath(checkout, resolve(discovery.root, path)) }));
-  const revisions = named.flatMap(({ inCheckout }) => [`:./${inCheckout}`, `HEAD:./${inCheckout}`]);
+  const unread = named.filter(({ inCheckout }) => walked?.asked.has(inCheckout) !== true);
+  const revisions = unread.flatMap(({ inCheckout }) => [`:./${inCheckout}`, `HEAD:./${inCheckout}`]);
   // A blob larger than a source could never match its digest: it is skipped, never read into memory.
-  const blobs = await discovery.git.run(signal => readGitBlobs(checkout, revisions, { maxBlobBytes: MAX_SOURCE_BYTES, signal }));
-  const held = (inCheckout: string): Array<Buffer | undefined> => [blobs.get(`:./${inCheckout}`), blobs.get(`HEAD:./${inCheckout}`)];
-  const decided = named.filter(({ path, inCheckout }) => held(inCheckout).some(blob => heldOnlyInCrlf(blob, uncaptured.get(path))));
-  const crlf = await discovery.git.run(signal => gitCrlfPaths(checkout, decided.map(({ inCheckout }) => inCheckout), { signal }));
+  const read = await discovery.git.run(signal => readGitBlobs(checkout, revisions, { maxBlobBytes: MAX_SOURCE_BYTES, signal }));
+  const blob = (revision: string): Buffer | undefined => read.get(revision) ?? walked?.blobs.get(revision);
   for (const { path, inCheckout } of named) {
     const digest = uncaptured.get(path);
-    for (const blob of held(inCheckout)) {
-      const form = heldAs(blob, digest, crlf.get(inCheckout));
-      if (blob === undefined || form === undefined) continue;
+    for (const held of [blob(`:./${inCheckout}`), blob(`HEAD:./${inCheckout}`)]) {
+      const form = heldAs(held, digest, "text");
+      if (held === undefined || form === undefined) continue;
       // In the line breaks the file held it in, so the diff against the working tree lines up line by line.
-      recovered.set(path, textAs(blob, form));
+      recovered.set(path, textAs(held, form));
       break;
     }
   }
@@ -1640,11 +1642,11 @@ export class CodeRuleBridge {
    * by its own tool call or its own folder's walk.
    */
   async #auditWalkEdits(discovery: SourceDiscovery, walk: WalkStart, edits: readonly CodeRuleEdit[], uncaptured: Map<string, string>): Promise<void> {
-    const { own, notOwn } = await this.#separateOwnWrites(discovery, walk, edits, uncaptured);
+    const { own, notOwn, views } = await this.#separateOwnWrites(discovery, walk, edits, uncaptured);
     const checkpoints = discoveryCheckpoints(strongerCheckpoint(walk.checkpoint, discovery.requested));
     try {
       if (notOwn.length > 0) await this.#auditEdits(discovery, notOwn, checkpoints, new Map(), "log");
-      if (own.length > 0) await this.#auditEdits(discovery, own, checkpoints, uncaptured, walk.inSession ? undefined : "log");
+      if (own.length > 0) await this.#auditEdits(discovery, own, checkpoints, uncaptured, walk.inSession ? undefined : "log", views);
     } catch (error) {
       // A rejected evaluator submission is not an observation we have enforced.
       // Restore these baselines so the next requested scan can retry the changes.
@@ -1770,13 +1772,15 @@ export class CodeRuleBridge {
     walk: WalkStart,
     edits: readonly CodeRuleEdit[],
     uncaptured: Map<string, string>,
-  ): Promise<{ own: CodeRuleEdit[]; notOwn: CodeRuleEdit[] }> {
+  ): Promise<{ own: CodeRuleEdit[]; notOwn: CodeRuleEdit[]; views: Map<string, GitRead> }> {
     const unwritten: CodeRuleEdit[] = [];
     const notOwn: CodeRuleEdit[] = [];
+    const views = new Map<string, GitRead>();
     const { owned, unowned } = this.#byOwningCheckout(discovery.root, edits, edit => edit.path);
     unwritten.push(...unowned);
     for (const [checkout, group] of owned) {
-      const verdicts = await this.#gitVerdicts(discovery, checkout, group, uncaptured);
+      const { verdicts, view } = await this.#gitVerdicts(discovery, checkout, group, uncaptured);
+      if (view !== undefined) views.set(checkout, view);
       for (const edit of group) {
         const verdict = verdicts.get(edit.path);
         if (verdict === undefined) unwritten.push(edit);
@@ -1788,7 +1792,7 @@ export class CodeRuleBridge {
       }
     }
     const own = walk.inSession ? await this.#claimOwnWrites(discovery, walk, unwritten, uncaptured, notOwn) : unwritten;
-    return { own, notOwn };
+    return { own, notOwn, views };
   }
 
   /**
@@ -1854,20 +1858,21 @@ export class CodeRuleBridge {
    * before it. A file holds a blob in the CRLF line breaks as well where the repository's settings have a checkout write
    * them (`gitCrlfPaths`, `line-endings.ts`), which are asked for only where they can move a verdict (`crlfOfChanges`);
    * other filters' bytes never match, and stay the session's.
-   * Of the rest, a file restored from a branch is Git's too (`#restoredFromBranches`).
+   * Of the rest, a file restored from a branch is Git's too (`#restoredFromBranches`). What Git was read for (`view`)
+   * comes back with the verdicts, so the recovery of a preimage the session did not capture reads none of it again.
    */
   async #gitVerdicts(
     discovery: SourceDiscovery,
     checkout: string,
     edits: readonly CodeRuleEdit[],
     uncaptured: ReadonlyMap<string, string>,
-  ): Promise<Map<string, GitVerdict>> {
+  ): Promise<{ verdicts: Map<string, GitVerdict>; view: GitView | undefined }> {
     const verdicts = new Map<string, GitVerdict>();
     const named = edits.map(edit => ({ edit, path: sessionPath(checkout, resolve(discovery.root, edit.path)), prior: uncaptured.get(edit.path) }));
     // Only a readable text can be restored from a branch (`#addRestoredVerdicts`), so only its ids are looked for.
     const asked = named.map(({ edit, path }) => ({ path, text: edit.readError === undefined ? edit.generatedText : undefined }));
     const read = await readGitView(discovery, checkout, asked);
-    if (read === undefined) return verdicts;
+    if (read === undefined) return { verdicts, view: undefined };
     const changes = named.map(({ edit, path, prior }) => ({ path, prior, after: this.#digestWithCr(edit) }));
     const blobs: GitBlobs = { ...read, crlf: await crlfOfChanges(discovery.git, checkout, read, changes) };
     const view: GitView = { ...blobs, stopped: stoppedSince(blobs, named) };
@@ -1876,7 +1881,7 @@ export class CodeRuleBridge {
       if (verdict !== undefined) verdicts.set(edit.path, verdict);
     }
     await this.#addRestoredVerdicts(discovery.git, checkout, view, named, verdicts);
-    return verdicts;
+    return { verdicts, view };
   }
 
   /** Of the changes Git has not explained, those restored from a branch are Git's, their text kept for the next edit. */
@@ -2172,15 +2177,17 @@ export class CodeRuleBridge {
     return { path: location.path, language: location.language, readError: errorMessage(error) };
   }
 
+  /** Audits `captured`; `walked` holds what the walk that found them read of each checkout's Git (`#gitVerdicts`). */
   async #auditEdits(
     discovery: SourceDiscovery,
     captured: CodeRuleEditBatch["edits"],
     checkpoints: CodeRuleCheckpoint[],
     uncaptured: ReadonlyMap<string, string>,
     mode?: AuditMode,
+    walked?: ReadonlyMap<string, GitRead>,
   ): Promise<CodeRuleResponse> {
     const sessionId = this.#requireSession();
-    const edits = await this.#recoverPreimages(discovery, captured, uncaptured);
+    const edits = await this.#recoverPreimages(discovery, captured, uncaptured, walked);
     for (const edit of edits) {
       this.#forgetText(edit.path);
       if (edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText, "edit");
@@ -2197,19 +2204,21 @@ export class CodeRuleBridge {
   /**
    * Gives each edit `uncaptured` names (made with no preimage captured: a shell write, a tool call whose start was not
    * seen) the source it changed, where that is known exactly: the text this session last saw the file with, else its
-   * Git index or `HEAD` blob, each taken only when its SHA-256 is the digest observed before the change. Any other
-   * keeps its `previousReadError`, so the generated lines stay unknown rather than guessed.
+   * Git index or `HEAD` blob, each taken only when its SHA-256 is the digest observed before the change, from what the
+   * walk already read of the checkout's Git where it did (`walked`). Any other keeps its `previousReadError`, so the
+   * generated lines stay unknown rather than guessed.
    */
   async #recoverPreimages(
     discovery: SourceDiscovery,
     edits: CodeRuleEditBatch["edits"],
     uncaptured: ReadonlyMap<string, string>,
+    walked: ReadonlyMap<string, GitRead> | undefined,
   ): Promise<CodeRuleEditBatch["edits"]> {
     if (uncaptured.size === 0) return edits;
     const recovered = new Map<string, string>();
     const unresolved = this.#recoverFromTexts(uncaptured, recovered);
     for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, unresolved, path => path).owned)
-      await recoverFromGit(discovery, checkout, paths, uncaptured, recovered);
+      await recoverFromGit(discovery, checkout, paths, uncaptured, { recovered, walked: walked?.get(checkout) });
     return edits.map(edit => {
       const previousText = recovered.get(edit.path);
       if (previousText === undefined) return edit;

@@ -1495,17 +1495,28 @@ describe("CodeRuleBridge and Git's own writes under core.autocrlf", () => {
     ]);
   });
 
-  it("asks Git for a file's line-ending rule while its earlier bytes are a blob's CRLF form, and not once it measures from its own text", async () => {
+  it("asks Git nothing of line endings for shell edits of a file a CRLF checkout wrote, and recovers its earlier text all the same", async () => {
     const root = await crlfBranches();
     const { bridge, auditGeneratedEdits } = await opened(root);
-    // The file held the index blob in the CRLF form a checkout writes here: only the rule says Git wrote that.
-    const first = await lineEndingReads(() => shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\r\nmine\r\n")));
-    expect(first.filter(command => command.startsWith("check-attr "))).toHaveLength(1);
+    // The file held the index blob in the CRLF form a checkout writes here; its digest proves that text, rule or none.
+    expect(await lineEndingReads(() => shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\r\nmine\r\n")))).toEqual([]);
     // The next edit is measured from the text the session left, and its bytes hold no blob's CRLF form.
     expect(await lineEndingReads(() => shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\r\nmine\r\nmore\r\n")))).toEqual([]);
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
       [{ path: "src/a.py", language: "python", previousText: "old\r\n", generatedText: "old\r\nmine\r\n" }],
       [{ path: "src/a.py", language: "python", previousText: "old\r\nmine\r\n", generatedText: "old\r\nmine\r\nmore\r\n" }],
+    ]);
+  });
+
+  it("recovers the earlier text of a file an editor wrote with CRLF where a checkout writes LF", async () => {
+    const root = await twoBranches();
+    // Written before the session, so the session holds no text of it: only the index blob's CRLF form matches its digest.
+    await writeFile(join(root, "src", "a.py"), "old\r\n");
+    await awaitClockAfter(join(root, "src", "a.py"));
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    expect(await lineEndingReads(() => shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\r\nmine\r\n")))).toEqual([]);
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/a.py", language: "python", previousText: "old\r\n", generatedText: "old\r\nmine\r\n" }],
     ]);
   });
 
@@ -1558,8 +1569,8 @@ describe("CodeRuleBridge and Git's own writes", () => {
   it("reads Git's blobs for a shell edit and whether a branch could hold its text by one Git process", async () => {
     const root = await twoBranches();
     const { bridge, auditGeneratedEdits } = await opened(root);
-    // The first edit's text before it was never captured, so Git's blobs are read for that too (`recoverFromGit`).
-    await shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nmine\n"));
+    // The first edit's text before it was never captured: it is recovered from the blobs the verdict read (`recoverFromGit`).
+    expect(await objectReads(() => shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nmine\n")))).toEqual(["cat-file --batch"]);
     expect(await objectReads(() => shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nmine\nmore\n")))).toEqual(["cat-file --batch"]);
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
       [{ path: "src/a.py", language: "python", previousText: "old\n", generatedText: "old\nmine\n" }],

@@ -265,19 +265,23 @@ a tracked file lost its earlier text.
 attributes, and reads `core.autocrlf` and `core.eol`. It names the files a checkout writes with CRLF as Git decides:
 an `eol` attribute as it says, never a `-text` file, a file with no `text` attribute only under `core.autocrlf=true`,
 and a text file under `core.autocrlf=true`, else by `core.eol`, whose native default is CRLF on Windows alone. For
-those files only, the comparisons also try the CRLF form: in the walk's Git verdicts, the recovery of a preimage the
-session did not capture, and the search of the branches a file was restored from. `src/engine/code-rule/line-endings.ts`
-holds every such comparison: `heldAs` says whether a file holds a blob and in which form, `textAs` gives a blob's text
-in that form, and `blobIds` gives the blob ids a file's text can stand for. A text names an LF blob only when a
-checkout writes that blob as the text, so a text with an LF and no CR before it, a lone CR, or a NUL names none. A
-preimage recovered from Git keeps the CRLF line breaks the file held, so the diff lines up line by line. A shell
-command that rewrites an LF file with CRLF where Git would not is still the agent's edit.
+those files only, the walk's Git verdicts and the search of the branches a file was restored from also try the CRLF
+form. `src/engine/code-rule/line-endings.ts` holds every such comparison: `heldAs` says whether a file holds a blob and
+in which form, `textAs` gives a blob's text in that form, and `blobIds` gives the blob ids a file's text can stand for.
+A text names an LF blob only when a checkout writes that blob as the text, so a text with an LF and no CR before it, a
+lone CR, or a NUL names none. A shell command that rewrites an LF file with CRLF where Git would not is still the
+agent's edit.
 
 Those settings move a comparison only for a file whose bytes hold a blob in a CRLF form and not as stored
 (`heldOnlyInCrlf`), or whose text is the CRLF form of an LF blob the repository holds (`crlfSourceId`), so Rerail
 asks Git for them for those files alone, when a walk finds one. A walk of edits Git did not write starts no Git
 process for line endings. A walk that finds files Git wrote in a CRLF form asks Git as before, so each answer is the
 one Git gives at that moment, after any `.gitattributes` or configuration change.
+
+The recovery of a preimage the session did not capture asks for no setting: it takes the index or `HEAD` blob, as
+stored or in its CRLF form, whose SHA-256 is the digest the file had before the change, since that digest proves the
+bytes whoever wrote them. The text keeps the CRLF line breaks the file held, so the diff lines up line by line. It
+takes the blobs the walk's verdict already read, and reads Git only for a file the verdict did not ask about.
 
 </details>
 
