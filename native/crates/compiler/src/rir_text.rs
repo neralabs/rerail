@@ -56,6 +56,13 @@ pub fn mark_word_rows(out: &mut String, mark_words: &[(u8, u16)]) {
     }
 }
 
+pub fn word_kind_rows(out: &mut String, word_kinds: &[(u16, u16)]) {
+    use std::fmt::Write as _;
+    for &(s, k) in word_kinds {
+        let _ = writeln!(out, "  wordkind s{s} #{k}");
+    }
+}
+
 pub fn rule_rows(out: &mut String, rules: &[u16]) {
     use std::fmt::Write as _;
     for (at, p) in rules.iter().enumerate() {

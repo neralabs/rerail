@@ -344,6 +344,8 @@ pub struct Structure {
     pub switches: Vec<crate::stream_ir::ByteSwitch>,
     pub readings: crate::stream_ir::Readings,
     /// Tier 2's rules (`Words::rules`): each rule's first place.
+    /// Each keyword's node kind, by string (`Words::word_kinds`).
+    pub word_kinds: Vec<(u16, u16)>,
     pub rules: Vec<u16>,
     /// The block programs, lowered (`BlockNative`).
     pub block_programs: Vec<BlockNative>,
@@ -505,6 +507,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
         switches: program.switches.clone(),
         readings: program.readings.clone(),
         rules: program.rules.clone(),
+        word_kinds: program.word_kinds.clone(),
         block_programs: program.block_programs.iter().map(BlockNative::lower).collect(),
         output: FunctionRef::Output,
         reduction: FunctionRef::Reduction,

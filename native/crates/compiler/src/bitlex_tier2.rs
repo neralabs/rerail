@@ -14,7 +14,7 @@
 //!   its node and returns to switch on the token again.
 
 use crate::grammar::{Act, ArmRow, StateRow};
-use crate::stream_ir::{ByteSwitch, REFUSE};
+use crate::stream_ir::{ByteSwitch, REFUSE, WORD_KIND};
 use std::collections::HashMap;
 
 /// A set of bytes, bit `b` for byte `b`.
@@ -160,6 +160,9 @@ struct Emit<'a> {
     arm_code: HashMap<(usize, Span, Pre), u16>,
     /// The marks of one word, by order: their strings (`Lowered::mark_words`).
     mark_words: std::collections::BTreeMap<u8, u16>,
+    /// Each keyword's leaf kind, by its string (`Words::word_kinds`): a leaf of a keyword's
+    /// own kind takes it from the token's word, so keywords' arms differing only in it are one.
+    word_kinds: std::collections::BTreeMap<u16, u16>,
     /// Where the state being lowered goes on a token none of its arms takes: its level's end
     /// (the caller then switches on the token), or `REFUSE`.
     default: u16,
@@ -210,6 +213,21 @@ impl Emit<'_> {
                 (self.strings.len() - 1) as u16
             }
         }
+    }
+
+    /// The string of the one keyword whose kind `kind` is, where only a token of that word has
+    /// it (no row's own kind): a leaf of the kind then takes it from the token's word, as the
+    /// lean parser's `Kind::DotDecl + (d - W_DECL)`.
+    fn word_kind(&mut self, kind: u16) -> Option<u16> {
+        if self.rows.iter().any(|r| r.kind == kind) {
+            return None;
+        }
+        let mut words = self.rows.iter().flat_map(|r| r.keywords.iter().chain(&r.soft)).filter(|&&(_, k)| k == kind).map(|(w, _)| w.clone());
+        let w = words.next()?;
+        if words.any(|x| x != w) {
+            return None;
+        }
+        Some(self.string(&w))
     }
 
     /// An arm's code: its token's end, its test, acts, push and jump.
@@ -303,7 +321,15 @@ impl Emit<'_> {
                     (supers, field)
                 }
                 Act::Leaf { field, supers, kind } => {
-                    self.push("LEAF", 0, Arg::Kind(if kind != 0 { kind } else { token }));
+                    let kind = if kind != 0 { kind } else { token };
+                    let kind = match self.word_kind(kind) {
+                        Some(s) => {
+                            self.word_kinds.insert(s, kind);
+                            WORD_KIND
+                        }
+                        None => kind,
+                    };
+                    self.push("LEAF", 0, Arg::Kind(kind));
                     (supers, field)
                 }
                 Act::Extra => {
@@ -838,7 +864,16 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         marked: vec![0; states.len()],
         arm_code: HashMap::new(),
         mark_words: Default::default(),
+        word_kinds: Default::default(),
     };
+    // The keywords' strings first, in the order of their kinds, as the lean parser numbers its
+    // words: a keyword's leaf kind is then its word plus a constant over each run of kinds
+    // (`word_kind`), one add, not a compare tree.
+    let mut keywords: Vec<(u16, Vec<u8>)> = rows.iter().flat_map(|r| r.keywords.iter().chain(&r.soft)).map(|(w, k)| (*k, w.clone())).collect();
+    keywords.sort();
+    for (_, w) in &keywords {
+        e.string(w);
+    }
     for t in 0..empties {
         e.push("EMPTY", 0, Arg::Num(t));
     }
@@ -923,6 +958,8 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
     }
     let mark_words: Vec<(u8, u16)> = e.mark_words.iter().map(|(&k, &s)| (k, s)).collect();
     crate::rir_text::mark_word_rows(&mut text, &mark_words);
+    let word_kinds: Vec<(u16, u16)> = e.word_kinds.iter().map(|(&s, &k)| (s, k)).collect();
+    crate::rir_text::word_kind_rows(&mut text, &word_kinds);
     crate::rir_text::rule_rows(&mut text, &firsts);
     for (pc, (op, mode, arg)) in e.words.iter().enumerate() {
         let _ = write!(text, "  {pc:04} {op}");

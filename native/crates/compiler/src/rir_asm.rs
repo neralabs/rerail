@@ -426,6 +426,14 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             }
             parts.mark_words.push((k, s));
         }
+        "wordkind" => {
+            let s: u16 = line.number("s")?;
+            let k = line.kind()?;
+            if parts.word_kinds.last().is_some_and(|&(x, _)| x >= s) {
+                return Err(format!("wordkind s{s} out of order"));
+            }
+            parts.word_kinds.push((s, k));
+        }
         "provisional" => {
             let f: u16 = line.number("#")?;
             parts.readings.provisional.push(f);
@@ -657,6 +665,7 @@ pub fn head_rows(out: &mut String, program: &Words) {
     }
     reading_rows(out, &program.readings);
     crate::rir_text::mark_word_rows(out, &program.mark_words);
+    crate::rir_text::word_kind_rows(out, &program.word_kinds);
     crate::rir_text::rule_rows(out, &program.rules);
 }
 

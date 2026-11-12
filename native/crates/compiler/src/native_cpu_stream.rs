@@ -20,7 +20,7 @@ use crate::Error;
 
 use crate::native_cpu_shape::Step;
 use crate::native_ir::{FlagOp, On, Structure, StructuralOperation as Op};
-use crate::stream::{ByteSwitch, DEAD, GONE, KEEP, Node, REFUSE, REMEMBERED, Refused};
+use crate::stream::{ByteSwitch, DEAD, GONE, KEEP, Node, REFUSE, REMEMBERED, Refused, WORD_KIND};
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::{AbiParam, Block, BlockArg, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
@@ -615,14 +615,16 @@ impl Mem {
 pub const HELD_IN_RULES: [u32; 0] = [];
 
 /// A compare tree over a byte (or a place), as rustc lowers a `match` (LLVM's switch lowering):
-/// `runs` are runs of one target (the first from 0, the last on past every value). The target
-/// with the most runs is the default; the tree is over the other runs alone (the cases), split
-/// at the middle case, each side knowing the range its value is in; a case is one test at its
-/// leaf (an equality, a bound, or a range), and a value in no case goes to the default. A
-/// switch that expects one kind is one compare, as `expect(kind)`.
-fn dispatch(f: &mut FunctionBuilder<'_>, x: Value, runs: &[(u32, Block)]) {
-    let ends: Vec<u64> = runs.iter().skip(1).map(|r| u64::from(r.0)).chain([u64::MAX]).collect();
-    let spans: Vec<(u64, u64, Block)> = runs.iter().zip(&ends).enumerate().map(|(i, (r, &e))| (if i == 0 { 0 } else { u64::from(r.0) }, e, r.1)).collect();
+/// `runs` are runs of one target (the first from 0, the last on to `end`, past every value the
+/// switch reads: 256 for a byte). The target with the most runs is the default; the tree is over
+/// the other runs alone (the cases), split at the middle, each side knowing the range its value
+/// is in; a case is one test at its leaf (an equality, a bound, or a range), and a value in no
+/// case goes to the default. A switch that expects one kind is one compare, as `expect(kind)`.
+/// Cases of at most three targets within 64 values are bit tests, as LLVM's: one shift, then a
+/// mask a target.
+fn dispatch(f: &mut FunctionBuilder<'_>, x: Value, runs: &[(u32, Block)], end: u64) {
+    let ends: Vec<u64> = runs.iter().skip(1).map(|r| u64::from(r.0)).chain([end]).collect();
+    let spans: Vec<(u64, u64, Block)> = runs.iter().zip(&ends).enumerate().map(|(i, (r, &e))| (if i == 0 { 0 } else { u64::from(r.0) }, e, r.1)).filter(|&(a, b, _)| a < b).collect();
     // The default: the target with the most runs (the first such).
     let mut count: Vec<(Block, usize)> = Vec::new();
     for &(_, _, b) in &spans {
@@ -633,16 +635,89 @@ fn dispatch(f: &mut FunctionBuilder<'_>, x: Value, runs: &[(u32, Block)]) {
     }
     let default = count.iter().max_by_key(|&&(_, n)| n).map(|&(b, _)| b).expect("a run");
     let cases: Vec<(u64, u64, Block)> = spans.into_iter().filter(|&(_, _, b)| b != default).collect();
-    cases_tree(f, x, 0, u64::MAX, &cases, default);
+    let clusters = clusters(&cases);
+    cases_tree(f, x, 0, end, &clusters, default);
+}
+
+/// A leaf of `dispatch`'s tree: the values `a..b`, to one target (`Range`), or tested by bits
+/// (`Bits`: each target with its mask over `x - a`; a value in none goes to the default).
+enum Cluster {
+    Range(u64, u64, Block),
+    Bits(u64, u64, Vec<(Block, u64)>),
+}
+
+impl Cluster {
+    fn start(&self) -> u64 {
+        match *self {
+            Cluster::Range(a, ..) | Cluster::Bits(a, ..) => a,
+        }
+    }
+}
+
+/// `cases` (rising, apart) as clusters: from each case on, the longest run of cases within 64
+/// values and of at most three targets, as bit tests where LLVM finds them worth it (one
+/// target and 3 compares saved, two and 5, three and 6: a range counting two), else the case.
+fn clusters(cases: &[(u64, u64, Block)]) -> Vec<Cluster> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < cases.len() {
+        let mut best = None;
+        let (mut dests, mut cmps): (Vec<Block>, usize) = (Vec::new(), 0);
+        for j in i..cases.len() {
+            let (a, b, t) = cases[j];
+            if b - cases[i].0 > 64 || b == u64::MAX {
+                break;
+            }
+            if !dests.contains(&t) {
+                if dests.len() == 3 {
+                    break;
+                }
+                dests.push(t);
+            }
+            cmps += if b == a + 1 { 1 } else { 2 };
+            let worth = match dests.len() {
+                1 => cmps >= 3,
+                2 => cmps >= 5,
+                _ => cmps >= 6,
+            };
+            if worth {
+                best = Some(j);
+            }
+        }
+        match best {
+            Some(j) => {
+                let base = cases[i].0;
+                let mut masks: Vec<(Block, u64)> = Vec::new();
+                for &(a, b, t) in &cases[i..=j] {
+                    let m = (a..b).fold(0u64, |m, v| m | 1 << (v - base));
+                    match masks.iter_mut().find(|(x, _)| *x == t) {
+                        Some(x) => x.1 |= m,
+                        None => masks.push((t, m)),
+                    }
+                }
+                // The target with the most values first, as LLVM orders them.
+                masks.sort_by_key(|&(_, m)| std::cmp::Reverse(m.count_ones()));
+                out.push(Cluster::Bits(base, cases[j].1, masks));
+                i = j + 1;
+            }
+            None => {
+                let (a, b, t) = cases[i];
+                out.push(Cluster::Range(a, b, t));
+                i += 1;
+            }
+        }
+    }
+    out
 }
 
 /// `dispatch`'s tree over `cases` for a value known to be in `lo..hi`.
-fn cases_tree(f: &mut FunctionBuilder<'_>, x: Value, lo: u64, hi: u64, cases: &[(u64, u64, Block)], default: Block) {
+fn cases_tree(f: &mut FunctionBuilder<'_>, x: Value, lo: u64, hi: u64, cases: &[Cluster], default: Block) {
     match cases {
         [] => {
             f.ins().jump(default, &[]);
         }
-        &[(a, b, to)] => {
+        [Cluster::Range(a, b, to)] => {
+            let (a, b, to) = (*a, *b, *to);
             let inside = if a <= lo && b >= hi {
                 f.ins().jump(to, &[]);
                 return;
@@ -658,9 +733,35 @@ fn cases_tree(f: &mut FunctionBuilder<'_>, x: Value, lo: u64, hi: u64, cases: &[
             };
             f.ins().brif(inside, to, &[], default, &[]);
         }
+        [Cluster::Bits(a, b, masks)] => {
+            let (a, b) = (*a, *b);
+            let d = if a == 0 { x } else { f.ins().iadd_imm(x, -(a as i64)) };
+            if a > lo || b < hi {
+                let tests = f.create_block();
+                let inside = f.ins().icmp_imm(IntCC::UnsignedLessThan, d, (b - a) as i64);
+                f.ins().brif(inside, tests, &[], default, &[]);
+                f.switch_to_block(tests);
+            }
+            let one = f.ins().iconst(types::I64, 1);
+            let bit = f.ins().ishl(one, d);
+            // Every value of the cluster some target's: the last target needs no test.
+            let full = (a.max(lo)..b.min(hi)).all(|v| masks.iter().any(|&(_, m)| m >> (v - a) & 1 != 0));
+            for (k, &(to, m)) in masks.iter().enumerate() {
+                if full && k + 1 == masks.len() {
+                    f.ins().jump(to, &[]);
+                    return;
+                }
+                let next = if k + 1 == masks.len() { default } else { f.create_block() };
+                let t = f.ins().band_imm(bit, m as i64);
+                f.ins().brif(t, to, &[], next, &[]);
+                if next != default {
+                    f.switch_to_block(next);
+                }
+            }
+        }
         _ => {
             let mid = cases.len() / 2;
-            let pivot = cases[mid].0;
+            let pivot = cases[mid].start();
             let (low, high) = (f.create_block(), f.create_block());
             let below = f.ins().icmp_imm(IntCC::UnsignedLessThan, x, pivot as i64);
             f.ins().brif(below, low, &[], high, &[]);
@@ -832,7 +933,8 @@ enum EndAt {
 /// `ctx` (`Ctx::state`), as the lean parser's in `self`. Its kind or field is an argument.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum WordFn {
-    Leaf { deferred: bool, extra: bool, end: EndAt },
+    /// `by_word`: a keyword's leaf, its kind its token's word's (`WORD_KIND`).
+    Leaf { deferred: bool, extra: bool, end: EndAt, by_word: bool },
     Open,
     Close { this: bool, end: EndAt },
     Wrap,
@@ -926,6 +1028,56 @@ fn remembered_kind(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>) -> Value {
     let none = f.ins().icmp_imm(IntCC::Equal, w, 0);
     (e.guard)(f, none);
     w
+}
+
+/// A keyword's leaf kind (`WORD_KIND`): its token's word's (`Words::word_kinds`), refused where
+/// the word has none. As LLVM lowers a `match` that maps a value to a value: runs of strings
+/// whose kinds rise with them are one add each (`Kind::DotDecl + (d - W_DECL)`), a compare
+/// tree picks the run.
+fn word_kind(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, word_kinds: &[(u16, u16)]) -> Value {
+    let code = (e.get)(f, Mem::Taken);
+    let w = f.ins().ushr_imm(code, i64::from(crate::records::KIND_BITS));
+    let w = f.ins().band_imm(w, 0xff);
+    // The word's string: the word less one (0, no word, wraps past every string).
+    let s = f.ins().iadd_imm(w, -1);
+    // Runs: (first string, past the last, kind less string).
+    let mut runs: Vec<(u32, u32, i64)> = Vec::new();
+    for &(at, k) in word_kinds {
+        let delta = i64::from(k) - i64::from(at);
+        match runs.last_mut() {
+            Some(r) if r.1 == u32::from(at) && r.2 == delta => r.1 += 1,
+            _ => runs.push((u32::from(at), u32::from(at) + 1, delta)),
+        }
+    }
+    let join = f.create_block();
+    f.append_block_param(join, types::I64);
+    let none = f.create_block();
+    let mut cases: Vec<(u32, Block)> = Vec::new();
+    let mut made = Vec::new();
+    let mut at = 0;
+    for &(a, b, delta) in &runs {
+        if a > at {
+            cases.push((at, none));
+        }
+        let blk = f.create_block();
+        cases.push((a, blk));
+        made.push((blk, delta));
+        at = b;
+    }
+    cases.push((at, none));
+    dispatch(f, s, &cases, u64::MAX);
+    for (blk, delta) in made {
+        f.switch_to_block(blk);
+        let k = f.ins().iadd_imm(s, delta);
+        f.ins().jump(join, &[k.into()]);
+    }
+    f.switch_to_block(none);
+    let bad = f.ins().iconst(types::I8, 1);
+    (e.guard)(f, bad);
+    let zero = f.ins().iconst(types::I64, 0);
+    f.ins().jump(join, &[zero.into()]);
+    f.switch_to_block(join);
+    f.block_params(join)[0]
 }
 
 /// `LEAF`: its row (its kind, with its field above it or none; its bytes; one record), the
@@ -2657,7 +2809,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     match cut.pick {
                         crate::native_cpu_clusters::Pick::Tree => {
                             let t = runs(s, &|t| if t == REFUSE { no } else { word(t) });
-                            dispatch(&mut f, b, &t);
+                            dispatch(&mut f, b, &t, 256);
                         }
                         crate::native_cpu_clusters::Pick::Weighted => {
                             // Each run's weight: its target's share of this word's profile, split
@@ -2707,7 +2859,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         }
                         let sw = ByteSwitch { targets: t, ..ByteSwitch::refusing(0) };
                         let r = runs(&sw, &|t| if t == REFUSE { no } else { word(t) });
-                        dispatch(&mut f, w, &r);
+                        dispatch(&mut f, w, &r, 256);
                     }
                     f.switch_to_block(no);
                     let at = f.ins().iconst(types::I64, pc as i64 + 1);
@@ -2836,9 +2988,21 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 }
                 Op::Leaf { kind, deferred, extra } => {
                     let end = end_at(pc);
+                    let by_word = kind == WORD_KIND;
                     let (code, next) = with_field(kind);
+                    // A keyword's leaf: the field above, the kind from the token's word.
+                    let code = if by_word { code & !0xffff } else { code };
                     let k = f.ins().iconst(types::I64, code);
-                    word!(WordFn::Leaf { deferred, extra, end }, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| leaf_word(g, e, q[0], deferred, extra, end, wrapping), next);
+                    let word_kinds = &native.word_kinds;
+                    word!(WordFn::Leaf { deferred, extra, end, by_word }, &[k], by_word, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| {
+                        let k = if by_word {
+                            let kind = word_kind(g, e, word_kinds);
+                            g.ins().bor(q[0], kind)
+                        } else {
+                            q[0]
+                        };
+                        leaf_word(g, e, k, deferred, extra, end, wrapping)
+                    }, next);
                 }
                 Op::Settle { .. } => {
                     // A token the grammar implies: no node; the extras pending stay where they are.
@@ -3246,7 +3410,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     if t.is_empty() {
                         f.ins().jump(off_end, &[]);
                     } else {
-                        dispatch(&mut f, p, &t);
+                        dispatch(&mut f, p, &t, u64::MAX);
                     }
                 }
                 Op::Accept => {

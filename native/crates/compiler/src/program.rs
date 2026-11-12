@@ -117,4 +117,7 @@ pub struct Words {
     /// order) holds where its mask does and the token's record names string `W`, as a parser
     /// tests the next token's word. Rising by mark.
     pub mark_words: Vec<(u8, u16)>,
+    /// Each keyword's node kind (`wordkind sW #K`): a token whose record names string `W` makes a
+    /// leaf of kind `K` where a `LEAF` names `stream_ir::WORD_KIND`. Rising by string.
+    pub word_kinds: Vec<(u16, u16)>,
 }

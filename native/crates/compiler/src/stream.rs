@@ -9,7 +9,7 @@ use crate::program::*;
 use crate::Error;
 use std::collections::{HashMap, HashSet};
 
-pub use crate::stream_ir::{ByteSwitch, DEAD, GONE, KEEP, REFUSE, REMEMBERED, Reading, Readings};
+pub use crate::stream_ir::{ByteSwitch, DEAD, GONE, KEEP, REFUSE, REMEMBERED, Reading, Readings, WORD_KIND};
 
 /// Whether a word is one of tier 2's.
 pub fn is_stream(opcode: u8) -> bool {
@@ -43,6 +43,9 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         // `m=1`: an extra's leaf, deferred; `m=2`: an extra's leaf placed now, never the node
         // made last at its level.
         // `m=3`: a token the grammar implies, no node.
+        // A keyword's leaf (`WORD_KIND`, `m=0`): the kind of its token's word, which the records
+        // name (`Words::word_kinds`).
+        LEAF if operand == WORD_KIND => mode == 0 && !program.word_kinds.is_empty() && records.is_some_and(|r| r.words == program.strings),
         LEAF => mode <= 3 && operand != REMEMBERED,
         // Mark `m % 32` (its order), its bit in mask `operand`; `m & 32`: the file's end has it.
         MARK => mode < 64 && usize::from(operand) < masks,
@@ -602,6 +605,16 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             // they are, as a leaf's would.
             LEAF if mode == 3 => pending = 0,
             LEAF => {
+                // A keyword's leaf: its token's word's kind, refused where it names none.
+                let operand = if operand != WORD_KIND {
+                    operand
+                } else {
+                    let w = crate::records::word_of(code).checked_sub(1);
+                    match w.and_then(|w| program.word_kinds.binary_search_by_key(&(w as u16), |&(s, _)| s).ok()) {
+                        Some(i) => program.word_kinds[i].1,
+                        None => return refuse(pc - 1, "a keyword's leaf at a token of no keyword"),
+                    }
+                };
                 if mode == 1 && pending == 0 {
                     keep = last_end;
                 }
@@ -712,6 +725,7 @@ pub fn validate_tier2(program: &Words) -> Result<(), Error> {
     }
     validate(program)?;
     validate_mark_words(program)?;
+    validate_word_kinds(program)?;
     validate_rules(program)
 }
 
@@ -724,6 +738,18 @@ pub fn validate_mark_words(program: &Words) -> Result<(), Error> {
         let rising = i == 0 || program.mark_words[i - 1].0 < k;
         let ok = rising && k < 32 && tested.contains(&k) && usize::from(s) < program.strings.len() && records.is_some_and(|r| r.words == program.strings);
         if !ok {
+            return Err(Error::InvalidOperand(i));
+        }
+    }
+    Ok(())
+}
+
+/// The keywords' leaf kinds (`Words::word_kinds`): rising by string, each a string of the
+/// program's (the records' words, `LEAF`'s check) and a kind that names no level's word.
+pub fn validate_word_kinds(program: &Words) -> Result<(), Error> {
+    for (i, &(s, k)) in program.word_kinds.iter().enumerate() {
+        let rising = i == 0 || program.word_kinds[i - 1].0 < s;
+        if !rising || usize::from(s) >= program.strings.len() || k == WORD_KIND || k == REMEMBERED {
             return Err(Error::InvalidOperand(i));
         }
     }
