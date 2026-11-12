@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { watch as watchPath } from "node:fs";
 import type * as FileSystem from "node:fs/promises";
 import { lstat, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -6,15 +7,18 @@ import { join, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
 import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/code-rule/code-rule.js";
+import { WatchedWorktrees, type WatchPath } from "../../../../src/engine/code-rule/worktree-notices.js";
 import { WorktreeWalks } from "../../../../src/engine/code-rule/worktree-walks.js";
 import type * as Git from "../../../../src/engine/git.js";
 
 /**
- * How many times each file was read whole through `node:fs/promises`, by the path it was read at; the listings held back
- * until a test lets them go, by folder; and how many times Git listed each checkout's changed files.
+ * How many times each file was read whole through `node:fs/promises`, by the path it was read at; each path `lstat` was
+ * asked about; the listings held back until a test lets them go, by folder; and how many times Git listed each
+ * checkout's changed files.
  */
 const counted = vi.hoisted(() => ({
   reads: new Map<string, number>(),
+  stats: [] as string[],
   held: new Map<string, () => Promise<void>>(),
   listings: new Map<string, number>(),
 }));
@@ -26,6 +30,10 @@ vi.mock("node:fs/promises", async importOriginal => {
       const path = String(args[0]);
       counted.reads.set(path, (counted.reads.get(path) ?? 0) + 1);
       return await actual.readFile(...args);
+    },
+    lstat: async (...args: Parameters<typeof actual.lstat>) => {
+      counted.stats.push(String(args[0]));
+      return await actual.lstat(...args);
     },
     opendir: async (...args: Parameters<typeof actual.opendir>) => {
       const hold = counted.held.get(String(args[0]));
@@ -45,7 +53,7 @@ vi.mock("../../../../src/engine/git.js", async importOriginal => {
     },
   };
 });
-const { reads, listings } = counted;
+const { reads, stats, listings } = counted;
 
 // Each test opens several sessions and walks four or five checkouts many times over.
 vi.setConfig({ testTimeout: 60_000 });
@@ -58,6 +66,7 @@ afterEach(async () => {
   counted.held.clear();
   await Promise.all(bridges.splice(0).map(bridge => bridge.close()));
   reads.clear();
+  stats.length = 0;
   listings.clear();
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
@@ -104,8 +113,11 @@ function innermost(checkouts: readonly string[], absolute: string): string | und
 
 type Session = Awaited<ReturnType<typeof opened>>;
 
-/** A session opened in `folder`, watching the other `checkouts` (read as they are at each walk) through `walks`. */
-async function opened(folder: string, checkouts: readonly string[], walks: WorktreeWalks) {
+/**
+ * A session opened in `folder`, watching the other `checkouts` (read as they are at each walk) through `walks`; Git
+ * ignores each path `ignores` names, as the session names it.
+ */
+async function opened(folder: string, checkouts: readonly string[], walks: WorktreeWalks, ignores?: (path: string) => boolean) {
   const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => ({
     revision: batch.revision, disposition: "continue" as const, violations: [], failures: [],
   }));
@@ -117,6 +129,7 @@ async function opened(folder: string, checkouts: readonly string[], walks: Workt
     sourceRoot: path => innermost(checkouts, resolve(folder, path)),
     // As the router does: the session's own checkout is never one of the other worktrees.
     worktreeRoots: () => checkouts.filter(checkout => checkout !== innermost(checkouts, folder)),
+    ...(ignores === undefined ? {} : { ignoresPath: ignores }),
   };
   const bridge = new CodeRuleBridge(folder, auditor, { worktreeWalks: walks });
   bridges.push(bridge);
@@ -125,8 +138,8 @@ async function opened(folder: string, checkouts: readonly string[], walks: Workt
 }
 
 /** A session whose first turn, and the walk of the other worktrees after it, are done. */
-async function session(folder: string, checkouts: readonly string[], walks: WorktreeWalks): Promise<Session> {
-  const opening = await opened(folder, checkouts, walks);
+async function session(folder: string, checkouts: readonly string[], walks: WorktreeWalks, ignores?: (path: string) => boolean): Promise<Session> {
+  const opening = await opened(folder, checkouts, walks, ignores);
   await turn(opening);
   return opening;
 }
@@ -260,6 +273,202 @@ describe("WorktreeWalks", () => {
     await turn(first, second, third);
     // `w4` is new to each session: listed once for the first session's walk and once for the walk the other two share.
     expect(listings.get(worktrees[3]!)).toBe(2);
+  });
+});
+
+/** How many times `lstat` was asked about each of `roots` or anything in it. */
+function statsUnder(...roots: string[]): number[] {
+  return roots.map(root => stats.filter(path => path === root || path.startsWith(`${root}${sep}`)).length);
+}
+
+/** Every batch of edits a session's auditor was given, whole, with its mode. */
+function edits({ auditGeneratedEdits }: Session): unknown[] {
+  return auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode]);
+}
+
+/**
+ * Two sessions in `folder`: one whose walks read only the worktrees a change notice named, and one whose walks read every
+ * worktree, as all walks did before notices. Each has had two walks, so the first one's worktrees are watched whole.
+ */
+async function bothWays(folder: string, checkouts: readonly string[]): Promise<{ noticed: Session; everyWorktree: Session }> {
+  const noticed = await session(folder, checkouts, new WorktreeWalks({ gapMs: 0 }));
+  const everyWorktree = await session(folder, checkouts, new WorktreeWalks({ gapMs: 0, fullWalkMs: 0 }));
+  await turn(noticed, everyWorktree);
+  return { noticed, everyWorktree };
+}
+
+describe("a walk of the other worktrees with change notices", () => {
+  it("stats no entry of the other worktrees when nothing changed in them since the last walk", async () => {
+    const { main, worktrees, checkouts } = await repository();
+    const watching = await session(worktrees[0]!, checkouts, new WorktreeWalks({ gapMs: 0 }));
+    // On Linux the folders of a worktree are watched once its first read is over, so the next walk reads it again.
+    await turn(watching);
+    stats.length = 0;
+    await turn(watching);
+    expect(statsUnder(main, worktrees[1]!, worktrees[2]!)).toEqual([0, 0, 0]);
+  });
+
+  it("stats only the worktree a file changed in, and each session watching it records the change", async () => {
+    const { main, worktrees, checkouts } = await repository();
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const first = await session(worktrees[0]!, checkouts, walks);
+    const second = await session(worktrees[1]!, checkouts, walks);
+    await turn(first, second);
+    stats.length = 0;
+    await writeFile(join(worktrees[2]!, "src", "a.py"), "old\nmine\n");
+    await turn(first, second);
+    // `w3`, its `src` and `src/a.py`, once for both sessions.
+    expect(statsUnder(main, worktrees[2]!)).toEqual([0, 3]);
+    expect([audited(first), audited(second)]).toEqual([[[["written ../w3/src/a.py"], "log"]], [[["written ../w3/src/a.py"], "log"]]]);
+  });
+
+  it("reads a worktree whose HEAD moved though no file in it changed", async () => {
+    const { main, worktrees, checkouts } = await repository();
+    const watching = await session(worktrees[0]!, checkouts, new WorktreeWalks({ gapMs: 0 }));
+    await turn(watching);
+    stats.length = 0;
+    git(worktrees[2]!, "commit", "--quiet", "--allow-empty", "-m", "empty");
+    await turn(watching);
+    expect(statsUnder(main, worktrees[1]!, worktrees[2]!)).toEqual([0, 0, 3]);
+  });
+
+  it("records a file created in another worktree as walks of every worktree do", async () => {
+    const { worktrees, checkouts } = await repository();
+    const { noticed, everyWorktree } = await bothWays(worktrees[0]!, checkouts);
+    await writeFile(join(worktrees[2]!, "src", "new.py"), "n = 1\n");
+    await turn(noticed, everyWorktree);
+    expect(audited(noticed)).toEqual([[["written ../w3/src/new.py"], "log"]]);
+    expect(edits(noticed)).toEqual(edits(everyWorktree));
+  });
+
+  it("records a file removed from another worktree as walks of every worktree do", async () => {
+    const { worktrees, checkouts } = await repository();
+    const { noticed, everyWorktree } = await bothWays(worktrees[0]!, checkouts);
+    await rm(join(worktrees[2]!, "src", "a.py"));
+    await turn(noticed, everyWorktree);
+    expect(audited(noticed)).toEqual([[["deleted ../w3/src/a.py"], "log"]]);
+    expect(edits(noticed)).toEqual(edits(everyWorktree));
+  });
+
+  it("follows a branch switch in another worktree as walks of every worktree do", async () => {
+    const { worktrees, checkouts } = await repository();
+    const w3 = worktrees[2]!;
+    git(w3, "checkout", "--quiet", "-b", "other");
+    await writeFile(join(w3, "src", "a.py"), "other\n");
+    git(w3, "commit", "--quiet", "-am", "other");
+    git(w3, "checkout", "--quiet", "--detach", "HEAD~1");
+    await awaitClockAfter(join(w3, "src", "a.py"));
+    const { noticed, everyWorktree } = await bothWays(worktrees[0]!, checkouts);
+    git(w3, "checkout", "--quiet", "other");
+    await turn(noticed, everyWorktree);
+    await awaitClockAfter(join(w3, "src", "a.py"));
+    await writeFile(join(w3, "src", "a.py"), "other\nmine\n");
+    await turn(noticed, everyWorktree);
+    // The write after the switch is measured against the branch's text.
+    expect(edits(noticed).at(-1)).toEqual([[{ path: "../w3/src/a.py", language: "python", previousText: "other\n", generatedText: "other\nmine\n" }], "log"]);
+    expect(edits(noticed)).toEqual(edits(everyWorktree));
+  });
+
+  it("takes a worktree added since, and records a write in it, as walks of every worktree do", async () => {
+    const { main, worktrees, checkouts } = await repository();
+    const { noticed, everyWorktree } = await bothWays(worktrees[0]!, checkouts);
+    const added = join(main, "..", "w4");
+    git(main, "worktree", "add", "--quiet", "--detach", added);
+    checkouts.push(added);
+    await turn(noticed, everyWorktree);
+    await awaitClockAfter(join(added, "src", "a.py"));
+    await writeFile(join(added, "src", "a.py"), "old\nmine\n");
+    await turn(noticed, everyWorktree);
+    expect(audited(noticed).at(-1)).toEqual([["written ../w4/src/a.py"], "log"]);
+    expect(edits(noticed)).toEqual(edits(everyWorktree));
+  });
+
+  it("drops a worktree removed since without recording its files, as walks of every worktree do", async () => {
+    const { main, worktrees, checkouts } = await repository();
+    const { noticed, everyWorktree } = await bothWays(worktrees[0]!, checkouts);
+    // Removed while the walks watch it: on Windows a watch holds the folder until it closes.
+    git(main, "worktree", "remove", "--force", worktrees[2]!);
+    checkouts.splice(checkouts.indexOf(worktrees[2]!), 1);
+    await turn(noticed, everyWorktree);
+    await writeFile(join(worktrees[1]!, "src", "a.py"), "old\nmine\n");
+    await turn(noticed, everyWorktree);
+    expect(audited(noticed)).toEqual([[["written ../w2/src/a.py"], "log"]]);
+    expect(edits(noticed)).toEqual(edits(everyWorktree));
+  });
+
+  it("finds a change made while a read ran, after the read passed the file and before its folders were watched", async () => {
+    const { worktrees, checkouts } = await repository();
+    const most = join(worktrees[2]!, "deep", "inner", "most");
+    await mkdir(most, { recursive: true });
+    const watching = await opened(worktrees[0]!, checkouts, new WorktreeWalks({ gapMs: 0 }));
+    const hold = holdListing(most);
+    await watching.bridge.checkpoint("turn");
+    // `w3` is read last; its listing of `most` waits until the read has observed `src/a.py`.
+    await hold.entered;
+    await writeFile(join(worktrees[2]!, "src", "a.py"), "old\nmine\n");
+    hold.release();
+    await watching.bridge.settleWorktreeWalk();
+    await turn(watching);
+    expect(audited(watching)).toEqual([[["written ../w3/src/a.py"], "log"]]);
+  });
+
+  it("reads on every walk a worktree it cannot watch, and a change there reaches the session", async () => {
+    const { main, worktrees, checkouts } = await repository();
+    const watch: WatchPath = () => {
+      throw Object.assign(new Error("too many open files"), { code: "EMFILE" });
+    };
+    const walks = new WorktreeWalks({ gapMs: 0, notices: new WatchedWorktrees({ watch }) });
+    const watching = await session(worktrees[0]!, checkouts, walks);
+    await turn(watching);
+    stats.length = 0;
+    await writeFile(join(worktrees[2]!, "src", "a.py"), "old\nmine\n");
+    await turn(watching);
+    expect(statsUnder(main, worktrees[1]!, worktrees[2]!)).toEqual([3, 3, 3]);
+    expect(audited(watching)).toEqual([[["written ../w3/src/a.py"], "log"]]);
+  });
+
+  it("reads every worktree again once the full walk is due", async () => {
+    const { main, worktrees, checkouts } = await repository();
+    const watching = await session(worktrees[0]!, checkouts, new WorktreeWalks({ gapMs: 0, fullWalkMs: 0 }));
+    await turn(watching);
+    stats.length = 0;
+    await turn(watching);
+    expect(statsUnder(main, worktrees[1]!, worktrees[2]!)).toEqual([3, 3, 3]);
+  });
+
+  // FSEvents coalesces notices rather than dropping them, so macOS has no overflow to provoke.
+  it.skipIf(process.platform === "darwin")("reads a worktree again when the system dropped its notices", async () => {
+    const { worktrees, checkouts } = await repository();
+    const src = join(worktrees[2]!, "src");
+    // More notices than the system keeps: inotify queues max_queued_events (16,384 by default), ReadDirectoryChangesW
+    // fills a 64 KB buffer. In files Git ignores, whose own notices never count.
+    const files = process.platform === "linux" ? 20_000 : 1_500;
+    /** Writes `text` to every ignored file, then `last` to `a.py`, in another process: the loop waits meanwhile. */
+    const flood = (text: string, last?: string): void => {
+      const script = [
+        `const fs = require("node:fs");`,
+        `for (let i = 0; i < ${files}; i += 1) fs.writeFileSync(${JSON.stringify(src)} + "/flood-" + i + ".tmp", ${JSON.stringify(text)});`,
+        last === undefined ? "" : `fs.writeFileSync(${JSON.stringify(join(src, "a.py"))}, ${JSON.stringify(last)});`,
+      ];
+      execFileSync(process.execPath, ["-e", script.join("\n")]);
+    };
+    flood("x");
+    const named: Array<string | null> = [];
+    const watch: WatchPath = (path, { recursive }, listener) => watchPath(path, { recursive, persistent: false }, (event, name) => {
+      named.push(name);
+      listener(event, name);
+    });
+    const walks = new WorktreeWalks({ gapMs: 0, notices: new WatchedWorktrees({ watch }) });
+    const watching = await session(worktrees[0]!, checkouts, walks, path => path.endsWith(".tmp"));
+    await turn(watching);
+    await awaitClockAfter(join(src, "a.py"));
+    named.length = 0;
+    flood("y", "old\nmine\n");
+    await new Promise(resolve => { setTimeout(resolve, 500); });
+    // The system dropped the notice of `a.py`, the last write.
+    expect(named.some(name => name?.endsWith("a.py") === true)).toBe(false);
+    await turn(watching);
+    expect(audited(watching)).toEqual([[["written ../w3/src/a.py"], "log"]]);
   });
 });
 

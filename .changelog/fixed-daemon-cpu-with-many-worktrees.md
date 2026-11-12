@@ -1,0 +1,1 @@
+In a repository with many worktrees, Rerail's daemon now reads only the other worktrees the operating system reports a change in, and all of them once every 10 minutes. It read every file of every worktree on each walk, which with 190 worktrees kept up to half a core busy.
