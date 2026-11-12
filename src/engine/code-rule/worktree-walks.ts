@@ -269,19 +269,14 @@ export class WorktreeWalks {
     return due;
   }
 
-  /** Waits until a session asking for a walk may have one, then walks; returns without one once none is left asking. */
+  /**
+   * Waits until a session asking for a walk may have one, then walks; returns without one once none is left asking. The
+   * walk starts when its timer fires, as timed: only a wake before it (an ask already due, a session gone) times it
+   * again.
+   */
   async #walkWhenDue(): Promise<void> {
     for (let due = this.#dueAt(); due !== undefined && due > Date.now(); due = this.#dueAt()) {
-      const wait = due - Date.now();
-      await new Promise<void>(wake => {
-        const timer = setTimeout(wake, wait);
-        timer.unref?.();
-        this.#wake = () => {
-          clearTimeout(timer);
-          wake();
-        };
-      });
-      this.#wake = undefined;
+      if (!(await this.#sleep(due - Date.now()))) break;
     }
     if (this.#dueAt() === undefined) return;
     const startedAt = Date.now();
@@ -292,6 +287,22 @@ export class WorktreeWalks {
       const end = Date.now();
       for (const watching of askers) watching.nextWalkAt = end + Math.max(this.#gapMs, end - startedAt);
     }
+  }
+
+  /** Waits `ms`, or until `#wake` is called; resolves whether it was woken first. */
+  #sleep(ms: number): Promise<boolean> {
+    return new Promise(done => {
+      const timer = setTimeout(() => {
+        this.#wake = undefined;
+        done(false);
+      }, ms);
+      timer.unref?.();
+      this.#wake = () => {
+        clearTimeout(timer);
+        this.#wake = undefined;
+        done(true);
+      };
+    });
   }
 
   async #settled(watching: Watching): Promise<void> {
