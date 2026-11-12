@@ -38,9 +38,9 @@ fn native_rows(query: &str, source: &str, tape: &TapeDoc) -> CaptureRows {
         assert_eq!(tape.transducer_kind(index), node.kind_id());
         assert_eq!(tape.transducer_span(index), node.byte_range());
         nodes.insert(node.id(), index);
-        let mut cursor = node.walk();
-        let children = node.children(&mut cursor).collect::<Vec<_>>();
-        pending.extend(children.into_iter().rev());
+        // The children the tape stores: no implied token (RER-131).
+        let children = crate::code_rule_dsl::tape::stored_children_for_test(SupportLang::Python, node);
+        pending.extend(children.into_iter().rev().map(|(child, _)| child));
     }
     assert_eq!(nodes.len(), tape.transducer_len());
     let mut cursor = tree_sitter::QueryCursor::new();
@@ -55,7 +55,9 @@ fn native_rows(query: &str, source: &str, tape: &TapeDoc) -> CaptureRows {
                     .map(|c| {
                         (
                             query.capture_names()[c.index as usize].to_owned(),
-                            nodes[&c.node.id()],
+                            *nodes.get(&c.node.id()).unwrap_or_else(|| {
+                                panic!("the native match captures `{}`, a token the tape does not store", c.node.kind())
+                            }),
                             c.node.start_byte(),
                             c.node.end_byte(),
                         )
@@ -615,13 +617,9 @@ fn wildcard_and_missing_flags_preserve_native_node_meaning() {
 }
 
 #[test]
-fn native_repetition_preserves_anonymous_sibling_boundaries_and_capture_order() {
+fn native_repetition_preserves_sibling_boundaries_and_capture_order() {
+    // No case captures an implied token such as `,`: the tape never stores one (RER-131).
     for (query, source) in [
-        ("(list ((identifier) @item)+)", "items = [a, b, c]\n"),
-        (
-            r#"(list [(identifier) @name "," @comma]+)"#,
-            "items = [a, b, c]\n",
-        ),
         (
             "(module [(comment) @x @y (comment) @y @x]+ @z)",
             "# first\n# second\n",
@@ -677,4 +675,28 @@ fn missing_patterns_reject_nested_or_multiple_node_kinds() {
             "compiler: {query}"
         );
     }
+}
+
+#[test]
+fn repetition_across_an_implied_token_is_one_run_on_the_tape() {
+    // Tree-sitter ends a `+` run at an anonymous sibling: `[a, b, c]` gives three one-item matches. The tape
+    // stores no implied token (RER-131), so the run goes on over `a b c` and gives one match of three.
+    // O-repetition-implied-boundary: whether rules need tree-sitter's boundary here.
+    let (query, source) = ("(list ((identifier) @item)+)", "items = [a, b, c]\n");
+    let tape = document(source);
+    let program =
+        Program::compile_tree_sitter_query_pattern(query, &SupportLang::Python.get_ts_language()).unwrap();
+    let native = native_rows(query, source, &tape);
+    assert_eq!(native.iter().map(Vec::len).collect::<Vec<_>>(), [1, 1, 1], "native");
+    let roots = (0..tape.transducer_len() as u32).collect::<Vec<_>>();
+    let actual = program.execute_roots(&tape, roots.iter().copied()).unwrap();
+    let rows = capture_rows(&program, &actual);
+    assert_eq!(rows, vec![native.concat()], "interpreter");
+    let jit = super::super::native_cpu::execute_batch(
+        std::slice::from_ref(&program),
+        std::slice::from_ref(&tape),
+        &[vec![roots]],
+    )
+    .unwrap();
+    assert_eq!(capture_rows(&program, &jit[0][0]), rows, "JIT");
 }

@@ -3729,3 +3729,15 @@ relations, not the observer: the module digests match.
 It passes with `RERAIL_TAPE_CACHE` pointing at an empty store. Next step: find
 whether the first or the second run is wrong (compare both with a run on an
 empty store), then fix the rule or the maintenance that loses the edge.
+
+## O-repetition-implied-boundary. A `+` run on the tape does not end at an implied token
+
+**Seen (2026-11-12).** Tree-sitter ends a quantified sibling run at an anonymous
+sibling: `(list ((identifier) @item)+)` on `items = [a, b, c]` gives three
+matches of one item each. The tape stores no implied token (RER-131), so the
+transducer's run goes on over `a b c` and gives one match of three items.
+`repetition_across_an_implied_token_is_one_run_on_the_tape` pins both results.
+
+**Closure:** decide whether any rule depends on tree-sitter's boundary. If one
+does, the program reads the boundary from the gap between stored siblings
+(the tape's `implied` gaps, `tape.rs`), never from generated tokens.

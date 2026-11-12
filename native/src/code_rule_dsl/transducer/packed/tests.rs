@@ -102,10 +102,10 @@
                 )
                 .unwrap();
                 let span = match (edge, mode) {
-                    (FIRST, 0) => 1..2,
-                    (FIRST, NAMED) => 2..4,
-                    (LAST, 0) => source.len() - 2..source.len() - 1,
-                    (LAST, NAMED) => source.len() - 6..source.len() - 2,
+                    // The tape stores named nodes only (RER-131): the brackets are not children, so the
+                    // all-sibling and named edges are the same arguments.
+                    (FIRST, _) => 2..4,
+                    (LAST, _) => source.len() - 6..source.len() - 2,
                     _ => unreachable!(),
                 };
                 let mut stats = ExecutionStats::default();
@@ -119,7 +119,7 @@
                 );
             }
         }
-        // Named and all-sibling queries share a parent but have different edges.
+        // Named and all-sibling queries share a parent; on a named-only tape their edges agree.
         let mixed = Program::new(
             vec![
                 word(CHILD, 0, 0),
@@ -140,7 +140,7 @@
         .unwrap();
         assert_eq!(
             mixed.execute_roots(&file, [root]).unwrap(),
-            expected(1..2, root)
+            expected(2..4, root)
         );
         for edge in [FIRST, LAST] {
             let program = Program::new(
