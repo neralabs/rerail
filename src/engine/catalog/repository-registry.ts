@@ -72,13 +72,24 @@ function contextOf<C extends string | null>(
   return { checkoutPath, repositoryKey, cloneId, git: location.git, main: location.main };
 }
 
+/** The most values one statement binds: SQLite refuses a statement with more than 32,766 variables (999 before 3.32). */
+const PATHS_PER_STATEMENT = 500;
+
+/** `values` in runs of at most {@link PATHS_PER_STATEMENT}, one run per statement; none for none. */
+function statementRuns(values: readonly string[]): string[][] {
+  const runs: string[][] = [];
+  for (let start = 0; start < values.length; start += PATHS_PER_STATEMENT) runs.push(values.slice(start, start + PATHS_PER_STATEMENT));
+  return runs;
+}
+
 /** A forgotten checkout's own rows go with it: its rule settings, and what Merge Assist found and scanned there. */
 function deleteCheckoutSettings(db: Writer, checkoutPaths: readonly string[]): void {
-  if (checkoutPaths.length === 0) return;
-  db.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "checkout"), inArray(ruleSettings.ownerId, [...checkoutPaths]))).run();
+  for (const paths of statementRuns(checkoutPaths)) {
+    db.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "checkout"), inArray(ruleSettings.ownerId, paths))).run();
+  }
   // The keys `runtime/merge-assist/state.ts` keeps per checkout (`STATE_KEYS`).
   const keys = checkoutPaths.flatMap(path => [`conflicts:${path}`, `scan:${path}`, `scanning:${path}`]);
-  db.delete(mergeAssistState).where(inArray(mergeAssistState.key, keys)).run();
+  for (const run of statementRuns(keys)) db.delete(mergeAssistState).where(inArray(mergeAssistState.key, run)).run();
 }
 
 /** The keys `runtime/merge-assist/state.ts` keeps per repository (`STATE_KEYS`): the person's settings, and `gh` readiness. */
@@ -698,13 +709,13 @@ function onDiskOf(path: string, present: boolean | undefined): OnDisk {
 
 /** Forget those of `gone` not recorded or seen again since `now`, with their own settings, and return their paths. */
 function forgetCheckouts(tx: Writer, gone: readonly string[], now: number): string[] {
-  const forgotten = tx.select({ path: checkouts.checkoutPath, lastSeenAt: checkouts.lastSeenAt }).from(checkouts)
-    .where(inArray(checkouts.checkoutPath, [...gone])).all()
+  const forgotten = statementRuns(gone)
+    .flatMap(paths => tx.select({ path: checkouts.checkoutPath, lastSeenAt: checkouts.lastSeenAt }).from(checkouts)
+      .where(inArray(checkouts.checkoutPath, paths)).all())
     .filter(row => row.lastSeenAt < now)
     .map(row => row.path);
-  if (forgotten.length === 0) return forgotten;
   deleteCheckoutSettings(tx, forgotten);
-  tx.delete(checkouts).where(inArray(checkouts.checkoutPath, forgotten)).run();
+  for (const paths of statementRuns(forgotten)) tx.delete(checkouts).where(inArray(checkouts.checkoutPath, paths)).run();
   return forgotten;
 }
 
