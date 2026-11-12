@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { adoptRemote, openRerailDatabase, recordCheckout } from "../../src/engine/index.js";
 import { SqliteSessionStore } from "../../src/runtime/index.js";
@@ -58,6 +59,26 @@ function recordSteerAt(store: SqliteSessionStore, observedAt: number, ...steer: 
     store.recordSteer(...steer);
   } finally {
     vi.useRealTimers();
+  }
+}
+
+/** Runs `read`, counting the rows SQLite hands back meanwhile through every statement's `all` and `get`. */
+async function rowsReturned<T>(read: () => Promise<T>): Promise<{ result: T; rows: number }> {
+  const probe = new Database(":memory:");
+  const statement: Database.Statement = Object.getPrototypeOf(probe.prepare("select 1"));
+  probe.close();
+  const all = vi.spyOn(statement, "all");
+  const get = vi.spyOn(statement, "get");
+  try {
+    const result = await read();
+    const returned = [...all.mock.results, ...get.mock.results].map(({ type, value }) => {
+      if (type !== "return" || value === undefined) return 0;
+      return Array.isArray(value) ? value.length : 1;
+    });
+    return { result, rows: returned.reduce((sum, count) => sum + count, 0) };
+  } finally {
+    all.mockRestore();
+    get.mockRestore();
   }
 }
 
@@ -231,6 +252,45 @@ describe("rerail rules evidence", () => {
     })]);
     expect(evidence.riskyCommands).toEqual([{ label: "force push", count: 1, example: "git push --force origin main" }]);
     expect(evidence.steers).toEqual([{ ruleId: "no-force-push", count: 1 }]);
+  });
+
+  it("reads a session that started before the window from the window on, plus its task and its last calls", async () => {
+    /** A 1-day window over a session with `history` calls before it, and the rows SQLite returned for it. */
+    const evidenceAfter = async (history: number) => {
+      const repo = await repository();
+      const { databasePath, store } = await sessionDatabase(repo);
+      try {
+        const event = (sessionId: string, kind: string, payload: unknown, observedAt: number) => {
+          store.append({ sessionId, kind, payload, observedAt });
+        };
+        store.openSession({ host: "claude-code", sessionId: "long", cwd: repo }, NOW - 10 * DAY);
+        event("long", "user-prompt", { text: "Add the logging" }, NOW - 10 * DAY + MINUTE);
+        for (let index = 0; index < history; index += 1) {
+          event("long", "call", { toolName: "Bash", input: { command: `npm test -- ${index}` } }, NOW - 9 * DAY + index * MINUTE);
+        }
+        event("long", "call", { toolName: "Edit", input: { file_path: "src/a.ts" } }, NOW - 2 * DAY);
+        event("long", "call", { toolName: "Bash", input: { command: "git push --force origin main" } }, NOW - HOUR);
+        event("long", "user-prompt", { text: "Don't force push" }, NOW - HOUR + MINUTE);
+        // Its only prompt before the window has no text, so its first prompt in the window is its task.
+        store.openSession({ host: "codex", sessionId: "untasked", cwd: repo }, NOW - 2 * DAY);
+        event("untasked", "user-prompt", { images: 1 }, NOW - 2 * DAY + MINUTE);
+        event("untasked", "user-prompt", { text: "Never use sudo here" }, NOW - HOUR);
+      } finally {
+        store.close();
+      }
+      return rowsReturned(() => collectRuleEvidence(repo, { databasePath, now: NOW, days: 1 }));
+    };
+    const shorter = await evidenceAfter(20);
+    const longer = await evidenceAfter(120);
+    expect(longer.result.window).toEqual({ days: 1, sessions: 2, hosts: { "claude-code": 1, codex: 1 }, prompts: 2 });
+    expect(longer.result.corrections).toEqual([expect.objectContaining({
+      sessionId: "long",
+      text: "Don't force push",
+      before: ["Bash npm test -- 119", "Edit src/a.ts", "Bash git push --force origin main"],
+    })]);
+    expect(longer.result.riskyCommands).toEqual([{ label: "force push", count: 1, example: "git push --force origin main" }]);
+    // A hundred more calls before the window, and not one more row read.
+    expect(longer.rows).toBe(shorter.rows);
   });
 
   it("reports a repository Rerail has never seen, and still lists its standards files", async () => {
