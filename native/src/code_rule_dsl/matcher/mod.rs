@@ -116,9 +116,15 @@ pub(super) struct GrammarMatcher {
     pub(super) text: Option<Arc<RequiredText>>,
     /// Whether witnesses outside syntax-error regions stay sound; see `sound_under_errors`.
     pub(super) sound_under_errors: bool,
+    /// Whether the matcher or a utility it calls holds an `importTarget` term
+    /// (`reads_import_targets`), worked out once when it is compiled.
+    pub(super) import_target: bool,
     /// Keeps the query's utility rules alive (`AstMatcher::Util` holds only a weak reference)
     /// and lets violation compilation walk them.
     pub(super) utils: Arc<UtilTable>,
+    /// The query's utilities in `utils`, by index: every one of a table of its own, the ones it
+    /// reaches of a document's shared table, which holds other queries' too.
+    pub(super) query_utils: Arc<[usize]>,
     /// The query's `file` condition: a file whose module path fails it gets no matcher.
     pub(super) file: Option<Arc<crate::code_rule_dsl::language::FileCondition>>,
     /// Whether the query's `when` gate holds. A query outside it is compiled in full, so its

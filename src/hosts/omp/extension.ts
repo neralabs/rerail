@@ -25,10 +25,13 @@ import {
   type AdapterEvent,
   type AdapterSession,
 } from "../../engine/adapter-contract.js";
-import { bundledModelPath, ENTRY_POINTS, PACKAGE_ROOT } from "../../engine/package-root.js";
+import { rerailRunsIn } from "../../engine/catalog/repository-model.js";
+import { ENTRY_POINTS, PACKAGE_ROOT } from "../../engine/package-root.js";
+import { resolveSessionPaths } from "../../runtime/session-paths.js";
 import { registerConversationRulesCommand } from "./command.js";
 import { nodeExecutable } from "../../runtime/daemon-control.js";
-import { registerOmpSemanticTools, type NativeSemanticToolRuntime } from "../../harness/native-semantic-tools.js";
+import type { NativeSemanticToolRuntime } from "../../harness/native-semantic-tools.js";
+import { registerOmpSemanticTools } from "./semantic-tools.js";
 import { countDroppedEvent, createNativeSession, NativeSessionClient, type NativeSessionHost } from "../../harness/native-session-client.js";
 import type { SessionDatabaseOptions } from "../../harness/session-database-options.js";
 import { contained } from "../../harness/contained-hook.js";
@@ -77,13 +80,13 @@ async function rerailStarted(cwd: string, databasePath: string | undefined): Pro
   if (reader !== undefined) return reader.isRerailStarted(cwd, databasePath);
   if (databasePath === undefined) {
     const answered = await readRepositoryState(cwd, "omp");
-    if (answered !== null) return answered !== "stopped";
+    if (answered !== null) return rerailRunsIn(answered);
   }
   const cli = join(PACKAGE_ROOT, ENTRY_POINTS.cli);
   if (!existsSync(cli)) return false;
   const databaseArgs = databasePath === undefined ? [] : ["--database", databasePath];
   const { stdout } = await execFileAsync(nodeExecutable(), [cli, "state", "--repo", cwd, ...databaseArgs], { cwd, timeout: STATE_CHECK_TIMEOUT_MS });
-  return ["started", "not-set-up"].includes(stdout.trim());
+  return rerailRunsIn(stdout.trim());
 }
 
 /**
@@ -456,9 +459,8 @@ export function createConversationRulesExtension(options: ConversationRulesOptio
       }
       const activation = await createNativeSession(nativeHost, ctx, session, options_.rebuild === true, {
         ...options,
-        modelPath: resolve(options.modelPath ?? process.env.RERAIL_MODEL_PATH ?? bundledModelPath()),
         ...(databasePath === undefined ? {} : { databasePath }),
-        storageRoot: resolve(ctx.cwd, process.env.RERAIL_STORAGE_ROOT ?? ".rerail/sessions"),
+        ...resolveSessionPaths(ctx.cwd, { modelPath: options.modelPath }),
       });
       if (activation !== "attached") throw new Error("OMP Rerail routing did not attach a runtime");
       guardCompactions();

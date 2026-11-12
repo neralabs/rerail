@@ -29,7 +29,8 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   `rule-controls.js`), the range control, the repository choices (`repos.js`), the rule sheet (`panel.js`, its
   state and clicks in `rule-sheet-actions.js`, its pure text and prompts in `rule-sheet-model.js`), a rule pack in the
   sheet (`pack-panel.js`), and the session timeline (`timeline.js`).
-- `state.js` holds the state; `poll.js` refreshes it with what the page needs (`setNeeds`); `attachments.js` writes
+- `state.js` holds the state; `poll.js` refreshes it with what the page needs (`setNeeds`);
+  `repo-rule-counts.js` reads each repository's rule counts; `attachments.js` writes
   rule pack changes in click order, `rule-remove.js` deletes a rule created by you from the repository (with Undo),
   and `settings-writes.js` writes rule settings. Merge Assist's writes go through `writeMergeAssist` in `poll.js`:
   each answers the checkout's status, which replaces the page's unless a later write was sent, and a read sent before
@@ -39,8 +40,8 @@ daemon's `/api` operations and `/healthz` (`api.js`).
   logged ranking, whether a session is live), `pack-model.js` (a pack page's rules as filtered and sorted, the
   whole-pack switch's state, the catalog's kinds and order), `history-model.js` (which rules History by rule lists
   under its All · Steered · Logged chips and which one it shows), `sessions-model.js` (a session's events as turns
-  and tool calls), `settings-model.js` (coding agent states and the install date), `repo-rules.js` (each
-  repository's rule counts for Settings and the repository menu) and `merge-model.js` (Merge Assist's tabs, sections,
+  and tool calls), `settings-model.js` (coding agent states and the install date), `repo-rules.js` (what Settings and
+  the repository menu say of a repository's rule counts) and `merge-model.js` (Merge Assist's tabs, sections,
   conflicts and decision log, its status strip and readiness checklist, the sidebar's count, and which pull request
   links are safe to open).
   `format.js` formats numbers and dates; `dom.js` builds and reconciles elements.

@@ -25,6 +25,7 @@ import Database from "better-sqlite3";
 import {
   RULE_MESSAGE_TYPE,
   defaultRerailDatabasePath,
+  messageSteer,
   steerBlock,
   steerOrigin,
   steerRules,
@@ -171,7 +172,7 @@ describe("Pi conversation-rules extension", () => {
       {
         message: {
           customType: RULE_MESSAGE_TYPE,
-          content: steerBlock({ kind: "tool" }, findings),
+          content: messageSteer(steerBlock({ kind: "tool" }, findings)),
           display: true,
           details: { requested: mode, mechanism: "native-queue", sessionId: expect.any(String), rules: steerRules(findings, steerOrigin) },
         },
@@ -182,7 +183,7 @@ describe("Pi conversation-rules extension", () => {
     expect(receiptCount(harness)).toBe(1);
   });
 
-  it("says Rerail is not on here in a stopped checkout, without asking a daemon", async () => {
+  it("draws no footer in a stopped checkout, without asking a daemon (#298)", async () => {
     const harness = createHarness();
     // Set-up starts the repository; stopping it afterwards leaves it set up but off here.
     addRules(harness, [messageRule]);
@@ -194,7 +195,7 @@ describe("Pi conversation-rules extension", () => {
       Object.assign(harness.context, { hasUI: true, ui: { setWidget: (_key: string, content: string[] | undefined) => { widgets.push(content); } } });
       createPiConversationRulesExtension({ modelPath: resolve("model"), registerTool: false, registerCommand: false })(harness.pi);
       await harness.handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, harness.context);
-      expect(widgets.at(-1)?.map(line => line.replace(/\u001b\[[0-9;]*m|\u001b\]8;;[^\u0007]*\u0007/gu, ""))).toEqual(["R E R A I L ○ not on here"]);
+      expect(widgets.every(lines => lines === undefined)).toBe(true);
       expect(fetchSpy).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
@@ -344,7 +345,7 @@ describe("Pi conversation-rules extension", () => {
         expect(harness.messages).toEqual([{
           message: {
             customType: RULE_MESSAGE_TYPE,
-            content: "Rerail found 1 problem in your last edit.",
+            content: messageSteer("Rerail found 1 problem in your last edit."),
             display: true,
             details: { requested: "steer", mechanism: "native-queue", sessionId: "pi-test-session", rules: [{ id: "no-any", state: "steered" }] },
           },
@@ -371,7 +372,7 @@ describe("Pi conversation-rules extension", () => {
           await harness.handlers.get("turn_end")!({ type: "turn_end", turnIndex: 0, message: { role: "assistant", timestamp: 101, responseId, content: [] }, toolResults: [] }, harness.context);
         }
         expect(registered).toEqual(["rerail_fix"]);
-        const steer = { message: expect.objectContaining({ content: "Delegate the fix with `rerail_fix`." }), options: { deliverAs: "steer" } };
+        const steer = { message: expect.objectContaining({ content: messageSteer("Delegate the fix with `rerail_fix`.") }), options: { deliverAs: "steer" } };
         expect(harness.messages).toEqual([steer, steer]);
       } finally {
         spy.mockRestore();

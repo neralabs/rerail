@@ -1,7 +1,7 @@
 /**
  * The folded gate (conformance/languages/gates.ts): every rule of a gated tool-pack through loads, compact and the
- * conformance checks, judged on the pack's conformance report and gates.yaml's declared facts, and the summary and
- * sticky comment built from it.
+ * conformance checks, judged on the pack's conformance report and gates.yaml's declared facts; a pack's own rules
+ * through loads and compact alone; and the summary and sticky comment built from them.
  */
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { COMMENT_MARKER, renderComment } from "../../conformance/languages/comment.js";
 import { loadEngine } from "../../conformance/languages/checks/engine.js";
-import { judgeToolPack } from "../../conformance/languages/gates.js";
+import { judgeOwnRules, judgeToolPack } from "../../conformance/languages/gates.js";
 import { fixturesDirectory, fixturesExpectedPath, loadPack } from "../../conformance/languages/pack.js";
 import { reportFailures, runPack } from "../../conformance/languages/runner.js";
 import { summarize, ungatedRow } from "../../conformance/languages/summary.js";
@@ -90,6 +90,16 @@ describe("a gated tool-pack's rules", () => {
     ]);
   });
 
+  it("leave a pack's own rule (conformance.json own) out of the unmapped documents and the tool-pack's rules, and still load it with the rest", async () => {
+    const path = join(pack, "conformance.json");
+    writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), own: ["pass-statement"] }));
+    const { verdict, summary } = await judge();
+    expect(verdict.unmapped).toEqual([]);
+    expect(verdict.rules.map(rule => rule.id)).toEqual(["assert-used"]);
+    expect(summary.blocking.filter(row => row.stoppedAt === "Mapping")).toEqual([]);
+    expect(verdict.checks[0]).toMatchObject({ id: "bundled-load", ok: true, detail: expect.stringContaining("all 2 shipped document(s)") });
+  });
+
   it("take on or off from gates.yaml's declared facts, and list a shipped rule whose pack.json on disagrees", async () => {
     setUnits({ "clean.py": { rules: ["EX101"] } });
     writeFileSync(join(pack, "upstream", "examplelint", "gates.yaml"), GATES("null"));
@@ -137,6 +147,59 @@ describe("a gated tool-pack's rules", () => {
     const comment = renderComment(passing.summary, { commit: "0123456789abcdef" });
     expect(comment.startsWith(`${COMMENT_MARKER}\n## Conformance: `)).toBe(true);
     expect(comment).toContain("🟢 1 candidate ready to promote");
+  });
+});
+
+describe("a pack's own rules (conformance.json own)", () => {
+  beforeEach(() => {
+    const path = join(pack, "conformance.json");
+    writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, "utf8")), own: ["pass-statement"] }));
+  });
+
+  const editPassStatement = (edit: (document: Record<string, unknown>) => Record<string, unknown>): void => {
+    const path = join(pack, "rules", "pass-statement.json");
+    writeFileSync(path, JSON.stringify(edit(JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>), null, 2));
+  };
+
+  const judgeOwn = () => {
+    const verdict = judgeOwnRules(root, loadEngine(), loadPack(pack));
+    return { verdict, summary: summarize([], [verdict], UNGATED) };
+  };
+
+  it("pass on loads and compact alone, judged apart from the tool-packs", () => {
+    const { verdict, summary } = judgeOwn();
+    expect(verdict).toMatchObject({ pack: "valid", tool: null, toolPack: "valid/own", checks: [], unmapped: [] });
+    expect(verdict.rules).toEqual([
+      expect.objectContaining({ id: "pass-statement", file: "packs/valid/rules/pass-statement.json", location: "shipped", upstreamRule: null, pass: true, stoppedAt: null, failure: null, on: true }),
+    ]);
+    expect(Object.keys(verdict.rules[0]!.gates)).toEqual(["loads", "compact"]);
+    expect(summary).toMatchObject({ pass: true, shipped: { rules: 1, pass: 1 }, onOff: [] });
+  });
+
+  it("fail loads when the rule's scope leaves out a file its pack.json examples are in", () => {
+    editPassStatement(document => ({ ...document, scope: { include: ["**/*.pyi"], exclude: [] } }));
+    const { verdict, summary } = judgeOwn();
+    expect(verdict.rules[0]).toMatchObject({ pass: false, stoppedAt: "loads", failure: { check: "in-scope" } });
+    expect(summary.blocking).toEqual([expect.objectContaining({ pack: "valid/own", rule: "pass-statement", check: "in-scope" })]);
+  });
+
+  it("fail compact when the rule writes a product out case by case", () => {
+    const cells = ["print", "open", "input", "eval", "exec"].flatMap(callee =>
+      ["append", "extend", "insert", "remove", "update", "setdefault"].flatMap(method =>
+        ["class_definition", "function_definition", "lambda", "for_statement", "with_statement"].map(enclosing => ({
+          kind: "call",
+          regex: `^${callee}\\(.*\\)\\.${method}\\b`,
+          inside: { kind: enclosing, stopBy: "end" },
+        })),
+      ),
+    );
+    editPassStatement(document => ({
+      ...document,
+      clauses: [{ id: "pass-statement", forbid: { ast: { language: "python", rule: { any: [{ kind: "pass_statement" }, ...cells] } } }, violation: { anchor: "witness.span", code: "PASS", message: "Remove this pass statement." } }],
+    }));
+    const { verdict, summary } = judgeOwn();
+    expect(verdict.rules[0]).toMatchObject({ pass: false, stoppedAt: "compact", failure: { check: "no-combinatorial-expansion" } });
+    expect(summary.blocking).toEqual([expect.objectContaining({ pack: "valid/own", rule: "pass-statement", check: "no-combinatorial-expansion" })]);
   });
 });
 

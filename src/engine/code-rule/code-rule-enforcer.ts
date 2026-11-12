@@ -7,9 +7,11 @@ import { diffLines } from "diff";
 import { z } from "zod";
 import {
   encodeCodeRuleWorkspaceRequest,
+  isWorkspaceBusy,
   loadNativeBinding,
   RESULT_PAGE_BYTES,
   type NativeCodeRuleDslWorkspace,
+  type NativeGitIgnoreMatch,
   type NativeGitIgnoreMatcher,
   type NativePackageFacts,
   type NativePackageFactsReader,
@@ -56,21 +58,26 @@ import { compareDeterministicStrings } from "../stable-json.js";
 import { assertContentStoreOwner } from "../native/main-instance.js";
 import { contentStorePath } from "../native/rerail-build.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
-import { SOURCE_LANGUAGES, SOURCE_NAMES, sourceLanguageOfPath } from "./code-rule-languages.js";
+import { SOURCE_LANGUAGES, SOURCE_NAMES, sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
+import { binaryPrefix } from "./binary-prefix.js";
+import { checkoutPathBoundary, SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES, sensitiveByName } from "../path-boundary.js";
 
 export { SOURCE_LANGUAGES };
 
 
-const MAX_SOURCE_BYTES = 32_000_000;
+/** The largest source file the repository walk reads. */
+export const MAX_SOURCE_BYTES = 32_000_000;
 const MAX_PENDING_BYTES = 8 * 1024 * 1024;
 const AUDIT_BATCH_FILES = 32;
 const AUDIT_CHUNK_BYTES = 1024 * 1024;
 const AUDIT_MAX_DURATION_MS = 5 * 60_000;
-const AUDIT_MAX_FILES = 100_000;
+/** The most source files the repository walk reads. */
+export const AUDIT_MAX_FILES = 100_000;
 const AUDIT_MAX_FAILURES = 20;
 /** The recorded `package` facts of a source a superseded evaluation repackaged: never equal to any facts' JSON, so the source is resent. */
 const UNREPORTED_FACTS = "\0unreported";
-const AUDIT_MAX_SOURCE_BYTES = 512 * 1024 * 1024;
+/** The most source bytes the repository walk reads in total. */
+export const AUDIT_MAX_SOURCE_BYTES = 512 * 1024 * 1024;
 export const IGNORED_DIRECTORIES = new Set([
   ".git",
   ".hg",
@@ -87,7 +94,10 @@ export const IGNORED_DIRECTORIES = new Set([
   "target",
   "vendor",
 ]);
-/** A repository index honours the walk's bounds, ignored directories and source languages; the lane adds Git's ignores. */
+/**
+ * A repository index honours the walk's bounds, ignored directories and source languages, and skips an unlisted file
+ * named like a secret as `workspaceLanguage` does; the lane adds Git's ignores.
+ */
 const REPOSITORY_INDEX_OPTIONS: Omit<NativeRepositoryIndexOptions, "nestedCheckouts" | "followGitignore"> = {
   maxFiles: AUDIT_MAX_FILES,
   maxSourceBytes: AUDIT_MAX_SOURCE_BYTES,
@@ -195,7 +205,7 @@ const repositoryIndexChunkSchema = z.strictObject({
 });
 const storedEditSchema = z.object({
   path: z.string(),
-  language: z.enum([...new Set(SOURCE_LANGUAGES.values())] as [CodeRuleSourceLanguage, ...CodeRuleSourceLanguage[]]),
+  language: z.enum([...new Set([...SOURCE_LANGUAGES.values(), ...SOURCE_NAMES.values(), UNLISTED_TEXT_LANGUAGE])] as [CodeRuleSourceLanguage, ...CodeRuleSourceLanguage[]]),
   generatedText: z.string().optional(),
   previousText: z.string().optional(),
   previousReadError: z.string().optional(),
@@ -203,7 +213,10 @@ const storedEditSchema = z.object({
   readError: z.string().optional(),
 });
 type Evaluation = z.infer<typeof evaluationSchema>;
+type WorkspaceResult = z.infer<typeof workspaceResultSchema>;
 type WorkspaceFile = { language: CodeRuleSourceLanguage; path: string; source: string } & SourceFileFacts;
+/** What `#applyRequest` sends the engine: the files to apply and the paths removed. */
+type ApplyRequest = { files: WorkspaceFile[]; removed: string[]; deferGlobal?: boolean; quiet?: boolean };
 type StoredEdit = {
   edit?: CodeRuleEdit;
   spool?: string;
@@ -270,16 +283,32 @@ function generatedRanges(previousText: string, generatedText: string): ByteRange
   return ranges;
 }
 
-function intersectsGeneratedRange(violation: CodeRuleViolation, ranges: readonly ByteRange[]): boolean {
-  if (violation.span === undefined) return false;
+/**
+ * Whether an ai-output edit generated `violation`: its span meets a generated range. A violation with no span is about
+ * the whole file (a `file.path` match, a `file` query), which the edit generated only by creating the file.
+ */
+function generatedBy(violation: CodeRuleViolation, ranges: readonly ByteRange[], created: boolean): boolean {
+  if (violation.span === undefined) return created;
   const { startByte, endByte } = violation.span;
   return ranges.some(({ start, end }) =>
     startByte === endByte ? start <= startByte && startByte <= end : startByte < end && start < endByte,
   );
 }
 
+/** The label of a listed file (`sourceLanguageOfPath`); undefined for an unlisted one, which only text-reading rules read. */
 export function languageFor(path: string): CodeRuleSourceLanguage | undefined {
   return sourceLanguageOfPath(path);
+}
+
+/**
+ * The label `workspace` reads `path` with: a listed file's own where some code rule's scope holds it, an unlisted
+ * file's `UNLISTED_TEXT_LANGUAGE` where a code rule that reads text has it in scope; undefined where no rule reads it.
+ * An unlisted file named like a secret (`sensitiveByName`) is no source at all, read by no rule, as if binary.
+ */
+function workspaceLanguage(workspace: NativeCodeRuleDslWorkspace, path: string): CodeRuleSourceLanguage | undefined {
+  const language = languageFor(path);
+  if (language !== undefined) return workspace.acceptsPath(path) ? language : undefined;
+  return workspace.acceptsTextPath(path) && !sensitiveByName(path) ? UNLISTED_TEXT_LANGUAGE : undefined;
 }
 
 /**
@@ -417,6 +446,21 @@ function emptyEvaluation(): Evaluation {
     metrics: { files: 0, visitedNodes: 0, witnesses: 0 },
   };
 }
+
+/** `applied`, after `previous`'s violations and failures on paths outside `replaced` (and on no path). */
+function withReplacedPaths(previous: Evaluation, applied: Evaluation, replaced: ReadonlySet<string>): Evaluation {
+  return {
+    ...applied,
+    violations: [
+      ...previous.violations.filter((violation) => violation.path === undefined || !replaced.has(violation.path)),
+      ...applied.violations,
+    ],
+    failures: [
+      ...previous.failures.filter((failure) => failure.path === undefined || !replaced.has(failure.path)),
+      ...applied.failures,
+    ],
+  };
+}
 function failure(
   clauseId: string,
   code: AuditFailure["code"],
@@ -507,6 +551,23 @@ function auditFailureCap(scope: AuditScope, limit = AUDIT_MAX_FAILURES): (failur
 }
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** The graph reads the edit's own text, which disk may not hold yet. */
+function overlayOf(edit: CodeRuleEdit): SourceOverlay {
+  return { path: edit.path, source: edit.deleted ? undefined : edit.generatedText };
+}
+
+/** Whether an edit has text of its own to send: it neither deletes its source nor lacks generated text. */
+function hasGeneratedText(edit: CodeRuleEdit): edit is CodeRuleEdit & { generatedText: string } {
+  return !edit.deleted && edit.generatedText !== undefined;
+}
+
+/** What the workspace now holds: the facts each file was sent with. */
+function recordSentPackages(packages: Map<string, string>, edit: CodeRuleEdit, files: readonly WorkspaceFile[]): void {
+  if (edit.deleted) packages.delete(edit.path);
+  for (const file of files)
+    if (loadNativeBinding().readsPackageManifests(file.language)) packages.set(file.path, JSON.stringify(file.package ?? null));
 }
 
 /** Generated snapshots and repository audits have independent native state. */
@@ -629,19 +690,25 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * `jsxImportSource` and import aliases (`paths`, `baseUrl`) those `package` facts read, and, where a code rule reads
    * Next server module graphs, any source a manifest reads, since its imports move other sources in or out of a graph,
    * and any file in an `app/` folder, which may make a root `app/` (hiding `src/app/`) present. Without such a rule,
-   * the scopes alone decide. Whatever they say, a path Git ignores is refused while the lane follows `.gitignore`.
+   * the scopes alone decide. An unlisted file (no `languageFor`) is accepted only in the scope of a code rule that reads
+   * text, never when it is named like a secret (`sensitiveByName`), and never before the workspace opens. Whatever they
+   * say, a path Git ignores is refused while the lane follows `.gitignore`.
    */
   acceptsPath(path: string): boolean {
+    return this.#readsPath(path) && !this.ignoresPath(path, false);
+  }
+
+  /** `acceptsPath` apart from Git's ignore rules. */
+  #readsPath(path: string): boolean {
     const language = languageFor(path);
     const workspace = (this.#replacement ?? this.#workspace)?.workspace;
-    const graphInput = language !== undefined && (loadNativeBinding().readsPackageManifests(language) || inAppFolder(path));
+    if (language === undefined) return (workspace?.acceptsTextPath(path) ?? false) && !sensitiveByName(path);
+    const graphInput = loadNativeBinding().readsPackageManifests(language) || inAppFolder(path);
     return (
-      language !== undefined &&
-      (((manifestDirectory(path) !== undefined || ignoreFileDirectory(path) !== undefined || isModuleConfig(path)) &&
+      ((manifestDirectory(path) !== undefined || ignoreFileDirectory(path) !== undefined || isModuleConfig(path)) &&
         (workspace?.readsPackageManifests() ?? true)) ||
-        (workspace?.readsServerGraph() === true && graphInput) ||
-        (workspace?.acceptsPath(path) ?? true)) &&
-      !this.ignoresPath(path, false)
+      (workspace?.readsServerGraph() === true && graphInput) ||
+      (workspace?.acceptsPath(path) ?? true)
     );
   }
 
@@ -651,14 +718,29 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * so a broken `.gitignore` never hides sources.
    */
   ignoresPath(path: string, directory: boolean): boolean {
-    if (!this.#followGitignore) return false;
+    return this.#askGitIgnore(path, matcher => matcher.ignored(path, directory)) ?? false;
+  }
+
+  /**
+   * Why an edit of the file `path` (relative to the workspace root) goes unchecked though the rules would read it: the
+   * pattern by which Git ignores it, while this lane follows `.gitignore`. Undefined for a file it checks, and for one
+   * no rule reads anyway.
+   */
+  ignoredEdit(path: string): NativeGitIgnoreMatch | undefined {
+    if (!this.#followGitignore || !this.#readsPath(path)) return undefined;
+    return this.#askGitIgnore(path, matcher => matcher.ignoredBy(path, false)) ?? undefined;
+  }
+
+  /** `ask` of this checkout's exclude stack while the lane follows `.gitignore`; undefined otherwise, and outside Git. */
+  #askGitIgnore<T>(path: string, ask: (matcher: NativeGitIgnoreMatcher) => T): T | undefined {
+    if (!this.#followGitignore) return undefined;
     try {
       this.#gitIgnore ??= loadNativeBinding().openGitIgnoreMatcher(this.#workspaceRoot);
-      return this.#gitIgnore?.ignored(path, directory) ?? false;
+      return this.#gitIgnore === null ? undefined : ask(this.#gitIgnore);
     } catch (error) {
       this.#gitIgnore ??= null;
       process.stderr.write(`rerail: cannot read Git ignore rules for ${path || "."}: ${errorMessage(error)}\n`);
-      return false;
+      return undefined;
     }
   }
 
@@ -952,7 +1034,9 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       // Import targets resolve against the files below the workspace root that the workspace does not hold.
       workspace.setRoot(this.#workspaceRoot);
       const attachStartedAt = performance.now();
-      storage = workspace.enableStorageAsync(this.#workspaceRoot, storePath).then(({ attached, reason, discoveryMilliseconds, publicationMilliseconds }) => {
+      // The store is a cache every checkout shares, kept on disk: a file named like one holding secrets never goes into it.
+      const secretNames = { files: SENSITIVE_FILE_NAMES, folders: SENSITIVE_FOLDER_NAMES };
+      storage = workspace.enableStorageAsync(this.#workspaceRoot, storePath, secretNames).then(({ attached, reason, discoveryMilliseconds, publicationMilliseconds }) => {
         this.#timingLog?.(
           `rerail: repository storage ${attached ? "attached" : "not attached"} in ${Math.round(performance.now() - attachStartedAt)} ms (discovery ${Math.round(discoveryMilliseconds)} ms, publication ${Math.round(publicationMilliseconds)} ms)\n`,
         );
@@ -1114,9 +1198,27 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     unreported: () => void,
   ): Promise<void> {
     const failures = result.failures.map((item) => ({ ...item, stage: "evaluate" as const }));
-    // Touched-files scope reports every source the edit gave another `package` (`#apply`). Any other scope reports each
-    // edit's own generated lines, so such a source is reported again only where the findings in its own edit's
-    // generated lines changed; the others keep their earlier findings and steers.
+    const reported = this.#reportedAgain(stored, repackaged, result);
+    const base = stored.scope === "ai-output" ? this.#reportBase(path, edit) : edit;
+    const own = this.#selectViolations(stored.scope, edit, result.violations, base);
+    this.#finishAudit(stored.auditId, result.status === "completed" ? "completed" : "failed", [...own, ...[...reported.values()].flat()], failures);
+    if (this.#isSuperseded(path, stored)) {
+      if (stored.scope === "ai-output") this.#unreported.set(path, { base, published: false });
+      unreported();
+      return;
+    }
+    this.#recordPublished(path, stored, edit, own, base);
+    this.#evaluation = result;
+    this.#storeReadyViolations(path, stored, edit, own, reported);
+    await this.#steerAgainThenPublish(stored, reported);
+  }
+
+  /**
+   * The repackaged sources an evaluation reports again. Touched-files scope reports every source the edit gave another
+   * `package` (`#apply`). Any other scope reports each edit's own generated lines, so such a source is reported again
+   * only where the findings in its own edit's generated lines changed; the others keep their earlier findings and steers.
+   */
+  #reportedAgain(stored: StoredEdit, repackaged: readonly CodeRuleEdit[], result: Evaluation): Map<string, CodeRuleViolation[]> {
     const reported = new Map<string, CodeRuleViolation[]>();
     for (const source of repackaged) {
       const findings = this.#selectViolations(stored.scope, source, result.violations);
@@ -1126,24 +1228,30 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       )
         reported.set(source.path, findings);
     }
-    const base = stored.scope === "ai-output" ? this.#reportBase(path, edit) : edit;
-    const own = this.#selectViolations(stored.scope, edit, result.violations, base);
-    this.#finishAudit(stored.auditId, result.status === "completed" ? "completed" : "failed", [...own, ...[...reported.values()].flat()], failures);
-    if (this.#versions.get(path) !== stored.revision || this.#replacement !== undefined) {
-      if (stored.scope === "ai-output") this.#unreported.set(path, { base, published: false });
-      unreported();
-      return;
-    }
-    if (stored.scope === "ai-output") {
-      if (edit.deleted || !own.some((violation) => steers(violation.mode))) this.#unreported.delete(path);
-      else this.#unreported.set(path, { base, published: true });
-    }
-    this.#evaluation = result;
-    let readyViolations = this.#readyViolations.get(stored.revision);
+    return reported;
+  }
+
+  #isSuperseded(path: string, stored: StoredEdit): boolean {
+    return this.#versions.get(path) !== stored.revision || this.#replacement !== undefined;
+  }
+
+  #recordPublished(path: string, stored: StoredEdit, edit: CodeRuleEdit, own: readonly CodeRuleViolation[], base: ReportBase): void {
+    if (stored.scope !== "ai-output") return;
+    if (edit.deleted || !own.some((violation) => steers(violation.mode))) this.#unreported.delete(path);
+    else this.#unreported.set(path, { base, published: true });
+  }
+
+  #readyViolationsAt(revision: number): Map<string, CodeRuleViolation[]> {
+    let readyViolations = this.#readyViolations.get(revision);
     if (readyViolations === undefined) {
       readyViolations = new Map();
-      this.#readyViolations.set(stored.revision, readyViolations);
+      this.#readyViolations.set(revision, readyViolations);
     }
+    return readyViolations;
+  }
+
+  #storeReadyViolations(path: string, stored: StoredEdit, edit: CodeRuleEdit, own: CodeRuleViolation[], reported: ReadonlyMap<string, CodeRuleViolation[]>): void {
+    const readyViolations = this.#readyViolationsAt(stored.revision);
     // Each source the evaluation reported again owns its findings: a later edit of it in the same batch replaces them,
     // and its later revisions supersede them (`#versions`).
     for (const source of reported.keys())
@@ -1156,8 +1264,15 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       else this.#sourceFindings.set(slot, { revision: stored.revision, mode: stored.mode, violations });
     }
     this.#readyModes.set(stored.revision, stored.mode);
-    // A steer queued for a source this evaluation reported again speaks for its older facts. The runtime drops each
-    // such steer whole, so the other sources it spoke for are steered again with the findings they last reported.
+  }
+
+  /**
+   * A steer queued for a source this evaluation reported again speaks for its older facts. The runtime drops each such
+   * steer whole, so the other sources it spoke for are steered again with the findings they last reported. Then what is
+   * ready is published, once nothing is pending: with nothing reported again, that is decided without a wait, so an
+   * edit queued meanwhile cannot put the publishing off.
+   */
+  async #steerAgainThenPublish(stored: StoredEdit, reported: ReadonlyMap<string, CodeRuleViolation[]>): Promise<void> {
     if (reported.size > 0 && this.#sessionId !== undefined) {
       const revised = [...reported.keys()].map(source => this.#presentPath(source));
       await this.#steerAgain(this.#steerDelivery.revised?.(this.#sessionId, stored.revision, revised) ?? []);
@@ -1227,7 +1342,9 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     if (scope === "touched-files" || edit.deleted || edit.generatedText === undefined || base.previousReadError !== undefined)
       return pathViolations;
     const ranges = generatedRanges(base.previousText ?? "", edit.generatedText);
-    return pathViolations.filter((violation) => intersectsGeneratedRange(violation, ranges));
+    // A new file has no earlier text and no error reading one.
+    const created = base.previousText === undefined;
+    return pathViolations.filter((violation) => generatedBy(violation, ranges, created));
   }
   /**
    * A repository-scope audit of a Git checkout runs the native repository index on the audit
@@ -1358,7 +1475,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
           followGitignore: this.#followGitignore,
         });
       } catch (error) {
-        if (!(error instanceof Error) || error.message !== "WORKSPACE_BUSY") throw error;
+        if (!isWorkspaceBusy(error)) throw error;
         await pause(backoff);
         backoff = Math.min(backoff * 2, 25);
       }
@@ -1594,7 +1711,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       nested.reached.push(path);
       return false;
     }
-    return entry.isFile() && languageFor(path) !== undefined && workspace.acceptsPath(path);
+    return entry.isFile() && workspaceLanguage(workspace, path) !== undefined;
   }
 
   async #readAuditFile(
@@ -1606,18 +1723,20 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     failures: AuditFailure[],
     facts: SourceFactsCache,
   ): Promise<WorkspaceFile | undefined> {
-    const language = languageFor(path);
-    if (!info.isFile() || language === undefined || !workspace.acceptsPath(path) || seen.has(path) || this.ignoresPath(path, false))
-      return undefined;
+    const language = workspaceLanguage(workspace, path);
+    if (!info.isFile() || language === undefined || seen.has(path) || this.ignoresPath(path, false)) return undefined;
     seen.add(path);
     if (info.size > MAX_SOURCE_BYTES) {
+      // An oversize unlisted file is binary, skipped without a failure, when its first bytes hold a NUL byte.
+      if (languageFor(path) === undefined && await binaryPrefix(absolute)) return undefined;
       failures.push(failure("source", "budget-exceeded", "Source exceeds the per-file byte budget", path, "read"));
       return undefined;
     }
     const source = await readFile(absolute);
     if (this.#closing) return undefined;
     if (source.includes(0)) {
-      failures.push(failure("source", "source-incomplete", BINARY_SOURCE_MESSAGE, path, "read"));
+      // An unlisted file holding a NUL byte is binary, no text file: skipped without a failure.
+      if (languageFor(path) !== undefined) failures.push(failure("source", "source-incomplete", BINARY_SOURCE_MESSAGE, path, "read"));
       return undefined;
     }
     return {
@@ -1710,70 +1829,76 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const packages = this.#workspacePackages.get(workspace);
     if (packages === undefined) throw new Error("Policy workspace was disposed");
     const serverGraph = workspace.readsServerGraph();
-    const root = this.#workspaceRoot;
     const cache = pass ?? sourceFactsCache();
-    // The graph reads the edit's own text, which disk may not hold yet.
-    const overlay: SourceOverlay | undefined =
-      pass === undefined ? { path: edit.path, source: edit.deleted ? undefined : edit.generatedText } : undefined;
-    const files: WorkspaceFile[] =
-      edit.deleted || edit.generatedText === undefined
-        ? []
-        : [{
-            path: edit.path,
-            language: edit.language,
-            source: edit.generatedText,
-            ...(await sourceFileFacts(root, edit.path, edit.language, cache, serverGraph, overlay)),
-          }];
-    const repackaged: CodeRuleEdit[] = [];
-    // A project configuration may be another package's base (`extends`), so its edit rechecks every applied source.
-    const manifest = manifestDirectory(edit.path);
-    const ignoreFile = ignoreFileDirectory(edit.path);
-    const directory =
-      pass !== undefined
-        ? undefined
-        : manifest !== undefined
-          ? this.#manifestEditFolder(manifest, serverGraph)
-          : ignoreFile !== undefined
-            ? ignoreFile
-            : isModuleConfig(edit.path)
-              ? ""
-              : serverGraph
-                ? this.#serverGraphFolder(edit)
-                : undefined;
-    if (directory !== undefined)
-      for (const [path, sent] of packages) {
-        const stored = this.#applied.get(path);
-        // A source whose own edit is still queued applies with the facts then on disk; resending its older text now would
-        // report that text's findings and supersede the edit.
-        if (
-          stored === undefined ||
-          path === edit.path ||
-          this.#pending.has(path) ||
-          (directory !== "" && !path.startsWith(`${directory}/`))
-        )
-          continue;
-        const facts = await sourceFileFacts(root, path, stored.language, cache, serverGraph, overlay);
-        if (JSON.stringify(facts.package ?? null) === sent) continue;
-        const applied = await this.#load(stored);
-        if (applied.generatedText === undefined) continue;
-        files.push({ path, language: applied.language, source: applied.generatedText, ...facts });
-        repackaged.push(applied);
-      }
-    const evaluation = await this.#applyRequest(workspace, {
-      files,
-      removed: edit.deleted ? [edit.path] : [],
-      ...(pass !== undefined ? { deferGlobal: true, quiet: true } : {}),
-    });
-    if (edit.deleted) packages.delete(edit.path);
-    // What the workspace now holds: the facts each file was sent with.
-    for (const file of files)
-      if (loadNativeBinding().readsPackageManifests(file.language)) packages.set(file.path, JSON.stringify(file.package ?? null));
+    const overlay = pass === undefined ? overlayOf(edit) : undefined;
+    // An edit that deletes its source, or has no generated text, sends no file of its own and waits for no facts.
+    const own: WorkspaceFile[] = hasGeneratedText(edit)
+      ? [{
+          path: edit.path,
+          language: edit.language,
+          source: edit.generatedText,
+          ...(await sourceFileFacts(this.#workspaceRoot, edit.path, edit.language, cache, serverGraph, overlay)),
+        }]
+      : [];
+    const directory = this.#recheckedFolder(edit, serverGraph, pass);
+    const { files: rechecked, repackaged } = directory === undefined
+      ? { files: [], repackaged: [] }
+      : await this.#repackagedSources(edit, directory, { packages, cache, serverGraph, overlay });
+    const files = [...own, ...rechecked];
+    const evaluation = await this.#sendFiles(workspace, edit, files, pass);
+    recordSentPackages(packages, edit, files);
     if (pass === undefined) workspace.evictInactive();
     // A superseded evaluation's repackaged sources: no facts match the mark, so the next edit reaching them resends them.
     const unreported = () => {
       for (const { path } of repackaged) if (packages.has(path)) packages.set(path, UNREPORTED_FACTS);
     };
     return { evaluation, repackaged, unreported };
+  }
+
+  async #sendFiles(workspace: NativeCodeRuleDslWorkspace, edit: CodeRuleEdit, files: WorkspaceFile[], pass: SourceFactsCache | undefined): Promise<Evaluation> {
+    return await this.#applyRequest(workspace, {
+      files,
+      removed: edit.deleted ? [edit.path] : [],
+      ...(pass !== undefined ? { deferGlobal: true, quiet: true } : {}),
+    });
+  }
+
+  /**
+   * The folder whose applied sources an edit may give other facts, "" for every applied source: a project configuration
+   * may be another package's base (`extends`), so its edit rechecks them all. None within a workspace replacement's pass.
+   */
+  #recheckedFolder(edit: CodeRuleEdit, serverGraph: boolean, pass: SourceFactsCache | undefined): string | undefined {
+    if (pass !== undefined) return undefined;
+    const manifest = manifestDirectory(edit.path);
+    if (manifest !== undefined) return this.#manifestEditFolder(manifest, serverGraph);
+    const ignoreFile = ignoreFileDirectory(edit.path);
+    if (ignoreFile !== undefined) return ignoreFile;
+    if (isModuleConfig(edit.path)) return "";
+    return serverGraph ? this.#serverGraphFolder(edit) : undefined;
+  }
+
+  /** A source whose own edit is still queued applies with the facts then on disk; resending its older text now would report that text's findings and supersede the edit. */
+  #mayRecheck(path: string, edit: CodeRuleEdit, directory: string): boolean {
+    return path !== edit.path && !this.#pending.has(path) && (directory === "" || path.startsWith(`${directory}/`));
+  }
+
+  /** Each applied source under `directory` whose facts changed: `files` to send again, and `repackaged`, the applied edits they came from. */
+  async #repackagedSources(edit: CodeRuleEdit, directory: string, { packages, cache, serverGraph, overlay }: {
+    packages: ReadonlyMap<string, string>; cache: SourceFactsCache; serverGraph: boolean; overlay: SourceOverlay | undefined;
+  }): Promise<{ files: WorkspaceFile[]; repackaged: CodeRuleEdit[] }> {
+    const files: WorkspaceFile[] = [];
+    const repackaged: CodeRuleEdit[] = [];
+    for (const [path, sent] of packages) {
+      const stored = this.#applied.get(path);
+      if (stored === undefined || !this.#mayRecheck(path, edit, directory)) continue;
+      const facts = await sourceFileFacts(this.#workspaceRoot, path, stored.language, cache, serverGraph, overlay);
+      if (JSON.stringify(facts.package ?? null) === sent) continue;
+      const applied = await this.#load(stored);
+      if (applied.generatedText === undefined) continue;
+      files.push({ path, language: applied.language, source: applied.generatedText, ...facts });
+      repackaged.push(applied);
+    }
+    return { files, repackaged };
   }
 
   /**
@@ -1799,58 +1924,64 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     return enclosing?.dependencies.includes("next") ? enclosing.folder : folder;
   }
 
-  async #applyRequest(
-    workspace: NativeCodeRuleDslWorkspace,
-    request: { files: WorkspaceFile[]; removed: string[]; deferGlobal?: boolean; quiet?: boolean },
-  ): Promise<Evaluation> {
+  async #applyRequest(workspace: NativeCodeRuleDslWorkspace, request: ApplyRequest): Promise<Evaluation> {
+    const revision = await this.#nextRevision(workspace);
+    let backoff = 2;
+    while (!this.#closing) {
+      try {
+        return this.#recordApplied(workspace, request, await this.#applyOnce(workspace, revision, request));
+      } catch (error) {
+        if (!isWorkspaceBusy(error)) throw error;
+        await pause(backoff);
+        backoff = Math.min(backoff * 2, 25);
+      }
+    }
+    throw new Error("Policy execution interrupted by session closure");
+  }
+
+  /** The revision `workspace`'s next apply takes, recorded as its current one once its storage is attached. */
+  async #nextRevision(workspace: NativeCodeRuleDslWorkspace): Promise<number> {
     await this.#workspaceStorage.get(workspace);
     const current = this.#workspaceRevisions.get(workspace);
     // A workspace disposed meanwhile (a superseded replacement) must not be revived in the revision map.
     if (current === undefined) throw new Error("Policy workspace was disposed");
     const revision = current + 1;
     this.#workspaceRevisions.set(workspace, revision);
-    let backoff = 2;
-    while (!this.#closing) {
-      try {
-        const inline =
-          workspace === this.#workspace?.workspace &&
-          !request.deferGlobal &&
-          request.files.length <= 1 &&
-          (request.files[0]?.source.length ?? 0) < 4_096
-            ? workspace.tryApply(JSON.stringify({ revision, ...request }))
-            : undefined;
-        const result =
-          inline ?? (await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, ...request })));
-        const parsed = workspaceResultSchema.parse(JSON.parse(result));
-        const failures = withBlindFiles(parsed.evaluation.failures, parsed.blindFiles);
-        // An apply is no repository audit: a file read in part fails it (`#finishScopeAudit` decides a repository audit's).
-        const applied: Evaluation = { ...parsed.evaluation, status: failsAudit(failures, "touched-files") ? "failed" : "completed", failures };
-        if (request.deferGlobal || parsed.replacedPaths == null) {
-          if (!request.deferGlobal) this.#workspaceEvaluations.set(workspace, applied);
-          return applied;
-        }
-        const replaced = new Set(parsed.replacedPaths);
-        const previous = this.#workspaceEvaluations.get(workspace) ?? emptyEvaluation();
-        const evaluation: Evaluation = {
-          ...applied,
-          violations: [
-            ...previous.violations.filter((violation) => violation.path === undefined || !replaced.has(violation.path)),
-            ...applied.violations,
-          ],
-          failures: [
-            ...previous.failures.filter((failure) => failure.path === undefined || !replaced.has(failure.path)),
-            ...applied.failures,
-          ],
-        };
-        this.#workspaceEvaluations.set(workspace, evaluation);
-        return evaluation;
-      } catch (error) {
-        if (!(error instanceof Error) || error.message !== "WORKSPACE_BUSY") throw error;
-        await pause(backoff);
-        backoff = Math.min(backoff * 2, 25);
-      }
+    return revision;
+  }
+
+  /** One apply of `request` at `revision`: inline when it is small and on the session's own workspace, else buffered. */
+  async #applyOnce(workspace: NativeCodeRuleDslWorkspace, revision: number, request: ApplyRequest): Promise<WorkspaceResult> {
+    const inline = this.#appliesInline(workspace, request) ? workspace.tryApply(JSON.stringify({ revision, ...request })) : undefined;
+    const result = inline ?? (await workspace.applyBufferAsync(encodeCodeRuleWorkspaceRequest({ revision, ...request })));
+    return workspaceResultSchema.parse(JSON.parse(result));
+  }
+
+  #appliesInline(workspace: NativeCodeRuleDslWorkspace, request: ApplyRequest): boolean {
+    return (
+      workspace === this.#workspace?.workspace &&
+      !request.deferGlobal &&
+      request.files.length <= 1 &&
+      (request.files[0]?.source.length ?? 0) < 4_096
+    );
+  }
+
+  /**
+   * The evaluation an apply's `parsed` result gives, stored as `workspace`'s unless `request` defers the global rules. A
+   * result that replaced paths keeps the stored findings on every other path.
+   */
+  #recordApplied(workspace: NativeCodeRuleDslWorkspace, request: ApplyRequest, parsed: WorkspaceResult): Evaluation {
+    const failures = withBlindFiles(parsed.evaluation.failures, parsed.blindFiles);
+    // An apply is no repository audit: a file read in part fails it (`#finishScopeAudit` decides a repository audit's).
+    const applied: Evaluation = { ...parsed.evaluation, status: failsAudit(failures, "touched-files") ? "failed" : "completed", failures };
+    if (request.deferGlobal || parsed.replacedPaths == null) {
+      if (!request.deferGlobal) this.#workspaceEvaluations.set(workspace, applied);
+      return applied;
     }
-    throw new Error("Policy execution interrupted by session closure");
+    const previous = this.#workspaceEvaluations.get(workspace) ?? emptyEvaluation();
+    const evaluation = withReplacedPaths(previous, applied, new Set(parsed.replacedPaths));
+    this.#workspaceEvaluations.set(workspace, evaluation);
+    return evaluation;
   }
   async #publishReady(): Promise<void> {
     const ready = [...this.#readyViolations.entries()];
@@ -1897,7 +2028,11 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
       const recorded = provenance.find(entry => entry.ruleId === ruleId);
       return recorded !== undefined && "source" in recorded ? recorded.source : undefined;
     };
-    const steer = buildSteer(steerable, trigger, sourceOf);
+    // Paths are judged in the workspace they are relative to, so a file that links to a secret is judged as one.
+    const boundary = checkoutPathBoundary(this.#workspaceRoot);
+    const secret = new Set(violations.flatMap(({ path, mode }) =>
+      path !== undefined && steers(mode) && boundary.sensitive(path) ? [this.#presentPath(path)] : []));
+    const steer = buildSteer(steerable, trigger, sourceOf, path => secret.has(path) || sensitiveByName(path));
     await this.#steerDelivery.requestSteer(this.#sessionId, "steer", steer.content, {
       revision,
       scope,

@@ -103,6 +103,9 @@ export function assertCommit(directory, commit) {
   if (head !== commit) throw new Error(`${directory} is at ${head}; pinned ${commit}`);
 }
 
+/** The ecma family's extensions (`CODE_RULE_DIALECTS`): a named case outside them is not JavaScript to Rerail. */
+export const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
+
 /** ESLint's line terminators; the ecma family's lines are ESLint's. */
 const LINE_BREAK = /\r\n|[\r\n\u2028\u2029]/u;
 

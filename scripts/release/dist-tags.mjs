@@ -1,7 +1,8 @@
 // Reading npm dist-tags, and keeping `next` from trailing `latest`, for the release scripts in this directory. Core and
-// the packs are published with `--access public`, so an anonymous reader gets their dist-tags: the publish, promote
-// and put-back jobs, which hold no read token, read them that way (readPublicDistTags, `npm dist-tag ls`). The packs'
-// plan and read-back jobs still read with NODE_AUTH_TOKEN set to the workflows' NPM_PACKS_READ_TOKEN in ~/.npmrc.
+// the packs are published with `--access public`, so an anonymous reader gets their dist-tags: the publish, promote,
+// put-back and pack read-back jobs, which hold no read token, read them that way (readPublicDistTags, `npm dist-tag
+// ls`), so the pack read-back also proves each pack public. The packs' plan job still reads with NODE_AUTH_TOKEN set
+// to the workflows' NPM_PACKS_READ_TOKEN in ~/.npmrc.
 // Nothing here needs node_modules: the publish jobs install none.
 import { execFile, execFileSync } from "node:child_process";
 import { promisify } from "node:util";
@@ -67,6 +68,14 @@ export async function readPublicDistTags(name) {
 /** `name`'s `next` dist-tag, null when it has none (readPublicDistTags). */
 export const readNextTag = async (name) => (await readPublicDistTags(name))[NEXT_TAG] ?? null;
 
+/** `name`'s `latest` dist-tag, null when it has none or the package was never published (a first publish by hand). */
+export async function readLatestTag(name) {
+  const response = await fetch(`${REGISTRY}/-/package/${name.replace("/", "%2f")}/dist-tags`, { headers: { accept: "application/json" } });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`${name}'s dist-tags answer an anonymous request with ${response.status}`);
+  return (await response.json()).latest ?? null;
+}
+
 /** Points `name`'s dist-tag `tag` at `version`, with npm's output on the terminal; throws when npm fails. */
 export const addDistTag = (name, version, tag) => execFileSync("npm", ["dist-tag", "add", `${name}@${version}`, tag, "--registry", REGISTRY], { stdio: "inherit" });
 
@@ -97,6 +106,23 @@ export async function readDistTags(names, { fresh = false } = {}) {
       const args = fresh ? ["dist-tag", "ls", name] : ["view", name, "dist-tags", "--json"];
       const { stdout } = await promisify(execFile)("npm", [...args, "--registry", REGISTRY]);
       return [name, fresh ? parseDistTagList(stdout) : JSON.parse(stdout)];
+    } catch (error) {
+      console.error(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+      return [name, null];
+    }
+  };
+  return new Map(await Promise.all(names.map(read)));
+}
+
+/**
+ * Each name's published versions (`npm view <name> versions`), read in parallel; null for one npm could not give, with
+ * why on stderr. npm prints a lone version as a string, which is read as a list of one.
+ */
+export async function readVersions(names) {
+  const read = async (name) => {
+    try {
+      const { stdout } = await promisify(execFile)("npm", ["view", name, "versions", "--json", "--registry", REGISTRY]);
+      return [name, [JSON.parse(stdout)].flat()];
     } catch (error) {
       console.error(`${name}: ${error instanceof Error ? error.message : String(error)}`);
       return [name, null];

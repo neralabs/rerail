@@ -12,6 +12,7 @@ import { parseConversationRule, type ConversationRule } from "./rule-schema.js";
 import type { RuleDocument } from "./rule-store.js";
 import {
   libraryRules,
+  repositories,
   ruleAttachments,
   ruleCatalogIdentities,
   ruleSettings,
@@ -45,7 +46,7 @@ export interface LibraryRuleQuery {
 
 export interface CopiedRule {
   readonly rule: LibraryRule;
-  /** Folders of the repository where the copy was added and the original switched off. */
+  /** Folders of the repository where the copy was added; its first approval switches the original off there. */
   readonly folders: readonly string[];
 }
 
@@ -195,16 +196,61 @@ export function removeLibraryRule(db: RerailDatabase, id: string): boolean {
 function freeCopyId(db: Queries, ruleCatalog: RuleCatalog, sourceId: string): string {
   const taken = (id: string) => ruleCatalog.documents.has(id)
     || db.select({ id: ruleCatalogIdentities.ruleId }).from(ruleCatalogIdentities).where(eq(ruleCatalogIdentities.ruleId, id)).get() !== undefined
-    || db.select({ id: libraryRules.ruleId }).from(libraryRules).where(eq(libraryRules.ruleId, id)).get() !== undefined;
+    || libraryHoldsId(db, id);
   let candidate = `${sourceId}-copy`;
   for (let suffix = 2; taken(candidate); suffix += 1) candidate = `${sourceId}-copy-${suffix}`;
   return candidate;
 }
 
+/** Folders of the repository where the By Rerail rule `sourceId` is present: added alone or with its pack. */
+export function rerailRuleFolders(db: Pick<Queries, "select">, ruleCatalog: RuleCatalog, repositoryKey: RepositoryKey, sourceId: string): string[] {
+  const packId = ruleCatalog.packOf.get(sourceId);
+  const alone = and(eq(ruleAttachments.sourceKind, "rerail_rule"), eq(ruleAttachments.sourceId, sourceId));
+  const presences = db.select({ folder: ruleAttachments.folder }).from(ruleAttachments).where(and(
+    eq(ruleAttachments.repositoryKey, repositoryKey),
+    packId === undefined ? alone : or(alone, and(eq(ruleAttachments.sourceKind, "pack"), eq(ruleAttachments.sourceId, packId))),
+  )).all();
+  return [...new Set(presences.map(row => row.folder))].sort();
+}
+
+/** Folders of the repository the library rule `id` is added at. */
+export function libraryRuleFolders(db: Pick<Queries, "select">, repositoryKey: RepositoryKey, id: string): string[] {
+  const rows = db.select({ folder: ruleAttachments.folder }).from(ruleAttachments).where(and(
+    eq(ruleAttachments.repositoryKey, repositoryKey),
+    eq(ruleAttachments.sourceKind, "library_rule"),
+    eq(ruleAttachments.sourceId, id),
+  )).orderBy(asc(ruleAttachments.folder)).all();
+  return rows.map(row => row.folder);
+}
+
+/** The repositories the library rule `id` is added to, by key with their names, in key order. */
+export function libraryRuleRepositories(db: Pick<Queries, "select">, id: string): Array<{ repositoryKey: RepositoryKey; name: string }> {
+  const rows = db.select({ repositoryKey: ruleAttachments.repositoryKey, name: repositories.displayName }).from(ruleAttachments)
+    .innerJoin(repositories, eq(repositories.repositoryKey, ruleAttachments.repositoryKey))
+    .where(and(eq(ruleAttachments.sourceKind, "library_rule"), eq(ruleAttachments.sourceId, id)))
+    .orderBy(asc(ruleAttachments.repositoryKey)).all();
+  return [...new Map(rows.map(row => [row.repositoryKey, row])).values()];
+}
+
+/** Ids of the library copies of the By Rerail rule `sourceId` that are added to the repository. */
+export function rerailRuleCopiesIn(db: Pick<Queries, "select">, repositoryKey: RepositoryKey, sourceId: string): string[] {
+  const rows = db.select({ id: libraryRules.ruleId }).from(libraryRules)
+    .innerJoin(ruleAttachments, and(eq(ruleAttachments.sourceKind, "library_rule"), eq(ruleAttachments.sourceId, libraryRules.ruleId)))
+    .where(and(eq(libraryRules.copiedFromRuleId, sourceId), eq(ruleAttachments.repositoryKey, repositoryKey)))
+    .orderBy(asc(libraryRules.ruleId)).all();
+  return [...new Set(rows.map(row => row.id))];
+}
+
+/** Whether the library holds a row under `id`, readable or quarantined; such a row shadows a By Rerail rule's id. */
+export function libraryHoldsId(db: Pick<Queries, "select">, id: string): boolean {
+  return db.select({ id: libraryRules.ruleId }).from(libraryRules).where(eq(libraryRules.ruleId, id)).get() !== undefined;
+}
+
 /**
  * Store an edited By Rerail rule as a library copy, in one transaction: wherever the original is present in the
- * repository (its pack or the rule itself is attached), the copy is added at the same folder and a repository
- * setting switches the original off there. The original stays a reference to the rule catalog.
+ * repository (its pack or the rule itself is attached), the copy is added at the same folder. The copy's first
+ * approval switches the original off there (`approve` in `rule-approval.ts`); until then the original keeps running.
+ * The original stays a reference to the rule catalog.
  */
 export function copyRerailRuleToLibrary(
   db: RerailDatabase,
@@ -222,27 +268,11 @@ export function copyRerailRuleToLibrary(
     const id = options.id ?? freeCopyId(tx, ruleCatalog, sourceId);
     const document = validateLibraryDocument({ ...edited, id }, original.kind);
     writeLibraryRule(tx, ruleCatalog, document, { copiedFromRuleId: sourceId, now });
-    const packId = ruleCatalog.packOf.get(sourceId);
-    const presences = tx.select({ folder: ruleAttachments.folder }).from(ruleAttachments).where(and(
-      eq(ruleAttachments.repositoryKey, repositoryKey),
-      packId === undefined
-        ? and(eq(ruleAttachments.sourceKind, "rerail_rule"), eq(ruleAttachments.sourceId, sourceId))
-        : or(
-          and(eq(ruleAttachments.sourceKind, "rerail_rule"), eq(ruleAttachments.sourceId, sourceId)),
-          and(eq(ruleAttachments.sourceKind, "pack"), eq(ruleAttachments.sourceId, packId)),
-        ),
-    )).all();
-    const folders = [...new Set(presences.map(row => row.folder))].sort();
+    const folders = rerailRuleFolders(tx, ruleCatalog, repositoryKey, sourceId);
     for (const folder of folders) {
       tx.insert(ruleAttachments)
         .values({ repositoryKey, folder, sourceKind: "library_rule", sourceId: id, createdAt: now })
         .onConflictDoNothing().run();
-      tx.insert(ruleSettings)
-        .values({ ownerKind: "repository", ownerId: repositoryKey, folder, targetKind: "rule", targetId: sourceId, on: false, mode: null, updatedAt: now })
-        .onConflictDoUpdate({
-          target: [ruleSettings.ownerKind, ruleSettings.ownerId, ruleSettings.folder, ruleSettings.targetKind, ruleSettings.targetId],
-          set: { on: false, updatedAt: now },
-        }).run();
     }
     return { rule: readRequired(tx, id), folders };
   }, { behavior: "immediate" });

@@ -156,8 +156,8 @@ function Get-Facts {
 $facts = Get-Facts
 
 if ($RerailEnv.BundleUrl) {
-  # Packages under test (core and every rule pack) from a registry on this VM, as npmjs will serve them after
-  # launch; everything else still comes from npmjs.
+  # Packages under test (core and every published rule pack) from a registry on this VM, as npmjs will serve them
+  # after launch; everything else still comes from npmjs.
   Step "registry" {
     $tarballs = @(Get-ChildItem "$Work\bundle\*.tgz" | ForEach-Object { $_.FullName })
     $State.Registry = Start-RerailRegistry -Root "$Out\registry" -Tarballs $tarballs

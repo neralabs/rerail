@@ -10,7 +10,7 @@
 //! `max_file_bytes`). Its apply publishes the batch and releases every source and tape before the
 //! chunk returns, so between chunks the workspace retains per-file results only.
 
-use super::api::{WorkspaceApplyTask, cpu_slot};
+use super::api::{WORKSPACE_BUSY, WorkspaceApplyTask, close_poisoned, cpu_slot};
 use super::crossfile::CrossFileScheduler;
 use super::global::record_evidence;
 use super::ingest::{Request, WireFile, make_file};
@@ -38,6 +38,9 @@ use std::sync::{Arc, Mutex, MutexGuard};
 const INDEX_BATCH_FILES: usize = 32;
 /// Source bytes after which an index chunk stops reading.
 const INDEX_BATCH_BYTES: usize = 1024 * 1024;
+/// How much of an oversized unlisted file is checked for a NUL byte (Git's binary test), as it is
+/// never read whole.
+const BINARY_PREFIX_BYTES: u64 = 8000;
 
 #[cfg(test)]
 thread_local! {
@@ -64,7 +67,8 @@ pub struct RepositoryIndexOptions {
     /// Directory names never indexed, at any depth below the workspace root.
     pub ignored_directories: Vec<String>,
     /// The file label of each extension the host evaluates (`.py` → `python`, `.md` →
-    /// `markdown`), keyed lowercase with its dot; files with other extensions are not indexed.
+    /// `markdown`), keyed lowercase with its dot; a file with no listed label is indexed as `text`
+    /// only for a code rule that reads text (`CompiledCodeRule::reads_text`).
     pub source_languages: HashMap<String, String>,
     /// The file label of each file the host evaluates by its whole name (`.npmignore` → `text`),
     /// keyed lowercase; it wins over `source_languages`.
@@ -86,7 +90,8 @@ pub struct WorkspaceIndexTask {
 
 #[cfg(test)]
 impl WorkspaceIndexTask {
-    /// One index call over `state`, with sources above `max_file_bytes` refused.
+    /// One index call over `state`, with sources above `max_file_bytes` refused and `.git` ignored
+    /// as the host ignores it.
     pub(super) fn for_test(
         state: Arc<Mutex<WorkspaceState>>,
         closed: Arc<AtomicBool>,
@@ -99,7 +104,7 @@ impl WorkspaceIndexTask {
                 max_files: u32::MAX,
                 max_source_bytes: u32::MAX,
                 max_file_bytes,
-                ignored_directories: Vec::new(),
+                ignored_directories: vec![".git".to_owned()],
                 source_languages: [
                     (".py", "python"),
                     (".ts", "typescript"),
@@ -139,6 +144,9 @@ struct PendingFile {
     repository_path: String,
     path: String,
     language: String,
+    /// The host lists no language for the file: it is read as `text` for a code rule that reads
+    /// text, and dropped without a failure where it turns out binary.
+    unlisted: bool,
 }
 
 /// The clean trees under the workspace root, keyed by their workspace-relative prefix. A tree's
@@ -287,7 +295,7 @@ impl WorkspaceIndexTask {
     fn lock(&self) -> Result<MutexGuard<'_, WorkspaceState>> {
         self.state
             .lock()
-            .map_err(|_| invalid("policy workspace is unavailable"))
+            .map_err(|error| close_poisoned(error.into_inner(), &self.state, &self.closed))
     }
 
     /// The host's file label for `path`: its whole name where the host lists it (`.npmignore`),
@@ -314,18 +322,23 @@ impl WorkspaceIndexTask {
     }
 
     /// The workspace's scoped sources as the host's walk selects them: every regular file below
-    /// the workspace root with a host source language and a code-rule scope, outside the host's
-    /// ignored directories, outside what Git ignores when the host follows `.gitignore` (a path
-    /// whose ignore files cannot be read is kept and reported), and never through a symlink,
-    /// sorted by path. `.rerailignore` and Rerail's built-in ignores play no part here; they decide
-    /// only which of these files the store may restore. Directories it cannot list become read
-    /// failures. A directory the host names as a nested checkout is not descended into, only
-    /// reported. Also returns whether the files exceed `max_files`, in which case it stops listing.
+    /// the workspace root with a host source language and a code-rule scope, or with no listed
+    /// language (read as `text`), a name unlike a secret's (`secret(path)`: the storage's
+    /// `withholds`, the host's `sensitiveByName`) and the scope of a code rule that reads text;
+    /// outside the host's ignored directories, outside what Git ignores when the host follows
+    /// `.gitignore` (a path whose ignore files cannot be read is kept and reported), and never
+    /// through a symlink, sorted by path. `scoped(path, text)` is whether a code rule's scope
+    /// holds `path`, with `text` one of the code rules that read text. `.rerailignore` and
+    /// Rerail's built-in ignores play no part here; they decide only which of these files the
+    /// store may restore. Directories it cannot list become read failures. A directory the host
+    /// names as a nested checkout is not descended into, only reported. Also returns whether the
+    /// files exceed `max_files`, in which case it stops listing.
     fn walk(
         &self,
         repository: &git_workspace::GitWorkspace,
         prefix: &str,
-        scoped: impl Fn(&str) -> bool,
+        scoped: impl Fn(&str, bool) -> bool,
+        secret: impl Fn(&str) -> bool,
         failures: &mut Vec<Value>,
     ) -> Result<(Vec<PendingFile>, Vec<String>, bool)> {
         let ignored = self
@@ -388,9 +401,12 @@ impl WorkspaceIndexTask {
                     }
                     None
                 } else if kind.is_file() {
-                    match self.source_language(&path).filter(|_| scoped(&path)) {
-                        Some(language) => Some(language),
-                        None => continue,
+                    match self.source_language(&path) {
+                        Some(language) if scoped(&path, false) => Some((language, false)),
+                        // Named like a secret: no source, never read, as a binary is not.
+                        None if secret(&path) => continue,
+                        None if scoped(&path, true) => Some(("text".to_owned(), true)),
+                        _ => continue,
                     }
                 } else {
                     continue;
@@ -425,10 +441,11 @@ impl WorkspaceIndexTask {
                         over_budget = true;
                         break 'walk;
                     }
-                    Some(language) => files.push(PendingFile {
+                    Some((language, unlisted)) => files.push(PendingFile {
                         repository_path: format!("{prefix}{path}"),
                         path,
                         language,
+                        unlisted,
                     }),
                 }
             }
@@ -452,11 +469,12 @@ impl WorkspaceIndexTask {
         let (accepted, nested_checkouts, over_budget) = self.walk(
             repository,
             prefix,
-            |path| {
-                code_rules
-                    .iter()
-                    .any(|code_rule| code_rule.scope.matches(path))
+            |path, text| {
+                code_rules.iter().any(|code_rule| {
+                    (!text || code_rule.reads_text()) && code_rule.scope.matches(path)
+                })
             },
+            |path| storage.withholds(path),
             &mut failures,
         )?;
         let mut manifests = Manifests::new(repository.worktree_root.join(prefix))
@@ -607,6 +625,15 @@ impl WorkspaceIndexTask {
             let bytes = match repository.read_source(&file.repository_path, max_file_bytes) {
                 Ok(bytes) => bytes,
                 Err(error) if error.kind() == std::io::ErrorKind::FileTooLarge => {
+                    // An oversized file the host lists no language for is binary, and dropped like
+                    // one in budget, where its first bytes hold a NUL.
+                    if file.unlisted
+                        && repository
+                            .read_source_prefix(&file.repository_path, BINARY_PREFIX_BYTES)
+                            .is_ok_and(|prefix| prefix.contains(&0))
+                    {
+                        continue;
+                    }
                     failures.push(read_failure(
                         &file.path,
                         "budget-exceeded",
@@ -625,11 +652,14 @@ impl WorkspaceIndexTask {
                 }
             };
             if bytes.contains(&0) {
-                failures.push(read_failure(
-                    &file.path,
-                    "source-incomplete",
-                    "Binary source cannot be evaluated",
-                ));
+                // A file the host lists no language for is text only where it holds no NUL.
+                if !file.unlisted {
+                    failures.push(read_failure(
+                        &file.path,
+                        "source-incomplete",
+                        "Binary source cannot be evaluated",
+                    ));
+                }
                 continue;
             }
             let length = bytes.len() as u64;
@@ -661,18 +691,16 @@ impl WorkspaceIndexTask {
         }
         Ok(batch)
     }
-}
 
-impl Task for WorkspaceIndexTask {
-    type Output = String;
-    type JsValue = String;
-
-    /// One chunk: plan on the first call, then read one batch and apply it with global clauses
-    /// deferred (the host's closing apply evaluates them). Only the read and apply hold the CPU
-    /// slot: an interactive apply waits for one batch at most, and if it holds the slot the
-    /// chunk keeps its plan and reports busy, so the host retries.
-    fn compute(&mut self) -> Result<String> {
-        check_closed(&self.closed)?;
+    /// The workspace's storage and Git repository, and the index a previous chunk left, taken
+    /// from the state.
+    fn take_repository_index(
+        &self,
+    ) -> Result<(
+        StorageContext,
+        Arc<git_workspace::GitWorkspace>,
+        Option<RepositoryIndex>,
+    )> {
         let (storage, index) = {
             let mut state = self.lock()?;
             let storage = state
@@ -685,17 +713,47 @@ impl Task for WorkspaceIndexTask {
             .repository
             .clone()
             .ok_or_else(|| invalid("repository indexing requires Git discovery"))?;
-        let mut index = match index {
-            Some(index) => index,
-            None => self.plan(&storage, &repository)?,
-        };
-        let Ok(_slot) = cpu_slot().try_lock() else {
+        Ok((storage, repository, index))
+    }
+
+    /// Reads the next batch and applies it under the CPU slot, then reports the chunk. Without the
+    /// slot the chunk keeps its index and reports busy, so the host retries.
+    fn index_batch(
+        &self,
+        repository: &git_workspace::GitWorkspace,
+        mut index: RepositoryIndex,
+    ) -> Result<String> {
+        let Some(_slot) = cpu_slot().try_lock() else {
             self.lock()?.repository_index = Some(index);
-            return Err(invalid("WORKSPACE_BUSY"));
+            return Err(invalid(WORKSPACE_BUSY));
         };
         let mut failures = std::mem::take(&mut index.failures);
-        let batch = self.read_batch(&repository, &mut index, &mut failures)?;
-        let evaluation = if batch.is_empty() {
+        let batch = self.read_batch(repository, &mut index, &mut failures)?;
+        let evaluation = self.apply_batch(batch)?;
+        let mut state = self.lock()?;
+        check_closed(&self.closed)?;
+        let done = index.pending.is_empty();
+        let response = json!({
+            "revision": state.revision,
+            "done": done,
+            "overBudget": done && index.over_budget,
+            "evaluation": evaluation,
+            "failures": failures,
+            "discoveredFiles": index.discovered,
+            "restoredFiles": index.restored,
+            "readFiles": index.read_files,
+            "readBytes": index.read_bytes,
+            "reusableDirectories": index.reusable_directories,
+            "nestedCheckouts": index.nested_checkouts,
+        });
+        state.repository_index = Some(index);
+        serde_json::to_string(&response).map_err(json_error)
+    }
+
+    /// Applies `batch` with global clauses deferred and returns its evaluation; `null` for an
+    /// empty batch.
+    fn apply_batch(&self, batch: Vec<WireFile>) -> Result<Value> {
+        Ok(if batch.is_empty() {
             Value::Null
         } else {
             let revision = self.lock()?.revision.saturating_add(1);
@@ -715,25 +773,28 @@ impl Task for WorkspaceIndexTask {
             let mut output: Value =
                 serde_json::from_str(&apply.apply_with_slot()?.text).map_err(json_error)?;
             output["evaluation"].take()
-        };
-        let mut state = self.lock()?;
-        check_closed(&self.closed)?;
-        let done = index.pending.is_empty();
-        let response = json!({
-            "revision": state.revision,
-            "done": done,
-            "overBudget": done && index.over_budget,
-            "evaluation": evaluation,
-            "failures": failures,
-            "discoveredFiles": index.discovered,
-            "restoredFiles": index.restored,
-            "readFiles": index.read_files,
-            "readBytes": index.read_bytes,
-            "reusableDirectories": index.reusable_directories,
-            "nestedCheckouts": index.nested_checkouts,
-        });
-        state.repository_index = Some(index);
-        serde_json::to_string(&response).map_err(json_error)
+        })
+    }
+}
+
+impl Task for WorkspaceIndexTask {
+    type Output = String;
+    type JsValue = String;
+
+    /// One chunk: plan on the first call, then read one batch and apply it with global clauses
+    /// deferred (the host's closing apply evaluates them). Only the read and apply hold the CPU
+    /// slot: an interactive apply waits for one batch at most, and if it holds the slot the
+    /// chunk keeps its plan and reports busy, so the host retries.
+    fn compute(&mut self) -> Result<String> {
+        crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+            check_closed(&self.closed)?;
+            let (storage, repository, index) = self.take_repository_index()?;
+            let index = match index {
+                Some(index) => index,
+                None => self.plan(&storage, &repository)?,
+            };
+            self.index_batch(&repository, index)
+        })
     }
 
     fn resolve(&mut self, _env: Env, output: String) -> Result<String> {

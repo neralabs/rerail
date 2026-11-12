@@ -84,7 +84,7 @@ describe("/rerail", () => {
   it("says what Rerail is doing in this session, then lists every command", async () => {
     mocks.presentation.mockResolvedValue({
       status: "on", text: "", url: "http://127.0.0.1:4737/?sessionId=session-1&host=omp#sessions", parts: [],
-      presence: "compact", repositoryState: "started", counts: { rules: 26, steered: 1 },
+      presence: "compact", repositoryState: "started", counts: { rules: 26, steered: 1, awaitingApproval: 0 },
     });
     mocks.rulesDashboard.mockResolvedValue({ url: "http://127.0.0.1:4737/#rules", reason: null });
     const { run, notices } = commandHarness();
@@ -103,10 +103,23 @@ describe("/rerail", () => {
     expect(notice?.message).not.toContain("rerail-test");
   });
 
+  it("counts what runs in Log waiting for approval, linked to the dashboard, whose Overview lists it", async () => {
+    mocks.presentation.mockResolvedValue({
+      status: "on", text: "", url: null, parts: [],
+      presence: "compact", repositoryState: "started", counts: { rules: 26, steered: 0, awaitingApproval: 2 },
+    });
+    mocks.rulesDashboard.mockResolvedValue({ url: "http://127.0.0.1:4737/?repository=remote%3Agithub.com%2Facme%2Fapp#rules", reason: null });
+    const { run, notices } = commandHarness();
+    await run("rerail");
+    expect(notices[0]?.message).toContain(
+      "  2 to approve, running in Log → http://127.0.0.1:4737/?repository=remote%3Agithub.com%2Facme%2Fapp#rules\n",
+    );
+  });
+
   it("answers /rerail-help exactly as /rerail", async () => {
     mocks.presentation.mockResolvedValue({
       status: "on", text: "", url: "http://127.0.0.1:4737/?sessionId=session-1&host=omp#sessions", parts: [],
-      presence: "compact", repositoryState: "started", counts: { rules: 26, steered: 1 },
+      presence: "compact", repositoryState: "started", counts: { rules: 26, steered: 1, awaitingApproval: 0 },
     });
     mocks.rulesDashboard.mockResolvedValue({ url: "http://127.0.0.1:4737/#rules", reason: null });
     const { run, notices } = commandHarness();

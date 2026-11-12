@@ -1,6 +1,6 @@
 {
   "name": "@neralabs/rerail",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "description": "Checks the code your coding agent writes against your rules while it works, and steers it back in the same session",
   "license": "Apache-2.0",
   "publishConfig": {
@@ -25,6 +25,10 @@
     "./rules": {
       "types": "./dist/engine/rules.d.ts",
       "import": "./dist/engine/rules.js"
+    },
+    "./pi": {
+      "types": "./dist/hosts/pi/index.d.ts",
+      "import": "./dist/hosts/pi/index.js"
     },
     "./schemas": {
       "types": "./dist/engine/schemas.d.ts",
@@ -74,15 +78,17 @@
     "hooks",
     "CHANGELOG.md",
     "THIRD_PARTY_NOTICES",
-    "skills"
+    "skills",
+    "npm-shrinkwrap.json"
   ],
   "scripts": {
     "build": "npm run build:clean && npm run build:native && npm run build:js",
     "build:js": "npm run build:ts && npm run build:omp && npm run build:events && npm run build:cursor && npm run build:claude && npm run build:codex && npm run build:ui",
     "build:clean": "node -e \"require('node:fs').rmSync('dist',{recursive:true,force:true})\"",
     "build:ui": "node scripts/build/copy-ui.mjs",
+    "build:docs-site": "node --import tsx scripts/build/docs-site.mjs",
     "ensure:sqlite": "node scripts/build/ensure-sqlite.mjs",
-    "build:native": "node scripts/build/require-cargo.mjs && napi build --platform --release --manifest-path native/Cargo.toml --output-dir native",
+    "build:native": "node scripts/build/require-cargo.mjs && node scripts/build/require-lfs.mjs && napi build --platform --release --manifest-path native/Cargo.toml --output-dir native",
     "build:ts": "tsc -p tsconfig.build.json && esbuild src/presentation/session-presentation.ts --bundle --platform=node --format=esm --outfile=dist/presentation/session-presentation.js",
     "build:omp": "esbuild src/hosts/omp/default-extension.ts --bundle --platform=node --target=node24 --format=esm --external:better-sqlite3 --external:drizzle-orm \"--banner:js=import { createRequire as __rerailRequire } from 'node:module'; const require = __rerailRequire(import.meta.url);\" --outfile=dist/hosts/omp/default-extension.js",
     "build:test-host": "esbuild integration/support/omp-host-extension.ts --bundle --packages=external --platform=node --target=node24 --format=esm --outfile=node_modules/.cache/rerail/omp-host.mjs",
@@ -90,8 +96,9 @@
     "build:cursor": "esbuild src/hosts/cursor/cursor-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm \"--banner:js=import { createRequire as __rerailRequire } from 'node:module'; const require = __rerailRequire(import.meta.url);\" --outfile=dist/hosts/cursor/cursor-hook.js",
     "build:claude": "esbuild src/hosts/claude/claude-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm \"--banner:js=import { createRequire as __rerailRequire } from 'node:module'; const require = __rerailRequire(import.meta.url);\" --outfile=dist/hosts/claude/claude-hook.js",
     "build:codex": "esbuild src/hosts/codex/codex-hook.ts --bundle --platform=node --format=esm --external:better-sqlite3 --external:drizzle-orm \"--banner:js=import { createRequire as __rerailRequire } from 'node:module'; const require = __rerailRequire(import.meta.url);\" --outfile=dist/hosts/codex/codex-hook.js",
-    "check": "tsc --noEmit && npm run check:boundaries && npm run check:structure && npm run check:windows-paths && npm run check:internal-refs && npm run check:pins",
+    "check": "tsc --noEmit && npm run check:boundaries && npm run check:structure && npm run check:windows-paths && npm run check:internal-refs && npm run check:pins && npm run check:ci-paths",
     "check:boundaries": "node scripts/check/check-boundaries.mjs",
+    "check:ci-paths": "node scripts/check/check-ci-paths.mjs",
     "check:native": "cargo fmt --manifest-path Cargo.toml --all -- --check && cargo clippy --manifest-path Cargo.toml --workspace --all-targets -- -D warnings && cargo clippy --manifest-path native/Cargo.toml --features code-rule-profile --all-targets -- -D warnings",
     "check:all": "npm run check && npm run check:native && npm run check:ui-tokens && npm run check:reference && npm run check:licenses",
     "check:internal-refs": "node scripts/check/check-internal-refs.mjs",
@@ -133,8 +140,9 @@
     "generate:packs": "node --import tsx scripts/generate/packs/pack-list.ts",
     "package:check": "npm run build && npm pack --dry-run",
     "version:packs": "changeset version && node scripts/release/sync-pack-lockfile.mjs",
-    "prepack": "node scripts/build/stamp-plugin-versions.mjs stamp",
-    "postpack": "node scripts/build/stamp-plugin-versions.mjs restore"
+    "prepare": "node scripts/dev/install-git-hooks.mjs",
+    "prepack": "node scripts/release/shrinkwrap-pack.mjs write && node scripts/build/stamp-plugin-versions.mjs stamp",
+    "postpack": "node scripts/build/stamp-plugin-versions.mjs restore && node scripts/release/shrinkwrap-pack.mjs remove"
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^9.1.0",
@@ -150,9 +158,16 @@
     "ignore": "7.0.14",
     "semver": "^7.8.5",
     "superjson": "2.2.6",
-    "typebox": "1.4.3",
     "yaml": "2.9.1",
     "zod": "^4.6.7"
+  },
+  "peerDependencies": {
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "typebox": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "@ast-grep/cli": "0.51.0",
@@ -162,10 +177,10 @@
     "@earendil-works/pi-ai": "1.4.0",
     "@earendil-works/pi-coding-agent": "1.5.0",
     "@napi-rs/cli": "3.10.9",
-    "@oh-my-pi/omptype": "18.13.3",
-    "@oh-my-pi/pi-agent-core": "18.13.3",
-    "@oh-my-pi/pi-ai": "18.13.3",
-    "@oh-my-pi/pi-coding-agent": "18.13.3",
+    "@oh-my-pi/omptype": "18.14.2",
+    "@oh-my-pi/pi-agent-core": "18.14.2",
+    "@oh-my-pi/pi-ai": "18.14.2",
+    "@oh-my-pi/pi-coding-agent": "18.14.2",
     "@playwright/test": "^1.64.1",
     "@types/better-sqlite3": "^9.6.0",
     "@types/node": "26.6.6",
@@ -173,10 +188,14 @@
     "@vitest/coverage-v8": "^5.0.5",
     "drizzle-kit": "^0.31.11",
     "esbuild": "0.28.2",
+    "highlight.js": "11.12.0",
+    "marked": "18.1.2",
+    "node-html-markdown": "2.0.0",
     "smol-toml": "1.9.1",
     "tsx": "4.23.15",
-    "typescript": "5.9.3",
-    "vitest": "5.0.5"
+    "typebox": "1.4.3",
+    "typescript": "6.0.3",
+    "vitest": "5.1.0"
   },
   "engines": {
     "node": ">=24"

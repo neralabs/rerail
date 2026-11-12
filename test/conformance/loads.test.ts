@@ -76,10 +76,10 @@ const violation = (severity?: string) => ({ anchor: "witness.span", code: "C", m
 test("only a document written for the current rule contract is current", () => {
   const onMain = { format: "rerail.policy/v1", id: "bandit:b101", revision: 2, mode: "log", clauses: [{ id: "c", forbid: {}, violation: violation() }] };
   assert.deepEqual(currentContract(onMain), { id: "current-contract", ok: true, detail: "written for the current rule contract (rerail.policy/v1 with clauses, each with a violation, and a rule mode)" });
-  const before = { format: "tempo.policy/v1", id: "bandit:b101", revision: 2, checks: [{ id: "c", forbid: {}, finding: violation("warning") }] };
+  const before = { format: "earlier.policy/v1", id: "bandit:b101", revision: 2, checks: [{ id: "c", forbid: {}, finding: violation("warning") }] };
   const result = currentContract(before);
   assert.equal(result.ok, false);
-  assert.match(result.detail, /format "tempo\.policy\/v1", checks instead of clauses, no rule mode$/u);
+  assert.match(result.detail, /format "earlier\.policy\/v1", checks instead of clauses, no rule mode$/u);
   assert.equal(currentContract({ ...onMain, clauses: [{ id: "c", forbid: {}, violation: violation("warning") }] }).ok, false);
 });
 
@@ -87,7 +87,7 @@ test("loads fails a document written for an earlier contract and compiles it as 
   const scratch = await mkdtemp(join(tmpdir(), "validation-compile-"));
   try {
     const { clauses, mode: _mode, ...rest } = RAW;
-    const text = JSON.stringify({ ...rest, format: "tempo.policy/v1", checks: [{ ...clauses[0]!, finding: violation("warning") }] });
+    const text = JSON.stringify({ ...rest, format: "earlier.policy/v1", checks: [{ ...clauses[0]!, finding: violation("warning") }] });
     const compiledTexts: string[] = [];
     const engine = fakeEngine();
     const compile = engine.compile;

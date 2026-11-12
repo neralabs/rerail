@@ -300,6 +300,8 @@ const UNREAD_PERCENT: usize = 50;
 /// The failure message an AST clause gets on a file the parser did not read; persisted results
 /// store it, and `SyntaxReading::Unread` carries the detail reported in its place.
 pub(super) const UNREAD: &str = "file did not parse";
+/// The `source-incomplete` failure of an AST clause a file's syntax errors kept out.
+pub(super) const SYNTAX_ERRORS: &str = "file has syntax errors";
 
 /// How much of a file with syntax errors its AST clauses read, with the message to report.
 pub(super) enum SyntaxReading {

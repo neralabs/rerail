@@ -1,9 +1,9 @@
 /**
  * The page's rule setting writes: rules on or off, a whole rule pack on or off, and whether a rule pack's rules honour
  * linter suppression comments. Each change is one `PUT /api/repository/settings` per folder and setting it writes,
- * owned by this worktree or the repository (`owner()`), sent in click order. The page shows the change at once; after a
- * failed write it puts back what nothing saved and reads the rules in full, so it ends on what the daemon holds.
- * `toast` and `invalidate` are the page's.
+ * owned by this worktree or the repository (`owner(packId)`, given the pack the change is to, when it is to one pack),
+ * sent in click order. The page shows the change at once; after a failed write it puts back what nothing saved and reads
+ * the rules in full, so it ends on what the daemon holds. `toast` and `invalidate` are the page's.
  */
 import { send } from "./api.js";
 import { data } from "./state.js";
@@ -77,12 +77,13 @@ export function settingWrites({ toast, invalidate, owner }) {
   /**
    * Send `puts` (`{ folder, targets, setting }` each) in order, and show the change on `rules` at once with `show`.
    * The repository, owner and rows are fixed when the action starts: switching repository mid-save writes nothing there.
-   * `label` is the toast once saved; `failed` begins the toast when a write fails, before the error.
+   * `label` is the toast once saved; `failed` begins the toast when a write fails, before the error. `packId` is the one
+   * pack the change is to, which decides its owner.
    */
-  async function save(puts, rules, show, label, failed = SAVE_FAILED) {
+  async function save(puts, rules, show, label, failed = SAVE_FAILED, packId = undefined) {
     if (puts.length === 0) return;
     const scope = captureScope();
-    const by = owner();
+    const by = owner(packId);
     const before = new Map(rules.map(r => [r, { ...r }]));
     for (const r of rules) show(r);
     const shown = new Map(rules.map(r => [r, { ...r }]));
@@ -121,13 +122,16 @@ export function settingWrites({ toast, invalidate, owner }) {
   /** Switch rules on or off, at every folder each is added at. */
   function setEnabled(ids, enabled, label, failed) {
     const rules = storedRules(ids);
-    return save(writesOf(ruleTargets(rules), { on: enabled }), rules, r => { r.enabled = enabled; }, label, failed);
+    // Rules all present through one pack are a change to that pack's rules.
+    const packs = new Set(rules.map(r => (r.source?.kind === "pack" ? r.source.id : null)));
+    const packId = packs.size === 1 ? [...packs][0] ?? undefined : undefined;
+    return save(writesOf(ruleTargets(rules), { on: enabled }), rules, r => { r.enabled = enabled; }, label, failed, packId);
   }
 
   /** Switch every rule of pack `packId` on or off (`packSwitchWrites`). */
   function setPackEnabled(packId, enabled, label, failed) {
     const rules = [...data.rules.values()].filter(r => inPack(r, packId));
-    return save(packSwitchWrites(packId, enabled), rules, r => { r.enabled = enabled; }, label, failed);
+    return save(packSwitchWrites(packId, enabled), rules, r => { r.enabled = enabled; }, label, failed, packId);
   }
 
   /**
@@ -136,11 +140,11 @@ export function settingWrites({ toast, invalidate, owner }) {
    * depth, or a rule's own setting at the same owner and folder.
    */
   function setPackSuppressions(packId, suppressions, label, failed) {
-    const by = owner();
+    const by = owner(packId);
     const decides = state => packSettingDecides(state, packId, by, data.checkout?.checkoutPath);
     const rules = [...data.rules.values()].filter(r => r.folderStates.some(decides));
     const folders = byFolder(packFolders(packId).map(folder => [folder, { kind: "pack", id: packId }]));
-    return save(writesOf(folders, { suppressions }), rules, showSuppressions(suppressions, decides, decider(by, "pack")), label, failed);
+    return save(writesOf(folders, { suppressions }), rules, showSuppressions(suppressions, decides, decider(by, "pack")), label, failed, packId);
   }
 
   return { setEnabled, setPackEnabled, setPackSuppressions };

@@ -1,0 +1,63 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "rerail-start-state",
+  "revision": 1,
+  "mode": "log",
+  "description": "Turn a checkout's status into a start state, or decide from one whether Rerail runs, only through src/runtime/repository-start.ts, outside engine and activation code; copies drift.",
+  "scope": {
+    "include": [
+      "src/**/*.ts"
+    ],
+    "exclude": [
+      "src/runtime/repository-start.ts",
+      "src/engine/**",
+      "src/activation/**",
+      "**/*.test.ts",
+      "**/*.generated.ts"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "status-to-state",
+      "forbid": {
+        "regex": {
+          "pattern": "[^\\w$]setUp\\s*\\?\\s*\"(?:started|ok)\"|!\\s*(?:[\\w$.#]*(?:\\((?:[^()\\n]|\\([^()\\n]*\\))*\\))?\\.)?setUp\\s*\\?\\s*\"not-set-up\"|!\\s*(?:\\w*[Ss]tatus(?:\\((?:[^()\\n]|\\([^()\\n]*\\))*\\))?\\.)?started\\s*\\?\\s*\"stopped\"|!\\s*(?:\\w*[Ss]tatus(?:\\((?:[^()\\n]|\\([^()\\n]*\\))*\\))?\\.)?(?:started|setUp)\\s*\\)\\s*\\{?\\s*(?:return\\s+[^;\\n]*?|[\\w$.#]+\\s*=\\s*)\"(?:stopped|not-set-up)\"|configuredAt\\s*(?:===|!==)\\s*null\\s*\\?\\s*\"(?:not-set-up|started)\"",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "START_STATE_MAPPED_OUTSIDE_OWNER",
+        "anchor": "witness.span",
+        "message": "Turn this status into a start state with stateOf from src/runtime/repository-start.ts (workspaceSetUp when only set-up matters), instead of mapping started and setUp here."
+      }
+    },
+    {
+      "id": "started-and-set-up",
+      "forbid": {
+        "regex": {
+          "pattern": "\\.started\\s*&&\\s*[\\w$.#]*(?:\\((?:[^()\\n]|\\([^()\\n]*\\))*\\))?\\.setUp\\b|\\.setUp\\s*&&\\s*[\\w$.#]*(?:\\((?:[^()\\n]|\\([^()\\n]*\\))*\\))?\\.started\\b|!\\s*[\\w$.#]*(?:\\((?:[^()\\n]|\\([^()\\n]*\\))*\\))?\\.started\\s*\\|\\|\\s*!\\s*[\\w$.#]*(?:\\((?:[^()\\n]|\\([^()\\n]*\\))*\\))?\\.setUp\\b|!\\s*[\\w$.#]*(?:\\((?:[^()\\n]|\\([^()\\n]*\\))*\\))?\\.setUp\\s*\\|\\|\\s*!\\s*[\\w$.#]*(?:\\((?:[^()\\n]|\\([^()\\n]*\\))*\\))?\\.started\\b",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "STARTED_AND_SET_UP_OUTSIDE_OWNER",
+        "anchor": "witness.span",
+        "message": "Started and set up is stateOf(status) === \"started\": import stateOf from src/runtime/repository-start.ts instead of combining started and setUp here."
+      }
+    },
+    {
+      "id": "runs-here-from-state",
+      "forbid": {
+        "regex": {
+          "pattern": "(?:[\\w$#]*[Ss]tate|answered)\\s*!==\\s*\"stopped\"|[Ss]tate\\((?:[^()\\n]|\\([^()\\n]*\\))*\\)\\)?\\s*!==\\s*\"stopped\"|\"stopped\"\\s*!==\\s*[\\w$#.]*(?:[Ss]tate|answered)\\b|\\[\\s*\"(?:started|not-set-up)\"\\s*,\\s*\"(?:started|not-set-up)\"\\s*\\]|===\\s*\"started\"\\s*\\|\\|\\s*[\\w$.#]+\\s*===\\s*\"not-set-up\"|===\\s*\"not-set-up\"\\s*\\|\\|\\s*[\\w$.#]+\\s*===\\s*\"started\"|case\\s+\"(?:started|not-set-up)\"\\s*:\\s*case\\s+\"(?:started|not-set-up)\"\\s*:",
+          "source": "file.content"
+        }
+      },
+      "violation": {
+        "code": "RUNS_HERE_DECIDED_OUTSIDE_OWNER",
+        "anchor": "witness.span",
+        "message": "Ask isRerailStarted in src/runtime/repository-start.ts whether Rerail runs here. For a state already in hand (a daemon or CLI answer), add one predicate beside the RepositoryStartState type."
+      }
+    }
+  ]
+}

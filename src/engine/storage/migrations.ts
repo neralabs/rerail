@@ -98,6 +98,34 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
     },
   },
   {
+    // Rules created by you, and packs Rerail does not publish, run in Log only until a person approves their content
+    // (`rule-approval.ts`). The library rules a file already holds were in force before approvals existed, so each is
+    // recorded approved at the content it has; only new rules and later edits wait. Steps run before the DDL, so the
+    // table is created here as this step introduced it. No floor: an older build never reads the table, and runs
+    // every rule as before.
+    id: "rule-approvals",
+    up(database) {
+      database.run(sql.raw(RULE_APPROVALS_TABLE));
+      if (database.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'library_rules'`).length === 0) return;
+      database.run(sql.raw(`INSERT OR IGNORE INTO rule_approvals (subject_kind, subject_id, digest, approved_at)
+        SELECT 'rule', rule_id, payload_hash, updated_at FROM library_rules`));
+    },
+  },
+  {
+    // A violation that an audit in Log mode recorded is `logged` whatever its rule's mode, because that audit tells the
+    // coding agent nothing. The three triggers that derive `audit_violations.logged` are dropped, and the DDL right
+    // after creates them again with the audit's mode in it. The rows already derived are repaired, and so are their
+    // rollup rows, whose triggers run on insert and delete but not on this update. No floor: an older build reads
+    // `logged` as before, and it creates a trigger only when the trigger is missing, so it keeps these.
+    id: "audit-violations-logged-by-audit-mode",
+    up(database) {
+      for (const trigger of ["audits_history_insert", "audits_history_violations_append", "audits_history_violations_update"])
+        database.run(sql.raw(`DROP TRIGGER IF EXISTS \`${trigger}\``));
+      if (database.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audit_violations'`).length === 0) return;
+      for (const statement of LOGGED_BY_AUDIT_MODE_REPAIR) database.run(sql.raw(statement));
+    },
+  },
+  {
     // A repository's `merge_assist`, off by default: only a person turns Merge Assist on. No floor: an older build
     // never reads the column, and its inserts take the default. Its tables need no step; the DDL creates them.
     id: "repositories-merge-assist",
@@ -106,6 +134,27 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
     },
   },
 ];
+
+/**
+ * `audit-violations-logged-by-audit-mode`'s repair: every row of an audit in Log mode becomes `logged`, and each
+ * rollup row of those violations takes the latest of them as its latest logged sighting if it is later.
+ */
+const LOGGED_BY_AUDIT_MODE_REPAIR: readonly string[] = [
+  `UPDATE audit_violations SET logged = 1
+    WHERE logged = 0 AND audit_id IN (SELECT audit_id FROM audits WHERE mode = 'log')`,
+  `UPDATE rule_violation_rollup SET last_logged_at = max(coalesce(last_logged_at, latest.started_at), latest.started_at)
+    FROM (
+      SELECT violation.session_id, violation.rule_id, violation.violation_key, max(violation.started_at) AS started_at
+      FROM audits audit JOIN audit_violations violation ON violation.audit_id = audit.audit_id
+      WHERE audit.mode = 'log' AND violation.rule_id IS NOT NULL
+      GROUP BY violation.session_id, violation.rule_id, violation.violation_key
+    ) latest
+    WHERE rule_violation_rollup.session_id = latest.session_id AND rule_violation_rollup.rule_id = latest.rule_id
+      AND rule_violation_rollup.violation_key = latest.violation_key`,
+];
+
+/** `rule_approvals` as `rule-approvals` introduced it. */
+const RULE_APPROVALS_TABLE = "CREATE TABLE IF NOT EXISTS `rule_approvals` (\n\t`subject_kind` text NOT NULL,\n\t`subject_id` text NOT NULL,\n\t`digest` text NOT NULL,\n\t`approved_at` integer NOT NULL,\n\tPRIMARY KEY(`subject_kind`, `subject_id`, `digest`),\n\tCONSTRAINT \"rule_approvals_subject_kind\" CHECK(\"rule_approvals\".\"subject_kind\" IN ('rule', 'pack'))\n)";
 
 /** The derived audit history tables as `audit-history-derived-tables` introduced them. */
 const AUDIT_HISTORY_TABLES: readonly string[] = [

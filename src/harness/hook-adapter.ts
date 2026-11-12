@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { readFile, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
 import type { Writable } from "node:stream";
@@ -9,6 +9,8 @@ import { isSteerRule, type AdapterDelivery, type ConflictNotice, type RerailHost
 import { RULE_MODES, steers } from "../engine/catalog/rule-mode.js";
 import { asLateSteer } from "../engine/code-rule/rerail-steer.js";
 import { REQUIRED_NODE_MAJOR } from "../engine/package-root.js";
+import { scrubSecrets } from "../engine/secret-scrub.js";
+import { makeLedgerFolder, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
 
 export type HookInput = Record<string, unknown>;
 export type HookOutput = Record<string, unknown>;
@@ -86,54 +88,88 @@ function errno(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
 
-export async function readPending(path: string): Promise<AdapterDelivery[]> {
-  try {
-    const parsed = JSON.parse(await readFile(path, "utf8")) as unknown;
-    if (!Array.isArray(parsed)) throw new Error("Pending delivery state must be an array");
-    return parsed
-      .filter((value): value is Omit<AdapterDelivery, "rules"> & { rules?: unknown } => {
-        if (value === null || typeof value !== "object") return false;
-        const delivery = value as Partial<AdapterDelivery>;
-        return typeof delivery.sessionId === "string"
-          && delivery.requested !== undefined
-          && RULE_MODES.includes(delivery.requested)
-          && steers(delivery.requested)
-          && typeof delivery.mechanism === "string"
-          && typeof delivery.content === "string"
-          && Array.isArray(delivery.ruleIds)
-          && delivery.ruleIds.every(id => typeof id === "string");
-      })
+/**
+ * The steers held at `path`; a symlink on the way to it under `.rerail` is refused (`readLedgerFile`). A steer held
+ * at `Stop` is `late`; the 0.1.2 hook marked one `shown`, which a session updated mid-turn still holds.
+ */
+export async function readPending(path: string): Promise<HeldDelivery[]> {
+  const text = await readLedgerFile(path, dirname(path));
+  if (text === undefined) return [];
+  const parsed = JSON.parse(text) as unknown;
+  if (!Array.isArray(parsed)) throw new Error("Pending delivery state must be an array");
+  return parsed
+    .filter((value): value is Omit<AdapterDelivery, "rules"> & { rules?: unknown; late?: unknown; shown?: unknown } => {
+      if (value === null || typeof value !== "object") return false;
+      const delivery = value as Partial<AdapterDelivery>;
+      return typeof delivery.sessionId === "string"
+        && delivery.requested !== undefined
+        && RULE_MODES.includes(delivery.requested)
+        && steers(delivery.requested)
+        && typeof delivery.mechanism === "string"
+        && typeof delivery.content === "string"
+        && Array.isArray(delivery.ruleIds)
+        && delivery.ruleIds.every(id => typeof id === "string");
+    })
+    .map(({ late, shown, ...delivery }) => ({
+      ...delivery,
       // A steer held before deliveries carried their rules, or with rules that are not, shows no line.
-      .map(delivery => ({ ...delivery, rules: Array.isArray(delivery.rules) ? delivery.rules.filter(isSteerRule) : [] }));
-  } catch (error) {
-    if (errno(error, "ENOENT")) return [];
-    throw error;
-  }
+      rules: Array.isArray(delivery.rules) ? delivery.rules.filter(isSteerRule) : [],
+      ...(late === true || shown === true ? { late: true as const } : {}),
+    }));
 }
 
-export async function persistPending(path: string, deliveries: readonly AdapterDelivery[]): Promise<void> {
+/**
+ * Deliveries as a pending file holds them: each one's content scrubbed of secrets (`scrubSecrets`), as the session
+ * ledger stores a delivery. The caller keeps the original, so a steer delivered now carries its text whole; one held
+ * for a later event goes out as it was written here.
+ */
+function pendingForDisk(deliveries: readonly HeldDelivery[]): HeldDelivery[] {
+  return deliveries.map(delivery => {
+    const content = scrubSecrets(delivery.content);
+    return content === delivery.content ? delivery : { ...delivery, content };
+  });
+}
+
+export async function persistPending(path: string, deliveries: readonly HeldDelivery[]): Promise<void> {
   if (deliveries.length === 0) return;
-  await mkdir(join(path, ".."), { recursive: true });
-  const temporary = `${path}.${process.pid}`;
-  await writeFile(temporary, JSON.stringify([...(await readPending(path)), ...deliveries]), { mode: 0o600 });
-  await rename(temporary, path);
+  await writeLedgerFile(path, dirname(path), JSON.stringify(pendingForDisk([...(await readPending(path)), ...deliveries])));
 }
 
-export async function takePending(path: string): Promise<AdapterDelivery[]> {
+export async function takePending(path: string): Promise<HeldDelivery[]> {
   const deliveries = await readPending(path);
   await rm(path, { force: true });
   return deliveries;
 }
 
-export async function replacePending(path: string, deliveries: readonly AdapterDelivery[]): Promise<void> {
+export async function replacePending(path: string, deliveries: readonly HeldDelivery[]): Promise<void> {
   if (deliveries.length === 0) {
     await rm(path, { force: true });
     return;
   }
-  await mkdir(join(path, ".."), { recursive: true });
-  const temporary = `${path}.${process.pid}`;
-  await writeFile(temporary, JSON.stringify(deliveries), { mode: 0o600 });
-  await rename(temporary, path);
+  await writeLedgerFile(path, dirname(path), JSON.stringify(pendingForDisk(deliveries)));
+}
+
+/**
+ * A pending file's text as `rerail scrub` rewrites it: each entry's `content` scrubbed of secrets, every other part of
+ * the file as it was; undefined when nothing changes or the text is not a JSON array.
+ */
+export function scrubbedPendingText(text: string): string | undefined {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(parsed)) return undefined;
+  let changed = false;
+  const scrubbed = parsed.map((entry: unknown) => {
+    if (entry === null || typeof entry !== "object" || !("content" in entry) || typeof entry.content !== "string") return entry;
+    const content = scrubSecrets(entry.content);
+    if (content === entry.content) return entry;
+    changed = true;
+    return { ...entry, content };
+  });
+  return changed ? JSON.stringify(scrubbed) : undefined;
 }
 
 export async function routeDeliveries(
@@ -141,42 +177,34 @@ export async function routeDeliveries(
   hook: string,
   deliveries: readonly AdapterDelivery[],
   contextEvents: EventTable,
-): Promise<AdapterDelivery[]> {
+): Promise<HeldDelivery[]> {
   const pendingSteers = [...await readPending(path), ...deliveries.filter(delivery => steers(delivery.requested))];
   const carried = contextEvents[hook] === true;
   await replacePending(path, carried ? [] : pendingSteers);
   return carried ? pendingSteers : [];
 }
 
-/** A steer held for the next context event; `shown` once the person has already seen its line, at `Stop`. */
-export type HeldDelivery = AdapterDelivery & { readonly shown?: true };
+/** A steer held for the next context event; `late` once a `Stop` that did not carry it held it past the end of a turn. */
+export type HeldDelivery = AdapterDelivery & { readonly late?: true };
 
 /** The person's lines for `deliveries`, as the host draws them, in one `systemMessage`; nothing without a line. */
 export type SteerLines = (deliveries: readonly AdapterDelivery[]) => { systemMessage: string } | Record<string, never>;
 
 /**
- * Holds `Stop`'s steers for the next context event, marking `shown` each one whose line the person sees at `Stop`.
- * `Stop` reaches the model only through a block, which Claude Code shows it as an error and Codex records as the
- * user's turn, so a steer never goes out there.
+ * Holds a `Stop`'s steers for the next context event, each marked `late`, where that `Stop` does not carry them: in
+ * Codex, which records a `Stop` block's reason as the user's turn, and in Claude Code once Rerail has already kept the
+ * turn going. Nothing goes out at that `Stop`, the person's lines included: they show, and the steer counts, when the
+ * block reaches the agent.
  */
-export async function holdStopSteers(path: string, deliveries: readonly AdapterDelivery[]): Promise<AdapterDelivery[]> {
-  const held = deliveries.filter(delivery => steers(delivery.requested));
-  await persistPending(path, held.map(delivery => (delivery.rules.length > 0 || delivery.conflict !== undefined ? { ...delivery, shown: true as const } : delivery)));
-  return held;
-}
-
-/** At `Stop`, only the person's lines go out, counted as steers when they name rules. */
-function stopOutput(unseen: readonly HeldDelivery[], lines: SteerLines): HookOutput {
-  const shown = lines(unseen);
-  const ruleIds = deliveryRuleIds(unseen.filter(delivery => delivery.rules.length > 0));
-  return "systemMessage" in shown && ruleIds.length > 0 ? prepareGuidanceOutput(shown, ruleIds) : shown;
+export async function holdStopSteers(path: string, deliveries: readonly AdapterDelivery[]): Promise<void> {
+  await persistPending(path, deliveries.filter(delivery => steers(delivery.requested)).map(delivery => ({ ...delivery, late: true as const })));
 }
 
 /**
- * Steers reach the model as `additionalContext` at a context event, after `note`, and the person as one line per rule.
- * At `Stop` only the person's lines go out; the steers wait for the next context event (design N4c), led as late steers.
- * A steer counts once, when the person sees its line (D5): at `Stop` for a late steer, whose block later goes out uncounted.
- * A conflict's line with no text for the model (terminal delivery) goes out alone, as the person's line.
+ * Steers reach the model as `additionalContext` at a context event, after `note`, and the person as one line per rule,
+ * in the same output, which records the receipt once written (D5): what the person sees, what the agent is told and
+ * what is counted agree. A steer held past the end of a turn (`late`) is led as a late steer. A conflict's line with no
+ * text for the model (terminal delivery) goes out alone, as the person's line.
  */
 export function steerHookOutput(
   hook: string,
@@ -185,15 +213,14 @@ export function steerHookOutput(
   lines: SteerLines,
   note?: string,
 ): HookOutput {
-  const unseen = deliveries.filter(delivery => delivery.shown !== true);
-  if (hook === "Stop") return stopOutput(unseen, lines);
   if (contextEvents[hook] !== true) return {};
-  const content = deliveryText(deliveries.map(delivery => (delivery.shown === true ? { ...delivery, content: asLateSteer(delivery.content) } : delivery)));
+  const content = deliveryText(deliveries.map(delivery => (delivery.late === true ? { ...delivery, content: asLateSteer(delivery.content) } : delivery)));
   const context = [note, content].filter(text => text !== undefined).join("\n\n");
-  if (context === "") return lines(unseen);
-  const output = { ...lines(unseen), hookSpecificOutput: { hookEventName: hook, additionalContext: context } };
+  if (context === "") return lines(deliveries);
+  const output = { ...lines(deliveries), hookSpecificOutput: { hookEventName: hook, additionalContext: context } };
   // A note that names no rule (a Merge Assist note) shows the person no steer line, so it is not counted as a steer.
-  return deliveryRuleIds(unseen).length === 0 ? output : prepareGuidanceOutput(output, deliveryRuleIds(unseen));
+  const ruleIds = deliveryRuleIds(deliveries);
+  return content === undefined || ruleIds.length === 0 ? output : prepareGuidanceOutput(output, ruleIds);
 }
 
 interface LockOwner {
@@ -228,7 +255,7 @@ async function reclaimDeadOwner(path: string): Promise<boolean> {
   }
 }
 
-async function acquireLock(path: string, serializedOwner: string, deadline: number, sessionId: string): Promise<void> {
+async function acquireLock(path: string, serializedOwner: string, deadline: number, label: string): Promise<void> {
   for (;;) {
     try {
       await writeFile(path, serializedOwner, { flag: "wx", mode: 0o600 });
@@ -236,7 +263,7 @@ async function acquireLock(path: string, serializedOwner: string, deadline: numb
     } catch (error) {
       if (!errno(error, "EEXIST")) throw error;
       if (await reclaimDeadOwner(path)) continue;
-      if (Date.now() >= deadline) throw new Error(`Timed out waiting for session lock: ${sessionId}`);
+      if (Date.now() >= deadline) throw new Error(`Timed out waiting for session lock: ${label}`);
       await delay(10);
     }
   }
@@ -256,11 +283,27 @@ export async function withSessionLock<T>(
   sessionId: string,
   operation: () => Promise<T>,
 ): Promise<T> {
-  const path = sessionFile(storageRoot, host, "locks", sessionId, "lock");
-  await mkdir(join(path, ".."), { recursive: true });
+  return withLockFile(sessionFile(storageRoot, host, "locks", sessionId, "lock"), sessionId, operation);
+}
+
+/**
+ * Runs `operation` holding the lock a hook holds for the session whose held steers are `pendingFile`
+ * (`<storageRoot>/<host>-pending/<digest>.json`, `pendingPath`): the same `<storageRoot>/<host>-locks/<digest>.lock`,
+ * so rewriting the file races no hook of that session.
+ */
+export async function withPendingFileLock<T>(pendingFile: string, operation: () => Promise<T>): Promise<T> {
+  const folder = basename(dirname(pendingFile));
+  const host = /^(.+)-pending$/.exec(folder)?.[1];
+  const digest = /^([0-9a-f]{64})\.json$/.exec(basename(pendingFile))?.[1];
+  if (host === undefined || digest === undefined) throw new Error(`Not a pending steer file: ${pendingFile}`);
+  return withLockFile(join(dirname(dirname(pendingFile)), `${host}-locks`, `${digest}.lock`), digest, operation);
+}
+
+async function withLockFile<T>(path: string, label: string, operation: () => Promise<T>): Promise<T> {
+  await makeLedgerFolder(dirname(path));
   const owner: LockOwner = { pid: process.pid, token: randomUUID() };
   const serializedOwner = JSON.stringify(owner);
-  await acquireLock(path, serializedOwner, Date.now() + 30_000, sessionId);
+  await acquireLock(path, serializedOwner, Date.now() + 30_000, label);
   try {
     const result = await operation();
     await releaseLock(path, serializedOwner);

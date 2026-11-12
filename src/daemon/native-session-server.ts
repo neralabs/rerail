@@ -15,6 +15,7 @@ import { openCheckoutConversationRules } from "../engine/code-rule/code-rule-dsl
 import { MATCH_ENTRY_TYPE, MUTATION_ENTRY_TYPE, replaySessionState, TURN_ENTRY_TYPE, type DroppedEvents, type RuleMutation } from "../runtime/session-state.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 import type { MergeAssistRuntime } from "../runtime/merge-assist/service.js";
+import { resolveSessionPaths } from "../runtime/session-paths.js";
 
 export type NativeSessionRequest = z.infer<typeof requestSchema>;
 
@@ -281,15 +282,18 @@ export class NativeSessionServer {
     return { deliveries: session.pendingDeliveries.splice(0), entries: session.appendEntries.splice(0) };
   }
 
-  /** Model, database, and session storage paths resolve against the session's cwd. */
+  /**
+   * Model, database, and session storage paths resolve against the session's cwd; the hosts send theirs. A model or
+   * database path left out is the daemon's; a storage root left out is resolved again for the session's cwd
+   * (`resolveSessionPaths`: `RERAIL_STORAGE_ROOT`, else `<cwd>/.rerail/sessions`).
+   */
   #sessionPaths(
     options: { modelPath?: string; databasePath?: string; storageRoot?: string },
     cwd: string,
   ): { modelPath: string; databasePath: string; storageRoot: string } {
     return {
-      modelPath: resolve(cwd, options.modelPath ?? this.#modelPath),
+      ...resolveSessionPaths(cwd, { modelPath: options.modelPath ?? this.#modelPath, storageRoot: options.storageRoot }),
       databasePath: options.databasePath === undefined ? this.#databasePath : resolve(cwd, options.databasePath),
-      storageRoot: resolve(cwd, options.storageRoot ?? ".rerail/sessions"),
     };
   }
 

@@ -1861,8 +1861,8 @@ Node kinds and field names are unchanged: the augmentation is an `internal_modul
 declarations. Each generated parser has fewer states (5,900 for TypeScript and 6,187 for TSX, from 5,905 and 6,191).
 
 With Patches 25 and 26, upstream's corpus parses as before (111 of its own 112 cases; the one failure patch 1's
-`foo++!`). Over 20,235 TypeScript and TSX files (vscode's, nera-landing's and this repository's, packs' upstream
-sources and fixtures included), in the C locale, every tree is unchanged, so no file gains an error.
+`foo++!`). Over 20,235 TypeScript and TSX files (vscode's, a private web application's and this repository's, packs'
+upstream sources and fixtures included), in the C locale, every tree is unchanged, so no file gains an error.
 
 ## Patch 27: a tagged template may take type arguments
 

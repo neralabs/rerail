@@ -58,6 +58,10 @@ impl Adapter for Sql {
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = false;
     const STRIPS_BOM: bool = false;
+    const COMMENT_KINDS: &'static [&'static str] = &["comment"];
+    const PREAMBLE_KINDS: &'static [&'static str] = &[];
+    /// A `block` (`BEGIN … END`) starts at its `BEGIN`, which is no statement.
+    const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
@@ -106,6 +110,10 @@ impl ScopeRules for Sql {
     const REFERENCE_KINDS: &'static [&'static str] = &["identifier"];
     const ANNOTATION_STRING_KINDS: &'static [&'static str] = &[];
     const NAME_KINDS: &'static [&'static str] = &["identifier"];
+    const PAREN_KINDS: &'static [&'static str] = &["parenthesized_expression"];
+    const DOTTED_NAME_KINDS: &'static [&'static str] = &[];
+    const ATTRIBUTE_KINDS: &'static [&'static str] = &[];
+    const THIS_KINDS: &'static [&'static str] = &[];
     const PRIVATE_NAME_KINDS: &'static [&'static str] = &[];
     const FORMS: &'static [(&'static str, Form)] = &[
         ("relation", Form::Relation),

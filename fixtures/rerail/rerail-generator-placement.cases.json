@@ -1,0 +1,126 @@
+{
+  "caught": [
+    {
+      "path": "packs/typescript/candidates/build-vitest-policies.mjs",
+      "content": "// Builds the TypeScript pack's @vitest/eslint-plugin 1.6.27 candidates: packs/typescript/candidates/rules/vitest-*.json.\n// The JSON files are the committed artifacts; this script is their source. It spells once the test-function check the\n// three ports share and writes each document the utilities it needs. Run offline by a maintainer, never in CI; the\n// output is deterministic.\n//\n// Usage (from the repository root): node packs/typescript/candidates/build-vitest-policies.mjs\nimport { writeFileSync } from \"node:fs\";\nimport { dirname, join } from \"node:path\";\nimport { fileURLToPath } from \"node:url\";\n\nconst RULES = join(dirname(fileURLToPath(import.meta.url)), \"rules\");\nconst DOCUMENTS = {};\n\n// A rule's id is its document's file name (docs/pack-format.md, the pack contract's check 1).\nfor (const [id, { mode, description, clauses }] of Object.entries(DOCUMENTS)) {\n  const document = { format: \"rerail.policy/v1\", id, revision: 2, mode, description, scope: SCOPE, clauses };\n  writeFileSync(join(RULES, `${id}.json`), `${JSON.stringify(document, null, 2)}\\n`);\n}\n"
+    },
+    {
+      "path": "packs/react/candidates/probes/build.mjs",
+      "content": "import { mkdirSync, readFileSync, writeFileSync } from \"node:fs\";\nimport { dirname, join } from \"node:path\";\nimport { fileURLToPath } from \"node:url\";\n\nconst DIR = dirname(fileURLToPath(import.meta.url));\nfor (const probe of PROBES) {\n  const document = policy(probe);\n  writeFileSync(join(DIR, \"rules\", `${probe.id}.json`), `${JSON.stringify(document, null, 2)}\\n`);\n}\n"
+    },
+    {
+      "path": "packs/next/candidates/build-rules.ts",
+      "content": "import { writeFile, appendFile } from \"node:fs/promises\";\nimport * as fs from \"node:fs\";\n\nawait writeFile(new URL(\"../rules/next-no-img.json\", import.meta.url), text);\nawait fs.promises.writeFile(\"packs/next/conformance.json\", manifest);\nfs.copyFileSync(\"rules/a.json\", \"../rules/a.json\");\nconst out = fs.createWriteStream(\"packs/next/README.md\");\n"
+    },
+    {
+      "path": "packs/vue/candidates/build.cjs",
+      "content": "const fse = require(\"fs-extra\");\nconst { cpSync } = require(\"node:fs\");\nfse.outputJsonSync(__dirname + \"/../pack.json\", pack, { spaces: 2 });\ncpSync(__dirname + \"/rules\", __dirname + \"/../rules\", { recursive: true });\nawait Bun.write(\"rules/vue-no-v-html.json\", text);\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/scope/data/generate_python_builtins.py",
+      "content": "import json\nimport pathlib\n\n\ndef main() -> None:\n    table: dict[str, object] = {\"source\": \"F821\", \"versions\": {}}\n    (pathlib.Path(__file__).parent / \"python_builtins.json\").write_text(json.dumps(table, indent=1) + \"\\n\")\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/logic/magic/golden/generate.py",
+      "content": "# Regenerates the goldens from T's rdl.py: python3 generate.py <dir with rdl.py and rdl/> <program.rdl> demand|adorn|gate <out>\n# (gate: run with RDL_GATE=1 RDL_NATIVE=program).\nimport sys, json, os\nfront, prog_name, mode, out = sys.argv[1:5]\nsys.path.insert(0, front)\nimport rdl\nsrc = open(os.path.join(front, \"rdl\", prog_name)).read()\np = rdl.prune(rdl.parse(src))\nif mode == \"demand\":\n    p = rdl.prune(rdl.magic_sets(p))\nelse:\n    p = rdl.prune(rdl.magic_adorn(p))\nlines = []\nfor r, cols in sorted(p.decls.items()):\n    if r.startswith((\"magic_\", \"done_\")):\n        lines.append(\"decl \" + r + \"(\" + \", \".join(f\"{c}: {t}\" for c, t in cols) + \")\")\nfor h, b in p.rules:\n    lines.append(\"rule \" + repr(h) + \" :- \" + \", \".join(map(repr, b)))\nfor name, g in sorted(getattr(p, \"gates\", {}).items()):\n    lines.append(\"gate \" + name + \" \" + json.dumps(g, sort_keys=True))\nrep = getattr(p, \"magic_report\", None)\nif rep is not None:\n    lines.append(\"report \" + json.dumps(rep, sort_keys=True))\nlines.append(\"dropped \" + json.dumps(getattr(p, \"demand_dropped\", [])))\nlines.append(\"extras \" + json.dumps(getattr(p, \"magic_extras\", None)))\nlines.append(\"demand \" + json.dumps(p.demand))\nopen(out, \"w\").write(\"\\n\".join(lines) + \"\\n\")\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/value/names/generate.py",
+      "content": "import pathlib\nimport shutil\n\nHERE = pathlib.Path(__file__).parent\nout = bytearray()\n(HERE / \"names.bin\").write_bytes(bytes(out))\nwith (HERE / \"names.txt\").open(\"w\", encoding=\"utf-8\") as handle:\n    handle.write(\"x\")\nwith open(HERE / \"aliases.txt\", mode=\"a\") as handle:\n    handle.write(\"y\")\nshutil.copyfile(\"NameAliases.txt\", HERE / \"NameAliases.txt\")\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/scope/php/generate_by_reference.php",
+      "content": "<?php\n$out = \"pub(super) const BY_REFERENCE: &[(&str, &[&str], &[i8])] = &[\\n\";\n$out .= \"];\\n\";\nfile_put_contents(__DIR__ . '/by_reference.rs', $out);\n$handle = fopen(__DIR__ . '/by_reference.txt', 'w');\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/logic/plan/golden/generate.sh",
+      "content": "#!/bin/bash\n# Regenerates the planner goldens from a reference checkout (T), read-only:\n#   generate.sh <T checkout> <CPython 3.13 Lib/> <work dir>\n# Facts: T's exporter over json/, ftplib, shlex, fnmatch and glob, then stats.py; kfreq, efreq and sqlite_stat4\n# (unused by rdl.py) dropped. Goldens: rdl.py sql (no RDL_NATIVE) on the dump itself, its plan.json's \"rules\" as\n# head<TAB>anchor<TAB>walks<TAB>work lines, and its output CSVs.\nset -euo pipefail\nT=$1 LIB=$2 W=$3 G=$(cd \"$(dirname \"$0\")\" && pwd)\nmkdir -p \"$W/corpus\" && cp -R \"$LIB\"/{json,ftplib.py,shlex.py,fnmatch.py,glob.py} \"$W/corpus/\"\ncd \"$W\" && \"$T/exporter/target/release/dl-export\" corpus facts\npython3 -I -B \"$T/stats.py\" build facts/facts.sqlite\nsqlite3 facts/facts.sqlite \"DROP TABLE kfreq; DROP TABLE efreq; DROP TABLE sqlite_stat4; VACUUM;\"\nsqlite3 facts/facts.sqlite .dump > facts.sql && zstd -19 -q -f facts.sql -o \"$G/facts.sql.zst\"\nsqlite3 dumped.sqlite < facts.sql\nfor p in workload workload_demand calls; do\n  mkdir -p \"out/$p\" \"$G/$p\"\n  python3 -I -B \"$T/rdl/rdl.py\" sql \"$T/rdl/$p.rdl\" dumped.sqlite \"out/$p\"\n  cp out/$p/*.csv \"$G/$p/\"\n  python3 -I -c 'import json, sys\np = json.load(open(sys.argv[1]))\nopen(sys.argv[2], \"w\").write(\"\".join(f\"{r[\\\"head\\\"]}\\t{r[\\\"anchor\\\"]}\\t{json.dumps(r[\\\"walks\\\"])}\\t{r[\\\"work\\\"]}\\n\" for r in p[\"rules\"]))' \"out/$p/plan.json\" \"$G/$p/rules.txt\"\ndone\n"
+    },
+    {
+      "path": "packs/react/candidates/write-docs.js",
+      "content": "const { writeFileSync } = require(\"node:fs\");\nwriteFileSync(require(\"node:path\").join(__dirname, \"../README.md\"), text);\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/value/names/generate_table.py",
+      "content": "import os\nwith open(os.path.join(HERE, 'table.json'), 'w') as fh:\n    fh.write('{}')\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/value/names/generate_kw.py",
+      "content": "with open(path, encoding='utf-8', mode='w') as fh:\n    fh.write('{}')\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/logic/plan/golden/regenerate.sh",
+      "content": "#!/bin/bash\nG=$(cd \"$(dirname \"$0\")\" && pwd)\npython3 build.py > \"$G\"/table.txt\n"
+    }
+  ],
+  "passed": [
+    {
+      "path": "scripts/generate/packs/typescript-vitest-policies.mjs",
+      "content": "// Writes the TypeScript pack's @vitest/eslint-plugin 1.6.27 candidates: packs/typescript/candidates/rules/vitest-*.json\n// (listed in scripts/generate/README.md; edit this script, not the JSON). It spells once the checks the three ports\n// share (which calls are Vitest's, upstream's valid chains, where findings sit) and writes each document the utilities\n// it needs. It reads no tools; run offline by a maintainer, never in CI; the output is deterministic.\n//\n// Usage (from the repository root): node scripts/generate/packs/typescript-vitest-policies.mjs\n//\nimport { writeFileSync } from \"node:fs\";\nwriteFileSync(join(RULES, `${id}.json`), `${JSON.stringify(document, null, 2)}\\n`);\n"
+    },
+    {
+      "path": "packs/react/candidates/specs.mjs",
+      "content": "// The specs build.mjs reads; it calls writeFileSync(path, text) for each one, this module writes nothing.\nimport { readFileSync } from \"node:fs\";\n\nexport const HAND_WRITTEN = new Set(JSON.parse(readFileSync(new URL(\"./hand-written.json\", import.meta.url), \"utf8\")));\nexport const SPECS = [{ id: \"react-jsx-key\", note: \"fs.writeFileSync(x)\" }];\n"
+    },
+    {
+      "path": "packs/next/candidates/check-probes.mjs",
+      "content": "import { readFileSync, existsSync } from \"node:fs\";\nconst probes = `\ncp rules/a.json rules/b.json\necho x > $OUT/a\n`;\nconst rules = JSON.parse(readFileSync(\"packs/next/pack.json\", \"utf8\"));\nconsole.log(existsSync(\"x\"), rules, probes);\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/logic/front/check.py",
+      "content": "import json\n\nwith open(\"plan.json\") as handle:\n    plan = json.load(handle)\nwith open(\"plan.json\", \"r\", encoding=\"utf-8\") as handle:\n    text = handle.read()\nwith open(\"plan.bin\", mode=\"rb\") as handle:\n    data = handle.read()\nprint(plan, text, data)\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/logic/plan/golden/check.sh",
+      "content": "#!/bin/bash\nset -euo pipefail\nG=$(cd \"$(dirname \"$0\")\" && pwd)\nfor f in \"$G\"/*.csv; do\n  diff -u \"$f\" \"out/$(basename \"$f\")\" > /dev/null 2>&1 || echo \"stale: $f\"\ndone\n"
+    },
+    {
+      "path": "packs/blade/upstream/blade-parser/generate.py",
+      "content": "import pathlib\n(pathlib.Path(__file__).parent / \"expected.json\").write_text(\"[]\\n\")\n"
+    },
+    {
+      "path": "packs/node/candidates/probes/labels/fixtures/fs/write.js",
+      "content": "const fs = require(\"fs\");\nfs.writeFileSync(\"out.txt\", \"x\");\n"
+    },
+    {
+      "path": "packs/react/candidates/zip-helper.ts",
+      "content": "export function pack(zip: Zip, name: string, data: string) {\n  zip.writeFile(name, data);\n}\n"
+    },
+    {
+      "path": "packs/node/candidates/probes/run.mjs",
+      "content": "import fs from 'node:fs';\nfs.writeSync(1, 'done\\n');\n"
+    },
+    {
+      "path": "packs/python/candidates/test_build.py",
+      "content": "def test_writes(tmp_path):\n    with open(tmp_path / 'x.json', 'w') as fh:\n        fh.write('{}')\n"
+    },
+    {
+      "path": "packs/php/candidates/report.php",
+      "content": "<?php\n$out = fopen('php://stdout', 'w');\nfwrite($out, \"ok\\n\");\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/logic/front/read.py",
+      "content": "import os, tarfile\nwith open('raw.json') as fh:\n    raw = fh.read()\naliases = open(os.path.join(HERE, 'aliases.txt')).read()\narchive = tarfile.open('archive.tar')\n"
+    },
+    {
+      "path": "native/src/code_rule_dsl/scope/php/read_cache.php",
+      "content": "<?php\n$handle = fopen(implode('/', [$dir, 'cache.txt']), 'r');\n"
+    },
+    {
+      "path": "packs/next/candidates/usage.sh",
+      "content": "#!/bin/bash\ncat <<EOF\nUsage: run.sh\ninstall the pinned tools first\nEOF\n"
+    },
+    {
+      "path": "packs/next/candidates/math.sh",
+      "content": "#!/bin/bash\nN=$1 M=$2\nif (( N > $M/2 )); then echo big; fi\n"
+    },
+    {
+      "path": "packs/next/candidates/log.sh",
+      "content": "#!/bin/bash\n# Usage: log.sh > $OUT/log.txt   (prints only)\necho hi | tee /dev/stderr\n"
+    },
+    {
+      "path": "packs/x/candidates/help.py",
+      "content": "HELP = \"\"\"\ncp a \"$G/b.json\"\n\"\"\"\nprint(HELP)\n"
+    }
+  ]
+}

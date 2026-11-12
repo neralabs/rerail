@@ -1,25 +1,30 @@
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, X509Certificate } from "node:crypto";
 import { createReadStream, existsSync, realpathSync } from "node:fs";
 import { readFile, stat, writeFile, rm, rename } from "node:fs/promises";
-import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
-import { dirname, extname, join, normalize, resolve, sep } from "node:path";
+import { createServer, type RequestListener, type Server as HttpServer } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
+import type { AddressInfo, Server as NetServer } from "node:net";
+import { basename, dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { bundledModelPath, PACKAGE_ROOT } from "../engine/package-root.js";
+import { PACKAGE_ROOT } from "../engine/package-root.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
-import { DAEMON_ACCESS_TOKEN_FILE, type DaemonHealth, type DaemonState, type NativeStatus } from "../runtime/daemon-control.js";
-import { startEngineService, type EngineService } from "../runtime/engine-service.js";
+import { DAEMON_ACCESS_TOKEN_FILE, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
+import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.js";
+import { chooseEngineSocketPath, startEngineService, type EngineService } from "../runtime/engine-service.js";
+import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "../runtime/merge-assist/service.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { getRequestListener } from "@hono/node-server";
 import { Hono } from "hono";
-import { accessCapability, createRerailApi, hostAllowlist, publicHostSet, sameSecret } from "../api/http.js";
+import { HTTPException } from "hono/http-exception";
+import { accessCapability, createRerailApi, hostAllowlist, publicHostSet, requestBodyLimit } from "../api/http.js";
 import { createRerailMcpHandler } from "../api/mcp.js";
 import { operations } from "../api/operations.js";
 import { DatabaseApiStores } from "../api/stores.js";
 import { nativeHealth as loadNativeHealth, type NativeHealth } from "../engine/native/native.js";
+import { modelStatus } from "../engine/native/model-status.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -31,8 +36,31 @@ export const DEFAULT_DAEMON_PORT = 4737;
 /** In the Rerail home: the port the daemon last listened on, which the next start without `--port` prefers. */
 export const DAEMON_PORT_FILE = "daemon-port.json";
 
+/**
+ * The largest body `/api` and `/mcp` take. Their largest legitimate request is a rule document (a library rule
+ * upsert, or the MCP tool call carrying one): conversation rule text is capped at 32 KiB a field and a code rule is a
+ * query, not source, so real documents are tens of KiB. 4 MiB leaves room for any of them.
+ */
+const API_BODY_LIMIT_BYTES = 4 * 1024 * 1024;
+/**
+ * The largest body `/native/session` takes. Its `initialize`, `semantic` and `cosine` requests carry the host
+ * session's whole branch (every entry, tool output included), which reaches tens of MiB in a long session; 256 MiB
+ * stays below the size V8 can hold as one string to parse.
+ */
+const NATIVE_BODY_LIMIT_BYTES = 256 * 1024 * 1024;
+/**
+ * How long a client has to send its headers, then its whole request. Both bound receiving the request only, never how
+ * long a handler takes to answer, and `/mcp` answers each POST with one JSON body (no SSE stream: `mcp.ts`), so no
+ * response is cut short. Dashboard polls are small GETs; between them a kept-alive connection is closed by Node's
+ * `keepAliveTimeout`, not these. Loopback carries the largest native body in well under 60 seconds.
+ */
+const HTTP_TIMEOUTS = { headersTimeout: 10_000, requestTimeout: 60_000 } as const;
+const INTERNAL_ERROR_MESSAGE = "The Rerail daemon could not answer this request; daemon.log in the Rerail home has the cause.";
+
 export interface RerailDaemonOptions {
   version: string;
+  /** Internal testing: false keeps the remote sink's sender off; tests may shorten its interval. */
+  remoteSink?: false | { intervalMs: number };
   /** Defaults to `$RERAIL_HOME/rerail.sqlite`; embedding and tests pass their own. */
   databasePath?: string;
   /** Checkout native sessions address; defaults to the current directory. The API serves every repository. */
@@ -62,6 +90,17 @@ export interface RerailDaemonOptions {
   kernelSocketPath?: string;
   /** The coding agent check `GET /api/coding-agents` reports; the daemon's entry point passes set-up's. */
   codingAgents?: () => Promise<CodingAgentState[]>;
+  /**
+   * The certificate (a PEM chain, leaf first) and private key to serve https with; omitted, the daemon serves http.
+   * The state file records the leaf's SHA-256 fingerprint, which Rerail's own clients pin.
+   */
+  tls?: DaemonTlsMaterial;
+}
+
+/** What `--tls-cert` and `--tls-key` name, read: PEM text. */
+export interface DaemonTlsMaterial {
+  cert: string;
+  key: string;
 }
 
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
@@ -100,16 +139,26 @@ export function sourceUiRoot(): string {
   return join(PACKAGE_ROOT, "ui");
 }
 
-/** A short, database-derived local IPC endpoint isolates each Rerail home's engine service. */
+/**
+ * A short, database-derived local IPC endpoint isolates each Rerail home's engine service. On POSIX it lives in this
+ * user's own directory in the temp directory, `rerail-<uid>`, which the engine service makes 0700 and checks before
+ * listening; the daemon falls back to a `run` folder beside the database when that one is refused. Names stay short:
+ * a socket path must fit 104 bytes on macOS and 108 on Linux.
+ */
 export function defaultEngineSocketPath(
   databasePath: string,
   platform: NodeJS.Platform = process.platform,
 ): string {
   const identity = createHash("sha256").update(resolve(databasePath)).digest("hex").slice(0, 24);
-  return platform === "win32" ? String.raw`\\.\pipe\rerail-${identity}` : join(tmpdir(), `rerail-${identity}.sock`);
+  return platform === "win32"
+    ? String.raw`\\.\pipe\rerail-${identity}`
+    : join(tmpdir(), `rerail-${process.getuid!()}`, `${identity}.sock`);
 }
 
-async function listen(server: Server, port: number, host: string): Promise<void> {
+/** The listener the daemon serves on: `node:http`'s, or `node:https`'s when it has a certificate. */
+type DaemonServer = NetServer & Pick<HttpServer, "closeIdleConnections" | "closeAllConnections">;
+
+async function listen(server: DaemonServer, port: number, host: string): Promise<void> {
   const listening = Promise.withResolvers<void>();
   server.once("error", listening.reject);
   server.listen(port, host, () => {
@@ -125,7 +174,7 @@ async function listen(server: Server, port: number, host: string): Promise<void>
  * port number. Held (EADDRINUSE) or refused (EACCES: Windows reserves port ranges for Hyper-V and moves them across
  * restarts) both move on; the remembered port moves on whatever its error, since only a deleted file would undo it.
  */
-async function listenPreferred(server: Server, port: number | undefined, remembered: number | undefined, host: string): Promise<void> {
+async function listenPreferred(server: DaemonServer, port: number | undefined, remembered: number | undefined, host: string): Promise<void> {
   if (port !== undefined) return await listen(server, port, host);
   for (const preferred of new Set([remembered ?? DEFAULT_DAEMON_PORT, DEFAULT_DAEMON_PORT])) {
     try {
@@ -200,7 +249,7 @@ async function persistentAccessToken(file: string): Promise<string> {
   return token;
 }
 
-async function closeHttpServer(server: Server): Promise<void> {
+async function closeHttpServer(server: DaemonServer): Promise<void> {
   server.closeIdleConnections();
   const closed = Promise.withResolvers<void>();
   server.close((error) => (error === undefined ? closed.resolve() : closed.reject(error)));
@@ -208,12 +257,145 @@ async function closeHttpServer(server: Server): Promise<void> {
   await closed.promise;
 }
 
+/** The hosts the daemon binds and answers to, and whether it is reachable off loopback. */
+function daemonHosts(options: RerailDaemonOptions): { bindHost: string; publicHosts: ReturnType<typeof publicHostSet>; remote: boolean } {
+  const bindHost = options.host ?? DEFAULT_DAEMON_HOST;
+  const loopbackBind = LOOPBACK_BIND_HOSTS.includes(bindHost.toLowerCase());
+  // A daemon bound off loopback (`--allow-remote`) is dialled by its own literal address, e.g. a
+  // `http://0.0.0.0:4737/` state URL. An IP literal cannot arrive by DNS rebinding —
+  // that attack's `Host` is a DNS name — so the bound address is as safe to answer as loopback.
+  const publicHosts = publicHostSet([
+    ...(options.publicHosts ?? []),
+    ...(loopbackBind ? [] : [bindHost.includes(":") ? `[${bindHost}]` : bindHost]),
+  ]);
+  return { bindHost, publicHosts, remote: !loopbackBind || (options.publicHosts ?? []).length > 0 };
+}
+
+/**
+ * Every request carries the daemon's access capability: `Host`/`Origin` are only what a client claims, and on
+ * loopback another user of the machine, or a sandboxed process allowed localhost, reaches the socket as the person
+ * would. A loopback daemon keeps its capability in the home across restarts, so a browser that holds it keeps
+ * working; one reachable off loopback (`--allow-remote`, or a `--public-host` a reverse proxy forwards) mints a new
+ * one on every start.
+ */
+async function daemonAccessToken(options: RerailDaemonOptions, remote: boolean): Promise<string> {
+  return options.accessToken
+    ?? (remote || options.accessTokenFile === undefined ? newAccessToken() : await persistentAccessToken(options.accessTokenFile));
+}
+
+function daemonUi(options: RerailDaemonOptions): { uiRoot: string | undefined; ui: DaemonState["ui"] } {
+  const uiRoot = options.uiRoot === undefined ? undefined : realpathSync(options.uiRoot);
+  return { uiRoot, ui: uiRoot === undefined || options.dev === true ? "dev" : "bundled" };
+}
+
+/** What the HTTP app serves. `health` asks the daemon the app ends up behind. */
+function daemonApp({ stores, options, publicHosts, accessToken, nativeToken, sessions, workspaceRoot, uiRoot, health }: {
+  stores: DatabaseApiStores; options: RerailDaemonOptions; publicHosts: ReturnType<typeof publicHostSet>; accessToken: string; nativeToken: string;
+  sessions: NativeSessionServer; workspaceRoot: string; uiRoot: string | undefined; health: () => ReturnType<RerailDaemon["health"]>;
+}): Hono {
+  const mcp = createRerailMcpHandler(stores, operations, { version: options.version, publicHosts });
+  const app = new Hono();
+  app.use("*", hostAllowlist(publicHosts));
+  app.use("*", accessCapability(accessToken));
+  app.use("/api/*", requestBodyLimit(API_BODY_LIMIT_BYTES));
+  app.use("/mcp", requestBodyLimit(API_BODY_LIMIT_BYTES));
+  app.use("/native/*", requestBodyLimit(NATIVE_BODY_LIMIT_BYTES));
+  app.get("/healthz", context => context.json(health()));
+
+  app.post("/native/session", async (context) => {
+    // Browsers always send Origin, and Rerail processes always send JSON with the private capability.
+    if (context.req.header("origin") !== undefined) return context.json({ error: "native-origin-forbidden" }, 403);
+    if (context.req.header("content-type") !== "application/json") return context.json({ error: "native-content-type-required" }, 415);
+    if (!sameSecret(context.req.header("authorization"), `Bearer ${nativeToken}`)) {
+      return context.json({ error: "native-authorization-invalid" }, 403);
+    }
+    let body: unknown;
+    try {
+      body = await context.req.json();
+    } catch {
+      return context.json({ error: "native-request-invalid" }, 400);
+    }
+    if (body === null || typeof body !== "object" || Array.isArray(body)
+      || !("workspaceRoot" in body) || typeof body.workspaceRoot !== "string") {
+      return context.json({ error: "native-request-invalid" }, 400);
+    }
+    if (resolve(body.workspaceRoot) !== workspaceRoot) return context.json({ error: "native-workspace-mismatch" }, 403);
+    try {
+      return context.json(await sessions.handle(body));
+    } catch (error) {
+      return context.json({
+        error: "native-request-invalid",
+        message: error instanceof Error ? error.message : String(error),
+      }, 400);
+    }
+  });
+  app.route("/", createRerailApi(stores, operations, { version: options.version, publicHosts }));
+  app.all("/mcp", (context) => mcp(context.req.raw));
+  app.all("/api/*", (context) => context.json({ error: "not-found" }, 404));
+  app.all("*", (context) => {
+    if (context.req.method !== "GET" && context.req.method !== "HEAD") {
+      return context.json({ error: "method-not-allowed" }, 405);
+    }
+    if (uiRoot === undefined) return context.json({ error: "not-found" }, 404);
+    return serveStatic(context.req.path, context.req.method === "HEAD", uiRoot, context.req.header("if-none-match"));
+  });
+  // A client hears that something failed, never why: an error's text can name paths, rule text or SQL. The daemon
+  // log (`daemon.log` in the Rerail home, which only this user can read) keeps the whole error. An `HTTPException`
+  // is the framework's own answer to a malformed request (a body that is not JSON) and goes out as it is.
+  app.onError((error, context) => {
+    if (error instanceof HTTPException) return error.getResponse();
+    process.stderr.write(`rerail daemon: ${context.req.method} ${context.req.path} failed: ${error.stack ?? error.message}\n`);
+    return context.json({ error: "internal", message: INTERNAL_ERROR_MESSAGE }, 500);
+  });
+  return app;
+}
+
+function createDaemonServer(options: RerailDaemonOptions, app: Hono): DaemonServer {
+  const listener = getRequestListener(app.fetch);
+  const handle: RequestListener = (request, response) => void listener(request, response);
+  return options.tls === undefined
+    ? createServer(HTTP_TIMEOUTS, handle)
+    : createHttpsServer({ ...HTTP_TIMEOUTS, cert: options.tls.cert, key: options.tls.key }, handle);
+}
+
+/** What a start has running so far, for a failed one to close. */
+interface StartedServices {
+  engineService?: EngineService;
+  nativeServer?: NativeSessionServer;
+  server?: DaemonServer;
+}
+
+/**
+ * Every one of them, whatever another does: a socket left bound makes every later start fail (EADDRINUSE); the
+ * database last, once nothing uses it. The start's own error is the one thrown; a close that failed too is written to
+ * stderr, so a later EADDRINUSE has its cause on record.
+ */
+async function closeAfterFailedStart({ engineService, nativeServer, server }: StartedServices, stores: DatabaseApiStores): Promise<void> {
+  const failed = (what: string, reason: unknown): void => {
+    process.stderr.write(`rerail daemon: could not close ${what} after a failed start: ${reason instanceof Error ? reason.message : String(reason)}\n`);
+  };
+  const closing: [string, () => unknown][] = [
+    ["the HTTP server", () => (server?.listening === true ? closeHttpServer(server) : undefined)],
+    ["the native session server", () => nativeServer?.close()],
+    ["the engine service", () => engineService?.close()],
+  ];
+  const settled = await Promise.allSettled(closing.map(async ([, close]) => await close()));
+  settled.forEach((outcome, index) => {
+    if (outcome.status === "rejected") failed(closing[index]![0], outcome.reason);
+  });
+  try {
+    stores.close();
+  } catch (reason) {
+    failed("the database", reason);
+  }
+}
+
 export class RerailDaemon {
   readonly host: string;
   readonly port: number;
   readonly url: string;
   readonly startedAt: number;
-  readonly #server: Server;
+  readonly #server: DaemonServer;
   readonly #engineService: EngineService;
   readonly #stores: DatabaseApiStores;
   readonly #ui: DaemonState["ui"];
@@ -225,14 +407,17 @@ export class RerailDaemon {
   readonly #nativeServer: NativeSessionServer;
   readonly #nativeToken: string;
   readonly #accessToken: string;
+  readonly #tlsFingerprint256: string | undefined;
   #closed = false;
   /** The Merge Assist the API and every session share: stopped before the database closes. */
   readonly #mergeAssist: MergeAssistRuntime;
+  #remoteSink: RemoteSinkLoop | undefined;
 
   private constructor({
     server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot, nativeServer, nativeToken, accessToken, mergeAssist,
+    tlsFingerprint256,
   }: {
-    server: Server;
+    server: DaemonServer;
     engineService: EngineService;
     kernelSocketPath: string;
     stores: DatabaseApiStores;
@@ -245,11 +430,12 @@ export class RerailDaemon {
     nativeToken: string;
     accessToken: string;
     mergeAssist: MergeAssistRuntime;
+    tlsFingerprint256: string | undefined;
   }) {
     const address = server.address() as AddressInfo;
     this.host = address.address;
     this.port = address.port;
-    this.url = `http://${this.host}:${this.port}/`;
+    this.url = `${tlsFingerprint256 === undefined ? "http" : "https"}://${this.host}:${this.port}/`;
     this.startedAt = Date.now();
     this.#server = server;
     this.#engineService = engineService;
@@ -264,34 +450,26 @@ export class RerailDaemon {
     this.#nativeToken = nativeToken;
     this.#accessToken = accessToken;
     this.#mergeAssist = mergeAssist;
+    this.#tlsFingerprint256 = tlsFingerprint256;
   }
 
   static async start(options: RerailDaemonOptions): Promise<RerailDaemon> {
-    const bindHost = options.host ?? DEFAULT_DAEMON_HOST;
-    const loopbackBind = LOOPBACK_BIND_HOSTS.includes(bindHost.toLowerCase());
-    // A daemon bound off loopback (`--allow-remote`) is dialled by its own literal address, e.g. a
-    // `http://0.0.0.0:4737/` state URL. An IP literal cannot arrive by DNS rebinding —
-    // that attack's `Host` is a DNS name — so the bound address is as safe to answer as loopback.
-    const publicHosts = publicHostSet([
-      ...(options.publicHosts ?? []),
-      ...(loopbackBind ? [] : [bindHost.includes(":") ? `[${bindHost}]` : bindHost]),
-    ]);
-    // Every request carries the daemon's access capability: `Host`/`Origin` are only what a client claims, and on
-    // loopback another user of the machine, or a sandboxed process allowed localhost, reaches the socket as the person
-    // would. A loopback daemon keeps its capability in the home across restarts, so a browser that holds it keeps
-    // working; one reachable off loopback (`--allow-remote`, or a `--public-host` a reverse proxy forwards) mints a new
-    // one on every start.
-    const remote = !loopbackBind || (options.publicHosts ?? []).length > 0;
-    const accessToken = options.accessToken
-      ?? (remote || options.accessTokenFile === undefined ? newAccessToken() : await persistentAccessToken(options.accessTokenFile));
-    const uiRoot = options.uiRoot === undefined ? undefined : realpathSync(options.uiRoot);
-    const ui: DaemonState["ui"] = uiRoot === undefined || options.dev === true ? "dev" : "bundled";
+    // Before anything is opened or bound: a file that holds no certificate is the start's whole failure.
+    const tlsFingerprint256 = options.tls === undefined ? undefined : certificateFingerprint(options.tls.cert);
+    const { bindHost, publicHosts, remote } = daemonHosts(options);
+    const accessToken = await daemonAccessToken(options, remote);
+    const { uiRoot, ui } = daemonUi(options);
     const native = readNativeStatus(options.nativeHealth ?? loadNativeHealth);
     const databasePath = resolve(options.databasePath ?? defaultRerailDatabasePath());
-    const kernelSocketPath = options.kernelSocketPath ?? defaultEngineSocketPath(databasePath);
+    // Anyone on the machine can make `rerail-<uid>` in a shared temp directory first, so a refused one falls back to a
+    // `run` folder beside the database, checked the same way. Clients find the socket through the state file, never by
+    // computing it. A socket path the caller named is used or refused, never replaced.
+    const defaultSocketPath = defaultEngineSocketPath(databasePath);
+    const kernelSocketPath = options.kernelSocketPath
+      ?? await chooseEngineSocketPath([defaultSocketPath, join(dirname(databasePath), "run", basename(defaultSocketPath))]);
     const workspaceRoot = resolve(options.workspaceRoot ?? process.cwd());
-    const storageRoot = join(workspaceRoot, ".rerail", "sessions");
-    const modelPath = bundledModelPath();
+    // The paths of a session whose host sends none.
+    const { storageRoot, modelPath } = resolveSessionPaths(workspaceRoot);
     let daemon: RerailDaemon | undefined;
     // One Merge Assist for the API and every session this daemon runs, so a scan runs once per checkout and gh's
     // readiness is read once; its database opens with the stores', on first use.
@@ -304,100 +482,46 @@ export class RerailDaemon {
       ...(options.codingAgents === undefined ? {} : { codingAgents: options.codingAgents }),
       mergeAssist,
     });
-    let engineService: EngineService | undefined;
-    let nativeServer: NativeSessionServer | undefined;
-    let server: Server | undefined;
+    const started: StartedServices = {};
     try {
-      engineService = await startEngineService({
+      const engineService = await startEngineService({
         socketPath: kernelSocketPath,
         storageRoot,
         modelPath,
         databasePath,
         workspaceRoot,
+        accessToken,
         mergeAssist,
       });
+      started.engineService = engineService;
       const nativeToken = randomBytes(32).toString("hex");
       const sessions = new NativeSessionServer({ workspaceRoot, modelPath, databasePath, mergeAssist });
-      nativeServer = sessions;
-      const mcp = createRerailMcpHandler(stores, operations, { version: options.version, publicHosts });
-      const app = new Hono();
-      app.use("*", hostAllowlist(publicHosts));
-      app.use("*", accessCapability(accessToken));
-      app.get("/healthz", context => context.json(daemon!.health()));
-
-      app.post("/native/session", async (context) => {
-        // Browsers always send Origin, and Rerail processes always send JSON with the private capability.
-        if (context.req.header("origin") !== undefined) return context.json({ error: "native-origin-forbidden" }, 403);
-        if (context.req.header("content-type") !== "application/json") return context.json({ error: "native-content-type-required" }, 415);
-        if (!sameSecret(context.req.header("authorization"), `Bearer ${nativeToken}`)) {
-          return context.json({ error: "native-authorization-invalid" }, 403);
-        }
-        let body: unknown;
-        try {
-          body = await context.req.json();
-        } catch {
-          return context.json({ error: "native-request-invalid" }, 400);
-        }
-        if (body === null || typeof body !== "object" || Array.isArray(body)
-          || !("workspaceRoot" in body) || typeof body.workspaceRoot !== "string") {
-          return context.json({ error: "native-request-invalid" }, 400);
-        }
-        if (resolve(body.workspaceRoot) !== workspaceRoot) return context.json({ error: "native-workspace-mismatch" }, 403);
-        try {
-          return context.json(await sessions.handle(body));
-        } catch (error) {
-          return context.json({
-            error: "native-request-invalid",
-            message: error instanceof Error ? error.message : String(error),
-          }, 400);
-        }
-      });
-      app.route("/", createRerailApi(stores, operations, { version: options.version, publicHosts }));
-      app.all("/mcp", (context) => mcp(context.req.raw));
-      app.all("/api/*", (context) => context.json({ error: "not-found" }, 404));
-      app.all("*", (context) => {
-        if (context.req.method !== "GET" && context.req.method !== "HEAD") {
-          return context.json({ error: "method-not-allowed" }, 405);
-        }
-        if (uiRoot === undefined) return context.json({ error: "not-found" }, 404);
-        return serveStatic(context.req.path, context.req.method === "HEAD", uiRoot, context.req.header("if-none-match"));
-      });
-      app.onError((error, context) => context.json({ error: "internal", message: error.message }, 500));
-      const listener = getRequestListener(app.fetch);
-      server = createServer((request, response) => void listener(request, response));
+      started.nativeServer = sessions;
+      const app = daemonApp({ stores, options, publicHosts, accessToken, nativeToken, sessions, workspaceRoot, uiRoot, health: () => daemon!.health() });
+      const server = createDaemonServer(options, app);
+      started.server = server;
       const remembered = options.portFile === undefined ? undefined : await readRememberedPort(options.portFile);
       await listenPreferred(server, options.port, remembered, bindHost);
       daemon = new RerailDaemon({
         server, engineService, kernelSocketPath, stores, options, databasePath, native, ui, workspaceRoot,
-        nativeServer: sessions, nativeToken, accessToken, mergeAssist,
+        nativeServer: sessions, nativeToken, accessToken, tlsFingerprint256, mergeAssist,
       });
-      if (options.stateFile !== undefined) await writePrivateFile(options.stateFile, `${JSON.stringify(daemon.state(), null, 2)}\n`);
-      // A start that asked for any free port (`0`) takes a throwaway one; it does not replace the port links point at.
-      if (options.portFile !== undefined && options.port !== 0 && daemon.port !== remembered) await rememberPort(options.portFile, daemon.port);
+      await daemon.#announce(remembered);
       return daemon;
     } catch (error) {
-      // Every one of them, whatever another does: a socket left bound makes every later start fail (EADDRINUSE); the
-      // database last, once nothing uses it. The start's own error is the one thrown; a close that failed too is
-      // written to stderr, so a later EADDRINUSE has its cause on record.
-      const failed = (what: string, reason: unknown): void => {
-        process.stderr.write(`rerail daemon: could not close ${what} after a failed start: ${reason instanceof Error ? reason.message : String(reason)}\n`);
-      };
-      const closing: [string, () => unknown][] = [
-        ["the HTTP server", () => (server?.listening === true ? closeHttpServer(server) : undefined)],
-        ["the native session server", () => nativeServer?.close()],
-        ["the engine service", () => engineService?.close()],
-      ];
-      const settled = await Promise.allSettled(closing.map(async ([, close]) => await close()));
-      settled.forEach((outcome, index) => {
-        if (outcome.status === "rejected") failed(closing[index]![0], outcome.reason);
-      });
-      try {
-        stores.close();
-      } catch (reason) {
-        failed("the database", reason);
-      }
+      await closeAfterFailedStart(started, stores);
       throw error;
     }
+  }
+
+  /** What a started daemon leaves behind for others: its state file, its remote sink and the port links point at. */
+  async #announce(remembered: number | undefined): Promise<void> {
+    const options = this.#options;
+    if (options.stateFile !== undefined) await writePrivateFile(options.stateFile, `${JSON.stringify(this.state(), null, 2)}\n`);
+    // Internal testing: the remote sink sends nothing until a remote is added (`rerail remote add`).
+    if (options.remoteSink !== false) this.#remoteSink = startRemoteSink({ home: dirname(this.#databasePath), ...(options.remoteSink ?? {}) });
+    // A start that asked for any free port (`0`) takes a throwaway one; it does not replace the port links point at.
+    if (options.portFile !== undefined && options.port !== 0 && this.port !== remembered) await rememberPort(options.portFile, this.port);
   }
 
   state(): DaemonState {
@@ -415,10 +539,12 @@ export class RerailDaemon {
       workspaceRoot: this.#workspaceRoot,
       nativeToken: this.#nativeToken,
       accessToken: this.#accessToken,
+      ...(this.#tlsFingerprint256 === undefined ? {} : { tlsFingerprint256: this.#tlsFingerprint256 }),
     };
   }
 
   health(): DaemonHealth {
+    const model = modelStatus();
     return {
       status: "ok",
       version: this.#options.version,
@@ -429,6 +555,8 @@ export class RerailDaemon {
         exists: existsSync(this.#databasePath),
       },
       native: this.#native,
+      model,
+      healthy: this.#native.ok && model.ok,
       ui: this.#ui,
       workspaceRoot: this.#workspaceRoot,
       installedAt: this.#stores.installedAt(),
@@ -439,6 +567,7 @@ export class RerailDaemon {
     if (this.#closed) return;
     this.#closed = true;
     try {
+      await this.#remoteSink?.stop();
       await closeHttpServer(this.#server);
     } finally {
       try {
@@ -531,6 +660,7 @@ interface DaemonArguments {
   port?: number;
   dev: boolean;
   stateFile?: string;
+  tls?: DaemonTlsFiles;
 }
 
 const LOOPBACK_BIND_HOSTS: readonly string[] = ["127.0.0.1", "localhost", "::1"];
@@ -553,22 +683,91 @@ export function parsePublicHosts(text: string | undefined): readonly string[] {
   return text === undefined ? [] : text.split(",").map(host => host.trim()).filter(host => host !== "");
 }
 
+/** The flags and options `parseDaemonTransport` reads; every launcher of the daemon accepts them. */
+export const DAEMON_TRANSPORT_FLAGS: readonly string[] = ["--insecure-http"];
+export const DAEMON_TRANSPORT_OPTIONS: readonly string[] = ["--tls-cert", "--tls-key"];
+
+/**
+ * Whether a daemon on `host` answering `publicHosts` serves https (`--tls-cert` and `--tls-key`, resolved to absolute
+ * paths) or plain http. One reachable from other machines (bound off loopback, or answering a `--public-host`) must
+ * not serve plain http unless `--insecure-http` says so: every request carries the access capability, which would
+ * cross the network in clear. Shared by `rerail daemon start` and the daemon itself, like `assertHostBindable`.
+ */
+export function parseDaemonTransport(
+  arguments_: ParsedArguments,
+  host: string,
+  publicHosts: readonly string[],
+): Pick<DaemonLaunchOptions, "tls" | "insecureHttp"> {
+  const certFile = arguments_.options.get("--tls-cert");
+  const keyFile = arguments_.options.get("--tls-key");
+  if ((certFile === undefined) !== (keyFile === undefined)) {
+    throw new Error("--tls-cert and --tls-key go together: pass the certificate and its private key, both PEM files.");
+  }
+  const insecureHttp = arguments_.flags.has("--insecure-http");
+  if (certFile !== undefined && keyFile !== undefined) {
+    if (insecureHttp) throw new Error("--insecure-http contradicts --tls-cert and --tls-key; pass one or the other.");
+    return { tls: { certFile: resolve(certFile), keyFile: resolve(keyFile) } };
+  }
+  if (insecureHttp) return { insecureHttp: true };
+  const offLoopback = !LOOPBACK_BIND_HOSTS.includes(host.toLowerCase());
+  if (!offLoopback && publicHosts.length === 0) return {};
+  throw new Error(
+    `${offLoopback ? `--host ${host}` : `--public-host ${publicHosts.join(",")}`} makes this daemon reachable from other machines, `
+    + "and over plain http its access capability, sent with every request, would cross the network in clear. "
+    + "Pass --tls-cert <cert.pem> --tls-key <key.pem> to serve https; a self-signed certificate works "
+    + "(openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 365 -subj /CN=rerail "
+    + "-keyout key.pem -out cert.pem, then chmod 600 key.pem). Pass --insecure-http instead only when the network in "
+    + "between is already trusted, such as a container port published on the host's loopback.",
+  );
+}
+
+/**
+ * The PEM files `tls` names, read once at start. The private key must be its owner's alone: a key other users can read
+ * lets any of them impersonate the daemon, so a key with any group or other permission is refused, as ssh refuses
+ * one. Windows has no mode bits to check.
+ */
+export async function loadDaemonTls(tls: DaemonTlsFiles): Promise<DaemonTlsMaterial> {
+  if (process.platform !== "win32") {
+    const mode = (await stat(tls.keyFile)).mode & 0o777;
+    if ((mode & 0o077) !== 0) {
+      throw new Error(
+        `${tls.keyFile} is open to other users (mode ${mode.toString(8).padStart(4, "0")}); a TLS private key must be `
+        + `readable by its owner only: chmod 600 ${tls.keyFile}`,
+      );
+    }
+  }
+  const [cert, key] = await Promise.all([readFile(tls.certFile, "utf8"), readFile(tls.keyFile, "utf8")]);
+  return { cert, key };
+}
+
+/** The SHA-256 fingerprint of the first certificate in `pem`, the one a TLS server presents as its own. */
+function certificateFingerprint(pem: string): string {
+  try {
+    return new X509Certificate(pem).fingerprint256;
+  } catch (error) {
+    throw new Error(`The TLS certificate is not a PEM X.509 certificate: ${errorText(error)}`);
+  }
+}
+
 function parseDaemonArguments(argv: readonly string[]): DaemonArguments {
   const { flags, options } = parseArguments(
     argv,
-    { flags: ["--dev", "--allow-remote"], options: ["--host", "--port", "--state-file", "--public-host"] },
+    { flags: ["--dev", "--allow-remote", ...DAEMON_TRANSPORT_FLAGS], options: ["--host", "--port", "--state-file", "--public-host", ...DAEMON_TRANSPORT_OPTIONS] },
     (argument) => `Unknown daemon argument: ${argument}`,
   );
   const host = options.get("--host") ?? DEFAULT_DAEMON_HOST;
   assertHostBindable(host, flags.has("--allow-remote"));
+  const publicHosts = parsePublicHosts(options.get("--public-host"));
+  const { tls } = parseDaemonTransport({ flags, options }, host, publicHosts);
   const port = options.get("--port");
   const stateFile = options.get("--state-file");
   return {
     host,
-    publicHosts: parsePublicHosts(options.get("--public-host")),
+    publicHosts,
     ...(port === undefined ? {} : { port: parsePort(port) }),
     dev: flags.has("--dev"),
     ...(stateFile === undefined ? {} : { stateFile: resolve(stateFile) }),
+    ...(tls === undefined ? {} : { tls }),
   };
 }
 
@@ -589,6 +788,7 @@ export type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents">;
 
 export async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
   const arguments_ = parseDaemonArguments(argv);
+  const tls = arguments_.tls === undefined ? undefined : await loadDaemonTls(arguments_.tls);
   // Before anything opens a store: the main daemon is the machine's one main instance, and a second one stops
   // here naming the first. A checkout's daemon is a dev build with its own content store and takes no lock.
   const build = isMainRerailBuild() ? currentRerailBuild() : undefined;
@@ -614,15 +814,20 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
     dev,
     ...services,
     ...(arguments_.stateFile === undefined ? {} : { stateFile: arguments_.stateFile }),
+    ...(tls === undefined ? {} : { tls }),
   });
   const health = daemon.health();
   process.stdout.write(`rerail daemon ${health.version} listening at ${daemon.url} (pid ${process.pid})\n`);
+  const { tlsFingerprint256 } = daemon.state();
+  // What a browser shows for a self-signed certificate, to compare before accepting it.
+  if (tlsFingerprint256 !== undefined) process.stdout.write(`TLS certificate SHA-256: ${tlsFingerprint256}\n`);
   process.stdout.write(`database: ${health.database.path}\n`);
   process.stdout.write(
     health.native.ok
       ? `native kernel: ok (version ${health.native.kernelVersion})\n`
       : `native kernel: unavailable: ${health.native.error}\n`,
   );
+  process.stdout.write(`model: ${health.model.message}\n`);
   const catalog = loadRuleCatalog();
   const packs = [...catalog.packs.values()].map(pack => `${pack.id}@${pack.version ?? "unversioned"}`);
   process.stdout.write(`rule packs: ${packs.length === 0 ? "none installed" : packs.join(", ")}\n`);

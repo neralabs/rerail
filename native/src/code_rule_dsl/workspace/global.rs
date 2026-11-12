@@ -18,7 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) type QueryPlan = query::select_when::Plan<ClauseId>;
 
-/// A global `forbid` query's plan; each regex or AST leaf becomes a synthetic clause whose
+/// A global `forbid` query's plan; each regex, AST or file leaf becomes a synthetic clause whose
 /// witnesses are recorded as evidence. A leaf under an `exists` side only answers whether it has a
 /// witness: reporting configuration is dropped from it, and its evaluation in a file stops at the
 /// first witness.

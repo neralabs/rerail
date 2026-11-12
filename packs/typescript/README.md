@@ -120,7 +120,7 @@ typescript-eslint 8.70.1, default options. Flags `Function` as a type reference,
 
 ### `typescript-eslint-no-unused-expressions`
 
-Unwraps parentheses and TS `as` / `<T>` / `!` / instantiation wrappers; allowed: call, new, assignment, update, await, yield, import(), void, delete; directive prologue strings exempt. tree-sitter reads `e as A.B.C` and `e satisfies A.B.C` (type name with two or more dots) as a member access on `e as A.B` / `e satisfies A.B`; such a member access is treated as the `as` (unwrapped) or `satisfies` (never flagged, as upstream).
+Unwraps parentheses and TS `as` / `<T>` / `!` / instantiation wrappers; allowed: call, new, assignment, update, await, yield, import(), void, delete; directive prologue strings exempt. tree-sitter reads `e as A.B.C` and `e satisfies A.B.C` (type name with two or more dots) as a member access on `e as A.B` / `e satisfies A.B`; such a member access is treated as the `as` (unwrapped) or `satisfies` (never flagged, as upstream). A `&&`, `||` or `??` statement whose right operand `allowShortCircuit` would allow (a call, assignment, `await`, ...) is reported where upstream reports it, under the same code, with a message that says to rewrite it as an `if` keeping the condition; the example in the message is generic because a message cuts a long or multi-line operand. Set `allowShortCircuit` to allow these statements.
 
 ### `typescript-eslint-prefer-as-const`
 

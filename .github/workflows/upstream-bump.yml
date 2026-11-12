@@ -106,7 +106,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -135,7 +135,7 @@ jobs:
         include: ${{ fromJSON(needs.scope.outputs.tool-packs) }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -154,11 +154,18 @@ jobs:
         run: npm run build:js
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
 
-      # The php and blade tool-packs run their upstream under the exact PHP their runtime pins, and Composer installs it.
+      # A tool-pack whose runtime pins a PHP runs its upstream under exactly that one, and Composer installs it.
+      - id: needs
+        name: Read what the tool-pack's runtime needs
+        env:
+          PACK: ${{ matrix.pack }}
+          TOOL: ${{ matrix.tool }}
+        run: node --import tsx scripts/upstream/tool-pack-needs.ts --pack "$PACK" --tool "$TOOL" >> "$GITHUB_OUTPUT"
+
       - name: Set up the pinned PHP and Composer
-        if: matrix.pack == 'php' || matrix.pack == 'blade'
+        if: steps.needs.outputs.php == 'true'
         uses: ./.github/actions/php
 
       - name: Bump the pins
@@ -210,7 +217,7 @@ jobs:
           echo "staged in publish/: $(git diff --cached --name-only -- 'packs/*/upstream/*/publish/**' | wc -l) file(s)"
 
       - name: Upload the bump
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: bump-${{ matrix.pack }}--${{ matrix.tool }}
           path: ${{ runner.temp }}/bump/

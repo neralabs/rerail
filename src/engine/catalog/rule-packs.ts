@@ -5,10 +5,18 @@ import { loadRuleCatalog } from "./rule-catalog.js";
 import { parseRuleDocument, readJsonDocument } from "./rule-documents.js";
 import {
   DEPENDENCY_ECOSYSTEMS,
+  fileEndings,
   globPattern,
   matchFolder,
   matchReason,
+  nearMiss,
+  packLooksFor,
   scanRepository,
+  type FileEnding,
+  type NearMiss,
+  type NotScannedFolder,
+  type PackLooksFor,
+  type RepositoryScan,
   type RulePackMatch,
   type RulePackSignal,
 } from "./rule-pack-matcher.js";
@@ -18,11 +26,12 @@ import { RULE_MODES, type RuleMode } from "./rule-mode.js";
 export type { RulePackMatch, RulePackSignal } from "./rule-pack-matcher.js";
 
 /**
- * Rule packs: named sets of rules, each its own npm package (`@neralabs/rerail-pack-<id>`), installed into the Rerail
- * home and read by `rule-catalog.ts`. A pack's match definition says which repositories it fits and why; a pack
- * without a rule that starts on is never recommended. A pack is a directory (`docs/pack-format.md`): `pack.json` lists
- * each rule with the document in the pack's `rules/` that defines it. A pack's rules run only in repositories that add
- * it (`repository_attachments_set`); this module defines, validates and recommends.
+ * Rule packs: named sets of rules, each its own npm package (`rerail-pack-<id>` or `@<scope>/rerail-pack-<id>`; Rerail's
+ * own are `@neralabs/rerail-pack-<id>`), installed into the Rerail home and read by `rule-catalog.ts`. A pack's match
+ * definition says which repositories it fits and why; a pack without a rule that starts on is never recommended. A pack
+ * is a directory (`docs/pack-format.md`): `pack.json` lists each rule with the document in the pack's `rules/` that
+ * defines it. A pack's rules run only in repositories that add it (`repository_attachments_set`); this module defines,
+ * validates and recommends.
  */
 export const RULE_PACK_FORMAT = "rerail.rule-pack/v1" as const;
 export const RULE_PACK_CATEGORIES = ["language", "framework", "repository"] as const;
@@ -38,6 +47,12 @@ const exampleSchema = z
     text: nonEmpty,
   })
   .strict();
+
+/**
+ * A pack's id, its `pack.json` `id`: lowercase letters, digits and dashes, starting with a letter. It is also the end
+ * of the pack's package name (`rerail-pack-<id>`), and repositories add the pack by it.
+ */
+export const RULE_PACK_ID = /^[a-z][a-z0-9-]*$/u;
 
 /**
  * A pack rule's id: lowercase letters, digits and dashes, one style in every pack (`eslint-no-empty`,
@@ -78,7 +93,7 @@ const matchSchema: z.ZodType<RulePackMatch> = z.object({ any: z.array(signalSche
 export const rulePackFileSchema = z
   .object({
     format: z.literal(RULE_PACK_FORMAT),
-    id: z.string().regex(/^[a-z][a-z0-9-]*$/u, "must be lowercase letters, digits and dashes"),
+    id: z.string().regex(RULE_PACK_ID, "must be lowercase letters, digits and dashes"),
     name: nonEmpty,
     category: z.enum(RULE_PACK_CATEGORIES),
     covers: nonEmpty,
@@ -92,8 +107,49 @@ export const rulePackFileSchema = z
   .strict();
 export type RulePackFile = z.infer<typeof rulePackFileSchema>;
 
-/** The npm package name of pack `<id>`. */
-export const rulePackPackageName = (id: string): string => `@neralabs/rerail-pack-${id}`;
+/** The npm scope Rerail publishes its own packs under. */
+const RERAIL_PACK_SCOPE = "@neralabs";
+/** The publisher of Rerail's own packs, as the catalog and the API name it. */
+export const RERAIL_PUBLISHER = "rerail";
+
+/**
+ * A pack's npm package name: `rerail-pack-<id>`, or `@<scope>/rerail-pack-<id>` under any scope, where `<id>` is the
+ * pack's `pack.json` id. The first group is the scope, the second the id.
+ */
+export const RULE_PACK_PACKAGE_NAME = /^(?:(@[a-z0-9][a-z0-9._-]*)\/)?rerail-pack-([a-z][a-z0-9-]*)$/u;
+
+/** The npm package name of Rerail's own pack `<id>`. */
+export const rulePackPackageName = (id: string): string => `${RERAIL_PACK_SCOPE}/rerail-pack-${id}`;
+
+/** The pack id a pack's package name holds (`@acme/rerail-pack-sql` → `sql`); undefined for any other name. */
+export const packIdOfPackage = (packageName: string): string | undefined => RULE_PACK_PACKAGE_NAME.exec(packageName)?.[2];
+
+/**
+ * Who publishes the pack in package `packageName`: `rerail` for `@neralabs/*`, else the npm scope (`@acme`), else the
+ * package name (`rerail-pack-foo`). A pack directory without a package (null) is a Rerail checkout's `packs/<id>/`.
+ */
+export function rulePackPublisher(packageName: string | null): string {
+  if (packageName === null) return RERAIL_PUBLISHER;
+  const scope = RULE_PACK_PACKAGE_NAME.exec(packageName)?.[1];
+  return scope === RERAIL_PACK_SCOPE ? RERAIL_PUBLISHER : scope ?? packageName;
+}
+
+/**
+ * How `rerail packs add` and set-up's `--packs` name the pack in package `packageName`: its id for one of Rerail's own
+ * (`sql`), else its package name (`@acme/rerail-pack-sql`). `rulePackPackageOf` reads either back as the package.
+ */
+export function rulePackShortName(packageName: string): string {
+  return rulePackPublisher(packageName) === RERAIL_PUBLISHER ? packIdOfPackage(packageName) ?? packageName : packageName;
+}
+
+/**
+ * The package a pack's short name names: a pack's package name is itself (`rerail-pack-foo` is one, not an id), and a
+ * pack id is Rerail's own package; undefined for anything else.
+ */
+export function rulePackPackageOf(name: string): string | undefined {
+  if (RULE_PACK_PACKAGE_NAME.test(name)) return name;
+  return RULE_PACK_ID.test(name) ? rulePackPackageName(name) : undefined;
+}
 
 /**
  * `package.json`: the pack's npm package. Core's version range is a peer dependency, a declaration and not an import;
@@ -101,7 +157,7 @@ export const rulePackPackageName = (id: string): string => `@neralabs/rerail-pac
  * that `files` publishes no validation material, and that `license` agrees with `licenses/`.
  */
 export const rulePackPackageSchema = z.looseObject({
-  name: z.string().regex(/^@neralabs\/rerail-pack-[a-z][a-z0-9-]*$/u, "must be @neralabs/rerail-pack-<id>"),
+  name: z.string().regex(RULE_PACK_PACKAGE_NAME, "must be rerail-pack-<id> or @<scope>/rerail-pack-<id>"),
   version: z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/u, "must be a semver version"),
   description: nonEmpty.optional(),
   /** An SPDX expression naming every licence the published files carry. */
@@ -109,6 +165,11 @@ export const rulePackPackageSchema = z.looseObject({
   files: z.array(nonEmpty).min(1),
   peerDependencies: z.looseObject({ "@neralabs/rerail": nonEmpty }),
   publishConfig: z.looseObject({ access: z.enum(["restricted", "public"]) }).optional(),
+  /**
+   * npm's own flag: `true` means the pack is never published (docs/pack-format.md, "package.json"). The release
+   * scripts, the pack list and the conformance checks read it through `isPrivatePack` in scripts/release/packs.mjs.
+   */
+  private: z.boolean().optional(),
 });
 export type RulePackPackage = z.infer<typeof rulePackPackageSchema>;
 
@@ -133,11 +194,27 @@ export interface RulePackRule {
   readonly examples?: { readonly caught: RuleExample; readonly passes: RuleExample };
 }
 
+/** Where a pack installed from disk came from: a folder, or a tarball, by its absolute path. */
+export interface RulePackLocalSource {
+  readonly kind: "folder" | "tarball";
+  readonly path: string;
+}
+
 export interface RulePack {
   readonly id: string;
   readonly name: string;
   /** The version of the pack's npm package; null for a pack directory without one. */
   readonly version: string | null;
+  /** The pack's npm package name, e.g. `@neralabs/rerail-pack-sql`; null for a pack directory without one. */
+  readonly packageName: string | null;
+  /** Who publishes the pack (`rulePackPublisher`): `rerail` for Rerail's own, else e.g. `@acme` or `rerail-pack-foo`. */
+  readonly publisher: string;
+  /**
+   * The folder or tarball the pack was installed from (`rerail packs add <folder>`), its absolute path, rather than
+   * from the npm registry; absent for a pack from the registry or one read where it is. Its `package.json` name is
+   * whatever the folder says, published by no one.
+   */
+  readonly localSource?: RulePackLocalSource;
   readonly category: RulePackCategory;
   /** What the pack covers, in one sentence. */
   readonly covers: string;
@@ -192,7 +269,7 @@ function readPackageJson(directory: string, id: string): RulePackPackage | undef
   }
   const parsed = rulePackPackageSchema.safeParse(readJsonDocument(path));
   if (!parsed.success) throw new Error(`Rule pack ${id}: package.json ${parsed.error.issues[0]?.path.join(".") ?? ""} ${parsed.error.issues[0]?.message ?? "is invalid"}`.replace(/\s+/gu, " "));
-  if (parsed.data.name !== rulePackPackageName(id)) throw new Error(`Rule pack ${id} must be the package ${rulePackPackageName(id)}, not ${parsed.data.name}`);
+  if (packIdOfPackage(parsed.data.name) !== id) throw new Error(`Rule pack ${id} must be the package rerail-pack-${id} or @<scope>/rerail-pack-${id}, not ${parsed.data.name}`);
   return parsed.data;
 }
 
@@ -251,6 +328,8 @@ export function readRulePack(directory: string): LoadedRulePack {
     id: file.id,
     name: file.name,
     version: packageJson?.version ?? null,
+    packageName: packageJson?.name ?? null,
+    publisher: rulePackPublisher(packageJson?.name ?? null),
     category: file.category,
     covers: file.covers,
     reason: file.reason,
@@ -294,13 +373,12 @@ export function rulePackIdOf(ruleId: string, packs: readonly RulePack[] = loadRu
 }
 
 /**
- * The packs whose match definition fits the repository at `repositoryRoot`, from its files and dependency manifests:
- * no model, no network, no code from the packs, and no list of what does not fit. A pack fits whatever its rules;
- * `ruleCount` is how many start on. Languages come first, then frameworks, then repository packs. Each comes with the
- * folder it belongs in (see `RulePackRecommendation.folder`).
+ * The packs whose match definition fits the scanned repository, from its files and dependency manifests: no model, no
+ * network, no code from the packs. A pack fits whatever its rules; `ruleCount` is how many start on. Languages come
+ * first, then frameworks, then repository packs. Each comes with the folder it belongs in (see
+ * `RulePackRecommendation.folder`). `explainNoFit` says why none does.
  */
-export function rulePacksThatFit(repositoryRoot: string, packs: readonly RulePack[]): RulePackRecommendation[] {
-  const scan = scanRepository(repositoryRoot);
+export function rulePacksThatFit(scan: RepositoryScan, packs: readonly RulePack[]): RulePackRecommendation[] {
   return packs.flatMap(pack => {
     const reason = matchReason(pack.match, scan);
     if (reason === undefined) return [];
@@ -310,9 +388,44 @@ export function rulePacksThatFit(repositoryRoot: string, packs: readonly RulePac
   });
 }
 
+/** Why none of a set of packs fits a repository: what the scan found and left out, and what each pack looks for. */
+export interface NoFitExplanation {
+  /** How many files the scan read, with an ending or not. */
+  readonly fileCount: number;
+  /** The endings of the files scanned, most files first. */
+  readonly endings: readonly FileEnding[];
+  /** The folders the scan did not enter. */
+  readonly notScanned: readonly NotScannedFolder[];
+  /** Whether the scan read Git's listing, which leaves out the files Git ignores. */
+  readonly git: boolean;
+  /** Whether the walk outside Git stopped early, so the rest describes only the files it read. */
+  readonly stoppedEarly: boolean;
+  /** The packs that look for files the repository has but exclude every one of them, most files first. */
+  readonly nearMisses: readonly (NearMiss & { readonly name: string })[];
+  /** What each pack looks for, in the order the packs came. */
+  readonly packs: readonly (PackLooksFor & { readonly id: string; readonly name: string })[];
+}
+
+/** Why none of `packs` fits the scanned repository; the caller knows none does (`rulePacksThatFit` gave none). */
+export function explainNoFit(scan: RepositoryScan, packs: readonly RulePack[]): NoFitExplanation {
+  const nearMisses = packs.flatMap(pack => {
+    const missed = nearMiss(pack.match, scan);
+    return missed === undefined ? [] : [{ name: pack.name, ...missed }];
+  });
+  return {
+    fileCount: scan.files.length,
+    endings: fileEndings(scan),
+    notScanned: scan.notScanned,
+    git: scan.git,
+    stoppedEarly: scan.stoppedEarly,
+    nearMisses: nearMisses.sort((left, right) => right.fileCount - left.fileCount),
+    packs: packs.map(pack => ({ id: pack.id, name: pack.name, ...packLooksFor(pack.match) })),
+  };
+}
+
 /** The packs that fit the repository at `repositoryRoot` (`rulePacksThatFit`) and have a rule that starts on. */
 export function recommendRulePacks(repositoryRoot: string, packs: readonly RulePack[] = loadRulePacks()): RulePackRecommendation[] {
-  return rulePacksThatFit(repositoryRoot, packs).filter(found => found.ruleCount > 0);
+  return rulePacksThatFit(scanRepository(repositoryRoot), packs).filter(found => found.ruleCount > 0);
 }
 
 /** How long a daemon reuses a repository's recommendations before scanning it again. */

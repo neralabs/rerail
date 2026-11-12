@@ -3,8 +3,8 @@
 // RuleTester cases).
 // Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release or a re-snapshot):
 //   node generate.mjs --tools <dir> --vitest <checkout>
-// <dir> holds node_modules with the runtime nera-rule-validation pins for @vitest/eslint-plugin 1.6.27
-// (validation/upstream/vitest-eslint-plugin-1.6.27): eslint 10.0.0, @vitest/eslint-plugin 1.6.27,
+// <dir> holds node_modules with the runtime scripts/pack-data/runtimes/vitest-eslint-plugin-1.6.27 pins for
+// @vitest/eslint-plugin 1.6.27: eslint 10.0.0, @vitest/eslint-plugin 1.6.27,
 // @typescript-eslint/parser 8.58.0 and tsx (to load the plugin's .ts tests). The checkout is
 // github.com/vitest-dev/eslint-plugin-vitest at v1.6.27 (aad57d121647efe764463c37414a8cd67ec9cf92); only its tests/
 // are read, and the plugin linted is the published one in <dir>.
@@ -32,6 +32,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   assertCommit,
   assertKnownReportRules,
+  ECMA_EXTENSIONS,
   isVariantPath,
   lint,
   pinnedRequire,
@@ -48,7 +49,6 @@ const TOOL = "eslint-plugin-vitest";
 const PINS = { eslint: "10.0.0", "@vitest/eslint-plugin": "1.6.27", "@typescript-eslint/parser": "8.58.0", tsx: "4.21.0" };
 const CHECKOUT = { repository: "https://github.com/vitest-dev/eslint-plugin-vitest", commit: "aad57d121647efe764463c37414a8cd67ec9cf92" };
 const PREFIX = "vitest/";
-const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 const TYPESCRIPT_EXTENSIONS = [".d.ts", ".ts", ".tsx", ".mts", ".cts"];
 
 /**

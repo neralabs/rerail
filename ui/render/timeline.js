@@ -2,13 +2,13 @@ import { h, setAttr, setText, setClass, chevron, syncChildren } from "../dom.js"
 import { fmt, plural, ago, clockSeconds, shortPath, truncate } from "../format.js";
 import { violationOutcome } from "../derive.js";
 import { ui, titleOf, packRuleOf } from "../state.js";
-import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, outputText, describeInput } from "../sessions-model.js";
+import { openState, lastEventAt, droppedEvents, uncheckedBoundaries, codeRulesPendingBoundaries, ignoredEdits, ignoreRuleChanges, outputText, describeInput } from "../sessions-model.js";
 
 /** Every event with "Show all events", else only those that carry a shown violation. */
 const EF = () => (ui.showAll ? "all" : "corrections");
 /** A violation's card shows unless the timeline is filtered to another rule (`ui.sessRule`). */
 const cardShown = c => ui.sessRule === null || c.finding.ruleId === ui.sessRule;
-const hasShownCard = ev => ev.correction !== null && cardShown(ev.correction);
+const hasShownCard = ev => ev.corrections.some(cardShown);
 /** Folded away as noise, unless a shown correction hangs off it: that one must show, whatever its level. */
 const QUIET = ev => (ev.level === "observe" || ev.level === "coordinate") && !hasShownCard(ev);
 
@@ -18,7 +18,7 @@ let t = null;
 
 function build(tl) {
   t = {
-    empty: h("div.empty", { style: "padding:48px 20px", hidden: true }, h("h3", null, "No violations logged"), h("p"), h("p", { style: "margin-top:12px" }, h("button.btn.sm", { "data-act": "showall" }, "Show all events"))),
+    empty: h("div.empty", { style: "padding:48px 20px", hidden: true }, h("h3", null, "No violations logged."), h("p"), h("p", { style: "margin-top:12px" }, h("button.btn.sm", { "data-act": "showall" }, "Show all events"))),
     loading: h("div.empty", { hidden: true }, h("p", null, "Loading…")),
     earlier: h("div.smore", { hidden: true }, h("button.btn.sm", { "data-act": "earlier" })),
     start: h("div.bound", null, "Session started"),
@@ -154,7 +154,9 @@ function updateCorr(node, item) {
   setText(node.querySelector(".mono"), f.ruleId);
   const result = violationOutcome(f);
   node.dataset.outcome = result;
-  setText(node.querySelector(".badge"), result === "logged" ? "Logged" : "Steered");
+  const badge = node.querySelector(".badge");
+  setText(badge, result === "logged" ? "Logged" : "Steered");
+  setAttr(badge, "title", result === "logged" ? "Rerail recorded it; the coding agent wasn’t told." : "Rerail told the coding agent.");
   setAttr(node.querySelector("[data-act=detail]"), "data-i", f.ruleId);
   setAttr(node.querySelector("[data-act=detail]"), "hidden", c.rule === null);
   setText(node.querySelector(".said"), f.message);
@@ -185,14 +187,17 @@ function foldSummary(quiet) {
   return parts.join(" · ").replace(/^./, c => c.toUpperCase());
 }
 
-function updateTurn(node, turn, sessionId) {
-  const [u, a, fold, foldBody, body] = node.children;
-  setAttr(u, "hidden", turn.u === null);
-  if (turn.u !== null) { setText(u.querySelector(".msg"), turn.u); setText(u.querySelector(".mt"), `#${turn.uSeq} · ${clockSeconds(turn.uTime)}`); }
-  setAttr(a, "hidden", turn.a === null);
-  if (turn.a !== null) { setText(a.querySelector(".msg"), truncate(turn.a, 600)); setText(a.querySelector(".mt"), `#${turn.aSeq} · ${clockSeconds(turn.aTime)}`); }
-  const shown = turn.tools.filter(evMatches);
-  const quiet = shown.filter(QUIET), loud = turn.tools.filter(e => !QUIET(e));
+/** The prompt or reply row of a turn, hidden when the turn has none. */
+function updateMessage(row, text, seq, time) {
+  setAttr(row, "hidden", text === null);
+  if (text === null) return;
+  setText(row.querySelector(".msg"), text);
+  setText(row.querySelector(".mt"), `#${seq} · ${clockSeconds(time)}`);
+}
+
+/** The fold of a turn's quiet calls (reads, searches, plan updates): offered only while every event shows. */
+function updateFold(fold, foldBody, turn, sessionId) {
+  const quiet = turn.tools.filter(evMatches).filter(QUIET);
   const fkey = `${sessionId}:f${turn.ti}`, fopen = ui.openFolds.has(fkey), showFold = quiet.length > 0 && EF() === "all";
   setAttr(fold, "hidden", !showFold);
   setAttr(fold, "data-i", fkey);
@@ -200,14 +205,27 @@ function updateTurn(node, turn, sessionId) {
   if (showFold) setText(fold.lastChild, foldSummary(quiet));
   setAttr(foldBody, "hidden", !(showFold && fopen));
   syncChildren(foldBody, showFold && fopen ? quiet : [], e => e.key, createEvent, updateEvent);
-  const items = [];
-  for (const ev of loud) {
-    if (!evMatches(ev)) continue;
+}
+
+/** The turn's body: its shown loud calls, each followed by its shown cards. */
+function turnItems(turn) {
+  const card = c => ({ key: `c:${c.key}`, c });
+  // Orphans are older than every loaded call, so they lead the turn.
+  const items = turn.orphans.filter(cardShown).map(card);
+  for (const ev of turn.tools) {
+    if (QUIET(ev) || !evMatches(ev)) continue;
     items.push({ key: `e:${ev.key}`, ev });
-    if (hasShownCard(ev)) items.push({ key: `c:${ev.correction.key}`, c: ev.correction });
+    items.push(...ev.corrections.filter(cardShown).map(card));
   }
-  for (const c of turn.orphans) if (cardShown(c)) items.push({ key: `c:${c.key}`, c });
-  syncChildren(body, items, i => i.key, i => (i.ev ? createEvent(i.ev) : createCorr(i)), (n, i) => (i.ev ? updateEvent(n, i.ev) : updateCorr(n, i)));
+  return items;
+}
+
+function updateTurn(node, turn, sessionId) {
+  const [u, a, fold, foldBody, body] = node.children;
+  updateMessage(u, turn.u, turn.uSeq, turn.uTime);
+  updateMessage(a, turn.a === null ? null : truncate(turn.a, 600), turn.aSeq, turn.aTime);
+  updateFold(fold, foldBody, turn, sessionId);
+  syncChildren(body, turnItems(turn), i => i.key, i => (i.ev ? createEvent(i.ev) : createCorr(i)), (n, i) => (i.ev ? updateEvent(n, i.ev) : updateCorr(n, i)));
 }
 
 const turnVisible = turn => EF() === "all" || turn.tools.some(evMatches) || turn.orphans.some(cardShown);
@@ -229,6 +247,49 @@ function renderEarlier(earlier) {
   setText(t.earlier.firstChild, ["Load earlier", ...parts].join(" · "));
 }
 
+/** What Rerail did not see of the session, in a sentence's clauses: empty when it saw all of it. */
+function coverageGaps(sess) {
+  const dropped = droppedEvents(sess);
+  const unchecked = uncheckedBoundaries(sess);
+  const rulesPending = codeRulesPendingBoundaries(sess);
+  const ignored = ignoredEdits(sess);
+  const ruleChanges = ignoreRuleChanges(sess);
+  return [
+    ...(dropped === 0 ? [] : [`${fmt(dropped)} ${plural(dropped, "event")} never reached Rerail`]),
+    ...(unchecked === 0 ? [] : [`rules had not yet seen shell edits at ${fmt(unchecked)} ${plural(unchecked, "boundary", "boundaries")}`]),
+    ...(rulesPending === 0 ? [] : [`code rules were not yet running at ${fmt(rulesPending)} ${plural(rulesPending, "boundary", "boundaries")}`]),
+    ...(ignored === 0 ? [] : [`${fmt(ignored)} ${plural(ignored, "edit")} went unchecked because Git ignores the file`]),
+    ...(ruleChanges === 0 ? [] : [`Git's ignore rules changed ${ruleChanges === 1 ? "once" : `${fmt(ruleChanges)} times`}`]),
+  ].join("; ");
+}
+
+/** The audited-clean note, and what it says of the session's coverage. */
+function renderCleanNote(sess, gaps, loaded, clean) {
+  setAttr(t.empty, "hidden", !(loaded && clean));
+  setText(t.empty.querySelector("p"), gaps === ""
+    ? `Rerail audited the whole session: ${fmt(sess.eventCount)} events.`
+    : `Rerail saw ${fmt(sess.eventCount)} events; ${gaps}.`);
+}
+
+/** The rail, the start and the end, once there is something to place them around. */
+function renderBounds(rail, sess, gaps, { loaded, quietEmpty, earlier }) {
+  const hidden = quietEmpty || !loaded;
+  setAttr(rail, "hidden", hidden);
+  // The start is only reached once the whole session is loaded back to it.
+  setAttr(t.start, "hidden", hidden || earlier !== false);
+  setAttr(t.end, "hidden", hidden);
+  const end = endLabel(openState(sess), sess);
+  setText(t.end, gaps === "" ? end : `${end} · ${gaps}`);
+}
+
+function renderLoading(loaded, quietEmpty, total) {
+  setAttr(t.loading, "hidden", loaded && !(quietEmpty && total === null));
+}
+
+const visibleTurns = (turns, quietEmpty) => (quietEmpty ? [] : turns.filter(turnVisible));
+
+const earlierToOffer = ({ loaded, clean, earlier }) => (loaded && !clean ? earlier : false);
+
 /**
  * `page`: whether the newest transcript page is `loaded`, the session's violation `total` (`null` until known), and
  * `earlier`: `false` once the transcript and violations reach the session's start, else how many of each are loaded.
@@ -239,27 +300,12 @@ export function renderTimeline(tl, rail, sess, turns, cs, page) {
   const quietEmpty = !ui.showAll && cs.length === 0;
   // Audited clean: no violation logged in the whole session, not just none among the loaded events.
   const clean = quietEmpty && total === 0;
-  setAttr(t.empty, "hidden", !(loaded && clean));
-  const dropped = droppedEvents(sess);
-  const unchecked = uncheckedBoundaries(sess);
-  const rulesPending = codeRulesPendingBoundaries(sess);
-  const gaps = [
-    ...(dropped === 0 ? [] : [`${fmt(dropped)} ${plural(dropped, "event")} never reached Rerail`]),
-    ...(unchecked === 0 ? [] : [`shell edits were not yet checked at ${fmt(unchecked)} ${plural(unchecked, "boundary", "boundaries")}`]),
-    ...(rulesPending === 0 ? [] : [`code rules were not yet running at ${fmt(rulesPending)} ${plural(rulesPending, "boundary", "boundaries")}`]),
-  ].join("; ");
-  setText(t.empty.querySelector("p"), gaps === ""
-    ? `Rerail audited all ${fmt(sess.eventCount)} events in this session and logged no violations.`
-    : `Rerail logged no violations in the ${fmt(sess.eventCount)} events it audited; ${gaps}.`);
-  setAttr(t.loading, "hidden", loaded && !(quietEmpty && total === null));
-  setAttr(rail, "hidden", quietEmpty || !loaded);
-  // The start is only reached once the whole session is loaded back to it.
-  setAttr(t.start, "hidden", quietEmpty || !loaded || earlier !== false);
-  setAttr(t.end, "hidden", quietEmpty || !loaded);
-  const st = openState(sess);
-  setText(t.end, gaps === "" ? endLabel(st, sess) : `${endLabel(st, sess)} · ${gaps}`);
-  syncChildren(t.turns, quietEmpty ? [] : turns.filter(turnVisible), turn => turn.key, createTurn, (n, turn) => updateTurn(n, turn, sess.sessionId));
-  renderEarlier(loaded && !clean ? earlier : false);
+  const gaps = coverageGaps(sess);
+  renderCleanNote(sess, gaps, loaded, clean);
+  renderLoading(loaded, quietEmpty, total);
+  renderBounds(rail, sess, gaps, { loaded, quietEmpty, earlier });
+  syncChildren(t.turns, visibleTurns(turns, quietEmpty), turn => turn.key, createTurn, (n, turn) => updateTurn(n, turn, sess.sessionId));
+  renderEarlier(earlierToOffer({ loaded, clean, earlier }));
   placeTicks(rail, tl);
 }
 

@@ -1025,6 +1025,16 @@
   ],
   "onlyPyflakes": []
  },
+ "F823_unpacking": {
+  "ranges": [
+   [
+    361,
+    364
+   ]
+  ],
+  "onlyRuff": [],
+  "onlyPyflakes": []
+ },
  "F842": {
   "ranges": [
    [

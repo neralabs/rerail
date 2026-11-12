@@ -14,6 +14,7 @@ import {
   defaultRerailDatabasePath,
 } from "../../src/engine/index.js";
 import {
+  DAEMON_KEEPS_RUNNING,
   RerailRuntime,
   type RerailRuntimeOptions,
   isRerailStarted,
@@ -44,6 +45,7 @@ const fetch = (input: string | URL, init: RequestInit & { headers?: Record<strin
 
 const fixtures: Array<{ root: string; runtime: RerailRuntime; daemon: RerailDaemon }> = [];
 afterEach(async () => {
+  vi.unstubAllEnvs();
   for (const { root, runtime, daemon } of fixtures.splice(0)) {
     await runtime.dispose();
     await daemon.close();
@@ -129,6 +131,7 @@ describe("rerail scan and settings CLI", () => {
     expect(notices.at(-1)).toBe([
       `○ Rerail is stopped in ${name}. No rules run here, and nothing is logged.`,
       "  Start it again with /rerail-start.",
+      `  ${DAEMON_KEEPS_RUNNING}`,
       "",
       "  Rerail steered this session on one rule, test:no-print.",
       "  To turn off only that rule, say “turn that rule off”.",
@@ -143,6 +146,7 @@ describe("rerail scan and settings CLI", () => {
   }, 60_000);
 
   it("runs one log-only repository audit for the workspace and exposes it to later sessions", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT", "1");
     const automaticAuditRequests: Array<{ sessionId: string; scope: string; mode: string }> = [];
     const { root, runtime, daemon } = await fixture(options => ({
       openWorkspace: async () => undefined,
@@ -338,11 +342,16 @@ describe("rerail scan and settings CLI", () => {
         forbid: { ast: { language: "python", rule: { pattern: "print($$$ARGS)" } } },
       }],
     });
-    const { root, home, daemon } = await fixture(options => new NativeCodeRuleEnforcer(testCodeRuleCatalog([NO_PRINT, PRINT_CALL]), options));
+    const { root, home, daemon, runtime } = await fixture(options => new NativeCodeRuleEnforcer(testCodeRuleCatalog([NO_PRINT, PRINT_CALL]), options));
+    // The agent writes and commits them with a command: what is stamped while its call runs is the session's own.
+    await runtime.ingest({
+      kind: "call", eventId: "write-broken", sessionId: "s1", toolCallId: "write-broken", toolName: "bash", input: { command: "./write-broken.sh" },
+    });
     await Promise.all(Array.from({ length: 25 }, (_, index) =>
       writeFile(join(root, `api/broken-${String(index).padStart(2, "0")}.py`), "value = 1\ndef (\n")));
     execFileSync("git", ["add", "api"], { cwd: root });
     execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-m", "broken"], { cwd: root });
+    await runtime.ingest({ kind: "result", eventId: "write-broken-result", sessionId: "s1", toolCallId: "write-broken", toolName: "bash", output: "" });
     // The session audits the 25 edits on its own; the scan must come after them to be the session's latest audit.
     await vi.waitFor(async () => {
       const { audits } = await (await fetch(new URL("/api/audits?sessionId=s1", daemon.url))).json();
@@ -361,6 +370,7 @@ describe("rerail scan and settings CLI", () => {
   });
 
   it("applies saved log mode to new edits while an explicit audit is still running", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT", "1");
     const gate = Promise.withResolvers<void>();
     const { root, database, runtime, daemon } = await fixture(options => {
       const auditor = new NativeCodeRuleEnforcer(testCodeRuleCatalog([NO_PRINT]), options);
@@ -410,7 +420,9 @@ describe("rerail scan and settings CLI", () => {
 
 
   it("requires a session instead of guessing the latest one", async () => {
-    await expect(runAuditCommand("scan", [], { home: "/unused" })).rejects.toThrow("--session is required");
+    // `rerail scan` without one is the headless scan of a checkout (headless-scan.test.ts), never the latest session's.
+    await expect(runAuditCommand("settings", [], { home: "/unused" })).rejects.toThrow("--session is required");
+    await expect(runAuditCommand("scan", ["--session", "s1", "--repo", "."], { home: "/unused" })).rejects.toThrow("Unknown option: --repo");
   });
 
   it("refuses a steer strategy it does not know before reaching Rerail", async () => {

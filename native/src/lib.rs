@@ -12,10 +12,11 @@ pub mod git_ignore;
 pub mod git_workspace;
 mod main_instance;
 mod model;
+mod panic_boundary;
 pub mod process;
 mod rules;
 
-use model::{ModelFingerprint, load_model};
+use model::{ModelFingerprint, load_model, verify_model};
 use napi::{Error, Result, Status, bindgen_prelude::Float32Array};
 use napi_derive::napi;
 use rules::{CompileSummary, ModelEncoder, NativeMatch, NativeRuleInput, NativeSample, RuleSet};
@@ -34,7 +35,7 @@ union JemallocConf {
 }
 
 // Freed pages stay for a second so an apply reuses them instead of mapping new ones (immediate
-// decay cost a tenth of the data-layer benchmark's CPU in mmap/munmap); every apply purges them
+// decay cost a tenth of a storage-heavy benchmark's CPU in mmap/munmap); every apply purges them
 // when it ends and again once its response is freed (`purge_allocator_pages`), so nothing dirty
 // is kept at rest.
 #[cfg(not(windows))]
@@ -115,8 +116,33 @@ pub fn health() -> Health {
     }
 }
 
+/// What `verify_model` found: `problem` and `file` are absent where the model matches its manifest.
+#[napi(object)]
+pub struct ModelCheck {
+    /// `missing`, `unreadable`, `invalid-manifest` or `checksum-mismatch`.
+    pub problem: Option<String>,
+    /// The file in the model directory at fault, `manifest.json` included.
+    pub file: Option<String>,
+}
+
+/// Checks the model directory at `model_path` against its `manifest.json` (every file's SHA-256),
+/// as a session's attach does, without loading the model.
+#[napi(catch_unwind)]
+pub fn verify_model_files(model_path: String) -> ModelCheck {
+    match verify_model(Path::new(&model_path)) {
+        Ok(()) => ModelCheck {
+            problem: None,
+            file: None,
+        },
+        Err(fault) => ModelCheck {
+            problem: Some(fault.problem.to_owned()),
+            file: Some(fault.file.to_owned()),
+        },
+    }
+}
+
 /// Check a pattern against the regex dialect and size limit structural rule conditions compile with.
-#[napi]
+#[napi(catch_unwind)]
 pub fn validate_regex(pattern: String) -> Result<()> {
     rules::compile_regex(&pattern)
         .map(|_| ())
@@ -227,7 +253,7 @@ pub struct ConversationEngine {
 
 #[napi]
 impl ConversationEngine {
-    #[napi(factory)]
+    #[napi(factory, catch_unwind)]
     pub fn load(model_path: String, max_input_tokens: u32) -> Result<Self> {
         if max_input_tokens == 0 {
             return Err(Error::new(
@@ -252,7 +278,7 @@ impl ConversationEngine {
     pub fn fingerprint(&self) -> ModelFingerprint {
         self.fingerprint.clone()
     }
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn embed_texts(&self, texts: Vec<String>) -> Result<Vec<Float32Array>> {
         if texts.iter().any(|text| text.trim().is_empty()) {
             return Err(Error::new(
@@ -291,7 +317,7 @@ impl ConversationEngine {
             })
             .collect()
     }
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn token_counts(&self, texts: Vec<String>) -> Result<Vec<u32>> {
         texts
             .iter()
@@ -312,7 +338,7 @@ impl ConversationEngine {
             .collect()
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn fit_texts(
         &self,
         texts: Vec<String>,
@@ -382,22 +408,22 @@ impl ConversationEngine {
             .collect()
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn replace_rules(&mut self, rules: Vec<NativeRuleInput>) -> Result<CompileSummary> {
         self.rules.replace(&self.encoder, rules)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn upsert_rules(&mut self, rules: Vec<NativeRuleInput>) -> Result<CompileSummary> {
         self.rules.upsert(&self.encoder, rules)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn remove_rules(&mut self, ids: Vec<String>) -> u32 {
         self.rules.remove(ids)
     }
 
-    #[napi]
+    #[napi(catch_unwind)]
     pub fn match_text(&self, sample: NativeSample) -> Result<Vec<NativeMatch>> {
         self.rules.match_sample(&self.encoder, sample)
     }

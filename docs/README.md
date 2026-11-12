@@ -1,47 +1,65 @@
 # Documentation
 
 ## Using Rerail
-- [installation.md](installation.md): what `rerail setup` writes, removal, and the managed-installation layout
+Install Rerail, write rules, and see what it does in a session.
+
+- [installation.md](installation.md): requirements, what set-up asks and changes, updating, starting, stopping,
+  removal, and what Rerail runs on
+- [how-setup-works.md](how-setup-works.md): each set-up step and what it writes, the managed-installation layout, the
+  database, updates and removal
 - [troubleshooting.md](troubleshooting.md): what you see when set-up or Rerail goes wrong, and what to do
-- [reference.md](reference.md): how rules and their configuration work, the database, updates, the daemon and its API,
-  and audits
+- [reference.md](reference.md): rules and their configuration, the database, updates, the daemon and its API, audits
 - [distribution-model.md](distribution-model.md): how the package is distributed and updated
-- [writing-rules.md](writing-rules.md): which rules are worth having, and suggesting, writing, testing and tuning one
-  with `/rerail-create` and `rerail rules evidence|test|add`
+- [writing-rules.md](writing-rules.md): which rules are worth having; suggesting, writing, testing and tuning one with
+  `/rerail-create` and `rerail rules evidence|test|add`; keeping a rule to one worktree with `.rerail/rules/`
 - [rule-scoping.md](rule-scoping.md): global, project and repository rules
-- [tool-call-rules.md](tool-call-rules.md): writing rules over the commands an agent runs
+- [tool-call-rules.md](tool-call-rules.md): rules over the commands an agent runs
+- [path-and-text-rules.md](path-and-text-rules.md): code rules over file text and paths, which files they read, and
+  rules that a file should not exist
+- [architecture-rule-examples.md](architecture-rule-examples.md): design rules that maintainers of Sentry, Home
+  Assistant, Zulip, Immich, n8n, VS Code, rust-analyzer, Zed, uv, Nextcloud, Laravel apps and Synapse enforce in
+  review, each as a tested rule, plus React wrapper rules and what a rule can and cannot see
 - [code-rule-dsl-reference.html](code-rule-dsl-reference.html): every construct of the `rerail.policy/v1` code-rule
   DSL. Hand-written prose with generated regions; see `scripts/generate/README.md`.
 - [in-session-surfaces.md](in-session-surfaces.md): what Rerail shows inside a coding-agent session
 - [privacy.md](privacy.md): what Rerail sends over the network, what it stores locally, and how to delete it
-- [internal-testing.md](internal-testing.md): features in the code that are not ready for public use, and where each
-  surfaces
+- [internal-testing.md](internal-testing.md): unreleased features and where each surfaces
+- [headless-scan.md](headless-scan.md): `rerail scan` of a checkout for CI, with no daemon or session, and its
+  `rerail.scan/1` report (internal testing)
+- [remote-sink.md](remote-sink.md): sending this machine's Rerail data to a remote you add, its protocol, and what
+  stays on disk (internal testing)
 
 ## Rules, packs and languages
-- [rule-packs.md](rule-packs.md): rule packs, matching and recommendation, and the shipped packs
-- [pack-format.md](pack-format.md): the pack layout, its pack data and provenance records, and its validation contract
-- [upstream.md](upstream.md): upstream snapshots and pack data: samples and their licences, new snapshots, the
+How rule packs are built, ported, checked and extended.
+
+- [rule-packs.md](rule-packs.md): packs, matching and recommendation, the shipped packs, and a worktree's own rules
+- [pack-format.md](pack-format.md): pack layout, pack data, provenance records and the validation contract
+- [upstream.md](upstream.md): upstream snapshots and pack data, samples and their licences, new snapshots, the
   publish workflow, upstream releases and bumps, and CI
 - [conformance/README.md](../conformance/README.md): the conformance check every shipped ported rule passes, its pull
   request comment, divergences, and promoting a candidate
 - [language-packs.md](language-packs.md): the language registry, statuses, and how to start a pack
+- [adding-rules-to-a-pack.md](adding-rules-to-a-pack.md): adding rules written for Rerail or ported from a tool, who
+  does what, the steps for each kind, the Conformance comment, promotion and demotion, and maintainers' publish steps
 
 ## Release
+How core and packs are published.
+
 - [release.md](release.md): how core is built, versioned and published
-- [publishing-a-new-pack.md](publishing-a-new-pack.md): runbook for a pack's first publish to npm and its trusted
+- [publishing-a-new-pack.md](publishing-a-new-pack.md): runbook for a pack's first npm publish and its trusted
   publisher
 
 ## Repository
-- [GOVERNANCE.md](GOVERNANCE.md): who takes part and how, who the maintainers are, and how decisions are made
-- [repository-structure.md](repository-structure.md): the layout rules and the structure gate
-  (`npm run check:structure`) that enforces them
+How the project is run and laid out.
+
+- [GOVERNANCE.md](GOVERNANCE.md): participation, maintainers and decision-making
+- [repository-structure.md](repository-structure.md): layout rules and the structure gate (`npm run check:structure`)
 
 ## Design notes
-- [content-addressed-workspace-store.md](content-addressed-workspace-store.md) and
-  [content-store-bulk-publication-design.md](content-store-bulk-publication-design.md): the machine-wide source store
-- [sql-driven-transducer-execution.md](sql-driven-transducer-execution.md) and
-  [transducer-design.md](transducer-design.md): the tape transducer language
-- [in-session-status-line-prd.md](in-session-status-line-prd.md): requirements for in-session visibility
+Internal designs for contributors.
+
+- [content-addressed-workspace-store.md](content-addressed-workspace-store.md): the machine-wide content store
+- [transducer-design.md](transducer-design.md): the tape transducer language used by tests and benchmarks
 - [merge-assist-prd.md](merge-assist-prd.md): requirements and design for Merge Assist (internal testing), which
   shares decisions between branches before they merge, as rules in `.rerail/rules/`;
   [merge-assist-v1-build.md](merge-assist-v1-build.md) specifies the first build, and

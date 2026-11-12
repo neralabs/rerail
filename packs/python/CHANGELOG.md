@@ -1,5 +1,32 @@
 # @neralabs/rerail-pack-python
 
+Every notable change to this rule pack, latest first. Each release says how many rules the pack ships, then lists its changes, rule by rule, under Added, Changed, Deprecated, Removed, Fixed and Security, as in [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/); releases from before the pack's notes took that format list them without those headings. There are two differences: a heading reads `## <version> (<date>)` rather than `## [<version>] - <date>`, and changes waiting for the next release are [changesets](../../.changeset/README.md), so there is no `## Unreleased`.
+
+Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 every release is a patch, and a patch can add, change or remove rules, so read the notes before you update.
+
+## 0.1.8 (2026-11-06)
+
+537 rules, 318 of them on by default.
+
+### Changed
+
+- The pack's npm page lists keywords: Rerail, its language and the tools it ports, so a search on npm finds it. Its rules are unchanged.
+
+## 0.1.7 (2026-11-04)
+
+537 rules, 318 of them on by default.
+
+### Fixed
+
+- `bandit-b101-assert-used` no longer reports test code. It skips `tests/` directories and `test_*.py`, `*_test.py` and `conftest.py` files at any depth, where pytest's `assert` is the idiom. Asserts in every other file, including a `test/` package and a Django app's `tests.py`, are still reported.
+
+## 0.1.6 (2026-11-04)
+
+537 rules, 318 of them on by default.
+
+- 401 new rules (11 from Bandit and 390 from Ruff): 206 start in Steer and 195 off.
+- `ruff-f822-undefined-export` now reports an undefined name in an `__all__` entry written in parentheses (`[((("a")))]`) and in a bare tuple value (`__all__ = "a", "b"`, `__all__ += "c", "d"`), as Ruff does.
+
 ## 0.1.5
 
 ### Patch Changes
@@ -38,4 +65,4 @@
 - 48d8728: bandit-b604 (candidate) reads only a `shell=` keyword, as Bandit's has_shell does: a call's second positional argument is no longer taken as `shell` (pytest.mark.parametrize, getattr and re.sub stop being flagged), and `shell=<expression>` is now reported unless it is a falsy constant, `[]` or `{}`.
 - b8cc317: Three Python rules (two on by default, B406 and B610; F722 is off by default) no longer steer agents to rewrite idiomatic code: `bandit-b406-import-xml-sax` skips imports of only `xml.sax.saxutils` (escaping and writing helpers, no parser), `bandit-b610-django-extra-used` reports `.extra(...)` only on a receiver that looks like a Django QuerySet or Manager, and `ruff-f722-forward-annotation-syntax-error` skips jaxtyping shape strings such as `Float[Array, "b n"]`.
 - 5a9d5b6: Python pack: 138 Ruff 0.16.9 and Bandit 1.9.4 rules, each scored against the tool's recorded findings on its own tests, 25 of them off by default; 96 more ports, among them 5 rules the pack carried before, wait in candidates.
-- 740cf08: One rule id style in every pack, before any pack is published: lowercase letters, digits and dashes, the same string as the rule's document file name and its port's id in `conformance.json`. JavaScript's `eslint:<rule>` and `unicorn:<rule>` ids become `eslint-<rule>` and `unicorn-<rule>`, with their documents renamed to match; TypeScript's `typescript-eslint:<rule>` become `typescript-eslint-<rule>`; Python's `python-conformance:<tool>-<rule>` become `<tool>-<rule>`; React's `react:no-array-index-key` becomes `react-no-array-index-key`; Next's probe documents are named for their ids; the complexity rules become `complexity-cyclomatic-<language>`. TypeScript's `no-explicit-any` candidate is converted from `tempo.policy/v1` to `rerail.policy/v1` and moves to `candidates/rules/`. The JavaScript and TypeScript packs say how many of their rules start on.
+- 740cf08: One rule id style in every pack, before any pack is published: lowercase letters, digits and dashes, the same string as the rule's document file name and its port's id in `conformance.json`. JavaScript's `eslint:<rule>` and `unicorn:<rule>` ids become `eslint-<rule>` and `unicorn-<rule>`, with their documents renamed to match; TypeScript's `typescript-eslint:<rule>` become `typescript-eslint-<rule>`; Python's `python-conformance:<tool>-<rule>` become `<tool>-<rule>`; React's `react:no-array-index-key` becomes `react-no-array-index-key`; Next's probe documents are named for their ids; the complexity rules become `complexity-cyclomatic-<language>`. TypeScript's `no-explicit-any` candidate is converted from the older policy format to `rerail.policy/v1` and moves to `candidates/rules/`. The JavaScript and TypeScript packs say how many of their rules start on.

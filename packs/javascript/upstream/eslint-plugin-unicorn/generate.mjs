@@ -2,8 +2,8 @@
 // format rerail/conformance/languages/pack.ts reads: eslint-plugin-unicorn/fixtures.expected.json.
 // Run by `npm run fixtures:derive` (a maintainer, or the bump workflow for an upstream release or a re-snapshot):
 //   node generate.mjs --tools <dir> --unicorn <checkout>
-// <dir> holds node_modules with the runtime nera-rule-validation pins for eslint-plugin-unicorn 76.0.0
-// (validation/upstream/eslint-plugin-unicorn-76.0.0): eslint 10.11.0, eslint-plugin-unicorn 76.0.0,
+// <dir> holds node_modules with the runtime scripts/pack-data/runtimes/eslint-plugin-unicorn-76.0.0 pins for
+// eslint-plugin-unicorn 76.0.0: eslint 10.11.0, eslint-plugin-unicorn 76.0.0,
 // @typescript-eslint/parser 8.70.0 and the test-time packages unicorn's tests import. The checkout is
 // github.com/sindresorhus/eslint-plugin-unicorn at v76.0.0 (f70155ebe24dbb35b9814c3dbb3ab3620e09c3e1); only its
 // test/<rule>.js files are read, and the plugin linted is the published one in <dir>.
@@ -35,6 +35,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   assertCommit,
   assertPortableCase,
+  ECMA_EXTENSIONS,
   isVariantPath,
   lint,
   pinnedRequire,
@@ -52,8 +53,6 @@ const TOOL = "eslint-plugin-unicorn";
 const PINS = { eslint: "10.11.0", "eslint-plugin-unicorn": "76.0.0", "@typescript-eslint/parser": "8.70.0" };
 const CHECKOUT = { repository: "https://github.com/sindresorhus/eslint-plugin-unicorn", commit: "f70155ebe24dbb35b9814c3dbb3ab3620e09c3e1" };
 const PREFIX = "unicorn/";
-/** The ecma family's extensions (`CODE_RULE_DIALECTS`): a named case outside them is not JavaScript to Rerail. */
-const ECMA_EXTENSIONS = [".ts", ".mts", ".cts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"];
 
 function parseArguments(argv) {
   const options = {};

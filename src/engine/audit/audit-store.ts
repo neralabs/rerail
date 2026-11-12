@@ -4,9 +4,12 @@ import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import { z } from "zod";
 import { LazyReadonlyRerailDatabase, openRerailDatabase, type RerailDatabase } from "../storage/database.js";
 import { decodeCursor, encodeCursor } from "../storage/page-cursor.js";
+import { holdsTable } from "../storage/table-probe.js";
 import type { CodeRuleViolation } from "../code-rule/code-rule.js";
+import { scrubSecrets, scrubValue } from "../secret-scrub.js";
 import {
   blindFilePaths,
+  type AuditFailure,
   type AuditRecorder,
   type AuditInput,
   type AuditRecord,
@@ -32,15 +35,39 @@ import {
 } from "../storage/schema.js";
 
 /**
+ * Violations as the database keeps them: each one's message, captured variables and fix text scrubbed of secrets
+ * (`scrubSecrets`). What identifies a violation across audits (`violationKeySql`: clause, path, span, code) is kept
+ * as it is, so history counts it as before. Steers render the live violations, never these.
+ */
+export function storedViolations(violations: readonly CodeRuleViolation[]): CodeRuleViolation[] {
+  return violations.map(violation => {
+    const message = scrubSecrets(violation.message);
+    const variables = scrubValue(violation.variables);
+    const fixText = violation.fix === undefined ? undefined : scrubSecrets(violation.fix.text);
+    if (message === violation.message && variables === violation.variables && fixText === violation.fix?.text) return violation;
+    return {
+      ...violation, message, variables,
+      ...(violation.fix === undefined || fixText === undefined ? {} : { fix: { ...violation.fix, text: fixText } }),
+    };
+  });
+}
+
+/** Failures as the database keeps them: each message scrubbed of secrets (`scrubSecrets`). */
+export function storedFailures(failures: readonly AuditFailure[]): AuditFailure[] {
+  return failures.map(failure => {
+    const message = scrubSecrets(failure.message);
+    return message === failure.message ? failure : { ...failure, message };
+  });
+}
+
+/**
  * Databases known to hold `audit_unlisted_failures`. A read-only open applies no DDL, so a file only an earlier build
  * wrote lacks the table: its audits list every failure they kept, and none is counted beyond them.
  */
 const HOLDS_UNLISTED_TABLE = new WeakSet<RerailDatabase>();
 function holdsUnlistedTable(database: RerailDatabase): boolean {
   if (HOLDS_UNLISTED_TABLE.has(database)) return true;
-  const holds = database.$client
-    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audit_unlisted_failures'")
-    .get() !== undefined;
+  const holds = holdsTable(database.$client, "audit_unlisted_failures");
   if (holds) HOLDS_UNLISTED_TABLE.add(database);
   return holds;
 }
@@ -163,6 +190,8 @@ export interface ViolationHistoryEntry {
   auditId: string;
   at: number;
   host: string | null;
+  /** The coding agent was not told: the audit ran in Log mode, or the violation's rule was in Log mode then. */
+  logged: boolean;
 }
 
 export interface ViolationHistoryPage {
@@ -544,13 +573,14 @@ function listViolationHistory(database: RerailDatabase, query: ViolationHistoryQ
   )`;
   // The page and its total from one snapshot, so a commit between them cannot make them disagree.
   const { rows, total } = database.transaction(() => ({
-    rows: database.all<{ payload: string; auditId: string; ordinal: number; sessionId: string; at: number; host: string | null }>(sql`
+    rows: database.all<{ payload: string; auditId: string; ordinal: number; sessionId: string; at: number; host: string | null; logged: number }>(sql`
     SELECT
       json_extract(${audits.violations}, '$[' || page.ordinal || ']') AS payload,
       page.audit_id AS auditId, page.ordinal AS ordinal, page.session_id AS sessionId, page.started_at AS at,
-      ${sessions.host} AS host
+      ${sessions.host} AS host, page.logged AS logged
     FROM (
-      SELECT ${auditViolations.auditId}, ${auditViolations.ordinal}, ${auditViolations.sessionId}, ${auditViolations.startedAt}
+      SELECT ${auditViolations.auditId}, ${auditViolations.ordinal}, ${auditViolations.sessionId}, ${auditViolations.startedAt},
+        ${auditViolations.logged}
       FROM ${auditViolations}
       WHERE ${and(matching, continuing)}
       ORDER BY ${auditViolations.startedAt} DESC, ${auditViolations.auditId} DESC, ${auditViolations.ordinal}
@@ -572,6 +602,7 @@ function listViolationHistory(database: RerailDatabase, query: ViolationHistoryQ
       auditId: row.auditId,
       at: row.at,
       host: row.host,
+      logged: row.logged === 1,
     })),
     total,
     nextCursor: rows.length > limit && last !== undefined ? encodeCursor([last.at, last.auditId, last.ordinal]) : null,
@@ -627,8 +658,8 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
       .run(
         auditId,
         pageIndex,
-        JSON.stringify(result.violations ?? []),
-        JSON.stringify(result.failures ?? []),
+        JSON.stringify(storedViolations(result.violations ?? [])),
+        JSON.stringify(storedFailures(result.failures ?? [])),
         auditId,
       );
   }
@@ -653,8 +684,8 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
       const running = this.#database
         .update(audits)
         .set({
-          ...(result.violations === undefined ? {} : { violations: result.violations }),
-          ...(result.failures === undefined ? {} : { failures: result.failures }),
+          ...(result.violations === undefined ? {} : { violations: storedViolations(result.violations) }),
+          ...(result.failures === undefined ? {} : { failures: storedFailures(result.failures) }),
         })
         .where(and(eq(audits.auditId, auditId), eq(audits.status, "running")))
         .run().changes > 0;
@@ -670,8 +701,8 @@ export class SqliteAuditStore implements AuditRecorder, AuditReader {
         .update(audits)
         .set({
           status: result.status,
-          violations: result.violations ?? [],
-          failures: result.failures ?? [],
+          violations: storedViolations(result.violations ?? []),
+          failures: storedFailures(result.failures ?? []),
           finishedAt: Date.now(),
         })
         .where(and(eq(audits.auditId, auditId), eq(audits.status, "running")))

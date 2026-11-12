@@ -29,9 +29,12 @@ const BLOCK_END = "# <<< rerail <<<";
 const BLOCK = /(?<![^\n])# >>> rerail >>>\r?\n(?:(?!# >>> rerail >>>).*\r?\n)*?# <<< rerail <<<(?:\r?\n|$)/u;
 /** The block with the blank line `addBlock` puts before it, when that line is still blank. */
 const BLOCK_AND_GAP = /(?:(?<![^\n])\r?\n)?(?<![^\n])# >>> rerail >>>\r?\n(?:(?!# >>> rerail >>>).*\r?\n)*?# <<< rerail <<<(?:\r?\n|$)/u;
-/** The record that a set-up handled PATH: written, found in place, or left to the person. */
+/** In the Rerail home: the record that a set-up handled PATH: written, found in place, or left to the person. */
+export const LAUNCHER_PATH_FILE = "launcher-path.json";
+
+/** Where `LAUNCHER_PATH_FILE` is in `rerailHome`. */
 export function launcherPathMarker(rerailHome: string): string {
-  return join(rerailHome, "launcher-path.json");
+  return join(rerailHome, LAUNCHER_PATH_FILE);
 }
 
 /** Record `change` as PATH handled, unless it failed (the next run tries again) or the run was dry. */

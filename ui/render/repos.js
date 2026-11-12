@@ -5,7 +5,8 @@
  */
 import { h, icon } from "../dom.js";
 import { data, runningCount } from "../state.js";
-import { repoLine, repoRuleCounts } from "../repo-rules.js";
+import { repoRuleCounts } from "../repo-rule-counts.js";
+import { repoLine } from "../repo-rules.js";
 
 /**
  * `{ total, on }` for repository `repo`: its own rules as last read (`loadRepoRuleCounts`), else for the repository
@@ -17,6 +18,9 @@ export function repoCounts(repo) {
   const shown = data.loaded && repo.repositoryKey === data.repository?.repositoryKey;
   return shown ? { total: data.rules.size, on: runningCount() } : null;
 }
+
+/** How a repository not in the list gets there: the repository page's and the menu's one line. */
+export const repoHint = () => ["Don’t see the repo you want? Type ", h("span.mono", null, "/rerail-start"), " in a session there."];
 
 /** The line under the repository's name (`repoLine`), from the counts the page holds for it. */
 export const repoMeta = repo => repoLine(repo, repoCounts(repo));

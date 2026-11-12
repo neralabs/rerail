@@ -98,5 +98,5 @@ Caveats:
 - The analysis reads the branch from its newest compaction onward without Pi's projection. That is exact for a
   session with no compaction or context edit. A trial that auto-compacted is approximate.
 - A single trial is an anecdote. Use `--trials` and report means with the harness versions and models.
-- `--keep` leaves each sandbox in `/tmp` for inspection. It holds the imported access token, so delete the sandbox
-  when you are done.
+- `--keep` leaves each sandbox in `/tmp` for inspection. The access token imported into it is deleted when the
+  trial ends either way, so a kept sandbox cannot rerun the harness.

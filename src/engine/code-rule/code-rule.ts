@@ -4,7 +4,7 @@ import type { RuleMode } from "../catalog/rule-mode.js";
 import { sensitiveByName } from "../path-boundary.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
-import { steerBlock, steerRules, type SteerFinding, type SteerTrigger } from "./rerail-steer.js";
+import { inlineCode, steerBlock, steerRules, steerText, type SteerFinding, type SteerTrigger } from "./rerail-steer.js";
 import { steerOrigin, type SteerRuleSource } from "./steer-origin.js";
 
 export type CodeRuleDslScalar = boolean | number | string | null;
@@ -181,14 +181,23 @@ export type CodeRuleDslReportingClause = CodeRuleDslClauseBase & (
 export type CodeRuleDslQuery =
   | CodeRuleDslRegexQuery
   | CodeRuleDslAstQuery
-  | CodeRuleDslSelectWhenQuery;
+  | CodeRuleDslSelectWhenQuery
+  | CodeRuleDslFileQuery;
 
 export interface CodeRuleDslRegexQuery {
   regex: {
     source: "file.content" | "file.path";
-    /** Named groups (`(?<NAME>…)`) become the witness's captures. */
+    /** Named groups (`(?<NAME>…)`) become the witness's captures; a `file.path` match's groups are text for the message, never an anchor. */
     pattern: string;
   };
+}
+
+/**
+ * Each file in the rule's scope, whatever its type, without reading it: one witness per file, at the file's path with
+ * no line. In a `select_when.exists` it always holds.
+ */
+export interface CodeRuleDslFileQuery {
+  file: Record<string, never>;
 }
 
 export interface CodeRuleDslAstQuery {
@@ -1486,6 +1495,13 @@ export interface RepositoryAuditHooks {
   finish(checkoutRoot: string, auditId: string | undefined): void;
 }
 
+/** The pattern of Git's exclude stack that ignores a path: the file it was read from (absolute; absent when it came from no file), its line there, and the pattern. */
+export interface IgnoredEditMatch {
+  source?: string | null;
+  line: number;
+  pattern: string;
+}
+
 export interface CodeRuleAuditor {
   openWorkspace(sessionId: string): Promise<void>;
   /** Refresh live rules before filtering paths for a tool's preimages; `acceptsPath` reflects them on return. */
@@ -1500,10 +1516,23 @@ export interface CodeRuleAuditor {
    */
   ignoresPath?(path: string, directory: boolean): boolean;
   /**
+   * Why an edit of the file `path` (as for `acceptsPath`) goes unchecked though the rules would read it: the pattern
+   * by which Git ignores it, while the session follows `.gitignore`, with its file (absolute) and line. Undefined for a
+   * file that is checked, and for one no rule reads anyway. Absent: no edit is left out for Git's rules.
+   */
+  ignoredEdit?(path: string): IgnoredEditMatch | undefined;
+  /**
    * The folder whose real path must contain an accepted `path`'s real path (its owning checkout); the session folder
    * when undefined or absent.
    */
   sourceRoot?(path: string): string | undefined;
+  /** The repository's other worktrees (physical) a source walk covers as well as the session folder; none when absent. */
+  worktreeRoots?(): readonly string[];
+  /**
+   * The checkouts (physical) whose Git ignore rules the session's checks follow, beside the session folder's own: a
+   * change to their exclude files changes what is checked. None beyond the session folder's when absent.
+   */
+  ignoreRuleRoots?(): readonly string[];
   auditGeneratedEdits(sessionId: string, batch: CodeRuleEditBatch): Promise<CodeRuleResponse>;
   /** Wait until every accepted generated edit has completed, without waiting for unrelated audits. */
   settleGeneratedEdits?(): Promise<void>;
@@ -1540,20 +1569,16 @@ function violationLocation(violation: CodeRuleViolation): string | undefined {
 /** Longest fix text rendered inline in a steer; a longer fix is cut with a note. */
 export const STEER_FIX_CHARS = 240;
 
-/** `text` as CommonMark inline code: a backtick fence longer than any backtick run in it, padded where it starts or ends with one. */
-function inlineCode(text: string): string {
-  const longest = Math.max(0, ...[...text.matchAll(/`+/gu)].map(([run]) => run.length));
-  const fence = "`".repeat(longest + 1);
-  const padding = text.startsWith("`") || text.endsWith("`") ? " " : "";
-  return `${fence}${padding}${text}${padding}${fence}`;
-}
-
-/** The fix's lines under its finding: a deletion, a one-line replacement inline, or a longer one in a `~~~` fence. */
+/**
+ * The fix's lines under its finding: a deletion, a one-line replacement inline, or a longer one in a `~~~` fence. The
+ * fix is code from the checkout, so it is {@link steerText} and cut to {@link STEER_FIX_CHARS} before it is fenced.
+ */
 function suggestedFix(fix: CodeRuleViolationFix): string {
   const { startLine, startColumn, endLine, endColumn } = fix.span;
   const range = `${startLine + 1}:${startColumn + 1}–${endLine + 1}:${endColumn + 1}`;
   if (fix.text === "") return `  Suggested fix: delete ${range}`;
-  const text = fix.text.length > STEER_FIX_CHARS ? `${fix.text.slice(0, STEER_FIX_CHARS)}… (truncated)` : fix.text;
+  const clean = steerText(fix.text);
+  const text = clean.length > STEER_FIX_CHARS ? `${clean.slice(0, STEER_FIX_CHARS)}… (truncated)` : clean;
   if (!text.includes("\n")) return `  Suggested fix: replace ${range} with ${inlineCode(text)}`;
   const longest = Math.max(0, ...[...text.matchAll(/^ *(~{3,})/gmu)].map(([, run]) => run!.length));
   const fence = `  ${"~".repeat(Math.max(3, longest + 1))}`;
@@ -1573,11 +1598,11 @@ export const SECRET_FILE_FINDING_MESSAGE = "A finding here; its message and fix 
 
 /**
  * Each violation as a steer finding, in the order given: its location, message and any fix; by rule and place only
- * in a file that is secret-like by name.
+ * in a file that is secret-like (`sensitive`: by name, unless the caller also judges where a link leads).
  */
-function steerFindings(violations: readonly CodeRuleViolation[]): SteerFinding[] {
+function steerFindings(violations: readonly CodeRuleViolation[], sensitive: (path: string) => boolean): SteerFinding[] {
   return violations.map(violation => {
-    const secret = violation.path !== undefined && sensitiveByName(violation.path);
+    const secret = violation.path !== undefined && sensitive(violation.path);
     return {
       ruleId: violation.ruleId,
       mode: violation.mode,
@@ -1590,7 +1615,7 @@ function steerFindings(violations: readonly CodeRuleViolation[]): SteerFinding[]
 
 /** The steer block (`steerBlock`) for `violations`, in first-seen order, led as `trigger` says (an edit's by default). */
 export function renderSteer(violations: readonly CodeRuleViolation[], trigger: SteerTrigger = { kind: "edit" }): string {
-  return steerBlock(trigger, steerFindings(violations));
+  return steerBlock(trigger, steerFindings(violations, sensitiveByName));
 }
 
 /** Rule ids credited with a steer: the distinct `ruleId`s of the rendered violations, in first-seen order. */
@@ -1600,14 +1625,17 @@ export function steerRuleIds(violations: readonly CodeRuleViolation[]): string[]
 
 /**
  * The rendered steer text with its contributing rule ids and rules (`steerRules`, each naming where it comes from);
- * the text is byte-identical to `renderSteer`.
+ * the text is byte-identical to `renderSteer` when `sensitive` is `sensitiveByName`. `sensitive` judges which
+ * violation paths are secret-like: a caller that knows the checkout the paths are relative to passes
+ * `checkoutPathBoundary(root).sensitive`, so a file that links to a secret is judged as one.
  */
 export function buildSteer(
   violations: readonly CodeRuleViolation[],
   trigger: SteerTrigger,
   sourceOf: SteerSourceOf = () => undefined,
+  sensitive: (path: string) => boolean = sensitiveByName,
 ): { content: string; ruleIds: string[]; rules: SteerRule[] } {
-  const findings = steerFindings(violations);
+  const findings = steerFindings(violations, sensitive);
   return {
     content: steerBlock(trigger, findings),
     ruleIds: steerRuleIds(violations),

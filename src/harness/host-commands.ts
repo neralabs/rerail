@@ -188,6 +188,7 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
       presentation,
       repositoryState,
       ruleCount: null,
+      awaitingApproval: null,
       rulesUrl: (await readRulesDashboard({ cwd })).url,
       repositoryName: repositoryName(cwd),
       sigil: "/",
@@ -219,7 +220,7 @@ export function registerHostCommands(pi: HostCommandHost, options: HostCommandOp
   }, true);
 
   // Start and stop run the launcher, so the CLI owns the wording; without a terminal it addresses the coding agent's user.
-  // Re-attaching attaches the runtime where Rerail is started, and leaves only the "not on here" footer where it is not.
+  // Re-attaching attaches the runtime where Rerail is started, and leaves no footer where it is not.
   register("rerail-start", async ctx => {
     if (await startFromCommand(options, ctx)) await options.reattach?.();
   });

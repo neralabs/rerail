@@ -1,20 +1,24 @@
 name: Release packs
 
-# Releases the rule packs under packs/, each its own npm package @neralabs/rerail-pack-<id> (docs/pack-format.md,
-# "Versioning and release"). Core's release is release.yml, on `v*` tags; this workflow never touches core.
+# Releases the published rule packs under packs/, each its own npm package @neralabs/rerail-pack-<id> (docs/pack-format.md,
+# "Versioning and release"); a pack with `"private": true` is never published. Core's release is release.yml, on `v*`
+# tags; this workflow never touches core.
 #
-# The "Release" pull request (each pack's version and CHANGELOG.md, written by changesets, beside core's bump) is
-# opened by release-pr.yml; merging it is the release. On a push to main this workflow publishes:
+# The "Release" pull request (each pack's version and CHANGELOG.md, from its changesets, beside core's bump) is
+# opened by release-pr.yml; merging it is the release. On a push to main this workflow releases:
 #   Every pack whose package.json version has no `<name>@<version>` git tag is validated (the whole pack
-#   validation of test/engine/catalog/packs.test.ts), packed, checked to hold only what its `files` allows, published
-#   under `latest` with trusted publishing, and tagged; its `next` is moved up to that version too, unless `next` is
+#   validation of test/engine/catalog/packs.test.ts), packed, checked to hold only what its `files` allows, and
+#   tagged. The release never waits on npm: the tag comes first, then the version's GitHub Release and its publish
+#   under `latest` with trusted publishing, side by side; its `next` is moved up to that version too, unless `next` is
 #   already at a newer one, so `next` never trails `latest`. A pack held at an older `latest` (put back on purpose) is
-#   published under `next` instead, so the hold stays. The dist-tags job then lists each published pack's dist-tags in
-#   the run summary and fails if one is not where it was published, or one's `next` is older than its `latest`. A
-#   pack never published at all needs its first publish by hand; the run reports it and fails after publishing the
-#   others.
+#   published under `next` instead, so the hold stays. A version tagged but not on npm (a failed or unapproved
+#   publish) is planned again by every later run, so re-running the run or the next push publishes it. The dist-tags
+#   job then lists each published pack's dist-tags in the run summary and fails if one is not
+#   where it was published, or one's `next` is older than its `latest`. A pack never published at all needs its first
+#   publish by hand; the run reports it and fails after publishing the others.
 # A pull request touching packs runs the validation and packing as a dry run and publishes nothing, and fails if it
-# changes what a pack publishes without a changeset naming that pack (the Release pull request is not checked). Its
+# changes what a published pack publishes without a changeset naming that pack, or if a changeset names a private pack
+# (the Release pull request is not checked). Its
 # paths see only the git diff, not the packs' test data: a change to that data is a change to a tool-pack's
 # test-data.lock, under packs/**, and a pull request that checks data in adds it there too (CONTRIBUTING.md).
 # `workflow_dispatch` points `latest` at released pack versions, to put one back: naming a pack and an older version
@@ -23,7 +27,7 @@ name: Release packs
 # The promote-plan job lists them in the run summary before the promote job, which needs the `release` environment's
 # approval, moves them all, moves each one's `next` up to it unless `next` is at a newer version, and then fails if a
 # promoted pack's `latest` is not the version or its `next` is older (docs/pack-format.md, "Release").
-# Each pack version a push publishes gets its GitHub Release on its tag, with the version's CHANGELOG.md section as its
+# Each pack version a push tags gets its GitHub Release on its tag, with the version's CHANGELOG.md section as its
 # notes (the github-releases job).
 
 on:
@@ -73,13 +77,13 @@ jobs:
     steps:
       # The full history, so the diff can reach the merge base with the pull request's base.
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node.js v24
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
 
@@ -101,13 +105,14 @@ jobs:
       held: ${{ steps.plan.outputs.held }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
 
-      # On a push, the plan reads each pack's dist-tags (is it held?), which for these restricted packs needs the
-      # read-only NPM_PACKS_READ_TOKEN, as the promote-plan job does. The file names the variable, not the token.
+      # On a push, the plan reads from npm whether each tagged version is published and each pack's dist-tags (is it
+      # held?), with the read-only NPM_PACKS_READ_TOKEN, as the promote-plan job does. A pack it cannot read fails the
+      # plan, so a version npm lacks is never taken as released. The file names the variable, not the token.
       - name: Authenticate npm to read the packs
         if: github.event_name == 'push'
         env:
@@ -149,7 +154,7 @@ jobs:
       id-token: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -178,7 +183,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -199,7 +204,7 @@ jobs:
 
       - id: native-cache
         name: Restore the release native engine
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             native/*.node
@@ -215,7 +220,7 @@ jobs:
 
       - name: Cache cargo artifacts
         if: steps.native-cache.outputs.cache-hit != 'true'
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry
@@ -239,104 +244,61 @@ jobs:
           node --import tsx scripts/release/packs-pack.ts --out "$RUNNER_TEMP/rule-packs" "${packs[@]}"
 
       - name: Upload the pack tarballs
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rule-packs
           path: ${{ runner.temp }}/rule-packs
           if-no-files-found: error
 
-  # npm trusted publishing: npmjs lists this repository, `release-packs.yml` and the `release` environment as each
-  # pack's trusted publisher, so no npm token exists anywhere. packs-publish.mjs passes `--provenance` here, so a pack
-  # that npm cannot attach a provenance attestation to fails to publish instead of going out without one.
-  publish:
-    name: Publish to npmjs
+  # A pack's release is its tag and GitHub Release, and never waits on npm: once the publish gate passes, this job tags
+  # the released commit `<name>@<version>` for each pack the plan names (packs-tag.mjs), before anything is published.
+  # A version already tagged is skipped, so the job can be run again. The GitHub Releases and the npm publish both
+  # follow the tags, and neither waits on the other.
+  tag:
+    name: Tag each release
     needs: [plan, pack]
     if: github.event_name == 'push' && needs.plan.outputs.publish != ''
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    environment: release
+    timeout-minutes: 5
     permissions:
       contents: write
-      id-token: write
     outputs:
-      released: ${{ steps.publish.outputs.released }}
+      released: ${{ steps.tag.outputs.released }}
     steps:
       - name: Set up Node.js v24
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
 
-      # Trusted publishing needs npm 11.5.1 or newer; dist-tags over it (moving `next`, and the promote job) 11.21.0.
-      - name: Install npm with trusted publishing support
-        run: |
-          npm install --global "npm@^11.21.0"
-          npm --version
-
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
 
       - name: Download the pack tarballs
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: rule-packs
           path: ${{ runner.temp }}/rule-packs
 
-      - id: publish
-        name: Publish under latest, raise next and tag each release
+      - id: tag
+        name: Tag each release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           HELD: ${{ needs.plan.outputs.held }}
-        run: node scripts/release/packs-publish.mjs "$RUNNER_TEMP/rule-packs"
+        run: node scripts/release/packs-tag.mjs "$RUNNER_TEMP/rule-packs"
 
-  # Reads back what the publish job released, with the read-only NPM_PACKS_READ_TOKEN: each pack's dist-tags in the
-  # run summary, failing if one's `latest` (`next` for a held pack) is not the version just published, or its `next` is
-  # older than its `latest`.
-  dist-tags:
-    name: Published dist-tags
-    needs: publish
-    if: needs.publish.outputs.released != ''
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - name: Set up Node.js v24
-        uses: actions/setup-node@v7
-        with:
-          node-version: "24"
-
-      - name: Checkout repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Authenticate npm to read the packs
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
-        run: |
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::Reading the restricted rule packs needs the repository secret NPM_PACKS_READ_TOKEN"
-            exit 1
-          fi
-          printf '//registry.npmjs.org/:_authToken=${NODE_AUTH_TOKEN}\n' > "$HOME/.npmrc"
-
-      - name: Check each published pack's dist-tag
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_PACKS_READ_TOKEN }}
-          RELEASED: ${{ needs.publish.outputs.released }}
-        run: node scripts/release/dist-tags-check.mjs
-
-  # The GitHub Release of each pack version the publish job released and tagged, once npm has it where it was
-  # published: its notes are the version's section of the pack's CHANGELOG.md (scripts/release/github-release.mjs), so
-  # release notes are written once, in the changelog. A pack's Release is never the repository's latest release (core's
-  # is), and is a pre-release only when the pack was held and published under `next`. Run again, it rewrites the
-  # notes and flags of the Releases it made.
+  # The GitHub Release of each pack version the tag job tagged, beside the npm publish rather than after it: its notes
+  # are the version's section of the pack's CHANGELOG.md (scripts/release/github-release.mjs), so release notes are
+  # written once, in the changelog. A pack's Release is never the repository's latest release (core's is), and is a
+  # pre-release only when the pack is held and published under `next`. Run again, it rewrites the notes and flags of
+  # the Releases it made.
   github-releases:
     name: GitHub Releases
-    needs: [publish, dist-tags]
+    needs: tag
+    if: needs.tag.outputs.released != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -354,8 +316,83 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASED: ${{ needs.publish.outputs.released }}
+          RELEASED: ${{ needs.tag.outputs.released }}
         run: node scripts/release/github-release.mjs
+
+  # npm trusted publishing: npmjs lists this repository, `release-packs.yml` and the `release` environment as each
+  # pack's trusted publisher, so no npm token exists anywhere. packs-publish.mjs passes `--provenance` here, so a pack
+  # that npm cannot attach a provenance attestation to fails to publish instead of going out without one. It publishes
+  # the tagged versions and waits on nothing npm does after a publish. Should it fail, the tags and Releases stand:
+  # every later plan publishes again a version tagged but not on npm, so re-running the run (all jobs or failed jobs)
+  # or the next push recovers it, and a version npm already has counts as published.
+  publish:
+    name: Publish to npmjs
+    needs: [plan, pack, tag]
+    if: github.event_name == 'push' && needs.plan.outputs.publish != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      released: ${{ steps.publish.outputs.released }}
+    steps:
+      - name: Set up Node.js v24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      # Trusted publishing needs npm 11.5.1 or newer; dist-tags over it (moving `next`, and the promote job) 11.21.0.
+      - name: Install npm with trusted publishing support
+        run: |
+          npm install --global "npm@^11.21.0"
+          npm --version
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Download the pack tarballs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: rule-packs
+          path: ${{ runner.temp }}/rule-packs
+
+      - id: publish
+        name: Publish under latest and raise next
+        env:
+          HELD: ${{ needs.plan.outputs.held }}
+        run: node scripts/release/packs-publish.mjs "$RUNNER_TEMP/rule-packs"
+
+  # Reads back what the publish job released, with no npm login, so it also proves each pack public: each pack's
+  # dist-tags in the run summary, failing if one cannot be read anonymously, if one's `latest` (`next` for a held pack)
+  # is not the version just published, or if its `next` is older than its `latest`. It gates nothing: the tags and
+  # Releases are made already.
+  dist-tags:
+    name: Published dist-tags
+    needs: publish
+    if: needs.publish.outputs.released != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Set up Node.js v24
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Check each published pack's dist-tag
+        env:
+          RELEASED: ${{ needs.publish.outputs.released }}
+        run: node scripts/release/dist-tags-check.mjs
 
   first-publish:
     name: First publish needed
@@ -392,12 +429,12 @@ jobs:
           fi
 
       - name: Set up Node.js v24
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
 
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -430,7 +467,7 @@ jobs:
       id-token: write
     steps:
       - name: Set up Node.js v24
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
 
@@ -440,7 +477,7 @@ jobs:
           npm --version
 
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false

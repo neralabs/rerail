@@ -3,13 +3,15 @@
 // `next` kept from trailing `latest`, the refusal of a preview older than `latest`, and the check of a release's
 // dist-tags.
 
-import { readFileSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import semver from "semver";
 import { describe, expect, it } from "vitest";
-import { coreChanges, lockChangesCore, matrixChanges, shipsWithCore } from "../../scripts/release/core-paths.mjs";
-import { NO_CHANGELOG_ENTRIES, PLUGIN_PINS, changelogEntries, changelogLead, changelogLeadRefusal, changelogSection, coreTagRefusal, firstChangelogSection, newChangelogEntries, nextCoreVersion, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion } from "../../scripts/release/core.mjs";
+import { changesPackage, coreChanges, lockChangesCore, matrixChanges, publishRetryRefusal, retrySummary, shipsWithCore } from "../../scripts/release/core-paths.mjs";
+import { CHANGE_TYPES, NO_CHANGELOG_ENTRIES, PLUGIN_PINS, changelogEntries, changelogEntryFileRefusal, changelogEntryType, changelogEntryTypeRefusal, changelogLead, changelogLeadRefusal, changelogSection, coreTagRefusal, firstChangelogSection, handWrittenChangelogEntries, newChangelogEntries, nextCoreVersion, readChangelogEntries, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion, unreleasedChangelogEntries } from "../../scripts/release/core.mjs";
 import { RELEASE_NOTE_WORDS, releaseNoteRefusal } from "../../scripts/release/release-notes.mjs";
 import { compareVersions, distTagReport, nextTrails, parseDistTagList, parseExpectation, previewRefusal, raiseNext } from "../../scripts/release/dist-tags.mjs";
 
@@ -20,7 +22,7 @@ describe("shipsWithCore", () => {
     for (const path of ["src/cli/cli.ts", "native/src/lib.rs", "languages/python.json", "ui/src/App.tsx", "package.json", "Cargo.lock", "scripts/build/copy-ui.mjs", "skills/rerail/SKILL.md", "README.md"]) {
       expect(shipsWithCore(path), path).toBe(true);
     }
-    for (const path of ["packs/python/rules/x.json", "docs/pack-format.md", ".github/workflows/ci.yml", ".changeset/a.md", "test/scripts/x.test.mjs", "integration/x.test.ts", "scripts/release/core.mjs", "scripts/dev/rerail-dev.mjs", "CHANGELOG.md", "CONTRIBUTING.md"]) {
+    for (const path of ["packs/python/rules/x.json", "docs/pack-format.md", "scripts/build/docs-site.mjs", ".github/workflows/ci.yml", ".changeset/a.md", ".changelog/a.md", "test/scripts/x.test.mjs", "integration/x.test.ts", "e2e/smoke.spec.ts", "scripts/release/core.mjs", "scripts/dev/rerail-dev.mjs", "scripts/pack-data/derive.ts", "CHANGELOG.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md", ".cursor-plugin/marketplace.json"]) {
       expect(shipsWithCore(path), path).toBe(false);
     }
   });
@@ -41,6 +43,58 @@ describe("lockChangesCore and coreChanges", () => {
     expect(reads).toEqual([]);
     expect(coreChanges(["package-lock.json", "src/a.ts", "packs/python/package.json"], readLock)).toEqual(["src/a.ts"]);
     expect(reads).toEqual(["release", "head"]);
+  });
+});
+
+describe("publishRetryRefusal", () => {
+  const retry = { version: "0.1.2", ref: "refs/heads/main", packageVersion: "0.1.2", tagged: true, shipped: [] };
+
+  it("retries the version main names, tagged, with nothing shipped changed since", () => {
+    expect(publishRetryRefusal(retry)).toBeNull();
+    expect(publishRetryRefusal({ ...retry, version: "0.2.0-next.1", packageVersion: "0.2.0-next.1" })).toBeNull();
+  });
+
+  it("refuses another branch, a malformed version and a version main has moved past", () => {
+    expect(publishRetryRefusal({ ...retry, ref: "refs/heads/fix" })).toBe("a retry runs from main, not refs/heads/fix");
+    expect(publishRetryRefusal({ ...retry, version: "v0.1.2" })).toBe("v0.1.2 is not X.Y.Z, X.Y.Z-beta.N or X.Y.Z-next.N");
+    expect(publishRetryRefusal({ ...retry, version: "0.1.2-rc.1" })).toBe("0.1.2-rc.1 is not X.Y.Z, X.Y.Z-beta.N or X.Y.Z-next.N");
+    expect(publishRetryRefusal({ ...retry, packageVersion: "0.1.3" })).toBe("main's package.json says 0.1.3, so 0.1.2 can't be retried from it");
+  });
+
+  it("refuses a run that also asks for a put-back, so the retry is never dropped in silence", () => {
+    expect(publishRetryRefusal({ ...retry, latest: "0.1.1" })).toBe("publish retries 0.1.2 and latest puts core back to 0.1.1: run them separately");
+  });
+
+  it("refuses a version with no tag, which never went through the Release pull request", () => {
+    expect(publishRetryRefusal({ ...retry, tagged: false })).toContain("v0.1.2 has no tag");
+  });
+
+  it("refuses when what ships changed since the tag, naming the paths and the next version", () => {
+    const refusal = publishRetryRefusal({ ...retry, shipped: ["src/cli/cli.ts", "package-lock.json"] });
+    expect(refusal).toContain("src/cli/cli.ts, package-lock.json");
+    expect(refusal).toContain("the next version");
+  });
+});
+
+describe("retrySummary", () => {
+  it("counts the paths that build or are packed into the tarball, and no others", () => {
+    for (const path of [".github/workflows/package.yml", ".github/actions/lfs/action.yml", "scripts/release/shrinkwrap-pack.mjs", ".gitattributes", "CHANGELOG.md"]) expect(changesPackage(path)).toBe(true);
+    for (const path of [".github/workflows/release.yml", "docs/release.md", "scripts/host/azure/matrix.mjs", "scripts/release/core-paths.mjs"]) expect(changesPackage(path)).toBe(false);
+  });
+
+  it("lists what can change the tarball first, under its own heading, then every other path", () => {
+    const summary = retrySummary("0.1.2", ["docs/release.md", ".github/workflows/package.yml", "scripts/host/azure/matrix.mjs"]);
+    expect(summary).toContain("3 path(s) changed since the tag");
+    expect(summary).toContain("**Can change the tarball, so check these before approving (1):**\n\n- `.github/workflows/package.yml`");
+    expect(summary).toContain("**Other changes (2):**\n\n- `docs/release.md`\n- `scripts/host/azure/matrix.mjs`");
+    expect(summary.indexOf("package.yml")).toBeLessThan(summary.indexOf("docs/release.md"));
+  });
+
+  it("says so when nothing that builds the tarball changed, and when nothing changed at all", () => {
+    expect(retrySummary("0.1.2", ["docs/release.md"])).toContain("Nothing that builds or is packed into the tarball changed.");
+    const none = retrySummary("0.1.2", []);
+    expect(none).toContain("0 path(s) changed since the tag");
+    expect(none).not.toContain("Other changes");
   });
 });
 
@@ -76,22 +130,73 @@ describe("nextCoreVersion", () => {
 
   it("reads a Keep a Changelog `[Unreleased]` heading as unreleased", () => {
     expect(nextCoreVersion("0.1.0", "# Changelog\n\n## [Unreleased]\n\n- a\n")).toBe("0.1.1");
-    expect(releaseChangelog("## [Unreleased]\n\n- a\n", "0.1.1", "2026-10-23")).toEqual({ text: "## 0.1.1 (2026-10-23)\n\n- a\n", notes: true });
+    expect(releaseChangelog("## [Unreleased]\n\n- a\n", "0.1.1", "2026-10-23", [])).toEqual({ text: "## 0.1.1 (2026-10-23)\n\n- a\n", notes: true });
   });
 });
 
 describe("releaseChangelog and changelogSection", () => {
   it("dates the unreleased section as the release, whatever its heading", () => {
-    const named = releaseChangelog("# Changelog\n\n## 0.1.0 (unreleased)\n\n- a\n", "0.1.0", "2026-10-22");
+    const named = releaseChangelog("# Changelog\n\n## 0.1.0 (unreleased)\n\n- a\n", "0.1.0", "2026-10-22", []);
     expect(named).toEqual({ text: "# Changelog\n\n## 0.1.0 (2026-10-22)\n\n- a\n", notes: true });
-    const plain = releaseChangelog("# Changelog\n\n## Unreleased\n\n- b\n\n## 0.1.0 (2026-10-22)\n\n- a\n", "0.1.1", "2026-10-23");
+    const plain = releaseChangelog("# Changelog\n\n## Unreleased\n\n- b\n\n## 0.1.0 (2026-10-22)\n\n- a\n", "0.1.1", "2026-10-23", []);
     expect(plain.text).toBe("# Changelog\n\n## 0.1.1 (2026-10-23)\n\n- b\n\n## 0.1.0 (2026-10-22)\n\n- a\n");
   });
 
-  it("adds a section saying there are no notes when nobody wrote an unreleased one", () => {
-    const released = releaseChangelog("# Changelog\n\n## 0.1.0 (2026-10-22)\n\n- a\n", "0.1.1", "2026-10-23");
+  it("puts the pending entries under the unreleased lead, in their order, above the last release", () => {
+    const text = "# Changelog\n\n## Unreleased\n\nA lead.\n\n## 0.1.0 (2026-10-22)\n\n- a\n";
+    const released = releaseChangelog(text, "0.1.1", "2026-10-23", [{ type: "Added", entry: "- b" }, { type: "Added", entry: "- c\n\n  More on c." }]);
+    expect(released).toEqual({ text: "# Changelog\n\n## 0.1.1 (2026-10-23)\n\nA lead.\n\n### Added\n\n- b\n- c\n\n  More on c.\n\n## 0.1.0 (2026-10-22)\n\n- a\n", notes: true });
+    expect(changelogEntries(changelogSection(released.text, "0.1.1"))).toEqual(["- b", "- c\n\n  More on c."]);
+  });
+
+  it("dates pending entries with no unreleased heading as a section with no lead, which CI then asks for", () => {
+    const released = releaseChangelog("# Changelog\n\n## 0.1.0 (2026-10-22)\n\n- a\n", "0.1.1", "2026-10-23", [{ type: "Fixed", entry: "- b" }]);
+    expect(released).toEqual({ text: "# Changelog\n\n## 0.1.1 (2026-10-23)\n\n### Fixed\n\n- b\n\n## 0.1.0 (2026-10-22)\n\n- a\n", notes: true });
+    expect(changelogLeadRefusal(firstChangelogSection(released.text))).toContain("opens with an entry");
+  });
+
+  it("adds a section saying there are no notes when nobody wrote a lead or an entry", () => {
+    const released = releaseChangelog("# Changelog\n\n## 0.1.0 (2026-10-22)\n\n- a\n", "0.1.1", "2026-10-23", []);
     expect(released).toEqual({ text: "# Changelog\n\n## 0.1.1 (2026-10-23)\n\nNo changelog entries were written for this release.\n\n## 0.1.0 (2026-10-22)\n\n- a\n", notes: false });
     expect(changelogSection(released.text, "0.1.1")).toBe("No changelog entries were written for this release.");
+    expect(releaseChangelog("# Changelog\n\n## Unreleased\n\n## 0.1.0 (2026-10-22)\n\n- a\n", "0.1.1", "2026-10-23", [])).toEqual(released);
+  });
+
+  it("lists the entries under Keep a Changelog's headings in its order, leaving out the types with none", () => {
+    const entries = ["Security", "Fixed", "Removed", "Added", "Changed", "Added"].map((type, index) => ({ type, entry: `- ${index}` }));
+    const released = releaseChangelog("# Changelog\n\n## Unreleased\n\nA lead.\n", "0.1.1", "2026-10-23", entries);
+    expect(released.text).toBe(
+      "# Changelog\n\n## 0.1.1 (2026-10-23)\n\nA lead.\n\n### Added\n\n- 3\n- 5\n\n### Changed\n\n- 4\n\n### Removed\n\n- 2\n\n### Fixed\n\n- 1\n\n### Security\n\n- 0\n",
+    );
+    const section = firstChangelogSection(released.text);
+    expect(changelogLead(section.body)).toBe("A lead.");
+    expect(changelogLeadRefusal(section)).toBeNull();
+    expect(changelogEntries(section.body)).toEqual(["- 3", "- 5", "- 4", "- 2", "- 1", "- 0"]);
+    expect(CHANGE_TYPES).toEqual(["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security"]);
+  });
+
+  it("refuses an entry with no type rather than leaving it out of the notes", () => {
+    expect(() => releaseChangelog("# Changelog\n", "0.1.1", "2026-10-23", [{ type: null, entry: "- a" }])).toThrow("has no change type: - a");
+  });
+
+  it("reads the pending entries in file-name order, each as the bullet it becomes with its type, and nothing else in the directory", () => {
+    const root = mkdtempSync(join(tmpdir(), "rerail-changelog-"));
+    try {
+      expect(readChangelogEntries(root)).toEqual([]);
+      mkdirSync(join(root, ".changelog"));
+      writeFileSync(join(root, ".changelog", "changed-dashboard-b.md"), "The dashboard says less.\n\nIt says it by rule.\n");
+      writeFileSync(join(root, ".changelog", "added-cli-a.md"), "`rerail version` prints the version.\n");
+      writeFileSync(join(root, ".changelog", "cli-c.md"), "No type.\n");
+      writeFileSync(join(root, ".changelog", "README.md"), "# Changelog entries\n");
+      writeFileSync(join(root, ".changelog", "notes.txt"), "not an entry\n");
+      expect(readChangelogEntries(root).map(({ path, type, entry }) => [path, type, entry])).toEqual([
+        [".changelog/added-cli-a.md", "Added", "- `rerail version` prints the version."],
+        [".changelog/changed-dashboard-b.md", "Changed", "- The dashboard says less.\n\n  It says it by rule."],
+        [".changelog/cli-c.md", null, "- No type."],
+      ]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("reads one version's section, dated as core's or bare as a pack's, and nothing for a version it lacks", () => {
@@ -146,6 +251,98 @@ describe("release notes: the lead, the entries, and what a note may say", () => 
     expect(newChangelogEntries("# Changelog\n\n## Unreleased\n\n- An old entry.\n", unreleased)).toEqual(["- A new entry."]);
     expect(newChangelogEntries(null, unreleased)).toEqual(["- A new entry.", "- An old entry."]);
     expect(newChangelogEntries("", "# Changelog\n")).toEqual([]);
+  });
+
+  it("refuses an entry written into CHANGELOG.md by hand, under a dated heading too, but not the Release pull request's", () => {
+    const dated = "# Changelog\n\n## 0.1.1 (2026-11-02)\n\nA lead.\n\n- A released entry.\n";
+    const addedToDated = dated.replace("- A released entry.", "- A released entry.\n- A hand-written entry.");
+    expect(handWrittenChangelogEntries(dated, addedToDated)).toEqual(["- A hand-written entry."]);
+    expect(handWrittenChangelogEntries("# Changelog\n\n## Unreleased\n\n- An old entry.\n", unreleased)).toEqual(["- A new entry."]);
+    const moved = [{ type: "Fixed", entry: "- A moved entry." }];
+    const releasePr = releaseChangelog("# Changelog\n\n## Unreleased\n\nA lead.\n", "0.1.1", "2026-11-02", moved).text;
+    expect(handWrittenChangelogEntries("# Changelog\n\n## Unreleased\n\nA lead.\n", releasePr)).toEqual([]);
+    const nextRelease = releaseChangelog(dated, "0.1.2", "2026-11-09", moved).text;
+    expect(handWrittenChangelogEntries(dated, nextRelease)).toEqual([]);
+  });
+
+  it("reads the whole entries of an unreleased first section only, as moved out of it", () => {
+    expect(unreleasedChangelogEntries("# Changelog\n\n## Unreleased\n\n- A pending entry.\n\n## 0.1.0 (2026-10-27)\n\n- A released entry.\n")).toEqual(["- A pending entry."]);
+    expect(unreleasedChangelogEntries(released)).toEqual([]);
+    expect(unreleasedChangelogEntries(null)).toEqual([]);
+  });
+
+  it("refuses an entry file that is empty or opens with a list marker, which the Release pull request would nest", () => {
+    expect(changelogEntryFileRefusal("The dashboard says less.\n")).toBeNull();
+    expect(changelogEntryFileRefusal("Rules read `-1` and `*` as written.\n")).toBeNull();
+    expect(changelogEntryFileRefusal(" \n")).toBe("is empty: write what changed for the person upgrading");
+    expect(changelogEntryFileRefusal("- The dashboard says less.\n")).toContain("starts with `- `");
+    expect(changelogEntryFileRefusal("\n* The dashboard says less.\n")).toContain("starts with `* `");
+  });
+
+  it("takes an entry's change type from the start of its file name, and refuses a name that gives none", () => {
+    expect(changelogEntryType(".changelog/fixed-dashboard-toasts.md")).toBe("Fixed");
+    expect(changelogEntryType("security-daemon-access.md")).toBe("Security");
+    expect(changelogEntryTypeRefusal(".changelog/deprecated-old-flag.md")).toBeNull();
+    for (const path of [".changelog/dashboard-toasts.md", ".changelog/playground-removed.md", ".changelog/Fixed-a.md", ".changelog/added.md", ".changelog/added-.md"]) {
+      expect(changelogEntryType(path)).toBeNull();
+      expect(changelogEntryTypeRefusal(path)).toContain("start its file name with added-, changed-, deprecated-, removed-, fixed- or security-");
+    }
+  });
+
+  describe("core-changelog-check.mjs", () => {
+    const LONG = `${"word ".repeat(RELEASE_NOTE_WORDS + 1).trim()}\n`;
+
+    /** The check's result on a checkout whose base holds `base` in .changelog/ and that holds `after` there. */
+    function check(base, after) {
+      const root = mkdtempSync(join(tmpdir(), "rerail-changelog-check-"));
+      try {
+        // A copy of the scripts, since the check reads the checkout that holds it.
+        cpSync(join(ROOT, "scripts", "release"), join(root, "scripts", "release"), { recursive: true });
+        cpSync(join(ROOT, "scripts", "check", "check-internal-refs.mjs"), join(root, "scripts", "check", "check-internal-refs.mjs"));
+        symlinkSync(join(ROOT, "node_modules"), join(root, "node_modules"));
+        const git = (...args) => execFileSync("git", ["-c", "user.name=test", "-c", "user.email=test@example.com", ...args], { cwd: root, stdio: "ignore" });
+        const write = (files) => {
+          rmSync(join(root, ".changelog"), { recursive: true, force: true });
+          mkdirSync(join(root, ".changelog"));
+          writeFileSync(join(root, ".changelog", "README.md"), "# Changelog entries\n");
+          for (const [file, text] of Object.entries(files)) writeFileSync(join(root, ".changelog", file), text);
+        };
+        writeFileSync(join(root, "CHANGELOG.md"), "# Changelog\n\n## 0.1.0 (2026-10-27)\n\nA lead.\n");
+        write(base);
+        git("init", "-q");
+        git("add", "CHANGELOG.md", ".changelog");
+        git("commit", "-q", "-m", "base");
+        git("branch", "base");
+        write(after);
+        return spawnSync(process.execPath, [join("scripts", "release", "core-changelog-check.mjs"), "base"], { cwd: root, encoding: "utf8" });
+      } finally {
+        rmSync(root, { recursive: true, force: true });
+      }
+    }
+
+    it("does not read an entry as new for being renamed to give it a type, or to change its type", () => {
+      expect(check({ "old.md": LONG }, { "fixed-old.md": LONG }).status).toBe(0);
+      expect(check({ "fixed-old.md": LONG }, { "changed-old.md": LONG }).status).toBe(0);
+    });
+
+    it("still checks an entry that was renamed and changed", () => {
+      const result = check({ "old.md": LONG }, { "fixed-old.md": `more ${LONG}` });
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain(`.changelog/fixed-old.md "- more word`);
+      expect(result.stdout).toContain(`runs to ${RELEASE_NOTE_WORDS + 2} words`);
+    });
+
+    it("refuses an entry with no type, one the base holds already too", () => {
+      for (const [base, after] of [[{}, { "new.md": "A new entry.\n" }], [{ "old.md": LONG }, { "old.md": LONG }]]) {
+        const result = check(base, after);
+        expect(result.status).toBe(1);
+        expect(result.stdout).toContain("names no change type");
+      }
+    });
+
+    it("passes a new entry with a type", () => {
+      expect(check({}, { "added-new.md": "A new entry.\n" }).status).toBe(0);
+    });
   });
 
   // The ticket id is spelled in pieces: check-internal-refs.mjs refuses it written out in any tracked file.

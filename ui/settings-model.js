@@ -3,10 +3,16 @@
 /**
  * A coding agent's row (`GET /api/coding-agents`): its state, `tone` "on" when connected, and the command a person
  * runs in a terminal to change it (`null` when there is nothing to change). A problem wins: the check did not finish.
+ * A connected agent also says whether its tools can read Rerail's data (`data`), `warn` unless they are kept out.
  */
 export function agentStatus(agent) {
   if (agent.problem) return { state: "Couldn’t check", tone: "warn", command: null, problem: agent.problem };
-  if (agent.connected) return { state: "Connected", tone: "on", command: { text: `rerail install --remove --agents ${agent.id}`, label: "Copy disconnect command" } };
+  if (agent.connected) {
+    return {
+      state: "Connected", tone: "on", command: { text: `rerail install --remove --agents ${agent.id}`, label: "Copy disconnect command" },
+      data: { text: agent.rerailData.why, warn: agent.rerailData.access !== "kept-out" },
+    };
+  }
   if (agent.found) return { state: "On this computer, not connected", tone: "", command: { text: `rerail install --agents ${agent.id}`, label: "Copy connect command" } };
   return { state: "Not found on this machine", tone: "off", command: null };
 }

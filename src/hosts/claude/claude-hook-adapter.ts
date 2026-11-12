@@ -32,14 +32,19 @@ const CLAUDE_EVENTS: EventTable = {
 };
 
 /**
- * Events whose `additionalContext` reaches the model beside a tool call or at the session's start. `UserPromptSubmit`'s
- * lands inside the person's own turn, so a steer held then waits for the next tool call.
+ * Events whose `additionalContext` reaches the model beside a tool call, at the session's start, or at `Stop`, where
+ * Claude Code shows it as `Stop hook feedback` and continues the turn so the agent can act on it. Claude Code takes
+ * `Stop` context from 2.1.163 (2.1.162 reports a Stop hook error and drops it), and its `Stop` input carries the
+ * `prompt_id` the turn end needs only from 2.1.196, so a `Stop` this hook answers always reaches the agent; an older
+ * one fails before it touches the held steers or records a receipt.
+ * `UserPromptSubmit`'s lands inside the person's own turn, so a steer held then waits for the next tool call or `Stop`.
  */
 const CONTEXT_EVENTS: EventTable = {
   SessionStart: true,
   PreToolUse: true,
   PostToolUse: true,
   PostToolUseFailure: true,
+  Stop: true,
 };
 
 const { required: requiredText } = hookText("Claude");
@@ -75,12 +80,13 @@ export interface ClaudeOutputOptions {
 
 /**
  * Steers reach the model as `additionalContext` and the person as one line per rule in `systemMessage` (Claude Code
- * shows it under the tool call); at `Stop`, only the person's lines (`steerHookOutput`). At `PreToolUse`, a Merge Assist
- * stop that asks (`conflict.ask`) makes Claude Code ask the person before the call (`permissionDecision: "ask"`).
+ * shows it under the tool call, or at the turn's end), in the same output (`steerHookOutput`). At `PreToolUse`, a
+ * Merge Assist stop that asks (`conflict.ask`) makes Claude Code ask the person before the call
+ * (`permissionDecision: "ask"`).
  */
 export function claudeHookOutput(hook: string, deliveries: readonly HeldDelivery[], { note, links = "hyperlink", mark }: ClaudeOutputOptions = {}): HookOutput {
   const output = steerHookOutput(hook, deliveries, CONTEXT_EVENTS, steerLines(links, mark), note);
-  const ask = hook === "PreToolUse" ? deliveries.find(delivery => delivery.shown !== true && delivery.conflict?.ask !== undefined)?.conflict?.ask : undefined;
+  const ask = hook === "PreToolUse" ? deliveries.find(delivery => delivery.conflict?.ask !== undefined)?.conflict?.ask : undefined;
   // In place: the output may carry the guidance receipt `prepareGuidanceOutput` keyed to it.
   if (ask !== undefined && output.hookSpecificOutput !== undefined) {
     output.hookSpecificOutput = { ...(output.hookSpecificOutput as Record<string, unknown>), permissionDecision: "ask", permissionDecisionReason: ask };
@@ -103,13 +109,18 @@ export async function handleClaudeEvent(
     await rm(path, { force: true });
     return {};
   }
+  // Rerail keeps a turn going at most once: a Stop that follows a Stop hook's continuation (`stop_hook_active`) holds
+  // its steers, line and all, for the next context event, so writes the turn-end walk keeps finding cannot loop it.
+  if (hook === "Stop" && input.stop_hook_active === true) {
+    await holdStopSteers(path, deliveries);
+    return {};
+  }
   // The runtime records no links; the rules point at this checkout's dashboard only here.
   const cwd = claudeWorkspace(input.cwd);
   const links = terminalDrawsHyperlinks(env) ? "hyperlink" : "plain";
   const mark = rerailMark(colourDepth(env));
-  if (hook === "Stop") return claudeHookOutput(hook, await linkDeliveries(await holdStopSteers(path, deliveries), cwd), { links, mark });
   const note = hook === "SessionStart" ? sessionStartNote(await dashboardOrigin(cwd), "claude-code", sessionId, await presentedSessionNoteRules({ host: "claude-code", sessionId, cwd })) : undefined;
-  const routed: HeldDelivery[] = await routeDeliveries(path, hook, deliveries, CONTEXT_EVENTS);
-  // `linkDeliveries` copies each delivery, so a held steer keeps its `shown` mark.
+  const routed = await routeDeliveries(path, hook, deliveries, CONTEXT_EVENTS);
+  // `linkDeliveries` copies each delivery, so a steer the 0.1.2 hook held at `Stop` keeps its `late` mark.
   return claudeHookOutput(hook, await linkDeliveries(routed, cwd), { note, links, mark });
 }

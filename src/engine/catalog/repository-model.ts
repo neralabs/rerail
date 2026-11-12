@@ -59,6 +59,13 @@ export interface CheckoutContext {
 /** `not-set-up`: started, but the repository has no configuration, so nothing runs. */
 export type RepositoryStartState = "started" | "stopped" | "not-set-up";
 
+const RUNNING_START_STATES: readonly string[] = ["started", "not-set-up"];
+
+/** Whether Rerail runs in a checkout in `state`, set up or not. `state` may be a daemon's or the CLI's answer, as text. */
+export function rerailRunsIn(state: string): boolean {
+  return RUNNING_START_STATES.includes(state);
+}
+
 export interface RepositoryStatus {
   readonly started: boolean;
   readonly setUp: boolean;
@@ -113,7 +120,16 @@ export type Decider =
   | { readonly by: "checkout"; readonly checkoutPath: string; readonly folder: string; readonly target: RuleSettingTargetKind }
   | { readonly by: "repository"; readonly folder: string; readonly target: RuleSettingTargetKind }
   | { readonly by: "pack-start"; readonly packId: string }
-  | { readonly by: "rule-default" };
+  | { readonly by: "rule-default" }
+  /** The rule's content waits for a person's approval, so it runs in Log whatever else would decide its mode. */
+  | { readonly by: "awaiting-approval" };
+
+/** Whether a rule's content needs a person's approval to steer, and whether it has it (`rule-approval.ts`). */
+export interface RuleApproval {
+  /** What is approved: the rule by its id, or its pack by package name, at the digest of the content. */
+  readonly subject: { readonly kind: "rule" | "pack"; readonly id: string; readonly digest: string };
+  readonly approved: boolean;
+}
 
 export interface EffectiveRule {
   readonly document: RuleDocument;
@@ -141,6 +157,11 @@ export interface EffectiveRule {
   };
   readonly revision: number;
   readonly payloadHash: string;
+  /**
+   * Present for a rule whose content needs a person's approval to steer (one created by you, in a worktree's
+   * `.rerail/rules`, or in a pack Rerail does not publish): until it is approved, `mode` is `log`.
+   */
+  readonly approval?: RuleApproval;
 }
 
 /** An attachment whose target can't be resolved; reported, never thrown. */

@@ -162,8 +162,8 @@ collect_facts() {
   ' >"$facts"
 }
 
-# Packages under test (core and every rule pack) from a registry on this VM, as npmjs will serve them after launch;
-# everything else still comes from npmjs.
+# Packages under test (core and every published rule pack) from a registry on this VM, as npmjs will serve them after
+# launch; everything else still comes from npmjs.
 start_registry() {
   local port password token
   port="$(node -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{process.stdout.write(String(s.address().port));s.close()})')"

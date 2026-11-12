@@ -3,6 +3,7 @@ import { mkdirSync, realpathSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createRerailApi } from "../../src/api/http.js";
 import { createRerailMcpHandler } from "../../src/api/mcp.js";
@@ -173,13 +174,15 @@ describe("MCP callers and the agent guard", () => {
       .toMatch(/^agent-not-permitted/u);
     expect((await call("library_rules_remove", { id: created.id }, caller)).result).toMatch(/^agent-not-permitted/u);
 
-    // Editing a By Rerail rule stores a copy, added where the original is, and switches the original off there.
+    // Editing a By Rerail rule stores a copy, added where the original is. The copy runs in Log until a person approves
+    // it, and only that approval switches the original off: an agent's copy weakens nothing.
     const ruleCatalog = loadRuleCatalog();
     const [ruleId, packId] = [...ruleCatalog.packOf].find(([id]) => ruleCatalog.documents.get(id)?.kind === "code")!;
     addAttachment(stores.database(), { repositoryKey: parentKey, folder: "web", sourceKind: "pack", sourceId: packId });
     const original = ruleCatalog.documents.get(ruleId)!.rule as CodeRule;
     const copied = await call("library_rules_upsert", { id: ruleId, kind: "code", rule: { ...original, revision: original.revision + 1 } }, caller);
     expect(copied.result).toMatchObject({ copiedFromRuleId: ruleId, attached: { repositoryKey: parentKey, folders: ["web"] } });
+    expect(stores.database().select().from(ruleSettings).where(eq(ruleSettings.targetId, ruleId)).all()).toEqual([]);
     // Editing its own copy later is allowed, as making it was.
     const copy = (copied.result as { rule: { rule: CodeRule } }).rule.rule;
     expect((await call("library_rules_upsert", { id: copy.id, kind: "code", rule: { ...copy, revision: copy.revision + 1 } }, caller)).result)

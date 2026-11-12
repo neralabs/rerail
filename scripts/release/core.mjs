@@ -1,14 +1,46 @@
 // Shared by the core release scripts in this directory (docs/distribution-model.md, "Release channels"). The core
 // package @neralabs/rerail is versioned by the Release pull request, not by changesets: when anything core ships has
-// changed since its last release (core-paths.mjs), the pull request bumps its patch version and dates the root
-// CHANGELOG.md's unreleased section. Each released core version is marked by the git tag `v<version>`, which
-// release.yml publishes.
+// changed since its last release (core-paths.mjs), the pull request bumps its patch version and writes the root
+// CHANGELOG.md's section for it from the entries pending in .changelog/, by change type, below the lead written under
+// the unreleased heading. Each released core version is marked by the git tag `v<version>`, which release.yml publishes.
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import semver from "semver";
+import { CHANGE_TYPES, changeType, changeTypeRefusal, changeTypeSections, releaseNoteEntry } from "./release-notes.mjs";
 
 export const CORE_NAME = "@neralabs/rerail";
 
 /** The git tag that releases core's `version`: release.yml publishes on it. */
 export const coreTag = (version) => `v${version}`;
+
+/**
+ * Where core's changelog entries wait for the Release pull request, one file each, so pull requests that add one never
+ * edit the same lines (.changelog/README.md).
+ */
+export const CHANGELOG_ENTRIES = ".changelog";
+
+export { CHANGE_TYPES, changeType as changelogEntryType };
+
+/** Why the pending entry at `path` can't go under a heading of a release's notes, or null: its name gives no type. */
+export const changelogEntryTypeRefusal = (path) => changeTypeRefusal(path, `${CHANGELOG_ENTRIES}/README.md`);
+
+/**
+ * Core's pending changelog entries in the checkout at `root`: every `.md` file in CHANGELOG_ENTRIES but its README, in
+ * file-name order, as `{ path, type, text, entry }`, `type` one of CHANGE_TYPES (null when the name gives none), `text`
+ * the file as written and `entry` the CHANGELOG.md entry it becomes (releaseNoteEntry).
+ */
+export function readChangelogEntries(root) {
+  const directory = join(root, CHANGELOG_ENTRIES);
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory)
+    .filter((file) => file.endsWith(".md") && file !== "README.md")
+    .sort()
+    .map((file) => `${CHANGELOG_ENTRIES}/${file}`)
+    .map((path) => {
+      const text = readFileSync(join(root, path), "utf8");
+      return { path, type: changeType(path), text, entry: releaseNoteEntry(text) };
+    });
+}
 
 /** The first `## ` heading of a changelog and where it is, or null. */
 function firstSection(text) {
@@ -42,19 +74,26 @@ export function nextCoreVersion(current, changelog) {
 export const NO_CHANGELOG_ENTRIES = "No changelog entries were written for this release.";
 
 /**
- * The root CHANGELOG.md released as `version` on `date` (YYYY-MM-DD): its unreleased section's heading becomes
- * `## <version> (<date>)`. Without an unreleased section, a dated section saying so is added above the last release.
- * `notes` is whether the release had notes of its own.
+ * The root CHANGELOG.md released as `version` on `date` (YYYY-MM-DD), with `entries` (`{ type, entry }`, in order) the
+ * pending ones from CHANGELOG_ENTRIES: the unreleased section, if any, becomes `## <version> (<date>)`, its lead (and
+ * any entry written under it) followed by `entries` under a `### <type>` heading each, in CHANGE_TYPES' order, leaving
+ * out the types with none. Without an unreleased section the dated section is added above the last release; with
+ * neither a lead nor an entry it says so. `notes` is whether the release had notes. Throws on an entry with no type,
+ * which would otherwise drop out of the notes.
  */
-export function releaseChangelog(text, version, date) {
-  const heading = `## ${version} (${date})`;
+export function releaseChangelog(text, version, date, entries) {
+  const untyped = entries.find(({ type }) => !CHANGE_TYPES.includes(type));
+  if (untyped !== undefined) throw new Error(`a changelog entry has no change type: ${untyped.entry}`);
   const section = firstSection(text);
-  if (section !== null && unreleasedVersion(section.heading) !== null) {
-    return { text: `${text.slice(0, section.index)}${heading}${text.slice(section.index + section.length)}`, notes: true };
-  }
-  const added = `${heading}\n\n${NO_CHANGELOG_ENTRIES}\n`;
-  if (section === null) return { text: `${text.replace(/\n*$/u, "")}\n\n${added}`, notes: false };
-  return { text: `${text.slice(0, section.index)}${added}\n${text.slice(section.index)}`, notes: false };
+  const unreleased = section !== null && unreleasedVersion(section.heading) !== null;
+  const before = section === null ? `${text.replace(/\n*$/u, "")}\n\n` : text.slice(0, section.index);
+  const rest = section === null ? "" : text.slice(section.index + (unreleased ? section.length : 0));
+  const next = unreleased ? /^## /mu.exec(rest) : null;
+  const written = unreleased ? (next === null ? rest : rest.slice(0, next.index)).trim() : "";
+  const after = unreleased ? (next === null ? "" : rest.slice(next.index)) : rest;
+  const parts = [written, ...changeTypeSections(entries)].filter((part) => part !== "");
+  const body = parts.length === 0 ? NO_CHANGELOG_ENTRIES : parts.join("\n\n");
+  return { text: `${before}## ${version} (${date})\n\n${body}\n${after === "" ? "" : `\n${after}`}`, notes: parts.length > 0 };
 }
 
 /** The body of the changelog section headed `## <version>` (to the next `## `), trimmed; `""` when there is none. */
@@ -127,6 +166,40 @@ export function newChangelogEntries(before, after) {
   const section = firstChangelogSection(after);
   if (section === null) return [];
   return changelogEntries(section.body).filter((entry) => before === null || !before.includes(entry));
+}
+
+/**
+ * The entries a pull request writes into `after`'s first section (CHANGELOG.md) by hand rather than in
+ * CHANGELOG_ENTRIES: every one of newChangelogEntries, under `## Unreleased` or under a dated heading (main's top
+ * section right after a release), except on the Release pull request, whose first section is a dated heading the
+ * base's (`before`, or null) does not open with and holds the entries it moved out of CHANGELOG_ENTRIES.
+ */
+export function handWrittenChangelogEntries(before, after) {
+  const section = firstChangelogSection(after);
+  if (section === null) return [];
+  if (section.released && firstChangelogSection(before ?? "")?.heading !== section.heading) return [];
+  return newChangelogEntries(before, after);
+}
+
+/**
+ * The whole entries of `text`'s first section (CHANGELOG.md, or null) when it is unreleased, where entries waited
+ * before CHANGELOG_ENTRIES held them; `[]` when that section is dated or there is none.
+ */
+export function unreleasedChangelogEntries(text) {
+  const section = text === null ? null : firstChangelogSection(text);
+  return section === null || section.released ? [] : changelogEntries(section.body);
+}
+
+/**
+ * Why `text`, a file in CHANGELOG_ENTRIES, is no entry the Release pull request can add, or null: it is empty, or it
+ * opens with a list marker, which releaseNoteEntry would nest under the bullet it adds (`- - …`).
+ */
+export function changelogEntryFileRefusal(text) {
+  const trimmed = text.trim();
+  if (trimmed === "") return "is empty: write what changed for the person upgrading";
+  const marker = /^([-*+])\s/u.exec(trimmed);
+  if (marker === null) return null;
+  return `starts with \`${marker[1]} \`: write the entry's text alone, which the Release pull request adds to the notes under a bullet of its own (${CHANGELOG_ENTRIES}/README.md)`;
 }
 
 /** `package.json`'s text with its own `version` set to `version`, and nothing else changed. */

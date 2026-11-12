@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { and, eq, inArray, or } from "drizzle-orm";
 import { loadRuleCatalog } from "../catalog/rule-catalog.js";
+import { worktreeRuleCatalog } from "../catalog/worktree-pack.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
 import { CheckoutOwners, type CheckoutOwner } from "../catalog/checkout-owner.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../storage/database.js";
@@ -26,8 +27,8 @@ import {
   type CodeRulePlacementEntry,
   type RepositoryStatus,
 } from "../catalog/repository-model.js";
-import { repositoryIdentityLocation } from "../catalog/repository-identity.js";
-import { checkoutStatus, followsGitignore, parentCheckouts, recordedCheckoutsVersion } from "../catalog/repository-registry.js";
+import { repositoryIdentityLocation, type RepositoryIdentityLocation } from "../catalog/repository-identity.js";
+import { checkoutStatus, followsGitignore, parentCheckouts, recordedCheckoutsVersion, recordStartedWorktree } from "../catalog/repository-registry.js";
 import { loadCheckoutRuleSet, ruleConfigurationSignature } from "../catalog/rule-configuration.js";
 import { LIBRARY_OWNER, quarantinedLibraryRules } from "../catalog/rule-library.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
@@ -304,7 +305,7 @@ export interface ConversationRuleSource {
 
 interface CheckoutEntry {
   readonly root: string;
-  location: { readonly git: boolean; readonly main: boolean } | undefined;
+  location: RepositoryIdentityLocation | undefined;
   checkout: CheckoutContext | undefined;
   parents: readonly string[];
   status: RepositoryStatus | undefined;
@@ -324,7 +325,10 @@ export class CheckoutCatalogs {
   readonly #capabilities: CodeRuleCapabilities;
   readonly #entries = new Map<string, CheckoutEntry>();
 
-  /** `options.ruleCatalog` fixes the catalog; without it each read follows the installed packs (`loadRuleCatalog`). */
+  /**
+   * `options.ruleCatalog` fixes the installed packs; without it each read follows them (`loadRuleCatalog`). Either way a
+   * checkout's own rules are added to its catalog.
+   */
   constructor(databasePath: string = defaultRerailDatabasePath(), options: { capabilities?: CodeRuleCapabilities; ruleCatalog?: RuleCatalog } = {}) {
     this.databasePath = resolve(databasePath);
     this.database = openRerailDatabase(this.databasePath);
@@ -333,9 +337,15 @@ export class CheckoutCatalogs {
   }
 
   /**
-   * The catalog the checkouts' rules come from. A pack installed or removed changes its digest, and with it every
-   * checkout's configuration signature, so the next refresh rebuilds their rules.
+   * The catalog `root`'s rules come from: the installed packs and the checkout's own rules (`worktree-pack.ts`). A pack
+   * installed or removed, or a file in the checkout's `.rerail/rules` changed, changes its digest, and with it the
+   * checkout's configuration signature, so the next refresh rebuilds its rules.
    */
+  #ruleCatalogOf(root: string): RuleCatalog {
+    return worktreeRuleCatalog(this.ruleCatalog, root);
+  }
+
+  /** The installed packs' catalog, without any checkout's own rules: fixed by `options.ruleCatalog`, else read now. */
   get ruleCatalog(): RuleCatalog {
     return this.#ruleCatalog ?? loadRuleCatalog();
   }
@@ -422,10 +432,12 @@ export class CheckoutCatalogs {
     return entry;
   }
 
-  /** Only a recorded checkout is eligible; its row names its repository, so Git is asked once per checkout. */
+  /**
+   * Only a recorded checkout is eligible; its row names its repository, so Git is asked once per checkout. A worktree
+   * of a started clone that no session started in is recorded here, the first time a path in it is looked up.
+   */
   #read(entry: CheckoutEntry): void {
-    const row = this.database.select({ repositoryKey: checkouts.repositoryKey, cloneId: checkouts.cloneId })
-      .from(checkouts).where(eq(checkouts.checkoutPath, entry.root)).get();
+    const row = this.#row(entry) ?? this.#recordWorktree(entry);
     if (row === undefined) {
       entry.checkout = undefined;
       entry.parents = [];
@@ -433,11 +445,9 @@ export class CheckoutCatalogs {
       entry.eligibility = "unrecorded";
       return;
     }
-    if (entry.location === undefined) {
-      const { git, main } = repositoryIdentityLocation(entry.root);
-      entry.location = { git, main };
-    }
-    const checkout: CheckoutContext = { checkoutPath: entry.root, repositoryKey: row.repositoryKey, cloneId: row.cloneId, ...entry.location };
+    entry.location ??= repositoryIdentityLocation(entry.root);
+    const { git, main } = entry.location;
+    const checkout: CheckoutContext = { checkoutPath: entry.root, repositoryKey: row.repositoryKey, cloneId: row.cloneId, git, main };
     const status = checkoutStatus(this.database, checkout);
     entry.checkout = checkout;
     entry.parents = parentCheckouts(this.database, checkout).map(parent => parent.checkoutPath);
@@ -446,17 +456,30 @@ export class CheckoutCatalogs {
     else entry.eligibility = status.setUp ? "ok" : "not-set-up";
   }
 
+  /** The row of `entry` once recorded as a worktree of a started clone (`recordStartedWorktree`); undefined when it is not one. */
+  #recordWorktree(entry: CheckoutEntry): { repositoryKey: string; cloneId: string } | undefined {
+    // A folder outside Git may become a checkout, so only a Git location is kept.
+    const location = entry.location ?? repositoryIdentityLocation(entry.root);
+    if (location.git) entry.location = location;
+    return recordStartedWorktree(this.database, entry.root, location) ? this.#row(entry) : undefined;
+  }
+
+  #row(entry: CheckoutEntry): { repositoryKey: string; cloneId: string } | undefined {
+    return this.database.select({ repositoryKey: checkouts.repositoryKey, cloneId: checkouts.cloneId })
+      .from(checkouts).where(eq(checkouts.checkoutPath, entry.root)).get();
+  }
+
   /** `<eligibility>` while unrecorded, else `<eligibility>\0<configuration signature>`; see `configurationSignatureOf`. */
   #signature(entry: CheckoutEntry): string {
     this.#read(entry);
     if (entry.checkout === undefined) return entry.eligibility;
-    const signature = ruleConfigurationSignature(this.database, this.ruleCatalog, entry.checkout.repositoryKey, this.ownerCheckoutPaths(entry.root));
+    const signature = ruleConfigurationSignature(this.database, this.#ruleCatalogOf(entry.root), entry.checkout.repositoryKey, this.ownerCheckoutPaths(entry.root));
     return `${entry.eligibility}\0${signature}`;
   }
 
   #ruleSet(entry: CheckoutEntry): CheckoutRuleSet | undefined {
     if (entry.checkout === undefined || entry.status === undefined) return undefined;
-    return loadCheckoutRuleSet(this.database, this.ruleCatalog, entry.checkout, entry.status, entry.parents);
+    return loadCheckoutRuleSet(this.database, this.#ruleCatalogOf(entry.root), entry.checkout, entry.status, entry.parents);
   }
 
   #load(entry: CheckoutEntry): LoadedCheckoutRules {

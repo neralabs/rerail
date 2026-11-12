@@ -1,12 +1,24 @@
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadRuleCatalog } from "../../src/engine/index.js";
 import type { NpmRunner } from "../../src/runtime/index.js";
-import { addPackSpecs, discoverPacks, installPackVersions, npmPackStore, packsLeftOutByCore, parsePackVersions, type PackStore } from "../../src/setup/index.js";
-import { installPackDirectory, uninstallPack } from "../support/installed-packs.js";
-import { repositoryPath } from "../support/oracles.js";
+import {
+  addPackSpecs,
+  discoverPacks,
+  installedPackagesOf,
+  installedPackVersion,
+  installPackVersions,
+  npmPackStore,
+  packsLeftOutByCore,
+  parsePackVersions,
+  type PackStore,
+  type PackVersion,
+} from "../../src/setup/index.js";
+import { directoryPackStore } from "../support/directory-pack-store.js";
+import { installPackDirectory, linkingPackStore, thirdPartyPack, uninstallPack } from "../support/installed-packs.js";
+import { fixturesPath, repositoryPath } from "../support/oracles.js";
 
 const homes: string[] = [];
 afterEach(() => {
@@ -31,10 +43,15 @@ function fakeNpm(fail: (spec: string) => string | undefined = () => undefined): 
   return { npm, calls };
 }
 
+/** Rerail's own typescript pack at `version`. */
+const typescriptAt = (version: string): PackVersion => ({ packageName: "@neralabs/rerail-pack-typescript", id: "typescript", version });
+
 /** The value of `--prefix` in one npm call. */
 const prefixOf = (args: readonly string[]): string => args[args.indexOf("--prefix") + 1]!;
 /** What follows `--`: the specs npm reads as packages, never as options. */
 const specsOf = (args: readonly string[]): string[] => args.slice(args.indexOf("--") + 1);
+/** Installs here are checked as the catalog checks them, compiling every rule of the TypeScript pack: slow under load. */
+const COMPILING_TIMEOUT_MS = 30_000;
 
 describe("npmPackStore", () => {
   it("fetches each pack under the tag into a staging folder of the run's own, without running install scripts, and removes it on release", async () => {
@@ -172,26 +189,22 @@ function copiesStore(home: string, ranges: Record<string, string>): PackStore & 
         installPackDirectory(copy, "typescript", home);
       }
     },
-    async remove(ids) {
-      removes.push([...ids]);
-      for (const id of ids) uninstallPack(id, home);
+    async remove(packageNames) {
+      removes.push([...packageNames]);
+      for (const packageName of packageNames) uninstallPack(packageName, home);
     },
   };
 }
 
-/**
- * Each test copies the repository's typescript pack and loads the rule catalog over it several times, compiling every
- * document; a loaded full-suite run needs more than the default 5 s.
- */
-const INSTALL_TIMEOUT_MS = 30_000;
+const VALID = fixturesPath("packs", "valid");
 
-describe("installPackVersions", { timeout: INSTALL_TIMEOUT_MS }, () => {
+describe("installPackVersions", { timeout: COMPILING_TIMEOUT_MS }, () => {
   it("puts the installed version back as npm recorded it when the one named installs but its core range leaves it out, and says why", async () => {
     const home = temporaryHome();
     const store = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0", "9.0.0": ">=9.0.0" });
-    expect(await installPackVersions([{ id: "typescript", version: "0.1.1" }], store)).toBeUndefined();
+    expect(await installPackVersions([typescriptAt("0.1.1")], store)).toBeUndefined();
 
-    const problem = await installPackVersions([{ id: "typescript", version: "9.0.0" }], store);
+    const problem = await installPackVersions([typescriptAt("9.0.0")], store);
 
     expect(problem).toMatch(/^@neralabs\/rerail-pack-typescript@9\.0\.0 cannot be used: .*>=9\.0\.0.*\. Nothing was changed\.$/u);
     expect(store.installs.at(-1)).toEqual([`@neralabs/rerail-pack-typescript@file:${join(home, "copies", "0.1.1")}`]);
@@ -202,25 +215,25 @@ describe("installPackVersions", { timeout: INSTALL_TIMEOUT_MS }, () => {
     const home = temporaryHome();
     const store = copiesStore(home, { "9.0.0": ">=9.0.0" });
 
-    expect(await installPackVersions([{ id: "typescript", version: "9.0.0" }], store)).toMatch(/cannot be used/u);
+    expect(await installPackVersions([typescriptAt("9.0.0")], store)).toMatch(/cannot be used/u);
 
-    expect(store.removes).toEqual([["typescript"]]);
+    expect(store.removes).toEqual([["@neralabs/rerail-pack-typescript"]]);
     expect(loadRuleCatalog(home).packs.has("typescript")).toBe(false);
   });
 
   it("installs nothing when every pack named is installed at that version", async () => {
     const home = temporaryHome();
     const store = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0" });
-    await installPackVersions([{ id: "typescript", version: "0.1.1" }], store);
+    await installPackVersions([typescriptAt("0.1.1")], store);
 
-    expect(await installPackVersions([{ id: "typescript", version: "0.1.1" }], store)).toBeUndefined();
+    expect(await installPackVersions([typescriptAt("0.1.1")], store)).toBeUndefined();
     expect(store.installs).toHaveLength(1);
   });
 
   it("puts everything back when the pack named loads but pushes an installed pack out", async () => {
     const home = temporaryHome();
     const copies = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0" });
-    await installPackVersions([{ id: "typescript", version: "0.1.1" }], copies);
+    await installPackVersions([typescriptAt("0.1.1")], copies);
     // A pack listing typescript's rules under an id that sorts first: the catalog loads it, and leaves typescript out.
     const rival = join(home, "rival");
     cpSync(repositoryPath("packs", "typescript"), rival, { recursive: true, filter: source => !source.includes("upstream") });
@@ -238,17 +251,17 @@ describe("installPackVersions", { timeout: INSTALL_TIMEOUT_MS }, () => {
       },
     };
 
-    const problem = await installPackVersions([{ id: "aaa-rival", version: "1.0.0" }], store);
+    const problem = await installPackVersions([{ packageName: "@neralabs/rerail-pack-aaa-rival", id: "aaa-rival", version: "1.0.0" }], store);
 
     expect(problem).toMatch(/@neralabs\/rerail-pack-typescript would stop loading: .*\. Nothing was changed\.$/u);
-    expect(copies.removes).toEqual([["aaa-rival"]]);
+    expect(copies.removes).toEqual([["@neralabs/rerail-pack-aaa-rival"]]);
     expect([...loadRuleCatalog(home).packs.keys()]).toEqual(["typescript"]);
   });
 
   it("says what failed and where to look when putting a pack back fails, rather than throwing", async () => {
     const home = temporaryHome();
     const copies = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0", "9.0.0": ">=9.0.0" });
-    await installPackVersions([{ id: "typescript", version: "0.1.1" }], copies);
+    await installPackVersions([typescriptAt("0.1.1")], copies);
     const store: PackStore = {
       ...copies,
       async install(specs) {
@@ -257,7 +270,7 @@ describe("installPackVersions", { timeout: INSTALL_TIMEOUT_MS }, () => {
       },
     };
 
-    const problem = await installPackVersions([{ id: "typescript", version: "9.0.0" }], store);
+    const problem = await installPackVersions([typescriptAt("9.0.0")], store);
 
     expect(problem).toMatch(/cannot be used: .*\. Then putting back @neralabs\/rerail-pack-typescript@file:.* failed: nospc no space left on device\. `rerail packs list` shows what is installed now\.$/u);
   });
@@ -265,10 +278,10 @@ describe("installPackVersions", { timeout: INSTALL_TIMEOUT_MS }, () => {
   it("says nothing was changed when npm fails and leaves the packs as they were, putting nothing back", async () => {
     const home = temporaryHome();
     const copies = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0" });
-    await installPackVersions([{ id: "typescript", version: "0.1.1" }], copies);
+    await installPackVersions([typescriptAt("0.1.1")], copies);
     const store: PackStore = { ...copies, install: async () => { throw new Error("npm error code ENOTFOUND\nnpm error network request failed"); } };
 
-    expect(await installPackVersions([{ id: "typescript", version: "0.1.2" }], store)).toBe("could not reach the npm registry (ENOTFOUND): check your network, proxy, or registry in ~/.npmrc. Nothing was changed.");
+    expect(await installPackVersions([typescriptAt("0.1.2")], store)).toBe("could not reach the npm registry (ENOTFOUND): check your network, proxy, or registry in ~/.npmrc. Nothing was changed.");
     expect(copies.installs).toHaveLength(1);
     expect(loadRuleCatalog(home).packs.get("typescript")?.version).toBe("0.1.1");
   });
@@ -276,7 +289,7 @@ describe("installPackVersions", { timeout: INSTALL_TIMEOUT_MS }, () => {
   it("puts the packs back when npm fails partway through, having changed one", async () => {
     const home = temporaryHome();
     const copies = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0", "0.1.2": ">=0.1.0-0 <0.2.0" });
-    await installPackVersions([{ id: "typescript", version: "0.1.1" }], copies);
+    await installPackVersions([typescriptAt("0.1.1")], copies);
     // npm wrote the new version, then ran out of disk before it finished.
     const store: PackStore = {
       ...copies,
@@ -286,38 +299,103 @@ describe("installPackVersions", { timeout: INSTALL_TIMEOUT_MS }, () => {
       },
     };
 
-    expect(await installPackVersions([{ id: "typescript", version: "0.1.2" }], store)).toBe("nospc no space left on device. Nothing was changed.");
+    expect(await installPackVersions([typescriptAt("0.1.2")], store)).toBe("nospc no space left on device. Nothing was changed.");
     expect(loadRuleCatalog(home).packs.get("typescript")?.version).toBe("0.1.1");
   });
 });
 
-describe("addPackSpecs", () => {
+describe("addPackSpecs", { timeout: COMPILING_TIMEOUT_MS }, () => {
   it("puts back a loaded pack that the install replaced with one its core range leaves out, and says why", async () => {
     const home = temporaryHome();
     // What `rerail packs add typescript` installs once `latest` moves past this core.
     const copies = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0", "0.2.0": ">=0.2.0" });
-    expect(await addPackSpecs(["@neralabs/rerail-pack-typescript@0.1.1"], copies)).toBeUndefined();
+    expect(await addPackSpecs(["@neralabs/rerail-pack-typescript@0.1.1"], copies)).toEqual({ installed: [typescriptAt("0.1.1")] });
 
-    const problem = await addPackSpecs(["@neralabs/rerail-pack-typescript@0.2.0"], copies);
+    const added = await addPackSpecs(["@neralabs/rerail-pack-typescript@0.2.0"], copies);
 
-    expect(problem).toMatch(/^@neralabs\/rerail-pack-typescript@0\.2\.0 cannot be used: .*>=0\.2\.0.*\. Nothing was changed\.$/u);
+    expect(added).toEqual({ problem: expect.stringMatching(/^@neralabs\/rerail-pack-typescript@0\.2\.0 cannot be used: .*>=0\.2\.0.*\. Nothing was changed\.$/u) });
     expect(loadRuleCatalog(home).packs.get("typescript")?.version).toBe("0.1.1");
+  });
+
+  it("checks a third party's pack as it does Rerail's own, and says what it installed under its package name", async () => {
+    const home = temporaryHome();
+    const store = linkingPackStore(home, { "@acme/rerail-pack-acme-valid": thirdPartyPack(join(home, "copies"), "@acme/rerail-pack-acme-valid", "acme-valid") });
+
+    expect(await addPackSpecs(["@acme/rerail-pack-acme-valid@1.0.0"], store)).toEqual({ installed: [{ packageName: "@acme/rerail-pack-acme-valid", id: "acme-valid", version: "1.0.0" }] });
+    expect(loadRuleCatalog(home).packs.get("acme-valid")).toMatchObject({ packageName: "@acme/rerail-pack-acme-valid", publisher: "@acme" });
+    expect(installedPackVersion("@acme/rerail-pack-acme-valid", home)).toBe("1.0.0");
+    expect(installedPackVersion("@neralabs/rerail-pack-acme-valid", home)).toBeNull();
+  });
+
+  it("puts back a third party's pack whose pack id Rerail's own pack holds, naming that pack", async () => {
+    const home = temporaryHome();
+    installPackDirectory(VALID, "valid", home);
+    const store = linkingPackStore(home, { "@acme/rerail-pack-valid": thirdPartyPack(join(home, "copies"), "@acme/rerail-pack-valid", "valid") });
+
+    const added = await addPackSpecs(["@acme/rerail-pack-valid@1.0.0"], store);
+
+    expect(added).toEqual({ problem: "@acme/rerail-pack-valid@1.0.0 cannot be used: pack id valid is taken by @neralabs/rerail-pack-valid. Nothing was changed." });
+    expect(store.removes).toEqual([["@acme/rerail-pack-valid"]]);
+    expect(installedPackagesOf("valid", home)).toEqual(["@neralabs/rerail-pack-valid"]);
+  });
+
+  it("puts a third party's pack back as npm recorded it when the version installed in its place is left out", async () => {
+    const home = temporaryHome();
+    const first = thirdPartyPack(join(home, "copies"), "rerail-pack-acme-valid", "acme-valid");
+    const store = linkingPackStore(home, { "rerail-pack-acme-valid": first });
+    await addPackSpecs(["rerail-pack-acme-valid@1.0.0"], store);
+    // npm recorded the registry install as its version; anything else installs the newer one in its place.
+    const newer: PackStore = {
+      ...store,
+      async install(specs) {
+        if (specs.every(spec => spec.endsWith("@1.0.0"))) return await store.install(specs);
+        installPackDirectory(thirdPartyPack(join(home, "copies"), "rerail-pack-acme-valid", "acme-valid", "2.0.0", ">=9.0.0"), "rerail-pack-acme-valid", home, "2.0.0");
+      },
+    };
+
+    const added = await addPackSpecs(["rerail-pack-acme-valid@2.0.0"], newer);
+
+    expect(added).toEqual({ problem: expect.stringMatching(/^rerail-pack-acme-valid@2\.0\.0 cannot be used: .*>=9\.0\.0.*\. Nothing was changed\.$/u) });
+    expect(store.installs.at(-1)).toEqual(["rerail-pack-acme-valid@1.0.0"]);
+    expect(loadRuleCatalog(home).packs.get("acme-valid")).toMatchObject({ packageName: "rerail-pack-acme-valid", version: "1.0.0", publisher: "rerail-pack-acme-valid" });
   });
 });
 
 describe("packsLeftOutByCore", () => {
+  // A real pack install and three catalog reads: over 4 s on a loaded CI shard, near vitest's 5 s default.
   it("names an installed pack the new core leaves out that the previous one loaded, with why, and nothing else", async () => {
     const home = temporaryHome();
-    await installPackVersions([{ id: "typescript", version: "0.1.1" }], copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0" }));
+    await installPackVersions([typescriptAt("0.1.1")], copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0" }));
 
     expect(packsLeftOutByCore(home, "0.2.0", "0.1.9")).toEqual([expect.stringMatching(/^@neralabs\/rerail-pack-typescript@0\.1\.1: .*0\.2\.0/u)]);
     // Already left out before the change, or still fitting after it: not this change's to name.
     expect(packsLeftOutByCore(home, "0.2.1", "0.2.0")).toEqual([]);
     expect(packsLeftOutByCore(home, "0.1.9", "0.1.8")).toEqual([]);
-  });
+  }, 30_000);
 });
 
 describe("discoverPacks", () => {
+  it("offers an installed third party's pack under its package name, and names one whose pack id Rerail's own holds", async () => {
+    const home = temporaryHome();
+    installPackDirectory(thirdPartyPack(join(home, "copies"), "@acme/rerail-pack-acme-valid", "acme-valid"), "@acme/rerail-pack-acme-valid", home);
+    // Its scope sorts before @neralabs: Rerail's own pack still takes the id.
+    installPackDirectory(thirdPartyPack(join(home, "copies"), "@aaa/rerail-pack-valid", "valid"), "@aaa/rerail-pack-valid", home);
+    const store: PackStore = {
+      home,
+      fetch: async () => ({ fetched: [{ id: "valid", directory: VALID }], problems: [], release: async () => {} }),
+      install: async () => {},
+      remove: async () => {},
+    };
+
+    const discovery = await discoverPacks(undefined, store);
+
+    expect(discovery.available.map(found => [found.packageName, found.pack.publisher, found.version, found.installed]).sort()).toEqual([
+      ["@acme/rerail-pack-acme-valid", "@acme", "1.0.0", "1.0.0"],
+      ["@neralabs/rerail-pack-valid", "rerail", "0.1.0", null],
+    ]);
+    expect(discovery.problems).toEqual(["@aaa/rerail-pack-valid@1.0.0: pack id valid is taken by @neralabs/rerail-pack-valid"]);
+  });
+
   it("reads the installed packs of its store's home, as stand-ins for packs npm cannot give", async () => {
     const home = temporaryHome();
     const installed = installPackDirectory(repositoryPath("packs", "typescript"), "typescript", home);
@@ -333,13 +411,112 @@ describe("discoverPacks", () => {
 
     expect(discovery.available.map(found => [found.pack.id, found.version, found.installed])).toEqual([["typescript", version, version]]);
   });
+
+  describe("when no pack fits", { timeout: COMPILING_TIMEOUT_MS }, () => {
+    // Rerail's own Python and SQL packs: Python skips tests/ and scripts/, and SQL looks for *.sql only.
+    const store = (home: string): PackStore => directoryPackStore(repositoryPath("packs"), ["python", "sql"], home);
+
+    function project(files: Record<string, string>): string {
+      const root = temporaryHome();
+      for (const [path, content] of Object.entries(files)) {
+        mkdirSync(dirname(join(root, path)), { recursive: true });
+        writeFileSync(join(root, path), content);
+      }
+      return root;
+    }
+
+    it("says what the scan found, the pack whose excludes left out every file it looks for, and what each pack looks for", async () => {
+      const root = project({ "tests/test_a.py": "a = 1\n", "tests/test_b.py": "b = 1\n", "scripts/release.py": "r = 1\n", "README.md": "hi\n" });
+
+      const discovery = await discoverPacks(root, store(temporaryHome()));
+
+      expect(discovery.recommended).toEqual([]);
+      expect(discovery.nothingFits).toEqual({
+        fileCount: 4,
+        endings: [{ ending: ".py", fileCount: 3 }, { ending: ".md", fileCount: 1 }],
+        notScanned: [],
+        git: false,
+        stoppedEarly: false,
+        nearMisses: [{ name: "Python", fileCount: 3, excludedBy: [{ glob: "tests/", fileCount: 2 }, { glob: "scripts/", fileCount: 1 }] }],
+        packs: [{ id: "python", name: "Python", files: ["*.py", "*.pyi"], dependencies: [] }, { id: "sql", name: "SQL", files: ["*.sql"], dependencies: [] }],
+      });
+    });
+
+    it("names the folder it did not scan when that held the only source file", async () => {
+      const root = project({ "fixtures/app.py": "app = 1\n" });
+
+      const discovery = await discoverPacks(root, store(temporaryHome()));
+
+      expect(discovery.nothingFits).toMatchObject({ endings: [], notScanned: [{ folder: "fixtures" }], nearMisses: [] });
+    });
+
+    it("explains nothing when a pack fits, or when there is no repository to scan", async () => {
+      const root = project({ "src/app.py": "app = 1\n", "tests/test_app.py": "t = 1\n" });
+
+      const fits = await discoverPacks(root, store(temporaryHome()));
+      const unscanned = await discoverPacks(undefined, store(temporaryHome()));
+
+      expect(fits.recommended.map(found => found.pack.id)).toEqual(["python"]);
+      expect(fits.nothingFits).toBeUndefined();
+      expect(unscanned.nothingFits).toBeUndefined();
+    });
+
+    it("explains nothing when the only pack that fits has no rules yet: that reason is the whole answer", async () => {
+      // Rerail's Rust pack, and its SQL pack as it would be published before any of its rules is ready.
+      const packsRoot = temporaryHome();
+      for (const id of ["rust", "sql"]) cpSync(repositoryPath("packs", id), join(packsRoot, id), { recursive: true, filter: source => !source.includes("upstream") });
+      const packJson = join(packsRoot, "sql", "pack.json");
+      writeFileSync(packJson, JSON.stringify({ ...JSON.parse(readFileSync(packJson, "utf8")) as Record<string, unknown>, rules: [] }));
+      const root = project({ "db/schema.sql": "select 1;\n" });
+
+      const discovery = await discoverPacks(root, directoryPackStore(packsRoot, ["rust", "sql"], temporaryHome()));
+
+      expect(discovery.withoutRules.map(found => [found.pack.id, found.match !== undefined])).toEqual([["sql", true]]);
+      expect(discovery.recommended).toEqual([]);
+      expect(discovery.nothingFits).toBeUndefined();
+    });
+
+    it("explains nothing when no pack could be fetched", async () => {
+      const root = project({ "tests/test_a.py": "a = 1\n" });
+      const offline: PackStore = {
+        ...store(temporaryHome()),
+        fetch: async ids => ({ fetched: [], problems: ids.map(id => ({ packageName: `@neralabs/rerail-pack-${id}`, reason: "npm could not reach the registry (ENOTFOUND)" })), release: async () => {} }),
+      };
+
+      const discovery = await discoverPacks(root, offline);
+
+      expect(discovery.available).toEqual([]);
+      expect(discovery.nothingFits).toBeUndefined();
+    });
+  });
+});
+
+describe("installedPackagesOf", () => {
+  it("names every installed package holding a pack id, whoever publishes it, and only those", () => {
+    const home = temporaryHome();
+    installPackDirectory(VALID, "valid", home);
+    installPackDirectory(thirdPartyPack(join(home, "copies"), "rerail-pack-valid", "valid"), "rerail-pack-valid", home);
+    installPackDirectory(thirdPartyPack(join(home, "copies"), "@acme/rerail-pack-valid", "valid"), "@acme/rerail-pack-valid", home);
+    installPackDirectory(thirdPartyPack(join(home, "copies"), "@acme/rerail-pack-other", "other"), "@acme/rerail-pack-other", home);
+
+    expect(installedPackagesOf("valid", home)).toEqual(["@acme/rerail-pack-valid", "@neralabs/rerail-pack-valid", "rerail-pack-valid"]);
+    expect(installedPackagesOf("missing", home)).toEqual([]);
+  });
 });
 
 describe("parsePackVersions", () => {
   it("reads each <id>@<version> entry, prerelease versions included, and a pack named twice at one version once", () => {
     expect(parsePackVersions("typescript@0.1.1,complexity@0.1.2-next.0,typescript@0.1.1")).toEqual([
-      { id: "typescript", version: "0.1.1" },
-      { id: "complexity", version: "0.1.2-next.0" },
+      typescriptAt("0.1.1"),
+      { packageName: "@neralabs/rerail-pack-complexity", id: "complexity", version: "0.1.2-next.0" },
+    ]);
+  });
+
+  it("reads a pack's package name, a third party's included, as that package", () => {
+    expect(parsePackVersions("@acme/rerail-pack-sql@1.0.0,rerail-pack-lint@0.2.0,@neralabs/rerail-pack-typescript@0.1.1")).toEqual([
+      { packageName: "@acme/rerail-pack-sql", id: "sql", version: "1.0.0" },
+      { packageName: "rerail-pack-lint", id: "lint", version: "0.2.0" },
+      typescriptAt("0.1.1"),
     ]);
   });
 
@@ -347,12 +524,12 @@ describe("parsePackVersions", () => {
     expect(() => parsePackVersions("complexity@0.1.1,typescript")).toThrow(/<id>@<version>.*not typescript$/u);
   });
 
-  it.each(["typescript@01.2.3", "typescript@1.0.0-a..b"])("refuses %s, a version semver does not read", entry => {
-    expect(() => parsePackVersions(entry)).toThrow(`<id>@<version>, for example typescript@0.1.1, not ${entry}`);
+  it.each(["typescript@01.2.3", "typescript@1.0.0-a..b", "@acme/sql@1.0.0"])("refuses %s, not a pack at a version semver reads", entry => {
+    expect(() => parsePackVersions(entry)).toThrow(`<id>@<version> or <package>@<version>, for example typescript@0.1.1, not ${entry}`);
   });
 
   it("takes any well-formed pack id, a project's own included, and refuses one named at two versions", () => {
-    expect(parsePackVersions("acme-conventions@1.0.0")).toEqual([{ id: "acme-conventions", version: "1.0.0" }]);
+    expect(parsePackVersions("acme-conventions@1.0.0")).toEqual([{ packageName: "@neralabs/rerail-pack-acme-conventions", id: "acme-conventions", version: "1.0.0" }]);
     expect(() => parsePackVersions("typescript@0.1.1,typescript@0.1.2")).toThrow("typescript is named twice, at 0.1.1 and 0.1.2");
   });
 });

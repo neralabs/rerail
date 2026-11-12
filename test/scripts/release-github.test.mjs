@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import { NO_CHANGELOG_ENTRIES } from "../../scripts/release/core.mjs";
-import { backfillPlan, backfillTags, changelogPath, ghReleaseArgs, githubRelease, packReleaseNotes, parseRemoteTags, releasedByTag } from "../../scripts/release/github-release.mjs";
+import { backfillPlan, backfillTags, changelogPath, ghReleaseArgs, githubRelease, packReleaseNotes, parseRemoteTags, RELEASE_NOTES_LIMIT, releasedByTag } from "../../scripts/release/github-release.mjs";
 
 const CORE = "@neralabs/rerail";
 const PYTHON = "@neralabs/rerail-pack-python";
@@ -52,6 +52,32 @@ describe("githubRelease", () => {
     });
     expect(githubRelease({ name: PYTHON, version: "0.1.5", distTag: "next" }, packChangelog)).toMatchObject({ prerelease: true, latest: false });
   });
+
+  it("points relative links at the docs website or the file at the tag, since GitHub resolves them against the release page", () => {
+    const changelog = ["# Changelog", "", "## 0.1.1 (2026-11-04)", "", "- [a](docs/privacy.md#support-bundles), [b](docs/code-rule-dsl-reference.html#importTarget), [c](docs/README.md), [d](SECURITY.md), [e](https://x.dev/y), [f](#g).", ""].join("\n");
+    expect(githubRelease({ name: CORE, version: "0.1.1", distTag: "latest" }, changelog).notes).toBe(
+      "- [a](https://neralabs.github.io/rerail/privacy.html#support-bundles), [b](https://neralabs.github.io/rerail/code-rule-dsl-reference.html#importTarget), [c](https://neralabs.github.io/rerail/index.html), [d](https://github.com/neralabs/rerail/blob/v0.1.1/SECURITY.md), [e](https://x.dev/y), [f](#g).",
+    );
+    const pack = [`# ${PYTHON}`, "", "## 0.1.6 (2026-11-04)", "", "- See [the README](README.md) and [packs](../../docs/rule-packs.md).", ""].join("\n");
+    expect(githubRelease({ name: PYTHON, version: "0.1.6", distTag: "latest" }, pack).notes).toBe(
+      `- See [the README](https://github.com/neralabs/rerail/blob/${PYTHON}@0.1.6/packs/python/README.md) and [packs](https://neralabs.github.io/rerail/rule-packs.html).`,
+    );
+  });
+});
+
+describe("notes past what a GitHub Release holds", () => {
+  const section = (entries) => [`# ${PYTHON}`, "", "## 0.1.6 (2026-11-05)", "", "537 rules, 318 of them on by default.", "", "### Added", "", "- `a` (starts off): ".concat("x".repeat(entries)), ""].join("\n");
+
+  it("go out as the lead and a link to the changelog at the tag", () => {
+    const { notes } = githubRelease({ name: PYTHON, version: "0.1.6", distTag: "latest" }, section(RELEASE_NOTES_LIMIT));
+    expect(notes).toBe(`537 rules, 318 of them on by default.\n\nThese notes are too long for a GitHub Release: [read them in packs/python/CHANGELOG.md](https://github.com/neralabs/rerail/blob/${PYTHON}@0.1.6/packs/python/CHANGELOG.md).`);
+  });
+
+  it("are left as they are up to the limit", () => {
+    const { notes } = githubRelease({ name: PYTHON, version: "0.1.6", distTag: "latest" }, section(1000));
+    expect(notes).toContain("### Added");
+    expect(notes.length).toBeLessThan(RELEASE_NOTES_LIMIT);
+  });
 });
 
 describe("packReleaseNotes", () => {
@@ -63,6 +89,11 @@ describe("packReleaseNotes", () => {
   it("keeps the headings of a section with more than one kind of change", () => {
     const section = "### Minor Changes\n\n- 1234abc: A rule added.\n\n### Patch Changes\n\n- A fix.";
     expect(packReleaseNotes(section)).toBe("### Minor Changes\n\n- A rule added.\n\n### Patch Changes\n\n- A fix.");
+  });
+
+  it("leaves a section in Keep a Changelog's format as it is, a lone change type's heading included", () => {
+    const section = "10 rules, all on by default.\n\n### Added\n\n- New rule: `x` starts in Steer.";
+    expect(packReleaseNotes(section)).toBe(section);
   });
 
   it("leaves text that is no hash alone", () => {

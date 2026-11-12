@@ -280,6 +280,29 @@ export const libraryRules = sqliteTable(
   ],
 );
 
+/** What a person approves before it steers: one rule's content, or one pack's content at one version. */
+export const RULE_APPROVAL_SUBJECTS = ["rule", "pack"] as const;
+
+/**
+ * Content a person approved (`rule-approval.ts`), once per machine: a rule created by you or in a worktree's
+ * `.rerail/rules` by its id, or a pack Rerail does not publish by its package name, each at the digest of the content
+ * approved. Content with no row here runs in Log only. Rows are only added, so going back to approved content needs
+ * no approval again.
+ */
+export const ruleApprovals = sqliteTable(
+  "rule_approvals",
+  {
+    subjectKind: text("subject_kind", { enum: RULE_APPROVAL_SUBJECTS }).notNull(),
+    subjectId: text("subject_id").notNull(),
+    digest: text("digest").notNull(),
+    approvedAt: integer("approved_at").notNull(),
+  },
+  table => [
+    primaryKey({ columns: [table.subjectKind, table.subjectId, table.digest] }),
+    check("rule_approvals_subject_kind", sql`${table.subjectKind} IN (${sql.raw(inList(RULE_APPROVAL_SUBJECTS))})`),
+  ],
+);
+
 /**
  * `repository_id` is the stable identity of the checkout the session ran in; per-repository
  * views filter on it. Null when the recorder had no repository identity to attribute it to.
@@ -334,6 +357,32 @@ export const workLinks = sqliteTable(
   table => [
     unique("work_links_session_reference").on(table.sessionId, table.kind, table.reference),
     index("work_links_reference").on(table.kind, table.reference),
+  ],
+);
+
+/**
+ * A coding agent's one-line reason for not following a steer (`rerail feedback`), kept on this computer for tuning
+ * the rule; `rerail feedback list` prints them for the person to attach to a rule misfire issue. Rerail sends none
+ * anywhere. The repository is the checkout's, so a reset deletes the repository's notes, and the session is where the
+ * rule last steered there, when Rerail found one; like `work_links`, no foreign key.
+ */
+export const steerFeedback = sqliteTable(
+  "steer_feedback",
+  {
+    id: text("id").primaryKey(),
+    ruleId: text("rule_id").notNull(),
+    packId: text("pack_id"),
+    packVersion: text("pack_version"),
+    host: text("host").$type<RerailHost>(),
+    sessionId: text("session_id"),
+    repositoryId: text("repository_id").notNull(),
+    reason: text("reason").notNull(),
+    rerailVersion: text("rerail_version").notNull(),
+    recordedAt: integer("recorded_at").notNull(),
+  },
+  table => [
+    index("steer_feedback_rule_recorded").on(table.ruleId, table.recordedAt),
+    index("steer_feedback_repository").on(table.repositoryId),
   ],
 );
 
@@ -406,7 +455,8 @@ export const auditResultPages = sqliteTable(
 
 /**
  * One row per distinct violation an audit reported: `(rule_id, violation_key)` once per audit, at the `ordinal` of
- * its first copy in `audits.violations_json`, where its payload stays. `logged`: some copy was recorded in Log mode.
+ * its first copy in `audits.violations_json`, where its payload stays. `logged`: the coding agent was not told, because
+ * the audit ran in Log mode or some copy's rule was in Log mode.
  */
 export const auditViolations = sqliteTable(
   "audit_violations",
@@ -426,15 +476,15 @@ export const auditViolations = sqliteTable(
     index("audit_violations_rule_started").on(table.ruleId, table.startedAt),
     // An append looks up the audit's own rows by (rule, key).
     index("audit_violations_audit_key").on(table.auditId, table.ruleId, table.violationKey),
-    // The rollup's maxima: a key's latest sighting, and its latest in Log mode, each one index probe.
+    // The rollup's maxima: a key's latest sighting, and its latest logged, each one index probe.
     index("audit_violations_key").on(table.sessionId, table.ruleId, table.violationKey, table.startedAt),
     index("audit_violations_key_logged").on(table.sessionId, table.ruleId, table.violationKey, table.startedAt).where(sql`${table.logged} = 1`),
   ],
 );
 
 /**
- * Per session, rule and violation key: the latest audit start that reported it, and the latest that reported it in
- * Log mode. A range `[since, now)` holds the violation exactly when `last_seen_at >= since`.
+ * Per session, rule and violation key: the latest audit start that reported it, and the latest that reported it
+ * `logged` (`audit_violations`). A range `[since, now)` holds the violation exactly when `last_seen_at >= since`.
  */
 export const ruleViolationRollup = sqliteTable(
   "rule_violation_rollup",
@@ -684,7 +734,7 @@ export function sessionsOfRepository(repositoryIds: string | readonly string[], 
  * lose only ended sessions, so running ones keep recording. A Merge Assist item keyed by a session records which
  * correction a branch's own candidate came from; the candidate file stays in the checkout.
  */
-export const SESSION_HISTORY_TABLES = [events, workLinks, audits, auditRequests, repositoryAudits, mergeAssistItems] as const;
+export const SESSION_HISTORY_TABLES = [events, workLinks, steerFeedback, audits, auditRequests, repositoryAudits, mergeAssistItems] as const;
 
 export type RuleRow = typeof rules.$inferSelect;
 export type NewRuleRow = typeof rules.$inferInsert;

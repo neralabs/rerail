@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadRuleCatalog } from "../../../src/engine/catalog/rule-catalog.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
 import { assertEngineRegexes, engineRegexIssues } from "../../../src/engine/catalog/rule-regexes.js";
@@ -13,6 +13,20 @@ import {
 import { SqliteRuleStore } from "../../../src/engine/catalog/rule-store.js";
 import { listLibraryRules, upsertLibraryRule } from "../../../src/engine/catalog/rule-library.js";
 import { MOCK_CONVERSATION_RULES } from "../../../src/cli/index.js";
+import { EngineUnavailableError } from "../../../src/engine/code-rule/code-rule-compile.js";
+
+/** Set to make the native binding fail to load, as on a machine without the engine. */
+const engine = vi.hoisted(() => ({ missing: false }));
+vi.mock("../../../src/engine/native/native.js", async importOriginal => {
+  const native = await importOriginal<typeof import("../../../src/engine/native/native.js")>();
+  return {
+    ...native,
+    loadNativeBinding: () => {
+      if (engine.missing) throw new Error("the native binding did not load");
+      return native.loadNativeBinding();
+    },
+  };
+});
 
 const LOOK_AROUND = /^is not a valid regex: .*look-around/su;
 const command = (regex: string): MatchCondition => ({ field: "input.command", regex });
@@ -29,6 +43,7 @@ function structural(match: unknown): ConversationRule {
 
 const directories: string[] = [];
 afterEach(async () => {
+  engine.missing = false;
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
 
@@ -58,6 +73,12 @@ describe("engine regex validation", () => {
       { path: ["match", "regex"], message: "is 16385 bytes; maxRegexPatternBytes allows at most 16384" },
     ]);
     expect(engineRegexIssues(structural(command("a".repeat(16_384))))).toEqual([]);
+  });
+
+  it("throws without the engine rather than taking an unchecked pattern as accepted", () => {
+    engine.missing = true;
+    expect(() => engineRegexIssues(structural(command("(?!main)")))).toThrow(EngineUnavailableError);
+    expect(() => assertEngineRegexes(structural(command("x")))).toThrow(/native kernel unavailable: the native binding did not load/u);
   });
 
   it("has nothing to check on a similarity rule", () => {

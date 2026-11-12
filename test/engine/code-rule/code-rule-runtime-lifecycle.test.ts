@@ -1,10 +1,11 @@
-import { mkdir, opendir, realpath, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { mkdir, opendir, realpath, rm, writeFile } from "node:fs/promises";
 import type * as FsPromises from "node:fs/promises";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AdapterDelivery, RerailHost } from "../../../src/engine/adapter-contract.js";
 import type { CodeRuleAuditor, RuleSteerDelivery } from "../../../src/engine/code-rule/code-rule.js";
-import { NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
+import { languageFor, NativeCodeRuleEnforcer } from "../../../src/engine/code-rule/code-rule-enforcer.js";
 import { CodeRuleBridge } from "../../../src/engine/code-rule/code-rule-bridge.js";
 import { SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import { codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
@@ -47,7 +48,8 @@ async function fixture({ deliverBackground, host = "claude-code", prepare, audit
       steerDelivery = options.steerDelivery;
       return {
         openWorkspace: async () => { opened.resolve(); },
-        acceptsPath: () => true,
+        // As rules without a text clause: the session's own files under `sessions/` are no sources.
+        acceptsPath: path => languageFor(path) !== undefined,
         auditGeneratedEdits: auditGeneratedEdits?.(options.steerDelivery)
           ?? (async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] })),
         close: async () => undefined,
@@ -81,8 +83,13 @@ function needleCatalog() {
   })]);
 }
 
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
+
 describe("source-scoped steers", () => {
   it("starts and accepts edits while repository discovery is pending, then records audit errors and delivers fresh violations", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT", "1");
     const root = await realpath(await temporaryDirectory());
     await writeFile(join(root, "broken.py"), Buffer.from([0]));
     await writeFile(join(root, "edited.py"), "before\n");
@@ -144,6 +151,11 @@ describe("source-scoped steers", () => {
       expect(await runtime.ingest({
         kind: "user-prompt", eventId: "poll", sessionId: session.sessionId, text: "continue",
       })).toEqual([]);
+      // A command the turn's end finds still running: what it wrote while the baseline was pending is the session's own.
+      await runtime.ingest({
+        kind: "call", eventId: "shell-call", sessionId: session.sessionId,
+        toolCallId: "shell", toolName: "bash", input: { command: "./write.sh &" },
+      });
       await writeFile(join(root, "shell.py"), "safe()\n");
       gate.resolve();
       await enforcer!.settle();
@@ -170,6 +182,7 @@ describe("source-scoped steers", () => {
   });
 
   it("evaluates an edit to a source that a rule refreshed at the tool call brings into scope", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT", "1");
     const root = await realpath(await temporaryDirectory());
     await mkdir(join(root, "web"));
     const databasePath = join(root, "rerail.sqlite");
@@ -228,7 +241,105 @@ describe("source-scoped steers", () => {
     }
   });
 
+  it("audits only what a session changes while the automatic first repository audit is off", async () => {
+    const root = await realpath(await temporaryDirectory());
+    const databasePath = join(root, "rerail.sqlite");
+    await writeFile(join(root, "existing.py"), "NEEDLE\n");
+    await writeFile(join(root, "edited.py"), "before\n");
+    const runtime = new RerailRuntime({
+      storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
+      createAuditor: options => new NativeCodeRuleEnforcer(needleCatalog(), options),
+    });
+    const audits = new SqliteAuditStore(databasePath);
+    const session = { host: "omp" as const, sessionId: "no-first-audit", cwd: root };
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      await runtime.codeRulesOpened(session.sessionId);
+      expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([]);
+      await runtime.ingest({
+        kind: "call", eventId: "call", sessionId: session.sessionId,
+        toolCallId: "write", toolName: "write", input: { path: "edited.py" },
+      });
+      await writeFile(join(root, "edited.py"), "NEEDLE\n");
+      const deliveries = [
+        ...await runtime.ingest({
+          kind: "result", eventId: "result", sessionId: session.sessionId,
+          toolCallId: "write", toolName: "write", output: "written",
+        }),
+        ...await runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId: session.sessionId, text: "done" }),
+      ];
+      expect(deliveries).toEqual([expect.objectContaining({ content: expect.stringContaining("- edited.py:1:1 — No needle [") })]);
+      expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([
+        expect.objectContaining({ scope: "ai-output", status: "completed", paths: ["edited.py"] }),
+      ]);
+    } finally {
+      await runtime.dispose();
+      audits.close();
+    }
+  });
+
+  it("steers and records nothing for what a Git command rewrote, in any session, and only its own line for a later edit", async () => {
+    const root = await realpath(await temporaryDirectory());
+    const databasePath = join(root, "rerail.sqlite");
+    const git = (...args: string[]) =>
+      execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd: root, stdio: "ignore" });
+    await writeFile(join(root, ".gitignore"), "rerail.sqlite*\nsessions/\n");
+    await writeFile(join(root, "existing.py"), "safe\n");
+    await writeFile(join(root, "removed.py"), "NEEDLE\n");
+    git("init", "--quiet", "--initial-branch=main");
+    git("add", ".");
+    git("commit", "--quiet", "-m", "seed");
+    git("switch", "--quiet", "-c", "other");
+    await writeFile(join(root, "existing.py"), "NEEDLE\nsafe\n");
+    await writeFile(join(root, "added.py"), "NEEDLE\n");
+    await rm(join(root, "removed.py"));
+    git("add", ".");
+    git("commit", "--quiet", "-m", "other");
+    git("switch", "--quiet", "main");
+    const runtime = new RerailRuntime({
+      storageRoot: join(root, "sessions"), databasePath, workspaceRoot: root, autostart: false, embedder: testEmbedder,
+      createAuditor: options => new NativeCodeRuleEnforcer(needleCatalog(), options),
+    });
+    const audits = new SqliteAuditStore(databasePath);
+    const ran = { host: "omp" as const, sessionId: "ran-the-checkout", cwd: root };
+    const other = { host: "omp" as const, sessionId: "only-browsed", cwd: root };
+    const command = async (eventId: string, run: () => unknown) => {
+      await runtime.ingest({
+        kind: "call", eventId: `${eventId}-call`, sessionId: ran.sessionId, toolCallId: eventId, toolName: "bash", input: { command: "./run.sh" },
+      });
+      await run();
+      return await runtime.ingest({
+        kind: "result", eventId: `${eventId}-result`, sessionId: ran.sessionId, toolCallId: eventId, toolName: "bash", output: "",
+      });
+    };
+    const turnEnd = (sessionId: string, eventId: string) => runtime.ingest({ kind: "turn-end", eventId, sessionId, text: "done" });
+    try {
+      for (const session of [ran, other]) {
+        await runtime.ingest({ kind: "session-start", eventId: `${session.sessionId}-start`, session });
+        await runtime.codeRulesOpened(session.sessionId);
+        expect(await turnEnd(session.sessionId, `${session.sessionId}-baseline`)).toEqual([]);
+      }
+
+      expect(await command("checkout", () => git("checkout", "--quiet", "other"))).toEqual([]);
+      expect(await turnEnd(ran.sessionId, "ran-turn")).toEqual([]);
+      expect(await turnEnd(other.sessionId, "other-turn")).toEqual([]);
+      for (const session of [ran, other]) expect(audits.list({ sessionId: session.sessionId }).audits).toEqual([]);
+
+      const deliveries = await command("edit", () => writeFile(join(root, "existing.py"), "NEEDLE\nsafe\nNEEDLE\n"));
+      const steered = deliveries.map(delivery => delivery.content).join("\n");
+      expect(steered).toContain("- existing.py:3:1 — No needle [");
+      expect(steered).not.toContain("existing.py:1:1");
+      expect(audits.list({ sessionId: ran.sessionId }).audits).toEqual([
+        expect.objectContaining({ scope: "ai-output", status: "completed", paths: ["existing.py"] }),
+      ]);
+    } finally {
+      await runtime.dispose();
+      audits.close();
+    }
+  });
+
   it("ends a turn without waiting for the session-start repository audit, once the turn's edits are audited", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT", "1");
     const root = await realpath(await temporaryDirectory());
     const databasePath = join(root, "rerail.sqlite");
     // The session's evaluator attaches at once; the repository audit's own workspace waits for the gate.
@@ -272,6 +383,7 @@ describe("source-scoped steers", () => {
   });
 
   it("closes a session only once its session-start repository audit has stopped", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT", "1");
     const root = await realpath(await temporaryDirectory());
     const databasePath = join(root, "rerail.sqlite");
     const attachments = gateStorageAttachments();
@@ -517,6 +629,7 @@ describe("source-scoped steers", () => {
   });
 
   it("leaves the audits of a reopened session alone when the evaluator it replaced is released late", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT", "1");
     const root = await realpath(await temporaryDirectory());
     const databasePath = join(root, "rerail.sqlite");
     const attachments = gateStorageAttachments();
@@ -576,6 +689,7 @@ describe("source-scoped steers", () => {
   });
 
   it("leaves the audits of a session another runtime reopened alone when the evaluator the closed runtime left opening is released late", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT", "1");
     const root = await realpath(await temporaryDirectory());
     const databasePath = join(root, "rerail.sqlite");
     const attachments = gateStorageAttachments();
@@ -677,7 +791,7 @@ describe("source-scoped steers", () => {
         expect(test.audits.list({ sessionId: test.session.sessionId }).audits).toEqual([]);
         test.attachments.workspaces[0]!.release();
         // Opened: the call it answered is not begun or finished late. The evaluator's first walk still sees the file
-        // changed while it ran, as it sees any change it did not watch being made, and checks it.
+        // changed while it ran, and the call's window, opened as it was answered, makes the change the session's own.
         expect(await test.steers()).toEqual([expect.objectContaining({ content: expect.stringContaining("- edited.py:1:1 — No needle [") })]);
 
       } finally { await test.close(); }
@@ -976,6 +1090,60 @@ describe("source-scoped steers", () => {
       expect(readBoundary).toEqual([]);
       expect(await test.runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId, text: "done" })).toEqual([]);
       expect(batches).toHaveLength(1);
+    } finally { await test.close(); }
+  });
+
+  it("steers a Codex write no hook showed, made between the prompt and the turn's end, as the session's own", async () => {
+    const batches: Parameters<CodeRuleAuditor["auditGeneratedEdits"]>[1][] = [];
+    const test = await fixture({
+      host: "codex",
+      prepare: root => writeFile(join(root, "route.py"), "transaction.fetch_value('SELECT 1')\n"),
+      auditGeneratedEdits: steerDelivery => async (sessionId, batch) => {
+        batches.push(batch);
+        await steerDelivery.requestSteer(sessionId, "steer", `CURSOR_EXECUTE revision ${batch.revision}`, {
+          revision: batch.revision, scope: batch.edits.map(edit => edit.path),
+        });
+        return { revision: batch.revision, disposition: "continue", violations: [], failures: [] };
+      },
+    });
+    try {
+      const sessionId = test.session.sessionId;
+      expect(await test.runtime.ingest({ kind: "turn-end", eventId: "baseline", sessionId, text: "" })).toEqual([]);
+      await test.runtime.ingest({ kind: "user-prompt", eventId: "prompt", sessionId, text: "use a cursor" });
+      // `apply_patch`: Codex fires no hook for it, so no call opens around the write.
+      await writeFile(join(test.root, "route.py"), "cursor.execute('SELECT 1')\n");
+      const turnEnd = await test.runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId, text: "done" });
+      // Steered, not recorded in Log as another writer's change.
+      expect(batches.map(batch => [batch.mode, batch.edits.map(edit => [edit.path, edit.generatedText])])).toEqual([
+        [undefined, [["route.py", "cursor.execute('SELECT 1')\n"]]],
+      ]);
+      expect(turnEnd).toEqual([expect.objectContaining({ content: "CURSOR_EXECUTE revision 1" })]);
+    } finally { await test.close(); }
+  });
+
+  it("opens a Codex turn's window at its first call when the runtime never saw the turn's prompt, as after a restart", async () => {
+    const batches: Parameters<CodeRuleAuditor["auditGeneratedEdits"]>[1][] = [];
+    const test = await fixture({
+      host: "codex",
+      prepare: root => writeFile(join(root, "route.py"), "transaction.fetch_value('SELECT 1')\n"),
+      auditGeneratedEdits: () => async (_sessionId, batch) => {
+        batches.push(batch);
+        return { revision: batch.revision, disposition: "continue", violations: [], failures: [] };
+      },
+    });
+    try {
+      const sessionId = test.session.sessionId;
+      expect(await test.runtime.ingest({ kind: "turn-end", eventId: "baseline", sessionId, text: "" })).toEqual([]);
+      // No user-prompt: the daemon that saw it is gone. The turn's next shell command reaches this one.
+      const command = { sessionId, toolCallId: "shell-1", toolName: "exec_command" };
+      await test.runtime.ingest({ kind: "call", eventId: "call", ...command, input: { cmd: "ls" } });
+      await test.runtime.ingest({ kind: "result", eventId: "result", ...command, output: "" });
+      // `apply_patch` after the command, which no hook shows.
+      await writeFile(join(test.root, "route.py"), "cursor.execute('SELECT 1')\n");
+      await test.runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId, text: "done" });
+      expect(batches.map(batch => [batch.mode, batch.edits.map(edit => [edit.path, edit.generatedText])])).toEqual([
+        [undefined, [["route.py", "cursor.execute('SELECT 1')\n"]]],
+      ]);
     } finally { await test.close(); }
   });
 

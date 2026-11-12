@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants, existsSync } from "node:fs";
 import {
@@ -20,7 +19,6 @@ import {
 } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
-import { promisify } from "node:util";
 import {
   isClaudeStatusLine,
   readClaudeStatusRegistration,
@@ -29,17 +27,23 @@ import {
   type ClaudeStatusRegistration,
   type ClaudeStatusLine,
 } from "./claude-status-store.js";
+import { readAddedSettingsEntries, writeAddedSettingsEntries, type AddedSettingsEntries } from "./settings-entries-store.js";
 import { commandFileText, MANAGED_SKILL_MARKER, type CommandFileContext } from "../harness/rerail-command-files.js";
 import { RERAIL_COMMANDS, type RerailCommandName } from "../harness/rerail-commands.js";
 import { andList, shellQuote } from "../harness/setup-screens.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
-import { defaultRerailHome } from "../engine/storage/rerail-home.js";
+import { RERAIL_HOSTS, type RerailHost } from "../engine/adapter-contract.js";
+import { CURRENT_LINK, defaultRerailHome, VERSIONS_DIR } from "../engine/storage/rerail-home.js";
+import { runGit } from "../engine/git.js";
 import { pinnedNodePath } from "./node-path.js";
+import { DAEMON_ACCESS_TOKEN_FILE } from "../runtime/daemon-control.js";
+import { ACTIVE_PROFILE_FILE, PROFILES_DIR } from "../activation/customer-profile.js";
+import { DEVICE_SECRETS_DIR } from "../activation/device-keystore.js";
 
-export type Harness = "omp" | "pi" | "claude-code" | "codex" | "cursor";
+export type Harness = RerailHost;
 
-export const HARNESSES: readonly Harness[] = ["omp", "pi", "claude-code", "codex", "cursor"];
+export const HARNESSES: readonly Harness[] = RERAIL_HOSTS;
 
 export interface RegistrationOptions {
   /** Installed package root containing package.json, dist/ and hooks/. */
@@ -206,7 +210,7 @@ function registeredRoot(script: string, executable: string): string | undefined 
 }
 
 async function isRerailPackageRoot(context: Context, root: string): Promise<boolean> {
-  if (root === context.root || root === join(context.home, ".rerail", "current")) return true;
+  if (root === context.root || root === join(context.home, ".rerail", CURRENT_LINK)) return true;
   let verified = context.packageRoots.get(root);
   if (verified === undefined) {
     verified = readFile(join(root, "package.json"), "utf8").then(text => {
@@ -393,10 +397,14 @@ function commandContext(context: Context): CommandFileContext {
   return { cli: directCommand(context, ENTRY_POINTS.cli), packageRoot: context.root, setupLauncher: setupLauncher(context) };
 }
 
+/** The Rerail home set-up uses: `RERAIL_HOME`, else `.rerail` in the registered home (`defaultRerailHome`). */
+function rerailHomeDirectory(context: Context): string {
+  return process.env.RERAIL_HOME === undefined ? join(context.home, ".rerail") : resolve(process.env.RERAIL_HOME);
+}
+
 /** The launcher set-up's answer commands start with (`Updater.launcherPath`), quoted as set-up prints it. */
 function setupLauncher(context: Context): string {
-  const home = process.env.RERAIL_HOME === undefined ? join(context.home, ".rerail") : resolve(process.env.RERAIL_HOME);
-  return shellQuote(join(home, "bin", context.platform === "win32" ? "rerail.cmd" : "rerail"), context.platform);
+  return shellQuote(join(rerailHomeDirectory(context), "bin", context.platform === "win32" ? "rerail.cmd" : "rerail"), context.platform);
 }
 
 function describe(context: Context, detail: string): string {
@@ -651,6 +659,170 @@ function restoreClaudeStatus(next: JsonObject, statusLine: ClaudeStatusLine | un
   next.statusLine = restored;
 }
 
+/** Whether `path` is `container` or lies inside it. */
+function contains(container: string, path: string): boolean {
+  const rel = relative(container, path);
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
+/** The container at the dotted `keys` below `value`, or undefined when one on the way is missing or not an object. */
+function objectAt(value: JsonObject, keys: readonly string[]): JsonObject | undefined {
+  let container = value;
+  for (const key of keys) {
+    const next = container[key];
+    if (!isObject(next)) return undefined;
+    container = next;
+  }
+  return container;
+}
+
+/**
+ * Takes out what an earlier registration added (`previous`), then adds the `wanted` entries each list lacks, creating
+ * the objects and lists that hold them. Returns what it added, for removal to take out again; undefined when nothing.
+ * Only Rerail's own entries move: the person's entries keep their place, and one they had already is not recorded.
+ * Removal takes out only what a registration of the same root added, as it does with the status line.
+ */
+function replaceAddedEntries(
+  context: Context, value: JsonObject, previous: AddedSettingsEntries | undefined,
+  wanted: Readonly<Record<string, readonly string[]>>, path: string,
+): AddedSettingsEntries | undefined {
+  if (context.mode === "unregister" && previous !== undefined && previous.root !== context.root) return previous;
+  removeAddedLists(value, previous);
+  removeCreatedContainers(value, previous);
+  const added: AddedSettingsEntries = { root: context.root, entries: {}, created: [] };
+  for (const [key, entries] of Object.entries(wanted)) addWantedEntries(value, key, entries, { previous, added, path });
+  return isNothingAdded(added) ? undefined : added;
+}
+
+const isNothingAdded = (added: AddedSettingsEntries): boolean => Object.keys(added.entries).length === 0 && added.created.length === 0;
+
+/** The object that holds a dotted key's last name, and that name. */
+function lastKeyOf(value: JsonObject, key: string): [JsonObject | undefined, string] {
+  const keys = key.split(".");
+  return [objectAt(value, keys.slice(0, -1)), keys.at(-1)!];
+}
+
+const isEmptyContainer = (held: unknown): boolean => (Array.isArray(held) && held.length === 0) || (isObject(held) && Object.keys(held).length === 0);
+
+/** Takes out the entries `previous` added. */
+function removeAddedLists(value: JsonObject, previous: AddedSettingsEntries | undefined): void {
+  for (const [key, entries] of Object.entries(previous?.entries ?? {})) {
+    const [parent, name] = lastKeyOf(value, key);
+    const list = parent?.[name];
+    if (parent !== undefined && Array.isArray(list)) parent[name] = list.filter(entry => typeof entry !== "string" || !entries.includes(entry));
+  }
+}
+
+/** Takes out what `previous` created that its entries' removal left empty. */
+function removeCreatedContainers(value: JsonObject, previous: AddedSettingsEntries | undefined): void {
+  // Deepest first, so an object left empty by removing a list registration created goes too.
+  for (const key of [...previous?.created ?? []].sort((a, b) => b.split(".").length - a.split(".").length)) {
+    const [parent, name] = lastKeyOf(value, key);
+    if (parent !== undefined && isEmptyContainer(parent[name])) delete parent[name];
+  }
+}
+
+/**
+ * The value at `dotted`, created empty when missing; one an earlier registration created stays Rerail's even once the
+ * person has added to it.
+ */
+function claimSetting(
+  container: JsonObject, name: string, dotted: string, empty: unknown[] | JsonObject,
+  { previous, added }: { previous: AddedSettingsEntries | undefined; added: AddedSettingsEntries },
+): unknown {
+  if (container[name] === undefined || previous?.created.includes(dotted)) {
+    container[name] ??= empty;
+    if (!added.created.includes(dotted)) added.created.push(dotted);
+  }
+  return container[name];
+}
+
+function misshapenSetting(path: string, dotted: string, shape: string): Error {
+  return new Error(`Cannot keep Rerail's data from the coding agent: "${dotted}" in ${path} is not ${shape}`);
+}
+
+/** Adds the `entries` the list at `key` lacks, creating the objects and the list that hold them. */
+function addWantedEntries(
+  value: JsonObject, key: string, entries: readonly string[],
+  run: { previous: AddedSettingsEntries | undefined; added: AddedSettingsEntries; path: string },
+): void {
+  const keys = key.split(".");
+  let container = value;
+  for (const [depth, name] of keys.slice(0, -1).entries()) {
+    const dotted = keys.slice(0, depth + 1).join(".");
+    const held = claimSetting(container, name, dotted, {}, run);
+    if (!isObject(held)) throw misshapenSetting(run.path, dotted, "an object");
+    container = held;
+  }
+  const list = claimSetting(container, keys.at(-1)!, key, [], run);
+  if (!Array.isArray(list)) throw misshapenSetting(run.path, key, "an array");
+  const missing = [...new Set(entries)].filter(entry => !list.includes(entry));
+  list.push(...missing);
+  if (missing.length > 0) run.added.entries[key] = missing;
+}
+
+/**
+ * The Rerail home's entries that hold the person's data, as Read rule patterns below the home. The installed package
+ * (`current`, `versions`), the launcher (`bin`) and the installed rule packs (`packs`, public npm packages) stay
+ * readable, since an allow rule cannot reopen part of a denied folder and `/rerail-create` reads its skill in the
+ * package. A new data file or folder in the Rerail home must be added here, or the agent's file tools can read it.
+ */
+const RERAIL_HOME_DATA_ENTRIES: readonly string[] = [
+  "*.json*", "*.sqlite*", "*.log*", "*.lock",
+  ...[DAEMON_ACCESS_TOKEN_FILE, ACTIVE_PROFILE_FILE].map(file => `${file}*`),
+  ...[DEVICE_SECRETS_DIR, PROFILES_DIR].map(folder => `${folder}/**`),
+];
+
+/** `path` as the absolute path of a Read or Edit rule (`//path`), its gitignore pattern characters escaped. */
+function claudeRulePath(path: string, platform: NodeJS.Platform): string {
+  // Claude Code matches Windows paths in POSIX form: `C:\Users\me` is `/c/Users/me`.
+  const posix = platform === "win32"
+    ? path.replaceAll("\\", "/").replace(/^([A-Za-z]):/u, (_drive, letter: string) => `/${letter.toLowerCase()}`)
+    : path;
+  return `/${posix.replace(/[\\*?[\]]/gu, "\\$&")}`;
+}
+
+interface RerailDataDirectories {
+  rerailHome: string;
+  /** The machine-wide content cache, `mainContentStoreDirectory` for the registered home. */
+  cache: string;
+  /** False when the Rerail home is the home directory or holds it: denying it would deny every project. */
+  isolateHome: boolean;
+}
+
+function rerailDataDirectories(context: Context): RerailDataDirectories {
+  const rerailHome = rerailHomeDirectory(context);
+  return { rerailHome, cache: join(context.home, ".cache", "rerail"), isolateHome: !contains(rerailHome, context.home) };
+}
+
+/**
+ * What keeps the Rerail home and the content cache out of the agent's reach in Claude Code's user settings. Sandboxed
+ * commands may neither read nor write either; within the home they may read the installed package, which
+ * `/rerail-create` reads. The file tools follow `permissions.deny`: no edit of either, no read of the cache or of the
+ * home's data (`RERAIL_HOME_DATA_ENTRIES`). Rerail's own CLI, which reads and writes both, runs outside the sandbox
+ * (`excludedCommands`) and goes through the person's permission rules there.
+ */
+async function claudeIsolationEntries(context: Context): Promise<Record<string, string[]>> {
+  const { rerailHome, cache, isolateHome } = rerailDataDirectories(context);
+  const protectedDirectories = isolateHome ? [rerailHome, cache] : [cache];
+  const rule = (path: string): string => claudeRulePath(path, context.platform);
+  const deny = [
+    ...protectedDirectories.map(directory => `Edit(${rule(directory)}/**)`),
+    ...isolateHome ? RERAIL_HOME_DATA_ENTRIES.map(entry => `Read(${rule(rerailHome)}/${entry})`) : [],
+    `Read(${rule(cache)}/**)`,
+  ];
+  // Native Windows runs commands unsandboxed: only the file tools' rules apply there.
+  if (context.platform === "win32") return { "permissions.deny": deny };
+  const packageCode = [join(rerailHome, CURRENT_LINK), join(rerailHome, VERSIONS_DIR), context.root, await realpath(context.root).catch(() => context.root)];
+  return {
+    "permissions.deny": deny,
+    "sandbox.filesystem.denyRead": protectedDirectories,
+    "sandbox.filesystem.denyWrite": protectedDirectories,
+    ...isolateHome ? { "sandbox.filesystem.allowRead": [...new Set(packageCode.filter(path => path !== rerailHome && contains(rerailHome, path)))] } : {},
+    "sandbox.excludedCommands": [`${directCommand(context, ENTRY_POINTS.cli)} *`, `${setupLauncher(context)} *`, "rerail *"],
+  };
+}
+
 /** Global hooks and statusLine share one preflight and atomic settings replacement. */
 async function planClaudeSettings(
   context: Context,
@@ -673,8 +845,13 @@ async function planClaudeSettings(
     ? hookExecEntry(context, ENTRY_POINTS.claudeHook)
     : { type: "command", command: hookCommand(context, ENTRY_POINTS.claudeHook) };
   const next = global
-    ? await updateGroupedHooks(existing.value, path, context, CLAUDE_HOOK_EVENTS, CLAUDE_TOOL_EVENTS, ENTRY_POINTS.claudeHook, hookEntry)
+    ? structuredClone(await updateGroupedHooks(existing.value, path, context, CLAUDE_HOOK_EVENTS, CLAUDE_TOOL_EVENTS, ENTRY_POINTS.claudeHook, hookEntry))
     : { ...existing.value };
+  // Only the user settings carry the isolation entries; a project's settings never get them.
+  const added = global ? readAddedSettingsEntries(context.home, path) : undefined;
+  const nextAdded = global
+    ? replaceAddedEntries(context, next, added, context.mode === "register" ? await claudeIsolationEntries(context) : {}, path)
+    : undefined;
   let nextRegistration: ClaudeStatusRegistration | undefined = registration;
   if (context.mode === "register") {
     const replaceable = await isPackageClaudeStatus(context, statusLine ?? inherited);
@@ -685,20 +862,57 @@ async function planClaudeSettings(
   }
   const settingsChanged = stableJsonText(existing.value) !== stableJsonText(next);
   const ownershipChanged = stableJsonText(registration ?? {}) !== stableJsonText(nextRegistration ?? {});
+  const addedChanged = stableJsonText(added ?? {}) !== stableJsonText(nextAdded ?? {});
   let detail = context.mode === "register" ? "compose the project Claude Code status line" : "restore the project Claude Code status line";
   if (global) detail = context.mode === "register"
-    ? `register rerail hooks for ${CLAUDE_HOOK_EVENTS.length} Claude Code events and compose the status line`
-    : "remove rerail hooks and restore the Claude Code status line";
-  if (!settingsChanged && !ownershipChanged) {
+    ? `register rerail hooks for ${CLAUDE_HOOK_EVENTS.length} Claude Code events, compose the status line and keep Rerail's data from the agent`
+    : "remove rerail hooks and data denies and restore the Claude Code status line";
+  if (!settingsChanged && !ownershipChanged && !addedChanged) {
     return { change: { harness: "claude-code", path, action: "unchanged", detail: `${detail}: already in place` } };
   }
   return planMutation(context, "claude-code", path, existing.exists ? "updated" : "created", detail, async () => {
     const writeSettings = async (): Promise<void> => {
       if (settingsChanged) await writeTextFile(path, `${JSON.stringify(next, null, 2)}\n`, existing);
     };
-    if (ownershipChanged) await writeClaudeStatusRegistration(context.home, nextRegistration, writeSettings, path);
-    else await writeSettings();
+    const writeWithStatus = async (): Promise<void> => {
+      if (ownershipChanged) await writeClaudeStatusRegistration(context.home, nextRegistration, writeSettings, path);
+      else await writeSettings();
+    };
+    if (addedChanged) await writeAddedSettingsEntries(context.home, path, nextAdded, writeWithStatus);
+    else await writeWithStatus();
   });
+}
+
+/**
+ * The Cursor CLI's file tools follow `permissions.deny` in `~/.cursor/cli-config.json`: no write to the Rerail home or
+ * the content cache, no read of the cache or of the home's data (`RERAIL_HOME_DATA_ENTRIES`). Only a file the CLI has
+ * written is changed, so a Cursor without the CLI gets none. Nothing else in Cursor reads such a list: `sandbox.json`
+ * only adds paths, and the editor's agent has no path deny. Native Windows is left out, as the reference shows only
+ * POSIX paths.
+ */
+async function planCursorCli(context: Context): Promise<Plan[]> {
+  const path = join(context.home, ".cursor", "cli-config.json");
+  assertInside(path, context.home, "home");
+  const existing = await readJsonFile(path);
+  const previous = readAddedSettingsEntries(context.home, path);
+  if (!existing.exists && previous === undefined) return [];
+  const { rerailHome, cache, isolateHome } = rerailDataDirectories(context);
+  const deny = [
+    ...(isolateHome ? [rerailHome, cache] : [cache]).map(directory => `Write(${directory}/**)`),
+    ...isolateHome ? RERAIL_HOME_DATA_ENTRIES.map(entry => `Read(${rerailHome}/${entry})`) : [],
+    `Read(${cache}/**)`,
+  ];
+  const wanted = context.mode === "register" && existing.exists && context.platform !== "win32" ? { "permissions.deny": deny } : {};
+  const next = structuredClone(existing.value);
+  const added = replaceAddedEntries(context, next, previous, wanted, path);
+  const settingsChanged = stableJsonText(existing.value) !== stableJsonText(next);
+  const detail = context.mode === "register" ? "deny the Cursor CLI's file tools Rerail's data" : "remove Rerail's data denies from the Cursor CLI";
+  if (!settingsChanged && stableJsonText(previous ?? {}) === stableJsonText(added ?? {})) {
+    return [{ change: { harness: "cursor", path, action: "unchanged", detail: `${detail}: already in place` } }];
+  }
+  return [planMutation(context, "cursor", path, "updated", detail, () => writeAddedSettingsEntries(context.home, path, added, async () => {
+    if (settingsChanged) await writeTextFile(path, `${JSON.stringify(next, null, 2)}\n`, existing);
+  }))];
 }
 
 /**
@@ -721,17 +935,16 @@ async function isPackageClaudeStatus(context: Context, statusLine: ClaudeStatusL
   return script !== undefined && isAbsolute(script) && await isReplaceableScript(context, script, ENTRY_POINTS.claudeStatus);
 }
 
-const execGit = promisify(execFile);
-
 /** Claude uses the safe main-checkout root for local settings, but shared settings stay at cwd. */
 async function claudeLocalDirectory(workspaceDir: string, context: Context): Promise<string> {
   if (context.platform === "win32" || process.getuid === undefined) return workspaceDir;
   let root: string;
   try {
     // rev-parse rejects non-repositories/bare repositories; Git also enforces safe.directory.
-    await execGit("git", ["rev-parse", "--show-toplevel"], { cwd: workspaceDir });
-    const { stdout } = await execGit("git", ["worktree", "list", "--porcelain", "-z"], { cwd: workspaceDir });
-    const first = stdout.split("\0", 1)[0];
+    if (runGit(workspaceDir, ["rev-parse", "--show-toplevel"]).status !== 0) return workspaceDir;
+    const worktrees = runGit(workspaceDir, ["worktree", "list", "--porcelain", "-z"]);
+    if (worktrees.status !== 0) return workspaceDir;
+    const first = worktrees.stdout.split("\0", 1)[0];
     if (first === undefined || !first.startsWith("worktree ")) return workspaceDir;
     root = await realpath(first.slice("worktree ".length));
   } catch {
@@ -1175,7 +1388,7 @@ function newContext(options: RegistrationOptions, mode: Mode): Context {
   return {
     mode,
     root,
-    managed: options.managed ?? root === join(defaultRerailHome(), "current"),
+    managed: options.managed ?? root === join(defaultRerailHome(), CURRENT_LINK),
     packageRoots: new Map(),
     home: resolve(options.home ?? homedir()),
     nodePath: options.nodePath ?? pinnedNodePath(),
@@ -1189,6 +1402,77 @@ export function loadsOmpPluginCopy(root: string, home: string): Promise<boolean>
   return hasOmpPluginCopy(newContext({ root, home }, "register"));
 }
 
+/** The plan for a harness that was not selected. */
+function skippedPlan(harness: Harness, home: string, options: RegistrationOptions): Plan {
+  return {
+    change: {
+      harness,
+      path: join(home, CONFIG_DIRS[harness]),
+      action: "skipped",
+      detail: options.harnesses === undefined ? "config directory not found" : "not selected",
+    },
+  };
+}
+
+/** Whether the status line at `path` is Rerail's to rewrite: removal takes out what a registration added, and a registration only follows itself. */
+async function statusLineFollowsRegistration(home: string, path: string, mode: Mode): Promise<boolean> {
+  const registration = readClaudeStatusRegistration(home, path);
+  const statusLine = (await readJsonFile(path)).value.statusLine;
+  return mode === "unregister" || (isClaudeStatusLine(statusLine) && statusLine.command === registration?.installedCommand);
+}
+
+async function addClaudeSettingsPlans(context: Context, workspaceDir: string | undefined, plans: Plan[]): Promise<void> {
+  if (workspaceDir !== undefined) plans.push(...await planClaudeProjectSettings(workspaceDir, context));
+  for (const path of readClaudeStatusSettingsPaths(context.home)) {
+    if (plans.some(plan => plan.change.path === path)) continue;
+    if (await statusLineFollowsRegistration(context.home, path, context.mode)) plans.push(await planClaudeSettings(context, path));
+  }
+}
+
+/** Every plan for a selected harness, added to `plans`: the plans so far say which Claude settings files are already handled. */
+async function addHarnessPlans(harness: Harness, context: Context, workspaceDir: string | undefined, plans: Plan[]): Promise<void> {
+  plans.push(await planHarness(harness, context));
+  switch (harness) {
+    case "omp":
+      plans.push(await planOmpMcp(context), ...await planOmpPackageDuplicates(context));
+      break;
+    case "claude-code":
+      await addClaudeSettingsPlans(context, workspaceDir, plans);
+      plans.push(...await planAgentCommands(context, harness));
+      break;
+    case "cursor":
+      plans.push(...await planCursorCli(context));
+      plans.push(...await planAgentCommands(context, harness));
+      break;
+    case "codex":
+      plans.push(...await planAgentCommands(context, harness));
+      break;
+    default:
+      break;
+  }
+}
+
+/** What a registration has to tell the person. */
+async function registrationNotes(changes: readonly RegistrationChange[], context: Context, selected: ReadonlySet<Harness>): Promise<string[]> {
+  const notes: string[] = [];
+  const wrote = (change: RegistrationChange): boolean => change.action === "created" || change.action === "updated";
+  if (changes.some(wrote)) {
+    notes.push("Harness sessions pick up registration changes when they next start.");
+  }
+  // Codex asks to trust a hook again only when its command changes.
+  const codexHooks = join(context.home, ".codex", "hooks.json");
+  if (context.mode === "register" && changes.some(change => change.path === codexHooks && wrote(change))) {
+    notes.push(CODEX_TRUST_NOTE);
+  }
+  if (await ompPluginCopyMatters(context, selected)) notes.push(OMP_PLUGIN_NOTE);
+  return notes;
+}
+
+/** A dry run's caller (a status check) reads no note, so it skips looking in OMP's plugin folder. */
+async function ompPluginCopyMatters(context: Context, selected: ReadonlySet<Harness>): Promise<boolean> {
+  return context.mode === "register" && !context.dryRun && selected.has("omp") && await hasOmpPluginCopy(context);
+}
+
 async function run(options: RegistrationOptions, mode: Mode): Promise<RegistrationReport> {
   const context = newContext(options, mode);
   const { home } = context;
@@ -1197,49 +1481,12 @@ async function run(options: RegistrationOptions, mode: Mode): Promise<Registrati
 
   // Plan every harness before touching anything so a malformed config aborts with nothing written.
   for (const harness of HARNESSES) {
-    if (!selected.has(harness)) {
-      plans.push({
-        change: {
-          harness,
-          path: join(home, CONFIG_DIRS[harness]),
-          action: "skipped",
-          detail: options.harnesses === undefined ? "config directory not found" : "not selected",
-        },
-      });
-      continue;
-    }
-    plans.push(await planHarness(harness, context));
-    if (harness === "omp") plans.push(await planOmpMcp(context), ...await planOmpPackageDuplicates(context));
-    if (harness === "claude-code" && options.workspaceDir !== undefined) {
-      plans.push(...await planClaudeProjectSettings(options.workspaceDir, context));
-    }
-    if (harness === "claude-code") {
-      for (const path of readClaudeStatusSettingsPaths(home)) {
-        if (plans.some(plan => plan.change.path === path)) continue;
-        const registration = readClaudeStatusRegistration(home, path);
-        const statusLine = (await readJsonFile(path)).value.statusLine;
-        if (mode === "unregister" || (isClaudeStatusLine(statusLine) && statusLine.command === registration?.installedCommand)) {
-          plans.push(await planClaudeSettings(context, path));
-        }
-      }
-    }
-    if (harness === "codex" || harness === "claude-code" || harness === "cursor") plans.push(...await planAgentCommands(context, harness));
+    if (selected.has(harness)) await addHarnessPlans(harness, context, options.workspaceDir, plans);
+    else plans.push(skippedPlan(harness, home, options));
   }
   for (const plan of plans) await plan.apply?.();
   const changes = plans.map((plan) => plan.change);
-
-  const notes: string[] = [];
-  if (changes.some((change) => change.action === "created" || change.action === "updated")) {
-    notes.push("Harness sessions pick up registration changes when they next start.");
-  }
-  // Codex asks to trust a hook again only when its command changes.
-  const codexHooks = join(home, ".codex", "hooks.json");
-  if (mode === "register" && changes.some(change => change.path === codexHooks && (change.action === "created" || change.action === "updated"))) {
-    notes.push(CODEX_TRUST_NOTE);
-  }
-  // A dry run's caller (a status check) reads no note, so it skips looking in OMP's plugin folder.
-  if (mode === "register" && !context.dryRun && selected.has("omp") && await hasOmpPluginCopy(context)) notes.push(OMP_PLUGIN_NOTE);
-  return { changes, notes };
+  return { changes, notes: await registrationNotes(changes, context, selected) };
 }
 
 /** The note a registration that wrote Codex's hooks carries: Codex runs no hook the person has not trusted. */

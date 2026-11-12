@@ -5,9 +5,9 @@
  */
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { parse } from "node:path";
+import { dirname, parse } from "node:path";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
-import { physicalPath, withinCheckout } from "./checkout-control.js";
+import { physicalPath, storedPath, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
 import { gitExecutable, GitUnavailableError, runGit } from "../git.js";
 import type { CheckoutContext, CheckoutRecord, RepositoryKey, RepositoryRecord, RepositoryStatus } from "./repository-model.js";
@@ -18,6 +18,7 @@ import {
   repositoryFolderName,
   repositoryIdentityLocation,
   resolveCloneId,
+  worktreeRegistry,
   type RepositoryIdentityLocation,
 } from "./repository-identity.js";
 import { checkouts, repositories, ruleSettings } from "../storage/schema.js";
@@ -83,49 +84,100 @@ const adoptionChecked = new Set<RepositoryKey>();
  * adopts the checkout's remote once per process.
  */
 export function recordCheckout(db: RerailDatabase, workspace: string, now = Date.now()): CheckoutContext & { readonly cloneId: string } {
-  const located = repositoryIdentityLocation(workspace);
-  const physical = physicalPath(located.workspaceRoot);
-  // Outside git a folder is its own checkout; a filesystem root or the home folder would claim everything below it.
-  if (!located.git && (physical === parse(physical).root || physical === physicalPath(homedir()))) {
-    throw new Error(`${physical} is not a git checkout; Rerail won't treat a filesystem root or your home folder as one`);
-  }
+  refuseUnboundedFolder(repositoryIdentityLocation(workspace));
   const { cloneId, location } = resolveCloneId(workspace);
   const checkoutPath = physicalPath(location.workspaceRoot);
-  const context = db.transaction(tx => {
-    const existing = tx.select().from(checkouts).where(eq(checkouts.checkoutPath, checkoutPath)).get();
-    if (existing?.cloneId === cloneId) {
-      tx.update(checkouts).set({ lastSeenAt: now }).where(eq(checkouts.checkoutPath, checkoutPath)).run();
-      return contextOf(location, checkoutPath, existing.repositoryKey, cloneId);
-    }
-    if (existing !== undefined) {
-      deleteCheckoutSettings(tx, [checkoutPath]);
-      tx.delete(checkouts).where(eq(checkouts.checkoutPath, checkoutPath)).run();
-    }
-    // A clone joins its recorded checkouts, else the repository keyed by its clone id.
-    let repositoryKey = tx.select({ key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.cloneId, cloneId)).limit(1).get()?.key
-      ?? repositoryByKeyOrAlias(tx, `${CLONE_KEY_PREFIX}${cloneId}`)?.repositoryKey;
-    if (repositoryKey === undefined) {
-      const remoteKey = remoteKeyOf(location.workspaceRoot);
-      repositoryKey = remoteKey === undefined ? undefined : repositoryByKeyOrAlias(tx, remoteKey)?.repositoryKey;
-      if (repositoryKey === undefined) {
-        repositoryKey = remoteKey ?? `${CLONE_KEY_PREFIX}${cloneId}`;
-        tx.insert(repositories).values({
-          repositoryKey, displayName: displayNameFor(repositoryKey, repositoryFolderName(location)), configuredAt: null, started: null, createdAt: now, updatedAt: now,
-        }).run();
-      }
-    }
-    tx.insert(checkouts).values({ checkoutPath, repositoryKey, cloneId, started: null, createdAt: now, lastSeenAt: now }).run();
-    return contextOf(location, checkoutPath, repositoryKey, cloneId);
-  }, { behavior: "immediate" });
+  const context = db.transaction(tx => recordCheckoutRow(tx, location, checkoutPath, cloneId, now), { behavior: "immediate" });
+  return adoptRemoteOnce(db, context, location, now);
+}
+
+/** Outside git a folder is its own checkout; a filesystem root or the home folder would claim everything below it. */
+function refuseUnboundedFolder(located: RepositoryIdentityLocation): void {
+  if (located.git) return;
+  const physical = physicalPath(located.workspaceRoot);
+  if (physical === parse(physical).root || physical === physicalPath(homedir())) {
+    throw new Error(`${physical} is not a git checkout; Rerail won't treat a filesystem root or your home folder as one`);
+  }
+}
+
+/** The checkout row at `checkoutPath` for `cloneId`, touched when it is there and written when not; a row of another clone id goes with its settings. */
+function recordCheckoutRow(
+  tx: Writer,
+  location: RepositoryIdentityLocation,
+  checkoutPath: string,
+  cloneId: string,
+  now: number,
+): CheckoutContext & { readonly cloneId: string } {
+  const existing = tx.select().from(checkouts).where(eq(checkouts.checkoutPath, checkoutPath)).get();
+  if (existing?.cloneId === cloneId) {
+    tx.update(checkouts).set({ lastSeenAt: now }).where(eq(checkouts.checkoutPath, checkoutPath)).run();
+    return contextOf(location, checkoutPath, existing.repositoryKey, cloneId);
+  }
+  if (existing !== undefined) {
+    deleteCheckoutSettings(tx, [checkoutPath]);
+    tx.delete(checkouts).where(eq(checkouts.checkoutPath, checkoutPath)).run();
+  }
+  // A clone joins its recorded checkouts, else the repository keyed by its clone id, else the one its remote names.
+  const repositoryKey = cloneRepository(tx, cloneId) ?? remoteRepositoryCreated(tx, location, cloneId, now);
+  tx.insert(checkouts).values({ checkoutPath, repositoryKey, cloneId, started: null, createdAt: now, lastSeenAt: now }).run();
+  return contextOf(location, checkoutPath, repositoryKey, cloneId);
+}
+
+/** The repository of a recorded checkout of the clone, else the repository keyed by its clone id. */
+function cloneRepository(db: Reader, cloneId: string): RepositoryKey | undefined {
+  return db.select({ key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.cloneId, cloneId)).limit(1).get()?.key
+    ?? repositoryByKeyOrAlias(db, `${CLONE_KEY_PREFIX}${cloneId}`)?.repositoryKey;
+}
+
+/** The repository the checkout's remote names, created when none is known: keyed by the remote, else by the clone id. */
+function remoteRepositoryCreated(tx: Writer, location: RepositoryIdentityLocation, cloneId: string, now: number): RepositoryKey {
+  const remoteKey = remoteKeyOf(location.workspaceRoot);
+  const known = remoteKey === undefined ? undefined : repositoryByKeyOrAlias(tx, remoteKey)?.repositoryKey;
+  if (known !== undefined) return known;
+  const repositoryKey = remoteKey ?? `${CLONE_KEY_PREFIX}${cloneId}`;
+  tx.insert(repositories).values({
+    repositoryKey, displayName: displayNameFor(repositoryKey, repositoryFolderName(location)), configuredAt: null, started: null, createdAt: now, updatedAt: now,
+  }).run();
+  return repositoryKey;
+}
+
+/** A clone-keyed repository adopts the checkout's remote once per process; "no remote" is not remembered, so a remote added later is adopted. */
+function adoptRemoteOnce<C extends CheckoutContext>(db: RerailDatabase, context: C, location: RepositoryIdentityLocation, now: number): C {
   if (!context.repositoryKey.startsWith(CLONE_KEY_PREFIX) || adoptionChecked.has(context.repositoryKey)) return context;
-  // "No remote" is not remembered: a remote added later is adopted the next time the clone is recorded.
   const remoteKey = remoteKeyOf(location.workspaceRoot);
   if (remoteKey === undefined) return context;
   adoptionChecked.add(context.repositoryKey);
   const target = repositoryByKeyOrAlias(db, remoteKey)?.repositoryKey ?? remoteKey;
   adoptRemote(db, context.repositoryKey, target, now);
-  const adopted = db.select({ key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.checkoutPath, checkoutPath)).get();
+  const adopted = db.select({ key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.checkoutPath, context.checkoutPath)).get();
   return { ...context, repositoryKey: adopted?.key ?? context.repositoryKey };
+}
+
+/**
+ * Record the checkout at `root` (a physical top level, located at `location`, with no record yet) when it is a worktree
+ * of a clone Rerail knows and Rerail runs there, so an edit a session makes in it is audited though no session started
+ * there. Called from a path a tool call named, so only Git's own registry grants this: a recorded checkout of the clone
+ * must share `root`'s common directory and list `root`, as `git worktree add` registers it there. A `.git` file anyone
+ * can write names the same common directory and clone id and is not listed; a Git folder of its own with the clone id
+ * copied in is another common directory. Another clone of the same remote shares neither. A copy of a checkout made with
+ * its `.git` keeps the clone id but reads its own registry, so it neither grants nor refuses for the original. Git runs
+ * only in a recorded checkout Rerail runs in; false when nothing was recorded.
+ */
+export function recordStartedWorktree(db: RerailDatabase, root: string, location: RepositoryIdentityLocation): boolean {
+  const cloneId = readCloneIdAt(location.identityPath);
+  if (!location.git || cloneId === undefined || physicalPath(location.workspaceRoot) !== root) return false;
+  const commonDirectory = physicalPath(dirname(location.identityPath));
+  const recorded = db.select({ path: checkouts.checkoutPath, key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.cloneId, cloneId)).all();
+  const listed = recorded.some(peer =>
+    checkoutStatus(db, contextOf(location, root, peer.key, cloneId)).started && registryLists(peer.path, commonDirectory, root));
+  if (listed) recordCheckout(db, root);
+  return listed;
+}
+
+/** Whether the recorded `checkout` reads Git's registry in `commonDirectory` and lists `root` there; a gone folder lists nothing. */
+function registryLists(checkout: string, commonDirectory: string, root: string): boolean {
+  const registry = worktreeRegistry(checkout);
+  return registry?.commonDirectory === commonDirectory && registry.worktrees.some(worktree => storedPath(worktree) === root);
 }
 
 /**
@@ -147,22 +199,30 @@ export function lookupCheckout(db: Reader, workspace: string): CheckoutContext |
 function lookupAt(db: Reader, location: RepositoryIdentityLocation, remoteKeys: Map<string, RepositoryKey | undefined>): CheckoutContext | undefined {
   const cloneId = readCloneIdAt(location.identityPath) ?? null;
   const checkoutPath = physicalPath(location.workspaceRoot);
+  const repositoryKey = recordedRepositoryAt(db, checkoutPath, cloneId)
+    ?? (cloneId === null ? undefined : cloneRepository(db, cloneId))
+    ?? remoteRepository(db, location, checkoutPath, remoteKeys);
+  return repositoryKey === undefined ? undefined : contextOf(location, checkoutPath, repositoryKey, cloneId);
+}
+
+/** The repository of the row recorded at `checkoutPath`. Without an id file that row still names the checkout; a different id is a re-clone. */
+function recordedRepositoryAt(db: Reader, checkoutPath: string, cloneId: string | null): RepositoryKey | undefined {
   const recorded = db.select({ key: checkouts.repositoryKey, cloneId: checkouts.cloneId }).from(checkouts)
     .where(eq(checkouts.checkoutPath, checkoutPath)).get();
-  // Without an id file the recorded row at this path still names the checkout; a different id is a re-clone.
-  if (recorded !== undefined && (cloneId === null || recorded.cloneId === cloneId)) return contextOf(location, checkoutPath, recorded.key, cloneId);
-  if (cloneId !== null) {
-    const sibling = db.select({ key: checkouts.repositoryKey }).from(checkouts).where(eq(checkouts.cloneId, cloneId)).limit(1).get();
-    if (sibling !== undefined) return contextOf(location, checkoutPath, sibling.key, cloneId);
-    const cloneRepository = repositoryByKeyOrAlias(db, `${CLONE_KEY_PREFIX}${cloneId}`);
-    if (cloneRepository !== undefined) return contextOf(location, checkoutPath, cloneRepository.repositoryKey, cloneId);
-  }
-  // A folder outside git has no remote.
+  return recorded !== undefined && (cloneId === null || recorded.cloneId === cloneId) ? recorded.key : undefined;
+}
+
+/** The known repository the checkout's remote names, its remote read once per `remoteKeys`; a folder outside git has none. */
+function remoteRepository(
+  db: Reader,
+  location: RepositoryIdentityLocation,
+  checkoutPath: string,
+  remoteKeys: Map<string, RepositoryKey | undefined>,
+): RepositoryKey | undefined {
   if (!location.git) return undefined;
   if (!remoteKeys.has(checkoutPath)) remoteKeys.set(checkoutPath, remoteKeyOf(location.workspaceRoot));
   const remoteKey = remoteKeys.get(checkoutPath);
-  const repository = remoteKey === undefined ? undefined : repositoryByKeyOrAlias(db, remoteKey);
-  return repository === undefined ? undefined : contextOf(location, checkoutPath, repository.repositoryKey, cloneId);
+  return remoteKey === undefined ? undefined : repositoryByKeyOrAlias(db, remoteKey)?.repositoryKey;
 }
 
 /**
@@ -248,19 +308,25 @@ export function linkAlias(db: RerailDatabase, key: RepositoryKey, address: strin
     const repository = repositoryRow(tx, key);
     if (repository === undefined) throw new Error(`Unknown repository: ${key}`);
     if (alias === key || repository.aliases.includes(alias)) return;
-    const other = repositoryByKeyOrAlias(tx, alias);
-    if (other?.configuredAt != null) throw new Error(`${alias} already belongs to the set-up repository ${other.repositoryKey}`);
-    if (other !== undefined) {
-      tx.update(checkouts).set({ repositoryKey: key }).where(eq(checkouts.repositoryKey, other.repositoryKey)).run();
-      tx.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "repository"), eq(ruleSettings.ownerId, other.repositoryKey))).run();
-      tx.delete(repositories).where(eq(repositories.repositoryKey, other.repositoryKey)).run();
-    }
-    // The merged repository's own key and aliases resolve here too, so a fresh clone of its remote joins `key`.
-    const merged = other === undefined ? [] : [other.repositoryKey, ...other.aliases];
+    const merged = absorbAliasOwner(tx, key, alias);
     const aliases = [...new Set([...repository.aliases, alias, ...merged])].filter(name => name !== key);
     tx.update(repositories).set({ aliases, updatedAt: now }).where(eq(repositories.repositoryKey, key)).run();
   }, { behavior: "immediate" });
   return alias;
+}
+
+/**
+ * Gives `key` the checkouts of the repository `alias` already names and removes that repository, returning the names it
+ * went by: its own key and aliases resolve to `key` too, so a fresh clone of its remote joins `key`. One set up is refused.
+ */
+function absorbAliasOwner(tx: Writer, key: RepositoryKey, alias: RepositoryKey): RepositoryKey[] {
+  const other = repositoryByKeyOrAlias(tx, alias);
+  if (other === undefined) return [];
+  if (other.configuredAt !== null) throw new Error(`${alias} already belongs to the set-up repository ${other.repositoryKey}`);
+  tx.update(checkouts).set({ repositoryKey: key }).where(eq(checkouts.repositoryKey, other.repositoryKey)).run();
+  tx.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "repository"), eq(ruleSettings.ownerId, other.repositoryKey))).run();
+  tx.delete(repositories).where(eq(repositories.repositoryKey, other.repositoryKey)).run();
+  return [other.repositoryKey, ...other.aliases];
 }
 
 /** The recorded checkouts of the same repository whose folder contains `checkout`, nearest first; never itself. */
@@ -342,7 +408,7 @@ function listedByGit(checkoutPath: string): boolean {
   }
   if (listed.status !== 0) return true;
   return listed.stdout.split("\n").filter(line => line.startsWith("worktree "))
-    .some(line => physicalPath(line.slice("worktree ".length)) === checkoutPath);
+    .some(line => storedPath(line.slice("worktree ".length)) === checkoutPath);
 }
 
 /** Forget checkouts whose folder is gone or that git no longer lists as a worktree, with their own settings. */

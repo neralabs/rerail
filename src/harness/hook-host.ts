@@ -1,11 +1,10 @@
-import { join } from "node:path";
 import type { AdapterEvent, AdapterSession, RerailEventLoop, RerailHost } from "../engine/adapter-contract.js";
-import { bundledModelPath } from "../engine/package-root.js";
+import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { readRepositoryState } from "../presentation/session-presentation.js";
 import { isRerailStarted } from "../runtime/repository-start.js";
 import { RerailRuntime } from "../runtime/runtime.js";
 import { ingestEngineEvent } from "../runtime/engine-service.js";
-import { daemonEngineSocket, runningDaemonEngineSocket } from "../runtime/daemon-control.js";
+import { daemonEngineEndpoint, engineEndpointAt, runningDaemonEngineEndpoint, type EngineEndpoint } from "../runtime/daemon-control.js";
 import {
   bindSteerReceipt,
   withSessionLock,
@@ -15,6 +14,7 @@ import {
 import type { SemanticEmbedder } from "../engine/native/semantic-types.js";
 import { SqliteSessionStore } from "../runtime/session-store.js";
 import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
+import { rerailRunsIn } from "../engine/catalog/repository-model.js";
 import { lookupCheckout } from "../engine/catalog/repository-registry.js";
 
 export * from "./hook-adapter.js";
@@ -53,7 +53,7 @@ function recordLocalReceipt(session: AdapterSession, databasePath: string): (rec
 export async function hookRerailStarted(host: RerailHost, workspace: string, databasePath?: string): Promise<boolean> {
   if (databasePath === undefined) {
     const answered = await readRepositoryState(workspace, host);
-    if (answered !== null) return answered !== "stopped";
+    if (answered !== null) return rerailRunsIn(answered);
   }
   return isRerailStarted(workspace, databasePath);
 }
@@ -96,28 +96,29 @@ export async function runHostHook(
   options: HookOptions,
   handle: (runtime: RerailEventLoop, storageRoot: string) => Promise<HookOutput>,
 ): Promise<HookOutput> {
-  const storageRoot = options.storageRoot ?? process.env.RERAIL_STORAGE_ROOT ?? join(workspace, ".rerail", "sessions");
+  const { storageRoot, modelPath } = resolveSessionPaths(workspace, options);
   return withSessionLock(storageRoot, host, sessionId, async () => {
     const databasePath = options.databasePath ?? defaultRerailDatabasePath();
     const session: AdapterSession = { host, sessionId, cwd: workspace };
 
     if (options.embedder === undefined) {
-      let socketPath: string | undefined;
+      let endpoint: EngineEndpoint | undefined;
       try {
-        socketPath = options.kernelSocketPath ?? process.env.RERAIL_ENGINE_SOCKET
-          ?? (startsSession ? await daemonEngineSocket(true) : await runningDaemonEngineSocket());
+        const named = options.kernelSocketPath ?? process.env.RERAIL_ENGINE_SOCKET;
+        endpoint = named !== undefined ? await engineEndpointAt(named)
+          : startsSession ? await daemonEngineEndpoint(true) : await runningDaemonEngineEndpoint();
       } catch (error) {
         throw new DaemonUnreachableError(error instanceof Error ? error.message : String(error), { cause: error });
       }
-      if (socketPath === undefined) return {};
+      if (endpoint === undefined) return {};
       const configuration = {
         storageRoot,
         databasePath,
-        modelPath: options.modelPath ?? process.env.RERAIL_MODEL_PATH ?? bundledModelPath(),
+        modelPath,
         workspaceRoot: workspace,
       };
-      const enginePath = socketPath;
-      const ingest = (event: AdapterEvent) => ingestEngineEvent(enginePath, event, configuration).catch((error: unknown) => {
+      const engine = endpoint;
+      const ingest = (event: AdapterEvent) => ingestEngineEvent(engine, event, configuration).catch((error: unknown) => {
         throw unreachable(error);
       });
       const output = await handle({ ingest }, storageRoot);

@@ -6,7 +6,6 @@ import { readPresentation, type SessionPresentation } from "../../src/presentati
 vi.mock("../../src/presentation/session-presentation.js", async () => ({
   readPresentation: vi.fn(),
   formatTerminalStatus: (presentation: SessionPresentation) => presentation.text,
-  notOnHerePresentation: (await vi.importActual<typeof import("../../src/presentation/session-presentation.js")>("../../src/presentation/session-presentation.js")).notOnHerePresentation,
 }));
 afterEach(() => vi.clearAllMocks());
 
@@ -42,7 +41,7 @@ it("never repaints a previous session or a closed widget after an outstanding re
   expect(visible).toBeUndefined();
 });
 
-it("says Rerail is not on here, without asking a daemon, where the host knows it is off", () => {
+it("draws no footer, without asking a daemon, where the host knows Rerail is off (#298)", () => {
   let visible: string[] | undefined;
   let polling = false;
   const context = {
@@ -53,9 +52,27 @@ it("says Rerail is not on here, without asking a daemon, where the host knows it
     clearTimer: () => undefined,
   } as unknown as ExtensionContext;
   createOmpPresentation().start(context, { off: true });
-  expect(visible).toEqual([expect.stringContaining("not on here")]);
+  expect(visible).toBeUndefined();
   expect(readPresentation).not.toHaveBeenCalled();
   expect(polling).toBe(false);
+});
+
+it("draws no line, not an empty one, when the daemon says Rerail is not on here (#298)", async () => {
+  vi.mocked(readPresentation).mockResolvedValueOnce({
+    status: "not-on-here", text: "", parts: [], url: null, presence: "compact", repositoryState: "stopped", counts: null,
+  });
+  const widgets: Array<string[] | undefined> = [];
+  const context = {
+    cwd: "/workspace", hasUI: true,
+    sessionManager: { getSessionId: () => "stopped" },
+    ui: { setWidget: (_key: string, lines: string[] | undefined) => { widgets.push(lines); } },
+    setInterval: () => 1,
+    clearTimer: () => undefined,
+  } as unknown as ExtensionContext;
+  createOmpPresentation().start(context);
+  await vi.waitFor(() => expect(readPresentation).toHaveBeenCalled());
+  await Promise.resolve();
+  expect(widgets.every(lines => lines === undefined)).toBe(true);
 });
 
 it("says session events are being dropped while the daemon's status still reads, and clears it when they stop", async () => {

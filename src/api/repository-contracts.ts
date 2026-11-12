@@ -9,8 +9,9 @@ import { codeRuleSchema, codeRuleValueSchema } from "../engine/code-rule/code-ru
 import { RULE_SETTING_OWNER_KINDS, RULE_SETTING_TARGET_KINDS, RULE_SOURCE_KINDS, RULE_SUPPRESSIONS } from "../engine/catalog/repository-model.js";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
 import { conversationRuleSchema } from "../engine/catalog/rule-schema.js";
-import { engineRegexIssues } from "../engine/catalog/rule-regexes.js";
-import { RULE_KINDS } from "../engine/storage/schema.js";
+import { engineRegexIssues, type RegexIssue } from "../engine/catalog/rule-regexes.js";
+import { EngineUnavailableError } from "../engine/code-rule/code-rule-compile.js";
+import { RULE_APPROVAL_SUBJECTS, RULE_KINDS } from "../engine/storage/schema.js";
 
 const START_STATES = ["started", "stopped", "not-set-up"] as const;
 
@@ -68,7 +69,16 @@ export const deciderSchema = z.discriminatedUnion("by", [
   z.object({ by: z.literal("repository"), folder: z.string(), target: z.enum(RULE_SETTING_TARGET_KINDS) }).strict(),
   z.object({ by: z.literal("pack-start"), packId: z.string() }).strict(),
   z.object({ by: z.literal("rule-default") }).strict(),
+  z.object({ by: z.literal("awaiting-approval") }).strict()
+    .describe("The rule's content waits for a person's approval, so it runs in Log whatever its settings say."),
 ]);
+
+/** What a person approves, the rule by its id or its pack by package name, at the digest of its content. */
+export const approvalSubjectSchema = z.object({
+  kind: z.enum(RULE_APPROVAL_SUBJECTS).describe("rule: the rule's own content; pack: everything its pack ships, at its version."),
+  id: z.string().describe("The rule's id, or the pack's package name."),
+  digest: z.string().describe("The digest of the content: approval holds for this content only, and an edit waits again."),
+}).strict();
 
 export const inactiveField = {
   inactive: z
@@ -110,6 +120,8 @@ const effectiveRuleBase = {
   addedAt: z.number().int().nullable()
     .describe("Epoch milliseconds the attachment that brings the rule in (its pack, or the rule itself) was added at this folder."),
   updatedAt: z.number().int().nullable().describe("Epoch milliseconds a rule created by you was last edited; null for rules by Rerail."),
+  approval: z.object({ subject: approvalSubjectSchema, approved: z.boolean() }).strict().optional()
+    .describe("Present for a rule Rerail did not publish (created by you, in a worktree's .rerail/rules, or in a third party's or a folder's pack): until a person approves its content it runs in Log."),
 };
 export const effectiveRuleSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("code"), rule: codeRuleSchema, ...effectiveRuleBase, ...inactiveField }).strict(),
@@ -218,17 +230,31 @@ export const libraryUpsertBodySchema = z.object({
     context.addIssue({ code: "custom", path: ["revision"], message: "code rules take their revision from rule.revision" });
   }
   if (value.kind === "conversation" && !("clauses" in value.rule)) {
-    for (const issue of engineRegexIssues(value.rule)) {
+    let issues: RegexIssue[];
+    try {
+      issues = engineRegexIssues(value.rule);
+    } catch (error) {
+      // Without the engine the write itself answers 503 kernel-unavailable, as it does for a code rule.
+      if (error instanceof EngineUnavailableError) return;
+      throw error;
+    }
+    for (const issue of issues) {
       context.addIssue({ code: "custom", path: ["rule", ...issue.path], message: issue.message });
     }
   }
 });
 
+/** The note a write that puts a rule on `block` answers with: block does not block in this release, and steers. */
+export const blockNoteShape = {
+  note: z.string().optional().describe("Set when the write puts a rule on block: block does not block in this release, and the rule steers instead."),
+};
+
 export const libraryUpsertResultSchema = z.object({
   rule: libraryRuleRecordSchema,
   copiedFromRuleId: z.string().nullable().describe("Set when the write edited a By Rerail rule and stored a copy instead."),
   attached: z.object({ repositoryKey: z.string(), folders: z.array(z.string()) }).strict().nullable()
-    .describe("Where the rule (or the copy) was added; a copy also switches the original off there."),
+    .describe("Where the rule (or the copy) was added; a copy switches the original off there once it is approved."),
+  ...blockNoteShape,
 }).strict();
 
 export const rerailRuleSchema = z.discriminatedUnion("kind", [

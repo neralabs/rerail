@@ -1,5 +1,6 @@
-use super::closure::{Bits, Closure, Graph, Hop, Seed, Status, path_module};
+use super::closure::{Bits, Closure, Graph, Hop, Seed, Status};
 use super::names::Name;
+use super::python::path_module;
 use super::summary::{ASYNC, CLASS, Callee, OPEN, Summary, callee_at};
 use super::{CallsView, FileSeeds, SeedScope, Through};
 use crate::code_rule_dsl::language::{Family, GrammarDialect};
@@ -329,11 +330,11 @@ fn a_seed_query_at_held_nodes_finds_the_definitions_rooted_rules_do() {
         .iter()
         .map(|(start, end)| crate::code_rule_dsl::violations::Witness {
             path: "m.py".into(),
-            span: crate::code_rule_dsl::violations::Span {
+            span: Some(crate::code_rule_dsl::violations::Span {
                 start_byte: *start as usize,
                 end_byte: *end as usize,
                 ..Default::default()
-            },
+            }),
             captures: Default::default(),
             message: None,
             fix: None,
@@ -357,7 +358,7 @@ fn a_seed_query_at_held_nodes_finds_the_definitions_rooted_rules_do() {
         .map(|(start, _)| start)
         .collect::<std::collections::BTreeSet<_>>();
         let mapped = super::seed_starts(
-            witnesses.iter().map(|witness| &witness.span),
+            witnesses.iter().filter_map(|witness| witness.span.as_ref()),
             scope,
             Some(&summary),
         )

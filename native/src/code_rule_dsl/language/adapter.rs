@@ -51,6 +51,7 @@ use ast_grep_language::LanguageExt;
 use std::borrow::Cow;
 use std::ops::Range;
 use std::path::Path;
+use std::sync::LazyLock;
 
 /// Python's family: Ruff's semantics.
 pub(crate) struct Python;
@@ -91,6 +92,23 @@ pub(crate) trait Adapter: 'static {
     /// text its rules read (ESLint's `SourceCode`), so a `file.content` regex reads a file from
     /// past it.
     const STRIPS_BOM: bool;
+    /// The kinds of the family's comment nodes, where `rerail-ignore` directives are read
+    /// (`suppress::rerail`).
+    const COMMENT_KINDS: &'static [&'static str];
+    /// The leaf kinds that may stand before a file's first code without being code (a shebang
+    /// line, PHP's `<?php`): a `rerail-ignore` comment before them all covers the whole file.
+    const PREAMBLE_KINDS: &'static [&'static str];
+    /// The kinds of a body that starts at its first statement, a comment before that statement
+    /// standing beside it rather than in it (Python's `block`): a leading `rerail-ignore` comment
+    /// there covers that statement, not the whole body.
+    const BODY_KINDS: &'static [&'static str];
+    /// The comment kinds a token or sibling walk passes over (`is_comment_kind`).
+    const WALK_COMMENT_KINDS: &'static [&'static str] = Self::COMMENT_KINDS;
+    /// Whether an ast query may ask where a file's imports lead (`importTarget`, eslint-plugin-n's).
+    const IMPORT_TARGETS: bool = false;
+    /// Whether the family's files are parsed by Rerail's port of Forte rather than tree-sitter
+    /// (`parsed_by_forte`, the registry's `parser`).
+    const PARSED_BY_FORTE: bool = false;
     type Scope: ScopeRules;
     type Value: ValueRules;
     type Arguments: ArgumentRules;
@@ -136,6 +154,9 @@ impl Adapter for Python {
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = false;
     const STRIPS_BOM: bool = false;
+    const COMMENT_KINDS: &'static [&'static str] = &["comment"];
+    const PREAMBLE_KINDS: &'static [&'static str] = &[];
+    const BODY_KINDS: &'static [&'static str] = &["block"];
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
@@ -187,6 +208,11 @@ impl Adapter for Ecma {
     const JSX_RUNTIMES: bool = true;
     const DECLARATION_FILES: bool = true;
     const STRIPS_BOM: bool = true;
+    /// `html_comment`: a script's `<!--` and line-leading `-->` comments.
+    const COMMENT_KINDS: &'static [&'static str] = &["comment", "html_comment"];
+    const IMPORT_TARGETS: bool = true;
+    const PREAMBLE_KINDS: &'static [&'static str] = &["hash_bang_line"];
+    const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
@@ -251,6 +277,23 @@ impl Adapter for Ecma {
     }
 }
 
+impl Ecma {
+    /// The module system of a file by its extension and its nearest `package.json`'s `type` alone
+    /// (`SourceType::by_package_type`).
+    pub(crate) fn source_type_by_package_type(
+        path: &str,
+        package: Option<PackageType>,
+    ) -> SourceType {
+        let name = path.rsplit('/').next().unwrap_or(path);
+        match name.rsplit_once('.').map(|(_, extension)| extension) {
+            Some("mjs" | "mts") => SourceType::Module,
+            Some("cjs" | "cts") => SourceType::CommonJs,
+            _ if package == Some(PackageType::Module) => SourceType::Module,
+            _ => SourceType::CommonJs,
+        }
+    }
+}
+
 impl Adapter for Php {
     const FAMILY: Family = Family::Php;
     const LABEL: &'static str = "php";
@@ -260,6 +303,9 @@ impl Adapter for Php {
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = true;
     const STRIPS_BOM: bool = false;
+    const COMMENT_KINDS: &'static [&'static str] = &["comment"];
+    const PREAMBLE_KINDS: &'static [&'static str] = &["php_tag"];
+    const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Self;
     type Value = Self;
     type Arguments = Self;
@@ -313,6 +359,15 @@ impl Adapter for Blade {
     const JSX_RUNTIMES: bool = false;
     const DECLARATION_FILES: bool = true;
     const STRIPS_BOM: bool = false;
+    /// A template's `<!-- -->` (`comment`) and `{{-- --}}` (`blade_comment`); its embedded PHP's
+    /// are read with PHP's family.
+    const COMMENT_KINDS: &'static [&'static str] = &["comment", "blade_comment"];
+    /// A `{{-- --}}` counts as a token of the template.
+    const WALK_COMMENT_KINDS: &'static [&'static str] = &["comment"];
+    const PARSED_BY_FORTE: bool = true;
+    /// A template's `php_tag` is a whole `<?php … ?>` region, code rather than a preamble.
+    const PREAMBLE_KINDS: &'static [&'static str] = &[];
+    const BODY_KINDS: &'static [&'static str] = &[];
     type Scope = Php;
     type Value = Php;
     type Arguments = Php;
@@ -373,6 +428,50 @@ pub(crate) fn source_type(
 pub(crate) fn packages(label: &str) -> bool {
     super::dialect_by_label(label)
         .is_some_and(|dialect| with_adapter!(Family::of(dialect), A => A::PACKAGES))
+}
+
+/// Every family's `kinds`, each once: the walks ask per node they visit, so the union is gathered
+/// once rather than per call.
+fn every_family_kind(kinds: impl Fn(Family) -> &'static [&'static str]) -> Vec<&'static str> {
+    let mut union = Vec::new();
+    for kind in Family::ALL.into_iter().flat_map(kinds) {
+        if !union.contains(kind) {
+            union.push(*kind);
+        }
+    }
+    union
+}
+
+static WALK_COMMENT_KINDS: LazyLock<Vec<&'static str>> =
+    LazyLock::new(|| every_family_kind(|family| with_adapter!(family, A => A::WALK_COMMENT_KINDS)));
+
+static PAREN_KINDS: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
+    every_family_kind(
+        |family| with_adapter!(family, A => <<A as Adapter>::Scope as ScopeRules>::PAREN_KINDS),
+    )
+});
+
+/// Whether `kind` is a comment that a token or sibling walk passes over, in any family's grammar
+/// (`Adapter::WALK_COMMENT_KINDS`). The matchers that walk (`compare`, `layout`) hold no family, and
+/// a kind's name means a comment in every grammar that has it.
+pub(crate) fn is_comment_kind(kind: &str) -> bool {
+    WALK_COMMENT_KINDS.contains(&kind)
+}
+
+/// Whether `kind` is a parenthesized expression in any family's grammar
+/// (`ScopeRules::PAREN_KINDS`), for the matchers that hold no family.
+pub(crate) fn is_paren_kind(kind: &str) -> bool {
+    PAREN_KINDS.contains(&kind)
+}
+
+/// Whether a file of `dialect` is parsed by Forte: its family's `Adapter::PARSED_BY_FORTE`.
+pub(crate) fn parsed_by_forte(dialect: GrammarDialect) -> bool {
+    with_adapter!(Family::of(dialect), A => A::PARSED_BY_FORTE)
+}
+
+/// Whether an ast query in `dialect` may use `importTarget`: its family's `Adapter::IMPORT_TARGETS`.
+pub(crate) fn has_import_targets(dialect: GrammarDialect) -> bool {
+    with_adapter!(Family::of(dialect), A => A::IMPORT_TARGETS)
 }
 
 /// What tree-sitter parses for a file of `dialect`: its family's `Adapter::parse_input`.

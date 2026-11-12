@@ -1,3 +1,5 @@
+import { ADAPTER_CAPABILITIES, type CommandSigil, type RerailHost } from "../engine/adapter-contract.js";
+import type { NoFitExplanation } from "../engine/catalog/rule-packs.js";
 import type { SetupOption, SetupOptionInput, SetupQuestion, SetupQuestionId } from "./setup-step.js";
 import { RERAIL_BRAND_FOREGROUND } from "../presentation/terminal-brand.generated.js";
 import { rerailMark, type ColourDepth } from "../presentation/rerail-mark.js";
@@ -16,14 +18,14 @@ import { rerailMark, type ColourDepth } from "../presentation/rerail-mark.js";
 export type SetupLane = "terminal" | "agent" | "json";
 
 export interface CodingAgent {
-  /** The value `--agents` takes, e.g. `claude`. */
-  readonly id: string;
+  /** The value `--agents` takes, e.g. `claude-code`. */
+  readonly id: RerailHost;
   /** The name people see, e.g. `Claude Code`. */
   readonly name: string;
 }
 
 export interface RecommendedPack {
-  /** The pack's id, which `--packs` names it by. */
+  /** How `--packs` names the pack: its id for one of Rerail's own, else its npm package name. */
   readonly id: string;
   readonly name: string;
   readonly ruleCount: number;
@@ -33,11 +35,18 @@ export interface RecommendedPack {
   readonly version: string;
   /** The version installed now, if any. Every repository on this computer runs it, so installing another replaces it there too. */
   readonly installed: string | null;
+  /** Who publishes it when that is not Rerail (`@acme`): a pack Rerail has not reviewed. */
+  readonly thirdParty?: string;
+  /** Set when the installed pack came from a folder or tarball, not npm: whatever its package.json says, unreviewed. */
+  readonly installedFrom?: "folder" | "tarball";
 }
 
-/** A rule pack "Choose rule packs…" offers: every one set-up fetched, matched or not. */
+/** A rule pack "Choose rule packs…" offers: every one set-up fetched, matched or not, and every one installed. */
 export interface AvailablePack {
+  /** How `--packs` names the pack: its id for one of Rerail's own, else its npm package name. */
   readonly id: string;
+  /** The npm package set-up installs. */
+  readonly packageName: string;
   readonly version: string;
   readonly name: string;
   /** Why it fits the repository; undefined for a pack that does not. */
@@ -320,6 +329,22 @@ export interface SessionsInput {
   /** What every answer carries on, so the run picks up where it was: `--repo <folder>` when one was named. */
   readonly carriedArgs: readonly string[];
   readonly setupCommand?: string;
+  /**
+   * Internal testing: the hosts of the remotes this computer sends Rerail's data to (`rerail remote`), so the screen
+   * never says nothing is sent when something is; null when the remote configuration could not be read.
+   */
+  readonly remoteHosts?: readonly string[] | null;
+}
+
+/** What the sessions question says about where sessions go: nowhere, or each remote by its host, and how to stop. */
+function sessionsDestination(remoteHosts: readonly string[] | null | undefined): string[] {
+  if (remoteHosts === null) return ["  ! Rerail could not read its remote settings; run rerail remote list to see what it sends where."];
+  if (remoteHosts === undefined || remoteHosts.length === 0) return ["  ✓ Stays on this computer. Nothing is sent anywhere."];
+  const where = remoteHosts.join(", ");
+  return [
+    `  ! Sent to ${remoteHosts.length === 1 ? "the remote" : "the remotes"} set up on this computer: ${where}.`,
+    "    Stop it with rerail remote remove <name> (rerail remote list names them).",
+  ];
 }
 
 /** T2b: asked once on this computer, before set-up connects anything, so the person agrees to what Rerail reads. */
@@ -332,7 +357,7 @@ export function sessionsQuestion(input: SessionsInput): QuestionForm {
       "Rerail sees what you ask your agent, what it does, and the files it edits,",
       "so it can check the work against your rules.",
       "",
-      "  ✓ Stays on this computer. Nothing is sent anywhere.",
+      ...sessionsDestination(input.remoteHosts),
       "  ✓ You’re asked once, for every repo you start Rerail in.",
     ],
     choices: [
@@ -426,6 +451,8 @@ export interface RecommendedPacksInput {
   readonly setupCommand?: string;
   /** The rule settings starting Rerail takes from the repository's lint config; nothing shown when empty. */
   readonly lintConfig?: LintConfigInput;
+  /** Why no rule pack fits, when set-up scanned the repository and had packs to offer. */
+  readonly nothingFits?: NoFitExplanation;
 }
 
 /** At most this many lines say which rule packs set-up could not fetch; the rest are counted. */
@@ -458,14 +485,39 @@ function lintConfigLines(input: RecommendedPacksInput, style: Style): string[] {
   ];
 }
 
+/** A pack's row name: its name, with its publisher when a third party's and where it came from when not npm. */
+function packRowName(pack: RecommendedPack): string {
+  const notes = [
+    ...(pack.thirdParty === undefined ? [] : [`by ${clean(pack.thirdParty)}`]),
+    ...(pack.installedFrom === undefined ? [] : [`from a ${pack.installedFrom}`]),
+  ];
+  return notes.length === 0 ? clean(pack.name) : `${clean(pack.name)} (${notes.join(", ")})`;
+}
+
+/** The packs that fit, one row each; a third party's pack is named with its publisher, and one from a folder says so. */
 function packTable(packs: readonly RecommendedPack[], style: Style): string[] {
-  const names = packs.map(pack => clean(pack.name));
+  const names = packs.map(packRowName);
   const nameWidth = Math.max(TABLE_MIN_PACK_WIDTH, ...names.map(name => name.length + 2));
   const header = style.dim(`  ${"Rule pack".padEnd(nameWidth)}${"Rules".padEnd(TABLE_RULES_WIDTH)}Why it fits`);
   const rows = packs.map(
     (pack, index) => `  ${(names[index] ?? "").padEnd(nameWidth)}${String(pack.ruleCount).padEnd(TABLE_RULES_WIDTH)}${clean(pack.reason)}`,
   );
   return [header, ...rows];
+}
+
+/**
+ * The packs "Yes" would add that Rerail has not reviewed, a third party's or one installed from a folder or tarball:
+ * they run in Log until a person approves them, and then their steer text reaches the coding agent, so the person sees
+ * that before saying yes.
+ */
+function unreviewedLines(packs: readonly RecommendedPack[], style: Style): string[] {
+  return packs.flatMap(pack => {
+    const what = pack.installedFrom !== undefined ? `was installed from a ${pack.installedFrom}, not from npm`
+      : pack.thirdParty !== undefined ? `is by ${clean(pack.thirdParty)}, not Rerail`
+      : undefined;
+    if (what === undefined) return [];
+    return [`  ${style.yellow("△")} ${clean(pack.packageName)} ${what}. Rerail has not reviewed it: its rules run in Log until you approve them (rerail rules approve ${clean(pack.packageName)}), then their steer text reaches the coding agent.`];
+  });
 }
 
 /**
@@ -500,6 +552,121 @@ function withoutRulesLines(names: readonly string[] | undefined, wouldFit: boole
   return [`  ${andList(names.map(clean))} ${wouldFit ? `would fit, but ${has}` : has} no rules yet, so set-up does not offer ${one ? "it" : "them"}.`];
 }
 
+// Why no rule pack fits: labelled rows, each wrapped under its label.
+const NO_FIT_LABEL_WIDTH = 16;
+/** The text after a label wraps here, so a row fits an 80-column terminal. */
+const NO_FIT_TEXT_WIDTH = 60;
+const MAX_NEAR_MISSES = 2;
+const MAX_EXCLUDED_GLOBS = 3;
+const MAX_LOOKS_FOR_FILES = 3;
+const MAX_LOOKS_FOR_DEPENDENCIES = 2;
+const PACK_NAME_GAP = 2;
+/** The pack name column is no wider than this, so one long name does not squeeze every pack's text. */
+const MAX_PACK_NAME_WIDTH = 24;
+
+/** `words` joined by spaces into rows of at most `width` characters; a longer word has a row of its own. */
+function wrapWords(words: readonly string[], width: number): string[] {
+  const rows: string[] = [];
+  for (const word of words) {
+    const last = rows.at(-1);
+    if (last !== undefined && last.length + 1 + word.length <= width) rows[rows.length - 1] = `${last} ${word}`;
+    else rows.push(word);
+  }
+  return rows;
+}
+
+/** `items`, each but the last followed by `mark`, as words for `wrapWords`. */
+const marked = (items: readonly string[], mark: string): string[] => items.map((item, index) => (index < items.length - 1 ? `${item}${mark}` : item));
+
+/** `label`, dim, then `rows`, each later one indented under the first. */
+function labelled(label: string, rows: readonly string[], style: Style): string[] {
+  return rows.map((row, index) => `  ${index === 0 ? style.dim(label.padEnd(NO_FIT_LABEL_WIDTH)) : " ".repeat(NO_FIT_LABEL_WIDTH)}${row}`);
+}
+
+/** `items` past `max` counted as one more item: `+2 more`. */
+function capped(items: readonly string[], max: number, more: (count: number) => string): string[] {
+  return items.length <= max ? [...items] : [...items.slice(0, max), more(items.length - max)];
+}
+
+/** The files the scan read, counted by ending; files without one are counted only when no file has one. */
+function endingRows(explanation: NoFitExplanation): string[] {
+  const endings = explanation.endings.map(({ ending, fileCount }) => `${clean(ending)} ${fileCount}`);
+  if (endings.length > 0) return wrapWords(marked(endings, " ·"), NO_FIT_TEXT_WIDTH);
+  return [explanation.fileCount === 0 ? "no files" : `${plural(explanation.fileCount, "file")}, none with an ending`];
+}
+
+/** How the scan read the repository, when that bounds what it found: Git's listing, or a walk that stopped early. */
+function howScannedRows(explanation: NoFitExplanation): string[] {
+  if (explanation.git) return ["from Git’s list of files, which leaves out what Git ignores"];
+  return explanation.stoppedEarly ? [`the scan stopped early, after ${explanation.fileCount.toLocaleString("en-US")} files`] : [];
+}
+
+/** The folders the scan skipped that the repository has, with the files Git lists in each. */
+function notScannedRows(explanation: NoFitExplanation): string[] {
+  const folders = explanation.notScanned.map(({ folder, fileCount }) => `${clean(folder)}/${fileCount === undefined ? "" : ` (${fileCount})`}`);
+  return wrapWords(marked(folders, ","), NO_FIT_TEXT_WIDTH);
+}
+
+function nearMissRows(explanation: NoFitExplanation): string[] {
+  return explanation.nearMisses.slice(0, MAX_NEAR_MISSES).flatMap(({ name, fileCount, excludedBy }) => {
+    const globs = capped(excludedBy.map(({ glob, fileCount: count }) => `${clean(glob)} (${count})`), MAX_EXCLUDED_GLOBS, count => `+${count} more`);
+    const sentence = `${clean(name)} excludes the ${plural(fileCount, "file")} it looks for:`;
+    return wrapWords([...sentence.split(" "), ...marked(globs, ",")], NO_FIT_TEXT_WIDTH);
+  });
+}
+
+/** A pack's file globs, then its dependencies, each list capped, as words for `wrapWords`. */
+function looksForWords(pack: NoFitExplanation["packs"][number]): string[] {
+  const more = (count: number): string => `+${count} more`;
+  const files = capped(pack.files.map(clean), MAX_LOOKS_FOR_FILES, more);
+  const dependencies = marked(capped(pack.dependencies.map(clean), MAX_LOOKS_FOR_DEPENDENCIES, more), ",");
+  if (dependencies.length === 0) return marked(files, ",");
+  // The label stays with the first name, so a wrap never leaves it alone at the end of a row.
+  dependencies[0] = `${pack.dependencies.length === 1 ? "dependency:" : "dependencies:"} ${dependencies[0]}`;
+  return [...files.map(file => `${file},`), ...dependencies];
+}
+
+/** What a pack looks for, on one line, as `rerail packs recommend` prints it after the pack. */
+export const looksForText = (pack: NoFitExplanation["packs"][number]): string => looksForWords(pack).join(" ");
+
+/** Each pack, then what it looks for, wrapped in a column after the names; a name too long for it has its own row. */
+function looksForRows(explanation: NoFitExplanation): string[] {
+  const nameWidth = Math.min(MAX_PACK_NAME_WIDTH, Math.max(0, ...explanation.packs.map(pack => clean(pack.name).length))) + PACK_NAME_GAP;
+  return explanation.packs.flatMap(pack => {
+    const name = clean(pack.name);
+    const rows = wrapWords(looksForWords(pack), NO_FIT_TEXT_WIDTH - nameWidth);
+    if (name.length + PACK_NAME_GAP > nameWidth) return [name, ...rows.map(row => `${" ".repeat(nameWidth)}${row}`)];
+    return rows.map((row, index) => `${(index === 0 ? name : "").padEnd(nameWidth)}${row}`);
+  });
+}
+
+/** What the scan found and left out, and the packs that came closest. */
+function scanRows(explanation: NoFitExplanation, style: Style): string[] {
+  const notScanned = notScannedRows(explanation);
+  const nearMisses = nearMissRows(explanation);
+  return [
+    ...labelled("Found", [...endingRows(explanation), ...howScannedRows(explanation)], style),
+    ...(notScanned.length === 0 ? [] : labelled("Not scanned", notScanned, style)),
+    ...(nearMisses.length === 0 ? [] : labelled("Closest", nearMisses, style)),
+  ];
+}
+
+/** Why no rule pack fits: the scan's rows, then what each pack looks for. */
+function noFitRows(explanation: NoFitExplanation, style: Style): string[] {
+  return [...scanRows(explanation, style), ...labelled("Packs look for", looksForRows(explanation), style)];
+}
+
+/** What the scan found and left out, as `rerail packs recommend` prints it; each pack's line says what it looks for. */
+export function noFitScanLines(explanation: NoFitExplanation): string[] {
+  return scanRows(explanation, PLAIN_STYLE);
+}
+
+/** The packs that fit, as a table, or why none does. */
+function fitLines(input: RecommendedPacksInput, style: Style): string[] {
+  if (input.packs.length > 0) return ["", ...packTable(input.packs, style)];
+  return input.nothingFits === undefined ? [] : ["", ...noFitRows(input.nothingFits, style)];
+}
+
 function recommendationLines(input: RecommendedPacksInput, lane: SetupLane): string[] {
   const style = styleFor(lane);
   const repo = clean(input.repoName);
@@ -509,11 +676,12 @@ function recommendationLines(input: RecommendedPacksInput, lane: SetupLane): str
     : `Scanned ${repo}. ${count === 1 ? "1 rule pack fits" : `${count} rule packs fit`}:`;
   const connecting = input.agentsFound.length === 0
     ? ["  Will connect to: no coding agents found"]
-    : [`  Will connect to: ${agentNames(input.agentsFound).join(", ")}`, "  Adds /rerail commands and a status line to each. Connecting is free."];
+    : [`  Will connect to: ${agentNames(input.agentsFound).join(", ")}`, `  Adds ${sigilIn(input.agentsFound)}rerail commands and a status line to each. Connecting is free.`];
   return [
     lane === "terminal" ? bullet(scanned, style) : scanned,
-    ...(count === 0 ? [] : ["", ...packTable(input.packs, style)]),
+    ...fitLines(input, style),
     ...replaceLines(input.packs, style),
+    ...unreviewedLines(input.packs, style),
     ...withoutRulesLines(input.withoutRules, true),
     ...lintConfigLines(input, style),
     ...unavailableLines(input.unavailable, style),
@@ -615,14 +783,18 @@ export function packsNotDownloadedQuestion(input: PacksNotDownloadedInput, lane:
 
 // ── T5 · Not now ───────────────────────────────────────────────────────────
 
-/** After "Not now": no rule pack installed, nothing connected or turned on. Set-up may have installed Rerail itself. */
-export function renderNotNow(lane: SetupLane): string {
+/**
+ * After "Not now": no rule pack installed, nothing connected or turned on. Set-up may have installed Rerail itself.
+ * `agents`: the coding agents the person would type the start command in.
+ */
+export function renderNotNow(agents: readonly CodingAgent[], lane: SetupLane): string {
   const style = styleFor(lane);
-  const start = lane === "terminal" ? "rerail start" : "/rerail-start";
+  const start = lane === "terminal" ? "rerail start" : commandIn(agents, "rerail-start");
   return lines([
     ...(lane === "terminal" ? [""] : []),
     bullet("Set-up stopped. No rule packs were installed and nothing was turned on.", style),
     `  ${style.dim(`Start Rerail in this repo whenever you’re ready with ${start}.`)}`,
+    ...(lane === "terminal" ? [] : otherFormLines(agents, "rerail-start").map(line => `  ${line}`)),
   ]);
 }
 
@@ -639,7 +811,7 @@ export interface AgentProblem {
 
 /** What connecting the coding agents left, which the summary's commands and notes follow. */
 export interface AgentsConnection {
-  /** Every coding agent Rerail is connected to now. Codex types Rerail's commands as `$rerail…`, the others as `/rerail…`. */
+  /** Every coding agent Rerail is connected to now. Each types Rerail's commands with its own sigil (`commandSigil`). */
   readonly connected: readonly CodingAgent[];
   /** Connected by set-up run again where it was set up: the coding agents found since. */
   readonly added?: readonly CodingAgent[];
@@ -665,17 +837,24 @@ export interface SummaryInput {
   readonly agents: AgentsConnection;
 }
 
-const CODEX_ID = "codex";
+const sigilOf = (agent: CodingAgent): CommandSigil => ADAPTER_CAPABILITIES[agent.id].commandSigil;
 
-/** How a screen writes Rerail's command `name`: Codex's `$name` when Codex is the only coding agent connected. */
-function commandIn(agents: readonly CodingAgent[], name: string): string {
-  return agents.length > 0 && agents.every(agent => agent.id === CODEX_ID) ? `$${name}` : `/${name}`;
+/** The sigil a screen writes Rerail's commands with: the one every coding agent in `agents` shares, else `/`. */
+function sigilIn(agents: readonly CodingAgent[]): CommandSigil {
+  const shared = new Set(agents.map(sigilOf));
+  return shared.size === 1 ? [...shared][0]! : "/";
 }
 
-/** With Codex and another coding agent connected, the line that gives Codex's form of a command shown as `/name`. */
-function codexFormLines(agents: readonly CodingAgent[], name: string): string[] {
-  const codex = agents.some(agent => agent.id === CODEX_ID);
-  return codex && agents.some(agent => agent.id !== CODEX_ID) ? [`In Codex, type $${name}.`] : [];
+/** How a screen writes Rerail's command `name` for the coding agents connected. */
+function commandIn(agents: readonly CodingAgent[], name: string): string {
+  return `${sigilIn(agents)}${name}`;
+}
+
+/** With coding agents that type commands differently (Codex and another), the line for those `commandIn` does not fit. */
+function otherFormLines(agents: readonly CodingAgent[], name: string): string[] {
+  const shown = sigilIn(agents);
+  const others = agents.filter(agent => sigilOf(agent) !== shown);
+  return others.length === 0 ? [] : [`In ${andList(agentNames(others))}, type ${sigilOf(others[0]!)}${name}.`];
 }
 
 /** The coding agents connected by this run, and each one that could not be, with the file and what to do. */
@@ -751,7 +930,7 @@ function summaryLines(input: SummaryInput, style: Style): string[] {
   const tryIt = connected.length === 0 ? [] : summaryRow("Try it", [
     `Open a new agent session and type ${commandIn(connected, "rerail-show-me")}`,
     "to watch Rerail catch and fix a broken rule.",
-    ...codexFormLines(connected, "rerail-show-me"),
+    ...otherFormLines(connected, "rerail-show-me"),
   ]);
   return [
     bullet(`Rerail is on in ${repo} · ${packsOn}`, style),
@@ -801,7 +980,7 @@ function tipLines(agents: readonly CodingAgent[]): string[] {
     "",
     `  ${commandIn(agents, "rerail-create").padEnd(COMMAND_WIDTH)}write your own rule, in plain words`,
     `  ${commandIn(agents, "rerail-stop").padEnd(COMMAND_WIDTH)}stop Rerail in this repo`,
-    ...codexFormLines(agents, "rerail-create").map(line => `  ${line}`),
+    ...otherFormLines(agents, "rerail-create").map(line => `  ${line}`),
   ];
 }
 
@@ -1028,7 +1207,7 @@ export function renderSkipped(agents: AgentsConnection, lane: SetupLane): string
   const { connected } = agents;
   const start = connected.length === 0
     ? summaryRow("Start", ["Run rerail start in one of your repos.", "Rerail asks, suggests rule packs that fit, and starts there."])
-    : summaryRow("Start", [`Open a session in one of your repos and type ${commandIn(connected, "rerail-start")}.`, "Rerail asks, suggests rule packs that fit, and starts there.", ...codexFormLines(connected, "rerail-start")]);
+    : summaryRow("Start", [`Open a session in one of your repos and type ${commandIn(connected, "rerail-start")}.`, "Rerail asks, suggests rule packs that fit, and starts there.", ...otherFormLines(connected, "rerail-start")]);
   const summary = [
     bullet("Rerail is installed · not on in any repo yet", style),
     ...connectionNotes(agents, style),

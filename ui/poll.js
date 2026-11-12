@@ -8,8 +8,12 @@
  */
 import { get, send } from "./api.js";
 import { data, ui, sinceFor, setScope, pagedList, panelRuleId } from "./state.js";
+import { toStoredRules } from "./derive.js";
 import { historyRuleId } from "./history-model.js";
+import { promptText } from "./sessions-model.js";
 import { failed } from "./format.js";
+
+export { toStoredRules };
 
 const INTERVAL = 5_000;
 const MAX_BACKOFF = 30_000;
@@ -157,65 +161,6 @@ async function loadContext() {
 }
 
 /**
- * One row per rule id, in the renderers' shape: on (`enabled`, the switch) only where it is on in every folder it is
- * added at, the first folder's mode, suppressions and options on the rule, and each folder's own on, mode,
- * suppressions and what decided them (`folderStates`; `mixed` when on or mode differ). `configError` is why the rule's
- * options don't apply, from any folder: the rule then runs nowhere, whatever its switch says. A change from the row is
- * written at every folder.
- */
-export function toStoredRules(entries) {
-  const rules = new Map();
-  for (const entry of entries) {
-    const id = entry.rule.id;
-    const known = rules.get(id);
-    if (known !== undefined) {
-      if (!known.folders.includes(entry.folder)) {
-        known.folders.push(entry.folder);
-        known.folderStates.push(folderState(entry));
-        known.enabled = known.enabled && entry.on;
-        known.configError ??= entry.configError ?? null;
-        known.mixed = known.folderStates.some(state => state.on !== entry.on || state.mode !== entry.mode) || known.mixed;
-        known.addedAt = earliest(known.addedAt, entry.addedAt ?? null);
-        known.updatedAt = latest(known.updatedAt, entry.updatedAt ?? null);
-      }
-      continue;
-    }
-    rules.set(id, {
-      kind: entry.kind,
-      rule: { ...entry.rule, mode: entry.mode },
-      enabled: entry.on,
-      origin: entry.source.kind === "library_rule" ? "user" : "rerail",
-      source: entry.source,
-      folders: [entry.folder],
-      folderStates: [folderState(entry)],
-      mixed: false,
-      onSource: entry.onSource,
-      modeSource: entry.modeSource,
-      suppressions: entry.suppressions,
-      suppressionsSource: entry.suppressionsSource,
-      config: entry.config,
-      configSource: entry.configSource,
-      configError: entry.configError ?? null,
-      revision: entry.revision,
-      addedAt: entry.addedAt ?? null,
-      updatedAt: entry.updatedAt ?? null,
-    });
-  }
-  return rules;
-}
-
-/** When a rule present in several folders was first added: the earliest folder's; `null` where none says. */
-const earliest = (a, b) => (a === null ? b : b === null ? a : Math.min(a, b));
-/** When its settings last changed: the latest folder's. */
-const latest = (a, b) => (a === null ? b : b === null ? a : Math.max(a, b));
-
-/** One folder's own on, mode and suppressions of a rule, what decided its suppressions, and what added it there. */
-const folderState = entry => ({
-  folder: entry.folder, on: entry.on, mode: entry.mode, suppressions: entry.suppressions, suppressionsSource: entry.suppressionsSource,
-  source: entry.source,
-});
-
-/**
  * The packs added to the repository: pack id → every folder it is attached at, from the rules present
  * through a pack and the pack attachments reported unavailable.
  */
@@ -238,10 +183,13 @@ async function loadRules() {
   return true;
 }
 
+/** The installed packs, and the scoped checkout's own rules (`.rerail/rules`) as the pack `worktree`. */
 async function loadPacks() {
-  const body = await fetchFresh("/api/rule-packs", "packs");
+  const checkout = ui.scope?.checkout;
+  const body = await fetchFresh(checkout === undefined ? "/api/rule-packs" : `/api/rule-packs?${new URLSearchParams({ checkout })}`, "packs");
   if (body === undefined) return false;
   data.packs = body.packs;
+  data.packsSkipped = body.skipped;
   return true;
 }
 
@@ -280,7 +228,7 @@ export async function saveFollowGitignore(follow, { toast, invalidate }) {
   data.followGitignore = follow; invalidate();
   try {
     if (!(await sendInScope(scope, "PUT", "/api/repository/follow-gitignore", { followGitignore: follow }))) return;
-    toast(follow ? "Files Git ignores are skipped from the next session." : "Files Git ignores are checked from the next session.");
+    toast(follow ? "New sessions skip Git-ignored files." : "New sessions include Git-ignored files.");
   } catch (error) {
     data.followGitignore = was;
     toast(failed("Couldn’t change Follow .gitignore", error));
@@ -556,8 +504,12 @@ export async function loadEarlier(id) {
 
 const WEAK = /^(continue|yes|no|ok|okay|go|try again|thanks|thank you|do it|next|y|n)\.?$/i;
 const TITLE_MAX = 96;
-/** First user prompt with three or more words that is not a bare acknowledgement; its first line, trimmed to a title. */
-export function titleFromPrompts(prompts) {
+/**
+ * First user prompt with three or more words that is not a bare acknowledgement; its first line, trimmed to a title.
+ * Text the coding agent's harness wrote into a prompt (`promptText`) is never the title.
+ */
+export function titleFromPrompts(texts) {
+  const prompts = texts.map(promptText).filter(Boolean);
   const t = prompts.find(u => u.split(/\s+/).length >= 3 && !WEAK.test(u.trim())) || prompts[0];
   if (!t) return null;
   const line = t.trim().split("\n")[0].replace(/\s+/g, " ").trim();
@@ -613,7 +565,7 @@ function pumpTitles() {
  * What a page can ask a poll for, by name; each loads with the range's `since`. A view declares the names it shows
  * (`needs` in its module) and the poll loads each name once, whoever else asked for it.
  * - `rules`: the repository's rules (`data.rules`, `attachedPacks`).
- * - `packs`: every rule pack that comes with Rerail (`data.packs`).
+ * - `packs`: every rule pack installed on this machine, and the scoped checkout's own rules (`data.packs`).
  * - `activity`: each rule's activity in the range and since install (`data.activity`, `activityAll`, their sessions).
  * - `recentSessions`: the range's five newest sessions and how many started in it (`data.recentSessions`).
  * - `findings`: History's shown rule's violations in the range (`data.findings`, owner = rule id); nothing without one.

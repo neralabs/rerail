@@ -114,6 +114,31 @@ describe("installed session presentation", () => {
     expect((await read()).text).toBe("R E R A I L ● 3 rules · engine unavailable");
   });
 
+  it("names each rule overlay in force after the rule count, linked to its pack page in the checkout's repository", async () => {
+    response.context!.session!.hud.overlays = ["worktree"];
+    response.scope = { repositoryKey: "remote:github.com/acme/app", checkoutPath: cwd };
+    const result = await read();
+
+    expect(result.text).toBe("R E R A I L ● 3 rules · worktree · steered 2×");
+    const pack = new URL(result.parts[2]!.url!);
+    expect(Object.fromEntries(pack.searchParams)).toEqual({ repository: "remote:github.com/acme/app", checkout: cwd });
+    expect(pack.hash).toBe("#pack/worktree");
+    // A daemon from before overlays sends none, and the footer reads as it did.
+    delete response.context!.session!.hud.overlays;
+    expect((await read()).text).toBe("R E R A I L ● 3 rules · steered 2×");
+  });
+
+  it("counts what waits for a person's approval after the overlays, linked to the repository's rules", async () => {
+    response.context!.session!.hud.awaitingApproval = 2;
+    response.scope = { repositoryKey: "remote:github.com/acme/app", checkoutPath: cwd };
+    const result = await read();
+
+    expect(result.text).toBe("R E R A I L ● 3 rules · 2 to approve · steered 2×");
+    expect(result.parts[2]!.url).toBe(result.parts[1]!.url);
+    response.context!.session!.hud.awaitingApproval = 0;
+    expect((await read()).text).toBe("R E R A I L ● 3 rules · steered 2×");
+  });
+
   it("counts every failure of a failed audit, those its list leaves out included", async () => {
     response.context!.session!.hud.steeringCount = 0;
     response.context!.session!.audit = {
@@ -178,6 +203,12 @@ describe("installed session presentation", () => {
     expect(new URL(requested[0]!).searchParams.get("repository")).toBe(await realpath(nested));
   });
 
+  it("says starting, not unavailable, while the daemon has not recorded the session's start yet (#302)", async () => {
+    response.context!.session = null;
+    expect(await read()).toMatchObject({ status: "starting", text: "R E R A I L ● starting", repositoryState: "started", counts: null });
+    expect(await read(true)).toMatchObject({ status: "starting" });
+  });
+
   it("does not fabricate links for a missing session or zero counts for unavailable counters", async () => {
     const session = response.context!.session!;
     response.context!.session = null;
@@ -202,9 +233,11 @@ describe("installed session presentation", () => {
     expect(decide.parts.at(-1)!.url).toMatch(/#merge\?conflict=conflict:overlap:abc:12345678$/u);
   });
 
-  it("reports not on here only where Rerail is stopped, and Not set up with the start command where no rules are configured", async () => {
+  it("draws no footer where Rerail is stopped, says not on here on demand, and Not set up with the start command where no rules are configured", async () => {
     response.repositoryState = "stopped";
-    const stopped = await read();
+    // The ambient footer takes no space in a repository Rerail does not run in (#298).
+    expect(await read()).toMatchObject({ status: "not-on-here", text: "", parts: [], repositoryState: "stopped" });
+    const stopped = await read(true);
     expect(stopped).toMatchObject({ status: "not-on-here", text: "R E R A I L ○ not on here", repositoryState: "stopped" });
     expect(stopped.parts.every(part => part.url === null)).toBe(true);
     response.presence = "silent";
@@ -223,8 +256,10 @@ describe("installed session presentation", () => {
 
   it("with no daemon, follows the caller's start state: not on here, not set up, or not running where started", async () => {
     await rm(join(home, "daemon.json"));
-    const withState = (startState: () => RepositoryStartState) => readPresentation({ sessionId, host: "claude-code", cwd, startState });
-    expect(await withState(() => "stopped")).toMatchObject({ status: "not-on-here", text: "R E R A I L ○ not on here", repositoryState: "stopped" });
+    const withState = (startState: () => RepositoryStartState, onDemand = false) =>
+      readPresentation({ sessionId, host: "claude-code", cwd, startState, onDemand });
+    expect(await withState(() => "stopped")).toMatchObject({ status: "not-on-here", text: "", parts: [], repositoryState: "stopped" });
+    expect(await withState(() => "stopped", true)).toMatchObject({ status: "not-on-here", text: "R E R A I L ○ not on here", repositoryState: "stopped" });
     expect(await withState(() => "not-set-up")).toMatchObject({ status: "not-set-up", text: "R E R A I L ○ not set up · rerail start" });
     expect(await withState(() => "started")).toMatchObject({ status: "not-running", text: "R E R A I L ✕ not running" });
     expect(await withState(() => { throw new Error("database unreadable"); })).toMatchObject({ status: "not-running" });
