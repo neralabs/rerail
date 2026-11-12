@@ -513,9 +513,10 @@ A second main daemon can come from another `$RERAIL_HOME`, or be an orphan its `
 Everything else goes through the daemon, not in-process evaluation. The Claude Code, Codex and Cursor hooks, OMP and
 Pi sessions, and `rerail events` streams (in internal testing) send events to it, starting it when it is not running,
 after a reboot too (unless `RERAIL_AUTOSTART=0`). When several of them find it down at once, one starts it: a start
-in the background first creates `autostart.claim` in the Rerail home, and the others leave the start to that one. A
-start that leaves the daemon answering removes the claim; after one that fails, the claim holds for 30 s. CLI commands
-such as `rerail settings` and `rerail scan` (in internal testing) use its API.
+in the background first creates `autostart.claim` in the Rerail home, naming the process it launches, and the others
+leave the start to that one. The claim ends when that start ends, whether the daemon came up or not, and holds no
+longer than its launcher runs, 30 s at most. CLI commands such as `rerail settings` and `rerail scan` (in internal
+testing) use its API.
 
 Any other process opening the machine-wide store gets an error and a failed policy run, not a second writer.
 Development builds never take the lock and never open that store.
