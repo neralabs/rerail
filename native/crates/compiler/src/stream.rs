@@ -54,7 +54,7 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         // `m=3` (a field): the node that one, a wrap, holds first. `RETAG m=3`: that node and
         // the nodes inside it, read by reading `operand` (`reread`).
         RETAG => (mode <= 2 && (mode != 0 || operand != REMEMBERED)) || (mode == 3 && usize::from(operand) < program.readings.maps.len()),
-        NODE_FIELD => mode <= 3 && operand != 0,
+        NODE_FIELD => mode <= 4 && operand != 0,
         // `m=1`: the open node's two leaves, one (`fold`).
         MERGE => mode <= 1 && operand != REMEMBERED,
         WRAP => mode == 0 && operand != REMEMBERED,
@@ -112,8 +112,13 @@ pub fn validate(program: &Words) -> Result<(), Error> {
         .map(|&w| usize::from(split(w).2))
         .collect();
     // A state: `TOKEN`, a `MARK` and its way (`GOTO` or `STOP`) per mark it tests, `SWITCH`.
+    // After the `TOKEN`, a call's field on the node it made (`NODE_FIELD m=4`), where both
+    // returns land (`RETURN m=0` at the `TOKEN`, `m=1` past it).
     let state = |p: usize| {
         let mut q = p + 1;
+        if words.get(q).is_some_and(|&w| split(w).0 == NODE_FIELD && split(w).1 == 4) {
+            q += 1;
+        }
         while words.get(q).is_some_and(|&w| split(w).0 == MARK) {
             if words.get(q + 1).is_none_or(|&w| !matches!(split(w).0, GOTO | STOP)) {
                 return false;
@@ -520,6 +525,13 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     return refuse(pc - 1, "an inner field on a node that is no wrap of a plain node");
                 }
                 nodes[base].field = operand;
+            }
+            // A call's field where it returns: on the node it made, where that has none.
+            NODE_FIELD if mode == 4 => {
+                let Some(Some((r, _))) = lasts_made.last().copied() else { return refuse(pc - 1, "a call's field with no node before it") };
+                if nodes[r].field == 0 {
+                    nodes[r].field = operand;
+                }
             }
             RETAG | NODE_FIELD if mode == 2 => {
                 let Some(Some((r, _))) = lasts_made.last().copied() else { return refuse(pc - 1, "a relabel with no node before it") };

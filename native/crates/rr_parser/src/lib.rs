@@ -254,7 +254,10 @@ pub mod tests {
         assert!(stream::validate(&bad).is_err(), "a switch's words out of order");
         let states = c.machine.lines().filter(|l| l.starts_with("state ")).count();
         let arms = c.machine.lines().filter(|l| l.starts_with("arm ")).count();
-        assert!(states <= 371 && arms <= 3068 && c.program.words.len() <= 8860, "{states} states, {arms} arms, {} words", c.program.words.len());
+        // A call of a nested choice with a field is a call where it can be (the field set where it
+        // returns): the choice's level switches on its first token itself, as the lean parser's
+        // function does, so more states and arms (371 and 3,068 before), and fewer words.
+        assert!(states <= 404 && arms <= 3412 && c.program.words.len() <= 4841, "{states} states, {arms} arms, {} words", c.program.words.len());
         let native = native_ir::lower(&c.program, 0, 0).expect("lowers");
         let cut = native_cpu_clusters::by_rules(&native);
         assert_eq!((cut.count as usize, cut.calls), (rules.len(), true), "a function a rule");

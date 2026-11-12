@@ -62,6 +62,9 @@ pub enum On {
     Made = 2,
     /// A field's only: the node the node made last, a wrap, holds first.
     Inner = 3,
+    /// A field's only: the node made last at the level, where it has none (a call's field, set
+    /// where it returns: the callee's own field, or its relabel's, is kept).
+    MadeUnset = 4,
 }
 
 impl On {
@@ -70,6 +73,7 @@ impl On {
             0 => On::Here,
             1 => On::Moved,
             2 => On::Made,
+            4 => On::MadeUnset,
             _ => On::Inner,
         }
     }

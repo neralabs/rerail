@@ -230,6 +230,14 @@ impl Emit<'_> {
         Some(self.string(&w))
     }
 
+    /// A call's field, set on the node it made where it returns to state `st`
+    /// (`StateRow::returned_field`): on the node made last at the level, where it has none.
+    fn returned_field(&mut self, st: &StateRow) {
+        if st.returned_field != 0 {
+            self.push("NODE_FIELD", 4, Arg::Field(st.returned_field));
+        }
+    }
+
     /// An arm's code: its token's end, its test, acts, push and jump.
     fn arm(&mut self, arm: usize, span: Span, pre: Pre) -> u16 {
         if let Some(&pc) = self.arm_code.get(&(arm, span, pre.clone())) {
@@ -703,6 +711,7 @@ impl Emit<'_> {
             // taken (`m=0`).
             let marks: Vec<u16> = self.marks.iter().map(|m| m.kind).collect();
             let after_mark = self.arms.iter().any(|a| usize::from(a.to) == s && !a.call && marks.contains(&a.token));
+            self.returned_field(&st);
             for mode in [1, 0].into_iter().take(1 + usize::from(after_mark)) {
                 if mode == 0 {
                     self.marked[s] = self.pc();
@@ -719,6 +728,8 @@ impl Emit<'_> {
         // `m=1+k`: mask `k` holds where any mark does; `TOKEN` sets the marks live there (and
         // at the stream's end) and none elsewhere, so a state's mark tests fail on a register.
         self.push("TOKEN", self.any_mark.map_or(0, |k| k as u8 + 1), Arg::Num(STARTS));
+        // Past the `TOKEN`, where both returns land (`m=0` at it, `m=1` past it).
+        self.returned_field(&st);
         // The marks, in order: each the state takes, a test and a jump to its arm; each not
         // hidden that it does not take, and each its level refuses, a test that refuses.
         let tests: Vec<(usize, Option<usize>)> = (0..self.marks.len())
@@ -899,6 +910,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         let at = e.pc();
         let any = e.any_mark.map_or(0, |k| k as u8 + 1);
         e.push("TOKEN", any, Arg::Num(STARTS));
+        e.returned_field(st);
         let t = e.switches.len();
         e.push("SWITCH", 0, Arg::Table(t as u16));
         let end = e.pc();
@@ -1340,12 +1352,14 @@ fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules
                 }
             }
         }
-        // A state's places by position stay its own: after `TOKEN` its `MARK` or `SWITCH`, after
-        // a `MARK` its way, then the next `MARK` or the `SWITCH`; after a `PUSH` its call's
-        // `GOTO` (only a `PUSH` reaches it, so it goes to its callee as a call).
+        // A state's places by position stay its own: after `TOKEN` its `MARK` or `SWITCH` (past
+        // a call's field, `NODE_FIELD m=4`), after a `MARK` its way, then the next `MARK` or the
+        // `SWITCH`; after a `PUSH` its call's `GOTO` (only a `PUSH` reaches it, so it goes to its
+        // callee as a call).
+        let field_after_token = op == "NODE_FIELD" && words[pc].1 == 4 && pc > 0 && words[pc - 1].0 == "TOKEN";
         for d in 1..=by_place {
             if pc + d < n {
-                let whole = matches!((op, d), ("TOKEN", 1) | ("MARK", 2) | ("PUSH", 1));
+                let whole = matches!((op, d), ("TOKEN", 1) | ("MARK", 2) | ("PUSH", 1)) || (field_after_token && d == 1);
                 todo.push((pc + d, whole));
             }
         }

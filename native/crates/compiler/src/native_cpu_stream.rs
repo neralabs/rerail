@@ -941,7 +941,7 @@ enum WordFn {
     /// `RETAG m=1`: the node the last wrap moved.
     RetagMoved { remembered: bool },
     /// `RETAG m=2`, `NODE_FIELD m=2`: the node made last at the level.
-    Made { retag: bool, remembered: bool, dead: bool },
+    Made { retag: bool, remembered: bool, dead: bool, unset: bool },
     /// `RETAG`: the innermost open node.
     Here,
     /// `MERGE m=1`.
@@ -1232,7 +1232,7 @@ fn wrap_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value) {
 
 /// `RETAG m=2`, `NODE_FIELD m=2`: the node made last at the innermost open node's level
 /// (`relabel`), its frame's last one more than its record (0: none), its kind or field `x`.
-fn made_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, x: Value, retag: bool, dead: bool) {
+fn made_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, x: Value, retag: bool, dead: bool, unset: bool) {
     let open = (e.get)(f, Mem::Open);
     let last = (e.get)(f, Mem::LastMade);
     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
@@ -1242,7 +1242,15 @@ fn made_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, x: Value, retag: bool
     (e.guard)(f, no_last);
     let r = f.ins().iadd_imm(last, -1);
     let rows = (e.ctx)(f, ROWS);
-    NodeCol::of(rows, if retag { AT_KIND } else { AT_FIELD }).put(f, r, x);
+    let col = NodeCol::of(rows, if retag { AT_KIND } else { AT_FIELD });
+    // A call's field (`On::MadeUnset`): the node's own, where it has one.
+    let x = if unset {
+        let had = col.get(f, r);
+        f.ins().select(had, had, x)
+    } else {
+        x
+    };
+    col.put(f, r, x);
     if dead {
         // `drop`: the node goes (a token the grammar implies), left out at `ACCEPT`; none is
         // made last at this level until the next.
@@ -3078,14 +3086,15 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     field_c.put(&mut f, base, x);
                     f.ins().jump(fall, &[]);
                 }
-                Op::Retag { kind, on: On::Made } | Op::NodeField { field: kind, on: On::Made } => {
+                Op::Retag { kind, on: On::Made } | Op::NodeField { field: kind, on: On::Made | On::MadeUnset } => {
                     let retag = matches!(w.operation, Op::Retag { .. });
+                    let unset = matches!(w.operation, Op::NodeField { on: On::MadeUnset, .. });
                     let remembered = retag && kind == REMEMBERED;
                     let dead = retag && kind == DEAD;
                     let k = f.ins().iconst(types::I64, i64::from(kind));
-                    word!(WordFn::Made { retag, remembered, dead }, &[k], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| {
+                    word!(WordFn::Made { retag, remembered, dead, unset }, &[k], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| {
                         let k = if remembered { remembered_kind(g, e) } else { q[0] };
-                        made_word(g, e, k, retag, dead)
+                        made_word(g, e, k, retag, dead, unset)
                     });
                 }
                 Op::Reread { reading } if wrapping => {
@@ -4185,7 +4194,7 @@ fn ctx_reads(op: &Op, wrapping: bool) -> Vec<i32> {
 
 /// The words that read many `ctx` fields and run rarely: each loads them all (`Cut::reload`).
 fn cold_op(op: &Op) -> bool {
-    matches!(op, Op::Accept | Op::Wrap { .. } | Op::Reread { .. } | Op::Retag { on: On::Made | On::Inner, .. } | Op::NodeField { on: On::Made | On::Inner, .. })
+    matches!(op, Op::Accept | Op::Wrap { .. } | Op::Reread { .. } | Op::Retag { on: On::Made | On::Inner, .. } | Op::NodeField { on: On::Made | On::MadeUnset | On::Inner, .. })
 }
 
 /// Whether the program has context beside each call's return (a level's word, its flags): two
@@ -4197,7 +4206,7 @@ fn has_context(words: &[crate::native_ir::StructuralBlock]) -> bool {
 /// Whether the program keeps a frame per open node: it wraps, or it relabels the node made last
 /// at a level (`On::Made`).
 fn framed(words: &[crate::native_ir::StructuralBlock]) -> bool {
-    words.iter().any(|b| matches!(b.operation, Op::Wrap { .. } | Op::Reread { .. } | Op::Retag { on: On::Made, .. } | Op::NodeField { on: On::Made | On::Inner, .. }))
+    words.iter().any(|b| matches!(b.operation, Op::Wrap { .. } | Op::Reread { .. } | Op::Retag { on: On::Made, .. } | Op::NodeField { on: On::Made | On::MadeUnset | On::Inner, .. }))
 }
 
 /// Tier 1's buffers as tier 2 reads them, where tier 1 wrote them (the CPU's batch, or the
