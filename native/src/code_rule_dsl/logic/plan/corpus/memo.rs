@@ -222,6 +222,18 @@ fn entry_rel(plan: &[u8; 32]) -> crate::content_store::FrameRel {
     crate::content_store::FrameRel { name: "local".to_owned(), ident: *plan }
 }
 
+/// Where an entry's outputs are kept beside it, under the same part (decision 0117 step 1): its nodes, its tree
+/// counts (`own:` rows) and its lines. A run whose kept inputs hold an unchanged file's export and base rows reads
+/// only this, not the entry's rows.
+fn outputs_rel(plan: &[u8; 32]) -> crate::content_store::FrameRel {
+    crate::content_store::FrameRel { name: "local_out".to_owned(), ident: *plan }
+}
+
+/// An entry's outputs (`outputs_rel`): its nodes, its tree counts and its lines.
+fn outputs_of(e: &Entry) -> Entry {
+    Entry { key: e.key, nodes: e.nodes, rows: e.rows.iter().filter(|(r, _)| r.starts_with("own:")).map(|(r, v)| (r.clone(), v.clone())).collect(), lines: e.lines.clone() }
+}
+
 /// The part an entry of content `digest` at `path` is kept under (0103 §8's `local_key(d, h, p)`, its `p` the space).
 fn part_of(digest: &[u8; 32], path: &str) -> i64 {
     let mut hash = Sha256::new();
@@ -240,6 +252,7 @@ fn frame_reads(path: &str, key: i64, digest: &[u8; 32]) -> Vec<(String, u64)> {
 }
 
 /// A memo entry as its stored frame holds it, not decoded: the document's path and key, and its content's digest.
+#[derive(Clone)]
 pub(in crate::code_rule_dsl) struct Frame {
     pub path: String,
     key: i64,
@@ -317,6 +330,7 @@ pub(super) fn lookup_all(store: &ContentStore, program: &[u8; 32], docs: &[(Sour
 
 /// A memo entry found before it is decoded: held in memory (a queued write's, or a session's), or its stored frame.
 /// A run finds its documents' entries before its first wave and decodes each in its wave (decision 0104).
+#[derive(Clone)]
 pub(super) enum Found {
     Held(std::sync::Arc<Entry>),
     Frame(Frame),
@@ -326,6 +340,15 @@ impl Found {
     /// The entry, when it is the document's (`key`).
     pub(super) fn entry(&self, key: i64) -> StoreResult<Option<Entry>> {
         self.projected(key, &|_| true)
+    }
+
+    /// The whole entry this was found for, when it is a frame of its outputs (`Memo::found_outputs_all`): its frame
+    /// of rows, by its content's digest, as the waves read frames (from memory). A held entry is whole already.
+    pub(super) fn whole(&self, store: &ContentStore, program: &[u8; 32]) -> StoreResult<Option<Found>> {
+        match self {
+            Found::Held(e) => Ok(Some(Found::Held(std::sync::Arc::clone(e)))),
+            Found::Frame(f) => Ok(by_digest(store, &plan_digest(program), &[f.path.as_str()], vec![(0, f.digest)])?.pop().map(|(_, found)| found)),
+        }
     }
 
     /// Decode only demanded relations. Skipped relations' rows are checked, not kept.
@@ -361,9 +384,14 @@ pub(super) fn found_all(store: &ContentStore, program: &[u8; 32], docs: &[(Sourc
 /// The frames of `wanted`, each `(at, content digest)` of the document at `paths[at]`: a frame's part is its
 /// content's and path's, and the frame names both. No source is read: in the waves, the frames are in memory.
 fn by_digest(store: &ContentStore, plan: &[u8; 32], paths: &[&str], wanted: Vec<(usize, [u8; 32])>) -> StoreResult<Vec<(usize, Found)>> {
+    by_digest_in(store, plan, paths, wanted, entry_rel(plan))
+}
+
+/// `by_digest`, of the frames of `rel`: the entries' (`entry_rel`) or their outputs' (`outputs_rel`).
+fn by_digest_in(store: &ContentStore, plan: &[u8; 32], paths: &[&str], wanted: Vec<(usize, [u8; 32])>, rel: crate::content_store::FrameRel) -> StoreResult<Vec<(usize, Found)>> {
     let wanted: Vec<(usize, [u8; 32], i64)> = wanted.into_iter().map(|(i, d)| (i, d, part_of(&d, paths[i]))).collect();
     let docs: Vec<((), &str)> = paths.iter().map(|p| ((), *p)).collect();
-    let (space, rel) = (crate::content_store::local_space(plan), entry_rel(plan));
+    let space = crate::content_store::local_space(plan);
     let mut frames = store.admit_parts_of(&space, &rel, &wanted.iter().map(|(_, _, p)| *p).collect::<Vec<_>>())?;
     let mut out = Vec::new();
     let mut used = Vec::new();
@@ -470,11 +498,13 @@ pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Ve
                 let Some(digest) = digest else { continue };
                 let part = part_of(&digest, path);
                 puts.push(crate::content_store::FramePut { rel: entry_rel(&plan), part, digest: e.key as u64, reads: frame_reads(path, e.key, &digest), rows: to_rows(e) });
+                puts.push(crate::content_store::FramePut { rel: outputs_rel(&plan), part, digest: e.key as u64, reads: frame_reads(path, e.key, &digest), rows: to_rows(&outputs_of(e)) });
             }
             let space = crate::content_store::local_space(&plan);
             store.keep_frames(&space, &puts, &[], None)?;
-            let parts: Vec<i64> = puts.iter().map(|p| p.part).collect();
-            store.use_frame_parts(&space, &entry_rel(&plan), &parts, token, MEMO_RUNS)
+            let parts: Vec<i64> = puts.iter().filter(|p| p.rel.name == "local").map(|p| p.part).collect();
+            store.use_frame_parts(&space, &entry_rel(&plan), &parts, token, MEMO_RUNS)?;
+            store.use_frame_parts(&space, &outputs_rel(&plan), &parts, token, MEMO_RUNS)
         }),
     );
 }
@@ -634,6 +664,25 @@ impl Memo<'_> {
                     .collect())
             }
         }
+    }
+
+    /// `found_all`, of the entries' outputs alone (`outputs_rel`): a stored memo's frames of them, else (a held
+    /// entry, queued by this process or a session's) the entry. `None` where the store keeps no outputs frame (an
+    /// entry written before them): the caller finds the whole entry.
+    pub(super) fn found_outputs_all(self, program: &[u8; 32], docs: &[(Content, &str)]) -> StoreResult<Vec<Option<Found>>> {
+        let Memo::Stored(store) = self else { return self.found_all(program, docs) };
+        off();
+        let plan = plan_digest(program);
+        let mut out: Vec<Option<Found>> = docs.iter().map(|(c, p)| queued_content(*c, p, program).and_then(|k| store.pending::<Entry>(&k)).map(Found::Held)).collect();
+        let stored: Vec<usize> = (0..docs.len()).filter(|i| out[*i].is_none() && matches!(docs[*i].0, Content::Stored(_))).collect();
+        let digests = store.source_digests(&stored.iter().map(|i| docs[*i].0.stored().expect("stored")).collect::<Vec<_>>())?;
+        let mut wanted: Vec<(usize, [u8; 32])> = stored.iter().zip(&digests).filter_map(|(i, d)| d.map(|d| (*i, d))).collect();
+        wanted.extend((0..docs.len()).filter(|i| out[*i].is_none()).filter_map(|i| match docs[i].0 { Content::Unstored(d) => Some((i, d)), _ => None }));
+        let paths: Vec<&str> = docs.iter().map(|(_, p)| *p).collect();
+        for (i, f) in by_digest_in(store, &plan, &paths, wanted, outputs_rel(&plan))? {
+            out[i] = Some(f);
+        }
+        Ok(out)
     }
 
     pub(super) fn lookup(self, content: Content, path: &str, key: i64, program: &[u8; 32]) -> StoreResult<Option<Entry>> {

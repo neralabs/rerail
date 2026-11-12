@@ -1,6 +1,6 @@
 # 0117: A relation carries its delta; maintenance is the core's, driven by the deltas that are not empty
 
-Status: accepted (2026-11-11). Step 1 (the inputs from the changed documents) is being built; steps 2–4 are not.
+Status: accepted (2026-11-11). Step 1 (the inputs from the changed documents) is built, with one open case (below); steps 2–4 are not.
 
 ## Intro
 
@@ -138,3 +138,46 @@ unchanged. Then the step is measured on the data layer's 9,010 files.
 
 **The end target** stays 0090's: an edit of one function costs under 5% of a cold cross part. On the 20-file corpus,
 the joins are about 0.7 s of an edit's 26 s of CPU today. The target is a run whose cost is mostly its joins.
+
+## Built: step 1 (2026-11-11)
+
+**What it does.**
+- **Each memo entry has a second frame**, under the same part, holding its outputs: its nodes, tree counts and lines
+  (`memo::outputs_rel`).
+- **An unchanged file reads only that frame.** A file is unchanged when it is as the statistics keeper counted it:
+  same content, same key. It is looked up before the first wave (`Memo::found_outputs_all`), and its rows are not
+  decoded.
+- **At the waves' end, each input of the cross part is rebuilt from the kept frames**
+  (`retain::kept_inputs`, `kept_with_changed`):
+  - an unchanged input is its kept rows;
+  - a changed base relation is its kept rows, less the changed files' old entry rows by count, plus this run's
+    rows;
+  - a changed export is its kept rows, less the rows its location column gives to a changed document, plus this
+    run's rows.
+- **The checks.** Each removal is checked against the old entries, and every row must be attributable. A failure
+  of either sends the run down the old route for that run: every hit is decoded whole from the entry already found.
+  The inputs are made first and installed only if all of them succeed.
+- **The cross part takes the kept inputs as its old sources** (`adopt_inputs`), named as the run binds them, so it
+  does not admit them again.
+- **Off switch:** `RERAIL_KEPT_INPUTS=off`.
+
+**Measured** (20 files, unprofiled, findings equal to the cold run's each time):
+
+| | Before (instructions, CPU) | Now (instructions, CPU) |
+|---|---|---|
+| First edit after cold | 289.6 G, 31.9 s | 282.0 G, 25.0 s |
+| Second edit | 235.3 G, 27.5 s | 212.0 G, 21.5 s |
+| Unchanged | 9.7 G, 1.2 s | 9.5 G, 0.8 s |
+| Deleting a function with 4 findings | | 58 findings, equal to a cold run of the edited corpus (fell back, below) |
+
+The profile of an edit says "19 memo hits read for their outputs alone; 148 of 5171 inputs changed, from 1 changed
+documents". The memo replay is 0.3 MB of values, where it was 135.3 MB.
+
+**What it still costs.** The install is 0.62 s. Of that, 0.20 s reads the kept inputs, and the rest copies every
+input's rows into the run's export and base structures. That copy is step 2's to remove: an input becomes its kept
+rows with its delta beside it, not a copy.
+
+**Open: a value document's rows.** A value document's row belongs to each file that asked for it, and the kept base
+relation can hold it once. Subtracting a changed file's old rows by count cannot then tell whether another file
+still holds the row. So the run falls back, as it did on the deletion above. The exact form is step 2's count side
+structure: how many files hold each row of a base relation, kept with its frame.

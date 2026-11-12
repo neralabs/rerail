@@ -322,7 +322,7 @@ impl Keeper {
     }
 }
 
-fn same(a: (memo::Content, i64), b: (memo::Content, i64)) -> bool {
+pub(super) fn same(a: (memo::Content, i64), b: (memo::Content, i64)) -> bool {
     a.1 == b.1
         && match (a.0, b.0) {
             (memo::Content::Stored(x), memo::Content::Stored(y)) => x == y,
