@@ -3,7 +3,7 @@
  * (`core.autocrlf=true`, which Git for Windows' installer sets for the whole machine, or a `text` or `eol=crlf`
  * attribute), the working tree does not hold a blob's bytes, so a comparison of the two by digest or blob id has to try
  * both forms, or every file Git writes reads as the session's own edit. Which rule a checkout follows for a path is the
- * repository's settings' answer (`gitCrlfPaths`); each function here takes that answer as `rule`, undefined where a
+ * repository's settings' answer (`GitReads.crlfPaths`); each function here takes that answer as `rule`, undefined where a
  * checkout writes the blob as stored.
  */
 import { createHash } from "node:crypto";

@@ -373,7 +373,7 @@ export function gitText(cwd: string, args: readonly string[]): string | undefine
  * on Windows a running process holds the folder it runs in, so a read that answered before its Git exited would leave
  * the checkout impossible to remove or rename for a moment.
  */
-export interface GitReadOptions {
+interface GitReadOptions {
   /**
    * Once aborted, the read ends its Git with every process that Git started, as its timeout does ({@link settleWhenDone}),
    * or starts none, and answers as it does past its timeout.
@@ -381,16 +381,98 @@ export interface GitReadOptions {
   signal?: AbortSignal | undefined;
 }
 
+/** What a blob read keeps and how long its Git may run. */
+export interface BlobLimits {
+  /** A blob larger than this is left out, never read into memory. */
+  readonly maxBlobBytes: number;
+  /** `DEFAULT_TIMEOUT_MS` by default. */
+  readonly timeout?: number | undefined;
+}
+
+/** Where Git looks for the global configuration files: this process's environment and platform by default. */
+interface GitPlace {
+  readonly env?: NodeJS.ProcessEnv;
+  readonly platform?: NodeJS.Platform;
+}
+
 /**
- * The Git reads one owner started without waiting for each, such as a session's source walks: {@link stop} kills those
- * still running and settles once each has exited, so the owner can end with no Git left running in its checkouts.
+ * The Git reads one owner makes without waiting for each, such as a session's source walks and ignore rules: each
+ * method is one read, and each starts its Git under the signal {@link stop} aborts. So {@link stop} kills the reads
+ * still running and settles once each Git has exited, and the owner can end with no Git left running in its checkouts.
+ * Once stopped, a read starts no Git and answers as without Git. It also keeps what {@link unmerged} last read of each
+ * folder, held while that folder's index file is unchanged.
  */
 export class GitReads {
   readonly #stopping = new AbortController();
   readonly #running = new Set<Promise<unknown>>();
+  readonly #unmerged = gitUnmergedReader();
 
-  /** Runs `read` with the signal {@link stop} aborts; once stopped, a read starts no Git and answers as without Git. */
-  run<T>(read: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  /** The commit `HEAD` names in `cwd`; undefined outside a repository, or before its first commit. */
+  head(cwd: string): Promise<string | undefined> {
+    return this.#run(signal => gitHead(cwd, { signal }));
+  }
+
+  /** Whether everything that moved `HEAD` in `cwd` since it named `from` was a commit ({@link headMovedOnlyByCommits}). */
+  movedOnlyByCommits(cwd: string, from: string | undefined): Promise<boolean> {
+    return this.#run(signal => headMovedOnlyByCommits(cwd, from, { signal }));
+  }
+
+  /** The contents of `revisions` in `cwd` by one `git cat-file --batch` ({@link readGitBlobs}). */
+  blobs(cwd: string, revisions: readonly string[], limits: BlobLimits): Promise<Map<string, Buffer>> {
+    return this.#run(signal => batchBlobs(cwd, revisions, { ...limits, signal }));
+  }
+
+  /** The object id of each of `revisions` that names a blob, no blob read ({@link readGitBlobIds}). */
+  blobIds(cwd: string, revisions: readonly string[]): Promise<Map<string, string>> {
+    return this.#run(signal => readGitBlobIds(cwd, revisions, { signal }));
+  }
+
+  /** The paths among `paths` a checkout of `cwd` writes with CRLF line breaks, with the rule of each ({@link gitCrlfPaths}). */
+  crlfPaths(cwd: string, paths: readonly string[], options: { platform?: NodeJS.Platform } = {}): Promise<Map<string, CrlfRule>> {
+    return this.#run(signal => gitCrlfPaths(cwd, paths, { ...options, signal }));
+  }
+
+  /** The distinct commits `cwd`'s branches and remote-tracking branches point at ({@link gitBranchTips}). */
+  branchTips(cwd: string): Promise<string[]> {
+    return this.#run(signal => gitBranchTips(cwd, { signal }));
+  }
+
+  /** The commits reachable from `to` but not from `from` ({@link gitCommitsBetween}). */
+  commitsBetween(cwd: string, from: string, to: string): Promise<string[]> {
+    return this.#run(signal => gitCommitsBetween(cwd, from, to, { signal }));
+  }
+
+  /** The files of `cwd`'s checkout whose text its index may not hold ({@link gitModifiedOrUntrackedPaths}). */
+  modifiedOrUntracked(cwd: string): Promise<string[]> {
+    return this.#run(signal => gitModifiedOrUntrackedPaths(cwd, { signal }));
+  }
+
+  /** The exclude files of `cwd`'s checkout that no diff shows ({@link gitExcludeFiles}). */
+  excludeFiles(cwd: string): Promise<string[]> {
+    return this.#run(signal => gitExcludeFiles(cwd, { signal }));
+  }
+
+  /** The configuration files that can name `cwd`'s excludes file ({@link gitConfigFiles}). */
+  configFiles(cwd: string, place: GitPlace = {}): Promise<string[]> {
+    return this.#run(signal => gitConfigFiles(cwd, { ...place, signal }));
+  }
+
+  /**
+   * The index's unmerged entries under `cwd` ({@link gitUnmergedReader}): a Git process runs only when the folder's
+   * index file changed since the last read; undefined when Git cannot say.
+   */
+  unmerged(cwd: string): Promise<ReadonlyMap<string, string> | undefined> {
+    return this.#run(signal => this.#unmerged(cwd, { signal }));
+  }
+
+  /** Kills every read still running and settles once the Git each started has exited. */
+  async stop(): Promise<void> {
+    this.#stopping.abort();
+    await Promise.allSettled([...this.#running]);
+  }
+
+  /** Runs `read` with the signal {@link stop} aborts, and keeps it among the reads `stop` waits for until it settles. */
+  #run<T>(read: (signal: AbortSignal) => Promise<T>): Promise<T> {
     const running = read(this.#stopping.signal);
     this.#running.add(running);
     const forget = (): void => {
@@ -398,12 +480,6 @@ export class GitReads {
     };
     running.then(forget, forget);
     return running;
-  }
-
-  /** Kills every read still running and settles once the Git each started has exited. */
-  async stop(): Promise<void> {
-    this.#stopping.abort();
-    await Promise.allSettled([...this.#running]);
   }
 }
 
@@ -456,7 +532,7 @@ async function gitStdout(cwd: string, args: readonly string[], signal: AbortSign
 }
 
 /** The commit `HEAD` names in `cwd`; undefined outside a repository, or before its first commit. */
-export async function gitHead(cwd: string, options: GitReadOptions = {}): Promise<string | undefined> {
+async function gitHead(cwd: string, options: GitReadOptions = {}): Promise<string | undefined> {
   return await gitOutput(cwd, ["rev-parse", "--verify", "--quiet", "HEAD"], options.signal);
 }
 
@@ -465,7 +541,7 @@ export async function gitHead(cwd: string, options: GitReadOptions = {}): Promis
  * folder's, which every worktree shares) and the file `core.excludesFile` names, else Git's default, `git/ignore` in
  * `XDG_CONFIG_HOME` or `~/.config`. Empty outside a Git checkout, or without Git.
  */
-export async function gitExcludeFiles(cwd: string, options: GitReadOptions = {}): Promise<string[]> {
+async function gitExcludeFiles(cwd: string, options: GitReadOptions = {}): Promise<string[]> {
   // Git prints the path relative to `cwd` unless it is elsewhere; `--path-format` would need Git 2.31.
   const exclude = await gitOutput(cwd, ["rev-parse", "--git-path", "info/exclude"], options.signal);
   if (exclude === undefined || exclude === "") return [];
@@ -515,7 +591,7 @@ function defaultExcludesFile(env: NodeJS.ProcessEnv = process.env, platform: Nod
  * `XDG_CONFIG_HOME` or that home's `.config`. The system file, which only an administrator writes, and files
  * `include.path` pulls in are left out. Empty outside a Git checkout, or without Git.
  */
-export async function gitConfigFiles(
+async function gitConfigFiles(
   cwd: string,
   options: GitReadOptions & { env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform } = {},
 ): Promise<string[]> {
@@ -539,7 +615,7 @@ const COMMIT_SUBJECT = /^commit(?: \([^)]*\))?: /u;
  * found it, by `HEAD`'s reflog. Anything else there (a checkout, pull, merge, rebase, reset, cherry-pick) wrote files, and
  * so did a move the reflog cannot show (`from` is not in it). With no `from`, `HEAD`'s newest move is all there is to go by.
  */
-export async function headMovedOnlyByCommits(cwd: string, from: string | undefined, options: GitReadOptions = {}): Promise<boolean> {
+async function headMovedOnlyByCommits(cwd: string, from: string | undefined, options: GitReadOptions = {}): Promise<boolean> {
   const reflog = await gitOutput(cwd, ["reflog", "show", "-n", String(MAX_REFLOG_ENTRIES), "--format=%H %gs", "HEAD"], options.signal);
   if (reflog === undefined) return false;
   const entries = reflog.split("\n");
@@ -548,13 +624,13 @@ export async function headMovedOnlyByCommits(cwd: string, from: string | undefin
 }
 
 /** The distinct commits `cwd`'s branches and remote-tracking branches point at; empty without Git or outside a repository. */
-export async function gitBranchTips(cwd: string, options: GitReadOptions = {}): Promise<string[]> {
+async function gitBranchTips(cwd: string, options: GitReadOptions = {}): Promise<string[]> {
   const tips = await gitOutput(cwd, ["for-each-ref", "--format=%(objectname)", "refs/heads", "refs/remotes"], options.signal);
   return tips === undefined || tips === "" ? [] : [...new Set(tips.split("\n"))];
 }
 
 /** The commits reachable from `to` but not from `from` (`git rev-list from..to`); empty when Git cannot say. */
-export async function gitCommitsBetween(cwd: string, from: string, to: string, options: GitReadOptions = {}): Promise<string[]> {
+async function gitCommitsBetween(cwd: string, from: string, to: string, options: GitReadOptions = {}): Promise<string[]> {
   const commits = await gitOutput(cwd, ["rev-list", `${from}..${to}`], options.signal);
   return commits === undefined || commits === "" ? [] : commits.split("\n");
 }
@@ -644,7 +720,7 @@ async function lineEndingAttributes(cwd: string, paths: readonly string[], signa
  * without Git, outside a repository or past the timeout, so a file with CRLF line breaks is then never taken for Git's
  * writing.
  */
-export async function gitCrlfPaths(
+async function gitCrlfPaths(
   cwd: string,
   paths: readonly string[],
   options: GitReadOptions & { platform?: NodeJS.Platform } = {},
@@ -675,7 +751,7 @@ const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;
  * but not ignored; relative to `cwd`. Empty without Git, outside a repository, past the timeout, or past
  * `MAX_LISTED_PATH_BYTES` of paths.
  */
-export async function gitModifiedOrUntrackedPaths(cwd: string, options: GitReadOptions = {}): Promise<string[]> {
+async function gitModifiedOrUntrackedPaths(cwd: string, options: GitReadOptions = {}): Promise<string[]> {
   const listed = await gitStdout(cwd, ["ls-files", "-z", "--modified", "--others", "--exclude-standard"], options.signal, MAX_LISTED_PATH_BYTES);
   return listed === undefined ? [] : listed.split("\0").filter(path => path !== "");
 }
@@ -685,7 +761,7 @@ export async function gitModifiedOrUntrackedPaths(cwd: string, options: GitReadO
  * --batch-check`: no blob is read. A revision Git does not resolve to a blob is absent, and so is every revision
  * without Git, outside a repository, or past the timeout; one containing a newline cannot be asked for and is skipped.
  */
-export async function readGitBlobIds(cwd: string, revisions: readonly string[], options: GitReadOptions = {}): Promise<Map<string, string>> {
+async function readGitBlobIds(cwd: string, revisions: readonly string[], options: GitReadOptions = {}): Promise<Map<string, string>> {
   const asked = revisions.filter(revision => !/[\r\n]/u.test(revision));
   const ids = new Map<string, string>();
   if (asked.length === 0) return ids;
@@ -815,7 +891,7 @@ async function gitIndexPath(cwd: string, signal: AbortSignal | undefined): Promi
  * so this can cost more, never answer with stale entries. When Git cannot list them (it failed, timed out or was
  * stopped), the answer is undefined and nothing is kept, so the next read asks Git again.
  */
-export function gitUnmergedReader(): (cwd: string, options?: GitReadOptions) => Promise<ReadonlyMap<string, string> | undefined> {
+function gitUnmergedReader(): (cwd: string, options?: GitReadOptions) => Promise<ReadonlyMap<string, string> | undefined> {
   const indexes = new Map<string, string>();
   const held = new Map<string, { readonly stamp: string; readonly entries: ReadonlyMap<string, string> }>();
   /** The stamp of `cwd`'s index file, found once and remembered; undefined when it cannot be found or stamped. */
@@ -857,12 +933,16 @@ interface BatchBody {
  * outside a repository, or past the timeout (blobs read before it are kept). A revision containing a newline cannot be
  * asked for and is skipped. Git never fetches a partial clone's missing blob or prompts for credentials here: a blob
  * the clone does not hold is absent.
+ *
+ * For a process that has nothing to stop its reads, such as a headless scan; a session reads through its
+ * {@link GitReads}.
  */
-export async function readGitBlobs(
-  cwd: string,
-  revisions: readonly string[],
-  options: GitReadOptions & { maxBlobBytes: number; timeout?: number },
-): Promise<Map<string, Buffer>> {
+export async function readGitBlobs(cwd: string, revisions: readonly string[], limits: BlobLimits): Promise<Map<string, Buffer>> {
+  return await batchBlobs(cwd, revisions, limits);
+}
+
+/** {@link readGitBlobs}, ended once `options.signal` is aborted ({@link GitReadOptions}). */
+async function batchBlobs(cwd: string, revisions: readonly string[], options: BlobLimits & GitReadOptions): Promise<Map<string, Buffer>> {
   const asked = revisions.filter(revision => !/[\r\n]/u.test(revision));
   const blobs = new Map<string, Buffer>();
   if (asked.length === 0) return blobs;

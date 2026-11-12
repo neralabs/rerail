@@ -17,19 +17,7 @@ import type {
 } from "./code-rule.js";
 import type { AuditMode } from "../audit/audit.js";
 import { fileStamp } from "../file-stamp.js";
-import {
-  gitBranchTips,
-  gitCommitsBetween,
-  gitCrlfPaths,
-  gitHead,
-  gitModifiedOrUntrackedPaths,
-  GitReads,
-  gitUnmergedReader,
-  headMovedOnlyByCommits,
-  readGitBlobIds,
-  readGitBlobs,
-  type CrlfRule,
-} from "../git.js";
+import { GitReads, type CrlfRule } from "../git.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { removeScratch, renameWithRetry } from "../file-replace.js";
@@ -169,9 +157,9 @@ interface GitBlobs {
   readonly committed: boolean;
   /** `HEAD` as the last walk saw it, when it moved since. */
   readonly before: string | undefined;
-  /** The changes whose blobs a checkout writes with CRLF line breaks, each with the rule it writes them by (`gitCrlfPaths`). */
+  /** The changes whose blobs a checkout writes with CRLF line breaks, each with the rule it writes them by (`GitReads.crlfPaths`). */
   readonly crlf: ReadonlyMap<string, CrlfRule>;
-  /** The index's unmerged entries now (`gitUnmergedReader`); undefined when Git could not list them. */
+  /** The index's unmerged entries now (`GitReads.unmerged`); undefined when Git could not list them. */
   readonly unmerged: ReadonlyMap<string, string> | undefined;
   /** Those entries as the last walk saw them; undefined when no walk has read them yet. */
   readonly unmergedBefore: ReadonlyMap<string, string> | undefined;
@@ -182,31 +170,24 @@ interface GitView extends GitBlobs {
 }
 async function readGitView(discovery: SourceDiscovery, checkout: string, paths: readonly string[]): Promise<GitBlobs | undefined> {
   const { git } = discovery;
-  const head = await git.run(signal => gitHead(checkout, { signal }));
+  const head = await git.head(checkout);
   if (head === undefined) return undefined;
   const from = discovery.heads.get(checkout);
   if (from === undefined) discovery.heads.set(checkout, head);
   const unmerged = await readUnmergedView(discovery, checkout);
   const moved = from !== head;
-  const committed = moved && await git.run(signal => headMovedOnlyByCommits(checkout, from, { signal }));
+  const committed = moved && await git.movedOnlyByCommits(checkout, from);
   const before = from === head ? undefined : from;
   const [blobs, crlf] = await Promise.all([
     // A blob larger than a source could never match its digest: it is skipped, never read into memory.
-    git.run(signal => readGitBlobs(checkout, paths.flatMap(path => gitRevisions(path, before)), { maxBlobBytes: MAX_SOURCE_BYTES, signal })),
-    git.run(signal => gitCrlfPaths(checkout, paths, { signal })),
+    git.blobs(checkout, paths.flatMap(path => gitRevisions(path, before)), { maxBlobBytes: MAX_SOURCE_BYTES }),
+    git.crlfPaths(checkout, paths),
   ]);
   return { blobs, head, moved, committed, before, crlf, ...unmerged };
 }
-/**
- * A checkout's unmerged entries now (`SourceDiscovery.readUnmerged`), read through the session's Git reads, which `close`
- * stops and waits out as it does every other Git a walk starts.
- */
-function unmergedNow(discovery: SourceDiscovery, checkout: string): Promise<ReadonlyMap<string, string> | undefined> {
-  return discovery.git.run(signal => discovery.readUnmerged(checkout, { signal }));
-}
 /** A checkout's unmerged entries now and as the last walk saw them; the first entries read become its snapshot. */
 async function readUnmergedView(discovery: SourceDiscovery, checkout: string): Promise<Pick<GitBlobs, "unmerged" | "unmergedBefore">> {
-  const unmerged = await unmergedNow(discovery, checkout);
+  const unmerged = await discovery.git.unmerged(checkout);
   const unmergedBefore = discovery.unmerged.get(checkout);
   if (unmergedBefore === undefined && unmerged !== undefined) discovery.unmerged.set(checkout, unmerged);
   return { unmerged, unmergedBefore };
@@ -226,7 +207,7 @@ function stoppedSince(view: GitBlobs, named: ReadonlyArray<{ path: string; prior
 async function commitsMade(git: GitReads, checkout: string, view: GitBlobs): Promise<string[] | undefined> {
   if (!view.committed) return [];
   const { before, head } = view;
-  const commits = before === undefined ? [head] : await git.run(signal => gitCommitsBetween(checkout, before, head, { signal }));
+  const commits = before === undefined ? [head] : await git.commitsBetween(checkout, before, head);
   return commits.length === 0 ? undefined : commits;
 }
 function gitRevisions(path: string, before: string | undefined): string[] {
@@ -436,19 +417,15 @@ interface SourceDiscovery {
   /** Each checkout's `HEAD` when the last walk that finished began, by its root: what the next walk's changes followed. */
   readonly heads: Map<string, string>;
   /**
-   * Every Git read the session's walks and ignore rules start, which `close` stops and waits out: a walk is never waited
-   * for, and on Windows a Git it left running would hold the checkout after the session ended.
+   * Every Git read the session's walks and ignore rules make, which `close` stops and waits out: a walk is never waited
+   * for, and on Windows a Git it left running would hold the checkout after the session ended. Every pass asks it for a
+   * checkout's unmerged entries, so a Git process runs only if that checkout's index file changed (`GitReads.unmerged`).
    */
   readonly git: GitReads;
-  /** Each checkout's unmerged entries (`readUnmerged`) when that walk began: a conflict they hold is not the next walk's. */
+  /** Each checkout's unmerged entries (`GitReads.unmerged`) when that walk began: a conflict they hold is not the next walk's. */
   readonly unmerged: Map<string, ReadonlyMap<string, string>>;
   /** The checkouts whose `.git` the session folder's last walk passed (`SourceScan.checkouts`): those inside it, and its own. */
   passedCheckouts: ReadonlySet<string>;
-  /**
-   * Reads a checkout's unmerged entries now. Every pass asks, so a Git process runs only if its index file changed; each
-   * read goes through `git` (`unmergedNow`).
-   */
-  readonly readUnmerged: ReturnType<typeof gitUnmergedReader>;
   /** When the session's tool calls ran: a change the session folder's walk finds is its own only when one ran then. */
   readonly toolCalls: ToolCallWindows;
 }
@@ -714,8 +691,8 @@ async function recoverFromGit(
   const revisions = named.flatMap(({ inCheckout }) => [`:./${inCheckout}`, `HEAD:./${inCheckout}`]);
   const [blobs, crlf] = await Promise.all([
     // A blob larger than a source could never match its digest: it is skipped, never read into memory.
-    discovery.git.run(signal => readGitBlobs(checkout, revisions, { maxBlobBytes: MAX_SOURCE_BYTES, signal })),
-    discovery.git.run(signal => gitCrlfPaths(checkout, named.map(({ inCheckout }) => inCheckout), { signal })),
+    discovery.git.blobs(checkout, revisions, { maxBlobBytes: MAX_SOURCE_BYTES }),
+    discovery.git.crlfPaths(checkout, named.map(({ inCheckout }) => inCheckout)),
   ]);
   for (const { path, inCheckout } of named) {
     const digest = uncaptured.get(path);
@@ -880,7 +857,7 @@ export class CodeRuleBridge {
       const discovery: SourceDiscovery = {
         startedAt, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
-        heads: new Map(), git, unmerged: new Map(), passedCheckouts: new Set(), readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
+        heads: new Map(), git, unmerged: new Map(), passedCheckouts: new Set(), toolCalls: this.#unwatched,
       };
       this.#unwatched = new ToolCallWindows();
       this.#discovery = discovery;
@@ -1658,7 +1635,7 @@ export class CodeRuleBridge {
     const heads = new Map<string, string>();
     const unmerged = new Map<string, ReadonlyMap<string, string>>();
     const readEntries = async (root: string): Promise<void> => {
-      const entries = await unmergedNow(discovery, root);
+      const entries = await discovery.git.unmerged(root);
       if (entries !== undefined) unmerged.set(root, entries);
     };
     const walkedApart = (root: string): boolean => discovery.worktrees.roots.has(sessionPath(discovery.root, root));
@@ -1667,7 +1644,7 @@ export class CodeRuleBridge {
     const session = this.#owningCheckout(discovery.root, "");
     const withHead = new Set(worktrees ?? (session === undefined ? others : [session, ...others]));
     for (const root of withHead) {
-      const head = await discovery.git.run(signal => gitHead(root, { signal }));
+      const head = await discovery.git.head(root);
       if (head === undefined) continue;
       heads.set(root, head);
       await readEntries(root);
@@ -1687,7 +1664,7 @@ export class CodeRuleBridge {
     for (const checkout of scan.checkouts) {
       if (discovery.cancelled) return;
       if (walk.unmerged.has(checkout) || discovery.unmerged.has(checkout)) continue;
-      const entries = await unmergedNow(discovery, checkout);
+      const entries = await discovery.git.unmerged(checkout);
       if (entries !== undefined) scan.unmerged.set(checkout, entries);
     }
   }
@@ -1786,7 +1763,7 @@ export class CodeRuleBridge {
    * in the same walk so is one that holds its index blob or that the index no longer has. A later change to a file with
    * the same unmerged entries as the last walk is no longer Git's stop, even when the file held the blob of its side
    * before it. A file holds a blob in the CRLF line breaks as well where the repository's settings have a checkout write
-   * them (`gitCrlfPaths`, `line-endings.ts`); other filters' bytes never match, and stay the session's.
+   * them (`GitReads.crlfPaths`, `line-endings.ts`); other filters' bytes never match, and stay the session's.
    * Of the rest, a file restored from a branch is Git's too (`#restoredFromBranches`).
    */
   async #gitVerdicts(
@@ -1854,15 +1831,15 @@ export class CodeRuleBridge {
     // Git names a blob by the SHA-1, or in a SHA-256 repository the SHA-256, of its header and bytes; `HEAD`'s id says which.
     const algorithm = view.head.length === 64 ? "sha256" : "sha1";
     const ids = new Map(named.map(({ edit, path }) => [edit.path, blobIds(edit.generatedText!, algorithm, view.crlf.get(path))]));
-    const known = await git.run(signal => readGitBlobIds(checkout, [...new Set([...ids.values()].flat())], { signal }));
+    const known = await git.blobIds(checkout, [...new Set([...ids.values()].flat())]);
     const candidates = named.filter(({ edit }) => ids.get(edit.path)!.some(id => known.has(id)));
     if (candidates.length === 0) return [];
     const excluded = await commitsMade(git, checkout, view);
     if (excluded === undefined) return [];
-    const tips = (await git.run(signal => gitBranchTips(checkout, { signal }))).filter(tip => !excluded.includes(tip));
+    const tips = (await git.branchTips(checkout)).filter(tip => !excluded.includes(tip));
     if (tips.length === 0) return [];
     const branchRevisions = candidates.flatMap(({ path }) => tips.map(tip => `${tip}:./${path}`));
-    const held = await git.run(signal => readGitBlobIds(checkout, branchRevisions, { signal }));
+    const held = await git.blobIds(checkout, branchRevisions);
     return candidates
       .filter(({ edit, path }) => tips.some(tip => ids.get(edit.path)!.includes(held.get(`${tip}:./${path}`) ?? "")))
       .map(({ edit }) => edit.path);
@@ -2173,7 +2150,7 @@ export class CodeRuleBridge {
 
   /**
    * Puts in `scan.firstSeen` the text of each source the walk saw first, in the session folder or a worktree new to it,
-   * that its checkout's index may not hold (`gitModifiedOrUntrackedPaths`): changed before the session, neither its
+   * that its checkout's index may not hold (`GitReads.modifiedOrUntracked`): changed before the session, neither its
    * index nor its `HEAD` blob is the preimage of the session's next shell write to it. Each is read again, while the
    * session's first-sight budget lasts, and taken only while it still has the digest the scan observed.
    */
@@ -2192,7 +2169,7 @@ export class CodeRuleBridge {
     const listed: string[] = [];
     for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, firstSeen, path => path).owned) {
       const seen = new Set(paths);
-      for (const path of await discovery.git.run(signal => gitModifiedOrUntrackedPaths(checkout, { signal }))) {
+      for (const path of await discovery.git.modifiedOrUntracked(checkout)) {
         const inSession = sessionPath(discovery.root, resolve(checkout, path));
         if (seen.has(inSession)) listed.push(inSession);
       }
