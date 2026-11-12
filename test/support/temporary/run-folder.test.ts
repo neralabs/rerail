@@ -1,5 +1,5 @@
 import { spawn, spawnSync, type ChildProcessByStdio } from "node:child_process";
-import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { Readable } from "node:stream";
@@ -11,6 +11,8 @@ import { afterEach, describe, expect, it } from "vitest";
 const CHECKOUT = fileURLToPath(new URL("../../../", import.meta.url));
 const VITEST = join(CHECKOUT, "node_modules", "vitest", "vitest.mjs");
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** What the `stuck` test file writes next to itself: the pid of the process in its folder, or the folder it locked. */
+const STUCK_NOTE = "stuck.txt";
 const IMPORTS = [
   `import { mkdtempSync } from "node:fs";`,
   `import { tmpdir } from "node:os";`,
@@ -22,6 +24,28 @@ const TEST_FILES = {
   leaves: `${IMPORTS}\nit("leaves a folder behind", () => { mkdtempSync(join(tmpdir(), "left-")); });\n`,
   // The folder's name carries the worker's pid, which killRun ends after vitest's own process.
   holds: `${IMPORTS}\nit("holds a folder until killed", async () => { mkdtempSync(join(tmpdir(), "held-" + process.pid + "-")); await new Promise(() => {}); }, 600_000);\n`,
+  // Leaves a folder no removal takes until releaseStuck lets it go, and writes next to itself what that takes: Windows
+  // removes no folder a process runs in, and elsewhere no file goes from a folder its owner may not write to. The
+  // process takes the folder as it starts, after spawn returns, so the test waits for the file it writes there.
+  stuck: `${IMPORTS}
+import { spawn } from "node:child_process";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+it("leaves a folder its run cannot remove", async () => {
+  const stuck = mkdtempSync(join(tmpdir(), "stuck-"));
+  const note = new URL("${STUCK_NOTE}", import.meta.url);
+  if (process.platform === "win32") {
+    const holder = spawn(process.execPath, ["-e", "require('node:fs').writeFileSync('running', ''); setTimeout(() => {}, 600000)"], { cwd: stuck, detached: true, stdio: "ignore", windowsHide: true });
+    holder.unref();
+    writeFileSync(note, String(holder.pid));
+    while (!existsSync(join(stuck, "running"))) await new Promise(resolve => setTimeout(resolve, 20));
+  } else {
+    mkdirSync(join(stuck, "locked"));
+    writeFileSync(join(stuck, "locked", "file"), "");
+    chmodSync(join(stuck, "locked"), 0o500);
+    writeFileSync(note, join(stuck, "locked"));
+  }
+}, 60_000);
+`,
 };
 
 interface Run {
@@ -39,6 +63,7 @@ afterEach(async () => {
     if (run.child.exitCode === null && run.child.signalCode === null) kill(run.child.pid);
     await run.ended.catch(() => undefined);
   }
+  for (const root of scratches) await releaseStuck(join(root, "tests"));
   await Promise.all(scratches.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
 
@@ -122,6 +147,37 @@ function endedPid(): number {
   return spawnSync(process.execPath, ["-e", ""]).pid;
 }
 
+/** Resolves once no process has `pid`; signal 0 only checks. */
+async function processEnded(pid: number): Promise<void> {
+  for (;;) {
+    try {
+      process.kill(pid, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ESRCH") return;
+      throw error;
+    }
+    await delay(50);
+  }
+}
+
+/**
+ * Lets go the folder the `stuck` test file in `tests` left, once: ends the process running in it on Windows, and
+ * elsewhere makes the folder it locked writable again. Nothing to do when that test file has not run.
+ */
+async function releaseStuck(tests: string): Promise<void> {
+  const note = join(tests, "stuck", STUCK_NOTE);
+  const text = await readFile(note, "utf8").catch(() => undefined);
+  if (text === undefined) return;
+  // Gone before the release, so a second call cannot signal a pid that another process has since been given.
+  await rm(note);
+  if (process.platform === "win32") {
+    kill(Number(text));
+    await processEnded(Number(text));
+  } else {
+    await chmod(text, 0o700);
+  }
+}
+
 describe("a test run's temporary folders", () => {
   it("are all gone after the run, with the folders of ended runs, and a running run's folder stays", async () => {
     const { temp, tests } = await scratch();
@@ -157,4 +213,25 @@ describe("a test run's temporary folders", () => {
     expect(next.code, next.output).toBe(0);
     expect(await readdir(temp)).toEqual([]);
   }, 120_000);
+
+  it("that a run cannot remove stay, the run says so and does not fail, and a later run removes them", async () => {
+    const { temp, tests } = await scratch();
+    const stuck = await startRun(join(tests, "stuck"), temp).ended;
+    const afterStuck = await readdir(temp);
+    // The next run finds the stuck run ended but cannot remove its folder either.
+    const blocked = await startRun(join(tests, "leaves"), temp).ended;
+    const afterBlocked = await readdir(temp);
+    await releaseStuck(tests);
+
+    const next = await startRun(join(tests, "leaves"), temp).ended;
+
+    expect(stuck.code, stuck.output).toBe(0);
+    expect(stuck.output).toContain("The test run could not remove its temporary folder; the next run tries again");
+    expect(afterStuck).toHaveLength(1);
+    expect(blocked.code, blocked.output).toBe(0);
+    expect(blocked.output).toContain("The test run could not remove the folders of ended test runs; the next run tries again");
+    expect(afterBlocked).toEqual(afterStuck);
+    expect(next.code, next.output).toBe(0);
+    expect(await readdir(temp)).toEqual([]);
+  }, 180_000);
 });
