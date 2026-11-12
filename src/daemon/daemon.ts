@@ -10,9 +10,9 @@ import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
-import { DAEMON_ACCESS_TOKEN_FILE, sameSecret, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
+import { DAEMON_ACCESS_TOKEN_FILE, sameSecret, STOP_DRAIN_MS, type DaemonHealth, type DaemonLaunchOptions, type DaemonState, type DaemonTlsFiles, type NativeStatus } from "../runtime/daemon-control.js";
 import { startRemoteSink, type RemoteSinkLoop } from "../runtime/remote-outbox.js";
-import { chooseEngineSocketPath, startEngineService, type EngineService } from "../runtime/engine-service.js";
+import { chooseEngineSocketPath, startEngineService, type EngineCloseOptions, type EngineService } from "../runtime/engine-service.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { NativeSessionServer } from "./native-session-server.js";
 import { getRequestListener } from "@hono/node-server";
@@ -553,7 +553,8 @@ export class RerailDaemon {
     };
   }
 
-  async close(): Promise<void> {
+  /** Closes every server and store; `options` says how long the engine service runs the events still waiting. */
+  async close(options: EngineCloseOptions = {}): Promise<void> {
     if (this.#closed) return;
     this.#closed = true;
     try {
@@ -562,7 +563,7 @@ export class RerailDaemon {
     } finally {
       try {
         await this.#nativeServer.close();
-        await this.#engineService.close();
+        await this.#engineService.close(options);
       } finally {
         this.#stores.close();
         if (this.#options.stateFile !== undefined) await rm(this.#options.stateFile, { force: true });
@@ -824,8 +825,10 @@ export async function runRerailDaemon(argv: readonly string[], services: RerailD
   for (const skipped of catalog.skipped) {
     process.stdout.write(`rule pack left out: ${skipped.packageName ?? skipped.path}${skipped.version === null ? "" : `@${skipped.version}`}: ${skipped.reason}\n`);
   }
+  // `rerail daemon stop` kills a daemon still running 10 s after it asked; the hooks of events still waiting by then
+  // get an answer that says the daemon is stopping instead of a reset connection.
   const shutdown = (): void => {
-    daemon.close().then(
+    daemon.close({ drainUntil: Date.now() + STOP_DRAIN_MS }).then(
       () => {
         mainInstance?.release();
         process.exit(0);

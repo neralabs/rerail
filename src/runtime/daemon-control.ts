@@ -254,6 +254,12 @@ const START_TIMEOUT_MS = 15_000;
  */
 const AUTOSTART_CLAIM_MS = 2 * START_TIMEOUT_MS;
 const STOP_TIMEOUT_MS = 10_000;
+/**
+ * How long a daemon asked to stop runs the events still waiting for its hooks (`EngineCloseOptions.drainUntil`): 2 s
+ * short of `STOP_TIMEOUT_MS`, so the events it is running can finish, the hooks of the ones it then refuses get that
+ * answer, and its own shutdown runs before {@link stopDaemon} kills it.
+ */
+export const STOP_DRAIN_MS = STOP_TIMEOUT_MS - 2_000;
 const KILL_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
 const PROBE_TIMEOUT_MS = 2_000;
