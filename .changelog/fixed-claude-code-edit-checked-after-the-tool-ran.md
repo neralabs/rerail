@@ -1,0 +1,1 @@
+A Claude Code edit is now checked when a busy Rerail took up the edit only after the tool had written the file. Rerail compares the file with what Claude Code says it held before the write, where it used to see no change and check nothing.

@@ -442,8 +442,18 @@ describe("Rerail tool results waiting for their edit's check", () => {
       await writeFile(join(root, "a.ts"), text);
       return { answering: runtime.ingest({ kind: "result", eventId: `result-${id}`, sessionId: session.sessionId, toolCallId: id, toolName: "Write", output: "ok" }) };
     };
+    /**
+     * Writes `text` into `file` with the Write tool before its call reaches the runtime, as a daemon too busy to take
+     * the call up until the hook gave up on it, and the tool ran, sees it; `output` is the tool's result.
+     */
+    const lateEdit = async (id: string, file: string, text: string, output: (path: string) => unknown) => {
+      const path = join(root, file);
+      await writeFile(path, text);
+      await runtime.ingest({ kind: "call", eventId: `call-${id}`, sessionId: session.sessionId, toolCallId: id, toolName: "Write", input: { file_path: path, content: text } });
+      return { answering: runtime.ingest({ kind: "result", eventId: `result-${id}`, sessionId: session.sessionId, toolCallId: id, toolName: "Write", output: output(path) }) };
+    };
     const turnEnd = (eventId: string) => runtime.ingest({ kind: "turn-end", eventId, sessionId: session.sessionId, session, text: "" });
-    return { runtime, root, session, check, checking, steered, edit, turnEnd };
+    return { runtime, root, session, check, checking, steered, edit, lateEdit, turnEnd };
   }
 
   /** `a.ts`'s finding as a steer renders it, and the digest that lists it at the end of the agent's run. */
@@ -456,6 +466,22 @@ describe("Rerail tool results waiting for their edit's check", () => {
       const { answering } = await edit("t1", BAD);
       check.resolve();
       expect((await answering).map(delivery => delivery.content)).toEqual([STEER]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  // Claude Code's Write result, as its PostToolUse hook carries it: `type: "create"` for a file the tool made, else the
+  // text it replaced in `originalFile`.
+  it.each([
+    { made: "a file the tool made", file: "b.ts", output: (path: string) => ({ type: "create", filePath: path, content: BAD, structuredPatch: [], originalFile: null }) },
+    { made: "a file the tool rewrote", file: "a.ts", output: (path: string) => ({ type: "update", filePath: path, content: BAD, structuredPatch: [], originalFile: "export const a = 1;\n" }) },
+  ])("steers $made when its call arrives only after the tool wrote it, from what Claude Code says the file held", async ({ file, output }) => {
+    const { runtime, check, lateEdit } = await hookSession();
+    try {
+      const { answering } = await lateEdit("t1", file, BAD, output);
+      check.resolve();
+      expect((await answering).map(delivery => delivery.content)).toEqual([renderSteer([finding(file)])]);
     } finally {
       await runtime.dispose();
     }
