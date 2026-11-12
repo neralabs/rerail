@@ -1,0 +1,1 @@
+Rerail's daemon no longer makes a text copy of each file it reads when it first walks your other worktrees, or a folder it could not read before; it keeps the file's digest, and its text only once the file changes. Those copies made the daemon's memory climb by up to a gigabyte a minute.

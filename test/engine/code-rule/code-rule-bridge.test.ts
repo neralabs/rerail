@@ -27,6 +27,8 @@ const discovery = vi.hoisted(() => ({
  * Git command (`failing`) that is made to fail, by an option Git does not know, while it is set.
  */
 const asyncGitCalls = vi.hoisted(() => ({ args: [] as string[][], failing: undefined as string | undefined }));
+/** How many of the files a walk read were made into text (`toString`), for the tests that pin what a walk keeps. */
+const decodedReads = vi.hoisted(() => ({ count: 0 }));
 vi.mock("node:child_process", async importOriginal => {
   const actual = await importOriginal<typeof ChildProcess>();
   const { promisify } = await import("node:util");
@@ -50,6 +52,13 @@ vi.mock("node:fs/promises", async importOriginal => {
     readFile: async (...args: Parameters<typeof actual.readFile>) => {
       const contents = await actual.readFile(...args);
       await discovery.reads.get(String(args[0]))?.shift()?.();
+      if (Buffer.isBuffer(contents)) {
+        const decode = contents.toString.bind(contents);
+        contents.toString = (...format: Parameters<Buffer["toString"]>) => {
+          decodedReads.count += 1;
+          return decode(...format);
+        };
+      }
       return contents;
     },
     opendir: async (...args: Parameters<typeof actual.opendir>) => {
@@ -390,6 +399,25 @@ describe("CodeRuleBridge", () => {
     await shell(bridge, () => writeFile(draft, "draft\nmine\n"));
     expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
       [{ path: "deep/draft.py", language: "python", previousText: "draft\n", generatedText: "draft\nmine\n" }],
+    ]);
+  });
+
+  it("makes no text of the files a later walk first sees, as its baseline, in a folder the baseline could not read", async () => {
+    const root = await realpath(await workspace());
+    await mkdir(join(root, "deep"));
+    const files = Array.from({ length: 20 }, (_, index) => join(root, "deep", `f${index}.py`));
+    await Promise.all(files.map((file, index) => writeFile(file, `x = ${index}\n`)));
+    commitAll(root);
+    await awaitClockAfter(...files);
+    discovery.directories.set(join(root, "deep"), [async () => { throw new Error("EMFILE: too many open files"); }]);
+    decodedReads.count = 0;
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    // A later walk reads the folder: its first sight of every file there, none of which can be an edit.
+    await bridge.checkpoint("turn");
+    expect(decodedReads.count).toBe(0);
+    await shell(bridge, () => writeFile(files[0]!, "x = 0\nmine\n"));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "deep/f0.py", language: "python", previousText: "x = 0\n", generatedText: "x = 0\nmine\n" }],
     ]);
   });
 
@@ -1166,6 +1194,26 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await bridge.settleWorktreeWalk();
     expect(auditedPaths(auditGeneratedEdits)).toEqual([relative(root, join(worktree, "deep", "new.py"))]);
     expect((await bridge.checkpoint("turn")).failures).toEqual([]);
+  });
+
+  it("makes no text of the files a worktree's first walk takes as its baseline, and records a later change from Git's text", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const files = Array.from({ length: 20 }, (_, index) => join(worktree, "src", `f${index}.py`));
+    await Promise.all(files.map((file, index) => writeFile(file, `x = ${index}\n`)));
+    git(worktree, "add", ".");
+    git(worktree, "commit", "--quiet", "-m", "files");
+    await awaitClockAfter(...files);
+    decodedReads.count = 0;
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    expect(decodedReads.count).toBe(0);
+    await shellInWorktree(bridge, () => writeFile(files[0]!, "x = 0\nmine\n"));
+    const path = relative(root, files[0]!).split(sep).join("/");
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
+      [[{ path, language: "python", previousText: "x = 0\n", generatedText: "x = 0\nmine\n" }], "log"],
+    ]);
+    // The one file that changed is the one read made into text.
+    expect(decodedReads.count).toBe(1);
   });
 
   it("reports a worktree walk that never ran as pending when the session closes, and none with no worktree to walk", async () => {
