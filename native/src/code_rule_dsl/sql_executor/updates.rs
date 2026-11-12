@@ -11,7 +11,7 @@ struct Patch {
     #[serde(default)]
     delete: Vec<Vec<Value>>,
 }
-pub(super) struct Prepared {
+pub struct Prepared {
     pub name: String,
     pub source: Arc<dyn Source>,
     pub live: Option<Arc<live::Live>>,
@@ -20,7 +20,7 @@ pub(super) struct Prepared {
     pub migrated: bool,
 }
 
-pub(super) fn contains(source: &dyn Source, row: &[i64]) -> bool {
+pub fn contains(source: &dyn Source, row: &[i64]) -> bool {
     let col = (0..row.len())
         .min_by_key(|c| source.estimated_matches(*c, false))
         .unwrap();
@@ -35,7 +35,7 @@ pub(super) fn contains(source: &dyn Source, row: &[i64]) -> bool {
 }
 
 impl CodeRuleSqlExecutor {
-    pub(super) fn change_facts(&mut self, json: String, max_waves: Option<u32>) -> Result<String> {
+    pub fn change_facts(&mut self, json: String, max_waves: Option<u32>) -> Result<String> {
         self.db.ensure_idle().map_err(error)?;
         if !self.db.is_autocommit() {
             return Err(error("fact changes require an autocommit session"));
@@ -110,7 +110,7 @@ impl CodeRuleSqlExecutor {
         self.apply_prepared(prepared, max_waves)
     }
 
-    pub(super) fn apply_prepared(
+    pub fn apply_prepared(
         &mut self,
         prepared: Vec<Prepared>,
         max_waves: Option<u32>,
@@ -174,7 +174,8 @@ impl CodeRuleSqlExecutor {
             super::super::logic::native::forget_inputs(&self.db);
             let mut reports = Vec::new();
             for i in affected {
-                let run = &mut executions[i];
+                let (upstream, remaining) = executions.split_at_mut(i);
+                let run = &mut remaining[0];
                 if !run
                     .inputs
                     .iter()
@@ -183,7 +184,31 @@ impl CodeRuleSqlExecutor {
                     continue;
                 }
                 let limit = max_waves.unwrap_or(run.max_waves);
-                let mut report = maintenance::maintain(&mut work, run, &mut deltas, limit)?;
+                let mut evaluation = self.planning.as_mut().and_then(|planning| {
+                    planning.evaluation(run, limit, |name| {
+                        prepared.iter().find(|p| p.name == name).map(|p| &p.source)
+                            .or_else(|| self.inputs.get(name))
+                            .map(|source| source.estimated_len() as u64)
+                            .or_else(|| upstream.iter().rev().find_map(|run| run.counts.get(name).copied()))
+                            .unwrap_or(0)
+                    }, |name| deltas.get(name).map_or((0, 0), |d| (d.inserted, d.deleted)))
+                });
+                if let Some(eval) = &mut evaluation {
+                    let strategy = run.temporal.get(&0).map_or(
+                        planning::Strategy::GroupedMaintenance,
+                        temporal::Trace::planning_strategy,
+                    );
+                    eval.choose(strategy, run.emitted.program.steps.len() > 32);
+                }
+                let result = maintenance::maintain(&mut work, run, &mut deltas, limit);
+                if let (Some(planning), Some(evaluation)) = (&mut self.planning, evaluation) {
+                    let mut evaluation = evaluation;
+                    if result.is_ok() {
+                        evaluation.capture(run);
+                    }
+                    planning.record(evaluation);
+                }
+                let mut report = result?;
                 report["program"] = json!(i);
                 report["migrated_views"] = json!(0);
                 reports.push(report);

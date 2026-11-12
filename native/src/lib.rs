@@ -102,6 +102,11 @@ fn install_store_functions_on_load() {
 #[cfg(not(any(windows, target_family = "wasm")))]
 #[napi_derive::module_init]
 fn install_tree_sitter_allocator() {
+    // Library callers and the test runner can park their main thread. Their pool needs
+    // actual workers, including with RERAIL_THREADS=1. The headless CLI registers its
+    // own main thread explicitly, before its first job.
+    #[cfg(not(feature = "headless"))]
+    threads::configure(false);
     install_store_functions();
     use std::ffi::c_void;
     unsafe extern "C" fn malloc(size: usize) -> *mut c_void {

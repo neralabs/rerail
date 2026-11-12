@@ -2,7 +2,18 @@
 use super::*;
 
 impl Retained {
-    pub(in crate::code_rule_dsl::sql_executor) fn can_fuse(&self) -> bool {
+    pub fn isolated_phase(&self) -> crate::code_rule_dsl::logic::analysis::Decision {
+        let proven = self.rebuildable() && self.rules.len() == 1 && self.rules.iter().all(|r| {
+            r.width + self.width < 2000 && super::super::plan::acyclic::fenced(&r.evaluation("rr_probe").body)
+                && super::super::plan::acyclic::fenced(&r.context_query.body)
+        });
+        crate::code_rule_dsl::logic::analysis::Decision::new(proven, if proven {
+            "One rule with total or checked builtins keeps its original gate; materialized contexts precede checked head evaluation and atomic native publication"
+        } else {
+            "Multiple rules, reducers, opaque callbacks, or registered lattice ordering retain their established support boundary"
+        })
+    }
+    pub fn can_fuse(&self) -> bool {
         self.rebuildable()
             && self.rules.len() <= 64
             && self.rules.iter().all(|rule| {
@@ -10,19 +21,8 @@ impl Retained {
                     return false;
                 }
                 let query = rule.evaluation("rr_probe");
-                let mut calls = false;
-                for e in plan::expressions(&query.body)
-                    .into_iter()
-                    .chain(plan::expressions(&rule.context_query.body))
-                {
-                    e.visit(&mut |e| {
-                        calls |= matches!(
-                            e,
-                            E::Call { .. } | E::Function { .. } | E::Scalar(_) | E::Exists { .. }
-                        )
-                    });
-                }
-                !calls
+                super::super::plan::acyclic::total(&query.body)
+                    && super::super::plan::acyclic::total(&rule.context_query.body)
             })
     }
 }
@@ -48,10 +48,10 @@ fn extreme(state: &Retained, changed: &str, keys: usize, function: &str) -> Stri
     let value = state.width - 1;
     let order = if function == "min" { "ASC" } else { "DESC" };
     let previous = format!(
-        "SELECT h.c{value} AS v FROM {} h WHERE {} AND NOT EXISTS(SELECT 1 FROM {changed} t WHERE {}) ORDER BY h.c{value} {order} LIMIT 1",
+        "SELECT h.c{value} AS v FROM {} h WHERE {} AND ({}) NOT IN(SELECT {} FROM {changed}) ORDER BY h.c{value} {order} LIMIT 1",
         quote(&state.heads),
         equal("h", "k", keys),
-        equal("t", "h", state.width)
+        names("h", state.width), names("", state.width)
     );
     format!(
         "(SELECT {function}(v) FROM(SELECT v FROM ({previous}) UNION ALL SELECT t.c{value} AS v FROM {changed} t WHERE {} AND t.c{}>0))",
@@ -60,23 +60,56 @@ fn extreme(state: &Retained, changed: &str, keys: usize, function: &str) -> Stri
     )
 }
 
-pub(super) fn append(
+pub fn append(
     state: &Retained,
     w: &mut Work<'_>,
     changes: &BTreeMap<String, Delta>,
     phase: &mut phase::Phase,
 ) -> Result<(String, String)> {
-    append_with(state, w, changes, phase, &BTreeMap::new(), &mut vec![])
+    append_with(state, w, changes, phase, &BTreeMap::new(), &mut vec![], &BTreeMap::new())
         .map(|(keys, next, _)| (keys, next))
 }
-pub(super) fn append_with(
+pub fn append_with(
     state: &Retained,
     w: &mut Work<'_>,
     changes: &BTreeMap<String, Delta>,
     phase: &mut phase::Phase,
     extra: &BTreeMap<usize, Vec<String>>,
     pending: &mut Vec<reducer::combined::publication::Publication>,
+    summaries: &BTreeMap<String, reducer::staged::Source>,
 ) -> Result<(String, String, Option<(String, String)>)> {
+    append_using(state,w,changes,phase,extra,pending,summaries,None)
+}
+
+pub struct Contexts {
+    pub dirty: String,
+    pub active: String,
+}
+
+pub fn append_support(
+    state: &Retained,
+    rule: &Rule,
+    w: &mut Work<'_>,
+    phase: &mut phase::Phase,
+    contexts: &Contexts,
+) -> Result<String> {
+    let single=Retained { rules:Arc::new(vec![rule.clone()]),..state.clone() };
+    let mut pending=vec![];
+    let (keys,_,_)=append_using(&single,w,&BTreeMap::new(),phase,&BTreeMap::new(),&mut pending,&BTreeMap::new(),Some(contexts))?;
+    if !pending.is_empty() { return Err(error("Isolated support requires native roots")); }
+    Ok(keys)
+}
+
+fn append_using(
+    state: &Retained,
+    w: &mut Work<'_>,
+    changes: &BTreeMap<String, Delta>,
+    phase: &mut phase::Phase,
+    extra: &BTreeMap<usize, Vec<String>>,
+    pending: &mut Vec<reducer::combined::publication::Publication>,
+    summaries: &BTreeMap<String,reducer::staged::Source>,
+    prepared: Option<&Contexts>,
+) -> Result<(String,String,Option<(String,String)>)> {
     let store = w
         .versions
         .ok_or_else(|| error("fused cache requires native storage"))?;
@@ -85,68 +118,89 @@ pub(super) fn append_with(
     let unique = state.lattice.is_none() && state.support_uniqueness().proven;
     let width = state.width;
     for rule in state.rules.iter() {
-        let mut removed = vec![];
-        let mut added = vec![];
-        for atom in &rule.atoms {
-            let Some(delta) = changes.get(&atom.relation) else {
-                continue;
-            };
-            if delta.deleted > 0 {
-                let predicate = (0..atom.columns.len())
-                    .map(|c| format!("c.c{}=d.c{c}", atom.offset + c))
-                    .collect::<Vec<_>>()
-                    .join(" AND ");
-                removed.push(format!(
-                    "SELECT c.* FROM {} d CROSS JOIN {} c WHERE {predicate}",
-                    quote(&delta.minus),
-                    quote(&rule.contexts)
-                ));
-            }
-            if delta.inserted > 0 {
-                let mut query = rule.context_query.clone();
-                query.body.from[atom.at].relation = source(&delta.plus, &atom.columns);
-                maintenance::anchor(&mut query, atom.at);
-                added.push(query.render());
-            }
-        }
-        let no_removed = removed.is_empty();
-        let removed = if no_removed {
-            phase.view(rule.width, &empty(rule.width))
+        let (dirty,added)=if let Some(contexts)=prepared {
+            let active=phase.relation(rule.width,&format!("SELECT * FROM {} ORDER BY {}",quote(&contexts.active),names("",rule.width)));
+            (contexts.dirty.clone(),active)
         } else {
-            phase.relation(rule.width, &union(removed, rule.width, false))
-        };
-        if let Some(queries) = extra.get(&rule.step) {
-            // Each dirty-key probe selects complete contexts. A single probe is
-            // unique by the retained context key; multiple probes need UNION.
-            let rows = phase.view(rule.width, &union(queries.clone(), rule.width, false));
-            added.push(if no_removed {
-                format!("SELECT * FROM {rows}")
+            let mut removed = vec![];
+            let mut added = vec![];
+            let total_context = super::super::plan::acyclic::total(&rule.context_query.body);
+            let covering = rule.atoms.iter().filter_map(|atom| {
+                let delta = changes.get(&atom.relation).filter(|d| d.inserted > 0)?;
+                let input = store.available(&atom.relation)?;
+                let plus = store.available(&delta.plus)?;
+                let proof = super::super::super::logic::analysis::deltas::complete_positive_input(
+                    total_context, input.shares_rows(&plus),
+                );
+                proof.proven.then_some((atom.at, delta.inserted, proof))
+            }).min_by_key(|(at, rows, _)| (*rows, *at));
+            if let Some((at, _, proof)) = &covering {
+                if w.profiler.is_some() {
+                    phase.analyses.push(json!({"operation":"positive context insertion coverage",
+                        "rule":rule.step,"anchor":at,"decision":proof,
+                        "scope":"Insertion branches only; deletions and scalar invalidations remain"}));
+                }
+            }
+            for atom in &rule.atoms {
+                let Some(delta) = changes.get(&atom.relation) else {
+                    continue;
+                };
+                if delta.deleted > 0 {
+                    let predicate = (0..atom.columns.len())
+                        .map(|c| format!("c.c{}=d.c{c}", atom.offset + c))
+                        .collect::<Vec<_>>()
+                        .join(" AND ");
+                    removed.push(format!(
+                        "SELECT c.* FROM {} d CROSS JOIN {} c WHERE {predicate}",
+                        quote(&delta.minus),
+                        quote(&rule.contexts)
+                    ));
+                }
+                if delta.inserted > 0 && covering.as_ref().is_none_or(|(at, _, _)| *at == atom.at) {
+                    let mut query = rule.context_query.clone();
+                    query.body.from[atom.at].relation = source(&delta.plus, &atom.columns);
+                    maintenance::anchor(&mut query, atom.at);
+                    added.push(query.render());
+                }
+            }
+            let no_removed = removed.is_empty();
+            let removed = if no_removed {
+                phase.view(rule.width, &empty(rule.width))
             } else {
-                format!(
-                    "SELECT a.* FROM {rows} a WHERE NOT EXISTS(SELECT 1 FROM {removed} r WHERE {})",
-                    equal("a", "r", rule.width)
+                phase.relation(rule.width, &union(removed, rule.width, false))
+            };
+            if let Some(queries) = extra.get(&rule.step) {
+                // Each dirty-key probe selects complete contexts. A single probe is
+                // unique by the retained context key; multiple probes need UNION.
+                let rows = phase.view(rule.width, &union(queries.clone(), rule.width, false));
+                added.push(if no_removed {
+                    format!("SELECT * FROM {rows}")
+                } else {
+                    let remaining = phase.difference_keys(rule.width, &rows, &removed);
+                    format!("SELECT * FROM {remaining}")
+                });
+            }
+            let no_added = added.is_empty();
+            let added = phase.relation(rule.width, &union(added, rule.width, false));
+            let dirty = if no_removed {
+                added.clone()
+            } else if no_added {
+                removed.clone()
+            } else {
+                phase.relation(
+                    rule.width,
+                    &format!("SELECT * FROM {removed} UNION SELECT * FROM {added}"),
                 )
-            });
-        }
-        let no_added = added.is_empty();
-        let added = phase.relation(rule.width, &union(added, rule.width, false));
-        let dirty = if no_removed {
-            added.clone()
-        } else if no_added {
-            removed.clone()
-        } else {
-            phase.relation(
-                rule.width,
-                &format!("SELECT * FROM {removed} UNION SELECT * FROM {added}"),
-            )
+            };
+            (dirty,added)
         };
-        let evaluated = phase.relation(rule.width + width, &rule.evaluation(&added).render());
-        if store.available(&rule.contexts).is_some()
+        let evaluated = phase.relation(rule.width + width, &rule.evaluation_with(&added, summaries).render());
+        if prepared.is_none() && (store.available(&rule.contexts).is_some()
             || rule.atoms.iter().any(|a| {
                 changes
                     .get(&a.relation)
                     .is_some_and(|d| d.inserted + d.deleted > 0)
-            })
+            }))
         {
             reducer::combined::publication::append(
                 w,
@@ -212,20 +266,8 @@ pub(super) fn append_with(
         };
         // The shared witness proof establishes at most one producer per head
         // in each snapshot. Replace dirty supports of one without an aggregate.
-        let removed = phase.relation(
-            width,
-            &format!(
-                "SELECT o.* FROM {old} o WHERE NOT EXISTS(SELECT 1 FROM {next} n WHERE {})",
-                equal("n", "o", width)
-            ),
-        );
-        let added = phase.relation(
-            width,
-            &format!(
-                "SELECT n.* FROM {next} n WHERE NOT EXISTS(SELECT 1 FROM {old} o WHERE {})",
-                equal("n", "o", width)
-            ),
-        );
+        let removed = phase.difference_keys(width, &old, &next);
+        let added = phase.difference_keys(width, &next, &old);
         let keys = phase.view(
             width,
             &format!("SELECT * FROM {removed} UNION ALL SELECT * FROM {added}"),
@@ -247,6 +289,7 @@ pub(super) fn append_with(
         if w.profiler.is_some() {
             phase.analyses.push(json!({"operation":"unique incremental support","proof":state.support_uniqueness(),"strategy":"Unique old/new head sets replace supports of one without grouping"}));
         }
+        if prepared.is_some() { return Ok((keys,heads,None)); }
         if store.available(&state.output).is_some() {
             phase.patch_computed(store, &state.output, &keys, &added)?;
         }
@@ -276,6 +319,7 @@ pub(super) fn append_with(
         width,
         width + 1,
     )?;
+    if prepared.is_some() { return Ok((head_keys,head_rows,None)); }
     let (keys, next) = if let Some(lattice) = &state.lattice {
         let k = lattice.keys;
         let keys = phase.relation(
@@ -321,7 +365,7 @@ pub(super) fn append_with(
     Ok((keys, next, None))
 }
 
-pub(super) fn apply(
+pub fn apply(
     state: &Retained,
     w: &mut Work<'_>,
     changes: &BTreeMap<String, Delta>,
@@ -332,7 +376,7 @@ pub(super) fn apply(
     let width = state.width;
     let mut phase = phase::Phase::default();
     let (keys, next, difference) =
-        append_with(state, w, changes, &mut phase, &BTreeMap::new(), &mut vec![])?;
+        append_with(state, w, changes, &mut phase, &BTreeMap::new(), &mut vec![], &BTreeMap::new())?;
     let key_width = state.lattice.as_ref().map_or(width, |l| l.keys);
     let (plus_rows, minus_rows) = if let Some(difference) = difference {
         difference

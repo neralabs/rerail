@@ -470,4 +470,3 @@ that branched to itself, which was only the tail after the ASCII branch's merge.
 over the whole body, JSON's loop was 564 instructions with 4 stack loads and stores before
 these changes (the old budget said 182 and 0), and stage 1's 660 with 11. Their budgets now
 start from the true numbers.
-

@@ -540,6 +540,7 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::semver;
     pub use rerail_w::code_rule_dsl::soundness;
     pub use rerail_facts::code_rule_dsl::sql_profile;
+    pub use rerail_facts::code_rule_dsl::sql_admission;
     pub use rerail_w::code_rule_dsl::stats;
     #[path = "suppress"]
     pub mod suppress {

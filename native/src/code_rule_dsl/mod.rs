@@ -1659,6 +1659,12 @@ pub use rerail_prof::code_rule_dsl::prof;
 pub use rerail_w::code_rule_dsl::profile;
 // The same SQL diagnostics serve standalone execution and the workspace profiler.
 pub use rerail_facts::code_rule_dsl::sql_profile;
+#[path = "sql_admission"]
+pub mod sql_admission {
+    pub use rerail_facts::code_rule_dsl::sql_admission::*;
+    #[cfg(test)]
+    pub mod tests;
+}
 #[path = "query"]
 mod query {
     pub use rerail_w::code_rule_dsl::query::*;

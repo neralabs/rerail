@@ -3,6 +3,21 @@ use crate::code_rule_dsl::logic::rr;
 use std::collections::BTreeSet;
 
 #[test]
+fn existence_evaluation_proof_does_not_require_summary_combination() {
+    use scalars::{Expression as E,Kind,Scalar};
+    let mut exists = Scalar { kind:Kind::Exists,source:"events".into(),keys:vec![E::Column(0)],
+        predicates:vec![],lookup:vec![E::Column(1)],value:E::Integer(1),dependent:false,non_null:true };
+    assert!(!exists.compatible(&exists).proven);
+    assert!(exists.independent_evaluation().proven);
+    assert!(scalars::analyze(vec![exists.clone()]).evaluation_order(&[E::Column(0)]).proven);
+    exists.dependent = true;
+    assert!(!exists.independent_evaluation().proven);
+    exists.dependent = false;
+    exists.predicates.push(E::Opaque("callback".into()));
+    assert!(!exists.independent_evaluation().proven);
+}
+
+#[test]
 fn keys_propagate_through_projections_and_joins_without_assuming_injective_calls() {
     let p = rr::parse(".decl seed(k:number,v:number)\n.input seed\n.decl lattice(k:number,v:min<>) widen 3\nlattice(k,v) :- seed(k,v).\n.decl copy(k:number,v:number)\ncopy(k,v) :- lattice(k,v).\n.decl joined(k:number,v:number,w:number)\njoined(k,v,w) :- copy(k,v),lattice(k,w).\n.decl lossy(v:number)\nlossy(v) :- copy(_,v).\n.decl hidden(k:number,v:number)\nhidden(k,v) :- seed(k,_),lattice(k,v).\n.output joined,lossy,hidden\n").unwrap();
     let a = ProgramAnalysis::analyze(&p);

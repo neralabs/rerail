@@ -30,6 +30,8 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
     let mut sparse_batch = false;
     let mut files = 0;
     let mut logical = false;
+    let mut component_loop=false;
+    let mut insertion_coverage = false;
     for entry in std::fs::read_dir(directory.path().join("sql")).unwrap() {
         let path = entry.unwrap().path();
         if path.extension().is_none_or(|s| s != "json") {
@@ -83,12 +85,22 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
                 .as_array()
                 .is_some_and(|a| !a.is_empty())
                 || event["context"]["logicalAnalysis"].is_object();
+            insertion_coverage |= event["context"]["logicalAnalyses"].as_array().is_some_and(|analyses| {
+                analyses.iter().any(|a| a["operation"] == "positive context insertion coverage"
+                    && a["decision"]["proven"] == true && a["anchor"].is_u64())
+            });
             let stage = event["context"]["stage"].as_str().unwrap_or("");
             cold |= stage == "cold rule";
             recursive |= event["context"].get("frame").is_some();
             columns |= event["frame"][3].as_u64().unwrap_or(0) > 0;
             inserts |= event["frame"][4].as_u64().unwrap_or(0) > 0;
             let q = &queries[event["query"].as_u64().unwrap() as usize];
+            if stage=="recursive component comparison" && event["context"]["strategy"].is_string() {
+                assert!(q["plan"].is_array(),"Component inputs must remain available for explanation: {q}");
+                assert!(q["bytecode"].is_array());
+                assert_eq!(event["context"]["logicalAnalysis"]["decision"]["proven"],true);
+                component_loop=true;
+            }
             if q["sql"].as_str().unwrap().contains("/* sparse compound */") {
                 // Includes native candidate inspections, not only rows returned to SQLite.
                 assert!(event["frame"][2].as_u64().unwrap() < 100, "{event}");
@@ -121,6 +133,8 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
             && failed
             && sparse_batch
             && logical
+            && component_loop
+            && insertion_coverage
     );
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let output = std::process::Command::new("node")
@@ -193,6 +207,11 @@ fn profiled_session_child() {
         totals,
         "explain must not execute SQL"
     );
+    assert!(explanation["executions"][0]["retained"].as_array().unwrap().iter().any(|state| {
+        state["rules"].as_array().unwrap().iter().any(|rule| {
+            rule["context_insertion_coverage"]["if_insertions_equal_current_input"]["proven"] == true
+        })
+    }));
     let patch = json!([{"name":"edge","delete":[[2,1,1]]}]).to_string();
     e.set_limits(json!({"max_steps":1}).to_string()).unwrap();
     assert!(e.apply_changes(patch.clone(), None).is_err());
@@ -208,6 +227,8 @@ fn profiled_session_child() {
     )
     .unwrap();
     assert_eq!(result["rows"], json!([[1, 5]]));
+    e.apply_changes(json!([{"name":"root","delete":[[0]]}]).to_string(), None).unwrap();
+    e.apply_changes(json!([{"name":"root","insert":[[0]]}]).to_string(), None).unwrap();
     e.reset().unwrap();
     let versions = versions::Store::default();
     versions
@@ -226,6 +247,12 @@ fn profiled_session_child() {
     );
     e.db.profile_checkpoint();
     versions.close(&e.db).unwrap();
+    e.run(".decl edge(a:number,b:number,w:number)\n.input edge\n.decl profile_reach(a:number,b:number)\nprofile_reach(a,b) :- edge(a,b,_).\nprofile_reach(a,c) :- profile_reach(a,b),edge(b,c,_).\n.output profile_reach\n".into(),"python".into(),None).unwrap();
+    e.compare_recursive_components(Some(128),false).unwrap();
+    // Exercise the SQL storage adapter as well as the default retained graph.
+    e.legacy_initial=true;
+    e.bind_relation(json!({"name":"profile_seed","columns":["n"],"rows":[[1],[2]]}).to_string()).unwrap();
+    e.run(".decl profile_seed(n:number)\n.input profile_seed\n.decl profile_out(n:number)\nprofile_out(n) :- profile_seed(n).\n.output profile_out\n".into(),"python".into(),None).unwrap();
     drop(e);
     let store = tempfile::tempdir().unwrap();
     super::super::super::tools::sql(&store.path().join("constant.sqlite"),&json!({"program":".decl answer(n:number)\nanswer(7).\n.output answer\n","queries":[{"sql":"SELECT * FROM answer"}]}).to_string()).unwrap();

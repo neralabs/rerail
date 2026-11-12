@@ -77,7 +77,8 @@ fn a_wave_runs_on_every_lane_at_once_and_matches_the_reference() {
     for ((k, _), d) in ks.iter().zip(&done) {
         assert_eq!(d.out, cpu::run(k), "{} on {}", k.form().name(), d.lane.name());
     }
-    for l in &lanes {
+    // This wave contains array kernels; SQL programs have separate coverage.
+    for l in lanes.iter().filter(|&&l|l!=Lane::Sql) {
         assert!(report.launches[l.index()] > 0, "no launch on {}", l.name());
     }
     eprintln!("pinned: {report:?}");
@@ -357,7 +358,7 @@ fn launches_planned_on_a_lane_behind_its_plan_are_claimed_by_the_others() {
     for f in [rerail_accel::kernel::Form::Probe] {
         ex.prices.set(f, Lane::Gpu, Some(1e-15));
     }
-    ex.prices.latency = [0.0; 4];
+    ex.prices.latency = [0.0; Lane::COUNT];
     ex.prices.fixed[Lane::Gpu.index()] = rerail_accel::price::Fixed { submission: 0.0, launch: 0.0 };
     ex.prices.host[Lane::Gpu.index()] = rerail_accel::price::Fixed { submission: 0.0, launch: 0.0 };
     let mut rng = Rng(0xc1a1);
@@ -433,7 +434,7 @@ fn a_device_with_nothing_planned_takes_the_cores_late_launches() {
     let mut ex = Executor::with(vec![Arc::new(CpuBackend::default()), Arc::new(Fake { delay: std::time::Duration::ZERO, log })]);
     // The device fast, but dear in host CPU, so the plan puts every launch on the cores.
     ex.prices.set(rerail_accel::kernel::Form::Probe, Lane::Gpu, Some(1e-9));
-    ex.prices.latency = [0.0; 4];
+    ex.prices.latency = [0.0; Lane::COUNT];
     ex.prices.fixed[Lane::Gpu.index()] = rerail_accel::price::Fixed { submission: 0.0, launch: 0.0 };
     ex.prices.host[Lane::Gpu.index()] = rerail_accel::price::Fixed { submission: 0.05, launch: 0.05 };
     let hold = std::time::Duration::from_millis(300);
@@ -535,6 +536,29 @@ fn a_program_is_placed_by_its_own_prices_and_runs_the_lanes_form() {
         assert_eq!(done[2].lane, Lane::Gpu, "and one far cheaper there goes there");
     }
     assert!(format!("{}", ex.score()).contains("program"), "{}", ex.score());
+}
+
+#[test]
+fn polling_a_batch_preserves_its_outputs_and_scoreboard_completion() {
+    use rerail_accel::exec::CpuBackend;
+    let executor=Executor::with(vec![Arc::new(CpuBackend::default())]);
+    let kernel=Kernel::Histogram {off:vec![0,3].into(),codes:vec![0,1,1].into(),width:2};
+    let expected=cpu::run(&kernel);
+    let mut running=executor.begin(Batch(vec![Launch::on(kernel.clone(),Lane::Cpu),Launch::on(kernel,Lane::Cpu)])).unwrap();
+    let started=std::time::Instant::now();
+    while !running.ready() {
+        assert!(started.elapsed()<std::time::Duration::from_secs(5));
+        if !rerail_accel::exec::on_pool() || !rerail_accel::exec::help_once() {
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+    }
+    assert!(running.ready(),"Polling a completed batch must retain every reply");
+    let (done,report)=running.wait().unwrap();
+    assert_eq!(done.len(),2);
+    for item in done {assert_eq!(item.out,expected);}
+    assert_eq!(report.launches[Lane::Cpu.index()],2);
+    let score=executor.score();let cpu=&score.units[Lane::Cpu.index()];
+    assert_eq!((cpu.jobs,cpu.failed,cpu.queued,cpu.running),(2,0,0,0));
 }
 
 /// The cost statistics fit a device lane's rate from warm samples of one kernel alone, its fixed costs taken out;

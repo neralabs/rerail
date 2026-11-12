@@ -213,6 +213,7 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::semver;
     pub mod sql_executor;
     pub use rerail_facts::code_rule_dsl::sql_profile;
+    pub use rerail_facts::code_rule_dsl::sql_admission;
     #[path = "stats"]
     pub mod stats {
         pub use rerail_facts::code_rule_dsl::stats::identity;

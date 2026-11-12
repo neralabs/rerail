@@ -8,11 +8,16 @@ mod scaling;
 mod updates;
 mod temporal;
 mod profiling;
+mod planning;
 mod initial;
+mod frontiers;
 mod cte;
 mod analysis;
 mod sharing;
 mod shape;
+mod producers;
+mod component_caches;
+mod workers;
 
 pub(super) fn executor() -> (tempfile::TempDir, CodeRuleSqlExecutor) {
     let dir = tempfile::tempdir().unwrap();

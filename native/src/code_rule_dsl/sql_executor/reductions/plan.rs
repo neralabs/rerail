@@ -3,14 +3,14 @@ use super::super::super::logic::sql::sql_ast::SqlUnaryOperator as U;
 use super::*;
 
 #[derive(Clone)]
-pub(super) struct Atom {
+pub struct Atom {
     pub at: usize,
     pub relation: String,
     pub offset: usize,
     pub columns: Vec<String>,
 }
 #[derive(Clone)]
-pub(super) struct Rule {
+pub struct Rule {
     pub step: usize,
     pub contribution_storage: crate::code_rule_dsl::logic::analysis::storage::Projection,
     pub contribution_view: bool,
@@ -29,16 +29,16 @@ pub(super) struct Rule {
     fields: BTreeMap<(String, String), usize>,
 }
 
-pub(super) fn column(alias: &str, name: &str) -> E {
+pub fn column(alias: &str, name: &str) -> E {
     E::Qualified {
         alias: alias.into(),
         column: name.into(),
     }
 }
-pub(super) fn integer(n: i64) -> E {
+pub fn integer(n: i64) -> E {
     E::Value(V::Integer(n))
 }
-pub(super) fn names(alias: &str, width: usize) -> String {
+pub fn names(alias: &str, width: usize) -> String {
     (0..width)
         .map(|i| {
             if alias.is_empty() {
@@ -50,7 +50,7 @@ pub(super) fn names(alias: &str, width: usize) -> String {
         .collect::<Vec<_>>()
         .join(",")
 }
-pub(super) fn expressions(block: &Select) -> Vec<&E> {
+pub fn expressions(block: &Select) -> Vec<&E> {
     block
         .columns
         .iter()
@@ -62,7 +62,7 @@ pub(super) fn expressions(block: &Select) -> Vec<&E> {
         }))
         .collect()
 }
-pub(super) fn replace(block: &mut Select, f: &mut dyn FnMut(&mut E)) {
+pub fn replace(block: &mut Select, f: &mut dyn FnMut(&mut E)) {
     for (e, _) in &mut block.columns {
         e.visit_mut(f);
     }
@@ -77,7 +77,7 @@ pub(super) fn replace(block: &mut Select, f: &mut dyn FnMut(&mut E)) {
         }
     }
 }
-pub(super) fn plain(e: &E) -> bool {
+pub fn plain(e: &E) -> bool {
     let mut yes = true;
     e.visit(&mut |e| {
         if matches!(e, E::Scalar(_) | E::Exists { .. } | E::Parameter(_)) {
@@ -86,7 +86,7 @@ pub(super) fn plain(e: &E) -> bool {
     });
     yes
 }
-pub(super) fn fields(db: &rusqlite::Connection, r: &Rel) -> Result<Vec<String>> {
+pub fn fields(db: &rusqlite::Connection, r: &Rel) -> Result<Vec<String>> {
     Ok(db
         .prepare(&format!("SELECT * FROM {} LIMIT 0", r.render()))
         .map_err(error)?
@@ -95,7 +95,7 @@ pub(super) fn fields(db: &rusqlite::Connection, r: &Rel) -> Result<Vec<String>> 
         .collect())
 }
 /// A delta has positional columns even when the original source exposes native column names.
-pub(super) fn source(table: &str, columns: &[String]) -> Rel {
+pub fn source(table: &str, columns: &[String]) -> Rel {
     let projection = columns
         .iter()
         .enumerate()
@@ -108,7 +108,7 @@ pub(super) fn source(table: &str, columns: &[String]) -> Rel {
     }
 }
 
-pub(super) fn rule(
+pub fn rule(
     db: &rusqlite::Connection,
     output: &str,
     id: usize,
@@ -348,11 +348,21 @@ impl Rule {
         expression
     }
     pub fn evaluation(&self, table: &str) -> Query {
+        self.evaluation_with(table, &BTreeMap::new())
+    }
+    pub fn evaluation_with(&self, table: &str, summaries: &BTreeMap<String, reducer::staged::Source>) -> Query {
         let mut query = self.evaluation.clone();
+        query.body.relations_mut(&mut |r| {
+            if let Rel::Bound { rel, table } = r
+                && let Some(source) = summaries.get(rel)
+            {
+                *table = source.sql.clone();
+            }
+        });
         let mut projections = vec!["rr_input.*".into()];
         let mut from = format!("{} rr_input", quote(table));
         for reducer in &self.reducers {
-            reducer.append_join(self, &mut projections, &mut from);
+            reducer.append_join(self, &mut projections, &mut from, summaries);
         }
         let source = if projections.len() == 1 {
             quote(table)
