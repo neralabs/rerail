@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitExcludeFiles, gitHead, gitInstalled, gitUnmergedReader, headMovedOnlyByCommits,
-  readGitBlobIds, readGitBlobs, runGit,
+  gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitExcludeFiles, gitHead, gitInstalled, gitModifiedOrUntrackedPaths, gitUnmergedReader,
+  headMovedOnlyByCommits, readGitBlobIds, readGitBlobs, runGit,
 } from "../../src/engine/git.js";
 import { honoursNoLazyFetch, partialCloneLacks } from "../support/partial-clone.js";
 
@@ -145,6 +145,18 @@ describe("gitHead and headMovedOnlyByCommits", () => {
     expect(await headMovedOnlyByCommits(root, undefined)).toBe(false);
     expect(await headMovedOnlyByCommits(root, "0".repeat(40))).toBe(false);
   });
+});
+
+describe("Git reads and their time limit", () => {
+  it("answers with what Git printed when the event loop stalls past the time limit after Git finished", async () => {
+    const root = await repository({ "a.py": "print(1)\n" });
+    await writeFile(join(root, "a.py"), "print(2)\n");
+    const head = git(root, "rev-parse", "HEAD").trim();
+    const reads = Promise.all([gitModifiedOrUntrackedPaths(root), gitHead(root)]);
+    // Both Gits finish during the stall, and the event loop handles their exits only once it ends, past the 10 s limit.
+    setImmediate(() => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10_500));
+    await expect(reads).resolves.toEqual([["a.py"], head]);
+  }, 30_000);
 });
 
 describe("gitExcludeFiles", () => {

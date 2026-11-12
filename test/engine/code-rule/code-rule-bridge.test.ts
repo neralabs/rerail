@@ -23,10 +23,11 @@ const discovery = vi.hoisted(() => ({
   directories: new Map<string, Array<() => Promise<void>>>(),
 }));
 /**
- * The arguments of every Git process Rerail started without blocking, for the tests that pin what a pass costs, and a
- * Git command (`failing`) that is made to fail, by an option Git does not know, while it is set.
+ * The arguments of every Git process Rerail started without blocking, for the tests that pin what a pass costs, a Git
+ * command (`failing`) that is made to fail, by an option Git does not know, while it is set, and one (`hanging`) that
+ * runs until it is ended instead: `cat-file --batch` waits for revisions on an input nothing writes to.
  */
-const asyncGitCalls = vi.hoisted(() => ({ args: [] as string[][], failing: undefined as string | undefined }));
+const asyncGitCalls = vi.hoisted(() => ({ args: [] as string[][], failing: undefined as string | undefined, hanging: undefined as string | undefined }));
 vi.mock("node:child_process", async importOriginal => {
   const actual = await importOriginal<typeof ChildProcess>();
   const { promisify } = await import("node:util");
@@ -34,7 +35,8 @@ vi.mock("node:child_process", async importOriginal => {
     if (Array.isArray(call[1])) {
       const args = call[1] as readonly string[];
       const fails = asyncGitCalls.failing !== undefined && args.includes(asyncGitCalls.failing);
-      const forwarded = fails ? [...args, "--no-such-option"] : [...args];
+      const hangs = asyncGitCalls.hanging !== undefined && args.includes(asyncGitCalls.hanging);
+      const forwarded = hangs ? [...args.slice(0, args.indexOf("-C") + 2), "cat-file", "--batch"] : fails ? [...args, "--no-such-option"] : [...args];
       call[1] = forwarded;
       asyncGitCalls.args.push(forwarded);
     }
@@ -392,6 +394,40 @@ describe("CodeRuleBridge", () => {
       [{ path: "deep/draft.py", language: "python", previousText: "draft\n", generatedText: "draft\nmine\n" }],
     ]);
   });
+
+  it("reports a walk whose Git did not list the files changed before the session in time, and lists them at the next walk", async () => {
+    const root = await workspace();
+    const dirty = join(root, "src", "dirty.py");
+    await writeFile(dirty, "committed\n");
+    commitAll(root);
+    await writeFile(dirty, "uncommitted\n");
+    await awaitClockAfter(dirty);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits), { discoveryWaitMs: 50 });
+    // The baseline walk passes the session folder, then waits on a listing Git never finishes; the next two walks are held there.
+    discovery.directories.set(root, [async () => undefined]);
+    const next = holdDiscovery("directories", root);
+    const last = holdDiscovery("directories", root);
+    asyncGitCalls.hanging = "--modified";
+    try {
+      await bridge.openWorkspace("session-1");
+      await bridge.checkpoint("turn");
+      await next.entered;
+    } finally {
+      asyncGitCalls.hanging = undefined;
+    }
+    await expect(bridge.checkpoint("turn")).resolves.toEqual(expect.objectContaining({
+      failures: [expect.objectContaining({ code: "source-incomplete", message: ".: Git did not list the checkout's changed files in time" })],
+    }));
+    // The next walk lists again and keeps the session's first sight of the file; it is done once the one after it starts.
+    next.release();
+    await last.entered;
+    last.release();
+    await shell(bridge, () => writeFile(dirty, "uncommitted\nmine\n"));
+    await vi.waitFor(() => expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "src/dirty.py", language: "python", previousText: "uncommitted\n", generatedText: "uncommitted\nmine\n" }],
+    ]), { timeout: 10_000 });
+  }, 40_000);
 
   it("audits nothing Git wrote over a file changed before the session, and measures the next shell edit from Git's text", async () => {
     const root = await workspace();

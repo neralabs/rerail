@@ -2077,13 +2077,19 @@ export class CodeRuleBridge {
     }
   }
 
-  /** The sources `walk` saw first that their checkout's Git lists as modified or untracked. */
+  /**
+   * The sources `walk` saw first that their checkout's Git lists as modified or untracked. Throws when a checkout's Git
+   * ran past its time limit: taken as listing none, each file changed before the session would be measured whole at the
+   * session's next shell write to it. The walk fails instead, the boundary reports why, and the next walk lists again.
+   */
   async #firstSeenModifiedOrUntracked(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): Promise<string[]> {
     const firstSeen = [...scan.sources.keys()].filter(path => this.#firstSeen(discovery, walk, path));
     const listed: string[] = [];
     for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, firstSeen, path => path).owned) {
       const seen = new Set(paths);
-      for (const path of await gitModifiedOrUntrackedPaths(checkout)) {
+      const changed = await gitModifiedOrUntrackedPaths(checkout);
+      if (changed === undefined) throw new Error(`${sessionPath(discovery.root, checkout) || "."}: Git did not list the checkout's changed files in time`);
+      for (const path of changed) {
         const inSession = sessionPath(discovery.root, resolve(checkout, path));
         if (seen.has(inSession)) listed.push(inSession);
       }

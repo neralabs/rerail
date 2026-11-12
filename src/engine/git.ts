@@ -1,4 +1,4 @@
-import { execFile, spawn, spawnSync } from "node:child_process";
+import { type ChildProcess, execFile, spawn, spawnSync } from "node:child_process";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
@@ -243,20 +243,64 @@ async function gitOutput(cwd: string, args: readonly string[]): Promise<string |
 
 /** Stdout, as Git wrote it, of a successful Git command run as `gitOutput` runs one; undefined past `maxBuffer` bytes. */
 async function gitStdout(cwd: string, args: readonly string[], maxBuffer = 1024 * 1024): Promise<string | undefined> {
+  const read = await readGit(cwd, args, maxBuffer);
+  return read.ended === "printed" ? read.stdout : undefined;
+}
+
+/** How a Git read ended: with what Git printed, failing (no Git, an error, past `maxBuffer`), or ended past its time limit. */
+type GitRead = { readonly ended: "printed"; readonly stdout: string } | { readonly ended: "failed" | "timed-out" };
+
+/** Runs a Git command as `gitOutput` does, and says how it ended. */
+async function readGit(cwd: string, args: readonly string[], maxBuffer: number): Promise<GitRead> {
   let executable: string;
   try {
     executable = gitExecutable();
   } catch {
-    return undefined;
+    return { ended: "failed" };
   }
-  const { promise, resolve: settle } = Promise.withResolvers<string | undefined>();
-  execFile(
+  const { promise, resolve: settle } = Promise.withResolvers<GitRead>();
+  let timedOut = false;
+  // Not execFile's `timeout`: it destroys the output unread when it fires, so a Git that exited while the event loop
+  // stalled past it answered with what was read before the stall, often nothing, and as a success.
+  const child = execFile(
     executable,
     [...SAFE_CONFIG, "-C", cwd, ...args],
-    { encoding: "utf8", maxBuffer, timeout: DEFAULT_TIMEOUT_MS, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" } },
-    (error, stdout) => settle(error === null ? stdout : undefined),
+    { encoding: "utf8", maxBuffer, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" } },
+    (error, stdout) => {
+      if (timedOut) settle({ ended: "timed-out" });
+      else settle(error === null ? { ended: "printed", stdout } : { ended: "failed" });
+    },
   );
+  endPastTimeLimit(child, () => {
+    timedOut = true;
+  });
   return await promise;
+}
+
+/**
+ * How often a Git read checks its time limit. Each check counts this long however late it runs, so the limit counts the
+ * time the event loop ran, not the time it stalled: a Git that finished during a stall has its exit handled first.
+ */
+const TIME_LIMIT_TICK_MS = 1_000;
+
+/**
+ * Ends `child` once it has run `DEFAULT_TIMEOUT_MS` of event-loop time, after calling `ending`. Like execFile's own
+ * timeout, it destroys the output before the kill, so the read answers even while a process Git started holds it open.
+ */
+function endPastTimeLimit(child: ChildProcess, ending: () => void): void {
+  let counted = 0;
+  const ticks = setInterval(() => {
+    counted += TIME_LIMIT_TICK_MS;
+    if (counted < DEFAULT_TIMEOUT_MS) return;
+    clearInterval(ticks);
+    ending();
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    child.kill();
+  }, TIME_LIMIT_TICK_MS);
+  const stop = (): void => clearInterval(ticks);
+  child.once("exit", stop);
+  child.once("error", stop);
 }
 
 /** The commit `HEAD` names in `cwd`; undefined outside a repository, or before its first commit. */
@@ -334,12 +378,13 @@ const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;
 
 /**
  * The files of the checkout at `cwd` whose text its index may not hold: modified since staged (or deleted), and untracked
- * but not ignored; relative to `cwd`. Empty without Git, outside a repository, past the timeout, or past
- * `MAX_LISTED_PATH_BYTES` of paths.
+ * but not ignored; relative to `cwd`. Empty without Git, outside a repository, or past `MAX_LISTED_PATH_BYTES` of paths.
+ * Undefined when Git ran past its time limit: it did not say which files changed, and none is not its answer.
  */
-export async function gitModifiedOrUntrackedPaths(cwd: string): Promise<string[]> {
-  const listed = await gitStdout(cwd, ["ls-files", "-z", "--modified", "--others", "--exclude-standard"], MAX_LISTED_PATH_BYTES);
-  return listed === undefined ? [] : listed.split("\0").filter(path => path !== "");
+export async function gitModifiedOrUntrackedPaths(cwd: string): Promise<string[] | undefined> {
+  const read = await readGit(cwd, ["ls-files", "-z", "--modified", "--others", "--exclude-standard"], MAX_LISTED_PATH_BYTES);
+  if (read.ended === "timed-out") return undefined;
+  return read.ended === "printed" ? read.stdout.split("\0").filter(path => path !== "") : [];
 }
 
 /**
