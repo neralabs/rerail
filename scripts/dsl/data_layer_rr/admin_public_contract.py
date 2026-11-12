@@ -47,7 +47,12 @@ def exercise(module,case,scratch):
     with contextlib.ExitStack() as stack:
         stack.enter_context(patch.object(module,'SCAN_DIRS',case.get('dirs',['l8000_admin/tools'])))
         stack.enter_context(patch.object(module,'ALLOWLISTED_FILES',case.get('allowed',[])))
-        if case.get('readError'):stack.enter_context(patch.object(Path,'read_text',side_effect=OSError('fixture read failure')))
+        if case.get('readError'):
+            original_read=Path.read_text
+            def read(path,*args,**kwargs):
+                if path.is_relative_to(root):raise OSError('fixture read failure')
+                return original_read(path,*args,**kwargs)
+            stack.enter_context(patch.object(Path,'read_text',read))
         with contextlib.redirect_stdout(out),contextlib.redirect_stderr(err):
             try:
                 value=(module._collect_violations_from_source(root,root/case['path'],case['source']) if case['kind']=='source' else module._collect_violations(root))

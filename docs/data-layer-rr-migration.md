@@ -4185,3 +4185,20 @@ The upstream read-error test patches only reads of the source fixture file.
 The fixture must target source reads while retaining the same expected source result.
 The complete first replay is `rr-admin-public-read-fixture-red-finalfcce.json.gz`.
 The admin rule remains a draft.
+
+### 2026-11-12 — Admin scanners pass on one coherent candidate
+
+The read-error mock now targets fixture source files and permits native transport I/O.
+All 38 source inputs and complete expected results remain identical after that fixture correction.
+Both APIs pass all 128 component cases and all 38 public scanner cases on the same candidate revision.
+The checkpoint `rr-admin-scanners-finalfcce.json.gz` retains 432 native invocations, complete source and native results, and consumed program and harness snapshots.
+All 666 Python tooling tests pass in 51.211 seconds. The manifest audit passes.
+
+The next corpus records 31 complete CLI outcomes, including stdout, stderr, statuses, service-call arguments, and script bytes before and after signing.
+Signing cases use only the public synthetic fixture key.
+The current CLI reaches original `cli_main`; the source guard rejects all 31 cases.
+The red receipt is `rr-admin-cli-source-red-finalfcce.json.gz`.
+
+The admin rule remains a draft with explicit scanner progress in the manifest.
+All 125 original assertions still require full native acceptance. Production, CLI, earlier corpora, retained updates, and valid removal controls also remain open.
+The inventory remains twenty admissions, seventy-nine drafts, and one absent translation.

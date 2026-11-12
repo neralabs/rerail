@@ -4595,7 +4595,26 @@
       "legacySha256": "7c77aef231725a946398a941b9b1a9d2adac72f1506073b5881dd84796bfeb2a",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/admin-async-purity.rr",
-      "ruleSha256": "5f690fafe2556bb83220537c281674a7e35272ac99bdc46f8ffae0436ed97d86"
+      "ruleSha256": "5f690fafe2556bb83220537c281674a7e35272ac99bdc46f8ffae0436ed97d86",
+      "migrationProgress": {
+        "status": "native-scanner-progress",
+        "admitted": false,
+        "verifiedNativeExecutions": 432,
+        "checkpoint": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-admin-scanners-finalfcce.json.gz",
+          "sha256": "19847970c4f3399b983fa08c91fe0cc0f2a9bdbbd6517a2591d5fdb85b08cdd6"
+        },
+        "summary": {
+          "componentsPerAPI": 128,
+          "publicScannerCasesPerAPI": 38,
+          "sourceSemanticCallbacks": 0
+        },
+        "remaining": [
+          "Full native replay of all 125 original assertions.",
+          "Native CLI and signing contracts; all 31 current CLI cases still reach guarded source semantics.",
+          "Complete production, earlier corpora, retained updates and valid removal controls."
+        ]
+      }
     },
     {
       "check": "plan_scope_side_effects",
