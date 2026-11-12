@@ -21,6 +21,7 @@ import {
   CodeRuleBridge, generatedEditPaths, ledgerPreimage, type Preimage, type RewoundEdit, type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
 import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
+import { claudeCodeReportedPreimage } from "../engine/code-rule/reported-preimage.js";
 import {
   buildSteer, type AuditorCloseOptions, type CodeRuleAuditor, type AuditSettings, type CodeRuleViolation, type RuleSteerDelivery,
   type RepositoryAuditHooks, type SteerMetadata, type SteerSourceOf,
@@ -975,12 +976,17 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * Finishes a tool call on the open evaluator, with the tool's result, which may say what the file it wrote held; one
-   * answered while the evaluator opened only ends its window (`unwatchedResult`).
+   * Finishes a tool call on the open evaluator, with what the tool's result says the file it wrote held: only Claude
+   * Code's Write and Edit results say it, so no other agent's result is read as theirs. One answered while the evaluator
+   * opened only ends its window (`unwatchedResult`).
    */
   async #finishCall(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, result: Extract<AdapterEvent, { kind: "result" }>): Promise<void> {
-    if (bridge !== undefined) await bridge.finish(result.toolCallId, result.failed === true, { rewindable: true, output: result.output });
-    else await state.codeRuleBridge?.unwatchedResult(result.toolCallId);
+    if (bridge === undefined) {
+      await state.codeRuleBridge?.unwatchedResult(result.toolCallId);
+      return;
+    }
+    const reported = state.descriptor.host === "claude-code" ? claudeCodeReportedPreimage(result.output) : undefined;
+    await bridge.finish(result.toolCallId, result.failed === true, { rewindable: true, reported });
   }
 
   /**

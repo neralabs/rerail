@@ -14,6 +14,7 @@ import {
   renderSteer,
   languageFor,
 } from "../../src/engine/index.js";
+import { claudeHookEvents } from "../../src/hosts/claude/index.js";
 import { RerailRuntime } from "../../src/runtime/runtime.js";
 import { SqliteSessionStore } from "../../src/runtime/session-store.js";
 import { setUpTestRepository } from "../support/repository-rules.js";
@@ -376,7 +377,7 @@ describe("Rerail tool results waiting for their edit's check", () => {
    * A session whose edit checks finish only once the test opens `check`, each steering its file's finding when the
    * edit wrote `bad`: Claude Code's unless `host` says otherwise.
    */
-  async function hookSession(host: "claude-code" | "omp" = "claude-code") {
+  async function hookSession(host: "claude-code" | "codex" | "omp" = "claude-code") {
     // The real path: macOS's temporary folder is reached through a symlink, which would name the file twice.
     const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-hook-check-")));
     directories.push(root);
@@ -440,7 +441,7 @@ describe("Rerail tool results waiting for their edit's check", () => {
       return { answering: runtime.ingest({ kind: "result", eventId: `result-${id}`, sessionId: session.sessionId, toolCallId: id, toolName: tool, output: output(path) }) };
     };
     const turnEnd = (eventId: string) => runtime.ingest({ kind: "turn-end", eventId, sessionId: session.sessionId, text: "" });
-    return { runtime, check, checking, steered, edit, lateEdit, turnEnd };
+    return { runtime, root, check, checking, steered, edit, lateEdit, turnEnd };
   }
 
   /** `a.ts`'s finding as a steer renders it, and the digest that lists it at the end of the agent's run. */
@@ -478,6 +479,42 @@ describe("Rerail tool results waiting for their edit's check", () => {
       const { answering } = await lateEdit("t1", file, BAD, output, tool);
       check.resolve();
       expect((await answering).map(delivery => delivery.content)).toEqual([renderSteer([finding(file)])]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("steers a late Edit from the PostToolUse payload Claude Code sends, read through its hook adapter", async () => {
+    // The project folder Claude Code names would stand in for the payload's `cwd`.
+    vi.stubEnv("CLAUDE_PROJECT_DIR", "");
+    const { runtime, root, check } = await hookSession();
+    const path = join(root, "a.ts");
+    const hook = { session_id: "hook-check", transcript_path: join(root, "transcript.jsonl"), cwd: root, permission_mode: "default", tool_name: "Edit", tool_use_id: "toolu_1" };
+    const toolInput = { file_path: path, old_string: "export const a = 1;\n", new_string: BAD, replace_all: false };
+    // The tool's result in the shape a real Claude Code 2.1 session recorded for an Edit whose `originalFile` is null.
+    const toolResponse = {
+      filePath: path, oldString: "export const a = 1;\n", newString: BAD, originalFile: null, userModified: false, replaceAll: false,
+      structuredPatch: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, lines: [" export const a = 1;", "+const bad = 2;"] }],
+    };
+    try {
+      await writeFile(path, BAD);
+      for (const event of claudeHookEvents({ ...hook, hook_event_name: "PreToolUse", tool_input: toolInput })) await runtime.ingest(event);
+      const [result] = claudeHookEvents({ ...hook, hook_event_name: "PostToolUse", tool_input: toolInput, tool_response: toolResponse });
+      const answering = runtime.ingest(result!);
+      check.resolve();
+      expect((await answering).map(delivery => delivery.content)).toEqual([STEER]);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("reads another agent's result as no Claude Code result: a late Codex edit stays unchecked", async () => {
+    const { runtime, check, lateEdit } = await hookSession("codex");
+    try {
+      const output = (path: string) => ({ type: "update", filePath: path, content: BAD, structuredPatch: [], originalFile: "export const a = 1;\n" });
+      const { answering } = await lateEdit("t1", "a.ts", BAD, output);
+      check.resolve();
+      expect(await answering).toEqual([]);
     } finally {
       await runtime.dispose();
     }
