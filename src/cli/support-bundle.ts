@@ -243,7 +243,7 @@ function knownPattern({ value, word, pathOnly }: KnownValue): string {
  * there are. Then what looks like a secret goes. A bundle holds thousands of texts, and a database can record hundreds
  * of checkouts.
  */
-function textScrub(knownValues: readonly KnownValue[]): (text: string) => string {
+function scrubFor(knownValues: readonly KnownValue[]): (text: string) => string {
   const forms = knownValues
     .flatMap(literal => pathForms(literal.value).map(value => ({ ...literal, value })))
     // A home or checkout of `/`, as a container can have, would take every slash with it.
@@ -259,9 +259,9 @@ function textScrub(knownValues: readonly KnownValue[]): (text: string) => string
   };
 }
 
-/** Takes what this computer knows out of `text`, then what looks like a secret ({@link textScrub}). */
+/** Takes what this computer knows out of `text`, then what looks like a secret ({@link scrubFor}). */
 export function scrubText(text: string, { knownValues }: { knownValues: readonly KnownValue[] }): string {
-  return textScrub(knownValues)(text);
+  return scrubFor(knownValues)(text);
 }
 
 function scrubValue<T>(value: T, scrub: (text: string) => string): T {
@@ -608,7 +608,7 @@ export async function collectSupportBundle(input: CollectInput): Promise<{ bundl
     daemonLogOmittedLines: omitted,
     problems,
   };
-  const scrub = textScrub(knownValues);
+  const scrub = scrubFor(knownValues);
   return { bundle: scrubValue(bundle, scrub), ownRules: scrubValue(ownRules, scrub) };
 }
 
