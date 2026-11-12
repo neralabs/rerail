@@ -154,8 +154,9 @@ describe("hook steers", () => {
   it("does not emit a second JSON answer when receipt persistence fails after stdout succeeds", async () => {
     const root = await temporaryDirectory();
     const options = hookOptions(root);
+    // A delivery that names a rule, so writing the answer records a receipt: one that names none is never counted.
     await persistPending(pendingPath(options.storageRoot!, "claude-code", "session-1"), [
-      { ...delivery("guidance"), requested: "steer" },
+      { ...delivery("guidance", ["rule:a"]), requested: "steer" },
     ]);
     const output = await runClaudeHook({ cwd: root, session_id: "session-1", hook_event_name: "SessionStart" }, options);
     const databasePath = join(root, "rerail.sqlite");

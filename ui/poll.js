@@ -573,7 +573,8 @@ function pumpTitles() {
  * - `sessions`: the first page of the sessions list (`data.sessions`).
  * - `selectedSession`: the selected session's head, new transcript events and violations; nothing without one.
  * - `mergeAssist`: Merge Assist for the scoped checkout (`data.mergeAssist`), every poll.
- * - `mergeAssistCount`: the same, read at most every 30 s: the sidebar's count of open conflicts.
+ * - `mergeAssistCount`: the same, read at most every 30 s: the sidebar's count of open conflicts. Not in a scope's
+ *   first poll, which the page waits on to draw, so the count never holds the page up.
  */
 const NEEDS = {
   rules: () => loadRules(),
@@ -593,7 +594,7 @@ const NEEDS = {
   sessions: () => loadFirstPage("sessions", "sessions", `/api/sessions?limit=${SESSIONS_PAGE}${repositoryFilter()}`),
   selectedSession: () => (ui.selectedSession ? [loadSession(ui.selectedSession), loadSessionFindings(ui.selectedSession)] : []),
   mergeAssist: () => loadMergeAssist(),
-  mergeAssistCount: () => loadMergeAssist(MERGE_ASSIST_COUNT_EVERY),
+  mergeAssistCount: () => (data.loaded ? loadMergeAssist(MERGE_ASSIST_COUNT_EVERY) : false),
 };
 
 /** The names of what the page needs now, beyond the shared reads; set once by the page (`setNeeds`). */

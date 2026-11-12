@@ -68,7 +68,8 @@ describe("a poll", () => {
 
     await refresh();
 
-    expect(paths()).toEqual(["/api/merge-assist", "/api/repositories", "/api/repository", "/api/repository/rules", "/api/rule-packs", "/api/rules/activity", "/api/violations", "/healthz"]);
+    // The sidebar's Merge Assist count is not read in the first poll, which the page waits on.
+    expect(paths()).toEqual(["/api/repositories", "/api/repository", "/api/repository/rules", "/api/rule-packs", "/api/rules/activity", "/api/violations", "/healthz"]);
     expect(requested.filter(url => url.pathname === "/api/violations").map(url => url.searchParams.get("ruleId"))).toEqual(["r"]);
   });
 
