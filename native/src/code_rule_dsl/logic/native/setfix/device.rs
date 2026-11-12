@@ -101,6 +101,7 @@ fn text_function(name: &str) -> Option<(u32, usize, usize)> {
         "slice" => (mj::TEXTFN_SLICE, 1, 2),
         "rr_to_string" => (mj::TEXTFN_TO_STRING, 0, 1),
         "sql_replace" => (mj::TEXTFN_REPLACE, 3, 0),
+        "replace_all" | "rx_replace" => (mj::TEXTFN_REGEX, 3, 0),
         _ => return None,
     })
 }
@@ -608,6 +609,9 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
                             xk = if form == mj::CAT_PLAIN { mj::OPND_PLAIN } else { mj::OPND_DOT };
                         }
                     }
+                    if f == mj::TEXTFN_REGEX && args[1..3].iter().any(|k| matches!(k, Key::Slot(x) if !known.contains_key(x))) {
+                        return Err(format!("the function {name} of a regex or replacement that is not a constant has no device form"));
+                    }
                     if args[1..ntexts].iter().any(|k| matches!(k, Key::Slot(x) if is_arena(*x) || deferred.contains_key(x))) {
                         return Err(format!("the function {name}'s pattern or replacement made by the rule has no device form"));
                     }
@@ -815,6 +819,25 @@ fn arena_reader(step: &Step, x: usize) -> bool {
         Step::Func { name, args, bind: true, .. } => text_function(name).is_some_and(|(_, nt, _)| nt > 0) && me(&args[0]) && !args[1..].iter().any(me),
         _ => false,
     }
+}
+
+/// The automaton of a `TEXTFN_REGEX` stage's regex (key 2's constant), on the device once per regex; refused (the
+/// stratum runs on the CPU) for a regex it has none for, or a replacement naming groups (`$`).
+fn regex_automaton(d: &mj::Stage, names: &Interner) -> Result<Rc<mj::DevBytes>, String> {
+    thread_local! {
+        static UPLOADED: RefCell<HashMap<String, Rc<mj::DevBytes>>> = RefCell::new(HashMap::new());
+    }
+    if names.name(d.key_const[4]).contains('$') {
+        return Err("replace_all with a replacement naming a group ($) has no device form".into());
+    }
+    let pattern = names.name(d.key_const[2]).to_string();
+    if let Some(b) = UPLOADED.with_borrow(|u| u.get(&pattern).cloned()) {
+        return Ok(b);
+    }
+    let r = crate::code_rule_dsl::text::table::replacer(&pattern).map_err(|e| format!("replace_all has no device form: {e}"))?;
+    let b = Rc::new(mj::DevBytes::upload(&r.bytes).map_err(|e| format!("{e:?}"))?);
+    UPLOADED.with_borrow_mut(|u| u.insert(pattern, b.clone()));
+    Ok(b)
 }
 
 /// A `TEXTFN_COPY` stage: the text of `a` and `b` by `form` (`cat`'s or `str_concat`'s) made into the arena, its
@@ -1212,7 +1235,9 @@ impl<'p> Run<'p> {
                         self.arena = Some(batch.arena().map_err(|e| format!("{e:?}"))?);
                     }
                     let left = self.tables[i].as_ref().expect("the stage's input");
-                    batch.stage(s.desc, left, right, i, o, &self.totals, &self.counters, self.counter[k], &out).map_err(|e| format!("{e:?}: a stage's space for {cap_in} rows"))?;
+                    let aux = if s.desc.mode == mj::TEXTFN && s.desc.agg[0] == mj::TEXTFN_REGEX { Some(regex_automaton(&s.desc, names)?) } else { None };
+                    batch.stage(s.desc, left, right, i, o, &self.totals, &self.counters, self.counter[k], &out, aux.as_deref())
+                        .map_err(|e| format!("{e:?}: a stage's space for {cap_in} rows"))?;
                     self.tables[o] = Some(out);
                 }
             }
@@ -1751,7 +1776,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
                     d.nkeys = k as u32;
                     let fresh_rows = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
                     let counters = mj::Words::zeroed(1).map_err(|e| format!("{e:?}"))?;
-                    batch.stage(d, &distinct, Some((&total, ix.as_deref())), 1, 2, &words, &counters, None, &fresh_rows).map_err(|e| format!("{e:?}"))?;
+                    batch.stage(d, &distinct, Some((&total, ix.as_deref())), 1, 2, &words, &counters, None, &fresh_rows, None).map_err(|e| format!("{e:?}"))?;
                     news.push((h, fresh_rows, words, true));
                     hold.push(distinct);
                 }
@@ -2235,6 +2260,10 @@ mod tests {
             // Compared with another relation's symbols, and ordered against a constant.
             format!("pos {m} v0\npos {n} v1 v2\nfunc head v3 v1\neq v3 v0\nhead v1 v2"),
             format!("pos {n} v0 v1\nfunc dir v2 v0\nfunc str_cmp v3 v2 {}\nlt i:0 v3\nhead v0 v1", sym("src")),
+            // Regex replacements: leftmost first, anchored, multibyte classes.
+            format!("pos {n} v0 v1\nfunc replace_all v2 v0 {} {}\nhead v2 v1", sym("_+|\\.ts$"), sym("-")),
+            format!("pos {n} v0 v1\nfunc replace_all v2 v0 {} {}\nhead v2 v1", sym("^[A-Za-z]+|[0-9]"), sym("#")),
+            format!("pos {n} v0 v1\nlt v1 i:900\nfunc rx_replace v2 v0 {} {}\nfunc rr_strlen v3 v2\nhead v2 v3", sym("[αβé]+"), sym("<u>")),
             // Unicode's lower of ASCII names.
             format!("pos {a} v0 v1\nfunc lower v2 v0\nhead v2 v1"),
         ];
