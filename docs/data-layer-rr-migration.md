@@ -4114,3 +4114,21 @@ The current inventory has twenty admissions, seventy-nine drafts, and one absent
 The receipt is `rr-boundary-complete-finalfcce.json.gz`; its original-suite replays are `rr-boundary-complete-native-snapshot.json` and `rr-boundary-complete-native-workspace.json`.
 The native engine is unchanged; compile time is zero.
 No repository-wide cold execution or additional Linear ticket was created.
+
+### 2026-11-12 — Admin purity source contracts and native configuration rejection
+
+All 125 unchanged admin-purity source tests pass with no source-file differences.
+The lossless recording retains 51 detector observations; 26 eligible observations contain findings.
+Seventy-four original tests have no detector observation. They still require full native assertion replay.
+No original test is excluded from the migration contract.
+
+A new component corpus records 124 complete source outcomes for metadata, registered source extraction, fact projection, and supplied-fact reporting.
+Positive extraction includes all three forbidden patterns, malformed Python, Unicode boundaries, source line separators, strings, and inline comments.
+The source also detects calls in caller-supplied files outside the default roots and in non-Python files.
+Raw reporter cases retain malformed values, missing keys, coercion exceptions, wide integers, paths, and duplicate findings.
+
+The current native candidate returns no configuration rows.
+The retained failing query is backed by the actual engine response and both consumed program hashes.
+The source contracts and native rejection are retained in `rr-admin-components-source-red-finalfcce.json.gz`.
+The configuration adapter now requires those native exports. Extraction and reporting remain unported.
+The inventory remains twenty admitted rules, seventy-nine drafts, and one absent translation.
