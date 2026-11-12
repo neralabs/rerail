@@ -150,3 +150,4 @@ Numbers are tier 2's for `.rr`. Each step's commit is listed.
 | Tier 1 too through LLVM; the whole parse against the lean parser, by where it goes (page 34) | | | 276.6M (54.4M) |
 | Comments in the token step: 5,271 words to 3,341, 322 comment tests to 40 (page 34) | | 17,460 | 311.3M (60.7M) |
 | A mark refused only on its token's bytes: 320 mark tests to 193 (page 34) | | 17,278 | 307.1M (58.4M) |
+| Tier 1's checks at the token: a count of tokens (`COUNT`) and local checks (`CHECK`), tier 1's 606 operations to 452 (page 34) | `5da312927` | | 328.7M (57.2M; load 15) |
