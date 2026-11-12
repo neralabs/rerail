@@ -16,7 +16,9 @@ import {
 import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState } from "./host-runtime.js";
 import { autostartDaemon } from "./daemon-control.js";
 import { InactiveSessionError } from "./event-protocol.js";
-import { LedgerDeliverySchema, owedFinding, owedForDisk, OwedEntrySchema, type OwedEntry, type OwedSteer } from "./owed-ledger.js";
+import {
+  LedgerDeliverySchema, owedFinding, owedForDisk, OwedEntrySchema, restoredFinding, type OwedEntry, type OwedSteer,
+} from "./owed-ledger.js";
 import {
   CodeRuleBridge, generatedEditPaths, ledgerPreimage, type Preimage, type RewoundEdit, type SessionWalkResume, type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
@@ -272,12 +274,7 @@ function restoredOwed(ledger: readonly LedgerEntry[]): OwedState {
   if (owed === undefined) return { steers: [], findings: [], recorded: 0 };
   return {
     steers: owed.steers.map(steer => ({ delivery: steer.delivery, revision: 0, scope: [...steer.scope] })),
-    findings: owed.findings.map(finding => ({
-      violation: { ...finding.violation, captures: {}, variables: {} },
-      sourceOf: () => finding.source ?? undefined,
-      revision: 0,
-      scope: [...finding.scope],
-    })),
+    findings: owed.findings.map(finding => ({ ...restoredFinding(finding), revision: 0 })),
     recorded: owed.steers.length + owed.findings.length,
   };
 }

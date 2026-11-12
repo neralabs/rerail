@@ -2,7 +2,7 @@ import { z } from "zod/v4";
 import { STEER_STRATEGIES, type AdapterDelivery } from "../engine/adapter-contract.js";
 import { RULE_SOURCE_KINDS } from "../engine/catalog/repository-model.js";
 import { RULE_MODES } from "../engine/catalog/rule-mode.js";
-import { SECRET_FILE_FINDING_MESSAGE, type CodeRuleViolation } from "../engine/code-rule/code-rule.js";
+import { SECRET_FILE_FINDING_MESSAGE, type CodeRuleViolation, type SteerSourceOf } from "../engine/code-rule/code-rule.js";
 import type { SteerRuleSource } from "../engine/code-rule/steer-origin.js";
 import { scrubSecrets } from "../engine/secret-scrub.js";
 import { SteerRuleSchema } from "./event-protocol.js";
@@ -99,6 +99,18 @@ export function owedFinding(
 function withheld(violation: OwedViolation): OwedViolation {
   const { fix: _fix, ...rest } = violation;
   return { ...rest, message: SECRET_FILE_FINDING_MESSAGE };
+}
+
+/**
+ * A held finding the ledger kept (`owedFinding`), as the session holds it again: with no text captured, which the
+ * ledger never keeps, and the source of its rule as the ledger recorded it.
+ */
+export function restoredFinding(owed: OwedFinding): { violation: CodeRuleViolation; sourceOf: SteerSourceOf; scope: string[] } {
+  return {
+    violation: { ...owed.violation, captures: {}, variables: {} },
+    sourceOf: () => owed.source ?? undefined,
+    scope: [...owed.scope],
+  };
 }
 
 /**
