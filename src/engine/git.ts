@@ -284,8 +284,9 @@ async function readGit(cwd: string, args: readonly string[], maxBuffer: number):
 const TIME_LIMIT_TICK_MS = 1_000;
 
 /**
- * Ends `child` once it has run `DEFAULT_TIMEOUT_MS` of event-loop time, after calling `ending`. Like execFile's own
- * timeout, it destroys the output before the kill, so the read answers even while a process Git started holds it open.
+ * Ends `child`'s read once it has run `DEFAULT_TIMEOUT_MS` of event-loop time without its output closing, after calling
+ * `ending`. Like execFile's own timeout, it destroys the output before the kill, so the read answers even while a process
+ * Git started holds the output open, after Git has exited too: a repository's clean filter can leave one behind.
  */
 function endPastTimeLimit(child: ChildProcess, ending: () => void): void {
   let counted = 0;
@@ -299,7 +300,7 @@ function endPastTimeLimit(child: ChildProcess, ending: () => void): void {
     child.kill();
   }, TIME_LIMIT_TICK_MS);
   const stop = (): void => clearInterval(ticks);
-  child.once("exit", stop);
+  child.once("close", stop);
   child.once("error", stop);
 }
 

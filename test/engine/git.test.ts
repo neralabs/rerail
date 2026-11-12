@@ -157,6 +157,24 @@ describe("Git reads and their time limit", () => {
     setImmediate(() => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10_500));
     await expect(reads).resolves.toEqual([["a.py"], head]);
   }, 30_000);
+
+  it("ends a read at the time limit when Git has exited but a process it started keeps the output open", async () => {
+    const root = await repository({ ".gitattributes": "a.py filter=held\n", "a.py": "print(1)\n" });
+    const released = join(root, ".git", "released");
+    // Git runs the clean filter to compare a.py, changed on disk, with the index. The loop the filter leaves behind holds
+    // Git's stderr, outside the repository, until the test creates `released`.
+    git(root, "config", "filter.held.clean", `(cd / && while [ ! -e '${released.replaceAll("\\", "/")}' ]; do sleep 0.2; done) </dev/null >/dev/null & cat`);
+    await writeFile(join(root, "a.py"), "print(2)\n");
+    let late: NodeJS.Timeout | undefined;
+    try {
+      const read = gitModifiedOrUntrackedPaths(root);
+      const waited = new Promise(settle => { late = setTimeout(settle, 20_000, "still waiting at 20 s"); });
+      await expect(Promise.race([read, waited])).resolves.toBeUndefined();
+    } finally {
+      clearTimeout(late);
+      await writeFile(released, "");
+    }
+  }, 30_000);
 });
 
 describe("gitExcludeFiles", () => {
