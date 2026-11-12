@@ -390,32 +390,39 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   #lane(root: string): Lane | undefined {
     const sessionId = this.#sessionId;
     if (sessionId === undefined || this.#closing || !this.#mayRun(root)) return undefined;
-    let lane = this.#lanes.get(root);
-    if (lane !== undefined && lane.refreshed !== this.#refreshes) {
-      lane.refreshed = this.#refreshes;
-      lane.enforcer.refreshCodeRules();
-    }
-    if (lane === undefined) {
-      // Every lane in this checkout, this session's earlier ones and other sessions', shares the catalog, and each reads
-      // it again only at its own next use: it may hold rules from before the last event.
-      const catalog = this.#options.catalogs.catalog(root);
-      catalog.refresh();
-      const enforcer = new NativeCodeRuleEnforcer(catalog, {
-        workspaceRoot: root,
-        steerDelivery: this.#options.steerDelivery,
-        audits: this.#options.audits,
-        ...this.#settings,
-        ...(this.#options.timingLog === undefined ? {} : { timingLog: this.#options.timingLog }),
-        followGitignore: this.#options.followGitignore ?? false,
-        presentPath: path => relative(this.#sessionRoot, join(root, path)).split(sep).join("/"),
-        nestedCheckouts: () => this.#nestedCheckoutsOf(root),
-      });
-      // The enforcer registers its code rules synchronously, so the new lane answers `acceptsPath` at once.
-      lane = { root, enforcer, opening: enforcer.openWorkspace(sessionId), refreshed: this.#refreshes };
-      lane.opening.catch(() => undefined);
-      this.#lanes.set(root, lane);
-    }
+    const lane = this.#lanes.get(root);
+    if (lane === undefined) return this.#openLane(root, sessionId);
+    if (lane.refreshed !== this.#refreshes) this.#readRulesAgain(lane);
     return lane;
+  }
+
+  /** The lane of `root`, opened now with its checkout's rules read first. */
+  #openLane(root: string, sessionId: string): Lane {
+    // Every lane in this checkout, this session's earlier ones and other sessions', shares the catalog, and each reads
+    // it again only at its own next use: it may hold rules from before the last event.
+    const catalog = this.#options.catalogs.catalog(root);
+    catalog.refresh();
+    const enforcer = new NativeCodeRuleEnforcer(catalog, {
+      workspaceRoot: root,
+      steerDelivery: this.#options.steerDelivery,
+      audits: this.#options.audits,
+      ...this.#settings,
+      ...(this.#options.timingLog === undefined ? {} : { timingLog: this.#options.timingLog }),
+      followGitignore: this.#options.followGitignore ?? false,
+      presentPath: path => relative(this.#sessionRoot, join(root, path)).split(sep).join("/"),
+      nestedCheckouts: () => this.#nestedCheckoutsOf(root),
+    });
+    // The enforcer registers its code rules synchronously, so the new lane answers `acceptsPath` at once.
+    const lane: Lane = { root, enforcer, opening: enforcer.openWorkspace(sessionId), refreshed: this.#refreshes };
+    lane.opening.catch(() => undefined);
+    this.#lanes.set(root, lane);
+    return lane;
+  }
+
+  /** `lane`'s first use since the last `refreshCodeRules`: it reads its checkout's rules again before it answers. */
+  #readRulesAgain(lane: Lane): void {
+    lane.refreshed = this.#refreshes;
+    lane.enforcer.refreshCodeRules();
   }
 
   /** Whether `root` may run rules in this session: it is eligible, and the session's own checkout is not stopped. */
