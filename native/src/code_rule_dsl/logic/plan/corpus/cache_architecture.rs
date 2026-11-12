@@ -146,7 +146,10 @@ fn a_cache_is_rules_only_with_no_store_hook_or_lookup_of_its_own() {
                 found.push(format!("{rel}: {name}"));
             }
         }
-        if knows.is_match(&text) && !KNOWS_CACHES.contains(&rel.as_str()) {
+        // A crate's facade re-exports the module where the crate split mounts it (`pub use rerail_rr::…::caches::*`):
+        // that names the module, and knows nothing of any relation.
+        let mounted = |line: &str| line.trim_start().starts_with("pub use rerail_");
+        if text.lines().any(|line| knows.is_match(line) && !mounted(line)) && !KNOWS_CACHES.contains(&rel.as_str()) {
             found.push(format!("{rel}: knows a relation is a cache"));
         }
     }

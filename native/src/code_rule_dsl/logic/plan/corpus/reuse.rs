@@ -226,7 +226,7 @@ pub mod tests {
     /// each run it again.
     #[test]
     fn an_unchanged_run_writes_its_kept_outputs() {
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("reuse");
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("reuse");
         let _ = std::fs::remove_dir_all(&dir);
         let src = dir.join("src");
         std::fs::create_dir_all(&src).unwrap();
@@ -289,7 +289,7 @@ pub mod tests {
 
     #[test]
     fn unchanged_cross_file_outputs_skip_derivation_and_changed_members_invalidate() {
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("cross-reuse");
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("cross-reuse");
         let src = dir.join("src"); std::fs::create_dir_all(&src).unwrap();
         std::fs::write(src.join("a.py"),"x = 1\n").unwrap();
         std::fs::write(src.join("b.py"),"y = 2\n").unwrap();

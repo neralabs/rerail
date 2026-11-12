@@ -62,6 +62,10 @@ const FACT_STORE: &[&str] = &[
 ];
 /// Tables made and dropped inside one statement, one lab or one older pipeline's query.
 const SCRATCH: &[&str] = &[
+    // The device tests' inputs (`setfix/device.rs`, an inline test module the file filter cannot leave out).
+    "e",
+    "m",
+    "n",
     "x",
     "a",
     "b",
@@ -162,6 +166,21 @@ const NOT_YET_TABLES_PIN: usize = 62;
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
 const STATE: &[(&str, &str)] = &[
+    // What a crate above registers at load, as the crate split made them (a function or a device, set once).
+    ("code_rule_dsl/logic/device.rs", "SOLVER"),
+    ("code_rule_dsl/logic/plan/corpus.rs", "CROSS_FILE"),
+    ("code_rule_dsl/logic/strings.rs", "FUNCTORS"),
+    ("code_rule_dsl/logic/strings/functions.rs", "PY_REPR"),
+    ("code_rule_dsl/logic/strings/functions.rs", "TO_PRECISION"),
+    // The rule being compiled: the step that first bound each slot, for a refusal's message.
+    ("code_rule_dsl/logic/native/setfix/device.rs", "BINDER"),
+    // This thread's run's binding (CPU or Metal).
+    ("code_rule_dsl/logic/plan/placement.rs", "DEVICE"),
+    // Profiling: the placements a recording run made, and the writer's jobs by kind.
+    ("code_rule_dsl/logic/plan/placement.rs", "RECORDED"),
+    ("content_store/write_back.rs", "BY_KIND"),
+    // The coverage check's census of the shipped rule files, read once by a test process.
+    ("code_rule_dsl/logic/plan/coverage.rs", "CENSUS"),
     // The process's interned relation names (`front::Name`): one allocation per distinct name, not a result kept.
     ("code_rule_dsl/logic/front/name.rs", "TABLE"),
     ("code_rule_dsl/logic/costs.rs", "FITTED"),
@@ -188,8 +207,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/native/extension/setfix.rs", "LOADS"),
     ("code_rule_dsl/logic/native/extension/setfix.rs", "SYMS"),
     ("code_rule_dsl/logic/native/setfix.rs", "ADOPTED"),
-    // A strand's first interning that failed, until its stratum checks (0113): an error, not a result.
-    ("code_rule_dsl/logic/native/setfix.rs", "HELD_FAILED"),
     ("code_rule_dsl/logic/native/setfix.rs", "CHANGING"),
     ("code_rule_dsl/logic/native/setfix.rs", "COMPONENTS"),
     ("code_rule_dsl/logic/native/setfix.rs", "DERIVATIONS"),
@@ -223,8 +240,6 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan.rs", "LOG"),
     ("code_rule_dsl/logic/plan.rs", "PATH"),
     ("code_rule_dsl/logic/plan.rs", "SETTING"),
-    // The `re_match` functions' compiled patterns (RER-131): the program's own text compiled once, not a result kept.
-    ("code_rule_dsl/logic/plan.rs", "REGEXES"),
     // core.rr's declarations (RER-131), read once from the engine's own library text: not a result kept.
     ("code_rule_dsl/logic/rr/lower/core.rs", "DECLS"),
     // This thread's zstd contexts by dictionary (RER-131): open things, not results.
@@ -236,11 +251,6 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "HANDLES"),
     ("code_rule_dsl/logic/plan/choices.rs", "DURABLE"),
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
-    // The build's Python grammar, and what follows from it and a matcher's text alone (its single-field answers, its
-    // lowered code): the process's code, as a compiled rule's, not a run's result.
-    ("code_rule_dsl/logic/plan/corpus/matchers.rs", "GRAMMAR"),
-    ("code_rule_dsl/logic/plan/corpus/matchers.rs", "KEPT"),
-    ("code_rule_dsl/logic/plan/corpus/matchers.rs", "LOWERED"),
     // Profiling totals, consumed and cleared by each report; no reusable results.
     ("code_rule_dsl/logic/plan/corpus/memo.rs", "SIZES"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),

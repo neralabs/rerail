@@ -262,7 +262,8 @@ pub(in crate::code_rule_dsl) fn capture_outputs(conn: &Connection, cap: Capture)
     }
 }
 
-#[cfg(test)]
+// O-split-logic-tests: reads a crate above rerail-logic; compiled only once the split hosts it in the engine.
+#[cfg(all(test, any()))]
 pub mod tests {
     use super::super::thread_cpu;
     use rusqlite::Connection;
@@ -319,8 +320,8 @@ pub mod tests {
         let mut device = Device::default();
         println!("{:>9} {:>9} {:>10}  {:<5} capture", "cpu ms", "solve ms", "rows", "rows");
         for path in captures {
-            let store = crate::code_rule_dsl::prefilter::tests::temp();
-            drop(crate::code_rule_dsl::prefilter::tests::open(&store));
+            let store = crate::code_rule_dsl::fixtures::temp();
+            drop(crate::content_store::ContentStore::open(&store).unwrap());
             let db = Connection::open(&store).unwrap();
             crate::code_rule_dsl::logic::native::register(&db).unwrap();
             crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();

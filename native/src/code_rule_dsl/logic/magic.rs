@@ -22,17 +22,17 @@ pub use crate::code_rule_dsl::logic::front::ast::{Gate, Report};
 #[derive(Clone, Debug)]
 pub struct Options {
     /// `RDL_COARSE`: magic rules take no extras.
-    pub(in crate::code_rule_dsl) coarse: bool,
+    pub coarse: bool,
     /// `RDL_MAGIC_KEY`: adorn the key column only.
-    pub(in crate::code_rule_dsl) key_only: bool,
+    pub key_only: bool,
     /// `RDL_MAGIC_NONKEY`: adorn non-key columns bound by a variable when the rules answer them.
-    pub(in crate::code_rule_dsl) nonkey: bool,
+    pub nonkey: bool,
     /// `RDL_MAGIC_INPUT_FIRST`: sideways, an input on a bound key before a derived atom.
-    pub(in crate::code_rule_dsl) input_first: bool,
+    pub input_first: bool,
     /// `RDL_GATE` (with the native program mode): gate negations instead of computing relations in full.
     pub gate: bool,
     /// `RDL_MAGIC_EXCLUDE`: relations computed in full.
-    pub(in crate::code_rule_dsl) exclude: Vec<String>,
+    pub exclude: Vec<String>,
 }
 
 impl Default for Options {
