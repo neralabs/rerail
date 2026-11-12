@@ -1079,7 +1079,58 @@ and about 40% of the gap to the lean parser:
   so every state tests it after its token, to refuse it where no arm takes it.
   The lean parser looks for it only where it reads an aggregate's `(`.
 
-## The order
+## Measured: Cranelift's code against LLVM's, of one IR
+
+How much of the gap is Cranelift's, and how much the IR's?
+To find out, the same functions are built a second way, ahead of time:
+`clif_rust` writes tier 2's Cranelift IR as Rust, and rustc compiles it with LLVM.
+The IR is the one Cranelift is given, after the lowering's own passes,
+so the two builds differ only in the compiler.
+
+Each function becomes one Rust function, `#[inline(never)]`, so the calls stay the JIT's.
+Each value is a local. The graph is written as structured control,
+as WebAssembly's backends do ("Beyond Relooper", Ramsey 2022):
+
+```rust
+// A loop header: a labelled loop; a branch back to it, `continue`.
+'b12: loop {
+    // A block two forward branches reach: the code after a labelled block,
+    // which those branches leave with `break`.
+    'm40: {
+        v7 = v3 & 255;
+        if v7 != 0 { v9 = v7; break 'm40; } else { continue 'b12; }
+    }
+    // block40's code
+}
+```
+
+A first version wrote every function as a loop over a `match` on the block.
+LLVM does not thread jumps through a loop's header,
+so each branch went through a table: 1,182M instructions, 3.8 times the JIT's.
+
+Thirteen functions have a loop entered at two places (an irreducible graph).
+Nine are made reducible by copying a block or two for one of the edges,
+about 30 instructions each.
+The other four, the largest rules, would need more than their own size in copies.
+Their loops get one entry instead: a dispatch,
+which the edges into the loop reach with a small label (`match d`).
+
+`cargo run -p rerail-rr-aot-gen` writes the source;
+the `rerail-rr-aot` crate runs it on the JIT's harness,
+and refuses if the JIT's IR has changed since.
+On the 1,360 corpus files, it writes the JIT's tape on every one.
+
+Over the corpus, on the profiling build (load 28 to 39):
+
+| | Machine instructions | Instructions | Cycles |
+|---|---|---|---|
+| Tier 2, Cranelift (JIT) | 23,758 | 308.1M | 59.2M |
+| Tier 2, LLVM (ahead of time) | 22,375 | 276.6M | 55.3M |
+| Lean parser | 10,008 | 356.3M | 68.2M |
+
+LLVM's code is 6% smaller and runs 10% fewer instructions, 7% fewer cycles.
+So the code is 2.2 times lean's under either compiler:
+the gap is in the IR, not in Cranelift.
 
 ## The order
 

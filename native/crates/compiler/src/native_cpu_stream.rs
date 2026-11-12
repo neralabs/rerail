@@ -231,7 +231,12 @@ pub const NO_PARENT: u32 = u32::MAX;
 const IS_WRAP: i64 = u32::MAX as i64;
 
 /// Returns 0 when the words accept, else one more than the refusing word's place.
-type Entry = unsafe extern "C" fn(*const Ctx) -> u64;
+/// Tier 2's entry: `ctx`, the run's end.
+pub type Entry = unsafe extern "C" fn(*const Ctx) -> u64;
+
+/// Keep each tier 2 function's IR (`CompiledStream::ir`), for an ahead-of-time build of the same
+/// code (`clif_rust`).
+pub static KEEP_IR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// The most a program writes between two `TOKEN`s: nodes, supertypes and returns pushed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -287,6 +292,10 @@ pub struct CompiledStream {
     pub word_bytes: Vec<u32>,
     /// Each word's machine code's ranges in `code_bytes` (its place, start, end), for the shape.
     pub word_ranges: Vec<(u32, u32, u32)>,
+    /// With `KEEP_IR`: each function's IR as Cranelift was given it (its `FuncId`), and the
+    /// entry's id.
+    pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
+    pub entry_id: u32,
 }
 
 /// Each word's phases (`stream::phases`), over the lowered words: `TAKEN` after a `SPAN`,
@@ -3797,6 +3806,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     for (_, c) in &items {
         clif.push_str(&c.func.display().to_string());
     }
+    let ir: Vec<(u32, cranelift_codegen::ir::Function)> = if KEEP_IR.load(std::sync::atomic::Ordering::Relaxed) { items.iter().map(|(fid, c)| (fid.as_u32(), c.func.clone())).collect() } else { Vec::new() };
     let defined = crate::native_cpu_codegen::define_functions(&mut module, items, cut.near).map_err(|e| {
         if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
             eprintln!("tier 2: {e:?}");
@@ -3847,7 +3857,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     let marks = words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, wraps, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges })
+    Ok(CompiledStream { _module: module, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, wraps, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
 }
 
 /// What an instruction does to `ctx`'s fields (`state_in_registers`).
@@ -4327,6 +4337,18 @@ impl CompiledStream {
         };
         t.clear();
         t
+    }
+
+    /// Runs another build of the same code from now on: `entry` for the JIT's, and the log of
+    /// its smallest rule function's frame (`Ctx::frame_shift`; 4, a frame pointer and a return
+    /// address, holds for any).
+    ///
+    /// # Safety
+    /// `entry` must be this program's code (`clif_rust` of `ir`), reading and writing `Ctx` as the
+    /// JIT's does.
+    pub unsafe fn set_entry(&mut self, entry: Entry, frame_shift: u64) {
+        self.entry = entry;
+        self.frame_shift = frame_shift;
     }
 
     /// One call over a file. `bytes` is the file (`len` its length), with 64 readable bytes

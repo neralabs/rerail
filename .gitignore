@@ -48,3 +48,5 @@ packs/*/upstream/*/*.cases.json
 packs/*/upstream/*/fixtures.upstream-check.json
 packs/*/upstream/*/lizard-*.tsv
 packs/*/upstream/*/authored/
+# Tier 2's code as Rust, written by `cargo run -p rerail-rr-aot-gen`.
+native/crates/rr_aot/src/tier2_aot.rs

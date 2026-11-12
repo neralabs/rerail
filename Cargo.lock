@@ -3268,6 +3268,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-rr-aot"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "rerail-compiler",
+ "rerail-rr-parser",
+ "rerail-rr-syntax",
+]
+
+[[package]]
+name = "rerail-rr-aot-gen"
+version = "0.1.0"
+dependencies = [
+ "rerail-compiler",
+ "rerail-rr-parser",
+]
+
+[[package]]
 name = "rerail-rr-parser"
 version = "0.1.0"
 dependencies = [
