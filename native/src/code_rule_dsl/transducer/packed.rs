@@ -1213,10 +1213,34 @@ struct CaptureStateSet {
     states: HashSet<Arc<[CaptureIdentity]>>,
 }
 
+// A test's per-task work limit (`TaskLimit::enter`), which `charge_task_work` reads in tests.
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    static TASK_LIMIT: std::cell::Cell<usize> = const { std::cell::Cell::new(MAX_WORK_PER_TASK) };
+}
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn task_work_limit() -> usize {
+    TASK_LIMIT.with(std::cell::Cell::get)
+}
+#[cfg(any(test, feature = "test-hooks"))]
+pub struct TaskLimit(usize);
+#[cfg(any(test, feature = "test-hooks"))]
+impl TaskLimit {
+    pub fn enter(limit: usize) -> Self {
+        Self(TASK_LIMIT.with(|value| value.replace(limit)))
+    }
+}
+#[cfg(any(test, feature = "test-hooks"))]
+impl Drop for TaskLimit {
+    fn drop(&mut self) {
+        TASK_LIMIT.with(|value| value.set(self.0));
+    }
+}
+
 fn charge_task_work(work: &mut usize) -> Result<(), Error> {
     *work = work.checked_add(1).ok_or(Error::WorkLimit)?;
     #[cfg(any(test, feature = "test-hooks"))]
-    let limit = capture_run_tests::task_work_limit();
+    let limit = task_work_limit();
     #[cfg(not(any(test, feature = "test-hooks")))]
     let limit = MAX_WORK_PER_TASK;
     if *work > limit {

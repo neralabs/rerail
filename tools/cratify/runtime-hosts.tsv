@@ -9,7 +9,7 @@ eval::query::tape_cache_tests	rerail-engine
 facts::core::tests	rerail-engine
 facts::families::tests	rerail-engine
 facts::producers::python::call_batch::tests	rerail-engine
-facts::producers::python::families::candidates	rerail-engine
+facts::producers::python::families::candidates::tests	rerail-engine
 facts::producers::python::families::tests	rerail-engine
 facts::producers::python::import_screen::tests	rerail-engine
 facts::producers::python::python_facts::tests	rerail-engine
@@ -19,8 +19,10 @@ facts::vtab::syntax::python_parts::tests	rerail-engine
 language::adapter::vue::tests	rerail-engine
 literal::annotation::tests	rerail-engine
 logic::liveness::tests	rerail-engine
+logic::native::setfix::device::tests	rerail-engine
 logic::plan::choices::tests	rerail-engine
 logic::plan::compose::tests	rerail-engine
+logic::plan::corpus::cache_architecture	rerail-engine
 logic::plan::corpus::cache_tests	rerail-engine
 logic::plan::corpus::combined::tests	rerail-engine
 logic::plan::corpus::kept_strata::tests	rerail-engine
@@ -32,6 +34,7 @@ logic::plan::corpus::retain::frame_tests	rerail-engine
 logic::plan::corpus::reuse::tests	rerail-engine
 logic::plan::native_demand::tests	rerail-engine
 logic::profile::report::tests	rerail-engine
+matcher::arguments::php_syntactic_tests	rerail-engine
 matcher::python_facts::tests	rerail-engine
 matcher::value::tests	rerail-engine
 residency::admission::relational::pool::tests	rerail-engine
@@ -42,6 +45,7 @@ scope::php::flow_tests	rerail-engine
 scope::tests	rerail-engine
 scope::usage::rust::tests	rerail-engine
 scope::usage::tests	rerail-engine
+sql_executor::verification::tests	rerail-engine
 suppress::phpstan::tests	rerail-engine
 tape::resident::tests	rerail-engine
 tape::tokens_tests	rerail-engine
@@ -59,6 +63,7 @@ transducer::packed::metal_backend::launch_tests	rerail-engine
 transducer::packed::metal_grid::tests	rerail-engine
 transducer::packed::metal_program_backend::tape_tests	rerail-engine
 transducer::packed::native_cpu::tests	rerail-engine
+transducer::packed::regex_block::tests	rerail-engine
 transducer::packed::rir::tests	rerail-engine
 transducer::packed::set_mode::tests	rerail-engine
 transducer::packed::tests	rerail-engine
