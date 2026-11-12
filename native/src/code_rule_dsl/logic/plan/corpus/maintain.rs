@@ -77,13 +77,16 @@ pub(in crate::code_rule_dsl) struct Maintained {
 }
 
 /// The derived relations that are views of one input: one rule, one positive atom of an input, every column of the
-/// input in the head (a variable the head names, or a constant), so a row of it is one row of the input. Such a
-/// relation is a view when planned (`plan_views`); a session keeps it as one (decision 0090): its old rows are the
-/// view over the input's old rows, its delta the view over the input's delta, and none of its rows are kept.
+/// input in the head (a variable the head names, or a constant), so a row of it is one row of the input. With
+/// `RERAIL_SESSION_VIEWS=on` a session keeps such a relation as a view (decision 0090): its old rows are the view
+/// over the input's old rows, its delta the view over the input's delta, and none of its rows are kept.
 ///
-/// `RERAIL_SESSION_VIEWS=off` keeps and maintains them as other relations, to compare.
+/// By default none is: a native run makes no views (decision 0104), so a view's stratum copied its input twice
+/// each run, as itself and as its old rows (`kind__sup0` and `kind__sup0__old` each a scan of `node`'s 243,092
+/// rows, 0.8 s of an O125 step for four such views). Kept and maintained as other relations, a view costs its
+/// delta, and its rows' memory (about 10 MB each there).
 pub(in crate::code_rule_dsl) fn input_views(prog: &front::Program) -> BTreeMap<String, Rule> {
-    if std::env::var("RERAIL_SESSION_VIEWS").is_ok_and(|v| v == "off") {
+    if !std::env::var("RERAIL_SESSION_VIEWS").is_ok_and(|v| v == "on") {
         return BTreeMap::new();
     }
     let mut by: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();

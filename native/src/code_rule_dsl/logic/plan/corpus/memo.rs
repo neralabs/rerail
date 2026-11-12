@@ -457,8 +457,10 @@ pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Ve
     off();
     let plan = plan_digest(program);
     if crate::code_rule_dsl::logic::profile::on() {
+        let _t = crate::code_rule_dsl::logic::profile::span(|| "tally the entries (profiling)".into());
         tally(entries.iter().map(|e| &e.3));
     }
+    let _queue = crate::code_rule_dsl::logic::profile::span(|| "queue the entries to the store".into());
     let held: Vec<(Content, String, std::sync::Arc<Entry>)> = entries.into_iter().filter(|e| e.0.in_store()).map(|(content, path, key, entry)| (content, path, std::sync::Arc::new(Entry { key, ..entry }))).collect();
     let bytes: usize = held.iter().map(|(_, _, e)| e.bytes()).sum();
     if bytes > 32 << 20 && crate::code_rule_dsl::logic::profile::on() {

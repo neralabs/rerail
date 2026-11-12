@@ -1303,6 +1303,12 @@ impl Model {
         Ok(self.plan_rule_explained(prog, head, body, first)?.0)
     }
 
+    /// `plan_rule` for its price alone: no EXPLAIN is made of it, even when profiling (§4's pricing of a stratum's
+    /// two forms planned 10,092 rules at O125 step 08 to read their totals, 0.6 s of explain records).
+    pub fn plan_rule_priced(&self, prog: &Program, head: &Atom, body: &[Literal], first: Option<usize>) -> Result<Plan> {
+        Ok(self.plan_inner(prog, head, body, first, None, false)?.0)
+    }
+
     /// `plan_rule`, and when profiling, the plan as EXPLAIN shows it (`profile::RulePlan`): the search's size, and per
     /// step its access method, source and the rows expected after it.
     pub fn plan_rule_explained(
@@ -3752,7 +3758,7 @@ impl Run<'_, '_> {
             let mut total = 0.0;
             let mut made: BTreeMap<&str, f64> = BTreeMap::new();
             for r in rules {
-                let (_, w, rows) = self.model.plan_rule(prog, &r.head, &r.body, None).ok()?;
+                let (_, w, rows) = self.model.plan_rule_priced(prog, &r.head, &r.body, None).ok()?;
                 total += w;
                 if grow && pieces.iter().any(|p| **p == r.head.rel) {
                     let n = made.entry(r.head.rel.as_str()).or_insert(0.0);
@@ -5755,7 +5761,7 @@ impl<'a> Run<'a, '_> {
         placement::record(&stratum_key(scc), &placed, None);
         if profiling {
             let (u, s) = corpus::thread_usage();
-            let work: u64 = counted.iter().chain(earlier.iter().flatten().map(|(_, c)| c)).flatten().map(|(a, _)| *a).sum();
+            let work: u64 = counted.iter().chain(earlier.iter().flatten().map(|(_, c)| c)).map(|c| super::profile::plan_work(c)).sum();
             super::profile::report::placed(&stratum_key(scc), &placed, &shape, work, u + s - cpu_at, device.as_ref());
         }
         if super::profile::on() {
@@ -5806,11 +5812,11 @@ impl<'a> Run<'a, '_> {
             let empty = Vec::new();
             for (k, o) in orders.iter().chain(probes.iter().map(|p| &p.2)).enumerate() {
                 for (was, c) in earlier.get(k).into_iter().flatten() {
-                    let work: u64 = c.iter().map(|(a, _)| a).sum();
+                    let work: u64 = super::profile::plan_work(c);
                     text += &format!("  work={work} (an earlier order) {}\n    {}\n", c.iter().map(|(a, b)| format!("{a}:{b}")).collect::<Vec<_>>().join(","), shown(was).join(" , "));
                 }
                 let line: Vec<String> = counted.get(k).unwrap_or(&empty).iter().map(|(a, b)| format!("{a}:{b}")).collect();
-                let work: u64 = counted.get(k).unwrap_or(&empty).iter().map(|(a, _)| a).sum();
+                let work: u64 = super::profile::plan_work(counted.get(k).unwrap_or(&empty));
                 text += &format!("  work={work} {}\n    {}\n", line.join(","), shown(o).join(" , "));
             }
             use std::io::Write;
@@ -7115,13 +7121,15 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let mut again_chosen: Vec<Option<bool>> = vec![None; prog.again.len()];
     // A stratum derived again makes its deltas against its old rows only when a stratum that runs reads them
     // (`RERAIL_AGAIN_DEFER`): those not yet made, by name, with the group and rule that make each and the size taken
-    // for it. A group reading one decides by its estimate (`estimate`, the default) and makes it if maintained; or is
-    // derived again without deciding (`propagate`); or makes it and measures (`measure`). `off` makes every delta
-    // where its stratum is derived again.
+    // for it. A group reading one makes it and measures it (`measure`, the default); or decides by its estimate
+    // (`estimate`) and makes it if maintained; or is derived again without deciding (`propagate`). `off` makes every
+    // delta where its stratum is derived again. An estimate is its maker's input deltas, an upper bound, and bounds
+    // compound down the strata: at O125 step 08 `possible_type` was taken at 347,616 input delta rows, where no delta
+    // made was over 5,497 (except `node_order`'s), and 379 strata were derived again; measured, work fell 26%.
     let defer_mode = std::env::var("RERAIL_AGAIN_DEFER").unwrap_or_default();
     let defer = defer_mode != "off";
     let propagate = defer_mode == "propagate";
-    let estimate = defer && !propagate && defer_mode != "measure";
+    let estimate = defer && !propagate && defer_mode == "estimate";
     let mut again_delta: Vec<usize> = vec![0; prog.again.len()];
     let mut deferred: HashMap<String, (usize, usize, usize)> = HashMap::new();
     let mut unloaded: BTreeSet<String> = BTreeSet::new();

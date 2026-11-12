@@ -155,10 +155,22 @@ impl Keeper {
                 old(c, k)
             } {
                 Some(before) => {
+                    // A relation whose rows the edit left as they were (node ids by definition keep an unchanged
+                    // definition's) is counted out and in again to no effect: left as counted. Each relation's
+                    // statistics are its own rows', so this is exact; within a relation the rows are counted out and
+                    // in whole, as its per-document statistics need.
+                    let (before, now_rows) = changed_only(&before, entry);
+                    crate::code_rule_dsl::logic::profile::decision("statistics kept by file (decision 0096 §3)", || {
+                        format!("an edited file's unchanged relations not counted again: {} of {} changed", now_rows.rows.len(), entry.rows.len())
+                    });
                     self.count(&before, -1);
                     if !self.building {
                         self.patch_exports(path, &before, -1);
                     }
+                    self.count(&now_rows, 1);
+                    self.patch_exports(path, &now_rows, 1);
+                    self.docs.insert(path.to_owned(), now);
+                    return;
                 }
                 None => return self.fail(format!("{path}: the memo no longer holds the rows counted")),
             },
@@ -364,4 +376,11 @@ pub mod tests {
         assert_eq!(after[&r].rows(), first[&r].rows());
         assert_ne!(after[&r], first[&r], "b.py's values moved");
     }
+}
+
+/// `before` and `now` without the relations whose rows are the same in both: what an edit changed, by relation.
+fn changed_only(before: &memo::Entry, now: &memo::Entry) -> (memo::Entry, memo::Entry) {
+    let same = |rel: &String| before.rows.get(rel) == now.rows.get(rel);
+    let keep = |e: &memo::Entry| memo::Entry { rows: e.rows.iter().filter(|(r, _)| !same(r)).map(|(r, v)| (r.clone(), v.clone())).collect(), key: e.key, nodes: e.nodes, lines: Default::default() };
+    (keep(before), keep(now))
 }

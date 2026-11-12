@@ -169,7 +169,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
         let _ = writeln!(sql_tsv, "{p}\t{}\t{:.3}\t{}\t{}\t{}\t{}\t{text}", s.runs, s.ns as f64 / 1e6, s.vm, s.scan, s.sort, s.autoindex);
     }
     std::fs::write(dir.join("sql.tsv"), sql_tsv)?;
-    let work = |steps: &Vec<(u64, u64)>| steps.iter().map(|(a, _)| a).sum::<u64>();
+    let work = |steps: &Vec<(u64, u64)>| super::plan_work(steps);
     let mut native: Vec<_> = state.native.iter().collect();
     native.sort_by_key(|(_, s)| std::cmp::Reverse(work(s)));
     let mut native_tsv = String::from("span\twork\tsteps_in_out\tplan\tcpu_s\n");
