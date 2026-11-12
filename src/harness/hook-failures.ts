@@ -99,12 +99,14 @@ function moveAside(path: string, movedAside: string): void {
     return;
   }
   try {
+    // No wait for a `.1` another program holds: the log goes back at once and a later hook moves it, so it stays under
+    // this hook's name for the moment of one rename, not for the 2 s of retries.
     if (sizeOf(taken) > MAX_FAILURE_BYTES) {
-      renameWithRetrySync(taken, movedAside);
+      renameWithRetrySync(taken, movedAside, { retryMs: 0 });
       return;
     }
   } catch (error) {
-    // Moved on by another hook. Any other failure leaves `.1` held through the retries: the log goes back.
+    // Moved on by another hook. Any other failure leaves `.1` held: the log goes back.
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
   }
   try {
