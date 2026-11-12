@@ -75,7 +75,36 @@ pub(in crate::code_rule_dsl) fn parse_own(src: &str) -> Result<Program, Error> {
 }
 
 fn parse_with(src: &str, clauses: bool) -> Result<Program, Error> {
+    if clauses && let Some(program) = lowered(src) {
+        crate::code_rule_dsl::prof::count("rr.lowered_reused", 1);
+        return Ok(program);
+    }
     read_text(src)?.lower(clauses)
+}
+
+/// Programs already lowered, by the digest of the text they print as (`remember_lowered`).
+static LOWERED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<[u8; 32], Program>>> = std::sync::LazyLock::new(Default::default);
+
+fn text_digest(src: &str) -> [u8; 32] {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(src.as_bytes()).into()
+}
+
+/// Keeps `program` as the program `text` (its print) is: a run handed the text (`tools::run_rr`, which read the file
+/// and lowered it) parses it back to `program` itself, not lowering it a second time. Lowering a printed program
+/// is no identity (a regex's group bindings are added again, a unit atom grounds a rule of constants), so the run
+/// would otherwise hold another program than the one read.
+pub(in crate::code_rule_dsl) fn remember_lowered(text: &str, program: &Program) {
+    if let Ok(mut kept) = LOWERED.lock() {
+        if kept.len() >= 256 {
+            kept.clear();
+        }
+        kept.insert(text_digest(text), program.clone());
+    }
+}
+
+fn lowered(src: &str) -> Option<Program> {
+    LOWERED.lock().ok()?.get(&text_digest(src)).cloned()
 }
 
 /// A program text read once (its tape, its statements, its includes resolved), for what a run needs of it: its

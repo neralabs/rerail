@@ -1719,9 +1719,19 @@ impl Lowerer {
         for r in &self.prog.rules {
             by_head.entry(r.head.rel.as_str()).or_default().push(r);
         }
+        // The relations whose rules read each relation (positive atoms, what `binder` reads): a round derives again
+        // only the readers of the columns the round before changed, the rest being what they were.
+        let mut readers: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        for r in &self.prog.rules {
+            for a in r.body.iter().filter_map(Literal::atom).filter(|a| !a.neg) {
+                readers.entry(a.rel.as_str()).or_default().insert(r.head.rel.as_str());
+            }
+        }
+        let mut dirty: BTreeSet<&str> = by_head.keys().copied().collect();
         loop {
             let mut found = BTreeMap::new();
-            for (&rel, rules) in &by_head {
+            for &rel in &dirty {
+                let rules = &by_head[rel];
                 for i in 0..rules[0].head.args.len() {
                     let each: Option<Vec<BTreeSet<SpanIn>>> = rules.iter().map(|r| match r.head.args.get(i) {
                         Some(Term::Var(x)) => binder(&r.body, x, &columns),
@@ -1740,6 +1750,7 @@ impl Lowerer {
             if found.is_empty() || rounds > 64 {
                 break;
             }
+            dirty = found.keys().filter_map(|(r, _)| readers.get(r.as_str())).flatten().copied().collect();
             columns.extend(found);
         }
         // Top-down: a helper's column its own rules do not bind to spans, where every rule that reads the helper binds
@@ -1748,6 +1759,14 @@ impl Lowerer {
         // gives every reader the same rows. Not for a column the run outputs, which no reader bounds.
         let mut demand: BTreeMap<(String, usize), BTreeSet<SpanIn>> = BTreeMap::new();
         let outputs: BTreeSet<&str> = self.prog.outputs.iter().map(String::as_str).collect();
+        // Each relation's reading atoms with their rules, in the rules' and bodies' order: a column's readers, not a
+        // scan of every rule for each column and round.
+        let mut sites_of: BTreeMap<&str, Vec<(&Rule, &Atom)>> = BTreeMap::new();
+        for r in &self.prog.rules {
+            for a in r.body.iter().filter_map(Literal::atom) {
+                sites_of.entry(a.rel.as_str()).or_default().push((r, a));
+            }
+        }
         let mut rounds = 0;
         loop {
             let mut found = BTreeMap::new();
@@ -1759,8 +1778,8 @@ impl Lowerer {
                     let mut all = BTreeSet::new();
                     let mut sites = 0;
                     let mut bound = true;
-                    for r in &self.prog.rules {
-                        for a in r.body.iter().filter_map(Literal::atom).filter(|a| a.rel == rel) {
+                    for &(r, a) in sites_of.get(rel).map_or(&[][..], Vec::as_slice) {
+                        {
                             sites += 1;
                             let got = match a.args.get(i) {
                                 Some(Term::Var(y)) => binder(&r.body, y, &columns).or_else(|| {

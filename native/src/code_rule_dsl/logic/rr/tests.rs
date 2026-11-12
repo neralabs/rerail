@@ -2716,3 +2716,45 @@ fn quoting_escapes_only_what_needs_it() {
     assert_eq!(super::quote("plain text é"), "\"plain text é\"");
     assert_eq!(super::quote("a\"b\\c\nd\te\u{1}"), "\"a\\\"b\\\\c\\nd\\te\\u{1}\"");
 }
+
+/// A policy file's program, printed, reads back as the program itself once remembered (`remember_lowered`): what
+/// `run-rr` hands the run. Every data-layer policy, by its print.
+#[test]
+fn a_policys_printed_program_reads_back_as_the_program_read() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer");
+    let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "rr")).collect();
+    paths.sort();
+    let mut read = 0;
+    for path in paths.iter().take(12) {
+        let Ok((program, _)) = super::read_file(path) else { continue };
+        read += 1;
+        let printed = super::print(&program).unwrap();
+        super::remember_lowered(&printed, &program);
+        assert_eq!(super::print(&super::parse(&printed).unwrap()).unwrap(), printed, "{}", path.display());
+    }
+    assert!(read > 5, "{read} policies read");
+}
+
+/// Aggregate demand's stratification shortcut (`aggregate_demand::optimize`): every data-layer policy lowers to the
+/// program it lowers to with each candidate stratified whole.
+#[test]
+fn aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer");
+    let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "rr")).collect();
+    paths.sort();
+    let (mut read, mut demanded) = (0, 0);
+    for path in &paths {
+        let text = std::fs::read_to_string(path).unwrap();
+        let lowered = |full: bool| {
+            super::aggregate_demand::FULL_CHECKS.with(|c| c.set(full));
+            let p = super::read_text(&text).and_then(|t| t.lower(true)).map(|p| super::print(&p).unwrap());
+            super::aggregate_demand::FULL_CHECKS.with(|c| c.set(false));
+            p
+        };
+        let (Ok(short), Ok(whole)) = (lowered(false), lowered(true)) else { continue };
+        read += 1;
+        demanded += usize::from(short.contains("rr_demand_agg_"));
+        assert_eq!(short, whole, "{}", path.display());
+    }
+    assert!(read > 20 && demanded > 3, "{read} policies read, {demanded} with aggregate demand");
+}
