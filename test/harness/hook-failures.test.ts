@@ -124,7 +124,7 @@ describe("the hook failure log", () => {
     const started = await Promise.allSettled(Array.from({ length: processes }, () => startHookProcess()));
     const hooks = started.flatMap(outcome => (outcome.status === "fulfilled" ? [outcome.value] : []));
     try {
-      expect(hooks).toHaveLength(processes);
+      expect(started.flatMap(outcome => (outcome.status === "rejected" ? [String(outcome.reason)] : []))).toEqual([]);
       for (let round = 0; round < rounds; round += 1) {
         const rerailHome = await home();
         writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), `${line}\n`.repeat(full));
@@ -135,6 +135,8 @@ describe("the hook failure log", () => {
       }
     } finally {
       await Promise.all(hooks.map(({ child }) => {
+        // A process that already exited, such as one that crashed in a round, sends no exit event to wait for.
+        if (child.exitCode !== null || child.signalCode !== null) return undefined;
         const exited = once(child, "exit");
         child.kill();
         return exited;
