@@ -41,9 +41,10 @@ use napi_derive::napi;
 use rules::{CompileSummary, ModelEncoder, NativeMatch, NativeRuleInput, NativeSample, RuleSet};
 use std::path::Path;
 
-// jemalloc does not build for MSVC targets; Windows keeps the system allocator. A test build links the engine
-// again as its own dev-dependency (`test-hooks`), whose copy declares the allocator.
-#[cfg(not(any(test, windows, target_family = "wasm", feature = "system-allocator")))]
+// jemalloc does not build for MSVC targets; Windows keeps the system allocator. A test build declares it too, so
+// tests run on the allocator the product ships: the engine's own dev-dependency copy (`test-hooks`) does not
+// decide the test binary's allocator, and without this its tests ran on the system allocator.
+#[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
