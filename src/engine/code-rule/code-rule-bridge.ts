@@ -1826,8 +1826,10 @@ export class CodeRuleBridge {
    * them (`firstSightIsBaseline`) is what `#discoveredEdit` then takes as a baseline. Walks of one kind run one at a time,
    * so for the session folder's walk these are the subtrees its last walk could not read, and for the worktrees' walk
    * the worktrees whose first walk is still to finish with the subtrees the last worktree walk could not read. A worktree
-   * removed meanwhile stops being one, but no walk answers for its files then. The session folder's subtrees are left
-   * out of the worktrees' walk: that folder's walk may change them while it runs.
+   * removed meanwhile stops being one, and its files leave the walk with it, unless it sits inside another walked
+   * worktree: that worktree's walk then answers for them, and observes a first sight there, stamped before the session,
+   * with no text and no edit, since no one wrote it. The session folder's subtrees are left out of the worktrees' walk:
+   * that folder's walk may change them while it runs.
    */
   #walkBaselineRoots(discovery: SourceDiscovery, walk: WalkStart): ReadonlySet<string> {
     return walk.inSession ? discovery.baselineRoots : new Set([...discovery.worktrees.fresh, ...discovery.worktrees.baselineRoots]);
