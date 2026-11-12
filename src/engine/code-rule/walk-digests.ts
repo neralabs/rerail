@@ -71,10 +71,13 @@ const gunzipped = promisify(gunzip);
 
 /**
  * Whether a stamp moves with every write to the file, whatever its modification time says: a program may set that time
- * back (`touch -d`, a copy that keeps times), but the change time is the file system's own, and a write moves it. A
- * stamp with no file id or change time cannot tell, nor can one whose change time sits on a 10 ms grid: FAT and exFAT
- * keep no change time and report the modification time in its place, and a file system with coarser times leaves a
- * write within the same tick unseen.
+ * back (`touch -d`, a copy or archive tool that keeps times), but a write moves the change time, and setting the
+ * modification time afterwards does not put it back. Only a change of the system clock, or a program that sets the
+ * change time itself (Windows allows that through `SetFileInformationByHandle`), can; a running daemon's walks miss
+ * such a write too, as they take a file whose stamp held as unchanged (`staleStamp`). A stamp with no file id or
+ * change time cannot tell, nor can one whose change time sits on a 10 ms grid: FAT and exFAT keep no change time and
+ * report the modification time in its place, and a file system with coarser times leaves a write within the same tick
+ * unseen.
  */
 export function stampTellsChanges(stamp: string): boolean {
   const fields = stamp.split(":").map(Number);
