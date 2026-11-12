@@ -19,7 +19,7 @@ import { fileStamp } from "../file-stamp.js";
 import {
   gitBranchTips, gitCommitsBetween, gitHead, gitModifiedOrUntrackedPaths, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds, readGitBlobs,
 } from "../git.js";
-import { inGitBackground, inGitForeground } from "../git-start-turns.js";
+import { inGitBackground, OperationQueue } from "../git-start-turns.js";
 import type { RewoundPaths } from "./rerail-steer.js";
 import { compareDeterministicStrings } from "../stable-json.js";
 import { sourceLanguageOfPath, UNLISTED_TEXT_LANGUAGE } from "./code-rule-languages.js";
@@ -740,7 +740,11 @@ export class CodeRuleBridge {
   #lastResponse = emptyResponse(0);
   #sessionId: string | undefined;
   #revision = 0;
-  #queue: Promise<void> = Promise.resolve();
+  /**
+   * A boundary waits behind whatever holds the queue, so an operation the walk of the other worktrees queues starts its
+   * Git behind a hook's own only until a boundary waits behind it (`OperationQueue`).
+   */
+  readonly #queue = new OperationQueue();
   #discovery: SourceDiscovery | undefined;
   readonly #discoveryWaitMs: number;
   readonly #onDiscoveryPending: ((boundary: DiscoveryPendingBoundary) => void) | undefined;
@@ -1112,7 +1116,7 @@ export class CodeRuleBridge {
   }
   async settleGeneratedEdits(): Promise<void> {
     this.#requireSession();
-    await this.#queue;
+    await this.#queue.settled();
     if (this.#auditor.settleGeneratedEdits !== undefined) {
       await this.#auditor.settleGeneratedEdits();
     } else {
@@ -1122,7 +1126,7 @@ export class CodeRuleBridge {
 
   async settle(): Promise<void> {
     this.#requireSession();
-    await this.#queue;
+    await this.#queue.settled();
     await this.#auditor.settle?.();
   }
 
@@ -2165,11 +2169,6 @@ export class CodeRuleBridge {
     return this.#sessionId;
   }
   async #enqueue<T>(operation: () => Promise<T>): Promise<T> {
-    // A boundary waits behind whatever holds the queue, so an operation a background walk queues starts its Git as a
-    // boundary's own would (`inGitForeground`).
-    const run = async (): Promise<T> => await inGitForeground(operation);
-    const pending = this.#queue.then(run, run);
-    this.#queue = pending.then(() => undefined, () => undefined);
-    return await pending;
+    return await this.#queue.run(operation);
   }
 }

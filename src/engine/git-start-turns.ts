@@ -9,17 +9,29 @@
  *
  * Starts go in the order they were asked for, except that work nothing waits for (the walk of the other worktrees,
  * `inGitBackground`) lets the starts of everything else go first, a hook's own reads among them. It still gets one
- * start in every `BACKGROUND_SHARE` while others wait, so it never stops.
+ * start in every `BACKGROUND_SHARE` while others wait, so it never stops. Once something waits for it, by queueing
+ * behind it in an `OperationQueue`, its starts go in turn with everyone else's.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
 
 /** One start in this many goes to background work while other starts wait too. */
 export const BACKGROUND_SHARE = 4;
 
-const background = new AsyncLocalStorage<true>();
-const waiting = { foreground: [] as Array<() => void>, background: [] as Array<() => void> };
+/** Work run by `inGitBackground`, or an operation it queued, which nothing waits for until `waitedFor` is set. */
+interface BackgroundWork {
+  waitedFor: boolean;
+}
+
+/** A start waiting for its turn, and the background work that asked for it, if any. */
+interface WaitingStart {
+  readonly start: () => void;
+  readonly work: BackgroundWork | undefined;
+}
+
+const background = new AsyncLocalStorage<BackgroundWork>();
+const waiting: WaitingStart[] = [];
 let scheduled = false;
-/** Foreground starts let go since the last background one. */
+/** Starts let go since the last one of background work nothing waited for. */
 let sinceBackground = 0;
 
 /**
@@ -27,22 +39,23 @@ let sinceBackground = 0;
  * everyone else's (see the module comment).
  */
 export function inGitBackground<T>(work: () => T): T {
-  return background.run(true, work);
+  return background.run({ waitedFor: false }, work);
 }
 
-/**
- * Runs `work` as work something waits for, even when background work asks for it: a step that holds what a hook's
- * own work waits behind (a session's queue of operations) must not start its Git behind everyone else's, or the hook
- * waits for it at background pace.
- */
-export function inGitForeground<T>(work: () => T): T {
-  return background.exit(work);
+/** Whether the caller runs as background work that nothing waits for yet. */
+function inUnwaitedWork(): boolean {
+  return background.getStore()?.waitedFor === false;
+}
+
+/** Whether `start` lets everyone else's go first: background work nothing waits for asked for it. */
+function behind(start: WaitingStart): boolean {
+  return start.work?.waitedFor === false;
 }
 
 /** Resolves in a turn of the event loop in which no other Git process has started; start the process then. */
 export async function gitStartTurn(): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
-  (background.getStore() === true ? waiting.background : waiting.foreground).push(resolve);
+  waiting.push({ start: resolve, work: background.getStore() });
   if (!scheduled) {
     scheduled = true;
     setImmediate(startNext);
@@ -55,15 +68,72 @@ export async function gitStartTurn(): Promise<void> {
  * callback's continuation, before any other check-phase callback; the next one waits for the next check phase.
  */
 function startNext(): void {
-  const backgroundTurn = waiting.background.length > 0
-    && (waiting.foreground.length === 0 || sinceBackground >= BACKGROUND_SHARE - 1);
-  if (backgroundTurn) {
-    sinceBackground = 0;
-    waiting.background.shift()?.();
-  } else {
-    sinceBackground += 1;
-    waiting.foreground.shift()?.();
+  const next = takeNext();
+  if (next !== undefined) {
+    sinceBackground = behind(next) ? 0 : sinceBackground + 1;
+    next.start();
   }
-  if (waiting.foreground.length + waiting.background.length > 0) setImmediate(startNext);
-  else scheduled = false;
+  scheduled = waiting.length > 0;
+  if (scheduled) setImmediate(startNext);
+}
+
+/**
+ * The waiting start to let go now, taken off the line: the first asked for, but one that lets everyone else's go first
+ * only while no other waits, or when it is owed one start in every `BACKGROUND_SHARE`. A start of background work
+ * that came to be waited for keeps the place it was asked for in.
+ */
+function takeNext(): WaitingStart | undefined {
+  const other = waiting.findIndex(start => !behind(start));
+  const owed = other < 0 || sinceBackground >= BACKGROUND_SHARE - 1;
+  const backgroundAt = owed ? waiting.findIndex(behind) : -1;
+  const at = backgroundAt >= 0 ? backgroundAt : other;
+  return at >= 0 ? waiting.splice(at, 1)[0] : undefined;
+}
+
+/**
+ * Operations run one at a time, each once every operation queued before it has settled (a session's queue of
+ * operations), so whoever queues one waits behind all of those. An operation that background work queues is background
+ * work of its own: its Git processes start behind everyone else's while nothing waits for it, so a hook's own reads
+ * elsewhere go first. Once a caller that is not background work queues behind it (`run`) or waits for the queue to
+ * settle (`settled`), it starts its Git in turn with everyone else's, so that caller never waits at background pace.
+ */
+export class OperationQueue {
+  #last: Promise<void> = Promise.resolve();
+  /** The operations background work queued that nothing waits behind yet. */
+  readonly #unwaited = new Set<BackgroundWork>();
+
+  /** Runs `operation` once every operation queued before it has settled, and settles as it does. */
+  async run<T>(operation: () => Promise<T>): Promise<T> {
+    if (!inUnwaitedWork()) {
+      this.#waitBehind();
+      return await this.#append(operation);
+    }
+    // Background work of its own, so that waiting behind this operation leaves the rest of the work that queued it
+    // behind everyone else's.
+    const work: BackgroundWork = { waitedFor: false };
+    this.#unwaited.add(work);
+    try {
+      return await this.#append(async () => await background.run(work, operation));
+    } finally {
+      this.#unwaited.delete(work);
+    }
+  }
+
+  /** Resolves once every operation queued so far has settled. */
+  async settled(): Promise<void> {
+    if (!inUnwaitedWork()) this.#waitBehind();
+    await this.#last;
+  }
+
+  async #append<T>(operation: () => Promise<T>): Promise<T> {
+    const pending = this.#last.then(operation, operation);
+    this.#last = pending.then(() => undefined, () => undefined);
+    return await pending;
+  }
+
+  /** The caller waits behind every operation queued so far, so each starts its Git in turn with everyone else's. */
+  #waitBehind(): void {
+    for (const work of this.#unwaited) work.waitedFor = true;
+    this.#unwaited.clear();
+  }
 }

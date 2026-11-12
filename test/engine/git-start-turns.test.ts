@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { gitHead, readGitBlobIds, readGitBlobs } from "../../src/engine/git.js";
-import { BACKGROUND_SHARE, inGitBackground, inGitForeground } from "../../src/engine/git-start-turns.js";
+import { BACKGROUND_SHARE, inGitBackground, OperationQueue } from "../../src/engine/git-start-turns.js";
 
 /**
  * The turn of the event loop each Git process started in, and how it started, in order: `gitHead` starts with
@@ -100,14 +100,46 @@ describe("Git process starts", () => {
     expect(starts.kinds.indexOf("spawn")).toBeLessThan(BACKGROUND_SHARE);
   });
 
-  it("let a read background work runs in the foreground start before the background reads asked for earlier", async () => {
+  it("let a read start before the reads of an operation background work queued, while nothing waits behind it", async () => {
     const root = await repository();
+    const queue = new OperationQueue();
     starts.kinds.length = 0;
-    const reads = inGitBackground(() => [
-      ...Array.from({ length: 6 }, async () => await gitHead(root)),
-      inGitForeground(async () => await readGitBlobIds(root, ["HEAD:./a.py"])),
-    ]);
-    await Promise.all(reads);
+    const queued = inGitBackground(async () => await queue.run(async () => await Promise.all(Array.from({ length: 6 }, async () => await gitHead(root)))));
+    // The operation asks for its reads as it starts, before the loop's next turn.
+    await nextTurn();
+    const own = readGitBlobIds(root, ["HEAD:./a.py"]);
+    await Promise.all([queued, own]);
+    expect(starts.kinds).toHaveLength(7);
+    expect(starts.kinds.indexOf("spawn")).toBeLessThan(2);
+  });
+
+  it("start the waiting reads of an operation background work queued in turn once an operation queues behind it", async () => {
+    const root = await repository();
+    const queue = new OperationQueue();
+    starts.kinds.length = 0;
+    const background = inGitBackground(() => Array.from({ length: 6 }, async () => await gitHead(root)));
+    const queued = inGitBackground(async () => await queue.run(async () => await readGitBlobIds(root, ["HEAD:./a.py"])));
+    // One background read has started, and the operation's read waits behind the other five.
+    await nextTurn();
+    const behind = queue.run(async () => await Promise.resolve("behind"));
+    await Promise.all([...background, queued]);
+    expect(await behind).toBe("behind");
+    expect(starts.kinds.indexOf("spawn")).toBeLessThan(2);
+  });
+
+  it("start the reads of an operation background work queued in turn when the queue is waited on to settle", async () => {
+    const root = await repository();
+    const queue = new OperationQueue();
+    starts.kinds.length = 0;
+    const background = inGitBackground(() => Array.from({ length: 6 }, async () => await gitHead(root)));
+    const queued = inGitBackground(async () => await queue.run(async () => await readGitBlobIds(root, ["HEAD:./a.py"])));
+    const settled = queue.settled();
+    await Promise.all([...background, queued, settled]);
     expect(starts.kinds.indexOf("spawn")).toBeLessThan(2);
   });
 });
+
+/** Resolves in the loop's next check phase, after any check-phase callback scheduled before it. */
+async function nextTurn(): Promise<void> {
+  await new Promise(resolve => { setImmediate(resolve); });
+}
