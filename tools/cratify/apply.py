@@ -515,7 +515,8 @@ def manifest(c, engine):
                     lines.append(f'{k} = {toml_value(rebase(v, d))}')
     lines += ['', '[dev-dependencies]']
     for k, v in engine.get('dev-dependencies', {}).items():
-        if k.startswith('rerail-') or k in test_only:
+        # the rerail crates outside the split (the parsers' tests, the compiler's hooks) serve every crate's own tests
+        if (k.startswith('rerail-') and k in DIRS) or k in test_only:
             continue
         lines.append(f'{k} = {toml_value(rebase(v, d))}')
     if c == 'rerail-lang':

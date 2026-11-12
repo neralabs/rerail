@@ -282,4 +282,11 @@ compile::format_args::php	rerail-engine
 compile::binds::eslint	rerail-engine
 findings::async_reference::native_oracle	rerail-engine
 findings::async_reference::s_native_oracle	rerail-engine
+findings::async_reference::tests	rerail-engine
+findings::async_reference::compiler_admission	rerail-engine
+findings::async_reference::rr_comparison	rerail-engine
 demand::driver::catalog	rerail-engine
+# Tests the index sees no read of above their crate: the children of a #[path] module (findings::async_reference's,
+# above), and reads through a renamed re-export (MetalTestScope, Metal's LaunchScope).
+transducer::packed::native_cpu::tests	rerail-device-metal
+transducer::packed::capture_run_entry_tests	rerail-device-metal
