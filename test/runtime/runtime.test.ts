@@ -355,7 +355,7 @@ describe("A scan requested while the session's evaluator is still opening", () =
       test.opening.resolve();
       const request = await test.settled();
       expect(request).toMatchObject({ status: "completed", auditIds: test.scans, error: null });
-      expect(kept).toBe(false);
+      expect(kept).toEqual({ kind: "owing" });
     } finally { await test.close(); }
   });
 
@@ -502,9 +502,9 @@ describe("Rerail tool results waiting for their edit's check", () => {
       kept.push(await runtime.closeIdleSession(session.sessionId));
       const next = await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId: session.sessionId, session, text: "next" });
       expect(next.map(delivery => delivery.content)).toEqual([STEER]);
-      expect(kept).toEqual([false, false]);
-      // Delivered: nothing holds the session open any more.
-      expect(await runtime.closeIdleSession(session.sessionId)).toBe(true);
+      expect(kept).toEqual([{ kind: "owing" }, { kind: "owing" }]);
+      // Delivered: nothing holds the session in memory any more.
+      expect(await runtime.closeIdleSession(session.sessionId)).toMatchObject({ kind: "suspended" });
     } finally {
       vi.useRealTimers();
       check.resolve();
@@ -526,11 +526,11 @@ describe("Rerail tool results waiting for their edit's check", () => {
       await writeFile(join(root, "a.ts"), BAD);
       const answer = await runtime.ingest({ kind: "result", eventId: "result-t1", sessionId: session.sessionId, session, toolCallId: "t1", toolName: "Write", output: "ok" });
       expect(answer.map(delivery => delivery.content)).toEqual([STEER]);
-      expect(kept).toBe(false);
+      expect(kept).toEqual({ kind: "owing" });
       // A call the user refused gets no result: the end of its turn settles it.
       await call("t2");
       await turnEnd("turn");
-      expect(await runtime.closeIdleSession(session.sessionId)).toBe(true);
+      expect(await runtime.closeIdleSession(session.sessionId)).toMatchObject({ kind: "suspended" });
     } finally {
       check.resolve();
       await runtime.dispose();
@@ -642,7 +642,7 @@ describe("Rerail tool results waiting for their edit's check", () => {
 
       const kept = await runtime.closeIdleSession(session.sessionId);
       expect((await turnEnd("turn")).map(delivery => delivery.content)).toEqual([DIGEST]);
-      expect(kept).toBe(false);
+      expect(kept).toEqual({ kind: "owing" });
     } finally {
       vi.useRealTimers();
       check.resolve();
