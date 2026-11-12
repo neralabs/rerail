@@ -34,6 +34,7 @@ import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES } from "../../../src/engin
 import * as native from "../../../src/engine/native/native.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
+import { GIT_OPEN_AGAIN_MS, nativeGitAccess } from "../../../src/engine/native/git-access.js";
 
 
 vi.mock("node:fs/promises", { spy: true });
@@ -1316,6 +1317,87 @@ describe("mechanical code rule regressions", () => {
     expect(await repositoryAuditPaths(join(checkout, "tmp/ws"), true)).toEqual(["api/a.py"]);
     expect(await repositoryAuditPaths(join(checkout, "out/ws"), true)).toEqual([]);
   }, 60_000);
+
+  it("tries a refused Git ignore matcher once and logs it once, however many paths ask", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-refused-ignore-"));
+    roots.push(root);
+    const access = nativeGitAccess();
+    const opens = vi.spyOn(access, "openGitIgnoreMatcher").mockImplementation(() => {
+      throw new Error("detected dubious ownership");
+    });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const enforcer = new NativeCodeRuleEnforcer(testCodeRuleCatalog([needleCodeRule(1)]), {
+      workspaceRoot: root,
+      steerDelivery: { requestSteer: async () => undefined },
+      followGitignore: true,
+    });
+    try {
+      expect(["a.py", "b.log", "build"].map(path => enforcer.ignoresPath(path, path === "build"))).toEqual([false, false, false]);
+      expect(opens).toHaveBeenCalledTimes(1);
+      expect(stderr.mock.calls.filter(([text]) => String(text).includes("cannot read Git ignore rules"))).toHaveLength(1);
+    } finally {
+      opens.mockRestore();
+      stderr.mockRestore();
+      await enforcer.close();
+    }
+  });
+
+  it("opens the Git ignore matcher again once GIT_OPEN_AGAIN_MS has passed after an open that timed out, not at every path", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-timed-out-ignore-"));
+    roots.push(root);
+    const access = nativeGitAccess();
+    const timedOut = Object.assign(new Error("opening Git's ignore rules gave no answer within 10 s"), { code: "GitReadTimedOut" });
+    const ignoresLogs = { ignored: (path: string) => path.endsWith(".log"), ignoredBy: () => null };
+    const opens = vi.spyOn(access, "openGitIgnoreMatcher").mockImplementationOnce(() => { throw timedOut; }).mockImplementation(() => ignoresLogs);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    let clock = 1_000_000;
+    const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    const enforcer = new NativeCodeRuleEnforcer(testCodeRuleCatalog([needleCodeRule(1)]), {
+      workspaceRoot: root,
+      steerDelivery: { requestSteer: async () => undefined },
+      followGitignore: true,
+    });
+    try {
+      expect(["a.log", "b.log", "c.log"].map(path => enforcer.ignoresPath(path, false))).toEqual([false, false, false]);
+      expect(opens).toHaveBeenCalledTimes(1);
+      clock += GIT_OPEN_AGAIN_MS;
+      expect(["d.log", "e.py"].map(path => enforcer.ignoresPath(path, false))).toEqual([true, false]);
+      expect(opens).toHaveBeenCalledTimes(2);
+      expect(stderr.mock.calls.filter(([text]) => String(text).includes("gave no answer within"))).toHaveLength(1);
+    } finally {
+      now.mockRestore();
+      opens.mockRestore();
+      stderr.mockRestore();
+      await enforcer.close();
+    }
+  });
+
+  it("logs each distinct failure of a Git ignore question once", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-failing-ignore-"));
+    roots.push(root);
+    const access = nativeGitAccess();
+    const failing = {
+      ignored: (path: string) => { throw new Error(path.startsWith("locked/") ? "cannot read Git excludes for locked: Permission denied" : "cannot read Git index"); },
+      ignoredBy: () => null,
+    };
+    const opens = vi.spyOn(access, "openGitIgnoreMatcher").mockImplementation(() => failing);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const enforcer = new NativeCodeRuleEnforcer(testCodeRuleCatalog([needleCodeRule(1)]), {
+      workspaceRoot: root,
+      steerDelivery: { requestSteer: async () => undefined },
+      followGitignore: true,
+    });
+    try {
+      for (const path of ["locked/a.py", "locked/b.py", "c.py", "d.py"]) expect(enforcer.ignoresPath(path, false)).toBe(false);
+      const logged = stderr.mock.calls.map(([text]) => String(text)).filter(text => text.includes("cannot read Git ignore rules"));
+      expect(logged).toEqual([expect.stringContaining("Permission denied"), expect.stringContaining("cannot read Git index")]);
+      expect(opens).toHaveBeenCalledTimes(1);
+    } finally {
+      opens.mockRestore();
+      stderr.mockRestore();
+      await enforcer.close();
+    }
+  });
 
   it("audits a workspace root reached through a symlink as its target, with or without Git", async () => {
     const plain = await mkdtemp(join(tmpdir(), "rerail-scan-plain-"));
