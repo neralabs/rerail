@@ -1,12 +1,13 @@
 import { existsSync } from "node:fs";
 import { access, readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { and, asc, gte, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, or, type SQL } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import { parseArguments } from "../daemon/daemon.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
 import { followsGitignore, listRepositories, lookupCheckout } from "../engine/catalog/repository-registry.js";
 import { loadNativeBinding, type NativeGitIgnoreMatcher } from "../engine/native/native.js";
-import { defaultRerailDatabasePath, openRerailDatabase } from "../engine/storage/database.js";
+import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
 import { events, sessions } from "../engine/storage/schema.js";
 import { callNamesDeniedPath } from "../engine/transcript-boundary.js";
 
@@ -281,7 +282,22 @@ function emptyEvidence(name: string, days: number, standards: string[]): RuleEvi
   };
 }
 
-/** Collect the evidence for `repo`'s repository over the last `days` days. Reads the database only. */
+/**
+ * The repository's sessions active at or after `since`: those that started then, and those that started earlier and
+ * whose last event came then, such as a session still running or one resumed. Events are stamped with the time they
+ * are written, so a session's last event, the one written last, is its newest.
+ */
+function activeSince(database: RerailDatabase, historyIds: readonly string[], since: number): SQL | undefined {
+  const latest = alias(events, "latest");
+  const lastEventAt = database.select({ observedAt: latest.observedAt }).from(latest)
+    .where(eq(latest.sessionId, sessions.sessionId)).orderBy(desc(latest.sequence)).limit(1);
+  return and(inArray(sessions.repositoryId, [...historyIds]), or(gte(sessions.startedAt, since), gte(lastEventAt, since)));
+}
+
+/**
+ * Collect the evidence for `repo`'s repository over the last `days` days, from the sessions active in them and what
+ * each did in them. Reads the database only.
+ */
 export async function collectRuleEvidence(repo: string, options: RuleEvidenceOptions = {}): Promise<RuleEvidence> {
   const days = options.days ?? DEFAULT_DAYS;
   const limit = options.limit ?? DEFAULT_LIMIT;
@@ -300,7 +316,7 @@ export async function collectRuleEvidence(repo: string, options: RuleEvidenceOpt
     // clone id from before the repository had a remote. Its history is all of them, as `rerail reset` reads it.
     const repository = listRepositories(database).find(candidate => candidate.repositoryKey === checkout.repositoryKey);
     const historyIds = [...new Set([checkout.repositoryKey, ...(repository?.aliases ?? []), ...(repository?.checkouts ?? []).map(row => row.cloneId)])];
-    const inWindow = and(inArray(sessions.repositoryId, historyIds), gte(sessions.startedAt, since));
+    const inWindow = activeSince(database, historyIds, since);
     const repositorySessions = database.select({ sessionId: sessions.sessionId, host: sessions.host }).from(sessions).where(inWindow).all();
     const hostOf = new Map(repositorySessions.map(session => [session.sessionId, session.host]));
     const hosts: Record<string, number> = {};
@@ -313,7 +329,7 @@ export async function collectRuleEvidence(repo: string, options: RuleEvidenceOpt
         inArray(events.kind, ["user-prompt", "call", "steering-delivered"]),
       ))
       .orderBy(asc(events.sessionId), asc(events.sequence)).all();
-    const evidence = readEvents(stored, hostOf, limit);
+    const evidence = readEvents(stored, hostOf, { limit, since });
     return {
       repository: { name, known: true, checkouts: repository?.checkouts.length ?? 1 },
       window: { days, sessions: hostOf.size, hosts, prompts: evidence.prompts },
@@ -327,6 +343,11 @@ export async function collectRuleEvidence(repo: string, options: RuleEvidenceOpt
 
 /** What one pass over the repository's events has found so far. */
 interface EvidenceTally {
+  /**
+   * When the window starts. An event before it is only context, for a session that started earlier: the session's
+   * task, or a call before a correction in the window.
+   */
+  since: number;
   corrections: EvidenceCorrection[];
   risky: Map<string, EvidenceCommand>;
   steers: Map<string, number>;
@@ -337,14 +358,16 @@ interface EvidenceTally {
   recentCalls: string[];
 }
 
-function tallyCall(tally: EvidenceTally, payload: Record<string, unknown>): void {
+function tallyCall(tally: EvidenceTally, event: StoredEvent, payload: Record<string, unknown>): void {
   tally.recentCalls = [...tally.recentCalls, callSummary(payload)].slice(-CALLS_BEFORE);
+  if (event.observedAt < tally.since) return;
   const input = typeof payload.input === "object" && payload.input !== null ? payload.input as Record<string, unknown> : {};
   // A risky command's example is quoted to the agent; one over a path outside the boundary is not.
   if (typeof input.command === "string" && !callNamesDeniedPath(input.command)) countRisky(tally.risky, input.command);
 }
 
-function tallySteer(tally: EvidenceTally, payload: Record<string, unknown>): void {
+function tallySteer(tally: EvidenceTally, event: StoredEvent, payload: Record<string, unknown>): void {
+  if (event.observedAt < tally.since) return;
   const ruleIds = Array.isArray(payload.ruleIds) ? payload.ruleIds : [];
   for (const ruleId of ruleIds) {
     if (typeof ruleId === "string") tally.steers.set(ruleId, (tally.steers.get(ruleId) ?? 0) + 1);
@@ -352,10 +375,11 @@ function tallySteer(tally: EvidenceTally, payload: Record<string, unknown>): voi
 }
 
 function tallyPrompt(tally: EvidenceTally, event: StoredEvent, text: string, host: string): void {
-  tally.prompts += 1;
   // A session's first prompt states the task; corrections come after the agent has done something.
   const followUp = tally.tasked.has(event.sessionId);
   tally.tasked.add(event.sessionId);
+  if (event.observedAt < tally.since) return;
+  tally.prompts += 1;
   const families = followUp ? correctionFamilies(text) : [];
   if (families.length === 0) return;
   tally.corrections.push({
@@ -369,12 +393,12 @@ function tallyPrompt(tally: EvidenceTally, event: StoredEvent, text: string, hos
   });
 }
 
-/** One pass over the repository's events, each session's in order. */
-function readEvents(stored: readonly StoredEvent[], hostOf: ReadonlyMap<string, string>, limit: number): {
+/** One pass over the repository's events, each session's in order, counting those at or after `since`. */
+function readEvents(stored: readonly StoredEvent[], hostOf: ReadonlyMap<string, string>, { limit, since }: { limit: number; since: number }): {
   prompts: number;
   found: Pick<RuleEvidence, "corrections" | "correctionCount" | "riskyCommands" | "steers">;
 } {
-  const tally: EvidenceTally = { corrections: [], risky: new Map(), steers: new Map(), tasked: new Set(), prompts: 0, recentCalls: [] };
+  const tally: EvidenceTally = { since, corrections: [], risky: new Map(), steers: new Map(), tasked: new Set(), prompts: 0, recentCalls: [] };
   let currentSession = "";
   for (const event of stored) {
     if (event.sessionId !== currentSession) {
@@ -382,8 +406,8 @@ function readEvents(stored: readonly StoredEvent[], hostOf: ReadonlyMap<string, 
       tally.recentCalls = [];
     }
     const payload = payloadOf(event);
-    if (event.kind === "call") tallyCall(tally, payload);
-    else if (event.kind === "steering-delivered") tallySteer(tally, payload);
+    if (event.kind === "call") tallyCall(tally, event, payload);
+    else if (event.kind === "steering-delivered") tallySteer(tally, event, payload);
     else if (typeof payload.text === "string") tallyPrompt(tally, event, payload.text, hostOf.get(event.sessionId) ?? "unknown");
   }
   // Standing instructions first, then the newest: they are the ones most likely to be rules.
