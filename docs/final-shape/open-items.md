@@ -3711,7 +3711,7 @@ compiled only there.
 **Status (2026-11-12):** the target builds (the engine hosts the tests that read above the crate); 20 pass,
 the two text tests fail (O-device-step-counts).
 
-## O-phase0-store-state (closed 2026-11-12). Phase 0's include graph depends on what the store already holds
+## O-phase0-store-state. Phase 0's include graph depends on what the store already holds
 
 Each test now starts from a copy of a store template that already holds the
 library's facts (decision 0118). In such a store, two runs of phase 0 on the
@@ -3737,6 +3737,12 @@ empty store), then fix the rule or the maintenance that loses the edge.
 runs alone, and `logic::plan::corpus` (73 tests) twice in one process. The maintenance merged in the roll-up
 keeps the edge. `bootstrap_resolves_as_the_builtin_reader_does` runs again (no `#[ignore]`).
 
+**Open again (2026-11-12): intermittent.** It failed once more, in `logic::native logic::plan` under load. Since
+then, four runs of that set in one process have passed. Four threads deriving the same seed at once agree with
+a derive alone, three rounds of it (a test written for the check, then removed). Shared derive state is not the
+cause, then; the graph side (`graph`, the kept text) is the suspect. On a failure, the assertion now prints both
+graphs (`Graph::describe`: includes, missing, absent), so the next one shows which edge differs.
+
 ## O-repetition-implied-boundary. A `+` run on the tape does not end at an implied token
 
 **Seen (2026-11-12).** Tree-sitter ends a quantified sibling run at an anonymous
@@ -3749,7 +3755,7 @@ transducer's run goes on over `a b c` and gives one match of three items.
 does, the program reads the boundary from the gap between stored siblings
 (the tape's `implied` gaps, `tape.rs`), never from generated tokens.
 
-## O-slice-launch-limit. One file's Metal label passes take more launches than the bound
+## O-slice-launch-limit (closed 2026-11-12). One file's Metal label passes take more launches than the bound
 
 **Seen (2026-11-12).** `slice::tests::the_backends_find_the_same_keys_on_real_files`: the interpreter and the
 JIT agree (101 files, 491 clauses, 2193 keys); the Metal backends end in `BackendLaunchLimit`.
@@ -3760,6 +3766,47 @@ the whole batch: `label_settle` 1044, `label_micro_8` 912, `label_micro` 526, `c
 
 **Closure:** the label passes' launches bounded by the plan (settle and micro passes batched over clauses), or
 a new bound decided by the user. The bound is not raised here.
+
+**Closed (2026-11-12): batched; the bound stays 200.** The plan counts every recursive group as one fused
+dispatch (`label_group_*`), but a group ran unfused, at rounds × levels launches, whenever one of its walks was a
+loop walk (no static depth) or had a static depth over 64. Three changes:
+
+- A group fuses whatever its walks' depths. A walk takes the fewest frames that hold its static depth, at most
+  the run's tier: 64, or 256 on the deep run (`label_group_128` and `label_group_256` added). A static depth
+  bounds the grammar's nesting, not a file's. A walk that does outgrow its frames flags it, and the group runs
+  again deep, then interpreted.
+- The deep run still overflowed on one file, at a fork (`MICRO_FAIL` tagged by site, a temporary trace). The
+  cause was not nesting but `bounded`'s loop, `top: step; FORK reached; SUPERTYPE bound; GOTO top`. Each node
+  it passed left the exit path as a frame, so walking a module's statements by `NEXT` held one frame per
+  statement. `bounded` now takes the exit first and keeps the path that goes on as the fork's frame:
+  `top: step; FORK on; GOTO reached; on: SUPERTYPE bound; GOTO top; reached:`. The loop holds one frame. A
+  label is a set of nodes, so the order of its paths is free.
+- Without overflows, nothing falls to the interpreter, whose workspace for that file was over the buffer budget
+  even at 512 states.
+
+The slice test passes with all four backends: 101 files, 491 clauses, 2193 keys each. The largest batch takes
+97 launches (planned 74). Batches over the buffer budget still split (`BackendCapacity`), as designed. Not
+measured here: the Metal backends' process CPU (430–450 s against the CPU backends' 130 s; the run is under
+`nice` and shares the machine).
+
+## O-closures-one-wave-flake. A level's closures sometimes launch in no wave
+
+**Seen (2026-11-12),** once in four runs of `logic::native logic::plan` in one process:
+`logic::plan::tests::closures_of_one_level_launch_in_one_wave` read `(0, 0)` waves and launches for the program
+mode, where it expects `(1, 3)`. The counter (`lanes::wave::flushed`) is the thread's own, so no wave ran on the
+test's thread. Ruled out: other tests' waves (thread-local counters), connection reuse (a closed connection's
+components and derived relations are dropped by its client-data destructor), and the device binding
+(thread-local). The remaining ways to get no wave are a closure that keeps levels (`prepare` returns no
+launches), a closure not recognized (the stratum placed on device rounds), and a caller that cannot wait.
+
+**Closure:** make the assertion name which of the three it was, then fix that one at its root.
+
+## O-pack-upstream-data. The Python pack's upstream sources are not in the checkout
+
+`compile_matcher_tests::the_gate_catches_a_widened_walk` fails here (`only 2 widened clauses differ`), with the
+`bounded` change and without it. `packs/python/upstream` holds 3 `.py` files; before #179 moved the pack's test
+data out of git (236fc98d2~1), it held 618. The test samples every fourth one. **Closure:** `npm run
+fixtures:pull` (CONTRIBUTING.md, "Pack test data"), then run the test again.
 
 ## O-device-step-counts (closed 2026-11-12). The device's per-step counts of a cross join are not the CPU's
 
