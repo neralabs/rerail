@@ -1702,6 +1702,19 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     let mut reorder_fn = None;
     // The words made as functions of their own (`WordFn`), with a function a grammar rule.
     let outlined = !native.rules.is_empty() && cut.calls;
+    // With a function a grammar rule (only calls cross functions), each function's ways of
+    // returning (bit 0: `RETURN m=0`, bit 1: `m=1`). A function with one gives back 0 for it,
+    // and its callers test once, as a `Result`'s.
+    let rule_of = |pc: usize| native.rules.partition_point(|&s| usize::from(s) <= pc).saturating_sub(1);
+    let by_rule = outlined && (0..words.len()).all(|pc| cut.of[pc] as usize == rule_of(pc));
+    let mut return_ways = vec![0u8; cut.count as usize];
+    for (pc, b) in words.iter().enumerate() {
+        if let Op::Return { again } = b.operation {
+            return_ways[cut.of[pc] as usize] |= 1 << u8::from(again);
+        }
+    }
+    // The one way function `d` returns, where it has one.
+    let one_way = |d: usize| -> Option<u16> { if !by_rule { None } else { match return_ways[d] { 1 => Some(0), 2 => Some(1), _ => None } } };
     let mut word_fns: std::collections::HashMap<WordFn, (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)> = std::collections::HashMap::new();
     let mut table_fn: Option<(cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)> = None;
     let mut lowered: Vec<Lowered> = Vec::new();
@@ -2840,6 +2853,18 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         mset(&mut f, Mem::Flags, fl);
                     }
                     let (other, not_next) = (f.create_block(), f.create_block());
+                    if let Some(way) = one_way(d) {
+                        // Zero: back at the call's place, or the one after, as the callee always
+                        // returns; else the run's end, passed on.
+                        f.ins().brif(v, other, &[], word(target + way), &[]);
+                        f.switch_to_block(not_next);
+                        f.ins().jump(other, &[]);
+                        f.switch_to_block(other);
+                        f.set_cold_block(other);
+                        let r = results(&mut f, v, false);
+                        leave(&mut f, &r);
+                        continue;
+                    }
                     // Zero: back at the call's place; else one, the place after.
                     f.ins().brif(v, not_next, &[], word(target), &[]);
                     f.switch_to_block(not_next);
@@ -2863,7 +2888,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                             f.ins().store(MemFlags::trusted(), x, p, STATE + 8 * k as i32);
                         }
                     }
-                    let v = f.ins().iconst(types::I64, RETURNED as i64 + i64::from(again));
+                    // A function that returns one way gives back 0 for it (`one_way`).
+                    let way = if one_way(cut.of[pc] as usize).is_some() { 0 } else { i64::from(again) };
+                    let v = f.ins().iconst(types::I64, RETURNED as i64 + way);
                     let r = results(&mut f, v, false);
                     leave(&mut f, &r);
                 }
