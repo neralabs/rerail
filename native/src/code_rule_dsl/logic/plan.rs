@@ -6932,6 +6932,19 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         super::profile::work(super::profile::Unit::Literal, prog.rules.iter().map(|r| 1 + r.body.len() as u64).sum::<u64>());
     }
     let (sccs, deps) = strata(prog)?;
+    // A debugging aid: `RERAIL_RUN_DUMP=<file>` appends the rules each run is given, by stratum.
+    if let Some(path) = std::env::var_os("RERAIL_RUN_DUMP") {
+        use std::io::Write as _;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(f, "== run of {} rules", prog.rules.len());
+            for scc in &sccs {
+                let _ = writeln!(f, "-- stratum {scc:?}");
+                for r in prog.rules.iter().filter(|r| scc.contains(r.head.rel.as_str())) {
+                    let _ = writeln!(f, "{r}");
+                }
+            }
+        }
+    }
     // Device waves (decision 0095 §5, 0098 §6): the strata in order of their levels. A stratum's level is one more
     // than the deepest level it depends on, so a level's strata do not depend on each other, and in this order each
     // level's strata are adjacent: a level is a device wave. The sort is stable, so within a level the strata keep
@@ -7843,6 +7856,46 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                 b.collect(&mut run, stream)?;
             }
             take_answers(&mut run, &mut asked, &mut arrived, &mut waiting, &mut outcome, &mut carry, &sccs, &last, std::time::Duration::from_millis(1))?;
+        }
+    }
+    // A debugging aid: `RERAIL_REL_ROWS=<file>` appends each derived relation's rows; `RERAIL_REL_DIR=<dir>` writes
+    // every relation the run reads or derives, one directory per run.
+    if let Some(path) = std::env::var_os("RERAIL_REL_ROWS") {
+        use std::io::Write as _;
+        static RUNS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let at = RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path).map_err(|e| Error::Plan(e.to_string()))?;
+        let _ = writeln!(f, "== run {at}");
+        let mut all: BTreeSet<String> = sccs.iter().flatten().cloned().collect();
+        all.extend(prog.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| a.rel.to_string())));
+        let dir = std::env::var_os("RERAIL_REL_DIR").map(|d| std::path::Path::new(&d).join(format!("run{at}")));
+        if let Some(d) = &dir { let _ = std::fs::create_dir_all(d); }
+        for r in &all {
+            let h = super::native::component::held(run.db, r);
+            let n = h.as_ref().map(|h| h.rows() as i64).unwrap_or_else(|| run.count(&format!("SELECT count(*) FROM {}", crate::code_rule_dsl::logic::sql::ident(r))).unwrap_or(-1));
+            let _ = writeln!(f, "{r}\t{n}");
+            if let Some(d) = &dir {
+                let text: String = match h {
+                    Some(h) => (0..h.rows()).map(|i| h.row(i).iter().map(|v| v.to_string()).collect::<Vec<_>>().join("\t") + "\n").collect(),
+                    None => {
+                        let k = prog.decls.get(r.as_str()).map_or(0, |d| d.len());
+                        let sql = format!("SELECT * FROM {}", crate::code_rule_dsl::logic::sql::ident(r));
+                        let mut out = String::new();
+                        if let Ok(mut st) = run.db.prepare(&sql) {
+                            let k = if k == 0 { st.column_count() } else { k.min(st.column_count()) };
+                            if let Ok(mut rows) = st.query([]) {
+                                while let Ok(Some(row)) = rows.next() {
+                                    let vals: Vec<String> = (0..k).map(|i| row.get::<_, rusqlite::types::Value>(i).map(|v| match v { rusqlite::types::Value::Integer(n) => n.to_string(), rusqlite::types::Value::Text(t) => t, rusqlite::types::Value::Real(x) => x.to_string(), _ => String::new() }).unwrap_or_default()).collect();
+                                    out.push_str(&vals.join("\t"));
+                                    out.push('\n');
+                                }
+                            }
+                        }
+                        out
+                    }
+                };
+                let _ = std::fs::write(d.join(format!("{r}.tsv")), text);
+            }
         }
     }
     Ok(())

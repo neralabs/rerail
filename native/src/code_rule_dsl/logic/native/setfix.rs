@@ -1550,7 +1550,9 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             syms = &mut cursor;
         }
         // Join probes, natively; seed joins in the first wave only (none when the device ran the fixpoint).
-        let mut wholes_run: Vec<&Arc<JoinSpec>> = Vec::new();
+        // The whole plans run this wave, by head: a spec says what a body derives, not where, so two rules with one
+        // body and different heads (a magic relation and its reader's, decision 0108's demand) are two runs.
+        let mut wholes_run: Vec<(usize, &Arc<JoinSpec>)> = Vec::new();
         for (pi, p) in comp.probes.iter().enumerate() {
             let Body::Join(j) = &p.body else { continue };
             let tp = Instant::now();
@@ -1559,8 +1561,8 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             else if store.rels[p.delta].lo == store.rels[p.delta].hi { skips += 1; continue; }
             let j = match (&p.whole, &p.wkey) {
                 (Some(w), Some(k)) if p.delta != SEED && store.rels[p.delta].lo == 0 => {
-                    if wholes_run.iter().any(|w| Arc::ptr_eq(w, k) || ***w == **k) { skips += 1; continue; }
-                    wholes_run.push(k);
+                    if wholes_run.iter().any(|&(h, w)| h == p.head && (Arc::ptr_eq(w, k) || **w == **k)) { skips += 1; continue; }
+                    wholes_run.push((p.head, k));
                     w
                 }
                 _ => j,

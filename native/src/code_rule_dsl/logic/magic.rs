@@ -365,6 +365,25 @@ fn magic_sets_once(mut prog: Program, options: &Options) -> Result<Program, Erro
     Ok(prog)
 }
 
+/// A corpus run's `.pragma "magic-transform" "r, …"` (decision 0108, "Building on it"): each listed relation computed only for what its
+/// readers ask, by adornments over every column they bind (`found(c, a, at)` read with `c` and `a` bound is
+/// `found_bbf`), not its first column alone as `magic_sets` (T's `.demand`) restricts it. It is `magic_adorn` with
+/// every relation not listed computed in full; `"*"` is `magic_adorn` itself. A use of a demanded relation with
+/// nothing bound computes it in full, and a negative cycle demand would close computes the relations negated in it in
+/// full (`magic_adorn`'s retries): leaving demand out only widens it, so the rows are the program's.
+pub fn demand_bound_columns(prog: Program, options: &Options) -> Result<Program, Error> {
+    if prog.demand.is_empty() {
+        return Ok(prog);
+    }
+    if prog.demand.iter().any(|d| d == "*") {
+        return magic_adorn(prog, options);
+    }
+    let mut options = options.clone();
+    let derived: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
+    options.exclude.extend(derived.into_iter().filter(|r| !prog.demand.contains(r)));
+    magic_adorn(prog, &options)
+}
+
 /// A failure of one `magic_adorn_once` attempt: a negative cycle that demand closed (with the relations negated or
 /// aggregated inside it), or any other error.
 enum Attempt {
