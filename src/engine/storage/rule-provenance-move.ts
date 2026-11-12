@@ -55,7 +55,7 @@ type Free = <T>(step: () => T) => Promise<T>;
 export async function moveRuleProvenances(path: string, options: RuleProvenanceMoveOptions = {}): Promise<number> {
   const { perBatch = MOVED_PER_BATCH, signal } = options;
   const pause = options.pause ?? (() => sleep(PAUSE_MS, undefined, { signal }).catch(() => undefined));
-  if (!existsSync(path)) return 0;
+  if (!existsSync(path) || !leftToMove(path)) return 0;
   const database = openRerailDatabase(path);
   try {
     // From here SQLite reports another connection's lock at once, and `whenFree` waits for it off the thread.
@@ -132,6 +132,25 @@ function stepAppliedAt(database: RerailDatabase): number | undefined {
     .get(RULE_PROVENANCE_STEP);
 }
 
+/** The audits the move takes: those holding their provenance inline that started no later than the step ran (`?`). */
+const TAKEN = "started_at <= ? AND rule_provenance_id IS NULL AND rule_provenance_json <> '[]'";
+
+/**
+ * Whether the file holds an audit the move takes, read on a read-only connection: once the move has ended, each later
+ * daemon start finds none and opens no writer, so it takes no write lock. A read-only open runs a pending step through
+ * a writable open first, as it does for any reader.
+ */
+function leftToMove(path: string): boolean {
+  const database = openRerailDatabase(path, { readonly: true });
+  try {
+    const upTo = stepAppliedAt(database);
+    return upTo !== undefined
+      && database.$client.prepare<[number], number>(`SELECT 1 FROM audits WHERE ${TAKEN} LIMIT 1`).pluck().get(upTo) !== undefined;
+  } finally {
+    database.$client.close();
+  }
+}
+
 /**
  * Moves up to `limit` audits after rowid `after` that started no later than `upTo`, in one write transaction: each names
  * the stored copy of its JSON text instead, stored first when no audit had the same text, and keeps `[]` inline. The
@@ -146,8 +165,7 @@ function moveBatch(
   const client = database.$client;
   return client.transaction(() => {
     const rows = client.prepare<[number, number, number], { row: number; json: string }>(`SELECT rowid AS row, rule_provenance_json AS json
-      FROM audits WHERE rowid > ? AND started_at <= ? AND rule_provenance_id IS NULL AND rule_provenance_json <> '[]'
-      ORDER BY rowid LIMIT ?`).all(after, upTo, limit);
+      FROM audits WHERE rowid > ? AND ${TAKEN} ORDER BY rowid LIMIT ?`).all(after, upTo, limit);
     const stored = client.prepare<[string], number>("SELECT provenance_id FROM audit_rule_provenances WHERE digest = ?").pluck();
     const store = client.prepare<[string, string]>("INSERT INTO audit_rule_provenances (digest, rule_provenance_json) VALUES (?, ?)");
     const name = client.prepare<[number, number]>("UPDATE audits SET rule_provenance_id = ?, rule_provenance_json = '[]' WHERE rowid = ?");

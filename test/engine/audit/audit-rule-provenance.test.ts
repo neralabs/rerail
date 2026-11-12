@@ -388,6 +388,22 @@ describe("audit rule provenance", () => {
     expect(pageBytes(path).free).toBe(free);
   });
 
+  it("takes no write lock once nothing is left to move", async () => {
+    const path = await fileOfTheBuildBefore();
+    writeInlineAudits(path, [provenanceOf("/home/dev/app", 20)]);
+    expect(await move(path)).toBe(1);
+
+    // Another connection holds the write lock: a move that took it would wait out its 5 s busy timeout, then fail.
+    const writer = new Database(path);
+    try {
+      writer.exec("BEGIN IMMEDIATE");
+      expect(await move(path)).toBe(0);
+      writer.exec("ROLLBACK");
+    } finally {
+      writer.close();
+    }
+  }, 15_000);
+
   it("leaves the free space in the file when there is no provenance to move", async () => {
     const path = await fileOfTheBuildBefore();
     writeInlineAudits(path, [[], []]);
