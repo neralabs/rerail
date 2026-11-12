@@ -82,11 +82,11 @@ test("a shell command that writes many sources costs no session events", async (
     { content: ["Done."] },
   ]);
   try {
-    // On a slow runner each command result and turn end may spend its full 10 s waiting for the shell-write walk of the
-    // 8,000 outputs (and the first one 10 s more for their audits): the run outlasts the host harness's default minute.
-    // This test is about events kept, not speed; a run that still overruns says where the daemon spent the time.
+    // One command result or turn end waits its 10 s for the shell-write walk of the 8,000 outputs, and one for their
+    // audits; while those still run, the later ones answer at once, so even a slow runner's run fits the host harness's
+    // default minute. A run that still overruns says where the daemon spent the time.
     try {
-      await host.prompt("Run the tests, then look at one output.", { timeoutMs: 180_000 });
+      await host.prompt("Run the tests, then look at one output.");
     } catch (error) {
       const waits = (await readFile(join(home, "daemon.log"), "utf8").catch(() => "")).split("\n").filter(line => line.includes("waited"));
       throw new Error(`${error instanceof Error ? error.message : String(error)}\ndaemon log (turn-end waits):\n${waits.join("\n")}`, { cause: error });

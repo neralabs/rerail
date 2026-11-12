@@ -383,7 +383,10 @@ interface SourceDiscovery {
   baselineRoots: Set<string>;
   readonly worktrees: WorktreeDiscovery;
   error: string | undefined;
-  /** A boundary answered while the current walk was running; closing before it finishes says so again. */
+  /**
+   * A boundary answered while the current walk was running: later boundaries answer at once until it finishes, and
+   * closing before it finishes says so again.
+   */
   pendingReported: boolean;
   /**
    * The unlisted files the last walk found too large to read, by path, with their stamps. Each is reported as not
@@ -692,7 +695,7 @@ export function isCommandTool(toolName: string): boolean {
  * How long a turn checkpoint or a command result waits for a checkout-wide source walk, and a code-rule boundary
  * waits for the session's evaluator to open, before answering with what it has. The work goes on, and what it finds
  * is audited and delivered at a later boundary; waiting longer would hold the session's event lane past the host's
- * per-event timeout.
+ * per-event timeout. A walk is waited for once: the boundaries that come while it still runs do not wait for it.
  */
 export const BOUNDARY_DISCOVERY_WAIT_MS = 10_000;
 /**
@@ -1229,16 +1232,25 @@ export class CodeRuleBridge {
     return discovery.idle;
   }
 
-  /** A requested walk, waited for at most `#discoveryWaitMs`; a walk that outlasts it is reported pending at `boundary`. */
+  /**
+   * A requested walk, waited for at most `#discoveryWaitMs`; a walk that outlasts it is reported pending at `boundary`.
+   * Passes run one after another, so while a walk an earlier boundary stopped waiting for still runs, this boundary's
+   * pass is behind it: the boundary asks for that pass and is reported pending at once rather than spend the wait again.
+   */
   async #awaitDiscovery(
     discovery: SourceDiscovery,
     checkpoint: DiscoveryCheckpoint,
     boundary: Exclude<DiscoveryPendingBoundary, "close">,
   ): Promise<void> {
+    const idle = this.#requestDiscovery(discovery, checkpoint);
+    if (sessionWalkAbandoned(discovery)) {
+      if (!discovery.cancelled) this.#reportDiscoveryPending(boundary);
+      return;
+    }
     const budget = Promise.withResolvers<boolean>();
     const timer = setTimeout(() => budget.resolve(false), this.#discoveryWaitMs);
     try {
-      const walked = await Promise.race([this.#requestDiscovery(discovery, checkpoint).then(() => true), budget.promise]);
+      const walked = await Promise.race([idle.then(() => true), budget.promise]);
       if (!walked && !discovery.cancelled) {
         discovery.pendingReported = true;
         this.#reportDiscoveryPending(boundary);

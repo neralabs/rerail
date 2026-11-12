@@ -1,0 +1,1 @@
+A shell command that writes thousands of files no longer stalls the agent for a minute or more. Once a shell result or turn end has waited 10 seconds for Rerail to find what the shell wrote, later ones answer at once while that search runs, and what it finds is steered at a later step.

@@ -215,7 +215,7 @@ Rerail checks shell-written files when the command finishes. Edits made while a 
 <details>
 <summary>Shell edits and indexing</summary>
 
-- A shell result, or a turn end, waits up to 10 seconds for Rerail to find what the shell wrote. Later finds are steered at a later step, and the dashboard timeline says rules had not yet seen shell edits there.
+- A shell result, or a turn end, waits up to 10 seconds for Rerail to find what the shell wrote. Later finds are steered at a later step, and the dashboard timeline says rules had not yet seen shell edits there. While that search still runs, later shell results and turn ends do not wait for it again.
 - A file the shell deleted is reported only if Rerail had seen it.
 
 In a large repository, Rerail indexes at session start before code rules can run; nothing waits for it.

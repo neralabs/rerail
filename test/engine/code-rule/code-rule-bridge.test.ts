@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  BOUNDARY_DISCOVERY_WAIT_MS,
   CodeRuleBridge,
   generatedEditPaths,
   isCommandTool,
@@ -102,6 +103,26 @@ async function requestDiscovery(
 }
 async function settled<T>(promise: Promise<T>): Promise<boolean> {
   return await Promise.race([promise.then(() => true, () => true), new Promise<boolean>(resolve => setImmediate(() => resolve(false)))]);
+}
+/**
+ * Runs a boundary under fake timers, moving the clock past `BOUNDARY_DISCOVERY_WAIT_MS` each time the boundary sets its
+ * wait for the source walk: how many times it waited before answering, whatever the machine's speed.
+ */
+async function discoveryWaits(boundary: () => Promise<unknown>): Promise<number> {
+  const answer = boundary();
+  passes.push(answer.catch(() => undefined));
+  let waits = 0;
+  while (!(await settled(answer))) {
+    if (vi.getTimerCount() === 0) continue;
+    waits += 1;
+    await vi.advanceTimersByTimeAsync(BOUNDARY_DISCOVERY_WAIT_MS);
+  }
+  await answer;
+  return waits;
+}
+/** Resolves once `done` holds, checked after each turn of the event loop: for work that sets no timer. */
+async function ticksUntil(done: () => boolean): Promise<void> {
+  while (!done()) await new Promise(resolve => setImmediate(resolve));
 }
 
 const directories: string[] = [];
@@ -579,6 +600,46 @@ describe("CodeRuleBridge", () => {
       expect(stderr).toHaveBeenCalledWith(expect.stringContaining("recording failed: database is locked"));
     } finally {
       stderr.mockRestore();
+    }
+  });
+
+  it("waits once for a walk that outlasts the wait: later boundaries answer at once while it runs, and the next walk is waited for again", async () => {
+    const root = await workspace();
+    const path = join(root, "src", "a.py");
+    await writeFile(path, "before\n");
+    await awaitClockAfter(path);
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const audited = (file: string) => auditGeneratedEdits.mock.calls.some(([, batch]) => batch.edits.some(edit => edit.path === file));
+    const pending: string[] = [];
+    const bridge = createBridge(root, auditor(auditGeneratedEdits), { onDiscoveryPending: boundary => { pending.push(boundary); } });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      // The session's first walk, and the pass the boundaries ask for behind it.
+      const [slow, behind] = [holdDiscovery("directories", root), holdDiscovery("directories", root)];
+      await bridge.openWorkspace("session-1");
+      await slow.entered;
+      await bridge.begin("shell-1", "Bash", { command: "./build.sh" });
+      const first = await discoveryWaits(() => bridge.finish("shell-1"));
+      await bridge.begin("shell-2", "Bash", { command: "./write.sh" });
+      await writeFile(path, "shell write\n");
+      const second = await discoveryWaits(() => bridge.finish("shell-2"));
+      const turn = await discoveryWaits(() => bridge.checkpoint("turn"));
+      expect({ waits: [first, second, turn], pending }).toEqual({ waits: [1, 0, 0], pending: ["command", "command", "turn"] });
+
+      // What the walks find is audited behind the boundaries; once they finish, the next walk is waited for again.
+      slow.release();
+      await behind.entered;
+      expect(audited("src/a.py")).toBe(true);
+      await bridge.begin("shell-3", "Bash", { command: "./write.sh" });
+      await writeFile(join(root, "src", "b.py"), "late write\n");
+      behind.release();
+      await ticksUntil(() => audited("src/b.py"));
+      const next = holdDiscovery("directories", root);
+      const later = [await discoveryWaits(() => bridge.finish("shell-3")), await discoveryWaits(() => bridge.checkpoint("turn"))];
+      await next.entered;
+      expect({ waits: later, pending: pending.slice(3) }).toEqual({ waits: [1, 0], pending: ["command", "turn"] });
+    } finally {
+      vi.useRealTimers();
     }
   });
 
