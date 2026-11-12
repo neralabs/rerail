@@ -10,8 +10,7 @@
 //! define is unknown there, never undefined.
 
 pub mod forte;
-#[cfg(test)]
-pub mod oracle_tests;
+// oracle_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 // cratify: `tests` is rerail-engine's (it mounts it)
 pub mod view;
 // Its tape (`tape::TreeParser`).

@@ -9,7 +9,7 @@ use serde_json::Value;
 /// Grammar dialects a rule language spans, keyed by the file language label that selects each one.
 type GrammarDialects = Vec<(&'static str, GrammarDialect)>;
 
-pub(super) fn language_capability(
+pub fn language_capability(
     name: &str,
     capabilities: &Capabilities,
 ) -> Result<(GrammarDialects, String)> {
@@ -42,7 +42,7 @@ pub(super) fn language_capability(
 /// The dialects of the programs a file of `dialects` embeds through `via` (`ast.embedded`), each
 /// keyed by its label: what an embedded clause compiles for. `None` where the language embeds
 /// nothing through `via`.
-pub(super) fn embedded_dialects(
+pub fn embedded_dialects(
     dialects: &[(&'static str, GrammarDialect)],
     via: language::Via,
 ) -> Option<GrammarDialects> {
@@ -60,10 +60,9 @@ pub(super) fn embedded_dialects(
     (!embedded.is_empty()).then_some(embedded)
 }
 
-pub(super) fn grammar_gap(gaps: &mut Vec<String>, reason: String) -> AstMatcher {
+pub fn grammar_gap(gaps: &mut Vec<String>, reason: String) -> AstMatcher {
     gaps.push(reason);
     AstMatcher::Never
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

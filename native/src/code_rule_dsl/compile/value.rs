@@ -66,7 +66,7 @@ fn strings<'a>(value: &'a Json, path: &str) -> Result<Vec<&'a str>> {
 }
 
 /// The grammar-independent checks of a `value` object.
-pub(super) fn validate_value(value: &Json, path: &str, limits: &Limits) -> Result<()> {
+pub fn validate_value(value: &Json, path: &str, limits: &Limits) -> Result<()> {
     let test = object(value, path)?;
     reject_unknown(test, VALUE_KEYS, path)?;
     if let Some(follow) = test.get("follow")
@@ -176,7 +176,7 @@ pub(super) fn compile_value(
 }
 
 /// Compiles a validated `value` whose nodes are read as `reading` reads them.
-pub(super) fn compile_value_with(
+pub fn compile_value_with(
     value: &Json,
     language: GrammarDialect,
     path: &str,
@@ -244,5 +244,4 @@ fn compile_value_in(pack: &dyn language_pack::LanguagePack, value: &Json, path: 
     }))))
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

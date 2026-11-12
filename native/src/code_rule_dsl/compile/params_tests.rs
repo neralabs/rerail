@@ -1,7 +1,7 @@
 //! Parameterized utilities: `{ "params": [...], "rule": ... }` called as
 //! `{ "matches": { "id": { "PARAM": "$CAPTURE" } } }`, each call a frame of its own.
 
-// cratify: a re-export of rerail-engine's, which its facades of this module make
+use crate::code_rule_dsl::test_support::*;
 use serde_json::{Value, json};
 
 /// Every `a = b` pair's right side where the left side at the same position has the same name, as

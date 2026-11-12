@@ -548,7 +548,7 @@ impl Answer {
 
 /// A `calls` term's answer for one callee: the call reaches its seed, or may.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Verdict {
+pub struct Verdict {
     pub(crate) reach: bool,
     /// Not known to reach: a definition on the way calls something unknown.
     pub(crate) open: bool,

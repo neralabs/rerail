@@ -74,7 +74,7 @@ impl PythonArguments for Arguments {
 
 /// The pairs of `**{'a': 1}`: a dict display whose keys are all string literals, without `**`
 /// of its own.
-pub(super) fn literal_keywords<'r, D: Doc>(splat: &Node<'r, D>) -> Option<Vec<(String, Node<'r, D>)>> {
+pub fn literal_keywords<'r, D: Doc>(splat: &Node<'r, D>) -> Option<Vec<(String, Node<'r, D>)>> {
     let [dictionary] = splat.named_code().collect::<Vec<_>>().try_into().ok()?;
     if dictionary.kind() != "dictionary" {
         return None;

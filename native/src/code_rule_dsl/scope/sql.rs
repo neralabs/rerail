@@ -128,7 +128,7 @@ pub use super::Uses;
 
 /// The query blocks of one SQL file with their bindings and references.
 #[derive(Debug, Default)]
-pub(crate) struct SqlScopes {
+pub struct SqlScopes {
     blocks: Vec<Block>,
     bindings: Vec<Binding>,
     /// Sorted by start byte.
@@ -221,13 +221,13 @@ impl SqlScopes {
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn read<D: Doc>(root: &Node<'_, D>) -> Self {
+    pub fn read<D: Doc>(root: &Node<'_, D>) -> Self {
         Self::build(root, &mut || Ok(())).expect("no budget")
     }
 
     /// The byte ranges of qualifiers no binding resolves (RF01).
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn unresolved(&self) -> Vec<Range<usize>> {
+    pub fn unresolved(&self) -> Vec<Range<usize>> {
         self.references
             .iter()
             .filter(|reference| {
@@ -239,7 +239,7 @@ impl SqlScopes {
 
     /// The byte ranges of alias names no reference uses (AL05).
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn unused_aliases(&self) -> Vec<Range<usize>> {
+    pub fn unused_aliases(&self) -> Vec<Range<usize>> {
         let uses = self.uses();
         let mut repeats: HashMap<(usize, &str), usize> = HashMap::new();
         for binding in &self.bindings {
@@ -265,7 +265,7 @@ impl SqlScopes {
 
     /// The binding a reference at `range` resolves to, as the binding's name range.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn binding(&self, range: &Range<usize>) -> Option<Range<usize>> {
+    pub fn binding(&self, range: &Range<usize>) -> Option<Range<usize>> {
         let reference = self.reference_at(range.start, range.end)?;
         self.resolve(reference).map(|binding| {
             let name = self.bindings[binding].name;
@@ -733,5 +733,4 @@ fn is_policy<D: Doc>(kind: &str, children: &[Node<'_, D>]) -> bool {
                 .is_some_and(|child| child.kind() == "keyword_policy"))
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

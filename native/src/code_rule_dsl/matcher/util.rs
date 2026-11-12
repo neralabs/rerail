@@ -13,14 +13,14 @@ pub const MAX_UTIL_DEPTH: u32 = 256;
 /// level in release, 15 KiB in debug), so bytes back up the level count. Every thread matching runs
 /// on has room for this on top of its callers: Node's main thread and libuv workers (8 MiB) and
 /// Rust test threads (2 MiB).
-pub(super) const MAX_UTIL_STACK_BYTES: usize = 1 << 20;
+pub const MAX_UTIL_STACK_BYTES: usize = 1 << 20;
 
 thread_local! {
-    pub(super) static UTIL_DEPTH: Cell<u32> = const { Cell::new(0) };
+    pub static UTIL_DEPTH: Cell<u32> = const { Cell::new(0) };
     /// The stack address `begin_clause` started at; 0 outside one (no stack limit applies).
-    pub(super) static UTIL_STACK_BASE: Cell<usize> = const { Cell::new(0) };
-    pub(super) static UTIL_STEPS_LEFT: Cell<usize> = const { Cell::new(usize::MAX) };
-    pub(super) static UTIL_EXCEEDED: Cell<Option<UtilLimit>> = const { Cell::new(None) };
+    pub static UTIL_STACK_BASE: Cell<usize> = const { Cell::new(0) };
+    pub static UTIL_STEPS_LEFT: Cell<usize> = const { Cell::new(usize::MAX) };
+    pub static UTIL_EXCEEDED: Cell<Option<UtilLimit>> = const { Cell::new(None) };
     /// The matcher's Unknown flag: set when a rule failed because a verdict it read was unknown
     /// rather than false (a value it could not decide). A matcher that returns a match leaves it
     /// as it found it; one that fails leaves it set if it was set on entry or its own failure is
@@ -29,14 +29,14 @@ thread_local! {
     pub static UNKNOWN: Cell<bool> = const { Cell::new(false) };
     /// Whether the root being matched can reach an unknown verdict (it reads values). Without one,
     /// no matcher touches `UNKNOWN`, so rules that read no values match exactly as they did.
-    pub(super) static THREE_VALUED: Cell<bool> = const { Cell::new(false) };
+    pub static THREE_VALUED: Cell<bool> = const { Cell::new(false) };
 }
 
 pub use crate::code_rule_dsl::language::adapter::{is_comment_kind, is_paren_kind};
 
 /// An address in the current stack frame.
 #[inline(always)]
-pub(super) fn stack_address() -> usize {
+pub fn stack_address() -> usize {
     let marker = 0u8;
     std::hint::black_box(&marker) as *const u8 as usize
 }
@@ -106,7 +106,7 @@ pub struct UtilOrigin {
 /// them (`compile::shared`).
 pub struct UtilTable {
     #[cfg_attr(not(feature = "code-rule-profile"), allow(dead_code))]
-    pub(crate) names: Vec<String>,
+    pub names: Vec<String>,
     /// Whether each utility has parameters: it runs in a frame of its own, never in its caller's
     /// environment, so its captures are not the query's.
     pub(crate) framed: Vec<bool>,
@@ -149,7 +149,7 @@ impl UtilTable {
     }
 
     /// Utility `index`'s compiled rule, once filled.
-    pub(crate) fn rule(&self, index: usize) -> Option<&AstMatcher> {
+    pub fn rule(&self, index: usize) -> Option<&AstMatcher> {
         self.rules.get(index)?.get()
     }
 
@@ -291,7 +291,7 @@ struct Started {
 }
 
 impl<K: Ord + Clone, T: Clone + PartialEq> UtilitySummary<K, T> {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             completed: BTreeMap::new(),
             stack: Vec::new(),
@@ -607,5 +607,4 @@ impl UtilRef {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

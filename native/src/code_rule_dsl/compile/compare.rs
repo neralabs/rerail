@@ -24,7 +24,7 @@ pub(super) struct CountSpec<'a> {
 }
 
 /// A `count` object's one relation, its `min`/`max` bounds, and its `as`/`offset`.
-pub(super) fn count_bounds<'a>(value: &'a Value, path: &str) -> Result<CountSpec<'a>> {
+pub fn count_bounds<'a>(value: &'a Value, path: &str) -> Result<CountSpec<'a>> {
     let count = object(value, path)?;
     reject_unknown(
         count,
@@ -103,7 +103,7 @@ pub(super) fn count_bounds<'a>(value: &'a Value, path: &str) -> Result<CountSpec
 }
 
 /// A `compare` object; its names are checked against the whole query once it compiled.
-pub(super) fn parse_comparison(value: &Value, path: &str) -> Result<Comparison> {
+pub fn parse_comparison(value: &Value, path: &str) -> Result<Comparison> {
     let entry = object(value, path)?;
     reject_unknown(
         entry,
@@ -272,9 +272,9 @@ pub(super) struct CompareSite<'a> {
 /// A sub-rule that evaluates in an environment of its own: `not` and `count` start from the
 /// caller's bindings and keep what they bind to themselves; a stop rule starts empty.
 #[derive(Clone)]
-pub(super) struct Scope {
+pub struct Scope {
     fresh: bool,
-    names: BTreeSet<String>,
+    pub names: BTreeSet<String>,
 }
 
 impl CompareSite<'_> {
@@ -420,7 +420,7 @@ pub(super) fn json_call(matches: &Value) -> Option<(&str, Vec<(&str, &str)>)> {
 
 /// Where a query binds each name, as written: pattern metavariables, `capture`, `arguments.bind`
 /// and what parameterized calls return, each with the path of the rule object that binds it.
-pub(super) fn binding_site_index(
+pub fn binding_site_index(
     rule: &Value,
     rule_path: &str,
     utils: &BTreeMap<String, UtilDef>,
@@ -501,7 +501,7 @@ fn under(path: &str, prefix: &str) -> bool {
 /// Whether something outside an `all` conflict's items binds its name where the `all` runs: in the
 /// query (its rule, utilities and constraints), or, inside a parameterized utility, in that
 /// utility's frame (its parameters, which a caller may pass bound, and its own rule).
-pub(super) fn bound_elsewhere(
+pub fn bound_elsewhere(
     conflict: &AllOrderConflict,
     utils: &BTreeMap<String, UtilDef>,
     sites: &[(String, String)],
@@ -528,7 +528,7 @@ pub(super) fn bound_elsewhere(
 
 /// The scope a parameterized utility's rule runs in: a frame of its own, holding its parameters
 /// (whatever a caller passes) and what it binds itself.
-pub(super) fn frame_scope(
+pub fn frame_scope(
     util: &UtilDef,
     utils: &BTreeMap<String, UtilDef>,
     pattern_names: PatternNames<'_>,
@@ -595,7 +595,7 @@ struct Calls {
 /// Every `compare` and `within` in a validated rule, with the scopes it sits in. A utility the rule
 /// calls shares the caller's environment, so it is walked again from each call, in the caller's
 /// scopes: a comparison there may read what the caller binds, under `not` too.
-pub(super) fn compare_sites<'a>(
+pub fn compare_sites<'a>(
     rule: &'a Value,
     path: &str,
     utils: &BTreeMap<String, UtilDef<'a>>,
@@ -864,5 +864,4 @@ fn walk_sites<'a>(
     }
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

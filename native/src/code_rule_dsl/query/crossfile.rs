@@ -20,7 +20,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 /// One relation's rows and the files whose rows are unknown.
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Relation {
+pub struct Relation {
     /// Projected fields per row, in the order the caller reports them.
     pub(in crate::code_rule_dsl) rows: Vec<Map<String, Value>>,
     /// Files of the relation's domain whose rows are incomplete.
@@ -29,7 +29,7 @@ pub(in crate::code_rule_dsl) struct Relation {
 
 /// What `require_each` found for one subject row.
 #[derive(Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) enum Requirement {
+pub enum Requirement {
     /// No evidence row satisfies the predicate, and the evidence is complete.
     Missing(usize),
     /// No complete evidence row satisfies it, but some evidence file is incomplete: unknown.

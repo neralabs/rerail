@@ -74,6 +74,19 @@ pub(super) fn choose(prog: &Program, model: &mut Model) -> Result<Option<(Progra
         return Ok(None);
     }
     let _span = super::super::profile::span(|| "inline or store".into());
+    // A session's part (decision 0099): every relation it keeps is `no_inline`, and the rest are its maintenance
+    // pieces (`__` in the name, which `refusals` stores as the engine's). Nothing may be inlined, which the names
+    // and qualifiers alone tell, before the strata, refusals and readers of its some 17,000 rules are made (0117
+    // step 3: the whole-program passes not made each step).
+    if std::env::var_os("RERAIL_INLINE_ONLY").is_none()
+        && !prog.rules.iter().any(|r| {
+            let rel = r.head.rel.as_str();
+            prog.qualified(rel, "inline") || !(prog.qualified(rel, "no_inline") || rel.contains("__"))
+        })
+    {
+        super::super::profile::decision("inline or store (decision 0099)", || "no relation may be inlined (each `.decl … no_inline` or a session's piece): nothing estimated".to_owned());
+        return Ok(None);
+    }
     let Ok((sccs, _)) = strata(prog) else { return Ok(None) };
     let mut rules_of: BTreeMap<&str, Vec<&Rule>> = BTreeMap::new();
     for r in &prog.rules {

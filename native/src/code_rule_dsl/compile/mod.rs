@@ -1,7 +1,6 @@
 pub mod arguments;
 pub mod ast_rule;
-#[cfg(test)]
-pub mod binding_tests;
+// binding_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 pub mod binds;
 pub mod compare;
 pub mod config;
@@ -9,8 +8,7 @@ pub mod define;
 pub mod dialect;
 pub mod documents;
 pub mod evidence;
-#[cfg(test)]
-pub mod examples_tests;
+// examples_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 pub mod format_args;
 // cratify: `import_target` is rerail-lang-ecma's (it mounts it)
 pub mod layout;
@@ -18,8 +16,7 @@ pub mod line_state;
 pub mod nth_child;
 pub mod options;
 pub mod order;
-#[cfg(test)]
-pub mod params_tests;
+// params_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 pub mod parse;
 pub mod resolve;
 pub mod shared;
@@ -234,7 +231,7 @@ pub fn compile_scope(value: Option<&Value>) -> Result<CodeRuleScope> {
     })
 }
 
-fn string_array(value: &Value, key: &str, path: &str) -> Result<Vec<String>> {
+pub fn string_array(value: &Value, key: &str, path: &str) -> Result<Vec<String>> {
     value
         .get(key)
         .and_then(Value::as_array)
@@ -249,7 +246,7 @@ fn string_array(value: &Value, key: &str, path: &str) -> Result<Vec<String>> {
         .collect()
 }
 
-fn compile_glob_set(patterns: &[String], path: &str) -> Result<GlobSet> {
+pub fn compile_glob_set(patterns: &[String], path: &str) -> Result<GlobSet> {
     let mut builder = GlobSetBuilder::new();
     for (index, pattern) in patterns.iter().enumerate() {
         let glob = GlobBuilder::new(pattern)
@@ -591,7 +588,7 @@ fn compile_clause(
     })
 }
 
-pub(in crate::code_rule_dsl) fn compile_query(
+pub fn compile_query(
     value: &Value,
     path: &str,
     capabilities: &Capabilities,
@@ -1842,7 +1839,7 @@ impl Embedding {
     }
 }
 
-pub(super) fn refuse_unavailable_semantics(
+pub fn refuse_unavailable_semantics(
     value: &Value,
     path: &str,
     language: CodeRuleLanguage,
@@ -1881,7 +1878,7 @@ pub(super) fn refuse_unavailable_semantics(
 
 /// The error for `predicate` at `at` when `language`'s registry entry does not support its
 /// capability.
-fn unsupported_semantic(support: Support, at: &str, predicate: &str, language: &str) -> Result<()> {
+pub fn unsupported_semantic(support: Support, at: &str, predicate: &str, language: &str) -> Result<()> {
     gate(
         at,
         match support {
@@ -1896,5 +1893,4 @@ fn unsupported_semantic(support: Support, at: &str, predicate: &str, language: &
     )
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

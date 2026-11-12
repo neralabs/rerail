@@ -278,5 +278,4 @@ pub fn result_order(value: &Value) -> (&str, u64, &str, &str) {
     )
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

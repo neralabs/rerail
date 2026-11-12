@@ -762,8 +762,8 @@ pub fn sql_col(rel: &str, col: usize) -> String {
 
 /// The kept-plan outcomes of `plan_rule_reused` in this process, by `CacheOutcome`: `RERAIL_PLAN_CACHE_COUNTS`
 /// prints them at the end of each corpus run (`KeepPlans`).
-static PLAN_CACHE: [std::sync::atomic::AtomicU64; 8] = [const { std::sync::atomic::AtomicU64::new(0) }; 8];
-const PLAN_CACHE_NAMES: [&str; 8] = ["no cache", "first sight", "kept price", "re-priced", "replanned: cheaper start", "replanned: work grew", "replanned: no longer runs", "taken from the store"];
+static PLAN_CACHE: [std::sync::atomic::AtomicU64; 9] = [const { std::sync::atomic::AtomicU64::new(0) }; 9];
+const PLAN_CACHE_NAMES: [&str; 9] = ["no cache", "first sight", "kept price", "re-priced", "replanned: cheaper start", "replanned: work grew", "replanned: no longer runs", "taken from the store", "re-priced, cheap"];
 fn plan_cache(outcome: usize) {
     PLAN_CACHE[outcome].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
@@ -5745,6 +5745,11 @@ impl<'a> Run<'a, '_> {
             if produced.contains_key(r.as_str()) {
                 lines.push(SpecLine::Produced(ri[*r]));
             }
+            // Stored for a session's next run (decision 0099): its statistics kept as its rows come, so that run
+            // does not count them from its rows (decision 0096 step 4).
+            if prog.qualified(r, "no_inline") {
+                lines.push(SpecLine::Stats(ri[*r]));
+            }
         }
         let mut est: HashMap<&str, f64> = HashMap::new();
         for (h, (old, _)) in &based {
@@ -8109,13 +8114,18 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             }
             // The level's first joins (decision 0100 §5, §6): every seed join of its strata that reads only
             // relations already held, sent to the executor as one batch while the level's strata run.
-            let native_ones: Vec<usize> = level.iter().copied().filter(|&j| !sccs[j].iter().all(|r| run.views.contains(r))).collect();
+            // Not planned at all where the batch is off (`RERAIL_LEVEL_JOINS=off`), nor in a maintained run (a
+            // session's part, `prog.again`): its seeds join deltas of a few rows, below the batch's `MIN_LEFT`, so
+            // planning and specifying them ahead only doubled their planning (O125 steps 01-03: -5% cycles without
+            // it). `RERAIL_LEVEL_JOINS=on` batches them as before.
+            let batched = super::native::setfix::level::on() && (prog.again.is_empty() || std::env::var("RERAIL_LEVEL_JOINS").is_ok_and(|v| v == "on"));
+            let native_ones: Vec<usize> = if !batched { Vec::new() } else { level.iter().copied().filter(|&j| !sccs[j].iter().all(|r| run.views.contains(r))).collect() };
             let mut specs: Vec<Arc<JoinSpec>> = native_ones.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])).collect();
             // Chained (decision 0100 §11): the next level's seed joins whose relations are already held go in this
             // batch too, so their launch and its latency run under this level's strata, not before the next's.
             // `seed_specs` keeps only those whose every atom is a relation run natively so far.
             let own = specs.len();
-            if let Some(next) = (at..sccs.len()).map(|j| level_of[j]).filter(|&l| l > level_of[at]).min() {
+            if let Some(next) = (at..sccs.len()).map(|j| level_of[j]).filter(|&l| l > level_of[at]).min().filter(|_| batched) {
                 let later: Vec<usize> = (at..sccs.len()).filter(|&j| level_of[j] == next && !waved[j] && !sccs[j].iter().all(|r| run.views.contains(r))).collect();
                 specs.extend(later.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])));
             }

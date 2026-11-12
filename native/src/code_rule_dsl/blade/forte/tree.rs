@@ -192,10 +192,10 @@ kinds! {
 }
 
 /// Kinds from this id on are anonymous (punctuation and delimiters).
-pub(crate) const FIRST_ANONYMOUS: u16 = Kind::LessThan as u16;
+pub const FIRST_ANONYMOUS: u16 = Kind::LessThan as u16;
 
 /// Field names, by id (0: no field).
-pub(crate) const FIELD_NAMES: &[&str] = &[
+pub const FIELD_NAMES: &[&str] = &[
     "",
     "name",
     "closing_name",
@@ -221,28 +221,28 @@ enum Field {
     End,
 }
 
-const NONE: u32 = u32::MAX;
+pub const NONE: u32 = u32::MAX;
 
 /// Node ids of a tree are its base plus a preorder index below `SLOT` per tree slot it took
 /// from `NEXT_TREE` (the counter `literal`'s sub-trees draw from).
 const SLOT_BITS: u32 = 24;
 
 #[derive(Clone, Debug)]
-struct Rec {
-    kind: u16,
+pub struct Rec {
+    pub kind: u16,
     field: u16,
-    parent: u32,
-    first: u32,
-    next: u32,
-    prev: u32,
-    children: u32,
-    start: u32,
-    end: u32,
+    pub parent: u32,
+    pub first: u32,
+    pub next: u32,
+    pub prev: u32,
+    pub children: u32,
+    pub start: u32,
+    pub end: u32,
 }
 
 /// A template's text and line starts.
 #[derive(Clone)]
-pub(crate) struct BladeSource {
+pub struct BladeSource {
     bytes: Vec<u8>,
     lines: Vec<u32>,
 }
@@ -306,9 +306,9 @@ impl Content for BladeSource {
 /// A parsed template as a tree.
 pub struct BladeTree {
     source: BladeSource,
-    nodes: Vec<Rec>,
+    pub nodes: Vec<Rec>,
     /// The flat node each node stands for (`NONE` for leaves).
-    forte: Vec<u32>,
+    pub forte: Vec<u32>,
     errors: Vec<Range<usize>>,
     base: usize,
 }
@@ -511,7 +511,7 @@ fn unclaimed(next: &mut [u32], mut at: usize) -> usize {
 
 impl BladeTree {
     /// The tree of a parse of `source`.
-    pub(crate) fn new(source: Vec<u8>, parsed: Parsed) -> Self {
+    pub fn new(source: Vec<u8>, parsed: Parsed) -> Self {
         Self::build(
             source,
             &parsed.tokens,
@@ -812,18 +812,18 @@ impl BladeTree {
 
     /// Nodes in the tree.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.nodes.len()
     }
 
     /// The template's bytes.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn source(&self) -> &[u8] {
+    pub fn source(&self) -> &[u8] {
         &self.source.bytes
     }
 
     /// The `document` node.
-    pub(crate) fn root(&self) -> BladeNode<'_> {
+    pub fn root(&self) -> BladeNode<'_> {
         BladeNode {
             tree: self,
             index: 0,
@@ -837,7 +837,7 @@ impl BladeTree {
 
     /// The flat node (index into Forte's array) the node with this id stands for.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn forte_index(&self, node_id: usize) -> Option<usize> {
+    pub fn forte_index(&self, node_id: usize) -> Option<usize> {
         let forte = *self.forte.get(self.index_of(node_id)?)?;
         (forte != NONE).then_some(forte as usize)
     }
@@ -863,11 +863,11 @@ pub fn parse_tree(source: &[u8]) -> Result<BladeTree, ParseError> {
 /// written `$X` and read as `µX` (its expando character), so a pattern's PHP variables (`$x`) stay
 /// PHP: Forte reads `µX` in an echo or in arguments as opaque PHP bytes, the leaf's whole text.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct BladeLang;
+pub struct BladeLang;
 
 impl BladeLang {
     /// A document over a template, parsed as patterns are; `Err` where Forte stopped at a limit.
-    pub(crate) fn doc(self, source: &[u8]) -> Result<BladeDoc, ParseError> {
+    pub fn doc(self, source: &[u8]) -> Result<BladeDoc, ParseError> {
         Ok(BladeDoc {
             tree: Arc::new(parse_tree(source)?),
             lang: self,
@@ -907,14 +907,14 @@ impl Language for BladeLang {
 
 /// A Blade tree as an ast-grep document.
 #[derive(Clone)]
-pub(crate) struct BladeDoc {
-    pub(crate) tree: Arc<BladeTree>,
+pub struct BladeDoc {
+    pub tree: Arc<BladeTree>,
     lang: BladeLang,
 }
 
 impl BladeDoc {
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn new(tree: BladeTree, lang: BladeLang) -> Self {
+    pub fn new(tree: BladeTree, lang: BladeLang) -> Self {
         Self {
             tree: Arc::new(tree),
             lang,
@@ -952,7 +952,7 @@ impl Doc for BladeDoc {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct BladeNode<'r> {
+pub struct BladeNode<'r> {
     tree: &'r BladeTree,
     index: u32,
 }
@@ -972,7 +972,7 @@ impl<'r> BladeNode<'r> {
         }
     }
     /// The id of the field this node is its parent's (`FIELD_NAMES`), 0 for none.
-    pub(crate) fn field_id(&self) -> u16 {
+    pub fn field_id(&self) -> u16 {
         self.rec().field
     }
     /// The template's bytes this node spans.
@@ -1092,5 +1092,4 @@ impl<'r> SgNode<'r> for BladeNode<'r> {
     }
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

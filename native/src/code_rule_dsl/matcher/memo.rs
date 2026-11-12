@@ -146,12 +146,12 @@ thread_local! {
 /// The most verdicts a file's memo held at once on this thread (`reset_remembered_peak` restarts
 /// it).
 #[cfg(any(test, feature = "test-hooks"))]
-fn remembered_peak() -> usize {
+pub fn remembered_peak() -> usize {
     REMEMBERED_PEAK.get()
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
-fn reset_remembered_peak() {
+pub fn reset_remembered_peak() {
     REMEMBERED_PEAK.set(0);
 }
 
@@ -305,7 +305,7 @@ pub(super) fn nodes_of_kinds(
 /// deadline passed while they were listed (the clause stops at it). `None` where the walk must test
 /// every node: in a three-valued clause (its order of unknown verdicts is the walk's), or over a
 /// tree that is not the evaluated file's.
-pub(super) fn bounded<'t, D: Doc>(
+pub fn bounded<'t, D: Doc>(
     filter: &Arc<WalkFilter>,
     node: &Node<'t, D>,
     range: impl FnOnce(&TapeDoc, u32) -> Range<u32>,
@@ -613,7 +613,7 @@ pub(super) fn file_node<'a, 't, D: Doc>(node: &'a Node<'t, D>) -> Option<&'a Nod
 
 /// A three-valued answer, ordered as `or` combines them.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(super) enum Truth {
+pub enum Truth {
     False,
     Unknown,
     True,
@@ -801,5 +801,4 @@ fn bind<'t>(
     Some(())
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

@@ -80,10 +80,10 @@ use std::ops::Range;
 use tree_sitter::{Node, Parser, Tree};
 
 /// The program a Vue single-file component embeds and its map back to the file.
-pub(crate) struct View {
+pub struct View {
     /// The program's text, never empty.
-    text: String,
-    segments: SegmentMap,
+    pub text: String,
+    pub segments: SegmentMap,
     tree: Tree,
     dialect: GrammarDialect,
 }
@@ -91,7 +91,7 @@ pub(crate) struct View {
 impl View {
     /// The program the SFC whose tree-sitter-vue tree is `root` embeds; `None` where its script
     /// is in a language other than JavaScript or TypeScript, or nothing it holds is read.
-    pub(crate) fn build(root: Node<'_>, source: &str) -> Option<Self> {
+    pub fn build(root: Node<'_>, source: &str) -> Option<Self> {
         let blocks = sfc::blocks(root, source);
         let dialect = sfc::script_dialect(&blocks)?;
         let language = dialect.get_ts_language();
@@ -145,19 +145,19 @@ impl View {
 
     /// The grammar the program is written in.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn dialect(&self) -> GrammarDialect {
+    pub fn dialect(&self) -> GrammarDialect {
         self.dialect
     }
 
     /// The program's root node.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn root(&self) -> Node<'_> {
+    pub fn root(&self) -> Node<'_> {
         self.tree.root_node()
     }
 
     /// The program's text.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn text(&self) -> &str {
+    pub fn text(&self) -> &str {
         &self.text
     }
 
@@ -165,7 +165,7 @@ impl View {
     /// parameters it writes in an empty `v-for` alias slot (`(,a)`); every other token the view
     /// writes stands for script, a template expression or the Vue syntax around one.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn segments(&self) -> &SegmentMap {
+    pub fn segments(&self) -> &SegmentMap {
         &self.segments
     }
 
@@ -197,7 +197,7 @@ impl View {
     /// The ranges of `source`, the `.vue` file, a node of the program stands for, in file order,
     /// as its tape's document places them (`tape::TapeDoc`'s `Origin`).
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn ranges(&self, node: Node<'_>, source: &str) -> Vec<Range<usize>> {
+    pub fn ranges(&self, node: Node<'_>, source: &str) -> Vec<Range<usize>> {
         self.segments
             .file_ranges(self.extent(node))
             .bridged(source)
@@ -209,7 +209,7 @@ impl View {
     /// The bytes of `source` a node of the program reports: its primary range
     /// (`FileRanges::primary`).
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn span(&self, node: Node<'_>, source: &str) -> Range<usize> {
+    pub fn span(&self, node: Node<'_>, source: &str) -> Range<usize> {
         self.segments
             .file_ranges(self.extent(node))
             .bridged(source)
@@ -218,7 +218,7 @@ impl View {
 
     /// The file ranges the program copies byte for byte, in program order.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn copied(&self) -> impl Iterator<Item = Range<usize>> + '_ {
+    pub fn copied(&self) -> impl Iterator<Item = Range<usize>> + '_ {
         self.segments.copied()
     }
 }
@@ -226,7 +226,7 @@ impl View {
 /// Native tags of compiler-dom 3.5.43's `isNativeTag` (@vue/shared's `HTML_TAGS`, `SVG_TAGS` and
 /// `MATH_TAGS`) that are JavaScript identifiers, sorted bytewise for binary search.
 #[rustfmt::skip]
-const NATIVE_TAGS: &[&str] = &[
+pub const NATIVE_TAGS: &[&str] = &[
     "a", "abbr", "address", "animate", "animateMotion", "animateTransform", "annotation", "area",
     "article", "aside", "audio", "b", "base", "bdi", "bdo", "blockquote", "body", "br", "button",
     "canvas", "caption", "circle", "cite", "clipPath", "code", "col", "colgroup", "data",
@@ -868,5 +868,4 @@ impl<'t> Emitter<'t> {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

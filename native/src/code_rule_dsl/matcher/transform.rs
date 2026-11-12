@@ -45,9 +45,9 @@ pub fn line_table_constructions() -> usize {
 /// rather than its source text (`value`, with how values are read).
 #[derive(Clone)]
 pub struct Source {
-    pub(crate) variable: MetaVariable,
-    pub(crate) default: Option<String>,
-    pub(crate) value: Option<Reading>,
+    pub variable: MetaVariable,
+    pub default: Option<String>,
+    pub value: Option<Reading>,
 }
 
 /// A `value` source whose value is not known and that has no default.
@@ -57,7 +57,7 @@ pub struct TransformLimit;
 
 /// Why a transformation computed no text: its source's value is not known, or its output exceeds
 /// the budget.
-enum ComputeError {
+pub enum ComputeError {
     Unknown,
     Limit,
 }
@@ -148,7 +148,7 @@ impl Trans {
     ];
 
     /// `KINDS` as a message lists them: `replace, substring, ... or toPrecision`.
-    pub(crate) fn kinds_listed() -> String {
+    pub fn kinds_listed() -> String {
         let (last, rest) = Self::KINDS.split_last().expect("transformation kinds");
         format!("{} or {last}", rest.join(", "))
     }
@@ -202,7 +202,7 @@ impl Trans {
 
     /// Upstream's `compute`: `Ok(None)` where the source is unbound and has no default. `line`,
     /// `lines` and `count` read the capture's node; an unbound one reads as the default.
-    fn compute<D: Doc>(
+    pub fn compute<D: Doc>(
         &self,
         env: &MetaVarEnv<'_, D>,
         max_output_bytes: usize,
@@ -319,7 +319,7 @@ fn variable_name(variable: &MetaVariable) -> &str {
     }
 }
 
-fn replace_bounded(
+pub fn replace_bounded(
     text: &str,
     regex: &Regex,
     by: &str,
@@ -581,8 +581,7 @@ impl Transform {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 /// `Number::toString(x)` in base 10: the shortest digits that read back as `x`, laid out as
 /// ECMA-262 §6.1.6.1.20 lays them out.

@@ -33,8 +33,7 @@ pub fn php_comment_end(source: &str, range: &std::ops::Range<usize>) -> usize {
 // cratify: `biome` is rerail-lang-ecma's (it mounts it)
 // cratify: `clippy` is rerail-lang-rust's (it mounts it)
 // cratify: `eslint` is rerail-lang-ecma's (it mounts it)
-#[cfg(test)]
-pub mod eslint_tests;
+// eslint_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 // cratify: `noqa` is rerail-lang-python's (it mounts it)
 // cratify: `nosec` is rerail-lang-python's (it mounts it)
 // cratify: `oxlint` is rerail-lang-ecma's (it mounts it)
@@ -47,5 +46,4 @@ pub mod rerail;
 // cratify: `sqlfluff` is rerail-lang-sql's (it mounts it)
 // cratify: `vue` is rerail-lang-ecma's (it mounts it)
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

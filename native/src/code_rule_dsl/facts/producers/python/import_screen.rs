@@ -19,7 +19,7 @@ enum Prefix {
 }
 
 #[derive(Default, Debug)]
-pub(crate) struct Imports {
+pub struct Imports {
     bindings: BTreeMap<String, BTreeSet<Prefix>>,
     /// An import could not be understood, so qualification requests are admitted.
     pub opaque: bool,

@@ -586,8 +586,7 @@ pub mod code_rule_dsl {
     pub mod value {
         pub use rerail_w::code_rule_dsl::value::*;
         pub mod ecma;
-        #[cfg(test)]
-        pub mod eslint_rules;
+        // eslint_rules: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
         pub mod key;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::language::{Family, GrammarDialect};

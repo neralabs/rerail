@@ -8,7 +8,7 @@ use crate::code_rule_dsl::value::python::{Prefix, prefix};
 use ast_grep_core::{Doc, Node};
 
 /// Decodes a Python `string` or `concatenated_string` node as `str`, recording spans.
-pub(crate) fn decode_python<D: Doc>(node: &Node<'_, D>) -> Decode {
+pub fn decode_python<D: Doc>(node: &Node<'_, D>) -> Decode {
     let parts: Vec<Node<'_, D>> = match node.kind().as_ref() {
         "string" => vec![node.clone()],
         "concatenated_string" => node
@@ -184,7 +184,7 @@ fn escape(body: &str, index: usize, at: usize, decoded: &mut Decoded) -> Option<
 
 /// Parses a Python string node with a text grammar (not `annotation`, which the scope table
 /// parses). Spends one step of `spend` per tree node; `None` when the budget ran out.
-pub(crate) fn parse_string<D: ast_grep_core::Doc>(
+pub fn parse_string<D: ast_grep_core::Doc>(
     node: &ast_grep_core::Node<'_, D>,
     grammar: super::Grammar,
     spend: &mut dyn FnMut(usize) -> bool,
