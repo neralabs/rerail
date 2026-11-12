@@ -11,6 +11,7 @@
  * the next daemon takes none of a root's reads when the clock is behind the last walk that kept them. Files named like
  * ones holding secrets are never kept. The reads of a root live in one file of `folder`, written off the event path; a
  * root that is gone, or that no walk used for 30 days, is dropped, and past `maxBytes` the least recently used go first.
+ * A read or write that fails costs the next walks reads, never a change they miss, and the daemon's log says so once.
  */
 import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readdir, readFile, rename, rm, stat, utimes, writeFile } from "node:fs/promises";
@@ -199,6 +200,9 @@ interface RootFile {
 export class WalkDigests {
   readonly #folder: string;
   readonly #maxBytes: number;
+  readonly #log: (line: string) => void;
+  /** The failures the log has told of: one line each per daemon, as a full disk would fail every write. */
+  readonly #reported = new Set<"read" | "write">();
   /** What the folder holds, by file name: read once, before the first write, removal or use is noted, dropping what is stale. */
   #files: Map<string, RootFile> | undefined;
   readonly #pending = new Map<string, Pick<WalkReads, "sources" | "observedAt">>();
@@ -208,9 +212,11 @@ export class WalkDigests {
   #disk: Promise<void> = Promise.resolve();
   #closed = false;
 
-  constructor(folder: string, options: { maxBytes?: number } = {}) {
+  /** `log` takes each line that says what failed, the daemon's log (stderr) by default. */
+  constructor(folder: string, options: { maxBytes?: number; log?: (line: string) => void } = {}) {
     this.#folder = folder;
     this.#maxBytes = options.maxBytes ?? MAX_WALK_DIGEST_BYTES;
+    this.#log = options.log ?? (line => process.stderr.write(line));
   }
 
   /**
@@ -226,8 +232,9 @@ export class WalkDigests {
       if (decoded === undefined || observedAt < decoded.header.observedAt) return new Map();
       this.#used(name);
       return decoded.reads;
-    } catch {
+    } catch (error) {
       // Missing, cut short or not ours: the walk reads every file, as with no kept reads.
+      this.#failed("read", error);
       return new Map();
     }
   }
@@ -282,7 +289,25 @@ export class WalkDigests {
   }
 
   #queue(operation: () => Promise<void>): void {
-    this.#disk = this.#disk.then(operation).catch(() => undefined);
+    this.#disk = this.#disk.then(operation).catch((error: unknown) => this.#failed("write", error));
+  }
+
+  /**
+   * Tells the log, once per daemon, that a read or write of the kept reads failed: the walks then read those files again,
+   * which is slower, not wrong. A file that is not there (no daemon kept that root, or another removed it) is no failure.
+   */
+  #failed(what: "read" | "write", error: unknown): void {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === "ENOENT" || this.#reported.has(what)) return;
+    this.#reported.add(what);
+    const reason = error instanceof Error ? error.message : String(error);
+    const line = what === "write"
+      ? `rerail: cannot keep what the source walks read in ${this.#folder}: ${reason}. After a restart the daemon reads those files again.\n`
+      : `rerail: cannot read what the last daemon's source walks read in ${this.#folder}: ${reason}. The walks read those files again.\n`;
+    try {
+      this.#log(line);
+    } catch {
+      // A log that cannot take the line leaves nothing else to tell, and the queue of writes must go on.
+    }
   }
 
   async #writeDue(all: boolean): Promise<void> {
@@ -312,8 +337,10 @@ export class WalkDigests {
       await writeFile(temporary, data, { mode: 0o600 });
       await rename(temporary, join(this.#folder, name));
       files.set(name, { root, bytes: data.length, usedAt: Date.now() });
-    } catch {
-      await rm(temporary, { force: true });
+    } catch (error) {
+      this.#failed("write", error);
+      // A folder that could not be made holds no temporary file either; the other roots are still written.
+      await rm(temporary, { force: true }).catch(() => undefined);
     }
   }
 

@@ -83,15 +83,18 @@ describe("WalkDigests", () => {
     first.keep(root, { sources, previous: new Map(), kept: undefined, observedAt: 3_000 });
     await first.close();
 
-    const next = new WalkDigests(folder);
+    const lines: string[] = [];
+    const next = new WalkDigests(folder, { log: line => lines.push(line) });
     expect(Object.fromEntries(await next.load(root, 4_000))).toEqual({
       "src/a.py": { kind: "text", stamp: stamp(), digest: DIGEST },
       "logo.png": { kind: "binary", stamp: stamp() },
     });
     // The clock went back while no daemon ran: a file written since may carry a stamp it had before.
     expect((await next.load(root, 2_999)).size).toBe(0);
+    // No daemon kept this root: nothing failed.
     expect((await next.load(await scratch(), 4_000)).size).toBe(0);
     await next.close();
+    expect(lines).toEqual([]);
   });
 
   it("writes nothing for a walk that found every file as it started or as the last daemon kept it", async () => {
@@ -106,16 +109,18 @@ describe("WalkDigests", () => {
     expect(await readdir(folder).catch(() => [])).toEqual([]);
   });
 
-  it("reads a file it cannot decode as no kept reads", async () => {
+  it("reads a file it cannot decode as no kept reads, and says so in the log", async () => {
     const [folder, root] = [await scratch(), await scratch()];
     const first = new WalkDigests(folder);
     first.keep(root, { sources: new Map([["src/a.py", read()]]), previous: new Map(), kept: undefined, observedAt: 3_000 });
     await first.close();
     const [name] = await readdir(folder);
     await writeFile(join(folder, name!), `${JSON.stringify({ format: 1, root, observedAt: 3_000 })}\nnot gzip`);
-    const next = new WalkDigests(folder);
+    const lines: string[] = [];
+    const next = new WalkDigests(folder, { log: line => lines.push(line) });
     expect((await next.load(root, 4_000)).size).toBe(0);
     await next.close();
+    expect(lines).toEqual([expect.stringContaining(`cannot read what the last daemon's source walks read in ${folder}`)]);
   });
 
   it("drops a root whose folder is gone, a worktree it is told is gone, and past its bound the roots used longest ago", async () => {
@@ -141,14 +146,17 @@ describe("WalkDigests", () => {
     expect([...(await keptFiles(folder)).keys()].map(root => roots.indexOf(root)).sort()).toEqual([1, 2, 3, 4]);
   });
 
-  it("keeps nothing, and fails no walk, where it cannot write", async () => {
-    const root = await scratch();
+  it("keeps nothing, fails no walk, and says so once in the log, where it cannot write", async () => {
+    const [root, other] = [await scratch(), await scratch()];
     const blocked = join(root, "file");
     await writeFile(blocked, "");
-    const digests = new WalkDigests(join(blocked, "walk-digests"));
-    digests.keep(root, { sources: new Map([["src/a.py", read()]]), previous: new Map(), kept: undefined, observedAt: 3_000 });
+    const lines: string[] = [];
+    const digests = new WalkDigests(join(blocked, "walk-digests"), { log: line => lines.push(line) });
+    for (const walked of [root, other]) digests.keep(walked, { sources: new Map([["src/a.py", read()]]), previous: new Map(), kept: undefined, observedAt: 3_000 });
     await expect(digests.close()).resolves.toBeUndefined();
-    expect((await new WalkDigests(join(blocked, "walk-digests")).load(root, 4_000)).size).toBe(0);
+    // Two roots failed to be written; a full disk would fail every write, so the log is told once.
+    expect(lines).toEqual([expect.stringContaining(`cannot keep what the source walks read in ${join(blocked, "walk-digests")}`)]);
+    expect((await new WalkDigests(join(blocked, "walk-digests"), { log: () => undefined }).load(root, 4_000)).size).toBe(0);
   });
 });
 
