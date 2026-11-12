@@ -75,9 +75,10 @@ enum Arg {
     /// A state's entry past its `TOKEN`: a call's way into its callee's start, where the
     /// callee's level tests a mark its caller's does not (`Arg::Again`).
     Past(u16),
-    /// Where a mark's arm goes: a state's entry, or for a state that takes no token, its entry
-    /// after a mark (`Emit::marked`), which closes at the last token taken (`CLOSE m=0`): a
-    /// mark takes no bytes, so its token's end is no node's.
+    /// Where a mark's arm goes: a state's entry past its `TOKEN` (the token is not taken, so
+    /// the state switches on it), or for a state that takes no token, its entry after a mark
+    /// (`Emit::marked`), which closes at the last token taken (`CLOSE m=0`): a mark takes no
+    /// bytes, so its token's end is no node's.
     Marked(u16),
     /// A word's place.
     Pc(u16),
@@ -195,6 +196,12 @@ impl Emit<'_> {
         }
     }
 
+    /// Where a mark's arm goes in state `s` (`Arg::Marked`).
+    fn after_mark(&self, s: u16) -> u16 {
+        let at = self.marked[usize::from(s)];
+        if self.words.get(usize::from(at)).is_some_and(|w| w.0 == "TOKEN") { at + 1 } else { at }
+    }
+
     fn string(&mut self, s: &[u8]) -> u16 {
         match self.strings.iter().position(|x| x == s) {
             Some(i) => i as u16,
@@ -212,6 +219,10 @@ impl Emit<'_> {
         }
         let at = self.pc();
         self.arm_code.insert((arm, span, pre.clone()), at);
+        // The arm's guards before its token is taken: a guard that holds goes on as if the
+        // state had no arm on the token, which is then still the next one's (`SPAN` takes a
+        // token for good, so every word knows whether its token is taken).
+        self.guards(arm);
         // A call takes no token (`ArmRow::call`): the callee's start switches on it.
         match span {
             _ if self.arms[arm].call => {}
@@ -225,7 +236,7 @@ impl Emit<'_> {
                 self.push("WORD", 0, Arg::Str(s));
             }
         }
-        self.body(arm);
+        self.acts(arm);
         at
     }
 
@@ -238,19 +249,28 @@ impl Emit<'_> {
         }
     }
 
-    /// An arm's acts, push and jump, here.
+    /// An arm that takes its token's bytes to its record's end, entered by falling to it: its
+    /// code here, or a jump to where it is already.
+    fn here(&mut self, arm: usize) {
+        let pc = self.pc();
+        let at = self.arm(arm, Span::Last, Pre::None);
+        if at != pc {
+            self.push("GOTO", 0, Arg::Pc(at));
+        }
+    }
+
+    /// An arm's guards, acts, push and jump, here: an arm that takes no token.
     fn body(&mut self, arm: usize) -> u16 {
         let at = self.pc();
-        let a = &self.arms[arm];
-        let (token, to, ret) = (a.token, a.to, a.push.clone());
-        // A remembered token is the word of the level it is taken at: after the calls the arm
-        // makes, which keep their caller's (`PUSH`), so the innermost level's.
-        let mut remember = None;
-        // Each call's flags (`with F R`), after its `PUSH`: (call, flag, set).
-        let mut flags: Vec<(u8, u16, bool)> = Vec::new();
-        // The arm's guards first (`unless F`): where the flag is set, the state goes on as if it
-        // had no arm on the token: its end, or a refusal.
-        for act in a.acts.clone() {
+        self.guards(arm);
+        self.acts(arm);
+        at
+    }
+
+    /// An arm's guards (`unless F`): where the flag is set, the state goes on as if it had no
+    /// arm on the token: its end, or a refusal.
+    fn guards(&mut self, arm: usize) {
+        for act in self.arms[arm].acts.clone() {
             if let Act::Unless { flag } = act {
                 self.push("FLAG", 2, Arg::Num(flag));
                 if self.default == REFUSE {
@@ -260,6 +280,17 @@ impl Emit<'_> {
                 }
             }
         }
+    }
+
+    /// An arm's acts, push and jump, here.
+    fn acts(&mut self, arm: usize) {
+        let a = &self.arms[arm];
+        let (token, to, ret) = (a.token, a.to, a.push.clone());
+        // A remembered token is the word of the level it is taken at: after the calls the arm
+        // makes, which keep their caller's (`PUSH`), so the innermost level's.
+        let mut remember = None;
+        // Each call's flags (`with F R`), after its `PUSH`: (call, flag, set).
+        let mut flags: Vec<(u8, u16, bool)> = Vec::new();
         let a = &self.arms[arm];
         for act in a.acts.clone() {
             let (supers, field) = match act {
@@ -384,7 +415,6 @@ impl Emit<'_> {
             }
         }
         self.rule = caller;
-        at
     }
 
     /// The target for the candidates of one byte at `depth` of their keywords.
@@ -457,13 +487,13 @@ impl Emit<'_> {
         }
         if !plain.is_empty() && (words.len() > 1 || !check_refuses) {
             // Keywords and the row's own kind on one byte, which the row's check does not tell
-            // apart: the token's end, then a test per keyword (`WORD m=1`, a jump to the
-            // keyword's arm where the token is the word), then the row's own arm.
+            // apart: a test per keyword (`WORD m=1`, a jump to the keyword's arm where the token
+            // is the word: the record names it), then the row's own arm. Each arm takes the
+            // token; one that is no arm's is left for the state's end.
             if row.one_byte {
                 return Err(format!("one-byte tokens sharing byte {b:#04x} with keywords: not compiled yet"));
             }
             let at = self.pc();
-            self.push("SPAN", 1, Arg::Num(LASTS));
             let mut jumps = Vec::new();
             for c in &words {
                 let w = self.string(c.word.as_ref().expect("a keyword"));
@@ -478,11 +508,11 @@ impl Emit<'_> {
                 jumps.push((self.pc(), None));
                 self.push("GOTO", 0, Arg::Pc(0));
             }
-            self.body(plain[0].arm);
+            self.here(plain[0].arm);
             let mut stop = (self.default != REFUSE).then_some(self.default);
             for (jump, arm) in jumps {
                 let to = match arm {
-                    Some(arm) => self.body(arm),
+                    Some(arm) => self.arm(arm, Span::Last, Pre::None),
                     None => *stop.get_or_insert_with(|| {
                         let pc = self.pc();
                         self.push("STOP", 0, Arg::None);
@@ -503,19 +533,16 @@ impl Emit<'_> {
             if pre == Pre::None || self.default == REFUSE {
                 return Ok(self.arm(words[0].arm, span, pre));
             }
-            // Where the state may end, a token that is not the word is its caller's: a test, the
-            // arm where the token is the word, else the end.
+            // Where the state may end, a token that is not the word is its caller's: a test (the
+            // record names the word), the arm where the token is the word, else the end, with
+            // the token not taken.
             let at = self.pc();
-            match span {
-                Span::Len(n) => self.push("SPAN", 0, Arg::Num(n)),
-                Span::Last => self.push("SPAN", 1, Arg::Num(LASTS)),
-            }
             let s = self.string(&w);
             self.push("WORD", 1, Arg::Str(s));
             let jump = self.pc();
             self.push("GOTO", 0, Arg::Pc(0));
             self.push("GOTO", 0, Arg::Pc(self.default));
-            let to = self.body(words[0].arm);
+            let to = self.arm(words[0].arm, span, Pre::None);
             self.words[usize::from(jump)].2 = Arg::Pc(to);
             return Ok(at);
         }
@@ -536,7 +563,6 @@ impl Emit<'_> {
                 .filter(|w| w.starts_with(&prefix) && !words.iter().any(|c| c.word.as_ref() == Some(w)))
                 .collect();
             let at = self.pc();
-            self.push("SPAN", 1, Arg::Num(LASTS));
             let mut jumps = Vec::new();
             for c in &words {
                 let w = self.string(c.word.as_ref().expect("a keyword"));
@@ -553,7 +579,7 @@ impl Emit<'_> {
             // No word and no plain arm: the state's end, or a refusal.
             let stop = match plain.first() {
                 Some(p) => {
-                    self.body(p.arm);
+                    self.here(p.arm);
                     (self.default != REFUSE).then_some(self.default)
                 }
                 None if self.default != REFUSE => {
@@ -570,7 +596,7 @@ impl Emit<'_> {
             let mut stop = stop;
             for (jump, arm) in jumps {
                 let to = match arm {
-                    Some(arm) => self.body(arm),
+                    Some(arm) => self.arm(arm, Span::Last, Pre::None),
                     None => *stop.get_or_insert_with(|| {
                         let pc = self.pc();
                         self.push("STOP", 0, Arg::None);
@@ -658,7 +684,9 @@ impl Emit<'_> {
                 for _ in 0..c + u8::from(st.own) {
                     self.push("CLOSE", mode, Arg::None);
                 }
-                self.push("RETURN", 0, Arg::None);
+                // After a mark, the token is not taken: the caller switches on it again
+                // (`RETURN m=1`), as a return lands past `TOKEN` only where none was taken.
+                self.push("RETURN", u8::from(mode == 0), Arg::None);
             }
             return Ok(());
         }
@@ -851,7 +879,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         Arg::State(s) => Arg::Pc(e.entry[usize::from(s)]),
         Arg::Again(s) => Arg::Pc(e.switch_at[usize::from(s)]),
         Arg::Past(s) => Arg::Pc(e.entry[usize::from(s)] + 1),
-        Arg::Marked(s) => Arg::Pc(e.marked[usize::from(s)]),
+        Arg::Marked(s) => Arg::Pc(e.after_mark(s)),
         Arg::Return(s) => Arg::Pc(returns.get(&s).copied().unwrap_or(e.entry[usize::from(s)])),
         a => a,
     };
@@ -910,7 +938,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
             Arg::State(s) => write!(text, " @{:04}", e.entry[usize::from(s)]),
             Arg::Again(s) => write!(text, " @{:04}", e.switch_at[usize::from(s)]),
             Arg::Past(s) => write!(text, " @{:04}", e.entry[usize::from(s)] + 1),
-            Arg::Marked(s) => write!(text, " @{:04}", e.marked[usize::from(s)]),
+            Arg::Marked(s) => write!(text, " @{:04}", e.after_mark(s)),
             Arg::Return(s) => write!(text, " @{:04}", returns.get(&s).copied().unwrap_or(e.entry[usize::from(s)])),
             Arg::Pc(p) => write!(text, " @{p:04}"),
         };

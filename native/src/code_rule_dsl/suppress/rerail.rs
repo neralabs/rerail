@@ -35,17 +35,17 @@ const DIRECTIVE: &str = "rerail-ignore";
 
 /// A byte range covered for the rule ids a directive names.
 #[derive(Debug, PartialEq, Eq)]
-struct Cover {
+pub struct Cover {
     /// Exclusive of its end, as the covered node's; the whole file's runs to `usize::MAX`, past an
     /// anchor at the end of the file.
-    range: Range<usize>,
-    rules: Vec<String>,
+    pub range: Range<usize>,
+    pub rules: Vec<String>,
 }
 
 /// A file's `rerail-ignore` directives, as the ranges they cover.
 #[derive(Debug, Default)]
 pub struct RerailIgnores {
-    covers: Vec<Cover>,
+    pub covers: Vec<Cover>,
 }
 
 impl RerailIgnores {
@@ -155,7 +155,7 @@ impl Kinds {
 /// after the comment's opener and any `*` and white space, `rerail-ignore`, then white space and
 /// ids separated by commas or white space, up to the end of the line or a ` -- ` reason. None
 /// where the comment is no directive, or one naming no rule.
-fn rule_ids(comment: &str) -> Vec<&str> {
+pub fn rule_ids(comment: &str) -> Vec<&str> {
     let mut text = comment.trim_end();
     if let Some(inner) = ["--}}", "-->", "*/"]
         .into_iter()
@@ -321,5 +321,4 @@ fn covered<D: Doc>(
     None
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

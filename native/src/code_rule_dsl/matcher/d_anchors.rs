@@ -143,13 +143,13 @@ use crate::code_rule_dsl::language::adapter::pack as language_pack;
 // the roots they keep (`run_clause`), including for predicates answered by this index.
 #[derive(Clone)]
 pub struct AnchorPlan {
-    root_kinds: Option<BTreeSet<u16>>,
-    condition: Condition,
+    pub root_kinds: Option<BTreeSet<u16>>,
+    pub condition: Condition,
     pub exact: bool,
 }
 
 #[derive(Clone)]
-enum Condition {
+pub enum Condition {
     Always,
     Pattern(Vec<Requirement>),
     Text {
@@ -173,7 +173,7 @@ enum Condition {
 }
 
 #[derive(Clone, Copy)]
-enum Direction {
+pub enum Direction {
     Has,
     Inside,
     Precedes,
@@ -181,16 +181,16 @@ enum Direction {
 }
 
 #[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
-enum Required {
+pub enum Required {
     Kind(u16),
     Terminal(u16, String),
 }
 
 #[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
-struct Requirement {
-    value: Required,
+pub struct Requirement {
+    pub value: Required,
     // Immediate parent first. Smart skips siblings, not ancestor levels.
-    parents: Vec<Option<u16>>,
+    pub parents: Vec<Option<u16>>,
 }
 
 /// `matches` references inlined into one query's plan before the rest fall back to unrestricted.
@@ -218,7 +218,7 @@ impl AnchorPlan {
     }
 
     /// Selects every root: the sound plan for a sub-rule that is not analysed.
-    fn unrestricted() -> Self {
+    pub fn unrestricted() -> Self {
         Self {
             root_kinds: None,
             condition: Condition::Always,

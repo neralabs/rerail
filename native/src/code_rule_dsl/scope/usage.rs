@@ -186,7 +186,7 @@ impl Usage {
     /// Whether the reference starting at `start` is its function's first read of the binding that
     /// the function's own (later) binding of the name shadows: `Some(true)` where that binding is
     /// the name's builtin, so only if the target version has one.
-    pub(crate) fn before_local(&self, start: usize) -> Option<bool> {
+    pub fn before_local(&self, start: usize) -> Option<bool> {
         let index = self
             .before_local
             .binary_search_by_key(&start, |(start, _)| *start)
@@ -496,8 +496,7 @@ impl ScopeTable {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 // TypeScript's and JavaScript's usage index (moved from `usage.rs` by the crate split). (`lang_ecma`, its crate's).
 // cratify: `lang_ecma` is rerail-lang-ecma's (it mounts it)

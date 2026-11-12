@@ -1,6 +1,10 @@
 //! Admission of the actual catalog JSON through the generic compiler. No executor is substituted.
 use super::POLICIES;
-use crate::code_rule_dsl::{language::GrammarDialect, matcher::gated_match_tree, model::{ClauseKind, Query}};
+use crate::code_rule_dsl::{
+    CodeRuleDslRuntime, language::GrammarDialect, matcher::gated_match_tree,
+    model::{ClauseKind, Query}, slice::Rules, test_support::CAPABILITIES,
+    transducer::packed::{ExecutionBackend, LoweredMatcher},
+};
 use serde_json::{Value, json};
 
 pub(super) fn probe() -> Value {

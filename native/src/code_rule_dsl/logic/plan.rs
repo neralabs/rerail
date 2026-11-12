@@ -1340,6 +1340,12 @@ impl Model {
         Ok(self.plan_rule_explained(prog, head, body, first)?.0)
     }
 
+    /// `plan_rule` for its price alone: no EXPLAIN is made of it, even when profiling (§4's pricing of a stratum's
+    /// two forms planned 10,092 rules at O125 step 08 to read their totals, 0.6 s of explain records).
+    pub fn plan_rule_priced(&self, prog: &Program, head: &Atom, body: &[Literal], first: Option<usize>) -> Result<Plan> {
+        Ok(self.plan_inner(prog, head, body, first, None, false)?.0)
+    }
+
     /// `plan_rule`, and when profiling, the plan as EXPLAIN shows it (`profile::RulePlan`): the search's size, and per
     /// step its access method, source and the rows expected after it.
     pub fn plan_rule_explained(
@@ -1786,6 +1792,11 @@ impl Model {
                 basis_hit.set(hit);
             }
             // Every column bound: a membership test, at most one row of a set.
+            // A tree child is also unique by (parent, ordinal). Marginal hot-value
+            // frequencies cannot multiply this lookup into several children.
+            if a.rel == "child" && self.is_input(prog, &a.rel) && cols.contains(&0) && cols.contains(&2) {
+                rows = rows.min(1.0);
+            }
             if cols.len() == a.args.len() && !prog.lattice.contains_key(a.rel.as_str()) {
                 if rows > 1.0 { basis.set("membership"); }
                 rows = rows.min(1.0);
@@ -2606,7 +2617,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "tree_digest" | "def_digest" => &[&["n"], &["s", "n"]],
         "rx_span" => &[&["c"], &["m"]],
         "ast_match" => &[&["n"], &["c"]],
-        "intval" | "op" | "op_t" | "tape" | "line" | "end_line" | "col" | "docof" | "visit_index" | "ast_depth" | "spread" | "reference_open" => &[&["n"]],
+        "intval" | "op" | "op_t" | "tape" | "line" | "end_line" | "col" | "docof" | "visit_index" | "ast_depth" | "spread" | "reference_open" | "rr_long_text_node" => &[&["n"]],
         "node_order" => &[&["n"], &["k"]],
         "first_token" | "last_token" => &[&["n"]],
         "token_before" | "token_after" => &[&["x"]],
@@ -3795,7 +3806,7 @@ impl Run<'_, '_> {
             let mut total = 0.0;
             let mut made: BTreeMap<&str, f64> = BTreeMap::new();
             for r in rules {
-                let (_, w, rows) = self.model.plan_rule(prog, &r.head, &r.body, None).ok()?;
+                let (_, w, rows) = self.model.plan_rule_priced(prog, &r.head, &r.body, None).ok()?;
                 total += w;
                 if grow && pieces.iter().any(|p| **p == r.head.rel) {
                     let n = made.entry(r.head.rel.as_str()).or_insert(0.0);
@@ -5753,6 +5764,7 @@ impl<'a> Run<'a, '_> {
             let text_symbols = |i: usize, c: usize| self.model.inputs.atoms.is_none() && prog_types(prog, rels[i]).get(c) == Some(&"sym");
             let live = self.fx().stats(&name, &text_symbols)?;
             for (i, (r, l)) in rels.iter().zip(live).enumerate() {
+                replanned_at.rows(i, l.n);
                 replanned_at.delta(i, l.delta);
                 self.model.stats.delta_rows.insert((*r).clone(), l.delta as f64);
                 for slot in live_stats(&mut self.model, r, l) {
@@ -5762,7 +5774,7 @@ impl<'a> Run<'a, '_> {
             if f.last() == Some(&"1") || chunk == 0 {
                 break;
             }
-            if chunk == 1 {
+            {
                 // The whole plans, planned from seed estimates (a derived relation empty, its columns without
                 // distinct counts), again from the live counts: once per rule, the same plan for each of its probes
                 // (`setfix` runs it once a wave).
@@ -5775,6 +5787,7 @@ impl<'a> Run<'a, '_> {
                     if r.body[probes[k].1].atom().is_some_and(|a| small_batches(&a.rel)) {
                         continue;
                     }
+                    if !replanned_at.take_whole(k) { continue; }
                     let spec = match whole.iter().find(|(p, _)| std::ptr::eq(*p, r)) {
                         Some((_, w)) => w.clone(),
                         None => {
@@ -5858,7 +5871,7 @@ impl<'a> Run<'a, '_> {
         placement::record(&stratum_key(scc), &placed, None);
         if profiling {
             let (u, s) = corpus::thread_usage();
-            let work: u64 = counted.iter().chain(earlier.iter().flatten().map(|(_, c)| c)).flatten().map(|(a, _)| *a).sum();
+            let work: u64 = counted.iter().chain(earlier.iter().flatten().map(|(_, c)| c)).map(|c| super::profile::plan_work(c)).sum();
             super::profile::report::placed(&stratum_key(scc), &placed, &shape, work, u + s - cpu_at, device.as_ref());
         }
         if super::profile::on() {
@@ -5909,11 +5922,11 @@ impl<'a> Run<'a, '_> {
             let empty = Vec::new();
             for (k, o) in orders.iter().chain(probes.iter().map(|p| &p.2)).enumerate() {
                 for (was, c) in earlier.get(k).into_iter().flatten() {
-                    let work: u64 = c.iter().map(|(a, _)| a).sum();
+                    let work: u64 = super::profile::plan_work(c);
                     text += &format!("  work={work} (an earlier order) {}\n    {}\n", c.iter().map(|(a, b)| format!("{a}:{b}")).collect::<Vec<_>>().join(","), shown(was).join(" , "));
                 }
                 let line: Vec<String> = counted.get(k).unwrap_or(&empty).iter().map(|(a, b)| format!("{a}:{b}")).collect();
-                let work: u64 = counted.get(k).unwrap_or(&empty).iter().map(|(a, _)| a).sum();
+                let work: u64 = super::profile::plan_work(counted.get(k).unwrap_or(&empty));
                 text += &format!("  work={work} {}\n    {}\n", line.join(","), shown(o).join(" , "));
             }
             use std::io::Write;
@@ -7231,13 +7244,15 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let mut again_chosen: Vec<Option<bool>> = vec![None; prog.again.len()];
     // A stratum derived again makes its deltas against its old rows only when a stratum that runs reads them
     // (`RERAIL_AGAIN_DEFER`): those not yet made, by name, with the group and rule that make each and the size taken
-    // for it. A group reading one decides by its estimate (`estimate`, the default) and makes it if maintained; or is
-    // derived again without deciding (`propagate`); or makes it and measures (`measure`). `off` makes every delta
-    // where its stratum is derived again.
+    // for it. A group reading one makes it and measures it (`measure`, the default); or decides by its estimate
+    // (`estimate`) and makes it if maintained; or is derived again without deciding (`propagate`). `off` makes every
+    // delta where its stratum is derived again. An estimate is its maker's input deltas, an upper bound, and bounds
+    // compound down the strata: at O125 step 08 `possible_type` was taken at 347,616 input delta rows, where no delta
+    // made was over 5,497 (except `node_order`'s), and 379 strata were derived again; measured, work fell 26%.
     let defer_mode = std::env::var("RERAIL_AGAIN_DEFER").unwrap_or_default();
     let defer = defer_mode != "off";
     let propagate = defer_mode == "propagate";
-    let estimate = defer && !propagate && defer_mode != "measure";
+    let estimate = defer && !propagate && defer_mode == "estimate";
     let mut again_delta: Vec<usize> = vec![0; prog.again.len()];
     let mut deferred: HashMap<String, (usize, usize, usize)> = HashMap::new();
     let mut unloaded: BTreeSet<String> = BTreeSet::new();
@@ -8187,7 +8202,7 @@ fn take_answers<'a>(
 }
 
 /// Per relation, the first stratum whose rules read it; a view is read where its first reader runs.
-fn first_reads(prog: &Program, sccs: &[BTreeSet<String>], views: &HashSet<String>) -> HashMap<String, usize> {
+pub fn first_reads(prog: &Program, sccs: &[BTreeSet<String>], views: &HashSet<String>) -> HashMap<String, usize> {
     let mut first: HashMap<String, usize> = HashMap::new();
     let by = rules_by_stratum(prog, sccs);
     for (j, scc) in sccs.iter().enumerate().rev() {
@@ -8231,7 +8246,7 @@ fn thread_cpu() -> f64 {
     (user + kernel).as_secs_f64()
 }
 
-fn rules_by_stratum<'a>(prog: &'a Program, sccs: &[BTreeSet<String>]) -> Vec<Vec<&'a Rule>> {
+pub fn rules_by_stratum<'a>(prog: &'a Program, sccs: &[BTreeSet<String>]) -> Vec<Vec<&'a Rule>> {
     let of: HashMap<&str, usize> = sccs.iter().enumerate().flat_map(|(j, scc)| scc.iter().map(move |r| (r.as_str(), j))).collect();
     let mut by: Vec<Vec<&Rule>> = vec![Vec::new(); sccs.len()];
     for r in &prog.rules {
@@ -8242,7 +8257,7 @@ fn rules_by_stratum<'a>(prog: &'a Program, sccs: &[BTreeSet<String>]) -> Vec<Vec
     by
 }
 
-fn last_reads(prog: &Program, sccs: &[BTreeSet<String>], views: &HashSet<String>) -> HashMap<String, usize> {
+pub fn last_reads(prog: &Program, sccs: &[BTreeSet<String>], views: &HashSet<String>) -> HashMap<String, usize> {
     let mut last: HashMap<String, usize> = HashMap::new();
     let by = rules_by_stratum(prog, sccs);
     for (j, scc) in sccs.iter().enumerate().rev() {

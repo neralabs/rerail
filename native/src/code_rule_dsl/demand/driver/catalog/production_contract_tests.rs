@@ -567,6 +567,42 @@ fn oracle_result(case: &ContractCase) -> Value {
     serde_json::from_str(&output).expect("the oracle returns JSON")
 }
 
+/// The committed results as the engine gives them now, for `tools/bless_production_contracts.py` to write into the
+/// fixtures (their formats and key orders kept): `RERAIL_CONTRACT_ACTUAL=<file> cargo test … --ignored`. Each case's
+/// oracle violations and failures, and each case's terminal catalog (the same for the structural and the final
+/// projection: they differ in SQL only).
+#[test]
+#[ignore = "writes the actual contract results: RERAIL_CONTRACT_ACTUAL=<file>"]
+fn production_contract_actual_results() {
+    let path = std::env::var("RERAIL_CONTRACT_ACTUAL").expect("RERAIL_CONTRACT_ACTUAL");
+    let mut oracle = serde_json::Map::new();
+    let mut catalogs = serde_json::Map::new();
+    let catalogued = [implementation_goldens(), phase_five_implementation_goldens(), phase_six_implementation_goldens(), phase_seven_implementation_goldens()]
+        .into_iter()
+        .flat_map(|file| file.cases.into_iter().map(|golden| golden.name))
+        .collect::<BTreeSet<_>>();
+    for case in cases() {
+        let result = oracle_result(&case);
+        oracle.insert(case.name.clone(), serde_json::json!({ "violations": result["violations"], "failures": result["failures"] }));
+        if !catalogued.contains(&case.name) {
+            continue;
+        }
+        let catalog = actual_implementation_golden(&case)
+            .terminal_catalog
+            .iter()
+            .map(|t| serde_json::json!({
+                "ordinal": t.ordinal, "kind": t.kind, "dialect": t.dialect, "producer_kind": t.producer_kind,
+                "program_digest": t.program_digest, "result_schema": t.result_schema,
+                "owning_clause_ids": t.owning_clause_ids, "result_limit": t.result_limit,
+                "completion_required": t.completion_required,
+            }))
+            .collect::<Vec<_>>();
+        catalogs.insert(case.name.clone(), Value::from(catalog));
+    }
+    let actual = serde_json::json!({ "oracle": oracle, "catalogs": catalogs });
+    std::fs::write(&path, serde_json::to_string(&actual).unwrap()).unwrap();
+}
+
 #[test]
 fn production_contract_phase_one_distinct_count_uses_related_capture() {
     let cases = cases();
@@ -3221,9 +3257,9 @@ fn production_contract_phase_four_fact_rows_are_exact_and_typed() {
                 row(1, (0, 18), None, 14, 0, 0, 0, None, None),
                 row(1, (0, 18), None, 14, 0, 1, 0, None, None),
                 row(1, (0, 18), Some((0, 5)), 17, 0, 0, 1, Some(1), Some("S")),
+                // `$$$A` holds `a` and `b`: the `,` between them is an implied token, not on the tape (RER-131).
                 row(1, (0, 18), Some((13, 14)), 17, 0, 0, 1, Some(2), Some("A")),
-                row(1, (0, 18), Some((14, 15)), 17, 0, 1, 1, Some(2), Some("A")),
-                row(1, (0, 18), Some((16, 17)), 17, 0, 2, 1, Some(2), Some("A")),
+                row(1, (0, 18), Some((16, 17)), 17, 0, 1, 1, Some(2), Some("A")),
             ],
             "semantic-format-missing-fields" => vec![
                 row(1, (0, 25), None, 0, 0, 0, 1, Some(1), None),
@@ -3234,14 +3270,13 @@ fn production_contract_phase_four_fact_rows_are_exact_and_typed() {
                 row(1, (0, 25), Some((0, 11)), 17, 0, 0, 1, Some(1), Some("S")),
                 row(1, (0, 25), Some((19, 24)), 17, 0, 0, 1, Some(2), Some("A")),
             ],
+            // No row for `(` or `)`: implied tokens, not on the tape (RER-131).
             "semantic-layout" => vec![
                 row(1, (0, 1), None, 0, 0, 0, 1, None, None),
                 row(1, (0, 8), None, 0, 0, 0, 1, None, None),
                 row(1, (0, 8), None, 0, 0, 0, 1, None, None),
-                row(1, (1, 2), None, 0, 0, 0, 1, None, None),
                 row(1, (1, 8), None, 0, 0, 0, 1, None, None),
                 row(1, (2, 7), None, 0, 0, 0, 1, None, None),
-                row(1, (7, 8), None, 0, 0, 0, 1, None, None),
             ],
             "semantic-calls-direct" => vec![
                 row(2, (23, 31), None, 0, 0, 0, 1, None, None),

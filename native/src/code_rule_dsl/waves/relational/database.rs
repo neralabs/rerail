@@ -17,7 +17,7 @@ pub struct Database {
     pub(super) healthy: std::cell::Cell<bool>,
     pub(super) active: std::cell::Cell<usize>,
     pub(super) plan_signature: std::cell::Cell<u64>,
-    pub(super) storage: std::cell::RefCell<super::storage::Storage>,
+    pub storage: std::cell::RefCell<super::storage::Storage>,
     pub(super) bindings: std::cell::RefCell<super::shared::Bindings>,
     pub(super) program_bytes: std::cell::Cell<usize>,
     pub(super) descriptor_bytes: std::cell::Cell<usize>,
@@ -190,7 +190,7 @@ impl Database {
     }
 
     /// The owned connection, to set a hook of its own (an anchor store's budget, a test's step counter).
-    pub(in crate::code_rule_dsl) fn connection_mut(&mut self) -> &mut Connection {
+    pub fn connection_mut(&mut self) -> &mut Connection {
         &mut self.connection
     }
 }

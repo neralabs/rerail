@@ -36,7 +36,7 @@ pub(super) struct Context {
 }
 
 /// The document's shared tables; `None` where one was given up.
-pub(super) struct SharedTables<'a> {
+pub struct SharedTables<'a> {
     languages: BTreeMap<&'a str, Language<'a>>,
     tables: RefCell<HashMap<TableKey, Option<Table>>>,
 }

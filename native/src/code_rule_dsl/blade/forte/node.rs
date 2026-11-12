@@ -8,7 +8,7 @@ pub(crate) const NONE: i32 = -1;
 /// `Fragment` (3) is left out: its tree builder never creates one.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum NodeKind {
+pub enum NodeKind {
     Root = 0,
     Element = 1,
     Text = 2,
@@ -41,7 +41,7 @@ pub(crate) enum NodeKind {
 
 /// A directive's place in a block (`Parser\Directives\StructureRole`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum StructureRole {
+pub enum StructureRole {
     Opening,
     Closing,
     Intermediate,
@@ -52,7 +52,7 @@ pub(crate) enum StructureRole {
 impl StructureRole {
     /// The case name.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn name(self) -> &'static str {
+    pub fn name(self) -> &'static str {
         match self {
             StructureRole::Opening => "Opening",
             StructureRole::Closing => "Closing",
@@ -67,28 +67,28 @@ impl StructureRole {
 /// structural ones (`FlatNodeRecord::$extra`): `name` and `args` always together, `role` on
 /// directives but not on blocks.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct DirectiveInfo {
+pub struct DirectiveInfo {
     /// The directive's name as the tree builder resolved it (`$directiveName`).
-    pub(crate) name: Box<[u8]>,
+    pub name: Box<[u8]>,
     /// The arguments' text (`$argsContent`), `None` for PHP's null.
-    pub(crate) args: Option<Box<[u8]>>,
-    pub(crate) role: Option<StructureRole>,
+    pub args: Option<Box<[u8]>>,
+    pub role: Option<StructureRole>,
 }
 
 /// A flat node (`FlatNodeRecord`). Links are node indices and token fields token indices,
 /// `NONE` for none, as Forte holds them.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct FlatNode {
-    pub(crate) kind: NodeKind,
-    pub(crate) parent: i32,
-    pub(crate) first_child: i32,
-    pub(crate) last_child: i32,
-    pub(crate) next_sibling: i32,
-    pub(crate) token_start: i32,
-    pub(crate) token_count: i32,
-    pub(crate) generic_offset: i32,
-    pub(crate) data: i32,
-    pub(crate) directive: Option<Box<DirectiveInfo>>,
+pub struct FlatNode {
+    pub kind: NodeKind,
+    pub parent: i32,
+    pub first_child: i32,
+    pub last_child: i32,
+    pub next_sibling: i32,
+    pub token_start: i32,
+    pub token_count: i32,
+    pub generic_offset: i32,
+    pub data: i32,
+    pub directive: Option<Box<DirectiveInfo>>,
 }
 
 impl FlatNode {

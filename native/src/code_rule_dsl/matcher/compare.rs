@@ -428,5 +428,4 @@ pub(crate) fn tokens<D: Doc>(node: &Node<'_, D>) -> Vec<String> {
     out
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

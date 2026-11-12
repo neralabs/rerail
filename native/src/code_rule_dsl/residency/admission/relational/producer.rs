@@ -107,7 +107,7 @@ impl Completed {
 }
 /// Checked, flat request columns. Relation boundaries are numeric CSR offsets.
 #[derive(Default)]
-struct Resident {
+pub struct Resident {
     ends: Vec<u32>,
     visible: Vec<u32>,
     files: Vec<[u32; 4]>,

@@ -65,13 +65,13 @@ impl Stages {
 /// All offsets are checked scalar indices. No source, path, or host pointer is a request field.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub(in crate::code_rule_dsl) struct Root {
+pub struct Root {
     pub file: u32,
     pub node: u32,
     pub expand: u32,
 }
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Tree {
+pub struct Tree {
     pub facts: Arc<super::syntax::Facts>,
     pub visible: Arc<Vec<u32>>,
 }
@@ -98,7 +98,7 @@ impl Completed {
 }
 /// Checked, flat request columns. Relation boundaries are numeric CSR offsets.
 #[derive(Default)]
-struct Resident {
+pub struct Resident {
     ends: Vec<u32>,
     visible: Vec<u32>,
     files: Vec<[u32; 4]>,

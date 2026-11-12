@@ -21,7 +21,7 @@ pub(in crate::code_rule_dsl) fn limits(rule: &CompiledCodeRule, snapshot: &Snaps
     Ok(())
 }
 
-pub(in crate::code_rule_dsl) fn check(
+pub fn check(
     rule: &CompiledCodeRule,
     clause: &CompiledClause,
     inputs: &mut Inputs,
@@ -84,5 +84,4 @@ pub(in crate::code_rule_dsl) fn check(
     Ok(admitted)
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

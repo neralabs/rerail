@@ -203,6 +203,8 @@ pub struct GpuTotal {
     pub waved: u64,
     /// Batches run again because their text arena filled.
     pub arena_reruns: u64,
+    /// Stages whose grids the device sized.
+    pub sized: u64,
 }
 
 impl GpuTotal {
@@ -230,6 +232,7 @@ impl GpuTotal {
         self.made += o.made;
         self.waved += o.waved;
         self.arena_reruns += o.arena_reruns;
+        self.sized += o.sized;
     }
 
     /// The host's CPU on the device's work: encoding, uploads, waiting, reading back.
@@ -818,6 +821,13 @@ pub fn work(unit: Unit, n: u64) {
     *state().work.entry((path, unit)).or_default() += n;
 }
 
+/// A native plan's work from its rows in and out per step: the bindings each step was entered with, and the rows
+/// its last step made, as the planner prices a plan (`est work`). Summing the bindings in alone charged a scan that
+/// made 243,092 rows as 1 (`kind__sup0`, O125).
+pub fn plan_work(steps: &[(u64, u64)]) -> u64 {
+    steps.iter().map(|(a, _)| a).sum::<u64>() + steps.last().map_or(0, |s| s.1)
+}
+
 /// Adds a native plan's rows in and out per step, and its probes' CPU seconds, to the current span.
 pub fn native(plan: String, steps: &[(u64, u64)], cpu_s: f64) {
     let path = current();
@@ -930,8 +940,8 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
     let ms = |s: f64| s * 1e3;
     let _ = writeln!(r, "Strata run on the GPU: {} strata, {} runs, {} rules in {} stages; their CPU {:.2} s (the whole stratum: planning its replans, the store, the device's host part)",
         ran.len(), sum.runs, sum.rules, sum.stages, cpu);
-    let _ = writeln!(r, "  GPU {:.1} ms (command buffers' timestamps) in {} submissions, {} dispatches ({} stages run again after an overflow, {} after the text arena filled); {} runs sent in their level's wave",
-        ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns, sum.arena_reruns, sum.waved);
+    let _ = writeln!(r, "  GPU {:.1} ms (command buffers' timestamps) in {} submissions, {} dispatches ({} stages run again after an overflow, {} after the text arena filled); {} runs sent in their level's wave; {} stages' grids sized on the device",
+        ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns, sum.arena_reruns, sum.waved, sum.sized);
     let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, uploads {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
         ms(sum.host()), ms(sum.encode), ms(sum.upload), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
     let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), found resident {}; sorts made {}, found resident {}; bindings {}, head rows {} ({} distinct, made so on the device); texts made {}",
@@ -1532,6 +1542,11 @@ pub struct Report {
     pub waved: u32,
     /// Batches run again because their text arena filled (in one as big as their texts asked).
     pub arena_reruns: u32,
+    /// Stages whose grids were sized on the device, from the rows before them (not the host's guess of their space).
+    pub sized: u32,
+    /// Text functions made once per distinct symbol (`mapped_text`, chunked), and the names they made.
+    pub per_symbol: u32,
+    pub per_symbol_names: u64,
     pub stages: u32,
     pub submissions: u32,
     pub dispatches: u32,

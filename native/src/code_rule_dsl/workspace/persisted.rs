@@ -48,7 +48,7 @@ thread_local! {
 
 /// Fill `file` with its stored results. `None` unless every eligible clause has a decodable one:
 /// a partial result set is never presented as the file's result.
-pub(super) fn restore_complete_results(
+pub fn restore_complete_results(
     file: &mut FileState,
     code_rules: &[Arc<CompiledCodeRule>],
     persisted: &[crate::content_store::StoredLocalResult],

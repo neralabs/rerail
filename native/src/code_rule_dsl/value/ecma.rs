@@ -19,7 +19,7 @@ pub use calls::to_precision;
 pub use destructure::destructured;
 
 /// Decodes `node` to its value; `Unknown` for anything that is not a literal this knows.
-pub(crate) fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
+pub fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     if !context.enter() {
         return Value::Unknown;
     }
@@ -247,7 +247,7 @@ fn binary<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
 }
 
 /// The expression a wrapper holds: its one named child that is not a type or a comment.
-pub(super) fn operand<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
+pub fn operand<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
     let kind = node.kind();
     if kind == "type_assertion" {
         // `<T>x`: type arguments first, then the expression.
@@ -266,7 +266,7 @@ pub(super) fn operand<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
 
 /// A numeric literal: decimal with `_` separators, `0x`/`0o`/`0b`, legacy octal (`010`) and legacy
 /// decimal (`08`), and BigInts (`n`).
-pub(crate) fn number(text: &str) -> Value {
+pub fn number(text: &str) -> Value {
     if !separators_valid(text) {
         return Value::Unknown;
     }
@@ -349,7 +349,7 @@ fn radix_body(lower: &str) -> (u32, &str) {
 }
 
 /// A string node's code units: a JSX attribute's value as JSX reads it, any other as a literal.
-pub(crate) fn string_node<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
+pub fn string_node<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
     let text = node.text();
     if node
         .parent()
@@ -520,7 +520,7 @@ pub(crate) fn cooked_text(chunk: &str) -> Option<String> {
 }
 
 /// A template chunk's cooked code units: line terminators normalized to LF, escapes decoded.
-pub(super) fn cooked(chunk: &str) -> Option<Vec<u16>> {
+pub fn cooked(chunk: &str) -> Option<Vec<u16>> {
     let normalized = chunk.replace("\r\n", "\n").replace('\r', "\n");
     let units = escapes(&normalized, true)?;
     (units.len() * 2 <= MAX_STRING_BYTES).then_some(units)
@@ -752,8 +752,7 @@ fn object<D: Doc>(node: &Node<'_, D>) -> Value {
     }
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 /// ECMAScript's numbers as `toPrecision` reads them (`matcher::transform::NumberText`).
 pub struct Numbers;

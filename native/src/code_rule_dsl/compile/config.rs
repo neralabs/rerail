@@ -553,7 +553,7 @@ fn condition_holds(value: &Value, condition: &Value, path: &str) -> Result<bool>
 /// The document's options, and the document with every `$option` reference replaced. The defines'
 /// `options` and `config` are read as written; `format`, `id` and `revision` too. A reference among
 /// the clauses stands for a clause or, spread, for several; never for a define.
-pub(super) fn resolve(document: &Value) -> Result<(Value, Options)> {
+pub fn resolve(document: &Value) -> Result<(Value, Options)> {
     let mut declared = BTreeMap::new();
     let mut values = BTreeMap::new();
     let clauses = document
@@ -677,5 +677,4 @@ fn resolve_clause(options: &Options, clause: &Value, path: &str) -> Result<Value
     Ok(Value::Object(resolved))
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

@@ -528,7 +528,7 @@ fn a_count_many_bindings_reach_reads_its_count_table() {
 /// A triangle (`pfn`'s shape: `p(c, o, m)`, `d(o, k)`, `f(k, m)`), in the order that rejects late: `p` by `$o` binds
 /// `$c`, read by the head alone, and `$m`, which `f` tests. Once `f` fails for an `($o, $m)`, `p`'s other rows with it are
 /// passed over (`setfix::factored`): `f` is entered once per failing group and once per row that joins, not once per
-/// row of `p`, and the rows are those SQL gives.
+/// row of `p`, and the rows are those SQL gives. The steps' counts are still the join's rows, as with no factoring.
 #[test]
 fn a_late_test_rejects_once_per_group_of_what_it_reads() {
     let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
@@ -547,15 +547,18 @@ fn a_late_test_rejects_once_per_group_of_what_it_reads() {
     let report = super::setfix::run(&db, "tri", 0).unwrap();
     assert!(report.ends_with(" 1"), "{report}");
     let steps = super::setfix::steps(&db, "tri").unwrap();
+    let passed_over = super::setfix::passed_over(&db, "tri").unwrap();
     super::setfix::close(&db, "tri").unwrap();
     let rows = |sql: &str| db.prepare(sql).unwrap().query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))).unwrap().map(Result::unwrap).collect::<Vec<_>>();
     let got = rows("SELECT c0, c1 FROM r ORDER BY 1, 2");
     let want = rows("SELECT DISTINCT p.c0, p.c1 FROM d JOIN p ON p.c1 = d.c0 JOIN f ON f.c0 = d.c1 AND f.c1 = p.c2 ORDER BY 1, 2");
     assert_eq!(want.len(), 1000);
     assert!(got == want, "the rows SQL gives: {} against {}", got.len(), want.len());
-    // `f` is entered by the 1,000 rows that join and once by each of the 45 failing (o, m) groups, of 10,000 rows.
+    // `f` is entered by the 1,000 rows that join and once by each of the 45 failing (o, m) groups, of 10,000 rows:
+    // the other 8,955 are passed over. The counts are the join's: 10,000 rows into `f`, as the device counts them.
     let into_f: u64 = steps.lines().next().unwrap().split(',').nth(2).unwrap().split(':').next().unwrap().parse().unwrap();
-    assert_eq!(into_f, 1045, "{steps}");
+    assert_eq!(into_f, 10_000, "{steps}");
+    assert_eq!(passed_over, [8_955], "{steps}");
 }
 
 /// `shortlex_min` keeps the shorter symbol, then the lesser by bytes; `TOP` and an atom the run does not hold absorb.

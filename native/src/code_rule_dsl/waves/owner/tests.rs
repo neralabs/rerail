@@ -1,6 +1,7 @@
 use super::*;
 use crate::code_rule_dsl::facts::vtab::syntax::{sources};
 use std::path::PathBuf;
+use crate::content_store::ContentStore;
 
 fn temp(what: &str) -> PathBuf {
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();

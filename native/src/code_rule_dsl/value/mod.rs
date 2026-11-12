@@ -61,7 +61,7 @@ impl NodeRef {
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn range(&self) -> Range<usize> {
+    pub fn range(&self) -> Range<usize> {
         self.start as usize..self.end as usize
     }
 
@@ -772,6 +772,5 @@ pub fn js_same_value(left: &Value, right: &Value) -> Option<bool> {
 }
 
 // cratify: `eslint_rules` is rerail-lang-ecma's (it mounts it)
-#[cfg(test)]
-pub mod rules;
+// rules: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 // cratify: `tests` is rerail-engine's (it mounts it)

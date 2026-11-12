@@ -19,7 +19,7 @@ use std::sync::{Arc, Condvar, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 /// A resident document's parts that are the engine's types: its code table and its image.
-pub(in crate::code_rule_dsl) trait ResidentParts {
+pub trait ResidentParts {
     fn resident(&self) -> &Resident;
 
     /// The fixed-width code table (`DeviceCode`), as the device reads it.
@@ -304,7 +304,7 @@ fn place(
 
 /// Releases everything resident: documents, slabs (as their last batch lets go) and compiled
 /// pipelines.
-pub(in crate::code_rule_dsl) fn drop_all() {
+pub fn drop_all() {
     clear();
     crate::code_rule_dsl::transducer::packed::metal_backend::drop_pipelines();
     rerail_metal::pool::drop_all();
@@ -322,5 +322,5 @@ pub fn executed() {
     rerail_metal::slabs::executed(drop_all);
 }
 
-#[cfg(test)]
-pub mod tests;
+// Its tests run in the engine's test binary (its facade of this module mounts `slabs/tests.rs`): they read what the
+// engine registers as it loads (the languages, their `.rr` libraries).

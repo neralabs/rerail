@@ -14,7 +14,7 @@
         std::fs::create_dir_all(&src).unwrap();
         std::fs::write(src.join("a.py"), "import hashlib\nhashlib.md5(b'x')\n").unwrap();
         std::fs::write(src.join("b.py"), "import pickle\npickle.loads(b'x')\n").unwrap();
-        let rule = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../docs/rule-syntax/packs/python/bandit-b301-pickle.rr");
+        let rule = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/bandit-b301-pickle.rr");
         let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
         let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
         let findings = || std::fs::read_to_string(out.join("violation.csv")).unwrap();
@@ -46,7 +46,7 @@
         std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
         std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
         std::fs::write(src.join("other.py"), "import json\njson.loads('1')\n").unwrap();
-        let rules = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../docs/rule-syntax/packs/python");
+        let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
         let programs: Vec<String> = ["bandit-b301-pickle.rr", "bandit-b307-eval.rr"].iter().map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap()).collect();
         let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
         let run = || super::super::run_all(&texts, &src, &out, "program", Binding::Cpu, 1 << 18).unwrap();

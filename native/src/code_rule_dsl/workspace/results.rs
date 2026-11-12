@@ -31,8 +31,8 @@ thread_local! {
     pub static RESULT_PAGE_SORTS: Cell<usize> = const { Cell::new(0) };
     pub static RESULT_PAGE_EVICTED_RESTORES: Cell<usize> = const { Cell::new(0) };
     /// Files whose violations a complete result rendered, and complete results that sorted theirs.
-    pub(super) static RESULT_RENDERS: Cell<usize> = const { Cell::new(0) };
-    pub(super) static RESULT_SORTS: Cell<usize> = const { Cell::new(0) };
+    pub static RESULT_RENDERS: Cell<usize> = const { Cell::new(0) };
+    pub static RESULT_SORTS: Cell<usize> = const { Cell::new(0) };
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
@@ -926,5 +926,4 @@ pub(super) fn serialize_result(
     })
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

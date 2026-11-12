@@ -2066,6 +2066,25 @@ fn a_plan_priced_on_an_empty_relation_is_not_kept_once_it_fills() {
     assert!(!near(&[1.0], &[0.0]), "one row, then empty");
 }
 
+#[test]
+fn child_ordinal_lookup_is_unique_despite_hot_marginal_statistics() {
+    let p = parse(".decl parents(p:number)\n.input parents\n.decl child(p:number,c:number,idx:number)\n.input child\n.decl out(c:number)\nout(c) :- parents(p), child(p,c,0).\n").unwrap();
+    let mut model = Model { docs_by_shift:false, analysis:Default::default(), input_set:Default::default(),
+        stats:Stats::empty(&p), ndv:HashMap::new(), docof:Default::default(), view_src:Default::default(),
+        inputs:Inputs::file().into(), derived:Default::default() };
+    model.stats.card.insert("parents".into(),100.0);
+    model.ndv.insert(("parents".into(),0),100.0);
+    model.stats.card.insert("child".into(),10000.0);
+    model.ndv.insert(("child".into(),0),100.0);
+    model.ndv.insert(("child".into(),1),10000.0);
+    model.ndv.insert(("child".into(),2),100.0);
+    model.stats.fan.insert(("child".into(),0),100.0);
+    model.stats.memo.insert("child".into(),HashMap::from([(("idx".into(),Constant::Int(0)),9000)]));
+    let (order,work,rows) = model.plan_rule(&p,&p.rules[0].head,&p.rules[0].body,None).unwrap();
+    assert_eq!(order[0].lit.atom().unwrap().rel,"parents");
+    assert!(rows<=100.0 && work<=400.0,"a parent/ordinal lookup has at most one result: {rows} rows, {work} work");
+}
+
 /// A planner change's measurement (O148): T's programs on T's facts, each statement's SQLite VM steps, the plans
 /// chosen and whether each output is T's. Run on a build before the change and one after (`O148_OUT`, with
 /// `RERAIL_NODE_IDS=preorder`) and compare them (`scripts/profiling/o148/compare.py`): the goldens (`rules.txt`) pin
@@ -2112,4 +2131,17 @@ fn o148_plans_and_their_work() {
         }
     }
     std::fs::write(out, lines.join("\n") + "\n").unwrap();
+}
+
+#[test]
+fn empty_required_inputs_defer_both_plan_shapes_until_growth() {
+    let program = crate::code_rule_dsl::logic::rr::parse(
+        ".decl a(x:number)\n.decl b(x:number)\n.decl p(x:number)\np(x) :- a(x), b(x).\n").unwrap();
+    let mut w = replanning::Watch::new(&BTreeMap::from([("a".into(),0),("b".into(),1)]), &[(&program.rules[0],0,vec![])]);
+    w.rows(0,100); w.rows(1,0); w.delta(0,100);
+    assert!(!w.take(0));
+    assert!(!w.take_whole(0), "a whole join over an empty input needs no search");
+    w.rows(1,1);
+    assert!(w.take(0)); assert!(w.take_whole(0));
+    assert!(!w.take(0)); assert!(!w.take_whole(0));
 }

@@ -36,8 +36,7 @@ pub mod code_rule_dsl {
             use crate::code_rule_dsl::language::adapter::pack as language_pack;
         }
         pub mod php;
-        #[cfg(test)]
-        pub mod php_tests;
+        // php_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
         #[allow(unused_imports)]
         use crate::code_rule_dsl::json::{invalid, object};
         #[allow(unused_imports)]
@@ -158,8 +157,7 @@ pub mod code_rule_dsl {
     pub mod embed {
         pub use rerail_lang::code_rule_dsl::embed::*;
         pub mod compiled_view;
-        #[cfg(any(test, feature = "test-hooks"))]
-        pub mod tests;
+        // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
         #[allow(unused_imports)]
         #[cfg(any(test, feature = "test-hooks"))]
         pub(crate) use crate::code_rule_dsl::embed::test_script::TestScript;
@@ -504,8 +502,7 @@ pub mod code_rule_dsl {
         pub mod arguments {
             pub use rerail_w::code_rule_dsl::matcher::arguments::*;
             pub mod lang_php;
-            #[cfg(test)]
-            pub mod php_syntactic_tests;
+            // php_syntactic_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
             #[allow(unused_imports)]
             use crate::code_rule_dsl::tree::Tree;
             #[allow(unused_imports)]
@@ -858,8 +855,7 @@ pub mod code_rule_dsl {
     #[path = "tape"]
     pub mod tape {
         pub use rerail_lang::code_rule_dsl::tape::*;
-        #[cfg(test)]
-        pub mod corpus_parity;
+        // corpus_parity: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
         #[allow(unused_imports)]
         use crate::code_rule_dsl::embed::segments::SegmentMap;
         #[allow(unused_imports)]

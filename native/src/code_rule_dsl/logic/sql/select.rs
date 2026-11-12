@@ -145,7 +145,7 @@ pub struct Cte {
     pub columns: Option<Vec<String>>,
     pub arms: Vec<Select>,
     pub distinct: bool,
-    pub(in crate::code_rule_dsl) materialized: bool,
+    pub materialized: bool,
 }
 
 impl Cte {

@@ -1,6 +1,6 @@
 # 0117: A relation carries its delta; maintenance is the core's, driven by the deltas that are not empty
 
-Status: accepted (2026-11-11). Step 1 (the inputs from the changed documents) is being built; steps 2–4 are not.
+Status: accepted (2026-11-11). Steps 1 and 2 are built (below); steps 3–4 are not.
 
 ## Intro
 
@@ -138,3 +138,130 @@ unchanged. Then the step is measured on the data layer's 9,010 files.
 
 **The end target** stays 0090's: an edit of one function costs under 5% of a cold cross part. On the 20-file corpus,
 the joins are about 0.7 s of an edit's 26 s of CPU today. The target is a run whose cost is mostly its joins.
+
+## Built: step 1 (2026-11-11)
+
+**What it does.**
+- **Each memo entry has a second frame**, under the same part, holding its outputs: its nodes, tree counts and lines
+  (`memo::outputs_rel`).
+- **An unchanged file reads only that frame.** A file is unchanged when it is as the statistics keeper counted it:
+  same content, same key. It is looked up before the first wave (`Memo::found_outputs_all`), and its rows are not
+  decoded.
+- **At the waves' end, each input of the cross part is rebuilt from the kept frames**
+  (`retain::kept_inputs`, `kept_with_changed`):
+  - an unchanged input is its kept rows;
+  - a changed base relation is its kept rows, less the changed files' old entry rows by count, plus this run's
+    rows;
+  - a changed export is its kept rows, less the rows its location column gives to a changed document, plus this
+    run's rows.
+- **The checks.** Each removal is checked against the old entries, and every row must be attributable. A failure
+  of either sends the run down the old route for that run: every hit is decoded whole from the entry already found.
+  The inputs are made first and installed only if all of them succeed.
+- **The cross part takes the kept inputs as its old sources** (`adopt_inputs`), named as the run binds them, so it
+  does not admit them again.
+- **Off switch:** `RERAIL_KEPT_INPUTS=off`.
+
+**Measured** (20 files, unprofiled, findings equal to the cold run's each time):
+
+| | Before (instructions, CPU) | Now (instructions, CPU) |
+|---|---|---|
+| First edit after cold | 289.6 G, 31.9 s | 282.0 G, 25.0 s |
+| Second edit | 235.3 G, 27.5 s | 212.0 G, 21.5 s |
+| Unchanged | 9.7 G, 1.2 s | 9.5 G, 0.8 s |
+| Deleting a function with 4 findings | | 58 findings, equal to a cold run of the edited corpus (fell back, below) |
+
+The profile of an edit says "19 memo hits read for their outputs alone; 148 of 5171 inputs changed, from 1 changed
+documents". The memo replay is 0.3 MB of values, where it was 135.3 MB.
+
+**What it still costs.** The install is 0.62 s. Of that, 0.20 s reads the kept inputs, and the rest copies every
+input's rows into the run's export and base structures. That copy is step 2's to remove: an input becomes its kept
+rows with its delta beside it, not a copy.
+
+**Open: a value document's rows.** A value document's row belongs to each file that asked for it, and the kept base
+relation can hold it once. Subtracting a changed file's old rows by count cannot then tell whether another file
+still holds the row. So the run falls back, as it did on the deletion above. The exact form is step 2's count side
+structure: how many files hold each row of a base relation, kept with its frame.
+
+## Step 2, designed (2026-11-11): an input is the sum of its files' entries, kept by owner
+
+**What step 1 got wrong.** Step 1 takes a changed file's old rows out of the kept input. That is exact only if the
+kept input holds each row once for each file whose memo entry holds it. Two kinds of row are held by several files:
+- a value document's rows (each file that asked for the value holds them);
+- a string's rows, such as `value_type(v, t)` (each file whose text holds the string).
+
+A cold run adds such a row once per chunk, not once per file, so the kept input can hold fewer copies than the
+entries do. Taking one file's copy out can then remove a row other files still hold. The check catches this only
+when the kept input holds fewer copies than one entry; a run with a shared row in a chunk of two files would pass
+the check and drop the row.
+
+**The rule.** An input of the cross part is the sum of the files' memo entries' rows, whichever route built it:
+- **a base relation is that sum as a bag**: a row once for each file whose entry holds it. This is what the
+  statistics keeper already counts (0096 §3), so its statistics stay exact;
+- **an export is that sum as a set, with each row's count**: the number of files whose entries hold it. The
+  session's counted exports (0096 step 3) are this structure, kept only in memory; step 2 keeps it in the store.
+
+The chunk route builds its base rows from the entries it makes (not from the chunk's rows), and counts each export
+row's files as it attributes them.
+
+**Kept by owner.** A row's owner is its first node column's document (the location column the memo attributes rows
+by; a string's own value for `value_type` and the text tests). Every row of one owner has the same holders: a
+value document's rows go to every file that asked for it, a string's to every file that holds it. So:
+- the frames hold each input's rows grouped by owner, each owner's rows contiguous within its granule;
+- each owner's entry in the input's document table carries its holders, where it is not 1.
+
+An edit then touches only the owners its changed files' rows name, read from their ranges. No other row is read,
+hashed or copied.
+
+**The edit.** For each owner the changed files' rows name:
+- a base relation's rows are the kept rows, less the changed files' old entries' rows, plus this run's;
+- an export's holders are the kept holders, less the changed files that held the owner, plus those that hold it
+  now; its rows are this run's when a changed file holds it now, else the kept ones;
+- a row removed that the kept rows do not hold, or an owner whose rows differ between two holders, is an error,
+  and the run takes the old route.
+
+**The relation with its delta.** The bound input is the kept rows with the changed owners' ranges dead and their new
+rows appended (`retain::Layered`): a view, not a copy. A lookup goes through the kept rows' own index and skips the
+dead rows. `r__plus` and `r__minus` are the rows an owner gained and lost, as sets, handed to the rewrite as given.
+The digest is the kept one, less the changed owners' sums, plus their new sums. Written back, only the changed
+owners' granules are rewritten, from the ranges.
+
+## Built: step 2 (2026-11-11)
+
+**What it does.**
+- **The chunk route's base rows are its entries'** (`raw_base`, `canonical` in the chunk): a row once per file whose
+  entry holds it. The batch's own rows are used only for a chunk the memo cannot attribute.
+- **The frames group each input by owner** (`retain::group_col`; input identity v3), so each owner's rows are one
+  range (`KeptInput::ranges`). Reading the kept inputs no longer hashes every row; each range is checked at its ends,
+  and a changed owner's rows against its digest.
+- **The keeper counts each export's value documents' holders**, kept in its blob (version 4).
+- **`patch_owners` changes only the owners the changed files' rows name**: base relations by multiset arithmetic,
+  exports by holders, with the errors above sending the run down the old route.
+- **The bound input is `retain::Layered`**: the kept rows with the changed owners' ranges dead and their new rows
+  after them, looked up through the kept rows' index.
+- **`r__plus` and `r__minus` are handed to the rewrite as given.** The profile says "129 inputs' deltas kept beside
+  them; 0 found by hashing their documents".
+- **Written back, a changed granule is made from the ranges**, with no pass over the input.
+
+**Measured** (20 files, unprofiled; findings equal to the cold run's each time):
+
+| | Step 1 | Step 2 |
+|---|---|---|
+| Cold | 927.4 G | 934.3 G |
+| First edit after cold | 282.0 G, 25.0 s CPU | 277.1 G, 28.7 s CPU |
+| Later edits | 212.0 G, 21.5 s CPU | 216.3 G, 23.7 s; 214.0 G, 25.3 s |
+| Unchanged | 9.5 G | 9.7 G |
+| Deleting a function (58 findings) | fell back; 1079.4 G | on the new route, no fallback; 1089.5 G |
+
+The machine's load was 40–100 during these runs, so CPU seconds vary by several seconds; the instruction counts
+are the comparison. **Step 2 did not make an edit cheaper.** It made the route exact (the deletion is right on it,
+and shared rows can no longer be dropped), and it removed the hashing of the changed inputs. The install the
+profile showed at 0.6–0.8 s is about 0.2 s unprofiled (sampled). Almost all of that is `kept_inputs` copying every
+kept input's rows out of the frames: a read of unchanged rows, which is step 4's to remove (old rows read only for
+the strata reached).
+
+**What an edit costs now.** The main cross part runs 8,313 of 10,355 strata (5,578 maintained from deltas, 2,720
+derived again), with 148 inputs changed. That is steps 3's and 4's work, not this step's.
+
+**The deletion costs more than a cold run** (1089.5 G against 922.2 G). Deleting 100 lines changes nearly every row of
+that file (its nodes move), so the deltas are most of the file's rows, and maintaining from deltas that large costs
+more than deriving again. The driver of step 3 should choose between the two by the size of the delta.

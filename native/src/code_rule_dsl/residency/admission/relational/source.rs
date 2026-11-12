@@ -40,7 +40,7 @@ pub fn charge(work: &AtomicUsize, count: usize) -> Result<()> {
     Ok(())
 }
 
-pub(in crate::code_rule_dsl) fn install(
+pub fn install(
     db: &Connection,
     snapshot: Option<&Snapshot>,
     work: Arc<AtomicUsize>,

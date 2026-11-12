@@ -5,6 +5,19 @@ use super::*;
 use crate::code_rule_dsl::logic::front::{self, Literal, Term};
 use std::collections::BTreeSet;
 
+#[test]
+fn include_seed_ignores_quoted_directives_and_preserves_real_includes() {
+    let quoted = parse(r##".decl x(s:symbol)
+x("#include \"absent.rr\"").
+// #include "absent.rr"
+"##).unwrap();
+    assert_eq!(quoted.facts["x"].len(),1);
+    let included = parse("#include \"core.rr\"\n.decl answer(n:node)\nanswer(n) :- kind(n, \"call\").\n").unwrap();
+    assert!(included.decls.contains_key("doc"), "a real include still supplies its declarations");
+    assert!(parse("#unknown \"x.rr\"\n").is_err());
+    assert!(parse(".decl broken(\n").is_err(), "the lexical shortcut does not bypass compilation errors");
+}
+
 fn finding_contract(source: &str, program: &str) -> Vec<serde_json::Value> {
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("rr-contract");
     std::fs::create_dir_all(&root).unwrap();
@@ -417,6 +430,42 @@ fn a_context_leaves_out_literals_not_tied_to_its_variables() {
     assert!(ctx.iter().all(|r| !r.contains("root(")), "{ctx:?}");
 }
 
+/// A context's second group binding only what the first binds still narrows it, joined once a binding: as a
+/// relation of the asked variable, not left out (every row the first group gives) and not joined whole (every pair
+/// of the two groups' rows, pyi041's `within(c1, n), within(c2, n)`).
+#[test]
+fn a_context_joins_a_later_group_by_what_it_binds() {
+    let p = parse(concat!(
+        ".decl within(n: node, a: node)\n.decl kind(n: node, k: symbol)\n",
+        ".input within, kind\n",
+        ".decl hit(e: node, s: node)\n.output hit\n",
+        "hit(r, s) :- within(c1, s), kind(c1, \"call\"), within(c2, s), kind(c2, \"name\"), parsed(s, \"annotation\", r).\n",
+    ))
+    .unwrap();
+    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    let shown = |stem: &str| -> Vec<String> { p.rules.iter().filter(|r| r.head.rel.starts_with(stem)).map(|r| r.to_string()).collect() };
+    let (ctx, cover) = (shown("rr_ctx"), shown("rr_cover"));
+    assert!(!ctx.is_empty(), "the parse's demand has a context");
+    assert!(ctx.iter().all(|r| r.contains("\"call\"") && r.contains("rr_cover") && !r.contains("\"name\"")), "{ctx:?}");
+    assert!(!cover.is_empty() && cover.iter().all(|r| r.contains("\"name\"") && !r.contains("\"call\"")), "{cover:?}");
+    assert!(p.decls.iter().any(|(rel, cols)| rel.starts_with("rr_cover") && cols.len() == 1), "a relation of s alone");
+}
+
+/// A group that only computes from an asked variable (`jb(p - 1, 92)`) does not bind it: covered alone it would be
+/// `rr_cover(p) :- t = @sub(p, 1), jb(t, 92)`, which cannot place `p` (serverplan-state-tripwires' `jbs_odd`).
+#[test]
+fn a_context_covers_no_group_that_only_computes_from_an_asked_variable() {
+    let p = parse(concat!(
+        ".decl jb(p: number, c: number)\n.input jb\n",
+        ".decl odd(p: number)\n.output odd\n",
+        "odd(p) :- jb(p, _), jb(p - 1, 92), m = max j : { jb(j, 92), j < p }, m > 0.\n",
+    ))
+    .unwrap();
+    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    let cover: Vec<String> = p.rules.iter().filter(|r| r.head.rel.starts_with("rr_cover")).map(|r| r.to_string()).collect();
+    assert!(cover.iter().all(|r| r.contains("jb(p,")), "a cover binds what it is a relation of: {cover:?}");
+}
+
 /// Tests of one span in a disjunction, folded into one set test, test its text as a single test does
 /// (bootstrap-engine-invariants' `source(d, sp), (contains("a", sp) ; contains("b", sp))`).
 #[test]
@@ -736,14 +785,15 @@ fn normalized(mut p: front::Program) -> front::Program {
 
 /// A lowered `.rr` program without the requests its lowering derives (`rr_embed_req` for `parsed`, decision 0055;
 /// `rr_parse_req`, `rr_splice_req` for tape operations, 0058;
-/// `rr_dir_req`, `rr_file_req` for the file system, t21) and the context relations only they read: an `.rdl` program
+/// `rr_dir_req`, `rr_file_req` for the file system, t21) and the context relations only they read (a context's
+/// `rr_ctx` and the `rr_cover` groups it joins): an `.rdl` program
 /// asks for nothing, and the requests change no relation the program derives.
 fn without_requests(mut p: front::Program) -> front::Program {
     let mut gone: BTreeSet<String> = ["rr_embed_req", "rr_parse_req", "rr_splice_req"].into_iter().map(str::to_owned).chain(super::WORLD.iter().map(|(_, d)| (*d).to_owned())).collect();
     loop {
         p.rules.retain(|r| !gone.contains(r.head.rel.as_str()));
         let read: BTreeSet<&str> = p.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.as_str()).collect();
-        let more: Vec<String> = p.rules.iter().map(|r| r.head.rel.to_string()).filter(|h| h.starts_with("rr_ctx") && !read.contains(h.as_str()) && !gone.contains(h.as_str())).collect();
+        let more: Vec<String> = p.rules.iter().map(|r| r.head.rel.to_string()).filter(|h| (h.starts_with("rr_ctx") || h.starts_with("rr_cover")) && !read.contains(h.as_str()) && !gone.contains(h.as_str())).collect();
         if more.is_empty() {
             break;
         }
@@ -2806,4 +2856,140 @@ fn a_text_read_once_is_read_as_each_reader_reads_it() {
 fn quoting_escapes_only_what_needs_it() {
     assert_eq!(super::quote("plain text é"), "\"plain text é\"");
     assert_eq!(super::quote("a\"b\\c\nd\te\u{1}"), "\"a\\\"b\\\\c\\nd\\te\\u{1}\"");
+}
+
+/// A policy file's program, printed, reads back as the program itself once remembered (`remember_lowered`): what
+/// `run-rr` hands the run. Every data-layer policy, by its print.
+#[test]
+fn a_policys_printed_program_reads_back_as_the_program_read() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer");
+    let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "rr")).collect();
+    paths.sort();
+    let mut read = 0;
+    for path in paths.iter().take(12) {
+        let Ok((program, _)) = super::read_file(path) else { continue };
+        read += 1;
+        let printed = super::print(&program).unwrap();
+        super::remember_lowered(&printed, &program);
+        assert_eq!(super::print(&super::parse(&printed).unwrap()).unwrap(), printed, "{}", path.display());
+    }
+    assert!(read > 5, "{read} policies read");
+}
+
+/// Aggregate demand's stratification shortcut (`aggregate_demand::optimize`): every data-layer policy lowers to the
+/// program it lowers to with each candidate stratified whole.
+#[test]
+fn aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer");
+    let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "rr")).collect();
+    paths.sort();
+    let (mut read, mut demanded) = (0, 0);
+    for path in &paths {
+        let text = std::fs::read_to_string(path).unwrap();
+        let lowered = |full: bool| {
+            super::aggregate_demand::FULL_CHECKS.with(|c| c.set(full));
+            let p = super::read_text(&text).and_then(|t| t.lower(true)).map(|p| super::print(&p).unwrap());
+            super::aggregate_demand::FULL_CHECKS.with(|c| c.set(false));
+            p
+        };
+        let (Ok(short), Ok(whole)) = (lowered(false), lowered(true)) else { continue };
+        read += 1;
+        demanded += usize::from(short.contains("rr_demand_agg_"));
+        assert_eq!(short, whole, "{}", path.display());
+    }
+    assert!(read > 20 && demanded > 3, "{read} policies read, {demanded} with aggregate demand");
+}
+
+/// Lowering is idempotent: each program file under `dirs` (shard `k` of `n`, by its place in name order), printed and
+/// lowered again (not from `remember_lowered`'s cache), prints as the same text, statement for statement and in order.
+/// A file that is no program of its own (a library module's part) is passed over. `RERAIL_IDEMPOTENCY_DUMP=<dir>`
+/// writes both prints of each that differs.
+fn lowers_back(dirs: &[&str], k: usize, n: usize) {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
+    let mut paths: Vec<_> = dirs
+        .iter()
+        .flat_map(|d| std::fs::read_dir(root.join(d)).unwrap().map(|e| e.unwrap().path()))
+        .filter(|p| p.extension().is_some_and(|e| e == "rr"))
+        .collect();
+    paths.sort();
+    let (mut read, mut differ) = (0, Vec::new());
+    for path in paths.iter().skip(k).step_by(n) {
+        let Ok((program, _)) = super::read_file(path) else { continue };
+        let Ok(printed) = super::print(&program) else { continue };
+        read += 1;
+        let again = match super::read_text(&printed).and_then(|t| t.lower(true)).and_then(|p| super::print(&p)) {
+            Ok(again) => again,
+            Err(e) => {
+                differ.push(format!("{}: its print does not lower: {e}", path.display()));
+                continue;
+            }
+        };
+        if again != printed {
+            if let Some(dir) = std::env::var_os("RERAIL_IDEMPOTENCY_DUMP") {
+                let name = path.file_stem().unwrap().to_string_lossy().into_owned();
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(std::path::Path::new(&dir).join(format!("{name}.first.rr")), &printed).unwrap();
+                std::fs::write(std::path::Path::new(&dir).join(format!("{name}.again.rr")), &again).unwrap();
+            }
+            let at = printed.lines().zip(again.lines()).position(|(a, b)| a != b).unwrap_or(printed.lines().count().min(again.lines().count()));
+            differ.push(format!("{}: line {at}: {:?} / {:?}", path.display(), printed.lines().nth(at), again.lines().nth(at)));
+        }
+    }
+    assert!(read > 0, "no program read in {dirs:?}");
+    assert!(differ.is_empty(), "{} of {read} lower to another program:\n{}", differ.len(), differ.join("\n"));
+}
+
+#[test]
+fn lowering_is_idempotent_data_layer() {
+    lowers_back(&["data-layer"], 0, 1);
+}
+
+#[test]
+fn lowering_is_idempotent_python_0() {
+    lowers_back(&["packs/python"], 0, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_python_1() {
+    lowers_back(&["packs/python"], 1, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_python_2() {
+    lowers_back(&["packs/python"], 2, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_python_3() {
+    lowers_back(&["packs/python"], 3, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_python_4() {
+    lowers_back(&["packs/python"], 4, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_python_5() {
+    lowers_back(&["packs/python"], 5, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_python_6() {
+    lowers_back(&["packs/python"], 6, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_python_7() {
+    lowers_back(&["packs/python"], 7, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_javascript_typescript() {
+    lowers_back(&["packs/javascript", "packs/typescript"], 0, 1);
+}
+
+#[test]
+fn lowering_is_idempotent_other_packs() {
+    lowers_back(&["packs/react", "packs/node", "packs/rust", "packs/vue", "packs/sql", "packs/next", "packs/php", "packs/blade", "packs/complexity", "packs/rr"], 0, 1);
 }

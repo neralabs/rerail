@@ -84,15 +84,6 @@ pub(in crate::code_rule_dsl) const TEXT_SPLIT: u32 = 1 << 4;
 pub(in crate::code_rule_dsl) const OPND_SYM: u32 = 0;
 pub(in crate::code_rule_dsl) const OPND_DOT: u32 = 1;
 pub(in crate::code_rule_dsl) const OPND_PLAIN: u32 = 2;
-/// A text made of two names, a's and b's (keys 0 and 1) by the form `agg[1]`, into `bind_slot[0]` as a made value
-/// (`MADE`): the parts' symbols, not yet a symbol (the device makes none). Its counter word is set when a part is no
-/// symbol a made value holds (`MADE_PART`).
-pub(in crate::code_rule_dsl) const MAKE: u32 = 8;
-/// A made value: this bit, the form at `MADE_FORM`, a's symbol from bit 30, b's from bit 0.
-pub(in crate::code_rule_dsl) const MADE: i64 = 1 << 62;
-pub(in crate::code_rule_dsl) const MADE_FORM: u32 = 61;
-/// One past the greatest part a made value holds.
-pub(in crate::code_rule_dsl) const MADE_PART: i64 = 1 << 30;
 /// `cat`'s form: b's name alone when a's is empty, else a's, ".", b's.
 pub(in crate::code_rule_dsl) const CAT_DOT: u32 = 0;
 /// `str_concat`'s form: a's name then b's.
@@ -101,7 +92,21 @@ pub(in crate::code_rule_dsl) const CAT_PLAIN: u32 = 1;
 /// `bind_slot[0]`: of X (keys 0, 1, kind `agg[1]`), Y and Z (keys 2 and 4, symbols), numbers (keys 5 and 6), by
 /// `agg[0]`. A value with none (the arena full, or `lower` past ASCII) sets the stage's counter word (`TEXTFN_FULL`,
 /// `TEXTFN_HOST`).
-pub(in crate::code_rule_dsl) const TEXTFN: u32 = 9;
+/// Mode 10: a made text per row by a SIMD group a row (`row_text`): agg[0] & 15 one of `ROW_*`, agg[0] bit 8 a test's
+/// wanted verdict; X (keys 0, 1) and Y (keys 2, 3) of kinds agg[1] & 15 and agg[1] >> 4 (`OPND_*`); its value into
+/// `bind_slot[0]`.
+pub(in crate::code_rule_dsl) const ROWTEXT: u32 = 10;
+/// `cat`'s text of X and Y ("." between when X is not empty).
+pub(in crate::code_rule_dsl) const ROW_CAT: u32 = 0;
+/// `str_concat`'s text of X and Y.
+pub(in crate::code_rule_dsl) const ROW_CONCAT: u32 = 1;
+/// `replace_all` of a regex (its automata) in X by Y.
+pub(in crate::code_rule_dsl) const ROW_REPLACE: u32 = 2;
+/// A text test of X by its table.
+pub(in crate::code_rule_dsl) const ROW_TEST: u32 = 3;
+/// Text function `TEXTFN_*` (agg[0] >> 16) of X: of numbers keys 5 and 6; a literal replacement's pattern key 2's
+/// symbol, its replacement key 4's.
+pub(in crate::code_rule_dsl) const ROW_MAP: u32 = 4;
 pub(in crate::code_rule_dsl) const TEXTFN_LOWER: u32 = 0;
 pub(in crate::code_rule_dsl) const TEXTFN_HEAD: u32 = 1;
 pub(in crate::code_rule_dsl) const TEXTFN_DIR: u32 = 2;
@@ -112,6 +117,8 @@ pub(in crate::code_rule_dsl) const TEXTFN_REPLACE: u32 = 6;
 pub(in crate::code_rule_dsl) const TEXTFN_SQL_SUBSTR: u32 = 7;
 pub(in crate::code_rule_dsl) const TEXTFN_ASCII_LOWER: u32 = 8;
 pub(in crate::code_rule_dsl) const TEXTFN_ASCII_UPPER: u32 = 9;
+/// X's text whole: a cat's (operand `OPND_DOT` or `OPND_PLAIN`), made for the head or a text function.
+pub(in crate::code_rule_dsl) const TEXTFN_COPY: u32 = 10;
 pub(in crate::code_rule_dsl) const TEXTFN_FULL: u32 = 1;
 pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
 /// An operand that is an arena text (a text function's value).
@@ -497,14 +504,38 @@ static inline Txt txt_of(constant Stage& s, device const long* L, uint t, device
 
 // Mode 7: a literal text test of pattern X (keys 0, 1) and subject Y (keys 2, 3), each of kind agg[1] & 15 and
 // agg[1] >> 4: by op agg[0] >> 1 & 3, 0 equal, 1 Y begins with X, 2 Y ends with X; as agg[0] & 1 wants.
+static inline bool textop_one(uint op, Txt x, uint xs, uint lx, Txt y, uint ly) {
+    if (op == 0) return lx == ly && txt_same(x, xs, y, 0, lx);
+    if (op == 1) return ly >= lx && txt_same(x, xs, y, 0, lx);
+    return ly >= lx && txt_same(x, xs, y, ly - lx, lx);
+}
+
+// With `TEXT_SPLIT` (agg[0] bit 5), X is a set of patterns (`strings::SET_SEP` between them, empty ones too, as
+// `strings::test` splits it): Y passes when any one does. The separators are found a word of eight at a time (an exact
+// mask of the bytes equal to 0x1f), each member compared as one pattern.
 static inline bool textop_pass(constant Stage& s, device const long* L, uint t, device const long* R, device atomic_uint* A) {
     Txt x = txt_of(s, L, t, R, A, 0, s.agg[1] & 15), y = txt_of(s, L, t, R, A, 2, s.agg[1] >> 4);
     uint lx = txt_len(x), ly = txt_len(y);
     uint op = (s.agg[0] >> 1) & 3;
-    bool r;
-    if (op == 0) r = lx == ly && txt_same(x, 0, y, 0, lx);
-    else if (op == 1) r = ly >= lx && txt_same(x, 0, y, 0, lx);
-    else r = ly >= lx && txt_same(x, 0, y, ly - lx, lx);
+    bool r = false;
+    if ((s.agg[0] & 32) == 0) r = textop_one(op, x, 0, lx, y, ly);
+    else {
+        const ulong lo7 = 0x7f7f7f7f7f7f7f7ful;
+        uint start = 0;
+        for (uint at = 0; at < lx; at += 8) {
+            ulong z = txt_word(x, at, lx) ^ 0x1f1f1f1f1f1f1f1ful;
+            // Bytes past the text read 0 (z's 0x1f): never a separator.
+            ulong m = ~(((z & lo7) + lo7) | z | lo7);
+            while (m != 0) {
+                uint k = clz(m) / 8;
+                uint pos = at + k;
+                r = r || textop_one(op, x, start, pos - start, y, ly);
+                start = pos + 1;
+                m &= ~(0x8000000000000000ul >> (8 * k));
+            }
+        }
+        r = r || textop_one(op, x, start, lx - start, y, ly);
+    }
     return r == ((s.agg[0] & 1) != 0);
 }
 
@@ -534,129 +565,6 @@ static inline long strcmp_value(constant Stage& s, device const long* L, uint t,
     return lx == ly ? 0 : (lx < ly ? -1 : 1);
 }
 
-// The byte offset of character `c` of x (its length past the last).
-static inline uint txt_char_at(Txt x, uint c) {
-    uint n = txt_len(x), seen = 0;
-    for (uint i = 0; i < n; i++) {
-        if ((txt_byte(x, i) & 0xc0) != 0x80) {
-            if (seen == c) return i;
-            seen++;
-        }
-    }
-    return n;
-}
-
-// Mode 9, a text function (agg[0]: `TEXTFN_*`) of X (keys 0, 1, kind agg[1] & 15), Y and Z (keys 2 and 4, symbols:
-// `replace_all`'s pattern and replacement) and numbers (keys 5 and 6): its text's bytes [from, from + len) of X
-// (`head`, `dir`, `substr`, `slice`), or made into the arena (`lower`, `to_string`, `replace_all`). Its value: an
-// arena text; -1 and a flag in the stage's counter word (1: the arena is full, its first word then says how much
-// was wanted; 2: `lower` of a name past ASCII, which the host's Unicode mapping makes) when it has none.
-static inline long textfn_value(constant Stage& s, device const long* L, uint t, device const long* R, device atomic_uint* A, device atomic_uint* counters) {
-    Txt x = txt_of(s, L, t, R, A, 0, s.agg[1] & 15);
-    uint n = txt_len(x), f = s.agg[0];
-    long n0 = key_value(s, L, t, 5), n1 = key_value(s, L, t, 6);
-    // A range of X (in bytes) when the function copies one.
-    uint from = 0, len = 0, made = 0;
-    Txt y, z;
-    char digits[24];
-    if (f == 8 || f == 9) {
-        // SQLite's lower and upper: ASCII alone.
-        made = n;
-    } else if (f == 0) {
-        // lower: ASCII alone (a name past it is the host's: Unicode's mapping).
-        for (uint i = 0; i < n; i++) if (txt_byte(x, i) >= 0x80) {
-            if (s.counter != NONE) atomic_fetch_or_explicit(&counters[s.counter], 2u, memory_order_relaxed);
-            return -1;
-        }
-        made = n;
-    } else if (f == 1) {
-        // head: up to the first ".".
-        len = n;
-        for (uint i = 0; i < n; i++) if (txt_byte(x, i) == uchar('.')) { len = i; break; }
-    } else if (f == 2) {
-        // dir: up to the last "/" (none: empty).
-        for (uint i = n; i > 0; i--) if (txt_byte(x, i - 1) == uchar('/')) { len = i - 1; break; }
-    } else if (f == 3 || f == 4 || f == 7) {
-        long nc = long(txt_chars(x)), a, b;
-        if (f != 4) {
-            // substr(s, i, n): SQLite's substr(s, i + 1, n) (f 7: SQLite's own), in characters.
-            long p1 = f == 3 ? n0 + 1 : n0, p2 = n1;
-            bool neg = p2 < 0;
-            if (neg) p2 = -p2;
-            if (p1 < 0) {
-                p1 += nc;
-                if (p1 < 0) { p2 = max(p2 + p1, 0l); p1 = 0; }
-            } else if (p1 > 0) p1 -= 1;
-            else if (p2 > 0) p2 -= 1;
-            if (neg) {
-                p1 -= p2;
-                if (p1 < 0) { p2 += p1; p1 = 0; }
-            }
-            a = clamp(p1, 0l, nc);
-            b = clamp(p1 + p2, a, nc);
-        } else {
-            // slice(s, start, end): characters, negative from the end, clamped.
-            a = clamp(n0 < 0 ? nc + n0 : n0, 0l, nc);
-            b = clamp(n1 < 0 ? nc + n1 : n1, 0l, nc);
-            if (a > b) b = a;
-        }
-        from = txt_char_at(x, uint(a));
-        len = txt_char_at(x, uint(b)) - from;
-    } else if (f == 5) {
-        // to_string(n): its decimal digits.
-        ulong u = n0 < 0 ? ulong(-(n0 + 1)) + 1 : ulong(n0);
-        uint k = 0;
-        do { digits[k++] = char('0' + u % 10); u /= 10; } while (u > 0);
-        if (n0 < 0) digits[k++] = '-';
-        made = k;
-    } else {
-        // replace_all(s, p, r) of a literal p (not empty) and r: the leftmost matches, not overlapping.
-        y = txt_of(s, L, t, R, A, 2, 0);
-        z = txt_of(s, L, t, R, A, 4, 0);
-        uint ly = txt_len(y), lz = txt_len(z), hits = 0;
-        for (uint i = 0; i + ly <= n && ly > 0;) {
-            if (txt_same(x, i, y, 0, ly)) { hits++; i += ly; } else i++;
-        }
-        made = n - hits * ly + hits * lz;
-    }
-    if (f >= 1 && f <= 4 || f == 7) made = len;
-    device atomic_uint* used = A;
-    uint cap = ((device const uint*)A)[1];
-    uint off = atomic_fetch_add_explicit(used, made, memory_order_relaxed);
-    if (ulong(off) + made > cap) {
-        if (s.counter != NONE) atomic_fetch_or_explicit(&counters[s.counter], 1u, memory_order_relaxed);
-        return -1;
-    }
-    device uchar* o = (device uchar*)A + 16 + off;
-    if (f == 0 || f == 8) {
-        for (uint i = 0; i < n; i++) { uchar c = txt_byte(x, i); o[i] = (c >= 'A' && c <= 'Z') ? c + 32 : c; }
-    } else if (f == 9) {
-        for (uint i = 0; i < n; i++) { uchar c = txt_byte(x, i); o[i] = (c >= 'a' && c <= 'z') ? c - 32 : c; }
-    } else if (f == 5) {
-        for (uint i = 0; i < made; i++) o[i] = uchar(digits[made - 1 - i]);
-    } else if (f == 6) {
-        uint ly = txt_len(y), lz = txt_len(z), w = 0;
-        for (uint i = 0; i < n;) {
-            if (ly > 0 && i + ly <= n && txt_same(x, i, y, 0, ly)) {
-                for (uint k = 0; k < lz; k++) o[w++] = txt_byte(z, k);
-                i += ly;
-            } else o[w++] = txt_byte(x, i++);
-        }
-    } else {
-        for (uint i = 0; i < len; i++) o[i] = txt_byte(x, from + i);
-    }
-    return arena_value(off, made);
-}
-
-// Mode 8: the made value of a's and b's symbols by form agg[1] (`MADE`); -1 when a part is none a made value holds.
-static inline long make_value(constant Stage& s, device const long* L, uint t) {
-    long v[2];
-    for (uint k = 0; k < 2; k++) v[k] = s.key_kind[k] == 1 ? L[ulong(s.key_slot[k]) * s.cap_in + t] : s.key_const[k];
-    const long part = 1l << 30;
-    if (v[0] < 0 || v[0] >= part || v[1] < 0 || v[1] >= part) return -1;
-    return (1l << 62) | (long(s.agg[1] & 1) << 61) | (v[0] << 30) | v[1];
-}
-
 // Whether binding t's symbol in slot agg[0] has its verdict bit (mode 5), as agg[1] wants.
 static inline bool text_pass(constant Stage& s, device const long* L, uint t, device const long* R) {
     long v = L[ulong(s.agg[0]) * s.cap_in + t];
@@ -676,12 +584,6 @@ kernel void stage_count(device const long* L [[buffer(0)]], device const long* R
     if (s.mode == 5) { counts[t] = uint(text_pass(s, L, t, R)); return; }
     if (s.mode == 6) { counts[t] = 1; return; }
     if (s.mode == 7) { counts[t] = uint(textop_pass(s, L, t, R, A)); return; }
-    if (s.mode == 9) { counts[t] = 1; return; }
-    if (s.mode == 8) {
-        if (make_value(s, L, t) < 0 && s.counter != NONE) atomic_store_explicit(&counters[s.counter], 1u, memory_order_relaxed);
-        counts[t] = 1;
-        return;
-    }
     candidates(s, L, t, starts, rkeys, nruns, kv, lo, hi);
     if (s.mode == 4) {
         long v = 0;
@@ -731,8 +633,9 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
                           device uint* totals [[buffer(6)]], device const uint* offsets [[buffer(7)]], device long* O [[buffer(8)]],
                           device atomic_uint* A [[buffer(9)]], device atomic_uint* counters [[buffer(10)]], constant Stage& s [[buffer(11)]],
                           uint t [[thread_position_in_grid]]) {
-    if (t == 0) totals[s.out_slot] = offsets[s.cap_in];
     uint n = min(totals[s.in_slot], s.cap_in);
+    // The offsets past the rows' are not scanned when the grids are sized on the device (`Scan::size`).
+    if (t == 0) totals[s.out_slot] = offsets[n];
     if (t >= n) return;
     uint at = offsets[t];
     if (at >= s.cap_out) return;
@@ -746,18 +649,6 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
         if (offsets[t + 1] <= at) return;
         write_row(s, L, t, R, 0, O, at);
         O[ulong(s.bind_slot[0]) * s.cap_out + at] = strcmp_value(s, L, t, R, A);
-        return;
-    }
-    if (s.mode == 9) {
-        if (offsets[t + 1] <= at) return;
-        write_row(s, L, t, R, 0, O, at);
-        O[ulong(s.bind_slot[0]) * s.cap_out + at] = textfn_value(s, L, t, R, A, counters);
-        return;
-    }
-    if (s.mode == 8) {
-        if (offsets[t + 1] <= at) return;
-        write_row(s, L, t, R, 0, O, at);
-        O[ulong(s.bind_slot[0]) * s.cap_out + at] = make_value(s, L, t);
         return;
     }
     if (s.mode == 4) {
@@ -787,29 +678,6 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
         write_row(s, L, t, R, r, O, at);
         at++;
     }
-}
-
-// The texts of made values (mode 8's), one a thread: V's n values, each one's bytes into its `width` bytes of `out`
-// (its length into `lens`), from the parts' names in T. The host stores them as symbols; it makes no text.
-kernel void text_make(device const long* V [[buffer(0)]], device const long* T [[buffer(1)]], device uint* lens [[buffer(2)]],
-                      device uchar* out [[buffer(3)]], constant uint2& p [[buffer(4)]], uint t [[thread_position_in_grid]]) {
-    if (t >= p.x) return;
-    long v = V[t];
-    uint form = uint((v >> 61) & 1);
-    long a = (v >> 30) & ((1l << 30) - 1), b = v & ((1l << 30) - 1);
-    uint ao, al, bo, bl;
-    text_find(T, a, ao, al);
-    text_find(T, b, bo, bl);
-    device const uchar* c = text_chars(T);
-    device uchar* o = out + ulong(t) * p.y;
-    bool dot = form == 0 && al > 0;
-    uint n = al + (dot ? 1 : 0) + bl;
-    if (n > p.y) { lens[t] = 0xffffffffu; return; }
-    uint at = 0;
-    for (uint k = 0; k < al; k++) o[at++] = c[ao + k];
-    if (dot) o[at++] = uchar('.');
-    for (uint k = 0; k < bl; k++) o[at++] = c[bo + k];
-    lens[t] = n;
 }
 
 // A text test's verdicts, once per distinct term (decision 0038's chunked matching): a SIMD group per term walks it
@@ -863,6 +731,409 @@ kernel void text_verdicts(device const long* T [[buffer(0)]], device const uchar
         if (lane == 0 && acc[state] != 0) {
             long id = ids[term];
             if (id >= 0) atomic_fetch_or_explicit(&bits[ulong(id) >> 5], 1u << uint(id & 31), memory_order_relaxed);
+        }
+    }
+}
+
+// The states after each of m (at most 32) bytes of x, lane l's after byte `first + step * l`, from state `st`: the
+// bytes' transition functions (rows of table `tab`, S states of C classes) composed by a prefix over the lanes in
+// device scratch `f` (two rows of S bytes a lane), Hillis and Steele's: five steps of a row a lane.
+static inline uint chunk_states(device const uchar* tab, uint S, uint C, Txt x, int first, int step, uint m, uint st,
+                                device uchar* f, uint lane) {
+    device const uchar* cls = tab;
+    device const uchar* next = tab + 256;
+    device uchar* a = f;
+    device uchar* b = f + 32 * S;
+    bool has = lane < m;
+    uint c = has ? uint(cls[txt_byte(x, uint(first + step * int(lane)))]) : 0;
+    for (uint q = 0; q < S; q++) a[lane * S + q] = has ? next[q * C + c] : uchar(q);
+    simdgroup_barrier(mem_flags::mem_device);
+    for (uint d = 1; d < 32; d <<= 1) {
+        // The bytes before (lane - d's prefix), then this lane's: applied in order.
+        for (uint q = 0; q < S; q++) b[lane * S + q] = lane >= d ? a[lane * S + a[(lane - d) * S + q]] : a[lane * S + q];
+        simdgroup_barrier(mem_flags::mem_device);
+        device uchar* t = a; a = b; b = t;
+    }
+    uint r = a[lane * S + st];
+    simdgroup_barrier(mem_flags::mem_device);
+    return r;
+}
+
+// A text's bytes as a text operand.
+static inline Txt txt_raw(device const uchar* p, uint n) {
+    Txt x;
+    x.a = p;
+    x.al = n;
+    x.b = p;
+    x.bl = 0;
+    x.dot = 0;
+    return x;
+}
+
+// The byte of character c of x (n bytes; n when it has fewer), 32 bytes at a time: each chunk's characters' first
+// bytes counted by a prefix over the lanes.
+static inline uint char_byte(Txt x, uint n, long c, uint lane) {
+    uint seen = 0;
+    for (uint k = 0; k < n; k += 32) {
+        bool first = k + lane < n && (txt_byte(x, k + lane) & 0xc0) != 0x80;
+        uint before = simd_prefix_exclusive_sum(first ? 1u : 0u);
+        uint hit = simd_min(first && long(seen + before) == c ? lane : 32u);
+        if (hit < 32) return k + hit;
+        seen += simd_sum(first ? 1u : 0u);
+    }
+    return n;
+}
+
+// The characters [a, b) a substring keeps of nc: `substr(s, i, n)` (f 3, SQLite's substr(s, i + 1, n)), SQLite's
+// `substr` (f 7), `slice(s, start, end)` (f 4: negative from the end, clamped).
+static inline void substr_range(uint f, long n0, long n1, long nc, thread long& a, thread long& b) {
+    if (f != 4) {
+        long p1 = f == 3 ? n0 + 1 : n0, p2 = n1;
+        bool neg = p2 < 0;
+        if (neg) p2 = -p2;
+        if (p1 < 0) {
+            p1 += nc;
+            if (p1 < 0) { p2 = max(p2 + p1, 0l); p1 = 0; }
+        } else if (p1 > 0) p1 -= 1;
+        else if (p2 > 0) p2 -= 1;
+        if (neg) {
+            p1 -= p2;
+            if (p1 < 0) { p2 += p1; p1 = 0; }
+        }
+        a = clamp(p1, 0l, nc);
+        b = clamp(p1 + p2, a, nc);
+    } else {
+        a = clamp(n0 < 0 ? nc + n0 : n0, 0l, nc);
+        b = clamp(n1 < 0 ? nc + n1 : n1, 0l, nc);
+        if (a > b) b = a;
+    }
+}
+
+// A function's kept range of x [from, to) (`TEXTFN_*` f of numbers n0, n1), by a SIMD group 32 bytes at a time: head
+// to the first ".", dir to the last "/" (by a minimum and a maximum over the lanes), substrings by characters counted by
+// sums over the lanes, their first bytes found by prefixes; the whole text for the rest. `high`: x has a byte past
+// ASCII (`lower`'s, f 0).
+static inline void text_range(uint f, Txt x, long n0, long n1, uint lane, thread uint& from, thread uint& to, thread bool& high) {
+    uint n = txt_len(x);
+    from = 0;
+    to = n;
+    high = false;
+    if (f == 1) {
+        for (uint k = 0; k < n; k += 32) {
+            uint d = simd_min(k + lane < n && txt_byte(x, k + lane) == uchar('.') ? lane : 32u);
+            if (d < 32) { to = k + d; break; }
+        }
+    } else if (f == 2) {
+        int last = -1;
+        for (uint k = 0; k < n; k += 32) {
+            int d = simd_max(k + lane < n && txt_byte(x, k + lane) == uchar('/') ? int(lane) : -1);
+            if (d >= 0) last = int(k) + d;
+        }
+        to = last >= 0 ? uint(last) : 0;
+    } else if (f == 3 || f == 4 || f == 7) {
+        long nc = 0, a, b;
+        for (uint k = 0; k < n; k += 32) nc += long(simd_sum(k + lane < n && (txt_byte(x, k + lane) & 0xc0) != 0x80 ? 1u : 0u));
+        substr_range(f, n0, n1, nc, a, b);
+        from = char_byte(x, n, a, lane);
+        to = char_byte(x, n, b, lane);
+    } else if (f == 0) {
+        for (uint k = 0; k < n; k += 32) if (simd_any(k + lane < n && txt_byte(x, k + lane) >= 0x80)) high = true;
+    }
+}
+
+// `replace_all` of a regex over x (its automata G, `text::table::Replacer`) by z, by a SIMD group 32 bytes at a time:
+// each match's end by the forward automaton (the last match before it dies), its start by the reverse one run back
+// from the end (the furthest match). The replaced text's length; written to o when `write`. f: the group's scratch
+// (64 rows of the automata's states).
+static inline uint rx_replace_txt(device const uchar* G, Txt x, Txt z, bool write, device uchar* o, device uchar* f, uint lane) {
+    device const uint* h = (device const uint*)G;
+    uint fS = h[0], fC = h[1], fdead = h[4], rS = h[5], rC = h[6], rdead = h[9];
+    device const uchar* ft = G + h[10];
+    device const uchar* rt = G + h[11];
+    device const uchar* feoi = ft + 256 + fS * fC;
+    device const uchar* facc = feoi + fS;
+    device const uchar* reoi = rt + 256 + rS * rC;
+    device const uchar* racc = reoi + rS;
+    uint n = txt_len(x), lz = txt_len(z);
+    uint pos = 0, w = 0;
+    while (pos < n) {
+        // The match's end: the forward automaton's last match before it dies (or at the end of the text).
+        uint st = pos == 0 ? h[2] : h[3], last = NONE;
+        bool dead = false;
+        for (uint k = pos; k < n && !dead; k += 32) {
+            uint m = min(32u, n - k);
+            uint q = chunk_states(ft, fS, fC, x, int(k), 1, m, st, f, lane);
+            uint d = simd_min(lane < m && q == fdead ? lane : 32u);
+            int lm = simd_max(lane < m && lane < d && facc[q] != 0 ? int(lane) : -1);
+            if (lm >= 0) last = k + uint(lm);
+            if (d < 32) dead = true;
+            else st = simd_shuffle(q, ushort(m - 1));
+        }
+        if (!dead && facc[feoi[st]] != 0) last = n;
+        if (last == NONE) break;
+        uint e = last;
+        // Its start: the reverse automaton's furthest match back from the end, down to the byte before `pos`.
+        uint lo = pos > 0 ? pos - 1 : 0, first = NONE;
+        uint rs = e == n ? h[7] : h[8];
+        bool rd = false;
+        for (uint k = e; k > lo && !rd;) {
+            uint m = min(32u, k - lo);
+            uint q = chunk_states(rt, rS, rC, x, int(k) - 1, -1, m, rs, f, lane);
+            uint d = simd_min(lane < m && q == rdead ? lane : 32u);
+            int lm = simd_max(lane < m && lane < d && racc[q] != 0 ? int(lane) : -1);
+            if (lm >= 0) first = k - uint(lm);
+            if (d < 32) rd = true;
+            else rs = simd_shuffle(q, ushort(m - 1));
+            k -= m;
+        }
+        if (!rd && pos == 0 && racc[reoi[rs]] != 0) first = 0;
+        if (first == NONE || first < pos) break;
+        if (write) {
+            for (uint i = lane; i < first - pos; i += 32) o[w + i] = txt_byte(x, pos + i);
+            for (uint i = lane; i < lz; i += 32) o[w + first - pos + i] = txt_byte(z, i);
+        }
+        w += first - pos + lz;
+        pos = e;
+    }
+    if (write) for (uint i = lane; i < n - pos; i += 32) o[w + i] = txt_byte(x, pos + i);
+    return w + n - pos;
+}
+
+// Whether text test table `tab` (`text::table::Table`: S states of C classes, from `start`) accepts x, walked by a
+// SIMD group 32 bytes at a time (`chunk_states`), the state after the end of text accepting.
+static inline bool txt_verdict(device const uchar* tab, uint S, uint C, uint start, Txt x, device uchar* f, uint lane) {
+    device const uchar* eoi = tab + 256 + S * C;
+    device const uchar* acc = eoi + S;
+    uint n = txt_len(x), st = start;
+    for (uint k = 0; k < n; k += 32) {
+        uint m = min(32u, n - k);
+        uint q = chunk_states(tab, S, C, x, int(k), 1, m, st, f, lane);
+        st = simd_shuffle(q, ushort(m - 1));
+    }
+    return acc[eoi[st]] != 0;
+}
+
+// `replace_all` of a regex, once per distinct term (decision 0038's chunked matching), its automata G
+// (`text::table::Replacer`): a SIMD group per term (`rx_replace_txt`), the replacement Z (`lz` bytes). Pass 0 counts
+// each term's replaced length into `lens`; after their scan (the offsets), pass 1 writes O as a text buffer
+// (`DevText`'s: the terms' ids, offsets, bytes). Groups are persistent.
+struct ReplaceParams { uint nterms; uint groups; uint lz; uint write; uint states; uint pad0; uint pad1; uint pad2; };
+
+kernel void text_replace(device const long* T [[buffer(0)]], device const uchar* G [[buffer(1)]], device const uchar* Z [[buffer(2)]],
+                         device uint* lens [[buffer(3)]], device long* O [[buffer(4)]], device uchar* scratch [[buffer(5)]],
+                         constant ReplaceParams& p [[buffer(6)]], uint t [[thread_position_in_grid]], uint lane [[thread_index_in_simdgroup]]) {
+    uint sg = t / 32;
+    if (t == 0) {
+        if (p.write == 0) lens[p.nterms] = 0;
+        else {
+            O[0] = long(p.nterms);
+            ((device uint*)(O + 1 + p.nterms))[p.nterms] = lens[p.nterms];
+        }
+    }
+    if (sg >= p.groups) return;
+    device const long* ids = T + 1;
+    device const uint* offs = text_offs(T);
+    device const uchar* bytes = text_chars(T);
+    device uchar* f = scratch + ulong(sg) * 64 * p.states;
+    device uint* ooffs = (device uint*)(O + 1 + p.nterms);
+    device uchar* obytes = (device uchar*)(ooffs + p.nterms + 1);
+    Txt z = txt_raw(Z, p.lz);
+    for (uint term = sg; term < p.nterms; term += p.groups) {
+        Txt x = txt_raw(bytes + offs[term], offs[term + 1] - offs[term]);
+        bool write = p.write != 0;
+        uint len = rx_replace_txt(G, x, z, write, obytes + (write ? lens[term] : 0), f, lane);
+        if (lane == 0) {
+            if (write) {
+                O[1 + term] = ids[term];
+                ooffs[term] = lens[term];
+            } else lens[term] = len;
+        }
+    }
+}
+
+// `replace_all` of literal y (not empty; empty: x itself) in x by z, by a SIMD group: each lane tests whether a match
+// starts at its byte (compared a word of eight at a time), the leftmost of a chunk taken, the next looked for past it
+// (matches not overlapping). The replaced text's length; written to o when `write`.
+static inline uint lit_replace_txt(Txt x, Txt y, Txt z, bool write, device uchar* o, uint lane) {
+    uint n = txt_len(x), ly = txt_len(y), lz = txt_len(z), pos = 0, w = 0;
+    while (ly > 0 && pos + ly <= n) {
+        uint m = NONE;
+        for (uint k = pos; k + ly <= n; k += 32) {
+            uint at = k + lane;
+            uint d = simd_min(at + ly <= n && txt_same(x, at, y, 0, ly) ? lane : 32u);
+            if (d < 32) { m = k + d; break; }
+        }
+        if (m == NONE) break;
+        if (write) {
+            for (uint i = lane; i < m - pos; i += 32) o[w + i] = txt_byte(x, pos + i);
+            for (uint i = lane; i < lz; i += 32) o[w + m - pos + i] = txt_byte(z, i);
+        }
+        w += m - pos + lz;
+        pos = m + ly;
+    }
+    if (write) for (uint i = lane; i < n - pos; i += 32) o[w + i] = txt_byte(x, pos + i);
+    return w + n - pos;
+}
+
+constant ulong POW10[20] = {1ul, 10ul, 100ul, 1000ul, 10000ul, 100000ul, 1000000ul, 10000000ul, 100000000ul, 1000000000ul,
+    10000000000ul, 100000000000ul, 1000000000000ul, 10000000000000ul, 100000000000000ul, 1000000000000000ul,
+    10000000000000000ul, 100000000000000000ul, 1000000000000000000ul, 10000000000000000000ul};
+
+// Mode 10, a made text per row, by a SIMD group a row (decision 0038's chunked matching, per binding): before its
+// scatter, `row_text` gives each row t of L its keep bit (counts[t]) and its value (V[t]), by op agg[0] & 15 of X
+// (keys 0, 1, kind agg[1] & 15) and Y (keys 2, 3, kind agg[1] >> 4): 0 `cat`'s text of X and Y ("." between when X
+// is not empty), 1 `str_concat`'s, 2 `replace_all` of regex G in X by Y, made into the arena (a bump of the group's
+// lane 0; full: the stage's counter word's bit 1, the value -1); 3 a text test of X by table G (P: its states,
+// classes, start), kept as agg[0] bit 8 wants. P[0]: the groups (persistent), P[1]: the states a group's scratch holds.
+kernel void row_text(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]], device atomic_uint* A [[buffer(2)]],
+                     device const uint* totals [[buffer(3)]], device atomic_uint* counters [[buffer(4)]], device uint* counts [[buffer(5)]],
+                     device long* V [[buffer(6)]], device const uchar* G [[buffer(7)]], device uchar* scratch [[buffer(8)]],
+                     device const uint* P [[buffer(9)]], constant Stage& s [[buffer(10)]], uint t [[thread_position_in_grid]],
+                     uint lane [[thread_index_in_simdgroup]]) {
+    uint n = min(totals[s.in_slot], s.cap_in);
+    uint groups = P[0];
+    for (uint r = n + t; r <= s.cap_in; r += groups * 32) counts[r] = 0;
+    uint sg = t / 32;
+    if (sg >= groups) return;
+    device uchar* fs = scratch + ulong(sg) * 64 * P[1];
+    uint op = s.agg[0] & 15;
+    bool want = ((s.agg[0] >> 8) & 1) != 0;
+    for (uint row = sg; row < n; row += groups) {
+        Txt x = txt_of(s, L, row, R, A, 0, s.agg[1] & 15);
+        if (op == 3) {
+            bool v = txt_verdict(G, P[2], P[3], P[4], x, fs, lane);
+            if (lane == 0) counts[row] = uint(v == want);
+            continue;
+        }
+        Txt y = txt_of(s, L, row, R, A, 2, s.agg[1] >> 4), z = y;
+        uint f = (s.agg[0] >> 16) & 255;
+        uint lx = txt_len(x), len = 0, dot = 0, from = 0, to = 0, ndig = 0;
+        ulong u = 0;
+        bool neg = false;
+        if (op == 0 || op == 1) {
+            dot = op == 0 && lx > 0 ? 1 : 0;
+            len = lx + dot + txt_len(y);
+        } else if (op == 2) {
+            len = rx_replace_txt(G, x, y, false, (device uchar*)A, fs, lane);
+        } else if (f == 5) {
+            // to_string(n): its decimal digits, a lane each (at most 20).
+            long n0 = key_value(s, L, row, 5);
+            neg = n0 < 0;
+            u = neg ? ulong(-(n0 + 1)) + 1 : ulong(n0);
+            ndig = 1;
+            while (ndig < 20 && u >= POW10[ndig]) ndig++;
+            len = ndig + (neg ? 1 : 0);
+        } else if (f == 6) {
+            // replace_all of a literal pattern (key 2) by key 4's text.
+            y = txt_of(s, L, row, R, A, 2, 0);
+            z = txt_of(s, L, row, R, A, 4, 0);
+            len = lit_replace_txt(x, y, z, false, (device uchar*)A, lane);
+        } else {
+            bool high;
+            text_range(f, x, key_value(s, L, row, 5), key_value(s, L, row, 6), lane, from, to, high);
+            if (f == 0 && high) {
+                // lower of a name past ASCII: Unicode's mapping is the host's.
+                if (lane == 0) {
+                    if (s.counter != NONE) atomic_fetch_or_explicit(&counters[s.counter], 2u, memory_order_relaxed);
+                    V[row] = -1;
+                    counts[row] = 1;
+                }
+                continue;
+            }
+            len = to - from;
+        }
+        uint off = 0;
+        if (lane == 0) off = atomic_fetch_add_explicit(A, len, memory_order_relaxed);
+        off = simd_shuffle(off, ushort(0));
+        uint cap = ((device const uint*)A)[1];
+        bool full = ulong(off) + len > cap;
+        if (!full) {
+            device uchar* o = (device uchar*)A + 16 + off;
+            if (op == 2) rx_replace_txt(G, x, y, true, o, fs, lane);
+            else if (op <= 1) for (uint i = lane; i < len; i += 32) o[i] = i < lx ? txt_byte(x, i) : (i < lx + dot ? uchar('.') : txt_byte(y, i - lx - dot));
+            else if (f == 6) lit_replace_txt(x, y, z, true, o, lane);
+            else if (f == 5) {
+                for (uint i = lane; i < len; i += 32) {
+                    uint d = i - (neg ? 1 : 0);
+                    o[i] = neg && i == 0 ? uchar('-') : uchar('0' + (u / POW10[ndig - 1 - d]) % 10);
+                }
+            } else {
+                for (uint i = lane; i < len; i += 32) {
+                    uchar c = txt_byte(x, from + i);
+                    if (f == 0 || f == 8) c = (c >= 'A' && c <= 'Z') ? c + 32 : c;
+                    else if (f == 9) c = (c >= 'a' && c <= 'z') ? c - 32 : c;
+                    o[i] = c;
+                }
+            }
+        }
+        if (lane == 0) {
+            if (full && s.counter != NONE) atomic_fetch_or_explicit(&counters[s.counter], 1u, memory_order_relaxed);
+            V[row] = full ? -1 : arena_value(off, len);
+            counts[row] = 1;
+        }
+    }
+}
+
+// Mode 10's rows out: those `row_text` kept, each its value (V's) in `bind_slot[0]` but for a test's.
+kernel void row_scatter(device const long* L [[buffer(0)]], device const long* V [[buffer(1)]], device uint* totals [[buffer(2)]],
+                        device const uint* offsets [[buffer(3)]], device long* O [[buffer(4)]], constant Stage& s [[buffer(5)]],
+                        uint t [[thread_position_in_grid]]) {
+    uint n = min(totals[s.in_slot], s.cap_in);
+    if (t == 0) totals[s.out_slot] = offsets[n];
+    if (t >= n) return;
+    uint at = offsets[t];
+    if (offsets[t + 1] <= at || at >= s.cap_out) return;
+    for (uint k = 0; k < s.nslots; k++) O[ulong(k) * s.cap_out + at] = L[ulong(k) * s.cap_in + t];
+    if ((s.agg[0] & 15) != 3) O[ulong(s.bind_slot[0]) * s.cap_out + at] = V[t];
+}
+
+// A text function of constant arguments (`TEXTFN_*`: f), once per distinct term (decision 0038's chunked matching):
+// a SIMD group per term, 32 bytes at a time. The kept range of its text (head: to the first "."; dir: to the last
+// "/"; substr, sql_substr, slice: characters counted by sums over the lanes, their first bytes found by prefixes), or
+// its bytes mapped (lower, upper). `lower` of a term past ASCII sets `flag` (Unicode's mapping is the host's). Pass 0
+// counts each term's length into `lens`; after their scan, pass 1 writes O as a text buffer (`DevText`'s).
+struct MapParams { uint nterms; uint groups; uint f; uint write; long n0; long n1; };
+
+kernel void text_map(device const long* T [[buffer(0)]], device uint* lens [[buffer(1)]], device long* O [[buffer(2)]],
+                     device atomic_uint* flag [[buffer(3)]], constant MapParams& p [[buffer(4)]], uint t [[thread_position_in_grid]],
+                     uint lane [[thread_index_in_simdgroup]]) {
+    uint sg = t / 32;
+    if (t == 0) {
+        if (p.write == 0) lens[p.nterms] = 0;
+        else {
+            O[0] = long(p.nterms);
+            ((device uint*)(O + 1 + p.nterms))[p.nterms] = lens[p.nterms];
+        }
+    }
+    if (sg >= p.groups) return;
+    device const long* ids = T + 1;
+    device const uint* offs = text_offs(T);
+    device const uchar* bytes = text_chars(T);
+    device uint* ooffs = (device uint*)(O + 1 + p.nterms);
+    device uchar* obytes = (device uchar*)(ooffs + p.nterms + 1);
+    uint f = p.f;
+    for (uint term = sg; term < p.nterms; term += p.groups) {
+        device const uchar* x = bytes + offs[term];
+        uint n = offs[term + 1] - offs[term];
+        uint from, to;
+        bool high;
+        text_range(f, txt_raw(x, n), p.n0, p.n1, lane, from, to, high);
+        if (f == 0 && high && lane == 0 && p.write == 0) atomic_fetch_or_explicit(flag, 1u, memory_order_relaxed);
+        uint len = to - from;
+        if (p.write == 0) {
+            if (lane == 0) lens[term] = len;
+            continue;
+        }
+        device uchar* o = obytes + lens[term];
+        for (uint i = lane; i < len; i += 32) {
+            uchar c = x[from + i];
+            if (f == 0 || f == 8) c = (c >= 'A' && c <= 'Z') ? c + 32 : c;
+            else if (f == 9) c = (c >= 'a' && c <= 'z') ? c - 32 : c;
+            o[i] = c;
+        }
+        if (lane == 0) {
+            O[1 + term] = ids[term];
+            ooffs[term] = lens[term];
         }
     }
 }
@@ -1066,6 +1337,8 @@ pub(in crate::code_rule_dsl) struct DevText {
     pub(in crate::code_rule_dsl) longest: usize,
     /// Whether a name holds the set separator (`strings::SET_SEP`): a text test would split it.
     pub(in crate::code_rule_dsl) sep: bool,
+    /// The names' bytes, all told.
+    pub(in crate::code_rule_dsl) chars: usize,
 }
 
 impl DevText {
@@ -1098,7 +1371,8 @@ impl DevText {
         let held = Held::of(out.into_iter()).map_err(|_| Error::BackendCapacity)?;
         let longest = offs.windows(2).map(|w| (w[1] - w[0]) as usize).max().unwrap_or(0);
         let sep = chars.contains(&0x1f);
-        Ok(DevText { packed: std::rc::Rc::new(DevRel { buffer: held, rows, cols: 1 }), terms: n, span, longest, sep })
+        let nchars = chars.len();
+        Ok(DevText { packed: std::rc::Rc::new(DevRel { buffer: held, rows, cols: 1 }), terms: n, span, longest, sep, chars: nchars })
     }
 
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
@@ -1256,6 +1530,28 @@ impl Words {
     }
 }
 
+/// A stage whose table's space is past this many rows has its grids sized on the device (`Scan::size`): below it,
+/// the threads past the rows are fewer than the sizing's own dispatch costs. `RERAIL_DEVICE_SIZED_MIN` sets it
+/// (0: every stage's, to test them), `RERAIL_DEVICE_SIZED=off` turns the sizing off.
+fn sized_min() -> usize {
+    static MIN: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *MIN.get_or_init(|| match std::env::var("RERAIL_DEVICE_SIZED") {
+        Ok(v) if v == "off" => usize::MAX,
+        _ => std::env::var("RERAIL_DEVICE_SIZED_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(4096),
+    })
+}
+
+/// Bytes the device reads (a regex's automaton for `TEXTFN_REGEX`).
+pub(in crate::code_rule_dsl) struct DevBytes {
+    held: Held,
+}
+
+impl DevBytes {
+    pub(in crate::code_rule_dsl) fn upload(bytes: &[u8]) -> Result<DevBytes, Error> {
+        Ok(DevBytes { held: Held::of(bytes.iter().copied()).map_err(|_| Error::BackendCapacity)? })
+    }
+}
+
 /// A batch's text arena: the texts its text functions make (`TEXTFN`), shared by every job in the batch. Its first
 /// word is an atomic bump of the bytes given out, which counts on past the end, so a full arena says how much its
 /// jobs wanted (they then run again in one that big, or on the host); its second, its capacity.
@@ -1303,6 +1599,8 @@ pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) submissions: u32,
     pub(in crate::code_rule_dsl) dispatches: u32,
     pub(in crate::code_rule_dsl) gpu_seconds: f64,
+    /// Stages whose grids were sized on the device (`Scan::size`).
+    pub(in crate::code_rule_dsl) sized: u32,
 }
 
 /// Work encoded into one command buffer at a time, committed when the launch budget of one is near and at `finish`;
@@ -1316,6 +1614,12 @@ pub(in crate::code_rule_dsl) struct Batch {
     /// Buffers the encoded work reads that nothing else holds: kept until it completes (a pooled buffer is written
     /// by the host when handed out again, and Metal orders no host write after a GPU read).
     keep: Vec<Held>,
+    /// Text buffers its passes read, kept until it is done (a chain's intermediate texts are dropped by their
+    /// maker once the next pass is encoded: their buffers must not be reused while the GPU reads them).
+    read: Vec<std::rc::Rc<DevRel>>,
+    /// What its passes write that their maker gave up before it was done (a stratum refused after some of its rules
+    /// were encoded): kept until it is, so no buffer it writes goes back to the pool while the GPU may write it.
+    held: Vec<Box<dyn std::any::Any>>,
     /// The texts its jobs' text functions make, made the first time a job asks.
     arena: Option<std::rc::Rc<Arena>>,
     arena_cap: usize,
@@ -1330,7 +1634,12 @@ impl Batch {
     /// A batch whose text arena holds `cap` bytes.
     pub(in crate::code_rule_dsl) fn with_arena(cap: usize) -> Result<Batch, Error> {
         rerail_accel::gpu::join::device()?;
-        Ok(Batch { open: None, pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, keep: Vec::new(), arena: None, arena_cap: cap })
+        Ok(Batch { open: None, pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, keep: Vec::new(), read: Vec::new(), held: Vec::new(), arena: None, arena_cap: cap })
+    }
+
+    /// Keeps `what` (encoded work's buffers, given up by its maker) until the batch is done.
+    pub(in crate::code_rule_dsl) fn hold(&mut self, what: Box<dyn std::any::Any>) {
+        self.held.push(what);
     }
 
     /// Its text arena, shared by its jobs.
@@ -1376,6 +1685,8 @@ impl Batch {
             self.done.gpu_seconds += s.wait();
         }
         self.keep.clear();
+        self.read.clear();
+        self.held.clear();
         Ok(std::mem::take(&mut self.done))
     }
 
@@ -1444,16 +1755,64 @@ impl Batch {
         let n = left.cap + 1;
         let counts = scratch(FREE, 4 * n)?;
         let scan = Scan::new(n)?;
-        let arena: metal::Buffer = if stage.mode == TEXTFN || matches!(stage.mode, STRCMP | TEXTOP) && (stage.agg[1] & 15 == OPND_ARENA || stage.agg[1] >> 4 == OPND_ARENA) {
+        let arena: metal::Buffer = if matches!(stage.mode, STRCMP | TEXTOP) && (stage.agg[1] & 15 == OPND_ARENA || stage.agg[1] >> 4 == OPND_ARENA) {
             self.arena()?.buffer.buffer.to_owned()
         } else {
             self.dummy.buffer.to_owned()
         };
-        let pass = self.pass(12)?;
+        let pass = self.pass(13)?;
         let lbuf: &BufferRef = &left.buffer.buffer;
-        pass.run_bytes(&count, &[lbuf, &rbuf, &perm, &starts, &rkeys, &nruns, &totals.buffer.buffer, &counters.buffer.buffer, &counts, &arena], stage.bytes(), groups(n));
+        let count_bufs: [&BufferRef; 10] = [lbuf, &rbuf, &perm, &starts, &rkeys, &nruns, &totals.buffer.buffer, &counters.buffer.buffer, &counts, &arena];
+        let scatter_bufs: [&BufferRef; 11] = [lbuf, &rbuf, &perm, &starts, &rkeys, &nruns, &totals.buffer.buffer, &counts, &out.buffer.buffer, &arena, &counters.buffer.buffer];
+        if n > sized_min() {
+            // The table's space is the host's guess: the grids are sized on the device, from the rows the stage
+            // before made (decision 0113's GPU-sized work).
+            let sizes = scan.size(pass, &totals.buffer.buffer, in_slot, left.cap)?;
+            pass.run_bytes_indirect(&count, &count_bufs, stage.bytes(), &sizes.buffer, 4 * 32);
+            scan.encode_sized(pass, &counts, &sizes)?;
+            pass.run_bytes_indirect(&scatter, &scatter_bufs, stage.bytes(), &sizes.buffer, 4 * 32);
+            self.done.sized += 1;
+            self.keep.push(sizes);
+            return Ok(());
+        }
+        pass.run_bytes(&count, &count_bufs, stage.bytes(), groups(n));
         scan.encode(pass, &counts)?;
-        pass.run_bytes(&scatter, &[lbuf, &rbuf, &perm, &starts, &rkeys, &nruns, &totals.buffer.buffer, &counts, &out.buffer.buffer, &arena, &counters.buffer.buffer], stage.bytes(), groups(n));
+        pass.run_bytes(&scatter, &scatter_bufs, stage.bytes(), groups(n));
+        Ok(())
+    }
+
+    /// A mode 10 stage (`ROWTEXT`) from `left` into `out`: `row_text` (a SIMD group a row, over the names `names`,
+    /// with automaton `auto`: a replacement's automata, or a test's table and its states, classes and start) gives
+    /// each row its keep bit and value, then a scan and `row_scatter`.
+    #[allow(clippy::too_many_arguments)]
+    pub(in crate::code_rule_dsl) fn row_stage(&mut self, mut stage: Stage, left: &Table, names: &DevRel, auto: Option<(&DevBytes, [u32; 4])>, in_slot: usize, out_slot: usize,
+                                              totals: &Words, counters: &Words, counter: Option<usize>, out: &Table) -> Result<(), Error> {
+        let text = pipeline("join", "row_text", || SOURCE.to_owned())?;
+        let scatter = pipeline("join", "row_scatter", || SOURCE.to_owned())?;
+        stage.cap_in = left.cap as u32;
+        stage.cap_out = out.cap as u32;
+        stage.in_slot = in_slot as u32;
+        stage.out_slot = out_slot as u32;
+        stage.counter = counter.map_or(NONE, |c| c as u32);
+        stage.nslots = left.slots as u32;
+        let n = left.cap + 1;
+        let ngroups = left.cap.clamp(1, 1024);
+        // [scratch states, states, classes, start]: a replacement's scratch holds its larger automaton's states.
+        let [kept, states, classes, start] = auto.map_or([1, 0, 0, 0], |a| a.1);
+        let work = Held::new(ngroups * 64 * kept.max(1) as usize)?;
+        let p = Held::of([ngroups as u32, kept, states, classes, start, 0, 0, 0].into_iter()).map_err(|_| Error::BackendCapacity)?;
+        let counts = scratch(FREE, 4 * n)?;
+        let values = Held::new(8 * n)?;
+        let scan = Scan::new(n)?;
+        let arena = self.arena()?.buffer.buffer.to_owned();
+        let g: metal::Buffer = auto.map_or_else(|| self.dummy.buffer.to_owned(), |a| a.0.held.buffer.to_owned());
+        let pass = self.pass(4)?;
+        let lbuf: &BufferRef = &left.buffer.buffer;
+        pass.run_bytes(&text, &[lbuf, &names.buffer.buffer, &arena, &totals.buffer.buffer, &counters.buffer.buffer, &counts, &values.buffer, &g, &work.buffer, &p.buffer],
+                       stage.bytes(), (ngroups * 32).div_ceil(256));
+        scan.encode(pass, &counts)?;
+        pass.run_bytes(&scatter, &[lbuf, &values.buffer, &totals.buffer.buffer, &counts, &out.buffer.buffer], stage.bytes(), groups(n));
+        self.keep.extend([work, p, values]);
         Ok(())
     }
 
@@ -1540,20 +1899,61 @@ impl Batch {
         Ok(())
     }
 
-    /// The texts of made values `vals` (`MAKE`'s), their parts' names in `text`: each one's length into `lens` (one
-    /// a row) and its bytes into `width` bytes of `out`.
-    pub(in crate::code_rule_dsl) fn make_texts(&mut self, vals: &DevRel, text: &DevText, width: usize, lens: &DevRel, out: &DevRel) -> Result<(), Error> {
-        if vals.rows == 0 {
-            return Ok(());
+    /// `replace_all` of a regex (its automata `table`, `text::table::Replacer`) by `with`, once per term of `text`: a
+    /// text buffer of the same terms, their replaced texts (`text_replace`, two passes and a scan between).
+    pub(in crate::code_rule_dsl) fn replace(&mut self, text: &DevText, table: &DevBytes, states: u32, with: &[u8]) -> Result<DevText, Error> {
+        let n = text.terms;
+        // A match of at least a byte becomes `with`: no text grows past its length times `with`'s.
+        let room = text.chars.saturating_mul(with.len().max(1));
+        let out = std::rc::Rc::new(DevRel::empty(1, (8 * (1 + n) + 4 * (n + 1) + room + 1).div_ceil(8))?);
+        let kernel = pipeline("join", "text_replace", || SOURCE.to_owned())?;
+        let groups = n.clamp(1, 1024);
+        let scratch = Held::new(groups * 64 * states as usize)?;
+        let lens = Held::new(4 * (n + 1))?;
+        let z = Held::of(with.iter().copied().chain([0u8]).collect::<Vec<u8>>().into_iter()).map_err(|_| Error::BackendCapacity)?;
+        let scan = Scan::new(n + 1)?;
+        for write in [0u32, 1] {
+            let p: [u32; 8] = [n as u32, groups as u32, with.len() as u32, write, states, 0, 0, 0];
+            // SAFETY: plain integers.
+            let bytes = unsafe { std::slice::from_raw_parts(p.as_ptr().cast::<u8>(), 32) };
+            let pass = self.pass(8)?;
+            pass.run_bytes(&kernel, &[&text.packed.buffer.buffer, &table.held.buffer, &z.buffer, &lens.buffer, &out.buffer.buffer, &scratch.buffer], bytes, (groups * 32).div_ceil(256));
+            if write == 0 {
+                scan.encode(pass, &lens.buffer)?;
+            }
         }
-        assert!(lens.rows * 2 >= vals.rows && out.rows * 8 >= vals.rows * width);
-        let kernel = pipeline("join", "text_make", || SOURCE.to_owned())?;
-        let p: [u32; 2] = [vals.rows as u32, width as u32];
-        // SAFETY: plain integers.
-        let bytes = unsafe { std::slice::from_raw_parts(p.as_ptr().cast::<u8>(), 8) };
-        let pass = self.pass(1)?;
-        pass.run_bytes(&kernel, &[&vals.buffer.buffer, &text.packed.buffer.buffer, &lens.buffer.buffer, &out.buffer.buffer], bytes, vals.rows.div_ceil(256));
-        Ok(())
+        self.keep.extend([scratch, lens, z]);
+        self.read.push(text.packed.clone());
+        Ok(DevText { packed: out, terms: n, span: text.span, longest: room, sep: true, chars: room })
+    }
+
+    /// Text function `f` (`TEXTFN_*`) of constant numbers `n0`, `n1`, once per term of `text` (`text_map`): a text
+    /// buffer of the same terms, their texts made. `flag` is set when `lower` met a term past ASCII.
+    pub(in crate::code_rule_dsl) fn text_map(&mut self, text: &DevText, f: u32, n0: i64, n1: i64, flag: &Words) -> Result<DevText, Error> {
+        let n = text.terms;
+        // No function here makes a text longer.
+        let room = text.chars;
+        let out = std::rc::Rc::new(DevRel::empty(1, (8 * (1 + n) + 4 * (n + 1) + room + 1).div_ceil(8))?);
+        let kernel = pipeline("join", "text_map", || SOURCE.to_owned())?;
+        let groups = n.clamp(1, 1024);
+        let lens = Held::new(4 * (n + 1))?;
+        let scan = Scan::new(n + 1)?;
+        for write in [0u32, 1] {
+            let mut p = [0u8; 32];
+            for (k, w) in [n as u32, groups as u32, f, write].iter().enumerate() {
+                p[4 * k..4 * k + 4].copy_from_slice(&w.to_le_bytes());
+            }
+            p[16..24].copy_from_slice(&n0.to_le_bytes());
+            p[24..32].copy_from_slice(&n1.to_le_bytes());
+            let pass = self.pass(8)?;
+            pass.run_bytes(&kernel, &[&text.packed.buffer.buffer, &lens.buffer, &out.buffer.buffer, &flag.buffer.buffer], &p, (groups * 32).div_ceil(256));
+            if write == 0 {
+                scan.encode(pass, &lens.buffer)?;
+            }
+        }
+        self.keep.push(lens);
+        self.read.push(text.packed.clone());
+        Ok(DevText { packed: out, terms: n, span: text.span, longest: text.longest, sep: true, chars: room })
     }
 
     /// Sets slots of `table` in place (`stage`'s binds: program columns of the binding's slots, or parameters).

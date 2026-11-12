@@ -26,16 +26,14 @@ pub mod replay;
 pub mod session;
 #[path = "functions/source_batch.rs"]
 pub mod source_batch;
-#[cfg(test)]
-#[path = "functions/source_batch_tests.rs"]
-pub mod source_batch_tests;
+// source_batch_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 pub mod statistics;
 pub mod store;
 pub mod values;
 
-use super::AnchorPlan;
+pub use super::AnchorPlan;
 #[cfg(any(test, feature = "test-hooks"))]
-use super::Selection;
+pub use super::Selection;
 use crate::code_rule_dsl::{language, tape::TapeDoc};
 #[cfg(any(test, feature = "test-hooks"))]
 use ast_grep_core::Node;
@@ -71,7 +69,7 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
         Self::build_at(root, _plans, max_nodes, interrupted, "input")
     }
 
-    pub(in crate::code_rule_dsl) fn build_at(
+    pub fn build_at(
         root: &'tree AstGrep<TapeDoc>,
         _plans: &[&AnchorPlan],
         max_nodes: usize,
@@ -111,7 +109,7 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
     pub(in crate::code_rule_dsl) fn len(&self) -> usize {
         self.nodes
     }
-    pub(in crate::code_rule_dsl) fn visited_nodes(&self) -> usize {
+    pub fn visited_nodes(&self) -> usize {
         self.visited
     }
     #[cfg(any(any(test, feature = "test-hooks"), feature = "code-rule-profile"))]
@@ -128,7 +126,7 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
         self.file.as_ref().map_or(0, |file| file.bytes)
     }
 
-    pub(in crate::code_rule_dsl) fn selected(
+    pub fn selected(
         &self,
         plan: &std::sync::Arc<AnchorPlan>,
     ) -> Option<std::sync::Arc<[u32]>> {
@@ -168,12 +166,10 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
     }
 }
 
-#[cfg(test)]
-pub mod preparation_tests;
+// preparation_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 #[cfg(all(test, feature = "code-rule-profile"))]
 pub mod retention_spikes;
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 #[path = "corpus/cache.rs"]
 pub mod cache;

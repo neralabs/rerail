@@ -48,7 +48,7 @@ fn shape<'a>(value: &'a Value, path: &str) -> Result<(NthPosition, Option<&'a Va
     Ok((position, object.get("ofRule"), reverse))
 }
 
-pub(super) fn validate_nth_child(
+pub fn validate_nth_child(
     value: &Value,
     path: &str,
     limits: &Limits,
@@ -60,7 +60,7 @@ pub(super) fn validate_nth_child(
     Ok(())
 }
 
-pub(super) fn compile_nth_child(
+pub fn compile_nth_child(
     value: &Value,
     language: GrammarDialect,
     path: &str,

@@ -7,6 +7,9 @@ pub enum Error {
     InvalidOperand(usize),
     InvalidTarget(usize),
     NonProgressingCycle(usize),
+    /// A tier-2 word in a phase it may not run in (`stream::phases`): a word that reads the
+    /// next token with it taken, or a word other than `TOKEN` reached in both.
+    Phase(usize),
     InvalidGreedyRegion(usize),
     WorkLimit,
     UnsupportedPattern,

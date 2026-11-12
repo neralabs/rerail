@@ -17,7 +17,7 @@ use regex::Regex;
 use std::ops::Range;
 
 /// A match local to its context (the complete source or one independent line).
-pub(in crate::code_rule_dsl) struct RegexMatch {
+pub struct RegexMatch {
     pub(in crate::code_rule_dsl) range: Range<usize>,
     pub context: Range<usize>,
     pub line: Option<usize>,

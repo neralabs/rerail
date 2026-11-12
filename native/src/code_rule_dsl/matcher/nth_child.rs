@@ -20,7 +20,7 @@ pub struct Position {
 
 impl Position {
     /// Upstream's `FunctionalPosition::is_matched`, integer division and remainder included.
-    fn holds(self, index: usize) -> bool {
+    pub fn holds(self, index: usize) -> bool {
         let Some(index) = i64::try_from(index)
             .ok()
             .and_then(|index| index.checked_add(1))
@@ -401,7 +401,7 @@ fn on_kinds(rule: &AstMatcher, kind: u16) -> Option<bool> {
 
 /// A parent's named children counted by `nthChild` (all, or those its `ofRule` matches), by node
 /// id in order; `unknown` where a probe's verdict was.
-pub(super) struct Siblings {
+pub struct Siblings {
     pub(super) counted: Vec<usize>,
     pub(super) unknown: bool,
 }
@@ -491,6 +491,5 @@ pub fn reset_named_sibling_visits() {
     NAMED_SIBLING_VISITS.set(0);
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 

@@ -221,7 +221,7 @@ pub struct Overlay {
 }
 
 impl Overlay {
-    pub(crate) fn new(store: Arc<ContentStore>, limits: Limits) -> StoreResult<Self> {
+    pub fn new(store: Arc<ContentStore>, limits: Limits) -> StoreResult<Self> {
         Self::with(StoreHandle::Shared(store), limits)
     }
 
@@ -277,7 +277,7 @@ impl Overlay {
     }
 
     /// Freezes the top and writes every layer: afterwards SQLite holds everything.
-    pub(crate) fn flush(&self) -> StoreResult<()> {
+    pub fn flush(&self) -> StoreResult<()> {
         let mut state = self.shared.lock();
         self.shared.freeze(&mut state);
         while !state.frozen.is_empty() {

@@ -13,7 +13,8 @@ use std::fmt::Write as _;
 use std::ops::Range;
 use std::sync::Arc;
 
-#[cfg(any(test, feature = "test-hooks"))]
+// Its tests parse Python, so the engine mounts it for them (tools/cratify/runtime-hosts.tsv); here it is a test hook.
+#[cfg(all(feature = "test-hooks", not(test)))]
 pub mod admission_spike;
 /// G's literal anchors over its positional search index (O21).
 #[cfg(any(test, feature = "test-hooks"))]
@@ -27,10 +28,8 @@ use literal_anchors::*;
 #[allow(dead_code)]
 pub mod sql_backend;
 pub mod capture_run;
-#[cfg(test)]
-pub mod capture_run_entry_tests;
-#[cfg(any(test, feature = "test-hooks"))]
-pub mod capture_run_tests;
+// capture_run_entry_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
+// capture_run_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 // cratify: `metal_backend` is rerail-device-metal's (it mounts it)
 // cratify: a re-export of rerail-device-metal's, which its facades of this module make
@@ -68,16 +67,12 @@ pub fn metal_execution_metrics() -> (usize, usize) {
 pub mod closure_proof;
 #[path = "packed/verify/cycle_progress.rs"]
 pub mod cycle_progress;
-#[cfg(test)]
-#[path = "packed/verify/cycle_progress_tests.rs"]
-pub mod cycle_progress_tests;
+// cycle_progress_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 #[path = "packed/verify/execution_shape.rs"]
 pub mod execution_shape;
 #[path = "packed/verify/greedy_contract.rs"]
 pub mod greedy_contract;
-#[cfg(test)]
-#[path = "packed/verify/greedy_contract_tests.rs"]
-pub mod greedy_contract_tests;
+// greedy_contract_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 #[path = "packed/verify/terminal_repeat_proof.rs"]
 pub mod terminal_repeat_proof;
 #[cfg(test)]
@@ -493,7 +488,7 @@ impl LuaPattern {
         })
     }
 
-    fn matches_with_work(&self, bytes: &[u8], work: &mut usize) -> Result<bool, ()> {
+    pub fn matches_with_work(&self, bytes: &[u8], work: &mut usize) -> Result<bool, ()> {
         fn suffix(
             pattern: &LuaPattern,
             item: usize,
@@ -617,7 +612,7 @@ impl LuaPattern {
         Ok(false)
     }
 
-    fn matches(&self, bytes: &[u8]) -> bool {
+    pub fn matches(&self, bytes: &[u8]) -> bool {
         self.matches_with_work(bytes, &mut 0).unwrap_or(false)
     }
 }
@@ -710,7 +705,7 @@ pub struct Program {
     pub output_program: output::OutputProgram,
     pub ast_pattern: Option<PackedPattern>,
     /// `canonical_digest("", b"")`, once (`plain_digest`).
-    digest: DigestMemo,
+    pub digest: DigestMemo,
 }
 
 impl std::ops::Deref for Program {
@@ -730,7 +725,7 @@ impl std::ops::DerefMut for Program {
 /// the batch keys each read it per execution (06 S7: ~12 k SHA-256 digests, 0.35 s of 1.1 s of
 /// roots). A clone starts empty, so a clone that is then changed digests itself.
 #[derive(Default)]
-struct DigestMemo(std::sync::OnceLock<String>);
+pub struct DigestMemo(std::sync::OnceLock<String>);
 
 impl Clone for DigestMemo {
     fn clone(&self) -> Self {
@@ -857,7 +852,7 @@ pub enum ExecutionBackend {
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
-pub(super) fn interpreter_reference(
+pub fn interpreter_reference(
     programs: &[Program],
     file: &TapeDoc,
     roots: &[Vec<u32>],
@@ -870,23 +865,23 @@ pub(super) fn interpreter_reference(
 pub use rerail_compiler::Error;
 
 #[derive(Clone, Copy)]
-struct Path {
-    pc: u16,
-    node: u32,
-    start: u32,
-    captures: u32,
-    cursors: u32,
-    active_repeats: u32,
-    steps: usize,
+pub struct Path {
+    pub pc: u16,
+    pub node: u32,
+    pub start: u32,
+    pub captures: u32,
+    pub cursors: u32,
+    pub active_repeats: u32,
+    pub steps: usize,
 }
 
-struct ExecutionArena {
-    captures: Vec<Vec<Capture>>,
-    ordered_captures: Vec<Arc<[CaptureIdentity]>>,
+pub struct ExecutionArena {
+    pub captures: Vec<Vec<Capture>>,
+    pub ordered_captures: Vec<Arc<[CaptureIdentity]>>,
     capture_transitions: HashMap<(u32, u16, u32), u32>,
-    cursors: Vec<Vec<Option<u32>>>,
+    pub cursors: Vec<Vec<Option<u32>>>,
     cursor_indexes: HashMap<Vec<Option<u32>>, u32>,
-    repeats: Vec<Vec<u16>>,
+    pub repeats: Vec<Vec<u16>>,
     repeat_indexes: HashMap<Vec<u16>, u32>,
     greedy_paths: Vec<Option<Path>>,
     greedy_indexes: HashMap<(u16, u32, u32, u32, u32), u32>,
@@ -909,7 +904,7 @@ impl Default for ExecutionArena {
 }
 
 impl ExecutionArena {
-    fn capture(&mut self, state: u32, capture: Capture) -> u32 {
+    pub fn capture(&mut self, state: u32, capture: Capture) -> u32 {
         let key = (state, capture.label, capture.node);
         if let Some(next) = self.capture_transitions.get(&key) {
             return *next;
@@ -937,7 +932,7 @@ impl ExecutionArena {
         next
     }
 
-    fn save_cursor(&mut self, state: u32, slot: u16, node: u32) -> u32 {
+    pub fn save_cursor(&mut self, state: u32, slot: u16, node: u32) -> u32 {
         let mut cursors = self.cursors[state as usize].clone();
         cursors.resize(usize::from(slot) + 1, None);
         cursors[usize::from(slot)] = Some(node);
@@ -950,7 +945,7 @@ impl ExecutionArena {
         next
     }
 
-    fn push_repeat(&mut self, state: u32, repeat: u16) -> u32 {
+    pub fn push_repeat(&mut self, state: u32, repeat: u16) -> u32 {
         let mut repeats = self.repeats[state as usize].clone();
         repeats.push(repeat);
         if let Some(next) = self.repeat_indexes.get(&repeats) {
@@ -962,7 +957,7 @@ impl ExecutionArena {
         next
     }
 
-    fn schedule_greedy(&mut self, path: Path) -> Option<u32> {
+    pub fn schedule_greedy(&mut self, path: Path) -> Option<u32> {
         let key = (
             path.pc,
             path.start,
@@ -980,7 +975,7 @@ impl ExecutionArena {
         Some(index)
     }
 
-    fn take_greedy(&mut self, index: u32) -> Option<Path> {
+    pub fn take_greedy(&mut self, index: u32) -> Option<Path> {
         let path = self.greedy_paths[index as usize].take()?;
         let key = (
             path.pc,
@@ -993,7 +988,7 @@ impl ExecutionArena {
         Some(path)
     }
 
-    fn pop_repeat(&mut self, state: u32, repeat: u16) -> Option<u32> {
+    pub fn pop_repeat(&mut self, state: u32, repeat: u16) -> Option<u32> {
         let mut repeats = self.repeats[state as usize].clone();
         if repeats.pop() != Some(repeat) {
             return None;
@@ -1008,7 +1003,7 @@ impl ExecutionArena {
     }
 }
 
-enum WorkItem {
+pub enum WorkItem {
     Path(Path),
     Greedy(u32),
     Following {
@@ -1043,7 +1038,7 @@ impl WorkItem {
 
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-enum SiblingRequirement {
+pub enum SiblingRequirement {
     None,
     Immediate,
     First,
@@ -1052,11 +1047,11 @@ enum SiblingRequirement {
 
 #[derive(Clone, Copy, Debug, Default)]
 #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
-struct ExecutionStats {
-    explored_states: usize,
-    max_pending_paths: usize,
-    peak_retained_bytes: usize,
-    sibling_edge_visits: usize,
+pub struct ExecutionStats {
+    pub explored_states: usize,
+    pub max_pending_paths: usize,
+    pub peak_retained_bytes: usize,
+    pub sibling_edge_visits: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1189,7 +1184,7 @@ fn ordered_capture_identities(captures: &[Capture]) -> Vec<CaptureIdentity> {
     identities
 }
 
-fn capture_containment(left: &[Capture], right: &[Capture]) -> (bool, bool) {
+pub fn capture_containment(left: &[Capture], right: &[Capture]) -> (bool, bool) {
     capture_identity_containment(
         &ordered_capture_identities(left),
         &ordered_capture_identities(right),
@@ -1197,7 +1192,7 @@ fn capture_containment(left: &[Capture], right: &[Capture]) -> (bool, bool) {
 }
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
-struct QueryStateIdentity {
+pub struct QueryStateIdentity {
     pc: u16,
     node: u32,
     cursors: u32,
@@ -1206,17 +1201,41 @@ struct QueryStateIdentity {
     captures: u32,
 }
 
-type QueryStateKey = (u16, u32, u32, u32, SiblingRequirement);
+pub type QueryStateKey = (u16, u32, u32, u32, SiblingRequirement);
 
 #[derive(Default)]
-struct CaptureStateSet {
+pub struct CaptureStateSet {
     states: HashSet<Arc<[CaptureIdentity]>>,
 }
 
-fn charge_task_work(work: &mut usize) -> Result<(), Error> {
+// A test's per-task work limit (`TaskLimit::enter`), which `charge_task_work` reads in tests.
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    static TASK_LIMIT: std::cell::Cell<usize> = const { std::cell::Cell::new(MAX_WORK_PER_TASK) };
+}
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn task_work_limit() -> usize {
+    TASK_LIMIT.with(std::cell::Cell::get)
+}
+#[cfg(any(test, feature = "test-hooks"))]
+pub struct TaskLimit(usize);
+#[cfg(any(test, feature = "test-hooks"))]
+impl TaskLimit {
+    pub fn enter(limit: usize) -> Self {
+        Self(TASK_LIMIT.with(|value| value.replace(limit)))
+    }
+}
+#[cfg(any(test, feature = "test-hooks"))]
+impl Drop for TaskLimit {
+    fn drop(&mut self) {
+        TASK_LIMIT.with(|value| value.set(self.0));
+    }
+}
+
+pub fn charge_task_work(work: &mut usize) -> Result<(), Error> {
     *work = work.checked_add(1).ok_or(Error::WorkLimit)?;
     #[cfg(any(test, feature = "test-hooks"))]
-    let limit = capture_run_tests::task_work_limit();
+    let limit = task_work_limit();
     #[cfg(not(any(test, feature = "test-hooks")))]
     let limit = MAX_WORK_PER_TASK;
     if *work > limit {
@@ -1523,7 +1542,7 @@ impl Program {
         }
     }
 
-    fn query_state_identity(&self, path: &Path) -> QueryStateIdentity {
+    pub fn query_state_identity(&self, path: &Path) -> QueryStateIdentity {
         QueryStateIdentity {
             pc: path.pc,
             node: path.node,
@@ -1534,7 +1553,7 @@ impl Program {
         }
     }
 
-    fn admit_query_state(
+    pub fn admit_query_state(
         &self,
         path: &Path,
         arena: &ExecutionArena,
@@ -1628,7 +1647,7 @@ impl Program {
         )
     }
 
-    pub(super) fn compile_ast_grep_literal(pattern: &Pattern) -> Result<Self, Error> {
+    pub fn compile_ast_grep_literal(pattern: &Pattern) -> Result<Self, Error> {
         if !matches!(pattern.strictness, MatchStrictness::Smart) {
             return Err(Error::UnsupportedPattern);
         }
@@ -1753,7 +1772,7 @@ impl Program {
 
     /// This program in set mode (`set_mode`). A tree-sitter query keeps its exact semantics: its
     /// repeats reduce by capture containment, which set mode does not admit (spec §2, :132).
-    pub(in crate::code_rule_dsl) fn in_set_mode(mut self) -> Self {
+    pub fn in_set_mode(mut self) -> Self {
         if !self.tree_sitter_query {
             self.set_mode = true;
             self.digest = DigestMemo::default();
@@ -1766,7 +1785,7 @@ impl Program {
     }
 
     /// `canonical_digest("", b"")`, computed once per program value (`DigestMemo`).
-    pub(in crate::code_rule_dsl) fn plain_digest(&self) -> &str {
+    pub fn plain_digest(&self) -> &str {
         self.digest.0.get_or_init(|| self.canonical_digest("", b""))
     }
 
@@ -2085,11 +2104,11 @@ impl Program {
         rerail_compiler::rir_asm::label_name(self, label)
     }
 
-    pub(in crate::code_rule_dsl) fn string_value(&self, string: u16) -> Option<&str> {
+    pub fn string_value(&self, string: u16) -> Option<&str> {
         std::str::from_utf8(self.strings.get(usize::from(string))?).ok()
     }
 
-    pub(in crate::code_rule_dsl) fn capture_names(&self) -> impl Iterator<Item = &str> {
+    pub fn capture_names(&self) -> impl Iterator<Item = &str> {
         self.words
             .iter()
             .filter(|word| (**word & 0xff) as u8 == CAPTURE)
@@ -2370,7 +2389,7 @@ impl Program {
         Ok(())
     }
 
-    fn capture_predicate_matches(
+    pub fn capture_predicate_matches(
         &self,
         predicate: &CapturePredicate,
         captures: &[Capture],
@@ -2938,7 +2957,7 @@ impl Program {
         None
     }
 
-    fn apply_directives(
+    pub fn apply_directives(
         &self,
         captures: &mut Vec<Capture>,
         source: &[u8],
@@ -3110,7 +3129,7 @@ impl Program {
         Ok(Some(dynamic_properties))
     }
 
-    fn properties(&self) -> Vec<(u16, Option<u16>)> {
+    pub fn properties(&self) -> Vec<(u16, Option<u16>)> {
         self.directives
             .iter()
             .filter_map(|directive| match directive {
@@ -3125,12 +3144,12 @@ impl Program {
             .collect()
     }
 
-    pub(in crate::code_rule_dsl) fn execute(&self, tape: &TapeDoc) -> Result<Vec<Output>, Error> {
+    pub fn execute(&self, tape: &TapeDoc) -> Result<Vec<Output>, Error> {
         self.execute_roots(tape, 0..tape.transducer_len() as u32)
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    fn execute_with_stats(&self, tape: &TapeDoc) -> Result<(Vec<Output>, ExecutionStats), Error> {
+    pub fn execute_with_stats(&self, tape: &TapeDoc) -> Result<(Vec<Output>, ExecutionStats), Error> {
         let mut stats = ExecutionStats::default();
         let output =
             self.execute_roots_from(tape, 0..tape.transducer_len() as u32, 0, Some(&mut stats))?;
@@ -3145,7 +3164,7 @@ impl Program {
         self.execute_roots_from(tape, roots, 0, None)
     }
 
-    fn execute_roots_from(
+    pub fn execute_roots_from(
         &self,
         tape: &TapeDoc,
         roots: impl IntoIterator<Item = u32>,
@@ -3168,7 +3187,7 @@ impl Program {
         self.execute_roots_from_with_work_limit(tape, roots, 0, None, work_limit)
     }
 
-    fn execute_roots_from_with_work_limit(
+    pub fn execute_roots_from_with_work_limit(
         &self,
         tape: &TapeDoc,
         roots: impl IntoIterator<Item = u32>,
@@ -3604,7 +3623,7 @@ impl Program {
         self.finalize_outputs(tape, output, has_repeats)
     }
 
-    fn finalize_outputs(
+    pub fn finalize_outputs(
         &self,
         tape: &TapeDoc,
         output: Vec<Output>,
@@ -3823,7 +3842,7 @@ pub fn packed_workspace_fits(
 /// batch, sized): what an execution of them holds while it runs.
 /// A packed workspace's size for `programs` on `files`: its bytes and its record counts
 /// (`PackedBatch::workspace_counts`).
-pub(in crate::code_rule_dsl) fn packed_workspace_size(
+pub fn packed_workspace_size(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],
@@ -3836,7 +3855,7 @@ pub(in crate::code_rule_dsl) fn packed_workspace_size(
 }
 
 /// Each program's record counts on `files` (`PackedBatch::program_counts`), from one batch.
-pub(in crate::code_rule_dsl) fn packed_program_counts(
+pub fn packed_program_counts(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],
@@ -3868,7 +3887,7 @@ pub fn execute_with_backend_packed_result_limits(
 /// `execute_with_backend_packed_result_limits` for a batch of plan `plan` (a wave's programs or a
 /// part of them, `PlanId::part`): a background backend binds the plan's interpreter until its
 /// compiled binding is ready (`compilation::resolve_plan`).
-pub(in crate::code_rule_dsl) fn execute_planned(
+pub fn execute_planned(
     backend: ExecutionBackend,
     plan: PlanId,
     programs: &[Program],
@@ -3918,7 +3937,7 @@ pub fn execute_with_backend_outcomes(
     }
 }
 
-fn execute_with_backend_bounded_limit(
+pub fn execute_with_backend_bounded_limit(
     backend: ExecutionBackend,
     programs: &[Program],
     files: &[TapeDoc],
@@ -4164,10 +4183,10 @@ pub fn execute_production_corpus_pages(
     }
 }
 
-pub(in crate::code_rule_dsl) const POSITIONAL_INDEX_VERSION: i64 = 5;
+pub const POSITIONAL_INDEX_VERSION: i64 = 5;
 const VALUE_INDEX_LIMIT: usize = 96;
 
-pub(in crate::code_rule_dsl) fn execute_many(
+pub fn execute_many(
     programs: &[Program],
     tape: &TapeDoc,
 ) -> Result<Vec<Vec<Output>>, Error> {
@@ -4207,5 +4226,4 @@ pub(in crate::code_rule_dsl) fn execute_many(
         .collect()
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

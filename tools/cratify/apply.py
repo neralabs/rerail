@@ -221,6 +221,20 @@ def thread_local_cfg_edits(nodes, edits):
                 edits.add(n.file, a, a + 4, HOOKS, 'cfg test')
 
 
+def cfg_macro_edits(nodes, edits):
+    """`cfg!(test)` (a macro the cfgtest tool does not see) in a crate other than the engine: test-hooks, as every
+    `#[cfg(test)]` is, so the engine's tests see the same switch (costs.rs: tests write no statistics)."""
+    seen = set()
+    for p, n in nodes.items():
+        if n.inline or n.owner == ENGINE or n.file in seen:
+            continue
+        seen.add(n.file)
+        data = open(n.file, 'rb').read()
+        for m in re.finditer(rb'cfg!\(\s*test\s*\)', data):
+            a = m.start() + data[m.start():m.end()].index(b'test')
+            edits.add(n.file, a, a + 4, HOOKS, 'cfg test')
+
+
 def use_vis_edits(nodes, edits):
     """Every restricted re-export (`pub(crate) use`, `pub(in ...) use`) in a crate other than the engine: `pub`. Other
     crates path through them, and the index names the definition, not the re-export, so widen.py cannot see them."""
@@ -515,11 +529,17 @@ def manifest(c, engine):
                     lines.append(f'{k} = {toml_value(rebase(v, d))}')
     lines += ['', '[dev-dependencies]']
     for k, v in engine.get('dev-dependencies', {}).items():
-        if k.startswith('rerail-') or k in test_only:
+        # the rerail crates outside the split (the parsers' tests, the compiler's hooks) serve every crate's own tests
+        if (k.startswith('rerail-') and k in DIRS) or k in test_only:
             continue
         lines.append(f'{k} = {toml_value(rebase(v, d))}')
     if c == 'rerail-lang':
-        lines += ['', '[build-dependencies]', 'serde = { version = "1.0", features = ["derive"] }', 'serde_json = "1.0"']
+        # the registry's generator and the vendored grammars' build (native/src/build_grammars.rs): the engine's
+        # build-dependencies but the Node addon's
+        lines += ['', '[build-dependencies]']
+        for k, v in engine.get('build-dependencies', {}).items():
+            if k != 'napi-build':
+                lines.append(f'{k} = {toml_value(rebase(v, d))}')
     if 'lints' in engine:
         lines += ['', '[lints]', 'workspace = true'] if engine['lints'].get('workspace') else []
     return '\n'.join(lines) + '\n'
@@ -637,6 +657,11 @@ def main(tree_tsv, join_out, *flags):
         print(f'{c:22} lib.rs {text.count(chr(10)):5} lines')
     if write:
         open(os.path.join(NATIVE, 'Cargo.toml'), 'w').write(engine_manifest_edits(engine_text, crates))
+        # the vendored grammars are built by the crate that declares their symbols: rerail-lang (its build.rs)
+        build = os.path.join(NATIVE, 'build.rs')
+        bt = open(build).read()
+        assert 'const BUILDS_GRAMMARS: bool = true;' in bt, 'native/build.rs: BUILDS_GRAMMARS'
+        open(build, 'w').write(bt.replace('const BUILDS_GRAMMARS: bool = true;', 'const BUILDS_GRAMMARS: bool = false;'))
         ws = os.path.join(ROOT, 'Cargo.toml')
         t = open(ws).read()
         m = re.search(r'members = \[([^\]]*)\]', t)
@@ -659,6 +684,7 @@ def main(tree_tsv, join_out, *flags):
     # (the engine's own files keep `cfg(test)`, as its declarations do)
     cfg_test_edits(nodes, [f for f in files if file_owner.get(f) != ENGINE], keep, edits)
     thread_local_cfg_edits(nodes, edits)
+    cfg_macro_edits(nodes, edits)
     manifest_dir_edits(nodes, edits)
     bad = edits.apply(write)
     print('edits:', dict(edits.why))

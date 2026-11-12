@@ -10,7 +10,7 @@ pub struct NodeRef {
     pub end: usize,
 }
 impl NodeRef {
-    pub(crate) fn of<D: Doc>(doc: u32, node: &Node<'_, D>) -> Self {
+    pub fn of<D: Doc>(doc: u32, node: &Node<'_, D>) -> Self {
         let range = node.range();
         Self {
             doc,
@@ -29,14 +29,14 @@ pub enum ContextKind {
     Lambda,
 }
 #[derive(Debug)]
-pub(crate) struct ExecutionContext {
+pub struct ExecutionContext {
     pub kind: ContextKind,
     pub parent: Option<u32>,
     pub owner: Option<NodeRef>,
     pub body: NodeRef,
 }
 #[derive(Debug)]
-pub(crate) struct CallSite {
+pub struct CallSite {
     pub call: NodeRef,
     /// The original function field, including all parentheses.
     pub callee: NodeRef,
@@ -49,13 +49,13 @@ pub(crate) struct CallSite {
     pub arguments: Range<usize>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Spread {
+pub enum Spread {
     None,
     Positional,
     Keywords,
 }
 #[derive(Debug)]
-pub(crate) struct Argument {
+pub struct Argument {
     pub call: usize,
     pub node: NodeRef,
     pub value: NodeRef,
@@ -69,14 +69,14 @@ pub(crate) struct Argument {
     pub after_positional_spread: bool,
 }
 #[derive(Debug)]
-pub(crate) struct Attribute {
+pub struct Attribute {
     pub node: NodeRef,
     pub object: NodeRef,
     pub name_node: NodeRef,
     pub name: String,
 }
 #[derive(Debug)]
-pub(crate) struct Parenthesis {
+pub struct Parenthesis {
     pub node: NodeRef,
     pub child: NodeRef,
 }
@@ -89,13 +89,13 @@ pub(crate) enum SequenceKind {
     Expressions,
 }
 #[derive(Debug)]
-pub(crate) struct Sequence {
+pub struct Sequence {
     pub node: NodeRef,
     pub kind: SequenceKind,
     pub children: Range<usize>,
 }
 #[derive(Debug)]
-pub(crate) struct SequenceChild {
+pub struct SequenceChild {
     pub node: NodeRef,
     pub named_index: usize,
     pub spread: bool,
@@ -107,7 +107,7 @@ pub(crate) enum AssignmentKind {
     NamedExpression,
 }
 #[derive(Debug)]
-pub(crate) struct Assignment {
+pub struct Assignment {
     pub node: NodeRef,
     pub left: NodeRef,
     pub right: Option<NodeRef>,
@@ -116,7 +116,7 @@ pub(crate) struct Assignment {
     pub context: u32,
 }
 #[derive(Debug)]
-pub(crate) struct WithItem {
+pub struct WithItem {
     pub node: NodeRef,
     pub value: NodeRef,
     pub as_pattern: Option<NodeRef>,
@@ -125,7 +125,7 @@ pub(crate) struct WithItem {
     pub context: u32,
 }
 #[derive(Default, Debug)]
-pub(crate) struct Counters {
+pub struct Counters {
     pub documents: usize,
     /// All syntax nodes, including punctuation and comments, each visited once.
     pub visited_nodes: usize,
@@ -135,7 +135,7 @@ pub(crate) struct Counters {
     pub peak_pending_nodes: usize,
 }
 #[derive(Default, Debug)]
-pub(crate) struct PythonStructure {
+pub struct PythonStructure {
     pub contexts: Vec<ExecutionContext>,
     pub calls: Vec<CallSite>,
     pub arguments: Vec<Argument>,
@@ -171,7 +171,7 @@ fn named<D: Doc>(node: &Node<'_, D>) -> bool {
 
 /// Collects owned byte-range facts; no Node or document reference escapes this call.
 /// Document IDs must be unique within the batch.
-pub(crate) fn collect<'t, D: Doc>(documents: Vec<(u32, Node<'t, D>)>) -> PythonStructure {
+pub fn collect<'t, D: Doc>(documents: Vec<(u32, Node<'t, D>)>) -> PythonStructure {
     collect_with(documents, |_, _| {})
 }
 

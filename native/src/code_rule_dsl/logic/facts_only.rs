@@ -64,15 +64,7 @@ const FACT_STORE: &[&str] = &[
 ];
 /// Tables made and dropped inside one statement, one lab or one older pipeline's query.
 const SCRATCH: &[&str] = &[
-    // The device tests' inputs (`setfix/device.rs`, an inline test module the file filter cannot leave out).
-    "e",
-    "m",
-    "n",
     "x",
-    "a",
-    "b",
-    "c",
-    "h0",
     "t",
     "input",
     "value",
@@ -93,9 +85,8 @@ const SCRATCH: &[&str] = &[
     "stat_docrange",
     "{table} in code_rule_dsl/logic/native/setfix/lab.rs",
     "{} in code_rule_dsl/slice.rs",
-    // A test's in-memory input (`plan/acyclic/queries.rs`) and the device wave test's heads (`setfix/device.rs`).
+    // A test's in-memory input (`plan/acyclic/queries.rs`).
     "facts",
-    "{h} in code_rule_dsl/logic/native/setfix/device.rs",
 ];
 /// Caches between runs not yet facts: (table, the 0104 step that moves it).
 const NOT_YET_TABLES: &[(&str, &str)] = &[
@@ -251,6 +242,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus.rs", "PATH"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "LAST"),
     ("code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT"),
+    // The device copies of `replace_all`'s regex automata, per thread: resident buffers, as `RESIDENT`.
+    ("code_rule_dsl/logic/native/setfix/device.rs", "UPLOADED"),
     ("code_rule_dsl/logic/native/setfix/level.rs", "PENDING"),
     ("code_rule_dsl/logic/native/setfix/table.rs", "BUILT"),
     ("code_rule_dsl/logic/plan.rs", "LOG"),
@@ -267,6 +260,11 @@ const STATE: &[(&str, &str)] = &[
     ("content_store/connection.rs", "HANDLES"),
     ("code_rule_dsl/logic/plan/choices.rs", "DURABLE"),
     ("code_rule_dsl/logic/plan/corpus.rs", "TEST_TAPE_CACHE"),
+    // A test's own store, the template's path and the threads said to ask off a test's (`test_store`): which files
+    // the tests' stores are, not results.
+    ("code_rule_dsl/logic/plan/corpus/test_store.rs", "OWN"),
+    ("code_rule_dsl/logic/plan/corpus/test_store.rs", "PATH"),
+    ("code_rule_dsl/logic/plan/corpus/test_store.rs", "SAID"),
     // Profiling totals, consumed and cleared by each report; no reusable results.
     ("code_rule_dsl/logic/plan/corpus/memo.rs", "SIZES"),
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "BASE"),

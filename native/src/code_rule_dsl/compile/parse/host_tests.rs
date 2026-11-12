@@ -3,7 +3,8 @@
 //! the tree's own search; a directive's item `resolves` as a declared global; and `compare`'s
 //! `name` reads an item's text.
 
-// cratify: a re-export of rerail-engine's, which its facades of this module make
+use crate::code_rule_dsl::CompiledCodeRuleDsl;
+use crate::code_rule_dsl::test_support::*;
 // cratify: a re-export of rerail-engine's, which its facades of this module make
 use napi::Result;
 use serde_json::{Value, json};

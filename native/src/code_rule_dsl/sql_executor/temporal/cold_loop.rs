@@ -408,11 +408,10 @@ pub fn resume(
     )
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 #[cfg(any(test, feature = "test-hooks"))]
-thread_local! { static FORCE_HOST: std::cell::Cell<bool> = const {std::cell::Cell::new(false)}; }
+thread_local! { pub static FORCE_HOST: std::cell::Cell<bool> = const {std::cell::Cell::new(false)}; }
 
 #[cfg(any(test, feature = "test-hooks"))]
-thread_local! { static FORCE_LOOP: std::cell::Cell<bool> = const {std::cell::Cell::new(false)}; }
+thread_local! { pub static FORCE_LOOP: std::cell::Cell<bool> = const {std::cell::Cell::new(false)}; }
