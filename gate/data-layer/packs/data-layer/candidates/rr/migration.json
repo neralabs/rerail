@@ -1568,7 +1568,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/admin-async-purity.rr",
-      "sha256": "e89038d5ed4b8918cb39f998963b79b50fde9c676b9af97d33301a330c7574c2",
+      "sha256": "bc0a93c17245dab2cc25a691a6b1691b491956cf486ccb806cad58c1305ef2dc",
       "origin": "authored",
       "upstreamPath": "scripts/lint_admin_async_purity.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -4600,27 +4600,114 @@
       "batch": 2,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-admin-async-purity.json",
       "legacySha256": "7c77aef231725a946398a941b9b1a9d2adac72f1506073b5881dd84796bfeb2a",
-      "status": "draft",
+      "status": "full-contract-passed",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/admin-async-purity.rr",
-      "ruleSha256": "e89038d5ed4b8918cb39f998963b79b50fde9c676b9af97d33301a330c7574c2",
+      "ruleSha256": "bc0a93c17245dab2cc25a691a6b1691b491956cf486ccb806cad58c1305ef2dc",
       "migrationProgress": {
-        "status": "native-scanner-progress",
-        "admitted": false,
-        "verifiedNativeExecutions": 432,
+        "status": "full-contract-passed",
+        "admitted": true,
+        "verifiedNativeExecutions": 1792,
         "checkpoint": {
-          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-admin-scanners-finalfcce.json.gz",
-          "sha256": "19847970c4f3399b983fa08c91fe0cc0f2a9bdbbd6517a2591d5fdb85b08cdd6"
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-admin-complete-finalfcce.json.gz",
+          "sha256": "db8d77de9f898f7c86d6764829e6e871106fd9c5e8d31cd09a10c5e906b09277"
         },
         "summary": {
-          "componentsPerAPI": 128,
-          "publicScannerCasesPerAPI": 38,
-          "sourceSemanticCallbacks": 0
+          "check": "admin_async_purity",
+          "admitted": true,
+          "fullRuleMigrationAcceptance": true,
+          "fullMigrationAcceptance": false,
+          "originalCasesPerAPI": 125,
+          "originalObservationsPerAPI": 51,
+          "originalPositiveObservationsPerAPI": 26,
+          "casesPerAPI": {
+            "components": 128,
+            "public": 38,
+            "cli": 31,
+            "production": 22,
+            "legacy": 59
+          },
+          "persistentStepsPerAPI": 21,
+          "controls": 36,
+          "nativeRuleExecutions": 1778,
+          "nativeUtilityExecutions": 14,
+          "nativeExecutions": 1792
         },
-        "remaining": [
-          "Full native replay of all 125 original assertions.",
-          "Native CLI and signing contracts; all 31 current CLI cases still reach guarded source semantics.",
-          "Complete production, earlier corpora, retained updates and valid removal controls."
-        ]
+        "remaining": []
+      },
+      "migrationProgressHistory": [
+        {
+          "status": "native-scanner-progress",
+          "admitted": false,
+          "verifiedNativeExecutions": 432,
+          "checkpoint": {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-admin-scanners-finalfcce.json.gz",
+            "sha256": "19847970c4f3399b983fa08c91fe0cc0f2a9bdbbd6517a2591d5fdb85b08cdd6"
+          },
+          "summary": {
+            "componentsPerAPI": 128,
+            "publicScannerCasesPerAPI": 38,
+            "sourceSemanticCallbacks": 0
+          },
+          "remaining": [
+            "Full native replay of all 125 original assertions.",
+            "Native CLI and signing contracts; all 31 current CLI cases still reach guarded source semantics.",
+            "Complete production, earlier corpora, retained updates and valid removal controls."
+          ]
+        }
+      ],
+      "evidence": {
+        "assertions": 125,
+        "positives": 26,
+        "failures": 0,
+        "skipped": 0,
+        "semanticFallbacks": 0,
+        "ruleSha256": "bc0a93c17245dab2cc25a691a6b1691b491956cf486ccb806cad58c1305ef2dc",
+        "engineCommit": "4e07746800e7fb958a57c5208c1ea956bc8f7412",
+        "engineSha256": "f4db14313662e14ca1e1924296c91acb48107035461e85db4a2977d61b6ce6e2",
+        "corpusSha256": "b0ae98e6c8d058d5a6a37122ee38925a91a211815194e1c95facc08b0891df50",
+        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "originalInventory": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory-v2.json",
+          "sha256": "a3636d7f8dbb210cfec64aa05b20ff37a97899365b68b3ba2a4ab855ccdda0db"
+        },
+        "reports": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-admin-complete-native-snapshot.json",
+            "sha256": "ba9183b417bbfc88003e8d0b53c610fdc50ad34235a1798de91282775ef16820"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-admin-complete-native-workspace.json",
+            "sha256": "6cf0b23814424bd28e20b27d5d539d7b43b11608a1e2b65194d4dacb5b5399aa"
+          }
+        ],
+        "acceptanceCheckpoints": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-admin-complete-finalfcce.json.gz",
+            "sha256": "db8d77de9f898f7c86d6764829e6e871106fd9c5e8d31cd09a10c5e906b09277"
+          }
+        ],
+        "supplemental": {
+          "check": "admin_async_purity",
+          "admitted": true,
+          "fullRuleMigrationAcceptance": true,
+          "fullMigrationAcceptance": false,
+          "originalCasesPerAPI": 125,
+          "originalObservationsPerAPI": 51,
+          "originalPositiveObservationsPerAPI": 26,
+          "casesPerAPI": {
+            "components": 128,
+            "public": 38,
+            "cli": 31,
+            "production": 22,
+            "legacy": 59
+          },
+          "persistentStepsPerAPI": 21,
+          "controls": 36,
+          "nativeRuleExecutions": 1778,
+          "nativeUtilityExecutions": 14,
+          "nativeExecutions": 1792
+        },
+        "scope": "All 125 unchanged original assertions, all 51 complete API observations, full native components, public scanning, CLI/signing, production, historical inputs, retained edits and valid removal controls through both APIs."
       }
     },
     {

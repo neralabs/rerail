@@ -7,7 +7,7 @@ Keep rule logic in Datalog. Do not add SQL stages or rule-specific native detect
 The migration covers the **100 existing ports**, including their complete public contracts.
 The remaining 42 checks will use `.rr` when ported.
 The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
-The current inventory has twenty admitted rules, seventy-nine drafts, and one absent translation.
+The current inventory has twenty-one admitted rules, seventy-eight drafts, and one absent translation.
 Draft policies do not count as completed migrations.
 
 ## Active engine
@@ -4221,6 +4221,31 @@ Twenty-two production cases record discovery, complete fact dictionaries, alias 
 The current native production query fails for missing contract metadata; its witness is `rr-admin-production-source-red-finalfcce.json.gz`.
 The earlier batch-two corpora also supply 59 historical inputs, all recorded again against the pinned source.
 Production, historical replay, retained edits, valid removal controls, and final coherent acceptance remain open. The rule remains a draft.
+
+### 2026-11-12 — Admin production and full admission
+
+Production now uses framework discovery, source triggers, complete fact payloads, and the same owner-aware detector as public scanning.
+Candidate rows retain their owner path. A skipped alias cannot inherit findings from an eligible alias of the same parsed source.
+Fact rows preserve line and pattern order. Structured findings preserve the source reporter's string-based stable-key order.
+
+Both APIs pass all 125 unchanged original assertions, all 51 complete API observations, and all 26 finding-positive observations.
+Each API also passes 128 component cases, 38 public scanner cases, 31 CLI cases, 22 production cases, and all 59 historical inputs.
+The 59 historical inputs include all 51 original batch-two inputs and all eight probes. Empty and retained input records are included.
+No original assertion is skipped, excluded, or delegated to source linter code.
+
+Both APIs pass all twenty-one retained repository update steps, including an unchanged repeat, aliases, deletions, and syntax changes.
+All 36 removal-control runs produce valid results that differ from their complete source witnesses.
+The final groups use one main rule revision and one frozen engine binary. Program and harness hashes bind every native invocation.
+
+The complete receipt is `rr-admin-complete-finalfcce.json.gz`.
+It retains 1,778 rule invocations and fourteen explicit native signing utility calls.
+Signing cases use only the public synthetic fixture key. Keys are absent from recorded requests.
+Twenty-five admission tests reject missing positives, missing native bindings, host CLI execution, changed DTOs and script bytes, incomplete updates, invalid controls, and mixed cohorts.
+
+All 691 Python tooling tests pass in 42.630 seconds. The manifest audit passes.
+All twenty-one admitted entries pass `require_complete`; the full hundred-rule migration remains incomplete.
+The inventory now has twenty-one admissions, seventy-eight drafts, and one absent translation.
+The native engine is unchanged, compile time is zero, and no whole-repository cold run or Linear ticket was added.
 
 ### 2026-11-12 — Admin CLI native control flow exposes a scan-context defect
 

@@ -25,8 +25,11 @@ class Admission(unittest.TestCase):
         v=copy.deepcopy(self.value);v['originals']['snapshot'][0]['cases'].popitem();self.rejected(v)
     def test_missing_original_positive(self):
         v=copy.deepcopy(self.value)
+        positive=next(r for r in v['originalSource']['value']['events'] if r['check']=='admin_async_purity' and r.get('findings'))
         for r in v['originals']['workspace']:
-            if r['detectorObservations']:r['detectorObservations'].pop();break
+            rows=r['detectorObservations']
+            match=next((i for i,row in enumerate(rows) if row['test']==positive['test'] and row['entry']==positive['entry']),None)
+            if match is not None:rows.pop(match);break
         self.rejected(v)
     def test_changed_original_dto(self):
         v=copy.deepcopy(self.value)
@@ -44,7 +47,11 @@ class Admission(unittest.TestCase):
         for r in v['groups']['components']['reports']['snapshot']:r['cases'][:]=[c for c in r['cases'] if c['input']['id']!='extract-all']
         self.rejected(v)
     def test_weakened_raw_report(self):
-        v=copy.deepcopy(self.value);r=v['groups']['components']['reports']['workspace'][15]['cases'][0];r['expected']=r['actual']={};self.rejected(v)
+        v=copy.deepcopy(self.value)
+        for report in v['groups']['components']['reports']['workspace']:
+            for row in report['cases']:
+                if row['input']['id']=='report-9':row['expected']=row['actual']={}
+        self.rejected(v)
     def test_source_callback(self):
         v=copy.deepcopy(self.value);v['groups']['cli']['reports']['snapshot'][0]['semanticFallbacks']=['cli_main'];self.rejected(v)
     def test_missing_native_call(self):

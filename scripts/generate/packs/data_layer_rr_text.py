@@ -286,10 +286,13 @@ def admin_async_purity(source, target, header):
     _, space, _ = classes()
     quote = json.dumps
     text = header('admin_async_purity', target).replace('#include "python/ast.rr"\n', '')
-    text += '.decl admin_scanning()\nadmin_scanning() :- !option("entryPoint",_).\nadmin_scanning() :- option("entryPoint","_admin_extract").\nadmin_scanning() :- option("entryPoint","_admin_scan").\n'
+    text = re.sub(r'^\.description .*$', '.description '+json.dumps(original.admin_async_purity_plugin(source).description),text,flags=re.M)
+    text += '.decl admin_api_scanning()\nadmin_api_scanning() :- option("entryPoint","_admin_extract").\nadmin_api_scanning() :- option("entryPoint","_admin_scan").\n'
+    text += '.decl admin_scanning()\nadmin_scanning() :- admin_api_scanning().\nadmin_scanning() :- pp_run().\n'
     text += '.decl admin_owner(d: number, p: symbol)\n'
-    text += 'admin_owner(d,p) :- doc(d,buffer,_), option_item("adminDocuments",i,buffer), option_item("adminPaths",i,p).\n'
-    text += 'admin_owner(d,p) :- doc(d,p,_), !option_item("adminDocuments",_,_).\n'
+    text += 'admin_owner(d,p) :- admin_api_scanning(), doc(d,buffer,_), option_item("adminDocuments",i,buffer), option_item("adminPaths",i,p).\n'
+    text += 'admin_owner(d,p) :- admin_api_scanning(), doc(d,p,_), !option_item("adminDocuments",_,_).\n'
+    text += 'admin_owner(d,p) :- pp_run(), pp_doc(d,p), pp_fact_present(d).\n'
     text += '.decl admin_file_ordinal(d: number, i: number)\n'
     text += 'admin_file_ordinal(d,i) :- doc(d,buffer,_), option_item("adminDocuments",i,buffer).\n'
     text += 'admin_file_ordinal(d,d) :- doc(d,_,_), !option_item("adminDocuments",_,_).\n'
@@ -299,9 +302,9 @@ def admin_async_purity(source, target, header):
         text += f'\n.violation AdminSkipPattern{index}(at: span) code "ADMIN_SKIP_PATTERN" "matched"\n'
         text += f'AdminSkipPattern{index}(@place("input.py", 1)) :- option("entryPoint", "skip_pattern_search"), option("patternOrdinal", "{index}"), option("patternText", t), match({quote(search(pattern))}, t).\n'
     text += '.decl admin_allowlisted(p: symbol)\nadmin_allowlisted(p) :- option_item("allowlistedFiles", _, p).\n'
-    text += '.decl admin_candidate(d: number, l: number, t: symbol, ordinal: number, label: symbol)\n'
+    text += '.decl admin_candidate(d: number, p: symbol, l: number, t: symbol, ordinal: number, label: symbol)\n'
     for index, (pattern, label) in enumerate(original.FORBIDDEN_PATTERNS):
-        text += f'admin_candidate(d, l, t, {index}, {quote(label)}) :- admin_scanning(), split_line(d, l, t), admin_owner(d, p), !admin_skip_path(p), !admin_allowlisted(p), !match({quote("(?s)" + space + "*#.*")}, t), match({quote(search(pattern))}, t).\n'
+        text += f'admin_candidate(d, p, l, t, {index}, {quote(label)}) :- admin_scanning(), split_line(d, l, t), admin_owner(d, p), !admin_skip_path(p), !admin_allowlisted(p), !match({quote("(?s)" + space + "*#.*")}, t), match({quote(search(pattern))}, t).\n'
         text += f'\n.violation AdminPattern{index}(at: span) code "ADMIN_PATTERN" "matched"\n'
         text += f'AdminPattern{index}(@place("input.py", 1)) :- option("entryPoint", "pattern_search"), option("patternOrdinal", "{index}"), option("patternText", t), match({quote(search(pattern))}, t).\n'
     triples = quote('"""|\x27\x27\x27')
@@ -310,11 +313,13 @@ def admin_async_purity(source, target, header):
     text += '.decl admin_toggle(d: number, l: number)\nadmin_toggle(d, l) :- admin_quotes(d, l, n), n % 2 = 1.\n'
     # Only candidate lines read preceding toggles. This preserves the source's textual
     # state machine, including quote markers in comments and mixed quote delimiters.
-    text += '.decl admin_visible(d: number, l: number, t: symbol, ordinal: number, label: symbol)\n'
-    text += 'admin_visible(d, l, t, ordinal, label) :- admin_candidate(d, l, t, ordinal, label), !admin_quotes(d, l, _), parity = count : { admin_toggle(d, before), before < l }, parity % 2 = 0.\n'
+    text += '.decl admin_visible(d: number, p: symbol, l: number, t: symbol, ordinal: number, label: symbol)\n'
+    text += 'admin_visible(d, p, l, t, ordinal, label) :- admin_candidate(d, p, l, t, ordinal, label), !admin_quotes(d, l, _), parity = count : { admin_toggle(d, before), before < l }, parity % 2 = 0.\n'
     trim = space + r'+\z'
+    text += '.decl admin_result(d:number,p:symbol,l:number,ordinal:number,pattern:symbol,text:symbol)\n'
+    text += f'admin_result(d,p,l,ordinal,label,@replace_all(t,{quote(trim)},"")) :- admin_visible(d,p,l,t,ordinal,label).\n'
     text += '\n.violation AdminPurity(at: span, file_ordinal: number, ordinal: number, pattern: symbol, text: symbol) code "AAP001"\n    "{pattern}: {text}"\n'
-    text += f'AdminPurity(@place(p, l), file_ordinal, ordinal, label, @replace_all(t, {quote(trim)}, "")) :- admin_visible(d, l, t, ordinal, label), admin_owner(d, p), admin_file_ordinal(d,file_ordinal).\n'
+    text += 'AdminPurity(@place(p,l),file_ordinal,ordinal,label,text) :- admin_result(d,p,l,ordinal,label,text),admin_file_ordinal(d,file_ordinal),!option("entryPoint","_production_contract").\n'
     for entry, code, relation in [('_should_skip', 'ADMIN_SKIP', 'admin_skip_probe'), ('_is_allowlisted', 'ADMIN_ALLOWLIST', 'admin_allowlisted')]:
         text += f'\n.violation {code}(at: span) code "{code}" "matched"\n{code}(@place("input.py", 1)) :- option("entryPoint", {quote(entry)}), option("path", p), {relation}(p).\n'
     text += '.decl admin_skip_probe(p: symbol)\n'
@@ -322,7 +327,8 @@ def admin_async_purity(source, target, header):
     for pattern in original.SKIP_PATTERNS:
         text += f'admin_skip_probe(p) :- admin_probe_path(p), match({quote(search(pattern))}, p).\n'
     from data_layer_rr_admin_api import suffix
-    return text+suffix(source)
+    from data_layer_rr_admin_production import production
+    return text+production(source)+suffix(source)
 
 
 def async_executor(source, target, header):
