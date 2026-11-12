@@ -87,3 +87,28 @@ Instructions retired, peak memory and the load are from `/usr/bin/time -l`.
   and 8.5 M instructions (SQLite parsing the store's schema a second time); it is now part of the first open, which
   every test pays anyway (2.7 ms, 14.2 M). In all, about 3 ms and 17.5 M instructions a test, against 3.6 ms and
   24 M before: about 3% of what a test's first run on a new store costs.
+
+## Why the template cannot make a test's start free
+
+Three tests, each run alone on the same binary, in instructions retired:
+
+| Test | A: its own copy | C: the template as the process's store, no copy | B: a store that already ran this test |
+|---|---|---|---|
+| `native_python_syntax_verdict_keeps_raw_source_available` | 19.1 G | 18.2 G | 14.2 G |
+| `rules_test_names_paths_and_lines_without_regexes` | 9.9 G | 9.5 G | 5.9 G |
+| `library_relations_are_shared_and_each_policy_reads_its_own_scope` | 59.3 G | 58.8 G | 49.6 G |
+
+- **A against C, the copy: 2 to 5%.** The template holds what it can.
+- **A against B, 4 to 10 G a test, is the test's own work.** A stack-sample diff of A and B for the third test
+  shows where it goes:
+  - phase 0 for the test's program, 860 samples. Phase 0's results are keyed by the whole set of modules a
+    program reads (O147), so the template's phase 0 holds only for the template's own set. Phase 0 kept per
+    module would let every test reuse the template's.
+  - the test's own program: its prepared and combined forms, plans, and the run itself (`run_atoms_native_over`,
+    `prepared::remember`, `combine_stored`), about 1,000 samples. These are keyed by the test's program, and the
+    template can only hold them by running the test, which is the test.
+  - the process, not the store: the GPU device's start (`gpu::shared::get`, 324 samples) and reading the
+    program's settings texts (244). No store can hold these.
+- **So the remaining lever is O147**, phase 0 per module, not more in the template. A template made from a
+  previous run's stores would help only a rerun of the same build, since every stored key carries the engine's
+  build identity.
