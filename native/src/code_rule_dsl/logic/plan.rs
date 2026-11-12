@@ -1062,6 +1062,24 @@ impl Model {
         }
     }
 
+    /// Cardinality of a kind posting in the population currently being planned.
+    pub fn kind_frequency(&self, kind: &Constant) -> Option<i64> {
+        // A complete current histogram is authoritative, including absent values.
+        // Sampled corpus priors describe a different population and are a fallback.
+        if let Some(freq) = self.stats.dfreq.get(&("kind".to_owned(), 1)) {
+            return Some(freq.get(kind).copied().unwrap_or(0));
+        }
+        let key = match kind { Constant::Str(s) => s.clone(), Constant::Int(i) => i.to_string() };
+        self.stats.kfreq.get(&key).copied()
+    }
+
+    /// Expected postings for a literal value whose frequency has not been measured.
+    pub fn unknown_constant_rows(&self, rel:&str, column:usize)->f64 {
+        // A literal key is not sampled from this relation's rows. sq / rows
+        // overweights hot keys; the value-uniform prior is rows / distinct.
+        self.card(rel)/self.ndv_or_1(rel,column)
+    }
+
     fn ndv_or_1(&self, rel: &str, c: usize) -> f64 {
         (self.ndv.get(&(rel.to_owned(), c)).copied().unwrap_or(1.0) * skew(rel, c, 0)).max(1.0)
     }
@@ -1074,8 +1092,7 @@ impl Model {
         for (c, t) in a.args.iter().enumerate() {
             let Some(k) = constant(t) else { continue };
             let measured = if a.rel == "kind" && c == 1 {
-                let key = match &k { Constant::Str(s) => s.clone(), Constant::Int(i) => i.to_string() };
-                self.stats.kfreq.get(&key).map(|n| *n as f64)
+                self.kind_frequency(&k).map(|n| n as f64)
             } else if let Some(freq) = self.stats.dfreq.get(&(a.rel.to_string(), c)) {
                 Some(freq.get(&k).copied().unwrap_or(0) as f64)
             } else {
@@ -1270,8 +1287,7 @@ impl Model {
                 sizes.push(self.stats.fan.get(&(a.rel.to_string(),c)).copied().unwrap_or(1.0));
                 if let Some(k) = constant(t) {
                     let n = if a.rel == "kind" && c == 1 {
-                        let key = match &k {Constant::Str(s)=>s.clone(),Constant::Int(i)=>i.to_string()};
-                        self.stats.kfreq.get(&key).copied()
+                        self.kind_frequency(&k)
                     } else {
                         self.stats.dfreq.get(&(a.rel.to_string(),c)).map(|f|f.get(&k).copied().unwrap_or(0))
                             .or_else(||self.stats.const_freq(&a.rel,&self.col(&a.rel,c),&k))
@@ -1456,11 +1472,7 @@ impl Model {
                 if matches!(&a.args[0], Term::Var(v) if bound.contains(v)) {
                     return 1.0;
                 }
-                let n = match &k {
-                    Constant::Str(s) => stats.kfreq.get(s).copied().unwrap_or(0),
-                    Constant::Int(i) => stats.kfreq.get(&i.to_string()).copied().unwrap_or(0),
-                };
-                return if n == 0 { 0.5 } else { n as f64 };
+                return self.kind_frequency(&k).map_or(0.5, |n| (n as f64).max(0.01));
             }
             let cols: Vec<usize> = (0..a.args.len())
                 .filter(|&c| constant(&a.args[c]).is_some() || matches!(&a.args[c], Term::Var(v) if bound.contains(v)))
@@ -1484,6 +1496,7 @@ impl Model {
                     if self.is_input(prog, &a.rel) && let Some(f) = stats.const_freq(&a.rel, &self.col(&a.rel, c), k) {
                         return f as f64;
                     }
+                    return self.unknown_constant_rows(&a.rel,c);
                 }
                 if let Term::Var(v) = &a.args[c] {
                     let distinct_demand = binding_domains.iter().any(|(d, vars, _)| {
@@ -2014,6 +2027,20 @@ impl Model {
         let full: u64 = (0..joins.len()).map(|i| 1u64 << i).sum();
         if std::env::var("RDL_EXPLAIN").is_ok_and(|r| r.split(',').any(|name| name == head.rel)) {
             // The chosen order's estimates step by step, and every two-step prefix's, for this head's rules.
+            // Report the provenance of estimates, without recounting inputs. This
+            // distinguishes a missing histogram from a bad cost calculation.
+            for a in body.iter().filter_map(Literal::atom) {
+                let columns:Vec<_>=a.args.iter().enumerate().map(|(c,t)| {
+                    let key=(a.rel.to_string(),c);
+                    let histogram=stats.dfreq.get(&key);
+                    let wanted=constant(t);
+                    format!("c{c}: ndv={:?} fan={:?} exact_values={:?} wanted={wanted:?} exact_count={:?} prior={:?}",
+                        self.ndv.get(&key),stats.fan.get(&key),histogram.map(HashMap::len),
+                        wanted.as_ref().and_then(|v|histogram.map(|f|f.get(v).copied().unwrap_or(0))),
+                        wanted.as_ref().and_then(|v|stats.const_freq(&a.rel,&self.col(&a.rel,c),v)))
+                }).collect();
+                eprintln!("    statistics {} card={} [{}]",a.rel,self.card(&a.rel),columns.join("; "));
+            }
             if let Some((work, rows, order, _, _)) = best_of.get(&full) {
                 eprintln!("EXPLAIN {head} (delta {first:?}): work {work:.0} rows {rows:.1}");
                 for &i in &delta_misses { eprintln!("    disjoint delta key domains: {}", body[i]); }
