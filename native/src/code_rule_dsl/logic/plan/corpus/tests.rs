@@ -549,6 +549,63 @@ unused(f) :- def(f, _), !used(f).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Decision 0101 §3: a maintained stratum's pieces run as one component per level, ordered by unit gates (each
+/// negation of a piece, `used__minus :- used__del, !used__ins`, reads it once it is whole). Edits that remove, add
+/// and move imports delete, insert and derive again; after each, the outputs are a run's with an empty store.
+#[test]
+fn a_maintained_strata_pieces_run_as_one_component() {
+    let marker = format!("# {:?}\n", std::time::SystemTime::now());
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("together");
+    std::fs::create_dir_all(&dir).unwrap();
+    let write = |file: &str, body: &str| std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
+    write("a.py", "def f():\n    pass\ndef k():\n    pass\n");
+    write("b.py", "from a import f\ndef g():\n    pass\n");
+    write("c.py", "from a import k\ndef h():\n    pass\n");
+    let rule = dir.join("uses.rr");
+    std::fs::write(&rule, r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl uses(n: node, f: node)
+uses(n, f) :- imp(n, q), def(f, q).
+.decl used(f: node)
+used(f) :- uses(_, f).
+.decl unused(f: node)
+unused(f) :- def(f, _), !used(f).
+.decl lone(f: node)
+lone(f) :- unused(f), !used(f), def(f, q), !imp(_, q).
+.output unused
+.output lone
+"#).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
+    let run = |store: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        let report = super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let rows = ["unused", "lone"].map(|r| std::fs::read_to_string(out.join(format!("{r}.csv"))).unwrap());
+        (report.cross_maintained.0, rows)
+    };
+    run("kept.sqlite");
+    let together = super::maintain::pieces_together();
+    let edits = [
+        ("c.py", "def h():\n    pass\n"),
+        ("b.py", "from a import f\nfrom a import k\ndef g():\n    pass\n"),
+        ("c.py", "from b import g\ndef h():\n    pass\n"),
+        ("b.py", "def g():\n    pass\n"),
+    ];
+    for (i, (file, body)) in edits.into_iter().enumerate() {
+        write(file, body);
+        let (maintained, rows) = run("kept.sqlite");
+        let (_, fresh) = run(&format!("fresh{i}.sqlite"));
+        assert_eq!(rows, fresh, "after edit {i} ({file})");
+        assert!(maintained > 0, "edit {i}: a changed stratum maintained from the kept rows");
+    }
+    assert!(super::maintain::pieces_together() > together, "a stratum's pieces ran together");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0103 (t33 K1): a relation is kept as a frame under its identity, not its program's. A second program
 /// with the same rules for `def`, `imp` and `uses` finds them clean on its first run, and the first program's
 /// relations are still clean after it. A rule edit makes new only the relations it reaches.

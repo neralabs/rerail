@@ -5252,6 +5252,8 @@ impl<'a> Run<'a, '_> {
             }
             kept
         };
+        // A gate ordering pieces (decision 0101 §3) that no rule left reads has nothing to order.
+        gates.retain(|(g, _)| !prog.together.iter().any(|t| t.contains(g)) || rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| a.rel.as_str() == g.as_str()))));
         let typed: HashMap<String, String> = rels.iter().map(|r| ((*r).clone(), prog_types(prog, r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>())).collect();
         let types = |r: &str| typed[r].clone();
         // Nothing left to run (every rule joined an empty relation, and no relation of the stratum has facts): the
@@ -7158,7 +7160,8 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let mut again_delta: Vec<usize> = vec![0; prog.again.len()];
     let mut deferred: HashMap<String, (usize, usize, usize)> = HashMap::new();
     let mut unloaded: BTreeSet<String> = BTreeSet::new();
-    let gated: BTreeSet<String> = prog.gates.iter().flat_map(|(g, d)| [g, &d.rel].into_iter().chain(&d.src).chain(&d.quiet).chain(&d.deps)).cloned().collect();
+    // A gate that orders a maintained stratum's pieces (decision 0101 §3) holds nothing past its component.
+    let gated: BTreeSet<String> = prog.gates.iter().filter(|(g, _)| !prog.together.iter().any(|t| t.contains(g))).flat_map(|(g, d)| [g, &d.rel].into_iter().chain(&d.src).chain(&d.quiet).chain(&d.deps)).cloned().collect();
     let stays: BTreeSet<String> = prog.outputs.iter().chain(&run.model.inputs.kept).chain(&gated).cloned().collect();
     // What stays, and what the views among it read (through views): SQL reads a view's inputs once the run ends.
     let mut pinned: BTreeSet<String> = stays.clone();

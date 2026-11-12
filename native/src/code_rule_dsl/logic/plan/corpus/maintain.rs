@@ -580,6 +580,159 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         }
     }
     part.program.rules = rules;
+    together(&mut part.program);
     let views = views.into_keys().collect();
     Ok(Maintained { program: part, sources, maintained, derived_again, recursive, again, views })
+}
+
+/// Decision 0101 §3: a maintained stratum's pieces (`h__del`, `h__ins`, its deltas, …) run as one component per
+/// level, not one each, so they pay one component's fixed cost (its spec, open and statistics) between them.
+///
+/// A piece is ordered after the pieces it reads as stratified sub-steps of the one fixpoint: a negation of a piece
+/// of the same component waits for a unit gate (`n__ready`, as magic's `done_` gates do) that passes once `n` and
+/// what it reads there are quiet, and reads `n` whole. A survivor (`h :- h__old, !h__del`) starts the next level:
+/// it is made in place from the kept rows less the deleted ones (`plan::survivors`), which are whole by then. A
+/// recursive stratum, or one with a relation made natively or by a lattice, keeps its pieces apart.
+///
+/// `RERAIL_PIECES_APART` runs each piece as its own component, as before (to compare).
+static TOGETHER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The sets of pieces run as one component so far in this process (`together`).
+pub fn pieces_together() -> usize {
+    TOGETHER.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn together(prog: &mut front::Program) {
+    if std::env::var_os("RERAIL_PIECES_APART").is_some() {
+        return;
+    }
+    let derived: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
+    let mut rules_of: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (i, r) in prog.rules.iter().enumerate() {
+        rules_of.entry(r.head.rel.to_string()).or_default().push(i);
+    }
+    let reads_of = |r: &Rule| -> Vec<(String, bool)> {
+        r.body.iter().filter_map(|l| match l {
+            Literal::Atom(a) => Some((a.rel.to_string(), a.neg)),
+            Literal::Agg { atom: a, .. } => Some((a.rel.to_string(), true)),
+            _ => None,
+        }).collect()
+    };
+    // Each group's components, by level.
+    let mut sets: Vec<(usize, BTreeSet<String>)> = Vec::new();
+    'group: for (g, again) in prog.again.iter().enumerate() {
+        let members: BTreeSet<&String> = again.owned.iter().filter(|r| derived.contains(*r)).collect();
+        if members.len() < 2 || members.iter().any(|r| prog.natives.contains_key(*r) || prog.lattice.contains_key(*r) || prog.facts.get(*r).is_some_and(|f| !f.is_empty())) {
+            continue;
+        }
+        let inner: BTreeMap<&String, BTreeSet<String>> = members.iter().map(|r| {
+            let reads = rules_of[*r].iter().flat_map(|&i| reads_of(&prog.rules[i])).map(|(x, _)| x).filter(|x| members.contains(&x)).collect();
+            (*r, reads)
+        }).collect();
+        // A survivor: `h :- h__old, !h__del` (or `h__gone`) with the deleted rows a piece.
+        let survivor = |h: &str| rules_of[h].iter().any(|&i| {
+            let r = &prog.rules[i];
+            matches!(r.body.as_slice(), [Literal::Atom(a), Literal::Atom(b)] if !a.neg && b.neg && a.rel.as_str() == named(h, "old")
+                && (b.rel.as_str() == named(h, "del") || b.rel.as_str() == named(h, "gone")) && members.iter().any(|m| m.as_str() == b.rel.as_str()))
+        });
+        // Levels, reads first; a cycle (a recursive stratum) keeps the group apart.
+        let mut level: BTreeMap<&String, usize> = BTreeMap::new();
+        let mut on: BTreeSet<&String> = BTreeSet::new();
+        fn visit<'m>(r: &'m String, inner: &'m BTreeMap<&'m String, BTreeSet<String>>, survivor: &dyn Fn(&str) -> bool, level: &mut BTreeMap<&'m String, usize>, on: &mut BTreeSet<&'m String>) -> bool {
+            if level.contains_key(r) {
+                return true;
+            }
+            if !on.insert(r) {
+                return false;
+            }
+            let mut l = 0;
+            for x in &inner[r] {
+                let Some((&x, _)) = inner.get_key_value(x) else { continue };
+                if !visit(x, inner, survivor, level, on) {
+                    return false;
+                }
+                l = l.max(level[x] + usize::from(survivor(r)));
+            }
+            on.remove(r);
+            level.insert(r, l);
+            true
+        }
+        for r in &members {
+            if !visit(r, &inner, &survivor, &mut level, &mut on) {
+                continue 'group;
+            }
+        }
+        let mut by_level: BTreeMap<usize, BTreeSet<String>> = BTreeMap::new();
+        for (r, l) in level {
+            by_level.entry(l).or_default().insert(r.clone());
+        }
+        sets.extend(by_level.into_values().filter(|s| s.len() > 1).map(|s| (g, s)));
+    }
+    // Only sets that are one component each as the strata are made (none takes in a relation outside it).
+    prog.together = sets.iter().map(|(_, s)| s.clone()).collect();
+    let apart: BTreeSet<usize> = front::apart(prog).into_iter().collect();
+    let sets: Vec<(usize, BTreeSet<String>)> = sets.into_iter().enumerate().filter(|(i, _)| !apart.contains(i)).map(|(_, s)| s).collect();
+    prog.together.clear();
+    for (g, set) in sets {
+        // Each negated piece's depth in the set (its gates' order), and what it reads there.
+        let inner: BTreeMap<&String, BTreeSet<String>> = set.iter().map(|r| {
+            (r, rules_of[r].iter().flat_map(|&i| reads_of(&prog.rules[i])).map(|(x, _)| x).filter(|x| set.contains(x)).collect())
+        }).collect();
+        let negated: BTreeSet<String> = set.iter().flat_map(|r| rules_of[r].iter().flat_map(|&i| reads_of(&prog.rules[i]))).filter(|(x, neg)| *neg && set.contains(x)).map(|(x, _)| x).collect();
+        let reach = |n: &String| -> BTreeSet<String> {
+            let (mut seen, mut todo) = (BTreeSet::new(), vec![n.clone()]);
+            while let Some(v) = todo.pop() {
+                if seen.insert(v.clone()) {
+                    todo.extend(inner[&v].iter().cloned());
+                }
+            }
+            seen
+        };
+        let depth = |n: &String| -> usize {
+            fn d(v: &String, inner: &BTreeMap<&String, BTreeSet<String>>) -> usize {
+                inner[v].iter().map(|x| 1 + d(x, inner)).max().unwrap_or(0)
+            }
+            d(n, &inner)
+        };
+        let ready = |n: &str| named(n, "ready");
+        let mut members = set.clone();
+        for n in &negated {
+            let quiet = reach(n);
+            let deps: BTreeSet<String> = quiet.iter().flat_map(|h| rules_of[h].iter().flat_map(|&i| reads_of(&prog.rules[i]))).filter(|(x, neg)| *neg && negated.contains(x) && x != n).map(|(x, _)| ready(&x)).collect();
+            let level = depth(n);
+            prog.gates.push((ready(n), crate::code_rule_dsl::logic::magic::Gate { src: None, rel: n.clone(), level, quiet: quiet.into_iter().collect(), deps: deps.into_iter().collect() }));
+            prog.decls.insert(ready(n), vec![("k".to_owned(), "int".to_owned())]);
+            let wild = vec![Term::Wild; prog.decls[n].len()];
+            prog.rules.push(Rule { head: Atom { rel: ready(n).into(), args: vec![Term::Int(0)], neg: false, gated: false }, body: vec![atom(n.clone(), wild, false)] });
+            members.insert(ready(n));
+        }
+        // A negation (or an aggregate) of a piece of the set reads it once its gate passed.
+        for h in &set {
+            for &i in &rules_of[h] {
+                let body = std::mem::take(&mut prog.rules[i].body);
+                let mut out = Vec::with_capacity(body.len() + 2);
+                for l in body {
+                    let n = match &l {
+                        Literal::Atom(a) if a.neg && set.contains(a.rel.as_str()) => Some(a.rel.to_string()),
+                        Literal::Agg { atom: a, .. } if set.contains(a.rel.as_str()) => Some(a.rel.to_string()),
+                        _ => None,
+                    };
+                    let Some(n) = n else {
+                        out.push(l);
+                        continue;
+                    };
+                    out.push(Literal::Atom(Atom { rel: ready(&n).into(), args: vec![Term::Int(0)], neg: false, gated: false }));
+                    out.push(match l {
+                        Literal::Atom(a) => Literal::Atom(Atom { gated: true, ..a }),
+                        Literal::Agg { var, op, over, atom } => Literal::Agg { var, op, over, atom: Atom { gated: true, ..atom } },
+                        l => l,
+                    });
+                }
+                prog.rules[i].body = out;
+            }
+        }
+        prog.again[g].owned.extend(members.iter().cloned());
+        prog.together.push(members);
+        TOGETHER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
 }
