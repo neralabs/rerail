@@ -259,6 +259,9 @@ pub mod tests {
         let cut = native_cpu_clusters::by_rules(&native);
         assert_eq!((cut.count as usize, cut.calls), (rules.len(), true), "a function a rule");
         assert_eq!(c.parser.tier2.clusters, rules.len(), "as compiled");
+        // The calls open counted by the machine's stack, as the lean parser's: no `RETURN` runs
+        // with no call open, and no `ACCEPT` within one, so neither is checked.
+        assert!(rerail_compiler::native_cpu_stream::calls_on_stack(&native), "the calls open on the stack");
         // A jump from one rule into a later one, not a call's: refused (into an earlier rule's
         // code, which rules share, it is a call of that rule's function).
         let mut bad = c.program.clone();

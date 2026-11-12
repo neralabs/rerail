@@ -79,6 +79,13 @@ pub struct Ctx {
     room_nodes: u64,
     room_supers: u64,
     room_pushes: u64,
+    /// With the calls open counted by the machine's stack (`calls_on_stack`): the stack
+    /// pointer where the run's first rule is called, the lowest it may go (`STACK_BYTES` below
+    /// it), and the log of the smallest rule function's frame, in bytes (so the calls open are
+    /// at most the stack's depth shifted down by it).
+    stack_base: u64,
+    stack_limit: u64,
+    frame_shift: u64,
     /// In clusters (`compile_cut`), the run's state (`Mem`): every cluster reaches it through
     /// `ctx`, its first argument.
     state: [u64; Mem::COUNT as usize],
@@ -119,8 +126,11 @@ const TOTALS_MASK: i32 = 192;
 const ROOM_NODES: i32 = 200;
 const ROOM_SUPERS: i32 = 208;
 const ROOM_PUSHES: i32 = 216;
-const STATE: i32 = 224;
-const _: () = assert!(std::mem::offset_of!(Ctx, out_rows) == OUT_ROWS as usize && std::mem::offset_of!(Ctx, state) == STATE as usize);
+const STACK_BASE: i32 = 224;
+const STACK_LIMIT: i32 = 232;
+const FRAME_SHIFT: i32 = 240;
+const STATE: i32 = 248;
+const _: () = assert!(std::mem::offset_of!(Ctx, out_rows) == OUT_ROWS as usize && std::mem::offset_of!(Ctx, stack_base) == STACK_BASE as usize && std::mem::offset_of!(Ctx, state) == STATE as usize);
 
 /// A node of the table, as the lean parser's tape has one (`rr_syntax::lean::Node`, 24 bytes):
 /// its kind and field, its bytes, and (where the lean parser has its parent) the records in its
@@ -242,6 +252,8 @@ pub struct Bounds {
 pub struct CompiledStream {
     _module: JITModule,
     entry: Entry,
+    /// The log of the smallest rule function's frame (`Ctx::frame_shift`).
+    frame_shift: u64,
     bounds: Bounds,
     /// The extract `TOKEN` reads, and the output of the mask `SPAN m=1` reads.
     pub starts: Option<usize>,
@@ -368,6 +380,51 @@ pub const ENDED: u64 = 1 << 63;
 /// fallback), as the machine's stack is the calls'. A rule's frame is at most about 350 bytes
 /// on `.rr`: some 360 KB at the most.
 pub const DEPTH: i64 = 1024;
+
+/// With the calls open counted by the machine's stack (`calls_on_stack`): the most of it a run
+/// takes, about `DEPTH` calls of `.rr`'s largest frames. Past it, a rule function refuses the
+/// file where it is entered (to the fallback), as a stack check in a prologue does.
+pub const STACK_BYTES: i64 = 384 << 10;
+
+/// Whether the machine's stack can count the calls open (`Cut::calls`), as the lean parser's
+/// has no count: no `RETURN` runs with no call open, and no `ACCEPT` within a call. Each by the
+/// words reached at the same depth (`rule_successors`): from the start, no `RETURN`; from
+/// every callee's entry, no `ACCEPT`. So neither needs a check, and the count serves only the
+/// depth (a check where each rule function is entered) and the room for the nodes returns
+/// write (`TOKEN`'s, bounded by the stack's depth).
+pub fn calls_on_stack(native: &Structure) -> bool {
+    let n = native.structural.len();
+    let reach = |from: Vec<usize>| -> Vec<bool> {
+        let mut seen = vec![false; n];
+        let mut todo = from;
+        while let Some(pc) = todo.pop() {
+            if pc >= n || std::mem::replace(&mut seen[pc], true) {
+                continue;
+            }
+            todo.extend(rule_successors(native, pc));
+        }
+        seen
+    };
+    let top = reach(vec![0]);
+    if (0..n).any(|pc| top[pc] && matches!(native.structural[pc].operation, Op::Return { .. })) {
+        return false;
+    }
+    let callees: Vec<usize> = (0..n).filter(|&pc| matches!(native.structural[pc].operation, Op::Push { .. })).map(|pc| callee(native, pc)).collect();
+    let inner = reach(callees);
+    !(0..n).any(|pc| inner[pc] && matches!(native.structural[pc].operation, Op::Accept))
+}
+
+/// The calls open, at most (`calls_on_stack`): the stack's depth below the run's first call,
+/// shifted down by the log of the smallest rule frame (each call open has one such frame, or
+/// more).
+fn calls_open_by_stack(f: &mut FunctionBuilder<'_>, ctx: Value) -> Value {
+    let flags = MemFlags::trusted();
+    let sp = f.ins().get_stack_pointer(types::I64);
+    let base = f.ins().load(types::I64, flags, ctx, STACK_BASE);
+    let shift = f.ins().load(types::I64, flags, ctx, FRAME_SHIFT);
+    let depth = f.ins().isub(base, sp);
+    f.ins().ushr(depth, shift)
+}
 
 /// The program's `Bounds`: the most written between two `TOKEN`s, weighting `OPEN`, `LEAF` and
 /// `WRAP` (a node), `NODE_SUPER` and `PUSH`.
@@ -1089,6 +1146,9 @@ struct TokenShape {
     end_bits: i64,
     /// The stream's end as a token's code (`end_kind`), where it has one.
     end_code: Option<i64>,
+    /// The calls open counted by the machine's stack (`calls_on_stack`): no argument for them,
+    /// and no room for returns (none is written).
+    on_stack: bool,
 }
 
 /// `TOKEN`'s body (`WordFn::Token`), taking a token: params `ctx`, the calls open. The room for
@@ -1098,11 +1158,18 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
     let ctx = p[0];
     let flags = MemFlags::trusted();
     let load = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, flags, ctx, at);
-    let open_calls = p[1];
+    let pops = t.bound.pop_nodes > 0 || t.bound.pop_supers > 0;
+    let open_calls = if !t.on_stack { p[1] } else if pops { calls_open_by_stack(f, ctx) } else { f.ins().iconst(types::I64, 0) };
     let over = f.create_block();
-    let counts = [field_get(f, ctx, Mem::Nodes), field_get(f, ctx, Mem::Supers), open_calls];
-    let rooms = [load(f, ROOM_NODES), load(f, ROOM_SUPERS), load(f, ROOM_PUSHES)];
-    for (at, (room, (most, per_call))) in counts.into_iter().zip(rooms.into_iter().zip([(t.bound.nodes, t.bound.pop_nodes), (t.bound.supers, t.bound.pop_supers), (t.bound.pushes, 0)])) {
+    let mut counts = vec![field_get(f, ctx, Mem::Nodes), field_get(f, ctx, Mem::Supers)];
+    let mut rooms = vec![load(f, ROOM_NODES), load(f, ROOM_SUPERS)];
+    let mut most = vec![(t.bound.nodes, t.bound.pop_nodes), (t.bound.supers, t.bound.pop_supers)];
+    if !t.on_stack {
+        counts.push(open_calls);
+        rooms.push(load(f, ROOM_PUSHES));
+        most.push((t.bound.pushes, 0));
+    }
+    for (at, (room, (most, per_call))) in counts.into_iter().zip(rooms.into_iter().zip(most)) {
         let at = if per_call > 0 {
             let popped = f.ins().imul_imm(open_calls, per_call as i64);
             f.ins().iadd(at, popped)
@@ -1189,7 +1256,7 @@ fn token_fn<'a>(module: &mut JITModule, fns: &'a mut std::collections::HashMap<W
     let key = WordFn::Token { any_mark };
     if !fns.contains_key(&key) {
         let name = format!("tempo_word_{}", fns.len());
-        let made = outline(module, &name, 2, 1, pinned, |g, q, _| take_token(g, q, any_mark, shape))?;
+        let made = outline(module, &name, if shape.on_stack { 1 } else { 2 }, 1, pinned, |g, q, _| take_token(g, q, any_mark, shape))?;
         fns.insert(key, made);
     }
     Ok(&fns[&key])
@@ -1750,55 +1817,78 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     let mut reorder_fn = None;
     // The words made as functions of their own (`WordFn`), with a function a grammar rule.
     let outlined = !native.rules.is_empty() && cut.calls;
-    // With a function a grammar rule, or code rules share (`merge_words`' helpers), the ways a
-    // call of each function returns (bit 0: `RETURN m=0`, bit 1: `m=1`): its own `RETURN`s and
-    // those of the helpers it goes into (which it calls, passing their result on). A function
-    // with one way gives back 0 for it, and its callers test once, as a `Result`'s.
+    // The calls open counted by the machine's stack (`calls_on_stack`), with `ctx` pinned.
+    let on_stack = pinned_ctx && outlined && !flagged && calls_on_stack(native);
+    // The callee takes its caller's token (`RETURN m=0`), as the lean parser's callee consumes
+    // it and its caller peeks: where every call's place to return to is one `TOKEN`, alike
+    // (the same mask, and taking a token there), a `RETURN m=0` takes it and returns as `m=1`
+    // does, to the caller's switch. So every call returns one way and is tested once (`cbnz`).
+    let landing_token: Option<Option<u8>> = {
+        let pushes = push_targets(native);
+        let mut anys = pushes.iter().map(|&p| match words.get(usize::from(p)).map(|b| b.operation) {
+            Some(Op::Token { any, .. }) if phase_of[usize::from(p)] == crate::stream::TAKEN => Some(any),
+            _ => None,
+        });
+        let first = anys.next().flatten();
+        first.filter(|&a| on_stack && anys.all(|x| x == Some(a)))
+    };
+    let callee_takes = landing_token.is_some();
+    // With a function a grammar rule, the ways a call returns (bit 0: `RETURN m=0`, bit 1:
+    // `m=1`), by the place it enters: the `RETURN`s reached from there at the same depth
+    // (`rule_successors`), in its function and in the code of earlier rules it goes into (which
+    // it calls, passing their result on). A call of a place with one way tests once (`cbnz`), as
+    // a `Result`'s: a `RETURN m=1` gives back 0 where every place reaching it has that way alone.
+    // By place, not function: a rule's function holds code other rules go into, with ways of
+    // its own.
     let rule_of = |pc: usize| native.rules.partition_point(|&s| usize::from(s) <= pc).saturating_sub(1);
     let by_rule = outlined && (0..words.len()).all(|pc| cut.of[pc] as usize == rule_of(pc));
-    let functions = cut.count as usize;
-    let mut own_ways = vec![0u8; functions];
-    // `into[d]`: the functions `d` goes into (its jumps to other functions, not its calls).
-    let mut into: Vec<std::collections::BTreeSet<usize>> = vec![Default::default(); functions];
-    for (pc, b) in words.iter().enumerate() {
-        if let Op::Return { again } = b.operation {
-            own_ways[cut.of[pc] as usize] |= 1 << u8::from(again);
-        }
-        let call = pc > 0 && matches!(words[pc - 1].operation, Op::Push { .. });
-        if cut.calls && !call {
-            for t in rule_successors(native, pc) {
-                if cut.of[t] != cut.of[pc] {
-                    into[cut.of[pc] as usize].insert(cut.of[t] as usize);
+    let n_structural = words.len();
+    let entered: Vec<usize> = {
+        let mut e: Vec<usize> = (0..n_structural).filter(|&pc| matches!(words[pc].operation, Op::Push { .. })).map(|pc| callee(native, pc)).collect();
+        e.sort_unstable();
+        e.dedup();
+        e
+    };
+    // The `RETURN`s each entered place reaches.
+    let returns_from: Vec<Vec<usize>> = entered
+        .iter()
+        .map(|&e| {
+            let mut seen = vec![false; n_structural];
+            let (mut todo, mut out) = (vec![e], Vec::new());
+            while let Some(pc) = todo.pop() {
+                if pc >= n_structural || std::mem::replace(&mut seen[pc], true) {
+                    continue;
                 }
-            }
-        }
-    }
-    // `reached[d]`: `d` and every function it goes into, on and on (helpers go into helpers
-    // of more rules alone, so no cycle).
-    let reached: Vec<std::collections::BTreeSet<usize>> = (0..functions)
-        .map(|d| {
-            let (mut seen, mut todo) = (std::collections::BTreeSet::from([d]), vec![d]);
-            while let Some(x) = todo.pop() {
-                for &y in &into[x] {
-                    if seen.insert(y) {
-                        todo.push(y);
-                    }
+                if matches!(words[pc].operation, Op::Return { .. }) {
+                    out.push(pc);
                 }
+                todo.extend(rule_successors(native, pc));
             }
-            seen
+            out
         })
         .collect();
-    let ways: Vec<u8> = reached.iter().map(|r| r.iter().fold(0, |w, &x| w | own_ways[x])).collect();
-    // One way each, where every `RETURN m=1` a call of it reaches can give back 0: one whose
-    // function is reached from a function with both ways gives back 1 (`RETURN`'s own), and so
-    // every function reaching it tests for 1. To a fixed point.
-    let mut one: Vec<Option<u16>> = ways.iter().map(|&w| if !by_rule { None } else { match w { 1 => Some(0), 2 => Some(1), _ => None } }).collect();
-    let users: Vec<Vec<usize>> = (0..functions).map(|x| (0..functions).filter(|&u| reached[u].contains(&x)).collect()).collect();
+    let again_of = |r: usize| matches!(words[r].operation, Op::Return { again: true });
+    let mut one: Vec<Option<u16>> = returns_from
+        .iter()
+        .map(|rs| {
+            let ways = rs.iter().fold(0u8, |w, &r| w | 1 << u8::from(again_of(r)));
+            if !by_rule { None } else { match ways { 1 => Some(0), 2 => Some(1), _ => None } }
+        })
+        .collect();
+    // Each `RETURN m=1`'s places (the entered places reaching it).
+    let mut users: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+    for (i, rs) in returns_from.iter().enumerate() {
+        for &r in rs.iter().filter(|&&r| again_of(r)) {
+            users.entry(r).or_default().push(i);
+        }
+    }
+    // A `RETURN m=1` a place with both ways reaches gives back 1: then every place reaching it
+    // tests for 1. To a fixed point.
     loop {
         let mut changed = false;
-        for x in (0..functions).filter(|&x| own_ways[x] & 2 != 0) {
-            if users[x].iter().any(|&u| one[u].is_none()) {
-                for &u in &users[x] {
+        for us in users.values() {
+            if us.iter().any(|&u| one[u].is_none()) {
+                for &u in us {
                     if one[u] == Some(1) {
                         one[u] = None;
                         changed = true;
@@ -1810,10 +1900,10 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             break;
         }
     }
-    // A `RETURN m=1` of function `x` gives back 0 where every call reaching it reads 0 so.
-    let again_as_one: Vec<bool> = (0..functions).map(|x| users[x].iter().all(|&u| one[u] == Some(1))).collect();
-    // The one way function `d` returns, where it has one.
-    let one_way = |d: usize| -> Option<u16> { one[d] };
+    // A `RETURN m=1` gives back 0 where every place reaching it reads 0 so.
+    let again_as_one: Vec<bool> = (0..n_structural).map(|r| users.get(&r).is_some_and(|us| us.iter().all(|&u| one[u] == Some(1)))).collect();
+    // The one way a call of place `e` returns, where it has one.
+    let one_way = |e: usize| -> Option<u16> { if callee_takes { Some(1) } else { entered.binary_search(&e).ok().and_then(|i| one[i]) } };
     let mut word_fns: std::collections::HashMap<WordFn, (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)> = std::collections::HashMap::new();
     let mut table_fn: Option<(cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)> = None;
     let mut lowered: Vec<Lowered> = Vec::new();
@@ -1875,6 +1965,13 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     for pc in (0..n_words).filter(|&pc| matches!(words[pc].operation, Op::Remember { .. } | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. })) {
         changes_context[cut.of[pc] as usize] = true;
     }
+    // With a function a grammar rule and `ctx` pinned (every exit through the function's one
+    // `exit`), the word and flags are callee-saved, as registers are: a function whose own
+    // words change them keeps the values it was entered with and gives them back where it
+    // leaves, as the lean parser's are its callees' locals. A call keeps nothing; code of
+    // another rule a function goes into keeps its own.
+    let own_changes = changes_context.clone();
+    let callee_keeps = pinned_ctx && has_context(words);
     loop {
         let mut more = false;
         for pc in (0..n_words).filter(|&pc| !shared_all.skipped[pc]) {
@@ -2073,6 +2170,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         // with its results. A return each would be an epilogue each (its callee-saved
         // registers restored).
         let exit = f.create_block();
+        // The word and flags this function gives back where it leaves (`callee_keeps`).
+        let mut entry_kept: Option<(Value, Value)> = None;
         for _ in 0..1 + if clustered { cut.pass.len() } else { 0 } {
             f.append_block_param(exit, types::I64);
         }
@@ -2092,6 +2191,25 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     };
                     f.def_var(v, x);
                 }
+            }
+            // The word and flags the function was entered with, where its own words change them
+            // (`callee_keeps`).
+            if callee_keeps && own_changes[c as usize] {
+                entry_kept = Some((mget(&mut f, Mem::Word), mget(&mut f, Mem::Flags)));
+            }
+            // The calls open on the machine's stack (`on_stack`): its depth checked once, where
+            // the function is entered, as a stack check in a prologue (one load, one compare).
+            if on_stack {
+                let sp = f.ins().get_stack_pointer(types::I64);
+                let limit = f.ins().load(types::I64, MemFlags::trusted(), ctx, STACK_LIMIT);
+                let deep = f.ins().icmp(IntCC::UnsignedLessThan, sp, limit);
+                let (ok, no) = (f.create_block(), f.create_block());
+                f.ins().brif(deep, no, &[], ok, &[]);
+                f.switch_to_block(no);
+                f.set_cold_block(no);
+                let at = f.ins().iconst(types::I64, 1);
+                f.ins().jump(refuse, &[BlockArg::from(at)]);
+                f.switch_to_block(ok);
             }
             f.ins().jump(pick, &[]);
         } else {
@@ -2311,11 +2429,11 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                             f.ins().jump(fall, &[]);
                             continue;
                         }
-                        let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from) };
+                        let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack };
                         let (id, sig, _) = token_fn(&mut module, &mut word_fns, any_mark, shape, pinned_ctx)?;
                         let c = pinned(&mut f);
-                        let open_calls = mget(&mut f, Mem::Ret);
-                        let r = call_word(&mut f, *id, sig, pinned_ctx, c, &[open_calls])[0];
+                        let open_calls: Vec<Value> = if on_stack { vec![] } else { vec![mget(&mut f, Mem::Ret)] };
+                        let r = call_word(&mut f, *id, sig, pinned_ctx, c, &open_calls)[0];
                         // A refusal: past the stream's end at this word, or out of room.
                         let no = f.create_block();
                         f.ins().brif(r, no, &[], fall, &[]);
@@ -2925,12 +3043,16 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     // the return's (`RETURN m=1`), a rule switches on the same token again, and
                     // each turn calls a rule, which takes a token before it returns.
                     heads.push((wb[pc].expect("its own place"), Step::Return));
-                    let ret = mget(&mut f, Mem::Ret);
-                    let deep = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, ret, DEPTH);
-                    guard(&mut f, deep, pc);
-                    let ret = f.ins().iadd_imm(ret, 1);
-                    mset(&mut f, Mem::Ret, ret);
-                    let kept = (two_slots && changes_context[cut.of[callee(native, pc)] as usize]).then(|| (mget(&mut f, Mem::Word), mget(&mut f, Mem::Flags)));
+                    // Counted by the machine's stack (`on_stack`), as the lean parser's: nothing
+                    // here, the depth checked where the callee is entered.
+                    if !on_stack {
+                        let ret = mget(&mut f, Mem::Ret);
+                        let deep = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, ret, DEPTH);
+                        guard(&mut f, deep, pc);
+                        let ret = f.ins().iadd_imm(ret, 1);
+                        mset(&mut f, Mem::Ret, ret);
+                    }
+                    let kept = (two_slots && !callee_keeps && changes_context[cut.of[callee(native, pc)] as usize]).then(|| (mget(&mut f, Mem::Word), mget(&mut f, Mem::Flags)));
                     for (k, v) in vars.iter().enumerate() {
                         if let Some(v) = v.filter(|_| !cut.pass.contains(&(k as u32))) {
                             let x = f.use_var(v);
@@ -2968,7 +3090,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         mset(&mut f, Mem::Flags, fl);
                     }
                     let (other, not_next) = (f.create_block(), f.create_block());
-                    if let Some(way) = one_way(d) {
+                    if let Some(way) = one_way(e) {
                         // Zero: back at the call's place, or the one after, as the callee always
                         // returns; else the run's end, passed on.
                         f.ins().brif(v, other, &[], word(target + way), &[]);
@@ -2991,11 +3113,15 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     leave(&mut f, &r);
                 }
                 Op::Return { again } if cut.calls => {
-                    let ret = mget(&mut f, Mem::Ret);
-                    let none = f.ins().icmp_imm(IntCC::Equal, ret, 0);
-                    guard(&mut f, none, pc);
-                    let ret = f.ins().iadd_imm(ret, -1);
-                    mset(&mut f, Mem::Ret, ret);
+                    // With the calls open on the stack, a call is always open here
+                    // (`calls_on_stack`).
+                    if !on_stack {
+                        let ret = mget(&mut f, Mem::Ret);
+                        let none = f.ins().icmp_imm(IntCC::Equal, ret, 0);
+                        guard(&mut f, none, pc);
+                        let ret = f.ins().iadd_imm(ret, -1);
+                        mset(&mut f, Mem::Ret, ret);
+                    }
                     for (k, v) in vars.iter().enumerate() {
                         if let Some(v) = v.filter(|_| !cut.pass.contains(&(k as u32))) {
                             let x = f.use_var(v);
@@ -3003,8 +3129,29 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                             f.ins().store(MemFlags::trusted(), x, p, STATE + 8 * k as i32);
                         }
                     }
-                    // A function that returns one way gives back 0 for it (`one_way`).
-                    let way = if again && by_rule && again_as_one[cut.of[pc] as usize] { 0 } else { i64::from(again) };
+                    // The caller's token, taken here (`callee_takes`): a refusal is this word's.
+                    if let (Some(any), false) = (landing_token, again) {
+                        let any_mark: Option<usize> = match any {
+                            Some(k) => Some(native.block_programs.first().and_then(|b| b.masks.get(usize::from(k)).copied()).ok_or(Error::UnsupportedBackend)?),
+                            None => None,
+                        };
+                        let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack };
+                        let (id, sig, _) = token_fn(&mut module, &mut word_fns, any_mark, shape, pinned_ctx)?;
+                        let c = pinned(&mut f);
+                        let r = call_word(&mut f, *id, sig, pinned_ctx, c, &[])[0];
+                        let (no, taken) = (f.create_block(), f.create_block());
+                        f.ins().brif(r, no, &[], taken, &[]);
+                        f.switch_to_block(no);
+                        f.set_cold_block(no);
+                        let past = f.ins().icmp_imm(IntCC::Equal, r, 1);
+                        let here = f.ins().iconst(types::I64, pc as i64 + 1);
+                        let at = f.ins().select(past, here, r);
+                        f.ins().jump(refuse, &[BlockArg::from(at)]);
+                        f.switch_to_block(taken);
+                    }
+                    // A function that returns one way gives back 0 for it (`one_way`); with the
+                    // caller's token taken here, every return (`callee_takes`).
+                    let way = if callee_takes || (again && by_rule && again_as_one[pc]) { 0 } else { i64::from(again) };
                     let v = f.ins().iconst(types::I64, RETURNED as i64 + way);
                     let r = results(&mut f, v, false);
                     leave(&mut f, &r);
@@ -3061,14 +3208,18 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     }
                 }
                 Op::Accept => {
-                    let (at_end, open, ret) = (mget(&mut f, Mem::AtEnd), mget(&mut f, Mem::Open), mget(&mut f, Mem::Ret));
+                    let (at_end, open) = (mget(&mut f, Mem::AtEnd), mget(&mut f, Mem::Open));
                     let not_end = f.ins().icmp_imm(IntCC::Equal, at_end, 0);
                     let not_one = f.ins().icmp_imm(IntCC::NotEqual, open, 1);
-                    let returns = f.ins().icmp_imm(IntCC::NotEqual, ret, 0);
                     // A branch each, not the tests joined.
                     guard(&mut f, not_end, pc);
                     guard(&mut f, not_one, pc);
-                    guard(&mut f, returns, pc);
+                    // Within no call (`calls_on_stack`), or checked.
+                    if !on_stack {
+                        let ret = mget(&mut f, Mem::Ret);
+                        let returns = f.ins().icmp_imm(IntCC::NotEqual, ret, 0);
+                        guard(&mut f, returns, pc);
+                    }
                     let root = f.ins().uload32(flags, open_c, 0);
                     let root_row = NodeCol::row(&mut f, rows_here, root);
                     end_c.put_row(&mut f, root_row, len);
@@ -3283,6 +3434,10 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         leave(&mut f, &r);
         f.switch_to_block(exit);
         let r = f.block_params(exit).to_vec();
+        if let Some((w, fl)) = entry_kept {
+            mset(&mut f, Mem::Word, w);
+            mset(&mut f, Mem::Flags, fl);
+        }
         f.ins().return_(&r);
         f.seal_all_blocks();
         f.finalize();
@@ -3342,6 +3497,13 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 f.ins().set_pinned_reg(ctx);
                 host
             });
+            // The calls open on the machine's stack (`on_stack`): its base and limit, here.
+            if on_stack {
+                let sp = f.ins().get_stack_pointer(types::I64);
+                f.ins().store(MemFlags::trusted(), sp, ctx, STACK_BASE);
+                let limit = f.ins().iadd_imm(sp, -STACK_BYTES);
+                f.ins().store(MemFlags::trusted(), limit, ctx, STACK_LIMIT);
+            }
             let args: Vec<Value> = (!pinned_ctx).then_some(ctx).into_iter().chain([first]).chain(passed).collect();
             let r = call_own(&mut f, cids[cut.of[0] as usize], &csig, &args);
             if let Some(host) = host {
@@ -3372,6 +3534,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         c.set_disasm(true);
         c
     };
+    let has_driver = driver.is_some();
     if let Some(func) = driver {
         items.push((id, context_of(&module, func)));
     }
@@ -3395,6 +3558,15 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     if times {
         eprintln!("tier 2: compiled {:.2?}", phase.elapsed());
     }
+    // The smallest rule function's frame (its saved registers, slots, and the frame pointer and
+    // return address): each call open has one, or more (`calls_open_by_stack`).
+    let frame_shift = defined
+        .iter()
+        .skip(usize::from(has_driver))
+        .take(cut.count as usize)
+        .filter_map(|c| c.compiled_code().map(|code| code.frame_size + 16))
+        .min()
+        .map_or(4, |least| u64::from(least.max(16).ilog2()));
     let mut disassembly = String::new();
     let mut code_bytes = Vec::new();
     let mut word_bytes = vec![0u32; words.len()];
@@ -3427,7 +3599,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     let marks = words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, entry, bounds: bounds(native), starts, lasts, marks, wraps, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges })
+    Ok(CompiledStream { _module: module, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, wraps, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges })
 }
 
 /// What an instruction does to `ctx`'s fields (`state_in_registers`).
@@ -3970,6 +4142,9 @@ impl CompiledStream {
             room_nodes: tape.rows.capacity() as u64,
             room_supers: tape.super_node.capacity() as u64,
             room_pushes: (tape.returns.capacity() / if self.context { 2 } else { 1 }) as u64,
+            stack_base: 0,
+            stack_limit: 0,
+            frame_shift: self.frame_shift,
             state: [0; Mem::COUNT as usize],
         };
         // SAFETY: the caller's contract; the function writes only the tape's buffers and the
