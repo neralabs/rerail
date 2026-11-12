@@ -53,12 +53,14 @@ interface Fixture {
   packageRoot: string;
 }
 
-/** A checkout-shaped package root plus an empty Rerail home, with Claude Code the only detected host. */
+/** A package root in a Git checkout plus an empty Rerail home, with Claude Code the only detected host. */
 async function fixture(): Promise<Fixture> {
   const base = await mkdtemp(join(tmpdir(), "rerail-setup-cli-"));
   temporaryDirectories.push(base);
   const packageRoot = join(base, "checkout", "rerail");
   await mkdir(join(packageRoot, "dist"), { recursive: true });
+  // What makes the folder a checkout to Rerail, which then keeps the build's content store there.
+  await mkdir(join(base, "checkout", ".git"));
   await writeFile(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
   const hostConfigHome = join(base, "home");
   await mkdir(join(hostConfigHome, ".claude"), { recursive: true });
@@ -133,6 +135,31 @@ describe("rerail install --root", () => {
     expect(existsSync(updater.currentLink)).toBe(false);
     expect(existsSync(updater.launcherPath)).toBe(false);
     expect(existsSync(context.home)).toBe(false);
+  });
+
+  it("refuses a package in no Git checkout and no managed version, which would run no code rule, and changes nothing", async () => {
+    const { context, hostConfigHome } = await fixture();
+    const installed = join(dirname(context.home), "install", "node_modules", "@neralabs", "rerail");
+    await mkdir(join(installed, "dist"), { recursive: true });
+    await writeFile(join(installed, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
+
+    for (const args of [["--root", installed, "--agents", "claude-code"], ["--root", installed, "--dry-run"]]) {
+      await expect(runInstallCommand(args, context)).rejects.toThrow(
+        /is neither the managed installation under .+ nor in a Git checkout, so it has no content store and would run no code rule\. --root takes a Rerail checkout/u,
+      );
+    }
+    expect(existsSync(context.home)).toBe(false);
+    expect(existsSync(join(hostConfigHome, ".claude", "settings.json"))).toBe(false);
+  });
+
+  it("takes a version Rerail installed under its home", async () => {
+    const { context } = await fixture();
+    const version = join(context.home, VERSIONS_DIR, "1.0.0", "node_modules", "@neralabs", "rerail");
+    await mkdir(join(version, "dist"), { recursive: true });
+    await writeFile(join(version, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
+
+    expect(await runInstallCommand(["--root", version, "--agents", "claude-code"], context)).toBe(0);
+    expect(await readlink(context.updater.currentLink)).toBe(version);
   });
 
   it("backs up rules and history on uninstall, and keeps them when only one coding agent is removed", async () => {

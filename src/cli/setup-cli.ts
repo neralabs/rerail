@@ -20,7 +20,7 @@ import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import { RULES_DUMP_FILE } from "../engine/catalog/rule-bootstrap.js";
 import { INSTALLED_PACKS_DIR, installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
-import { contentStoreOverride, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
+import { contentStoreOverride, mainContentStoreDirectory, resolveRerailBuild } from "../engine/native/rerail-build.js";
 import {
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
@@ -129,6 +129,23 @@ async function currentPointsAt(context: SetupContext, root: string): Promise<boo
 }
 
 /**
+ * Refuses a root that would have no content store: one in no Git checkout and not a version under `home`, such as a
+ * package `npm install` put in a folder of its own. Its daemon would answer every hook and run no code rule.
+ */
+function requireContentStore(root: string, home: string): void {
+  // A root that is not there fails on its package.json next, as it always has.
+  if (!existsSync(root)) return;
+  try {
+    resolveRerailBuild(root, { ...process.env, RERAIL_HOME: home });
+  } catch (error) {
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)} and would run no code rule. ` +
+        "--root takes a Rerail checkout; to run a published version, run npx @neralabs/rerail setup",
+    );
+  }
+}
+
+/**
  * `--root <checkout>`: adopt the checkout the way `setup` adopts a published
  * version, so a source install leaves a `rerail` command behind and its hooks
  * name `<home>/current` rather than the checkout, whose path dies with the
@@ -140,6 +157,7 @@ async function activateExplicitRoot(context: SetupContext, root: string, remove:
   if (remove) return (await currentPointsAt(context, root)) ? updater.currentLink : root;
   // A checkout cloned without Git LFS builds, then fails every session on the model's checksum.
   requireLfsContent(root);
+  requireContentStore(root, context.home);
   if (dryRun) {
     process.stdout.write(`Would point ${updater.currentLink} at ${root} and write the launcher ${updater.launcherPath}.\n`);
     return updater.currentLink;

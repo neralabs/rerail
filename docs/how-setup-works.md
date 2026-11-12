@@ -660,6 +660,9 @@ This builds the checkout, activates it as `~/.rerail/current` the way `setup` ac
 the launcher, registers every harness, and starts the checkout's dev daemon on the default home. Its hooks name
 `~/.rerail/current`, never the checkout path.
 
+It runs `rerail install --root <checkout>`, which refuses a package in no Git checkout and outside
+`~/.rerail/versions`: that package has no [content store](#the-content-store), so it would run no code rule.
+
 - `just nuke-rerail` removes it again (with a backup).
 - `npx @neralabs/rerail setup` returns to the published package.
 - Restart harness sessions after every rebuild.

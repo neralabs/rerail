@@ -165,6 +165,10 @@ describe("Rerail managed launcher", () => {
     expect(packed.exitCode, packed.stderr).toBe(0);
     const archive = join(packageRoot, `${manifest.name.slice(1).replace("/", "-")}-${manifest.version}.tgz`);
     const consumer = join(packageRoot, "consumer");
+    // A project in Git, as one that installs packages is: `install --root` takes the package for that, which gives it a
+    // content store, and refuses one installed in no checkout.
+    const project = await run(["git", "init", "-q", consumer], process.env);
+    expect(project.exitCode, project.stderr).toBe(0);
     // A clean install from the tarball's declared dependencies, so one missing from package.json fails here; packages
     // already in the npm cache (CI restores it and runs npm ci first) are taken from it instead of the registry.
     const installed = await run(["npm", "install", "--prefer-offline", "--prefix", consumer, "--no-audit", "--no-fund", archive], process.env);

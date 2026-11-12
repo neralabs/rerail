@@ -823,6 +823,8 @@ describe("Claude Code status-line ownership", () => {
     vi.spyOn(process.stdout, "write").mockReturnValue(true);
     const home = join(options.home, ".rerail");
     const updater = new ManagedUpdater({ home, packageRoot: options.root, packageVersion: "1.0.0" });
+    // `--root` takes a Rerail checkout, whose package root is the repository's.
+    await mkdir(join(options.root, ".git"));
     await runInstallCommand(["--root", options.root, "--agents", "claude-code"], { home, packageRoot: options.root, updater });
     expect(readClaudeStatusCommand(options.home, path)).toEqual(statusLine);
   });

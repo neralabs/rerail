@@ -1,0 +1,1 @@
+`rerail install --root` refuses a package in no Git checkout and outside `~/.rerail/versions`, since Rerail would run no code rule from it. Point it at a Rerail checkout, or install a published version with `npx @neralabs/rerail setup`.
