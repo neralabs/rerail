@@ -410,6 +410,42 @@ export function loadNativeBinding(): NativeBinding {
   return binding;
 }
 
+/** A Git ignore matcher as an engine built before `ignoredEntries` and `reread` existed opens it: without them. */
+type OlderGitIgnoreMatcher = Omit<NativeGitIgnoreMatcher, "ignoredEntries" | "reread"> &
+  Partial<Pick<NativeGitIgnoreMatcher, "ignoredEntries" | "reread">>;
+
+/** Whether this process has said that its engine's Git ignore matcher is older than this Rerail. */
+let olderGitIgnoreMatcherReported = false;
+
+/**
+ * `binding.openGitIgnoreMatcher(root)`, checked against this Rerail. An engine built before `ignoredEntries` and
+ * `reread` existed opens a matcher without them, and a walk's question about a folder would then throw: the walk would
+ * keep every entry and enter every folder Git ignores. Its matcher instead answers `ignoredEntries` with `ignored` of
+ * each entry and takes `reread` as nothing to do, the answers walks got before those questions, and the first one in
+ * the process writes a stderr line asking for the rebuild.
+ */
+export function openGitIgnoreMatcher(binding: Pick<NativeBinding, "openGitIgnoreMatcher">, root: string): NativeGitIgnoreMatcher | null {
+  const matcher: OlderGitIgnoreMatcher | null = binding.openGitIgnoreMatcher(root);
+  if (matcher === null || answersFolders(matcher)) return matcher;
+  if (!olderGitIgnoreMatcherReported) {
+    olderGitIgnoreMatcherReported = true;
+    process.stderr.write(
+      "rerail: the native addon's Git ignore matcher has no ignoredEntries, so it is older than this Rerail; rebuild or reinstall it. Until then walks ask Git's ignore rules once per path.\n",
+    );
+  }
+  return {
+    ignored: (path, directory) => matcher.ignored(path, directory),
+    ignoredBy: (path, directory) => matcher.ignoredBy(path, directory),
+    ignoredEntries: (folder, names, directories) =>
+      names.map((name, index) => matcher.ignored(folder === "" ? name : `${folder}/${name}`, directories[index] === true)),
+    reread: () => undefined,
+  };
+}
+
+function answersFolders(matcher: OlderGitIgnoreMatcher): matcher is NativeGitIgnoreMatcher {
+  return typeof matcher.ignoredEntries === "function" && typeof matcher.reread === "function";
+}
+
 /** Whether `error` is a workspace task's refusal because another apply holds the engine's one slot. */
 export function isWorkspaceBusy(error: unknown): boolean {
   if (!(error instanceof Error)) return false;

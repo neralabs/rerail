@@ -9,6 +9,7 @@ import {
   encodeCodeRuleWorkspaceRequest,
   isWorkspaceBusy,
   loadNativeBinding,
+  openGitIgnoreMatcher,
   RESULT_PAGE_BYTES,
   type NativeCodeRuleDslWorkspace,
   type NativeGitIgnoreMatch,
@@ -752,7 +753,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   #askGitIgnore<T>(path: string, ask: (matcher: NativeGitIgnoreMatcher) => T): T | undefined {
     if (!this.#followGitignore) return undefined;
     try {
-      this.#gitIgnore ??= loadNativeBinding().openGitIgnoreMatcher(this.#workspaceRoot);
+      this.#gitIgnore ??= openGitIgnoreMatcher(loadNativeBinding(), this.#workspaceRoot);
       return this.#gitIgnore === null ? undefined : ask(this.#gitIgnore);
     } catch (error) {
       this.#gitIgnore ??= null;

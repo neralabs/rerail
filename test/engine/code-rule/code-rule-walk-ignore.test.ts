@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 /** What the walks under test ask of Git's ignore rules, and how often they look for the engine's file. */
 const asked = vi.hoisted(() => ({ paths: 0, folders: 0, engineLookups: 0 }));
+/** Whether the engine's Git ignore matchers are those of an engine built before `ignoredEntries` and `reread`. */
+const engine = vi.hoisted(() => ({ older: false }));
 vi.mock("node:fs", async importOriginal => {
   const actual = await importOriginal<typeof FileSystem>();
   const existsSync = (path: FileSystem.PathLike): boolean => {
@@ -42,7 +44,9 @@ vi.mock("../../../src/engine/native/native.js", async importOriginal => {
       Object.defineProperty(counting, "openGitIgnoreMatcher", {
         value: (root: string) => {
           const matcher = binding.openGitIgnoreMatcher(root);
-          return matcher === null ? null : counted(matcher);
+          if (matcher === null) return null;
+          const answers = counted(matcher);
+          return engine.older ? { ignored: answers.ignored, ignoredBy: answers.ignoredBy } : answers;
         },
       });
       return counting;
@@ -224,5 +228,27 @@ describe("a walk of a session that follows .gitignore", () => {
     expect([...router.audited].sort()).toEqual(pythonGitKeeps(root));
     expect(router.audited).toContain("api/handler.py");
     expect([...router.gone].sort()).toEqual(["api/draft.py", "api/third_party/forced.py", "late_excluded.py", "late_local.py", "scratch.py"]);
+  });
+
+  it("follows Git's rules with an engine older than the folder questions, asking per path, and says once to rebuild it", async () => {
+    const { root, databasePath } = await checkout(
+      { ".gitignore": "*.gen.py\nout/\n", "api/handler.py": "x = 1\n", "top.py": "x = 1\n" },
+      { "api/new.py": "x = 1\n", "api/drop.gen.py": "x = 1\n", "out/x.py": "x = 1\n", "out/deep/y.py": "x = 1\n" },
+    );
+    const everyPythonFile = git(root, "ls-files", "-z", "--cached", "--others").split("\0").filter(path => path.endsWith(".py"));
+    engine.older = true;
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const { router, bridge } = await session(root, databasePath);
+
+      await touchEveryPythonFile(bridge, root, everyPythonFile, "touch-older");
+
+      expect([...router.audited].sort()).toEqual(pythonGitKeeps(root));
+      const lines = stderr.mock.calls.map(([text]) => String(text)).filter(text => text.includes("Git ignore"));
+      expect(lines).toEqual([expect.stringContaining("older than this Rerail; rebuild or reinstall it")]);
+    } finally {
+      stderr.mockRestore();
+      engine.older = false;
+    }
   });
 });
