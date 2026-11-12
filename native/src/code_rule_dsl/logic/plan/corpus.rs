@@ -4442,6 +4442,9 @@ fn run_observed(
         let rounds_world_in = Arc::clone(&rounds_world);
         let rounds_withdrawn: Arc<std::sync::Mutex<std::collections::HashSet<i64>>> = Arc::default();
         let rounds_withdrawn_in = Arc::clone(&rounds_withdrawn);
+        // The loads answered and taken back, shared with the rounds (decision 0108).
+        let load_ledger: Arc<std::sync::Mutex<cone_rounds::LoadLedger>> = Arc::default();
+        let load_ledger_in = Arc::clone(&load_ledger);
         let rounds_journal_in = rounds_journal.clone();
         // Beside the main thread, which answers its requests: a job of the pool's that takes turns with this one.
         let modes = modes.to_owned();
@@ -4485,7 +4488,7 @@ fn run_observed(
             // The rounds from the last run's final round, kept in the store.
             let rounds_key = round.as_ref().map(|r| retain::key(&[0; 32], &r.program));
             let rounds_space = rounds_key.as_ref().map(&rounds_space_of).unwrap_or_default();
-            let rounds_in = cone_rounds::Inputs { per_file: &corpus_rows, corpus: &corpus_docs, constants: &constants_at };
+            let rounds_in = cone_rounds::Inputs { per_file: &corpus_rows, corpus: &corpus_docs, constants: &constants_at, ledger: &load_ledger_in };
             // Only what the stored frames hold that is current is known here; rows are read when a round needs them.
             let mut from_rounds = None;
             if let (Some(r), Some(store), Some(key)) = (&round, &cone_handle, rounds_key) {
@@ -4631,6 +4634,7 @@ fn run_observed(
             }
             let _s = crate::code_rule_dsl::logic::profile::span(|| format!("answer {rel}"));
             let mut fresh = Vec::new();
+            let mut fresh_files: Vec<i64> = Vec::new();
             let mut again: std::collections::HashSet<i64> = std::collections::HashSet::new();
             let mut loaded_rows = Vec::new();
             // A run of some documents on their own (`phases::maintain`) follows no load: the documents loaded are the
@@ -4644,18 +4648,27 @@ fn run_observed(
             asked_rows.sort_by(|a, b| (a.1.matches('.').count(), &a.1, &a.0).cmp(&(b.1.matches('.').count(), &b.1, &b.0)));
             let t_take = std::time::Instant::now();
             let _taken = Finally(|| times.borrow_mut().take += t_take.elapsed().as_secs_f64());
+            // The loads the rounds took back since the last answer free their places in the budget.
+            let taken_back = std::mem::take(&mut load_ledger.lock().unwrap_or_else(|e| e.into_inner()).taken_back);
+            for file in taken_back {
+                world.unload(&text(file)?);
+            }
             for (asked, module, grammar, row) in asked_rows {
                 // A load asked again (its stratum's requests answered again, t33 K3) is answered alike: the same
-                // document, its rows from the exports, not sent again.
-                if let Some(doc) = world.loaded_as(&asked) {
+                // document, its rows from the exports, not sent again. So is one taken back and asked again.
+                if let Some(doc) = world.loaded_as(&asked).or_else(|| world.reload(&asked)) {
                     if let Some((key, _)) = loaded_docs.iter().find(|(_, p)| *p == doc.path) {
-                        loaded_rows.push(vec![atoms(&[doc.path.as_str()])?[0], row[1], row[2]]);
+                        let file = atoms(&[doc.path.as_str()])?[0];
+                        loaded_rows.push(vec![file, row[1], row[2]]);
+                        load_ledger.lock().unwrap_or_else(|e| e.into_inner()).documents.insert(file, *key);
                         again.insert(*key);
                     }
                     continue;
                 }
                 if let Some(doc) = world.load(&asked, &module, &grammar, label, &corpus) {
-                    loaded_rows.push(vec![atoms(&[doc.path.as_str()])?[0], row[1], row[2]]);
+                    let file = atoms(&[doc.path.as_str()])?[0];
+                    loaded_rows.push(vec![file, row[1], row[2]]);
+                    fresh_files.push(file);
                     fresh.push(doc);
                 }
             }
@@ -4677,6 +4690,7 @@ fn run_observed(
             let keys = memo::doc_keys(&all_paths);
             let keys = &keys[keys.len() - fresh.len()..];
             loaded_docs.extend(keys.iter().copied().zip(fresh.iter().map(|d| d.path.clone())));
+            load_ledger.lock().unwrap_or_else(|e| e.into_inner()).documents.extend(fresh_files.iter().copied().zip(keys.iter().copied()));
             {
                 let mut t = times.borrow_mut();
                 t.fresh += fresh.len();

@@ -72,6 +72,9 @@ pub(super) struct World {
     beyond: usize,
     /// Loads past the budget, or in another grammar than the run's, not taken.
     pub(super) dropped: usize,
+    /// Documents loaded this run and taken back since (`unload`): out of the budget, their rows still held where
+    /// they were made, so a load asked again takes them back in place (`reload`).
+    taken: BTreeMap<String, Loaded>,
 }
 
 impl World {
@@ -182,13 +185,51 @@ impl World {
         if corpus.contains(&path) || self.loads.contains_key(&path) {
             return None;
         }
-        let own = self.roots.first().is_some_and(|r| Path::new(&path).starts_with(r));
-        if grammar != run_grammar || (!own && self.beyond >= self.budget) {
+        let own = self.own(&path);
+        if grammar != run_grammar {
             self.dropped += 1;
             self.refused.insert(asked.to_owned());
             return None;
         }
+        // Past the budget is not refused for good: a load taken back frees its place, and a load asked again then
+        // is weighed again.
+        if !own && self.beyond >= self.budget {
+            self.dropped += 1;
+            return None;
+        }
         let loaded = Loaded { path: path.clone(), module: module.to_owned(), grammar: grammar.to_owned() };
+        self.beyond += usize::from(!own);
+        self.loads.insert(path, loaded.clone());
+        Some(loaded)
+    }
+
+    /// Whether `path` is under the corpus root: a file of the run's own tree, which the budget does not bound.
+    fn own(&self, path: &str) -> bool {
+        self.roots.first().is_some_and(|r| Path::new(path).starts_with(r))
+    }
+
+    /// Takes back the document loaded from `path` this run (decision 0108, a load taken back): its place in the
+    /// budget is free again. Whether it was loaded.
+    pub(super) fn unload(&mut self, path: &str) -> bool {
+        let Some(loaded) = self.loads.remove(path) else { return false };
+        self.beyond -= usize::from(!self.own(path));
+        self.taken.insert(path.to_owned(), loaded);
+        true
+    }
+
+    /// The document of `asked` taken back this run, loaded again when the budget allows: it is the same document,
+    /// with the rows it was given (`unload`).
+    pub(super) fn reload(&mut self, asked: &str) -> Option<Loaded> {
+        let path = self.allowed(asked)?.to_string_lossy().into_owned();
+        if !self.taken.contains_key(&path) {
+            return None;
+        }
+        let own = self.own(&path);
+        if !own && self.beyond >= self.budget {
+            self.dropped += 1;
+            return None;
+        }
+        let loaded = self.taken.remove(&path)?;
         self.beyond += usize::from(!own);
         self.loads.insert(path, loaded.clone());
         Some(loaded)
