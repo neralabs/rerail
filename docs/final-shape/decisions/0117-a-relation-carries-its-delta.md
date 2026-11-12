@@ -297,3 +297,18 @@ again only when a statistic its plans read leaves its bucket (decision 0038's ru
 as in step 2, so the kept component's relations are updated in place, not copied.
 
 **Target.** A reached stratum costs its joins. At O125 that is the components' 53% toward their joins' 13%.
+
+## Built: step 3, first parts (2026-11-12)
+
+The driver itself (each stratum rewritten when reached) is not built. Two of the whole-program passes a maintained
+run made every step are removed:
+
+- **The inline choice on a session's part** decides "nothing may be inlined" from the qualifiers and names alone
+  (every relation `no_inline` or a maintenance piece), before its strata, refusals and readers are made.
+- **A level's seed joins are not planned ahead in a maintained run** (decision 0100 §5's batch): its seeds join
+  deltas of a few rows, under the batch's `MIN_LEFT`, so the batch sent nothing and the planning ahead doubled
+  theirs. `RERAIL_LEVEL_JOINS=on` batches them as before; a cold run batches as it did.
+
+Together with the cheap-replan rule (a plan re-priced under `REPLAN_ROWS` is kept, before and during a run), on
+O125 steps 01-03 (debug, strict, load 30-45): 276.6 G to 251.9 G instructions (-9%), 82.8 G to 73.2 G cycles.
+Steps 01-02 are the same as full runs.
