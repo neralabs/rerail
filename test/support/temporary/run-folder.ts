@@ -43,11 +43,28 @@ const SOCKET_PATH_BYTES = process.platform === "linux" || process.platform === "
  * ends 42 bytes below it.
  */
 const DEEPEST_SOCKET_BYTES = 54;
-const REMOVAL_TRIES = 5;
 /** The errors Windows gives while a process still holds a file in a folder being removed. */
 const HELD = new Set(["EBUSY", "EPERM", "ENOTEMPTY", "EACCES"]);
 /** The errors a removal gives for want of permission, on Linux and macOS when a folder in the tree is read-only. */
 const DENIED = new Set(["EPERM", "EACCES"]);
+
+/** How hard a removal tries: how many times, and how long it waits before the next try, times the tries so far. */
+interface Patience {
+  readonly tries: number;
+  readonly waitMs: number;
+}
+
+/**
+ * This run's own folder: vitest ends its workers only after the run's teardown starts, so a file a worker holds lets go
+ * within a moment. The waits add to 1 s.
+ */
+const OWN_FOLDER: Patience = { tries: 5, waitMs: 100 };
+/**
+ * An ended run's folder: one more try after 100 ms, for a tree made writable after a refusal for want of permission, or
+ * a killed run's process that lets go a moment after it ends. A folder a running process still holds stays for the
+ * next run, so no run's end waits on it.
+ */
+const ENDED_FOLDER: Patience = { tries: 2, waitMs: 100 };
 
 /**
  * A run folder's owner: the pid of the vitest process the folder's name gives, where that pid means something, and when
@@ -76,13 +93,13 @@ export default async function setUpRunFolder(): Promise<() => Promise<void>> {
   const owner: Owner = { pid: process.pid, place: place ?? "", touchedMs: Date.now() };
   await writeOwner(folder, owner);
   const stopHeartbeat = startHeartbeat(join(folder, OWNER_FILE), HEARTBEAT_MS);
-  const ended = removeFolders(await endedFolders(parent, basename(folder), place));
+  const ended = removeFolders(await endedFolders(parent, basename(folder), place), ENDED_FOLDER);
   const restoreVariables = pointVariablesAt(folder);
   return async () => {
     restoreVariables();
     await stopHeartbeat();
     const own: Folder = { path: folder, owner: { ...owner, touchedMs: Date.now() } };
-    const [endedLeft, ownLeft] = await Promise.all([ended, removeFolders([own])]);
+    const [endedLeft, ownLeft] = await Promise.all([ended, removeFolders([own], OWN_FOLDER)]);
     warnLeft("could not remove the folders of ended test runs", endedLeft);
     warnLeft("could not remove its temporary folder", ownLeft);
   };
@@ -227,9 +244,9 @@ function isRunning(pid: number): boolean {
   }
 }
 
-/** Removes each of `folders`; returns why each one that stays did. */
-async function removeFolders(folders: readonly Folder[]): Promise<string[]> {
-  const left = await Promise.all(folders.map(removeFolder));
+/** Removes each of `folders` with `patience`; returns why each one that stays did. */
+async function removeFolders(folders: readonly Folder[], patience: Patience): Promise<string[]> {
+  const left = await Promise.all(folders.map(async folder => await removeFolder(folder, patience)));
   return left.filter(reason => reason !== undefined);
 }
 
@@ -238,8 +255,8 @@ async function removeFolders(folders: readonly Folder[]): Promise<string[]> {
  * goes back as it was: the removal may have taken it with the rest, and without it a later run would keep the folder
  * for a day once the process holding it let go.
  */
-async function removeFolder(folder: Folder): Promise<string | undefined> {
-  const left = await remove(folder.path);
+async function removeFolder(folder: Folder, patience: Patience): Promise<string | undefined> {
+  const left = await remove(folder.path, patience);
   if (left !== undefined && folder.owner !== undefined) await writeOwner(folder.path, folder.owner);
   return left;
 }
@@ -247,17 +264,17 @@ async function removeFolder(folder: Folder): Promise<string | undefined> {
 /**
  * Removes `path`; returns why it stays, or undefined once it is gone. When the first try is refused for want of
  * permission, every folder in it is made writable before the next. While Windows refuses because a process holds a
- * file in it, it tries again for about a second: vitest ends its workers only after the run's teardown starts, and a
- * killed run's processes let go a moment after they end. Node's own `maxRetries` would retry at every level of the
- * tree, so one file held deep down would keep it trying for minutes.
+ * file in it, it tries again as `patience` allows. Node's own `maxRetries` would retry at every level of the tree, so
+ * one file held deep down would keep it trying for minutes.
  */
-async function remove(path: string): Promise<string | undefined> {
+async function remove(path: string, patience: Patience): Promise<string | undefined> {
   for (let attempt = 1; ; attempt += 1) {
     try {
       await rm(path, { recursive: true, force: true });
       return undefined;
     } catch (error) {
-      if (!(await readyToRetry(path, (error as NodeJS.ErrnoException).code ?? "", attempt))) return String(error);
+      const code = (error as NodeJS.ErrnoException).code ?? "";
+      if (!(await readyToRetry({ path, code, attempt, patience }))) return String(error);
     }
   }
 }
@@ -267,10 +284,11 @@ async function remove(path: string): Promise<string | undefined> {
  * first refusal for want of permission it makes every folder in the tree writable, and it waits a little longer after
  * each try.
  */
-async function readyToRetry(path: string, code: string, attempt: number): Promise<boolean> {
-  if (attempt === REMOVAL_TRIES || !HELD.has(code)) return false;
+async function readyToRetry(refusal: { path: string; code: string; attempt: number; patience: Patience }): Promise<boolean> {
+  const { path, code, attempt, patience } = refusal;
+  if (attempt >= patience.tries || !HELD.has(code)) return false;
   if (attempt === 1 && DENIED.has(code)) await unlock(path);
-  await delay(100 * attempt);
+  await delay(patience.waitMs * attempt);
   return true;
 }
 
