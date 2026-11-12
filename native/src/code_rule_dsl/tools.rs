@@ -539,11 +539,18 @@ pub fn cli(args: &[String]) -> Result<String, String> {
 /// Each engine command prints one line to stderr: its CPU (user + sys) and the process's footprint, now and at most.
 #[cfg(not(target_family = "wasm"))]
 fn repeat_command(script: &str) -> Result<String, String> {
+    #[cfg(unix)]
     let cpu = || {
         let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
         unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
         let time = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
         (time(usage.ru_utime), time(usage.ru_stime))
+    };
+    // Windows: the process's user and kernel CPU (`GetProcessTimes`).
+    #[cfg(windows)]
+    let cpu = || {
+        let (user, kernel) = rerail_prof::windows_cpu(false);
+        (user.as_secs_f64(), kernel.as_secs_f64())
     };
     let mut out = String::new();
     for (n, line) in script.lines().enumerate().map(|(n, l)| (n + 1, l.trim())) {
