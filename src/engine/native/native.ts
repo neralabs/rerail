@@ -224,7 +224,10 @@ export interface NativeGitIgnoreMatcher {
   /**
    * Reads Git's ignore files again: `.git/info/exclude`, `core.excludesFile` and the top `.gitignore`, which the matcher
    * otherwise keeps as it first read them (a `.gitignore` below the top is read each time a question goes into its
-   * folder again). Throws as `ignored` does.
+   * folder again). From then on a path is ignored only where both the reading the matcher opened with and the latest
+   * one ignore it, and `ignoredBy` names the latest one's pattern: a file those files stop ignoring is visible at once,
+   * and one they start to ignore stays visible for the matcher's life. Throws when they cannot be read, and the matcher
+   * keeps answering as before.
    */
   reread(): void;
 }

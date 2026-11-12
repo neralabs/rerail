@@ -728,7 +728,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
    * `ignoresPath` of each entry of the folder `folder` (relative to the workspace root, `""` for it), in one ask. With
    * `reread`, Git's ignore files are read again first, as a walk asks at the folder it starts from (the workspace root,
    * unless the session's folder lies below it): the matcher keeps the top `.gitignore` and the exclude files as it first
-   * read them, and they may have changed since the last walk.
+   * read them, and ignores only what both those and the files as they are now ignore. So a file they stop ignoring is
+   * walked from this walk on, and one they start to ignore stays walked and checked while the lane lives.
    */
   ignoredEntries(folder: string, entries: readonly WalkEntry[], reread = folder === ""): boolean[] {
     if (entries.length === 0) return [];

@@ -183,8 +183,10 @@ controls bind only an agent that reaches Rerail through MCP (see T1).
 - **People-only tools.** `repository_reset`, `repository_link`, `presentation_preferences_*` and
   `audit_settings_update` refuse an `agent`. An agent can turn Follow `.gitignore` on but never off, change
   whole-repository settings only before set-up, and never remove a library rule another repository uses.
-- **Git's ignore rules.** An agent can still widen what Git ignores, and so what Rerail checks, by writing an ignore
-  file or pointing `core.excludesFile` at one. Nothing blocks it. The session records a change that can make the rules
+- **Git's ignore rules.** An agent can still widen what Git ignores, and so narrow what Rerail checks, by writing an
+  ignore file or pointing `core.excludesFile` at one. Nothing blocks it. A running session keeps checking a file that
+  the checkout's top `.gitignore`, `.git/info/exclude` or `core.excludesFile` starts to ignore; a `.gitignore` below
+  the top takes effect at its next look. The session records a change that can make the rules
   ignore more: a `.gitignore` a tool edit wrote or a walk found (including one that ignores itself), and
   `.git/info/exclude` or the `core.excludesFile` file, which no diff shows, followed when `git config` points it
   elsewhere. It records what a look saw, not who wrote it, and a change made while no session is open is on no record.

@@ -4,9 +4,13 @@
 //! is a folder that holds a tracked path. Hosts that follow `.gitignore` skip what this ignores,
 //! and can name the pattern that ignored a path, with its file and line (`git check-ignore -v`).
 //!
-//! The index is re-read whenever it changes on disk, so `git add` of an ignored file brings it back;
-//! a `.gitignore` is read when the walk first enters its folder, and the top one, with
-//! `.git/info/exclude` and `core.excludesFile`, again at each `reread`. A walk asks once per folder
+//! The index is re-read whenever it changes on disk, so `git add` of an ignored file brings it back,
+//! and a `.gitignore` below the top is read again as a question goes into its folder again. The
+//! top `.gitignore`, `.git/info/exclude` and `core.excludesFile` are read as the matcher opens, and
+//! again at each `reread`; from the first `reread` on, a path is ignored only where both readings
+//! ignore it: the one as the matcher opened, which it keeps, and the latest. So a file those three
+//! files stop ignoring is visible from the next `reread`, and one they start to ignore stays visible
+//! for the matcher's life, as it was before `reread` existed. A walk asks once per folder
 //! (`ignored_entries`), so the index is looked at once per folder, not once per file.
 
 use gix::bstr::{BStr, ByteSlice};
@@ -18,7 +22,12 @@ use std::sync::Mutex;
 
 pub struct GitIgnore {
     repository: gix::Repository,
+    /// The exclude stack as the last `reread` built it, or as `open` did before one.
     stack: gix::worktree::Stack,
+    /// Once `reread` has built another stack, the one `open` built, kept as it answered before:
+    /// asked where `stack` ignores a path, and once per folder a walk asks about, so it moves
+    /// through the folders, and reads their `.gitignore` files, as it did when it answered alone.
+    first: Option<gix::worktree::Stack>,
     /// Where the opened root sits below the worktree root: empty, or `/`-joined components.
     prefix: Vec<String>,
 }
@@ -55,17 +64,22 @@ impl GitIgnore {
         Ok(Some(Self {
             repository,
             stack,
+            first: None,
             prefix,
         }))
     }
 
     /// Reads Git's ignore files again: `.git/info/exclude` and `core.excludesFile` now, and the
-    /// top `.gitignore` at the next question. The stack reads those once and keeps them, where a
+    /// top `.gitignore` at the next question. A stack reads those once and keeps them, where a
     /// `.gitignore` below the top is read each time a question goes into its folder again; a host
-    /// rereads as it starts a walk, so each walk follows the files as they are.
+    /// rereads as it starts a walk. The stack `open` built stays beside the new one (`first`), so
+    /// a path those files start to ignore stays visible; one they stop ignoring is visible now.
+    /// When they cannot be read, the matcher keeps the stacks it has and answers from them.
     pub fn reread(&mut self) -> std::result::Result<(), String> {
         let index = self.index()?;
-        self.stack = exclude_stack(&self.repository, &index)?;
+        let current = exclude_stack(&self.repository, &index)?;
+        let replaced = std::mem::replace(&mut self.stack, current);
+        self.first.get_or_insert(replaced);
         Ok(())
     }
 
@@ -81,21 +95,23 @@ impl GitIgnore {
 
     /// The pattern that makes Git ignore `relative` (as for `ignored`), with the file it was read
     /// from and its line there; `None` when Git does not ignore it. A path under an ignored folder
-    /// names the folder's pattern, as `git check-ignore -v` does.
+    /// names the folder's pattern, as `git check-ignore -v` does. After a `reread`, the pattern is
+    /// the latest reading's.
     pub fn ignored_by(
         &mut self,
         relative: &str,
         is_directory: bool,
     ) -> std::result::Result<Option<GitIgnoreMatch>, String> {
         let index = self.index()?;
-        self.matching(&index, relative, is_directory)
+        self.matching(&index, relative, is_directory, &mut true)
     }
 
     /// Which entries of the folder `folder` Git ignores: `ignored` of `folder/names[i]`, a folder
     /// where `directories[i]` says so. `folder` is relative to the opened root as for `ignored`
     /// (empty for the root), and each name is one path component. The index is looked at once for
-    /// all of them, where `ignored` looks at it, a file system call, for each path; and the exclude
-    /// stack, positioned at the folder for the first entry, stays there for the rest.
+    /// all of them, where `ignored` looks at it, a file system call, for each path; and each
+    /// exclude stack, positioned at the folder for the first entry it is asked, stays there for
+    /// the rest.
     pub fn ignored_entries(
         &mut self,
         folder: &str,
@@ -110,6 +126,7 @@ impl GitIgnore {
             ));
         }
         let index = self.index()?;
+        let mut place_first = true;
         names
             .iter()
             .zip(directories)
@@ -119,7 +136,9 @@ impl GitIgnore {
                 } else {
                     format!("{folder}/{name}")
                 };
-                Ok(self.matching(&index, &relative, is_directory)?.is_some())
+                Ok(self
+                    .matching(&index, &relative, is_directory, &mut place_first)?
+                    .is_some())
             })
             .collect()
     }
@@ -132,12 +151,17 @@ impl GitIgnore {
             .map_err(|error| format!("cannot read Git index: {error}"))
     }
 
-    /// `ignored_by` against `index`.
+    /// `ignored_by` against `index`: the latest stack's pattern, where the stack `open` built (once
+    /// `reread` replaced it) ignores the path too. That first stack is asked about every path the
+    /// latest one ignores, and about one more where `place_first` holds, which it then clears: a
+    /// walk asks once per folder, so the first stack still goes to every folder the walk lists,
+    /// reading each `.gitignore` there as it did when it was asked about every entry.
     fn matching(
         &mut self,
         index: &gix::index::State,
         relative: &str,
         is_directory: bool,
+        place_first: &mut bool,
     ) -> std::result::Result<Option<GitIgnoreMatch>, String> {
         let Some(path) = self.worktree_path(relative) else {
             return Ok(None);
@@ -148,24 +172,17 @@ impl GitIgnore {
         if tracked(index, path.as_bytes().as_bstr(), is_directory) {
             return Ok(None);
         }
-        let platform = self
-            .stack
-            .at_path(
-                Path::new(&path),
-                Some(if is_directory { Mode::DIR } else { Mode::FILE }),
-                &self.repository.objects,
-            )
-            .map_err(|error| format!("cannot read Git excludes for {path}: {error}"))?;
-        Ok(platform
-            .matching_exclude_pattern()
-            .filter(|matched| !matched.pattern.is_negative())
-            .map(|matched| GitIgnoreMatch {
-                source: matched
-                    .source
-                    .map(|source| source.to_string_lossy().into_owned()),
-                line: u32::try_from(matched.sequence_number).unwrap_or(u32::MAX),
-                pattern: matched.pattern.to_string(),
-            }))
+        let objects = &self.repository.objects;
+        let latest = exclude_pattern(&mut self.stack, objects, &path, is_directory)?;
+        let Some(first) = self.first.as_mut() else {
+            return Ok(latest);
+        };
+        if latest.is_none() && !*place_first {
+            return Ok(None);
+        }
+        *place_first = false;
+        let first_ignores = exclude_pattern(first, objects, &path, is_directory)?.is_some();
+        Ok(latest.filter(|_| first_ignores))
     }
 
     /// `relative` below the worktree root, lexically normalised; `None` when it leaves the worktree.
@@ -199,6 +216,33 @@ fn exclude_stack(
         )
         .map_err(|error| format!("cannot read Git excludes: {error}"))?
         .detach())
+}
+
+/// The pattern of `stack` that makes Git ignore `path` (below the worktree root, untracked), with
+/// its file and line; `None` when none does.
+fn exclude_pattern(
+    stack: &mut gix::worktree::Stack,
+    objects: &dyn gix::objs::Find,
+    path: &str,
+    is_directory: bool,
+) -> std::result::Result<Option<GitIgnoreMatch>, String> {
+    let platform = stack
+        .at_path(
+            Path::new(path),
+            Some(if is_directory { Mode::DIR } else { Mode::FILE }),
+            objects,
+        )
+        .map_err(|error| format!("cannot read Git excludes for {path}: {error}"))?;
+    Ok(platform
+        .matching_exclude_pattern()
+        .filter(|matched| !matched.pattern.is_negative())
+        .map(|matched| GitIgnoreMatch {
+            source: matched
+                .source
+                .map(|source| source.to_string_lossy().into_owned()),
+            line: u32::try_from(matched.sequence_number).unwrap_or(u32::MAX),
+            pattern: matched.pattern.to_string(),
+        }))
 }
 
 /// Git applies ignore rules to untracked paths only: a tracked file, a submodule, and a folder
@@ -266,8 +310,9 @@ impl GitIgnoreMatcher {
     }
 
     /// Reads Git's ignore files again (`.git/info/exclude`, `core.excludesFile`, the top
-    /// `.gitignore`), which the matcher otherwise keeps as it first read them. A walk rereads as
-    /// it starts.
+    /// `.gitignore`), which the matcher otherwise keeps as it first read them. From then on it
+    /// ignores a path only where both that first reading and the latest one do. A walk rereads as
+    /// it starts; where the files cannot be read, the matcher keeps answering as before.
     #[napi(catch_unwind)]
     pub fn reread(&self) -> Result<()> {
         let mut inner = self
@@ -501,49 +546,179 @@ mod tests {
     }
 
     #[test]
-    fn rereads_the_top_gitignore_and_the_exclude_files_when_asked() {
+    fn reread_follows_what_the_top_files_stop_ignoring_and_keeps_what_they_start_to_ignore() {
         let root = fixture(
             "reread",
             &[
-                (".gitignore", "*.log\n"),
+                (".gitignore", "*.log\nwas_top.py\n"),
                 ("api/.gitignore", "\n"),
                 ("top.py", ""),
                 ("local.py", ""),
                 ("global.py", ""),
+                ("was_top.py", ""),
+                ("was_local.py", ""),
+                ("was_global.py", ""),
+                ("drop.log", ""),
                 ("api/nested.py", ""),
             ],
         );
         git(&root, &["init", "--initial-branch=main"]);
+        let root = root.canonicalize().unwrap();
+        std::fs::write(root.join(".git/info/exclude"), "was_local.py\n").unwrap();
         let excludes = root.with_extension("excludes");
-        std::fs::write(&excludes, "\n").unwrap();
+        std::fs::write(&excludes, "was_global.py\n").unwrap();
         git(
             &root,
             &["config", "core.excludesFile", &excludes.to_string_lossy()],
         );
-        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
-        let names = ["top.py", "local.py", "global.py"].map(String::from);
+        let names = [
+            "top.py",
+            "local.py",
+            "global.py",
+            "was_top.py",
+            "was_local.py",
+            "was_global.py",
+        ]
+        .map(String::from);
         let ask = |ignore: &mut GitIgnore| {
-            let mut answers = ignore
-                .ignored_entries("", &names, &[false, false, false])
-                .unwrap();
+            let mut answers = ignore.ignored_entries("", &names, &[false; 6]).unwrap();
+            for (name, answer) in names.iter().zip(&answers) {
+                assert_eq!(ignore.ignored(name, false).unwrap(), *answer, "{name}");
+            }
             answers.push(ignore.ignored("api/nested.py", false).unwrap());
             answers
         };
-        assert_eq!(ask(&mut ignore), [false, false, false, false]);
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        assert_eq!(
+            ask(&mut ignore),
+            [false, false, false, true, true, true, false]
+        );
 
-        std::fs::write(root.join(".gitignore"), "*.log\ntop.py\n").unwrap();
+        std::fs::write(root.join(".gitignore"), "# logs\n*.log\ntop.py\n").unwrap();
         std::fs::write(root.join(".git/info/exclude"), "local.py\n").unwrap();
         std::fs::write(&excludes, "global.py\n").unwrap();
         std::fs::write(root.join("api/.gitignore"), "nested.py\n").unwrap();
         assert_eq!(
             ask(&mut ignore),
-            [false, false, false, true],
-            "a nested .gitignore is read as its folder is entered again; the rest is kept"
+            [false, false, false, true, true, true, true],
+            "a nested .gitignore is read as its folder is entered again; the top files are kept"
         );
         ignore.reread().unwrap();
-        assert_eq!(ask(&mut ignore), [true, true, true, true]);
+        assert_eq!(
+            ask(&mut ignore),
+            [false, false, false, false, false, false, true],
+            "what the top files stop ignoring is visible; what they start to ignore stays visible"
+        );
+        assert_eq!(
+            ignore.ignored_by("drop.log", false).unwrap(),
+            Some(GitIgnoreMatch {
+                source: Some(root.join(".gitignore").to_string_lossy().into_owned()),
+                line: 2,
+                pattern: "*.log".to_owned(),
+            }),
+            "the pattern named is the latest reading's"
+        );
+        assert_eq!(
+            ask(&mut GitIgnore::open(&root).unwrap().unwrap()),
+            [true, true, true, false, false, false, true],
+            "a matcher opened now follows the files as they are"
+        );
+
+        std::fs::write(root.join(".gitignore"), "*.log\nwas_top.py\n").unwrap();
+        ignore.reread().unwrap();
+        assert_eq!(
+            ask(&mut ignore),
+            [false, false, false, true, false, false, true],
+            "a pattern the matcher opened with that comes back ignores again"
+        );
         std::fs::remove_dir_all(root).unwrap();
         std::fs::remove_file(excludes).unwrap();
+    }
+
+    #[test]
+    fn the_first_reading_reads_a_nested_gitignore_again_as_a_walk_enters_its_folder_again() {
+        let root = fixture(
+            "nested-again",
+            &[
+                (".gitignore", "\n"),
+                ("api/.gitignore", "x.py\n"),
+                ("api/x.py", ""),
+                ("api/y.py", ""),
+            ],
+        );
+        git(&root, &["init", "--initial-branch=main"]);
+        let names = ["x.py", "y.py"].map(String::from);
+        let walk = |ignore: &mut GitIgnore, reread: bool| {
+            if reread {
+                ignore.reread().unwrap();
+            }
+            let top = ignore
+                .ignored_entries("", &["api".to_owned()], &[true])
+                .unwrap();
+            let api = ignore.ignored_entries("api", &names, &[false; 2]).unwrap();
+            [top, api].concat()
+        };
+        let mut rereading = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        let mut opened = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        assert_eq!(walk(&mut rereading, true), [false, true, false]);
+        assert_eq!(walk(&mut opened, false), [false, true, false]);
+
+        // The nested pattern goes and the top .gitignore, read again, takes it over: the reading
+        // the matcher opened with no longer ignores x.py once the walk reads api/ again.
+        std::fs::write(root.join("api/.gitignore"), "\n").unwrap();
+        std::fs::write(root.join(".gitignore"), "x.py\n").unwrap();
+        assert_eq!(walk(&mut rereading, true), [false, false, false]);
+        assert_eq!(walk(&mut opened, false), [false, false, false]);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_reread_that_cannot_read_an_exclude_file_keeps_the_rules_it_had() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = fixture(
+            "unreadable",
+            &[
+                (".gitignore", "*.log\n"),
+                ("local.py", ""),
+                ("drop.log", ""),
+            ],
+        );
+        git(&root, &["init", "--initial-branch=main"]);
+        let exclude = root.join(".git/info/exclude");
+        std::fs::write(&exclude, "local.py\n").unwrap();
+        let names = ["local.py", "drop.log"].map(String::from);
+        let mut ignore = GitIgnore::open(&root).unwrap().expect("a Git worktree");
+        ignore.reread().unwrap();
+        assert_eq!(
+            ignore.ignored_entries("", &names, &[false; 2]).unwrap(),
+            [true, true]
+        );
+
+        std::fs::set_permissions(&exclude, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // A process that reads files whatever their mode (root) cannot make the file unreadable.
+        if std::fs::read(&exclude).is_err() {
+            assert!(
+                ignore
+                    .reread()
+                    .unwrap_err()
+                    .contains("cannot read Git excludes")
+            );
+            assert_eq!(
+                ignore.ignored_entries("", &names, &[false; 2]).unwrap(),
+                [true, true],
+                "the rules read before still answer"
+            );
+        }
+        std::fs::set_permissions(&exclude, std::fs::Permissions::from_mode(0o644)).unwrap();
+        std::fs::write(&exclude, "\n").unwrap();
+        ignore.reread().unwrap();
+        assert_eq!(
+            ignore.ignored_entries("", &names, &[false; 2]).unwrap(),
+            [false, true],
+            "once it can be read again, what it stopped ignoring is visible"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

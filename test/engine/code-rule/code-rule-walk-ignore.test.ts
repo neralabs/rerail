@@ -66,9 +66,11 @@ vi.mock("../../../src/engine/native/native.js", async importOriginal => {
 import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
 import { CheckoutCodeRuleRouter } from "../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { CodeRuleBridge } from "../../../src/engine/code-rule/code-rule-bridge.js";
+import type { AuditResult } from "../../../src/engine/audit/audit.js";
 import type { CodeRuleEditBatch, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
 import { CheckoutCatalogs, startingCheckout } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
+import type { IgnoreRulesChange } from "../../../src/engine/code-rule/ignore-rule-files.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -88,7 +90,7 @@ const RULE = codeRuleSchema.parse({
 
 /**
  * The router with the edits the walks hand it recorded by session-relative path: the files whose new text it audits,
- * and the files gone from what the walks observe, as a file Git starts to ignore is.
+ * and the files gone from what the walks observe, as a file a nested `.gitignore` starts to ignore is.
  */
 class RecordingRouter extends CheckoutCodeRuleRouter {
   readonly audited = new Set<string>();
@@ -122,24 +124,38 @@ async function checkout(files: Record<string, string>, untracked: Record<string,
   return { base, root, databasePath };
 }
 
-/** A session in `root` that follows `.gitignore`: its router and its bridge, open and past their baseline walk. */
+/**
+ * A session in `root` that follows `.gitignore`: its router and its bridge, open and past their baseline walk; the files
+ * its audits found the rule broken in, the files each steer spoke for, and the changes to Git's ignore rules it saw.
+ */
 async function session(root: string, databasePath: string) {
   const catalogs = new CheckoutCatalogs(databasePath);
   const owners = new CheckoutOwners(() => catalogs.recordedCheckoutsVersion());
+  const flagged = new Set<string>();
+  const steered: string[][] = [];
+  const ignoreChanges: IgnoreRulesChange[] = [];
+  const found = (result: Pick<AuditResult, "violations">): void => {
+    for (const violation of result.violations ?? []) if (violation.path !== undefined) flagged.add(violation.path);
+  };
   const router = new RecordingRouter({
     sessionRoot: root, startingCheckout: startingCheckout(owners, root).checkoutRoot, owners, catalogs,
-    steerDelivery: { requestSteer: async () => undefined },
-    audits: { start: () => "audit", finish: () => undefined, progress: () => undefined, interrupt: () => undefined },
+    steerDelivery: {
+      requestSteer: async (_sessionId, _delivery, _content, metadata) => {
+        steered.push([...(metadata?.scope ?? [])]);
+        return undefined;
+      },
+    },
+    audits: { start: () => "audit", finish: (_auditId, result) => found(result), progress: (_auditId, result) => found(result), interrupt: () => undefined },
     followGitignore: true,
   });
-  const bridge = new CodeRuleBridge(root, router, { discoveryWaitMs: 120_000 });
+  const bridge = new CodeRuleBridge(root, router, { discoveryWaitMs: 120_000, onIgnoreRulesChanged: change => { ignoreChanges.push(change); } });
   cleanups.push(async () => {
     await bridge.close();
     catalogs.close();
   });
   await bridge.openWorkspace("walk-ignore");
   await bridge.checkpoint("turn");
-  return { router, bridge };
+  return { router, bridge, flagged, steered, ignoreChanges };
 }
 
 /** The Python files Git does not ignore in `root`: tracked ones, and untracked ones no ignore rule matches. */
@@ -232,7 +248,9 @@ describe("a walk of a session that follows .gitignore", () => {
     expect(router.audited).toContain("api/third_party/forced.py");
 
     // Between walks, the nested and the top `.gitignore`, `.git/info/exclude` and `core.excludesFile` start to ignore
-    // files the walks observed, and Git stops tracking a file its rules match: the next walk observes none of them.
+    // files the walks observed, and Git stops tracking a file its rules match. The next walk drops what the nested
+    // `.gitignore` and the untracking leave to Git, as it always did; the files the top `.gitignore` and the exclude
+    // files start to ignore stay observed and checked for the session's life, as they were before walks read those again.
     await writeFile(join(root, "api", ".gitignore"), "secret_*.py\ndraft.py\n");
     await appendFile(join(root, ".gitignore"), "scratch.py\n");
     await appendFile(join(root, ".git", "info", "exclude"), "late_local.py\n");
@@ -240,9 +258,58 @@ describe("a walk of a session that follows .gitignore", () => {
     git(root, "rm", "--quiet", "--cached", "api/third_party/forced.py");
     router.audited.clear();
     await touchEveryPythonFile(bridge, root, everyPythonFile, "touch-2");
-    expect([...router.audited].sort()).toEqual(pythonGitKeeps(root));
+    const keptChecked = ["late_excluded.py", "late_local.py", "scratch.py"];
+    expect([...router.audited].sort()).toEqual([...pythonGitKeeps(root), ...keptChecked].sort());
     expect(router.audited).toContain("api/handler.py");
-    expect([...router.gone].sort()).toEqual(["api/draft.py", "api/third_party/forced.py", "late_excluded.py", "late_local.py", "scratch.py"]);
+    expect([...router.gone].sort()).toEqual(["api/draft.py", "api/third_party/forced.py"]);
+  });
+
+  it("keeps checking a file the top .gitignore starts to ignore during the session, with its finding, and records the change", async () => {
+    const { root, databasePath } = await checkout({ ".gitignore": "*.log\n", "top.py": "x = 1\n" }, { "scratch.py": "x = 1\n" });
+    const { router, bridge, flagged, steered, ignoreChanges } = await session(root, databasePath);
+    await touchEveryPythonFile(bridge, root, ["scratch.py"], "touch-1");
+    await router.settleGeneratedEdits();
+    expect(flagged).toContain("scratch.py");
+    expect(steered.flat()).toContain("scratch.py");
+    router.audited.clear();
+    flagged.clear();
+    steered.length = 0;
+
+    // One shell command adds the file to the top `.gitignore` and breaks the rule in it again.
+    await bridge.begin("ignore-it", "Bash", { command: "./ignore-scratch.sh" });
+    await appendFile(join(root, ".gitignore"), "scratch.py\n");
+    await appendFile(join(root, "scratch.py"), "NEEDLE\n");
+    await bridge.finish("ignore-it");
+    await router.settleGeneratedEdits();
+
+    expect(git(root, "check-ignore", "scratch.py")).toBe("scratch.py\n");
+    expect([...router.audited]).toEqual(["scratch.py"]);
+    expect([...router.gone]).toEqual([]);
+    expect(flagged).toContain("scratch.py");
+    expect(steered.flat()).toContain("scratch.py");
+    expect(ignoreChanges).toEqual([{ path: ".gitignore", via: "observed", ignoresMore: ["scratch.py"] }]);
+  });
+
+  it("observes a file the top .gitignore, .git/info/exclude or core.excludesFile stops ignoring from the next walk", async () => {
+    const { base, root, databasePath } = await checkout(
+      { ".gitignore": "*.log\nwas_top.py\n", "top.py": "x = 1\n" },
+      { "was_top.py": "x = 1\n", "was_local.py": "x = 1\n", "was_excluded.py": "x = 1\n" },
+    );
+    await writeFile(join(root, ".git", "info", "exclude"), "was_local.py\n");
+    await writeFile(join(base, "excludes"), "was_excluded.py\n");
+    git(root, "config", "core.excludesFile", join(base, "excludes"));
+    const everyPythonFile = git(root, "ls-files", "-z", "--cached", "--others").split("\0").filter(path => path.endsWith(".py"));
+    const { router, bridge } = await session(root, databasePath);
+    await touchEveryPythonFile(bridge, root, everyPythonFile, "touch-1");
+    expect([...router.audited]).toEqual(["top.py"]);
+
+    await writeFile(join(root, ".gitignore"), "*.log\n");
+    await writeFile(join(root, ".git", "info", "exclude"), "\n");
+    await writeFile(join(base, "excludes"), "\n");
+    router.audited.clear();
+    await touchEveryPythonFile(bridge, root, everyPythonFile, "touch-2");
+    expect([...router.audited].sort()).toEqual(["top.py", "was_excluded.py", "was_local.py", "was_top.py"]);
+    expect(pythonGitKeeps(root)).toEqual(["top.py", "was_excluded.py", "was_local.py", "was_top.py"]);
   });
 
   it("follows Git's rules with an engine older than the folder questions, asking per path, and says once to rebuild it", async () => {

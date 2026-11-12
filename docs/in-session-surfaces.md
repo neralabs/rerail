@@ -230,6 +230,8 @@ In a large repository, Rerail indexes at session start before code rules can run
 
 While the repository follows `.gitignore` (the default), files Git ignores are not checked. The session's record keeps a tool edit Git's rules left unchecked, and a change that can make those rules ignore more; the dashboard timeline counts both. Some skips are not recorded (below).
 
+A pattern added to the checkout's top `.gitignore`, `.git/info/exclude` or `core.excludesFile` while a session runs does not take a file out of that session's checks: the file stays checked until the session ends. A pattern removed from them brings a file in at the next look. A `.gitignore` in a folder below the top takes effect at the next look either way.
+
 <details>
 <summary>What is recorded, and what is not</summary>
 
