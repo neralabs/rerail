@@ -21,7 +21,7 @@
 
 use super::{ContentStore, StoreResult};
 use rusqlite::params;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// How many runs of a space in a row may leave a relation unused before it is collected.
@@ -244,6 +244,27 @@ fn snapshots() -> &'static std::sync::Mutex<HashMap<std::path::PathBuf, Arc<std:
     SNAPSHOTS.get_or_init(Default::default)
 }
 
+/// The relations a corpus memo's space keeps per file (decision 0108: `memo::entry_rel`, `outputs_rel`): one frame a
+/// file content and path, whose first read is its path.
+const MEMO_RELS: [&str; 2] = ["local", "local_out"];
+
+/// The frames of `rel` (a memo relation) in `space`, each path's newest (the last used): relation, path and part.
+fn newest_by_path(connection: &rusqlite::Connection, space: &[u8; 32], rel: &str) -> StoreResult<Vec<(Rel, String, i64)>> {
+    let mut st = connection.prepare_cached("SELECT ident, part, reads, used FROM frames WHERE space = ?1 AND rel = ?2")?;
+    let rows = st.query_map(params![&space[..], rel], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?, row.get::<_, Vec<u8>>(2)?, row.get::<_, i64>(3)?)))?;
+    let mut by: HashMap<([u8; 32], String), (i64, i64)> = HashMap::new();
+    for row in rows {
+        let (ident, part, reads, used) = row?;
+        let Ok(ident) = <[u8; 32]>::try_from(ident.as_slice()) else { continue };
+        let Some((path, _)) = decode_reads(&reads).into_iter().next() else { continue };
+        let at = by.entry((ident, path)).or_insert((part, used));
+        if used > at.1 {
+            *at = (part, used);
+        }
+    }
+    Ok(by.into_iter().map(|((ident, path), (part, _))| (Rel { name: rel.to_owned(), ident }, path, part)).collect())
+}
+
 /// Whether `frame` is a delta frame (decision 0117 step 4).
 fn is_delta(part: i64, frame: &Admitted) -> bool {
     part < 0 && matches!(&frame.data, Data::Encoded { types, .. } if types.first() == Some(&DELTA))
@@ -298,6 +319,31 @@ impl ContentStore {
     /// frames are read from memory, and every write of this process updates it. Returns the frames and their
     /// encoded bytes read now (none when an earlier run of the process read them).
     pub fn preload_frames(&self) -> StoreResult<(usize, usize)> {
+        self.preload_frames_for(None)
+    }
+
+    /// `preload_frames`, of the memos' per-file frames (`MEMO_RELS`) only those of live plans' spaces (each
+    /// root's protected runs' plans and those a run holds: `keep_corpus_runs`), and of each path the newest. A dead
+    /// plan's (an earlier engine build's, decision 0108) are read by no run, nor an edited file's earlier contents'
+    /// entries; a run that looks one up misses it, and evaluates the file (the memo is a cache).
+    pub fn preload_frames_live(&self) -> StoreResult<(usize, usize)> {
+        let spaces: Vec<[u8; 32]> = {
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            let has: i64 = connection.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='corpus_plans'", [], |r| r.get(0))?;
+            if has == 0 {
+                Vec::new()
+            } else {
+                let mut st = connection.prepare("SELECT plan_digest FROM corpus_plans WHERE live = 1")?;
+                let plans = st.query_map([], |r| r.get::<_, Vec<u8>>(0))?.collect::<Result<Vec<_>, _>>()?;
+                plans.iter().filter_map(|p| <[u8; 32]>::try_from(p.as_slice()).ok()).map(|p| local_space(&p)).collect()
+            }
+        };
+        self.preload_frames_for(Some(spaces))
+    }
+
+    /// `preload_frames`, of the memos' per-file frames those of `memos` (spaces, `local_space`) only, the newest of
+    /// each path; all of them when `None`.
+    fn preload_frames_for(&self, memos: Option<Vec<[u8; 32]>>) -> StoreResult<(usize, usize)> {
         if self.snapshot().is_some() {
             return Ok((0, 0));
         }
@@ -305,9 +351,17 @@ impl ContentStore {
         let (mut frames, mut bytes) = (0, 0);
         if self.frames_table()? {
             let connection = self.connection.lock().expect("content store mutex poisoned");
-            let mut st = connection.prepare("SELECT space, rel, ident, part, digest, reads, rows, types, data FROM frames")?;
+            // The memo's frames read: per relation and path, the newest of the run's memo space.
+            // Of the memos' frames, the live plans' outputs (`local_out`), each path's newest; their entries
+            // (`local`) a run reads as it looks them up (`admit_memo_entries`, `admit_parts_of`).
+            let mut wanted: Vec<([u8; 32], Vec<(Rel, i64)>)> = Vec::new();
+            for space in memos.iter().flatten() {
+                wanted.push((*space, newest_by_path(&connection, space, MEMO_RELS[1])?.into_iter().map(|(rel, _, part)| (rel, part)).collect()));
+            }
+            let all = memos.is_none();
+            let mut st = connection.prepare("SELECT space, rel, ident, part, digest, reads, rows, types, data FROM frames WHERE ?3 OR rel NOT IN (?1, ?2)")?;
             let mut chains: HashMap<[u8; 32], HashMap<Rel, u32>> = HashMap::new();
-            let rows = st.query_map([], |row| {
+            let rows = st.query_map(params![MEMO_RELS[0], MEMO_RELS[1], all], |row| {
                 let (space, ident): (Vec<u8>, Vec<u8>) = (row.get(0)?, row.get(2)?);
                 let space: [u8; 32] = space.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
                 let ident: [u8; 32] = ident.try_into().map_err(|_| rusqlite::Error::InvalidQuery)?;
@@ -331,6 +385,13 @@ impl ContentStore {
             drop(connection);
             for (space, held) in snapshot.iter_mut() {
                 compose_chains(held, chains.get(space))?;
+            }
+            // The memos' frames wanted, by key (no snapshot is installed yet: from the store).
+            for (space, keys) in wanted.into_iter().filter(|(_, k)| !k.is_empty()) {
+                let got = self.read_frame_parts(&space, &keys, true)?;
+                frames += got.len();
+                bytes += got.values().map(|f| f.encoded_bytes()).sum::<usize>();
+                snapshot.entry(space).or_default().extend(got);
             }
         }
         snapshots().lock().expect("the frames' snapshots").entry(super::atoms::key(&self.database_path)).or_insert_with(|| Arc::new(std::sync::Mutex::new(snapshot)));
@@ -361,6 +422,11 @@ impl ContentStore {
     }
 
     fn read_frame_parts(&self, space: &[u8; 32], keys: &[(Rel, i64)], payload: bool) -> StoreResult<HashMap<(Rel, i64), Arc<Admitted>>> {
+        self.read_frame_parts_from(space, keys, payload, true)
+    }
+
+    /// `read_frame_parts`, from the store's file past the snapshot unless `snapshot` (queued writes first, always).
+    fn read_frame_parts_from(&self, space: &[u8; 32], keys: &[(Rel, i64)], payload: bool, snapshot: bool) -> StoreResult<HashMap<(Rel, i64), Arc<Admitted>>> {
         let mut out = HashMap::new();
         let mut missing = std::collections::BTreeSet::new();
         for (rel, part) in keys {
@@ -374,7 +440,7 @@ impl ContentStore {
         }
         if missing.is_empty() { return Ok(out); }
         // Read before the first wave (`preload_frames`): from memory.
-        if let Some(snapshot) = self.snapshot() {
+        if snapshot && let Some(snapshot) = self.snapshot() {
             let snapshot = snapshot.lock().expect("the frames' snapshot");
             if let Some(held) = snapshot.get(space) {
                 for key in missing {
@@ -476,6 +542,44 @@ impl ContentStore {
         Ok(self.admit_frame_parts(space, &keys)?.into_iter().map(|((_, p), f)| (p, f)).collect())
     }
 
+    /// `admit_parts_of`, from the store's file past the snapshot (queued writes first): a memo's entries looked up
+    /// outside the waves, which the snapshot does not hold (`preload_frames_live`).
+    pub fn admit_parts_stored(&self, space: &[u8; 32], rel: &Rel, parts: &[i64]) -> StoreResult<HashMap<i64, Arc<Admitted>>> {
+        let keys: Vec<(Rel, i64)> = parts.iter().map(|p| (rel.clone(), *p)).collect();
+        Ok(self.read_frame_parts_from(space, &keys, true, false)?.into_iter().map(|((_, p), f)| (p, f)).collect())
+    }
+
+    /// A run's memo entries its waves may look up (decision 0104: read before its first wave): in `space` (its
+    /// plan's, `local_space`), each path's newest but those of `looked_up` (paths looked up before the first wave,
+    /// from the store), held with the snapshot. Once a process for each space.
+    pub fn admit_memo_entries(&self, space: &[u8; 32], looked_up: &HashSet<&str>) -> StoreResult<(usize, usize)> {
+        static ADMITTED: std::sync::Mutex<Option<HashSet<(std::path::PathBuf, [u8; 32])>>> = std::sync::Mutex::new(None);
+        let Some(snapshot) = self.snapshot() else { return Ok((0, 0)) };
+        if !ADMITTED.lock().expect("the memo spaces admitted").get_or_insert_with(HashSet::new).insert((super::atoms::key(&self.database_path), *space)) {
+            return Ok((0, 0));
+        }
+        if !self.frames_table()? {
+            return Ok((0, 0));
+        }
+        let keys = {
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            newest_by_path(&connection, space, MEMO_RELS[0])?
+        };
+        let keys: Vec<(Rel, i64)> = keys.into_iter().filter(|(_, path, _)| !looked_up.contains(path.as_str())).map(|(rel, _, part)| (rel, part)).collect();
+        if keys.is_empty() {
+            return Ok((0, 0));
+        }
+        let got = self.read_frame_parts_from(space, &keys, true, false)?;
+        let bytes = got.values().map(|f| f.encoded_bytes()).sum::<usize>();
+        let n = got.len();
+        let mut snapshot = snapshot.lock().expect("the frames' snapshot");
+        let held = snapshot.entry(*space).or_default();
+        for (k, f) in got {
+            held.entry(k).or_insert(f);
+        }
+        Ok((n, bytes))
+    }
+
     /// Every stored frame of `rel` in `space`, by part, admitted (queued writes are not among them).
     pub fn admit_all_parts(&self, space: &[u8; 32], rel: &Rel) -> StoreResult<Vec<(i64, Arc<Admitted>)>> {
         if let Some(snapshot) = self.snapshot() {
@@ -501,6 +605,40 @@ impl ContentStore {
     pub fn queue_frame_parts_used(&self, space: [u8; 32], rel: Rel, parts: Vec<i64>, token: u64, keep: i64) {
         let bytes = parts.len() * 8;
         self.write_back("the frames' parts used", bytes, Vec::new(), Box::new(move |store| store.use_frame_parts(&space, &rel, &parts, token, keep)));
+    }
+
+    /// Forgets `rel`'s frames in `space` but each path's newest `keep` (a memo relation, `MEMO_RELS`: an edited
+    /// file's earlier contents' entries, decision 0117), and returns how many it forgot.
+    pub fn keep_newest_by_path(&self, space: &[u8; 32], rel: &str, keep: usize) -> StoreResult<usize> {
+        if !self.frames_table()? {
+            return Ok(0);
+        }
+        let gone: Vec<(Rel, i64)> = {
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            let mut st = connection.prepare_cached("SELECT ident, part, reads, used FROM frames WHERE space = ?1 AND rel = ?2")?;
+            let rows = st.query_map(params![&space[..], rel], |row| Ok((row.get::<_, Vec<u8>>(0)?, row.get::<_, i64>(1)?, row.get::<_, Vec<u8>>(2)?, row.get::<_, i64>(3)?)))?;
+            let mut by: HashMap<([u8; 32], String), Vec<(i64, i64)>> = HashMap::new();
+            for row in rows {
+                let (ident, part, reads, used) = row?;
+                let Ok(ident) = <[u8; 32]>::try_from(ident.as_slice()) else { continue };
+                let Some((path, _)) = decode_reads(&reads).into_iter().next() else { continue };
+                by.entry((ident, path)).or_default().push((used, part));
+            }
+            let mut gone = Vec::new();
+            for ((ident, _), mut parts) in by {
+                if parts.len() > keep {
+                    parts.sort_by(|a, b| b.cmp(a));
+                    gone.extend(parts.into_iter().skip(keep).map(|(_, part)| (Rel { name: rel.to_owned(), ident }, part)));
+                }
+            }
+            gone
+        };
+        if gone.is_empty() {
+            return Ok(0);
+        }
+        let n = gone.len();
+        self.keep_frame_refs(space, &[], &[], &[], &[], &gone, None)?;
+        Ok(n)
     }
 
     /// `queue_frame_parts_used`, now.
@@ -1172,6 +1310,34 @@ mod tests {
         assert_eq!(store.frames(&space, &[r.clone()], 0).unwrap()[&r].digest, 10);
         store.keep_frames(&space, &[], &[(r.clone(), 0)], None).unwrap();
         assert!(store.frames(&space, &[r.clone()], 0).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Decision 0117: a memo keeps a path's newest contents only, and the frames read before the first wave are the
+    /// live plans' memo outputs (each path's newest), not another plan's (an earlier engine build's).
+    #[test]
+    fn a_memo_keeps_a_paths_newest_and_preloads_live_plans_only() {
+        let dir = std::env::temp_dir().join(format!("rerail-frames-memo-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
+        let (live, dead) = ([5u8; 32], [6u8; 32]);
+        store.hold_corpus_plan(live, "corpus-run:test", i64::MAX / 2).unwrap();
+        let out = rel(MEMO_RELS[1], 1);
+        let put = |part: i64, path: &str| Put { rel: out.clone(), part, digest: 1, reads: vec![(path.into(), 0)], rows: Rows { types: vec![0], rows: vec![part], n: 1 } };
+        for plan in [live, dead] {
+            let space = local_space(&plan);
+            // Six contents of a.py, one run each, and one of b.py.
+            for part in 0..6 {
+                store.keep_frames(&space, &[put(part, "a.py")], &[], Some((&[out.clone()][..], part as u64 + 1))).unwrap();
+            }
+            store.keep_frames(&space, &[put(100, "b.py")], &[], Some((&[out.clone()][..], 7))).unwrap();
+        }
+        let space = local_space(&live);
+        assert_eq!(store.keep_newest_by_path(&space, MEMO_RELS[1], 4).unwrap(), 2, "a.py's two oldest contents go");
+        let parts: Vec<i64> = store.connection.lock().unwrap().prepare("SELECT part FROM frames WHERE space = ?1 ORDER BY part").unwrap().query_map([&space[..]], |r| r.get(0)).unwrap().map(|r| r.unwrap()).collect();
+        assert_eq!(parts, vec![2, 3, 4, 5, 100]);
+        let (frames, _) = store.preload_frames_live().unwrap();
+        assert_eq!(frames, 2, "the live plan's newest of a.py and of b.py; none of the dead plan's");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

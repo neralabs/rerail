@@ -373,7 +373,7 @@ stratum of the level is known. The walk places the whole level there (`plan::run
 
 3,701 of 3,701 reached strata's forms ran as jobs. Issuing them costs 16 G instructions and 5 s of CPU for 1.5–3 s
 of wall: a job a form is small (a form is 5 pieces on average), and each pays for its strand. The board merges strata
-into components of 8 fixed costs; forms are not merged yet. **Open:** merge a level's small forms into components.
+into components of 8 fixed costs; forms were not merged. They are now: see *A level's forms merged* below.
 
 ## Built: step 4 (2026-11-12): old rows read for the strata reached; a changed relation writes its delta
 
@@ -418,3 +418,76 @@ time):
 every space. Each engine rebuild made a new space of the memo's entries (about 220 MB each), and no run uses the old
 ones again, so none is forgotten: the store of the measurements above had 1.86 GB of frames, 1.75 GB of them old
 spaces'. The numbers above are on a fresh store.
+
+## Built (2026-11-12): a level's forms merged into components, and the frames read before the first wave
+
+### A level's forms merged
+
+A level's forms run as at most `RERAIL_STRATA_WIDTH` jobs (6), each a component of forms (`Run::strand_forms`,
+`Strand::run_forms`, `Run::absorb_forms`). A component has one strand, one fork of the statistics and one prime of
+the scope, and runs its forms' pieces in level order.
+- **Balanced.** The forms go into the least loaded component, the largest first. A form's estimate is its fixed cost
+  per piece plus, per rule, the rows of the least of its positive atoms (a delta rule's driver). The full
+  cardinalities of the relations it reads counted old rows' millions, so almost nothing merged.
+- **Fewer components where a level is small.** A level has no more components than its estimate holds `k` fixed costs
+  (`RERAIL_STRATA_K`, 8). A component's first slot is its lead: the loop takes the component back there.
+- **The width, not a size, bounds the jobs.** Cut into components of `k` fixed costs, a run made 1,700 jobs. With
+  18 threads that cost 6–10 G instructions more than no jobs, and with 6 threads (`RERAIL_THREADS=6`) 1–4 G.
+- **Shared state a job takes.** The plans cache and the observed statistics took a lock for each use from each job
+  (2.9 s and 2.2 s of an edit's samples). Each job now writes to an overlay of its own thread
+  (`OWN_PLANS`, `OWN_OBSERVED`), folded into the run's when the job ends.
+
+**Measured** (20 files, a fresh store, unprofiled, findings equal to the cold run's each time; load 12–42, so wall is
+indicative only). The edited file grows by a line each edit, so compare within a round:
+
+| An edit | Instructions | CPU | Wall |
+|---|---|---|---|
+| Forms on the loop's thread (`RERAIL_STRATA_PARALLEL=off`) | 219–237 G | 14.1–19.0 s | 14.7–21.2 s |
+| A form a job (`RERAIL_STRATA_MERGE=off`) | 231–243 G | 18.6–20.4 s | 12.0–15.2 s |
+| Components, cut at 8 fixed costs | 229–239 G | 18.4–21.9 s | 11.0–20.2 s |
+| Components, at most 6 a level (the default) | 245–251 G | 16.7–17.4 s | 15.6–17.8 s |
+
+Per thread (`PROC_PIDTHREADCOUNTS`, two edits each): with no jobs, the main thread retires 206 G. With components, the
+main thread retires 114–116 G and the pool 100 G, about 8 G more in all. Every one of the 18 pool threads retires 1–3
+G, including those no component ran on. A sample of the pool's busy time shows the strata's joins and settles
+(`run_join_in_each`, `Fresh::settle`), the work the main thread does with no jobs. **Not found yet:** why the same
+strata retire about 8 G (4%) more on the pool.
+
+### The frames read before the first wave
+
+The store read before the first wave (decision 0104) read every frame of every space: 1.86 GB on the store measured,
+1.75 GB of it no run would read. The frames came from three places:
+- **Every engine build's memo stayed live.** A plan names the engine build, and its memo is a space of frames
+  (decision 0108). A plan was live while any kept manifest named it, and manifests are kept by the bytes of their
+  sources and tapes, which a small corpus never fills.
+- **Killed runs' holds.** A run holds its plans for a 6-hour lease and releases them as it ends. A run the watchdog
+  killed never did, so its plans stayed live for 6 hours.
+- **An edited file's earlier contents.** The memo kept an entry for each content of a path for 32 runs: 30 contents
+  of the edited file, 593 MB of one space.
+
+What the store does now:
+- **Only a root's protected runs keep a plan live** (`keep_corpus_runs_held`), with the plans their manifests name
+  and those a running run holds. A kept manifest past them keeps its sources and tapes, which any build reads.
+- **A hold whose process is gone is released** by the next collection pass (`orphaned_holds`; a run's holder names its
+  process). A decision follows at once.
+- **A pass collects every dead plan**, a transaction each, within its budget of rows. A dead plan's memo is a few
+  frames, and the pass counted none as work, so it stopped after one plan a run.
+- **A path keeps its 4 newest contents** (`MEMO_CONTENTS`, `keep_newest_by_path`), so worktrees or branches that take
+  turns at a file keep theirs (decision 0108 §4).
+- **The read before the first wave takes the live plans' memo outputs only** (`preload_frames_live`), each path's
+  newest. A memo's entries (`local`, 15 MB for the edited file) are read by their keys where they are looked up. The
+  files of a run are looked up before its first wave, from the store; the entries a wave may look up (a load's files)
+  are read into the snapshot before the first wave (`admit_memo_entries`).
+
+**Measured** on the store of 1.86 GB, findings equal to the cold run's each time:
+
+| | Before | After |
+|---|---|---|
+| Frames in the store | 1,582 MB (46,958 frames) | 374 MB (48,205); every recorded plan live |
+| Read before the first wave | 482 MB (45,448 frames) | 160–163 MB (45,154–48,150), 0.2–0.5 s |
+| An edit | 241–282 G | 240–288 G |
+
+Of the 163 MB still read, 107 MB are the kept strata's frames (one space a root, all of them used by the last run).
+The run reads the rows of 5,595 of their 9,152 relations; the others' frames are read and left undecoded.
+Tests: `only_protected_runs_keep_plans_and_a_dead_process_holds_nothing`,
+`a_memo_keeps_a_paths_newest_and_preloads_live_plans_only`.

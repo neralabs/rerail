@@ -852,6 +852,72 @@ pub(in crate::code_rule_dsl) type SharedObserved = std::sync::Arc<parking_lot::R
 
 thread_local! {
     static OBSERVED_AT: RefCell<SharedObserved> = RefCell::new(Default::default());
+    /// A job's own observations (a thread that entered another's, `enter_observed`): its strata add to them without
+    /// a lock, and they are added to the run's once, as the job ends (strands observing took turns at the run's
+    /// lock, rule by rule).
+    static OWN_OBSERVED: RefCell<Option<Observed>> = const { RefCell::new(None) };
+}
+
+/// Adds to this thread's job's observations where it has them (`enter_observed`), else to the run's: `f` is given
+/// them, and the run's (read: `copies`) where those are this job's too.
+fn observing_into(f: impl FnOnce(&mut Observed, Option<&Observed>)) {
+    let f = OWN_OBSERVED.with(|own| {
+        let mut own = own.borrow_mut();
+        let Some(mine) = own.as_mut() else { return Some(f) };
+        OBSERVED.with(|o| f(mine, o.borrow().as_ref()));
+        None
+    });
+    if let Some(f) = f {
+        OBSERVED.with(|o| {
+            if let Some(o) = o.borrow_mut().as_mut() {
+                f(o, None);
+            }
+        });
+    }
+}
+
+impl Observed {
+    /// Adds `other` (a job's, `OWN_OBSERVED`) to these.
+    fn add(&mut self, other: Observed) {
+        for (k, (a, b)) in other.rules {
+            let e = self.rules.entry(k).or_default();
+            e.0 += a;
+            e.1 += b;
+        }
+        for (k, r) in other.rels {
+            let e = self.rels.entry(k).or_default();
+            e.rows += r.rows;
+            e.nodes += r.nodes;
+            if e.ndv.len() < r.ndv.len() {
+                e.ndv.resize(r.ndv.len(), (0.0, 0.0));
+                e.fan.resize(r.fan.len().max(r.ndv.len()), (0.0, 0.0));
+            }
+            for (c, (x, y)) in r.ndv.into_iter().enumerate() {
+                e.ndv[c].0 += x;
+                e.ndv[c].1 += y;
+            }
+            for (c, (x, y)) in r.fan.into_iter().enumerate() {
+                e.fan[c].0 += x;
+                e.fan[c].1 += y;
+            }
+        }
+        for (k, [a, b]) in other.steps {
+            let e = self.steps.entry(k).or_default();
+            e[0] += a;
+            e[1] += b;
+        }
+        for (k, [a, b]) in other.pooled {
+            let e = self.pooled.entry(k).or_default();
+            e[0] += a;
+            e[1] += b;
+        }
+        self.copies.extend(other.copies);
+        for (k, (a, b)) in other.inlined {
+            let e = self.inlined.entry(k).or_default();
+            e.0 += a;
+            e.1 += b;
+        }
+    }
 }
 
 /// The observations as a cell: read (`borrow`, several at once) or written (`borrow_mut`).
@@ -879,15 +945,22 @@ pub(in crate::code_rule_dsl) fn share_observed() -> SharedObserved {
 
 /// While the guard lives, this thread's strata observe into `to` (another thread's, `share_observed`).
 pub(in crate::code_rule_dsl) fn enter_observed(to: SharedObserved) -> impl Drop {
-    struct Entered(Option<SharedObserved>);
+    struct Entered(Option<SharedObserved>, Option<Observed>);
     impl Drop for Entered {
         fn drop(&mut self) {
+            if let Some(mine) = OWN_OBSERVED.with(|o| std::mem::replace(&mut *o.borrow_mut(), self.1.take()))
+                && let Some(o) = OBSERVED_AT.with(|a| a.borrow().clone()).write().as_mut()
+            {
+                o.add(mine);
+            }
             if let Some(a) = self.0.take() {
                 OBSERVED_AT.with(|o| *o.borrow_mut() = a);
             }
         }
     }
-    Entered(Some(OBSERVED_AT.with(|a| std::mem::replace(&mut *a.borrow_mut(), to))))
+    let own = to.read().is_some().then(Observed::default);
+    let was = OBSERVED_AT.with(|a| std::mem::replace(&mut *a.borrow_mut(), to));
+    Entered(Some(was), OWN_OBSERVED.with(|o| std::mem::replace(&mut *o.borrow_mut(), own)))
 }
 
 /// Observed join work and relations, each with the corpus nodes of the runs that observed it (summed), so a later
@@ -936,9 +1009,7 @@ pub(super) fn observing(on: bool) {
 /// A stratum's native run: per rule, the (in, out) rows of each step of each of its probes, and each relation it
 /// made, over a corpus of `nodes`.
 pub(super) fn observe(rules: &[(u64, &[(u64, u64)])], rels: &[Seen], nodes: f64) {
-    OBSERVED.with(|o| {
-        let mut o = o.borrow_mut();
-        let Some(o) = o.as_mut() else { return };
+    observing_into(|o, run| {
         let mut per: BTreeMap<u64, f64> = BTreeMap::new();
         for (rule, steps) in rules {
             *per.entry(*rule).or_default() += steps.iter().map(|(a, b)| (a + b) as f64).sum::<f64>();
@@ -948,7 +1019,7 @@ pub(super) fn observe(rules: &[(u64, &[(u64, u64)])], rels: &[Seen], nodes: f64)
             let e = o.rules.entry(rule).or_default();
             e.0 += work;
             e.1 += nodes.max(1.0);
-            if let Some((reader, into)) = o.copies.get(&rule) {
+            if let Some((reader, into)) = o.copies.get(&rule).or_else(|| run.and_then(|r| r.copies.get(&rule))) {
                 for rel in into {
                     *through.entry((rel.clone(), *reader)).or_default() += work;
                 }
@@ -1004,9 +1075,7 @@ fn pattern(l: &Literal, bound: &BTreeSet<String>) -> Option<String> {
 
 /// A native stratum's steps for one plan of `rule` (`order`), each with its rows (in, out): kept per pattern.
 pub(super) fn observe_steps(rule: u64, order: &[super::Step], counts: &[(i64, i64)]) {
-    OBSERVED.with(|o| {
-        let mut o = o.borrow_mut();
-        let Some(o) = o.as_mut() else { return };
+    observing_into(|o, _| {
         let mut bound = BTreeSet::new();
         for (i, (s, &(n_in, n_out))) in order.iter().zip(counts).enumerate() {
             if i > 0
@@ -1087,11 +1156,9 @@ fn observed_rule(rule: &Rule, nodes: f64) -> Option<f64> {
 /// The rules inlining made, each as (its hash, the hash of the reader it was unfolded from, the relations unfolded
 /// into it): what they do when they run is the inlined side of those relations' readers (`observed_copies`).
 fn copied<'a>(made: impl Iterator<Item = (u64, u64, &'a BTreeSet<String>)>) {
-    OBSERVED.with(|o| {
-        if let Some(o) = o.borrow_mut().as_mut() {
-            for (rule, reader, into) in made {
-                o.copies.insert(rule, (reader, into.clone()));
-            }
+    observing_into(|o, _| {
+        for (rule, reader, into) in made {
+            o.copies.insert(rule, (reader, into.clone()));
         }
     });
 }

@@ -3359,8 +3359,23 @@ fn run_observed(
         // The atoms' lease, held to the run's end: on a new store, a string not in memory is new (decision 0104).
         let complete = store.atoms_handle().ready_for_run().map_err(|e| Error::Plan(e.to_string()))?;
         crate::code_rule_dsl::logic::profile::decision("atoms before the first wave (decision 0104)", || if complete { "every stored atom held: lookups read nothing".into() } else { "the store's atoms are too many to read whole: lookups read its key".into() });
-        // And every kept frame (decision 0104): the waves read them from memory.
-        let (frames, bytes) = store.preload_frames().map_err(|e| Error::Plan(e.to_string()))?;
+        // And the kept frames (decision 0104): the waves read them from memory. Of the memos', the live plans' newest
+        // per file (`preload_frames_live`): an earlier build's memo, or an edited file's earlier entries, no run reads.
+        let preload_at = std::time::Instant::now();
+        let (frames, bytes) = store.preload_frames_live().map_err(|e| Error::Plan(e.to_string()))?;
+        let preload_secs = preload_at.elapsed().as_secs_f64();
+        // The run's memo entries its waves may look up (a load's files): each path's newest of its plan's space, but
+        // the files looked up already (decision 0104: read before the first wave).
+        let (entries, entry_bytes) = match memo {
+            Some(memo::Memo::Stored(_)) if memoised => {
+                let looked: std::collections::HashSet<&str> = docs.iter().map(|(_, p)| world::store_path(p)).collect();
+                store.admit_memo_entries(&crate::content_store::local_space(&memo::plan_digest(&memo_program)), &looked).map_err(|e| Error::Plan(e.to_string()))?
+            }
+            _ => (0, 0),
+        };
+        if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() && frames + entries > 0 {
+            eprintln!("rerail: frames read before the first wave: {frames} frames, {:.1} MB encoded, {preload_secs:.2} s; {entries} memo entries its waves may look up, {:.1} MB", bytes as f64 / 1048576.0, entry_bytes as f64 / 1048576.0);
+        }
         if frames > 0 {
             crate::code_rule_dsl::logic::profile::decision("frames read before the first wave (decision 0104)", || format!("{frames} frames, {:.1} MB encoded", bytes as f64 / 1048576.0));
         }
