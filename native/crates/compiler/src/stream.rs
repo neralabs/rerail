@@ -58,6 +58,8 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         // `m=1`: the open node's two leaves, one (`fold`).
         MERGE => mode <= 1 && operand != REMEMBERED,
         WRAP => mode == 0 && operand != REMEMBERED,
+        // A keyword's word (`WORD_KIND`): its token's word's kind, as a keyword's leaf's.
+        REMEMBER if operand == WORD_KIND => mode == 0 && !program.word_kinds.is_empty() && records.is_some_and(|r| r.words == program.strings),
         REMEMBER => mode == 0 && operand != 0 && operand != REMEMBERED,
         FLAG => mode <= 2 && operand < 16,
         CLOSE => mode <= 1 && operand == 0,
@@ -643,6 +645,13 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             NODE_FIELD => nodes.last_mut().expect("a node before its field").field = operand,
             NODE_SUPER => nodes.last_mut().expect("a node before its supertype").supers.push(operand),
             PUSH => returns.push((operand, word, flags)),
+            REMEMBER if operand == WORD_KIND => {
+                let w = crate::records::word_of(code).checked_sub(1);
+                match w.and_then(|w| program.word_kinds.binary_search_by_key(&(w as u16), |&(s, _)| s).ok()) {
+                    Some(i) => word = program.word_kinds[i].1,
+                    None => return refuse(pc - 1, "a keyword's word at a token of no keyword"),
+                }
+            }
             REMEMBER => word = operand,
             FLAG if mode == 0 => flags |= 1 << operand,
             FLAG if mode == 1 => flags &= !(1 << operand),

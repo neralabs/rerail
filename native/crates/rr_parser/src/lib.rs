@@ -256,8 +256,9 @@ pub mod tests {
         let arms = c.machine.lines().filter(|l| l.starts_with("arm ")).count();
         // A call of a nested choice with a field is a call where it can be (the field set where it
         // returns): the choice's level switches on its first token itself, as the lean parser's
-        // function does, so more states and arms (371 and 3,068 before), and fewer words.
-        assert!(states <= 404 && arms <= 3412 && c.program.words.len() <= 4841, "{states} states, {arms} arms, {} words", c.program.words.len());
+        // function does, so more states and arms (371 and 3,068 before), and fewer words. A short
+        // tail alike in two rules is each rule's own (4,841 words when shared).
+        assert!(states <= 404 && arms <= 3412 && c.program.words.len() <= 4865, "{states} states, {arms} arms, {} words", c.program.words.len());
         let native = native_ir::lower(&c.program, 0, 0).expect("lowers");
         let cut = native_cpu_clusters::by_rules(&native);
         assert_eq!((cut.count as usize, cut.calls), (rules.len(), true), "a function a rule");

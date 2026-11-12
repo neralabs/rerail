@@ -946,6 +946,8 @@ enum WordFn {
     Here,
     /// `MERGE m=1`.
     Fold,
+    /// `REMEMBER #WORD_KIND`: the level's word, its token's word's kind.
+    RememberWord,
     Merge { end: EndAt },
     /// `TOKEN`, taking a token: 0, or 1 past the stream's end, or `OVERFLOW` out of room.
     Token { any_mark: Option<usize> },
@@ -3016,6 +3018,14 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     // A token the grammar implies: no node; the extras pending stay where they are.
                     mset(&mut f, Mem::Pending, zero);
                     f.ins().jump(fall, &[]);
+                }
+                // A keyword's: its token's word's kind (`WORD_KIND`), in a word of its own.
+                Op::Remember { kind: WORD_KIND } => {
+                    let word_kinds = &native.word_kinds;
+                    word!(WordFn::RememberWord, &[], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, _: &[Value]| {
+                        let k = word_kind(g, e, word_kinds);
+                        (e.set)(g, Mem::Word, k);
+                    });
                 }
                 Op::Remember { kind } => {
                     let k = f.ins().iconst(types::I64, i64::from(kind));

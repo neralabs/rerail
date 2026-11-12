@@ -440,6 +440,14 @@ impl Emit<'_> {
                     self.flags_of(&flags, i);
                 }
                 if let Some(k) = remember {
+                    // A keyword's: its kind from the token's word, as a keyword's leaf's.
+                    let k = match self.word_kind(k) {
+                        Some(s) => {
+                            self.word_kinds.insert(s, k);
+                            WORD_KIND
+                        }
+                        None => k,
+                    };
                     self.push("REMEMBER", 0, Arg::Kind(k));
                 }
                 let marked = self.marks.iter().any(|m| m.kind == token);
@@ -1260,15 +1268,18 @@ fn ways(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], pc: usize) -
 /// `return self.helper()`). A kind's first place is in the earliest rule that has it, so a
 /// rule goes into earlier rules' code alone. A call's landing stays its caller's (the call
 /// returns into its own function). The kept words' rules come back with them.
+/// The fewest words a rule's code must reach to be shared with another rule's (`merge_words`).
+const SHARED_LEAST: usize = 8;
+
 fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules: Option<&[u16]>) -> (Vec<(&'static str, u8, Arg)>, Vec<ByteSwitch>, Vec<u16>) {
     let n = words.len();
     const NONE: u32 = u32::MAX;
     let class_of = |class: &[u32], t: u16| if t == REFUSE || usize::from(t) >= n { NONE } else { class[usize::from(t)] };
     // The first partition: operation, mode, operand (a switch's offset too), and the rule.
     let is_call = |pc: usize| pc > 0 && words[pc].0 == "GOTO" && words[pc - 1].0 == "PUSH";
-    let partition = || -> (Vec<u32>, usize) {
+    let partition = |by_rule: bool| -> (Vec<u32>, usize) {
         let mut class: Vec<u32> = {
-            let mut ids: HashMap<(&str, u8, (u8, u16), u8, Vec<u16>), u32> = HashMap::new();
+            let mut ids: HashMap<(&str, u8, (u8, u16), u8, Vec<u16>, u16), u32> = HashMap::new();
             words
                 .iter()
                 .enumerate()
@@ -1278,7 +1289,8 @@ fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules
                     let next = ids.len() as u32;
                     // A call's `GOTO` is never another `GOTO`'s kind: it goes to its callee.
                     let op = if is_call(pc) { "GOTO (a call's)" } else { op };
-                    *ids.entry((op, mode, operand_key(arg), offset, named)).or_insert(next)
+                    let rule = if by_rule { rules.map_or(0, |r| r[pc]) } else { 0 };
+                    *ids.entry((op, mode, operand_key(arg), offset, named, rule)).or_insert(next)
                 })
                 .collect()
         };
@@ -1305,7 +1317,56 @@ fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules
         }
         (class, count)
     };
-    let (class, count) = partition();
+    // Across rules, words alike are shared where the code from the kept one is large: a helper
+    // the lean parser would call (`return self.helper()`). A short tail (a leaf and a return)
+    // each rule keeps its own, as each of the lean parser's methods writes its own.
+    let (all, all_count) = partition(false);
+    let class: Vec<u32> = match rules {
+        None => all,
+        Some(r) => {
+            let (own, _) = partition(true);
+            let mut first = vec![usize::MAX; all_count];
+            let mut spans = vec![false; all_count];
+            for pc in (0..n).rev() {
+                let k = all[pc] as usize;
+                if first[k] != usize::MAX && r[first[k]] != r[pc] {
+                    spans[k] = true;
+                }
+                first[k] = pc;
+            }
+            // The words the kept one reaches in its rule, up to `SHARED_LEAST` (a call's
+            // callee not followed: it is called).
+            let large = |at: usize| {
+                let mut seen = std::collections::HashSet::new();
+                let mut todo = vec![at];
+                while let Some(pc) = todo.pop() {
+                    if pc >= n || r[pc] != r[at] || !seen.insert(pc) {
+                        continue;
+                    }
+                    if seen.len() > SHARED_LEAST {
+                        return true;
+                    }
+                    if is_call(pc) {
+                        continue;
+                    }
+                    let (targets, by_place) = ways(words, switches, pc);
+                    todo.extend(targets.iter().filter(|&&t| t != REFUSE).map(|&t| usize::from(t)));
+                    todo.extend((1..=by_place).map(|d| pc + d));
+                }
+                false
+            };
+            let shared: Vec<bool> = (0..all_count).map(|k| !spans[k] || large(first[k])).collect();
+            let mut ids: HashMap<(bool, u32), u32> = HashMap::new();
+            (0..n)
+                .map(|pc| {
+                    let key = if shared[all[pc] as usize] { (true, all[pc]) } else { (false, own[pc]) };
+                    let id = ids.len() as u32;
+                    *ids.entry(key).or_insert(id)
+                })
+                .collect()
+        }
+    };
+    let count = class.iter().max().map_or(0, |&m| m as usize + 1);
     let mut rep = vec![usize::MAX; count];
     for pc in (0..n).rev() {
         rep[class[pc] as usize] = pc;
