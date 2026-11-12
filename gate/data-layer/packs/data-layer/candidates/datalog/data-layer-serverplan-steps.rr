@@ -1365,7 +1365,7 @@ sc4_sel_start(p, s) :- sc4_sel_child(p, n, _), node(_, n, _, s, _).
 sc4_sel_start(p, s) :- sc4_sel_comment(p, s).
 sc4_sel_before(p, s) :- sc4_sel_start(p, s), sc4_sel_start(p, t), t < s.
 sc4_ord(n, 0) :- sc4_sel_child(p, n, _), node(_, n, _, s, _), !sc4_sel_before(p, s).
-rr_ctx2(p, s) :- sc4_sel_child(p, n, _), node(_, n, _, s, _).
+rr_ctx2(p, s) :- sc4_sel_child(p, n, _), node(_, n, _, s, _), sc4_sel_before(p, s).
 rr_agg1(p, s, t) :- rr_demand_agg_rr_agg1(p, s), rr_ctx2(p, s), sc4_sel_start(p, t), t < s.
 sc4_ord(n, o) :- sc4_sel_child(p, n, _), node(_, n, _, s, _), sc4_sel_before(p, s), o = count : { rr_agg1(p, s, _) }.
 sc4_fn_name(f, s) :- node(_, f, "function_definition", _, _), field(f, "name", x), text(x, s).

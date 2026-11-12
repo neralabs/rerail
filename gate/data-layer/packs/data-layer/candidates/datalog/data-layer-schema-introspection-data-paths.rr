@@ -58,12 +58,12 @@ introspection_frame_mark("function_definition"). introspection_frame_mark("decor
 .decl option_json(name: symbol, pointer: symbol, v: symbol)
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
-.decl rr_agg1(b: number, b2: number, e: node)
-.decl rr_agg3(e: node, i: number, i2: number)
-.decl rr_ctx2(b: number, e: node)
-.decl rr_ctx4(e: node, i: number)
-.decl rr_demand_agg_rr_agg1(b: number, e: node)
-.decl rr_demand_agg_rr_agg3(e: node, i: number)
+.decl rr_agg3(b: number, b2: number, e: node, rr_any1: node, rr_any2: number)
+.decl rr_agg6(e: node, i: number, i2: number, rr_any5: symbol)
+.decl rr_ctx4(b: number, e: node)
+.decl rr_ctx7(e: node, i: number)
+.decl rr_demand_agg_rr_agg3(b: number, e: node)
+.decl rr_demand_agg_rr_agg6(e: node, i: number)
 .decl schema_approval_approved(x: number)
 .decl schema_approval_entry(e: symbol)
 .decl schema_approval_error(x: number)
@@ -251,12 +251,12 @@ introspection_not_next(e, o, b) :- introspection_after(e, o, b), introspection_a
 introspection_run(e, k, l) :- introspection_item(e, o, l), introspection_after(e, o, k), !introspection_not_next(e, o, k).
 introspection_run(e, k, l) :- introspection_item(e, o, l), !introspection_after(e, o, _), node(_, e, _, _, k).
 introspection_run_line(e, k, l) :- introspection_run(e, k, _), l = min l2 : { introspection_run(e, k, l2) }.
-rr_ctx2(b, e) :- introspection_field(e, _, b, _).
-rr_agg1(b, b2, e) :- rr_demand_agg_rr_agg1(b, e), rr_ctx2(b, e), introspection_field(e, _, b2, _), b2 < b.
-introspection_ford(e, b, j) :- introspection_field(e, _, b, _), j = count : { rr_agg1(b, _, e) }.
-rr_ctx4(e, i) :- fstring_piece(e, i, "interpolation", _).
-rr_agg3(e, i, i2) :- rr_demand_agg_rr_agg3(e, i), rr_ctx4(e, i), fstring_piece(e, i2, "interpolation", _), i2 < i.
-introspection_pord(e, i, j) :- introspection_fhost(e), fstring_piece(e, i, "interpolation", _), j = count : { rr_agg3(e, i, _) }.
+rr_ctx4(b, e) :- introspection_field(e, _, b, _).
+rr_agg3(b, b2, e, rr_any1, rr_any2) :- rr_demand_agg_rr_agg3(b, e), rr_ctx4(b, e), introspection_field(e, rr_any1, b2, rr_any2), b2 < b.
+introspection_ford(e, b, j) :- introspection_field(e, _, b, _), j = count : { rr_agg3(b, _, e, _, _) }.
+rr_ctx7(e, i) :- fstring_piece(e, i, "interpolation", _).
+rr_agg6(e, i, i2, rr_any5) :- rr_demand_agg_rr_agg6(e, i), rr_ctx7(e, i), fstring_piece(e, i2, "interpolation", rr_any5), i2 < i.
+introspection_pord(e, i, j) :- introspection_fhost(e), fstring_piece(e, i, "interpolation", _), j = count : { rr_agg6(e, i, _, _) }.
 introspection_later(e, i) :- introspection_fhost(e), fstring_piece(e, i, _, _), fstring_piece(e, i2, _, _), i2 > i.
 introspection_fconst(e, v, l) :- introspection_ford(e, b, j), introspection_pord(e, i, j), fstring_piece(e, h, "literal", v), i = @add(h, 1), introspection_run_line(e, b, l).
 introspection_fconst(e, v, l) :- introspection_fhost(e), node(_, e, _, _, k), fstring_piece(e, h, "literal", v), !introspection_later(e, h), introspection_run_line(e, k, l).
@@ -276,5 +276,5 @@ schema_approval_approved(1) :- option_value("parameters", _), !schema_approval_e
 schema_approval_approved(1) :- schema_approval_verified(1), !schema_approval_error(1).
 violation("data-layer-schema-introspection-data-paths", "schema-approval-configuration", "SIDP000", "scripts/lint_schema_introspection_data_paths.py", 1) :- option_value("entryPoint", v), v != "_collect_violations", schema_approval_error(1).
 violation("data-layer-schema-introspection-data-paths", "schema-approval-configuration", "SIDP000", "scripts/lint_schema_introspection_data_paths.py", 1) :- option_value("entryPoint", v), v != "_collect_violations", schema_approval_listed(1), !schema_approval_verified(1).
-rr_demand_agg_rr_agg1(b, e) :- introspection_field(e, _, b, _).
-rr_demand_agg_rr_agg3(e, i) :- introspection_fhost(e), fstring_piece(e, i, "interpolation", _).
+rr_demand_agg_rr_agg3(b, e) :- introspection_field(e, _, b, _).
+rr_demand_agg_rr_agg6(e, i) :- introspection_fhost(e), fstring_piece(e, i, "interpolation", _).
