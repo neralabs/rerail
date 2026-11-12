@@ -321,7 +321,9 @@ pub struct Rel { table: String, types: Vec<u8>, k: usize, n: usize, data: Vec<i6
              level: Vec<u32>, lbase: u32,
              /// Whether its rows get levels: only a relation of a recursive stratum reads them (`open`), and at 4
              /// bytes a row they are not held for the others.
-             leveled: bool }
+             leveled: bool,
+             /// Spike (`RERAIL_SPIKE_PLACED`): a dedup-only relation's row ids by row hash, holding ids `..upto`.
+             placed: std::sync::Mutex<(HashTable<u32>, usize)> }
 
 /// The id of a live row equal to `row` in the relation of `orders` (its first holds every column), not `skip`.
 fn find_row(orders: &[Index], data: &[i64], k: usize, row: &[i64], skip: impl Fn(u32) -> bool) -> Option<u32> {
@@ -372,7 +374,7 @@ impl Rel {
         Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Vec::new(), stored: 0, lo: 0, hi: 0, wave: 0,
               idx: vec![Index::new((0..k).collect())], serves: vec![Vec::new()], indexed: 0, pending: HashTable::new(),
               sketches: vec![Sketch::default(); k], dead: Vec::new(), ndead: 0, summaries: Default::default(), from: None,
-              level: Vec::new(), lbase: 0, leveled: true }
+              level: Vec::new(), lbase: 0, leveled: true, placed: Default::default() }
     }
     /// A relation that starts as `old` (a kept one: its rows copied as memory; its orders' runs and its sketches
     /// shared, not built again) less the rows of `gone`, marked dead in place (decision 0090 step 4). Its rows are the
@@ -419,7 +421,7 @@ impl Rel {
         let from = Some(Origin::Based { at: old as *const InRel as usize, n: old.n });
         Some(Rel { table: table.to_string(), types: types.to_vec(), k, n: old.n, data: data.clone(), stored: 0, lo: 0, hi: 0, wave: 0, idx, serves,
                    indexed: old.n, pending: HashTable::new(), sketches: old.sketches.clone(), dead, ndead, summaries: Default::default(), from, level,
-                   lbase: 0, leveled: true })
+                   lbase: 0, leveled: true, placed: Default::default() })
     }
     /// `based`'s relation, made from `old`'s rows less those of `gone` rather than in place (compacted).
     fn compacted(table: &str, types: &[u8], old: &InRel, gone: Option<&InRel>) -> Rel {
@@ -458,6 +460,10 @@ impl Rel {
             return Some(id);
         }
         find_row(&self.idx, data, k, row, skip)
+    }
+    /// Spike: whether its only order is the full row and no probe binds a key of it (index lever C's relations).
+    fn dedup_only(&self) -> bool {
+        self.idx.len() == 1 && self.serves.first().is_none_or(Vec::is_empty) && self.idx[0].cols.len() == self.k
     }
     pub fn contains(&self, row: &[i64]) -> bool {
         self.find(row, |id| is_dead(&self.dead, id)).is_some()
@@ -584,7 +590,7 @@ impl Rel {
         for ix in &mut self.idx {
             ix.settle(&self.data, k, u32::MAX);
             ix.add_run(&self.data, k, from, n, 0);
-            ix.tier(&self.data, k, FROZEN_RUNS);
+            ix.tier(&self.data, k, runs::spike_tier(FROZEN_RUNS));
         }
         self.indexed_to_n();
     }
@@ -650,7 +656,9 @@ impl Cands<'_> {
 /// are as derived. `emitted`: every row a rule derived this wave, new or not (`RERAIL_SPIKE_DERIVATIONS`: the
 /// derivations a counting scheme would count).
 #[derive(Clone, Default)]
-pub struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize }
+pub struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize,
+                   /// Spike (`RERAIL_SPIKE_PLACED`): the settled rows by row hash, for a dedup-only relation.
+                   seen: HashTable<u32> }
 
 /// Rows a wave's derived tuples hold before they are checked against their relation (`Fresh::offer`): a wave that
 /// derives many rows already held keeps at most about this many more.
@@ -675,6 +683,9 @@ impl Fresh {
         if settled == n {
             return;
         }
+        if runs::placed_on() && rel.dedup_only() {
+            return self.settle_placed(rel);
+        }
         // The first order's sort (`runs::cmp_vals`: tagged, by the leading value's tag first, then the columns).
         let cols = &rel.idx[0].cols;
         let tagged = runs::tagged(cols, k);
@@ -683,7 +694,9 @@ impl Fresh {
             runs::cmp_vals(cols, tagged, &data[a as usize * k..][..k], &data[b as usize * k..][..k])
         };
         let mut order: Vec<u32> = (settled as u32..n as u32).collect();
-        if tagged {
+        if runs::keyed_on() {
+            runs::sort_keyed(&mut order, tagged, cols.len(), |q, i| data[q as usize * k + cols[i]], &cmp);
+        } else if tagged {
             // By tag as integers, then rows only within a tag (`runs::sort_by_tag`).
             runs::sort_by_tag(&mut order, |q| runs::tag(data[q as usize * k + cols[0]]), &cmp);
         } else {
@@ -715,6 +728,42 @@ impl Fresh {
         self.n = kept + settled - s;
         self.settled = self.n;
         self.data = out;
+    }
+}
+impl Fresh {
+    /// Spike (`RERAIL_SPIKE_PLACED`, index lever C): `settle` for a relation whose only order is the full row, which
+    /// no probe reads by a key: the dedup test by row hash (the relation's ids placed by it, as mldb's IdHash, and
+    /// the batch's), not a sort and a search of the order. The rows kept stay in no order: `set_delta` sorts its runs.
+    fn settle_placed(&mut self, rel: &Rel) {
+        let (k, n, settled) = (rel.k, self.n, self.settled);
+        let mut placed = rel.placed.lock().expect("the placed ids");
+        let (table, upto) = &mut *placed;
+        let rd = &rel.data;
+        let hash_of = |d: &[i64], i: u32| hash_vals(d[i as usize * k..][..k].iter().copied());
+        while *upto < rel.n {
+            table.insert_unique(hash_of(rd, *upto as u32), *upto as u32, |&i| hash_of(rd, i));
+            *upto += 1;
+        }
+        let Fresh { data, seen, .. } = self;
+        let mut w = settled;
+        for q in settled..n {
+            let h = hash_of(data, q as u32);
+            let row = &data[q * k..][..k];
+            if seen.find(h, |&i| &data[i as usize * k..][..k] == row).is_some() {
+                continue;
+            }
+            if table.find(h, |&id| !rel.dead(id) && &rd[id as usize * k..][..k] == row).is_some() {
+                continue;
+            }
+            if w != q {
+                data.copy_within(q * k..(q + 1) * k, w * k);
+            }
+            seen.insert_unique(h, w as u32, |&i| hash_of(data, i));
+            w += 1;
+        }
+        data.truncate(w * k);
+        self.n = w;
+        self.settled = w;
     }
 }
 struct EdgeRule { head: usize, src: usize, key: Vec<usize>, ecols: Vec<usize>, pat: Vec<Pat>, out: Vec<Term>,
@@ -4336,7 +4385,9 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         let tagged = index.is_tagged(k);
         let mut order: Vec<u32> = (0..n as u32).collect();
         let cmp = |a: u32, b: u32| vals[a as usize * m..][..m].cmp(&vals[b as usize * m..][..m]);
-        if tagged {
+        if runs::keyed_on() {
+            runs::sort_keyed(&mut order, tagged, m, |q, i| vals[q as usize * m + i], cmp);
+        } else if tagged {
             runs::sort_by_tag(&mut order, |q| runs::tag(vals[q as usize * m]), cmp);
         } else {
             order.sort_by(|&a, &b| cmp(a, b));

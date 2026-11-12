@@ -128,6 +128,13 @@ impl Run {
 
     /// The ids of `ids` sorted by `cols` (then id).
     fn of(data: &[i64], k: usize, cols: &[usize], mut ids: Vec<u32>) -> Run {
+        if keyed_on() {
+            let tags = sort_keyed(&mut ids, tagged(cols, k), cols.len(), |id, i| data[id as usize * k + cols[i]], |a, b| cmp_rows(data, k, cols, a, b));
+            if tagged(cols, k) {
+                return Run { ids, fences: Vec::new(), tags };
+            }
+            return Run::fenced(data, k, cols, ids);
+        }
         if tagged(cols, k) {
             let lead = cols[0];
             let tags = sort_by_tag(&mut ids, |id| tag(data[id as usize * k + lead]), |a, b| cmp_rows(data, k, cols, a, b));
@@ -368,6 +375,62 @@ pub(super) fn sort_by_tag(ids: &mut [u32], tag_of: impl Fn(u32) -> u16, cmp: imp
     tags
 }
 
+/// Spike (index lever C): `RERAIL_SPIKE_PLACED=1`, a dedup-only relation's dedup test by row hash (`Fresh::settle_placed`).
+pub(super) fn placed_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("RERAIL_SPIKE_PLACED").is_some())
+}
+
+/// Spike (index levers, 2026-11-12): `RERAIL_SPIKE_RENT=<n>` probes' rent per merged id (`PROBE_PER_MERGED_ID`).
+pub(super) fn spike_rent() -> u64 {
+    static N: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *N.get_or_init(|| std::env::var("RERAIL_SPIKE_RENT").ok().and_then(|v| v.parse().ok()).unwrap_or(PROBE_PER_MERGED_ID))
+}
+
+/// Spike: `RERAIL_SPIKE_TIER=<n>` runs a frozen relation's order keeps at most (`FROZEN_RUNS`).
+pub(super) fn spike_tier(default: usize) -> usize {
+    static N: std::sync::OnceLock<Option<usize>> = std::sync::OnceLock::new();
+    N.get_or_init(|| std::env::var("RERAIL_SPIKE_TIER").ok().and_then(|v| v.parse().ok())).unwrap_or(default)
+}
+
+/// Spike (index levers, 2026-11-12): `RERAIL_SPIKE_KEYED=1` sorts by keys held beside the ids, read once a row.
+pub(super) fn keyed_on() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("RERAIL_SPIKE_KEYED").is_some())
+}
+
+/// `ids` sorted as `cmp` orders them, where `cmp` orders by the leading value's tag (`tagged`) and then the order's
+/// columns in turn, `val(id, i)` being an id's value in the order's column `i` (of `ncols`): the ids are sorted with
+/// their tag and first two values held beside them, read once a row, and rows are compared (`cmp`) only within a
+/// stretch equal in all three. The sorted ids' tags are returned (empty when untagged).
+pub(super) fn sort_keyed(ids: &mut [u32], tagged: bool, ncols: usize, val: impl Fn(u32, usize) -> i64, cmp: impl Fn(u32, u32) -> Ordering) -> Vec<u16> {
+    let mut keys: Vec<(u16, i64, i64, u32)> = ids
+        .iter()
+        .map(|&id| {
+            let v0 = if ncols > 0 { val(id, 0) } else { 0 };
+            (if tagged { tag(v0) } else { 0 }, v0, if ncols > 1 { val(id, 1) } else { 0 }, id)
+        })
+        .collect();
+    keys.sort_unstable();
+    for (slot, key) in ids.iter_mut().zip(&keys) {
+        *slot = key.3;
+    }
+    if ncols > 2 {
+        let mut at = 0;
+        while at < keys.len() {
+            let mut end = at + 1;
+            while end < keys.len() && keys[end].0 == keys[at].0 && keys[end].1 == keys[at].1 && keys[end].2 == keys[at].2 {
+                end += 1;
+            }
+            if end - at > 1 {
+                ids[at..end].sort_unstable_by(|&a, &b| cmp(a, b));
+            }
+            at = end;
+        }
+    }
+    if tagged { keys.iter().map(|k| k.0).collect() } else { Vec::new() }
+}
+
 impl Index {
     pub(super) fn new(cols: Vec<usize>) -> Index {
         Index { cols, runs: Vec::new(), rent: AtomicU64::new(0) }
@@ -394,7 +457,7 @@ impl Index {
         }
         let rent = *self.rent.get_mut();
         let ids: u64 = self.runs[..old].iter().map(|(r, _)| r.ids.len() as u64).sum();
-        if rent * PROBE_PER_MERGED_ID <= ids {
+        if rent * spike_rent() <= ids {
             return;
         }
         *self.rent.get_mut() = 0;
