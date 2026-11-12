@@ -930,6 +930,112 @@ kernel void text_replace(device const long* T [[buffer(0)]], device const uchar*
     }
 }
 
+// The byte of character c of x (n bytes; n when it has fewer), 32 bytes at a time: each chunk's characters' first
+// bytes counted by a prefix over the lanes.
+static inline uint char_byte(device const uchar* x, uint n, long c, uint lane) {
+    uint seen = 0;
+    for (uint k = 0; k < n; k += 32) {
+        bool first = k + lane < n && (x[k + lane] & 0xc0) != 0x80;
+        uint before = simd_prefix_exclusive_sum(first ? 1u : 0u);
+        uint hit = simd_min(first && long(seen + before) == c ? lane : 32u);
+        if (hit < 32) return k + hit;
+        seen += simd_sum(first ? 1u : 0u);
+    }
+    return n;
+}
+
+// A text function of constant arguments (`TEXTFN_*`: f), once per distinct term (decision 0038's chunked matching):
+// a SIMD group per term, 32 bytes at a time. The kept range of its text (head: to the first "."; dir: to the last
+// "/"; substr, sql_substr, slice: characters counted by sums over the lanes, their first bytes found by prefixes), or
+// its bytes mapped (lower, upper). `lower` of a term past ASCII sets `flag` (Unicode's mapping is the host's). Pass 0
+// counts each term's length into `lens`; after their scan, pass 1 writes O as a text buffer (`DevText`'s).
+struct MapParams { uint nterms; uint groups; uint f; uint write; long n0; long n1; };
+
+kernel void text_map(device const long* T [[buffer(0)]], device uint* lens [[buffer(1)]], device long* O [[buffer(2)]],
+                     device atomic_uint* flag [[buffer(3)]], constant MapParams& p [[buffer(4)]], uint t [[thread_position_in_grid]],
+                     uint lane [[thread_index_in_simdgroup]]) {
+    uint sg = t / 32;
+    if (t == 0) {
+        if (p.write == 0) lens[p.nterms] = 0;
+        else {
+            O[0] = long(p.nterms);
+            ((device uint*)(O + 1 + p.nterms))[p.nterms] = lens[p.nterms];
+        }
+    }
+    if (sg >= p.groups) return;
+    device const long* ids = T + 1;
+    device const uint* offs = text_offs(T);
+    device const uchar* bytes = text_chars(T);
+    device uint* ooffs = (device uint*)(O + 1 + p.nterms);
+    device uchar* obytes = (device uchar*)(ooffs + p.nterms + 1);
+    uint f = p.f;
+    for (uint term = sg; term < p.nterms; term += p.groups) {
+        device const uchar* x = bytes + offs[term];
+        uint n = offs[term + 1] - offs[term];
+        uint from = 0, to = n;
+        if (f == 1) {
+            for (uint k = 0; k < n; k += 32) {
+                uint d = simd_min(k + lane < n && x[k + lane] == uchar('.') ? lane : 32u);
+                if (d < 32) { to = k + d; break; }
+            }
+        } else if (f == 2) {
+            int last = -1;
+            for (uint k = 0; k < n; k += 32) {
+                int d = simd_max(k + lane < n && x[k + lane] == uchar('/') ? int(lane) : -1);
+                if (d >= 0) last = int(k) + d;
+            }
+            to = last >= 0 ? uint(last) : 0;
+        } else if (f == 3 || f == 4 || f == 7) {
+            long nc = 0;
+            for (uint k = 0; k < n; k += 32) nc += long(simd_sum(k + lane < n && (x[k + lane] & 0xc0) != 0x80 ? 1u : 0u));
+            long a, b, n0 = p.n0, n1 = p.n1;
+            if (f != 4) {
+                // substr(s, i, n): SQLite's substr(s, i + 1, n) (f 7: SQLite's own), in characters.
+                long p1 = f == 3 ? n0 + 1 : n0, p2 = n1;
+                bool neg = p2 < 0;
+                if (neg) p2 = -p2;
+                if (p1 < 0) {
+                    p1 += nc;
+                    if (p1 < 0) { p2 = max(p2 + p1, 0l); p1 = 0; }
+                } else if (p1 > 0) p1 -= 1;
+                else if (p2 > 0) p2 -= 1;
+                if (neg) {
+                    p1 -= p2;
+                    if (p1 < 0) { p2 += p1; p1 = 0; }
+                }
+                a = clamp(p1, 0l, nc);
+                b = clamp(p1 + p2, a, nc);
+            } else {
+                a = clamp(n0 < 0 ? nc + n0 : n0, 0l, nc);
+                b = clamp(n1 < 0 ? nc + n1 : n1, 0l, nc);
+                if (a > b) b = a;
+            }
+            from = char_byte(x, n, a, lane);
+            to = char_byte(x, n, b, lane);
+        } else if (f == 0) {
+            bool high = false;
+            for (uint k = 0; k < n; k += 32) if (simd_any(k + lane < n && x[k + lane] >= 0x80)) high = true;
+            if (high && lane == 0 && p.write == 0) atomic_fetch_or_explicit(flag, 1u, memory_order_relaxed);
+        }
+        uint len = to - from;
+        if (p.write == 0) {
+            if (lane == 0) lens[term] = len;
+            continue;
+        }
+        device uchar* o = obytes + lens[term];
+        for (uint i = lane; i < len; i += 32) {
+            uchar c = x[from + i];
+            if (f == 0 || f == 8) c = (c >= 'A' && c <= 'Z') ? c + 32 : c;
+            else if (f == 9) c = (c >= 'a' && c <= 'z') ? c - 32 : c;
+            o[i] = c;
+        }
+        if (lane == 0) {
+            O[1 + term] = ids[term];
+            ooffs[term] = lens[term];
+        }
+    }
+}
+
 // Rows copied between column-major buffers (a binding table, a relation): `n` rows of `ncols` columns, column k of
 // the destination from source column `src[k]` (or the constant `konst[k]` where it is NONE), at `dst_off`.
 struct Copy {
@@ -1645,7 +1751,7 @@ impl Batch {
 
     /// `replace_all` of a regex (its automata `table`, `text::table::Replacer`) by `with`, once per term of `text`: a
     /// text buffer of the same terms, their replaced texts (`text_replace`, two passes and a scan between).
-    pub(in crate::code_rule_dsl) fn replace(&mut self, text: &DevText, table: &DevBytes, states: u32, with: &[u8]) -> Result<std::rc::Rc<DevRel>, Error> {
+    pub(in crate::code_rule_dsl) fn replace(&mut self, text: &DevText, table: &DevBytes, states: u32, with: &[u8]) -> Result<DevText, Error> {
         let n = text.terms;
         // A match of at least a byte becomes `with`: no text grows past its length times `with`'s.
         let room = text.chars.saturating_mul(with.len().max(1));
@@ -1667,7 +1773,35 @@ impl Batch {
             }
         }
         self.keep.extend([scratch, lens, z]);
-        Ok(out)
+        Ok(DevText { packed: out, terms: n, span: text.span, longest: room, sep: true, chars: room })
+    }
+
+    /// Text function `f` (`TEXTFN_*`) of constant numbers `n0`, `n1`, once per term of `text` (`text_map`): a text
+    /// buffer of the same terms, their texts made. `flag` is set when `lower` met a term past ASCII.
+    pub(in crate::code_rule_dsl) fn text_map(&mut self, text: &DevText, f: u32, n0: i64, n1: i64, flag: &Words) -> Result<DevText, Error> {
+        let n = text.terms;
+        // No function here makes a text longer.
+        let room = text.chars;
+        let out = std::rc::Rc::new(DevRel::empty(1, (8 * (1 + n) + 4 * (n + 1) + room + 1).div_ceil(8))?);
+        let kernel = pipeline("join", "text_map", || SOURCE.to_owned())?;
+        let groups = n.clamp(1, 1024);
+        let lens = Held::new(4 * (n + 1))?;
+        let scan = Scan::new(n + 1)?;
+        for write in [0u32, 1] {
+            let mut p = [0u8; 32];
+            for (k, w) in [n as u32, groups as u32, f, write].iter().enumerate() {
+                p[4 * k..4 * k + 4].copy_from_slice(&w.to_le_bytes());
+            }
+            p[16..24].copy_from_slice(&n0.to_le_bytes());
+            p[24..32].copy_from_slice(&n1.to_le_bytes());
+            let pass = self.pass(8)?;
+            pass.run_bytes(&kernel, &[&text.packed.buffer.buffer, &lens.buffer, &out.buffer.buffer, &flag.buffer.buffer], &p, (groups * 32).div_ceil(256));
+            if write == 0 {
+                scan.encode(pass, &lens.buffer)?;
+            }
+        }
+        self.keep.push(lens);
+        Ok(DevText { packed: out, terms: n, span: text.span, longest: text.longest, sep: true, chars: room })
     }
 
     /// Sets slots of `table` in place (`stage`'s binds: program columns of the binding's slots, or parameters).
