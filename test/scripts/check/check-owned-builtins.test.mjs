@@ -53,7 +53,7 @@ const FORMS = {
 };
 
 /** A file each named rule covers, the owner aside. */
-const COVERED = { "file-replace": "src/a.ts", "checkout-paths": "src/engine/catalog/a.ts", "no-follow": "src/a.ts" };
+const COVERED = { "file-replace": "src/a.ts", "checkout-paths": "src/engine/catalog/a.ts", "no-follow": "src/a.ts", "git-starts": "src/a.ts" };
 
 describe("check-owned-builtins", () => {
   describe.each(Object.keys(COVERED))("the %s rule", (id) => {
@@ -158,7 +158,7 @@ describe("check-owned-builtins", () => {
 
   it("allows each owner, type-only imports, other names, names kept to the module, and files a rule does not cover", () => {
     expect(ownedBuiltinProblems([
-      { path: rule("child-process").owner, text: 'import { spawn } from "node:child_process";\nspawn("git", []);\n' },
+      { path: rule("child-process").owner, text: 'import { spawn } from "node:child_process";\nspawn("npm", []);\n' },
       { path: rule("file-replace").owner, text: 'import { rename } from "node:fs/promises";\n' },
       { path: rule("checkout-paths").owner, text: 'import { realpathSync } from "node:fs";\n' },
       { path: rule("no-follow").owner, text: 'import { constants } from "node:fs";\nconst noFollow = constants.O_NOFOLLOW ?? 0;\n' },
@@ -168,10 +168,39 @@ describe("check-owned-builtins", () => {
       { path: "src/d.ts", text: 'import * as fs from "node:fs";\nconst map = { rename: () => 1 };\nmap.rename();\nfs.readFileSync("x");\nconst { readFileSync } = fs;\n' },
       { path: "src/e.ts", text: 'import { promises, constants } from "node:fs";\nconst p = promises;\nexport { readFileSync } from "node:fs";\nexport const mode = constants.O_RDONLY;\n' },
       { path: "src/f.ts", text: 'const CODE_MODULES = new Set(["vm", "child_process"]);\n' },
-      { path: "src/engine/git.ts", text: 'import { realpathSync } from "node:fs";\n' },
+      { path: "src/engine/git-access/find-git.ts", text: 'import { realpathSync } from "node:fs";\n' },
       { path: "src/engine/catalog/g.ts", text: 'import { checkoutRealpath, physicalPath } from "./checkout-control.js";\n' },
       { path: "test/h.ts", text: 'import { rename } from "node:fs/promises";\nimport { spawn } from "node:child_process";\n' },
       { path: "src/i.md", text: 'import { spawn } from "node:child_process";\n' },
+    ])).toEqual([]);
+  });
+
+  it("flags a Git start outside git-process.ts, through a relative path to any module that holds one", () => {
+    const problems = ownedBuiltinProblems([
+      { path: "src/engine/catalog/a.ts", text: 'import { runGit } from "../git.js";\n' },
+      { path: "src/cli/b.ts", text: 'import { gitExecutable } from "../engine/git-access/find-git.js";\nspawnSync(gitExecutable(), []);\n' },
+      { path: "src/engine/git-access/c.ts", text: 'import * as git from "./git-process.js";\ngit.runGit(".", ["status"]);\n' },
+      { path: "src/d.ts", text: 'spawn("/usr/bin/git", []);\nexecFile("C:\\\\Program Files\\\\Git\\\\cmd\\\\GIT.EXE", []);\nspawn("/usr/bin/gitk", []);\n' },
+      { path: "src/e.ts", text: 'export { findGit } from "./engine/git.js";\n' },
+      { path: "src/engine/git.ts", text: 'import { runGit } from "./git-access/git-process.js";\nexport { runGit } from "./git-access/git-process.js";\nexport const run = runGit;\n' },
+    ]);
+    expect(rules(problems).filter(problem => problem.endsWith(":git-starts"))).toEqual([
+      "src/engine/catalog/a.ts:1:git-starts", "src/cli/b.ts:1:git-starts", "src/engine/git-access/c.ts:2:git-starts",
+      "src/d.ts:1:git-starts", "src/d.ts:2:git-starts", "src/e.ts:1:git-starts", "src/engine/git.ts:1:git-starts",
+      "src/engine/git.ts:3:git-starts",
+    ]);
+    expect(problems.find(problem => problem.path === "src/cli/b.ts")?.message).toContain(rule("git-starts").owner);
+  });
+
+  it("lets git.ts hand Git's names on, the two src/setup/ files take them there, and others ask through checkout-git.ts", () => {
+    expect(ownedBuiltinProblems([
+      { path: rule("git-starts").owner, text: 'import { gitExecutable } from "./find-git.js";\nspawnSync(gitExecutable(), []);\n' },
+      { path: "src/engine/git.ts", text: '// Hands the names on.\nexport { runGit } from "./git-access/git-process.js";\nexport { gitExecutable, type GitSearch } from "./git-access/find-git.js";\n' },
+      { path: "src/setup/harness-registration.ts", text: 'import { runGit } from "../engine/git.js";\nrunGit(".", ["rev-parse", "--show-toplevel"]);\n' },
+      { path: "src/setup/preflight.ts", text: 'import { gitExecutable } from "../engine/git.js";\ngitExecutable();\n' },
+      { path: "src/f.ts", text: 'import { checkoutGit, GitReads, requireGit } from "./engine/git-access/checkout-git.js";\nrequireGit();\ncheckoutGit.worktreeList(".");\n' },
+      { path: "src/engine/catalog/g.ts", text: 'import { GitUnavailableError, gitHome } from "../git.js";\nimport type { GitResult } from "../git-access/git-process.js";\n' },
+      { path: "test/h.ts", text: 'import { runGit } from "../src/engine/git.js";\n' },
     ])).toEqual([]);
   });
 

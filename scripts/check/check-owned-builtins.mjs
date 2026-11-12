@@ -26,6 +26,14 @@
 //                   (a spread, a variable), anywhere in src/; any other rm is free. That rm repeats the retries at every
 //                   level of the folder, each try at a folder removing its contents with a full set again: a file
 //                   Windows held one folder down kept a removal trying for minutes rather than 5.5 s.
+//   git-starts      Rerail's own Git starter (runGit) and the path Git is started from (gitExecutable, findGit), and
+//                   a starter given a literal path to a git program, anywhere in src/ but git-access/git-process.ts.
+//                   Every Git process Rerail starts is one question that file names and counts, so a start written
+//                   anywhere else is one nobody counts. src/engine/git.ts may only hand the names on (`export ...
+//                   from`), for the two files of src/setup/ that still import them from there.
+//
+// A rule's modules are built-in module names or, for Rerail's own modules, repository paths: a relative specifier is
+// read as the file it names, `./git.js` in src/engine/ as src/engine/git.ts.
 //
 // One walk of each file finds every way to reach a name: an `import` (named, default or namespace), `import x =
 // require(...)`, the module's name as an argument of any call (`require`, `import()`, a `createRequire` result,
@@ -35,7 +43,7 @@
 // it. Type-only imports and `typeof import(...)` load nothing.
 //
 //   node scripts/check/check-owned-builtins.mjs   (npm run check:owned-builtins; part of npm run check)
-import { dirname, resolve } from "node:path";
+import { dirname, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 import { CODE, codeFiles, eachNode, FS_MODULES as FS, lineOf, originalName, parseSource } from "./source-files.mjs";
@@ -57,6 +65,14 @@ export const KEYED = [
 ];
 
 const inSrc = path => path.startsWith("src/");
+
+/** Where Rerail's Git starter and Git's path live, and the file that hands them on. */
+const GIT_MODULES = ["src/engine/git-access/git-process.ts", "src/engine/git-access/find-git.ts", "src/engine/git.ts"];
+/**
+ * The files of src/ that still reach the Git starter or Git's path through src/engine/git.ts: src/setup/ is a path
+ * REVIEW.md asks a person to review, and moves to the questions of git-access/ in a change of its own.
+ */
+const GIT_STARTS_ELSEWHERE = ["src/setup/harness-registration.ts", "src/setup/preflight.ts"];
 const keyed = path => KEYED.some(entry => (entry.endsWith("/") ? path.startsWith(entry) : path === entry));
 
 /**
@@ -106,9 +122,20 @@ export const RULES = [
     covers: inSrc,
     message: "gives rm maxRetries, which rm repeats at every level of the folder, so a file Windows holds a folder down stalls the removal for minutes; use removeWithRetry from src/engine/file-replace.ts, which counts its own tries",
   },
+  {
+    id: "git-starts",
+    owner: "src/engine/git-access/git-process.ts",
+    modules: GIT_MODULES,
+    names: ["runGit", "gitExecutable", "findGit"],
+    covers: path => inSrc(path) && !GIT_STARTS_ELSEWHERE.includes(path),
+    relays: ["src/engine/git.ts"],
+    gitProgram: true,
+    message: "starts Git outside src/engine/git-access/git-process.ts, where each Git process is a question it names and counts; ask through checkoutGit or GitReads (src/engine/git-access/checkout-git.ts), or call requireGit to check that Git is installed",
+  },
 ].map(rule => ({ ...rule, names: rule.names?.map(name => name.split(".")) }));
 
 const PROGRAM_PATH_MESSAGE = "names a program without its folder, which Windows looks for in the current folder first; pass an absolute path (windowsSystemProgram, programOnPath)";
+const RELAY_MESSAGE = "holds more than `export ... from`: this file only hands git-access/'s names on";
 
 /** `path` inside `module` as a rule names it: a built-in's `default` is the module itself, and fs's `promises` holds the same names. */
 function canonical(module, path) {
@@ -174,12 +201,23 @@ function loadsValues(node) {
   return ts.isExportDeclaration(node) ? exportLoadsValues(node) : importLoadsValues(node.importClause);
 }
 
-/** The module an import, export or `import = require` declaration names, when it is one of `modules`. */
-function declaredModule(node, modules) {
+/**
+ * The module `specifier` names from the file at `path`: a built-in's name as written, and a relative specifier as the
+ * repository path of the TypeScript file it resolves to.
+ */
+function moduleOf(path, specifier) {
+  if (!specifier.startsWith(".")) return specifier;
+  return posix.normalize(posix.join(posix.dirname(path), specifier)).replace(/\.js$/u, ".ts");
+}
+
+/** The module an import, export or `import = require` declaration in the file at `path` names, when it is one of `modules`. */
+function declaredModule(node, modules, path) {
   const specifier = ts.isImportEqualsDeclaration(node)
     ? (ts.isExternalModuleReference(node.moduleReference) ? node.moduleReference.expression : undefined)
     : node.moduleSpecifier;
-  return specifier !== undefined && ts.isStringLiteralLike(specifier) && modules.has(specifier.text) ? specifier.text : undefined;
+  if (specifier === undefined || !ts.isStringLiteralLike(specifier)) return undefined;
+  const module = moduleOf(path, specifier.text);
+  return modules.has(module) ? module : undefined;
 }
 
 const isImport = node => ts.isImportDeclaration(node) || ts.isImportEqualsDeclaration(node);
@@ -221,12 +259,15 @@ function reexportedPaths(clause) {
   return valueElements(clause.elements).map(element => [originalName(element)]);
 }
 
-/** Whether a call starts a program it names by a literal that is not an absolute path: `spawn("git", ...)`. */
-function startsBareProgram(call) {
+/** The program a call of a starter names by a literal (`spawn("git", ...)`); undefined for any other call. */
+function literalProgram(call) {
   const [command] = call.arguments;
   return ts.isIdentifier(call.expression) && STARTERS.has(call.expression.text)
-    && command !== undefined && ts.isStringLiteralLike(command) && !ABSOLUTE.test(command.text);
+    && command !== undefined && ts.isStringLiteralLike(command) ? command.text : undefined;
 }
+
+/** A program path whose last part is `git` or `git.exe`, in any letter case. */
+const GIT_PROGRAM = /(?:^|[\\/])git(?:\.exe)?$/iu;
 
 const isArgument = node => ts.isCallExpression(node.parent) && node.parent.arguments.includes(node);
 
@@ -290,7 +331,7 @@ class Walk {
 
   /** Whether `node` is a string naming a watched module. */
   namesModule(node) {
-    return ts.isStringLiteralLike(node) && this.modules.has(node.text);
+    return ts.isStringLiteralLike(node) && this.modules.has(moduleOf(this.source.fileName, node.text));
   }
 
   /** What `node` evaluates to inside a watched module, if the walk can tell. */
@@ -313,7 +354,7 @@ class Walk {
   /** The watched module a call loads by naming it as an argument (`require`, `import()`, `process.getBuiltinModule`). */
   loaded(call) {
     const named = call.arguments.find(argument => this.namesModule(argument));
-    return named === undefined ? undefined : { module: named.text, path: [] };
+    return named === undefined ? undefined : { module: moduleOf(this.source.fileName, named.text), path: [] };
   }
 
   /** What a variable's value reaches inside a watched module, if it has one the walk can tell. */
@@ -342,7 +383,7 @@ class Walk {
   /** Each name an import, `import = require` or variable binds to a watched module, with what it reaches there. */
   declared(node) {
     if (ts.isVariableDeclaration(node)) return this.initialized(node);
-    const module = isImport(node) ? declaredModule(node, this.modules) : undefined;
+    const module = isImport(node) ? declaredModule(node, this.modules, this.source.fileName) : undefined;
     return module === undefined ? [] : importBindings(node).map(([name, path]) => [name, { module, path }]);
   }
 
@@ -390,7 +431,7 @@ class Walk {
 
   /** An import, export or `import = require` that loads a watched module as a value, and what an export hands on. */
   checkLoad(node) {
-    const module = declaredModule(node, this.modules);
+    const module = declaredModule(node, this.modules, this.source.fileName);
     if (module === undefined || !loadsValues(node)) return;
     this.reportLoad(node, module);
     if (ts.isExportDeclaration(node)) this.checkReexport(node, module);
@@ -404,7 +445,7 @@ class Walk {
   /** A watched module named as an argument of any call loads it, reported at the statement the call is in. */
   checkLoadingArgument(node) {
     if (!this.namesModule(node) || !isArgument(node)) return;
-    this.reportLoad(ts.findAncestor(node, ts.isStatement) ?? node, node.text);
+    this.reportLoad(ts.findAncestor(node, ts.isStatement) ?? node, moduleOf(this.source.fileName, node.text));
   }
 
   /** A member read of an owned name: `fs.rename`, `fs["rename"]`, `fs.promises.rename`. */
@@ -440,13 +481,35 @@ class Walk {
     }
   }
 
-  /** A call that names its program without a folder, reported as program-path under each rule with `programPath`. */
+  /**
+   * A call that names its program by a literal: one without a folder is reported as program-path under each rule with
+   * `programPath`, and a git program under each rule with `gitProgram`.
+   */
   checkProgram(call) {
-    if (!startsBareProgram(call)) return;
+    const program = literalProgram(call);
+    if (program === undefined) return;
     for (const rule of this.rules) {
-      if (rule.programPath === true) this.report(call, rule, PROGRAM_PATH_MESSAGE, "program-path");
+      if (rule.programPath === true && !ABSOLUTE.test(program)) this.report(call, rule, PROGRAM_PATH_MESSAGE, "program-path");
+      if (rule.gitProgram === true && GIT_PROGRAM.test(program)) this.report(call, rule);
     }
   }
+}
+
+/** Each statement of `source` that is not `export ... from`, in a file `rule` lets hand its names on. */
+function relayProblems(source, rule) {
+  return source.statements
+    .filter(statement => !ts.isExportDeclaration(statement) || statement.moduleSpecifier === undefined)
+    .map(statement => ({ line: lineOf(source, statement), rule: rule.id, message: RELAY_MESSAGE }));
+}
+
+/** The problems of one parsed file: each rule that covers it walks it, and each rule it relays for reads its statements. */
+function fileProblems(source, rules) {
+  const path = source.fileName;
+  const relayed = rules.filter(rule => rule.relays?.includes(path));
+  const walk = new Walk(source, rules.filter(rule => rule.owner !== path && !relayed.includes(rule) && rule.covers(path)));
+  walk.bind();
+  walk.check();
+  return [...walk.found.values(), ...relayed.flatMap(rule => relayProblems(source, rule))].sort((a, b) => a.line - b.line);
 }
 
 /**
@@ -456,14 +519,8 @@ class Walk {
 export function ownedBuiltinProblems(files, rules = RULES) {
   const problems = [];
   for (const { path, text } of files) {
-    if (!CODE.test(path)) continue;
-    const applying = rules.filter(rule => rule.owner !== path && rule.covers(path));
-    if (applying.length === 0) continue;
-    const walk = new Walk(parseSource(path, text), applying);
-    walk.bind();
-    walk.check();
-    const found = [...walk.found.values()].sort((a, b) => a.line - b.line);
-    for (const { line, rule, message } of found) problems.push({ path, line, rule, message });
+    if (!CODE.test(path) || !rules.some(rule => rule.owner !== path && rule.covers(path))) continue;
+    for (const { line, rule, message } of fileProblems(parseSource(path, text), rules)) problems.push({ path, line, rule, message });
   }
   return problems;
 }

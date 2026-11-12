@@ -225,7 +225,7 @@ without hooks or network.
   which has none, an `lstat` before the open and a `dev`/`ino` match after), then a `realpath` containment check, then
   a `dev`/`ino` recheck. Directory walks skip symlinks. `#writeSource` (rewind) writes a new file under a random name
   with `O_CREAT|O_EXCL`, which refuses any name that exists (`src/engine/code-rule/code-rule-bridge.ts`).
-- **Git** (`src/engine/git.ts`):
+- **Git** (`src/engine/git-access/`; only `git-process.ts` starts Git, which `npm run check:owned-builtins` holds):
   - Runs the first `git` on `PATH` that is a regular file it may execute, resolved to an absolute path by Rerail (so
     Windows never searches the current folder first), then the usual install locations.
   - Skips relative `PATH` entries, entries in a `node_modules` folder, and entries in the repository it runs in (the
