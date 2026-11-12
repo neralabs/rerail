@@ -2041,6 +2041,9 @@ fn counted(r: &Run<'_>, plan: &Plan, j: &JoinRule, rep: &mut Report) {
 }
 
 #[cfg(test)]
+mod parity;
+
+#[cfg(test)]
 mod tests {
     use rusqlite::Connection;
 

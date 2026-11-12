@@ -490,14 +490,38 @@ static inline Txt txt_of(constant Stage& s, device const long* L, uint t, device
 
 // Mode 7: a literal text test of pattern X (keys 0, 1) and subject Y (keys 2, 3), each of kind agg[1] & 15 and
 // agg[1] >> 4: by op agg[0] >> 1 & 3, 0 equal, 1 Y begins with X, 2 Y ends with X; as agg[0] & 1 wants.
+static inline bool textop_one(uint op, Txt x, uint xs, uint lx, Txt y, uint ly) {
+    if (op == 0) return lx == ly && txt_same(x, xs, y, 0, lx);
+    if (op == 1) return ly >= lx && txt_same(x, xs, y, 0, lx);
+    return ly >= lx && txt_same(x, xs, y, ly - lx, lx);
+}
+
+// With `TEXT_SPLIT` (agg[0] bit 5), X is a set of patterns (`strings::SET_SEP` between them, empty ones too, as
+// `strings::test` splits it): Y passes when any one does. The separators are found a word of eight at a time (an exact
+// mask of the bytes equal to 0x1f), each member compared as one pattern.
 static inline bool textop_pass(constant Stage& s, device const long* L, uint t, device const long* R, device atomic_uint* A) {
     Txt x = txt_of(s, L, t, R, A, 0, s.agg[1] & 15), y = txt_of(s, L, t, R, A, 2, s.agg[1] >> 4);
     uint lx = txt_len(x), ly = txt_len(y);
     uint op = (s.agg[0] >> 1) & 3;
-    bool r;
-    if (op == 0) r = lx == ly && txt_same(x, 0, y, 0, lx);
-    else if (op == 1) r = ly >= lx && txt_same(x, 0, y, 0, lx);
-    else r = ly >= lx && txt_same(x, 0, y, ly - lx, lx);
+    bool r = false;
+    if ((s.agg[0] & 32) == 0) r = textop_one(op, x, 0, lx, y, ly);
+    else {
+        const ulong lo7 = 0x7f7f7f7f7f7f7f7ful;
+        uint start = 0;
+        for (uint at = 0; at < lx; at += 8) {
+            ulong z = txt_word(x, at, lx) ^ 0x1f1f1f1f1f1f1f1ful;
+            // Bytes past the text read 0 (z's 0x1f): never a separator.
+            ulong m = ~(((z & lo7) + lo7) | z | lo7);
+            while (m != 0) {
+                uint k = clz(m) / 8;
+                uint pos = at + k;
+                r = r || textop_one(op, x, start, pos - start, y, ly);
+                start = pos + 1;
+                m &= ~(0x8000000000000000ul >> (8 * k));
+            }
+        }
+        r = r || textop_one(op, x, start, lx - start, y, ly);
+    }
     return r == ((s.agg[0] & 1) != 0);
 }
 
@@ -1512,6 +1536,9 @@ pub(in crate::code_rule_dsl) struct Batch {
     /// Buffers the encoded work reads that nothing else holds: kept until it completes (a pooled buffer is written
     /// by the host when handed out again, and Metal orders no host write after a GPU read).
     keep: Vec<Held>,
+    /// Text buffers its passes read, kept until it is done (a chain's intermediate texts are dropped by their
+    /// maker once the next pass is encoded: their buffers must not be reused while the GPU reads them).
+    read: Vec<std::rc::Rc<DevRel>>,
     /// The texts its jobs' text functions make, made the first time a job asks.
     arena: Option<std::rc::Rc<Arena>>,
     arena_cap: usize,
@@ -1526,7 +1553,7 @@ impl Batch {
     /// A batch whose text arena holds `cap` bytes.
     pub(in crate::code_rule_dsl) fn with_arena(cap: usize) -> Result<Batch, Error> {
         rerail_accel::gpu::join::device()?;
-        Ok(Batch { open: None, pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, keep: Vec::new(), arena: None, arena_cap: cap })
+        Ok(Batch { open: None, pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, keep: Vec::new(), read: Vec::new(), arena: None, arena_cap: cap })
     }
 
     /// Its text arena, shared by its jobs.
@@ -1572,6 +1599,7 @@ impl Batch {
             self.done.gpu_seconds += s.wait();
         }
         self.keep.clear();
+        self.read.clear();
         Ok(std::mem::take(&mut self.done))
     }
 
@@ -1773,6 +1801,7 @@ impl Batch {
             }
         }
         self.keep.extend([scratch, lens, z]);
+        self.read.push(text.packed.clone());
         Ok(DevText { packed: out, terms: n, span: text.span, longest: room, sep: true, chars: room })
     }
 
@@ -1801,6 +1830,7 @@ impl Batch {
             }
         }
         self.keep.push(lens);
+        self.read.push(text.packed.clone());
         Ok(DevText { packed: out, terms: n, span: text.span, longest: text.longest, sep: true, chars: room })
     }
 
