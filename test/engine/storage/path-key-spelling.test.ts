@@ -6,19 +6,19 @@ import { basename, dirname, join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SqliteAuditControlStore } from "../../../src/engine/audit/audit-control.js";
-import { currentPathKey } from "../../../src/engine/catalog/checkout-control.js";
 import { listRepositories, recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 import { setUpRepository } from "../../../src/engine/catalog/rule-configuration.js";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
+import { currentPathKey } from "../../../src/engine/storage/path-key-spelling.js";
 import { setCheckoutStarted, SqlitePresentationPreferenceStore, workspaceStartState } from "../../../src/runtime/index.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
-type CheckoutControl = typeof import("../../../src/engine/catalog/checkout-control.js");
+type PathKeySpelling = typeof import("../../../src/engine/storage/path-key-spelling.js");
 
 // The key a stored path moves to, which each test sets: on Linux and macOS the stored spelling is the one this build
-// gives, so a test stands in for Windows with a spelling of its own. The Windows test uses the real one.
-vi.mock("../../../src/engine/catalog/checkout-control.js", async importOriginal => {
-  const original = await importOriginal<CheckoutControl>();
+// gives, so a test stands in for Windows with a spelling of its own. The Windows tests use the real one.
+vi.mock("../../../src/engine/storage/path-key-spelling.js", async importOriginal => {
+  const original = await importOriginal<PathKeySpelling>();
   return { ...original, currentPathKey: vi.fn(original.currentPathKey) };
 });
 
@@ -204,7 +204,7 @@ describe("path keys an earlier build stored under another spelling", () => {
   });
 
   it.runIf(process.platform === "win32")("move, on Windows, from a lower-case drive letter and another case to the stored spelling", async () => {
-    const actual = await vi.importActual<CheckoutControl>("../../../src/engine/catalog/checkout-control.js");
+    const actual = await vi.importActual<PathKeySpelling>("../../../src/engine/storage/path-key-spelling.js");
     vi.mocked(currentPathKey).mockImplementation(actual.currentPathKey);
     // A folder outside Git, whose row an earlier version keyed by the folder as the caller spelt it.
     const { folder, databasePath } = await checkoutFolder({ git: false });
@@ -217,7 +217,7 @@ describe("path keys an earlier build stored under another spelling", () => {
   });
 
   it.runIf(process.platform === "win32")("stay, on Windows, on a network share, which the step never looks up", async () => {
-    const actual = await vi.importActual<CheckoutControl>("../../../src/engine/catalog/checkout-control.js");
+    const actual = await vi.importActual<PathKeySpelling>("../../../src/engine/storage/path-key-spelling.js");
     vi.mocked(currentPathKey).mockImplementation(actual.currentPathKey);
     const { folder, databasePath } = await checkoutFolder();
     earlierBuildRecorded(folder, databasePath, otherSpelling(folder));
@@ -237,7 +237,7 @@ describe("path keys an earlier build stored under another spelling", () => {
   });
 
   it("keep their spelling outside Windows, where the realpath did not change", async () => {
-    const actual = await vi.importActual<CheckoutControl>("../../../src/engine/catalog/checkout-control.js");
+    const actual = await vi.importActual<PathKeySpelling>("../../../src/engine/storage/path-key-spelling.js");
     expect(actual.currentPathKey("/no/such/Folder", "linux")).toBe("/no/such/Folder");
     expect(actual.currentPathKey("/no/such/Folder", "darwin")).toBe("/no/such/Folder");
   });

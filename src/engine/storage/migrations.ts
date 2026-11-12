@@ -11,9 +11,8 @@
  * `schema_migrations`; an id this build does not know (a newer build's step) is left alone.
  */
 import { sql } from "drizzle-orm";
-import { currentPathKey } from "../catalog/checkout-control.js";
 import type { RerailDatabase } from "./database.js";
-import { respellPathKeys } from "./path-key-spelling.js";
+import { currentPathKey, respellPathKeys } from "./path-key-spelling.js";
 import { schemaMigrations } from "./schema.js";
 
 /** One change to the shape of an existing table. Ids and order never change once released. */
