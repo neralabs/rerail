@@ -650,6 +650,8 @@ impl BlockProgram {
                 && r.kinds.len() == 256
                 && !self.totals.is_empty()
                 && crate::records::WordTable::new(&r.words).is_ok()
+                && r.marks.len() <= crate::records::MARKS
+                && r.marks.iter().all(|&(o, w)| usize::from(o) < self.outputs.len() && usize::from(w) <= r.words.len())
         });
         if self.ops.is_empty() || !fits || !outputs || !earlier || !tables || !extracts || !delay || !records {
             return Err(Error::InvalidTarget(0));
@@ -737,6 +739,13 @@ impl BlockProgram {
                 out.extend_from_slice(&(w.len() as u32).to_le_bytes());
                 out.extend_from_slice(w);
             }
+            if !r.marks.is_empty() {
+                out.extend_from_slice(b"marks");
+                for &(o, w) in &r.marks {
+                    out.extend_from_slice(&o.to_le_bytes());
+                    out.extend_from_slice(&w.to_le_bytes());
+                }
+            }
         }
         out
     }
@@ -799,7 +808,7 @@ impl BlockProgram {
                     .collect();
                 let codes = match (&self.records, &table) {
                     (Some(r), Some(t)) => {
-                        let (codes, bad) = crate::records::pass(r, t, bytes, &positions[usize::from(r.starts)], &positions[usize::from(r.lasts)]);
+                        let (codes, bad) = crate::records::pass(r, t, bytes, &positions[usize::from(r.starts)], &positions[usize::from(r.lasts)], &outputs);
                         any |= bad;
                         codes
                     }
@@ -1452,6 +1461,10 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         let _ = writeln!(out, "  block {at} records {} {} kinds={}", r.starts, r.lasts, hex(&r.kinds));
         for w in &r.words {
             let _ = writeln!(out, "  block {at} word {}", crate::rir_text::quote(w));
+        }
+        // `block N recmark O W` a mark: its output, its word's code (0 for any).
+        for &(o, w) in &r.marks {
+            let _ = writeln!(out, "  block {at} recmark {o} {w}");
         }
     }
 }
