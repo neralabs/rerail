@@ -1449,7 +1449,7 @@ Row(@place("policy.json", 1), "title", t, 0) :- title(t).
 /// each one's files in scope and reports them together. It read the `.ts` files alone before.
 #[test]
 fn a_language_of_several_dialects_runs_over_each() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rrdialects");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrdialects");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.ts"), "let a = 1;\n").unwrap();
     std::fs::write(dir.join("b.js"), "\nlet b = 2;\n").unwrap();
@@ -1791,7 +1791,7 @@ per(x, n) :- piece_word(_, w), text(w, x), n = count : { match_all("(?<d>[0-9])"
 /// of tuples). Both gave one row or none before.
 #[test]
 fn match_all_over_a_node_gives_each_match_and_count_ranges_over_wildcards() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("matchcount");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("matchcount");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "f(a, b, c)
 g(d)

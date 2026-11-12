@@ -23,6 +23,9 @@ pub(in crate::code_rule_dsl) const D: usize = 3;
 /// Counters per level of the distinct-value bitmap.
 pub(in crate::code_rule_dsl) const M: usize = 64;
 const LEVELS: usize = 32;
+/// The stored format (`encode`): 2 places a value by one mix (`add`).
+const FORMAT: u8 = 2;
+const _: () = assert!(W == 64 && M == 64 && D == 3, "`add` takes 6 bits a counter and 7 an AMS row, of three");
 
 /// One column's sketches.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -49,14 +52,17 @@ fn mix(mut x: u64) -> u64 {
 impl Sketch {
     /// `n` rows of value `v` in (`n < 0`: taken out).
     pub fn add(&mut self, v: i64, n: i64) {
-        for (i, row) in self.ams.iter_mut().enumerate() {
-            let h = mix((v as u64) ^ mix(i as u64 + 1));
-            let sign = if h >> 63 == 1 { 1 } else { -1 };
-            row[(h % W as u64) as usize] += sign * n;
-        }
-        let h = mix((v as u64) ^ 0x5bd1_e995);
-        let level = (h.trailing_zeros() as usize).min(LEVELS - 1);
-        let slot = ((h >> 32) % M as u64) as usize;
+        // One mix a value: each AMS row's sign and counter from 7 bits of it (bits 0–20), the bitmap's slot from 6
+        // more (21–26), and its level from the rest's trailing zeros (format 2; format 1 mixed once a row and once
+        // more for the bitmap, 7 mixes a value).
+        let h = mix(v as u64);
+        let at = |i: usize| (((h >> (i * 7)) >> 1) % W as u64) as usize;
+        let by = |i: usize| if (h >> (i * 7)) & 1 == 1 { n } else { -n };
+        self.ams[0][at(0)] += by(0);
+        self.ams[1][at(1)] += by(1);
+        self.ams[2][at(2)] += by(2);
+        let level = ((h >> 27).trailing_zeros() as usize).min(LEVELS - 1);
+        let slot = ((h >> 21) % M as u64) as usize;
         let counters = self.levels[level].get_or_insert_with(|| Box::new([0; M]));
         counters[slot] += n;
         if n < 0 && counters.iter().all(|&c| c == 0) {
@@ -122,7 +128,7 @@ impl Sketch {
     /// and each occupied level's counters; counters as little-endian i32 (a column's rows stay under 2^31).
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(self.bytes());
-        out.push(1);
+        out.push(FORMAT);
         for &c in self.ams.iter().flatten() {
             out.extend_from_slice(&(c as i32).to_le_bytes());
         }
@@ -142,7 +148,8 @@ impl Sketch {
             at += 4;
             Some(i32::from_le_bytes(b.try_into().ok()?))
         };
-        if bytes.first() != Some(&1) {
+        // A sketch of another format placed its values elsewhere: not one to add rows to.
+        if bytes.first() != Some(&FORMAT) {
             return None;
         }
         let mut s = Sketch::default();

@@ -414,6 +414,11 @@ pub(in crate::code_rule_dsl) fn after(
     let mut bytes: usize = rels.values().map(Kept::bytes).sum();
     let budget = budget();
     for (rel, width, held) in derived {
+        // An index's relation (the reach index, decision 0119) is made again in less than reading it back costs:
+        // not kept, so it never takes the budget from the relations whose rows are work.
+        if held.held_source().is_some() {
+            continue;
+        }
         let k = Kept { rel: held, width, output: outputs.get(&rel).cloned() };
         bytes += k.bytes();
         if bytes > budget {
@@ -1035,6 +1040,9 @@ pub(in crate::code_rule_dsl) struct InFrames {
     derived: HashMap<String, FrameStored>,
     /// Each input as stored: its digest, and its rows' digest by document.
     inputs: HashMap<String, (u64, Arc<DocDigests>)>,
+    /// The relations admitted with their statistics part at their rows' digest (decision 0120 §3): written again
+    /// only if their rows change.
+    stats_kept: std::collections::HashSet<String>,
 }
 
 /// The digest of `read` a derived relation records (t33 K4): as `known` has it (an input as the run bound it, a
@@ -1364,6 +1372,10 @@ impl Retained {
         }).collect();
         let mut keys = derived_keys.clone();
         keys.extend(input_parts.iter().flat_map(|(_, k)| k.iter().cloned()));
+        // Each relation's statistics, a part of its frame (decision 0120 §3), admitted in the same batch.
+        if kept_stats::on() {
+            keys.extend(wanted.iter().map(|r| (frames.names[r].clone(), kept_stats::PART)));
+        }
         let admitted = store.admit_frame_parts(&frames.space, &keys).map_err(|e| Error::Plan(e.to_string()))?;
         // Their levels, where stored: not a key of the admission's check, as a relation may have none.
         let level_keys: Vec<_> = wanted.iter().map(|r| (frames.names[r].clone(), LEVELS_PART)).collect();
@@ -1420,6 +1432,47 @@ impl Retained {
             return Ok(None);
         };
         let count = rels.len() + sources.len();
+        // A relation whose statistics part was stored for the rows it has now takes them, under the address it has
+        // in this process: it is not counted or measured again (decision 0120 §3).
+        if kept_stats::on() {
+            let (mut patched, mut measured) = (0, 0);
+            // `RERAIL_KEPT_STATS_TRACE`: why a relation admitted took no statistics.
+            let (mut no_part, mut other_digest, mut undecoded) = (0, 0, 0);
+            for (rel, k) in &rels {
+                let Some(d) = frames.derived.get(rel).map(|s| s.digest) else { continue };
+                let Some(part) = admitted.get(&(frames.names[rel].clone(), kept_stats::PART)) else { no_part += 1; continue };
+                if part.stored.digest != d {
+                    other_digest += 1;
+                    continue;
+                }
+                let Some(all) = part.rows().ok().and_then(|r| kept_stats::from_words(&r.rows)) else { undecoded += 1; continue };
+                let at = Arc::as_ptr(&k.rel) as *const u8 as usize;
+                for ((name, _), s) in all {
+                    match s {
+                        kept_stats::KeptStat::Patched { stats, counts, tested } => {
+                            patched += 1;
+                            self.patched.insert(name, Patched { at, stats, counts, tested });
+                        }
+                        kept_stats::KeptStat::Measured(m) => {
+                            measured += 1;
+                            self.measured.insert((name, at), m);
+                        }
+                    }
+                }
+            }
+            if std::env::var_os("RERAIL_KEPT_STATS_TRACE").is_some() {
+                eprintln!("rerail: kept statistics: {} admitted, {patched} kept by delta, {measured} measured; no part {no_part}, at another digest {other_digest}, not decoded {undecoded}", rels.len());
+            }
+            if let Some(f) = self.frames.as_mut() {
+                f.stats_kept.extend(rels.iter().filter(|(_, k)| {
+                    let at = Arc::as_ptr(&k.rel) as *const u8 as usize;
+                    self.patched.values().any(|p| p.at == at) || self.measured.keys().any(|(_, a)| *a == at)
+                }).map(|(rel, _)| rel.clone()));
+            }
+            crate::code_rule_dsl::logic::profile::decision("kept statistics from the frames (decision 0120 §3)", || {
+                format!("{patched} kept by delta and {measured} measured, of {} relations admitted", rels.len())
+            });
+        }
         self.rels.extend(rels);
         self.input_srcs.extend(sources);
         Ok(Some((count, rows)))
@@ -1634,10 +1687,49 @@ impl Retained {
                 puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest: d, reads: read_digests, rows: FrameRows { types: k.rel.types().to_vec(), rows, n } });
             }
         }
+        if kept_stats::on() {
+            self.stats_puts(was, &now, &mut puts);
+        }
         store.queue_frames(was.space, puts, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token())));
         Ok(written)
     }
 }
+
+impl Retained {
+    /// Each kept relation's statistics of its rows now, as a part of its frame under the rows' digest (`now`, as
+    /// the frames name them; decision 0120 §3).
+    fn stats_puts(&self, was: &InFrames, now: &HashMap<String, u64>, puts: &mut Vec<FramePut>) {
+        let mut by: HashMap<&str, kept_stats::ByDigest> = HashMap::new();
+        let at_of = |rel: &str| self.rels.get(rel).map(|k| Arc::as_ptr(&k.rel) as *const u8 as usize);
+        for (name, p) in &self.patched {
+            let base = kept_stats::base(name);
+            if let Some(d) = now.get(base).filter(|_| at_of(base) == Some(p.at)) {
+                by.entry(base).or_default().insert((name.clone(), *d), kept_stats::KeptStat::of_patched(p));
+            }
+        }
+        for ((name, at), m) in &self.measured {
+            let base = kept_stats::base(name);
+            if let Some(d) = now.get(base).filter(|_| at_of(base) == Some(*at)) {
+                by.entry(base).or_default().insert((name.clone(), *d), kept_stats::KeptStat::Measured(m.clone()));
+            }
+        }
+        for (rel, all) in by {
+            let Some(name) = was.names.get(rel) else { continue };
+            let digest = now[rel];
+            // Admitted with them at these rows: the stored part is these statistics already.
+            if was.stats_kept.contains(rel) && was.derived.get(rel).is_some_and(|s| s.digest == digest) {
+                continue;
+            }
+            let words = kept_stats::to_words(&kept_stats::encode(&all));
+            if std::env::var_os("RERAIL_KEPT_STATS_TRACE").is_some() {
+                eprintln!("rerail: kept statistics written: {rel} ({} entries)", all.len());
+            }
+            puts.push(FramePut { rel: name.clone(), part: kept_stats::PART, digest, reads: Vec::new(), rows: FrameRows { types: vec![b'i'], n: words.len(), rows: words } });
+        }
+    }
+}
+
+mod kept_stats;
 
 #[cfg(test)]
 pub mod frame_tests;

@@ -137,6 +137,8 @@ pub enum Line {
     Leveled(Vec<usize>),
     Request(usize),
     Produced(usize),
+    /// The relation's statistics are kept as its rows come (`Rel::stats`): a session keeps it for its next run.
+    Stats(usize),
     Seed { head: usize, join: Arc<JoinSpec> },
     Join { head: usize, delta: usize, join: Arc<JoinSpec>, whole: Option<Arc<JoinSpec>> },
     Probe { head: usize, delta: usize, sql: String },
@@ -420,6 +422,7 @@ impl std::fmt::Display for Line {
             Line::Leveled(rels) => write!(f, "leveled {}", comma(rels)),
             Line::Request(r) => write!(f, "request {r}"),
             Line::Produced(r) => write!(f, "produced {r}"),
+            Line::Stats(r) => write!(f, "stats {r}"),
             Line::Seed { head, join } => write!(f, "seed {head} {}", hex(&join.to_text())),
             Line::Join { head, delta, join, whole } => {
                 write!(f, "join {head} {delta} {}", hex(&join.to_text()))?;
@@ -504,6 +507,7 @@ impl ComponentSpec {
                 "leveled" => Line::Leveled(t.get(1).map(|x| list(x)).transpose()?.unwrap_or_default()),
                 "request" => Line::Request(num(at(1)?)?),
                 "produced" => Line::Produced(num(at(1)?)?),
+                "stats" => Line::Stats(num(at(1)?)?),
                 "seed" => Line::Seed { head: num(at(1)?)?, join: join(at(2)?)? },
                 "join" => Line::Join {
                     head: num(at(1)?)?,

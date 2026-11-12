@@ -3620,6 +3620,60 @@ test's wave.
 **Closure:** a wave belongs to its run (or the test counts only its own launches), and the test passes 20 of 20
 beside the others.
 
+## O-cone-libraries. Since phase 1 loads the libraries, the import closure is near all pairs of 4,249 documents
+
+c90b3e39b makes the libraries an import resolves to into documents of every later phase. components.rr seeds
+`rr_cx_reach(d, d)` from every document (`rr_cx_own`), and typeshed's stubs import each other in cycles. So
+on the 54-file Python corpus, `rr_cx_reach` holds 6,347,637 rows over 4,249 documents (2026-11-11, hub 03125d2d1).
+Before the merge it was about 4 k. Through it:
+- `rr_cx_sees__sup0`'s seed and the statistics of `rr_cx_reach` cost about 7 s and 4.3 s a run.
+- The kept cross-file part holds one relation of 6.7 M rows (147 MB of values, 34 MB of levels, 41 MB of sets and
+  indexes).
+- Read back from the frames, the part is 268 MB, past the 256 MB budget (`RERAIL_CROSS_RETAIN_MB`). A warm run with
+  no input changed then keeps 70 relations and derives 215 of 481 strata again, run after run. A cold run had kept
+  364 relations in 145.7 MB.
+
+The closure is the same as its condensation: `d` reaches `e` iff `d`'s component reaches `e`'s
+(`rr_cx_component`). A reach over components, with `rr_cx_reach` and `rr_cx_sees` asked as memberships through
+it, holds the component DAG's closure instead of the documents' pairs.
+
+**Closure:** a warm run of the 54-file P3 corpus derives no stratum again with no input changed; cold CPU is back
+near 66.6 s (t32); findings unchanged.
+
+**Status (2026-11-11): mostly closed by decision 0119** (the reach index). `rr_cx_reach` is 208 KB of bitmaps,
+not 6.3 M rows. A warm run with nothing changed derives 2 of 480 strata again: the index's own two, rebuilt in
+0.1 s and never kept. It keeps 587 relations in 29.1 MB, and findings agree (4,815). Still open: the cold-CPU
+check against 66.6 s, measured with the per-file memo warm (0119 **Measured**).
+
+## O-logic-tests-link. rerail-logic's test binary checks but does not link: the grammars are the engine's
+
+`cargo test -p rerail-logic --lib --no-run` compiles (01db3167f) but fails to link: `_tree_sitter_python`,
+`_tree_sitter_javascript`, `_tree_sitter_typescript`, `_tree_sitter_tsx`, `_tree_sitter_sql` and
+`_tree_sitter_vue` are undefined. The language registry (rerail-lang's build.rs) declares them, but only the
+engine's build.rs compiles the vendored grammars. So the corpus tests that stay in logic (memo, retain's frame
+tests, kept_strata, phases, reuse, cache_tests, prepared) run nowhere.
+
+**Closure:** rerail-lang's build script compiles the vendored grammars it declares (the engine's then does not),
+and logic's test binary links and runs.
+
+## O-constants-strict. Under `RERAIL_SQL_STRICT=1` a corpus run stops at `constant_rows`'s set-up
+
+`corpus/constants.rs:214` creates `constant_rows` on the run's connection, a write outside the waves that
+decision 0104 refuses. So the P3 benchmark aborts in strict mode before its first wave (hub 03125d2d1).
+
+**Closure:** the table is made by the store's schema or written through the store writer; the 54-file P3 run
+passes in strict mode.
+
+**Closed (2026-11-11).** Four things stood in the way, each fixed:
+- The constants are a run record of phase 0's observer (`constants:<key>`), read with its records before the run and
+  written behind it by its writer. The `.phases` file is gone.
+- The keeper's files changed by key (a run numbers its documents afresh), not only by content, are found before the
+  first wave. One asked and not found is held as not found, so the waves do not ask SQLite for it again.
+- `@cat` inside a computed head term is a native `Cat` step (`struct.rr`'s `sym(f, cat(@dot(q, x), cat("#", …)))`).
+- `components` runs on the native engine over the relations it holds. The constants' own run outputs the constants
+  alone, not `rr_cx_component`.
+
+The 54-file P3 run passes strict, 4,815 agree.
 **Closed (2026-11-11): decision 0118.** With a store per test, the test passed beside the rest of
 `logic::plan::tests::` in 20 of 20 runs; with one store per process it failed 2 of 10. The split wave came from the
 shared store, not the device's lanes: a test's run took plans and choices that other tests' runs had kept there.
@@ -3988,6 +4042,293 @@ text for its `#include`s. **Closed (2026-11-12, 04f66708c):** `combine_keyed` re
 `rr_unit(0)` atoms, renamed natively made relations, and split set memberships into one rule per value.
 **Closed (2026-11-12, 5db161b00):** each of the 1,140 programs under `docs/rule-syntax` prints, lowers and prints as
 the same text (`lowering_is_idempotent_*`, 11 shards within the run cap).
+
+## O-replan-churn. Every edit replans about 3,350 rules whose kept order "grew over 4x" (closed)
+
+Measured on the P3 bench (54 files of `dl-sub40`, `calls_p3`, strict) on 2026-11-12,
+over two edits, each run in a new process:
+
+```text
+first edit:  planned (first sight) x1190; replanned, work per node grew over 4x, by over 10000 rows x3330
+second edit: planned (first sight) x186;  replanned, work per node grew over 4x, by over 10000 rows x3350
+```
+
+The plans are kept across processes (0116 step 2), but almost the same 3,350 are
+searched again on every edit. That is 0.87 s of join-order search and 0.77 s of
+strata planning in the second edit (profiled). A kept order priced at one scale
+and replanned at another, run after run, is churn, not a size that moved. Next
+step: print one such rule's kept and new work per node (`RERAIL_PLAN_CACHE_WHY`),
+and find whether the replan's result is kept under the key the next run reads.
+
+**Closed (2026-11-12).** The cause was not work growth. It came in three parts.
+
+1. **Distributions compared as they were.** `RERAIL_PLAN_CACHE_WHY` printed "distributions near false" for each
+   replan. A rule planned for a chunk (22,146 nodes) and for the cross part (61,997) shares one kept plan (0116
+   keys the scale by powers of 4), and its distinct values were compared as they were. So each scale replanned
+   what the other had kept. Now `near_distributions` takes an entry as near either as it was (a column of few
+   values) or in proportion to the nodes (a column of node ids).
+2. **Small relations whose distinct values differ by part.** The 935 replans left were rules whose re-priced work
+   was 1–600 rows (`rr_embed_req`, `pre_832`, `qann`, `callable_ann`). A search can save at most that work. So a
+   re-priced kept order whose whole work is under `REPLAN_ROWS` is kept, whatever its distributions.
+3. **First sights at a scale not stored.** An edit's chunk is a bucket or two from the scale its plans were stored
+   at, so `RunPlans::find` found none and searched from nothing (638 per edit). It now takes the plan stored at
+   the nearest scale. That plan is re-priced before it is kept, so this is exact as before.
+
+The profile's replan line now names its cause (driver not live, distributions moved, or work grew), where it said
+"work per node grew" for all of them.
+
+Measured on the third edit of a build (profiled; 2,987 agree each run):
+
+| Per edit | Before | Distributions in proportion | All three |
+|---|---|---|---|
+| Replanned | 3,350 | 935 | 18 (distributions moved, work 11,600–62,000) |
+| First sight | 186 | 638 | 0 |
+| Kept, re-priced | 228 | 2,710 | 3,468 |
+| Join-order search | 0.87 s | 0.77 s | 0.25 s |
+| Re-price + strata + replan spans | | 0.33 s | 0.23 s |
+
+## O-live-replan. Live replans search again for orders they already have (closed)
+
+Profiled on the P3 bench (third edit of a build, 2,987 agree), after O-replan-churn closed. Planning left per
+edit, as own CPU of spans (profiled):
+
+| Where | Calls | CPU |
+|---|---|---|
+| Live replans between waves (`plan_rule_live`): searches | 1,162 | 0.40 s |
+| Their EXPLAIN records | 1,162 | 0.085 s |
+| Their re-prices | 1,920 | 0.075 s |
+| The replan step's own work | 3,497 | 0.07–0.09 s |
+| Plan time: re-prices | 3,744 | 0.11 s |
+| Plan time: searches | 211 | 0.02 s |
+| Reprobes after an order changed | 1,255 | 0.05 s |
+
+Every live search had one cause: "the distributions it reads moved". Its guard compares distributions as they
+are, the fault O-replan-churn fixed at plan time. Most of the searched rules are in one recursive stratum of 99
+relations, searched again wave after wave. The costliest is `fgp` (16 literals, about 8 ms a search). Another,
+`sym`, flips between two size vectors (distinct values 1, then 3) on alternate waves, so each search overwrites
+the one priced entry that the next wave needed.
+
+What the searches found, against the kept order re-priced:
+
+| Re-priced work | Same order | Other order, saving < 100 rows | Saving 100–10,000 rows |
+|---|---|---|---|
+| Under `REPLAN_ROWS` (1,014 searches, 0.40 s) | 886 | 105 | 23 |
+| Over it, distributions moved (83, 0.012 s) | 81 | 0 | 2 |
+| One positive literal (55, 0.002 s) | 55 | 0 | 0 |
+| Near in proportion to the nodes (10) | 10 | 0 | 0 |
+
+So 89% of the live searches return the order they had.
+
+Opportunities, largest first:
+1. **Keep a re-priced live order whose work is under what a search costs.** This is the plan-time rule
+   (O-replan-churn, part 2) applied to `plan_rule_live`. A search is about 0.4 ms, roughly 600 rows of join work
+   at this bench's 0.64 µs a row, and grows with the literals (`fgp`: 8 ms). Keeping the order when its
+   re-priced work is under the search's own cost removes about 1,000 searches (0.40 s plus most of the 0.085 s
+   of EXPLAIN). It still searches the 23 that saved 100–10,000 rows. A flat `REPLAN_ROWS` would also skip those
+   23, giving up at most about 150,000 rows over the run's waves.
+2. **Build a live search's EXPLAIN only when its order is taken.** The caller drops the result when
+   `same_order` holds, so 0.085 s of EXPLAIN records are discarded when the order did not change.
+3. **Distributions in proportion, in the live guard** (`near_distributions`, as at plan time). This matters
+   only for the large relations once item 1 is in: 10 searches here.
+4. **Two priced states per live key.** This is for sizes that alternate between waves (`sym`). After item 1 it
+   is needed only when the work is large.
+5. **No search for a body with one positive literal.** Its order is forced: 55 searches, 0.002 s. Not worth it
+   alone.
+
+What is not an opportunity: reprobes (0.05 s with the indexes they open) and the plan-time re-prices (30 µs
+each, 0.11 s; they are what stands in for a search). The index builds in `open: joins` (0.36 s) are the joins'
+own cost, not replanning's.
+
+**Closed (2026-11-12, decision 0121 §1).** All five are built. A live replan keeps the re-priced order when its work
+is under what a search costs (`search_rows`), or when it has one positive atom. Its distributions are compared in
+proportion, the state before the last is kept, and a live search's EXPLAIN is made only when its order is taken.
+Live searches went from 1,162 (0.40 s) to 558 (0.04 s) per edit. Planning fell from 4.5% to 3.1% of the edit's
+CPU, and the join work is the same in each later run (8,766,423). 0121 also makes the cold search a third
+cheaper, with the same plans, and sizes greedy-first, classifiers and bulk planning.
+
+## O-cutoff-phases. The whole-run cutoff never applies to a phased program
+
+`RERAIL_REUSE_TRACE` on an unchanged P3 run:
+
+```text
+changes: not comparable: declared_ret false, phases ["(\"sources\", …)"]
+whole-run cutoff not applied: a consulted file or read changed
+whole-run cutoff not applied: not recorded: 54 consulted, other phases ["struct", "types"]
+```
+
+`corpus::changes` refuses any program that reads an earlier phase, and the
+outermost run is not recorded because it read other phases. So an unchanged run
+of `calls_p3` costs 5.5 s of CPU, where a single-phase program costs 0.71 s
+(b8819272f). The phases are derived from the same consulted documents and
+requests, so a record over the union of every phase's consulted things would be
+exact. Next step: record the outermost run with its phases' consulted things,
+and check each phase's requests in `changes` as for a phase-free program.
+
+**Closed (2026-11-12).**
+- `reuse::record` keeps a run of any phase, with every phase's consulted things, one `doc` entry a document.
+- `rule_files` names every phase program a program reads, transitively, with its includes (`phases::phase_files`).
+- `changes` compares only the workspace's documents with the file list; a library document (an absolute path) is
+  checked by its digest.
+- On the P3 bench, an unchanged run took the cutoff: 1.47 s user + 0.17 s sys, against 5.5 + 1.0 s, and 2,987
+  agree. An edit of one file was not cut off ("1 documents changed").
+
+## O-kept-inputs-stale. A run in a new process keeps an edited file's old rows (kept inputs, 0117)
+
+`a_session_derives_the_reach_index_again_when_cycles_and_connections_change` fails after the hub merge
+(d0f1297e5), on every run, with or without decision 0120's kept statistics, and on an empty store
+(`TEST_TAPE_CACHE`):
+
+```text
+edit: c.py "from a import z\nfrom d import v\n" -> "from d import v\n"  (break the first cycle)
+session run:  CYC, INCYC, SEESE at c.py:1                    (right: c.py has one line)
+full run:     CYC, INCYC, SEESE at c.py:1 and at c.py:2      (c.py's old line 2)
+```
+
+The full run is the one without a session (`session::full`), which reads the kept part from the
+store. With `RERAIL_KEPT_INPUTS=off` the test passes, so the stale rows come from 0117's kept-inputs
+route. The whole-run cutoff is not involved: the full runs don't ask for it. `RERAIL_CROSS_VERIFY` finds
+"0 relations differ" in the inputs, so the stale rows come in after them, from rows kept by owner
+or from the kept part's derived frames. The statistics keeper does count c.py as changed, under both
+memo keys. The test passed once right after the merge, under heavy load, so the route may depend on timing
+(write-behind, 0114). So does `the_reach_index_is_derived_again_when_cycles_and_connections_change_in_a_new_process`, on the same edit, against
+a run with an empty store; it too passes with `RERAIL_KEPT_INPUTS=off`. Both tests are ignored with this item's name. Next step: dump the full run's
+`impmod` (or the reach index's edge relation) rows for c.py with and without kept inputs, and find
+the owner range that was not marked dead.
+
+**Closed (2026-11-12).** `RERAIL_KEPT_INPUTS_TRACE` showed the cause. A chunk evaluates its unchanged
+files with the changed one (e.py with c.py), so this run's rows of an input hold e.py's too. e.py has no old entry,
+so `patch_owners` took its kept rows plus this run's: twice. The same sum kept rows a changed file's old entry
+did not hold (c.py's old entry had no `line` rows), and those included `line(…, 2)`. Now a real
+document's rows come from its own file alone (`memo::document_of`), so for every document this run evaluated,
+its rows are this run's. The count arithmetic is kept for value documents, which several files hold. Both tests
+pass again.
+
+## The big rocks of O125's cold run and edit step (found 2026-11-12)
+
+**Seen.** O125's replay has 74 Python files and 33,311 lines. The figures are CPU from span trees, summed over
+threads, in a debug build under RERAIL_SQL_STRICT, at bcf99d12d (the integration hub merged in). The cold run is
+22.9 s of CPU. Step 01 edits one file. Its delta is small, 2,743 input-delta rows and 2,316 rows truly
+inserted and 143 truly deleted, held in 240 of 759 relations, yet it costs 12.4 s (more than half the cold run). Both are more than ten times what the work should cost. The cost is in
+whole kinds of work, not in a few hot functions:
+
+```text
+step 01 (one file; 240 relations change)      cold run
+  planning               4.65 s  37%            join evaluation        9.90 s  43%
+  components set up      2.65 s  21%            per-file memo, export  ~4.4 s  19%
+  join evaluation        0.80 s   6.5%          planning               1.75 s   7.6%
+  773 of 829 strata run; 7,398 rule runs,       13.0 M units of join work in 2,802 rule
+  2,688 with no work                            runs; 411 seeds copy base relations
+```
+
+Each rock below is an item. They are closed in order: first a version of each that is not tuning the
+optimizer, then one optimized build, to measure what the debug build hides (`O-debug-build-gap`).
+
+## O-warm-noop-delta. A small edit runs nearly the whole maintenance program (W1)
+
+**Seen.** At step 01, 100 inputs change digest, and 240 of 759 maintained relations get a delta
+(`RERAIL_CROSS_DELTA_COUNTS=each`: 184 rows over-deleted, 2,805 inserted, 143 truly deleted, 2,316 truly
+inserted). Yet 773 of 829 strata run, and 2,688 of 7,398 rule runs do no work. (A first reading said "no rows
+changed": the step line's counts are zero unless `RERAIL_CROSS_DELTA_COUNTS` is set.)
+
+**Measured (2026-11-12, profile of step 01).** "773 of 829" is the cut's count of base strata, not what opens.
+The rewrite makes 4,736 strata of them; 2,365 are held empty (every rule joins an empty relation) and 513 are
+quiet (0101 §1). 1,858 open a component, and a third of those move at most 2 rows (median 5). So what is left of
+W1 is the cost per opened piece, which is O-component-overhead (0101 §3).
+
+**Closure:** a stratum runs only when one of its inputs has a non-empty delta at that step. An input whose plus and
+minus net to nothing, or a relation whose stratum produced no delta, makes its readers quiet (decision 0101 §1).
+The strata run are in proportion to the relations that changed.
+
+## O-warm-replan. Every rule is planned again at every step (W2)
+
+**Seen.** Step 01 makes 12,730 plan searches and 12,888 explain records, 4.65 s of its 12.4 s. The rule for
+keeping a plan exists (`stats::plans`: a plan stays valid while every statistic it read stays in its bucket), but
+the session's strata do not use it.
+
+**Measured (2026-11-12).** Plans are kept (decision 0038's cache). What is searched is the first sight of each
+maintenance piece (9,921 at step 01, 1,650 at step 02) and, before the fix below, replans of pieces whose sizes
+moved but whose work is a few rows (4,612 at step 02: "distributions not near"). The 4,629 replans of step 02
+were all labelled "work per node grew 4x", which is the fall-through label, not the reason. The explain records
+(1.2-1.4 s a step) are made only under `RERAIL_PROFILE`.
+
+**First version (2026-11-12).** A kept plan re-priced at a work under `REPLAN_ROWS` is kept, whatever the sizes
+did: a search can save at most that work (`RERAIL_REPLAN_CHEAP` searches again). Step 02's replans fell from
+4,629 to 268. Steps 01-03: 276.0 G to 271.3 G (-1.7%). Ordering small-delta pieces greedily instead of searching
+was tried and changed nothing in instructions (266.5 G against 266.4 G), so it was dropped. The same rule for live replans
+(`plan_rule_live`, replans inside a component's run): steps 01-03 276.6 G to 266.6 G instructions, 82.8 G to 79.0 G
+cycles (-4.6%), the same outputs as full runs. In samples the search
+is about 21% of a warm step's CPU, but in instructions planning is not a big rock.
+
+**Merged with O-replan-churn's form (2026-11-12).** Both branches had built the kept-plan rule. The merged engine
+keeps one form, O-replan-churn's (`plan_rule_reused`: re-priced under `REPLAN_ROWS`, whatever the distributions;
+`plan_rule_live`: kept when the re-priced work is under what a search costs, `search_rows`, decision 0121).
+`RERAIL_REPLAN_CHEAP` is gone. The live bound is a search's cost, not `REPLAN_ROWS`: a live search that changes the
+order saves up to the kept order's work, and a flat 10,000 rows gave up some of that (0121 §1). The step 01-03
+figures above were measured with the flat bound.
+
+**Closure:** a stratum's plans are kept from step to step and are planned again only when a statistic they read
+leaves its bucket. Explain records are made only when asked for. A step's planning is in proportion to the plans
+that changed.
+
+## O-component-overhead. Each component is specified, opened and closed each step (W3)
+
+**Seen.** About 1,880 components a step: spec text, indexes, joins, survivors, close. That is 2.65 s at step 01
+and 0.85 s cold, for a program of 680 rules.
+
+**Measured (2026-11-12): the cost of a component.** With `RERAIL_KEEP_EMPTY_JOINS=1` the strata held empty
+(about 2,000-2,400 a step) open as components: steps 01-03 go from 270.3 G to 355.4 G, about 13 M instructions a
+component that moves no rows. At about 1,858 opened a step that is some 24 G of a step's 90 G. In samples, an
+opened empty component is 54% join-order search, 20% opening its spec, 18% building indexes.
+
+What the levers can take, measured as ceilings:
+- **Search.** Ordering every delta-driven piece greedily (no search at all) takes steps 01-03 from 270.3 G to
+  258.5 G (-4.4%). In samples the search is about 21% of a warm step's CPU: it is memory-bound, so it costs more
+  time than its instructions say. Instructions alone undersell it.
+- **0101 §3 (one component per base stratum).** It removes the open and index cost of the pieces it merges, not
+  their planning: about 40% of 13 M, for about 1,000 fewer components a step, so at most about 5 G a step (6%).
+  Its engine part is gates per component, emitted in the spec (a program with gates is refused by maintenance).
+
+**Closure:** a component's spec and compiled joins are kept with its kept relations and reused while its plan
+is (O-warm-replan). Only what a component does with its delta is paid each step.
+
+## O-join-unit-cost. A unit of join work costs 520-830 ns (C1)
+
+**Seen.** In the cold run, 13.0 M units of work take 9.9 s: 518 ns a unit for seed rules and 833 ns for joins.
+That is debug code, but it is interpreted step by step for each row, through closures and dynamic sources.
+
+**Closure:** the cost of a unit is measured by kind (seed scan, probe, emit, dedup). The interpretive overhead
+is cut (rows read by column, probes in batches) until a unit costs tens of ns in an optimized build
+(O-debug-build-gap).
+
+## O-base-seed-copies. Seed rules copy base relations into derived ones (C2)
+
+**Measured (2026-11-12): smaller than first read.** Of the 4.7 M units, only 1.0 M (33 runs, 0.44 s) are
+pure projections: `kind` and `docof` from `node`, and their `__sup0`. The other 3.7 M are joins that start at a
+base relation, which is O-join-unit-cost. Projections are already read in place where the view is an input
+(`Run::projections`); the copies are where `kind` is derived in the part's own program.
+
+**First reading.** 411 seed runs start from a base relation (`node`, `child`, `kind`, `docof`, `field`, …), for example
+`kind($n,$k) :- node(_,$n,$k,_,_)` at 500 K rows. They are 4.7 M of the 13.0 M units of work and 2.8 s. A
+projection of a syntax table is copied into a derived relation and indexed, when it could be read in place.
+
+**Closure:** a rule that is a projection or filter of one base relation is a view over it (decision 0090 step
+3), not a derived relation; its readers probe the base relation's own index.
+
+## O-local-memo-cost. The per-file memo and export cost about half the join work (C3)
+
+**Seen.** In the cold run: keeping each file's entry 2.19 s, totals 0.64 s, base rows for the memo 0.54 s,
+holding the export 0.32 s, attributing to files 0.30 s, the export itself 0.43 s.
+
+**Closure:** each part is measured against the rows it writes. What is written twice (the entry and the export,
+the totals beside the rows) is written once.
+
+## O-debug-build-gap. How much of the gap is the debug build (C4)
+
+**Seen.** Debug-only checks are 16-18% of samples, and iterator-heavy loops run many times slower without
+optimisation. No optimized build has been measured. That is deliberate: they are not built for timing.
+
+**Closure:** once the rocks above have a first version, one optimized build is measured on O125, cold and step
+01, beside the debug one. That gives the ratio, and the targets are set against the optimized figures.
 
 ## O-plan-component-start. A join planned while a relation of its component is nearly empty runs until the replan
 

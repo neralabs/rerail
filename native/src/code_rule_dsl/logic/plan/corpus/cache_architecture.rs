@@ -62,8 +62,8 @@ const NOT_YET_MOVED: &[&str] = &[
     "completed_workspace_revisions", "tree_result_segments", "completed_snapshot_trees", "accel_models",
     // The derivation graph: what it records is the keys of §7.
     "name_bindings", "derivations", "derivation_inputs",
-    // Phase 0's observations (what each read is now) and the run's constants by them.
-    "observed", "observer_meta", "constant_rows",
+    // Phase 0's observations (what each read is now).
+    "observed", "observer_meta",
 ];
 
 #[test]

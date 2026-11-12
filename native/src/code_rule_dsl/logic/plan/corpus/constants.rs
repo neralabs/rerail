@@ -21,7 +21,7 @@
 //! changed constant (another Python version) misses the memo, as it must. What the constants' run read is part of
 //! the run's consulted record (`Report::consulted`).
 //!
-//! The constants' rows are kept in the phase store (`constant_rows`), under the programs, the relations, the run's
+//! The constants' rows are kept among phase 0's run records (`constants:<key>`), under the programs, the relations, the run's
 //! options (but which documents it runs over: the constants read none), the root and the engine, with what their run
 //! consulted. A later run whose consulted things are as they were (`World::still`) takes them as they are: an edit to
 //! a workspace file derives no constant again.
@@ -204,35 +204,26 @@ fn key(programs: &[&str], root: &Path, options: &serde_json::Value, wanted: &BTr
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The file the constants are kept in, beside the content store: `<content store>.phases`, where the phase store
-/// was (its tables are gone; t33 step 1 moves these rows to the facts).
-fn store_path() -> Option<std::path::PathBuf> {
-    super::tape_cache_path().map(|p| std::path::PathBuf::from(format!("{}.phases", p.display())))
-}
-
-fn table(db: &rusqlite::Connection) -> Result<()> {
-    db.execute_batch("CREATE TABLE IF NOT EXISTS constant_rows(key TEXT PRIMARY KEY, rows TEXT, consulted TEXT) WITHOUT ROWID;")?;
-    Ok(())
+/// The record the constants of `key` are kept under, among phase 0's run records (`content_store::observe`): read
+/// with the observer's other records before the run, written behind it by the observer's writer (decision 0104).
+fn record_key(key: &str) -> String {
+    format!("constants:{key}")
 }
 
 /// The constants kept under `key`, when what their run consulted is as it was.
 fn kept(key: &str, root: &Path, prog: &Program) -> Result<Option<Derived>> {
-    let Some(path) = store_path().filter(|p| p.exists()) else { return Ok(None) };
-    let db = rusqlite::Connection::open(&path)?;
-    table(&db)?;
-    let Some((rows, consulted)): Option<(String, String)> = db.query_row("SELECT rows, consulted FROM constant_rows WHERE key=?1", [key], |r| Ok((r.get(0)?, r.get(1)?))).ok() else { return Ok(None) };
-    let consulted: Vec<(String, String, String)> = serde_json::from_str(&consulted).map_err(|e| super::super::Error::Plan(e.to_string()))?;
+    let Some((consulted, rows)) = super::observe(|o| o.run_record(&record_key(key))) else { return Ok(None) };
+    let consulted = super::reuse::decode_consulted(&consulted);
     if !super::world::World::new(root, prog).still(&consulted) {
         return Ok(None);
     }
-    let rows = serde_json::from_str(&rows).map_err(|e| super::super::Error::Plan(e.to_string()))?;
+    let rows = serde_json::from_slice(&rows).map_err(|e| super::super::Error::Plan(e.to_string()))?;
     Ok(Some((rows, consulted)))
 }
 
 fn keep(key: &str, rows: &std::collections::BTreeMap<String, String>, consulted: &[(String, String, String)]) -> Result<()> {
-    let Some(path) = store_path() else { return Ok(()) };
-    let db = rusqlite::Connection::open(&path)?;
-    table(&db)?;
-    db.execute("INSERT OR REPLACE INTO constant_rows VALUES (?1, ?2, ?3)", rusqlite::params![key, serde_json::to_string(rows).unwrap_or_default(), serde_json::to_string(consulted).unwrap_or_default()])?;
+    let rows = serde_json::to_vec(rows).unwrap_or_default();
+    let consulted = super::reuse::encode_consulted(consulted);
+    super::observe(|o| o.put_run_record(&record_key(key), &consulted, &rows));
     Ok(())
 }
