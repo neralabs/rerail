@@ -2466,3 +2466,39 @@ The model test checks current-over-prior precedence, complete-zero versus unknow
 No rule-name preference, statement loop, or sampling-limit increase was introduced.
 The collector chooses its representation automatically within fixed memory bounds.
 Artifacts: `final-planner-o125`, `final-planner-after`, `final-planner-comparison`, and their gate and build logs.
+
+## Bounded statistical-planning spike
+
+Implemented the requested experiment in `scripts/profiling/statistical_planning`.
+The production engine remains at `fbc6814d5`; this change adds a capture wrapper, offline planner, tests, and measured results.
+A fresh O125 native-lab capture provides six immutable snapshots from three affected strata.
+Every tested connected join order matches native output. Three synthetic cases and historical poor-order controls supplement these inputs.
+The experiment uses 32 seeds, with one shared 2 MiB / 512-seed / 50,000-work budget per job and policy.
+Retained statistics, probe observations, and planning scratch peak at 286,976 bytes.
+Prepared source indexes and exhaustive oracle costs are separate and explicitly reported.
+
+The current captured orders are already optimal among the tested positive-join orders.
+There is no current-engine speedup demonstrated by this experiment.
+Exact demanded-key counters and the marginal estimator repair the historical controls; correlated tuple samples add no measured improvement here.
+Cold conservative probes make no changes to those controls and add 3.2% work.
+Prior measured current-order work on the same relation revisions enables a 17.3% reduction, including probe work.
+Its acquisition is a prior execution cost, not free oracle evidence.
+Synthetic stress tests show larger benefits, but their baselines are authored orders rather than production decisions.
+
+Collection groups watched keys by column mask. A test verifies that 1,000 keys require one lookup per row, not 1,000 comparisons.
+Summaries and probe observations share immutable revisions across rules.
+Missing counters and censored probes remain unknown. Stale revisions cannot reuse evidence.
+Nine focused tests cover these contracts, budgets, tuple correlation, and safe improvement selection.
+The raw artifacts include the initial red tests and the final passing log.
+
+Failures informed the spike: an early heavy-tail fixture repeated identical tuples, so set deduplication removed the intended tail.
+It now uses distinct tuples. Early optimistic pilot results are superseded.
+Tests also caught double-charged seed costs and missing revision validation.
+A separate selector test caught an uncertain alternative blocking a demonstrated improvement over the current order.
+The fix requires evidence of improvement over current, rather than proof that the challenger dominates every alternative.
+
+The actionable direction is bounded demanded counters during existing ingestion, followed by selective revision-keyed probes where evidence can pay for them.
+Blanket collection adds overhead: Python collection takes about 99 ms on the current snapshots in the final run, before planning.
+No additional production collection pass or automatic probing path is justified by these results.
+Retained statistics should follow normal typed facts and rule-defined caches, with population/revision keys and global limits.
+The README records supported semantics, index prerequisites, measurements, reproduction commands, and remaining heavy-tail limitations.
