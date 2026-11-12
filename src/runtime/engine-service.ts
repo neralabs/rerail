@@ -236,6 +236,7 @@ interface SuspendedEntry {
 /** The service's suspended sessions as its runtimes see them: one opening a session takes its suspension back. */
 function suspendedSessions(state: EngineRoutingState): SuspendedSessions {
   return {
+    get: sessionId => state.suspended.get(sessionId)?.suspension,
     take: (sessionId) => {
       const entry = state.suspended.get(sessionId);
       state.suspended.delete(sessionId);

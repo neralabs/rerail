@@ -99,6 +99,17 @@ export type ObservedSource = Omit<Source, "text" | "deleted">;
 /** Baseline observations keyed by workspace directory, shared so later sessions reuse digests of unchanged sources. */
 export type SourceObservationCache = Map<string, ReadonlyMap<string, ObservedSource>>;
 /**
+ * Where a session's source walks stood when its runtime suspended it (`CodeRuleBridge.walkResume`), for the walks of the
+ * session's next open to go on from: what was written since `since` is judged as the open session's next walk would have
+ * judged it, so another writer's change made while the session was suspended is recorded, not taken as the baseline.
+ */
+export interface SessionWalkResume {
+  /** Filesystem-clock reading: the earlier start of the last finished walks of the session folder and of the other worktrees. */
+  readonly since: number;
+  /** Each source whose text the evaluator held as the session's (`HELD_BY_EVALUATOR`), as last observed; undefined when gone. */
+  readonly held: ReadonlyMap<string, ObservedSource | undefined>;
+}
+/**
  * A file the auditor may read: `unlisted` when no language lists it, so it is read as `UNLISTED_TEXT_LANGUAGE` and,
  * being binary (a NUL byte in its first bytes, `binaryPrefix`, tested before it is read whole) or no regular file, is
  * no source at all and skipped without a read error.
@@ -402,17 +413,25 @@ interface WorktreeDiscovery {
   error: string | undefined;
   /** The unlisted files the last walk found too large to read, as `SourceDiscovery.unread`. */
   unread: ReadonlyMap<string, { readonly stamp: string; readonly readError: string }>;
+  /** Filesystem-clock reading taken as the last finished walk began; undefined until one finishes. */
+  walkedFrom: number | undefined;
 }
 
 function worktreeDiscovery(): WorktreeDiscovery {
   return {
     roots: new Set(), fresh: new Set(), baselineRoots: new Set(), walk: undefined, requested: false, nextWalkAt: 0, error: undefined, unread: new Map(),
+    walkedFrom: undefined,
   };
 }
 
 interface SourceDiscovery {
-  /** Filesystem-clock reading taken before the walk; files stamped at or after it may hold this session's shell writes. */
+  /**
+   * Filesystem-clock reading taken before the walk; files stamped at or after it may hold this session's shell writes.
+   * A session opened again after its runtime suspended it starts where its walks stood then (`SessionWalkResume.since`).
+   */
   readonly startedAt: number;
+  /** Filesystem-clock reading taken as the session folder's last finished walk began; `startedAt` until one finishes. */
+  walkedFrom: number;
   readonly root: string;
   cancelled: boolean;
   /** Resolves once every requested pass has run; undefined while no walk is in flight. */
@@ -795,6 +814,14 @@ export class CodeRuleBridge {
    */
   readonly #texts = new Map<string, { text: string; bytes: number; origin: TextOrigin }>();
   #textBytes = 0;
+  /**
+   * The sources the evaluator held as the session's before its runtime suspended it (`SessionWalkResume.held`), whose
+   * text the session's new evaluator never saw: a change another writer makes to one is recorded as it was before the
+   * suspension, until the source's text is next kept or dropped.
+   */
+  readonly #resumedHeld = new Set<string>();
+  /** Where the first `openWorkspace` goes on from, for a session its runtime suspended; taken once. */
+  #resume: SessionWalkResume | undefined;
   /** The calls the runtime answered while the evaluator opened (`unwatchedCall`), until the workspace opens and takes them. */
   #unwatched = new ToolCallWindows();
   #lastResponse = emptyResponse(0);
@@ -836,12 +863,15 @@ export class CodeRuleBridge {
       worktreeWalkGapMs?: number;
       /** `FIRST_SIGHT_TEXT_BYTES` by default. */
       firstSightTextBytes?: number;
+      /** Where the session's walks stood when its runtime suspended it: its first walk goes on from there, not from a baseline. */
+      resume?: SessionWalkResume;
     } = {},
   ) {
     this.#cwd = resolve(cwd);
     this.#auditor = auditor;
     this.#onRevision = options.onRevision;
     this.#observations = options.observations;
+    this.#resume = options.resume;
     this.#discoveryWaitMs = options.discoveryWaitMs ?? BOUNDARY_DISCOVERY_WAIT_MS;
     this.#onDiscoveryPending = options.onDiscoveryPending;
     this.#onIgnoredEdit = options.onIgnoredEdit;
@@ -865,6 +895,7 @@ export class CodeRuleBridge {
       this.#commands.clear();
       this.#observed.clear();
       this.#texts.clear();
+      this.#resumedHeld.clear();
       this.#textBytes = 0;
       this.#firstSightBytes = 0;
       this.#discovery = undefined;
@@ -877,8 +908,9 @@ export class CodeRuleBridge {
       this.#sessionId = sessionId;
       this.#revision = 0;
       this.#lastResponse = emptyResponse(0);
+      const since = this.#takeResume(startedAt);
       const discovery: SourceDiscovery = {
-        startedAt, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
+        startedAt: since, walkedFrom: since, root, cancelled: false, idle: undefined, baselineComplete: false, requested: undefined,
         versions: new Map(), baselineRoots: new Set(), worktrees: worktreeDiscovery(), error: undefined, unread: new Map(), reported: new Map(), pendingReported: false,
         heads: new Map(), git, unmerged: new Map(), passedCheckouts: new Set(), readUnmerged: gitUnmergedReader(), toolCalls: this.#unwatched,
       };
@@ -887,6 +919,49 @@ export class CodeRuleBridge {
       // The lowest priority: whichever boundary first waits on the baseline labels what it finds.
       void this.#requestDiscovery(discovery, "edit");
     });
+  }
+
+  /**
+   * Where the session's walks start: `now`, or for a session its runtime suspended, where they stood then, with each
+   * source the evaluator held kept as last observed, so the first walk compares it as the open session's next walk would
+   * have, and finds it changed or gone.
+   */
+  #takeResume(now: number): number {
+    const resume = this.#resume;
+    this.#resume = undefined;
+    if (resume === undefined) return now;
+    for (const [path, observed] of resume.held) {
+      this.#resumedHeld.add(path);
+      if (observed !== undefined) this.#observed.set(path, observed);
+    }
+    return Math.min(now, resume.since);
+  }
+
+  /**
+   * Where the session's walks stand (`SessionWalkResume`), for its runtime to suspend it; undefined while the workspace is
+   * not open. Read in turn with the walks' changes, so none lands in it half applied.
+   */
+  walkResume(): Promise<SessionWalkResume | undefined> {
+    return this.#enqueue(() => Promise.resolve(this.#walkResumeNow()));
+  }
+
+  #walkResumeNow(): SessionWalkResume | undefined {
+    const discovery = this.#discovery;
+    if (discovery === undefined || discovery.cancelled) return undefined;
+    const held = new Map<string, ObservedSource | undefined>();
+    for (const path of this.#heldPaths()) held.set(path, this.#observed.get(path));
+    return { since: Math.min(discovery.walkedFrom, discovery.worktrees.walkedFrom ?? discovery.walkedFrom), held };
+  }
+
+  /** The sources whose text the evaluator holds as the session's (`#heldByEvaluator`). */
+  #heldPaths(): string[] {
+    return [...this.#resumedHeld, ...[...this.#texts].filter(([, entry]) => HELD_BY_EVALUATOR[entry.origin]).map(([path]) => path)];
+  }
+
+  /** Whether the evaluator holds `path`'s text as the session's: one it audited, or one it held before a suspension. */
+  #heldByEvaluator(path: string): boolean {
+    const held = this.#texts.get(path);
+    return (held !== undefined && HELD_BY_EVALUATOR[held.origin]) || this.#resumedHeld.has(path);
   }
 
   async begin(
@@ -1245,6 +1320,7 @@ export class CodeRuleBridge {
       this.#commands.clear();
       this.#observed.clear();
       this.#texts.clear();
+      this.#resumedHeld.clear();
       this.#textBytes = 0;
       this.#firstSightBytes = 0;
       this.#discovery = undefined;
@@ -1598,6 +1674,7 @@ export class CodeRuleBridge {
   }
 
   #finishSessionWalk(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
+    discovery.walkedFrom = walk.observedAt;
     discovery.baselineComplete = true;
     discovery.baselineRoots = scan.failedRoots;
     discovery.error = scan.errors.length === 0 ? undefined : scan.errors.join("; ");
@@ -1609,6 +1686,7 @@ export class CodeRuleBridge {
 
   #finishWorktreeWalk(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
     const worktrees = discovery.worktrees;
+    worktrees.walkedFrom = walk.observedAt;
     for (const worktree of walk.worktrees) worktrees.fresh.delete(worktree);
     worktrees.baselineRoots = scan.failedRoots;
     worktrees.error = scan.errors.length === 0 ? undefined : scan.errors.join("; ");
@@ -1768,8 +1846,7 @@ export class CodeRuleBridge {
    * is kept for the session's next edit of the source.
    */
   #sortUnownedWrite(edit: CodeRuleEdit, keptAs: "git" | "other-writer" | undefined, notOwn: CodeRuleEdit[]): void {
-    const held = this.#texts.get(edit.path);
-    if (held !== undefined && HELD_BY_EVALUATOR[held.origin])
+    if (this.#heldByEvaluator(edit.path))
       notOwn.push(edit.generatedText === undefined ? edit : { ...withoutUncaptured(edit), previousText: edit.generatedText });
     // The next shell edit measures from the text left, which neither the index nor `HEAD` may hold.
     else if (keptAs !== undefined && edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText, keptAs);
@@ -1897,11 +1974,12 @@ export class CodeRuleBridge {
   }
 
   /**
-   * The walk is a baseline, or it first sees `path` under a subtree a walk could not read or in a worktree whose first walk
-   * is still to finish.
+   * The walk is a baseline, but for a source the evaluator held before a suspension (`#resumedHeld`), or it first sees
+   * `path` under a subtree a walk could not read or in a worktree whose first walk is still to finish.
    */
   #baselinePath(discovery: SourceDiscovery, path: string, before: ObservedSource | undefined, baseline: boolean): boolean {
-    if (baseline) return true;
+    // A source held before a suspension is compared with what was last observed of it, as a walk of the open session would.
+    if (baseline) return !this.#resumedHeld.has(path);
     return before === undefined
       && [discovery.baselineRoots, discovery.worktrees.baselineRoots, discovery.worktrees.fresh].some(roots => underBaselineRoot(roots, path));
   }
@@ -2231,6 +2309,7 @@ export class CodeRuleBridge {
   }
 
   #forgetText(path: string): void {
+    this.#resumedHeld.delete(path);
     const entry = this.#texts.get(path);
     if (entry !== undefined) this.#dropText(path, entry);
   }

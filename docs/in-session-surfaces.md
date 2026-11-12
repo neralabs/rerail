@@ -231,6 +231,8 @@ a TypeScript repository's five packs on a Windows laptop); nothing waits for tha
 
 - An edit made meanwhile is not checked at its own result. The turn's end checks it, and its steer reaches the agent at
   its next tool call, a turn later than usual.
+- A change another program made while the session was quiet, to a file the session had edited, is recorded in Log
+  when the session opens again, as it is while a session is active.
 - Stopping the daemon ends the session, as it ends every open one.
 
 </details>
