@@ -1,6 +1,6 @@
 # Tests in rule files: the spike
 
-A sample of decision 0119 (`docs/final-shape/decisions/0119-tests-in-rr-files.md`): a rule file that carries its
+A sample of decision 0130 (`docs/final-shape/decisions/0130-tests-in-rr-files.md`): a rule file that carries its
 own tests. `print-calls.rr` uses every form a test has:
 
 - fixtures written inline (a fenced text) and read from a file beside the rule (`from`);

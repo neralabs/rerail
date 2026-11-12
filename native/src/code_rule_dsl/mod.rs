@@ -4462,7 +4462,7 @@ impl CodeRuleDslRuntime {
     }
 
     /// The tests the `.rr` files under `paths_json` (a JSON array of files and directories) carry, each run (decision
-    /// 0119, `rerail-engine test-rr`): `[{file, test, line, status, failures, findings}]` as JSON. `rerail rules test`
+    /// 0130, `rerail-engine test-rr`): `[{file, test, line, status, failures, findings}]` as JSON. `rerail rules test`
     /// calls it for a `.rr` file.
     #[napi(catch_unwind)]
     pub fn test_rr(paths_json: String, filter: Option<String>) -> Result<String> {

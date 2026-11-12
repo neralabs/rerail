@@ -1601,7 +1601,7 @@ fn close_beside(db: Connection) {
 }
 
 /// The store the process's runs use instead of the machine's while one is set (`use_store`): testing mode's
-/// (decision 0119), whose runs must not read what other runs left, nor wait behind their writes.
+/// (decision 0130), whose runs must not read what other runs left, nor wait behind their writes.
 static STORE: std::sync::RwLock<Option<std::path::PathBuf>> = std::sync::RwLock::new(None);
 
 /// While the guard lives, every run of the process (without `RERAIL_TAPE_CACHE`) uses the store at `path`.

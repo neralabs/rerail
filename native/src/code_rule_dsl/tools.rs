@@ -190,7 +190,7 @@ pub fn read_rr(path: &std::path::Path) -> Result<String, String> {
 
 /// Convert whole AST policies for review. Unsupported clauses refuse the entire candidate.
 /// Each rule (a rule document, or a draft `{ kind, rule, cases }`) converted to `.rr`. A draft's cases, or the cases
-/// file `--cases` names for the rule after it, become the converted file's tests (decision 0119): `tests` in the
+/// file `--cases` names for the rule after it, become the converted file's tests (decision 0130): `tests` in the
 /// report, and after the program in `program`. They are printed even when the rule needs a hand-written port.
 pub fn convert_rr(paths: &[std::path::PathBuf]) -> serde_json::Value {
     convert_rr_with(&paths.iter().map(|p| (p.clone(), None)).collect::<Vec<_>>())
@@ -274,7 +274,7 @@ pub fn run_rr(
     run_program(path, program, &files, root, out, options)
 }
 
-/// `run_rr` of a program already read: `path`'s, or a test's (decision 0119, `rr::testing`).
+/// `run_rr` of a program already read: `path`'s, or a test's (decision 0130, `rr::testing`).
 pub fn run_program(
     path: &std::path::Path,
     program: super::logic::front::Program,
@@ -428,7 +428,7 @@ fn with_reuse(options: &serde_json::Value) -> serde_json::Value {
 
 /// [`program_text`] under the name the wasm build's callers use: a rule as written in the library, its includes
 /// and `core.rr` resolved, as one program's text.
-/// The file's text is kept as written (`program_text`), so its tests and fixture sets (decision 0119) go with it.
+/// The file's text is kept as written (`program_text`), so its tests and fixture sets (decision 0130) go with it.
 pub fn flatten(path: &std::path::Path) -> Result<String, String> {
     program_text(path)
 }
@@ -575,9 +575,9 @@ pub fn cli(args: &[String]) -> Result<String, String> {
                 Err(format!("{failures} rules failed the .rr reader"))
             } else { Ok(text) }
         }
-        // Each test the files carry (decision 0119).
+        // Each test the files carry (decision 0130).
         Some("test-rr") => crate::code_rule_dsl::logic::rr::testing::command(&args[1..]),
-        // `--cases <file>` gives the next rule its cases (decision 0119).
+        // `--cases <file>` gives the next rule its cases (decision 0130).
         Some("convert-rr") if args.len() > 1 => {
             let (mut rules, mut cases) = (Vec::new(), None);
             let mut rest = args[1..].iter();

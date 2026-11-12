@@ -583,7 +583,7 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
 }
 
 /// A file's program from its modules' statements (`program`): its names checked, its own rules grounded, and lowered,
-/// as `read_file` reads it. Testing mode (`rr::testing`, decision 0119) gives the file's statements with a test's
+/// as `read_file` reads it. Testing mode (`rr::testing`, decision 0130) gives the file's statements with a test's
 /// spliced in.
 pub fn lower_files(path: &Path, statements: Files) -> Result<Program, Error> {
     let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;

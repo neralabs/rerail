@@ -334,7 +334,7 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
                 _ => return not_yet(format!(".pragma {words:?}")).map_err(at),
             },
             Item::Policy(document) => l.prog.policies.push(document),
-            // A test is never the program's (decision 0119): testing mode splices its statements into a program of
+            // A test is never the program's (decision 0130): testing mode splices its statements into a program of
             // its own (`rr::testing`).
             Item::Test { .. } | Item::Fixtures { .. } => {}
             Item::Setting { key, text } => l.prog.settings.push((key, text)),

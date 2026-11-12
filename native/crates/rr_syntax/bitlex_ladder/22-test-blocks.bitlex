@@ -8,7 +8,7 @@
 #       .expect B101 at "a.py":1
 #   .end
 #
-# The engine's parser (logic/rr/syntax.rs) is the reference (decision 0119). A `.test` or a
+# The engine's parser (logic/rr/syntax.rs) is the reference (decision 0130). A `.test` or a
 # `.fixtures` block runs to its `.end`; its statements are a file's, but for another block:
 # blocks do not nest. Its `.`, its word, `uses` and its `,`, and the `.end` are implied; its
 # name, `exactly` and each set `uses` names are stored. What this step adds:
@@ -299,7 +299,7 @@ tree rr {
                               | line (directive | name: identifier | name: ('policy' as identifier))
                               | name: identifier (argument: word | setting_punctuation)* (argument: json | newline)
                               | name: ('policy' as identifier) ((argument: word | setting_punctuation)+ (argument: json | newline) | newline))
-  # A `.test` or a `.fixtures` block (decision 0119): the node opened as a setting at the `.` is
+  # A `.test` or a `.fixtures` block (decision 0130): the node opened as a setting at the `.` is
   # the block. Its statements are a file's, read with `in_block` set: no block opens there.
   flag in_block
   choice test_tail      = drop retag test_block 'test' name: identifier [modifier: ('exactly' as identifier)] ['uses' argument: identifier (',' argument: identifier)*] block_body

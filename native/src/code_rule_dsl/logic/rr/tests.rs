@@ -2858,7 +2858,7 @@ fn quoting_escapes_only_what_needs_it() {
     assert_eq!(super::quote("a\"b\\c\nd\te\u{1}"), "\"a\\\"b\\\\c\\nd\\te\\u{1}\"");
 }
 
-// ---------------------------------------------------------------- tests in rule files (decision 0119)
+// ---------------------------------------------------------------- tests in rule files (decision 0130)
 
 /// `text` with each `.test` … `.end` block's lines blank: its program, were tests part of it, would differ.
 fn without_tests(text: &str) -> String {
@@ -2905,7 +2905,7 @@ fn rule_files_pass_their_own_tests() {
     assert!(failed.is_empty(), "{failed:#?}");
 }
 
-/// A test is no part of its file's program (decision 0119): the program, and so every key made of it, is the one the
+/// A test is no part of its file's program (decision 0130): the program, and so every key made of it, is the one the
 /// file has with its tests' lines blank.
 #[test]
 fn a_rule_files_tests_are_no_part_of_its_program() {
@@ -2988,7 +2988,7 @@ fn run_tests_of(name: &str, text: &str) -> Vec<(String, Result<Vec<String>, Stri
     out
 }
 
-/// A unit test (decision 0119): `.given r` drops r's rules, so r holds the test's facts alone, and the test reads
+/// A unit test (decision 0130): `.given r` drops r's rules, so r holds the test's facts alone, and the test reads
 /// no file. A file of rules with no `.violation` (a library's) is tested so too. `.expect only` names every row.
 #[test]
 fn a_unit_test_gives_a_relation_its_rows_and_reads_no_file() {
