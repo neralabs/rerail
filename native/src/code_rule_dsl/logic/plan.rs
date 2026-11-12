@@ -3203,6 +3203,9 @@ struct Driving<'a> {
     ngates: usize,
     explained: Vec<(String, Option<usize>, Option<super::profile::RulePlan>, f64, u64)>,
     counted: Vec<Vec<(u64, u64)>>,
+    /// Per probe line, the orders it ran in before a replan changed it, each with its own step counts: `counted`
+    /// holds the current order's alone, so a step's counts are never another order's step at the same place.
+    earlier: Vec<Vec<(Vec<Step>, Vec<(u64, u64)>)>>,
     timed: Vec<f64>,
     chunk: i64,
     /// Relation/column versions and their dependent probe plans.
@@ -5035,6 +5038,26 @@ impl<'a> Run<'a, '_> {
             if before > kept.len() {
                 super::profile::decision("rules over empty relations", || format!("{} of {before} rules not run: each joins a relation of a lower stratum that has no rows", before - kept.len()));
             }
+            // The same inside the component: a relation of it that starts empty and that nothing fills (no rule left
+            // derives it; no facts, base, request, answer, level or gate writes it) stays empty, so a rule joining it
+            // derives nothing either; until none is left out. In a maintained run `pcall__ins`'s rules all joined
+            // empty input deltas, and the probes of `pfn__ins :- pcall__ins(…), pv(…), fv(…)` by `pv`'s and `fv`'s
+            // deltas read 341,837 rows each before the empty `pcall__ins` rejected them (O125 step 06).
+            let written: BTreeSet<&str> = levels.iter().flatten().map(String::as_str)
+                .chain(gates.iter().map(|(g, _)| g.as_str()))
+                .chain(based.keys().map(String::as_str))
+                .chain(fillable.iter().copied())
+                .chain(scc.iter().map(String::as_str).filter(|r| prog.facts.get(*r).is_some_and(|f| !f.is_empty())))
+                .collect();
+            let mut kept = kept;
+            loop {
+                let heads: BTreeSet<&str> = kept.iter().map(|r| r.head.rel.as_str()).collect();
+                let unfilled = |rel: &str| scc.contains(rel) && !heads.contains(rel) && !written.contains(rel);
+                let n = kept.len();
+                kept.retain(|r| !r.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && unfilled(&a.rel))));
+                if kept.len() == n { break; }
+                super::profile::decision("rules over empty relations", || format!("{} rules not run: each joins a relation of its component that starts empty and that nothing fills", n - kept.len()));
+            }
             kept
         };
         let typed: HashMap<String, String> = rels.iter().map(|r| ((*r).clone(), prog_types(prog, r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>())).collect();
@@ -5359,6 +5382,7 @@ impl<'a> Run<'a, '_> {
             ngates: gates.len(),
             explained,
             counted,
+            earlier: Vec::new(),
             timed,
             chunk: 1,
             replanned_at,
@@ -5378,7 +5402,7 @@ impl<'a> Run<'a, '_> {
     /// the wave ran.
     fn drive(&mut self, d: Box<Driving<'a>>, native_rels: &BTreeSet<String>, numbers: &rustc_hash::FxHashMap<*const Rule, usize>) -> Result<Native<'a>> {
         let prog = self.prog;
-        let Driving { scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut timed, mut chunk, mut replanned_at, started, placed, shape, cpu_own, lab, not_taken } = *d;
+        let Driving { scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut earlier, mut timed, mut chunk, mut replanned_at, started, placed, shape, cpu_own, lab, not_taken } = *d;
         let scc = &scc_owned;
         let rels: Vec<&String> = rels_owned.iter().collect();
         let planning = |r: &Rule, what: &str| {
@@ -5409,7 +5433,7 @@ impl<'a> Run<'a, '_> {
                     drop(rels);
                     Box::new(Driving {
                         scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, probes, order_rules, nseeds, seeds, ngates,
-                        explained, counted, timed, chunk, replanned_at, started, placed, shape, lab, not_taken,
+                        explained, counted, earlier, timed, chunk, replanned_at, started, placed, shape, lab, not_taken,
                         cpu_own: if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_at } else { 0.0 },
                     })
                 }};
@@ -5516,7 +5540,13 @@ impl<'a> Run<'a, '_> {
                     .whole_join_spec(&r.head, &new, Some(at), &ri, scc, &native_rels)
                     .ok_or_else(|| Error::Plan(format!("a replanned probe of {} has no native step", r.head)))?;
                 self.fx().reprobe(&name, nseeds + k, &Reprobe::Join(spec))?;
-                probes[k].2 = new;
+                // The counts so far are the old order's: kept with it, and the new order's counted from nothing. Summed
+                // by place, a step's counts were another order's step there (`pfn`'s `fv` rows shown at `pcall__ins`).
+                let line = nseeds + k;
+                if earlier.len() <= line { earlier.resize_with(line + 1, Vec::new); }
+                let ran = counted.get_mut(line).map(std::mem::take).unwrap_or_default();
+                if ran.iter().any(|&(a, _)| a > 0) { earlier[line].push((std::mem::replace(&mut probes[k].2, new), ran)); }
+                else { probes[k].2 = new; }
             }
             // Statistics can now end a chunk early. Bound its wave budget even in a long sequence of such
             // checkpoints; casting an overflowing budget to u32 would accidentally request an unbounded run.
@@ -5545,13 +5575,17 @@ impl<'a> Run<'a, '_> {
         });
         if profiling {
             let (u, s) = corpus::thread_usage();
-            let work: u64 = counted.iter().flatten().map(|(a, _)| *a).sum();
+            let work: u64 = counted.iter().chain(earlier.iter().flatten().map(|(_, c)| c)).flatten().map(|(a, _)| *a).sum();
             super::profile::report::placed(&stratum_key(scc), &placed, &shape, work, u + s - cpu_at, device.as_ref());
         }
         if super::profile::on() {
             let empty = Vec::new();
             let kinds = seeds.iter().map(|r| format!("seed {}", r.head)).chain(probes.iter().map(|(r, ai, _)| format!("join {} (delta at {ai})", r.head)));
             for ((k, o), kind) in orders.iter().chain(probes.iter().map(|p| &p.2)).enumerate().zip(kinds) {
+                // Each earlier order with its own counts (its time is in the current order's).
+                for (was, c) in earlier.get(k).into_iter().flatten() {
+                    super::profile::native(format!("{kind}: {}", shown(was).join(" , ")), c, 0.0);
+                }
                 super::profile::native(format!("{kind}: {}", shown(o).join(" , ")), counted.get(k).unwrap_or(&empty), timed.get(k).copied().unwrap_or(0.0));
             }
             // After the native plans: they are charged to this stratum's `engine run (joins)` by the current span.
@@ -5591,6 +5625,10 @@ impl<'a> Run<'a, '_> {
             }
             let empty = Vec::new();
             for (k, o) in orders.iter().chain(probes.iter().map(|p| &p.2)).enumerate() {
+                for (was, c) in earlier.get(k).into_iter().flatten() {
+                    let work: u64 = c.iter().map(|(a, _)| a).sum();
+                    text += &format!("  work={work} (an earlier order) {}\n    {}\n", c.iter().map(|(a, b)| format!("{a}:{b}")).collect::<Vec<_>>().join(","), shown(was).join(" , "));
+                }
                 let line: Vec<String> = counted.get(k).unwrap_or(&empty).iter().map(|(a, b)| format!("{a}:{b}")).collect();
                 let work: u64 = counted.get(k).unwrap_or(&empty).iter().map(|(a, _)| a).sum();
                 text += &format!("  work={work} {}\n    {}\n", line.join(","), shown(o).join(" , "));
