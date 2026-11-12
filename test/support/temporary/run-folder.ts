@@ -35,6 +35,9 @@ const HEARTBEAT_MS = MINUTE_MS;
 /** How long the owner file of a run from another place may go untouched before that run counts as ended. */
 const QUIET_MS = 10 * MINUTE_MS;
 const VARIABLES = ["TMPDIR", "TEMP", "TMP"] as const;
+/** Where a run folder goes when the temp folder leaves no room below it for the sockets, unless the variable names another folder. */
+const SHORT_TEMP_VARIABLE = "RERAIL_TEST_SHORT_TEMP";
+const SHORT_TEMP = "/tmp";
 /** The longest Unix socket path in bytes, the terminating NUL aside, as src/runtime/engine-service.ts counts it. */
 const SOCKET_PATH_BYTES = process.platform === "linux" || process.platform === "android" ? 107 : 103;
 /**
@@ -84,11 +87,13 @@ interface Folder {
 
 /**
  * Makes this run's folder, with its owner file, points the temp folder variables at it, and starts removing ended runs'
- * folders. The run's end removes its folder and waits for the others.
+ * folders. The run's end removes its folder and waits for the others. A run whose folder cannot be made runs as runs
+ * did before there was a run folder.
  */
 export default async function setUpRunFolder(): Promise<() => Promise<void>> {
   const parent = runFolderParent();
-  const folder = await mkdtemp(join(parent, `${PREFIX}${process.pid}-`));
+  const folder = await makeRunFolder(parent);
+  if (folder === undefined) return async () => undefined;
   const place = thisPlace();
   const owner: Owner = { pid: process.pid, place: place ?? "", touchedMs: Date.now() };
   await writeOwner(folder, owner);
@@ -107,17 +112,31 @@ export default async function setUpRunFolder(): Promise<() => Promise<void>> {
 
 /**
  * Where this run's folder goes: the temp folder, unless the deepest Unix socket a test binds would not fit below a run
- * folder there, when `/tmp` takes its place. Tests, and the daemons they start, listen on sockets below the temp
- * folder, and a socket path holds at most 107 bytes on Linux and 103 on macOS: macOS's per-user temp folder
- * (`/var/folders/<2>/<28>/T`, 46 bytes) never leaves the room, and a TMPDIR set by hand may not. Windows sockets are
- * named pipes, with no such limit. A run started inside another run's folder stays there, so that run's end removes
- * what this one leaves.
+ * folder there, when `/tmp` (or the folder RERAIL_TEST_SHORT_TEMP names) takes its place. Tests, and the daemons they
+ * start, listen on sockets below the temp folder, and a socket path holds at most 107 bytes on Linux and 103 on macOS:
+ * macOS's per-user temp folder (`/var/folders/<2>/<28>/T`, 46 bytes) never leaves the room, and a TMPDIR set by hand
+ * may not. Windows sockets are named pipes, with no such limit. A run started inside another run's folder stays there,
+ * so that run's end removes what this one leaves.
  */
 function runFolderParent(): string {
   const temp = tmpdir();
   if (process.platform === "win32" || temp.split(sep).some(part => RUN_FOLDER.test(part))) return temp;
   const deepestSocket = Buffer.byteLength(join(temp, `${PREFIX}${process.pid}-XXXXXX`)) + DEEPEST_SOCKET_BYTES;
-  return deepestSocket <= SOCKET_PATH_BYTES ? temp : "/tmp";
+  return deepestSocket <= SOCKET_PATH_BYTES ? temp : (process.env[SHORT_TEMP_VARIABLE] ?? SHORT_TEMP);
+}
+
+/**
+ * Makes this run's folder in `parent`. Undefined, with one line on stderr, when `parent` refuses it, as a read-only
+ * /tmp in a sandbox does: the run then leaves the temp folder variables as they are, so its tests make their folders
+ * where they did before there was a run folder, and every test still runs.
+ */
+async function makeRunFolder(parent: string): Promise<string | undefined> {
+  try {
+    return await mkdtemp(join(parent, `${PREFIX}${process.pid}-`));
+  } catch (error) {
+    console.warn(`The test run could not make its folder in ${parent}, so its tests leave their folders in ${tmpdir()}: ${String(error)}`);
+    return undefined;
+  }
 }
 
 /**

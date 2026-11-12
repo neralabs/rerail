@@ -102,17 +102,25 @@ async function scratch(): Promise<{ temp: string; tests: string }> {
   return { temp: join(root, "temp"), tests: join(root, "tests") };
 }
 
-/** This process's environment with every temp folder variable naming `temp`, and none of this vitest worker's own. */
-function runEnvironment(temp: string): NodeJS.ProcessEnv {
-  const environment = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(?:TMPDIR|TEMP|TMP|VITEST.*)$/iu.test(name)));
-  return { ...environment, TMPDIR: temp, TEMP: temp, TMP: temp };
+/**
+ * This process's environment with every temp folder variable naming `temp`, the variables in `extra` added, and none
+ * of this vitest worker's own nor a short temp folder the person set.
+ */
+function runEnvironment(temp: string, extra: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const environment = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !/^(?:TMPDIR|TEMP|TMP|VITEST.*|RERAIL_TEST_SHORT_TEMP)$/iu.test(name)),
+  );
+  return { ...environment, TMPDIR: temp, TEMP: temp, TMP: temp, ...extra };
 }
 
-/** `vitest run` on this checkout's config over the test files in `directory`, with `temp` as its temp folder. */
-function startRun(directory: string, temp: string): Run {
+/**
+ * `vitest run` on this checkout's config over the test files in `directory`, with `temp` as its temp folder and the
+ * variables in `extra`.
+ */
+function startRun(directory: string, temp: string, extra: NodeJS.ProcessEnv = {}): Run {
   const child = spawn(process.execPath, [VITEST, "run", "--root", CHECKOUT, "--dir", directory], {
     cwd: CHECKOUT,
-    env: runEnvironment(temp),
+    env: runEnvironment(temp, extra),
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
@@ -330,5 +338,26 @@ describe("a test run's temporary folders", () => {
     expect(result.code, result.output).toBe(0);
     expect(await readdir(temp)).toEqual([]);
     expect((await readdir("/tmp")).filter(name => name.startsWith(`rerail-vitest-${run.child.pid}-`))).toEqual([]);
+  }, 120_000);
+
+  // A read-only folder stops only a user other than root.
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("are made as before there was a run folder when the short folder refuses one", async () => {
+    const { tests } = await scratch();
+    // Outside this run's folder, as the socket case's temp folder is, and too long for a socket 54 bytes below a run
+    // folder in it. The short folder in its place is read-only, as /tmp is in some sandboxes.
+    const root = await mkdtemp("/tmp/rerail-vitest-long-");
+    scratches.push(root);
+    const temp = join(root, "a-temp-folder-too-long-for-the-socket-tests");
+    const readOnly = join(root, "read-only");
+    await mkdir(temp);
+    await mkdir(readOnly);
+    await chmod(readOnly, 0o500);
+
+    const run = await startRun(join(tests, "leaves"), temp, { RERAIL_TEST_SHORT_TEMP: readOnly }).ended;
+
+    expect(run.code, run.output).toBe(0);
+    expect(run.output).toContain(`The test run could not make its folder in ${readOnly}`);
+    expect((await readdir(temp)).map(name => name.slice(0, "left-".length))).toEqual(["left-"]);
+    expect(await readdir(readOnly)).toEqual([]);
   }, 120_000);
 });
