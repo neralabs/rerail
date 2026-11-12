@@ -1,6 +1,6 @@
 {
   "pack": "complexity",
-  "family": ["python", "ecma", "php", "blade", "rust", "vue"],
+  "family": ["python", "ecma", "php", "blade", "rust", "vue", "java"],
   "capabilities": ["syntax"],
   "tools": [
     { "name": "lizard", "version": "1.24.0" }
@@ -12,6 +12,7 @@
     {"id": "complexity-cyclomatic-php", "upstream": {"tool": "lizard", "rule": "CYCLOMATIC_COMPLEXITY"}, "policy": "rules/complexity-cyclomatic-php.json", "capabilities": ["syntax"], "match": "line", "fixtures": ["php/**"], "lints": [".php"]},
     {"id": "complexity-cyclomatic-blade", "upstream": {"tool": "lizard", "rule": "CYCLOMATIC_COMPLEXITY"}, "policy": "rules/complexity-cyclomatic-blade.json", "capabilities": ["syntax"], "match": "line", "fixtures": ["blade/**"], "lints": [".blade.php"]},
     {"id": "complexity-cyclomatic-rust", "upstream": {"tool": "lizard", "rule": "CYCLOMATIC_COMPLEXITY"}, "policy": "rules/complexity-cyclomatic-rust.json", "capabilities": ["syntax"], "match": "line", "fixtures": ["rust/**"], "lints": [".rs"]},
-    {"id": "complexity-cyclomatic-vue", "upstream": {"tool": "lizard", "rule": "CYCLOMATIC_COMPLEXITY"}, "policy": "rules/complexity-cyclomatic-vue.json", "capabilities": ["syntax"], "match": "line", "fixtures": ["vue/**"], "lints": [".vue"]}
+    {"id": "complexity-cyclomatic-vue", "upstream": {"tool": "lizard", "rule": "CYCLOMATIC_COMPLEXITY"}, "policy": "rules/complexity-cyclomatic-vue.json", "capabilities": ["syntax"], "match": "line", "fixtures": ["vue/**"], "lints": [".vue"]},
+    {"id": "complexity-cyclomatic-java", "upstream": {"tool": "lizard", "rule": "CYCLOMATIC_COMPLEXITY"}, "policy": "candidates/rules/complexity-cyclomatic-java.json", "capabilities": ["syntax"], "match": "line", "fixtures": ["java/**"], "lints": [".java"], "examples": {"caught": {"path": "src/main/java/com/example/Grade.java", "text": "class Grade {\n    String grade(int score, boolean late, boolean extra) {\n        if (score > 90 && !late) {\n            return \"A\";\n        }\n        if (score > 80 || extra) {\n            return \"B\";\n        }\n        if (score > 70) {\n            return \"C\";\n        }\n        for (int bonus : new int[] {1, 2}) {\n            if (bonus > score) {\n                return \"D\";\n            }\n        }\n        return \"F\";\n    }\n}\n"}, "passes": {"path": "src/main/java/com/example/Grade.java", "text": "class Grade {\n    String grade(int score, boolean late) {\n        if (late) {\n            return \"F\";\n        }\n        return score > 90 ? \"A\" : \"B\";\n    }\n}\n"}}}
   ]
 }
