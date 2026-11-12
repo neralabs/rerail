@@ -107,14 +107,18 @@ export function deniedByPathBoundary(path: string): boolean {
   return path.split("/").some(segment => segment !== "" && segment.startsWith(".")) || sensitiveByName(path);
 }
 
-/** How many distinct paths a {@link checkoutPathBoundary} resolves on disk by default; past them a path is judged by name. */
+/**
+ * How many distinct paths in the checkout a {@link checkoutPathBoundary} resolves on disk by default; past them a path
+ * is judged by name.
+ */
 export const CHECKOUT_PATH_RESOLUTIONS = 256;
 
 /** The path boundary within one checkout: where a path leads on disk, and a judgment by its name and by that. */
 export interface CheckoutPathBoundary {
   /**
    * Where `path` leads when a link redirects it: its target's `/`-separated path from the checkout's root, or its
-   * absolute path when it lies outside. Undefined when no link redirects it or it does not resolve.
+   * absolute path when it lies outside. Undefined when `path` itself lies outside the checkout, so it is not looked up,
+   * when no link redirects it, or when it does not resolve.
    */
   leadsTo(path: string): string | undefined;
   /** {@link sensitiveByName}, of the path and of where it leads. */
@@ -129,8 +133,11 @@ function realPath(path: string): string | undefined {
   }
 }
 
-/** The absolute `path` from the absolute `folder`, or undefined when it lies outside: above it, on another drive or host. */
-function pathFrom(folder: string, path: string): string | undefined {
+/**
+ * `path` relative to `folder` when it lies inside it (or is it); undefined when it lies above it or on another drive or
+ * host. A folder named `..cache` is inside.
+ */
+function within(folder: string, path: string): string | undefined {
   const inside = relative(folder, path);
   return inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside) ? undefined : inside;
 }
@@ -160,12 +167,12 @@ export function checkoutPathBoundary(root: string, resolutions = CHECKOUT_PATH_R
     const named = resolve(root, path);
     // Anywhere outside the checkout may be another machine: on Windows a URL's `//host/api` is the network share
     // `\\host\api`, and resolving it blocks until the host answers, about 21 s for one that never does.
-    if (pathFrom(root, named) === undefined && pathFrom(realRoot, named) === undefined) return undefined;
+    if (within(root, named) === undefined && within(realRoot, named) === undefined) return undefined;
     const resolved = realPath(named);
     let led: string | undefined;
     // A path no link redirects is judged by its own name, already.
     if (resolved !== undefined && resolved !== resolve(realRoot, path)) {
-      const inside = pathFrom(realRoot, resolved);
+      const inside = within(realRoot, resolved);
       led = inside === "" ? undefined : (inside ?? resolved).split(sep).join("/");
     }
     targets.set(path, led);
