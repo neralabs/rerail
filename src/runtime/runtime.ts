@@ -946,78 +946,116 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#session(sessionId).turn = turn;
   }
 
+  /** One event, in the order its steps run: the session and its bridge, the event's own step, its host, the answer. */
   async #ingest(event: AdapterEvent): Promise<readonly AdapterDelivery[]> {
-    if (event.kind === "session-start") {
-      this.#sessions.get(event.session.sessionId)?.ruleSync?.refresh();
-      return this.#ingestSessionStart(event);
-    }
+    if (event.kind === "session-start") return this.#ingestSessionStart(event);
+    const { state, host } = await this.#eventSession(event);
+    const bridge = await this.#eventBridge(state, event);
+    await this.#noteTurnWindow(state, event);
+    if (event.kind === "call") await this.#recordCall(state, bridge, event);
+    // Before the session closes with its end: no call still waiting gets a result after it.
+    if (event.kind === "session-end") await this.#settleUnresolvedCalls(state, true);
+    await this.#router(host).ingest(event);
+    noteCallsAwaitingResult(state.callsAwaitingResult, event);
+    if (event.kind === "result") await this.#ingestResult(state, bridge, host, event);
+    const yields = await this.#ingestTurnEnd(state, bridge, host, event);
+    if (event.kind === "session-end") return [];
+    return this.#eventDeliveries(state, event.eventId, yields);
+  }
 
+  /** The session of an event after its start, begun on its host when not yet active, its audit requests and rules refreshed. */
+  async #eventSession(
+    event: Exclude<AdapterEvent, { kind: "session-start" }>,
+  ): Promise<{ state: RuntimeSessionState; host: AdapterSession["host"] }> {
     const { active, descriptor } = this.#resolveEventSession(event);
     if (active === undefined) await this.#router(descriptor.host).start(descriptor);
     const state = this.#session(event.sessionId);
     this.#scheduleAuditRequests(state.descriptor.sessionId);
     state.ruleSync?.refresh();
-    // A code-rule boundary reached while the session's evaluator is still opening (indexing) goes on without code rules.
+    return { state, host: descriptor.host };
+  }
+
+  /**
+   * The session's code-rule bridge for an event, its rules refreshed. A code-rule boundary reached while the session's
+   * evaluator is still opening (indexing) goes on without code rules.
+   */
+  async #eventBridge(state: RuntimeSessionState, event: AdapterEvent): Promise<CodeRuleBridge | undefined> {
     const bridge = CODE_RULE_BOUNDARIES[event.kind] === true ? await this.#codeRuleWorkspaceNow(state, event) : state.codeRuleBridge;
     bridge?.refreshCodeRules();
-    await this.#noteTurnWindow(state, event);
-    if (event.kind === "call") await this.#recordCall(state, bridge, event);
-    // Before the session closes with its end: no call still waiting gets a result after it.
-    if (event.kind === "session-end") await this.#settleUnresolvedCalls(state, true);
-    await this.#router(descriptor.host).ingest(event);
-    noteCallsAwaitingResult(state.callsAwaitingResult, event);
-    if (event.kind === "result") {
-      const index = state.pendingCodeRuleCalls.findIndex((call) => call.id === event.toolCallId);
-      if (index >= 0) {
-        const [call] = state.pendingCodeRuleCalls.splice(index, 1);
-        // While the result is ingested, a steer from the call's edit check rides it, and a `rewind` one may roll the edit
-        // back (`#rewind`).
-        const window: ResultWindow | undefined = bridge === undefined ? undefined : { toolCallId: call!.id, steers: [] };
-        state.resultWindow = window;
-        try {
-          // From the finish on, which may check the edit before it returns, to the end of the wait.
-          await this.#waitingForEditChecks(state, false, async () => {
-            await this.#finishCall(state, bridge, call!.id, event.failed === true);
-            await this.#append(state, { type: "policy-result", toolCallId: call!.id });
-            await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[descriptor.host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS);
-          });
-        } finally {
-          if (window !== undefined) {
-            // A steer from now on is a message; one that already rolled the edit back is queued before this answers.
-            state.resultWindow = undefined;
-            bridge!.release(call!.id);
-            await Promise.all(window.steers);
-          }
-        }
+    return bridge;
+  }
+
+  /** A pending call's result: the call finished on the bridge and recorded, then its edit checks waited for. */
+  async #ingestResult(
+    state: RuntimeSessionState,
+    bridge: CodeRuleBridge | undefined,
+    host: AdapterSession["host"],
+    event: Extract<AdapterEvent, { kind: "result" }>,
+  ): Promise<void> {
+    const index = state.pendingCodeRuleCalls.findIndex((call) => call.id === event.toolCallId);
+    if (index < 0) return;
+    const [call] = state.pendingCodeRuleCalls.splice(index, 1);
+    // While the result is ingested, a steer from the call's edit check rides it, and a `rewind` one may roll the edit
+    // back (`#rewind`).
+    const window: ResultWindow | undefined = bridge === undefined ? undefined : { toolCallId: call!.id, steers: [] };
+    state.resultWindow = window;
+    try {
+      // From the finish on, which may check the edit before it returns, to the end of the wait.
+      await this.#waitingForEditChecks(state, false, async () => {
+        await this.#finishCall(state, bridge, call!.id, event.failed === true);
+        await this.#append(state, { type: "policy-result", toolCallId: call!.id });
+        await this.#awaitEditChecks(state, bridge, ADAPTER_CAPABILITIES[host].toolSurface === "native" ? NATIVE_EDIT_CHECK_MS : HOOK_EDIT_CHECK_MS);
+      });
+    } finally {
+      if (window !== undefined) {
+        // A steer from now on is a message; one that already rolled the edit back is queued before this answers.
+        state.resultWindow = undefined;
+        bridge!.release(call!.id);
+        await Promise.all(window.steers);
       }
     }
-    // A hook host's stop hook is the end of the agent's run; OMP and Pi end a turn at every model call, and yield later.
-    const yields = event.kind === "turn-end" && ADAPTER_CAPABILITIES[descriptor.host].toolSurface !== "native";
-    if (event.kind === "turn-end") {
-      // The source walk checks the shell writes it finds as generated edits, so the boundary waits from its start.
-      await this.#waitingForEditChecks(state, yields, async () => {
-        // Before the walk, which checks their files again from here on.
-        if (yields) await this.#settleUnresolvedCalls(state);
-        const walkStartedAt = performance.now();
-        await bridge?.checkpoint("turn");
-        this.#reportSlowTurnEndWait(event.sessionId, "the source walk", walkStartedAt);
-        // The turn's own edits, not unrelated audits: the session-start repository audit runs for minutes on a
-        // large checkout, and a turn boundary that waited for it held the session's request lane past the host's timeout.
-        // A hook host's stop hook carries the turn's steers, so it waits for all of them; OMP and Pi wait within the cap.
-        const settleStartedAt = performance.now();
-        if (yields) await bridge?.settleGeneratedEdits();
-        else await this.#awaitEditChecks(state, bridge, NATIVE_EDIT_CHECK_MS);
-        this.#reportSlowTurnEndWait(event.sessionId, "generated-edit audits", settleStartedAt);
-      });
-    }
-    if (event.kind === "session-end") return [];
+  }
+
+  /**
+   * A turn end's wait for the source walk and the turn's edit checks, and whether the event yields: a hook host's stop
+   * hook is the end of the agent's run; OMP and Pi end a turn at every model call, and yield later. Any other event
+   * waits for nothing here and does not yield.
+   */
+  async #ingestTurnEnd(
+    state: RuntimeSessionState,
+    bridge: CodeRuleBridge | undefined,
+    host: AdapterSession["host"],
+    event: AdapterEvent,
+  ): Promise<boolean> {
+    if (event.kind !== "turn-end") return false;
+    const yields = ADAPTER_CAPABILITIES[host].toolSurface !== "native";
+    // The source walk checks the shell writes it finds as generated edits, so the boundary waits from its start.
+    await this.#waitingForEditChecks(state, yields, async () => {
+      // Before the walk, which checks their files again from here on.
+      if (yields) await this.#settleUnresolvedCalls(state);
+      const walkStartedAt = performance.now();
+      await bridge?.checkpoint("turn");
+      this.#reportSlowTurnEndWait(event.sessionId, "the source walk", walkStartedAt);
+      // The turn's own edits, not unrelated audits: the session-start repository audit runs for minutes on a
+      // large checkout, and a turn boundary that waited for it held the session's request lane past the host's timeout.
+      // A hook host's stop hook carries the turn's steers, so it waits for all of them; OMP and Pi wait within the cap.
+      const settleStartedAt = performance.now();
+      if (yields) await bridge?.settleGeneratedEdits();
+      else await this.#awaitEditChecks(state, bridge, NATIVE_EDIT_CHECK_MS);
+      this.#reportSlowTurnEndWait(event.sessionId, "generated-edit audits", settleStartedAt);
+    });
+    return yields;
+  }
+
+  /** An event's answer: the session's pending steers, the missed-findings digest when it yields, and the event's own. */
+  async #eventDeliveries(state: RuntimeSessionState, eventId: string, yields: boolean): Promise<AdapterDelivery[]> {
     const deliveries = await this.#collectPendingSteers(state);
     if (yields) {
       const digest = await this.#takeMissedDigest(state);
       if (digest !== undefined) deliveries.push(digest);
     }
-    deliveries.push(...(state.eventDeliveries.get(event.eventId) ?? []));
-    state.eventDeliveries.delete(event.eventId);
+    deliveries.push(...(state.eventDeliveries.get(eventId) ?? []));
+    state.eventDeliveries.delete(eventId);
     return deliveries;
   }
 
@@ -2175,6 +2213,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   async #ingestSessionStart(event: Extract<AdapterEvent, { kind: "session-start" }>): Promise<readonly AdapterDelivery[]> {
+    this.#sessions.get(event.session.sessionId)?.ruleSync?.refresh();
     assertEventHost(event.session.host);
     if (this.#autostart) autostartDaemon();
     await this.#router(event.session.host).ingest(event);
