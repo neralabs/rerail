@@ -206,6 +206,8 @@ export class SqliteSessionStore {
   readonly #repositoryId: string | null;
   /** Each session's repository as it opened here, to restore its row after a reset. */
   readonly #sessionRepositories = new Map<string, string | null>();
+  /** True while `#synced` runs a write: one nested in it keeps FULL until the outer write ends. */
+  #syncing = false;
 
   constructor(path: string, { repositoryId }: { repositoryId?: string | undefined } = {}) {
     this.path = path;
@@ -215,17 +217,17 @@ export class SqliteSessionStore {
     // up to hundreds of milliseconds on a busy Linux disk, 1.7 to 3.2 on a Windows desktop. NORMAL syncs the
     // write-ahead log only before a checkpoint, and the file stays consistent. A committed event survives the daemon
     // crashing, since it sits in the operating system's cache. A power cut or system crash loses the events committed
-    // since the log was last synced, on Linux up to 30 s or more when nothing else writes. A daemon's session row and
-    // HUD baseline are not among them: the runtime claims the session's owner right after writing them, and that
-    // commit runs at FULL on the audit control store's connection, which syncs the log every connection shares. The
-    // session ledger, written after each insert and never synced, can keep its lines for events the history lost; an
-    // agent that sends one again stores it again (`unrecorded` in runtime.ts).
+    // since the log was last synced, on Linux up to 30 s or more when nothing else writes. The rows that create a
+    // session and start its HUD counts are not among them: they commit at FULL (`#synced`) as the session opens, or as
+    // an append puts the row back after a reset. The session ledger, written after each insert and never synced, can
+    // keep its lines for events the history lost; an agent that sends one again stores it again (`unrecorded` in
+    // runtime.ts).
     this.#database.run(sql`PRAGMA synchronous = NORMAL`);
   }
 
   openSession(session: AdapterSession, startedAt = Date.now(), repositoryKey: string | null = this.#repositoryId): void {
     this.#sessionRepositories.set(session.sessionId, repositoryKey);
-    this.#database
+    this.#synced(() => this.#database
       .insert(sessions)
       .values({ ...session, repositoryId: repositoryKey, startedAt, endedAt: null })
       .onConflictDoUpdate({
@@ -237,17 +239,34 @@ export class SqliteSessionStore {
           ...(repositoryKey === null ? {} : { repositoryId: repositoryKey }),
         },
       })
-      .run();
+      .run());
   }
 
   /** A stable identity makes reopen idempotent; missing history can never become complete later. */
   startHudTracking(session: AdapterSession, complete: boolean): void {
-    this.append({
+    this.#synced(() => this.append({
       sessionId: session.sessionId,
       eventId: "hud-tracking-start",
       kind: "hud-tracking-start",
       payload: { complete },
-    }, session);
+    }, session));
+  }
+
+  /**
+   * Runs `write` with each commit it makes synced to disk (FULL), then goes back to NORMAL: for the rows a power cut
+   * must not take, so the history never lists a session's events without the session or reads its HUD counts from the
+   * wrong start. SQLite refuses the change inside a transaction, and this connection opens none around these writes.
+   */
+  #synced<T>(write: () => T): T {
+    if (this.#syncing) return write();
+    this.#database.run(sql`PRAGMA synchronous = FULL`);
+    this.#syncing = true;
+    try {
+      return write();
+    } finally {
+      this.#syncing = false;
+      this.#database.run(sql`PRAGMA synchronous = NORMAL`);
+    }
   }
 
   /** `ruleIds` credits the steer to the rules whose violations it carried. */
@@ -341,12 +360,12 @@ export class SqliteSessionStore {
       // A `rerail reset` rebuilt the tables underneath a running session: its row is gone, so put
       // it back and keep going. The events before the reset are gone by design; these are not.
       if (session === undefined || !isForeignKeyFailure(error)) throw error;
-      this.#database.insert(sessions).values({
+      this.#synced(() => this.#database.insert(sessions).values({
         ...session,
         repositoryId: attribution?.repositoryKey ?? this.#sessionRepositories.get(session.sessionId) ?? this.#repositoryId,
         startedAt: attribution?.startedAt ?? Date.now(),
         endedAt: attribution?.endedAt ?? null,
-      }).onConflictDoNothing().run();
+      }).onConflictDoNothing().run());
       this.#database.insert(events).values(row).onConflictDoNothing().run();
     }
     return eventId;

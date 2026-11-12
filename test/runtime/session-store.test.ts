@@ -538,6 +538,41 @@ describe("SQLite session persistence", () => {
     expect(connection instanceof Database && connection.pragma("synchronous", { simple: true })).toBe(1);
   });
 
+  it("commits a session's row and HUD baseline with a disk sync, also when an append puts the row back after a reset", async () => {
+    const root = await temporaryDirectory();
+    const path = join(root, "rerail.sqlite");
+    const store = closeAfterTest(new SqliteSessionStore(path, { repositoryId: "repository" }));
+    const session = { host: "claude-code" as const, sessionId: "session-1", cwd: "/workspace" };
+    // Each insert with its connection's synchronous level as the insert is prepared: FULL (2) syncs the write-ahead
+    // log at the commit, NORMAL (1) only before a checkpoint.
+    const commits: string[] = [];
+    const prepare = Database.prototype.prepare;
+    const spy = vi.spyOn(Database.prototype, "prepare").mockImplementation(function (this: Database.Database, source: string) {
+      const table = /^insert into "(sessions|events)"/u.exec(source)?.[1];
+      if (table !== undefined) commits.push(`${table} ${String(prepare.call(this, "PRAGMA synchronous").pluck().get())}`);
+      return prepare.call(this, source);
+    });
+    try {
+      store.openSession(session, 100);
+      store.startHudTracking(session, true);
+      store.append({ sessionId: session.sessionId, eventId: "event-1", kind: "result", observedAt: 110, payload: { output: "ok" } });
+      store.closeSession(session.sessionId, 120);
+      resetRepositoryHistory(path, "repository");
+      store.append({ sessionId: session.sessionId, eventId: "event-2", kind: "result", observedAt: 130, payload: { output: "ok" } }, session);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(commits).toEqual([
+      "sessions 2",
+      "events 2",
+      "events 1",
+      // The reset took the row: the event's first insert fails on its foreign key, the row goes back, the event follows.
+      "events 1",
+      "sessions 2",
+      "events 1",
+    ]);
+  });
+
   it("keeps every event a writer appended when its process is killed before it closes the store", async () => {
     const root = await temporaryDirectory();
     const path = join(root, "rerail.sqlite");
@@ -595,8 +630,8 @@ describe("SQLite session persistence", () => {
       return { databasePath, ledgerBefore, ledgerAfter: await ledger() };
     }
 
-    // A reset removes an ended session's row with its events and keeps the ledger. A power cut leaves the same state
-    // only between the session row's insert and the owner claim whose commit syncs it.
+    // A reset removes an ended session's row with its events and keeps the ledger. A power cut cannot, since the row
+    // commits with a disk sync.
     it.each([
       { lost: "its last events", cut: (database: Database.Database) => database.exec("DELETE FROM events WHERE event_id IN ('prompt-2', 'turn-2')") },
       { lost: "the events of a session a reset removed", cut: (database: Database.Database) => database.exec("DELETE FROM events; DELETE FROM sessions") },

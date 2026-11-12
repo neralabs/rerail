@@ -467,8 +467,9 @@ interface RuntimeSessionState {
   processed: Set<string>;
   /**
    * Of those, the ones the session history lacked as the session opened. A power cut can roll the history back past
-   * events whose ledger lines reached the disk (the store syncs only at checkpoints), and a reset empties it. An agent
-   * that sends one again gets its history row back and nothing more, since the ledger holds the rest of what it did.
+   * events whose ledger lines reached the disk (the store does not sync an event's commit), and a reset empties it.
+   * An agent that sends one again gets its history row back and nothing more, since the ledger holds the rest of what
+   * it did.
    */
   unrecorded: ReadonlySet<string>;
   source: MutableContentSource;
