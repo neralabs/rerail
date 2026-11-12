@@ -1,6 +1,7 @@
 //! `resolves.binding` and `value.follow`: rules over what a name's file-local binding holds.
 
-// cratify: a re-export of rerail-engine's, which its facades of this module make
+use crate::code_rule_dsl::CompiledCodeRuleDsl;
+use crate::code_rule_dsl::test_support::*;
 use crate::code_rule_dsl::matcher::UtilLimit;
 // cratify: a re-export of rerail-engine's, which its facades of this module make
 use napi::Result;

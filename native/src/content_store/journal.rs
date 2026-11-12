@@ -231,6 +231,20 @@ mod fsevents {
         fn dispatch_release(object: *mut c_void);
     }
 
+    /// The stream's own reference to `Shared` (its context's `retain`), given back when FSEvents frees the stream:
+    /// what a callback reads lives as long as the stream, not only as long as `since`.
+    extern "C" fn retain(info: *const c_void) -> *const c_void {
+        // SAFETY: `info` is an `Arc<Shared>`'s pointer, and the caller holds a reference while the stream is made.
+        unsafe { Arc::increment_strong_count(info as *const Shared) };
+        info
+    }
+
+    /// The stream's reference given back when FSEvents frees the stream (its context's `release`).
+    extern "C" fn release(info: *const c_void) {
+        // SAFETY: balances the one `retain` took.
+        unsafe { Arc::decrement_strong_count(info as *const Shared) };
+    }
+
     const UTF8: u32 = 0x0800_0100;
     const NO_DEFER: u32 = 0x2;
     const FILE_EVENTS: u32 = 0x10;
@@ -319,7 +333,7 @@ mod fsevents {
             for s in strings {
                 CFRelease(s);
             }
-            let mut context = Context { version: 0, info: Arc::as_ptr(&shared) as *mut c_void, retain: std::ptr::null(), release: std::ptr::null(), copy_description: std::ptr::null() };
+            let mut context = Context { version: 0, info: Arc::as_ptr(&shared) as *mut c_void, retain: retain as *const c_void, release: release as *const c_void, copy_description: std::ptr::null() };
             let stream = FSEventStreamCreate(std::ptr::null(), callback, &mut context, array, cursor, 0.0, NO_DEFER | FILE_EVENTS);
             CFRelease(array);
             if stream.is_null() {
@@ -350,8 +364,8 @@ mod fsevents {
         let lost = seen.lost;
         let paths = std::mem::take(&mut seen.paths);
         drop(seen);
-        // SAFETY: stopped and invalidated before release; the callback no longer runs once `FSEventStreamInvalidate`
-        // returns, so `shared` may go after.
+        // SAFETY: stopped and invalidated before release; the stream holds its own reference to `shared` (`retain`)
+        // until FSEvents frees it, so no callback reads freed memory whenever it runs.
         unsafe {
             FSEventStreamStop(stream);
             FSEventStreamInvalidate(stream);

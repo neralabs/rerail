@@ -1,6 +1,6 @@
 //! Bulk storage construction after SQL has evaluated a relation. No rule evaluation occurs here.
 use super::*;
-pub(in crate::code_rule_dsl::sql_executor) struct Reuse<'a> {
+pub struct Reuse<'a> {
     store: &'a Store,
     previous: Vec<(TableKey, Option<Version>)>,
 }
@@ -18,6 +18,23 @@ impl Drop for Reuse<'_> {
 }
 
 impl Version {
+    /// Scratch and pending journals have complete-tuple keys and no public row IDs.
+    fn scratch_copy(&self, source: &Self) -> Option<Self> {
+        if source.schema.nullable.iter().any(|&v| v)
+            || self.schema.keys != source.schema.columns.len()
+            || self.schema.columns.len() != source.schema.columns.len()
+        {
+            return None;
+        }
+        let mut next = self.empty_like();
+        next.secondary = vec![false; self.schema.columns.len()].into();
+        next.full = source.full.clone();
+        next.primary = source.full.clone();
+        next.ids = source.ids.clone();
+        next.next = source.next;
+        next.distinct[0] = source.distinct[0];
+        Some(next)
+    }
     /// Reuse a validated output of this SQL phase when its ordered rows and new row IDs match.
     /// A complete-tuple primary key can also read a narrower source's complete-row index.
     pub fn reuse_empty_rows(&self, rows: &[Vec<Option<i64>>], source: &Self) -> Option<Self> {
@@ -63,7 +80,7 @@ impl Version {
         );
         Some(next)
     }
-    pub(in crate::code_rule_dsl::sql_executor) fn loaded(
+    pub fn loaded(
         &self,
         rows: Vec<Vec<Option<i64>>>,
         ignore: bool,
@@ -201,19 +218,9 @@ impl Store {
     }
     pub fn clone_scratch(&self, name: &str, source: &Version) -> Result<bool> {
         let old = self.version_at(0, name);
-        if source.schema.nullable.iter().any(|&v| v)
-            || old.schema.keys != source.schema.columns.len()
-            || old.schema.columns.len() != source.schema.columns.len()
-        {
+        let Some(next) = old.scratch_copy(source) else {
             return Ok(false);
-        }
-        let mut next = old.empty_like();
-        next.secondary = vec![false; old.schema.columns.len()].into();
-        next.full = source.full.clone();
-        next.primary = source.full.clone();
-        next.ids = source.ids.clone();
-        next.next = source.next;
-        next.distinct[0] = source.distinct[0];
+        };
         self.replace_at(0, name, next)?;
         Ok(true)
     }
@@ -240,6 +247,44 @@ impl Store {
             } else {
                 (&remove, &mut negative, &mut positive)
             };
+            if input.len() == 0 {
+                continue;
+            }
+            // Whole-snapshot removal and restoration often cancel the exact
+            // same immutable set in every waiting wave gate.
+            if input.same(cancel) {
+                *cancel = cancel.empty_like();
+                continue;
+            }
+            if cancel.len() == 0 && input.same(keep) {
+                continue;
+            }
+            if keep.len() == 0 && cancel.len() == 0 {
+                if let Some(shared) = keep.scratch_copy(input) {
+                    *keep = shared;
+                    continue;
+                }
+            }
+            // Journals contain complete tuples. Compose dense transitions as sets,
+            // then build each root once instead of hashing every persistent path.
+            if keep.schema.keys == keep.schema.columns.len()
+                && cancel.schema.keys == cancel.schema.columns.len()
+                && crate::code_rule_dsl::logic::analysis::storage::bulk_journal(
+                    keep.len() + cancel.len(),
+                    input.len(),
+                )
+            {
+                let mut positive = keep.rows().into_iter().collect::<BTreeSet<_>>();
+                let mut negative = cancel.rows().into_iter().collect::<BTreeSet<_>>();
+                for row in input.rows() {
+                    if !negative.remove(&row) {
+                        positive.insert(row);
+                    }
+                }
+                *keep = keep.loaded(positive.into_iter().collect(), false, true)?;
+                *cancel = cancel.loaded(negative.into_iter().collect(), false, true)?;
+                continue;
+            }
             let mut incoming = Vec::new();
             Node::prefix(&input.full, &[], &mut incoming);
             for row in incoming {

@@ -72,6 +72,11 @@ pub(super) struct World {
     beyond: usize,
     /// Loads past the budget, or in another grammar than the run's, not taken.
     pub(super) dropped: usize,
+    /// Of those, the loads past the budget: where it binds, what is loaded depends on the order loads are taken in.
+    pub(super) over_budget: usize,
+    /// Documents loaded this run and taken back since (`unload`): out of the budget, their rows still held where
+    /// they were made, so a load asked again takes them back in place (`reload`).
+    taken: BTreeMap<String, Loaded>,
 }
 
 impl World {
@@ -182,13 +187,73 @@ impl World {
         if corpus.contains(&path) || self.loads.contains_key(&path) {
             return None;
         }
-        let own = self.roots.first().is_some_and(|r| Path::new(&path).starts_with(r));
-        if grammar != run_grammar || (!own && self.beyond >= self.budget) {
+        let own = self.own(&path);
+        if grammar != run_grammar {
             self.dropped += 1;
             self.refused.insert(asked.to_owned());
             return None;
         }
+        // Past the budget is not refused for good: a load taken back frees its place, and a load asked again then
+        // is weighed again.
+        if !own && self.beyond >= self.budget {
+            self.dropped += 1;
+            self.over_budget += 1;
+            return None;
+        }
         let loaded = Loaded { path: path.clone(), module: module.to_owned(), grammar: grammar.to_owned() };
+        self.beyond += usize::from(!own);
+        self.loads.insert(path, loaded.clone());
+        Some(loaded)
+    }
+
+    /// Whether `path` is under the corpus root: a file of the run's own tree, which the budget does not bound.
+    fn own(&self, path: &str) -> bool {
+        self.roots.first().is_some_and(|r| Path::new(path).starts_with(r))
+    }
+
+    /// The documents taken back this run and not loaded again: not the run's documents.
+    pub(super) fn taken_paths(&self) -> impl Iterator<Item = &String> {
+        self.taken.keys()
+    }
+
+    /// Whether a load of `asked` is one the budget bounds: a file beyond the corpus root, not loaded yet this run.
+    pub(super) fn bounded(&self, asked: &str) -> bool {
+        self.allowed(asked).is_some_and(|p| {
+            let p = p.to_string_lossy();
+            !self.own(&p) && !self.loads.contains_key(p.as_ref())
+        })
+    }
+
+    /// Takes back every document loaded from beyond the corpus root this run: a cone that starts again in levels
+    /// (decision 0108) asks them again, level by level. How many.
+    pub(super) fn take_back_libraries(&mut self) -> usize {
+        let paths: Vec<String> = self.loads.keys().filter(|p| !self.own(p)).cloned().collect();
+        paths.iter().filter(|p| self.unload(p)).count()
+    }
+
+    /// Takes back the document loaded from `path` this run (decision 0108, a load taken back): its place in the
+    /// budget is free again. Whether it was loaded.
+    pub(super) fn unload(&mut self, path: &str) -> bool {
+        let Some(loaded) = self.loads.remove(path) else { return false };
+        self.beyond -= usize::from(!self.own(path));
+        self.taken.insert(path.to_owned(), loaded);
+        true
+    }
+
+    /// The document of `asked` taken back this run, loaded again when the budget allows: it is the same document,
+    /// with the rows it was given (`unload`).
+    pub(super) fn reload(&mut self, asked: &str) -> Option<Loaded> {
+        let path = self.allowed(asked)?.to_string_lossy().into_owned();
+        if !self.taken.contains_key(&path) {
+            return None;
+        }
+        let own = self.own(&path);
+        if !own && self.beyond >= self.budget {
+            self.dropped += 1;
+            self.over_budget += 1;
+            return None;
+        }
+        let loaded = self.taken.remove(&path)?;
         self.beyond += usize::from(!own);
         self.loads.insert(path, loaded.clone());
         Some(loaded)

@@ -39,8 +39,8 @@ fn registered_join_rotations_and_composite_keys_match_full_reduction() {
             "iteration {iteration}"
         );
         assert_eq!(
-            rows(
-                &mut e,
+            index_rows(
+                &e,
                 "SELECT count(*) FROM __sql_state_mask_join_nodes n LEFT JOIN __sql_state_mask_join_nodes l ON l.c0=n.c0 AND l.c1=n.c1 AND l.value=n.left_value LEFT JOIN __sql_state_mask_join_nodes r ON r.c0=n.c0 AND r.c1=n.c1 AND r.value=n.right_value WHERE abs(coalesce(l.height,0)-coalesce(r.height,0))>1 OR n.height<>1+max(coalesce(l.height,0),coalesce(r.height,0))"
             ),
             json!([[0]])
@@ -53,14 +53,30 @@ fn registered_join_rotations_and_composite_keys_match_full_reduction() {
     )
     .unwrap();
     assert_eq!(
-        rows(&mut e, "SELECT count(*) FROM __sql_state_mask_join_nodes"),
+        index_rows(&e, "SELECT count(*) FROM __sql_state_mask_join_nodes"),
         json!([[0]])
     );
     assert_eq!(
-        rows(&mut e, "SELECT count(*) FROM __sql_state_mask_join_roots"),
+        index_rows(&e, "SELECT count(*) FROM __sql_state_mask_join_roots"),
         json!([[0]])
     );
 }
+// Inspect the active cursor explicitly; closing frames can retain older caches.
+fn index_rows(e: &CodeRuleSqlExecutor, sql: &str) -> Value {
+    let trace=e.executions[0].temporal[&0].explain();
+    let frame=trace["frames"].as_array().unwrap().iter().find(|f|
+        f["operators"].as_array().unwrap().iter().any(|op|op["relation"]=="mask" && op["active"]==true)).unwrap();
+    let op=frame["operators"].as_array().unwrap().iter().find(|op|op["relation"]=="mask" && op["active"]==true).unwrap();
+    let index=&op["analysis"][0]["lattice_support_index"];
+    let nodes=index["nodes"].as_str().unwrap();
+    let roots=index["roots"].as_str().unwrap();
+    let _scope=e.versions.activate(frame["native_scope"].as_u64().unwrap() as usize).unwrap();
+    assert!(!crate::code_rule_dsl::facts::vtab::bound_source(e.connection(),nodes).unwrap().writable());
+    let query=sql.replace("__sql_state_mask_join_nodes",nodes).replace("__sql_state_mask_join_roots",roots);
+    assert_eq!(json!(e.verification_rows("SELECT count(*) FROM temp.sqlite_schema WHERE name GLOB '__sql_state_*' OR name GLOB '__rr_update_*'").unwrap()),json!([[0]]));
+    json!(e.verification_rows(&query).unwrap())
+}
+
 impl Aggregate<i64, i64> for Bits {
     fn init(&self, _: &mut Context<'_>) -> rusqlite::Result<i64> {
         Ok(0)
@@ -111,7 +127,7 @@ fn registered_joins_update_logarithmic_summary_paths_and_restore_after_errors() 
             rows(&mut e, "SELECT g,test_join_bits(v) FROM event GROUP BY g")
         );
         assert!(
-            rows(&mut e, "SELECT max(height) FROM __sql_state_mask_join_nodes")[0][0]
+            index_rows(&e, "SELECT max(height) FROM __sql_state_mask_join_nodes")[0][0]
                 .as_i64()
                 .unwrap()
                 < 25

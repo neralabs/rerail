@@ -426,8 +426,8 @@ pub struct Ran {
 static RECORDING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 static RECORDED: std::sync::Mutex<Vec<(String, Ran)>> = std::sync::Mutex::new(Vec::new());
 
-/// While the guard lives, every native stratum's placement is kept (`recorded`); for the coverage gate, in the
-/// engine's tests (another crate, so not `cfg(test)` here).
+/// While the guard lives, every native stratum's placement is kept (`recorded`).
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn recording() -> impl Drop {
     struct On;
     impl Drop for On {
@@ -440,6 +440,7 @@ pub fn recording() -> impl Drop {
 }
 
 /// The kept placements of strata whose key starts with `prefix` (taken).
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn recorded(prefix: &str) -> Vec<(String, Ran)> {
     let mut all = RECORDED.lock().unwrap_or_else(|e| e.into_inner());
     let (mine, rest): (Vec<_>, Vec<_>) = std::mem::take(&mut *all).into_iter().partition(|(k, _)| k.starts_with(prefix));

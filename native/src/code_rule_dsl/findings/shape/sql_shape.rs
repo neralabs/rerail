@@ -69,7 +69,7 @@ pub(crate) struct SourceUse {
     pub cte: Option<String>,
 }
 #[derive(Debug)]
-pub(crate) struct Emission {
+pub struct Emission {
     pub sql: String,
     pub sources: BTreeMap<String, SourceUse>,
     pub derived_ctes: BTreeMap<String, String>,

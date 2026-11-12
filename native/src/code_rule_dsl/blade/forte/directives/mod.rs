@@ -20,7 +20,7 @@ use std::sync::{Arc, LazyLock, OnceLock};
 
 /// Whether a directive takes arguments (`ArgumentRequirement`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ArgumentRequirement {
+pub enum ArgumentRequirement {
     Required,
     NotAllowed,
     Optional,
@@ -29,22 +29,22 @@ pub(crate) enum ArgumentRequirement {
 /// A directive the registry knows (`DiscoveredDirective`). `name` keeps the metadata's case
 /// (`endSwitch`); the registry's keys are lowercase.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct DiscoveredDirective {
-    pub(crate) name: Box<[u8]>,
-    pub(crate) args: ArgumentRequirement,
-    pub(crate) role: StructureRole,
-    pub(crate) is_condition: bool,
-    pub(crate) has_condition_like_branches: bool,
-    pub(crate) terminators: Vec<Box<[u8]>>,
-    pub(crate) condition_like_branches: Vec<Box<[u8]>>,
-    pub(crate) terminator: Option<Box<[u8]>>,
-    pub(crate) is_switch: bool,
-    pub(crate) switch_parent: Option<Box<[u8]>>,
-    pub(crate) is_switch_branch: bool,
-    pub(crate) is_switch_terminator: bool,
-    pub(crate) is_conditional_pair: bool,
-    pub(crate) pairing_strategy: Option<Box<str>>,
-    pub(crate) is_conditional_close: bool,
+pub struct DiscoveredDirective {
+    pub name: Box<[u8]>,
+    pub args: ArgumentRequirement,
+    pub role: StructureRole,
+    pub is_condition: bool,
+    pub has_condition_like_branches: bool,
+    pub terminators: Vec<Box<[u8]>>,
+    pub condition_like_branches: Vec<Box<[u8]>>,
+    pub terminator: Option<Box<[u8]>>,
+    pub is_switch: bool,
+    pub switch_parent: Option<Box<[u8]>>,
+    pub is_switch_branch: bool,
+    pub is_switch_terminator: bool,
+    pub is_conditional_pair: bool,
+    pub pairing_strategy: Option<Box<str>>,
+    pub is_conditional_close: bool,
 }
 
 impl DiscoveredDirective {
@@ -73,10 +73,10 @@ impl DiscoveredDirective {
 /// The registry's directives and the lists computed from them (Forte's caches, which
 /// `invalidateDirectiveCaches` clears on every change).
 #[derive(Clone, Debug, Default)]
-pub(crate) struct Table {
-    pub(crate) conditions: IndexSet<Box<[u8]>>,
-    pub(crate) final_terminators: IndexSet<Box<[u8]>>,
-    pub(crate) directives: IndexMap<Box<[u8]>, DiscoveredDirective>,
+pub struct Table {
+    pub conditions: IndexSet<Box<[u8]>>,
+    pub final_terminators: IndexSet<Box<[u8]>>,
+    pub directives: IndexMap<Box<[u8]>, DiscoveredDirective>,
     condition_terminators: OnceLock<Vec<Box<[u8]>>>,
     condition_branches: OnceLock<Vec<Box<[u8]>>>,
 }
@@ -90,7 +90,7 @@ impl Table {
 
 /// A directive registry (`Directives`).
 #[derive(Clone, Debug)]
-pub(crate) struct Directives {
+pub struct Directives {
     table: Arc<Table>,
     seen: IndexSet<Box<[u8]>>,
     advisory_pairs: IndexSet<Box<[u8]>>,
@@ -152,7 +152,7 @@ impl Directives {
     }
 
     /// Forte's directives (`Directives::withDefaults()`).
-    pub(crate) fn with_defaults() -> Self {
+    pub fn with_defaults() -> Self {
         static DEFAULTS: LazyLock<Directives> = LazyLock::new(|| {
             let mut directives = Directives::empty();
             for json in RESOURCES {
@@ -165,7 +165,7 @@ impl Directives {
 
     /// A registry from its parts (the oracle's recorded registries).
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn from_parts(
+    pub fn from_parts(
         table: Table,
         seen: IndexSet<Box<[u8]>>,
         advisory_pairs: IndexSet<Box<[u8]>>,
@@ -183,15 +183,15 @@ impl Directives {
 
     /// The registry's directive table.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) fn table(&self) -> &Table {
+    pub fn table(&self) -> &Table {
         &self.table
     }
 
-    pub(crate) fn set_accept_all(&mut self, accept_all: bool) {
+    pub fn set_accept_all(&mut self, accept_all: bool) {
         self.accept_all = accept_all;
     }
 
-    pub(crate) fn accepts_all_directives(&self) -> bool {
+    pub fn accepts_all_directives(&self) -> bool {
         self.accept_all
     }
 
@@ -217,7 +217,7 @@ impl Directives {
 
     /// `trainCompact`: learns which unknown directives pair (`@x`/`@endx`) or branch
     /// (`@x`/`@elsex`) from the names of the template's directive tokens.
-    pub(crate) fn train(&mut self, names: impl Iterator<Item = Box<[u8]>>) {
+    pub fn train(&mut self, names: impl Iterator<Item = Box<[u8]>>) {
         let mut names_lower = Vec::new();
         for name in names {
             let mut name = lower(&name);

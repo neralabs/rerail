@@ -33,18 +33,27 @@ pub trait SolverDevice: Send + Sync {
     /// Notes that the device refused the stratum being opened or run: it runs on the CPU, and the profile names why.
     fn refuse(&self, why: String);
     /// The seed joins `rules` (plan, rule, head relation) in one batch, their rows into `fresh`: per rule, the rows
-    /// made. `names`: the symbols, for texts the device makes and stores as symbols.
+    /// made. `names`: the run's symbols, for texts the device makes into heads.
     fn run_joins(&self, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String>;
-    /// Whether a join reads its own stratum's relations (a delta probe): its stratum runs as the device's rounds.
-    fn reads_own(&self, plan: &JoinPlan) -> bool;
-    /// `rules` sent in this thread's level wave, run once the wave is committed (`resume`): their ticket, or `None`
-    /// when they run alone.
+    /// Encodes the seed joins `rules` into this thread's device wave (`lanes::wave`), to be finished by `resume`
+    /// once the wave ran: the ticket, or `None` when they cannot wait in it (they then run by `run_joins`).
     fn submit(&self, rules: &[(&JoinPlan, &JoinRule, usize)], names: &Interner) -> Result<Option<u64>, String>;
-    /// The rows of joins sent in a wave (`submit`), once it ran.
+    /// Finishes the joins `submit` sent with ticket `ticket`: their rows into `fresh`, per rule the rows made.
     fn resume(&self, ticket: u64, rules: &[(&JoinPlan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String>;
-    /// A recursive stratum's semi-naive rounds to its fixpoint on the device: its seeds once, its deltas until no
-    /// round adds a row; per rule (seeds then deltas), the rows made.
-    fn fixpoint(&self, seeds: &[(&JoinPlan, &JoinRule, usize)], deltas: &[(&JoinPlan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String>;
+    /// Whether the plan reads its own component's relations (a delta join of a recursive component).
+    fn reads_own(&self, plan: &JoinPlan) -> bool;
+    /// A recursive component's fixpoint on the device: the `seeds` once, then the `deltas` round by round until no
+    /// head in `heads` grows, every row into `fresh`. Per rule (seeds, then deltas), the rows made.
+    #[allow(clippy::too_many_arguments)]
+    fn fixpoint(
+        &self,
+        seeds: &[(&JoinPlan, &JoinRule, usize)],
+        deltas: &[(&JoinPlan, &JoinRule, usize)],
+        heads: &[usize],
+        store: &Store,
+        names: &Interner,
+        fresh: &mut [Fresh],
+    ) -> Result<Vec<u64>, String>;
     /// The report of the last stratum the device ran or refused on this thread (taken).
     fn take_report(&self) -> Option<Report>;
     /// A flat-lattice system's least fixpoint on the device's work queue.

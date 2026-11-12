@@ -13,6 +13,7 @@ extern crate cranelift_jit_wasm as cranelift_jit;
 
 pub mod bitlex_masks;
 pub mod bitlex_prove;
+pub mod bitlex_sat;
 pub mod bitlex_tier2;
 pub mod block;
 pub mod block_native;
@@ -28,16 +29,20 @@ pub mod native_cpu_lanes;
 pub mod native_cpu_pressure;
 // Row programs' Cranelift definer (`block::BlockProgram::rows`, decision 0095 §2).
 pub mod native_cpu_rows;
+pub mod native_cpu_clusters;
 pub mod native_cpu_shape;
 pub mod native_cpu_stream;
 pub mod native_ir;
 pub mod program;
+pub mod records;
 pub mod rir_asm;
 pub mod rir_text;
 pub mod set_mode;
 pub mod stream;
 #[cfg(test)]
 mod stream_tests;
+#[cfg(test)]
+mod records_tests;
 pub mod stream_ir;
 /// Which tier 1 values are token-level checks (doc 25): local windows, anchors, readers.
 pub mod token_local;

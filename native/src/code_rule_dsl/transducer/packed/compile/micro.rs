@@ -385,7 +385,7 @@ impl Micro {
 
     /// A root program's walk from `start` on `tape` (labelled: `transducer_labels`), every path
     /// that emits appended to `out` as a record, in the walk's order.
-    pub(in crate::code_rule_dsl) fn records(
+    pub fn records(
         &self,
         tape: &TapeDoc,
         texts: &[Vec<u64>],

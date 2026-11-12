@@ -1,7 +1,7 @@
 //! Compatibility of retained scalar summaries, independent of their storage and evaluator.
 use super::Decision;
 
-pub(in crate::code_rule_dsl) fn unused_sum(bound: bool, observed: bool) -> Decision {
+pub fn unused_sum(bound: bool, observed: bool) -> Decision {
     Decision::new(
         !bound && !observed,
         if !bound && !observed {
@@ -78,6 +78,16 @@ pub struct Scalar {
     pub non_null: bool,
 }
 impl Scalar {
+    pub fn independent_evaluation(&self) -> Decision {
+        if self.kind != Kind::Exists { return self.compatible(self); }
+        let proven = !self.dependent && self.non_null
+            && self.keys.iter().chain(&self.predicates).chain(&self.lookup).all(Expression::stable);
+        Decision::new(proven, if proven {
+            "Independent existence lookup uses its own support-count summary with pure keys and filters"
+        } else {
+            "Dependent, nullable, or opaque existence lookup retains its evaluation boundary"
+        })
+    }
     pub fn compatible(&self, other: &Self) -> Decision {
         self.compatibility(other, true)
     }
@@ -144,7 +154,7 @@ pub struct Family {
     pub lookup: Decision,
 }
 #[derive(Clone, Debug, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct Check {
+pub struct Check {
     pub left: usize,
     pub right: usize,
     pub decision: Decision,
@@ -158,7 +168,7 @@ pub struct Analysis {
 pub fn analyze(inputs: Vec<Scalar>) -> Analysis {
     analyze_mode(inputs, true)
 }
-pub(in crate::code_rule_dsl) fn analyze_bags(inputs: Vec<Scalar>) -> Analysis {
+pub fn analyze_bags(inputs: Vec<Scalar>) -> Analysis {
     analyze_mode(inputs, false)
 }
 fn analyze_mode(inputs: Vec<Scalar>, lookup: bool) -> Analysis {
@@ -235,7 +245,7 @@ impl Analysis {
         self.evaluation_order(expressions)
     }
     pub fn evaluation_order(&self, expressions: &[Expression]) -> Decision {
-        let reason = if self.inputs.iter().any(|s| !s.compatible(s).proven) {
+        let reason = if self.inputs.iter().any(|s| !s.independent_evaluation().proven) {
             Some("A scalar has dependent, opaque, nullable, or ordered semantics")
         } else if expressions.iter().any(|e| !e.stable()) {
             Some("Outer expressions have no evaluation-order proof")

@@ -22,7 +22,7 @@
 
 use super::{Result, lower, maintained, retain};
 use crate::code_rule_dsl::facts::vtab::{Modules, Source};
-use crate::code_rule_dsl::logic::front::{self, Literal};
+use crate::code_rule_dsl::logic::front::{self, Atom, Literal, Rule, Term};
 use rusqlite::Connection;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -37,8 +37,18 @@ pub(in crate::code_rule_dsl) struct RoundProgram {
     gates: Vec<(String, Option<String>)>,
     /// Each request relation and its width.
     requests: Vec<(String, usize)>,
-    /// The relations answers add rows to, other than the per-file ones.
+    /// The relations answers add rows to, other than the per-file ones: `loaded`, and the file system's relations
+    /// (`fs_input`) in place of the answers they make.
     produced: Vec<(String, usize)>,
+    /// Each answer of the file system (`rr::WORLD`'s `dir_entry`, `file_line`, `file_digest`) the program reads, with
+    /// its request: a join of the two, `dir_entry(d, n, k) :- rr_dir_req(d), rr_fs_dir_entry(d, n, k)`.
+    fs: Vec<(String, String)>,
+}
+
+/// The relation of the file system an answer is the join of its request with (decision 0108, t33's K2): its rows are
+/// the file system's where asked, kept as inputs, and the answer is derived.
+pub(in crate::code_rule_dsl) fn fs_input(answer: &str) -> String {
+    format!("rr_fs_{answer}")
 }
 
 impl RoundProgram {
@@ -62,6 +72,34 @@ impl RoundProgram {
         if produced.iter().any(|(r, _)| heads.contains(r.as_str())) {
             return None;
         }
+        // The file system's answers as joins: each request with a relation of the file system, the input.
+        let mut fs = Vec::new();
+        for (answer, req) in crate::code_rule_dsl::logic::rr::WORLD {
+            let Some(width) = produced.iter().find(|(r, _)| r == answer).map(|(_, w)| *w) else { continue };
+            if !load.answers.contains_key(req) || load.decls.get(req).is_none_or(|d| d.len() != 1) {
+                continue;
+            }
+            let input = fs_input(answer);
+            program.decls.insert(input.clone(), load.decls[answer].clone());
+            let vars: Vec<Term> = (0..width).map(|c| Term::Var(format!("rr_c{c}"))).collect();
+            program.rules.push(Rule {
+                head: Atom { rel: (answer).to_owned().into(), args: vars.clone(), neg: false, gated: false },
+                body: vec![
+                    Literal::Atom(Atom { rel: (req).to_owned().into(), args: vec![vars[0].clone()], neg: false, gated: false }),
+                    Literal::Atom(Atom { rel: input.clone().into(), args: vars, neg: false, gated: false }),
+                ],
+            });
+            // Read back by the rest of the cross part: kept, not inlined.
+            program.qualifiers.entry((answer).to_owned()).or_default().insert("no_inline".to_owned());
+            program.inputs.retain(|r| r != answer);
+            fs.push(((answer).to_owned(), input));
+        }
+        let mut produced = produced;
+        for (answer, input) in &fs {
+            for p in produced.iter_mut().filter(|(r, _)| r == answer) {
+                p.0 = input.clone();
+            }
+        }
         for rel in gates.iter().map(|(d, _)| d.clone()).chain(produced.iter().map(|(r, _)| r.clone())) {
             if !program.inputs.contains(&rel) {
                 program.inputs.push(rel);
@@ -74,7 +112,7 @@ impl RoundProgram {
         // each is kept in the frames as any derived relation, with its rows.
         program.outputs.clear();
         front::strata(&program).ok()?;
-        Some(RoundProgram { program, gates, requests, produced })
+        Some(RoundProgram { program, gates, requests, produced, fs })
     }
 
     /// The relations a round's caller reads: its requests and asks.
@@ -119,6 +157,30 @@ pub(in crate::code_rule_dsl) struct Inputs<'a> {
     pub(in crate::code_rule_dsl) corpus: &'a HashSet<i64>,
     /// The run's constants the cone reads (the observer's facts, an earlier phase's exports): bound as they are.
     pub(in crate::code_rule_dsl) constants: &'a BTreeMap<String, Arc<dyn Source>>,
+    /// The loads answered and taken back, between the rounds and the thread that answers them.
+    pub(in crate::code_rule_dsl) ledger: &'a std::sync::Mutex<LoadLedger>,
+}
+
+/// What the rounds and the thread answering their loads share (decision 0108, a load taken back).
+#[derive(Default)]
+pub(in crate::code_rule_dsl) struct LoadLedger {
+    /// Each file a load answered (its path's atom, `loaded`'s first column) with its document: what a load taken
+    /// back takes with it. Filled by the answering thread.
+    pub(in crate::code_rule_dsl) documents: HashMap<i64, i64>,
+    /// The files the rounds took back, which the answering thread has not yet unloaded (`World::unload`): their
+    /// places in the load budget are free again.
+    pub(in crate::code_rule_dsl) taken_back: Vec<i64>,
+    /// The rounds are asking (set by the cone's thread while they run): their loads are answered at once, not in
+    /// the budget's levels.
+    pub(in crate::code_rule_dsl) rounds: bool,
+    /// A load the rounds asked was past the budget: what they load then depends on their order, so they give up and
+    /// the cone runs fresh, in levels (decision 0108).
+    pub(in crate::code_rule_dsl) bound: bool,
+    /// The rounds gave up and the cone runs fresh: what was answered to them is not the run's answers.
+    pub(in crate::code_rule_dsl) restarted: bool,
+    /// The cone runs again in the budget's levels: the answering thread takes back what was loaded from beyond the
+    /// corpus (`World::take_back_libraries`) and answers the loads asked again level by level.
+    pub(in crate::code_rule_dsl) relevel: bool,
 }
 
 impl Inputs<'_> {
@@ -137,30 +199,36 @@ pub(in crate::code_rule_dsl) struct Answers {
 
 impl Answers {
     /// Takes back the loads `stale` (keys of `world::LOAD`, `(file, module, grammar)`), none of which `asked_now`
-    /// holds: the `loaded` rows of their module and grammar that no key still asked shares, and each row an answer
-    /// gave that names one of their files or a node of one of their documents (by `per_file`'s location column). Their documents go into `withdrawn`; the relations whose rows changed are returned.
-    fn withdraw(&mut self, stale: &[Vec<i64>], asked_now: &HashSet<Vec<i64>>, per_file: &[(String, Arc<dyn Source>, usize)], withdrawn: &mut HashSet<i64>) -> BTreeSet<String> {
+    /// holds: the `loaded` rows of their module and grammar that no key still asked shares, and the rows of the
+    /// per-file relations located at their files' documents (`documents`, as the answers recorded them; by
+    /// `per_file`'s location column). Nothing is matched by value. Their documents go into `withdrawn`; the relations
+    /// whose rows changed are returned.
+    fn withdraw(&mut self, stale: &[Vec<i64>], asked_now: &HashSet<Vec<i64>>, per_file: &[(String, Arc<dyn Source>, usize)], ledger: &mut LoadLedger, withdrawn: &mut HashSet<i64>) -> BTreeSet<String> {
         let live: HashSet<(i64, i64)> = asked_now.iter().filter(|k| k.len() == 3).map(|k| (k[1], k[2])).collect();
         let gone: HashSet<(i64, i64)> = stale.iter().filter(|k| k.len() == 3).map(|k| (k[1], k[2])).filter(|mg| !live.contains(mg)).collect();
         for k in stale {
             self.asked.remove(&(super::world::LOAD.to_owned(), k.clone()));
         }
         let files: HashSet<i64> = self.rows.get(super::world::LOADED).into_iter().flatten().filter(|r| r.len() == 3 && gone.contains(&(r[1], r[2]))).map(|r| r[0]).collect();
-        // A document of theirs: the one a per-file row that names one of the files is of (its location column).
+        // Their documents, as the answers recorded them. A file loaded under a module still asked keeps its `loaded`
+        // row and its document.
         let at: HashMap<&str, usize> = per_file.iter().map(|(r, _, at)| (r.as_str(), *at)).collect();
-        let docs: HashSet<i64> = self
-            .rows
-            .iter()
-            .filter_map(|(rel, rows)| Some((at.get(rel.as_str())?, rows)))
-            .flat_map(|(c, rows)| rows.iter().filter(|r| r.iter().any(|v| files.contains(v))).filter_map(|r| r.get(*c).map(|v| super::memo::document_of(*v))))
-            .collect();
+        let still: HashSet<i64> = self.rows.get(super::world::LOADED).into_iter().flatten().filter(|r| r.len() == 3 && !gone.contains(&(r[1], r[2]))).map(|r| r[0]).collect();
+        let taken: Vec<i64> = files.iter().filter(|f| !still.contains(*f)).copied().collect();
+        let docs: HashSet<i64> = taken.iter().filter_map(|f| ledger.documents.get(f).copied()).collect();
+        ledger.taken_back.extend(taken);
+        // A load this run asked and was not given (past the budget, say) is asked again: a place may be free now.
+        let given: HashSet<(i64, i64)> = self.rows.get(super::world::LOADED).into_iter().flatten().filter(|r| r.len() == 3 && !gone.contains(&(r[1], r[2]))).map(|r| (r[1], r[2])).collect();
+        if !docs.is_empty() {
+            self.asked.retain(|(rel, k)| !(rel == super::world::LOAD && k.len() == 3 && !given.contains(&(k[1], k[2]))));
+        }
         withdrawn.extend(docs.iter().copied());
         let mut touched = BTreeSet::new();
         for (rel, rows) in self.rows.iter_mut() {
             let before = rows.len();
             let of_doc = |r: &Vec<i64>| at.get(rel.as_str()).is_some_and(|c| r.get(*c).is_some_and(|v| docs.contains(&super::memo::document_of(*v))));
             let loaded_gone = |r: &Vec<i64>| rel == super::world::LOADED && r.len() == 3 && gone.contains(&(r[1], r[2]));
-            rows.retain(|r| !(loaded_gone(r) || of_doc(r) || r.iter().any(|v| files.contains(v))));
+            rows.retain(|r| !(loaded_gone(r) || of_doc(r)));
             if rows.len() != before {
                 touched.insert(rel.clone());
             }
@@ -234,7 +302,7 @@ pub(in crate::code_rule_dsl) struct On<'a> {
 /// The digest of the file system's answers `kept` holds as inputs (`rr::WORLD`'s relations): what a record of the
 /// journal's cursors is checked against, so its cursors are trusted only over the answers kept with them.
 pub(in crate::code_rule_dsl) fn world_digest(digest: impl Fn(&str) -> Option<u64>) -> u64 {
-    crate::code_rule_dsl::logic::rr::WORLD.iter().fold(0x5157_0001u64, |h, (rel, _)| h.rotate_left(17) ^ digest(rel).unwrap_or(0))
+    crate::code_rule_dsl::logic::rr::WORLD.iter().fold(0x5157_0001u64, |h, (rel, _)| h.rotate_left(17) ^ digest(&fs_input(rel)).unwrap_or(0))
 }
 
 /// Where the rounds start.
@@ -259,6 +327,11 @@ impl RoundProgram {
             Start::Kept(k) => (Some(k), None),
             Start::Closing(asks) => (None, Some(asks)),
         };
+        // The answers recorded before the rounds (the gated fixpoint's), kept where the rounds keep them.
+        answers.rows = std::mem::take(&mut answers.rows).into_iter().fold(BTreeMap::new(), |mut m: BTreeMap<String, Vec<Vec<i64>>>, (r, rows)| {
+            m.entry(self.kept_as(&r)).or_default().extend(rows);
+            m
+        });
         let mut provisional: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
         let mut still_n = 0;
         // The documents loaded this run and taken back (`Answers::withdraw`).
@@ -290,10 +363,10 @@ impl RoundProgram {
                 provisional.insert(rel.clone(), k.read_input(on.store, program, rel, None)?.unwrap_or_default());
             }
             // The loaded documents' rows of each per-file relation: the kept rows not of the corpus's documents
-            // (only their granules read, where the documents are the first column's).
+            // (only their granules read, where the documents are the column the frames group its rows by).
             for (rel, _, at) in inputs.per_file {
                 let loaded = |d: i64| !inputs.corpus.contains(&d);
-                let rows = k.read_input(on.store, program, rel, (*at == 0).then_some(&loaded as &dyn Fn(i64) -> bool))?.unwrap_or_default();
+                let rows = k.read_input(on.store, program, rel, (*at == retain::group_col(program, rel)).then_some(&loaded as &dyn Fn(i64) -> bool))?.unwrap_or_default();
                 provisional.insert(rel.clone(), rows.into_iter().filter(|r| loaded(super::memo::document_of(r[*at]))).collect());
             }
             for (req, _) in &self.requests {
@@ -303,8 +376,9 @@ impl RoundProgram {
             // answers are its answer again, and it is not asked.
             if let Some(still) = on.still {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "rounds/answers the journal keeps".into());
-                for (produced, req) in crate::code_rule_dsl::logic::rr::WORLD {
-                    let Some(rows) = provisional.get(produced) else { continue };
+                for (answer, req) in crate::code_rule_dsl::logic::rr::WORLD {
+                    let produced = self.kept_as(answer);
+                    let Some(rows) = provisional.get(&produced) else { continue };
                     let mut by: HashMap<i64, Vec<&Vec<i64>>> = HashMap::new();
                     for r in rows.iter().filter(|r| !r.is_empty()) {
                         by.entry(r[0]).or_default().push(r);
@@ -313,7 +387,7 @@ impl RoundProgram {
                     let given: Vec<Vec<i64>> = keys.iter().flat_map(|k| by.get(&k[0]).into_iter().flatten().map(|r| (*r).clone())).collect();
                     still_n += keys.len();
                     answers.asked.extend(keys.into_iter().map(|k| ((*req).to_owned(), k.clone())));
-                    answers.rows.entry((*produced).to_owned()).or_default().extend(given);
+                    answers.rows.entry(produced).or_default().extend(given);
                 }
             }
         }
@@ -379,7 +453,21 @@ impl RoundProgram {
             let batch = [pick(true, false), pick(true, true), pick(false, false), pick(false, true)].into_iter().find(|b| !b.is_empty());
             if let Some(batch) = batch {
                 for (req, keys) in batch {
-                    let given = answer(&req, &keys)?;
+                    let given: Vec<(String, Vec<Vec<i64>>)> = answer(&req, &keys)?.into_iter().map(|(r, rows)| (self.kept_as(&r), rows)).collect();
+                    if inputs.ledger.lock().unwrap_or_else(|e| e.into_inner()).bound {
+                        return Err(Gave::Up("a load past the budget: where it binds, the loads are taken level by level, in a fresh cone".into()));
+                    }
+                    // A document taken back and loaded again is the run's again.
+                    if req == super::world::LOAD && !withdrawn.is_empty() {
+                        let ledger = inputs.ledger.lock().unwrap_or_else(|e| e.into_inner());
+                        for (_, rows) in given.iter().filter(|(r, _)| r == super::world::LOADED) {
+                            for r in rows {
+                                if let Some(d) = r.first().and_then(|f| ledger.documents.get(f)) {
+                                    withdrawn.remove(d);
+                                }
+                            }
+                        }
+                    }
                     dirty.extend(given.iter().filter(|(_, rows)| !rows.is_empty()).map(|(r, _)| r.clone()));
                     answers.record(&req, &keys, &given);
                 }
@@ -415,7 +503,7 @@ impl RoundProgram {
                 if closing {
                     return Err(Gave::Up("the closing round takes back a load".to_owned()));
                 }
-                let touched = answers.withdraw(&stale, &asked_now, inputs.per_file, &mut withdrawn);
+                let touched = answers.withdraw(&stale, &asked_now, inputs.per_file, &mut inputs.ledger.lock().unwrap_or_else(|e| e.into_inner()), &mut withdrawn);
                 dirty.extend(touched);
                 continue;
             }
@@ -443,9 +531,19 @@ impl RoundProgram {
             }
             None => 0,
         };
-        let produced = self.produced.iter().map(|(rel, _)| (rel.clone(), bound.get(rel).map(|(s, _)| rows(s.as_ref())).unwrap_or_default())).collect();
+        let mut produced: Vec<(String, Vec<Vec<i64>>)> = self.produced.iter().filter(|(rel, _)| !self.fs.iter().any(|(_, i)| i == rel)).map(|(rel, _)| (rel.clone(), bound.get(rel).map(|(s, _)| rows(s.as_ref())).unwrap_or_default())).collect();
+        // The file system's answers as the last round derived them: each request's rows of the file system.
+        for (answer, _) in &self.fs {
+            produced.push((answer.clone(), next.read_derived(on.store, answer)?.ok_or_else(|| Gave::Up(format!("{answer} is not kept")))?));
+        }
         let world = world_digest(|rel| bound.get(rel).map(|(_, d)| *d));
         Ok(Done { next, rounds, strata, maintained: maintained_n, derived_again: again, again_why, still: still_n, world, withdrawn, written, produced, answered })
+    }
+
+    /// Where the rounds keep an answer's rows: the file system's relation for one of its answers (`fs`), else the
+    /// answer's own.
+    fn kept_as(&self, rel: &str) -> String {
+        self.fs.iter().find(|(a, _)| a == rel).map_or_else(|| rel.to_owned(), |(_, i)| i.clone())
     }
 
     /// The ask relations, by gate.

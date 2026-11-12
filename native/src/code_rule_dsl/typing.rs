@@ -12,4 +12,5 @@ pub mod deps;
 pub mod rounds;
 pub mod terms;
 // cratify: `oracle_tests` is rerail-engine's (it mounts it)
-// cratify: `phase_tests` is rerail-engine's (it mounts it: they parse rule files, whose language the engine registers)
+// Its tests run in the engine's test binary (its facade of this module mounts `typing/phase_tests.rs`): they read what the
+// engine registers as it loads (the languages, their `.rr` libraries).

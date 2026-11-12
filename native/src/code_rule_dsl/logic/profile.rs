@@ -301,7 +301,10 @@ pub struct StepPlan {
     pub access: String,
     pub source: String,
     pub rows: f64,
-    pub passed: Vec<(String, f64)>,
+    pub passed: Vec<(String, f64, String)>,
+    /// The rule the step's rows a binding were priced by (`plan_search`'s `atom_rows`): postings, observed,
+    /// absence proof, membership, and the containment share applied, so a misprediction names its rule.
+    pub basis: String,
 }
 
 /// A rule's plan as the planner chose it: estimated work and rows, and its search (subsets kept, candidates priced).
@@ -893,8 +896,8 @@ pub fn behind_the_run() {
     BEHIND.with(|b| b.set(true));
 }
 
-/// Runs `f` on this thread as work behind the run: a write after the run's last wave, as a command's end flushes its
-/// cost samples (decision 0104).
+/// Runs `f` behind the run on this thread, which is then as it was: work after the command's end (its cost
+/// samples written) on a thread that otherwise is the run's.
 pub fn behind<T>(f: impl FnOnce() -> T) -> T {
     let was = BEHIND.with(|b| b.replace(true));
     let out = f();
@@ -1019,6 +1022,13 @@ pub fn work(unit: Unit, n: u64) {
     }
     let path = current();
     *state().work.entry((path, unit)).or_default() += n;
+}
+
+/// A native plan's work from its rows in and out per step: the bindings each step was entered with, and the rows
+/// its last step made, as the planner prices a plan (`est work`). Summing the bindings in alone charged a scan that
+/// made 243,092 rows as 1 (`kind__sup0`, O125).
+pub fn plan_work(steps: &[(u64, u64)]) -> u64 {
+    steps.iter().map(|(a, _)| a).sum::<u64>() + steps.last().map_or(0, |s| s.1)
 }
 
 /// Adds a native plan's rows in and out per step, and its probes' CPU seconds, to the current span.
@@ -1415,7 +1425,7 @@ pub fn reset() {
 }
 
 /// The statements recorded, by SQLite's time, most first: (span, text, totals).
-pub(in crate::code_rule_dsl) fn statements() -> Vec<(String, String, SqlTotal)> {
+pub fn statements() -> Vec<(String, String, SqlTotal)> {
     let state = state();
     let mut all: Vec<_> = state.sql.iter().map(|((p, t), s)| (p.clone(), t.clone(), s.clone())).collect();
     all.sort_by_key(|(_, _, s)| std::cmp::Reverse(s.ns));
@@ -1502,9 +1512,11 @@ pub fn explain(r: &mut String, state: &State) {
                 } else {
                     String::new()
                 };
-                let _ = writeln!(r, "       {:>2}. {:<44} {:<30} {:<20} est {:>11}  {actual}", i + 1, short(&st.literal, 44), short(&st.access, 30), short(&st.source, 20), rows(st.rows));
-                for (lit, per) in &st.passed {
-                    let _ = writeln!(r, "           passed over {:<44} {per:.1} rows a binding", short(lit, 44));
+                let basis = if st.basis.is_empty() { String::new() } else { format!("  [{}]", st.basis) };
+                let _ = writeln!(r, "       {:>2}. {:<44} {:<30} {:<20} est {:>11}  {actual}{basis}", i + 1, short(&st.literal, 44), short(&st.access, 30), short(&st.source, 20), rows(st.rows));
+                for (lit, per, why) in &st.passed {
+                    let why = if why.is_empty() { String::new() } else { format!("  [{why}]") };
+                    let _ = writeln!(r, "           passed over {:<44} {per:.1} rows a binding{why}", short(lit, 44));
                 }
             }
         }
@@ -1766,6 +1778,10 @@ pub struct Report {
     /// Rows the heads made (before the store's set), and bindings the stages made.
     pub rows: u64,
     pub bindings: u64,
+    /// Texts made on the device (`cat` into a head) and stored as symbols.
+    pub made: u64,
+    /// The rounds a recursive component ran on the device (`fixpoint`; 0 for seeds alone).
+    pub rounds: u32,
     /// Why the device refused the stratum (at open, or at run time: a table past its budget), which then ran on the
     /// CPU; `None` when it ran here.
     pub refused: Option<String>,

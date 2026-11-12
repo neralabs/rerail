@@ -3227,6 +3227,9 @@ no corpus session (a session held across the nested run deadlocked against the l
 
 **Closure:** the lease is held only across the atoms write, not the run; or tests default to a per-process store.
 
+**Closed (2026-11-11): decision 0118.** A test's store is its own: a copy of a template made once per build, removed
+when its test ends. No test shares a store, or its atoms lease, with another test or another process.
+
 ## O147. Each phase-0 run costs about 0.25 s, paid once per seed set
 
 **Seen (2026-11-08, t25).** A run of `bootstrap.rr` over one text with includes costs about 0.25 s CPU when nothing
@@ -3600,6 +3603,12 @@ connection address or by path (`""` for in-memory databases). Not yet traced.
 
 **Closure:** the shared state is found and keyed per run, and `base_tests` passes 20 of 20 in parallel.
 
+**Update (2026-11-11), decision 0118.** The same error comes up in `logic::plan::tests::` (for example
+`bounded_value_recursion_and_negated_conjunctions_run`): 4 of 10 runs on one store per process, 0 of 20 on a store
+per test. So the shared state is the shared store. A test's run read the statistics, plans and choices other tests'
+runs had kept there. `base_tests` is compiled only by `rerail-device-metal`'s test binary, which does not build
+(O-device-metal-tests), so its 20 runs are still to do.
+
 ## O-wave-test-shared. `closures_of_one_level_launch_in_one_wave` fails beside other tests
 
 Run with the rest of `logic::plan::tests` on the harness's parallel threads, this test sometimes sees its level's
@@ -3610,3 +3619,295 @@ test's wave.
 
 **Closure:** a wave belongs to its run (or the test counts only its own launches), and the test passes 20 of 20
 beside the others.
+
+**Closed (2026-11-11): decision 0118.** With a store per test, the test passed beside the rest of
+`logic::plan::tests::` in 20 of 20 runs; with one store per process it failed 2 of 10. The split wave came from the
+shared store, not the device's lanes: a test's run took plans and choices that other tests' runs had kept there.
+
+## O-split-logic-tests. Six tests of `rerail-logic` read crates above it, and are compiled nowhere
+
+After the crate split, `rerail-logic`'s test target did not build: its tests named the engine's modules (the
+`prefilter` test helpers, `tools::flatten`, `sql_executor`, `waves::policies`, `model::FileInput`, the device's
+`transducer::packed` rows). The helpers had a home below (`fixtures::temp`, `logic::settings::program_text`,
+`ContentStore::open`), and those calls now use it. The corpus runner's tests that parse files (the cone, the shared
+relations, the cross-file frames) need the languages, which the crates above register: they moved to
+`corpus/tests.rs`, which the engine's facade of `logic::plan::corpus` compiles. The ones that parse nothing stay in
+logic. Five tests need a crate above, so they are gated out (`#[cfg(any())]`, marked `O-split-logic-tests`) until
+the split hosts them in the engine:
+
+| Test | Reads |
+|---|---|
+| `corpus::matchers::tests::any_arms_binding_one_name_lower` | `waves::policies` |
+| `corpus::matchers::tests::a_matcher_relaxed_where_it_only_widens` | `waves::policies` |
+| `corpus::matchers::tests::a_nested_file_path_is_the_documents` | `tools::run_policies` |
+| `native_demand::tests::retained_semantic_results_support_sql_outputs_and_isolate_targets_and_runs` | `model::FileInput` |
+| `native::setfix::lab::tests` (the relational lab, ignored) | `transducer::packed` (Metal rows) |
+
+`test-hosts.tsv` already names `logic::native::setfix::lab::tests` as the engine's, but the generator does not move
+an inline test module, and the engine mounts none for it.
+
+**Found on the hub (2026-11-11), after the More-ergonomic and Cratification merges.** `rerail-logic`'s test
+target built only together with the engine: nothing turned on its own `test-hooks` (16 errors: `tempfile`,
+`fixtures`, `drop_unread_core`). It now has the engine's self dev-dependency (`rerail-logic = { path = ".",
+features = ["test-hooks"] }`, the same in `rerail-device-metal`), and `rerail-lang`'s `test-hooks` turns on
+`rerail-store`'s and `rerail-compiler`'s, which no crate's list named. Built alone, 269 pass and 41 fail;
+33 once `corpus::tests` went to the engine (More-ergonomic `b2bfa28d6`).
+Every failing test reads what the engine registers as it loads, through a
+registry that no static read shows, so `hosts.py` leaves them in `rerail-logic`:
+
+- the Rr language pack (`no language registered for Rr`, from `rr::stored_statements`);
+- then the language crates' `.rr` libraries (`#include "python/modules.rr": no such library`) and the Python pack;
+- the `to_precision` function (`TO_PRECISION`, set by the ECMA crate).
+
+**Hosted in the engine (2026-11-11).** A test that reads through a load-time registry reads the crate that
+registers it, so these went to the engine; copying `install_languages` into `rerail-logic` would have been a second
+loader. Each module's facade in the engine (`native/src/code_rule_dsl/mod.rs`, `waves.rs`) mounts the test file,
+and what the tests read became `pub`:
+
+- whole modules: `liveness::tests`, `corpus::{cache_tests, base_tests}`, `phase0::tests`, `phases::tests`,
+  `prepared::{tests, identity_tests}`, `reuse::tests`, `session::tests`, `profile::report::tests`,
+  `typing::phase_tests`, `waves::owner::tests`, `residency::slabs::tests` and
+  `metal_program_backend::tape_tests` (inline ones first moved to files);
+- the one test of a module that needs a language, in `engine_tests.rs` beside the module: `compose`,
+  `native_demand`, `strings` (`to_precision`), `metal_backend` (the launch budget) and `typing::file_local`.
+
+Their rule paths are the engine's manifest's (`CARGO_MANIFEST_DIR` is `native/`). The device tests stay in
+`rerail-device-metal`, which now registers Metal as its own test binary loads (`device_metal::test_load`), as the
+engine does. The launch-guard test cut each file at `#[cfg(test)]\nmod `, which the split's `pub mod` test modules
+no longer match, so it read its own list of forbidden calls; it cuts at either. Results: `rerail-logic` 262 pass,
+0 fail; the 83 hosted tests pass in the engine; `rerail-device-metal` 20 pass, 2 fail (below).
+
+**Still open:** `setfix::device::tests::{text_functions_on_the_device_are_the_cpus,
+text_tests_on_the_device_are_the_cpus}` ran nowhere on the hub until now. In the cases with a 60 × 2000 cross step
+the device reports fewer bindings at that step than the CPU (79,153 against 120,000); every final head count is the
+CPU's. It is Native-and-GPU-strata's to read: either the device drops bindings it should not, or it counts them
+after a filter the CPU applies one step later.
+
+**Closure:** each runs in the engine's test binary (or in a crate that has what it reads), and the gates go.
+
+## O-test-store-cost. A test's own store costs 5–21% more instructions per suite
+
+**Seen (2026-11-11), decision 0118.** Against one store per process: `logic::rr::` 740 G instructions against 668 G,
+and 784 MB against 686 MB; `logic::plan::tests::` 179 G against 148 G, and 329 MB against 240 MB;
+`logic::plan::corpus::tests::` 194 G against 185 G. That is about 0.65 G per test, whatever the template holds. A
+template of the core program alone costs as much, and needs less memory (669 MB for `logic::rr::`). The cost is a
+test's first run on a new store: it opens the store, makes its observer store, and finds the process's caches of the
+store cold (by its path: `setfix`'s `SYMS`, `STORED`, `INPUTS`; the frames read before the first wave). That warmth
+is the sharing between tests that the decision removes.
+
+**Closure:** each first-run step on a new store is measured, and any that is not proportional to what the run reads
+is cut. The memory per concurrent test is judged against the 1 GB budget. Which template, the library's or the core
+program's, is decided by the user.
+
+## O-device-metal-tests. `rerail-device-metal`'s test target does not build
+
+**Seen (2026-11-11).** `cargo test -p rerail-device-metal --lib --features test-hooks` fails in `rerail-transducer`:
+`content_store::positional_search` and the store's bulk search methods are not there under that build (11 errors).
+Without `test-hooks` its own facade fails (`fixtures`, `p_table`, `drop_unread_core`). `corpus::base_tests` is
+compiled only there.
+
+**Closure:** the target builds, and `base_tests` runs (O-p0-stats-flake's 20 runs).
+
+**Status (2026-11-12):** the target builds (the engine hosts the tests that read above the crate); 20 pass,
+the two text tests fail (O-device-step-counts).
+
+## O-phase0-store-state. Phase 0's include graph depends on what the store already holds
+
+Each test now starts from a copy of a store template that already holds the
+library's facts (decision 0118). In such a store, two runs of phase 0 on the
+same seed disagree:
+
+```text
+seed: the text of python/conditions.rr (its #include lines)
+first run   (graph):  python/env.rr includes core.rr at -1 (the implicit include)
+second run  (derive): python/env.rr has no includes; the absent candidates differ
+module digests: equal
+```
+
+On an empty store the two runs agree, so the derivation depends on the facts
+left in the store by earlier runs. That is maintenance of phase 0's own
+relations, not the observer: the module digests match.
+
+`bootstrap_resolves_as_the_builtin_reader_does` is ignored until this is fixed.
+It passes with `RERAIL_TAPE_CACHE` pointing at an empty store. Next step: find
+whether the first or the second run is wrong (compare both with a run on an
+empty store), then fix the rule or the maintenance that loses the edge.
+
+**Closed (2026-11-12).** On the hub after the final roll-up, the test passes in the template's store: six
+runs alone, and `logic::plan::corpus` (73 tests) twice in one process. The maintenance merged in the roll-up
+keeps the edge. `bootstrap_resolves_as_the_builtin_reader_does` runs again (no `#[ignore]`).
+
+**Open again (2026-11-12): intermittent.** It failed once more, in `logic::native logic::plan` under load. Since
+then, four runs of that set in one process have passed. Four threads deriving the same seed at once agree with
+a derive alone, three rounds of it (a test written for the check, then removed). Shared derive state is not the
+cause, then; the graph side (`graph`, the kept text) is the suspect. On a failure, the assertion now prints both
+graphs (`Graph::describe`: includes, missing, absent), so the next one shows which edge differs.
+
+## O-repetition-implied-boundary. A `+` run on the tape does not end at an implied token
+
+**Seen (2026-11-12).** Tree-sitter ends a quantified sibling run at an anonymous
+sibling: `(list ((identifier) @item)+)` on `items = [a, b, c]` gives three
+matches of one item each. The tape stores no implied token (RER-131), so the
+transducer's run goes on over `a b c` and gives one match of three items.
+`repetition_across_an_implied_token_is_one_run_on_the_tape` pins both results.
+
+**Closure:** decide whether any rule depends on tree-sitter's boundary. If one
+does, the program reads the boundary from the gap between stored siblings
+(the tape's `implied` gaps, `tape.rs`), never from generated tokens.
+
+## O-slice-launch-limit (closed 2026-11-12). One file's Metal label passes take more launches than the bound
+
+**Seen (2026-11-12).** `slice::tests::the_backends_find_the_same_keys_on_real_files`: the interpreter and the
+JIT agree (101 files, 491 clauses, 2193 keys); the Metal backends end in `BackendLaunchLimit`.
+`roots_metal_split` halves the batch down to one file, and one file still needs more than
+`KERNEL_LAUNCH_LIMIT` (200, the user's decision of list step 26). `RERAIL_LAUNCHES=1`, refused dispatches of
+the whole batch: `label_settle` 1044, `label_micro_8` 912, `label_micro` 526, `clause_patterns` 33,
+`label_round` 5, a few `label_group_*` and `root_records_*`.
+
+**Closure:** the label passes' launches bounded by the plan (settle and micro passes batched over clauses), or
+a new bound decided by the user. The bound is not raised here.
+
+**Closed (2026-11-12): batched; the bound stays 200.** The plan counts every recursive group as one fused
+dispatch (`label_group_*`), but a group ran unfused, at rounds × levels launches, whenever one of its walks was a
+loop walk (no static depth) or had a static depth over 64. Three changes:
+
+- A group fuses whatever its walks' depths. A walk takes the fewest frames that hold its static depth, at most
+  the run's tier: 64, or 256 on the deep run (`label_group_128` and `label_group_256` added). A static depth
+  bounds the grammar's nesting, not a file's. A walk that does outgrow its frames flags it, and the group runs
+  again deep, then interpreted.
+- The deep run still overflowed on one file, at a fork (`MICRO_FAIL` tagged by site, a temporary trace). The
+  cause was not nesting but `bounded`'s loop, `top: step; FORK reached; SUPERTYPE bound; GOTO top`. Each node
+  it passed left the exit path as a frame, so walking a module's statements by `NEXT` held one frame per
+  statement. `bounded` now takes the exit first and keeps the path that goes on as the fork's frame:
+  `top: step; FORK on; GOTO reached; on: SUPERTYPE bound; GOTO top; reached:`. The loop holds one frame. A
+  label is a set of nodes, so the order of its paths is free.
+- Without overflows, nothing falls to the interpreter, whose workspace for that file was over the buffer budget
+  even at 512 states.
+
+The slice test passes with all four backends: 101 files, 491 clauses, 2193 keys each. The largest batch takes
+97 launches (planned 74). Batches over the buffer budget still split (`BackendCapacity`), as designed. Not
+measured here: the Metal backends' process CPU (430–450 s against the CPU backends' 130 s; the run is under
+`nice` and shares the machine).
+
+## O-closures-one-wave-flake. A level's closures sometimes launch in no wave
+
+**Seen (2026-11-12),** once in four runs of `logic::native logic::plan` in one process:
+`logic::plan::tests::closures_of_one_level_launch_in_one_wave` read `(0, 0)` waves and launches for the program
+mode, where it expects `(1, 3)`. The counter (`lanes::wave::flushed`) is the thread's own, so no wave ran on the
+test's thread. Ruled out: other tests' waves (thread-local counters), connection reuse (a closed connection's
+components and derived relations are dropped by its client-data destructor), and the device binding
+(thread-local). The remaining ways to get no wave are a closure that keeps levels (`prepare` returns no
+launches), a closure not recognized (the stratum placed on device rounds), and a caller that cannot wait.
+
+**Closure:** make the assertion name which of the three it was, then fix that one at its root.
+
+## O-metal-slice-cpu. The Metal backends take three times the CPU backends' process CPU on the slice
+
+**Seen (2026-11-12)** in `slice::tests::the_backends_find_the_same_keys_on_real_files`, once the Metal backends
+completed (O-slice-launch-limit): interpreter 130 s, JIT 130 s, metal-interpreter 449 s, metal-jit 428 s of process
+CPU for the same 101 files and 2193 keys. One run, under `nice`, on a shared machine; not split by phase. The
+batch splits on `BackendCapacity` (101 → 50 → 25 → 12 files) each encode the clause again before it fails.
+
+**Closure:** measure warm and unprofiled (host CPU, GPU and wall apart, zero compiles in the timed run), split
+the host CPU by phase, and find the host work a Metal run repeats or does at all; then fix it at its shape.
+
+## O-pack-upstream-data. The Python pack's upstream sources are not in the checkout
+
+`compile_matcher_tests::the_gate_catches_a_widened_walk` fails here (`only 2 widened clauses differ`), with the
+`bounded` change and without it. `packs/python/upstream` holds 3 `.py` files; before #179 moved the pack's test
+data out of git (236fc98d2~1), it held 618. The test samples every fourth one. **Closure:** `npm run
+fixtures:pull` (CONTRIBUTING.md, "Pack test data"), then run the test again.
+
+## O-device-step-counts (closed 2026-11-12). The device's per-step counts of a cross join are not the CPU's
+
+**Seen (2026-11-12),** now that `rerail-device-metal`'s test target builds (O-device-metal-tests):
+`setfix::device::tests::text_tests_on_the_device_are_the_cpus` and `text_functions_on_the_device_are_the_cpus`.
+The rows were the same; the counts differed only at a step that joins `m` (60 rows) with `n` (2000 rows).
+The first reading had the sides backwards: the device counted the product, 120000; the CPU 78733 to 80169.
+The CPU's walk factors rows: a step whose key it has already seen fail (`Ctx.failed`) is skipped, and the
+skipped rows never reached the step counts.
+
+**Decided:** a step's count is the join's cardinality, the rows the plan's step sees, whatever a backend skips.
+That is what the planner estimates and what the device reports. The CPU now keeps, with each failed key, what
+its walk added to the counts of the steps below it, and adds that again when it skips the key. The saving is
+kept apart: `JoinRow` is charged for the skipped rows and `setfix::passed_over` gives them per join probe.
+`a_late_test_rejects_once_per_group_of_what_it_reads` asserts both (10000 counted, 8955 passed over).
+The device-metal target passes 22 of 22.
+
+## Setup cost of a batch of policies (measured 2026-11-12)
+
+The items below come from one sampled run: the 43 strict data-layer policies of `run-policies` over a one-file
+corpus (`dl1`), CPU, after commit 04f66708c (246G instructions retired, of which the main thread is nearly all).
+Shares are of the main thread's samples. Rule evaluation itself is a small part of such a run; a batch is mostly
+setup that each policy repeats. Each item says what repeats, why it need not, and how to close it.
+
+## O-batch-typing-once. Each policy reruns the same typing program over the same files
+
+**Seen (2026-11-12).** About 15% of the batch: `bridge::facts` → `run_typed` (13.5%), and reading the typing
+program's source again for each policy (`bridge::source` → `tools::program_text` → phase 0, 2.2%). Every policy
+that includes `lib/python/calls.rr` or `lib/python/types.rr` reads `typing_calls__<output>` relations, so its run
+first runs `typing/programs/calls.rr` in full over the corpus: planning it (`keeps::choose` →
+`calibrated_rows` → `plan_rule_explained`, 4.9%), then executing it (3.3%). Policies differ only in which of the
+seven outputs they read (the `typing_bridge_at` rules added to the program's text), so the same rounds run once
+per policy. O91 is the same work across runs; this is the same work within one batch.
+
+**Closure:** a batch runs each typing program once, for the union of the outputs its policies read, as the typing
+phase (P2 in the phase layout of decision 0083) ahead of the policies, and hands each policy its rows. Measured as
+`run_typed` once per batch, not once per policy, with findings unchanged on dl1 and dl10 (CPU and device).
+
+## O-batch-phase-sources. Earlier phases' sources are made again for each policy
+
+**Seen (2026-11-12).** 5.5% of the batch: `phases::sources` → `run_with_options`, inside each policy's run. The
+phases a policy's program reads (decision 0083 §1) run in their own fact spaces for every policy, though the
+policies of a batch read the same phases over the same files.
+
+**Closure:** as O-batch-typing-once: each phase runs once per batch for every policy that reads it, and is measured
+so.
+
+## O-lower-aggregate-demand. Aggregate demand clones and rescans the whole program for each aggregate
+
+**Seen (2026-11-12).** 8.3% of the batch, the largest part of lowering (lowering, `rr::read_file`, is 22%).
+`rr::aggregate_demand::optimize` loops over the program's aggregates. For each one it calls
+`dependencies(program)`, a scan of every rule (1.1%), and tries its candidate on a full copy of the program
+(`let mut next = program.clone()`; the clone alone is about 1.8%). Each aggregate's cost grows with the whole
+program, not with the rules it touches.
+
+**Closure:** one dependency map, updated as each candidate is placed, and candidates tried in place on the rules
+they change, with an undo when refused. `aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps` and
+the `lowering_is_idempotent_*` shards pass, and `optimize` costs a small fraction of lowering.
+
+## O-combine-hiding-single. A single program pays guest hiding's analysis in `combine`
+
+**Seen (2026-11-12).** 7.5% of the batch: `combine_texts` → `hiding::hide` (`analyse`, `carry`), for runs that
+combine one program. `combine`'s documentation says one program is parsed as it is, yet each policy's single text
+is still analysed for hiding (decision 0058 §2). O99 is hiding's cost at scale. This is its fixed cost for each
+program.
+
+**Closure:** either hiding is shown to change nothing for one program and is skipped, or what it computes is kept
+by the text's digest (like the combined program, decision 0094 §6). Measured as `hiding::hide` below 1% of a
+batch.
+
+## O-vocabulary-dfa-reuse. The text vocabulary's DFAs are built again for each policy
+
+**Seen (2026-11-12).** 3.5% of the batch: `strings::Vocabulary::compile` → `text::vocabulary::Searchers::new` →
+dense DFA determinization (`dfa::dense::Builder::build_from_nfa`), once per policy. The data-layer policies share
+most of their library patterns, but each policy's vocabulary is compiled from scratch.
+
+**Closure:** compiled searchers kept by pattern set (or per pattern, then combined), so a pattern set already built
+in the process is not built again; or a lazily determinized DFA where the dense build costs more than the search
+saves. Measured as `Vocabulary::compile` below 1% of a batch, with match results unchanged.
+
+## O-texts-digest-twice. A run's texts were digested twice (closed)
+
+**Seen (2026-11-12).** About 6% of the batch (`texts_digest` → `rr::graph_digest`, twice per policy). `combine`
+digested its texts for its cache key, then the run took the same digest again, each time tokenizing every program
+text for its `#include`s. **Closed (2026-11-12, 04f66708c):** `combine_keyed` returns the digest it computed;
+`text_seed` is kept per text digest, and a text without `#include` (a printed program) is not tokenized. dl1
+278G → 246G instructions retired (with 5db161b00), dl10 418G → 374G.
+
+## O-lower-idempotent. Lowering a printed program gave another program (closed)
+
+**Seen (2026-11-12).** Reading back a printed program added a second copy of each regex-group binding and
+`rr_unit(0)` atoms, renamed natively made relations, and split set memberships into one rule per value.
+**Closed (2026-11-12, 5db161b00):** each of the 1,140 programs under `docs/rule-syntax` prints, lowers and prints as
+the same text (`lowering_is_idempotent_*`, 11 shards within the run cap).

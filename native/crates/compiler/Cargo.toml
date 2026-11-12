@@ -16,6 +16,8 @@ cranelift-codegen = "=0.125.4"
 cranelift-frontend = "=0.125.4"
 cranelift-module = "=0.125.4"
 libc = "0.2.189"
+# The one pool the engine runs on (tier 2 clusters compiled in parallel).
+rayon = "=1.12.0"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
@@ -23,3 +25,7 @@ cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
 # The browser build: a page has no executable memory (the engine's `wasm/README.md`).
 [target.'cfg(target_family = "wasm")'.dependencies]
 cranelift-jit-wasm = { path = "../../wasm/cranelift-jit" }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-compiler = { path = ".", features = ["test-hooks"] }

@@ -325,7 +325,7 @@ fn quantity(
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::code_rule_dsl::oracle;
+    use crate::code_rule_dsl::fixtures::oracle;
 
     /// The tree as `kind(value)[children]`, one line per part.
     fn shape(text: &str) -> Vec<String> {

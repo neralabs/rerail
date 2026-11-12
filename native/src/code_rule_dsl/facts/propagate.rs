@@ -25,7 +25,7 @@ pub struct Work {
 /// (names an observer rebound), until a wave changes nothing. `recompute` receives one wave's
 /// frontier and returns its derivations as re-run; a frontier is never empty. More than
 /// `max_waves` waves is an error: a cycle whose digests do not settle.
-pub(crate) fn propagate(
+pub fn propagate(
     store: &(impl Graph + ?Sized),
     mut changed: Vec<String>,
     max_waves: u32,

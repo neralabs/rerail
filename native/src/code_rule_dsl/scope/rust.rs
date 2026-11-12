@@ -16,7 +16,7 @@ use crate::code_rule_dsl::calls::rust::{LIBRARY_ROOTS, crate_module, std_macro};
 use ast_grep_core::{Doc, Node};
 
 /// The macro namespace: `macro_rules!` definitions and imported macros.
-pub(crate) const MACRO: u8 = 4;
+pub const MACRO: u8 = 4;
 /// Lifetime parameters (`'a`).
 pub(crate) const LIFETIME: u8 = 8;
 /// Loop and block labels (`'outer:`).
@@ -45,7 +45,7 @@ pub(crate) fn finish<D: Doc>(table: &mut ScopeTable, _: &Node<'_, D>) {
 /// The scope and index of the binding `name` resolves to at `reference`: in each scope from the
 /// reference's outwards, the latest binding of the reference's namespace made before it. Past a
 /// function only items stay visible; past a module, only macros (`macro_rules!` is textual).
-pub(crate) fn resolve_index(
+pub fn resolve_index(
     table: &ScopeTable,
     reference: &Reference,
     name: &str,
@@ -122,7 +122,7 @@ fn is_item(binding: &Binding, scope_start: usize) -> bool {
 /// (`thread_local! { .. }`, `lazy_static! { .. }`) in the reference's module or a block within it
 /// may bind a name: the module a glob reads is another file's or crate's, and what a macro defines
 /// needs its expansion.
-pub(crate) fn glob_visible(table: &ScopeTable, reference: &Reference) -> bool {
+pub fn glob_visible(table: &ScopeTable, reference: &Reference) -> bool {
     let mut current = Some(reference.scope);
     while let Some(index) = current {
         let scope = &table.scopes[index as usize];
@@ -138,7 +138,7 @@ pub(crate) fn glob_visible(table: &ScopeTable, reference: &Reference) -> bool {
 }
 
 /// What the first segment of a `use` path names, once `use_path` has followed it.
-pub(crate) enum UseHead<'t> {
+pub enum UseHead<'t> {
     /// `crate`, `self` or `super`.
     Keyword,
     /// An extern crate: the path is global (`::serde`) or its head an `extern crate` item's name,
@@ -153,7 +153,7 @@ pub(crate) enum UseHead<'t> {
 /// What a `use` path leads to: its segments, the head followed through the `use` bindings it names
 /// where the `use` stands (`use crate::b as a; use a::f;` imports `crate::b::f`), and what that
 /// head then names.
-pub(crate) struct UsePath<'t> {
+pub struct UsePath<'t> {
     pub(crate) segments: Vec<String>,
     pub(crate) head: UseHead<'t>,
 }
@@ -166,7 +166,7 @@ const MAX_USE_HOPS: usize = 64;
 /// `use` path's first segment: each head bound by another `use` is replaced with that one's path,
 /// read from its own scope. `is_extern` tells an `extern crate` item's binding. `None` for a
 /// binding that imports no path, and where the `use` bindings name each other in a cycle.
-pub(crate) fn use_path<'t>(
+pub fn use_path<'t>(
     table: &'t ScopeTable,
     at: (u32, usize),
     name: &str,
@@ -273,7 +273,7 @@ pub(crate) fn use_path<'t>(
 /// head a glob import may bind, a path no read holds (a `use` path, a visibility), or `self::`
 /// and `super::` where the module is not known. A `use` path that names neither is read as
 /// written (an extern crate's, or a module of the crate the definitions would tell).
-pub(crate) fn import_path<D: Doc>(
+pub fn import_path<D: Doc>(
     table: &ScopeTable,
     node: &Node<'_, D>,
     file: Option<&str>,
@@ -1294,7 +1294,7 @@ fn defines_items<D: Doc>(node: &Node<'_, D>) -> bool {
 
 /// A Rust file's table, as `ScopeTable::build` builds it.
 #[cfg(any(test, feature = "test-hooks"))]
-pub(crate) fn build_for_test(source: &str) -> ScopeTable {
+pub fn build_for_test(source: &str) -> ScopeTable {
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_core::tree_sitter::LanguageExt;
     let root = GrammarDialect::Rust.ast_grep(source);
@@ -1302,5 +1302,4 @@ pub(crate) fn build_for_test(source: &str) -> ScopeTable {
         .expect("Rust scope build")
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

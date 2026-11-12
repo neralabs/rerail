@@ -1,6 +1,10 @@
 use super::native_oracle::Native;
 use super::*;
-use crate::code_rule_dsl::{tape::{Grammar, TapeDoc, TapeImage}};
+use crate::code_rule_dsl::{
+    CodeRuleDslRuntime,
+    tape::{Grammar, TapeDoc, TapeImage},
+    test_support::CAPABILITIES,
+};
 use ast_grep_core::{AstGrep, tree_sitter::StrDoc};
 use serde_json::{Value, json};
 use std::collections::HashMap;

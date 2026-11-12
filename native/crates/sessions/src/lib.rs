@@ -84,7 +84,7 @@ pub mod code_rule_dsl {
         #[path = "front"]
         pub mod front {
             pub use rerail_rr::code_rule_dsl::logic::front::*;
-            #[path = "caches"]
+            #[path = "."]
             pub mod caches {
                 pub use rerail_rr::code_rule_dsl::logic::front::caches::*;
                 #[allow(unused_imports)]
@@ -150,7 +150,7 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use std::collections::{BTreeMap, BTreeSet};
             }
-            #[path = "tape_type"]
+            #[path = "."]
             pub mod tape_type {
                 pub use rerail_rr::code_rule_dsl::logic::rr::tape_type::*;
                 #[allow(unused_imports)]
@@ -213,6 +213,7 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::semver;
     pub mod sql_executor;
     pub use rerail_facts::code_rule_dsl::sql_profile;
+    pub use rerail_facts::code_rule_dsl::sql_admission;
     #[path = "stats"]
     pub mod stats {
         pub use rerail_facts::code_rule_dsl::stats::identity;

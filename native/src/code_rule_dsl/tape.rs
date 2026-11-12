@@ -61,7 +61,7 @@ pub fn stored_tape_tag(bytes: &[u8]) -> Option<u8> {
 
 /// Each column starts at this alignment from the image's start (format 11), so a reader of the
 /// image in place, as the device reads a resident tape (PIAT §20.2.3), reads aligned columns.
-pub(super) const COLUMN_ALIGN: usize = 16;
+pub const COLUMN_ALIGN: usize = 16;
 
 /// `length` rounded up to `COLUMN_ALIGN`.
 pub const fn padded(length: usize) -> usize {
@@ -77,7 +77,7 @@ pub const CODE_MISSING: u8 = 4;
 pub const KIND_LIMIT: usize = 1024;
 pub const FIELD_LIMIT: usize = 64;
 pub const SENTINEL: u16 = u16::MAX;
-const NONE: u32 = u32::MAX;
+pub const NONE: u32 = u32::MAX;
 pub const CHECKPOINT_LIMIT: usize = 0x00ff_ffff;
 /// Tree-sitter's ERROR symbol does not fit the 10-bit kind code. ERROR records store the
 /// grammar's hidden end symbol, which never labels a visible node, and are listed in `error`.
@@ -91,8 +91,7 @@ pub mod navigation;
 pub use index::IndexImage;
 pub mod wire;
 pub mod tokens;
-#[cfg(test)]
-pub mod tokens_tests;
+// tokens_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 // cratify: `token_readers` is rerail-w's (it mounts it)
 pub mod resident;
 pub mod validated;
@@ -878,6 +877,8 @@ fn encode_tree(
     let mut stored: Option<Vec<bool>> = None;
     let mut place = 0usize;
     let mut levels: Vec<(Option<Vec<bool>>, usize)> = Vec::new();
+    let mut scratch = tokens::FilterScratch::default();
+    let mut filter_cursor = filter.map(|_| root.walk());
     let mut visited = 0usize;
     loop {
         // Every 256 nodes, omitted ones included.
@@ -885,33 +886,31 @@ fn encode_tree(
             checked(budget)?;
         }
         visited += 1;
-        let node = cursor.node();
         let implied = stored.as_ref().is_some_and(|stored| !stored.get(place).copied().unwrap_or(true));
-        let index = if implied || omitted.is_some_and(|segments| segments.omitted(node.byte_range())) {
-            None
-        } else {
+        // An implied token has no record or descendants. Do not reconstruct its
+        // TSNode (including its source position) merely to discard it.
+        let retained = (!implied).then(|| cursor.node()).filter(|node| !omitted.is_some_and(|segments| segments.omitted(node.byte_range())));
+        if let Some(node) = retained {
             // The cursor's root is `root` itself, which has no field.
             // One status call gives the field and the supertypes (the field alone walks the stack again).
             let (classes, count, field) = cursor_status(&cursor);
-            let field = if node.is_extra() { 0 } else { field };
-            let index = encode_node(nodes, node, parent, field, language, &mut catalog)?;
+            let extra = node.is_extra();
+            let field = if extra { 0 } else { field };
+            let index = encode_node(nodes, node, parent, field, extra, language, &mut catalog)?;
             for class in classes.into_iter().take(count) {
                 if usize::from(class) >= KIND_LIMIT {
                     return Err("supertype symbol exceeds tape limit".into());
                 }
                 supertypes.push((index, class));
             }
-            Some(index)
-        };
-        if let Some(index) = index
-            && cursor.goto_first_child()
-        {
-            above.push(parent);
-            parent = Some(index);
-            levels.push((stored.take(), place));
-            stored = filter.and_then(|filter| filter.stored_children(node));
-            place = 0;
-            continue;
+            if cursor.goto_first_child() {
+                above.push(parent);
+                parent = Some(index);
+                levels.push((stored.take(), place));
+                stored = filter.and_then(|filter| filter.stored_children_in(node, filter_cursor.as_mut().expect("a cursor for the filter"), &mut scratch));
+                place = 0;
+                continue;
+            }
         }
         // The next sibling, of this node or of its nearest ancestor that has one.
         loop {
@@ -925,6 +924,7 @@ fn encode_tree(
             cursor.goto_parent();
             above.pop();
             parent = grandparent;
+            if let Some(mask) = stored.take() { scratch.recycle(mask); }
             (stored, place) = levels.pop().unwrap_or_default();
         }
     }
@@ -936,20 +936,25 @@ fn encode_node<'l>(
     node: TsNode<'_>,
     parent: Option<u32>,
     field: u16,
+    extra: bool,
     language: &'l Language,
     catalog: &mut [Option<(Option<&'l str>, bool)>],
 ) -> Result<u32, String> {
     let index = u32::try_from(nodes.len()).map_err(|_| "rec6 node count overflow")?;
-    let kind = usize::from(node.kind_id());
-    let error = node.is_error();
+    let code = node.kind_id();
+    let kind = usize::from(code);
+    // ts_node_is_error repeats ts_node_symbol. The pinned runtime defines it
+    // as this comparison; read each node property once across the FFI boundary.
+    let error = code == ERROR_SYMBOL;
+    let missing = node.is_missing();
+    let span = node.byte_range();
     if usize::from(field) >= FIELD_LIMIT {
         return Err(format!(
             "grammar field id {field} exceeds tape limit {FIELD_LIMIT}"
         ));
     }
-    let code = node.kind_id();
     if error {
-        if code != ERROR_SYMBOL || node.is_missing() {
+        if missing {
             return Err("unsupported error or missing grammar symbol".into());
         }
     } else if kind >= language.node_kind_count() {
@@ -962,10 +967,9 @@ fn encode_node<'l>(
         ));
     } else if code == ERROR_CODE {
         return Err("grammar symbol conflicts with the reserved tape error code".into());
-    } else if node.is_missing() && !node.byte_range().is_empty() {
+    } else if missing && !span.is_empty() {
         return Err("missing grammar symbol has a non-empty source span".into());
     }
-    let span = node.byte_range();
     let start = u32::try_from(span.start).map_err(|_| "node span overflow")?;
     let end = u32::try_from(span.end).map_err(|_| "node span overflow")?;
     let length = end.checked_sub(start).ok_or("inverted node span")?;
@@ -974,8 +978,8 @@ fn encode_node<'l>(
     } else {
         let (name, named) = *catalog[kind].get_or_insert_with(|| {
             (
-                language.node_kind_for_id(node.kind_id()),
-                language.node_kind_is_named(node.kind_id()),
+                language.node_kind_for_id(code),
+                language.node_kind_is_named(code),
             )
         });
         // SAFETY: `node` is a live node of a tree in `language`, whose kind names are static
@@ -994,9 +998,9 @@ fn encode_node<'l>(
         start,
         length,
         size: 1,
-        extra: node.is_extra(),
+        extra,
         error,
-        missing: node.is_missing(),
+        missing,
         kind_alias,
     });
     Ok(index)
@@ -1634,11 +1638,32 @@ pub struct HostLink {
 /// from its first leaf to its last. A node's span may run past those leaves: a root's holds the
 /// white space after its last statement, and a statement ending in a `;` its embedder wrote over
 /// no bytes holds the white space before it, which stands for nothing of the node's.
+///
+/// The tape stores no implied token (RER-131, `tokens`): `echo` and `;` a Blade echo is written as,
+/// the `;` marker Vue's script and template programs start with. Their text is in the gaps a node's
+/// stored children leave in its span, the source `structural_before` and `structural_after` hold
+/// (core.rr): comments are nodes, so a gap is implied tokens and white space only, and each run of
+/// it that is not white space (`implied`) is read as a leaf. Which tokens a run holds does not
+/// matter here (`TokenGrammar::gaps` would say): only whether its bytes stand for the file's.
 fn node_extents(doc: &TapeDoc, segments: &SegmentMap) -> Vec<(u32, u32)> {
     let nodes = &doc.data[..];
     const NONE_YET: (u32, u32) = (u32::MAX, 0);
     let join = |into: &mut (u32, u32), (start, end): (u32, u32)| {
         *into = (into.0.min(start), into.1.max(end));
+    };
+    let text = doc.source.as_bytes();
+    // The implied tokens of `start..end`, a gap between a node's stored children (a
+    // `structural_before`/`structural_after` source): its runs of text that are not white space.
+    let implied = |start: u32, end: u32, leaf: &mut dyn FnMut(u32, u32)| {
+        let gap = text.get(start as usize..end as usize).unwrap_or_default();
+        let mut at = 0;
+        while at < gap.len() {
+            let Some(from) = gap[at..].iter().position(|b| !b.is_ascii_whitespace()) else { break };
+            let from = at + from;
+            let to = gap[from..].iter().position(|b| b.is_ascii_whitespace()).map_or(gap.len(), |n| from + n);
+            leaf(start + from as u32, start + to as u32);
+            at = to;
+        }
     };
     // Per node: the extent of its leaves standing for bytes, and of all its leaves.
     let mut standing = vec![NONE_YET; nodes.len()];
@@ -1649,6 +1674,30 @@ fn node_extents(doc: &TapeDoc, segments: &SegmentMap) -> Vec<(u32, u32)> {
             all[index] = (rec.start, rec.end);
             if segments.stands_for(rec.start as usize..rec.end as usize) {
                 standing[index] = (rec.start, rec.end);
+            }
+        } else {
+            // The gaps its stored children leave in its span.
+            let mut at = rec.start;
+            let mut child = rec.first;
+            let mut gaps = Vec::new();
+            while child != NONE {
+                let c = &nodes[child as usize];
+                if c.start > at {
+                    gaps.push((at, c.start));
+                }
+                at = at.max(c.end);
+                child = c.next;
+            }
+            if rec.end > at {
+                gaps.push((at, rec.end));
+            }
+            for (start, end) in gaps {
+                implied(start, end, &mut |from, to| {
+                    join(&mut all[index], (from, to));
+                    if segments.stands_for(from as usize..to as usize) {
+                        join(&mut standing[index], (from, to));
+                    }
+                });
             }
         }
         if rec.parent != NONE {

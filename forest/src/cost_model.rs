@@ -23,7 +23,7 @@ use crate::bucket::CellValue;
 use crate::dataset_feature_space::{ColumnData, DatasetFeatureSpace, FeatureType};
 use crate::memory_region::Pod;
 use crate::randomforest_predict::{BucketRules, BucketizerColumn, DeviceBucketizer, DeviceForest, FlatForest, PredictNode};
-use crate::randomforest_procedure::{train_regression_forest, RandomForestProcedureConfig, TargetScale};
+use crate::randomforest_procedure::{train_regression_flat, Qos, RandomForestProcedureConfig, TargetScale};
 
 /// A finished job, as the model trains on it.
 #[derive(Clone, Debug, PartialEq)]
@@ -75,8 +75,9 @@ pub struct CostConfig {
 impl Default for CostConfig {
     /// A row sample per tree (100 trees, each its own bag and every feature), at least 5 samples a leaf, depth 20:
     /// on the engine's samples this was the forest's best (decision 0100 §14's comparison), at about 1.4–2× the
-    /// training of upstream's 5 bags of 20 trees. Two threads, at the background quality of service, so that
-    /// training yields to the engine.
+    /// training of upstream's 5 bags of 20 trees. Two threads at the utility quality of service, below the
+    /// engine's: background would hold them to the efficiency cores and the GPU's lowest priority, at about 4–10×
+    /// the wall and twice the GPU seconds (measured 2026-11-11).
     fn default() -> Self {
         CostConfig {
             forest: RandomForestProcedureConfig {
@@ -85,7 +86,7 @@ impl Default for CostConfig {
                 feature_sampling_prop: 1.0,
                 min_leaf_examples: 5,
                 max_threads: 2,
-                background: true,
+                qos: Qos::Utility,
                 ..Default::default()
             },
             min_samples: 8,
@@ -113,7 +114,165 @@ pub struct CostModel {
     pub host_batch: usize,
     /// The samples it trained on.
     pub trained_on: usize,
+    /// The priced (lane, names) pairs, looked up by borrowed names: their codes and buckets ([`Index`]).
+    index: Index,
     device: OnceLock<Option<Arc<(DeviceForest, DeviceBucketizer)>>>,
+}
+
+/// A job's lane and names as the model knows them (`CostModel::job`).
+#[derive(Clone, Copy)]
+pub struct JobKey(Entry);
+
+/// The buckets of the features a batch's jobs share (`CostModel::shared_buckets`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SharedBuckets([u32; 4]);
+
+/// A job's buckets in every feature (`CostModel::key`): the forests' prediction is a function of it, so a memo
+/// of predictions by key (`CostMemo`) is the model's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CostKey(pub [u32; 7]);
+
+impl std::hash::Hash for CostKey {
+    /// One word: the buckets folded by multiplies (not the slice's bytes, written one by one).
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        let k = &self.0;
+        let a = (k[0] as u64) | (k[1] as u64) << 32;
+        let b = (k[2] as u64) | (k[3] as u64) << 32;
+        let c = (k[4] as u64) | (k[5] as u64) << 32;
+        let d = k[6] as u64;
+        let m = 0x9E37_79B9_7F4A_7C15u64;
+        state.write_u64(((a.wrapping_mul(m) ^ b).wrapping_mul(m) ^ c).wrapping_mul(m) ^ d);
+    }
+}
+
+/// Predictions by key, for one model (a caller keeps one per model; `get` walks the forests only for a key not
+/// seen). At most `CostMemo::MAX` keys: past that it starts again.
+#[derive(Default)]
+pub struct CostMemo {
+    map: HashMap<CostKey, CostPrediction, Words>,
+}
+
+impl CostMemo {
+    pub const MAX: usize = 1 << 16;
+
+    pub fn get(&mut self, model: &CostModel, key: CostKey) -> Result<CostPrediction, String> {
+        if let Some(&p) = self.map.get(&key) {
+            return Ok(p);
+        }
+        let p = model.predict_key(&key)?;
+        if self.map.len() >= Self::MAX {
+            self.map.clear();
+        }
+        self.map.insert(key, p);
+        Ok(p)
+    }
+
+    pub fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.map.is_empty()
+    }
+}
+
+/// What a query's lane and names give, found once a query with no allocation: the codes of the device's
+/// categorical columns (in `lanes` and `forms`, the same every batch) and the host's buckets.
+#[derive(Clone, Copy)]
+struct Entry {
+    lane_code: u32,
+    forms_code: u32,
+    lane_bucket: u32,
+    forms_bucket: u32,
+}
+
+#[derive(Default)]
+struct Index {
+    /// Per lane (a handful: scanned), its names' entries.
+    by_lane: Vec<(String, HashMap<String, Entry, Words>)>,
+    lanes: Vec<String>,
+    forms: Vec<String>,
+}
+
+impl Index {
+    /// The pairs of `known` with at least `min` samples.
+    fn new(known: &HashMap<(String, String), u32>, min: u32, rules: &BucketRules) -> Index {
+        let mut ix = Index::default();
+        let mut pairs: Vec<_> = known.iter().filter(|(_, n)| **n >= min).map(|(k, _)| k).collect();
+        pairs.sort();
+        let code = |names: &mut Vec<String>, n: &str| names.iter().position(|x| x == n).unwrap_or_else(|| {
+            names.push(n.to_owned());
+            names.len() - 1
+        }) as u32;
+        for (lane, forms) in pairs {
+            let e = Entry {
+                lane_code: code(&mut ix.lanes, lane),
+                forms_code: code(&mut ix.forms, forms),
+                lane_bucket: rules.bucket_of_name(0, Some(lane)),
+                forms_bucket: rules.bucket_of_name(1, Some(forms)),
+            };
+            let at = match ix.by_lane.iter().position(|(l, _)| l == lane) {
+                Some(at) => at,
+                None => {
+                    ix.by_lane.push((lane.clone(), HashMap::default()));
+                    ix.by_lane.len() - 1
+                }
+            };
+            ix.by_lane[at].1.insert(forms.clone(), e);
+        }
+        ix
+    }
+
+    fn get(&self, lane: &str, forms: &str) -> Option<Entry> {
+        self.by_lane.iter().find(|(l, _)| l == lane)?.1.get(forms).copied()
+    }
+}
+
+/// A hasher of a string eight bytes at a time (a multiply and a rotate a word): the index is asked once a query,
+/// on the placement path, and its keys are the program's own names.
+#[derive(Clone, Copy, Default)]
+struct Words;
+
+impl std::hash::BuildHasher for Words {
+    type Hasher = WordHasher;
+    fn build_hasher(&self) -> WordHasher {
+        WordHasher(0)
+    }
+}
+
+struct WordHasher(u64);
+
+impl std::hash::Hasher for WordHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        let mut chunks = bytes.chunks_exact(8);
+        for c in &mut chunks {
+            self.word(u64::from_le_bytes(c.try_into().unwrap()));
+        }
+        let rest = chunks.remainder();
+        if !rest.is_empty() {
+            let mut w = [0u8; 8];
+            w[..rest.len()].copy_from_slice(rest);
+            self.word(u64::from_le_bytes(w));
+        }
+    }
+    fn write_u8(&mut self, b: u8) {
+        self.word(b as u64);
+    }
+    fn write_usize(&mut self, v: usize) {
+        self.word(v as u64);
+    }
+    fn write_u64(&mut self, v: u64) {
+        self.word(v);
+    }
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+impl WordHasher {
+    fn word(&mut self, w: u64) {
+        self.0 = (self.0.rotate_left(5) ^ w).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
 }
 
 impl std::fmt::Debug for CostModel {
@@ -135,18 +294,20 @@ impl CostModel {
         let ln = |v: f64| v.max(MIN_SECONDS).ln() as f32;
         let wall_targets: Vec<f32> = used.iter().map(|s| ln(s.wall)).collect();
         let cpu_targets: Vec<f32> = used.iter().map(|s| ln(s.cpu)).collect();
-        let wall = train_regression_forest(fs.clone(), &wall_targets, None, None, &config.forest)?;
-        let cpu = train_regression_forest(fs.clone(), &cpu_targets, None, None, &config.forest)?;
+        let (wall, wall_scale) = train_regression_flat(fs.clone(), &wall_targets, None, None, &config.forest)?;
+        let (cpu, cpu_scale) = train_regression_flat(fs.clone(), &cpu_targets, None, None, &config.forest)?;
         let mut known: HashMap<(String, String), u32> = HashMap::new();
         for s in used.iter().filter(|s| !s.cold) {
             *known.entry((s.lane.clone(), s.forms.clone())).or_default() += 1;
         }
+        let rules = BucketRules::new(&fs)?;
         Ok(CostModel {
-            rules: BucketRules::new(&fs)?,
-            wall_scale: wall.target_scale.ok_or("no target scale")?,
-            cpu_scale: cpu.target_scale.ok_or("no target scale")?,
-            wall: FlatForest::new(&wall)?,
-            cpu: FlatForest::new(&cpu)?,
+            index: Index::new(&known, config.min_samples, &rules),
+            rules,
+            wall_scale,
+            cpu_scale,
+            wall,
+            cpu,
             known,
             min_samples: config.min_samples,
             host_batch: config.host_batch,
@@ -155,14 +316,40 @@ impl CostModel {
         })
     }
 
+    /// A job's lane and names as the model knows them (`None`: it does not price them), found once by the caller and
+    /// kept: what `key` takes in place of the strings.
+    pub fn job(&self, lane: &str, forms: &str) -> Option<JobKey> {
+        self.index.get(lane, forms).map(JobKey)
+    }
+
+    /// The buckets of the features a batch's jobs share (`key` takes them): their launches, coldness, load and
+    /// threads.
+    pub fn shared_buckets(&self, launches: u32, cold: bool, load: f64, threads: u32) -> SharedBuckets {
+        let r = &self.rules;
+        SharedBuckets([r.bucket_of_number(2, launches as f64), r.bucket_of_number(4, cold as u8 as f64), r.bucket_of_number(5, load), r.bucket_of_number(6, threads as f64)])
+    }
+
+    /// A job's buckets in every feature: all the forests see of it (`predict_key`). Its units are the one
+    /// feature found here.
+    pub fn key(&self, job: JobKey, shared: SharedBuckets, units: f64) -> CostKey {
+        let [launches, cold, load, threads] = shared.0;
+        CostKey([job.0.lane_bucket, job.0.forms_bucket, launches, self.rules.bucket_of_number(3, units), cold, load, threads])
+    }
+
+    /// The prediction for a job's buckets, walked on the host (`predict`'s, for the same job).
+    pub fn predict_key(&self, key: &CostKey) -> Result<CostPrediction, String> {
+        let (w, c) = (self.wall.predict_row(&key.0)?, self.cpu.predict_row(&key.0)?);
+        Ok(CostPrediction { wall: self.wall_scale.from_unit(w[1]).exp(), cpu: self.cpu_scale.from_unit(c[1]).exp() })
+    }
+
     /// Whether the model prices a job of these names on this lane.
     pub fn knows(&self, lane: &str, forms: &str) -> bool {
-        self.known.get(&(lane.to_owned(), forms.to_owned())).is_some_and(|&n| n >= self.min_samples)
+        self.index.get(lane, forms).is_some()
     }
 
     /// Each job's predicted cost, `None` for a job the model does not know (`knows`).
     pub fn predict(&self, queries: &[CostQuery]) -> Result<Vec<Option<CostPrediction>>, String> {
-        let asked: Vec<usize> = (0..queries.len()).filter(|&i| self.knows(queries[i].lane, queries[i].forms)).collect();
+        let asked: Vec<(usize, Entry)> = queries.iter().enumerate().filter_map(|(i, q)| Some((i, self.index.get(q.lane, q.forms)?))).collect();
         let mut out = vec![None; queries.len()];
         if asked.is_empty() {
             return Ok(out);
@@ -171,32 +358,58 @@ impl CostModel {
         let raw: Vec<([f32; 2], [f32; 2])> = match device {
             Some(d) => {
                 let (forests, bucketizer) = &*d;
-                let columns = typed(asked.iter().map(|&i| queries[i]));
+                let columns = self.columns(queries, &asked);
                 let p = forests.predict_values(bucketizer, &columns)?;
                 p.chunks(2).map(|c| (c[0], c[1])).collect()
             }
-            None => asked.iter().map(|&i| {
-                let b = self.buckets(&queries[i]);
+            None => asked.iter().map(|&(i, e)| {
+                let b = self.buckets(&queries[i], e);
                 Ok((self.wall.predict_row(&b)?, self.cpu.predict_row(&b)?))
             }).collect::<Result<_, String>>()?,
         };
-        for (&i, (w, c)) in asked.iter().zip(raw) {
+        for (&(i, _), (w, c)) in asked.iter().zip(raw) {
             out[i] = Some(CostPrediction { wall: self.wall_scale.from_unit(w[1]).exp(), cpu: self.cpu_scale.from_unit(c[1]).exp() });
         }
         Ok(out)
     }
 
     /// The query's bucket in each feature (the host's bucketizing, as the device's).
-    fn buckets(&self, q: &CostQuery) -> [u32; 7] {
+    fn buckets(&self, q: &CostQuery, e: Entry) -> [u32; 7] {
         let r = &self.rules;
         [
-            r.bucket_of_name(0, Some(q.lane)),
-            r.bucket_of_name(1, Some(q.forms)),
+            e.lane_bucket,
+            e.forms_bucket,
             r.bucket_of_number(2, q.launches as f64),
             r.bucket_of_number(3, q.units),
             r.bucket_of_number(4, q.cold as u8 as f64),
             r.bucket_of_number(5, q.load),
             r.bucket_of_number(6, q.threads as f64),
+        ]
+    }
+
+    /// Makes the device's copy and predicts once on it, so that its kernels are compiled here (a new binary's
+    /// first use compiles them, seconds), not on the first placement that asks. Without a device, nothing.
+    pub fn warm(&self) -> Result<(), String> {
+        let Some((lane, names)) = self.index.by_lane.first() else { return Ok(()) };
+        let Some(forms) = names.keys().next() else { return Ok(()) };
+        if self.device().is_none() {
+            return Ok(());
+        }
+        let q = CostQuery { lane, forms, launches: 1, units: 1.0, cold: false, load: 1.0, threads: 1 };
+        self.predict(&vec![q; self.host_batch + 1]).map(|_| ())
+    }
+
+    /// The asked jobs as the device's typed columns: the names by their codes in the index.
+    fn columns(&self, queries: &[CostQuery], asked: &[(usize, Entry)]) -> Vec<ColumnData> {
+        let num = |f: &dyn Fn(&CostQuery) -> f64| ColumnData::Numeric(asked.iter().map(|&(i, _)| f(&queries[i])).collect());
+        vec![
+            ColumnData::Categorical { codes: asked.iter().map(|(_, e)| e.lane_code).collect(), names: self.index.lanes.clone() },
+            ColumnData::Categorical { codes: asked.iter().map(|(_, e)| e.forms_code).collect(), names: self.index.forms.clone() },
+            num(&|q| q.launches as f64),
+            num(&|q| q.units),
+            num(&|q| q.cold as u8 as f64),
+            num(&|q| q.load),
+            num(&|q| q.threads as f64),
         ]
     }
 
@@ -297,7 +510,8 @@ impl CostModel {
         for f in [&wall, &cpu] {
             check(f, &rules)?;
         }
-        Ok(CostModel { rules, wall, cpu, wall_scale, cpu_scale, known, min_samples, host_batch, trained_on, device: OnceLock::new() })
+        let index = Index::new(&known, min_samples, &rules);
+        Ok(CostModel { rules, wall, cpu, wall_scale, cpu_scale, known, min_samples, host_batch, trained_on, index, device: OnceLock::new() })
     }
 }
 
@@ -389,32 +603,6 @@ fn cells<'a>(qs: impl Iterator<Item = CostQuery<'a>>) -> Vec<Vec<CellValue>> {
     c
 }
 
-/// The jobs as typed columns (the device's prediction): the names coded per batch.
-fn typed<'a>(qs: impl Iterator<Item = CostQuery<'a>>) -> Vec<ColumnData> {
-    let qs: Vec<CostQuery> = qs.collect();
-    let coded = |get: &dyn Fn(&CostQuery<'a>) -> &'a str| {
-        let mut names: Vec<String> = Vec::new();
-        let mut index: HashMap<&str, u32> = HashMap::new();
-        let codes = qs.iter().map(|q| {
-            let n = get(q);
-            *index.entry(n).or_insert_with(|| {
-                names.push(n.to_owned());
-                names.len() as u32 - 1
-            })
-        }).collect();
-        ColumnData::Categorical { codes, names }
-    };
-    vec![
-        coded(&|q| q.lane),
-        coded(&|q| q.forms),
-        ColumnData::Numeric(qs.iter().map(|q| q.launches as f64).collect()),
-        ColumnData::Numeric(qs.iter().map(|q| q.units).collect()),
-        ColumnData::Numeric(qs.iter().map(|q| q.cold as u8 as f64).collect()),
-        ColumnData::Numeric(qs.iter().map(|q| q.load).collect()),
-        ColumnData::Numeric(qs.iter().map(|q| q.threads as f64).collect()),
-    ]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,6 +651,69 @@ mod tests {
         eprintln!("{model:?}");
     }
 
+    /// Where training's and a large batch's time goes: each phase's wall, process CPU and GPU seconds; training at
+    /// each quality of service.
+    #[test]
+    #[ignore = "benchmark: --ignored --nocapture"]
+    fn phases_of_training_and_prediction() {
+        if crate::gpu::shared::get().is_none() {
+            return;
+        }
+        fn t<R>(what: &str, f: impl FnOnce() -> R) -> R {
+            let (g, c, w) = (crate::compute_kernel_metal::gpu_seconds_awaited(), crate::process_cpu(), std::time::Instant::now());
+            let r = f();
+            eprintln!("PHASE {what:44}: {:9.2} ms wall {:9.2} ms CPU {:9.2} ms GPU", w.elapsed().as_secs_f64() * 1e3, (crate::process_cpu() - c) * 1e3, (crate::compute_kernel_metal::gpu_seconds_awaited() - g) * 1e3);
+            r
+        }
+        let train = samples(12000);
+        let used: Vec<&CostSample> = train.iter().collect();
+        let named: Vec<(String, Vec<CellValue>)> = FEATURES.iter().map(|n| n.to_string()).zip(cells(used.iter().map(|s| query_of(s)))).collect();
+        let fs = t("feature space", || Arc::new(DatasetFeatureSpace::from_columns(&named, FeatureType::Real).unwrap()));
+        let targets: Vec<f32> = used.iter().map(|s| s.wall.max(MIN_SECONDS).ln() as f32).collect();
+        for qos in [Qos::Background, Qos::Utility, Qos::Inherit] {
+            for threads in [2, 0] {
+                let config = RandomForestProcedureConfig { qos, max_threads: threads, ..CostConfig::default().forest };
+                t(&format!("one forest, {qos:?}, threads {threads}"), || train_regression_flat(fs.clone(), &targets, None, None, &config).unwrap());
+            }
+        }
+        let model = t("CostModel::train (2 forests, default)", || CostModel::train(&train, &CostConfig::default()).unwrap());
+        let m = CostModel { host_batch: 0, ..CostModel::from_bytes(&model.to_bytes()).unwrap() };
+        let test = samples(1024);
+        let qs: Vec<CostQuery> = test.iter().map(query).collect();
+        t("warm (the first device prediction)", || m.warm().unwrap());
+        t("predict 1024, the first after warm", || m.predict(&qs).unwrap());
+        for _ in 0..3 {
+            t("predict 1024, all", || m.predict(&qs).unwrap());
+            let asked: Vec<(usize, Entry)> = t("  index", || qs.iter().enumerate().filter_map(|(i, q)| Some((i, m.index.get(q.lane, q.forms)?))).collect());
+            let columns = t("  columns", || m.columns(&qs, &asked));
+            let d = m.device().unwrap();
+            let (_, gpu) = t("  predict_values_timed", || d.0.predict_values_timed(&d.1, &columns).unwrap());
+            eprintln!("    (its own GPU seconds: {:.3} ms)", gpu * 1e3);
+        }
+    }
+
+    /// Trains one forest over and over for `PROFILE_SECONDS` (default 6): a process to sample.
+    #[test]
+    #[ignore = "for a profiler: PROFILE_SECONDS=6 --ignored"]
+    fn train_for_a_profiler() {
+        if crate::gpu::shared::get().is_none() {
+            return;
+        }
+        let secs: f64 = std::env::var("PROFILE_SECONDS").ok().and_then(|v| v.parse().ok()).unwrap_or(6.0);
+        let train = samples(12000);
+        let named: Vec<(String, Vec<CellValue>)> = FEATURES.iter().map(|n| n.to_string()).zip(cells(train.iter().map(query_of))).collect();
+        let fs = Arc::new(DatasetFeatureSpace::from_columns(&named, FeatureType::Real).unwrap());
+        let targets: Vec<f32> = train.iter().map(|s| s.wall.max(MIN_SECONDS).ln() as f32).collect();
+        let config = CostConfig::default().forest;
+        let (t, c, g) = (std::time::Instant::now(), crate::process_cpu(), crate::compute_kernel_metal::gpu_seconds_awaited());
+        let mut n = 0;
+        while t.elapsed().as_secs_f64() < secs {
+            train_regression_flat(fs.clone(), &targets, None, None, &config).unwrap();
+            n += 1;
+        }
+        eprintln!("PROFILED {n} forests: {:.1} ms wall {:.1} ms CPU {:.1} ms GPU a forest", t.elapsed().as_secs_f64() * 1e3 / n as f64, (crate::process_cpu() - c) * 1e3 / n as f64, (crate::compute_kernel_metal::gpu_seconds_awaited() - g) * 1e3 / n as f64);
+    }
+
     /// The model learns the costs (within a few percent on samples like those it trained on), the host's and the
     /// device's predictions agree, an unknown job is not priced, and the bytes give the same model back.
     #[test]
@@ -492,5 +743,30 @@ mod tests {
         let mut damaged = model.to_bytes();
         damaged.truncate(damaged.len() - 3);
         assert!(CostModel::from_bytes(&damaged).is_err());
+    }
+    /// Placement's path (a job key, the batch's shared buckets, the units' bucket, then the memo) is the model's
+    /// prediction, a memo hit as the walk that filled it.
+    #[test]
+    fn keys_and_the_memo_are_the_models_prediction() {
+        let train = samples(3000);
+        let config = CostConfig { forest: RandomForestProcedureConfig { feature_vector_samplings: 20, ..CostConfig::default().forest }, host_batch: usize::MAX, ..Default::default() };
+        let model = CostModel::train(&train, &config).unwrap();
+        let mut memo = CostMemo::default();
+        let mut seen = 0;
+        let test: Vec<CostSample> = samples(3300)[3000..].iter().map(|s| CostSample { launches: 1, cold: false, ..s.clone() }).collect();
+        for pass in 0..2 {
+            for s in &test {
+                let want = model.predict(&[query(s)]).unwrap()[0];
+                let job = model.job(&s.lane, &s.forms);
+                assert_eq!(job.is_some(), want.is_some());
+                let Some(job) = job else { continue };
+                let got = memo.get(&model, model.key(job, model.shared_buckets(1, false, s.load, s.threads), s.units)).unwrap();
+                assert_eq!(Some(got), want, "pass {pass}");
+            }
+            // The second pass is all memo hits.
+            assert!(pass == 0 || memo.len() == seen, "{} keys after {seen}", memo.len());
+            seen = memo.len();
+        }
+        assert!(model.job("ane", "closure").is_none());
     }
 }

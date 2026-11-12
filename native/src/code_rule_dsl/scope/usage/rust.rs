@@ -302,5 +302,4 @@ fn captures(text: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
     })
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

@@ -49,19 +49,26 @@ pub enum Refusal {
 /// Refuse `func` unless it calls only `own` functions and each of its cycles passes one of
 /// `heads`.
 pub fn check(func: &Function, heads: &[(Block, Step)], own: &[UserExternalName]) -> Result<(), Refusal> {
+    check_tails(func, heads, own, &[])
+}
+
+/// `check`, and tail calls (`return_call`) of `tails` allowed too: tier 2's functions of
+/// clusters, which call each other so. Their loops across functions are `acyclic`'s check.
+pub fn check_tails(func: &Function, heads: &[(Block, Step)], own: &[UserExternalName], tails: &[UserExternalName]) -> Result<(), Refusal> {
     for block in func.layout.blocks() {
         for inst in func.layout.block_insts(block) {
             let data = &func.dfg.insts[inst];
             let calls = matches!(data, InstructionData::Call { .. } | InstructionData::CallIndirect { .. })
                 || matches!(data.opcode(), Opcode::Call | Opcode::CallIndirect | Opcode::ReturnCall | Opcode::ReturnCallIndirect | Opcode::TryCall | Opcode::TryCallIndirect);
-            let mine = match data {
+            let named = |list: &[UserExternalName]| match data {
                 InstructionData::Call { func_ref, .. } => match &func.dfg.ext_funcs[*func_ref].name {
-                    ExternalName::User(r) => own.contains(&func.params.user_named_funcs()[*r]),
+                    ExternalName::User(r) => list.contains(&func.params.user_named_funcs()[*r]),
                     _ => false,
                 },
                 _ => false,
             };
-            if calls && !(mine && data.opcode() == Opcode::Call) {
+            let allowed = (data.opcode() == Opcode::Call && named(own)) || (data.opcode() == Opcode::ReturnCall && named(tails));
+            if calls && !allowed {
                 return Err(Refusal::Call(func.dfg.display_inst(inst).to_string()));
             }
         }
@@ -91,6 +98,73 @@ pub fn check(func: &Function, heads: &[(Block, Step)], own: &[UserExternalName])
                 },
                 None => {
                     mark.insert(*block, 2);
+                    stack.pop();
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// For each block of `from`, the `exits` (a block that leaves the function, and where to) it
+/// reaches before any of `heads`: none from a head. The graph with the heads taken out is
+/// acyclic (`check`), so each block's exits are its successors' and their own, found once.
+pub fn exits(func: &Function, heads: &[(Block, Step)], from: &[Block], exits: &HashMap<Block, usize>) -> Vec<Vec<usize>> {
+    let cfg = ControlFlowGraph::with_function(func);
+    let named: HashMap<Block, Step> = heads.iter().copied().collect();
+    let mut memo: HashMap<Block, std::rc::Rc<Vec<usize>>> = HashMap::new();
+    // Post-order, without recursion: a block's exits once its successors' are known.
+    let mut reach = |root: Block| -> std::rc::Rc<Vec<usize>> {
+        let mut stack: Vec<(Block, bool)> = vec![(root, false)];
+        while let Some((b, done)) = stack.pop() {
+            if memo.contains_key(&b) {
+                continue;
+            }
+            let succs: Vec<Block> = cfg.succ_iter(b).filter(|s| !named.contains_key(s)).collect();
+            if !done {
+                stack.push((b, true));
+                stack.extend(succs.iter().filter(|s| !memo.contains_key(s)).map(|&s| (s, false)));
+                continue;
+            }
+            let mut out: Vec<usize> = exits.get(&b).copied().into_iter().collect();
+            for s in succs {
+                out.extend(memo.get(&s).map(|v| v.as_slice()).unwrap_or(&[]));
+            }
+            out.sort_unstable();
+            out.dedup();
+            memo.insert(b, std::rc::Rc::new(out));
+        }
+        memo.get(&root).cloned().unwrap_or_default()
+    };
+    from.iter().map(|&b| if named.contains_key(&b) { Vec::new() } else { reach(b).as_ref().clone() }).collect()
+}
+
+/// Functions that pass control to each other: no cycle of `edges` (an entry to the entries it
+/// reaches before a loop head, `exits`), so every loop across them passes a head.
+pub fn acyclic(edges: &HashMap<usize, Vec<usize>>) -> Result<(), Refusal> {
+    let mut mark: HashMap<usize, u8> = HashMap::new();
+    let mut roots: Vec<usize> = edges.keys().copied().collect();
+    roots.sort_unstable();
+    for root in roots {
+        if mark.contains_key(&root) {
+            continue;
+        }
+        let next = |x: usize| edges.get(&x).cloned().unwrap_or_default();
+        let mut stack: Vec<(usize, Vec<usize>)> = vec![(root, next(root))];
+        mark.insert(root, 1);
+        while let Some((at, rest)) = stack.last_mut() {
+            match rest.pop() {
+                Some(n) => match mark.get(&n).copied() {
+                    Some(1) => return Err(Refusal::Loop(format!("entry {at} -> entry {n}, across functions"))),
+                    Some(_) => {}
+                    None => {
+                        mark.insert(n, 1);
+                        let s = next(n);
+                        stack.push((n, s));
+                    }
+                },
+                None => {
+                    mark.insert(*at, 2);
                     stack.pop();
                 }
             }

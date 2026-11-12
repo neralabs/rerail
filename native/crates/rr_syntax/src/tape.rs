@@ -225,6 +225,9 @@ pub struct Built {
     pub start: usize,
     pub end: usize,
     pub children: Vec<u32>,
+    /// A token's leaf (a `json_object`, a `raw_text` …): its text is its own. Not a node opened
+    /// for children, which may have none (`()`, its tokens implied).
+    pub leaf: bool,
 }
 
 /// The tree a `syntax::Parser` builds: node 0 is the `source_file`, and `stack` the nodes open while it parses.
@@ -245,7 +248,7 @@ pub struct Mark {
 
 impl Tree {
     pub fn new(len: usize) -> Self {
-        Self { nodes: vec![Built { kind: Kind::SourceFile as u16, field: 0, start: 0, end: len, children: Vec::new() }], stack: vec![0] }
+        Self { nodes: vec![Built { kind: Kind::SourceFile as u16, field: 0, start: 0, end: len, children: Vec::new(), leaf: false }], stack: vec![0] }
     }
 
     fn top(&mut self) -> &mut Built {
@@ -256,7 +259,7 @@ impl Tree {
     /// A node of `kind` from `start`, a child of the open node; it stays open when `open`.
     pub fn push(&mut self, kind: u16, start: usize, end: usize, open: bool) -> u32 {
         let id = self.nodes.len() as u32;
-        self.nodes.push(Built { kind, field: 0, start, end, children: Vec::new() });
+        self.nodes.push(Built { kind, field: 0, start, end, children: Vec::new(), leaf: !open });
         self.top().children.push(id);
         if open {
             self.stack.push(id);
@@ -287,7 +290,7 @@ impl Tree {
         if let Some(&c) = moved.first() {
             self.nodes[c as usize].field = 0;
         }
-        self.nodes.push(Built { kind, field, start, end: start, children: moved });
+        self.nodes.push(Built { kind, field, start, end: start, children: moved, leaf: false });
         self.top().children.push(id);
         self.stack.push(id);
         id
@@ -352,7 +355,7 @@ pub fn flatten(tree: &Tree, comments: &[(usize, usize)]) -> Vec<Node> {
             let built = &self.tree.nodes[id as usize];
             let at = self.out.len() as u32;
             self.out.push(Node { kind: built.kind, field: built.field, start: built.start as u32, end: built.end as u32, parent, extra: false });
-            if built.children.is_empty() && id != 0 {
+            if built.leaf {
                 // A leaf's text is its own: a comment inside it is not a node.
                 while self.comments.get(self.next).is_some_and(|&(start, _)| start < built.end) {
                     self.next += 1;

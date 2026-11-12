@@ -309,5 +309,3 @@ fn sqlite_functions_as_sqlite_has_them() {
         assert_eq!(eval("sql_char", &[], &[n]), sql("SELECT char(?1)", &[&n]), "char({n})");
     }
 }
-
-// `to_precision_is_javascripts` is in `registered_tests.rs` (rerail-engine's): it needs a language's formatting.

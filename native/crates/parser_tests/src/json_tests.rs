@@ -49,6 +49,11 @@ type Named = (String, String, usize, usize, usize);
 
 /// tree-sitter-json's nodes of `bytes`, or `None` where it finds an error.
 fn tree_sitter_json(bytes: &[u8]) -> Option<Vec<Named>> {
+    tree_sitter_json_with(bytes, false)
+}
+
+/// tree-sitter-json's nodes; with `tokens`, its anonymous tokens too.
+fn tree_sitter_json_with(bytes: &[u8], tokens: bool) -> Option<Vec<Named>> {
     let grammar = tree_sitter::Language::new(tree_sitter_json::LANGUAGE);
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&grammar).expect("tree-sitter-json");
@@ -56,14 +61,19 @@ fn tree_sitter_json(bytes: &[u8]) -> Option<Vec<Named>> {
     if tree.root_node().has_error() {
         return None;
     }
-    fn walk(n: tree_sitter::Node<'_>, field: Option<&str>, out: &mut Vec<Named>) -> usize {
+    // Named-only, as the engine's tapes: an anonymous token (`{`, `,`, `"` …) is left out; a
+    // comment, an extra, stays.
+    fn walk(n: tree_sitter::Node<'_>, field: Option<&str>, tokens: bool, out: &mut Vec<Named>) -> usize {
+        if !tokens && !n.is_named() && !n.is_extra() {
+            return 0;
+        }
         let at = out.len();
         out.push((n.kind().to_owned(), field.unwrap_or("").to_owned(), n.start_byte(), n.end_byte(), 0));
         let mut size = 1;
         let mut c = n.walk();
         if c.goto_first_child() {
             loop {
-                size += walk(c.node(), c.field_name(), out);
+                size += walk(c.node(), c.field_name(), tokens, out);
                 if !c.goto_next_sibling() {
                     break;
                 }
@@ -73,7 +83,7 @@ fn tree_sitter_json(bytes: &[u8]) -> Option<Vec<Named>> {
         size
     }
     let mut out = Vec::new();
-    walk(tree.root_node(), None, &mut out);
+    walk(tree.root_node(), None, tokens, &mut out);
     Some(out)
 }
 
@@ -216,6 +226,10 @@ fn median(mut xs: Vec<f64>) -> f64 {
 #[test]
 #[ignore = "a measurement: run by name with RERAIL_JSON_CORPUS and --nocapture"]
 fn json_bench() {
+    // `RERAIL_OPT`: Cranelift's optimizer on tier 1 (`1`), tier 2 (`2`), or both (`1,2`).
+    let opt = std::env::var("RERAIL_OPT").unwrap_or_default();
+    rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER1.store(opt.split(',').any(|t| t == "1"), std::sync::atomic::Ordering::Relaxed);
+    rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER2.store(opt.split(',').any(|t| t == "2"), std::sync::atomic::Ordering::Relaxed);
     let iters: usize = std::env::var("RERAIL_ITERS").ok().and_then(|v| v.parse().ok()).unwrap_or(20);
     // `RERAIL_FORMS`: other Bitlex files to time, as paths, in place of the two forms.
     let forms: Vec<(String, Compiled)> = match std::env::var("RERAIL_FORMS") {
@@ -291,6 +305,71 @@ fn json_bench() {
     }
 }
 
+/// Cranelift's optimizer on JSON (doc 28): step 14 compiled four ways (optimizer off, on tier
+/// 1, on tier 2, on both) in one process, then timed in turns: each round runs every form over
+/// every file, tier 1 then tier 2, and each form keeps its best round. In turns, so the
+/// machine's load falls on every form alike.
+#[test]
+#[ignore = "a benchmark: run by name with RERAIL_JSON_CORPUS"]
+fn json_optimizer_bench() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let rounds: usize = std::env::var("RERAIL_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(7);
+    let name = std::env::var("RERAIL_FORM").unwrap_or_else(|_| "14-json".to_owned());
+    let paths = files_in("RERAIL_JSON_CORPUS");
+    let files: Vec<Vec<u8>> = paths.iter().map(|p| std::fs::read(p).expect("reads")).collect();
+    let bytes: usize = files.iter().map(Vec::len).sum();
+    let forms: Vec<(&str, Compiled)> = [("off", false, false), ("tier 1", true, false), ("tier 2", false, true), ("both", true, true)]
+        .into_iter()
+        .map(|(label, one, two)| {
+            rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER1.store(one, Relaxed);
+            rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER2.store(two, Relaxed);
+            (label, form(&name))
+        })
+        .collect();
+    rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER1.store(false, Relaxed);
+    rerail_compiler::native_cpu_codegen::OPTIMIZE_TIER2.store(false, Relaxed);
+    // Each form's batches and tapes, made once.
+    let mut state: Vec<Vec<_>> = forms
+        .iter()
+        .map(|(_, c)| {
+            files
+                .iter()
+                .map(|f| {
+                    let mut b = native_cpu_block::Batch::new(&c.parser.tier1, &[f]);
+                    b.call(&c.parser.tier1);
+                    let t = c.parser.tape(&b);
+                    (b, t)
+                })
+                .collect()
+        })
+        .collect();
+    // Each tier's CPU time, instructions retired and cycles, each its least over the rounds.
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let mut best = vec![[(f64::MAX, u64::MAX, u64::MAX); 2]; forms.len()];
+    for _ in 0..rounds {
+        for (k, (_, c)) in forms.iter().enumerate() {
+            let mut sum = [(0.0, 0u64, 0u64); 2];
+            for (b, t) in &mut state[k] {
+                let (i0, c0, s) = (retired().0, retired().1, thread_ns());
+                b.call(&c.parser.tier1);
+                let (s1, (i1, c1)) = (thread_ns(), retired());
+                assert!(c.parser.words(b, t).is_ok());
+                let (s2, (i2, c2)) = (thread_ns(), retired());
+                sum[0] = (sum[0].0 + s1 - s, sum[0].1 + i1 - i0, sum[0].2 + c1 - c0);
+                sum[1] = (sum[1].0 + s2 - s1, sum[1].1 + i2 - i1, sum[1].2 + c2 - c1);
+            }
+            for j in 0..2 {
+                best[k][j] = (best[k][j].0.min(sum[j].0), best[k][j].1.min(sum[j].1), best[k][j].2.min(sum[j].2));
+            }
+        }
+    }
+    eprintln!("{name}: {} files, {:.1} MB, the best of {rounds} rounds in turns", files.len(), bytes as f64 / 1e6);
+    for ((label, _), tiers) in forms.iter().zip(&best) {
+        let show = |(ns, ins, cyc): (f64, u64, u64)| format!("{:6.2} ms CPU, {:6.1}M instructions, {:6.1}M cycles, IPC {:.2}", ns / 1e6, ins as f64 / 1e6, cyc as f64 / 1e6, ins as f64 / cyc as f64);
+        eprintln!("  optimizer {label:>6}: tier 1 {}; tier 2 {}", show(tiers[0]), show(tiers[1]));
+    }
+}
+
 /// Step 15 on real files with comments: JSONTestSuite's valid files and the corpus's smaller
 /// files, each with comments put between tokens (after a leaf outside a string, after a string,
 /// or at the start), where tree-sitter-json's own tree says the tokens end. Step 15's nodes equal
@@ -308,8 +387,9 @@ fn jsonc_comments_equal_tree_sitter() {
     let (mut equal, mut quoted_refused, mut ts_errors, mut problems) = (0usize, 0usize, 0usize, Vec::new());
     for path in &paths {
         let bytes = std::fs::read(path).expect("reads");
-        let Some(tree) = tree_sitter_json(&bytes) else { continue };
-        // Where a comment may go: the start, after each leaf outside a string, after each string.
+        // Where a comment may go: the start, after each token outside a string (a delimiter
+        // too, though the tapes leave it out), after each string.
+        let Some(tree) = tree_sitter_json_with(&bytes, true) else { continue };
         let mut parent: Vec<usize> = vec![usize::MAX; tree.len()];
         let mut open: Vec<usize> = Vec::new();
         for i in 0..tree.len() {

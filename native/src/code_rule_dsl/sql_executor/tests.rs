@@ -8,11 +8,16 @@ mod scaling;
 mod updates;
 mod temporal;
 mod profiling;
+mod planning;
 mod initial;
+mod frontiers;
 mod cte;
 mod analysis;
 mod sharing;
 mod shape;
+mod producers;
+mod component_caches;
+mod workers;
 
 pub(super) fn executor() -> (tempfile::TempDir, CodeRuleSqlExecutor) {
     let dir = tempfile::tempdir().unwrap();
@@ -550,7 +555,7 @@ a(x) :- b(x).
 fn a_corpus_runs_memoised_rows_bind_by_name_from_their_frames() {
     // A text no other test parses, so this run writes its own memo entries.
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("sql-corpus");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("sql-corpus");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), format!("{marker}def f():\n    pass\n")).unwrap();
     std::fs::write(dir.join("b.py"), format!("{marker}def f():\n    pass\ndef g():\n    pass\n")).unwrap();

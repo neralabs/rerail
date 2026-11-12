@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) enum FailureIsolationMode {
     PerFile,
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     AtomicGroup,
 }
 
@@ -35,17 +35,17 @@ impl ClauseScope {
         }
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub(super) fn clause(&self) -> ClausePlanId {
         self.clause
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub(super) fn effect_profile(&self) -> EffectProfileId {
         self.effect_profile
     }
 
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub(super) fn document_map_generation(&self) -> DocumentMapGenerationId {
         self.document_map_generation
     }
@@ -67,7 +67,7 @@ pub(super) struct ExecutionGroup {
 }
 
 impl ExecutionGroup {
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub(super) fn scope(&self) -> &CandidateScope {
         &self.key.scope
     }

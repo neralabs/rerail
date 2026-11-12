@@ -39,7 +39,7 @@ const NOT_CACHES: &[&str] = &[
     "push_pending", "snapshots", "snapshot_files", "workspaces", "workspace_overlay", "git_trees", "git_tree_entries", "git_alias",
     "corpus_roots", "corpus_manifests", "corpus_manifest_plans", "corpus_live", "corpus_plans", "corpus_plan_relations",
     "corpus_decided", "corpus_swept", "corpus_state",
-    "x", "rows", "x.node_type", "s.stat_col", "s.stat_docrange", "s.stat_edge", "s.stat_kind", "s.stat_meta", "s.stat_val",
+    "x", "rows", "facts", "x.node_type", "s.stat_col", "s.stat_docrange", "s.stat_edge", "s.stat_kind", "s.stat_meta", "s.stat_val",
 ];
 
 /// The relations' own storage between runs: every relation's rows as frames (notes/t33, K1). A cache's rows are
@@ -152,7 +152,9 @@ fn a_cache_is_rules_only_with_no_store_hook_or_lookup_of_its_own() {
                 found.push(format!("{rel}: {name}"));
             }
         }
-        if knows.is_match(&text) && !KNOWS_CACHES.contains(&rel.as_str()) {
+        // A re-export (a crate's facade over another's module) names the module but knows nothing of caches.
+        let knowing = text.lines().any(|l| knows.is_match(l) && !l.trim_start().starts_with("pub use ") && !l.trim_start().starts_with("use "));
+        if knowing && !KNOWS_CACHES.contains(&rel.as_str()) {
             found.push(format!("{rel}: knows a relation is a cache"));
         }
     }

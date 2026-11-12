@@ -1,0 +1,120 @@
+// tsx/node: the CommonJS view of a file that eslint-plugin-n's rules share: require() calls, the CommonJS globals
+// (require, module, exports), calls without parentheses, and where a node sits among ESTree's parents.
+//
+// What a rule gets from this library:
+//   cjs_ref(r, x)            r is a reference to the CommonJS global x (require, module, exports, __dirname,
+//                            __filename): nothing in the file declares it, and the global scope has it
+//   cjs_file(d, x)           document d's global scope has CommonJS variable x: a CommonJS file by package type
+//                            (values.rr's package_type), or a `/* global x */` comment
+//   bare_require(c, f)       c calls the identifier `require` (f), which nothing in the file declares; whether a
+//                            global require exists is not asked (the plugin's isShadowed)
+//   require_arg(c, s)        s is the first argument of such a call c
+//   node_ancestor(n, a)      a is an ancestor of n as ESTree has it: tree-sitter's parentheses and argument lists
+//                            are left out
+//   node_chain(t)            t is the outermost link of an optional chain: ESTree wraps it in a ChainExpression
+//   top_assign(n, t)         n is the object (or the object's object, …) of the left side of an assignment chain
+//                            whose outermost assignment is t: in `module.exports.a = exports.b = 1`, both
+//                            `module.exports` and `exports` have the whole statement's assignment
+//                            (exports-style's getTopAssignment)
+//   builtin_spec(name)       Node's isBuiltin(name): "fs", "node:fs", "fs/promises", "node:test" (not "test")
+//
+// Examples:
+//   n/no-new-require        new require("x")             the constructor, parentheses skipped
+//   n/global-require        function f() { require("x") }   bare_require + node_ancestor (a function)
+//   n/no-exports-assign     exports = {}                  cjs_file (exports is a global variable)
+//   n/exports-style         exports.a = 1                 cjs_ref(r, "exports")
+//   n/no-mixed-requires     const a = require("a"), b = 1   bare_require
+//
+// CommonJS globals. ESLint's commonjs sourceType, and eslint-plugin-n's configs for CommonJS files, declare
+// require, module, exports, __filename and __dirname in the global scope. In an ES module they do not exist:
+// `exports = {}` there assigns an undeclared name, which these rules leave alone. The policies follow the
+// plugin's package-type module system (values.rr's package_type): .cjs/.cts CommonJS, .mjs/.mts modules, any other
+// file CommonJS unless its package.json says "type": "module".
+//
+// Builds on tsx/values (package_type, cjs_global, tagged, first_arg, node_range), tsx/eslint-a-common (deparen)
+// and through them tsx/names (ref, ref_site, directive_global) and tsx/modules.
+
+#include "tsx/values.rr"
+#include "tsx/eslint-a-common.rr"
+
+.decl cjs_file(d: number, x: symbol)
+cjs_file(d, x) :- package_type(d, "commonjs"), cjs_global(x).
+cjs_file(d, x) :- cjs_global(x), directive_global(d, x).
+.decl cjs_ref(r: node, x: symbol)
+cjs_ref(r, x) :- cjs_global(x), ref(r, x, "value"), !ref_site(r, _), docof(r, d), cjs_file(d, x).
+
+.decl bare_require(c: node, f: node)
+bare_require(c, f) :- called(c, f), kind(f, "identifier"), text(f, "require"), !ref_site(f, _).
+.decl require_arg(c: node, s: node)
+require_arg(c, s) :- bare_require(c, _), first_arg(c, s).
+
+// node_ancestor(n, a): parenthesized_expression and arguments have no ESTree node. A call's argument has the
+// call as its parent; `(a)` has a's parent.
+.decl node_ancestor(n: node, a: node)
+node_ancestor(n, a) :- node_estree_kind(n), within(n, a), node(_, a, k, _, _), !node_hidden_kind(k).
+.decl node_hidden_kind(k: symbol)
+node_hidden_kind("parenthesized_expression"). node_hidden_kind("arguments").
+// node_estree_kind(n): the nodes node_ancestor is asked about; an including rule fills it (bounded: within's rows
+// are every pair).
+.decl node_estree_kind(n: node)
+
+// top_assign(n, t). Climb member objects (`module.exports.a.b`: from module.exports to the whole member), then the
+// node must be an assignment's left side, then climb assignments that hold it, on either side.
+.decl top_assign(n: node, t: node)
+top_assign(n, t) :- top_assign_ask(n), node_obj_top(n, m), node_left_of(m, a), node_assign_top(a, t).
+.decl top_assign_ask(n: node)  // the nodes a rule asks top_assign about
+.decl node_obj_ask(n: node)
+node_obj_ask(n) :- top_assign_ask(n).
+node_obj_ask(m) :- node_obj_ask(n), node_obj_of(n, m).
+.decl node_obj_top(n: node, m: node)  // m: the outermost member chain with n as its object, object's object, …
+node_obj_top(n, n) :- node_obj_ask(n), !node_obj_of(n, _).
+node_obj_top(n, t) :- node_obj_ask(n), node_obj_of(n, m), node_obj_top(m, t).
+.decl node_obj_of(o: node, m: node)  // m is a member expression whose object is o, parentheses skipped
+node_obj_of(o, m) :- (kind(m, "member_expression") ; kind(m, "subscript_expression")), field(m, "object", w),
+    deparen(w, o).
+.decl node_assign(a: node)  // `=`, `+=`, `||=`, …
+node_assign(a) :- kind(a, "assignment_expression").
+node_assign(a) :- kind(a, "augmented_assignment_expression").
+.decl node_left_of(m: node, a: node)  // m is the left side of assignment a
+node_left_of(m, a) :- node_assign(a), field(a, "left", w), deparen(w, m).
+.decl node_assign_top(a: node, t: node)  // t: the outermost assignment in a's chain of assignments
+node_assign_top(a, a) :- node_assign(a), !node_assign_in(a, _).
+node_assign_top(a, t) :- node_assign_in(a, b), node_assign_top(b, t).
+.decl node_assign_in(a: node, b: node)  // assignment a is a side of assignment b
+node_assign_in(a, b) :- node_assign(b), (field(b, "right", w) ; field(b, "left", w)), deparen(w, a), node_assign(a).
+
+// node_chain(t): t is the outermost link of an optional chain, which ESTree wraps in a ChainExpression. A chain is
+// members and calls linked by their object or callee, parentheses breaking it; it is optional when any link has
+// `?.`:  in `require("x")?.y.z` the chain is the whole expression, and the call is inside the ChainExpression.
+.decl node_chain(t: node)
+node_chain(t) :- node_q_below(t), !node_link(t, _).
+.decl node_q_below(n: node)  // n or a link below it has `?.`
+node_q_below(n) :- field(n, "optional_chain", _).
+node_q_below(p) :- node_link(n, p), node_q_below(n).
+.decl node_link(n: node, p: node)  // n is p's object or callee, with no parentheses between
+node_link(n, p) :- (kind(p, "member_expression") ; kind(p, "subscript_expression")), field(p, "object", n).
+node_link(n, p) :- kind(p, "call_expression"), field(p, "function", n).
+
+
+.decl builtin_spec(name: symbol)
+builtin_spec(x) :- node_builtin(x).
+builtin_spec(cat("node:", x)) :- node_builtin(x), !prefix("node:", x).
+// node_builtin(x): Node's module.builtinModules (Node 26.12); isBuiltin also takes "node:" before each.
+.decl node_builtin(x: symbol)
+node_builtin("_http_agent"). node_builtin("_http_client"). node_builtin("_http_common"). node_builtin("_http_incoming").
+node_builtin("_http_outgoing"). node_builtin("_http_server"). node_builtin("_tls_common"). node_builtin("_tls_wrap").
+node_builtin("assert"). node_builtin("assert/strict"). node_builtin("async_hooks"). node_builtin("buffer").
+node_builtin("child_process"). node_builtin("cluster"). node_builtin("console"). node_builtin("constants").
+node_builtin("crypto"). node_builtin("dgram"). node_builtin("diagnostics_channel"). node_builtin("dns").
+node_builtin("dns/promises"). node_builtin("domain"). node_builtin("events"). node_builtin("fs").
+node_builtin("fs/promises"). node_builtin("http"). node_builtin("http2"). node_builtin("https").
+node_builtin("inspector"). node_builtin("inspector/promises"). node_builtin("module"). node_builtin("net").
+node_builtin("os"). node_builtin("path"). node_builtin("path/posix"). node_builtin("path/win32").
+node_builtin("perf_hooks"). node_builtin("process"). node_builtin("punycode"). node_builtin("querystring").
+node_builtin("readline"). node_builtin("readline/promises"). node_builtin("repl"). node_builtin("stream").
+node_builtin("stream/consumers"). node_builtin("stream/promises"). node_builtin("stream/web").
+node_builtin("string_decoder"). node_builtin("sys"). node_builtin("timers"). node_builtin("timers/promises").
+node_builtin("tls"). node_builtin("trace_events"). node_builtin("tty"). node_builtin("url"). node_builtin("util").
+node_builtin("util/types"). node_builtin("v8"). node_builtin("vm"). node_builtin("wasi"). node_builtin("worker_threads").
+node_builtin("zlib"). node_builtin("node:ffi"). node_builtin("node:sea"). node_builtin("node:sqlite").
+node_builtin("node:test"). node_builtin("node:test/reporters").

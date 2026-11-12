@@ -1,8 +1,8 @@
 //! Ruff-shaped ports of Pyflakes' format rules (F501-F509, F521-F525), against where Ruff 0.16.9
 //! reports them on its own fixtures (`fixtures/python/literal/ruff`, `fixtures/python/literal/generate_ruff.py`).
 
-// cratify: a re-export of rerail-engine's, which its facades of this module make
-// cratify: a re-export of rerail-engine's, which its facades of this module make
+use crate::code_rule_dsl::fixtures::oracle;
+use crate::code_rule_dsl::test_support::*;
 use serde_json::{Value, json};
 
 const ORACLE: &str = oracle!("python/literal/ruff.expected.json");

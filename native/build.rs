@@ -6,8 +6,8 @@ mod identity;
 mod languages;
 #[path = "src/build_grammars.rs"]
 mod grammars;
-use grammars::{GRAMMARS, LFS_POINTER, LFS_REMEDY, collect_sources};
 
+use grammars::{GRAMMARS, LFS_POINTER, LFS_REMEDY, collect_sources};
 use identity::{grammar_build_id, hex};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -20,7 +20,12 @@ fn main() {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
     check_names_table(&manifest);
     let omitted = omitted_languages();
-    // The grammars are compiled by rerail-lang's build (`src/build_grammars.rs`), which every crate links.
+    // The crate that declares the grammars' symbols builds them: this one, until the crate split gives them to
+    // `rerail-lang` (tools/cratify sets this to false and writes that crate's build script).
+    const BUILDS_GRAMMARS: bool = false;
+    if BUILDS_GRAMMARS {
+        grammars::build_all(&manifest, &omitted);
+    }
     let registry = generate_languages(&omitted);
     configure_fixtures();
     build_identities(&registry);
@@ -32,6 +37,7 @@ fn omitted_languages() -> Vec<String> {
     let manifest = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("manifest dir"));
     languages::omitted_languages(&manifest.parent().expect("repository root").join("languages"))
 }
+
 
 /// The language registry, `languages/` at the repository root: validated, and generated into
 /// `OUT_DIR/language_registry.rs`. Returns each registry file and its bytes. The languages only
@@ -46,6 +52,7 @@ fn generate_languages(omitted: &[String]) -> Vec<(String, Vec<u8>)> {
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"));
     languages::generate_registry(&manifest, omitted, &out)
 }
+
 
 /// The Unicode names table `include_bytes!` embeds (`value/names.rs`): it must be the table, not
 /// its Git LFS pointer, or every Python `\N{...}` escape fails at run time.
@@ -67,6 +74,7 @@ fn check_names_table(manifest: &Path) {
         );
     }
 }
+
 
 /// Where the engine's tests read the conformance fixtures: `RERAIL_ORACLES_DIR` if set (relative
 /// to the repository root), else the repository's `fixtures/` directory. Only tests read them, so a

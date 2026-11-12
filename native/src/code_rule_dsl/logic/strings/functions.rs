@@ -224,19 +224,13 @@ pub fn install_to_precision(to: fn(f64, u32) -> String) {
     let _ = TO_PRECISION.set(to);
 }
 
-/// Python's `repr` of a string (`@py_repr`) and an Ed25519 signature's check (`@ed25519_ok`), registered at load by
-/// the crates that hold them (`cpython::value`, `crypto`): this crate is below both.
+/// Python's `repr` of a string (`@py_repr`), registered at load by the crate that knows the language
+/// (`cpython::value::str_repr`): this crate is below it.
 static PY_REPR: std::sync::OnceLock<fn(&str) -> String> = std::sync::OnceLock::new();
-static ED25519_OK: std::sync::OnceLock<fn(&str, &str, &str) -> bool> = std::sync::OnceLock::new();
 
-/// Registers `@py_repr` (once, at load).
-pub fn install_py_repr(to: fn(&str) -> String) {
-    let _ = PY_REPR.set(to);
-}
-
-/// Registers `@ed25519_ok` (once, at load).
-pub fn install_ed25519_ok(to: fn(&str, &str, &str) -> bool) {
-    let _ = ED25519_OK.set(to);
+/// Registers `@py_repr`'s formatting (once, at load).
+pub fn install_py_repr(repr: fn(&str) -> String) {
+    let _ = PY_REPR.set(repr);
 }
 
 pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
@@ -298,9 +292,9 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
                 _ => Value::Null,
             };
         }
-        // No value where the crate that knows them registered none (`install_py_repr`, `install_ed25519_ok`).
-        "py_repr" => PY_REPR.get().map(|f| f(t(0))),
-        "ed25519_ok" => return ED25519_OK.get().map_or(Value::Null, |f| Value::Integer(i64::from(f(t(0), t(1), t(2))))),
+        // No value where no language registered it (`install_py_repr`).
+        "py_repr" => PY_REPR.get().map(|repr| repr(t(0))),
+        "ed25519_ok" => return Value::Integer(i64::from(crate::code_rule_dsl::logic::crypto::ed25519_ok(t(0), t(1), t(2)))),
         "to_float" => return t(0).trim().parse::<f64>().ok().filter(|f| !f.is_nan()).map_or(Value::Null, |f| Value::Integer(float_key(f))),
         "float_add" | "float_sub" | "float_mul" | "float_div" => {
             let (a, b) = (float_of(numbers[0]), float_of(numbers[1]));

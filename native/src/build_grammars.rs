@@ -1,35 +1,25 @@
-//! The vendored grammars' parsers, generated and compiled (a build script's module): rerail-lang's build script
-//! compiles them (`crates/lang/build.rs`), as the crate whose code calls them, so every crate's build links them;
-//! the engine's (`build.rs`) reads `GRAMMARS` for its identities. Paths are relative to `native/`, the directory the
-//! build script runs `build_all` in.
-
-use super::identity::{hex, parser_cache_key};
+//! The vendored tree-sitter grammars' build, for the build script of the crate that declares their symbols: the engine's
+//! (`native/build.rs`), or, once the engine is split into crates, `rerail-lang`'s (tools/cratify writes it). Paths
+//! are under `base`, the `native/` directory: Cargo reads a build script's relative paths from its own package.
+use super::identity::{hex, locked_version, parser_cache_key};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
-/// `relative` (to `native/`) as an absolute path: cargo reads a relative `rerun-if-changed` against the package's
-/// own directory, which in rerail-lang's build is not `native/`.
-fn absolute(relative: &str) -> String {
-    std::env::current_dir().expect("the build's directory").join(relative).display().to_string()
-}
-
-/// Compiles every vendored grammar but those of the `omitted` languages, from `native/` (`native`), whose Cargo.lock
-/// is beside it.
-pub fn build_all(native: &Path) {
-    std::env::set_current_dir(native).expect("native/ is the grammars' directory");
-    let lock_text = std::fs::read_to_string(native.parent().expect("workspace root").join("Cargo.lock")).expect("Cargo.lock is readable");
+/// Builds every vendored grammar but the `omitted` languages' (`build_languages::omitted_languages`), at the
+/// tree-sitter-generate version `Cargo.lock` locks. `native` is the `native/` directory.
+pub fn build_all(native: &Path, omitted: &[String]) {
+    let root = native.parent().expect("repository root");
+    let lock_text = std::fs::read_to_string(root.join("Cargo.lock")).expect("Cargo.lock is readable");
     // A Windows checkout with `core.autocrlf` has a CRLF Cargo.lock; locked_version reads LF lines.
-    let generator = super::identity::locked_version(&lock_text.replace("\r\n", "\n"), "tree-sitter-generate");
-    let omitted = super::languages::omitted_languages(&native.parent().expect("repository root").join("languages"));
-    let skipped = vendored_of(native, &omitted);
+    let generator = locked_version(&lock_text.replace("\r\n", "\n"), "tree-sitter-generate");
+    let skipped = vendored_of(&root.join("languages"), omitted);
     for grammar in GRAMMARS.iter().filter(|grammar| !skipped.contains(&grammar.name.to_owned())) {
-        build_grammar(grammar, &generator);
+        build_grammar(native, grammar, &generator);
     }
 }
 
 /// The vendored grammars (`GRAMMARS` names) the `omitted` languages' dialects are parsed with.
-pub fn vendored_of(native: &Path, omitted: &[String]) -> Vec<String> {
-    let directory = native.parent().expect("repository root").join("languages");
+fn vendored_of(directory: &Path, omitted: &[String]) -> Vec<String> {
     omitted
         .iter()
         .flat_map(|id| {
@@ -203,10 +193,10 @@ fn generate_parser(grammar: &VendoredGrammar, json: &str) -> String {
 /// grammar.json at this version by this tree-sitter-generate. Anything else fails the build with
 /// the command that regenerates it, rather than spending half an hour generating it here; with
 /// GENERATE_PARSERS set, it is generated and written back.
-fn committed_parser(grammar: &VendoredGrammar, json: &str, generator: &str) -> String {
+fn committed_parser(base: &Path, grammar: &VendoredGrammar, json: &str, generator: &str) -> String {
     use std::io::{Read, Write};
-    let path = format!("{}/{COMMITTED_PARSER}", grammar.source);
-    println!("cargo:rerun-if-changed={}", absolute(&path));
+    let path = base.join(format!("{}/{COMMITTED_PARSER}", grammar.source)).display().to_string();
+    println!("cargo:rerun-if-changed={path}");
     println!("cargo:rerun-if-env-changed={GENERATE_PARSERS}");
     let expected = generated_from(grammar, json, generator);
     if std::env::var_os(GENERATE_PARSERS).is_some_and(|value| value == "1") {
@@ -245,18 +235,18 @@ fn committed_parser(grammar: &VendoredGrammar, json: &str, generator: &str) -> S
 pub const LFS_POINTER: &[u8] = b"version https://git-lfs";
 pub const LFS_REMEDY: &str = "git lfs install && git lfs pull";
 
-pub fn build_grammar(grammar: &VendoredGrammar, generator: &str) {
+pub fn build_grammar(base: &Path, grammar: &VendoredGrammar, generator: &str) {
     for input in grammar.inputs {
-        println!("cargo:rerun-if-changed={}", absolute(input));
+        println!("cargo:rerun-if-changed={}", base.join(input).display());
     }
     let name = grammar.name;
-    let source = grammar.source;
+    let source = base.join(grammar.source).display().to_string();
     let json = std::fs::read_to_string(format!("{source}/grammar.json"))
         .unwrap_or_else(|error| panic!("{name} grammar is unreadable: {error}"));
     let parser_path = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"))
         .join(format!("{name}_parser.c"));
     if grammar.committed_parser {
-        let parser = committed_parser(grammar, &json, generator);
+        let parser = committed_parser(base, grammar, &json, generator);
         std::fs::write(&parser_path, parser).expect("generated parser is writable");
     } else {
         // Rust-only edits rerun this script for the engine identity. Reuse a parser generated from
@@ -298,7 +288,7 @@ pub fn build_grammar(grammar: &VendoredGrammar, generator: &str) {
         inputs.update(b"TREE_SITTER_REUSE_ALLOCATOR");
     }
     let mut headers = Vec::new();
-    collect_sources(Path::new(grammar.headers), &mut headers);
+    collect_sources(&base.join(grammar.headers), &mut headers);
     headers.sort();
     for path in std::iter::once(parser_path.clone())
         .chain(std::iter::once(PathBuf::from(&scanner)))
@@ -317,7 +307,7 @@ pub fn build_grammar(grammar: &VendoredGrammar, generator: &str) {
     if reuse_allocator {
         build.define("TREE_SITTER_REUSE_ALLOCATOR", None);
     }
-    build.include(grammar.headers).file(parser_path).file(scanner).warnings(false).compile(&library);
+    build.include(base.join(grammar.headers)).file(parser_path).file(scanner).warnings(false).compile(&library);
     std::fs::write(compiled_stamp, key).expect("compiled grammar fingerprint is writable");
 }
 

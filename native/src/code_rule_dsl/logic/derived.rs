@@ -114,7 +114,7 @@ impl Inputs {
     }
 
     /// The digest of what `inputs` writes, under the hashers `keys`, charged as `Byte` work.
-    fn over(keys: &(RandomState, RandomState), inputs: impl FnOnce(&mut Inputs)) -> u128 {
+    fn over<S: BuildHasher<Hasher = foldhash::quality::FoldHasher<'static>>>(keys: &(S, S), inputs: impl FnOnce(&mut Inputs)) -> u128 {
         let mut d = Inputs { a: keys.0.build_hasher(), b: keys.1.build_hasher(), bytes: 0 };
         inputs(&mut d);
         super::profile::work(super::profile::Unit::Byte, d.bytes);
@@ -122,11 +122,13 @@ impl Inputs {
     }
 }
 
-/// The digest of what `inputs` writes, under keys fixed for the process: a key that outlives one run (a session's
-/// kept plans, `plan::PlanKey`). Two different input lists collide with odds of about 2^-128.
+/// The digest of what `inputs` writes, under fixed keys: a key that outlives one run and one process (a session's
+/// kept plans, and the plans the store keeps, `plan::PlanKey`, decision 0116 step 2). The engine's build is in
+/// whatever keeps it, so the hasher's own version cannot change under a kept key. Two different input lists
+/// collide with odds of about 2^-128.
 pub(in crate::code_rule_dsl) fn digest(inputs: impl FnOnce(&mut Inputs)) -> u128 {
-    static KEYS: std::sync::OnceLock<(RandomState, RandomState)> = std::sync::OnceLock::new();
-    Inputs::over(KEYS.get_or_init(|| (RandomState::default(), RandomState::default())), inputs)
+    const KEYS: (foldhash::quality::FixedState, foldhash::quality::FixedState) = (foldhash::quality::FixedState::with_seed(0x7265_7261_696c_2d61), foldhash::quality::FixedState::with_seed(0x7265_7261_696c_2d62));
+    Inputs::over(&KEYS, inputs)
 }
 
 /// The value `name` over the inputs `inputs` writes: kept from an earlier request with the same digest, or `make`'s.

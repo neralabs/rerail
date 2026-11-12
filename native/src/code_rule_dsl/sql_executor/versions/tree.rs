@@ -3,7 +3,7 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 pub mod bulk;
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
-pub(super) struct Cells {
+pub struct Cells {
     values: Vec<Option<i64>>,
     hash: [u8; 32],
 }
@@ -13,7 +13,7 @@ impl std::ops::Deref for Cells {
         &self.values
     }
 }
-pub(super) type Key = Arc<Cells>;
+pub type Key = Arc<Cells>;
 pub(super) fn key(values: Vec<Option<i64>>) -> Key {
     let mut h = Sha256::new();
     h.update((values.len() as u64).to_be_bytes());
@@ -31,8 +31,8 @@ pub(super) fn key(values: Vec<Option<i64>>) -> Key {
         hash: h.finalize().into(),
     })
 }
-pub(super) type Link<V> = Option<Arc<Node<V>>>;
-pub(super) struct Node<V> {
+pub type Link<V> = Option<Arc<Node<V>>>;
+pub struct Node<V> {
     pub key: Key,
     pub value: V,
     pub left: Link<V>,
@@ -41,7 +41,7 @@ pub(super) struct Node<V> {
     pub digest: [u8; 32],
     hashed: bool,
 }
-pub(super) fn size<V>(n: &Link<V>) -> usize {
+pub fn size<V>(n: &Link<V>) -> usize {
     n.as_ref().map_or(0, |n| n.size)
 }
 impl<V: Clone> Node<V> {

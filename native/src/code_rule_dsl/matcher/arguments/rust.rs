@@ -3,7 +3,7 @@ use super::{Arguments, Passed, every, unparenthesized};
 use ast_grep_core::{Doc, Node};
 
 /// Rust's passed arguments of a call (`ArgumentRules`).
-pub(crate) trait RustArguments {
+pub trait RustArguments {
     /// Returns the positional arguments passed by a Rust call expression.
     fn rust<'r, D: Doc>(&self, call: &Node<'r, D>) -> Vec<Passed<'r, D>>;
 }

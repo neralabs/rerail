@@ -39,7 +39,7 @@ impl Drop for Blob {
         }
     }
 }
-pub(super) struct Reader {
+pub struct Reader {
     database: *mut ffi::sqlite3,
     handles: HashMap<(i64, Column), Blob>,
     record: Option<RecordBlock>,
@@ -100,7 +100,7 @@ unsafe impl Send for Reader {}
 pub(super) type Shared = Arc<parking_lot::Mutex<Reader>>;
 
 /// The owner clears handles before writes and before SQLite destroys its callback closures.
-pub(super) struct Readers(pub Shared);
+pub struct Readers(pub Shared);
 impl Readers {
     pub fn new(db: &Connection) -> Self {
         // SAFETY: Store owns this guard before its connection and cannot outlive that connection.

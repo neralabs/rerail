@@ -3,7 +3,7 @@
 use super::*;
 
 /// PHP's argument binding (`Arguments`), its crate's.
-pub(crate) trait PhpArguments {
+pub trait PhpArguments {
     /// PHP 8.5's call binding: positional arguments fill the slots in order; `name: value` the
     /// slot of that name (case-sensitive; a name outside the signature binds a parameter it does
     /// not list); `...[...]` unpacks an array literal, its integer keys by position and its string

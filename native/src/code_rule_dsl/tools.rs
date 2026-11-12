@@ -4,7 +4,7 @@
 pub use super::logic::profile::watch::watch;
 pub use super::sql_executor::CodeRuleSqlExecutor;
 pub use super::logic::settings::{program_text, program_texts, settings, with_settings};
-pub(crate) use super::logic::settings::process_counters;
+pub use super::logic::settings::process_counters;
 use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::transducer::packed::rir;
 
@@ -61,6 +61,8 @@ fn sql_request(store: &std::path::Path, request: &str) -> Result<String, String>
         indexes: Vec<Index>,
         #[serde(default)]
         queries: Vec<Query>,
+        #[serde(default)]
+        query_plans: Vec<serde_json::Value>,
         #[serde(default)]
         changes: Vec<Vec<serde_json::Value>>,
         #[serde(default)]
@@ -161,7 +163,14 @@ fn sql_request(store: &std::path::Path, request: &str) -> Result<String, String>
             .map(|s| serde_json::from_str::<serde_json::Value>(&s))
             .transpose()
             .map_err(|e| napi::Error::from_reason(e.to_string()))?;
-        Ok(serde_json::json!({"execution": execution, "updates":updates, "queries": queries}))
+        let query_plans=request.query_plans.into_iter().map(|plan| {
+            let result=session.query_plan(plan.to_string())?;
+            serde_json::from_str::<serde_json::Value>(&result)
+                .map_err(|e|napi::Error::from_reason(e.to_string()))
+        }).collect::<napi::Result<Vec<_>>>()?;
+        let mut result=serde_json::json!({"execution": execution, "updates":updates, "queries": queries});
+        if !query_plans.is_empty() {result["query_plans"]=serde_json::json!(query_plans);}
+        Ok(result)
     })()
     .map_err(|e| e.to_string())?;
     serde_json::to_string_pretty(&result)
@@ -234,6 +243,8 @@ pub fn run_rr(
         return Err(format!("{}: no .violation declarations", path.display()));
     }
     let source = rr::print(&program).map_err(|e| e.to_string())?;
+    // The run reads the program from its text: the one just lowered, not the text lowered again.
+    rr::remember_lowered(&source, &program);
     // A language of several dialects (`.language typescript` over `.ts`, `.tsx` and `.js` files) is a run per dialect
     // with files in scope: the first into `out`, each other into `out/<dialect>`, their findings together. A language
     // of one dialect, or none with files, runs as written.
@@ -310,6 +321,13 @@ pub fn run_policies(
     options: &serde_json::Value,
 ) -> Result<serde_json::Value, String> {
     let (mut diagnostics, mut runs) = (Vec::new(), Vec::new());
+    // Every policy's includes resolved by one run of phase 0 (`bootstrap.rr`) over all of them, each graph kept for
+    // the policy's own read: not one run a policy. A path phase 0 cannot read is the policy's own error, below.
+    let seeds: Vec<super::logic::plan::corpus::phase0::Seed> =
+        paths.iter().filter_map(|p| p.canonicalize().ok()).map(super::logic::plan::corpus::phase0::Seed::File).collect();
+    if seeds.len() > 1 && !super::logic::plan::corpus::phase0::active() {
+        let _ = super::logic::plan::corpus::phase0::graphs(&seeds);
+    }
     for (k, path) in paths.iter().enumerate() {
         let report = run_rr(path, root, &out.join(k.to_string()), options).map_err(|e| format!("{}: {e}", path.display()))?;
         diagnostics.extend(report["diagnostics"].as_array().cloned().unwrap_or_default());

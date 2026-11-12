@@ -171,9 +171,8 @@ pub(crate) struct Writer {
     lane: Mutex<Option<Lane>>,
     /// The handles and holds of the store.
     handles: std::sync::atomic::AtomicUsize,
-    /// The identity of the store its handles opened (`store_identity`); unset while only a `Hold` keeps it. A store
-    /// created again at the path has a writer of its own: its jobs name its own atoms, and the old store's handles
-    /// still write theirs.
+    /// The store's identity (`store_identity`), set by its first handle: a store created again at the path has
+    /// another, and a writer of its own (as it has atoms of its own).
     identity: std::sync::OnceLock<i64>,
 }
 
@@ -183,18 +182,23 @@ fn writers() -> &'static Mutex<HashMap<PathBuf, Arc<Writer>>> {
     WRITERS.get_or_init(Default::default)
 }
 
-/// The writer of the store at `path` (of `identity`, for a handle; a `Hold` takes the path's), counted as one more of
-/// its handles. The path's writer is another store's when that store's identity differs: then this one gets its own,
-/// which the path names from now on.
-pub(super) fn register(path: &Path, identity: Option<i64>) -> Arc<Writer> {
+/// The writer of the store at `path`, counted as one more of its handles (a `Hold`, which names no store).
+pub(super) fn register(path: &Path) -> Arc<Writer> {
     let mut all = writers().lock().expect("the writers");
     let entry = all.entry(path.to_path_buf()).or_default();
-    if let Some(identity) = identity
-        && *entry.identity.get_or_init(|| identity) != identity
-    {
-        let fresh = Writer::default();
-        let _ = fresh.identity.set(identity);
-        *entry = Arc::new(fresh);
+    let w = Arc::clone(entry);
+    w.handles.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    w
+}
+
+/// The writer of the store at `path` whose identity is `identity`, counted as one more of its handles. The path's
+/// writer of a store since deleted stays its handles' alone: this store gets a new one.
+pub(super) fn register_store(path: &Path, identity: i64) -> Arc<Writer> {
+    let mut all = writers().lock().expect("the writers");
+    let entry = all.entry(path.to_path_buf()).or_default();
+    if *entry.identity.get_or_init(|| identity) != identity {
+        *entry = Arc::default();
+        entry.identity.get_or_init(|| identity);
     }
     let w = Arc::clone(entry);
     w.handles.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -241,7 +245,7 @@ impl Drop for Hold {
 
 /// `Hold` of the store at `path`: the writer of the store a handle opens there next, or has open.
 pub fn hold(path: &Path) -> Hold {
-    Hold(path.to_path_buf(), register(path, None))
+    Hold(path.to_path_buf(), register(path))
 }
 
 /// Each kind of job's count, bytes and CPU on the writer's thread, in this process (the profile's write-back).

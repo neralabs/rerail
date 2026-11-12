@@ -16,7 +16,7 @@ its file's crate. Then, per crate C:
 Writes, under <out dir>: crates/<dir>/src/lib.rs for each crate (the engine's root stays native/src/lib.rs), and
 edits.tsv, the declaration edits in the files (file, start, end, replacement). --apply writes both into the tree.
 """
-import collections, json, os, sys
+import collections, json, os, re, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from crate_map import ALLOW, DAG, ROOT, load_map
@@ -205,7 +205,7 @@ class Facades:
         sub = {x.path for x in subtree(k)}
         if not (sub & self.want):
             return
-        if k.owner != c and 'cfg(test)' in k.cfg.replace(' ', '') and k.path not in KEEP_TEST:
+        if k.owner != c and re.search(r'\btest\b', k.cfg) and k.path not in KEEP_TEST:
             return  # another crate's test module exists only in that crate's own test build (unless it is test-hooks')
         if k.path in globbed and not self.need_inline(k):
             return  # the parent's glob brings it
@@ -217,6 +217,10 @@ class Facades:
             lines.append(f'{cfg}{attr}{indent}{vis}mod {k.name};\n')
         elif self.need_inline(k):
             kd = child_dir(k) if not k.inline else os.path.join(my_dir, k.name)
+            # a directory the file system lacks (a file module with no children's directory): its children are all
+            # `#[path]` ones, and a path through it fails, so the facade's directory is its nearest existing one
+            while not k.inline and not os.path.isdir(kd) and kd != ROOT:
+                kd = os.path.dirname(kd)
             lines.append(f'{cfg}{indent}#[path = "{rel(kd, attr_dir)}"]\n{indent}{vis}mod {k.name} {{\n')
             self.body(k, indent + '    ', kd, lines)
             lines.append(f'{indent}}}\n')

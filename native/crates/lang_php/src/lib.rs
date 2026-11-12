@@ -36,8 +36,7 @@ pub mod code_rule_dsl {
             use crate::code_rule_dsl::language::adapter::pack as language_pack;
         }
         pub mod php;
-        #[cfg(test)]
-        pub mod php_tests;
+        // php_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
         #[allow(unused_imports)]
         use crate::code_rule_dsl::json::{invalid, object};
         #[allow(unused_imports)]
@@ -78,37 +77,6 @@ pub mod code_rule_dsl {
     #[path = "compile"]
     pub mod compile {
         pub use rerail_w::code_rule_dsl::compile::*;
-        #[path = "format_args"]
-        pub mod format_args {
-            pub use rerail_w::code_rule_dsl::compile::format_args::*;
-            // PHP's format-args lab (`php.rs`) reads the engine's oracles and test kit: the engine mounts it.
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::compile::ast_rule::{compile_ast_rule};
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::compile::utils::{UtilScope};
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::json::{invalid, non_empty_str, object, reject_unknown};
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::language::adapter::{FormatArgFeature};
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::language::{Family, GrammarDialect};
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::matcher::Semantic;
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::matcher::{
-                AstMatcher, Capture, FormatArgs, Reading, Style, parse_exported,
-            };
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::model::Limits;
-            #[allow(unused_imports)]
-            use napi::Result;
-            #[allow(unused_imports)]
-            use serde_json::Value;
-            #[allow(unused_imports)]
-            use std::collections::BTreeSet;
-            #[allow(unused_imports)]
-            use crate::code_rule_dsl::language::adapter::pack as language_pack;
-        }
         #[path = "resolve"]
         pub mod resolve {
             pub use rerail_w::code_rule_dsl::compile::resolve::*;
@@ -189,8 +157,7 @@ pub mod code_rule_dsl {
     pub mod embed {
         pub use rerail_lang::code_rule_dsl::embed::*;
         pub mod compiled_view;
-        #[cfg(test)]
-        pub mod tests;
+        // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
         #[allow(unused_imports)]
         #[cfg(any(test, feature = "test-hooks"))]
         pub(crate) use crate::code_rule_dsl::embed::test_script::TestScript;
@@ -211,6 +178,8 @@ pub mod code_rule_dsl {
         #[path = "vtab"]
         pub mod vtab {
             pub use rerail_facts::code_rule_dsl::facts::vtab::*;
+            #[cfg(any(test, feature = "test-hooks"))]
+            pub use rerail_w::code_rule_dsl::facts::vtab::p_table;
             #[allow(unused_imports)]
             use fallible_iterator::FallibleIterator;
             #[allow(unused_imports)]
@@ -387,10 +356,6 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::language::adapter::format_args::{FormatArgFeature, FormatArgRules};
             #[allow(unused_imports)]
-            #[cfg(any(test, feature = "test-hooks"))]
-            #[cfg_attr(not(feature = "lang-rr"), allow(unused_imports))]
-            pub(crate) use crate::code_rule_dsl::language::adapter::rr::Rr;
-            #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::language::adapter::scope::{ScopeFeature, ScopeRules};
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::language::adapter::syntax::{QueryWhen, SyntaxFeature, SyntaxRules};
@@ -422,12 +387,6 @@ pub mod code_rule_dsl {
             use std::path::Path;
             #[allow(unused_imports)]
             use std::sync::LazyLock;
-            #[allow(unused_imports)]
-            #[cfg(any(test, feature = "test-hooks"))]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::language::adapter::php::{Php};
-            #[allow(unused_imports)]
-            #[cfg(any(test, feature = "test-hooks"))]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::language::adapter::blade::{Blade};
             #[allow(unused_imports)]
             pub(crate) use crate::code_rule_dsl::language::{ast_grep, parse_input};
         }
@@ -543,8 +502,7 @@ pub mod code_rule_dsl {
         pub mod arguments {
             pub use rerail_w::code_rule_dsl::matcher::arguments::*;
             pub mod lang_php;
-            #[cfg(test)]
-            pub mod php_syntactic_tests;
+            // php_syntactic_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
             #[allow(unused_imports)]
             use crate::code_rule_dsl::tree::Tree;
             #[allow(unused_imports)]
@@ -877,6 +835,7 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::semver;
     pub use rerail_w::code_rule_dsl::soundness;
     pub use rerail_facts::code_rule_dsl::sql_profile;
+    pub use rerail_facts::code_rule_dsl::sql_admission;
     pub use rerail_w::code_rule_dsl::stats;
     #[path = "suppress"]
     pub mod suppress {
@@ -896,8 +855,7 @@ pub mod code_rule_dsl {
     #[path = "tape"]
     pub mod tape {
         pub use rerail_lang::code_rule_dsl::tape::*;
-        #[cfg(test)]
-        pub mod corpus_parity;
+        // corpus_parity: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
         #[allow(unused_imports)]
         use crate::code_rule_dsl::embed::segments::SegmentMap;
         #[allow(unused_imports)]

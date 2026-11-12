@@ -25,6 +25,26 @@ fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters()
     assert_eq!(outputs[1]["result"],vec!["1\t99\t3\t17\t3\t7","2\t99\t1\t-2\t-2\t-2","4\t99\t3\t9223372036854775807\t-1\t9223372036854775807"]);
 }
 
+/// Two rules of one recursive stratum with one body and different heads (a magic relation and its reader's, as
+/// decision 0108's demand writes them) each run their whole plan in the first wave: the plans are kept apart by
+/// head, so neither head loses the rows the first wave derives.
+#[test]
+fn rules_of_one_body_and_two_heads_both_run_their_whole_plan() {
+    let p=parse(".decl seed(x:number)\nseed(1).\n.decl e(x:number,y:number)\ne(1,2).\ne(2,3).\ne(3,4).\n.decl a(x:number)\n.decl b(x:number)\na(x) :- seed(x).\na(y) :- a(x), e(x,y).\nb(y) :- a(x), e(x,y).\na(x) :- b(x).\n.output a,b\n").unwrap();
+    for modes in ["","program"] {
+        let path=crate::code_rule_dsl::fixtures::temp();
+        let store=ContentStore::open(&path).unwrap();
+        let python=crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+        let lowered=lower::lower(&p,python,&mut |s|store.intern_atoms(s).map_err(|e|Error::Plan(e.to_string()))).unwrap();
+        let db=Connection::open(&path).unwrap();
+        super::super::native::register(&db).unwrap();
+        super::super::native::register_symbols(&db).unwrap();
+        let got=run_atoms_native_over(&lowered,&db,"main",Stats::empty(&lowered.program),BTreeSet::new(),modes).unwrap();
+        assert_eq!(got.outputs["a"],vec!["1","2","3","4"],"modes {modes:?}");
+        assert_eq!(got.outputs["b"],vec!["2","3","4"],"modes {modes:?}");
+    }
+}
+
 /// Whether this process numbers nodes in preorder, as T's facts and outputs do (`RERAIL_NODE_IDS=preorder`). The
 /// tests that compare with T run only then: under ids per definition (the default, decision 0094 §2a) a program that
 /// orders nodes reads `node_order`, which T's facts do not have, and outputs show ids as `slot.index`.
@@ -2046,6 +2066,25 @@ fn a_plan_priced_on_an_empty_relation_is_not_kept_once_it_fills() {
     assert!(!near(&[1.0], &[0.0]), "one row, then empty");
 }
 
+#[test]
+fn child_ordinal_lookup_is_unique_despite_hot_marginal_statistics() {
+    let p = parse(".decl parents(p:number)\n.input parents\n.decl child(p:number,c:number,idx:number)\n.input child\n.decl out(c:number)\nout(c) :- parents(p), child(p,c,0).\n").unwrap();
+    let mut model = Model { docs_by_shift:false, analysis:Default::default(), input_set:Default::default(),
+        stats:Stats::empty(&p), ndv:HashMap::new(), docof:Default::default(), view_src:Default::default(),
+        inputs:Inputs::file().into(), derived:Default::default() };
+    model.stats.card.insert("parents".into(),100.0);
+    model.ndv.insert(("parents".into(),0),100.0);
+    model.stats.card.insert("child".into(),10000.0);
+    model.ndv.insert(("child".into(),0),100.0);
+    model.ndv.insert(("child".into(),1),10000.0);
+    model.ndv.insert(("child".into(),2),100.0);
+    model.stats.fan.insert(("child".into(),0),100.0);
+    model.stats.memo.insert("child".into(),HashMap::from([(("idx".into(),Constant::Int(0)),9000)]));
+    let (order,work,rows) = model.plan_rule(&p,&p.rules[0].head,&p.rules[0].body,None).unwrap();
+    assert_eq!(order[0].lit.atom().unwrap().rel,"parents");
+    assert!(rows<=100.0 && work<=400.0,"a parent/ordinal lookup has at most one result: {rows} rows, {work} work");
+}
+
 /// A planner change's measurement (O148): T's programs on T's facts, each statement's SQLite VM steps, the plans
 /// chosen and whether each output is T's. Run on a build before the change and one after (`O148_OUT`, with
 /// `RERAIL_NODE_IDS=preorder`) and compare them (`scripts/profiling/o148/compare.py`): the goldens (`rules.txt`) pin
@@ -2092,4 +2131,17 @@ fn o148_plans_and_their_work() {
         }
     }
     std::fs::write(out, lines.join("\n") + "\n").unwrap();
+}
+
+#[test]
+fn empty_required_inputs_defer_both_plan_shapes_until_growth() {
+    let program = crate::code_rule_dsl::logic::rr::parse(
+        ".decl a(x:number)\n.decl b(x:number)\n.decl p(x:number)\np(x) :- a(x), b(x).\n").unwrap();
+    let mut w = replanning::Watch::new(&BTreeMap::from([("a".into(),0),("b".into(),1)]), &[(&program.rules[0],0,vec![])]);
+    w.rows(0,100); w.rows(1,0); w.delta(0,100);
+    assert!(!w.take(0));
+    assert!(!w.take_whole(0), "a whole join over an empty input needs no search");
+    w.rows(1,1);
+    assert!(w.take(0)); assert!(w.take_whole(0));
+    assert!(!w.take(0)); assert!(!w.take_whole(0));
 }

@@ -34,7 +34,7 @@ use rustc_hash::FxHashMap;
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, LazyLock, Mutex, OnceLock};
-use tree_sitter::{Language, Node as TsNode};
+use tree_sitter::{Language, Node as TsNode, TreeCursor};
 
 /// An interned name (a kind or a field; 0 is "no field").
 type Sym = u32;
@@ -153,6 +153,22 @@ struct Implied {
     end: Vec<Option<Box<[Label]>>>,
 }
 
+/// Temporary buffers for one tree walk. Ancestor masks stay on the encoder's
+/// stack; a completed mask can serve the next parent. Gaps never outlive a call.
+#[derive(Default)]
+pub(super) struct FilterScratch {
+    masks: Vec<Vec<bool>>,
+    gap: Vec<(usize, Label)>,
+    missing: Vec<usize>,
+}
+
+impl FilterScratch {
+    pub(super) fn recycle(&mut self, mut mask: Vec<bool>) {
+        mask.clear();
+        self.masks.push(mask);
+    }
+}
+
 /// Every visible kind's automaton for one grammar.
 pub struct TokenGrammar {
     names: FxHashMap<String, Sym>,
@@ -160,6 +176,9 @@ pub struct TokenGrammar {
     kinds: FxHashMap<Sym, Automaton>,
     /// Per tree-sitter field id: its symbol (0 where the grammar has none).
     field_sym: Vec<Sym>,
+    /// Symbols and filtering need by tree-sitter kind id, computed once per grammar.
+    kind_sym: Vec<Option<Sym>>,
+    filters: BTreeSet<Sym>,
     pub(in crate::code_rule_dsl) unsupported: BTreeSet<String>,
     /// The grammar's extras (comments and the like): in no automaton, anywhere among children.
     extras: BTreeSet<String>,
@@ -383,7 +402,7 @@ fn determinize(nfa: &Nfa, start: u32, accept: u32) -> Option<(Vec<FxHashMap<Labe
 impl TokenGrammar {
     /// Every visible kind's automaton from `json` (a `grammar.json`), its names resolved in
     /// `language`.
-    pub(in crate::code_rule_dsl) fn from_json(json: &str, language: &Language) -> Result<Self, String> {
+    pub fn from_json(json: &str, language: &Language) -> Result<Self, String> {
         let grammar: Value = serde_json::from_str(json).map_err(|error| error.to_string())?;
         let rules = grammar["rules"].as_object().ok_or("grammar.json has no rules")?;
         let listed = |key: &str| -> BTreeSet<String> {
@@ -455,6 +474,9 @@ impl TokenGrammar {
         let field_sym = (0..=language.field_count() as u16)
             .map(|id| language.field_name_for_id(id).and_then(|name| names.get(name).copied()).unwrap_or(0))
             .collect();
+        let kind_sym = (0..language.node_kind_count() as u16)
+            .map(|id| language.node_kind_for_id(id).and_then(|name| names.get(name).copied())).collect();
+        let filters = kinds.iter().filter(|(_, a)| a.dropped().next().is_some()).map(|(&sym, _)| sym).collect();
         let implied_texts = kinds
             .values()
             .flat_map(Automaton::dropped)
@@ -464,10 +486,10 @@ impl TokenGrammar {
         interned.push("");
         interned.sort_unstable();
         interned.dedup();
-        Ok(Self { names, texts, kinds, field_sym, unsupported, extras, implied_texts, interned })
+        Ok(Self { names, texts, kinds, field_sym, kind_sym, filters, unsupported, extras, implied_texts, interned })
     }
 
-    pub(in crate::code_rule_dsl) fn kind_count(&self) -> usize {
+    pub fn kind_count(&self) -> usize {
         self.kinds.len()
     }
 
@@ -481,50 +503,65 @@ impl TokenGrammar {
     /// the automaton cannot walk. A MISSING child walks the automaton as the child it stands for
     /// and is always stored: it is a syntax error.
     pub fn stored_children(&self, node: TsNode<'_>) -> Option<Vec<bool>> {
+        self.stored_children_in(node, &mut node.walk(), &mut FilterScratch::default())
+    }
+
+    pub(super) fn stored_children_in<'tree>(&self, node: TsNode<'tree>, cursor: &mut TreeCursor<'tree>, scratch: &mut FilterScratch) -> Option<Vec<bool>> {
         if node.is_error() || !node.is_named() || node.child_count() == 0 {
             return None;
         }
-        let automaton = self.kinds.get(self.names.get(node.kind())?)?;
-        let mut cursor = node.walk();
+        let sym = self.kind_sym.get(node.kind_id() as usize).copied().flatten()?;
+        if !self.filters.contains(&sym) { return None; }
+        let automaton = self.kinds.get(&sym)?;
+        cursor.reset(node);
         if !cursor.goto_first_child() {
             return None;
         }
-        let mut stored = Vec::with_capacity(node.child_count() as usize);
-        let mut gap: Vec<(usize, Label)> = Vec::new();
-        let mut missing = Vec::new();
-        let mut state = 0u32;
-        loop {
-            let child = cursor.node();
-            let position = stored.len();
-            stored.push(true);
-            if !child.is_extra() {
-                if child.is_error() {
-                    return None;
-                }
-                if child.is_missing() {
-                    missing.push(position);
-                }
-                let name = *self.names.get(child.kind())?;
-                let field = cursor.field_id().map_or(0, |id| self.field_sym.get(usize::from(id.get())).copied().unwrap_or(0));
-                if child.is_named() {
-                    state = gap_end(automaton, state, &gap, Some(Label { token: false, name, field }), &mut stored)?;
-                    gap.clear();
-                } else {
-                    if child.child_count() > 0 {
+        let mut stored = scratch.masks.pop().unwrap_or_default();
+        stored.reserve(node.child_count() as usize);
+        scratch.gap.clear();
+        scratch.missing.clear();
+        let walked = (|| {
+            let mut state = 0u32;
+            loop {
+                let child = cursor.node();
+                let position = stored.len();
+                stored.push(true);
+                if !child.is_extra() {
+                    if child.is_error() {
                         return None;
                     }
-                    gap.push((position, Label { token: true, name, field }));
+                    if child.is_missing() {
+                        scratch.missing.push(position);
+                    }
+                    let name = self.kind_sym.get(child.kind_id() as usize).copied().flatten()?;
+                    let field = cursor.field_id().map_or(0, |id| self.field_sym.get(usize::from(id.get())).copied().unwrap_or(0));
+                    if child.is_named() {
+                        state = gap_end(automaton, state, &scratch.gap, Some(Label { token: false, name, field }), &mut stored)?;
+                        scratch.gap.clear();
+                    } else {
+                        if child.child_count() > 0 {
+                            return None;
+                        }
+                        scratch.gap.push((position, Label { token: true, name, field }));
+                    }
+                }
+                if !cursor.goto_next_sibling() {
+                    break;
                 }
             }
-            if !cursor.goto_next_sibling() {
-                break;
+            gap_end(automaton, state, &scratch.gap, None, &mut stored)?;
+            for &position in &scratch.missing {
+                stored[position] = true;
             }
+            Some(())
+        })();
+        if walked.is_some() {
+            Some(stored)
+        } else {
+            scratch.recycle(stored);
+            None
         }
-        gap_end(automaton, state, &gap, None, &mut stored)?;
-        for position in missing {
-            stored[position] = true;
-        }
-        Some(stored)
     }
 }
 
@@ -630,6 +667,11 @@ fn gap_end(automaton: &Automaton, state: u32, gap: &[(usize, Label)], next: Opti
         None if automaton.accepting[at as usize] => at,
         None => return None,
     };
+    // No token can be omitted from an empty gap. The transition above still
+    // validates the next child (or acceptance); no implied-word lookup is needed.
+    if gap.is_empty() {
+        return Some(after);
+    }
     let implied = match next {
         Some(label) => automaton.implied.to.get(&(state, label)),
         None => automaton.implied.end[state as usize].as_ref(),
@@ -753,7 +795,7 @@ impl TokenGrammar {
 /// The `grammar.json` a dialect's parser was generated from, built into the engine (the vendored
 /// grammars, and byte-identical copies of the Rust and PHP crates' under `grammars/token-grammars`);
 /// `None` for a dialect whose tapes keep all their tokens.
-pub(in crate::code_rule_dsl) fn grammar_json(lang: GrammarDialect) -> Option<&'static str> {
+pub fn grammar_json(lang: GrammarDialect) -> Option<&'static str> {
     macro_rules! grammar {
         ($path:literal) => {
             include_str!(concat!(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."), "/grammars/", $path, "/grammar.json"))
@@ -768,6 +810,7 @@ pub(in crate::code_rule_dsl) fn grammar_json(lang: GrammarDialect) -> Option<&'s
         GrammarDialect::Vue => grammar!("tree-sitter-vue/src"),
         GrammarDialect::Rust => grammar!("token-grammars/rust"),
         GrammarDialect::Php => grammar!("token-grammars/php"),
+        GrammarDialect::Json => grammar!("token-grammars/json"),
         _ => return None,
     })
 }

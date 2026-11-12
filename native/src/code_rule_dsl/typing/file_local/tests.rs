@@ -72,34 +72,6 @@ fn the_device_finds_the_cpus_nearest() {
     }
 }
 
-/// T's programs split into file-local relations and the rest: what the cross-file rest reads.
-#[test]
-#[ignore = "open (decision 0128): parses files whose language only the engine registers; to be hosted by rerail-engine"]
-fn t_programs_split_into_file_local_and_cross_file() {
-    use crate::code_rule_dsl::logic::rr::parse;
-    for name in ["calls.rr", "calls_rust.rr", "workload.rr"] {
-        let path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/typing/programs").join(name);
-        let prog = parse(&crate::code_rule_dsl::logic::settings::program_text(&path).unwrap()).unwrap();
-        let local = split(&prog);
-        let derived: std::collections::BTreeSet<&str> = prog.rules.iter().map(|r| r.head.rel.as_str()).collect();
-        let global: Vec<&&str> = derived.iter().filter(|r| !local.contains(**r)).collect();
-        let mut reads_base = std::collections::BTreeSet::new();
-        let mut reads_local = std::collections::BTreeSet::new();
-        for rule in prog.rules.iter().filter(|r| !local.contains(r.head.rel.as_str())) {
-            for l in &rule.body {
-                if let Some(a) = l.atom() {
-                    if prog.inputs.iter().any(|x| x == &a.rel) { reads_base.insert(a.rel.to_string()); }
-                    if local.contains(a.rel.as_str()) { reads_local.insert(a.rel.to_string()); }
-                }
-            }
-        }
-        // Projections of the tree are file-local; what an import binds is not.
-        assert!(local.contains("kind"), "{name}");
-        assert!(!local.contains("calls") && !local.contains("res") || name == "workload.rr", "{name}");
-        eprintln!("SPLIT {name}: {} local, {} cross-file {global:?}\n  cross-file reads base {reads_base:?}\n  and local {reads_local:?}", local.len(), global.len());
-    }
-}
-
 /// Where the device's nearest time goes (ignored; `--ignored --nocapture`): one chunk-sized forest (about
 /// 172K nodes, as a 1-in-8 data-layer chunk), solved by the work queue, by the CPU worklist, and by one pass in
 /// preorder (a parent precedes its children, so each node reads its parent's answer once).

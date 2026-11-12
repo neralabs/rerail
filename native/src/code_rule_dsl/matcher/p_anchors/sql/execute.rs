@@ -8,7 +8,7 @@ use crate::code_rule_dsl::profile::trace::Span;
 use rusqlite::{Result, params_from_iter};
 
 #[cfg(any(test, feature = "test-hooks"))]
-pub(super) fn rows(
+pub fn rows(
     store: &Store,
     statement: &Statement,
     mut emit: impl FnMut(usize, i64, usize),

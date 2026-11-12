@@ -32,6 +32,9 @@ pub struct StateRow {
     /// The hidden marks its level refuses (`refuse M in L`): before a token it takes, each
     /// refuses the file.
     pub refuses: Vec<u16>,
+    /// Its rule: its level's index (`build_shaped`). In one state machine, levels that share a
+    /// state are one rule; a function a rule, no state is shared, so each level is one.
+    pub rule: u16,
 }
 
 /// What a transition does, in order: close nodes (innermost first), open nodes (outermost
@@ -45,6 +48,9 @@ pub enum Act {
     Open { kind: u16, field: u16, supers: Vec<u16> },
     /// The token's leaf node, of the token's kind, or of `kind` when it is not 0 (`A as K`).
     Leaf { field: u16, supers: Vec<u16>, kind: u16 },
+    /// A token the grammar implies (`implied`): no node; the extras pending before it stay where
+    /// they are, as its leaf's would.
+    Settle,
     /// An extra's leaf, deferred: the nodes closed before the next node leave it out, so it goes
     /// where the next token puts it (`with_extras`).
     Extra,
@@ -92,6 +98,10 @@ pub struct ArmRow {
     pub acts: Vec<Act>,
     pub to: u16,
     pub push: Vec<u16>,
+    /// A call, as recursive descent makes one (a function a rule, `build_shaped`): the token is
+    /// not taken here. The arm opens the callee's node, pushes its return, and goes to the
+    /// callee's start (`to`), which switches on the same token.
+    pub call: bool,
 }
 
 /// The state machine as text, a line per state and per arm, for tests and dumps:
@@ -134,6 +144,7 @@ pub fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
                     let _ = write!(acts, " relabel f {field} as {moved} inner {inner}");
                 }
                 Act::Extra => acts.push_str(" extra"),
+                Act::Settle => acts.push_str(" settle"),
                 Act::ExtraNow => acts.push_str(" extra now"),
                 Act::Retag { kind } => {
                     let _ = write!(acts, " retag {kind}");
@@ -159,7 +170,8 @@ pub fn text(states: &[StateRow], arms: &[ArmRow]) -> String {
             }
         }
         let push: String = arm.push.iter().map(|p| format!(" push {p}")).collect();
-        let _ = writeln!(out, "arm {} token {} to {}{push} do{acts}", arm.from, arm.token, arm.to);
+        let call = if arm.call { " call" } else { "" };
+        let _ = writeln!(out, "arm {} token {} to {}{call}{push} do{acts}", arm.from, arm.token, arm.to);
     }
     out
 }
@@ -212,6 +224,9 @@ enum Pos {
     Merge { token: u16, into: u16 },
 }
 
+/// A `Pos::Tok`'s leaf kind for a token the grammar implies (`implied`): it makes no leaf.
+const NO_LEAF: u16 = u16::MAX - 3;
+
 /// A rule of the tree section.
 struct Rule {
     kind: String,
@@ -234,6 +249,9 @@ pub struct Ids<'a> {
     pub tokens: &'a [String],
     /// A reading's id, by name (`reread R`).
     pub reading: &'a dyn Fn(&str) -> Result<u16, String>,
+    /// The marks' kinds (tokens of no width, `MARK`): a call whose callee may begin with one is
+    /// entered at its first token (`build_shaped`).
+    pub marks: &'a [u16],
 }
 
 /// The level a `balanced` leaf's name: its kind, then a byte no name holds.
@@ -409,7 +427,7 @@ impl Builder<'_> {
                 if !toks(&e, &mut ps) {
                     return Err(format!("`as {k}`: not a token"));
                 }
-                let kind = self.kind(k)?;
+                let kind = if k == bitlex::syntax::IMPLIED { NO_LEAF } else { self.kind(k)? };
                 if kind == crate::stream_ir::REMEMBERED {
                     return Err(format!("`as {k}` on a token: a word's kind is for a wrap's, a relabel's or a reading's node"));
                 }
@@ -435,6 +453,10 @@ impl Builder<'_> {
     /// A kind named in the grammar; a `remember` choice's name is its level's word's
     /// (`stream_ir::REMEMBERED`).
     fn kind(&self, name: &str) -> Result<u16, String> {
+        if name == bitlex::syntax::GONE {
+            // `drop`: the node goes (`DEAD`, left out at `ACCEPT`).
+            return Ok(crate::stream_ir::DEAD);
+        }
         if self.remember.iter().any(|r| r == name) { Ok(crate::stream_ir::REMEMBERED) } else { (self.ids.kind)(name) }
     }
 
@@ -611,7 +633,7 @@ fn closes(exits: &[Wrap], acts: &mut Vec<Act>) {
 struct Raw {
     level: usize,
     end: Option<u8>,
-    arms: Vec<(u16, Vec<Act>, usize, Vec<usize>)>,
+    arms: Vec<(u16, Vec<Act>, usize, Vec<usize>, bool)>,
 }
 
 /// The tree section's rules, desugared: the nodes (the root first), the choices inlined where
@@ -635,6 +657,9 @@ fn gather(stmts: &[Stmt], tokens: &[String]) -> (Vec<Rule>, Vec<(String, Option<
 /// The fewest states a call must save for a rule to be shared by calls (`shared`).
 pub const SHARED_STATES: usize = 8;
 
+/// A function a rule (`build_shaped`): the fewest inner positions a rule called has (`shared`).
+pub const RULE_INNER: usize = 2;
+
 /// The states a rule's calls save: its inner positions once instead of at each of its `uses`,
 /// less a state for each call. An inner position is one the rule may go on from (its state's
 /// arms are the rule's own); a position it may end with is a state at each place either way
@@ -650,9 +675,14 @@ pub fn saved_states(uses: usize, inner: usize) -> usize {
 /// saved are not worth that. The rest stay inlined; so do those that may match no token (a call
 /// takes one), those a refusing level uses (its marks would be the callee's, `refusing`), and
 /// those whose first token merges into the leaf before them.
-fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[Rule], stmts: &[Stmt]) -> Vec<String> {
+///
+/// A function a rule (`by_rules`): every rule or choice with `RULE_INNER` inner positions or
+/// more is called, however often it is used, as a recursive-descent parser has a function a
+/// rule; one smaller is a switch's arms, inlined.
+fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[Rule], stmts: &[Stmt], by_rules: bool) -> Vec<String> {
     #[derive(Default)]
     struct Facts {
+        by_rules: bool,
         uses: HashMap<String, usize>,
         size: HashMap<String, usize>,
         called: HashMap<String, bool>,
@@ -674,7 +704,7 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
             Gram::Lit(_) | Gram::Any(_) | Gram::Balanced { .. } => {}
         }
     }
-    let mut f = Facts::default();
+    let mut f = Facts { by_rules, ..Facts::default() };
     for g in rules.iter().chain(levels).map(|r| &r.body).chain(choices.iter().map(|c| &c.2)) {
         count(g, 1, &mut f.uses);
     }
@@ -780,7 +810,8 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
         let inner = s.saturating_sub(lasts(b, ctx, &f.called, stack));
         let e = empty(b, ctx, &f.called, stack) || merges_first(b, ctx, &f.called, stack);
         stack.pop();
-        let c = !e && !f.kept.iter().any(|k| k == n) && saved_states(f.uses.get(n).copied().unwrap_or(0), inner) >= SHARED_STATES;
+        let worth = if f.by_rules { inner >= RULE_INNER } else { saved_states(f.uses.get(n).copied().unwrap_or(0), inner) >= SHARED_STATES };
+        let c = !e && !f.kept.iter().any(|k| k == n) && worth;
         f.size.insert(n.to_owned(), s);
         f.called.insert(n.to_owned(), c);
         c
@@ -834,7 +865,7 @@ fn shared(rules: &[Rule], choices: &[(String, Option<String>, Gram)], levels: &[
 #[cfg(test)]
 pub(crate) fn shared_names(stmts: &[Stmt], tokens: &[String]) -> Vec<String> {
     let (rules, choices, levels, _) = gather(stmts, tokens);
-    shared(&rules, &choices, &levels, stmts)
+    shared(&rules, &choices, &levels, stmts, false)
 }
 
 /// The state machine of the tree section's rules in `stmts`.
@@ -842,9 +873,18 @@ pub(crate) fn shared_names(stmts: &[Stmt], tokens: &[String]) -> Vec<String> {
 /// it at byte 0, `bitlex_tier2::lower`): state 0's arms do not open it, and state 0 ends the file
 /// when the root may be empty. The third value says so.
 pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow>, bool), String> {
+    build_shaped(stmts, ids, false)
+}
+
+/// `build`, with `rules`: a function a grammar rule (docs/parser-generators/33-compiled-against-lean-shape.md).
+/// States merge within their level only, never across levels, so each state is its level's
+/// and each level is a rule of its own (`StateRow::rule`), as a recursive-descent parser has a
+/// function a rule. Without it, one state machine: states that act alike merge wherever they
+/// are, the smallest machine (simdjson's shape, for a small grammar).
+pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Vec<StateRow>, Vec<ArmRow>, bool), String> {
     let (mut rules, mut choices, mut nested_choices, balanced) = gather(stmts, ids.tokens);
     // The rules shared by calls (`shared`): levels of their own, as if marked `nested`.
-    let calls = shared(&rules, &choices, &nested_choices, stmts);
+    let calls = shared(&rules, &choices, &nested_choices, stmts, by_rules);
     for r in rules.iter_mut().skip(1) {
         r.nested |= calls.contains(&r.kind);
     }
@@ -935,6 +975,10 @@ pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow
 
     // The arms of a level's start or position `from`, on each token: follow a call into its
     // level's start until a token.
+    // The out arms: (token, acts, the position gone to, the calls' positions, a call taking no
+    // token). A level `l`'s start (a function a rule) is the position `positions.len() + l - 1`:
+    // its state is `positions.len() + l`, after the positions' (`state_of`).
+    #[allow(clippy::too_many_arguments)]
     fn arms_from(
         levels: &[Level],
         positions: &[(usize, Pos)],
@@ -945,7 +989,8 @@ pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow
         pending: Pending,
         push: Vec<usize>,
         depth: usize,
-        out: &mut Vec<(u16, Vec<Act>, usize, Vec<usize>)>,
+        by_rules: Option<&[u16]>,
+        out: &mut Vec<(u16, Vec<Act>, usize, Vec<usize>, bool)>,
     ) -> Result<(), String> {
         if depth > 16 {
             return Err("calls nest at the first token without end".into());
@@ -967,13 +1012,22 @@ pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow
                 }
             }
             match positions[q].1 {
+                Pos::Tok(kind, NO_LEAF, remembered) => {
+                    // A token the grammar implies: taken, no leaf.
+                    if p.field != 0 || !p.supers.is_empty() || remembered {
+                        return Err("an implied token with a field, a supertype or a word: it makes no node".into());
+                    }
+                    acts.push(Act::Settle);
+                    let Some(acts) = settled(acts) else { continue };
+                    out.push((kind, acts, q, push.clone(), false));
+                }
                 Pos::Tok(kind, leaf, remembered) => {
                     acts.push(Act::Leaf { field: p.field, supers: p.supers, kind: leaf });
                     if remembered {
                         acts.push(Act::Remember { kind });
                     }
                     let Some(acts) = settled(acts) else { continue };
-                    out.push((kind, acts, q, push.clone()));
+                    out.push((kind, acts, q, push.clone(), false));
                 }
                 Pos::Merge { token, into } => {
                     if p.field != 0 || !p.supers.is_empty() {
@@ -984,7 +1038,7 @@ pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow
                     }
                     acts.push(Act::Merge { kind: into });
                     let Some(acts) = settled(acts) else { continue };
-                    out.push((token, acts, q, push.clone()));
+                    out.push((token, acts, q, push.clone(), false));
                 }
                 Pos::Call(rule) => {
                     let child = level_of_rule[&rule];
@@ -992,6 +1046,31 @@ pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow
                     // the outer one first, so the inner one returns first.
                     let mut calls = push.clone();
                     calls.push(q);
+                    // A function a rule: a call takes no token. It opens the callee's node and
+                    // goes to the callee's start, which switches on the token itself, an arm on
+                    // each token the callee may begin with. Entered at its first token instead
+                    // where the call's field or supertypes go to its first node (a nested
+                    // choice's, which opens none); where it may begin with a mark (the caller's
+                    // state would take the mark, and the callee's could not); and where its first
+                    // token merges into the leaf before (the extras before it are that leaf's
+                    // text: pending in the state that takes them, which must be the merge's).
+                    if let Some(marks) = by_rules {
+                        let mut firsts = Vec::new();
+                        arms_from(levels, positions, level_of_rule, child, None, Vec::new(), Pending::default(), Vec::new(), depth + 1, by_rules, &mut firsts)?;
+                        let through = !levels[child].own && (p.field != 0 || !p.supers.is_empty() || levels[child].supertype.is_some());
+                        let merges = firsts.iter().any(|f| f.1.iter().any(|a| matches!(a, Act::Merge { .. })));
+                        if !through && !merges && !firsts.iter().any(|f| marks.contains(&f.0)) {
+                            acts.extend(levels[child].own.then(|| Act::Open { kind: levels[child].kind, field: p.field, supers: p.supers.clone() }));
+                            let Some(acts) = settled(acts) else { continue };
+                            let mut tokens: Vec<u16> = firsts.iter().map(|f| f.0).collect();
+                            tokens.sort_unstable();
+                            tokens.dedup();
+                            for t in tokens {
+                                out.push((t, acts.clone(), positions.len() + child - 1, calls.clone(), true));
+                            }
+                            continue;
+                        }
+                    }
                     // A nested choice opens no node: the call's field and supertypes go to its
                     // first node, as an inlined choice's do.
                     let inner = if levels[child].own {
@@ -1001,26 +1080,37 @@ pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow
                         p.supers.extend(levels[child].supertype);
                         p
                     };
-                    arms_from(levels, positions, level_of_rule, child, None, acts, inner, calls, depth + 1, out)?;
+                    arms_from(levels, positions, level_of_rule, child, None, acts, inner, calls, depth + 1, by_rules, out)?;
                 }
             }
         }
         Ok(())
     }
 
-    // Raw states: 0 is the root's start, then one per position.
+    // Raw states: 0 is the root's start, then one per position; a function a rule, then each
+    // nested level's start (a call goes to it, `arms_from`).
     let mut raw: Vec<Raw> = Vec::new();
     let state_of = |p: usize| p + 1;
-    for from in std::iter::once(None).chain((0..positions.len()).map(Some)) {
-        let level = from.map_or(0, |p| positions[p].0);
+    let marks = by_rules.then_some(ids.marks);
+    let starts = if by_rules { levels.len() - 1 } else { 0 };
+    for k in 0..1 + positions.len() + starts {
+        let (level, from) = if k == 0 {
+            (0, None)
+        } else if k <= positions.len() {
+            (positions[k - 1].0, Some(k - 1))
+        } else {
+            (k - positions.len(), None)
+        };
         let mut arms = Vec::new();
         // The root's start opens the root node first.
-        let prefix = if from.is_none() && !whole { vec![Act::Open { kind: levels[0].kind, field: 0, supers: vec![] }] } else { vec![] };
-        arms_from(&levels, &positions, &level_of_rule, level, from, prefix, Pending::default(), Vec::new(), 0, &mut arms)?;
-        let arms: Vec<_> = arms.into_iter().map(|(t, a, q, push)| (t, a, state_of(q), push.into_iter().map(state_of).collect::<Vec<_>>())).collect();
+        let prefix = if k == 0 && !whole { vec![Act::Open { kind: levels[0].kind, field: 0, supers: vec![] }] } else { vec![] };
+        arms_from(&levels, &positions, &level_of_rule, level, from, prefix, Pending::default(), Vec::new(), 0, marks, &mut arms)?;
+        let arms: Vec<_> = arms.into_iter().map(|(t, a, q, push, call)| (t, a, state_of(q), push.into_iter().map(state_of).collect::<Vec<_>>(), call)).collect();
         let end = match from {
             // A whole root that may be empty ends at its start: the file has no token.
-            None => (whole && root_empty).then_some(0),
+            None if k == 0 => (whole && root_empty).then_some(0),
+            // A nested level's start: it may not be empty.
+            None => None,
             Some(p) => levels[level].edges.iter().find(|e| e.from == Some(p) && e.to.is_none()).map(|e| {
                 let mut acts = Vec::new();
                 closes(&e.exits, &mut acts);
@@ -1044,12 +1134,15 @@ pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow
     // Merge states that act alike (Moore's refinement), then number them from the start, in
     // the order they are reached. States of different levels act alike when their arms do and
     // they end alike: the root's apart, a level with a node of its own apart from one without
-    // (its end closes it), and the marks refused the same.
+    // (its end closes it), and the marks refused the same. A function a rule (`rules`): a
+    // level's states apart from every other level's.
     let mut class: Vec<usize> = Vec::new();
     {
-        let mut keys: Vec<(bool, bool, Option<u8>, &[u16])> = Vec::new();
-        for r in &raw {
-            let k = (r.level == 0, levels[r.level].own, r.end, levels[r.level].refuses.as_slice());
+        // A function a rule: the root's start apart too, as the extras enter it once
+        // (`with_extras`), where a call's return could otherwise land on it.
+        let mut keys: Vec<(bool, bool, Option<u8>, &[u16], Option<usize>, bool)> = Vec::new();
+        for (i, r) in raw.iter().enumerate() {
+            let k = (r.level == 0, levels[r.level].own, r.end, levels[r.level].refuses.as_slice(), by_rules.then_some(r.level), by_rules && i == 0);
             let c = keys.iter().position(|x| *x == k).unwrap_or_else(|| {
                 keys.push(k);
                 keys.len() - 1
@@ -1057,10 +1150,10 @@ pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow
             class.push(c);
         }
         loop {
-            let mut sigs: Vec<(usize, Vec<(u16, &Vec<Act>, usize, Vec<usize>)>)> = Vec::new();
+            let mut sigs: Vec<(usize, Vec<(u16, &Vec<Act>, usize, Vec<usize>, bool)>)> = Vec::new();
             let mut next = Vec::with_capacity(raw.len());
             for (i, r) in raw.iter().enumerate() {
-                let mut arms: Vec<_> = r.arms.iter().map(|(t, a, q, p)| (*t, a, class[*q], p.iter().map(|&p| class[p]).collect::<Vec<_>>())).collect();
+                let mut arms: Vec<_> = r.arms.iter().map(|(t, a, q, p, c)| (*t, a, class[*q], p.iter().map(|&p| class[p]).collect::<Vec<_>>(), *c)).collect();
                 arms.sort_by_key(|a| a.0);
                 let sig = (class[i], arms);
                 let c = sigs.iter().position(|s| *s == sig).unwrap_or_else(|| {
@@ -1086,7 +1179,7 @@ pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow
         }
         number.insert(class[i], order.len() as u16);
         order.push(i);
-        for (_, _, q, p) in &raw[i].arms {
+        for (_, _, q, p, _) in &raw[i].arms {
             queue.push_back(*q);
             queue.extend(p.iter().copied());
         }
@@ -1115,9 +1208,9 @@ pub fn build(stmts: &[Stmt], ids: &Ids<'_>) -> Result<(Vec<StateRow>, Vec<ArmRow
     for (s, &i) in order.iter().enumerate() {
         let r = &raw[i];
         let level = find(&mut joined, r.level);
-        states.push(StateRow { level: levels[level].kind, own: levels[r.level].own, end: r.end, refuses: levels[r.level].refuses.clone() });
-        for (token, acts, q, p) in &r.arms {
-            arms.push(ArmRow { from: s as u16, token: *token, acts: acts.clone(), to: number[&class[*q]], push: p.iter().map(|&p| number[&class[p]]).collect() });
+        states.push(StateRow { level: levels[level].kind, own: levels[r.level].own, end: r.end, refuses: levels[r.level].refuses.clone(), rule: level as u16 });
+        for (token, acts, q, p, call) in &r.arms {
+            arms.push(ArmRow { from: s as u16, token: *token, acts: acts.clone(), to: number[&class[*q]], push: p.iter().map(|&p| number[&class[p]]).collect(), call: *call });
         }
     }
     refusing(&states, &arms)?;
@@ -1174,6 +1267,10 @@ pub fn with_extras(
     marks: &[u16],
 ) -> Result<(Vec<StateRow>, Vec<ArmRow>), String> {
     if extras.is_empty() {
+        // No extras, none pending: an implied token's settle has nothing to keep in place.
+        for a in &mut arms {
+            a.acts.retain(|x| !matches!(x, Act::Settle));
+        }
         return Ok((states, arms));
     }
     if let Some(a) = arms.iter().find(|a| extras.contains(&a.token)) {
@@ -1202,7 +1299,7 @@ pub fn with_extras(
     }
     if zero_takes {
         for &k in extras {
-            new_arms.push(ArmRow { from: 0, token: k, acts: vec![open_root.clone(), Act::ExtraNow], to: opened, push: Vec::new() });
+            new_arms.push(ArmRow { from: 0, token: k, acts: vec![open_root.clone(), Act::ExtraNow], to: opened, push: Vec::new(), call: false });
         }
     }
     }
@@ -1226,7 +1323,7 @@ pub fn with_extras(
         // puts it.
         if nested && end.is_some() {
             for &k in extras {
-                new_arms.push(ArmRow { from: s, token: k, acts: vec![Act::Extra], to: s, push: Vec::new() });
+                new_arms.push(ArmRow { from: s, token: k, acts: vec![Act::Extra], to: s, push: Vec::new(), call: false });
             }
             s += 1;
             continue;
@@ -1274,7 +1371,7 @@ pub fn with_extras(
                 *copies.entry((s, m)).or_insert_with(|| {
                     let c = states.len() as u16;
                     let st = &states[usize::from(s)];
-                    states.push(StateRow { level: st.level, own: st.own, end: end.map(|e| e - m as u8), refuses: st.refuses.clone() });
+                    states.push(StateRow { level: st.level, own: st.own, end: end.map(|e| e - m as u8), refuses: st.refuses.clone(), rule: st.rule });
                     for a in &mine {
                         arms.push(ArmRow { from: c, acts: a.acts[m..].to_vec(), ..a.clone() });
                     }
@@ -1284,11 +1381,11 @@ pub fn with_extras(
             let mut acts = vec![Act::Close; m];
             acts.push(Act::ExtraNow);
             for &k in extras {
-                new_arms.push(ArmRow { from: s, token: k, acts: acts.clone(), to, push: Vec::new() });
+                new_arms.push(ArmRow { from: s, token: k, acts: acts.clone(), to, push: Vec::new(), call: false });
             }
         } else {
             for &k in extras {
-                new_arms.push(ArmRow { from: s, token: k, acts: vec![Act::Extra], to: s, push: Vec::new() });
+                new_arms.push(ArmRow { from: s, token: k, acts: vec![Act::Extra], to: s, push: Vec::new(), call: false });
             }
         }
         s += 1;

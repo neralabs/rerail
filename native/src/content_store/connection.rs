@@ -408,6 +408,7 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
     // Temporary B-trees (a statement's materialized CTEs and sorts, the prefilter's stages) stay
     // in memory, not in temp files read back through the 1 MB cache (decision 0024 §6).
     connection.pragma_update(None, "temp_store", "MEMORY")?;
+    rusqlite::vtab::array::load_module(connection)?;
     super::postings::install(connection)?;
     super::vocabulary::install(connection)?;
     // The engine's SQL functions (its text tests, the prefilter's tapes), handed over as it loads.

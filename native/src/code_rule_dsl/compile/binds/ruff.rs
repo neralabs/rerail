@@ -3,8 +3,8 @@
 //! Where the engine is conservative by design (a read `eval` may make) the port reports less, and
 //! the test lists each such range.
 
-// cratify: a re-export of rerail-engine's, which its facades of this module make
-// cratify: a re-export of rerail-engine's, which its facades of this module make
+use crate::code_rule_dsl::fixtures::oracle;
+use crate::code_rule_dsl::test_support::*;
 use serde_json::{Value, json};
 
 const ORACLE: &str = oracle!("python/scope/usage.expected.json");

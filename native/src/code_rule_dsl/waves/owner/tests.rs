@@ -1,22 +1,24 @@
 use super::*;
-use crate::content_store::ContentStore;
-use std::sync::Arc;
-use crate::code_rule_dsl::facts::vtab::syntax::{self, sources};
+use crate::code_rule_dsl::facts::vtab::syntax::{sources};
 use std::path::PathBuf;
+use crate::content_store::ContentStore;
 
 fn temp(what: &str) -> PathBuf {
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     std::env::temp_dir().join(format!("rerail-owner-{what}-{}-{nonce}.sqlite", std::process::id()))
 }
-/// One parsed Python document, keyed 0.
-fn document() -> syntax::Document {
-    use crate::code_rule_dsl::facts::core::{self, Built, Source};
-    let file = Source { language: "python".into(), source: Arc::new("import os\nos.getcwd()\n".into()) };
-    let Built::Facts(facts) = core::build(&file).unwrap() else { panic!("did not parse") };
-    let facts = Arc::new(facts);
-    let path = "a.py".to_owned();
-    syntax::Document { key: 0, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None }
+/// One Python document's facts, read off its tape (the corpus helper of `facts::vtab::syntax`'s tests builds its
+/// files through `model`, which sits above this crate).
+fn documents() -> Vec<crate::code_rule_dsl::facts::vtab::syntax::Document> {
+    use crate::code_rule_dsl::facts::core;
+    let source = "import os\n\ndef f(x):\n    return os.path.join(x, 'a')\n";
+    let (tape, _) = crate::code_rule_dsl::fixtures::document(source, crate::code_rule_dsl::language::GrammarDialect::Python);
+    let lines = std::sync::Arc::new(crate::code_rule_dsl::lines::LineTable::new(source, crate::code_rule_dsl::lines::Terminators::Newlines));
+    let facts = std::sync::Arc::new(core::from_tape(&tape, lines).unwrap());
+    let path = "f.py".to_owned();
+    vec![crate::code_rule_dsl::facts::vtab::syntax::Document { key: 0, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None }]
 }
+
 fn count(db: &Database, sql: &str) -> i64 {
     db.query_row(sql, [], |r| r.get(0)).unwrap()
 }
@@ -33,7 +35,7 @@ fn a_lease_returns_empty_backing_and_empty_vtabs() {
         db.storage.borrow_mut().declare(&db, "input", "CREATE TEMP TABLE input(value)".into(), true).unwrap();
         db.execute("INSERT INTO input VALUES(7)", []).unwrap();
         db.storage.borrow_mut().written("input", true);
-        for (name, source) in sources(&store, vec![document()]).unwrap() {
+        for (name, source) in sources(&store, documents().into_iter().take(1).collect()).unwrap() {
             db.bind(name, source).unwrap();
         }
         assert!(count(&db, "SELECT count(*) FROM node") > 0);

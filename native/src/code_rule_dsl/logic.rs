@@ -6,17 +6,29 @@ pub mod crypto;
 pub mod derived;
 #[cfg(test)]
 pub mod facts_only;
+/// This crate's own test binary, which the engine does not load: every connection is strict about SQL in the waves, as
+/// the engine's loader makes them (`crate::install_store_functions` in `native/src/lib.rs`); the store reports its
+/// hazards to the profile itself.
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        crate::code_rule_dsl::logic::profile::strict_on_every_connection();
+    }
+    // Run as the binary loads, before any test opens a store (as the engine's `module_init` runs).
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}
 pub mod analysis;
 // Nothing emits SQL through them until the planner (Phase 6) does.
 #[path = "logic/front"]
 pub mod front {
     pub use rerail_rr::code_rule_dsl::logic::front::*;
-    // `front/caches/` is not a directory (caches.rs has no children's directory): a path through it fails, so the
-    // facade's directory is `front` (as Cratification's mounts.py, e2ab5d26b).
     #[path = "."]
     pub mod caches {
         pub use rerail_rr::code_rule_dsl::logic::front::caches::*;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         #[path = "caches_tests.rs"]
         pub mod tests;
         #[allow(unused_imports)]
@@ -26,12 +38,12 @@ pub mod front {
     }
     #[cfg(test)]
     pub mod data_layer_tests;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub mod tests;
     #[path = "yaml"]
     pub mod yaml {
         pub use rerail_rr::code_rule_dsl::logic::front::yaml::*;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         pub mod tests;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::logic::front::{Atom, Error, Literal, Program, Rule, Term};
@@ -59,7 +71,7 @@ pub mod liveness;
 #[path = "logic/magic"]
 pub mod magic {
     pub use rerail_rr::code_rule_dsl::logic::magic::*;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub mod tests;
     #[allow(unused_imports)]
     use crate::code_rule_dsl::logic::front::{AggOp, Atom, Error, Literal, Program, Rule, Term, Value, cmp_binds, join, strata, tarjan};
@@ -100,7 +112,7 @@ pub mod simplify;
 #[path = "logic/strings"]
 pub mod strings {
     pub use rerail_facts::code_rule_dsl::logic::strings::*;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub mod tests;
     #[allow(unused_imports)]
     use std::collections::{BTreeMap, HashMap, HashSet};

@@ -755,7 +755,7 @@ const TAPE_VIEW: &str = concat!("#include <metal_stdlib>\nusing namespace metal;
 const SOURCE: &str = concat!("#include <metal_stdlib>\nusing namespace metal;\n", include_str!("metal_tape.metal"), include_str!("metal_work_queue.metal"), include_str!("metal_label_passes.metal"));
 /// Where a label kernel binds the batch's four slabs (`Slabs`): past every other buffer.
 const SLAB_SLOT: u64 = 27;
-const KERNELS: [&str; 12] = [
+const KERNELS: [&str; 14] = [
     "label_sink",
     "label_settle",
     "label_round",
@@ -768,11 +768,17 @@ const KERNELS: [&str; 12] = [
     "root_records_8",
     "root_records_32",
     "label_group_64",
+    "label_group_128",
+    "label_group_256",
 ];
-/// The fused group kernels in `KERNELS` (`Runner::group`): 8, 32 and 64 frames a walk.
-const GROUP_KERNELS: [usize; 3] = [7, 8, 11];
-/// The frames of each fused group kernel (`GROUP_KERNELS`).
-const GROUP_FRAMES: [usize; 3] = [8, 32, 64];
+/// The fused group kernels in `KERNELS` (`Runner::group`): 8, 32, 64, 128 and 256 frames a walk.
+const GROUP_KERNELS: [usize; 5] = [7, 8, 11, 12, 13];
+/// The frames of each fused group kernel (`GROUP_KERNELS`). A walk takes the fewest that hold its
+/// static depth, at most the loop tier's 64, which a loop walk (no static depth) takes, as
+/// `label_micro` does. A run whose walk outgrows them runs again deep (`Runner::deep`), where the
+/// cap is 256: past every static depth seen (159 on the S7 slice), so only a loop walk can still
+/// outgrow it, and only that runs on the interpreter.
+const GROUP_FRAMES: [usize; 5] = [8, 32, 64, 128, 256];
 /// A group dispatch's threads per file.
 const GROUP_WIDTH: u64 = 64;
 
@@ -1015,7 +1021,7 @@ struct Runner<'a> {
     stacks: Option<MappedBuffer>,
     /// The deep fused groups' stacks, one buffer for all of them: the groups run one after
     /// another in the command buffer (five of 33 MB each on S7 before, list step 13).
-    group_stacks: [Option<MappedBuffer>; 3],
+    group_stacks: [Option<MappedBuffer>; 5],
     encoded: bool,
     outcome: Outcome,
     /// The plan's root walks, encoded after its passes (`records`).
@@ -1317,7 +1323,7 @@ fn encode(
         segments: Segments::default(),
         segs: None,
         stacks: kept.as_mut().and_then(|kept| kept.stacks.as_ref().map(|stacks| MappedBuffer::wrap(stacks.buffer.clone()))),
-        group_stacks: [None, None, None],
+        group_stacks: [None, None, None, None, None],
         encoded: false,
         outcome: Outcome {
             words,
@@ -2262,7 +2268,8 @@ impl Runner<'_> {
     }
 
     /// A recursive group's rounds to its fixpoint as one dispatch (`label_group_*`, decision 0024
-    /// §3), where every pass is a micro walk of at most 64 frames, a complement, a count or empty:
+    /// §3), where every pass is a micro walk (a loop walk with the loop tier's frames, the deep
+    /// pool's once a run outgrew them), a complement, a count or empty:
     /// each level's walks, words, starts and text rows concatenated, its settles after them.
     /// `false` where the group is not such (it runs as rounds of levels).
     fn group(&mut self, levels: &[Vec<Pass<'_>>]) -> Result<bool, Error> {
@@ -2276,6 +2283,7 @@ impl Runner<'_> {
         if !self.micro {
             return unfused("interpreted");
         }
+        let loop_frames = if self.deep { GROUP_FRAMES[4] } else { GROUP_FRAMES[2] };
         let place = |rows: &Option<Vec<u32>>, label: &u32| rows.as_ref().map_or(*label, |rows| rows[*label as usize]);
         let (mut records, mut words, mut texts) = (Vec::<[u32; 8]>::new(), Vec::<u32>::new(), Vec::<u32>::new());
         let (mut shape_levels, mut ops, mut steps, mut deepest) = (Vec::<[u32; 4]>::new(), Vec::<Op>::new(), 0_u32, 0_usize);
@@ -2297,13 +2305,11 @@ impl Runner<'_> {
             }
             let (pass_start, op_start) = (records.len() as u32, ops.len() as u32);
             if let Some(walks) = walks {
-                if walks.fused.iter().any(|(_, depth)| depth.is_none_or(|depth| depth > GROUP_FRAMES[2])) {
-                    if std::env::var_os("RERAIL_LAUNCHES").is_some() {
-                        eprintln!("DEEP depths {:?}", walks.fused.iter().map(|(_, depth)| *depth).collect::<Vec<_>>());
-                    }
-                    return unfused("deep");
-                }
-                deepest = deepest.max(walks.fused.iter().filter_map(|(_, depth)| *depth).max().unwrap_or(0));
+                // A walk's frames: its static depth, at most the run's tier (64, 256 on the deep run), which a
+                // loop walk takes. A static depth bounds the grammar's nesting, not a file's: a walk that does
+                // outgrow its frames flags it (`MICRO_FAIL`) and the group runs again deep, then interpreted.
+                let frames = |depth: &Option<usize>| depth.unwrap_or(loop_frames).min(loop_frames);
+                deepest = deepest.max(walks.fused.iter().map(|(_, depth)| frames(depth)).max().unwrap_or(0));
                 steps = steps.max(walks.steps);
                 let word_at = words.len() as u32;
                 let text_at = (texts.len() / self.words) as u32;

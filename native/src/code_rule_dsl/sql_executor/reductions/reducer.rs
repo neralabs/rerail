@@ -4,6 +4,10 @@ pub mod dependencies;
 pub mod lookup;
 pub mod transition;
 pub mod combined;
+pub mod counts;
+pub mod initial;
+pub mod general;
+pub mod staged;
 #[derive(Clone, Copy)]
 enum Kind {
     Count,
@@ -14,7 +18,7 @@ enum Kind {
     Matches(bool),
 }
 #[derive(Clone)]
-pub(super) struct Reducer {
+pub struct Reducer {
     combined: Option<combined::Shared>,
     pool_consumers: usize,
     transition_key: Option<Arc<str>>,
@@ -286,7 +290,7 @@ impl Reducer {
             native_keys,
         }))
     }
-    pub(super) fn prepare_transition(&mut self) { self.transition_key=transition::descriptor(self); }
+    pub fn prepare_transition(&mut self) { self.transition_key=transition::descriptor(self); }
     fn keys(&self) -> usize {
         self.outer_keys.len().max(1)
     }
@@ -428,67 +432,9 @@ impl Reducer {
         db: &rusqlite::Connection,
         objects: &mut Vec<(String, bool)>,
         storage: Option<&versions::Store>,
+        phase_publication: bool,
     ) -> Result<()> {
-        if let Some(shared) = &self.combined { return combined::initialize(self, shared, db, objects, storage); }
-        let keys = self.keys();
-        let cols = names("", keys);
-        let value = format!("c{keys}");
-        let wide = if matches!(self.kind, Kind::Sum) {
-            ",high INTEGER NOT NULL"
-        } else {
-            ""
-        };
-        owned(
-            db,
-            objects,
-            &self.groups,
-            &format!(
-                "{},n INTEGER NOT NULL CHECK(n>0),value INTEGER NOT NULL{wide},PRIMARY KEY({cols})",
-                schema(keys)
-            ),
-            storage,
-        )?;
-        let reduction = match self.kind {
-            Kind::Count | Kind::Matches(_) => "count(*)".into(),
-            Kind::Sum => format!("rr_sum_low({value},1,NULL),rr_sum_high({value},1,NULL)"),
-            Kind::Min => format!("min({value})"),
-            Kind::Max => format!("max({value})"),
-            Kind::Join => self.join.as_ref().unwrap().render(),
-        };
-        insert(
-            db,
-            &self.groups,
-            &format!(
-                "SELECT {cols},count(*),{reduction} FROM ({}) rr_join_values GROUP BY {cols}",
-                self.projection.render()
-            ),
-            storage,
-        )?;
-        if matches!(self.kind, Kind::Min | Kind::Max | Kind::Join) {
-            owned(
-                db,
-                objects,
-                &self.values,
-                &format!(
-                    "{},n INTEGER NOT NULL CHECK(n>0),PRIMARY KEY({})",
-                    schema(self.width()),
-                    names("", self.width())
-                ),
-                storage,
-            )?;
-            insert(
-                db,
-                &self.values,
-                &format!(
-                    "SELECT {},count(*) FROM ({}) GROUP BY {}",
-                    names("", self.width()),
-                    self.projection.render(),
-                    names("", self.width())
-                ),
-                storage,
-            )?;
-        }
-        Ok(())
+        initial::initialize(self, db, objects, storage, phase_publication)
     }
     pub fn apply(
         &self,
@@ -505,6 +451,9 @@ impl Reducer {
         else {
             return Ok(None);
         };
+        if w.versions.is_some_and(|s| s.available(&self.groups).is_some()) {
+            return if counts::eligible(self) {counts::apply(self,w,delta)} else {general::apply(self,w,delta)};
+        }
         let k = self.keys();
         let cols = names("", k);
         let val = format!("c{k}");

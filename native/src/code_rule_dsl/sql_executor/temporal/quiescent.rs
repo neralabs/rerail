@@ -9,8 +9,10 @@ fn aggregate(query: &Query) -> bool {
         // in this SELECT can produce a row from an empty positive body.
         e.visit(&mut |e| {
             if let E::Call { name, arguments } = e {
-                result |= matches!(*name, "count" | "sum" | "rr_exact_sum" | "rr_join" | "rr_update_sum")
-                    || (matches!(*name, "min" | "max") && arguments.len() == 1);
+                result |= matches!(
+                    *name,
+                    "count" | "sum" | "rr_exact_sum" | "rr_join" | "rr_update_sum"
+                ) || (matches!(*name, "min" | "max") && arguments.len() == 1);
             }
         });
     }
@@ -18,7 +20,18 @@ fn aggregate(query: &Query) -> bool {
 }
 
 impl operator::Operator {
-    pub(super) fn clear_empty_body(&mut self, store: &versions::Store) -> Result<bool> {
+    pub fn clear_empty_body(
+        &mut self,
+        db: &rusqlite::Connection,
+        store: &versions::Store,
+    ) -> Result<bool> {
+        self.empty_body = false;
+        if self.opaque.is_some() {return Ok(false);}
+        let native_empty = self
+            .run
+            .reductions
+            .as_ref()
+            .is_none_or(|states| states.values().all(|s| s.reducer_inputs().next().is_none()));
         let emitted = &self.run.emitted;
         let internal = emitted
             .program
@@ -40,7 +53,17 @@ impl operator::Operator {
                             if internal.contains(&name) {
                                 possible.contains(&name)
                             } else {
-                                !store.contains(&name) || store.version(&name).len() > 0
+                                if store.contains(&name) {
+                                    store.version(&name).len() > 0
+                                } else if native_empty {
+                                    // Estimates only avoid expensive exact counts. Only an
+                                    // exact zero proves emptiness. Scalar cursors must still
+                                    // consume their journals, even with an empty outer body.
+                                    super::super::super::facts::vtab::bound_source(db, &name)
+                                        .is_none_or(|s| s.estimated_len() > 0 || s.len() > 0)
+                                } else {
+                                    true
+                                }
                             }
                         })
                 });
@@ -69,7 +92,26 @@ impl operator::Operator {
             .collect::<BTreeSet<_>>();
         // Clearing an internal scalar source would require propagating its deletion
         // into the surviving reducer index. Leave such operators to normal maintenance.
-        if protected.iter().any(|r| empty.contains(r)) {
+        if protected.iter().any(|r| empty.contains(r))
+            || emitted
+                .program
+                .steps
+                .iter()
+                .zip(&emitted.queries)
+                .any(|(step, q)| {
+                    empty.contains(&step.output)
+                        && q.as_ref().is_some_and(|q| {
+                            q.body
+                                .from
+                                .iter()
+                                .filter_map(|i| read(&i.relation))
+                                .any(|r| protected.contains(&r))
+                        })
+                })
+        {
+            // A preserved scalar cursor may return to an identical source version.
+            // Its positive contexts must survive too, or reactivation sees no delta
+            // and never reconstructs them.
             return Ok(false);
         }
         for (step, query) in emitted.program.steps.iter().zip(&emitted.queries) {
@@ -84,7 +126,7 @@ impl operator::Operator {
                 state.clear_contexts(store)?;
             }
             for table in [name.clone(), format!("new_{name}"), format!("delta_{name}")] {
-                let version = store.version(&table);
+                let Some(version) = store.available(&table) else { continue; };
                 if version.len() > 0 {
                     store.replace(&table, version.empty_like())?;
                 }
@@ -101,6 +143,7 @@ impl operator::Operator {
                 pending.clear(store)?;
             }
         }
+        self.empty_body = true;
         Ok(true)
     }
 }

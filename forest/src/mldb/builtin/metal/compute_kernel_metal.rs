@@ -328,7 +328,24 @@ impl MetalComputeFunctionLibrary {
 pub struct MetalComputeQueue {
     pub queue: metal::CommandQueue,
     pub command_buffer: metal::CommandBuffer,
+    /// The command buffer's open encoder, kept across launches (a launch after a launch, a copy after a copy, in
+    /// the same encoder: a serial compute encoder runs its dispatches in order, each seeing the last's writes), and
+    /// ended when the other kind is needed or at `flush`.
+    open: std::cell::RefCell<Open>,
+    /// The command buffer's staging memory for `enqueue_copy_from_host` (filled up, then another), and how much is
+    /// used: one allocation a command buffer, not one a copy. The command buffer keeps it until it completes.
+    staging: std::cell::RefCell<Option<(metal::Buffer, u64)>>,
 }
+
+/// A command buffer's open encoder.
+enum Open {
+    None,
+    Compute(metal::ComputeCommandEncoder),
+    Blit(metal::BlitCommandEncoder),
+}
+
+/// The bytes a staging buffer holds (a larger copy gets its own).
+const STAGING_BYTES: u64 = 64 << 10;
 
 /// A committed command buffer (`MetalComputeEvent`).
 pub struct MetalComputeEvent {
@@ -375,12 +392,44 @@ fn pooled<R>(f: impl FnOnce() -> R) -> R {
 
 impl MetalComputeQueue {
     pub fn new(queue: &metal::CommandQueueRef) -> Self {
-        MetalComputeQueue { queue: queue.to_owned(), command_buffer: pooled(|| queue.new_command_buffer().to_owned()) }
+        MetalComputeQueue { queue: queue.to_owned(), command_buffer: pooled(|| queue.new_command_buffer().to_owned()), open: std::cell::RefCell::new(Open::None), staging: Default::default() }
     }
 
-    /// `newBindContext`: an encoder for one launch of `function`.
+    /// The open compute encoder (ending an open blit encoder first).
+    fn compute_encoder(&self) -> metal::ComputeCommandEncoder {
+        let mut open = self.open.borrow_mut();
+        if let Open::Compute(e) = &*open {
+            return e.clone();
+        }
+        Self::end(&mut open);
+        let e = pooled(|| self.command_buffer.new_compute_command_encoder().to_owned());
+        *open = Open::Compute(e.clone());
+        e
+    }
+
+    /// The open blit encoder (ending an open compute encoder first).
+    fn blit_encoder(&self) -> metal::BlitCommandEncoder {
+        let mut open = self.open.borrow_mut();
+        if let Open::Blit(e) = &*open {
+            return e.clone();
+        }
+        Self::end(&mut open);
+        let e = pooled(|| self.command_buffer.new_blit_command_encoder().to_owned());
+        *open = Open::Blit(e.clone());
+        e
+    }
+
+    fn end(open: &mut Open) {
+        match std::mem::replace(open, Open::None) {
+            Open::None => {}
+            Open::Compute(e) => e.end_encoding(),
+            Open::Blit(e) => e.end_encoding(),
+        }
+    }
+
+    /// `newBindContext`: one launch of `function`, on the command buffer's open compute encoder.
     pub fn new_bind_context(&self, function: &MetalComputeFunction) -> MetalBindContext {
-        let encoder = pooled(|| self.command_buffer.new_compute_command_encoder().to_owned());
+        let encoder = self.compute_encoder();
         encoder.set_compute_pipeline_state(&function.compute_pipeline_state);
         MetalBindContext { encoder }
     }
@@ -390,13 +439,24 @@ impl MetalComputeQueue {
         if bytes.is_empty() {
             return;
         }
-        let device = dst.device();
-        pooled(|| {
-            let staging = device.new_buffer_with_data(bytes.as_ptr().cast(), bytes.len() as u64, metal::MTLResourceOptions::StorageModeShared);
-            let blit = self.command_buffer.new_blit_command_encoder();
-            blit.copy_from_buffer(&staging, 0, dst, dst_offset, bytes.len() as u64);
-            blit.end_encoding();
-        });
+        let n = bytes.len() as u64;
+        // The bytes at the next 16-byte boundary of the command buffer's staging memory (written now: the copy reads
+        // them when the command buffer runs).
+        let (staging, at) = {
+            let mut st = self.staging.borrow_mut();
+            let fits = st.as_ref().is_some_and(|(b, used)| used.next_multiple_of(16) + n <= b.length());
+            if !fits {
+                let len = n.max(STAGING_BYTES);
+                *st = Some((pooled(|| dst.device().new_buffer(len, metal::MTLResourceOptions::StorageModeShared)), 0));
+            }
+            let (b, used) = st.as_mut().unwrap();
+            let at = used.next_multiple_of(16);
+            *used = at + n;
+            (b.clone(), at)
+        };
+        unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), staging.contents().cast::<u8>().add(at as usize), bytes.len()) };
+        let blit = self.blit_encoder();
+        blit.copy_from_buffer(&staging, at, dst, dst_offset, n);
     }
 
     /// `enqueueFillArray`: `count` copies of `value` into `dst` from element `offset` (all of it when `count` is
@@ -406,11 +466,7 @@ impl MetalComputeQueue {
         let count = count.unwrap_or(dst.length() as usize / size - offset);
         let one = unsafe { std::slice::from_raw_parts((value as *const T).cast::<u8>(), size) };
         if one.iter().all(|&b| b == 0) {
-            pooled(|| {
-                let blit = self.command_buffer.new_blit_command_encoder();
-                blit.fill_buffer(dst, metal::NSRange::new((offset * size) as u64, (count * size) as u64), 0);
-                blit.end_encoding();
-            });
+            self.blit_encoder().fill_buffer(dst, metal::NSRange::new((offset * size) as u64, (count * size) as u64), 0);
             return;
         }
         let bytes: Vec<u8> = one.iter().copied().cycle().take(count * size).collect();
@@ -419,15 +475,14 @@ impl MetalComputeQueue {
 
     /// `enqueueCopyBetweenDeviceRegions`.
     pub fn enqueue_copy_between_device_regions(&self, src: &metal::BufferRef, dst: &metal::BufferRef, src_offset: u64, dst_offset: u64, length: u64) {
-        pooled(|| {
-            let blit = self.command_buffer.new_blit_command_encoder();
-            blit.copy_from_buffer(src, src_offset, dst, dst_offset, length);
-            blit.end_encoding();
-        });
+        self.blit_encoder().copy_from_buffer(src, src_offset, dst, dst_offset, length);
     }
 
     /// Commits the work so far; its event.
     pub fn flush(&mut self) -> MetalComputeEvent {
+        Self::end(&mut self.open.borrow_mut());
+        // The next command buffer stages in memory of its own (this one's is read when it runs).
+        *self.staging.borrow_mut() = None;
         let next = pooled(|| self.queue.new_command_buffer().to_owned());
         let cb = std::mem::replace(&mut self.command_buffer, next);
         cb.commit();
@@ -485,8 +540,9 @@ impl crate::compute_kernel_grid::GridBindContext for MetalBindContext {
     }
 }
 
-impl Drop for MetalBindContext {
+impl Drop for MetalComputeQueue {
+    /// An encoder left open is ended (Metal requires it before the command buffer goes).
     fn drop(&mut self) {
-        self.encoder.end_encoding();
+        Self::end(&mut self.open.borrow_mut());
     }
 }

@@ -10,7 +10,7 @@
 //! The writer's thread and the training's work behind the run: what they send to SQLite no wave waits for.
 //!
 //! - **The learned model** (`rerail_accel::cost_model`): after the rates, the model saved for this machine (table
-//!   `models`) is put in place, and a thread of its own, at the background quality of service and in a pool of two
+//!   `models`) is put in place, and a thread of its own, at the utility quality of service and in a pool of two
 //!   threads apart from the engine's, trains a model on the samples read. A model that beats the rates on the
 //!   newest fifth of them is put in place and saved; one that does not is taken out, with the saved one. Training
 //!   runs again once [`RETRAIN_AFTER`] more samples are written, at most every [`RETRAIN_EVERY`].
@@ -20,6 +20,8 @@
 
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
+
+pub mod sql_plans;
 
 /// The samples kept per machine: older ones are deleted past this.
 const KEPT: i64 = 500_000;
@@ -71,6 +73,7 @@ pub fn open(path: &PathBuf) -> rusqlite::Result<rusqlite::Connection> {
          CREATE INDEX IF NOT EXISTS samples_by_form ON samples(machine, lane, forms, at);
          CREATE TABLE IF NOT EXISTS models(machine TEXT PRIMARY KEY, at REAL, trained_on INTEGER, comparison TEXT, model BLOB);",
     )?;
+    sql_plans::create(&db)?;
     Ok(db)
 }
 
@@ -79,12 +82,13 @@ static WRITER: Mutex<Option<rusqlite::Connection>> = Mutex::new(None);
 
 /// Writes the samples the executor kept since the last write: one transaction.
 fn write() {
-    let (samples, dropped) = rerail_accel::score::take_samples();
-    if samples.is_empty() {
-        return;
-    }
     let Some(path) = path() else { return };
     let mut w = WRITER.lock().unwrap_or_else(|p| p.into_inner());
+    let (samples, dropped) = rerail_accel::score::take_samples();
+    let plans = sql_plans::take();
+    if samples.is_empty() && plans.is_empty() {
+        return;
+    }
     if w.is_none() {
         *w = open(&path).ok();
         // Past `KEPT`, the oldest of this machine's samples go.
@@ -92,24 +96,39 @@ fn write() {
             let _ = db.execute("DELETE FROM samples WHERE machine = ?1 AND at < (SELECT at FROM samples WHERE machine = ?1 ORDER BY at DESC LIMIT 1 OFFSET ?2)", rusqlite::params![machine(), KEPT]);
         }
     }
-    let Some(db) = w.as_mut() else { return };
-    let machine = machine();
+    let Some(db) = w.as_mut() else {
+        sql_plans::retry(plans);
+        return;
+    };
+    let (machine, threads) = (machine(), rerail_accel::exec::threads() as i64);
     let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64());
-    let r = (|| -> rusqlite::Result<()> {
+    let r = (|| -> rusqlite::Result<Vec<i64>> {
         let tx = db.transaction()?;
-        {
+        if !samples.is_empty() {
             let mut ins = tx.prepare_cached("INSERT INTO samples VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)")?;
             for s in &samples {
                 ins.execute(rusqlite::params![at, machine, s.threads, s.lane.name(), s.forms, s.launches, s.units, s.estimate, s.host_estimate, s.wall, s.cpu, s.waited, s.phases, s.cold, s.ok, s.load])?;
             }
         }
-        tx.commit()
+        let ids = if plans.is_empty() {
+            Vec::new()
+        } else {
+            sql_plans::insert(&tx, &machine, threads, at, &plans)?
+        };
+        tx.commit()?;
+        Ok(ids)
     })();
     match r {
-        Ok(()) => {
+        Ok(ids) => {
             WRITTEN.fetch_add(samples.len(), std::sync::atomic::Ordering::Relaxed);
+            if !ids.is_empty() {
+                sql_plans::learn(ids, &plans);
+            }
         }
-        Err(e) => crate::code_rule_dsl::logic::profile::decision("cost statistics", || format!("{} samples not written: {e}", samples.len())),
+        Err(e) => {
+            crate::code_rule_dsl::logic::profile::decision("cost statistics", || format!("{} job samples and {} SQL reports not written: {e}", samples.len(), plans.len()));
+            sql_plans::retry(plans);
+        }
     }
     if dropped > 0 {
         crate::code_rule_dsl::logic::profile::decision("cost statistics", || format!("{dropped} samples dropped: the writer fell behind"));
@@ -171,15 +190,20 @@ fn read() {
     if !path.exists() {
         return;
     }
-    let r = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).and_then(|db| read_samples(&db, READ, READ_PER_FORM));
+    let r = (|| -> rusqlite::Result<Vec<rerail_accel::score::Sample>> {
+        let db = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+        if let Err(e) = sql_plans::read(&db, &machine(), rerail_accel::exec::threads() as i64) {
+            eprintln!("rerail: SQL planning observations not read from {}: {e}", path.display());
+        }
+        read_samples(&db, READ, READ_PER_FORM)
+    })();
     match r {
         Ok(samples) => {
             let fitted = rerail_accel::price::learn_from(&samples);
             *FITTED.lock().unwrap_or_else(|p| p.into_inner()) = Some((samples.len(), fitted.len()));
             #[cfg(target_os = "macos")]
             {
-                load_saved(&path);
-                train(path, samples);
+                train(path, samples, true);
             }
         }
         Err(e) => {
@@ -202,7 +226,8 @@ fn model_state(s: String) {
     *MODEL_STATE.lock().unwrap_or_else(|p| p.into_inner()) = s;
 }
 
-/// Puts this machine's saved model in place, if there is one that reads.
+/// Puts this machine's saved model in place, if there is one that reads, its kernels compiled first (the training
+/// thread's: a new binary compiles them in seconds).
 #[cfg(target_os = "macos")]
 fn load_saved(path: &PathBuf) {
     let Ok(db) = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) else { return };
@@ -211,18 +236,24 @@ fn load_saved(path: &PathBuf) {
     let Ok((bytes, trained_on)) = saved else { return };
     match rerail_accel::cost_model::CostModel::from_bytes(&bytes) {
         Ok(m) => {
+            let t = std::time::Instant::now();
+            if let Err(e) = m.warm() {
+                model_state(format!("the saved model does not predict ({e}); training a new one"));
+                return;
+            }
             rerail_accel::cost_model::install(Some(std::sync::Arc::new(m)));
-            model_state(format!("the saved model ({trained_on} samples) in place; training a new one"));
+            model_state(format!("the saved model ({trained_on} samples) in place, warmed in {:.2} s; training a new one", t.elapsed().as_secs_f64()));
         }
         Err(e) => model_state(format!("the saved model does not read ({e}); training a new one")),
     }
 }
 
 /// Trains a model on `samples` (oldest first) on a thread of its own, unless one is training: in a pool of two
-/// threads at the background quality of service, apart from the engine's. A model that wins is put in place and
-/// saved; else the model in place, and the saved one, are taken out.
+/// threads at the utility quality of service, apart from the engine's. With `saved`, the saved model is put in
+/// place first ([`load_saved`]). A model that wins is put in place and saved; else the model in place, and the
+/// saved one, are taken out.
 #[cfg(target_os = "macos")]
-fn train(path: PathBuf, samples: Vec<rerail_accel::score::Sample>) {
+fn train(path: PathBuf, samples: Vec<rerail_accel::score::Sample>, saved: bool) {
     use std::sync::atomic::Ordering;
     if TRAINING.swap(true, Ordering::AcqRel) {
         return;
@@ -231,11 +262,14 @@ fn train(path: PathBuf, samples: Vec<rerail_accel::score::Sample>) {
     *TRAINED_AT.lock().unwrap_or_else(|p| p.into_inner()) = Some(std::time::Instant::now());
     let spawned = rerail_accel::exec::service("rerail-cost-model", None, move || {
         crate::code_rule_dsl::logic::profile::behind_the_run();
-        rerail_accel::cost_model::set_background_qos();
+        rerail_accel::cost_model::set_qos(rerail_accel::cost_model::Qos::Utility);
+        if saved {
+            load_saved(&path);
+        }
         let pool = rayon::ThreadPoolBuilder::new()
             .num_threads(2)
             .thread_name(|i| format!("rerail-cost-model-{i}"))
-            .start_handler(|_| rerail_accel::cost_model::set_background_qos())
+            .start_handler(|_| rerail_accel::cost_model::set_qos(rerail_accel::cost_model::Qos::Utility))
             .build();
         let started = std::time::Instant::now();
         let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -303,7 +337,7 @@ fn maybe_retrain() {
         let Some(path) = path() else { return };
         let r = rusqlite::Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).and_then(|db| read_samples(&db, READ, READ_PER_FORM));
         if let Ok(samples) = r {
-            train(path, samples);
+            train(path, samples, false);
         }
     }
 }
@@ -313,12 +347,13 @@ static FITTED: Mutex<Option<(usize, usize)>> = Mutex::new(None);
 
 /// Starts the statistics, once: the executor keeps its samples, a thread writes them, and a job reads the stored
 /// ones and fits the prices. Without a store (`RERAIL_COSTS=off`, or in tests) nothing is kept.
-pub(in crate::code_rule_dsl) fn start() {
+pub fn start() {
     static STARTED: OnceLock<()> = OnceLock::new();
     STARTED.get_or_init(|| {
         if path().is_none() {
             return;
         }
+        sql_plans::enable();
         rerail_accel::score::keep_samples(true);
         let _ = rerail_accel::exec::service("rerail-costs", None, || {
             crate::code_rule_dsl::logic::profile::behind_the_run();
@@ -339,7 +374,7 @@ pub fn flush() {
 }
 
 /// For the profile: the samples read, the rates fitted and the rates in place.
-pub(in crate::code_rule_dsl) fn summary() -> String {
+pub fn summary() -> String {
     let fitted = *FITTED.lock().unwrap_or_else(|p| p.into_inner());
     let mut s = match (path(), fitted) {
         (None, _) => "off (RERAIL_COSTS=off, or a test)\n".to_owned(),
@@ -386,7 +421,7 @@ pub mod tests {
         db.execute("DELETE FROM models", []).unwrap();
         let samples = super::read_samples(&db, super::READ, super::READ_PER_FORM).unwrap();
         let t = std::time::Instant::now();
-        super::train(path.clone(), samples);
+        super::train(path.clone(), samples, false);
         while super::TRAINING.load(Ordering::Acquire) {
             std::thread::sleep(std::time::Duration::from_millis(50));
         }

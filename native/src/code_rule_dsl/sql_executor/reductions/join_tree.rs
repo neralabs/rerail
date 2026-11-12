@@ -19,7 +19,7 @@ fn write(
 }
 
 #[derive(Clone)]
-pub(super) struct JoinTree {
+pub struct JoinTree {
     pub nodes: String,
     pub roots: String,
     pub merge: String,
@@ -37,6 +37,7 @@ struct Node {
 struct Edit<'a> {
     db: &'a rusqlite::Connection,
     tree: &'a JoinTree,
+    storage: Option<&'a versions::Store>,
     key: Vec<i64>,
     cache: BTreeMap<i64, Node>,
 }
@@ -47,9 +48,10 @@ impl JoinTree {
         heads: &str,
         objects: &mut Vec<(String, bool)>,
         storage: Option<&versions::Store>,
+        native: bool,
     ) -> Result<()> {
         let keys = names("", self.keys);
-        owned(
+        owned_phase(
             db,
             objects,
             &self.nodes,
@@ -58,8 +60,9 @@ impl JoinTree {
                 schema(self.keys)
             ),
             storage,
+            native && storage.is_some(),
         )?;
-        owned(
+        owned_phase(
             db,
             objects,
             &self.roots,
@@ -68,6 +71,7 @@ impl JoinTree {
                 schema(self.keys)
             ),
             storage,
+            native && storage.is_some(),
         )?;
         let mut stmt = db
             .prepare(&format!(
@@ -89,28 +93,30 @@ impl JoinTree {
         for row in rows {
             let row = row.map_err(error)?;
             if row[..self.keys] != key && !values.is_empty() {
-                self.build(db, std::mem::take(&mut key), &values)?;
+                self.build(db, storage.filter(|_|native), std::mem::take(&mut key), &values)?;
                 values.clear();
             }
             key = row[..self.keys].to_vec();
             values.push(row[self.keys]);
         }
         if !values.is_empty() {
-            self.build(db, key, &values)?;
+            self.build(db, storage.filter(|_|native), key, &values)?;
         }
         Ok(())
     }
-    fn build(&self, db: &rusqlite::Connection, key: Vec<i64>, values: &[i64]) -> Result<()> {
+    fn build(&self, db: &rusqlite::Connection, storage: Option<&versions::Store>, key: Vec<i64>, values: &[i64]) -> Result<()> {
         let mut edit = Edit {
             db,
             tree: self,
+            storage,
             key,
             cache: BTreeMap::new(),
         };
         let root = edit.build(values)?;
         edit.root(root)
     }
-    pub fn apply(&self, db: &rusqlite::Connection, changed: &str) -> Result<()> {
+    pub fn apply(&self, db: &rusqlite::Connection, changed: &str, storage: Option<&versions::Store>) -> Result<()> {
+        let storage=storage.filter(|s|s.available(&self.nodes).is_some());
         let cols = names("", self.keys + 1);
         let mut stmt = db
             .prepare(&format!(
@@ -131,6 +137,7 @@ impl JoinTree {
             let edit = edits.entry(key.clone()).or_insert_with(|| Edit {
                 db,
                 tree: self,
+                storage,
                 key,
                 cache: BTreeMap::new(),
             });
@@ -234,15 +241,20 @@ impl Edit<'_> {
             .map(|i| format!("?{i}"))
             .collect::<Vec<_>>()
             .join(",");
-        write(
-            self.db,
-            &format!(
-                "INSERT OR REPLACE INTO {} VALUES({marks})",
-                quote(&self.tree.nodes)
-            ),
-            params_from_iter(values),
-        )
-        .map_err(error)?;
+        if let Some(storage)=self.storage {
+            let key=self.key.iter().copied().chain([node.value]).map(Some).collect();
+            patch(storage,&self.tree.nodes,key,vec![values])?;
+        } else {
+            write(
+                self.db,
+                &format!(
+                    "INSERT OR REPLACE INTO {} VALUES({marks})",
+                    quote(&self.tree.nodes)
+                ),
+                params_from_iter(values),
+            )
+            .map_err(error)?;
+        }
         self.cache.insert(node.value, node);
         Ok(node)
     }
@@ -328,17 +340,22 @@ impl Edit<'_> {
         } else if present {
             return Ok(Some(root));
         } else {
-            write(
-                self.db,
-                &format!(
-                    "DELETE FROM {} WHERE {} AND value=?{}",
-                    quote(&self.tree.nodes),
-                    self.tree.where_key(),
-                    self.key.len() + 1
-                ),
-                params_from_iter(self.key.iter().copied().chain([value])),
-            )
-            .map_err(error)?;
+            if let Some(storage)=self.storage {
+                let key=self.key.iter().copied().chain([value]).map(Some).collect();
+                patch(storage,&self.tree.nodes,key,vec![])?;
+            } else {
+                write(
+                    self.db,
+                    &format!(
+                        "DELETE FROM {} WHERE {} AND value=?{}",
+                        quote(&self.tree.nodes),
+                        self.tree.where_key(),
+                        self.key.len() + 1
+                    ),
+                    params_from_iter(self.key.iter().copied().chain([value])),
+                )
+                .map_err(error)?;
+            }
             self.cache.remove(&value);
             if node.left.is_none() {
                 return Ok(node.right);
@@ -368,27 +385,43 @@ impl Edit<'_> {
                 .map(|i| format!("?{i}"))
                 .collect::<Vec<_>>()
                 .join(",");
-            write(
-                self.db,
-                &format!(
-                    "INSERT OR REPLACE INTO {} VALUES({marks})",
-                    quote(&self.tree.roots)
-                ),
-                params_from_iter(self.key.iter().copied().chain([value, summary])),
-            )
-            .map_err(error)?;
+            if let Some(storage)=self.storage {
+                let key=self.key.iter().copied().map(Some).collect();
+                let rows=vec![self.key.iter().copied().chain([value,summary]).map(Some).collect()];
+                patch(storage,&self.tree.roots,key,rows)?;
+            } else {
+                write(
+                    self.db,
+                    &format!(
+                        "INSERT OR REPLACE INTO {} VALUES({marks})",
+                        quote(&self.tree.roots)
+                    ),
+                    params_from_iter(self.key.iter().copied().chain([value, summary])),
+                )
+                .map_err(error)?;
+            }
         } else {
-            write(
-                self.db,
-                &format!(
-                    "DELETE FROM {} WHERE {}",
-                    quote(&self.tree.roots),
-                    self.tree.where_key()
-                ),
-                params_from_iter(self.key.iter()),
-            )
-            .map_err(error)?;
+            if let Some(storage)=self.storage {
+                patch(storage,&self.tree.roots,self.key.iter().copied().map(Some).collect(),vec![])?;
+            } else {
+                write(
+                    self.db,
+                    &format!(
+                        "DELETE FROM {} WHERE {}",
+                        quote(&self.tree.roots),
+                        self.tree.where_key()
+                    ),
+                    params_from_iter(self.key.iter()),
+                )
+                .map_err(error)?;
+            }
         }
         Ok(())
     }
+}
+
+fn patch(storage: &versions::Store, table: &str, key: Vec<Option<i64>>, rows: Vec<Vec<Option<i64>>>) -> Result<()> {
+    let old=storage.available(table).ok_or_else(||error("Missing native lattice index root"))?;
+    let next=old.patched_rows(vec![key],rows,false)?;
+    storage.replace_available(table,next)
 }

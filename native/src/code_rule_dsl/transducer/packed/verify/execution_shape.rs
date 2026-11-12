@@ -30,7 +30,7 @@ pub(super) enum ExecutionRoute {
     Predicate,
 }
 
-pub(super) fn execution_class(program: &Program) -> ExecutionClass {
+pub fn execution_class(program: &Program) -> ExecutionClass {
     if program
         .capture_programs
         .iter()
@@ -91,7 +91,7 @@ pub(super) fn execution_class(program: &Program) -> ExecutionClass {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct ProgramRequirements {
+pub struct ProgramRequirements {
     pub cursor_slots: u32,
     pub capture_operations: u32,
     pub child_sites: u32,
@@ -284,7 +284,7 @@ enum EntryBoundary {
     ValueStart,
 }
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) struct EntryShape {
+pub struct EntryShape {
     pub signature: u32,
     pub route: ExecutionRoute,
     pub cursor_slots: u32,
@@ -327,7 +327,7 @@ fn metal_deterministic_opcode(opcode: u8) -> bool {
     )
 }
 
-pub(super) fn value_execution_signature(value: &super::value::ValueProgram) -> Vec<u32> {
+pub fn value_execution_signature(value: &super::value::ValueProgram) -> Vec<u32> {
     match value {
         super::value::ValueProgram::Equal { .. } => vec![0],
         super::value::ValueProgram::Prefix { .. } => vec![1],
@@ -424,7 +424,7 @@ pub(super) fn cursor_layouts(programs: &[Program]) -> (Vec<(u32, u32)>, Vec<u32>
 }
 
 /// Describe only the first bounded structural entry. Keys contain no scheduler addresses.
-pub(super) fn compile_entry_shapes(programs: &[Program]) -> Vec<EntryShape> {
+pub fn compile_entry_shapes(programs: &[Program]) -> Vec<EntryShape> {
     let mut signatures = std::collections::BTreeMap::<Vec<u32>, u32>::new();
     let (cursor_layouts, _) = cursor_layouts(programs);
     programs
@@ -679,7 +679,7 @@ fn entry_route(program: &Program, boundary: u32, supported: bool) -> ExecutionRo
     }
 }
 
-pub(super) fn program_requirements(program: &Program) -> ProgramRequirements {
+pub fn program_requirements(program: &Program) -> ProgramRequirements {
     let mut requirements = ProgramRequirements {
         instruction_count: program.words.len() as u32,
         cursor_slots: cursor_layouts(std::slice::from_ref(program)).0[0].1,

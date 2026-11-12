@@ -1,9 +1,9 @@
 use super::*;
 use crate::code_rule_dsl::{logic::{front, plan}, typing::file_local::Binding};
+use std::collections::BTreeMap;
 
 #[test]
 
-#[ignore = "open (decision 0128): parses rule files, whose language only the engine registers; to be hosted by rerail-engine"]
 fn fresh_and_restored_programs_have_identical_relation_identities() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
@@ -53,7 +53,7 @@ fn prepared_identity_child() {
     let phase = std::env::var("RERAIL_PREPARED_IDENTITY_PHASE").unwrap();
     let out = root.join("out");
     let program = crate::code_rule_dsl::logic::settings::program_text(
-        &std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/typing/programs/calls_p3.rr")
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs/calls_p3.rr")
     ).unwrap();
     let text = format!("{program}\n.decl hit(c:node,f:node)\nhit(c,f) :- call_target(c,f).\n.output hit\n");
     let report = super::super::run_with_options(&[text.as_str()], &root, None, &out, "program", Binding::Cpu,

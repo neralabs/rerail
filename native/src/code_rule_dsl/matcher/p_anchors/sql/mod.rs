@@ -66,7 +66,7 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
         Self::build_at(root, _plans, max_nodes, interrupted, "input")
     }
 
-    pub(in crate::code_rule_dsl) fn build_at(
+    pub fn build_at(
         root: &'tree AstGrep<TapeDoc>,
         _plans: &[&AnchorPlan],
         max_nodes: usize,
@@ -106,7 +106,7 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
     pub(in crate::code_rule_dsl) fn len(&self) -> usize {
         self.nodes
     }
-    pub(in crate::code_rule_dsl) fn visited_nodes(&self) -> usize {
+    pub fn visited_nodes(&self) -> usize {
         self.visited
     }
     #[cfg(any(any(test, feature = "test-hooks"), feature = "code-rule-profile"))]
@@ -123,7 +123,7 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
         self.file.as_ref().map_or(0, |file| file.bytes)
     }
 
-    pub(in crate::code_rule_dsl) fn selected(
+    pub fn selected(
         &self,
         plan: &std::sync::Arc<AnchorPlan>,
     ) -> Option<std::sync::Arc<[u32]>> {
@@ -163,10 +163,8 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
     }
 }
 
-#[cfg(test)]
-pub mod preparation_tests;
+// preparation_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 #[cfg(all(test, feature = "code-rule-profile"))]
 pub mod retention_spikes;
 // cratify: `lab` is rerail-engine's (it mounts it)
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

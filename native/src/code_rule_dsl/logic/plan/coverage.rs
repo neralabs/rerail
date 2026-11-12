@@ -381,11 +381,11 @@ fn ledger() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/executor-coverage/matrix.tsv")
 }
 
-/// One cell, on one line: the explanation's own detail (rule numbers, slots) left out after the first `(`'s
-/// detail, so the ledger names the gap and does not churn with numbering.
+/// One cell, on one line: the explanation's own detail (rule numbers, slots; the rule a SQL error was in) left
+/// out, so the ledger names the gap and does not churn with numbering or the probe's plan.
 fn cell(s: &str) -> String {
     let s = s.replace(['\t', '\n'], " ");
-    let s = match s.find(" (rule #") {
+    let s = match [" (rule #", ", in the SQL for "].iter().filter_map(|m| s.find(m)).min() {
         Some(i) => s[..i].to_owned(),
         None => s,
     };

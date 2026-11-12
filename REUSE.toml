@@ -118,8 +118,14 @@ precedence = "override"
 SPDX-FileCopyrightText = ["2024 Amaan Qureshi", "2014 Max Brunsfeld"]
 SPDX-License-Identifier = "MIT"
 
-# tree-sitter-rust 0.24.2 and tree-sitter-php 0.24.2 grammar.json, byte-identical to the crates': the
-# named-only tapes' token automata are built from them (RER-131).
+# tree-sitter-rust 0.24.2, tree-sitter-php 0.24.2 and tree-sitter-json 0.24.8 grammar.json, byte-identical to
+# the crates': the named-only tapes' token automata are built from them (RER-131).
+[[annotations]]
+path = "native/grammars/token-grammars/json/**"
+precedence = "override"
+SPDX-FileCopyrightText = ["2014 Max Brunsfeld", "2024 Amaan Qureshi"]
+SPDX-License-Identifier = "MIT"
+
 [[annotations]]
 path = "native/grammars/token-grammars/rust/**"
 precedence = "override"

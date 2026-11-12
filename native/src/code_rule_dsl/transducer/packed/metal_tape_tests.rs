@@ -3,11 +3,15 @@
 use super::*;
 use crate::code_rule_dsl::language::{self, GrammarDialect};
 use crate::code_rule_dsl::fixtures::{document, temp};
-// cratify: a re-export of rerail-engine's, which its facades of this module make
 use crate::code_rule_dsl::residency::slabs::{self, DocTable, DocView};
 use crate::code_rule_dsl::tape::{Grammar, TAPE_FORMAT_VERSION};
 use crate::content_store::ContentStore;
-use sha2::Sha256;
+use sha2::{Digest as _, Sha256};
+// What the backend reads through its own imports, which its facade in the engine does not re-export.
+use crate::code_rule_dsl::transducer::packed::metal_backend::{MappedBuffer, pipeline_named};
+use crate::code_rule_dsl::transducer::packed::packed_batch::PackedBatch;
+use crate::code_rule_dsl::transducer::packed::Program;
+use metal::MTLSize;
 
 const TAPE: &str = include_str!("metal_tape.metal");
 const FIELDS: usize = 12;
@@ -37,7 +41,6 @@ const SOURCES: [(&str, GrammarDialect); 5] = [
 
 #[test]
 
-#[ignore = "open (decision 0128): parses files whose language only the engine registers; to be hosted by rerail-engine"]
 fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
     let Some(device) = METAL_DEVICE.as_ref() else { return };
     let path = temp();

@@ -595,7 +595,7 @@ fn pascal(name: &str) -> String {
         .collect()
 }
 
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 fn render(entries: &[Entry], test_planned: &[String]) -> String {
     render_built(entries, test_planned, &[])
 }
@@ -1138,7 +1138,6 @@ mod tests {
         let generated = Registry::new("embeds", &[one, two]).generate();
         assert!(generated.contains("pub enum Via {\n    CompiledView,\n"));
         assert!(generated.contains("Self::One => &[(Via::CompiledView, GrammarDialect::Two)],"));
-        assert!(generated.contains("type $e = $crate::code_rule_dsl::embed::CompiledView;"));
     }
 
     #[test]
@@ -1152,7 +1151,6 @@ mod tests {
         assert!(generated.contains(
             "pub enum Via {\n    /// Tests' own embedding (`embed::TestScript`), of the test-only grammars `test_embeds` names.\n    #[cfg(any(test, feature = \"test-hooks\"))]\n    TestScript,\n}\n"
         ));
-        assert!(generated.contains("match $via {\n            #[cfg(any(test, feature = \"test-hooks\"))]\n"));
         assert!(!generated.contains("GrammarDialect::Two"));
     }
 

@@ -187,5 +187,6 @@ pub fn read_counts(csv: &str) -> std::collections::BTreeMap<String, std::collect
     out
 }
 
-// cratify: its tests (`liveness/tests.rs`) are rerail-engine's, which mounts them: they parse rule files, whose language the engine registers.
+// Its tests run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
+// engine registers as it loads (the languages, their `.rr` libraries).
 

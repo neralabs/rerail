@@ -13,11 +13,12 @@ function normalize(value) {
   return value;
 }
 function cell(value) {
-  return value === null || typeof value === "string" && /^-?\d+$/.test(value)
-    || value && typeof value === "object" && !Array.isArray(value)
-      && (Object.keys(value).length === 1 && (typeof value.symbol === "string" || typeof value.document === "string")
-        || Object.keys(value).length === 1 && Array.isArray(value.node) && value.node.length === 2
-          && typeof value.node[0] === "string" && typeof value.node[1] === "string" && /^\d+$/.test(value.node[1]));
+  if (value === null || typeof value === "string" && /^-?\d+$/.test(value)) return true;
+  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length !== 1) return false;
+  if (typeof value.symbol === "string" || typeof value.document === "string") return true;
+  const reference = value.node ?? value.nodeOrder;
+  return Array.isArray(reference) && reference.length === 2
+    && typeof reference[0] === "string" && typeof reference[1] === "string" && /^\d+$/.test(reference[1]);
 }
 function documents(value) {
   if (!Array.isArray(value) || value.some(f => !f || typeof f.path !== "string" || typeof f.language !== "string" || typeof f.source !== "string")) throw new Error("Missing complete document state");
@@ -52,7 +53,7 @@ export function compareSessions(requestBytes, actual, oracle, execution) {
   const request = JSON.parse(requestBytes), requestSha256 = sha256(requestBytes), problems = [];
   const steps = request.steps ?? (request.changes ?? []).map(changes => ({ changes }));
   const checks = [], failures = [];
-  if (typeof request.program !== "string" || Object.keys(request).some(name => !["program", "dialect", "relations", "snapshot", "steps", "changes", "max_waves", "queries"].includes(name))) problems.push("Unsupported verification request fields");
+  if (typeof request.program !== "string" || Object.keys(request).some(name => !["program", "dialect", "relations", "snapshot", "steps", "changes", "max_waves", "max_submissions", "queries"].includes(name))) problems.push("Unsupported verification request fields");
   for (const step of steps) if (!step || Object.keys(step).some(name => !["changes", "snapshot", "file_changes", "limits", "max_waves", "expected_error"].includes(name))) problems.push("Unsupported verification step fields");
   for (const step of steps) if (["changes","snapshot","file_changes"].filter(k=>Object.hasOwn(step,k)).length !== 1) problems.push("Ambiguous publication action");
   for (const q of request.queries ?? []) if (typeof q !== "string" && (!q || Object.keys(q).some(name => !["sql", "parameters"].includes(name)))) problems.push("Unsupported verification query fields");
@@ -63,6 +64,14 @@ export function compareSessions(requestBytes, actual, oracle, execution) {
         || observed.requestSha256 !== requestSha256 || observed.runnerSha256 !== execution.runnerSha256) problems.push(`Unpinned ${mode} observation`);
     if (!Array.isArray(observed?.checks) || observed.checks.length !== steps.length + 1) problems.push(`Incomplete ${mode} checks`);
     if (!Array.isArray(observed?.outputs) || !Array.isArray(observed.relations) || !observed.relations.length) problems.push(`Missing ${mode} relation inventory`);
+  }
+  if (Object.hasOwn(request, "max_submissions")) {
+    const limit = request.max_submissions, budget = actual?.sql_budget;
+    if (!Number.isSafeInteger(limit) || limit < 0 || budget?.limit !== limit
+        || !Number.isSafeInteger(budget?.executed) || budget.executed < 0 || budget.executed > limit
+        || budget.reserved !== 0 || oracle?.sql_budget?.limit !== null) {
+      problems.push("Session SQL admission does not match the requested limit");
+    }
   }
   if (execution.retained?.status !== 0 || execution.oracle?.status !== 0 || execution.retained?.signal || execution.oracle?.signal || execution.retained?.error || execution.oracle?.error) problems.push("Verification process failed");
   if (canonical(actual?.outputs) !== canonical(oracle?.outputs) || canonical(actual?.relations) !== canonical(oracle?.relations)) problems.push("Different compiled relation inventories");

@@ -46,7 +46,7 @@ pub(super) struct Reader {
     spans: Option<SpanBlock>,
     #[cfg(feature = "code-rule-profile")]
     pub counters: Counters,
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     pub read_bytes: usize,
 }
 // Small transport buffers, shared by scalar calls inside a batched SQL statement. The SQL
@@ -111,7 +111,7 @@ impl Readers {
             spans: None,
             #[cfg(feature = "code-rule-profile")]
             counters: Counters::default(),
-            #[cfg(any(test, feature = "test-hooks"))]
+            #[cfg(test)]
             read_bytes: 0,
         })))
     }
@@ -183,7 +183,7 @@ impl Reader {
             self.counters.reads[column as usize] += 1;
             self.counters.bytes[column as usize] += bytes.len() as u64;
         }
-        #[cfg(any(test, feature = "test-hooks"))]
+        #[cfg(test)]
         {
             self.read_bytes += bytes.len();
         }

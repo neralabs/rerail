@@ -60,7 +60,7 @@ pub(in crate::code_rule_dsl) fn run(
         let kept = kept.as_ref()?;
         let new = by_name.get(rel)?;
         let old = kept.input_source(rel)?;
-        let (delta, docs) = retain::document_delta(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref())?;
+        let (delta, docs) = retain::document_delta(rel, old.as_ref(), kept.input_docs(rel).map(|d| d.as_ref()), new.as_ref(), retain::group_col(&prog.program, rel))?;
         input_docs.insert(rel.to_owned(), docs);
         Some(delta)
     };

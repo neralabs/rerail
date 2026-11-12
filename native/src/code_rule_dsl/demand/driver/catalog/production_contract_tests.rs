@@ -582,6 +582,42 @@ fn oracle_result(case: &ContractCase) -> Value {
     serde_json::from_str(&output).expect("the oracle returns JSON")
 }
 
+/// The committed results as the engine gives them now, for `tools/bless_production_contracts.py` to write into the
+/// fixtures (their formats and key orders kept): `RERAIL_CONTRACT_ACTUAL=<file> cargo test … --ignored`. Each case's
+/// oracle violations and failures, and each case's terminal catalog (the same for the structural and the final
+/// projection: they differ in SQL only).
+#[test]
+#[ignore = "writes the actual contract results: RERAIL_CONTRACT_ACTUAL=<file>"]
+fn production_contract_actual_results() {
+    let path = std::env::var("RERAIL_CONTRACT_ACTUAL").expect("RERAIL_CONTRACT_ACTUAL");
+    let mut oracle = serde_json::Map::new();
+    let mut catalogs = serde_json::Map::new();
+    let catalogued = [implementation_goldens(), phase_five_implementation_goldens(), phase_six_implementation_goldens(), phase_seven_implementation_goldens()]
+        .into_iter()
+        .flat_map(|file| file.cases.into_iter().map(|golden| golden.name))
+        .collect::<BTreeSet<_>>();
+    for case in cases() {
+        let result = oracle_result(&case);
+        oracle.insert(case.name.clone(), serde_json::json!({ "violations": result["violations"], "failures": result["failures"] }));
+        if !catalogued.contains(&case.name) {
+            continue;
+        }
+        let catalog = actual_implementation_golden(&case)
+            .terminal_catalog
+            .iter()
+            .map(|t| serde_json::json!({
+                "ordinal": t.ordinal, "kind": t.kind, "dialect": t.dialect, "producer_kind": t.producer_kind,
+                "program_digest": t.program_digest, "result_schema": t.result_schema,
+                "owning_clause_ids": t.owning_clause_ids, "result_limit": t.result_limit,
+                "completion_required": t.completion_required,
+            }))
+            .collect::<Vec<_>>();
+        catalogs.insert(case.name.clone(), Value::from(catalog));
+    }
+    let actual = serde_json::json!({ "oracle": oracle, "catalogs": catalogs });
+    std::fs::write(&path, serde_json::to_string(&actual).unwrap()).unwrap();
+}
+
 #[test]
 fn production_contract_phase_one_distinct_count_uses_related_capture() {
     let cases = cases();

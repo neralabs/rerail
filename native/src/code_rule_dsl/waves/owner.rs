@@ -163,4 +163,5 @@ impl Drop for Lease<'_> {
     }
 }
 
-// cratify: its tests (`owner/tests.rs`) are rerail-engine's (it mounts them: they parse Python, whose language the engine registers)
+// Its tests run in the engine's test binary (its facade of this module mounts `owner/tests.rs`): they read what the
+// engine registers as it loads (the languages, their `.rr` libraries).

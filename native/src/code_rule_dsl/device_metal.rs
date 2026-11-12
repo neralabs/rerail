@@ -3,17 +3,6 @@
 //! code, registered as the engine loads (`crate::install_devices`). macOS only; the core never names it.
 use crate::code_rule_dsl::logic::device::{JoinPlan, Refused, Report, SolverDevice, lattice, nearest};
 use crate::code_rule_dsl::logic::native::setfix::{Fresh, Interner, JoinRule, Store, device as joins};
-
-/// Each rule's plan as Metal made it.
-fn plans<'a>(rules: &[(&'a JoinPlan, &'a JoinRule, usize)]) -> Result<Vec<(&'a joins::Plan, &'a JoinRule, usize)>, String> {
-    rules
-        .iter()
-        .map(|(plan, join, head)| {
-            let plan = plan.0.downcast_ref::<joins::Plan>().ok_or_else(|| "a join plan of another device".to_owned())?;
-            Ok((plan, *join, *head))
-        })
-        .collect()
-}
 use crate::code_rule_dsl::transducer::packed::{self, Error};
 
 /// The Metal device.
@@ -29,23 +18,35 @@ pub fn register() {
     crate::code_rule_dsl::prof::register_device_memory(|| (packed::metal_backend::reserved_mb(), packed::metal_backend::driver_mb()));
 }
 
-/// This crate's own test binary registers Metal as it loads, as the engine does (`install_devices`): its tests run
-/// the device's solver, which no engine set up there.
-#[cfg(all(test, target_os = "macos"))]
-#[used]
-#[unsafe(link_section = "__DATA,__mod_init_func")]
-static REGISTER_IN_TESTS: extern "C" fn() = {
-    extern "C" fn on_load() {
-        register();
+/// This crate's own test binary, which the engine does not load: Metal is registered as the binary loads, as the
+/// engine registers it (`crate::install_devices`), so the device's tests run on the device.
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        super::register();
     }
-    on_load
-};
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}
 
 fn refused(error: Error) -> Refused {
     match error {
         Error::UnsupportedBackend => Refused::NoDevice,
         other => Refused::Failed(format!("{other:?}")),
     }
+}
+
+/// The device's own plans of `rules`, each with its rule and head relation.
+fn plans<'a>(rules: &[(&'a JoinPlan, &'a JoinRule, usize)]) -> Result<Vec<(&'a joins::Plan, &'a JoinRule, usize)>, String> {
+    rules
+        .iter()
+        .map(|(plan, join, head)| {
+            let plan = plan.0.downcast_ref::<joins::Plan>().ok_or_else(|| "a join plan of another device".to_owned())?;
+            Ok((plan, *join, *head))
+        })
+        .collect()
 }
 
 impl SolverDevice for Metal {
@@ -65,10 +66,6 @@ impl SolverDevice for Metal {
         joins::run(&plans(rules)?, store, names, fresh)
     }
 
-    fn reads_own(&self, plan: &JoinPlan) -> bool {
-        plan.0.downcast_ref::<joins::Plan>().is_some_and(joins::reads_own)
-    }
-
     fn submit(&self, rules: &[(&JoinPlan, &JoinRule, usize)], names: &Interner) -> Result<Option<u64>, String> {
         joins::submit(&plans(rules)?, names)
     }
@@ -77,7 +74,19 @@ impl SolverDevice for Metal {
         joins::resume(ticket, &plans(rules)?, store, names, fresh)
     }
 
-    fn fixpoint(&self, seeds: &[(&JoinPlan, &JoinRule, usize)], deltas: &[(&JoinPlan, &JoinRule, usize)], heads: &[usize], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+    fn reads_own(&self, plan: &JoinPlan) -> bool {
+        plan.0.downcast_ref::<joins::Plan>().is_some_and(joins::reads_own)
+    }
+
+    fn fixpoint(
+        &self,
+        seeds: &[(&JoinPlan, &JoinRule, usize)],
+        deltas: &[(&JoinPlan, &JoinRule, usize)],
+        heads: &[usize],
+        store: &Store,
+        names: &Interner,
+        fresh: &mut [Fresh],
+    ) -> Result<Vec<u64>, String> {
         joins::fixpoint(&plans(seeds)?, &plans(deltas)?, heads, store, names, fresh)
     }
 
@@ -184,8 +193,11 @@ pub mod matcher {
             programs::label_passes::drop_pipelines();
         }
         fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[crate::code_rule_dsl::transducer::packed::block::BatchFile<'_>]) -> Option<Vec<Vec<u64>>> {
-            use programs::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
-            let run = run_split(natives, batch, LaneWidth::W64, Executor::Generated(ClassStrategy::Lookup), 64).ok()?;
+            use programs::block_program::{ClassStrategy, Executor, LaneWidth, generated_ready, run_split};
+            // Each set of patterns is a kernel of its own: until its compile (on a thread of its own) is done, the
+            // interpreter's pipeline runs the batch, so no launch waits on the compiler.
+            let executor = if generated_ready(natives, LaneWidth::W64) { Executor::Generated(ClassStrategy::Lookup) } else { Executor::Interpreter };
+            let run = run_split(natives, batch, LaneWidth::W64, executor, 64).ok()?;
             Some(run.files.into_iter().map(|mut r| r.outputs.swap_remove(0)).collect())
         }
         fn execution_metrics(&self) -> (usize, usize) {

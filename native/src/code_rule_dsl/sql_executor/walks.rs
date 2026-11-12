@@ -10,7 +10,21 @@ pub mod nullable;
 pub mod targets;
 use nullable::Layout;
 
-pub(super) fn optimize(e: &mut plan::emit::Emitted) {
+/// Keep generated pure tree walks inside their original SQL recursion. The outer
+/// retained wave still supplies immutable input versions and transactional output.
+pub fn kernel(query: &Query) -> bool {
+    // A checked generated CTE, with its original UNION and NULL semantics intact.
+    !query.ctes.is_empty() && query.body.distinct
+        && query.ctes.iter().all(|c| ["seed", "walk", "near"].iter().any(|prefix| {
+            c.name.strip_prefix(prefix).is_some_and(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+        }) && c.arms.iter().all(kernel_block)) && kernel_block(&query.body)
+}
+
+fn kernel_block(block: &Select) -> bool {
+    plan::acyclic::total(block)
+}
+
+pub fn optimize(e: &mut plan::emit::Emitted) {
     for (s, q) in e.program.steps.iter_mut().zip(&mut e.queries) {
         if let Some(q) = q
             && targets::optimize(q)
@@ -172,7 +186,7 @@ fn probe(query: &Query, name: &str) -> Query {
     }
 }
 
-pub(super) fn prepare(
+pub fn prepare(
     w: &mut Work<'_>,
     run: &mut session::Execution,
     storage: Option<&versions::Store>,
@@ -253,7 +267,7 @@ pub(super) fn prepare(
                 .join(",");
             for table in [name.clone(), format!("new_{name}"), format!("delta_{name}")] {
                 if let Some(storage) = storage {
-                    storage.create(w.db, &table, versions::Schema::integers(width, width))?;
+                    storage.create_readonly(w.db, &table, versions::Schema::integers(width, width))?;
                 } else {
                     w.db.execute_batch(&format!(
                         "CREATE TEMP TABLE {}({definition},PRIMARY KEY({cols})) WITHOUT ROWID",
@@ -263,7 +277,9 @@ pub(super) fn prepare(
                 }
                 run.objects.push((table, true));
             }
-            let count =
+            let count = if let Some(storage)=storage {
+                storage.load_select(w.db,name,&columns.probe(&q,&cte.name).render(),true)?
+            } else {
                 w.db.execute(
                     &format!(
                         "INSERT OR IGNORE INTO {} {}",
@@ -272,7 +288,8 @@ pub(super) fn prepare(
                     ),
                     [],
                 )
-                .map_err(error)?;
+                .map_err(error)?
+            };
             run.counts.insert(name.clone(), count as u64);
             e.program.relations.push((name.clone(), width));
             for arm in &cte.arms {

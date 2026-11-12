@@ -197,7 +197,7 @@ fn pack_patterns_keep_no_token_under_an_error() {
             _ => {}
         }
     }
-    let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../packs");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs");
     let mut found = Vec::new();
     for pack in std::fs::read_dir(&root).unwrap() {
         let Ok(rules) = std::fs::read_dir(pack.unwrap().path().join("rules")) else { continue };
@@ -229,7 +229,7 @@ fn pack_patterns_keep_no_token_under_an_error() {
 /// (extras aside), by kind: every token a gap test reads is the one tree-sitter has there (t31).
 /// The number of parents checked, or the first that differs.
 fn gaps_are_tree_sitters(lang: GrammarDialect, source: &str) -> Result<usize, String> {
-    use crate::code_rule_dsl::matcher::gap::stored_gaps;
+    use super::tokens::stored_gaps;
     use std::collections::HashMap;
     let language = Grammar::new(lang).unwrap().kinds.grammar().unwrap().clone();
     let grammar = TokenGrammar::of(lang, &language).unwrap();

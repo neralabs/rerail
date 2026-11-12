@@ -1319,36 +1319,6 @@ pub mod tests {
         }
     }
 
-    /// Blade's kinds and fields are its tree's own (`blade::forte::tree`), as the tape encodes
-    /// them: PHP's are its embedded program's, a document of their own. ERROR is a named kind of
-    /// Blade's too (a template's lexer errors).
-    #[test]
-    fn blade_names_its_trees_kinds_and_fields_only() {
-        use crate::code_rule_dsl::blade::forte::tree as blade_tree;
-        let blade = GrammarDialect::Blade.kinds();
-        assert!(blade.grammar().is_none());
-        assert_eq!(blade.kind_count(), blade_tree::KIND_NAMES.len());
-        for (id, name) in blade_tree::KIND_NAMES.iter().enumerate().skip(1) {
-            let id = u16::try_from(id).unwrap();
-            assert_eq!(blade.kind_name(id), Some(*name), "{id}");
-            assert_eq!(blade.kind_is_named(id), id < blade_tree::FIRST_ANONYMOUS);
-            if id < blade_tree::FIRST_ANONYMOUS {
-                assert_eq!(blade.kind_id(name), id, "{name}");
-            }
-        }
-        assert_eq!(blade.kind_name(u16::MAX), Some("ERROR"));
-        assert_eq!(blade.kind_id("ERROR"), u16::MAX);
-        assert!(blade.kind_is_named(u16::MAX));
-        for (id, name) in blade_tree::FIELD_NAMES.iter().enumerate().skip(1) {
-            let id = u16::try_from(id).unwrap();
-            assert_eq!(blade.field_id(name), Some(id), "{name}");
-            assert_eq!(blade.field_name(id), Some(*name));
-        }
-        assert_eq!(blade.field_count(), blade_tree::FIELD_NAMES.len() - 1);
-        assert_eq!(blade.kind_id("variable_name"), 0);
-        assert_eq!(blade.field_id("condition"), None);
-    }
-
     #[test]
     fn a_planned_language_is_not_supported_yet_and_an_unknown_one_is_invalid() {
         let unknown = || napi::Error::new(napi::Status::InvalidArg, "unknown".to_owned());

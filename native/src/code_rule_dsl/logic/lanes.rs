@@ -1,29 +1,32 @@
 //! The engine's compute lanes (decision 0098 §2): one executor per binding, shared by every stratum of the process.
 //!
 //! - Under the **CPU binding**, the CPU's lanes: the cores and, where the CPU has one, its matrix unit (SME2). The
-//!   CPU is a target in its own right (0095 §7), and SME is part of it.
+//!   CPU is a target in its own right (0095 §7), and SME is part of it. SQL forms are also available.
 //! - Under the **Metal binding**, every lane this machine has: the cores, SME, the GPU and the Neural Engine. Each
 //!   launch goes where `rerail_accel::price` places it: the least energy among the lanes within the parity band of
 //!   the first to finish.
 //!
-//! Which binding a thread's run has is the placement planner's (`plan::placement::set_device`).
+//! The SQL binding accepts only SQL forms. Connection-bound SQL keeps a scored owner-thread gate.
 //!
-//! Both executors run the cores' jobs on one pool of `RERAIL_THREADS` threads (4 when unset), and each keeps a
+//! Which native binding a thread's run has is the placement planner's (`plan::placement::set_device`).
+//!
+//! CPU and SQL jobs share one pool of `RERAIL_THREADS` threads (the available cores when unset). Each binding keeps a
 //! scoreboard of its jobs (`rerail_accel::score`): `RERAIL_SCOREBOARD=<file>` traces every job, and the strata loop
 //! appends the scoreboard at each chunk's end.
 
 use rerail_accel::Executor;
 use rerail_accel::exec::{Backend, CpuBackend};
+use rerail_accel::sql::SqlBackend;
 use std::sync::{Arc, LazyLock};
 
 /// Whether each executor was made: the profile reports only those.
-static MADE: [std::sync::atomic::AtomicBool; 2] = [std::sync::atomic::AtomicBool::new(false), std::sync::atomic::AtomicBool::new(false)];
+static MADE: [std::sync::atomic::AtomicBool; 3] = [const { std::sync::atomic::AtomicBool::new(false) }; 3];
 
 static CPU: LazyLock<Executor> = LazyLock::new(|| {
     MADE[0].store(true, std::sync::atomic::Ordering::Relaxed);
     super::costs::start();
     let all = Executor::new();
-    let mut lanes: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default())];
+    let mut lanes: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default()), Arc::new(SqlBackend)];
     #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     if all.lanes().contains(&rerail_accel::Lane::Sme) {
         lanes.extend(rerail_accel::sme::backend());
@@ -41,8 +44,16 @@ static ALL: LazyLock<Executor> = LazyLock::new(|| {
     Executor::new()
 });
 
+static SQL: LazyLock<Executor> = LazyLock::new(|| {
+    MADE[2].store(true, std::sync::atomic::Ordering::Relaxed);
+    Executor::sql_only()
+});
+
+/// Every rule job submitted in SQL mode must have a SQL form.
+pub fn sql_executor() -> &'static Executor { &SQL }
+
 /// The executor for this thread's run.
-pub(in crate::code_rule_dsl) fn executor() -> &'static Executor {
+pub fn executor() -> &'static Executor {
     if super::plan::placement::device() { &ALL } else { &CPU }
 }
 
@@ -53,13 +64,16 @@ pub fn executor_for(device: bool) -> &'static Executor {
 }
 
 /// Each executor made so far, by binding, and its scoreboard: for the profile.
-pub(in crate::code_rule_dsl) fn scores() -> Vec<(&'static str, rerail_accel::score::Score)> {
+pub fn scores() -> Vec<(&'static str, rerail_accel::score::Score)> {
     let mut out = Vec::new();
     if MADE[0].load(std::sync::atomic::Ordering::Relaxed) {
         out.push(("cpu binding", CPU.score()));
     }
     if MADE[1].load(std::sync::atomic::Ordering::Relaxed) {
         out.push(("metal binding", ALL.score()));
+    }
+    if MADE[2].load(std::sync::atomic::Ordering::Relaxed) {
+        out.push(("sql binding", SQL.score()));
     }
     out
 }
@@ -118,12 +132,12 @@ pub mod wave {
     }
 
     /// Whether this thread's caller can wait for the wave.
-    pub(in crate::code_rule_dsl) fn can_wait() -> bool {
+    pub fn can_wait() -> bool {
         SUSPENDABLE.get() > 0
     }
 
     /// Queues `form`'s launches for the wave: their tickets, in order.
-    pub(in crate::code_rule_dsl) fn queue(form: &'static str, kernels: Vec<Kernel>) -> Vec<u64> {
+    pub fn queue(form: &'static str, kernels: Vec<Kernel>) -> Vec<u64> {
         QUEUED.with_borrow_mut(|q| {
             kernels
                 .into_iter()
@@ -170,7 +184,7 @@ pub mod wave {
     }
 
     /// The outputs of a flushed wave's launches, by their tickets.
-    pub(in crate::code_rule_dsl) fn take(tickets: &[u64]) -> Result<Vec<Output>, String> {
+    pub fn take(tickets: &[u64]) -> Result<Vec<Output>, String> {
         DONE.with_borrow_mut(|d| tickets.iter().map(|t| d.remove(t).ok_or_else(|| format!("launch {t} has not run: its wave was not flushed"))).collect())
     }
 
@@ -206,15 +220,15 @@ pub mod prof {
         host: Vec<(&'static str, Time)>,
         batches: u64,
         /// Per lane: launches, submissions, wall, the lane thread's CPU, the backend's phases.
-        launches: [u64; 4],
-        submissions: [u64; 4],
-        wall: [f64; 4],
-        lane_cpu: [f64; 4],
-        encode: [f64; 4],
-        device: [f64; 4],
-        device_known: [bool; 4],
-        decode: [f64; 4],
-        worker_cpu: [f64; 4],
+        launches: [u64; Lane::COUNT],
+        submissions: [u64; Lane::COUNT],
+        wall: [f64; Lane::COUNT],
+        lane_cpu: [f64; Lane::COUNT],
+        encode: [f64; Lane::COUNT],
+        device: [f64; Lane::COUNT],
+        device_known: [bool; Lane::COUNT],
+        decode: [f64; Lane::COUNT],
+        worker_cpu: [f64; Lane::COUNT],
         /// The executor's own: placement, and spawning/joining the lanes' threads.
         total: f64,
         place: f64,
@@ -255,7 +269,7 @@ pub mod prof {
     }
 
     /// This thread's run is now at dependency level `l` (`None`: between runs). The level before is counted.
-    pub(in crate::code_rule_dsl) fn level(l: Option<usize>) {
+    pub fn level(l: Option<usize>) {
         let (was, n) = LEVEL.get();
         if was == l {
             return;
@@ -270,7 +284,7 @@ pub mod prof {
     }
 
     /// A wave the stratum driver flushed: its launches and the strata waiting on it.
-    pub(in crate::code_rule_dsl) fn wave(launches: usize, strata: usize) {
+    pub fn wave(launches: usize, strata: usize) {
         if profile::on() {
             let mut b = BATCHES.lock().unwrap();
             b.waves += 1;
@@ -366,7 +380,7 @@ pub mod prof {
 
     /// The section: per form, the host phases, then per lane the launches and where the submission's time went, then
     /// the executor's own time.
-    pub(in crate::code_rule_dsl) fn report() -> String {
+    pub fn report() -> String {
         let forms = FORMS.lock().unwrap();
         let mut r = String::new();
         if forms.is_empty() {

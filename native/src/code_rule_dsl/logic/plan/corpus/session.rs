@@ -137,4 +137,5 @@ impl Held {
     }
 }
 
-// cratify: its tests (`session/tests.rs`) are rerail-engine's, which mounts them: they run what this crate is below.
+// Its tests run in the engine's test binary (its facade of this module mounts `session/tests.rs`): they read what the
+// engine registers as it loads (the languages, their `.rr` libraries).

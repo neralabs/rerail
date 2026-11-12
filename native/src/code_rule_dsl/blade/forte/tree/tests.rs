@@ -561,3 +561,33 @@ fn a_parser_limit_leaves_no_tree_and_no_tape() {
     assert_eq!(failures.len(), 1, "{result}");
     assert_eq!(failures[0]["code"], "budget-exceeded", "{result}");
 }
+
+/// Blade's kinds and fields are its tree's own (`blade::forte::tree`), as the tape encodes
+/// them: PHP's are its embedded program's, a document of their own. ERROR is a named kind of
+/// Blade's too (a template's lexer errors).
+#[test]
+fn blade_names_its_trees_kinds_and_fields_only() {
+    use crate::code_rule_dsl::language::GrammarDialect;
+    let blade = GrammarDialect::Blade.kinds();
+    assert!(blade.grammar().is_none());
+    assert_eq!(blade.kind_count(), super::KIND_NAMES.len());
+    for (id, name) in super::KIND_NAMES.iter().enumerate().skip(1) {
+        let id = u16::try_from(id).unwrap();
+        assert_eq!(blade.kind_name(id), Some(*name), "{id}");
+        assert_eq!(blade.kind_is_named(id), id < super::FIRST_ANONYMOUS);
+        if id < super::FIRST_ANONYMOUS {
+            assert_eq!(blade.kind_id(name), id, "{name}");
+        }
+    }
+    assert_eq!(blade.kind_name(u16::MAX), Some("ERROR"));
+    assert_eq!(blade.kind_id("ERROR"), u16::MAX);
+    assert!(blade.kind_is_named(u16::MAX));
+    for (id, name) in super::FIELD_NAMES.iter().enumerate().skip(1) {
+        let id = u16::try_from(id).unwrap();
+        assert_eq!(blade.field_id(name), Some(id), "{name}");
+        assert_eq!(blade.field_name(id), Some(*name));
+    }
+    assert_eq!(blade.field_count(), super::FIELD_NAMES.len() - 1);
+    assert_eq!(blade.kind_id("variable_name"), 0);
+    assert_eq!(blade.field_id("condition"), None);
+}

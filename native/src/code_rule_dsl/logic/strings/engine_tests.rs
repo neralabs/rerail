@@ -1,5 +1,5 @@
-//! The string functions that read what a language registers as the engine loads (`install_to_precision`): hosted by
-//! the engine, which registers them.
+//! Tests of this module that read what the engine registers as it loads (the languages, their `.rr` libraries,
+//! the ECMA crate's functions): the engine's facade of the module mounts them.
 
 /// `@to_precision` is JavaScript's toPrecision of the numeral's value; no value past its range or for a non-number.
 #[test]
