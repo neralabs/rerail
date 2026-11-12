@@ -836,6 +836,77 @@ the three-way result) and the number of compares.
 `PUSH` is now a fifth of the machine code (15 instructions each),
 and `SWITCH` still most of it (29%).
 
+## Built: a call's bookkeeping as the lean parser's
+
+A rule call cost 14 instructions here and 3 in the lean parser.
+The difference was bookkeeping the lean parser does not have:
+a count of the calls open, the level's word and flags kept around the call,
+and a result tested two ways.
+Each one now has the lean parser's shape.
+
+- **The machine's stack counts the calls.**
+  The count served four checks; two of them are proved unneeded,
+  and two moved to where rustc's code would have them:
+  - No `RETURN` runs with no call open, and no `ACCEPT` runs within a call.
+    Both are proved over the program,
+    by the words reached at the same depth from the start and from each callee.
+    Neither is checked at run time.
+    A test asserts the proof holds for `.rr`.
+  - Too deep: one check where each rule function is entered,
+    the stack pointer against a limit in `ctx`, as a stack check in a prologue.
+    Past the limit the file goes to the fallback, as before (a test nests 3,000 deep).
+  - `TOKEN`'s room for the nodes that returns write:
+    the calls open are at most the stack's depth over the smallest rule frame,
+    which Cranelift reports once the functions are compiled.
+    The bound is loose, but no file of the corpus runs again on a bigger tape.
+- **The word and flags are callee-saved.**
+  A function whose own words change them keeps the values it was entered with
+  and gives them back at its one exit, as a callee-saved register is.
+  Calls keep nothing.
+- **The callee takes its caller's token.**
+  Every call returns to the same `TOKEN`, in its caller, so a `RETURN m=0` takes that token itself,
+  as the lean parser's callee consumes the token and its caller peeks at it.
+  Then every return lands on the caller's switch, and every call tests its result once.
+  This was tried before and dropped: then, `ctx` spilled.
+  With `ctx` pinned, it does not.
+
+A rule call and a function's entry now:
+
+```
+// Tier 2: a call (3 instructions)
+mov   x2, #12          // the callee's entry
+bl    rule
+cbnz  x2, end          // the run's end, passed on
+
+// A rule function's entry: the stack check
+mov   x26, x21         // ctx
+ldr   x8, [x26, #232]  // the stack's limit
+mov   x9, sp
+cmp   x9, x8
+b.lo  refuse
+```
+
+| | Before | Stack counts calls | Callee-saved context | Callee takes the token | Lean parser |
+|---|---|---|---|---|---|
+| Machine instructions | 31,702 | 28,962 | 27,433 | 26,575 | 10,008 |
+| `PUSH`, instructions each | 15.1 | 8.1 | 4.1 | | 3 |
+| Calls tested once | 35 of 366 | | | 366 of 366 | all |
+| Stores | 1,826 | 1,435 | 737 | 737 | |
+| Stack reloads | 17 | 15 | 10 | 10 | 0 |
+| Compares | 4,689 | 4,348 | 4,348 | 3,972 | 1,198 |
+| Tier 2, instructions | 361.0M | 350.4M | | 331.1M | 356.4M |
+| Tier 2, cycles | 76.5M | 74.7M | | 64.0M | 68.3M |
+
+The load average was about 21 for the last measurement.
+
+Between the callee-saved context and the taken token, the single-way test was also made per entry
+(the `RETURN`s reached from where a call enters, not from the whole function):
+87 calls tested once, from 35.
+It stays as the fallback where the callee cannot take the token.
+
+What is left is mostly the switches: 36% of the machine code, 28 instructions each,
+and 3,972 compares against the lean parser's 1,198.
+
 ## The order
 
 1. One symbol a token: rows and keywords in the record, one switch a state.
@@ -845,7 +916,8 @@ and `SWITCH` still most of it (29%).
    Built: no select, nothing held across calls, the tape in rows, one exit a function,
    the state as locals, a token taken for good, words as calls (and so the frame-free path),
    cheaper calls, callees shared across rules,
-   `ctx` in a register of its own, code shared from the middle of rules.
-   Next: a call's bookkeeping as the lean parser's, then fewer compares.
+   `ctx` in a register of its own, code shared from the middle of rules,
+   a call's bookkeeping as the lean parser's.
+   Next: fewer compares.
 4. Keyword marks from the records. Built for the marks of one word.
 5. Tier 1's primitives: the picked hash, then nibble fingerprints.
