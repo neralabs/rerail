@@ -620,6 +620,12 @@ fn wildcard_and_missing_flags_preserve_native_node_meaning() {
 fn native_repetition_preserves_sibling_boundaries_and_capture_order() {
     // No case captures an implied token such as `,`: the tape never stores one (RER-131).
     for (query, source) in [
+        // Separated by comparison operators, which a tape stores (a list's commas are implied, so not, RER-131).
+        ("(comparison_operator ((identifier) @item)+)", "a < b < c\n"),
+        (
+            r#"(comparison_operator [(identifier) @name "<" @comma]+)"#,
+            "a < b < c\n",
+        ),
         (
             "(module [(comment) @x @y (comment) @y @x]+ @z)",
             "# first\n# second\n",

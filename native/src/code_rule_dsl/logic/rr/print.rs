@@ -216,7 +216,9 @@ pub fn print(prog: &Program) -> Result<String, Error> {
     for (key, text) in &prog.settings {
         writeln!(out, ".{key} {text}").expect("a string");
     }
-    for (name, kinds) in &prog.kindsets {
+    // A set that is no relation of the program (no rule reads it) is printed by its kinds; one that is stays a
+    // relation, declared and stated below with the rest, once.
+    for (name, kinds) in prog.kindsets.iter().filter(|(name, _)| !prog.decls.contains_key(*name)) {
         writeln!(out, ".decl {name}(kind: symbol)").expect("a string");
         writeln!(out, "{}", kinds.iter().map(|k| format!("{name}({}).", quote(k))).collect::<Vec<_>>().join(" ")).expect("a string");
     }

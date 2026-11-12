@@ -372,6 +372,8 @@
             // Regex replacements: leftmost first, anchored, multibyte classes.
             format!("pos {n} v0 v1\nfunc replace_all v2 v0 {} {}\nhead v2 v1", sym("_+|\\.ts$"), sym("-")),
             format!("pos {n} v0 v1\nfunc replace_all v2 v0 {} {}\nhead v2 v1", sym("^[A-Za-z]+|[0-9]"), sym("#")),
+            // Matches past a chunk of 32 bytes (long names, long runs), their ends and starts found across chunks.
+            format!("pos {n} v0 v1\nfunc replace_all v2 v0 {} {}\nhead v2 v1", sym("[A-Za-z_./αβ]{3,}"), sym("~")),
             format!("pos {n} v0 v1\nlt v1 i:900\nfunc rx_replace v2 v0 {} {}\nfunc rr_strlen v3 v2\nhead v2 v3", sym("[αβé]+"), sym("<u>")),
             // Unicode's lower of ASCII names.
             format!("pos {a} v0 v1\nfunc lower v2 v0\nhead v2 v1"),
@@ -395,6 +397,7 @@
                     assert_eq!(r.refused.is_none(), on_device, "{case}: {r:?}");
                     if on_device {
                         assert!(r.made > 2000 && r.arena_reruns >= 1, "{case}: texts made in an arena that filled once: {r:?}");
+                        assert!(r.per_symbol >= 12, "{case}: text functions made once per distinct name, chunked: {r:?}");
                     }
                 }
                 let counts = super::super::step_counts(&db, "dev_fn").unwrap();

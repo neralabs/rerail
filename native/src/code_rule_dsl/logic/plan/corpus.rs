@@ -493,6 +493,12 @@ pub fn run_all(programs: &[&str], root: &Path, out: &Path, modes: &str, binding:
 /// `violation` output are shared, and kind sets are named by their kinds (`ks<j>`), so programs asking for one set
 /// share its tape pass. The simplifier then merges relations that are equal across programs (decision 0038).
 pub fn combine(programs: &[&str], extra: &str) -> Result<front::Program> {
+    combine_keyed(programs, extra).map(|(program, _)| program)
+}
+
+/// `combine`, with the digest of its texts (`texts_digest`) it is kept by: a run keys what it prepares by the same
+/// digest, so it is taken once.
+fn combine_keyed(programs: &[&str], extra: &str) -> Result<(front::Program, [u8; 32])> {
     use std::sync::{Mutex, OnceLock};
     // A function of the texts alone (`rr::parse` reads no file), so kept for the process by their digest: a session or
     // a test that runs one program over many roots parses and hides it once. A few programs at a time are kept.
@@ -502,7 +508,7 @@ pub fn combine(programs: &[&str], extra: &str) -> Result<front::Program> {
     let cache = COMBINED.get_or_init(Default::default);
     if let Some(program) = cache.lock().expect("the combined programs").get(&key) {
         crate::code_rule_dsl::prof::count("corpus.combined_reused", 1);
-        return Ok(program.clone());
+        return Ok((program.clone(), key));
     }
     let program = combine_stored(programs, extra, &key)?;
     let mut kept = cache.lock().expect("the combined programs");
@@ -510,7 +516,7 @@ pub fn combine(programs: &[&str], extra: &str) -> Result<front::Program> {
         kept.clear();
     }
     kept.insert(key, program.clone());
-    Ok(program)
+    Ok((program, key))
 }
 
 /// `combine_texts`, kept in the persistent store across processes for a pack of programs (`combined`, decision 0094
@@ -1883,8 +1889,7 @@ fn run_observed(
         crate::code_rule_dsl::logic::profile::reset();
     }
     let combining = crate::code_rule_dsl::logic::profile::span(|| "parse the program".into());
-    let mut prog = combine(programs, "")?;
-    let mut texts = texts_digest(programs, "");
+    let (mut prog, mut texts) = combine_keyed(programs, "")?;
     drop(combining);
     // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
     let (bridged, typing_runs) = bridge::facts(&prog, root, out, modes, binding, chunk_nodes, typing)?;
@@ -2062,8 +2067,7 @@ fn run_observed(
         let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p)).collect();
         let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
         if !facts.is_empty() {
-            prog = combine(programs, &facts)?;
-            texts = texts_digest(programs, &facts);
+            (prog, texts) = combine_keyed(programs, &facts)?;
             add_bridged(&mut prog);
             folded = fold_constants(&mut prog)?;
         }

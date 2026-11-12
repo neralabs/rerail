@@ -193,8 +193,11 @@ pub mod matcher {
             programs::label_passes::drop_pipelines();
         }
         fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[crate::code_rule_dsl::transducer::packed::block::BatchFile<'_>]) -> Option<Vec<Vec<u64>>> {
-            use programs::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
-            let run = run_split(natives, batch, LaneWidth::W64, Executor::Generated(ClassStrategy::Lookup), 64).ok()?;
+            use programs::block_program::{ClassStrategy, Executor, LaneWidth, generated_ready, run_split};
+            // Each set of patterns is a kernel of its own: until its compile (on a thread of its own) is done, the
+            // interpreter's pipeline runs the batch, so no launch waits on the compiler.
+            let executor = if generated_ready(natives, LaneWidth::W64) { Executor::Generated(ClassStrategy::Lookup) } else { Executor::Interpreter };
+            let run = run_split(natives, batch, LaneWidth::W64, executor, 64).ok()?;
             Some(run.files.into_iter().map(|mut r| r.outputs.swap_remove(0)).collect())
         }
         fn execution_metrics(&self) -> (usize, usize) {

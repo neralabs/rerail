@@ -362,6 +362,8 @@ fn capture_runs_execute_a_compiled_scm_sibling_sequence() {
     let doc = tape("f(ROOT,a,1,b,\"sep\",c,2,\"end\")\n");
     let root = capture(&doc, 0, b"a").node;
     let expected = p.execute_roots(&doc, [root]).unwrap();
+    // Raw path ordinals: no path through a stored comma comes before the first result (a tape leaves implied
+    // tokens out, RER-131).
     assert_eq!(
         expected.iter().map(|r| r.local_ordinal).collect::<Vec<_>>(),
         [0, 4]
@@ -582,8 +584,10 @@ fn capture_runs_see_no_unnamed_events_on_a_named_only_tape() {
     let mut p = program();
     let lang = SupportLang::Python.get_ts_language();
     p.words[3] = word(FOLLOWING, 0, 0);
+    // The unnamed siblings are comparison operators, which a tape stores (a list's commas are implied, so not
+    // stored, RER-131).
     for pc in [5, 13] {
-        p.words[pc] = word(KIND, 0, lang.id_for_node_kind(",", false));
+        p.words[pc] = word(KIND, 0, lang.id_for_node_kind("<", false));
     }
     p.validate().unwrap();
     let doc = tape("f(ROOT,a,1,b,\"end\")\n");

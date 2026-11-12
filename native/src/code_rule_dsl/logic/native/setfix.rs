@@ -4438,6 +4438,13 @@ fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fr
     run_join_in_each(j, head, store, syms, fresh, preset, collect, paired, None)
 }
 
+/// Whether a positive atom of `j` reads an input relation known to be empty, so the whole conjunction is: the CPU's
+/// walk then returns at once (`run_join_in_each`), and the device encodes nothing for it (`device::run`, `submit`).
+/// A lazy view's length is not known without enumerating it, so a view is not known empty.
+pub fn reads_empty_input(j: &JoinRule) -> bool {
+    j.steps.iter().any(|s| matches!(s, Step::Atom { src: Src::In(r, _), neg: false, .. } if r.n == 0 && r.view.as_ref().is_none_or(|v| v.ids.is_some())))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], preset: &[(usize, i64)], collect: Option<&mut Vec<i64>>,
                     paired: Option<&level::Paired>, each: Option<(usize, &mut dyn FnMut(&mut Vec<i64>) -> Option<i64>)>) -> Result<u64> {

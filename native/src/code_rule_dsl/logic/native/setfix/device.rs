@@ -73,6 +73,46 @@ enum Kind {
     /// A stage that reads names (`str_cmp`, a cat compared): the texts of the columns that bound its slots and of its
     /// constants, on the device together.
     Names { cols: Vec<(Arc<InRel>, usize)>, consts: Vec<i64> },
+    /// Text functions `ops`, in order, of the distinct symbols of column `col` of `rel`: their texts made on the
+    /// device a SIMD group a symbol, 32 bytes at a time (`mj::Batch::text_map`, `replace`), kept with the relation;
+    /// the stage copies a binding's into the arena.
+    Mapped { rel: Arc<InRel>, col: usize, ops: Vec<TextOp> },
+    /// A made text per row (`mj::ROWTEXT`: a cat, a regex's replacement, a text test of one), a SIMD group a row:
+    /// over the names of `cols`' symbols and `consts` (as `Names`), with its automaton.
+    RowText { cols: Vec<(Arc<InRel>, usize)>, consts: Vec<i64>, auto: RowAuto },
+}
+
+/// A `Kind::RowText` stage's automaton.
+#[derive(Clone, Debug)]
+enum RowAuto {
+    None,
+    /// A text test's table (`text::table`), keyed by its plans.
+    Test { table: Arc<crate::code_rule_dsl::text::table::Table>, key: String },
+    /// `replace_all` of regex `pattern` by `with` (symbols).
+    Replace { pattern: i64, with: i64 },
+}
+
+/// Whether a stage makes texts into the arena (its counter word says when the arena was full).
+fn makes_text(mode: u32) -> bool {
+    mode == mj::ROWTEXT
+}
+
+/// A `ROWTEXT` stage of op `op` (`mj::ROW_*`, with a test's verdict wanted at bit 8) over operands `x` and `y` (a
+/// symbol, a held cat's text, an arena text).
+fn row_stage(first: usize, op: u32, x: Key, y: Key, auto: RowAuto, deferred: &HashMap<usize, (Key, Key, u32)>, origin: &[Option<(Arc<InRel>, usize)>], known: &HashMap<usize, i64>) -> Result<PStage, String> {
+    let mut st = text_stage(mj::ROWTEXT, first, op, x, y, deferred, origin, known)?;
+    let Kind::Names { cols, consts } = std::mem::replace(&mut st.kind, Kind::Pass) else { return Err("a made text's operands of no names".into()) };
+    st.kind = Kind::RowText { cols, consts, auto };
+    Ok(st)
+}
+
+/// A text function of constant arguments, made once per distinct symbol (`Kind::Mapped`).
+#[derive(Clone, Debug, PartialEq)]
+enum TextOp {
+    /// `mj::TEXTFN_*` `f` of numbers `n0`, `n1` (`text_map`).
+    Map { f: u32, n0: i64, n1: i64 },
+    /// `replace_all` of a regex by a literal (symbols), or (`literal`) of the pattern's text itself.
+    Replace { pattern: i64, with: i64, literal: bool },
 }
 
 /// The texts of `keys` (slots an input column bound, or constants), for a stage that reads names: the columns and
@@ -80,7 +120,7 @@ enum Kind {
 thread_local! {
     /// The step that first bound each slot of the rule being compiled (its name): what a refusal of a slot names.
     static BINDER: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
-    /// The slots of the rule being compiled whose values are arena texts (`mj::TEXTFN`'s).
+    /// The slots of the rule being compiled whose values are arena texts (`mj::ROWTEXT`'s).
     static ARENA: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
@@ -102,7 +142,6 @@ fn text_function(name: &str) -> Option<(u32, usize, usize)> {
         "slice" => (mj::TEXTFN_SLICE, 1, 2),
         "rr_to_string" => (mj::TEXTFN_TO_STRING, 0, 1),
         "sql_replace" => (mj::TEXTFN_REPLACE, 3, 0),
-        "replace_all" | "rx_replace" => (mj::TEXTFN_REGEX, 3, 0),
         _ => return None,
     })
 }
@@ -178,10 +217,10 @@ fn step_name(s: &Step) -> &'static str {
         Step::Scalar { .. } => "aggregate",
         Step::Let { .. } => "let",
         Step::Ne { .. } => "ne",
-        Step::Func { .. } => "function",
+        Step::Func { name, .. } => name,
         Step::Doc { .. } => "document test",
         Step::DocOf { .. } => "docof",
-        Step::Test { .. } => "text test",
+        Step::Test { op, .. } => op,
         Step::In { .. } => "in",
         Step::StrJoin { .. } => "string join",
     }
@@ -304,6 +343,9 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
         }
     });
     ARENA.with_borrow_mut(Vec::clear);
+    // Slots whose texts are text functions of an input column's symbols, made once per symbol: the column, the slot
+    // that bound the symbol, and the functions.
+    let mut mapped: HashMap<usize, (Arc<InRel>, usize, usize, Vec<TextOp>)> = HashMap::new();
     // `cat`s held back, by the slot they bind: each read only by an `eq` or `ne` after, which compares names.
     let mut deferred: HashMap<usize, (Key, Key, u32)> = HashMap::new();
     let mut stages = Vec::new();
@@ -438,6 +480,15 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 stages.push(textop(i, op, *want, *p, *s, &deferred, &origin, &known)?);
                 i += 1;
             }
+            Step::Test { op, s: Key::Slot(x), matcher, want, .. } if is_arena(*x) || deferred.contains_key(x) => {
+                // A text test by automaton of a made text (an arena text, a held cat's): its table walked per row, a
+                // SIMD group a row, 32 bytes at a time (`ROWTEXT`).
+                let Some(m) = matcher else { return Err(format!("the text test @{op} of a pattern that is not a constant has no device form")) };
+                let table = crate::code_rule_dsl::text::table::table(&m.plans).map_err(|e| format!("the text test @{op} has no device form: {e}"))?;
+                let key = m.plans.iter().map(|p| p.key.0.as_str()).collect::<Vec<_>>().join(",");
+                stages.push(row_stage(i, mj::ROW_TEST | u32::from(*want) << 8, Key::Slot(*x), Key::Slot(*x), RowAuto::Test { table, key }, &deferred, &origin, &known)?);
+                i += 1;
+            }
             Step::Test { op, s, matcher, want, .. } => {
                 // A text test with constant patterns, of a slot an input relation's column bound: its verdicts per
                 // distinct symbol of the column, made on the device by the test's automaton (`text::table`).
@@ -513,14 +564,38 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 let later: Vec<&Step> = j.steps[i + 1..].iter().filter(|s| mentions(s, out)).collect();
                 let in_head = j.out.iter().any(|t| matches!(*t, Term::Slot(s) if s == out));
                 let in_head_cat = j.out.iter().any(|t| matches!(*t, Term::Cat(x, y) if x == out || y == out));
-                if [a, b].iter().any(|k| matches!(k, Key::Slot(s) if deferred.contains_key(s) || is_arena(*s))) {
-                    return Err("cat of a made text has no device form".into());
-                }
+                let made = [a, b].iter().any(|k| matches!(k, Key::Slot(s) if deferred.contains_key(s) || is_arena(*s)));
+                // Read as its parts: comparisons, and what reads a text a SIMD group a row (`ROWTEXT`: a text test by
+                // automaton, a regex's replacement, a cat).
                 let compares = |s: &&Step| {
                     matches!(s, Step::Eq { .. } | Step::Ne { .. } | Step::Func { name: "str_cmp" | "rr_strlen", bind: true, .. })
                         || matches!(s, Step::Test { op, .. } if literal_test(op).is_some())
+                        || matches!(s, Step::Test { p, matcher: Some(_), .. } if !matches!(p, Key::Slot(x) if *x == out))
+                        || matches!(s, Step::Func { name: "replace_all" | "rx_replace", args, bind: true, .. } if arena_reader(s, out))
+                        || joined(s).is_some_and(|(o, ..)| o != out)
                 };
-                if bind && !in_head && !in_head_cat && later.iter().all(compares) {
+                if made {
+                    // A cat of a made text (an arena text, a held cat's): made per row into the arena, a SIMD group a
+                    // row (`ROWTEXT`).
+                    if !bind {
+                        return Err("a cat of a made text compared with a bound slot has no device form".into());
+                    }
+                    if in_head_cat {
+                        return Err("cat of a made text in the head has no device form".into());
+                    }
+                    if let Some(s) = later.iter().find(|s| !arena_reader(s, out)) {
+                        return Err(format!("a cat's text read by {} has no device form", step_name(s)));
+                    }
+                    let op = if form == mj::CAT_PLAIN { mj::ROW_CONCAT } else { mj::ROW_CAT };
+                    let mut st = row_stage(i, op, a, b, RowAuto::None, &deferred, &origin, &known)?;
+                    st.desc.bind_slot[0] = out as u32;
+                    stages.push(st);
+                    if out >= bound.len() {
+                        bound.resize(out + 1, false);
+                    }
+                    bound[out] = true;
+                    ARENA.with_borrow_mut(|x| x.push(out));
+                } else if bind && !in_head && !in_head_cat && later.iter().all(compares) {
                     deferred.insert(out, (a, b, form));
                     stages.push(PStage { first: i, span: 1, kind: Kind::Pass, desc: mj::Stage::default(), npassed: 0 });
                 } else if bind {
@@ -577,6 +652,71 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 stages.push(st);
                 i += 1;
             }
+            Step::Func { name, args, out, bind: true, .. } if per_symbol(name, args, &known, &origin, &mapped, &deferred).is_some() => {
+                // A text function of constant arguments of an input column's symbol (or of such a function's text):
+                // made once per distinct symbol of the column, 32 bytes at a time, the binding's copied into the arena.
+                let (op, x) = per_symbol(name, args, &known, &origin, &mapped, &deferred).expect("a text function per symbol");
+                let later: Vec<&Step> = j.steps[i + 1..].iter().filter(|s| mentions(s, *out)).collect();
+                if let Some(s) = later.iter().find(|s| !arena_reader(s, *out)) {
+                    return Err(format!("the function {name}'s text read by {} has no device form", step_name(s)));
+                }
+                if j.out.iter().any(|t| matches!(*t, Term::Cat(a, b) if a == *out || b == *out)) {
+                    return Err(format!("cat of the function {name}'s text has no device form"));
+                }
+                let (rel, col, src, mut ops) = match mapped.get(&x) {
+                    Some(m) => m.clone(),
+                    None => {
+                        let (rel, col) = origin[x].clone().expect("an input column's symbol");
+                        (rel, col, x, Vec::new())
+                    }
+                };
+                ops.extend(op);
+                let mut d = mj::Stage { mode: mj::ROWTEXT, ..mj::Stage::default() };
+                d.key_kind[0] = mj::SLOT;
+                d.key_slot[0] = src as u32;
+                d.agg = [mj::ROW_MAP | mj::TEXTFN_COPY << 16, mj::OPND_SYM];
+                d.bind_slot[0] = *out as u32;
+                if *out >= bound.len() {
+                    bound.resize(*out + 1, false);
+                }
+                bound[*out] = true;
+                ARENA.with_borrow_mut(|a| a.push(*out));
+                mapped.insert(*out, (rel.clone(), col, src, ops.clone()));
+                stages.push(PStage { first: i, span: 1, kind: Kind::Mapped { rel, col, ops }, desc: d, npassed: 0 });
+                i += 1;
+            }
+            Step::Func { name: name @ ("replace_all" | "rx_replace"), args, out, bind: true, .. }
+                if args.len() == 3 && matches!(args[0], Key::Slot(x) if is_arena(x) || deferred.contains_key(&x)) =>
+            {
+                // A regex's replacement in a made text (an arena text, a held cat's): per row, a SIMD group a row, 32
+                // bytes at a time (`ROWTEXT`), into the arena.
+                let konst = |k: Key| match k {
+                    Key::Const(c) => Some(c),
+                    Key::Slot(x) => known.get(&x).copied(),
+                };
+                let (Some(pattern), Some(with)) = (konst(args[1]), konst(args[2])) else {
+                    return Err(format!("the function {name} of a regex or replacement that is not a constant has no device form"));
+                };
+                let later: Vec<&Step> = j.steps[i + 1..].iter().filter(|s| mentions(s, *out)).collect();
+                if let Some(s) = later.iter().find(|s| !arena_reader(s, *out)) {
+                    return Err(format!("the function {name}'s text read by {} has no device form", step_name(s)));
+                }
+                if j.out.iter().any(|t| matches!(*t, Term::Cat(a, b) if a == *out || b == *out)) {
+                    return Err(format!("cat of the function {name}'s text has no device form"));
+                }
+                let mut st = row_stage(i, mj::ROW_REPLACE, args[0], Key::Const(with), RowAuto::Replace { pattern, with }, &deferred, &origin, &known)?;
+                st.desc.bind_slot[0] = *out as u32;
+                stages.push(st);
+                if *out >= bound.len() {
+                    bound.resize(*out + 1, false);
+                }
+                bound[*out] = true;
+                ARENA.with_borrow_mut(|a| a.push(*out));
+                i += 1;
+            }
+            Step::Func { name: name @ ("replace_all" | "rx_replace"), .. } => {
+                return Err(format!("the function {name} of a text no input relation's column bound, or of a regex or replacement not a constant, has no device form (it is made per distinct name)"));
+            }
             Step::Func { name, args, out, bind: true, .. } if text_function(name).is_some() => {
                 // A text function: its text made into the batch's arena (or a range of its argument's), its value
                 // where the text is. Read by text tests, `str_cmp`, `strlen`, other text functions and the head (as a
@@ -592,7 +732,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                 if j.out.iter().any(|t| matches!(*t, Term::Cat(x, y) if x == *out || y == *out)) {
                     return Err(format!("cat of the function {name}'s text has no device form"));
                 }
-                let mut d = mj::Stage { mode: mj::TEXTFN, ..mj::Stage::default() };
+                let mut d = mj::Stage { mode: mj::ROWTEXT, ..mj::Stage::default() };
                 let mut xk = mj::OPND_SYM;
                 let kind = if ntexts > 0 {
                     // X (keys 0, 1), Y and Z (keys 2 and 4).
@@ -609,9 +749,6 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                             keys[1] = pb;
                             xk = if form == mj::CAT_PLAIN { mj::OPND_PLAIN } else { mj::OPND_DOT };
                         }
-                    }
-                    if f == mj::TEXTFN_REGEX && args[1..3].iter().any(|k| matches!(k, Key::Slot(x) if !known.contains_key(x))) {
-                        return Err(format!("the function {name} of a regex or replacement that is not a constant has no device form"));
                     }
                     if args[1..ntexts].iter().any(|k| matches!(k, Key::Slot(x) if is_arena(*x) || deferred.contains_key(x))) {
                         return Err(format!("the function {name}'s pattern or replacement made by the rule has no device form"));
@@ -639,7 +776,7 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str) -> Result<Plan
                         }
                     }
                 }
-                d.agg = [f, xk];
+                d.agg = [mj::ROW_MAP | f << 16, xk];
                 d.bind_slot[0] = *out as u32;
                 if *out >= bound.len() {
                     bound.resize(*out + 1, false);
@@ -816,37 +953,50 @@ fn arena_reader(step: &Step, x: usize) -> bool {
     let me = |k: &Key| matches!(k, Key::Slot(s) if *s == x);
     match step {
         Step::Eq { .. } | Step::Ne { .. } | Step::Func { name: "str_cmp" | "rr_strlen", bind: true, .. } | Step::Let { .. } => true,
-        Step::Test { op, p, .. } => literal_test(op).is_some() && !me(p),
+        Step::Test { op, p, matcher, .. } => (literal_test(op).is_some() || matcher.is_some()) && !me(p),
+        Step::Cat { bind: true, .. } | Step::Func { name: "str_concat", bind: true, .. } => true,
+        Step::Func { name: "replace_all" | "rx_replace", args, bind: true, .. } => args.len() == 3 && me(&args[0]) && !args[1..].iter().any(me),
         Step::Func { name, args, bind: true, .. } => text_function(name).is_some_and(|(_, nt, _)| nt > 0) && me(&args[0]) && !args[1..].iter().any(me),
         _ => false,
     }
 }
 
-/// The automaton of a `TEXTFN_REGEX` stage's regex (key 2's constant), on the device once per regex; refused (the
-/// stratum runs on the CPU) for a regex it has none for, or a replacement naming groups (`$`).
-fn regex_automaton(d: &mj::Stage, names: &Interner) -> Result<Rc<mj::DevBytes>, String> {
-    thread_local! {
-        static UPLOADED: RefCell<HashMap<String, Rc<mj::DevBytes>>> = RefCell::new(HashMap::new());
+/// A text function step made once per distinct symbol (`Kind::Mapped`): its function (none: the identity, as
+/// `sql_replace` of an empty pattern) and the slot of its text, when that text is an input column's symbol (or a
+/// mapped text) and its other arguments are constants.
+fn per_symbol(name: &str, args: &[Key], known: &HashMap<usize, i64>, origin: &[Option<(Arc<InRel>, usize)>],
+              mapped: &HashMap<usize, (Arc<InRel>, usize, usize, Vec<TextOp>)>, deferred: &HashMap<usize, (Key, Key, u32)>) -> Option<(Option<TextOp>, usize)> {
+    let konst = |k: &Key| match *k {
+        Key::Const(c) => Some(c),
+        Key::Slot(x) => known.get(&x).copied(),
+    };
+    let Some(&Key::Slot(x)) = args.first() else { return None };
+    let column = mapped.contains_key(&x) || (!is_arena(x) && !deferred.contains_key(&x) && origin.get(x).is_some_and(Option::is_some));
+    if !column {
+        return None;
     }
-    if names.name(d.key_const[4]).contains('$') {
-        return Err("replace_all with a replacement naming a group ($) has no device form".into());
-    }
-    let pattern = names.name(d.key_const[2]).to_string();
-    if let Some(b) = UPLOADED.with_borrow(|u| u.get(&pattern).cloned()) {
-        return Ok(b);
-    }
-    let r = crate::code_rule_dsl::text::table::replacer(&pattern).map_err(|e| format!("replace_all has no device form: {e}"))?;
-    let b = Rc::new(mj::DevBytes::upload(&r.bytes).map_err(|e| format!("{e:?}"))?);
-    UPLOADED.with_borrow_mut(|u| u.insert(pattern, b.clone()));
-    Ok(b)
+    let consts: Option<Vec<i64>> = args[1..].iter().map(konst).collect();
+    let consts = consts?;
+    let op = match name {
+        "replace_all" | "rx_replace" if consts.len() == 2 => TextOp::Replace { pattern: consts[0], with: consts[1], literal: false },
+        "sql_replace" if consts.len() == 2 => TextOp::Replace { pattern: consts[0], with: consts[1], literal: true },
+        _ => {
+            let (f, nt, nn) = text_function(name)?;
+            if nt != 1 || f == mj::TEXTFN_TO_STRING || consts.len() != nn {
+                return None;
+            }
+            TextOp::Map { f, n0: consts.first().copied().unwrap_or(0), n1: consts.get(1).copied().unwrap_or(0) }
+        }
+    };
+    Some((Some(op), x))
 }
 
 /// A `TEXTFN_COPY` stage: the text of `a` and `b` by `form` (`cat`'s or `str_concat`'s) made into the arena, its
 /// value into slot `out`.
 fn copy_stage(first: usize, out: usize, a: Key, b: Key, form: u32, origin: &[Option<(Arc<InRel>, usize)>], known: &HashMap<usize, i64>) -> Result<PStage, String> {
-    let mut d = mj::Stage { mode: mj::TEXTFN, ..mj::Stage::default() };
+    let mut d = mj::Stage { mode: mj::ROWTEXT, ..mj::Stage::default() };
     let kind = text_keys(&mut d, &[a, b], origin, known, "cat")?;
-    d.agg = [mj::TEXTFN_COPY, if form == mj::CAT_PLAIN { mj::OPND_PLAIN } else { mj::OPND_DOT }];
+    d.agg = [mj::ROW_MAP | mj::TEXTFN_COPY << 16, if form == mj::CAT_PLAIN { mj::OPND_PLAIN } else { mj::OPND_DOT }];
     d.bind_slot[0] = out as u32;
     Ok(PStage { first, span: 1, kind, desc: d, npassed: 0 })
 }
@@ -859,6 +1009,8 @@ struct Entry {
     /// Per column a text test read, its distinct symbols' names; per (column, test), the test's verdicts.
     texts: Vec<(usize, Rc<mj::DevText>)>,
     verdicts: Vec<((usize, String), Rc<mj::DevRel>)>,
+    /// Per (column, text functions), the column's symbols' texts made (`mapped_text`), with `lower`'s check.
+    mapped: Vec<((usize, String), (Rc<mj::DevText>, Option<Rc<mj::Words>>))>,
     bytes: usize,
     used: u64,
 }
@@ -929,6 +1081,8 @@ struct Run<'p> {
     uniq_cols: Vec<usize>,
     /// The text arena its text functions made their texts into (its batch's, shared with the batch's other jobs).
     arena: Option<Rc<mj::Arena>>,
+    /// Words its texts made per symbol set when `lower` met a name past ASCII (`mapped_text`).
+    checks: Vec<Rc<mj::Words>>,
 }
 
 /// The device's copy of `rel`, and its sort by `cols` (none when it has no keys), uploaded and encoded into `batch`
@@ -981,7 +1135,7 @@ fn resident(rel: &Arc<InRel>, cols: &[usize], batch: &mut mj::Batch, rep: &mut R
                 rep.upload_bytes += dev.bytes() as u64;
                 rep.upload_cpu += thread_cpu() - c0;
                 let bytes = dev.bytes();
-                res.entries.push(Entry { rel: weak, dev: Rc::new(dev), indexes: Vec::new(), texts: Vec::new(), verdicts: Vec::new(), bytes, used: clock });
+                res.entries.push(Entry { rel: weak, dev: Rc::new(dev), indexes: Vec::new(), texts: Vec::new(), verdicts: Vec::new(), mapped: Vec::new(), bytes, used: clock });
                 res.bytes += bytes;
                 res.entries.len() - 1
             }
@@ -1004,6 +1158,125 @@ fn resident(rel: &Arc<InRel>, cols: &[usize], batch: &mut mj::Batch, rep: &mut R
     })
 }
 
+/// The names of column `col`'s distinct symbols on the device, kept with the relation's entry `e` (copied once).
+fn column_text(e: &mut Entry, rel: &InRel, col: usize, rep: &mut Report, names: &Interner) -> Result<Rc<mj::DevText>, String> {
+    if let Some((_, t)) = e.texts.iter().find(|(c, _)| *c == col) {
+        return Ok(t.clone());
+    }
+    let c0 = thread_cpu();
+    let ids = column_symbols(rel, col);
+    let t = Rc::new(mj::DevText::upload(&ids, |v, out| out.extend_from_slice(names.name(v).as_bytes())).map_err(|e| format!("{e:?}: the names of {} symbols", ids.len()))?);
+    rep.uploads += 1;
+    rep.upload_bytes += t.bytes() as u64;
+    rep.upload_cpu += thread_cpu() - c0;
+    e.bytes += t.bytes();
+    e.texts.push((col, t.clone()));
+    Ok(t)
+}
+
+/// Regex `regex`'s automata for its replacements on the device (`text::table::Replacer`), and their states; kept while
+/// the thread runs (a command buffer may read them). Refused for a regex the device has no automata for.
+fn automata(regex: &str) -> Result<(Rc<mj::DevBytes>, u32), String> {
+    thread_local! {
+        static AUTOMATA: RefCell<HashMap<String, (Rc<mj::DevBytes>, u32)>> = RefCell::new(HashMap::new());
+    }
+    if let Some(a) = AUTOMATA.with_borrow(|a| a.get(regex).cloned()) {
+        return Ok(a);
+    }
+    let r = crate::code_rule_dsl::text::table::replacer(regex).map_err(|e| format!("replace_all has no device form: {e}"))?;
+    let a = (Rc::new(mj::DevBytes::upload(&r.bytes).map_err(|e| format!("{e:?}"))?), r.states);
+    AUTOMATA.with_borrow_mut(|m| m.insert(regex.to_owned(), a.clone()));
+    Ok(a)
+}
+
+/// A `ROWTEXT` stage's automaton on the device and `Batch::row_stage`'s numbers for it ([its scratch's states, a
+/// test table's states, classes, start]); a test's tables kept while the thread runs.
+fn row_automaton(auto: &RowAuto, names: &Interner) -> Result<Option<(Rc<mj::DevBytes>, [u32; 4])>, String> {
+    thread_local! {
+        static TESTS: RefCell<HashMap<String, Rc<mj::DevBytes>>> = RefCell::new(HashMap::new());
+    }
+    Ok(match auto {
+        RowAuto::None => None,
+        RowAuto::Replace { pattern, with } => {
+            if names.name(*with).contains('$') {
+                return Err("replace_all with a replacement naming a group ($) has no device form".into());
+            }
+            let (a, states) = automata(&names.name(*pattern))?;
+            Some((a, [states, 0, 0, 0]))
+        }
+        RowAuto::Test { table, key } => {
+            let b = match TESTS.with_borrow(|t| t.get(key).cloned()) {
+                Some(b) => b,
+                None => {
+                    let b = Rc::new(mj::DevBytes::upload(&table.bytes).map_err(|e| format!("{e:?}"))?);
+                    TESTS.with_borrow_mut(|t| t.insert(key.clone(), b.clone()));
+                    b
+                }
+            };
+            Some((b, [table.states, table.states, table.classes, table.start]))
+        }
+    })
+}
+
+/// Text functions `ops` of the distinct symbols of column `col` of `rel`, in order: their texts as a text buffer by
+/// symbol (`DevText`'s), made on the device (`Batch::text_map`, `Batch::replace`: a SIMD group a symbol, 32 bytes at a
+/// time) the first time a stage asks, and kept with the relation; with the word `lower` sets past ASCII (the run's
+/// check). Refused (the stratum runs on the CPU) for a regex the device has no automata for, or a replacement naming a
+/// group (`$`).
+fn mapped_text(rel: &Arc<InRel>, col: usize, ops: &[TextOp], batch: &mut mj::Batch, rep: &mut Report, names: &Interner)
+    -> Result<(Rc<mj::DevRel>, Option<Rc<mj::Words>>), String> {
+    // The functions with their texts, as the key they are kept by.
+    let mut steps = Vec::new();
+    for op in ops {
+        steps.push(match *op {
+            TextOp::Map { f, n0, n1 } => (format!("{f}({n0},{n1})"), None),
+            TextOp::Replace { pattern, with, literal } => {
+                let (p, w) = (names.name(pattern), names.name(with));
+                if !literal && w.contains('$') {
+                    return Err("replace_all with a replacement naming a group ($) has no device form".into());
+                }
+                if literal && p.is_empty() {
+                    // SQLite's replace of an empty pattern: the text itself.
+                    continue;
+                }
+                let regex = if literal { regex_syntax::escape(&p) } else { p };
+                let automata = automata(&regex)?;
+                (format!("rx({regex:?},{w:?})"), Some((automata, w)))
+            }
+        });
+    }
+    resident(rel, &[], batch, rep)?;
+    RESIDENT.with_borrow_mut(|res| {
+        let weak = Arc::downgrade(rel);
+        let e = res.entries.iter_mut().find(|e| Weak::ptr_eq(&e.rel, &weak)).expect("the relation made resident");
+        let key = (col, steps.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>().join(";"));
+        if let Some((_, (t, flag))) = e.mapped.iter().find(|(k, _)| *k == key) {
+            rep.sort_hits += 1;
+            return Ok((t.rel(), flag.clone()));
+        }
+        let mut text = column_text(e, rel, col, rep, names)?;
+        let mut flag = None;
+        for ((what, rx), op) in steps.iter().zip(ops.iter().filter(|op| !matches!(op, TextOp::Replace { pattern, literal: true, .. } if names.name(*pattern).is_empty()))) {
+            let next = match (rx, op) {
+                (Some(((automata, states), with)), _) => batch.replace(&text, automata, *states, with.as_bytes()),
+                (None, TextOp::Map { f, n0, n1 }) => {
+                    let w = flag.get_or_insert_with(|| Rc::new(mj::Words::zeroed(1).expect("a word")));
+                    batch.text_map(&text, *f, *n0, *n1, w)
+                }
+                (None, TextOp::Replace { .. }) => unreachable!("a replacement has its automata"),
+            };
+            text = Rc::new(next.map_err(|e| format!("{e:?}: {what} over {} names", text.terms))?);
+            rep.sorts += 1;
+            rep.per_symbol += 1;
+            rep.per_symbol_names += text.terms as u64;
+        }
+        e.bytes += text.bytes();
+        let flag = flag.filter(|_| ops.iter().any(|op| matches!(op, TextOp::Map { f: mj::TEXTFN_LOWER, .. })));
+        e.mapped.push((key, (text.clone(), flag.clone())));
+        Ok((text.rel(), flag))
+    })
+}
+
 /// The verdicts of text test `table` (keyed `key`) for the distinct symbols of column `col` of `rel`: a bitset by
 /// symbol, 64 a row, made on the device (`Batch::verdicts`) the first time a stage asks and kept with the relation.
 /// The column's symbols' names are copied to the device once (the host evaluates nothing).
@@ -1018,20 +1291,7 @@ fn verdicts(rel: &Arc<InRel>, col: usize, table: &Arc<crate::code_rule_dsl::text
             rep.sort_hits += 1;
             return Ok(v.clone());
         }
-        let text = match e.texts.iter().find(|(c, _)| *c == col) {
-            Some((_, t)) => t.clone(),
-            None => {
-                let c0 = thread_cpu();
-                let ids = column_symbols(rel, col);
-                let t = Rc::new(mj::DevText::upload(&ids, |v, out| out.extend_from_slice(names.name(v).as_bytes())).map_err(|e| format!("{e:?}: the names of {} symbols", ids.len()))?);
-                rep.uploads += 1;
-                rep.upload_bytes += t.bytes() as u64;
-                rep.upload_cpu += thread_cpu() - c0;
-                e.bytes += t.bytes();
-                e.texts.push((col, t.clone()));
-                t
-            }
-        };
+        let text = column_text(e, rel, col, rep, names)?;
         let dt = mj::DevTable::upload(table).map_err(|e| format!("{e:?}"))?;
         let words = text.span.div_ceil(64).max(1);
         let bits = Rc::new(mj::DevRel::upload(1, words, |v| v.fill(0)).map_err(|e| format!("{e:?}: verdicts of {} symbols", text.span))?);
@@ -1096,12 +1356,12 @@ impl<'p> Run<'p> {
         for s in &plan.stages {
             match s.kind {
                 Kind::Pass | Kind::Map => io.push((slot, slot)),
-                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } | Kind::Names { .. } => {
+                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } | Kind::Names { .. } | Kind::Mapped { .. } | Kind::RowText { .. } => {
                     io.push((slot, slot + 1));
                     slot += 1;
                 }
             }
-            if s.desc.mode == mj::AGG || s.desc.mode == mj::TEXTFN {
+            if s.desc.mode == mj::AGG || makes_text(s.desc.mode) {
                 // Its word: set when a sum passed 64 bits, or a made text's part is past what a made value holds.
                 counter.push(Some(ncounters));
                 ncounters += 1;
@@ -1128,7 +1388,7 @@ impl<'p> Run<'p> {
         if uniq_cols.len() > 16 {
             return Err("a head of more than 16 slots".into());
         }
-        Ok(Run { plan: Rc::new(plan.clone()), _plan: std::marker::PhantomData, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], uniq: None, uniq_cols, arena: None })
+        Ok(Run { plan: Rc::new(plan.clone()), _plan: std::marker::PhantomData, io, tables, caps, totals, counters, counter, rels: vec![None; plan.stages.len()], uniq: None, uniq_cols, arena: None, checks: Vec::new() })
     }
 
     /// The space for stage `k`'s rows out, from its input's space.
@@ -1159,7 +1419,7 @@ impl<'p> Run<'p> {
                     let t = self.tables[i].as_ref().expect("the map's table");
                     batch.map(s.desc, t, i, &self.totals).map_err(|e| format!("{e:?}"))?;
                 }
-                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } | Kind::Names { .. } => {
+                Kind::Filter | Kind::Atom { .. } | Kind::Own { .. } | Kind::Text { .. } | Kind::Names { .. } | Kind::Mapped { .. } | Kind::RowText { .. } => {
                     match (&s.kind, &self.rels[k]) {
                         (Kind::Names { cols, consts }, None) => {
                             let t = texts(cols, consts, rep, names)?;
@@ -1170,6 +1430,12 @@ impl<'p> Run<'p> {
                         }
                         (Kind::Atom { rel, cols }, None) => self.rels[k] = Some(resident(rel, cols, batch, rep)?),
                         (Kind::Text { rel, col, table, key }, None) => self.rels[k] = Some((verdicts(rel, *col, table, key, batch, rep, names)?, None)),
+                        (Kind::RowText { cols, consts, .. }, None) => self.rels[k] = Some((texts(cols, consts, rep, names)?.rel(), None)),
+                        (Kind::Mapped { rel, col, ops }, None) => {
+                            let (t, flag) = mapped_text(rel, *col, ops, batch, rep, names)?;
+                            self.checks.extend(flag);
+                            self.rels[k] = Some((t, None));
+                        }
                         (Kind::Own { rel, delta, cols }, None) => {
                             self.rels[k] = Some(own.get(*rel, *delta, cols, batch, rep)?.ok_or("an own relation with no rows")?);
                         }
@@ -1186,18 +1452,26 @@ impl<'p> Run<'p> {
                     }
                     let out = mj::Table::new(self.plan.nslots, cap).map_err(|e| format!("{e:?}: a binding table of {cap} rows, {} slots", self.plan.nslots))?;
                     if let Some(c) = self.counter[k] {
-                        for w in c..c + 1 + if matches!(s.desc.mode, mj::AGG | mj::TEXTFN) { 0 } else { s.npassed } {
+                        for w in c..c + 1 + if s.desc.mode == mj::AGG || makes_text(s.desc.mode) { 0 } else { s.npassed } {
                             self.counters.set(w, 0);
                         }
                     }
-                    if s.desc.mode == mj::TEXTFN && k == self.first_textfn().unwrap_or(usize::MAX) {
+                    if makes_text(s.desc.mode) && k == self.first_textfn().unwrap_or(usize::MAX) {
                         // Its texts, and those of the text functions after it, go into this batch's arena.
                         self.arena = Some(batch.arena().map_err(|e| format!("{e:?}"))?);
                     }
                     let left = self.tables[i].as_ref().expect("the stage's input");
-                    let aux = if s.desc.mode == mj::TEXTFN && s.desc.agg[0] == mj::TEXTFN_REGEX { Some(regex_automaton(&s.desc, names)?) } else { None };
-                    batch.stage(s.desc, left, right, i, o, &self.totals, &self.counters, self.counter[k], &out, aux.as_deref())
-                        .map_err(|e| format!("{e:?}: a stage's space for {cap_in} rows"))?;
+                    if s.desc.mode == mj::ROWTEXT {
+                        let auto = match &s.kind {
+                            Kind::RowText { auto, .. } => row_automaton(auto, names)?,
+                            _ => None,
+                        };
+                        let names_rel = right.map(|r| r.0).ok_or("a made text's stage with no names")?;
+                        batch.row_stage(s.desc, left, names_rel, auto.as_ref().map(|(b, p)| (&**b, *p)), i, o, &self.totals, &self.counters, self.counter[k], &out)
+                    } else {
+                        batch.stage(s.desc, left, right, i, o, &self.totals, &self.counters, self.counter[k], &out)
+                    }
+                    .map_err(|e| format!("{e:?}: a stage's space for {cap_in} rows"))?;
                     self.tables[o] = Some(out);
                 }
             }
@@ -1214,12 +1488,12 @@ impl<'p> Run<'p> {
     /// Its first text function's stage: a run that runs again in a new batch runs again from it (or before), its
     /// texts all in the new batch's arena.
     fn first_textfn(&self) -> Option<usize> {
-        self.plan.stages.iter().position(|s| s.desc.mode == mj::TEXTFN)
+        self.plan.stages.iter().position(|s| makes_text(s.desc.mode))
     }
 
     /// Whether a text function's text found the arena full (`mj::TEXTFN_FULL`).
     fn arena_full(&self) -> bool {
-        self.plan.stages.iter().zip(&self.counter).any(|(s, c)| s.desc.mode == mj::TEXTFN && c.is_some_and(|c| self.counters.get(c) & mj::TEXTFN_FULL != 0))
+        self.plan.stages.iter().zip(&self.counter).any(|(s, c)| makes_text(s.desc.mode) && c.is_some_and(|c| self.counters.get(c) & mj::TEXTFN_FULL != 0))
     }
 
     /// Why its rows are not the CPU's, once it ran: an aggregate's sum past 64 bits (the CPU's fold holds 128).
@@ -1228,7 +1502,9 @@ impl<'p> Run<'p> {
         if set(mj::AGG) {
             return Some("an aggregate's sum past 64 bits".to_owned());
         }
-        if self.plan.stages.iter().zip(&self.counter).any(|(s, c)| s.desc.mode == mj::TEXTFN && c.is_some_and(|c| self.counters.get(c) & mj::TEXTFN_HOST != 0)) {
+        if self.checks.iter().any(|w| w.get(0) != 0)
+            || self.plan.stages.iter().zip(&self.counter).any(|(s, c)| makes_text(s.desc.mode) && c.is_some_and(|c| self.counters.get(c) & mj::TEXTFN_HOST != 0))
+        {
             return Some("lower of a name past ASCII (Unicode's mapping is the host's)".to_owned());
         }
         if self.arena_full() {
@@ -1276,7 +1552,27 @@ fn on_lane<R>(form: &'static str, rules: usize, f: impl FnOnce() -> Result<R, St
     })
 }
 
+/// The rules that can make rows (none of them reads an empty input, `reads_empty_input`), by their places.
+fn live(rules: &[(&Plan, &JoinRule, usize)]) -> Vec<usize> {
+    (0..rules.len()).filter(|&k| !super::reads_empty_input(rules[k].1)).collect()
+}
+
+/// Rows per rule: the live rules' (`live`) at their places, none for the others.
+fn spliced(n: usize, live: &[usize], rows: Vec<u64>) -> Vec<u64> {
+    let mut out = vec![0; n];
+    for (&k, r) in live.iter().zip(rows) {
+        out[k] = r;
+    }
+    out
+}
+
 fn run_here(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
+    // A rule over an empty input makes no row, and its steps see none: it is not encoded, as the CPU does not walk it.
+    let live = live(rules);
+    if live.len() < rules.len() {
+        let some: Vec<(&Plan, &JoinRule, usize)> = live.iter().map(|&k| rules[k]).collect();
+        return run_here(&some, store, names, fresh).map(|rows| spliced(rules.len(), &live, rows));
+    }
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device joins".into());
     let c0 = thread_cpu();
     let mut rep = Report { rules: rules.len() as u32, stages: rules.iter().map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
@@ -1319,7 +1615,7 @@ thread_local! {
     /// counted by a stratum.
     static FLUSHED: RefCell<HashMap<u64, Result<Option<mj::Done>, String>>> = RefCell::new(HashMap::new());
     /// Strata waiting for their wave, by ticket: their encoded runs, their wave, their report so far.
-    static SUSPENDED: RefCell<HashMap<u64, (Vec<Run<'static>>, u64, Report)>> = RefCell::new(HashMap::new());
+    static SUSPENDED: RefCell<HashMap<u64, (Vec<Run<'static>>, u64, Report, Vec<usize>)>> = RefCell::new(HashMap::new());
     static TICKETS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
@@ -1328,6 +1624,10 @@ thread_local! {
 /// submission's space (the stratum then runs on its own, `run`).
 pub(in crate::code_rule_dsl) fn submit(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Option<u64>, String> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device joins (to the wave)".into());
+    // As `run_here`: a rule over an empty input is not encoded; `resume` gives it no rows.
+    let live = live(rules);
+    let some: Vec<(&Plan, &JoinRule, usize)> = live.iter().map(|&k| rules[k]).collect();
+    let rules = &some[..];
     let c0 = thread_cpu();
     let mut rep = Report { rules: rules.len() as u32, stages: rules.iter().map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
     let opened = WAVE.with_borrow(Option::is_none);
@@ -1352,20 +1652,25 @@ pub(in crate::code_rule_dsl) fn submit(rules: &[(&Plan, &JoinRule, usize)], name
     })?;
     let (wave, runs) = encoded;
     if runs.len() < rules.len() {
-        // Encoded work it will not wait for is harmless: the wave runs it and nothing reads it.
+        // Encoded work it will not wait for: the wave runs it and nothing reads it, but it writes the runs' buffers,
+        // which the wave keeps until it is done (back in the pool, another job's would be written).
+        WAVE.with_borrow_mut(|w| w.as_mut().expect("the open wave").1.hold(Box::new(runs)));
         return Ok(None);
     }
     rep.encode_cpu = thread_cpu() - c0 - rep.upload_cpu;
     let t = TICKETS.get() + 1;
     TICKETS.set(t);
-    SUSPENDED.with_borrow_mut(|s| s.insert(t, (runs, wave, rep)));
+    SUSPENDED.with_borrow_mut(|s| s.insert(t, (runs, wave, rep, live)));
     Ok(Some(t))
 }
 
 /// A stratum that waited for its wave (`submit`'s `ticket`), finished: as `run`, from the flushed submission.
 pub(in crate::code_rule_dsl) fn resume(ticket: u64, rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device joins (after the wave)".into());
-    let Some((runs, wave, mut rep)) = SUSPENDED.with_borrow_mut(|s| s.remove(&ticket)) else { return Err("a stratum's device joins were not submitted".into()) };
+    let Some((runs, wave, mut rep, live)) = SUSPENDED.with_borrow_mut(|s| s.remove(&ticket)) else { return Err("a stratum's device joins were not submitted".into()) };
+    let all = rules.len();
+    let some: Vec<(&Plan, &JoinRule, usize)> = live.iter().map(|&k| rules[k]).collect();
+    let rules = &some[..];
     let done = FLUSHED.with_borrow_mut(|f| match f.get_mut(&wave) {
         None => Err("a stratum's wave was not flushed".to_owned()),
         Some(Err(e)) => Err(e.clone()),
@@ -1385,7 +1690,7 @@ pub(in crate::code_rule_dsl) fn resume(ticket: u64, rules: &[(&Plan, &JoinRule, 
     let rows: u64 = rep.rows;
     crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "head rows read back", rows);
     LAST.with_borrow_mut(|l| *l = Some(rep));
-    Ok(out)
+    Ok(spliced(all, &live, out))
 }
 
 /// The first rules of `rules` that fit one submission's space, run: their head rows as `run`'s.
@@ -1405,8 +1710,19 @@ fn encode_runs(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batch, rep: 
         if !runs.is_empty() && (bytes > BATCH_MAX || mj::device_bytes_left() < HEADROOM) {
             break;
         }
-        let mut r = Run::new(plan)?;
-        r.encode(0, batch, rep, &mut Own::default(), names)?;
+        let mut r = match Run::new(plan) {
+            Ok(r) => r,
+            Err(e) => {
+                batch.hold(Box::new(runs));
+                return Err(e);
+            }
+        };
+        if let Err(e) = r.encode(0, batch, rep, &mut Own::default(), names) {
+            // The runs encoded so far (and this one's stages before the refusal) are in the batch: their buffers stay
+            // with it until it is done.
+            batch.hold(Box::new((runs, r)));
+            return Err(e);
+        }
         bytes += r.bytes();
         runs.push(r);
     }
@@ -1603,7 +1919,11 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Inte
             continue;
         }
         let mut r = Run::new(plan)?;
-        r.encode(0, &mut batch, rep, own, names)?;
+        if let Err(e) = r.encode(0, &mut batch, rep, own, names) {
+            // The batch's work writes the runs' buffers: done before they go back to the pool.
+            let _ = batch.finish();
+            return Err(e);
+        }
         runs.push(Some(r));
     }
     let mut pending: Vec<usize> = (0..runs.len()).filter(|&k| runs[k].is_some()).collect();
@@ -1640,7 +1960,10 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Inte
         rep.reruns += again.len() as u32;
         pending = again.iter().map(|&(k, _)| k).collect();
         for (k, s) in again {
-            runs[k].as_mut().expect("a run").encode(s, &mut batch, rep, own, names)?;
+            if let Err(e) = runs[k].as_mut().expect("a run").encode(s, &mut batch, rep, own, names) {
+                let _ = batch.finish();
+                return Err(e);
+            }
         }
     }
     let mut out = Vec::with_capacity(runs.len());
@@ -1669,7 +1992,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device fixpoint".into());
     let c0 = thread_cpu();
     let mut rep = Report { rules: (seeds.len() + deltas.len()) as u32, stages: seeds.iter().chain(deltas).map(|r| r.0.stages.len() as u32).sum(), ..Report::default() };
-    if seeds.iter().chain(deltas).any(|r| r.0.stages.iter().any(|s| s.desc.mode == mj::TEXTFN)) {
+    if seeds.iter().chain(deltas).any(|r| r.0.stages.iter().any(|s| makes_text(s.desc.mode))) {
         return Err("a made text in a recursive component (its rounds would join texts not yet symbols)".into());
     }
     for &h in heads {
@@ -1739,7 +2062,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
                     d.nkeys = k as u32;
                     let fresh_rows = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
                     let counters = mj::Words::zeroed(1).map_err(|e| format!("{e:?}"))?;
-                    batch.stage(d, &distinct, Some((&total, ix.as_deref())), 1, 2, &words, &counters, None, &fresh_rows, None).map_err(|e| format!("{e:?}"))?;
+                    batch.stage(d, &distinct, Some((&total, ix.as_deref())), 1, 2, &words, &counters, None, &fresh_rows).map_err(|e| format!("{e:?}"))?;
                     news.push((h, fresh_rows, words, true));
                     hold.push(distinct);
                 }
@@ -1854,3 +2177,5 @@ fn counted(r: &Run<'_>, plan: &Plan, j: &JoinRule, rep: &mut Report) {
 
 #[cfg(test)]
 pub mod tests;
+#[cfg(test)]
+mod parity;

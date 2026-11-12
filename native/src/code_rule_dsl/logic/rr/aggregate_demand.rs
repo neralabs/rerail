@@ -121,7 +121,40 @@ fn guards(
     (keys.is_subset(&bound) && !out.is_empty()).then_some(out)
 }
 
+/// Whether `start` depends on `target` through `edges` (`front::strata`'s: a relation to those it reads).
+fn depends(edges: &front::Edges, start: &str, target: &str) -> bool {
+    let mut todo = vec![start];
+    let mut seen = BTreeSet::new();
+    while let Some(at) = todo.pop() {
+        if at == target {
+            return true;
+        }
+        if seen.insert(at) {
+            todo.extend(edges.get(at).into_iter().flatten().map(|(w, _)| w.as_str()));
+        }
+    }
+    false
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    /// Each candidate stratified whole, as before the shortcut (the test of the shortcut, which the engine hosts).
+    pub static FULL_CHECKS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn full_checks() -> bool {
+    #[cfg(any(test, feature = "test-hooks"))]
+    return FULL_CHECKS.with(std::cell::Cell::get);
+    #[cfg(not(any(test, feature = "test-hooks")))]
+    false
+}
+
 pub fn optimize(program: &mut Program) {
+    // The program's dependency edges while it stratifies. A candidate adds its demand relation, read by the
+    // aggregate's rules, reading its guards' relations: a cycle it closes passes through the demand, so when no guard
+    // depends on the aggregate the components are the program's and the demand's own, stratified as the program is,
+    // and the candidate is not stratified again (one stratification a program, not one an aggregate).
+    let mut known: Option<front::Edges> = front::strata(program).ok().map(|(_, edges)| edges);
     let names: BTreeSet<_> = program
         .rules
         .iter()
@@ -227,8 +260,24 @@ pub fn optimize(program: &mut Program) {
                 }),
             );
         }
+        let guards: BTreeSet<String> = demands.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.to_string()).collect();
+        let closes = known.as_ref().is_none_or(|edges| guards.iter().any(|g| depends(edges, g, &name))) || full_checks();
         next.rules.extend(demands);
-        if front::declared(&next).is_ok() && front::strata(&next).is_ok() {
+        if front::declared(&next).is_err() {
+            continue;
+        }
+        if closes {
+            match front::strata(&next) {
+                Ok((_, edges)) => {
+                    known = Some(edges);
+                    *program = next;
+                }
+                Err(_) => {}
+            }
+        } else {
+            let edges = known.as_mut().expect("the edges of a stratified program");
+            edges.entry(name.clone()).or_default().insert((demand.clone(), false));
+            edges.entry(demand.clone()).or_default().extend(guards.into_iter().map(|g| (g, false)));
             *program = next;
         }
     }

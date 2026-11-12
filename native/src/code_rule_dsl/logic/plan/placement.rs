@@ -258,7 +258,7 @@ fn is_cat_of_rows(t: &Term) -> bool {
     matches!(t, Term::Call(f, args) if (f == "cat" || f == "concat") && args.len() == 2 && args.iter().all(|a| !matches!(a, Term::Call(..))))
 }
 
-/// The text functions the device makes (`metal_join::TEXTFN`), by the names the planner's terms and the native
+/// The text functions the device makes (`metal_join::ROW_MAP`), by the names the planner's terms and the native
 /// engine's steps give them.
 const DEVICE_TEXT_FUNCTIONS: [&str; 14] = [
     "lower", "sql_lower", "sql_upper", "head", "dir", "substr", "rr_substr", "sql_substr", "slice", "to_string", "rr_to_string", "sql_replace",

@@ -1544,6 +1544,9 @@ pub struct Report {
     pub arena_reruns: u32,
     /// Stages whose grids were sized on the device, from the rows before them (not the host's guess of their space).
     pub sized: u32,
+    /// Text functions made once per distinct symbol (`mapped_text`, chunked), and the names they made.
+    pub per_symbol: u32,
+    pub per_symbol_names: u64,
     pub stages: u32,
     pub submissions: u32,
     pub dispatches: u32,

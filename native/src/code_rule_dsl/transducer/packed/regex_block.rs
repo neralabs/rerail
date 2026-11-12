@@ -40,6 +40,13 @@ pub struct SpanPrefilter {
     native: super::native_ir::BlockNative,
 }
 
+impl SpanPrefilter {
+    /// The program as the native executors take it (the device's compile state is keyed by it).
+    pub fn native(&self) -> &super::native_ir::BlockNative {
+        &self.native
+    }
+}
+
 /// Where a batch's span programs ran (`ends_launch`).
 pub use crate::code_rule_dsl::facts::span_prefilter::RanOn;
 
