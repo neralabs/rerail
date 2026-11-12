@@ -326,6 +326,42 @@ describe("WorktreeWalks", () => {
     await other.bridge.settleWorktreeWalk();
     expect(audited(other)).toEqual([[["written ../w3/src/b.ts"], "log"]]);
   });
+
+  it("records a file that changed again after the walk it takes read it, from the text it last recorded", async () => {
+    const { checkouts, worktrees } = await repository();
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const first = await session(worktrees[0]!, checkouts, walks);
+    const second = await session(worktrees[1]!, checkouts, walks);
+    // The second session's take of the next walk is held on its audit.
+    const entered = Promise.withResolvers<void>();
+    const held = Promise.withResolvers<void>();
+    releases.push(held.resolve);
+    const audit = second.auditGeneratedEdits.getMockImplementation()!;
+    second.auditGeneratedEdits.mockImplementationOnce(async (sessionId, batch) => {
+      entered.resolve();
+      await held.promise;
+      return await audit(sessionId, batch);
+    });
+    await shell(first.bridge, "shell-1", () => writeFile(join(worktrees[2]!, "src", "g.py"), "g = 1\n"));
+    await first.bridge.settleWorktreeWalk();
+    await entered.promise;
+    // One walk sees `a.py` change and the next sees nothing new; the second session, still taking the first, takes the last.
+    const path = join(worktrees[2]!, "src", "a.py");
+    await shell(first.bridge, "shell-2", () => writeFile(path, "old\nmine\n"));
+    await first.bridge.settleWorktreeWalk();
+    await turn(first);
+    // `a.py` changes again before the second session reads it.
+    await writeFile(path, "old\nmine\nmore\n");
+    held.resolve();
+    await second.bridge.settleWorktreeWalk();
+    await turn(first);
+    await second.bridge.settleWorktreeWalk();
+    // It records the whole change from the text Git holds, which it saw last, as its own walk read it.
+    expect(second.auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([
+      [{ path: "../w3/src/g.py", language: "python", generatedText: "g = 1\n" }],
+      [{ path: "../w3/src/a.py", language: "python", previousText: "old\n", generatedText: "old\nmine\nmore\n" }],
+    ]);
+  });
 });
 
 describe("the other worktrees of a session in a nested worktree", () => {
