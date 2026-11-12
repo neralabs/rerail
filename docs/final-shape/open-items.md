@@ -3757,6 +3757,11 @@ optimizer, then one optimized build, to measure what the debug build hides (`O-d
 inserted). Yet 773 of 829 strata run, and 2,688 of 7,398 rule runs do no work. (A first reading said "no rows
 changed": the step line's counts are zero unless `RERAIL_CROSS_DELTA_COUNTS` is set.)
 
+**Measured (2026-11-12, profile of step 01).** "773 of 829" is the cut's count of base strata, not what opens.
+The rewrite makes 4,736 strata of them; 2,365 are held empty (every rule joins an empty relation) and 513 are
+quiet (0101 §1). 1,858 open a component, and a third of those move at most 2 rows (median 5). So what is left of
+W1 is the cost per opened piece, which is O-component-overhead (0101 §3).
+
 **Closure:** a stratum runs only when one of its inputs has a non-empty delta at that step. An input whose plus and
 minus net to nothing, or a relation whose stratum produced no delta, makes its readers quiet (decision 0101 §1).
 The strata run are in proportion to the relations that changed.
@@ -3766,6 +3771,18 @@ The strata run are in proportion to the relations that changed.
 **Seen.** Step 01 makes 12,730 plan searches and 12,888 explain records, 4.65 s of its 12.4 s. The rule for
 keeping a plan exists (`stats::plans`: a plan stays valid while every statistic it read stays in its bucket), but
 the session's strata do not use it.
+
+**Measured (2026-11-12).** Plans are kept (decision 0038's cache). What is searched is the first sight of each
+maintenance piece (9,921 at step 01, 1,650 at step 02) and, before the fix below, replans of pieces whose sizes
+moved but whose work is a few rows (4,612 at step 02: "distributions not near"). The 4,629 replans of step 02
+were all labelled "work per node grew 4x", which is the fall-through label, not the reason. The explain records
+(1.2-1.4 s a step) are made only under `RERAIL_PROFILE`.
+
+**First version (2026-11-12).** A kept plan re-priced at a work under `REPLAN_ROWS` is kept, whatever the sizes
+did: a search can save at most that work (`RERAIL_REPLAN_CHEAP` searches again). Step 02's replans fell from
+4,629 to 268. Steps 01-03: 276.0 G to 271.3 G (-1.7%). Ordering small-delta pieces greedily instead of searching
+was tried and changed nothing in instructions (266.5 G against 266.4 G), so it was dropped. In samples the search
+is about 21% of a warm step's CPU, but in instructions planning is not a big rock.
 
 **Closure:** a stratum's plans are kept from step to step and are planned again only when a statistic they read
 leaves its bucket. Explain records are made only when asked for. A step's planning is in proportion to the plans
@@ -3790,7 +3807,12 @@ is cut (rows read by column, probes in batches) until a unit costs tens of ns in
 
 ## O-base-seed-copies. Seed rules copy base relations into derived ones (C2)
 
-**Seen.** 411 seed runs start from a base relation (`node`, `child`, `kind`, `docof`, `field`, …), for example
+**Measured (2026-11-12): smaller than first read.** Of the 4.7 M units, only 1.0 M (33 runs, 0.44 s) are
+pure projections: `kind` and `docof` from `node`, and their `__sup0`. The other 3.7 M are joins that start at a
+base relation, which is O-join-unit-cost. Projections are already read in place where the view is an input
+(`Run::projections`); the copies are where `kind` is derived in the part's own program.
+
+**First reading.** 411 seed runs start from a base relation (`node`, `child`, `kind`, `docof`, `field`, …), for example
 `kind($n,$k) :- node(_,$n,$k,_,_)` at 500 K rows. They are 4.7 M of the 13.0 M units of work and 2.8 s. A
 projection of a syntax table is copied into a derived relation and indexed, when it could be read in place.
 

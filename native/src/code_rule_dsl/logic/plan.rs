@@ -762,8 +762,8 @@ pub fn sql_col(rel: &str, col: usize) -> String {
 
 /// The kept-plan outcomes of `plan_rule_reused` in this process, by `CacheOutcome`: `RERAIL_PLAN_CACHE_COUNTS`
 /// prints them at the end of each corpus run (`KeepPlans`).
-static PLAN_CACHE: [std::sync::atomic::AtomicU64; 8] = [const { std::sync::atomic::AtomicU64::new(0) }; 8];
-const PLAN_CACHE_NAMES: [&str; 8] = ["no cache", "first sight", "kept price", "re-priced", "replanned: cheaper start", "replanned: work grew", "replanned: no longer runs", "taken from the store"];
+static PLAN_CACHE: [std::sync::atomic::AtomicU64; 9] = [const { std::sync::atomic::AtomicU64::new(0) }; 9];
+const PLAN_CACHE_NAMES: [&str; 9] = ["no cache", "first sight", "kept price", "re-priced", "replanned: cheaper start", "replanned: work grew", "replanned: no longer runs", "taken from the store", "re-priced, cheap"];
 fn plan_cache(outcome: usize) {
     PLAN_CACHE[outcome].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
@@ -1372,6 +1372,16 @@ impl Model {
                 Ok(got) if cheaper_start(got.0.1) => {
                     plan_cache(4);
                     super::profile::decision("plan cache (decision 0038)", || "replanned: a start much cheaper than when the kept order was searched".into())
+                }
+                // Cheap as re-priced: a search with the same statistics can save at most the kept order's work, and
+                // that is under `REPLAN_ROWS`, however the sizes it reads moved (a maintenance piece priced on the
+                // cold run's sizes and re-priced on an edit's delta: step 02 of O125 searched 4,612 of them again,
+                // each at a work of a few rows). `RERAIL_REPLAN_CHEAP` searches them again, as before.
+                Ok(got) if got.0.1 <= REPLAN_ROWS && self.valid_live_driver(&got.0.0, body, first) && std::env::var_os("RERAIL_REPLAN_CHEAP").is_none() => {
+                    super::profile::decision("plan cache (decision 0038)", || format!("a kept plan reused, re-priced: its work is under {REPLAN_ROWS} rows, all a search could save"));
+                    plan_cache(8);
+                    remember(&key, &got);
+                    return Ok(got);
                 }
                 Ok(got) if self.valid_live_driver(&got.0.0, body, first) && previous.as_ref().is_some_and(|p| {
                     let cards = 1 + usize::from(first.is_some()) + body.iter().filter(|l| matches!(l, Literal::Atom(_) | Literal::Agg { .. })).count();
