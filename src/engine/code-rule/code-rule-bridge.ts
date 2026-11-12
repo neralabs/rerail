@@ -31,6 +31,7 @@ import { ToolCallWindows } from "./tool-call-windows.js";
 import {
   type WatcherWalk, type WorktreeFindings, type WorktreeScan, type WorktreeSnapshot, WorktreeView, type WorktreeWalk, WorktreeWalks, type WorktreeWatch,
 } from "./worktree-walks.js";
+import type { KeptReads, WalkDigests } from "./walk-digests.js";
 
 export { WORKTREE_WALK_GAP_MS } from "./worktree-walks.js";
 
@@ -261,11 +262,25 @@ async function modifiedSince(absolute: string, modifiedAt: number): Promise<numb
   const after = await lstat(absolute);
   return Math.max(modifiedAt, after.mtimeMs, after.ctimeMs);
 }
+/** Whether the walk keeps the text of a file stamped at `modifiedAt` whose digest changed. */
+function mayKeepText(walk: SourceWalk, modifiedAt: number): boolean {
+  return walk.captureChanges || modifiedAt >= walk.discovery.startedAt;
+}
 /** A text file as a walk observes it, with its text when it changed since the session's start. */
 function observedText(walk: SourceWalk, stamped: StampedSource, previous: ObservedSource | undefined, source: Buffer): Source {
   const digest = sha256(source);
-  const changed = (walk.captureChanges || stamped.modifiedAt >= walk.discovery.startedAt) && previous?.digest !== digest;
+  const changed = mayKeepText(walk, stamped.modifiedAt) && previous?.digest !== digest;
   return { ...stamped, digest, ...(changed ? { text: source.toString("utf8") } : {}) };
+}
+/**
+ * A file the walk has no observation of, as reading it would observe it, when the last daemon read it at this very stamp
+ * (`WalkDigests`) and the walk would keep none of its text: the kept read stands in for the read. Undefined to read it.
+ */
+function keptSource(walk: SourceWalk, location: SourceLocation, stamped: StampedSource, size: number): Source | undefined {
+  const kept = walk.kept?.get(location.path);
+  if (kept === undefined || kept.stamp !== stamped.stamp) return undefined;
+  if (kept.kind === "binary") return location.unlisted ? stamped : undefined;
+  return size > MAX_SOURCE_BYTES || mayKeepText(walk, stamped.modifiedAt) ? undefined : { ...stamped, digest: kept.digest };
 }
 /** An unlisted file too large to read is unread, reported once per stamp (`newlyUnread`); any other read error is the walk's. */
 function recordReadError(scan: SourceScan, source: Source): void {
@@ -541,6 +556,8 @@ interface SourceWalk {
   readonly view: WalkView;
   readonly observedAt: number;
   readonly previousSources: ReadonlyMap<string, ObservedSource>;
+  /** What the last daemon read of the files under the walk's root, for a first walk of it (`WalkDigests`). */
+  readonly kept: KeptReads | undefined;
   readonly captureChanges: boolean;
   readonly scan: SourceScan;
   readonly stack: string[];
@@ -821,6 +838,8 @@ export class CodeRuleBridge {
   readonly #worktreeView = new WorktreeView();
   /** The walk of the other worktrees this session shares with others (`worktreeWalks`), else its own, made on first use. */
   #worktreeWalks: WorktreeWalks | undefined;
+  /** What the daemon's walks read, kept for the next daemon (`walkDigests`); nothing is kept without it. */
+  readonly #walkDigests: WalkDigests | undefined;
   /**
    * The text each source this session changed was last seen with: the preimage of its next change made without one
    * captured, once its digest proves it (`#recoverPreimages`). The baseline is not kept, but for a source a walk first
@@ -875,6 +894,11 @@ export class CodeRuleBridge {
        * watch it.
        */
       worktreeWalks?: WorktreeWalks;
+      /**
+       * Where the walks keep what they read for the daemon that starts next, and find what the last one read: a first walk
+       * of a folder reads again only the files whose stamps changed. Without it, every first walk reads every file.
+       */
+      walkDigests?: WalkDigests;
       /** `FIRST_SIGHT_TEXT_BYTES` by default. */
       firstSightTextBytes?: number;
     } = {},
@@ -889,6 +913,7 @@ export class CodeRuleBridge {
     this.#onIgnoreRulesChanged = options.onIgnoreRulesChanged;
     this.#worktreeWalkGapMs = options.worktreeWalkGapMs;
     this.#worktreeWalks = options.worktreeWalks;
+    this.#walkDigests = options.walkDigests;
     this.#firstSightTextBytes = options.firstSightTextBytes ?? FIRST_SIGHT_TEXT_BYTES;
   }
 
@@ -1501,7 +1526,11 @@ export class CodeRuleBridge {
   }
 
   #forgetWorktrees(discovery: SourceDiscovery, removed: ReadonlySet<string>): void {
-    for (const worktree of removed) discovery.worktrees.fresh.delete(worktree);
+    for (const worktree of removed) {
+      discovery.worktrees.fresh.delete(worktree);
+      // A worktree Git no longer lists took its files with it: what the walks read of it is kept no longer.
+      this.#walkDigests?.forget(resolve(discovery.root, worktree));
+    }
     for (const path of this.#observed.keys()) if (underBaselineRoot(removed, path)) this.#observed.delete(path);
     this.#worktreeView.forget(removed);
   }
@@ -1584,15 +1613,17 @@ export class CodeRuleBridge {
   }
 
   async #scanSources(discovery: SourceDiscovery, walk: WalkStart, worktrees: readonly string[]): Promise<SourceScan> {
-    // An earlier session's baseline of this workspace lets unchanged sources skip the read.
+    // An earlier session's baseline of this workspace lets unchanged sources skip the read, as do the last daemon's reads.
     const seed = walk.baseline ? this.#observations?.get(this.#cwd) : undefined;
+    const previousSources = seed === undefined ? walk.previous : new Map([...seed, ...walk.previous]);
+    const kept = walk.baseline ? await this.#walkDigests?.load(discovery.root, walk.observedAt) : undefined;
     const scan = await this.#observeSources({
-      discovery, view: this.#auditor, observedAt: walk.observedAt,
-      previousSources: seed === undefined ? walk.previous : new Map([...seed, ...walk.previous]),
+      discovery, view: this.#auditor, observedAt: walk.observedAt, previousSources, kept,
       captureChanges: !walk.baseline,
       scan: emptyScan(),
       stack: [discovery.root], roots: new Set([discovery.root, ...worktrees]),
     });
+    if (!this.#abandoned(discovery)) this.#walkDigests?.keep(discovery.root, { sources: scan.sources, previous: previousSources, kept, observedAt: walk.observedAt });
     // Read off the lane, as the scan is, so tool calls are not held up behind it.
     await this.#readFirstSeenTexts(discovery, walk, scan);
     await this.#readPassedCheckouts(discovery, walk, scan);
@@ -1616,11 +1647,15 @@ export class CodeRuleBridge {
     };
     const abandoned = (): boolean => this.#abandoned(discovery);
     const scope: WalkScope = { root: request.root, startedAt: request.startedAt, get cancelled() { return abandoned(); } };
+    // A worktree's first walk takes what the last daemon read of it; later ones have the walk's own last snapshot.
+    const kept = request.captureChanges ? undefined : await this.#walkDigests?.load(request.root, request.observedAt);
     const scan = await this.#observeSources({
-      discovery: scope, view, observedAt: request.observedAt, previousSources: request.previous, captureChanges: request.captureChanges,
+      discovery: scope, view, observedAt: request.observedAt, previousSources: request.previous, kept, captureChanges: request.captureChanges,
       scan: emptyScan(), stack: [request.root], roots: request.skip,
     });
-    return abandoned() ? undefined : scan;
+    if (abandoned()) return undefined;
+    this.#walkDigests?.keep(request.root, { sources: scan.sources, previous: request.previous, kept, observedAt: request.observedAt });
+    return scan;
   }
 
   /**
@@ -2239,6 +2274,8 @@ export class CodeRuleBridge {
     if (!walk.view.acceptsPath(location.path)) return { ...stamped, ...knownDigest(previous) };
     const modifiedAt = Math.max(info.mtimeMs, info.ctimeMs);
     if (staleStamp(previous, stamped.stamp, modifiedAt)) return previous;
+    const kept = previous === undefined ? keptSource(walk, location, { ...stamped, modifiedAt }, info.size) : undefined;
+    if (kept !== undefined) return kept;
     const unread = await unreadFile(location, info);
     if (unread !== undefined) return { ...stamped, modifiedAt, ...unread };
     return await this.#readObservedFile(walk, location, { ...stamped, modifiedAt }, previous);

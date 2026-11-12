@@ -62,6 +62,7 @@ What Rerail holds that is worth attacking, and where it lives.
 | Session history: prompts, replies, tool inputs, **raw tool outputs** | `rerail.sqlite` (`RerailRuntime.persistEvent`) | Whatever the agent saw, secrets included, unredacted. |
 | Pre-edit source text and session ledgers | `<repo>/.rerail/sessions/<sha256(session)>/events.jsonl` | Source and prompt text in the working tree; `rewind` restores from it. |
 | Source copies, syntax trees, check results | `~/.cache/rerail/content-v1.sqlite` | A second copy of every file the engine read. |
+| What the source walks read | `~/.cache/rerail/walk-digests/` (`src/engine/code-rule/walk-digests.ts`) | Each file's path, stamp and SHA-256, no text, secret-like files left out. A forged entry makes the next daemon take a file as unchanged, so whoever can write it can hide a change made while no daemon ran; a host sandbox that denies `~/.cache/rerail` (below) denies it too. |
 | Rule catalog: rules, packs, settings, start state | `rerail.sqlite` | Decides what reaches every future session, and whether Rerail is armed. |
 | Daemon access capability | `~/.rerail/access-token`, `daemon.json` (0600) | Full `person` API: all repositories, unredacted transcripts, every write. |
 | Executable code Rerail launches | `~/.rerail/versions/<v>/`, `current`, `bin/rerail`, `update-state.json`, `RERAIL_ENGINE_PATH` | Runs on every hook, daemon start and CLI call. |

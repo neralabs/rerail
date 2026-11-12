@@ -151,7 +151,7 @@ Set-up denies coding agents access to Rerail's data wherever the agent's user se
 
 - **Rerail home** (`~/.rerail`, or `RERAIL_HOME`): access token, every repository's history database, installed
   package.
-- **Content cache** (`~/.cache/rerail`): parsed files and results.
+- **Content cache** (`~/.cache/rerail`): parsed files and results, and the digests of the files the daemon read.
 
 Agents run commands as you, so only their own sandbox can keep them out.
 

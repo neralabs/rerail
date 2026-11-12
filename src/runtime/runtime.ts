@@ -22,6 +22,7 @@ import {
 } from "../engine/code-rule/code-rule-bridge.js";
 import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
 import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
+import type { WalkDigests } from "../engine/code-rule/walk-digests.js";
 import {
   buildSteer, type AuditorCloseOptions, type CodeRuleAuditor, type AuditSettings, type CodeRuleViolation, type RuleSteerDelivery,
   type RepositoryAuditHooks, type SteerMetadata, type SteerSourceOf,
@@ -715,6 +716,11 @@ export interface RerailRuntimeOptions {
    * one to all its runtimes; a runtime makes its own otherwise, which its sessions share.
    */
   worktreeWalks?: RepositoryWorktreeWalks;
+  /**
+   * Where the walks keep what they read for the next daemon, and find what the last one read (the engine service passes
+   * its own); without it, nothing is kept and a session's first walks read every file.
+   */
+  walkDigests?: WalkDigests;
   /** Receives the timing lines of session start and slow turn ends (the daemon passes its log); without it they are not written. */
   timingLog?: (line: string) => void;
   nativeSession?: {
@@ -756,6 +762,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   readonly #ingestLanes = new SessionLanes();
   readonly #sourceObservations: SourceObservationCache = new Map();
   readonly #worktreeWalks: RepositoryWorktreeWalks;
+  readonly #walkDigests: WalkDigests | undefined;
   readonly #discoveryWaitMs: number | undefined;
   readonly #timingLog: ((line: string) => void) | undefined;
   readonly #startWatch: RepositoryStartWatch | undefined;
@@ -770,6 +777,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#auditSettings = { ...DEFAULT_AUDIT_SETTINGS, ...options.auditSettings };
     this.#discoveryWaitMs = options.discoveryWaitMs;
     this.#worktreeWalks = options.worktreeWalks ?? new RepositoryWorktreeWalks();
+    this.#walkDigests = options.walkDigests;
     this.#timingLog = options.timingLog;
     this.#autostart = options.autostart ?? true;
     this.#createAuditor = options.createAuditor ?? ((auditorOptions) => new CheckoutCodeRuleRouter({
@@ -1350,6 +1358,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         observations: this.#sourceObservations,
         // Every checkout of a clone has its clone id; a checkout the catalog does not know walks on its own.
         worktreeWalks: this.#worktreeWalks.of(this.#catalogs.checkout(checkout.root)?.cloneId ?? checkout.root),
+        ...(this.#walkDigests === undefined ? {} : { walkDigests: this.#walkDigests }),
         ...(this.#discoveryWaitMs === undefined ? {} : { discoveryWaitMs: this.#discoveryWaitMs }),
         // A boundary that answered before its shell-write check finished leaves its session's history marked partial.
         onDiscoveryPending: boundary => this.#recordSessionFact(

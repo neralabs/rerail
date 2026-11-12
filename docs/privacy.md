@@ -80,7 +80,7 @@ repository's `.rerail/sessions/`.
 | Where | What |
 | --- | --- |
 | `~/.rerail/` (or `$RERAIL_HOME`) | `rerail.sqlite`: rules, repositories, sessions, audits, findings, steer feedback, and all agent events (prompts, replies, tool inputs and outputs). Also daemon state and log, consent answer, rule packs, managed installs |
-| `~/.cache/rerail/` | `content-v1.sqlite`: compressed source files Rerail read, with syntax trees and check results |
+| `~/.cache/rerail/` | `content-v1.sqlite`: compressed source files Rerail read, with syntax trees and check results. `walk-digests/`: the path, size, times and SHA-256 of each file Rerail read (secret-like files left out), so a restarted daemon reads again only what changed |
 | `<your repository>/.rerail/sessions/` | One ledger per session: events and pre-edit file text. Its `.gitignore` of `*` keeps it out of Git |
 
 Steer feedback is the agent's one-line reason for ignoring a steer (`rerail feedback`). It is sent nowhere;

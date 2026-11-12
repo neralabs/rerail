@@ -211,9 +211,12 @@ describe("rerail install --root", () => {
     await mkdir(dirname(store));
     await writeFile(store, "cached");
     await writeFile(`${store}-wal`, "cached");
+    const walkDigests = join(dirname(store), "walk-digests");
+    await mkdir(walkDigests);
+    await writeFile(join(walkDigests, "0123.reads"), "what the walks read");
     vi.stubEnv("RERAIL_CONTENT_STORE_PATH", store);
     const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
-    const deleted = [join(plain, ".rerail"), join(linked, ".rerail", "sessions"), backup, cache, store, `${store}-wal`];
+    const deleted = [join(plain, ".rerail"), join(linked, ".rerail", "sessions"), backup, cache, store, `${store}-wal`, walkDigests];
 
     expect(await runInstallCommand(["--root", packageRoot, "--remove", "--delete-data", "--dry-run"], context)).toBe(0);
     expect(output.mock.calls.join("")).toContain(`Would delete ${join(plain, ".rerail", "sessions")}`);

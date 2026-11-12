@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
 import type * as FileSystem from "node:fs/promises";
-import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CheckoutCodeRuleRouter } from "../../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
@@ -78,6 +78,45 @@ function socketPathIn(root: string, name: string): string {
   return process.platform === "win32" ? `\\\\.\\pipe\\rerail-${name}-${process.pid}` : join(root, "engine.sock");
 }
 
+/** Waits until the filesystem clock has passed the stamp of `path`, so a walk after it reads the file as it stands. */
+async function awaitClockAfter(path: string): Promise<void> {
+  const info = await lstat(path);
+  const since = Math.max(info.mtimeMs, info.ctimeMs);
+  const probe = await mkdtemp(join(tmpdir(), "rerail-shared-walk-clock-"));
+  directories.push(probe);
+  for (;;) {
+    await writeFile(join(probe, "tick"), "");
+    const tick = await lstat(join(probe, "tick"));
+    if (Math.max(tick.mtimeMs, tick.ctimeMs) > since) return;
+  }
+}
+
+/**
+ * One daemon's life: an engine service on `databasePath` with a session in `cwd`, which takes a turn and the walk of the
+ * other worktrees after it, then whatever `then` does with its bridge, before the service closes.
+ */
+async function serviceLife(
+  root: string,
+  databasePath: string,
+  { name, cwd, then }: { name: string; cwd: string; then?: (bridge: CodeRuleBridge) => Promise<void> },
+): Promise<void> {
+  const opens = vi.spyOn(CodeRuleBridge.prototype, "openWorkspace");
+  opens.mockClear();
+  const service = await startEngineService({ socketPath: socketPathIn(root, name), storageRoot: join(root, "sessions"), databasePath, embedder: testEmbedder });
+  try {
+    const session = { host: "claude-code" as const, sessionId: name, cwd };
+    await service.ingest({ kind: "session-start", eventId: `${name}:start`, session });
+    await vi.waitFor(() => expect(opens.mock.results).toHaveLength(1), { timeout: 30_000, interval: 20 });
+    await opens.mock.results[0]!.value;
+    const bridge = opens.mock.contexts[0] as CodeRuleBridge;
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    await then?.(bridge);
+  } finally {
+    await service.close();
+  }
+}
+
 describe("the engine service and the other worktrees of a repository", () => {
   it("reads a worktree's files once for all the live sessions watching it, each in a worktree of its own", { timeout: 60_000 }, async () => {
     const root = await folder();
@@ -150,5 +189,67 @@ describe("the engine service and the other worktrees of a repository", () => {
       releases.splice(0).forEach(release => release());
       await service.close();
     }
+  });
+});
+
+describe("the engine service started again", () => {
+  /** A repository whose checkouts each hold `SOURCES`, with three worktrees; the filesystem clock is past every stamp. */
+  async function restartRepository(): Promise<{ root: string; databasePath: string; main: string; worktrees: string[] }> {
+    const root = await folder();
+    await mkdir(join(root, "main", "lib"));
+    await writeFile(join(root, "main", "src", "y.py"), "y = 1\n");
+    await writeFile(join(root, "main", "lib", "z.py"), "z = 1\n");
+    await writeFile(join(root, "main", "README.md"), "# notes\n");
+    const databasePath = join(root, "rerail.sqlite");
+    const { main, worktrees } = repository(root, databasePath, ["w1", "w2", "w3"]);
+    await awaitClockAfter(join(worktrees.at(-1)!, "README.md"));
+    return { root, databasePath, main, worktrees };
+  }
+  const SOURCES = ["src/x.py", "src/y.py", "lib/z.py", "README.md"];
+
+  it("reads none of the checkouts' files whose stamps held while no daemon ran", { timeout: 90_000 }, async () => {
+    const { root, databasePath, main, worktrees } = await restartRepository();
+    const files = [main, ...worktrees].flatMap(checkout => SOURCES.map(path => join(checkout, ...path.split("/"))));
+    await serviceLife(root, databasePath, { name: "before-restart", cwd: worktrees[0]! });
+    const readBefore = files.filter(file => reads.has(file));
+    reads.clear();
+    await serviceLife(root, databasePath, { name: "after-restart", cwd: worktrees[0]! });
+    // The session folder's walk read `w1`, the walk of the other worktrees `main`, `w2` and `w3`: each source a rule
+    // can match, once. Nothing changed while no daemon ran, so the walks after the restart read none of them again.
+    expect(readBefore.length).toBeGreaterThanOrEqual(12);
+    expect(files.filter(file => reads.has(file)).map(file => relative(root, file).split(sep).join("/"))).toEqual([]);
+  });
+
+  it("reads again a file rewritten while no daemon ran, its modification time put back, and records a later write from what it read", { timeout: 90_000 }, async () => {
+    const { root, databasePath, worktrees } = await restartRepository();
+    const path = join(worktrees[1]!, "src", "x.py");
+    // A modification time in whole seconds, which `utimes` can put back exactly.
+    const modified = Math.floor(Date.now() / 1000) - 60;
+    await utimes(path, modified, modified);
+    await awaitClockAfter(path);
+    await serviceLife(root, databasePath, { name: "before-rewrite", cwd: worktrees[0]! });
+    // The same size, with the times a copy that keeps them would leave: only the change time moves.
+    const before = await lstat(path);
+    await writeFile(path, "x = 9\n");
+    await utimes(path, modified, modified);
+    const after = await lstat(path);
+    expect([after.ino, after.size, after.mtimeMs]).toEqual([before.ino, before.size, before.mtimeMs]);
+    reads.clear();
+    const audits = vi.spyOn(CheckoutCodeRuleRouter.prototype, "auditGeneratedEdits");
+    let readByFirstWalk: number | undefined;
+    await serviceLife(root, databasePath, {
+      name: "after-rewrite", cwd: worktrees[0]!,
+      then: async bridge => {
+        readByFirstWalk = reads.get(path);
+        // Back to the text the last daemon read: a change from what this one read, which a kept digest would hide.
+        await bridge.begin("shell-1", "shell", { command: "./run.sh" });
+        await writeFile(path, "x = 1\n");
+        await bridge.finish("shell-1");
+        await bridge.checkpoint("turn");
+        await bridge.settleWorktreeWalk();
+      },
+    });
+    const logged = audits.mock.calls.filter(([, batch]) => batch.mode === "log").flatMap(([, batch]) => batch.edits.map(edit => [edit.path, edit.generatedText]));
+    expect({ readByFirstWalk, logged }).toEqual({ readByFirstWalk: 1, logged: [["../w2/src/x.py", "x = 1\n"]] });
   });
 });

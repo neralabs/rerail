@@ -1,7 +1,7 @@
 import { lstat, mkdir, unlink } from "node:fs/promises";
 import { createServer, request, type Server } from "node:http";
 import { connect } from "node:net";
-import { dirname, resolve as resolvePath } from "node:path";
+import { dirname, join, resolve as resolvePath } from "node:path";
 import { z } from "zod/v4";
 import type { AdapterDelivery, AdapterEvent } from "../engine/adapter-contract.js";
 import {
@@ -13,6 +13,8 @@ import {
 import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
 import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
+import { WALK_DIGESTS_FOLDER, WalkDigests } from "../engine/code-rule/walk-digests.js";
+import { contentStorePath } from "../engine/native/rerail-build.js";
 import { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
 
@@ -158,6 +160,20 @@ interface EngineRoutingState {
    * worktree for itself held every file of every worktree once per session.
    */
   worktreeWalks: RepositoryWorktreeWalks;
+  /**
+   * What the walks read, kept for the daemon that starts next, shared by every runtime: without it a started daemon read
+   * every file of every worktree again. Undefined when this build has no content store to keep them beside.
+   */
+  walkDigests: WalkDigests | undefined;
+}
+
+/** The kept reads beside the content store, which holds what the walks read; none for a build with no content store. */
+function defaultWalkDigests(): WalkDigests | undefined {
+  try {
+    return new WalkDigests(join(dirname(contentStorePath()), WALK_DIGESTS_FOLDER));
+  } catch {
+    return undefined;
+  }
 }
 
 interface RuntimeRoute {
@@ -227,7 +243,10 @@ async function routeEngineEvent(
     let runtime = state.runtimes.get(runtimeKey);
     if (runtime === undefined) {
       if (runtimeOptions === undefined) throw new Error(`Kernel runtime is unavailable for session ${sessionId}`);
-      runtime = new RerailRuntime({ ...runtimeOptions, autostart: false, startGate: true, worktreeWalks: state.worktreeWalks });
+      runtime = new RerailRuntime({
+        ...runtimeOptions, autostart: false, startGate: true, worktreeWalks: state.worktreeWalks,
+        ...(state.walkDigests === undefined ? {} : { walkDigests: state.walkDigests }),
+      });
       state.runtimes.set(runtimeKey, runtime);
     }
     if (event.kind === "session-start") {
@@ -309,6 +328,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     lanes: new SessionLanes(),
     pending: new Set(),
     worktreeWalks: options.worktreeWalks ?? new RepositoryWorktreeWalks(),
+    walkDigests: options.walkDigests ?? defaultWalkDigests(),
   };
   const server = createServer(async (incoming, response) => {
     response.setHeader("Content-Type", "application/json");
@@ -346,6 +366,8 @@ export async function startEngineService(options: EngineServiceOptions): Promise
       await closed.promise;
       await Promise.allSettled(routing.pending);
       await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
+      // After the walks stop: what they read since the last write is the next daemon's.
+      await routing.walkDigests?.close();
     },
   };
   server.requestTimeout = 30_000;

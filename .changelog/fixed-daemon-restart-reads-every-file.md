@@ -1,0 +1,1 @@
+After a restart, an update or a crash, Rerail's daemon no longer reads every file of every worktree again. It keeps the size, times and SHA-256 of each file it read in `~/.cache/rerail/walk-digests/`, and reads again only the files whose file id, size or change time moved since.
