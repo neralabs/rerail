@@ -1970,6 +1970,16 @@ pub fn live(conn: impl Scoped, name: &str) -> Result<Vec<Live>> {
     }).collect())
 }
 
+/// Per probe, the rows its factored steps passed over since it was last asked (`JoinRule::passed_over`).
+pub fn passed_over(conn: &Connection, name: &str) -> Result<Vec<u64>> {
+    let comp = component(conn, name)?;
+    let comp = comp.lock().unwrap();
+    Ok(comp.probes.iter().map(|p| match &p.body {
+        Body::Join(j) => j.passed_over.replace(0),
+        Body::Sql(_) => 0,
+    }).collect())
+}
+
 pub fn steps(conn: &Connection, name: &str) -> Result<String> {
     let comp = component(conn, name)?;
     let comp = comp.lock().unwrap();
@@ -4161,7 +4171,9 @@ pub enum Step {
 /// `forms`: per step, its count-table form's state (`table`).
 /// `spec`: the digest of the spec it was read from, which a level's batch keeps its pairs by (`level`).
 pub struct JoinRule { pub steps: Vec<Step>, pub out: Vec<Term>, pub nslots: usize, multi: Vec<(usize, Vec<usize>)>, pub counts: Vec<[std::cell::Cell<u64>; 2]>,
-                      pub fused: Vec<Option<Box<rowcode::Fused>>>, forms: Vec<table::StepForm>, spec: u64 }
+                      pub fused: Vec<Option<Box<rowcode::Fused>>>, forms: Vec<table::StepForm>, spec: u64,
+                      /// Rows passed over by a factored step (`factored`): counted in `counts` as joined, not walked.
+                      pub passed_over: std::cell::Cell<u64> }
 
 fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<JoinRule> {
     join_rule(conn, &JoinSpec::parse(spec).map_err(err)?, syms)
@@ -4374,7 +4386,7 @@ fn join_rule_with(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, index
     let counts = steps.iter().map(|_| Default::default()).collect();
     let fused = if env_set!("RERAIL_NO_ROW_PROGRAMS") { steps.iter().map(|_| None).collect() } else { rowcode::fuse(&steps) };
     let forms = (0..steps.len()).map(|_| table::StepForm::default()).collect();
-    Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts, fused, forms, spec: level::digest(spec) })
+    Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts, fused, forms, spec: level::digest(spec), passed_over: Default::default() })
 }
 
 /// Runs a join probe over the store; its new head tuples go to `fresh`. Returns the tuples it derived.
@@ -4464,8 +4476,13 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                      factor: Vec<Option<Factor>>,
                      /// The deepest step entered (`go`), so a factored step knows where its row's descent stopped.
                      deep: usize,
-                     /// Per such step, in its current probe, the values of those slots the rest of the body failed for.
-                     failed: Vec<rustc_hash::FxHashSet<[i64; FACTOR_MAX]>>,
+                     /// Per such step, in its current probe, the values of those slots the rest of the body failed for,
+                     /// each with what that failure added to the steps' counts from this step on (`counts[i..]`, in
+                     /// and out per step): a row passed over adds them again, so the counts are the join's rows, as
+                     /// the walk with no factoring (and the device) counts them; only the work is saved.
+                     failed: Vec<rustc_hash::FxHashMap<[i64; FACTOR_MAX], Box<[u64]>>>,
+                     /// The counts from a factored step on, before its row's descent (a stack: descents nest).
+                     snap: Vec<u64>,
                      /// Rows passed over by `failed`: read and tested, not joined on.
                      skipped: u64 }
     fn val(slots: &[i64], k: Key) -> i64 { match k { Key::Slot(s) => slots[s], Key::Const(c) => c } }
@@ -4674,12 +4691,22 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     if let Some(Factor { read, n, upto }) = factor {
                         let mut key = [0i64; FACTOR_MAX];
                         for (x, &s) in read[..n].iter().enumerate() { key[x] = slots[s]; }
-                        if cx.failed[i].contains(&key) { cx.skipped += 1; return false; }
+                        if let Some(added) = cx.failed[i].get(&key) {
+                            for (c, d) in j.counts[i..].iter().flatten().zip(added.iter()) { c.set(c.get() + d); }
+                            cx.skipped += 1;
+                            return false;
+                        }
                         let (made, deep) = (cx.n, cx.deep);
                         cx.deep = i;
+                        let at = cx.snap.len();
+                        cx.snap.extend(j.counts[i..].iter().flatten().map(std::cell::Cell::get));
                         go(cx, i + 1, slots);
                         // Stopped before `upto`: only `read` of this row's bindings was looked at.
-                        if cx.n == made && cx.deep < upto && cx.error.is_none() { cx.failed[i].insert(key); }
+                        if cx.n == made && cx.deep < upto && cx.error.is_none() {
+                            let added: Box<[u64]> = j.counts[i..].iter().flatten().zip(&cx.snap[at..]).map(|(c, b)| c.get() - b).collect();
+                            cx.failed[i].insert(key, added);
+                        }
+                        cx.snap.truncate(at);
                         cx.deep = cx.deep.max(deep);
                         return false;
                     }
@@ -4837,7 +4864,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     let factor = factored(j);
     let failed = factor.iter().map(|_| Default::default()).collect();
     let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(), scratch, collect, at0: 0, hints: vec![[0; runs::HINTS]; j.steps.len()],
-                       factor, failed, skipped: 0, deep: 0 };
+                       factor, failed, snap: Vec::new(), skipped: 0, deep: 0 };
     let mut slots = vec![0i64; j.nslots];
     for &(s, v) in preset { slots[s] = v; }
     match (each, paired, j.steps.first(), j.steps.get(1)) {
@@ -4879,7 +4906,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     }
     scalars::explain(&j.steps,store);
     // Each passed-over row was read and tested against a hash set, as a probe is.
-    if cx.skipped > 0 { charge(Unit::JoinRow, cx.skipped); }
+    if cx.skipped > 0 { charge(Unit::JoinRow, cx.skipped); j.passed_over.set(j.passed_over.get() + cx.skipped); }
     match cx.error {Some(e)=>Err(e),None=>Ok(cx.n)}
 }
 
