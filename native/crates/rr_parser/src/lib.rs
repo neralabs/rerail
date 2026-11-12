@@ -258,8 +258,9 @@ pub mod tests {
         // returns): the choice's level switches on its first token itself, as the lean parser's
         // function does, so more states and arms (371 and 3,068 before). Each rule keeps its own
         // code, as the lean parser's methods do (4,841 words when rules shared alike code), and
-        // a term's rest (`more`) is a call: fewer states and arms.
-        assert!(states <= 375 && arms <= 3064 && c.program.words.len() <= 5385, "{states} states, {arms} arms, {} words", c.program.words.len());
+        // a term's rest (`more`) is a call: fewer states and arms. A callee that begins with a
+        // mark or a merge is called too, at its start (375 states, 3,064 arms, 5,385 words before).
+        assert!(states <= 380 && arms <= 3076 && c.program.words.len() <= 5271, "{states} states, {arms} arms, {} words", c.program.words.len());
         let native = native_ir::lower(&c.program, 0, 0).expect("lowers");
         let cut = native_cpu_clusters::by_rules(&native);
         assert_eq!((cut.count as usize, cut.calls), (rules.len(), true), "a function a rule");
@@ -271,6 +272,13 @@ pub mod tests {
         // earlier one. A function is entered by calls alone, as the lean parser's methods are.
         use rerail_compiler::program::{GOTO, PUSH, split, word};
         let own_jump = |p: &rerail_compiler::program::Words, from: usize| (from..p.words.len()).find(|&pc| split(p.words[pc]).0 == GOTO && split(p.words[pc - 1]).0 != PUSH).expect("a rule's own jump");
+        // Every call enters its callee's function at its one entry, the rule's first place, as
+        // a lean parser's method is entered at its top: a flag the call runs with is its
+        // `PUSH`'s, a mark its caller's state keeps for it.
+        let firsts: std::collections::HashSet<u16> = rules.iter().copied().collect();
+        let w = &c.program.words;
+        let mid: Vec<usize> = (1..w.len()).filter(|&pc| split(w[pc - 1]).0 == PUSH && split(w[pc]).0 == GOTO && !firsts.contains(&split(w[pc]).2)).collect();
+        assert!(mid.is_empty(), "calls into the middle of a function: {mid:?}");
         for (from, into) in [(rules[1], rules[2]), (rules[2], rules[1] + 2)] {
             let mut bad = c.program.clone();
             let goto = own_jump(&bad, usize::from(from));

@@ -342,7 +342,7 @@ pub(crate) fn successors(native: &Structure, pushes: &[u16], pc: usize) -> Vec<u
 /// rule; `TOKEN` goes on to the next word.
 pub fn rule_successors(native: &Structure, pc: usize) -> Vec<usize> {
     match native.structural[pc].operation {
-        Op::Push { target } => vec![usize::from(target), usize::from(target) + 1],
+        Op::Push { target, .. } => vec![usize::from(target), usize::from(target) + 1],
         Op::Return { .. } => vec![],
         Op::Token { .. } => vec![pc + 1],
         _ => successors(native, &[], pc),
@@ -540,7 +540,7 @@ pub fn push_targets(native: &Structure) -> Vec<u16> {
         .structural
         .iter()
         .filter_map(|b| match b.operation {
-            Op::Push { target } => Some(target),
+            Op::Push { target, .. } => Some(target),
             _ => None,
         })
         .collect();
@@ -2915,7 +2915,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         f.ins().jump(fall, &[]);
                     }
                 }
-                Op::Mark { mask, order, end, word: mark_word } => {
+                Op::Mark { mask, order, end, keep, word: mark_word } => {
                     // The mark's bit at the token's start, if the mark is live: one load. At the
                     // stream's end, the mark is there when the end has it.
                     let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()).ok_or(Error::UnsupportedBackend)?;
@@ -2928,8 +2928,11 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         let taken = f.create_block();
                         f.ins().brif(lit, taken, &[], skip, &[]);
                         f.switch_to_block(taken);
-                        let rest = f.ins().band_imm(live, !((2i64 << order) - 1));
-                        mset(&mut f, Mem::Live, rest);
+                        // Kept: the callee its arm calls takes it.
+                        if !keep {
+                            let rest = f.ins().band_imm(live, !((2i64 << order) - 1));
+                            mset(&mut f, Mem::Live, rest);
+                        }
                         f.ins().jump(fall, &[]);
                         continue;
                     }
@@ -2967,10 +2970,13 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     let bit = f.ins().band_imm(bit, 1);
                     f.ins().brif(bit, taken, &[], skip, &[]);
                     f.switch_to_block(taken);
-                    // It and the marks before it are done at this token.
-                    let live = mget(&mut f, Mem::Live);
-                    let rest = f.ins().band_imm(live, !((2i64 << order) - 1));
-                    mset(&mut f, Mem::Live, rest);
+                    // It and the marks before it are done at this token; kept, the callee its arm
+                    // calls takes it.
+                    if !keep {
+                        let live = mget(&mut f, Mem::Live);
+                        let rest = f.ins().band_imm(live, !((2i64 << order) - 1));
+                        mset(&mut f, Mem::Live, rest);
+                    }
                     f.ins().jump(fall, &[]);
                 }
                 Op::Row { mask } => {
@@ -3259,7 +3265,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     mset(&mut f, Mem::Supers, supers);
                     f.ins().jump(fall, &[]);
                 }
-                Op::Push { target } if cut.calls => {
+                Op::Push { target, flag } if cut.calls => {
                     // A native call of the callee's function (`Cut::calls`): the calls open are
                     // counted (`ACCEPT` and `RETURN` check them), the held state stored for the
                     // callee and loaded again after, the level's word and flags kept in this
@@ -3278,6 +3284,14 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         mset(&mut f, Mem::Ret, ret);
                     }
                     let kept = (two_slots && !callee_keeps && changes_context[cut.of[callee(native, pc)] as usize]).then(|| (mget(&mut f, Mem::Word), mget(&mut f, Mem::Flags)));
+                    // The flag the call runs with, as a parameter: the caller's flags given back
+                    // after it (`let f = self.flags; ..; self.call(); self.flags = f`).
+                    let flag_back = flag.map(|(k, set)| {
+                        let fl = mget(&mut f, Mem::Flags);
+                        let changed = if set { f.ins().bor_imm(fl, 1i64 << k) } else { f.ins().band_imm(fl, !(1i64 << k)) };
+                        mset(&mut f, Mem::Flags, changed);
+                        fl
+                    });
                     for (k, v) in vars.iter().enumerate() {
                         if let Some(v) = v.filter(|_| !cut.pass.contains(&(k as u32))) {
                             let x = f.use_var(v);
@@ -3312,6 +3326,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     }
                     if let Some((w, fl)) = kept {
                         mset(&mut f, Mem::Word, w);
+                        mset(&mut f, Mem::Flags, fl);
+                    }
+                    if let Some(fl) = flag_back {
                         mset(&mut f, Mem::Flags, fl);
                     }
                     let (other, not_next) = (f.create_block(), f.create_block());
@@ -3381,7 +3398,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     let r = results(&mut f, v, false);
                     leave(&mut f, &r);
                 }
-                Op::Push { target } => {
+                Op::Push { target, flag } => {
                     let ret = mget(&mut f, Mem::Ret);
                     let t = f.ins().iconst(types::I64, i64::from(target));
                     // With context (`REMEMBER`, `FLAG`), two slots a call: its return, then the
@@ -3399,6 +3416,12 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     }
                     let ret = f.ins().iadd_imm(ret, 1);
                     mset(&mut f, Mem::Ret, ret);
+                    // The flag the call runs with: the caller's saved beside its return above.
+                    if let Some((k, set)) = flag {
+                        let fl = mget(&mut f, Mem::Flags);
+                        let changed = if set { f.ins().bor_imm(fl, 1i64 << k) } else { f.ins().band_imm(fl, !(1i64 << k)) };
+                        mset(&mut f, Mem::Flags, changed);
+                    }
                     f.ins().jump(fall, &[]);
                 }
                 Op::Return { again } => {
@@ -4210,7 +4233,7 @@ fn cold_op(op: &Op) -> bool {
 /// Whether the program has context beside each call's return (a level's word, its flags): two
 /// return slots a call.
 fn has_context(words: &[crate::native_ir::StructuralBlock]) -> bool {
-    words.iter().any(|b| matches!(b.operation, Op::Remember { .. } | Op::Flag { .. }))
+    words.iter().any(|b| matches!(b.operation, Op::Remember { .. } | Op::Flag { .. } | Op::Push { flag: Some(_), .. }))
 }
 
 /// Whether the program keeps a frame per open node: it wraps, or it relabels the node made last

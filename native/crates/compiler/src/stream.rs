@@ -47,8 +47,9 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         // name (`Words::word_kinds`).
         LEAF if operand == WORD_KIND => mode == 0 && !program.word_kinds.is_empty() && records.is_some_and(|r| r.words == program.strings),
         LEAF => mode <= 3 && operand != REMEMBERED,
-        // Mark `m % 32` (its order), its bit in mask `operand`; `m & 32`: the file's end has it.
-        MARK => mode < 64 && usize::from(operand) < masks,
+        // Mark `m % 32` (its order), its bit in mask `operand`; `m & 32`: the file's end has it;
+        // `m & 64`: kept, for the callee its arm calls, which takes it (`MARK_KEEP`).
+        MARK => mode < 128 && usize::from(operand) < masks,
         ROW => mode == 0 && usize::from(operand) < masks,
         // `m=1`: the node a wrap moved; `m=2`: the node made last at this level (`relabel`);
         // `m=3` (a field): the node that one, a wrap, holds first. `RETAG m=3`: that node and
@@ -63,7 +64,8 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         REMEMBER => mode == 0 && operand != 0 && operand != REMEMBERED,
         FLAG => mode <= 2 && operand < 16,
         CLOSE => mode <= 1 && operand == 0,
-        PUSH => mode == 0 && usize::from(operand) < words,
+        // `m`: the flag the call runs with (`push_flag`), of 16.
+        PUSH => mode <= 32 && usize::from(operand) < words,
         RETURN => mode <= 1 && operand == 0,
         // `m=1`: the token's end is its record's (operand 0).
         SPAN => (mode == 0 && operand != 0) || (mode == 1 && operand == 0),
@@ -444,8 +446,11 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     mask_bit(operand, start) && word_ok()
                 };
                 if live >> k & 1 == 1 && here {
-                    // Taken: it and the marks before it are done at this token.
-                    live &= !(u32::MAX >> (31 - k));
+                    // Taken: it and the marks before it are done at this token. Kept: its arm
+                    // calls the level that takes it.
+                    if mode & MARK_KEEP == 0 {
+                        live &= !(u32::MAX >> (31 - k));
+                    }
                 } else {
                     pc += 1;
                 }
@@ -644,7 +649,14 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             NODE_FIELD if mode == 1 => nodes[moved].field = operand,
             NODE_FIELD => nodes.last_mut().expect("a node before its field").field = operand,
             NODE_SUPER => nodes.last_mut().expect("a node before its supertype").supers.push(operand),
-            PUSH => returns.push((operand, word, flags)),
+            PUSH => {
+                returns.push((operand, word, flags));
+                match push_flag_of(mode) {
+                    Some((k, true)) => flags |= 1 << k,
+                    Some((k, false)) => flags &= !(1 << k),
+                    None => {}
+                }
+            }
             REMEMBER if operand == WORD_KIND => {
                 let w = crate::records::word_of(code).checked_sub(1);
                 match w.and_then(|w| program.word_kinds.binary_search_by_key(&(w as u16), |&(s, _)| s).ok()) {

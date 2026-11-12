@@ -1172,12 +1172,11 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
                     calls.push(q);
                     // A function a rule: a call takes no token. It opens the callee's node and
                     // goes to the callee's start, which switches on the token itself, an arm on
-                    // each token the callee may begin with. Entered at its first token instead
-                    // where the call's field or supertypes go to its first node (a nested
-                    // choice's, which opens none); where it may begin with a mark (the caller's
-                    // state would take the mark, and the callee's could not); and where its first
-                    // token merges into the leaf before (the extras before it are that leaf's
-                    // text: pending in the state that takes them, which must be the merge's).
+                    // each token the callee may begin with: a mark too (the caller's state keeps
+                    // it, `MARK_KEEP`, and the callee's takes it), and a token that merges into
+                    // the leaf before. Entered at its first token instead where the call's field
+                    // or supertypes go to its first node (a nested choice's, which opens none)
+                    // and cannot be set where it returns.
                     if let Some(marks) = by_rules {
                         let mut firsts = Vec::new();
                         arms_from(levels, positions, level_of_rule, child, None, Vec::new(), Pending::default(), Vec::new(), depth + 1, by_rules, returned, &mut firsts)?;
@@ -1196,8 +1195,7 @@ pub fn build_shaped(stmts: &[Stmt], ids: &Ids<'_>, by_rules: bool) -> Result<(Ve
                             && pending.supers.is_empty()
                             && one_node(levels, positions, level_of_rule, marks, child, &mut Vec::new());
                         let through = !field_after && !levels[child].own && (p.field != 0 || !p.supers.is_empty() || levels[child].supertype.is_some());
-                        let merges = firsts.iter().any(|f| f.1.iter().any(|a| matches!(a, Act::Merge { .. })));
-                        if !through && !merges && !firsts.iter().any(|f| marks.contains(&f.0)) {
+                        if !through {
                             if field_after {
                                 match returned.insert(q, p.field) {
                                     Some(f) if f != p.field => return Err(format!("a call returning to one place with fields {f} and {}", p.field)),
@@ -1451,6 +1449,16 @@ pub fn with_extras(
         }
     }
     }
+    // The states an arm of which merges into the leaf before, or calls one that does: the
+    // extras before its token are that leaf's text, pending in the caller's state too.
+    let mut merging: std::collections::HashSet<u16> = arms.iter().filter(|a| a.acts.iter().any(|x| matches!(x, Act::Merge { .. }))).map(|a| a.from).collect();
+    loop {
+        let more: Vec<u16> = arms.iter().filter(|a| a.call && merging.contains(&a.to) && !merging.contains(&a.from)).map(|a| a.from).collect();
+        if more.is_empty() {
+            break;
+        }
+        merging.extend(more);
+    }
     // Every other state, and the copies made on the way.
     let mut copies: HashMap<(u16, usize), u16> = HashMap::new();
     while usize::from(s) < states.len() {
@@ -1509,7 +1517,7 @@ pub fn with_extras(
         };
         let marked = mine.iter().any(|a| marks.contains(&a.token));
         // A merge joins the leaf before the extras: they must be pending, to be its text.
-        let merges = mine.iter().any(|a| a.acts.iter().any(|x| matches!(x, Act::Merge { .. })));
+        let merges = merging.contains(&s) || mine.iter().any(|a| a.acts.iter().any(|x| matches!(x, Act::Merge { .. })) || (a.call && merging.contains(&a.to)));
         let early = !merges && if marked { through(s).is_some_and(|w| w.iter().all(|&x| x == 0)) } else { ways.iter().all(|&w| w == ways[0]) };
         let m = if marked { 0 } else { ways[0] };
         if early {

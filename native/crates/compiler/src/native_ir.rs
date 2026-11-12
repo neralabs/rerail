@@ -131,7 +131,8 @@ pub enum StructuralOperation {
     /// Mark `order` (its bit in mask `mask` at the token's start; at the stream's end, `end`),
     /// if not yet taken nor passed: take it and run the next word; else skip that word.
     /// `word`: the string the token's record must name too (`Words::mark_words`).
-    Mark { mask: u16, order: u8, end: bool, word: Option<u16> },
+    /// `keep`: on the mark, its arm, the mark left for the callee the arm calls.
+    Mark { mask: u16, order: u8, end: bool, keep: bool, word: Option<u16> },
     /// The token starts at a bit of mask `mask`: run the next word; else skip it.
     Row { mask: u16 },
     /// A node becomes a `kind`: the innermost open node, or another (`On`).
@@ -149,7 +150,8 @@ pub enum StructuralOperation {
     /// A node's field: the last node's, or another's (`On`).
     NodeField { field: u16, on: On },
     NodeSuper { kind: u16 },
-    Push { target: u16 },
+    /// `flag`: the flag the call runs with, set or cleared (`push_flag`).
+    Push { target: u16, flag: Option<(u16, bool)> },
     /// The token just taken is its level's word, of `kind` (`REMEMBER`).
     Remember { kind: u16 },
     /// The level's flag `flag`: set, clear, or a test that runs the next word where it is set
@@ -212,7 +214,7 @@ impl StructuralOperation {
             Self::Close { this } => (CLOSE, u8::from(this), 0),
             Self::Leaf { kind, deferred, extra } => (LEAF, if extra { 2 } else { u8::from(deferred) }, kind),
             Self::Settle { kind } => (LEAF, 3, kind),
-            Self::Mark { mask, order, end, .. } => (MARK, order | if end { 32 } else { 0 }, mask),
+            Self::Mark { mask, order, end, keep, .. } => (MARK, order | if end { 32 } else { 0 } | if keep { MARK_KEEP } else { 0 }, mask),
             Self::Row { mask } => (ROW, 0, mask),
             Self::Retag { kind, on } => (RETAG, on as u8, kind),
             Self::Reread { reading } => (RETAG, 3, reading),
@@ -220,7 +222,7 @@ impl StructuralOperation {
             Self::Merge { kind, fold } => (MERGE, u8::from(fold), kind),
             Self::NodeField { field, on } => (NODE_FIELD, on as u8, field),
             Self::NodeSuper { kind } => (NODE_SUPER, 0, kind),
-            Self::Push { target } => (PUSH, 0, target),
+            Self::Push { target, flag } => (PUSH, flag.map_or(0, |(k, set)| push_flag(k, set)), target),
             Self::Remember { kind } => (REMEMBER, 0, kind),
             Self::Flag { flag, op } => (FLAG, op as u8, flag),
             Self::Return { again } => (RETURN, u8::from(again), 0),
@@ -448,7 +450,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             CLOSE => StructuralOperation::Close { this: mode != 0 },
             LEAF if mode == 3 => StructuralOperation::Settle { kind: operand },
             LEAF => StructuralOperation::Leaf { kind: operand, deferred: mode == 1, extra: mode == 2 },
-            MARK => StructuralOperation::Mark { mask: operand, order: mode % 32, end: mode & 32 != 0, word: program.mark_words.iter().find(|&&(k, _)| k == mode % 32).map(|&(_, s)| s) },
+            MARK => StructuralOperation::Mark { mask: operand, order: mode % 32, end: mode & 32 != 0, keep: mode & MARK_KEEP != 0, word: program.mark_words.iter().find(|&&(k, _)| k == mode % 32).map(|&(_, s)| s) },
             ROW => StructuralOperation::Row { mask: operand },
             RETAG if mode == 3 => StructuralOperation::Reread { reading: operand },
             RETAG => StructuralOperation::Retag { kind: operand, on: On::of(mode) },
@@ -456,7 +458,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             MERGE => StructuralOperation::Merge { kind: operand, fold: mode == 1 },
             NODE_FIELD => StructuralOperation::NodeField { field: operand, on: On::of(mode) },
             NODE_SUPER => StructuralOperation::NodeSuper { kind: operand },
-            PUSH => StructuralOperation::Push { target: operand },
+            PUSH => StructuralOperation::Push { target: operand, flag: push_flag_of(mode) },
             REMEMBER => StructuralOperation::Remember { kind: operand },
             FLAG => StructuralOperation::Flag {
                 flag: operand,

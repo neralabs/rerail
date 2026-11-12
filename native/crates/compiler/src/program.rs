@@ -50,6 +50,19 @@ pub const SPAN: u8 = 0x5c;
 pub const EMPTY: u8 = 0x5d;
 /// A mark (a token of no width) before the token: `m=k` its order, the operand its mask.
 pub const MARK: u8 = 0x5e;
+/// `MARK`'s mode bit: on the mark, its arm, the mark kept for the callee that arm calls.
+pub const MARK_KEEP: u8 = 64;
+
+/// A `PUSH`'s mode: the flag its call runs with (`flag`, set or cleared), as a parameter: the
+/// caller's flags saved first and given back where the call returns. 0: none.
+pub const fn push_flag(flag: u16, set: bool) -> u8 {
+    1 + ((flag as u8) << 1 | if set { 0 } else { 1 })
+}
+
+/// A `PUSH` mode's flag (`push_flag`): the flag and whether it is set.
+pub const fn push_flag_of(mode: u8) -> Option<(u16, bool)> {
+    if mode == 0 { None } else { Some((((mode - 1) >> 1) as u16, (mode - 1) & 1 == 0)) }
+}
 /// Runs the next word when the token starts at a bit of mask `operand`, else skips it: which of
 /// two rows beginning with one byte the token is.
 pub const ROW: u8 = 0x5f;
