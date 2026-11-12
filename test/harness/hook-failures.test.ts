@@ -93,6 +93,21 @@ describe("the hook failure log", () => {
     ]);
   });
 
+  it("reads past lines that hold no failure, and fills in the fields a failure's line lacks", async () => {
+    const rerailHome = await home();
+    writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), [
+      "",
+      '{"at":1000,"host":"codex","event":"Stop","reas',
+      '{"at":2000,"host":"codex","reason":"no event"}',
+      '{"startedAt":2500}',
+      '{"at":3000,"event":"Stop","reason":"no host, agent or version"}',
+      "",
+    ].join("\n"));
+    expect(readHookFailures(rerailHome, 0).failures).toEqual([
+      { at: 3_000, host: "unknown", event: "Stop", agent: null, rerail: "unknown", reason: "no host, agent or version" },
+    ]);
+  });
+
   it("moves a full log aside instead of growing without end", async () => {
     const rerailHome = await home();
     writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), `${"x".repeat(300 * 1024)}\n`);

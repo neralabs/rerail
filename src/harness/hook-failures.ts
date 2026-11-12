@@ -396,17 +396,29 @@ interface LogText {
 function parseLog(text: string): LogText {
   const log: LogText = { failures: [], startedAt: undefined };
   for (const line of text.split("\n")) {
-    if (line.trim() === "") continue;
-    try {
-      // Parsed from the log's own text; each field is checked before it is used.
-      const value = JSON.parse(line) as Partial<HookFailure & PartStart>;
-      if (typeof value.startedAt === "number") log.startedAt = Math.max(value.startedAt, log.startedAt ?? value.startedAt);
-      else if (typeof value.at === "number" && typeof value.event === "string" && typeof value.reason === "string") {
-        log.failures.push({ at: value.at, host: value.host ?? "unknown", event: value.event, agent: value.agent ?? null, rerail: value.rerail ?? "unknown", reason: value.reason });
-      }
-    } catch {
-      // A line cut short by a concurrent write.
-    }
+    const value = parseLine(line);
+    if (value === null) continue;
+    if ("startedAt" in value) log.startedAt = Math.max(value.startedAt, log.startedAt ?? value.startedAt);
+    else log.failures.push(value);
   }
   return log;
+}
+
+/** One line of a log file: a failure or a part's start; null when it is neither. */
+function parseLine(line: string): HookFailure | PartStart | null {
+  if (line.trim() === "") return null;
+  try {
+    // Parsed from the log's own text; each field is checked before it is used.
+    const value = JSON.parse(line) as Partial<HookFailure & PartStart>;
+    return typeof value.startedAt === "number" ? { startedAt: value.startedAt } : failureOf(value);
+  } catch {
+    // A line cut short by a concurrent write.
+    return null;
+  }
+}
+
+/** The failure a parsed line holds, with the optional fields it lacks filled in; null when it holds none. */
+function failureOf(value: Partial<HookFailure>): HookFailure | null {
+  if (typeof value.at !== "number" || typeof value.event !== "string" || typeof value.reason !== "string") return null;
+  return { at: value.at, host: value.host ?? "unknown", event: value.event, agent: value.agent ?? null, rerail: value.rerail ?? "unknown", reason: value.reason };
 }
