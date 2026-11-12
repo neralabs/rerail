@@ -429,8 +429,13 @@ failed, the coding agent and its version, the Rerail version and the reason, suc
 (it was busy, for example opening a large checkout; events are recorded again once it answers),
 `the Rerail daemon (pid …) refused the access capability in daemon.json` (`daemon.json` was edited or written by
 another daemon; run `rerail daemon stop`, then `rerail daemon start`) or a payload field the coding agent sent in a
-shape Rerail did not expect. The failures are kept in `hook-failures.jsonl` in the Rerail home. Update Rerail with
-`rerail update`; if the line stays, report it with `rerail support-bundle`.
+shape Rerail did not expect. The failures are kept in `hook-failures.jsonl` in the Rerail home; past 256 KB it moves
+to `hook-failures.jsonl.1`, replacing the one there. Update Rerail with `rerail update`; if the line stays, report it
+with `rerail support-bundle`.
+
+When events were recorded since the first failure, the line reads `Hooks: N hook events could not be recorded in the
+last 24 hours` instead. When more hooks failed in that time than the two files hold, it counts the failures they still
+hold and says from when: `since <time>, as far back as the log goes`.
 
 With `RERAIL_AUTOSTART=0` (or `false`) hooks start no daemon, and a hook that finds none logs nothing, since that is
 what you asked for. `rerail status` then says the daemon is not running and that `RERAIL_AUTOSTART=0` keeps hooks from

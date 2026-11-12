@@ -12,7 +12,7 @@ vi.mock("../../src/runtime/daemon-control.js", async () => {
   return { ...actual, autostartDaemon: () => { autostart.calls += 1; } };
 });
 
-import { HOOK_FAILURES_FILE, hookFailureLines, readHookFailures, recordHookFailure, type HookFailure } from "../../src/harness/hook-failures.js";
+import { HOOK_FAILURES_FILE, hookFailureLines, readHookFailures, recordHookFailure, type HookFailure, type HookFailureLog } from "../../src/harness/hook-failures.js";
 import { DaemonUnreachableError, runHostHook } from "../../src/harness/hook-host.js";
 import { listenAsEngine } from "../support/platform/engine-endpoint.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -34,21 +34,31 @@ const failure = (at: number, event = "MessageDisplay"): HookFailure => ({
   at, host: "claude-code", event, agent: "claude-code_2-1-311_harness", rerail: "0.1.3", reason: "Claude hook omitted index",
 });
 
+/** A log that reaches back over the whole period. */
+const whole = (...failures: HookFailure[]): HookFailureLog => ({ failures, keptSince: null });
+
 describe("what rerail status says of hook failures", () => {
   it("says hooks run but nothing was recorded when every failure is newer than the last recorded event", () => {
-    expect(hookFailureLines([failure(2_000), failure(3_000)], 1_000)).toEqual([
+    expect(hookFailureLines(whole(failure(2_000), failure(3_000)), 1_000)).toEqual([
       "Hooks run but nothing was recorded since 1970-01-01T00:00:02.000Z: 2 hook events failed; the last, MessageDisplay from "
         + "claude-code_2-1-311_harness with Rerail 0.1.3 at 1970-01-01T00:00:03.000Z: Claude hook omitted index.",
     ]);
-    expect(hookFailureLines([failure(2_000)], null)[0]).toMatch(/^Hooks run but nothing was recorded since /u);
+    expect(hookFailureLines(whole(failure(2_000)), null)[0]).toMatch(/^Hooks run but nothing was recorded since /u);
   });
 
   it("names the failures without that lead when events were recorded after some of them, and says nothing without any", () => {
-    expect(hookFailureLines([failure(2_000), failure(4_000, "Stop")], 3_000)).toEqual([
+    expect(hookFailureLines(whole(failure(2_000), failure(4_000, "Stop")), 3_000)).toEqual([
       "Hooks: 2 hook events could not be recorded in the last 24 hours; the last, Stop from claude-code_2-1-311_harness "
         + "with Rerail 0.1.3 at 1970-01-01T00:00:04.000Z: Claude hook omitted index.",
     ]);
-    expect(hookFailureLines([], 3_000)).toEqual([]);
+    expect(hookFailureLines(whole(), 3_000)).toEqual([]);
+  });
+
+  it("says since when it counts when the log no longer holds the failures before that", () => {
+    expect(hookFailureLines({ failures: [failure(2_000), failure(4_000, "Stop")], keptSince: 2_000 }, 3_000)).toEqual([
+      "Hooks: 2 hook events could not be recorded since 1970-01-01T00:00:02.000Z, as far back as the log goes; the last, Stop "
+        + "from claude-code_2-1-311_harness with Rerail 0.1.3 at 1970-01-01T00:00:04.000Z: Claude hook omitted index.",
+    ]);
   });
 });
 
@@ -57,7 +67,7 @@ describe("the hook failure log", () => {
     const rerailHome = await home();
     recordHookFailure({ host: "claude-code", event: "Stop", reason: "old" }, { home: rerailHome, now: 1_000, env: {} });
     recordHookFailure({ host: "claude-code", event: "MessageDisplay", reason: "new" }, { home: rerailHome, now: 5_000, env: { AI_AGENT: "claude-code_2-1-311_harness" } });
-    expect(readHookFailures(rerailHome, 2_000)).toEqual([
+    expect(readHookFailures(rerailHome, 2_000).failures).toEqual([
       expect.objectContaining({ at: 5_000, host: "claude-code", event: "MessageDisplay", agent: "claude-code_2-1-311_harness", reason: "new" }),
     ]);
   });
@@ -67,7 +77,38 @@ describe("the hook failure log", () => {
     writeFileSync(join(rerailHome, HOOK_FAILURES_FILE), `${"x".repeat(300 * 1024)}\n`);
     recordHookFailure({ host: "claude-code", event: "Stop", reason: "after" }, { home: rerailHome, now: 1, env: {} });
     expect(readFileSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`), "utf8").length).toBeGreaterThan(300 * 1024);
-    expect(readHookFailures(rerailHome, 0).map(entry => entry.reason)).toEqual(["after"]);
+    expect(readHookFailures(rerailHome, 0).failures.map(entry => entry.reason)).toEqual(["after"]);
+  });
+
+  // A failure of about 100 KB: the log passes its size every third one, and the next moves it aside.
+  const recordLarge = (rerailHome: string, at: number): void => {
+    recordHookFailure({ host: "claude-code", event: "PostToolUse", reason: `${"x".repeat(100 * 1024)} ${at}` }, { home: rerailHome, now: at, env: {} });
+  };
+  const recordLast = (rerailHome: string, at: number): void => {
+    recordHookFailure({ host: "claude-code", event: "PostToolUse", reason: "the daemon did not answer" }, { home: rerailHome, now: at, env: {} });
+  };
+  const statusSays = (rerailHome: string, since: number, lastRecordedAt: number): string[] =>
+    hookFailureLines(readHookFailures(rerailHome, since), lastRecordedAt);
+
+  it("counts the failures it moved aside with the newest ones, over the whole period when those reach back that far", async () => {
+    const rerailHome = await home();
+    // 1 s is older than the period; the fourth failure moves the first three aside.
+    for (const at of [1_000, 5_000, 6_000]) recordLarge(rerailHome, at);
+    recordLast(rerailHome, 7_000);
+    expect(existsSync(join(rerailHome, `${HOOK_FAILURES_FILE}.1`))).toBe(true);
+    expect(statusSays(rerailHome, 2_000, 5_500)).toEqual([expect.stringMatching(
+      /^Hooks: 3 hook events could not be recorded in the last 24 hours; the last, PostToolUse from claude-code with Rerail \S+ at 1970-01-01T00:00:07\.000Z: the daemon did not answer\.$/u,
+    )]);
+  });
+
+  it("says since when it counts once the failures before those it keeps are gone", async () => {
+    const rerailHome = await home();
+    // The log moves aside at the 4th, 7th and 10th failure; the 1st to 6th are gone.
+    for (let second = 1; second <= 9; second += 1) recordLarge(rerailHome, second * 1_000);
+    recordLast(rerailHome, 10_000);
+    expect(statusSays(rerailHome, 0, 8_500)).toEqual([expect.stringMatching(
+      /^Hooks: 4 hook events could not be recorded since 1970-01-01T00:00:07\.000Z, as far back as the log goes; the last, PostToolUse .* at 1970-01-01T00:00:10\.000Z: the daemon did not answer\.$/u,
+    )]);
   });
 });
 
@@ -82,7 +123,7 @@ describe("a hook that cannot record its event", () => {
     expect(await runHostHook("claude-code", rerailHome, "s", false, { storageRoot: join(rerailHome, "sessions") }, handle, "PostToolUse")).toEqual({});
     expect(handle).not.toHaveBeenCalled();
     expect(autostart.calls).toBe(1);
-    expect(readHookFailures(rerailHome, 0)).toEqual([
+    expect(readHookFailures(rerailHome, 0).failures).toEqual([
       expect.objectContaining({ host: "claude-code", event: "PostToolUse", reason: "no Rerail daemon answered, so this event was not recorded" }),
     ]);
   });
@@ -118,7 +159,7 @@ describe("a hook that cannot record its event", () => {
       expect(handle).not.toHaveBeenCalled();
       // A start finds the same daemon and refuses to replace it: the background start would cost a process and do nothing.
       expect(autostart.calls).toBe(0);
-      expect(readHookFailures(rerailHome, 0)).toEqual([expect.objectContaining({
+      expect(readHookFailures(rerailHome, 0).failures).toEqual([expect.objectContaining({
         event: "PreToolUse", reason: `the Rerail daemon (pid ${process.pid}) ${reason}, so this event was not recorded`,
       })]);
     } finally {
@@ -152,6 +193,6 @@ describe("a hook that cannot record its event", () => {
     const options = { storageRoot: join(rerailHome, "sessions"), databasePath: join(rerailHome, "rerail.sqlite"), embedder: { fingerprint: () => ({ modelId: "t", revision: "1", dimensions: 2, weightsSha256: "t", tokenizerSha256: "t", kernelFormatVersion: 1 }), embed: async (texts: readonly string[]) => texts.map(() => new Float32Array([1, 0])) } };
     await expect(runHostHook("claude-code", rerailHome, "s", false, options, async () => { throw new Error("Claude hook omitted index"); }, "MessageDisplay"))
       .rejects.toThrow("Claude hook omitted index");
-    expect(readHookFailures(rerailHome, 0)).toEqual([expect.objectContaining({ event: "MessageDisplay", reason: "Claude hook omitted index" })]);
+    expect(readHookFailures(rerailHome, 0).failures).toEqual([expect.objectContaining({ event: "MessageDisplay", reason: "Claude hook omitted index" })]);
   });
 });

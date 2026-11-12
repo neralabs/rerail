@@ -340,9 +340,9 @@ function hookHealthLines(home: string): string[] {
   const registration = missing.length === 0 ? [] : [
     `Claude Code's Rerail hooks run ${missing.join(", ")}, which ${missing.length === 1 ? "is" : "are"} missing, so every hook fails before Rerail runs and nothing is recorded. Run rerail install --refresh.`,
   ];
-  const failures = readHookFailures(home, Date.now() - HOOK_FAILURE_WINDOW_MS);
-  const recorded = failures.length === 0 ? null : lastObservedEventAt(join(home, RERAIL_DATABASE_FILE));
-  return [...registration, ...hookFailureLines(failures, recorded)];
+  const log = readHookFailures(home, Date.now() - HOOK_FAILURE_WINDOW_MS);
+  const recorded = log.failures.length === 0 ? null : lastObservedEventAt(join(home, RERAIL_DATABASE_FILE));
+  return [...registration, ...hookFailureLines(log, recorded)];
 }
 
 /** What `rerail status` says of the daemon, and the exit code that goes with it. */
