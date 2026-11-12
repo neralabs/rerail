@@ -3729,3 +3729,83 @@ relations, not the observer: the module digests match.
 It passes with `RERAIL_TAPE_CACHE` pointing at an empty store. Next step: find
 whether the first or the second run is wrong (compare both with a run on an
 empty store), then fix the rule or the maintenance that loses the edge.
+
+## The big rocks of O125's cold run and edit step (found 2026-11-12)
+
+**Seen.** O125's replay has 74 Python files and 33,311 lines. The figures are CPU from span trees, summed over
+threads, in a debug build under RERAIL_SQL_STRICT, at bcf99d12d (the integration hub merged in). The cold run is
+22.9 s of CPU. Step 01 edits one file and changes no rows (over-deleted, inserted, held, truly deleted and truly
+inserted are all 0), yet it costs 12.4 s. Both are more than ten times what the work should cost. The cost is in
+whole kinds of work, not in a few hot functions:
+
+```text
+step 01 (no rows changed)                     cold run
+  planning               4.65 s  37%            join evaluation        9.90 s  43%
+  components set up      2.65 s  21%            per-file memo, export  ~4.4 s  19%
+  join evaluation        0.80 s   6.5%          planning               1.75 s   7.6%
+  773 of 829 strata run; 7,398 rule runs,       13.0 M units of join work in 2,802 rule
+  2,688 with no work                            runs; 411 seeds copy base relations
+```
+
+Each rock below is an item. They are closed in order: first a version of each that is not tuning the
+optimizer, then one optimized build, to measure what the debug build hides (`O-debug-build-gap`).
+
+## O-warm-noop-delta. An edit that changes no rows runs the whole maintenance program (W1)
+
+**Seen.** At step 01, 100 inputs report a delta, but no row changes. No stratum is quiet, so 773 of 829 strata run.
+
+**Closure:** an input's plus and minus net each other out before a stratum is reached. A delta that nets to
+nothing makes the stratum quiet (decision 0101 §1), and so on downstream. A step that changes no rows costs
+its parse and the netting.
+
+## O-warm-replan. Every rule is planned again at every step (W2)
+
+**Seen.** Step 01 makes 12,730 plan searches and 12,888 explain records, 4.65 s of its 12.4 s. The rule for
+keeping a plan exists (`stats::plans`: a plan stays valid while every statistic it read stays in its bucket), but
+the session's strata do not use it.
+
+**Closure:** a stratum's plans are kept from step to step and are planned again only when a statistic they read
+leaves its bucket. Explain records are made only when asked for. A step's planning is in proportion to the plans
+that changed.
+
+## O-component-overhead. Each component is specified, opened and closed each step (W3)
+
+**Seen.** About 1,880 components a step: spec text, indexes, joins, survivors, close. That is 2.65 s at step 01
+and 0.85 s cold, for a program of 680 rules.
+
+**Closure:** a component's spec and compiled joins are kept with its kept relations and reused while its plan
+is (O-warm-replan). Only what a component does with its delta is paid each step.
+
+## O-join-unit-cost. A unit of join work costs 520-830 ns (C1)
+
+**Seen.** In the cold run, 13.0 M units of work take 9.9 s: 518 ns a unit for seed rules and 833 ns for joins.
+That is debug code, but it is interpreted step by step for each row, through closures and dynamic sources.
+
+**Closure:** the cost of a unit is measured by kind (seed scan, probe, emit, dedup). The interpretive overhead
+is cut (rows read by column, probes in batches) until a unit costs tens of ns in an optimized build
+(O-debug-build-gap).
+
+## O-base-seed-copies. Seed rules copy base relations into derived ones (C2)
+
+**Seen.** 411 seed runs start from a base relation (`node`, `child`, `kind`, `docof`, `field`, …), for example
+`kind($n,$k) :- node(_,$n,$k,_,_)` at 500 K rows. They are 4.7 M of the 13.0 M units of work and 2.8 s. A
+projection of a syntax table is copied into a derived relation and indexed, when it could be read in place.
+
+**Closure:** a rule that is a projection or filter of one base relation is a view over it (decision 0090 step
+3), not a derived relation; its readers probe the base relation's own index.
+
+## O-local-memo-cost. The per-file memo and export cost about half the join work (C3)
+
+**Seen.** In the cold run: keeping each file's entry 2.19 s, totals 0.64 s, base rows for the memo 0.54 s,
+holding the export 0.32 s, attributing to files 0.30 s, the export itself 0.43 s.
+
+**Closure:** each part is measured against the rows it writes. What is written twice (the entry and the export,
+the totals beside the rows) is written once.
+
+## O-debug-build-gap. How much of the gap is the debug build (C4)
+
+**Seen.** Debug-only checks are 16-18% of samples, and iterator-heavy loops run many times slower without
+optimisation. No optimized build has been measured. That is deliberate: they are not built for timing.
+
+**Closure:** once the rocks above have a first version, one optimized build is measured on O125, cold and step
+01, beside the debug one. That gives the ratio, and the targets are set against the optimized figures.
