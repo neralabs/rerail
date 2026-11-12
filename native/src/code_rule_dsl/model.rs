@@ -654,6 +654,15 @@ pub(super) struct CompiledCodeRule {
     pub(super) capabilities: Capabilities,
 }
 
+impl Drop for CompiledCodeRule {
+    /// The clauses hold the rule's regexes (`regexes`): they let go of them first, so the sweep
+    /// drops the ones nothing else holds and they go with the rule.
+    fn drop(&mut self) {
+        drop(std::mem::take(&mut self.clauses));
+        super::regexes::sweep();
+    }
+}
+
 impl CompiledCodeRule {
     /// Whether any clause reads `file.package.serverGraph` (`Query::reads_server_graph`).
     pub(super) fn reads_server_graph(&self) -> bool {

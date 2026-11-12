@@ -6,11 +6,15 @@
 //! Every term, value test and anchor plan of every rule holds its pattern's one `Arc<Regex>`: a
 //! regex is immutable, and its pool gives each thread that matches with it a cache of its own.
 //!
-//! The table keeps each regex until a `sweep` finds nothing else holding it. `compile_document`
-//! sweeps as it ends, so a regex its validation compiled is the one its terms take, and what no
-//! compiled rule holds goes then. A sweep each time the table doubles, as `calls::names` sweeps
-//! names, would drop regexes a document validated before its terms take them, since one document
-//! can bring hundreds of new patterns.
+//! The table keeps each regex until a `sweep` finds nothing else holding it. A compilation sweeps
+//! as it ends (`CodeRuleDslRuntime::compile`), so a regex its validation compiled is the one its
+//! terms take, and the ones only validation took, or a rejected document's, go then. A compiled
+//! rule sweeps as it drops (`CompiledCodeRule`), so its regexes go with it, as they did when each
+//! term built its own, and a process that drops its last rule holds none. A rule dropped on
+//! another thread while a document compiles can sweep a regex that document validated before its
+//! terms take it; they compile it again. A sweep each time the table doubles, as `calls::names`
+//! sweeps names, would drop regexes a document validated before its terms take them, since one
+//! document can bring hundreds of new patterns.
 
 use parking_lot::RwLock;
 use regex::Regex;

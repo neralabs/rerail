@@ -88,8 +88,11 @@ impl CodeRuleDslRuntime {
         let canonical_value = canonicalize_value(document);
         let canonical = serde_json::to_string(&canonical_value).map_err(json_error)?;
         let digest = format!("sha256:{}", hex_digest(canonical.as_bytes()));
-        let (id, rule_mode, scope, clauses, required) =
-            compile_document(&canonical_value, &capabilities)?;
+        let compiled = compile_document(&canonical_value, &capabilities);
+        // The clauses hold their regexes: the ones only validation took, or a rejected
+        // document's, go now (`regexes`).
+        regexes::sweep();
+        let (id, rule_mode, scope, clauses, required) = compiled?;
         Ok(CompiledCodeRuleDsl {
             inner: Arc::new(CompiledCodeRule {
                 id,
