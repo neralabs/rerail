@@ -22,6 +22,7 @@ import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../..
 import type { IgnoreRulesChange } from "../../../src/engine/code-rule/ignore-rule-files.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
 import { holdRemovals } from "../../support/platform/held-removal.js";
+import { symlinkOrSkip } from "../../support/platform/links.js";
 import { removeFolder, runningIn } from "../../support/platform/remove-folder.js";
 
 const discovery = vi.hoisted(() => ({
@@ -987,6 +988,37 @@ describe("CodeRuleBridge", () => {
     await bridge.finish("call-1");
 
     expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([]);
+  });
+
+  // Windows, which has no O_NOFOLLOW, followed every symlink here, and macOS and Linux none: an edit through a link to a
+  // file of its own checkout is that file's edit, so it is checked on every system, while a link to a secret, to Git's
+  // folder or out of the checkout is still never read.
+  it("checks an edit through a symlink to a file of its own checkout, and never reads one to a secret, .git or outside", async context => {
+    const root = await workspace();
+    const outside = await workspace();
+    await writeFile(join(root, "src", "a.py"), "before\n");
+    await writeFile(join(root, ".env"), "TOKEN=sk-live-0123456789\n");
+    git(root, "init", "--quiet");
+    git(root, "remote", "add", "origin", "https://user:secret@example.com/r.git");
+    await writeFile(join(outside, "src", "b.py"), "outside\n");
+    symlinkOrSkip(context, "a.py", join(root, "src", "link.py"));
+    symlinkOrSkip(context, join("..", ".env"), join(root, "src", "env.py"));
+    symlinkOrSkip(context, join("..", ".git", "config"), join(root, "src", "config.py"));
+    symlinkOrSkip(context, join(outside, "src", "b.py"), join(root, "src", "out.py"));
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, auditor(auditGeneratedEdits));
+    await bridge.openWorkspace("session-1");
+
+    const paths = ["src/link.py", "src/env.py", "src/config.py", "src/out.py"];
+    await expect(bridge.begin("call-1", "write", { path: paths })).resolves.toEqual({ "src/link.py": { text: "before\n" } });
+    await writeFile(join(root, "src", "a.py"), "after\n");
+    await writeFile(join(root, ".env"), "TOKEN=sk-live-9876543210\n");
+    await writeFile(join(outside, "src", "b.py"), "changed outside\n");
+    await bridge.finish("call-1");
+
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits)).toEqual([
+      { path: "src/link.py", language: "python", previousText: "before\n", generatedText: "after\n" },
+    ]);
   });
 });
 

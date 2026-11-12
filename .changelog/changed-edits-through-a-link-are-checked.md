@@ -1,0 +1,1 @@
+An agent's edit through a symbolic link is checked on every system when the link leads to a file in the same checkout that is not named like a secret. macOS and Linux skipped such edits; Windows read through any link, one to `.env` included, and now reads no link to a secret, to `.git` or outside the checkout.

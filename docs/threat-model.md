@@ -208,8 +208,8 @@ controls bind only an agent that reaches Rerail through MCP (see T1).
 
 ### B3: Repository content to the engine
 
-Repository content is hostile input. Rules are data, parsing is budgeted, reads never follow symlinks, and Git runs
-without hooks or network.
+Repository content is hostile input. Rules are data, parsing is budgeted, reads follow a symlink only to a file of
+the same checkout that is not secret-like, and Git runs without hooks or network.
 
 <details>
 <summary>Controls</summary>
@@ -223,7 +223,10 @@ without hooks or network.
   Value decoding is depth-limited.
 - **Symlinks when reading.** An open that refuses a symlink (`src/engine/no-follow.ts`: `O_NOFOLLOW`, or on Windows,
   which has none, an `lstat` before the open and a `dev`/`ino` match after), then a `realpath` containment check, then
-  a `dev`/`ino` recheck. Directory walks skip symlinks. `#writeSource` (rewind) writes a new file under a random name
+  a `dev`/`ino` recheck. A source a tool edited through a symlink is read from the link's target only when that target
+  lies in the checkout that owns the link, outside its `.git`, and is not named like a file holding secrets
+  (`sensitiveByName`); the target is opened the same way, and the checks after the open hold for it. Any other link
+  is not read. Directory walks skip symlinks. `#writeSource` (rewind) writes a new file under a random name
   with `O_CREAT|O_EXCL`, which refuses any name that exists (`src/engine/code-rule/code-rule-bridge.ts`).
 - **Git** (`src/engine/git.ts`):
   - Runs the first `git` on `PATH` that is a regular file it may execute, resolved to an absolute path by Rerail (so

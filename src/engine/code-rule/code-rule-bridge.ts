@@ -334,6 +334,15 @@ function previousOf(preimage: Preimage | undefined): Pick<CodeRuleEdit, "previou
   if (preimage.withheld !== undefined) return { previousReadError: "Rerail keeps no copy of a file holding secrets" };
   return { ...(preimage.text === undefined ? {} : { previousText: preimage.text }), ...(preimage.readError === undefined ? {} : { previousReadError: preimage.readError }) };
 }
+/**
+ * Whether a source may be read through a symlink that leads to `path`, the target's path from the checkout that owns
+ * the link: one outside Git's own folder and not named like a file holding secrets (`sensitiveByName`), so a link to
+ * `.env` or `.git/config` is never read as the source it stands in for.
+ */
+function readableLinkTarget(path: string): boolean {
+  const posix = path.split(sep).join("/");
+  return !posix.split("/").includes(".git") && !sensitiveByName(posix);
+}
 /** `absolute` opened without following a final symlink; undefined when it is one. */
 async function openSource(absolute: string): Promise<FileHandle | undefined> {
   try {
@@ -2062,13 +2071,14 @@ export class CodeRuleBridge {
   }
 
   /**
-   * Reads the file through one descriptor opened without following a final symlink. Its real path must stay inside
-   * the checkout that owns it (the session folder for an auditor that judges one folder), and still name the file
-   * that was opened, so a folder swapped for a symlink mid-read cannot bring outside bytes in. A file the auditor
-   * finds no owner for is not read, and an unlisted path that is no regular file, or a binary one, is no source.
+   * Reads the file through one descriptor opened without following a final symlink, or for a symlink, the file it
+   * leads to when that is safe to read (`#linkedSource`). Its real path must stay inside the checkout that owns it (the
+   * session folder for an auditor that judges one folder), and still name the file that was opened, so a folder or
+   * link swapped mid-read cannot bring outside bytes in. A file the auditor finds no owner for is not read, and an
+   * unlisted path that is no regular file, or a binary one, is no source.
    */
   async #readLocatedSource(root: string, location: SourceLocation): Promise<Source | undefined> {
-    const handle = await openSource(location.absolute);
+    const handle = await this.#openLocatedSource(root, location);
     if (handle === undefined) return undefined;
     try {
       const info = await handle.stat();
@@ -2077,6 +2087,26 @@ export class CodeRuleBridge {
     } finally {
       await handle.close();
     }
+  }
+
+  /** The file at `location` opened without following a final symlink, else the file its symlink leads to (`#linkedSource`). */
+  async #openLocatedSource(root: string, location: SourceLocation): Promise<FileHandle | undefined> {
+    const handle = await openSource(location.absolute);
+    if (handle !== undefined) return handle;
+    const target = await this.#linkedSource(root, location);
+    return target === undefined ? undefined : await openSource(target);
+  }
+
+  /**
+   * Where the symlink at `location` leads, when a source may be read through it: a file in the checkout that owns the
+   * link, which an agent's edit through the link changes as if it were the link's own, and no secret
+   * (`readableLinkTarget`). Undefined for any other link, and for one that leads nowhere.
+   */
+  async #linkedSource(root: string, location: SourceLocation): Promise<string | undefined> {
+    const owner = this.#owningCheckout(root, location.path);
+    if (owner === undefined) return undefined;
+    const target = await realpath(location.absolute).catch(() => undefined);
+    return target !== undefined && withinFolder(owner, target) && readableLinkTarget(relative(owner, target)) ? target : undefined;
   }
 
   /** Whether the file's real path stays inside the checkout that owns it and still names the file that was opened. */

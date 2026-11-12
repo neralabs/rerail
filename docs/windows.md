@@ -244,7 +244,10 @@ Rerail never makes a symlink on Windows, and opens its own files without followi
   where the OS has it. Where it has none they read the name with `lstat` before the open, refuse a link with `ELOOP`,
   and check that the opened file is the one `lstat` saw (device and file id), so a link swapped in between is refused
   too. Session record files, source reads, the repository identity file and the `daemon.log` that `rerail scrub`
-  rewrites open this way. The rewind's temporary file needs neither: it is a new random name opened with
+  rewrites open this way. A source read that meets a link then reads the file the link leads to, when that file lies
+  in the checkout that owns the link, outside its `.git`, and is not named like one holding secrets, opening it the
+  same way; an agent's edit through such a link is checked on every system, and a link to `.env` is read on none. The
+  rewind's temporary file needs neither: it is a new random name opened with
   `O_CREAT | O_EXCL`, which refuses any name that exists, a link included. The `no-follow` row of
   `npm run check:owned-builtins` fails on a read of `O_NOFOLLOW` anywhere in `src/` but `no-follow.ts`.
 
