@@ -1104,6 +1104,23 @@ describe("Claude Code commands", () => {
     await expect(lstat(skills)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  // PowerShell ends a literal at any of five quote characters, so Codex's and Cursor's hooks on Windows write each one
+  // twice; the reader that finds Rerail's hooks reads each of the five back.
+  it.each(["'", "\u2018", "\u2019", "\u201A", "\u201B"])("knows Codex's and Cursor's Windows hooks as Rerail's when the install's path holds %s", async quote => {
+    const install = await fixture();
+    const { home, root } = install;
+    const quoted = await packageInstall(install, `o${quote}neil`);
+    const windows = { home, nodePath: String.raw`C:\Program Files\nodejs\node.exe`, platform: "win32" as const, harnesses: ["codex", "cursor"] as const };
+    const hooks = [join(home, ".codex", "hooks.json"), join(home, ".cursor", "hooks.json")];
+    await registerHarnesses({ ...windows, root: quoted });
+    for (const path of hooks) expect(await readFile(path, "utf8")).toContain(`o${quote}${quote}neil`);
+    const again = (await registerHarnesses({ ...windows, root: quoted })).changes;
+    expect([change(again, "codex", "hooks.json").action, change(again, "cursor", "hooks.json").action]).toEqual(["unchanged", "unchanged"]);
+    // Another install's hooks are Rerail's: replaced, not kept beside the new ones.
+    await registerHarnesses({ ...windows, root });
+    for (const path of hooks) expect(await readFile(path, "utf8")).not.toContain("neil");
+  });
+
   it("writes Claude Code's Windows status line for Git Bash, with its node fallback and `%` as it is", async () => {
     const { home, root } = await fixture();
     const nodePath = String.raw`C:\Users\a%b\node.exe`;
