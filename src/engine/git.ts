@@ -1,6 +1,6 @@
 import { execFile, spawn, spawnSync } from "node:child_process";
-import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { accessSync, constants, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { dirname, join, posix, resolve, win32 } from "node:path";
 import { fileStamp } from "./file-stamp.js";
@@ -290,11 +290,14 @@ function errorCode(error: unknown): string {
 /**
  * A file's text, `!ENOENT` where there is none or `!EISDIR` where a folder stands, as one part of a {@link HeadKey}.
  * Undefined when the file could not be read for another reason (on Windows, another program holding it while Git
- * replaces it), which says nothing of what Git reads there.
+ * replaces it), which says nothing of what Git reads there. Read by one call that closes the file before it returns:
+ * Git for Windows cannot rename its lock file over a file another process has open, and an asynchronous read keeps the
+ * file open across event loop turns for as long as the loop runs other work, which failed an agent's `git commit` or
+ * `git switch` while a walk read the branch's file or `HEAD`.
  */
-async function fileText(path: string): Promise<string | undefined> {
+function fileText(path: string): string | undefined {
   try {
-    return await readFile(path, "utf8");
+    return readFileSync(path, "utf8");
   } catch (error) {
     const code = errorCode(error);
     return code === "ENOENT" || code === "EISDIR" ? `!${code}` : undefined;
@@ -306,7 +309,7 @@ async function fileText(path: string): Promise<string | undefined> {
  * for a reason other than its absence. Git writes packed-refs as a new file each time, so a rewrite changes its inode;
  * but a new file can take an inode freed by an earlier rewrite, and within one tick of the file clock it then keeps
  * every part of the stamp. A stamp taken `settleMs` after the file's last change can only be repeated by a write that
- * carries a later time.
+ * carries a later time. `stat` opens and closes the file within one request, never across a turn.
  */
 async function packedRefsStamp(path: string, settleMs: number): Promise<{ readonly stamp: string; readonly settled: boolean } | undefined> {
   try {
@@ -352,13 +355,13 @@ async function headLayout(cwd: string, dotGit: string): Promise<HeadLayout | und
  * file that could not be read.
  */
 async function headKey(layout: Extract<HeadLayout, { kind: "kept" }>, settleMs: number): Promise<HeadKey | undefined> {
-  const head = await fileText(join(layout.gitDir, "HEAD"));
+  const head = fileText(join(layout.gitDir, "HEAD"));
   if (head === undefined || head.startsWith("!")) return undefined;
   // Detached: `HEAD` holds the commit itself.
   if (!head.startsWith("ref:")) return { key: head, settled: true };
   const branch = head.slice("ref:".length).trim();
   if (!branch.startsWith("refs/heads/") || branch === "refs/heads/.invalid" || branch.split("/").includes("..")) return undefined;
-  const loose = await fileText(join(layout.commonDir, ...branch.split("/")));
+  const loose = fileText(join(layout.commonDir, ...branch.split("/")));
   if (loose === undefined || loose.startsWith("ref:")) return undefined;
   if (!loose.startsWith("!")) return { key: `${head}\0${loose}`, settled: true };
   // No loose ref, or a folder in its place: Git reads the branch from packed-refs.
@@ -374,14 +377,16 @@ async function headKey(layout: Extract<HeadLayout, { kind: "kept" }>, settleMs: 
  * next time. The first read of a folder with a `.git` entry, and the first after that entry changes, also asks Git where
  * the folder keeps `HEAD` (one more Git process). Where Git would read other files (a folder below the top of its
  * checkout, a branch naming another ref, a reftable repository), where packed-refs is newer than `settleMs`, and where
- * Git named no commit, every read asks Git: this can cost more, never answer differently from Git.
+ * Git named no commit, every read asks Git: this can cost more, never answer differently from Git. Every file is read by
+ * one call that closes it before returning ({@link fileText}) or stamped by one `stat`, so no file Git replaces stays
+ * open across an await.
  */
 export function gitHeadReader(options: { readonly settleMs?: number } = {}): (cwd: string) => Promise<string | undefined> {
   const settleMs = options.settleMs ?? PACKED_REFS_SETTLE_MS;
   const layouts = new Map<string, HeadLayout>();
   const held = new Map<string, { readonly key: string; readonly head: string }>();
   const layoutOf = async (cwd: string): Promise<HeadLayout | undefined> => {
-    const dotGit = await fileText(join(cwd, ".git"));
+    const dotGit = fileText(join(cwd, ".git"));
     const known = layouts.get(cwd);
     if (known !== undefined && known.dotGit === dotGit) return known;
     layouts.delete(cwd);

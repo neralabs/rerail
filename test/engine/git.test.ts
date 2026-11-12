@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import type * as ChildProcess from "node:child_process";
-import type * as FileSystem from "node:fs/promises";
+import { copyFileSync, renameSync, rmSync } from "node:fs";
+import type * as FileSystem from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -23,18 +24,18 @@ vi.mock("node:child_process", async importOriginal => {
 });
 /** How many more reads of each path fail as a file another program holds fails on Windows (`EBUSY`). */
 const heldFiles = vi.hoisted(() => new Map<string, number>());
-vi.mock("node:fs/promises", async importOriginal => {
+vi.mock("node:fs", async importOriginal => {
   const actual = await importOriginal<typeof FileSystem>();
-  const readFile = async (...args: Parameters<typeof actual.readFile>) => {
+  const readFileSync = (...args: Parameters<typeof actual.readFileSync>) => {
     const path = String(args[0]);
     const held = heldFiles.get(path) ?? 0;
     if (held > 0) {
       heldFiles.set(path, held - 1);
       throw Object.assign(new Error(`EBUSY: resource busy or locked, open '${path}'`), { code: "EBUSY" });
     }
-    return await actual.readFile(...args);
+    return actual.readFileSync(...args);
   };
-  return { ...actual, readFile };
+  return { ...actual, readFileSync };
 });
 
 const roots: string[] = [];
@@ -537,7 +538,50 @@ describe("gitHeadReader", () => {
     expect(await processes(read, root)).toBe(1);
     expect(await processes(read, root)).toBe(1);
   });
+
+  it("holds no file Git replaces open across a turn of the event loop", async () => {
+    // Git replaces HEAD, a branch's ref and config by renaming its lock file over them, which Windows refuses while
+    // another process has the file open: a read that held one across the turns of a busy event loop failed an agent's
+    // `git commit` and `git switch`.
+    const root = await repository({ "a.py": "1\n" });
+    const branch = git(root, "symbolic-ref", "HEAD").trim();
+    const files = [join(root, ".git", "HEAD"), join(root, ".git", ...branch.split("/")), join(root, ".git", "config")];
+    const read = gitHeadReader();
+    await read(root);
+    const refused: string[] = [];
+    for (let round = 0; round < 10 && refused.length === 0; round += 1) {
+      let reading = true;
+      const done = read(root).finally(() => { reading = false; });
+      while (reading) {
+        refused.push(...files.filter(file => !replacedByRename(file)));
+        await new Promise(resolve => setImmediate(resolve));
+      }
+      await done;
+    }
+    expect(refused).toEqual([]);
+  }, 30_000);
 });
+
+/**
+ * Whether a lock file renamed over `file`, as Git replaces it, succeeds within 50 ms of tries that never yield: another
+ * program's brief hold (a virus scanner's) passes, and a hold of this process's own event loop does not.
+ */
+function replacedByRename(file: string): boolean {
+  const lock = `${file}.lock`;
+  copyFileSync(file, lock);
+  const until = performance.now() + 50;
+  for (;;) {
+    try {
+      renameSync(lock, file);
+      return true;
+    } catch {
+      if (performance.now() >= until) {
+        rmSync(lock, { force: true });
+        return false;
+      }
+    }
+  }
+}
 
 describe("gitCandidates", () => {
   const disk = (files: readonly string[], links: Record<string, string> = {}) => ({
