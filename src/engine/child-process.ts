@@ -28,7 +28,8 @@ export const WINDOWLESS_CONSOLE = "RERAIL_WINDOWLESS_CONSOLE";
 
 /**
  * Whether this process has a console. Windows opens `CONOUT$`, the screen buffer of the process's console, only in a
- * process that has one; in one started with DETACHED_PROCESS the open fails with EBADF.
+ * process that has one; in one started with DETACHED_PROCESS the open fails with EBADF. Any other failure counts as no
+ * console too, which keeps `windowsHide`: at worst a console host per child, never a window.
  */
 export function hasConsole(): boolean {
   try {
@@ -105,13 +106,20 @@ export function assertProgramPath(args: readonly unknown[], platform: NodeJS.Pla
 
 type Starter = "spawn" | "spawnSync" | "execFile" | "execFileSync";
 
+/**
+ * `args`, a child_process call's arguments, as every starter here passes them on: with `windowsHide` set for this
+ * process ({@link withHiddenWindow}, {@link childrenShareConsole}). Throws first when {@link assertProgramPath} refuses
+ * the program.
+ */
+function startArguments(args: readonly unknown[]): unknown[] {
+  assertProgramPath(args);
+  return withHiddenWindow(args, !childrenShareConsole());
+}
+
 /** `name` of node:child_process, read at each call so a test's module mock is the one called. */
 function hidden<Name extends Starter>(name: Name): (typeof childProcess)[Name] {
   // Reflect.apply returns any; the cast restores the overloads of the function it calls.
-  return ((...args: unknown[]) => {
-    assertProgramPath(args);
-    return Reflect.apply(childProcess[name], undefined, withHiddenWindow(args, !childrenShareConsole()));
-  }) as (typeof childProcess)[Name];
+  return ((...args: unknown[]) => Reflect.apply(childProcess[name], undefined, startArguments(args))) as (typeof childProcess)[Name];
 }
 
 export const spawn = hidden("spawn");
@@ -128,8 +136,7 @@ export const execFile: typeof childProcess.execFile = Object.assign(hidden("exec
       if (error === null) resolve({ stdout, stderr });
       else reject(Object.assign(error, { stdout, stderr }));
     };
-    assertProgramPath(args);
-    Reflect.apply(childProcess.execFile, undefined, [...withHiddenWindow(args, !childrenShareConsole()), settle]);
+    Reflect.apply(childProcess.execFile, undefined, [...startArguments(args), settle]);
   }),
 });
 
