@@ -8048,6 +8048,17 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
                         base_strata.push(j);
                         continue;
                     }
+                    // A native operator's stratum (the reach index, decision 0119) has no maintained form: it is made again
+                    // from its reads as they are now, as the base program makes it, and its readers derive again.
+                    if scc.iter().any(|r| prog.natives.contains_key(r)) {
+                        need.extend(reads.iter().filter(|r| !scc.contains(*r)).cloned());
+                        base_strata.push(j);
+                        for r in scc {
+                            m.no_delta(r);
+                            moved_rels.insert(r.clone());
+                        }
+                        continue;
+                    }
                     need.extend(reads.iter().cloned());
                     need.extend(scc.iter().cloned());
                     reached_strata.push((j, rules, moved));
