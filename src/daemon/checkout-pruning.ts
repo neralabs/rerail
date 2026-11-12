@@ -8,7 +8,7 @@ import { pruneCheckouts } from "../engine/catalog/repository-registry.js";
 import { openRerailDatabase } from "../engine/storage/database.js";
 
 /** How often a running daemon forgets gone checkouts, so a removed worktree stays recorded at most this long. */
-export const CHECKOUT_PRUNING_INTERVAL_MS = 60 * 60 * 1000;
+const CHECKOUT_PRUNING_INTERVAL_MS = 60 * 60 * 1000;
 
 export interface CheckoutPruning {
   /**
