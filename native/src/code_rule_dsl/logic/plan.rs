@@ -5883,7 +5883,7 @@ pub(in crate::code_rule_dsl) struct Hooks<'a> {
 }
 
 /// What an earlier run of a program kept of its strata, and what this run gives back (decision 0077 §4).
-pub(in crate::code_rule_dsl) trait KeptStrata {
+pub trait KeptStrata {
     /// Each relation of the program the run evaluates, by its identity (`identities`): what was kept of a relation
     /// is of the relation of that identity.
     fn program(&mut self, identities: &HashMap<String, [u8; 32]>);

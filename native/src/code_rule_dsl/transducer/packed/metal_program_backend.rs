@@ -600,7 +600,7 @@ pub(super) fn compile_resident_interpreter_cached() -> Result<Engine, Error> {
     Ok(engine)
 }
 
-pub(in crate::code_rule_dsl) fn compile_interpreter() -> Result<Engine, Error> {
+pub fn compile_interpreter() -> Result<Engine, Error> {
     Ok(Engine::Interpreter {
         pipeline: pipeline_named(
             &kernel_source(
@@ -739,7 +739,7 @@ pub(super) fn execute_packed(
     execute_packed_with_result_limits(engine, programs, files, anchors, None)
 }
 
-pub(in crate::code_rule_dsl) fn execute_packed_with_result_limits(
+pub fn execute_packed_with_result_limits(
     engine: &Engine,
     programs: &[Program],
     files: &[TapeDoc],

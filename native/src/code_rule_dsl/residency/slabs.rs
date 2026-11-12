@@ -19,7 +19,7 @@ use std::sync::{Arc, Condvar, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 /// A resident document's parts that are the engine's types: its code table and its image.
-pub(in crate::code_rule_dsl) trait ResidentParts {
+pub trait ResidentParts {
     fn resident(&self) -> &Resident;
 
     /// The fixed-width code table (`DeviceCode`), as the device reads it.
