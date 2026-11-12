@@ -66,6 +66,27 @@ describe("CheckoutOwners", () => {
     expect(owners.ownerOf(join(worktree, "README.md"))).toBeUndefined();
   });
 
+  it("lets a worktree go once Git refuses its repository's configuration, at the next change in the recorded checkouts", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
+    cleanups.push(() => rm(root, { recursive: true, force: true }));
+    const main = await repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "--detach", join(root, "w"), "HEAD");
+    const worktree = await realpath(join(root, "w"));
+    const catalogs = new CheckoutCatalogs(join(root, "rerail.sqlite"));
+    cleanups.push(async () => catalogs.close());
+    recordCheckout(catalogs.database, main);
+    const owners = new CheckoutOwners(() => catalogs.recordedCheckoutsVersion());
+    expect(owners.ownerOf(join(worktree, "README.md"))).toEqual({ checkoutRoot: worktree, path: "README.md" });
+
+    // A repository format this Git does not read: Git refuses the main checkout and its worktree alike, though every
+    // file of the worktree's Git folder is still in place.
+    git(main, "config", "core.repositoryformatversion", "99");
+    expect(() => execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: worktree, stdio: "pipe" })).toThrow();
+    recordCheckout(catalogs.database, await repository(join(root, "other")));
+
+    expect(owners.ownerOf(join(worktree, "README.md"))).toBeUndefined();
+  });
+
   it("lets a worktree go once Git's folder for it is left empty, at the next change in the recorded checkouts", async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
     cleanups.push(() => rm(root, { recursive: true, force: true }));

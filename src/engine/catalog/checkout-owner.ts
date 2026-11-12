@@ -4,6 +4,7 @@
  * checkout judges the file with its own rules, or leaves it to the checkout around it, is the router's decision.
  */
 import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { physicalPath } from "./checkout-control.js";
 import { runGit } from "../git.js";
@@ -26,21 +27,44 @@ function holdsGitEntry(directory: string): boolean {
   }
 }
 
+/** Git's confirmation that a folder is a checkout's top level, with what Git read to give it (`gitBasis`). */
+interface Confirmation {
+  readonly root: string;
+  readonly basis: string;
+}
+
 /**
- * Whether `directory`'s `.git` entry still leads to a Git directory: it is one, or it is a file whose `gitdir:` line names
- * one, as Git reads it (relative to `directory`). A linked worktree whose entry under the main checkout's
- * `.git/worktrees` was removed or emptied keeps its `.git` file, and Git no longer takes the folder for a checkout; nor
- * does it take a folder whose `.git` folder was emptied, and it looks further up instead.
+ * What Git reads to take `directory` for a checkout's top level, as one string to compare later: the Git directory its
+ * `.git` entry leads to (the entry itself, or the folder a `.git` file's `gitdir:` line names, relative to `directory`),
+ * the common directory, the owner of the folder, the entry and the Git directory (Git refuses a folder another user
+ * owns), and the repository's configuration files, which hold its format version, extensions and `core.worktree`.
+ * Undefined when Git would not take the folder, as for a linked worktree whose entry under the main checkout's
+ * `.git/worktrees` was removed or emptied, or a folder whose `.git` folder was emptied (`isGitDirectory`).
  */
-function leadsToGitDirectory(directory: string): boolean {
+function gitBasis(directory: string): string | undefined {
   const entry = join(directory, ".git");
   try {
-    if (statSync(entry).isDirectory()) return isGitDirectory(entry);
-    const line = readFileSync(entry, "utf8").split("\n", 1)[0]!.trimEnd();
-    return line.startsWith("gitdir: ") && isGitDirectory(resolve(directory, line.slice("gitdir: ".length)));
+    const gitDirectory = statSync(entry).isDirectory() ? entry : gitDirectoryNamedBy(directory, entry);
+    if (gitDirectory === undefined) return undefined;
+    const common = commonDirectoryOf(gitDirectory);
+    if (!isGitDirectory(gitDirectory, common)) return undefined;
+    const owners = [directory, entry, gitDirectory].map(path => statSync(path).uid);
+    return [gitDirectory, common, ...owners, changeStamp(join(common, "config")), changeStamp(join(gitDirectory, "config.worktree"))].join("\0");
   } catch {
-    return false;
+    return undefined;
   }
+}
+
+/** The Git directory a `.git` file names on its `gitdir:` line, relative to the folder that holds it. */
+function gitDirectoryNamedBy(directory: string, entry: string): string | undefined {
+  const line = readFileSync(entry, "utf8").split("\n", 1)[0]!.trimEnd();
+  return line.startsWith("gitdir: ") ? resolve(directory, line.slice("gitdir: ".length)) : undefined;
+}
+
+/** The folder a Git directory's `commondir` file names, relative to it, else the Git directory itself. */
+function commonDirectoryOf(gitDirectory: string): string {
+  const commondir = join(gitDirectory, "commondir");
+  return existsSync(commondir) ? resolve(gitDirectory, readFileSync(commondir, "utf8").replace(/[\r\n]+$/u, "")) : gitDirectory;
 }
 
 /** A HEAD Git accepts (`validate_headref`): a symbolic ref under `refs/`, or an object name. */
@@ -48,14 +72,42 @@ const GIT_HEAD = /^(?:ref:\s*refs\/|[0-9a-f]{40})/iu;
 
 /**
  * Whether `folder` is a Git directory by the test Git applies before it takes a folder for one (`is_git_directory` in
- * Git's setup.c): its HEAD names a ref or an object, and its common directory (the folder its `commondir` file names,
- * relative to it, else itself) holds `objects` and `refs`. Throws when HEAD cannot be read.
+ * Git's setup.c): its HEAD names a ref or an object, and its common directory holds `objects` and `refs`. Throws when
+ * HEAD cannot be read.
  */
-function isGitDirectory(folder: string): boolean {
-  if (!GIT_HEAD.test(readFileSync(join(folder, "HEAD"), "utf8"))) return false;
-  const commondir = join(folder, "commondir");
-  const common = existsSync(commondir) ? resolve(folder, readFileSync(commondir, "utf8").replace(/[\r\n]+$/u, "")) : folder;
-  return existsSync(join(common, "objects")) && existsSync(join(common, "refs"));
+function isGitDirectory(folder: string, common: string): boolean {
+  return GIT_HEAD.test(readFileSync(join(folder, "HEAD"), "utf8")) && existsSync(join(common, "objects")) && existsSync(join(common, "refs"));
+}
+
+/** `path`'s modified time and size, or `-` when it does not exist: changes whenever the file is written. */
+function changeStamp(path: string): string {
+  try {
+    const info = statSync(path);
+    return `${info.mtimeMs}:${info.size}`;
+  } catch {
+    return "-";
+  }
+}
+
+/**
+ * The change stamps of the user's Git configuration files, where `safe.directory` (which other users' folders Git
+ * takes) is set: `GIT_CONFIG_GLOBAL` when set, else `~/.gitconfig` and the XDG `git/config`.
+ */
+function userGitConfigStamp(): string {
+  const home = process.env.HOME ?? homedir();
+  const files = process.env.GIT_CONFIG_GLOBAL === undefined
+    ? [join(home, ".gitconfig"), join(process.env.XDG_CONFIG_HOME ?? join(home, ".config"), "git", "config")]
+    : [process.env.GIT_CONFIG_GLOBAL];
+  return files.map(changeStamp).join("\0");
+}
+
+/** Git's confirmation of `directory` as a checkout's top level, or undefined when Git does not take it for one. */
+function gitConfirmation(directory: string): Confirmation | undefined {
+  // Read before Git is asked: a change between the two then makes the next check ask Git again.
+  const basis = gitBasis(directory) ?? "";
+  const location = repositoryIdentityLocation(directory);
+  const top = location.git ? physicalPath(location.workspaceRoot) : undefined;
+  return top !== undefined && top === physicalPath(directory) ? { root: top, basis } : undefined;
 }
 
 function within(root: string, candidate: string): boolean {
@@ -74,8 +126,10 @@ export class CheckoutOwners {
   #version: string | undefined;
   /** Lexical folder → physical root of the checkout that owns it (undefined: no Git checkout above it). */
   readonly #roots = new Map<string, string | undefined>();
-  /** Lexical folder → its physical root when it holds `.git` and Git confirms it as a top level. */
-  readonly #confirmed = new Map<string, string | undefined>();
+  /** Lexical folder → Git's confirmation of it as a top level when it holds `.git` (undefined: Git does not confirm it). */
+  readonly #confirmed = new Map<string, Confirmation | undefined>();
+  /** `userGitConfigStamp` at the last check of the confirmations. */
+  #userConfig: string | undefined;
   /** Physical checkout root → whether the checkout around it declares it as a submodule (a gitlink). */
   readonly #submodules = new Map<string, boolean>();
   /** Recorded checkouts outside Git (identity under `.rerail`), physical. */
@@ -149,10 +203,10 @@ export class CheckoutOwners {
 
   /**
    * Forget the cached answers when the recorded checkouts changed since the last lookup, but for each folder Git
-   * confirmed as a top level whose `.git` entry still leads to a Git directory: that is Git's answer, which no record
-   * changes, and asking it again costs a Git process per checkout the session knows each time any checkout is recorded or
-   * forgotten. Checking the entry costs a few reads and stats per folder kept, still no Git process: the entry, a `.git`
-   * file's Git directory, its HEAD and `commondir`, and the common directory's `objects` and `refs`.
+   * confirmed as a top level while what Git read to confirm it reads the same (`gitBasis`, and the user's Git
+   * configuration): that is Git's answer, which no record changes, and asking it again costs a Git process per checkout
+   * the session knows each time any checkout is recorded or forgotten. The check costs a few reads and stats per folder
+   * kept, still no Git process, and any change asks Git again.
    */
   #revalidate(): void {
     if (this.#recordedVersion === undefined) return;
@@ -160,8 +214,17 @@ export class CheckoutOwners {
     if (version === this.#version) return;
     this.#version = version;
     this.#roots.clear();
-    for (const [directory, root] of this.#confirmed) if (root === undefined || !leadsToGitDirectory(directory)) this.#confirmed.delete(directory);
     this.#submodules.clear();
+    this.#forgetChangedConfirmations();
+  }
+
+  #forgetChangedConfirmations(): void {
+    const userConfig = userGitConfigStamp();
+    if (userConfig !== this.#userConfig) this.#confirmed.clear();
+    this.#userConfig = userConfig;
+    for (const [directory, confirmed] of this.#confirmed) {
+      if (confirmed === undefined || gitBasis(directory) !== confirmed.basis) this.#confirmed.delete(directory);
+    }
   }
 
   #plainRoot(real: string): string | undefined {
@@ -193,14 +256,9 @@ export class CheckoutOwners {
   }
 
   #confirm(directory: string): string | undefined {
-    if (this.#confirmed.has(directory)) return this.#confirmed.get(directory);
-    let root: string | undefined;
-    if (holdsGitEntry(directory)) {
-      const location = repositoryIdentityLocation(directory);
-      const top = location.git ? physicalPath(location.workspaceRoot) : undefined;
-      if (top !== undefined && top === physicalPath(directory)) root = top;
-    }
-    this.#confirmed.set(directory, root);
-    return root;
+    if (this.#confirmed.has(directory)) return this.#confirmed.get(directory)?.root;
+    const confirmation = holdsGitEntry(directory) ? gitConfirmation(directory) : undefined;
+    this.#confirmed.set(directory, confirmation);
+    return confirmation?.root;
   }
 }
