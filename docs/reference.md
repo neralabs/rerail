@@ -763,7 +763,7 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 A draft is `{ kind, rule, folder?, cases: { caught: [...], passed: [...] } }`. `rerail rules test --help` prints the format; [Writing rules](writing-rules.md#testing-a-draft) explains each field.
 
 - `rerail rules show <rule id> [--repo <dir>]` prints a rule as a draft: one of yours, or a By Rerail rule as this repository runs it (the option values and mode the repository's settings give it, not a checkout's). A note on stderr, so stdout saves as a draft file, says where saving changes it: your rule here and in which other repositories, or that it is not added here; for a By Rerail rule, your copy, the copy this repository already has, or that the rule is not added or is off here (a copy would run on).
-- `rerail rules test` validates a draft, runs its cases and a repository pass, and writes nothing.
+- `rerail rules test` validates a draft, runs its cases and a repository pass over the folders `rules add` would add the rule at, and writes nothing.
 - `rerail rules add` stores the draft in your library and adds it, on, to this repository (or the draft's `folder`). A draft that keeps a By Rerail rule's id is stored as your copy (`<id>-copy`), added where the original is in this repository; approving the copy turns the original off there ([copy on edit](rule-scoping.md#coding-agents)).
 - The rule runs in Log until `rerail rules approve [<rule id | package> …] [--repo <dir>]` approves it as it is now ([approval](rule-scoping.md#approval)).
 

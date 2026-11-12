@@ -250,6 +250,7 @@ describe("rerail rules test", () => {
 
     expect(exit).toBe(0);
     expect(report.repository).toEqual({
+      folders: [""],
       matches: [
         { path: "src/a.ts", line: 2, column: 3, text: "console.log(a);" },
         { path: "src/a.ts", line: 3, column: 1, text: "console.log(a);" },
@@ -259,6 +260,37 @@ describe("rerail rules test", () => {
       binary: 0,
       leftOut: 0,
     });
+  });
+
+  it("counts only where rules add would have the rule run: the draft's folder, and the folders it is added at already", async () => {
+    const repo = await repository({
+      "web/src/a.ts": "console.log('web');\n",
+      "web2/src/b.ts": "console.log('web2');\n",
+      "lib/c.ts": "console.log('lib');\n",
+      "d.ts": "console.log('root');\n",
+    });
+    setUpEmpty(repo);
+    const rule = { ...noConsolePolicy(), id: "no-console-in-folders", scope: { include: ["**/*.ts"], exclude: [] } };
+    const tested = async (draft: object) => {
+      const { report, stdout } = await testReportText(writeDraft(repo, { kind: "code", rule, ...draft }), repo);
+      return { folders: report.repository?.folders, paths: report.repository?.matches.map(match => match.path), stdout };
+    };
+
+    // Not added yet: a draft that names no folder is added to the whole repository, and one that names a folder there.
+    expect(await tested({})).toMatchObject({ folders: [""], paths: ["d.ts", "lib/c.ts", "web/src/a.ts", "web2/src/b.ts"] });
+    const nested = await tested({ folder: "web/src" });
+    expect(nested).toMatchObject({ folders: ["web/src"], paths: ["web/src/a.ts"] });
+    expect(nested.stdout).toContain("  Repo: 1 place matches under web/src/, where the rule runs.\n    web/src/a.ts:1:1  console.log('web');");
+
+    // Added at web: it stays there when the draft names no folder, and a folder the draft names is one more.
+    expect((await run("add", [writeDraft(repo, { kind: "code", rule, folder: "web" }), "--repo", repo])).exit).toBe(0);
+    expect(await tested({})).toMatchObject({ folders: ["web"], paths: ["web/src/a.ts"] });
+    const both = await tested({ folder: "lib" });
+    expect(both).toMatchObject({ folders: ["lib", "web"], paths: ["lib/c.ts", "web/src/a.ts"] });
+    expect(both.stdout).toContain("  Repo: 2 places match under lib/, web/, where the rule runs.\n");
+    const whole = await tested({ folder: "" });
+    expect(whole).toMatchObject({ folders: [""], paths: ["d.ts", "lib/c.ts", "web/src/a.ts", "web2/src/b.ts"] });
+    expect(whole.stdout).toContain("  Repo: 4 places match.\n");
   });
 
   it("lists every match in the JSON report, and the first five in the text one", async () => {
@@ -336,6 +368,7 @@ describe("rerail rules test", () => {
       { label: ".gitattributes", caught: false, ok: true },
     ]);
     expect(report.repository).toEqual({
+      folders: [""],
       matches: [
         { path: "Cargo.lock", line: 1, column: 3, text: "# TODO" },
         { path: "Justfile", line: 2, column: 7, text: "echo TODO" },
@@ -773,6 +806,42 @@ describe("rerail rules add", () => {
         { id: SHIPPED, kind: "pack", folder: "api", on: true },
         { id: `${SHIPPED}-copy`, kind: "library_rule", folder: "api", on: true },
       ]);
+    });
+
+    /** A Python function over the complexity pack's limit: one place its Python rule matches, at line 1. */
+    const BRANCHY = `def branchy(n):\n${Array.from({ length: 7 }, (_, i) => `    if n == ${i}:\n        return ${i}\n`).join("")}    return -1\n`;
+
+    // No copy is made here: the test above shows rules add putting it where this pass looks.
+    it("is tested where the original is added, so rules test counts the places the copy would catch, and records nothing", async () => {
+      const repo = await repository({ "api/core.py": BRANCHY, "api/legacy/old.py": BRANCHY, "api2/near.py": BRANCHY, "other/outside.py": BRANCHY });
+      setUpWithComplexity(repo, "api");
+      const { draft } = await show(repo, SHIPPED);
+      const shipped = draft.rule.scope as { include: string[]; exclude: string[] };
+      const scope = { ...shipped, exclude: [...shipped.exclude, "**/legacy/**"] };
+      const file = writeDraft(repo, { ...draft, rule: { ...draft.rule, scope } });
+      const before = stableJsonText(rulesOf(repo));
+
+      const { exit, report, stdout } = await testReportText(file, repo);
+
+      expect(exit).toBe(0);
+      expect(report.repository).toMatchObject({ folders: ["api"], matches: [{ path: "api/core.py", line: 1 }] });
+      expect(stdout).toContain("  Repo: 1 place matches under api/, where the rule runs.\n    api/core.py:1:");
+      expect(stableJsonText(rulesOf(repo))).toBe(before);
+    });
+
+    it("is tested across the whole repository where the original is added to all of it, and where it is not added", async () => {
+      const files = { "api/core.py": BRANCHY, "other/outside.py": BRANCHY };
+      const everywhere = await repository(files);
+      setUpWithComplexity(everywhere);
+      const nowhere = await repository(files);
+      setUpEmpty(nowhere);
+
+      for (const repo of [everywhere, nowhere]) {
+        const { report, stdout } = await testReportText(writeDraft(repo, (await show(repo, SHIPPED)).draft), repo);
+
+        expect(report.repository).toMatchObject({ folders: [""], matches: [{ path: "api/core.py" }, { path: "other/outside.py" }] });
+        expect(stdout).toContain("  Repo: 2 places match.\n");
+      }
     });
 
     it("keeps the copy where the original is when it is changed again, from rules show of the copy", async () => {

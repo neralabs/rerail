@@ -141,7 +141,7 @@ A draft is the rule plus the cases it must catch and pass; test it before adding
 [Writing path and text rules](path-and-text-rules.md#text-in-files) has complete drafts to start from.
 
 ```sh
-rerail rules test draft.json            # validate, run the cases, list the matches across the repo; writes nothing
+rerail rules test draft.json            # validate, run the cases, list the matches in the repo; writes nothing
 rerail rules test draft.json --json     # the same, listing every match and every file the rule could not check
 rerail rules add draft.json             # store it in your library and add it, on, to this repo
 rerail rules approve <id>               # after reading it: it steers instead of running in Log
@@ -154,6 +154,11 @@ rerail rules show <id> > draft.json     # one rule as a draft, a By Rerail one t
 
 The text report shows the first five matches and the count; `--json` lists all. Path and `file` matches name the file
 with no line. Binary files in scope are counted; no rule reads them.
+
+The repo pass looks only where the added rule would run, so the count is what it would catch: the draft's `folder`,
+the folders a rule is already added at, or, for your copy of a By Rerail rule, the folders the original is added at.
+A new rule that names no `folder` is checked across the whole repo. A count over part of the repo names the folders;
+`--json` lists them in `repository.folders`, where `""` is the whole repo.
 
 The repo pass skips, and counts without naming:
 

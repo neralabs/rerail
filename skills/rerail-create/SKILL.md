@@ -101,6 +101,8 @@ Read [references/suggesting-rules.md](references/suggesting-rules.md) first, and
    - Every case comes out right. A case marked not checked (`notChecked`) is not right.
    - Read every match in `repository.matches`, and decide whether each is a real violation. A match with no `line` is the
      file's path.
+   - `repository.folders` are the folders the repo pass covered: where `rules add` would have the rule run (`""` is the
+     whole repo). A match outside them is not counted, since the added rule would not catch it.
    - `repository.leftOut` counts files and folders the repo pass did not read: hidden, secret-named, or ignored by Git.
      Its matches say nothing about those. `repository.binary` counts files in scope it skipped as binary.
    - A rule that matches hundreds of places fights the repo's convention.
@@ -238,7 +240,8 @@ commands, not a new rule.
    the same content, a line the rule catches (take it from the rule's description or one of its matches). A path
    still in scope is `caught`; a path the change leaves out is `passed`. Run `rerail rules test <tmp>/draft.json --json`
    once. Every case must come out right; a left-out path reads "(outside the files this rule covers)". Count
-   `repository.matches` for the card; do not review them.
+   `repository.matches` for the card; do not review them. The repo pass covers only the folders the rule runs in
+   (`repository.folders`), so the count is what the saved rule will catch.
 4. **Show the change, in this form, and ask once:**
 
    ```text

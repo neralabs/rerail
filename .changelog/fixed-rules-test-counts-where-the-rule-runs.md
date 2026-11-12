@@ -1,0 +1,1 @@
+`rerail rules test` counts a draft's matches only where `rerail rules add` would have the rule run: the draft's `folder`, the folders the rule is already added at, or, for your copy of a pack's rule, the original's folders. It counted the whole repository before. `--json` names the folders in `repository.folders`.
