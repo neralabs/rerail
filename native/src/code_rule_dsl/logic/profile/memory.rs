@@ -135,7 +135,11 @@ pub(super) struct Sample {
 /// The holders a sample reads (`Sample::holders`), in MB.
 fn holders() -> [usize; 5] {
     let (reserved, driver) = crate::code_rule_dsl::prof::device_memory();
+    // Relational work's device leases: Metal's, on macOS alone.
+    #[cfg(target_os = "macos")]
     let (live, idle) = rerail_accel::gpu::shared::held_bytes();
+    #[cfg(not(target_os = "macos"))]
+    let (live, idle) = (0usize, 0usize);
     let sqlite = unsafe { rusqlite::ffi::sqlite3_memory_used() }.max(0) as usize;
     [driver, reserved, live >> 20, idle >> 20, sqlite >> 20]
 }
@@ -164,6 +168,7 @@ pub(super) fn sample() {
         let every_ms = std::env::var("RERAIL_PROF_MEMORY_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(5u64).max(1);
         SAMPLED.lock().unwrap().every_ms = every_ms;
         // Relational work's device leases are sampled as the heap is, under the span that leased them.
+        #[cfg(target_os = "macos")]
         if rerail_prof::heap::on() {
             rerail_accel::gpu::shared::set_lease_hook(|ptr, len| {
                 if len == 0 {

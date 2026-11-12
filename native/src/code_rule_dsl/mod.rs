@@ -1965,6 +1965,8 @@ pub(crate) mod sql_hazards {
 }
 #[path = "sql_executor"]
 mod sql_executor {
+    // As rerail-sessions mounts it: for tests and the headless tools.
+    #[cfg(any(test, feature = "test-hooks", feature = "headless"))]
     pub mod verification {
         pub use rerail_sessions::code_rule_dsl::sql_executor::verification::*;
         #[cfg(test)]
@@ -2040,6 +2042,8 @@ mod sql_executor {
         #[allow(unused_imports)]
         use frame::Frame;
     }
+    // As rerail-sessions mounts it: for tests and the headless tools.
+    #[cfg(any(test, feature = "test-hooks", feature = "headless"))]
     pub mod component_loop {
         pub use rerail_sessions::code_rule_dsl::sql_executor::component_loop::*;
         #[cfg(test)]

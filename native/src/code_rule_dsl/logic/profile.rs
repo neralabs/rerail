@@ -1750,10 +1750,6 @@ pub struct Report {
     /// Text functions made once per distinct symbol (`mapped_text`, chunked), and the names they made.
     pub per_symbol: u32,
     pub per_symbol_names: u64,
-    /// Texts made on the device (`cat` into a head) and stored as symbols.
-    pub made: u64,
-    /// The rounds a recursive component ran on the device (`fixpoint`; 0 for seeds alone).
-    pub rounds: u32,
     pub stages: u32,
     pub submissions: u32,
     pub dispatches: u32,

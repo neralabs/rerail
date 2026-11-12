@@ -546,5 +546,51 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     std::fs::write(dir.join("profile.txt"), r)
 }
 
+/// The stage counters (`rerail_prof`): the device runs' host stages (CPU of the thread that ran
+/// them), their GPU time (`gpu.device_us`), memory readings and counts. With
+/// `RERAIL_GPU_KERNEL_TIMES` set, `kernel_us.<kernel>` splits the GPU time by kernel (each a
+/// command buffer of its own: slower, for profiling only).
+fn stages(r: &mut String) {
+    use std::fmt::Write as _;
+    let stages = rerail_prof::stages();
+    let _ = writeln!(r, "\n== Stages (rerail-prof): CPU ms of the threads that ran each, its calls (or its count); kernel_us = GPU µs by kernel");
+    if stages.is_empty() {
+        r.push_str("(no stages)\n");
+        return;
+    }
+    // Timed stages by CPU, then the counts by name.
+    let mut timed: Vec<_> = stages.iter().filter(|(_, (d, _))| !d.is_zero()).collect();
+    timed.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+    for (name, (d, calls)) in timed {
+        let _ = writeln!(r, "{:>12.1} ms {calls:>9}  {name}", d.as_secs_f64() * 1e3);
+    }
+    let mut kernels: Vec<_> = stages.iter().filter(|(n, _)| n.starts_with("kernel_us.")).collect();
+    kernels.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+    for (name, (_, us)) in &kernels {
+        let k = &name["kernel_us.".len()..];
+        let n = stages.get(&format!("kernel_n.{k}")).map_or(0, |e| e.1);
+        let _ = writeln!(r, "{:>12.1} ms {n:>9}  GPU {k}", *us as f64 / 1e3);
+    }
+    // `RERAIL_GPU_WALK_STEPS`: the micro walks by their steps (a GPU thread's serial work), with
+    // their walks and longest walk: a long walk is a dispatch's critical path.
+    let mut walks: Vec<_> = stages.iter().filter_map(|(n, e)| n.strip_prefix("walk_steps.").map(|w| (w, e.1))).collect();
+    if !walks.is_empty() {
+        walks.sort_by(|a, b| b.1.cmp(&a.1));
+        let total: usize = walks.iter().map(|w| w.1).sum();
+        let _ = writeln!(r, "\n  micro walks by steps ({total} steps in all; t0 = 8 frames, t2 = the loop tier):");
+        let _ = writeln!(r, "{:>14} {:>10} {:>10} {:>10}  walk words", "steps", "walks", "per walk", "longest");
+        for (w, steps) in walks.iter().take(30) {
+            let items = stages.get(&format!("walk_items.{w}")).map_or(0, |e| e.1);
+            let max = stages.get(&format!("walk_max.{w}")).map_or(0, |e| e.1);
+            let _ = writeln!(r, "{steps:>14} {items:>10} {:>10.1} {max:>10}  {w}", *steps as f64 / items.max(1) as f64);
+        }
+    }
+    for (name, (d, count)) in stages.iter() {
+        if d.is_zero() && !name.starts_with("kernel_") && !name.starts_with("walk_") {
+            let _ = writeln!(r, "{:>12} {count:>12}  {name}", "count");
+        }
+    }
+}
+
 // Its tests (the report over what a run recorded, and the projection's provenance over a parsed program) run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
 // engine registers as it loads (the languages, their `.rr` libraries).
