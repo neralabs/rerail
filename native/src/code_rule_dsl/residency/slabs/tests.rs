@@ -1,7 +1,12 @@
 use super::*;
 use crate::code_rule_dsl::language::{self, GrammarDialect};
-// cratify: a re-export of rerail-engine's, which its facades of this module make
+use crate::code_rule_dsl::fixtures::{document, temp};
 use crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION;
+// What the slabs module reads through its own imports, which its facade in the engine does not re-export.
+use crate::code_rule_dsl::tape::{Grammar, resident};
+use crate::content_store::ContentStore;
+use sha2::{Digest as _, Sha256};
+use std::sync::Arc;
 
 const SOURCES: [(&str, GrammarDialect); 3] = [
     ("value = left + right\nclass A:\n    def f(self, x=[]):\n        return (yield x)\n", GrammarDialect::Python),

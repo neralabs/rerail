@@ -5,7 +5,7 @@
 use super::super::reader::{Column, Readers};
 use super::{ANCESTORS, CHILDREN, install};
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::prefilter::tests::document;
+use crate::code_rule_dsl::fixtures::document;
 use rusqlite::{Connection, params};
 
 /// P's `file` table (`matcher/anchors/sql/schema.sql`), which the reader opens BLOBs in.

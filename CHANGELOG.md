@@ -4,6 +4,10 @@ Every notable change to Rerail's core package, `@neralabs/rerail`, latest first.
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. A release is a patch unless it names a later version, and a patch can change or remove what you use, so read the notes before you update.
 
+## Unreleased
+
+0.1.4 stops steering an agent for changes it did not make: a file changed by another session, your editor or a background process no longer counts as its edit. A steer found as a turn ends now reaches Claude Code then, not at your next prompt. The dashboard shows each violation under the tool call it followed, and set-up works on Linux images with no compiler. Before you update: Claude Code 2.1.196 or newer is required, and if your own code calls `serveRerailEventStream`, see its entry under Changed.
+
 ## 0.1.3 (2026-11-06)
 
 0.1.3 audits your agent's edits in every worktree of a started repository, not only the one its session started in, and stops counting files it restored from another branch as its own work. While a repository follows `.gitignore`, edits of files Git ignores, and changes that make Git ignore more, are recorded on the session as unchecked. The daemon starts again after a crash left its socket behind, the Claude Code, OMP and Pi footer is gone where Rerail is stopped, and code rules whose `define` shares utilities compile faster and in less memory. Before you update: if your own code imports `createPiConversationRulesExtension`, import it from `@neralabs/rerail/pi`; Pi itself needs no change.

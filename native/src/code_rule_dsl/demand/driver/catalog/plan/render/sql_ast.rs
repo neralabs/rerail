@@ -6,7 +6,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub enum SqlAstNodeKind {
+pub(in crate::code_rule_dsl::demand::driver::catalog) enum SqlAstNodeKind {
     RelationScan,
     DemandScan,
     Select,
@@ -984,14 +984,14 @@ impl SqlAst {
     }
 }
 
-pub struct ClauseMergeAst {
+pub(in crate::code_rule_dsl::demand::driver::catalog) struct ClauseMergeAst {
     ast: SqlAst,
     sources: Vec<PhysicalRelation>,
     outputs: bool,
 }
 
 impl ClauseMergeAst {
-    pub fn new(
+    pub(in crate::code_rule_dsl::demand::driver::catalog) fn new(
         ordinals: &[usize],
         outputs: bool,
     ) -> Result<Self, String> {
@@ -1071,7 +1071,7 @@ impl ClauseMergeAst {
         })
     }
 
-    pub fn render(&self) -> Result<(String, String), String> {
+    pub(in crate::code_rule_dsl::demand::driver::catalog) fn render(&self) -> Result<(String, String), String> {
         self.ast
             .validate()
             .map_err(|error| format!("invalid clause merge AST: {error:?}"))?;
@@ -1096,7 +1096,7 @@ impl ClauseMergeAst {
 }
 
 #[cfg(test)]
-pub mod tests {
+mod tests {
     use super::*;
 
     fn column(name: &str) -> SqlExpression {

@@ -36,6 +36,8 @@ pub struct Node {
     pub end: usize,
     /// The node and every node inside it.
     pub size: usize,
+    /// A token's leaf (or an extra's): not a node of the grammar's, which may be empty.
+    pub leaf: bool,
 }
 
 /// The token kinds a grammar may start with: names, and with `any`, every kind but some.
@@ -118,7 +120,7 @@ impl<'a> Parser<'a> {
         };
         if let Some((kind, _, body)) = decl.rules.iter().find(|r| &r.0 == name) {
             let me = self.out.len();
-            self.out.push(Node { kind: kind.clone(), field: None, supertypes: vec![], extra: false, start: 0, end: 0, size: 0 });
+            self.out.push(Node { kind: kind.clone(), field: None, supertypes: vec![], extra: false, start: 0, end: 0, size: 0, leaf: false });
             self.open.push(me);
             let next = self.matches(body, at, follow);
             self.open.pop();
@@ -390,14 +392,19 @@ impl<'a> Parser<'a> {
                 if self.out.len() != me + 1 {
                     return None;
                 }
-                self.out[me].kind = self.kind_of(kind)?;
+                if kind == crate::syntax::IMPLIED {
+                    // A token the grammar implies (`implied`): no leaf.
+                    self.out.truncate(me);
+                } else {
+                    self.out[me].kind = self.kind_of(kind)?;
+                }
                 Some(next)
             }
             Gram::Any(except) => {
                 let t = self.tokens.get(at).filter(|t| !t.mark && !except.contains(&t.kind))?;
                 let extra = self.decl.extra.contains(&t.kind);
                 let (kind, start, end) = (t.kind.clone(), t.start, t.end);
-                self.out.push(Node { kind, field: None, supertypes: vec![], extra, start, end, size: 1 });
+                self.out.push(Node { kind, field: None, supertypes: vec![], extra, start, end, size: 1, leaf: true });
                 self.past_marks(at + 1, follow)
             }
             Gram::Balanced { kind, open, close } => {
@@ -489,6 +496,27 @@ impl<'a> Parser<'a> {
                     }
                 }
             }
+            Gram::Relabel { moved: Some(m), body, .. } if m == crate::syntax::GONE => {
+                // `drop`: the node just made at this level, a leaf and the last node made, goes.
+                // It stays, of kind `GONE`, until the parse ends, as the machine's record does
+                // (a reading names no gone node); none is made last here until the next.
+                let c = self.last_made()?;
+                if !self.out[c].leaf || c + 1 != self.out.len() {
+                    return None;
+                }
+                let o = *self.open.last()?;
+                let was = (std::mem::replace(&mut self.out[c].kind, crate::syntax::GONE.into()), self.dissolved);
+                self.dissolved = Some((o, self.out.len()));
+                let len = self.out.len();
+                match self.matches(body, at, follow) {
+                    Some(next) => Some(next),
+                    None => {
+                        self.out.truncate(len);
+                        (self.out[c].kind, self.dissolved) = was;
+                        None
+                    }
+                }
+            }
             Gram::Relabel { field, moved, inner, body } => {
                 // The node just made at this level, as a wrap finds it; relabelled, then `body`.
                 let c = self.last_made()?;
@@ -529,7 +557,7 @@ impl<'a> Parser<'a> {
                 // The node just made at this level: the innermost open node's last child.
                 let c = self.last_made()?;
                 let was = (self.out[c].field.clone(), self.out[c].kind.clone());
-                let node = Node { kind: kind.clone(), field: was.0.clone(), supertypes: vec![], extra: false, start: self.out[c].start, end: 0, size: 0 };
+                let node = Node { kind: kind.clone(), field: was.0.clone(), supertypes: vec![], extra: false, start: self.out[c].start, end: 0, size: 0, leaf: false };
                 self.out.insert(c, node);
                 self.out[c + 1].field = field.clone();
                 if let Some(m) = moved {
@@ -589,7 +617,7 @@ impl<'a> Parser<'a> {
         let t = self.tokens.get(at).filter(|t| t.kind == kind || t.soft.as_deref() == Some(kind))?;
         if !t.mark {
             let extra = self.decl.extra.contains(&t.kind);
-            self.out.push(Node { kind: kind.to_owned(), field: None, supertypes: vec![], extra, start: t.start, end: t.end, size: 1 });
+            self.out.push(Node { kind: kind.to_owned(), field: None, supertypes: vec![], extra, start: t.start, end: t.end, size: 1, leaf: true });
         }
         self.past_marks(at + 1, follow)
     }
@@ -724,7 +752,7 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
     let root_sym = Gram::Sym(root.clone());
     let matched = if decl.whole {
         let body = &decl.rules[0].2;
-        p.out.push(Node { kind: root.clone(), field: None, supertypes: vec![], extra: false, start: 0, end: 0, size: 0 });
+        p.out.push(Node { kind: root.clone(), field: None, supertypes: vec![], extra: false, start: 0, end: 0, size: 0, leaf: false });
         let first = p.first(body).0;
         p.past_marks(0, first).and_then(|at| p.matches(body, at, 0))
     } else {
@@ -742,6 +770,18 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
         Some(next) => return Err(format!("the token at byte {} is past the grammar's end", plain[next].start)),
         None => return Err("no parse: the tokens do not match the grammar".into()),
     };
+    // The nodes dropped (`drop`) go, each node's size less those inside it.
+    if out.iter().any(|x| x.kind == crate::syntax::GONE) {
+        let mut before = vec![0usize; out.len() + 1];
+        for (i, x) in out.iter().enumerate() {
+            before[i + 1] = before[i] + usize::from(x.kind == crate::syntax::GONE);
+        }
+        for i in 0..out.len() {
+            let e = (i + out[i].size).min(out.len());
+            out[i].size -= before[e] - before[i];
+        }
+        out.retain(|x| x.kind != crate::syntax::GONE);
+    }
     // A provisional field left: no tree of the grammar's.
     if let Some(x) = out.iter().find(|x| x.field.as_ref().is_some_and(|f| decl.provisional.contains(f))) {
         return Err(format!("a provisional field {} left at byte {}", x.field.as_deref().unwrap_or_default(), x.start));
@@ -770,10 +810,30 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
         }
         open.push(i);
     }
-    // Each token's leaf: a merged leaf holds more than one token.
-    let leaves: Vec<usize> = (0..out.len()).filter(|&i| out[i].size == 1).collect();
     let real_tokens: Vec<&Token> = plain.iter().filter(|t| !t.mark).collect();
-    let leaf_of = |k: usize| leaves[leaves.partition_point(|&l| out[l].start <= real_tokens[k].start) - 1];
+    // The deepest node holding tokens `k - 1` and `k` (by spans: a token the grammar implies has
+    // no leaf, but its node holds it), and where among its children an extra between them goes:
+    // before the first that starts at or after token `k`.
+    let between = |k: usize| -> (usize, usize) {
+        let (a, b) = (real_tokens[k - 1], real_tokens[k]);
+        let mut o = 0;
+        'down: loop {
+            let mut j = o + 1;
+            while j < o + out[o].size {
+                if out[j].start <= a.start && b.end <= out[j].end {
+                    o = j;
+                    continue 'down;
+                }
+                j += out[j].size.max(1);
+            }
+            break;
+        }
+        let mut at = o + 1;
+        while at < o + out[o].size && out[at].start < b.start {
+            at += out[at].size.max(1);
+        }
+        (at, o)
+    };
     let ancestors = |mut i: usize| {
         let mut up = vec![i];
         while parent[i] != usize::MAX {
@@ -790,14 +850,10 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
             (1, 0)
         } else if k == real {
             (out.len(), 0)
-        } else if leaf_of(k - 1) == leaf_of(k) {
-            (usize::MAX, 0)
         } else {
-            let (before, after) = (ancestors(leaf_of(k - 1)), ancestors(leaf_of(k)));
-            let lca = *before.iter().find(|a| after.contains(a)).expect("the root holds both");
-            // Before the child of the common node that holds the token after it.
-            let child = after[after.iter().position(|&a| a == lca).expect("an ancestor") - 1];
-            (child, lca)
+            // Inside a leaf (a merged one): part of its text.
+            let (at, within) = between(k);
+            if out[within].leaf { (usize::MAX, 0) } else { (at, within) }
         });
     }
     // Inserted from the last, so that each place is still the tree's as parsed; extras at one
@@ -810,7 +866,7 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
         for a in ancestors(within) {
             out[a].size += 1;
         }
-        out.insert(at, Node { kind: t.kind.clone(), field: None, supertypes: vec![], extra: true, start: t.start, end: t.end, size: 1 });
+        out.insert(at, Node { kind: t.kind.clone(), field: None, supertypes: vec![], extra: true, start: t.start, end: t.end, size: 1, leaf: true });
     }
     out[0].start = out[0].start.min(extras[0].1.start);
     Ok(out)

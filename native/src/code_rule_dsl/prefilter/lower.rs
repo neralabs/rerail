@@ -103,7 +103,7 @@ impl Statement {
         self.schedule = compiled.schedule;
         self.ownership = compiled.layout;
     }
-    #[cfg(any(test, feature = "test-hooks"))]
+    #[cfg(test)]
     fn reschedule(&mut self) {
         self.schedule = lifetime::Schedule::new(
             &self
@@ -988,7 +988,7 @@ pub(super) struct Stage {
 
 /// SQLite expands CTE references during preparation, including AS MATERIALIZED CTEs.
 /// Cut shared dependencies into real SQL tables before that expansion becomes exponential.
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 pub(super) fn finish(
     ctes: Vec<String>,
     queries: Vec<String>,

@@ -186,3 +186,6 @@ pub(in crate::code_rule_dsl) fn compiled(matchers: &[(String, String, Vec<String
     let _span = crate::code_rule_dsl::logic::profile::span(|| "ast matchers lowered".into());
     crate::code_rule_dsl::facts::vtab::syntax::compile_matchers(matchers, policies)
 }
+
+#[cfg(test)]
+mod tests;

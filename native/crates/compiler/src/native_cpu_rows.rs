@@ -19,8 +19,8 @@ use crate::block_native::{BlockInst, BlockNative};
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::{AbiParam, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
-use cranelift_jit::{JITBuilder, JITModule};
-use cranelift_module::{Linkage, Module, default_libcall_names};
+use cranelift_jit::JITModule;
+use cranelift_module::{Linkage, Module};
 
 /// The columns' pointers, the parameters, the sets as (pointer, words) pairs, the run's words,
 /// and the outputs' words.
@@ -85,7 +85,7 @@ fn lane(f: &mut FunctionBuilder<'_>, v: Value, width: u8) -> Value {
 }
 
 pub(super) fn compile(native: &BlockNative, columns: usize) -> Result<CompiledRows, Error> {
-    let builder = JITBuilder::new(default_libcall_names()).map_err(|_| Error::BackendFailure)?;
+    let builder = crate::native_cpu_codegen::tier1_builder().map_err(|_| Error::BackendFailure)?;
     let mut module = JITModule::new(builder);
     let pointer = module.target_config().pointer_type();
     let mut signature = module.make_signature();

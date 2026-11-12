@@ -98,7 +98,7 @@ rayon = "=1.12.0"
 serde = { version = "1.0", features = ["derive"] }
 fancy-regex = "=0.17.0"
 regex = "=1.13.1"
-# The reach index (decision 0115): each start's closure as a compressed bitmap.
+# The reach index (decision 0119): each start's closure as a compressed bitmap.
 roaring = "=0.11.5"
 regex-automata = "=0.4.18"
 regex-syntax = "=0.8.11"
@@ -201,16 +201,16 @@ rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "arr
 tempfile = "=3.27.0"
 
 [build-dependencies]
-cc = "=1.10.0"
 napi-build = "2.2"
 sha2 = "0.11"
+# The vendored grammars' build (`src/build_grammars.rs`), which the build script mounts; it runs in rerail-lang's
+# once the crate split gives it there (`BUILDS_GRAMMARS`).
+cc = "=1.10.0"
+tree-sitter-generate = { version = "=0.27.1", default-features = false }
+flate2 = "=1.1.10"
 # Reads and validates the language registry (`languages/*.json`) the build generates tables from.
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-# Generates the vendored grammars' parsers from their grammar.json; no QuickJS, as no grammar.js is read.
-tree-sitter-generate = { version = "=0.27.1", default-features = false }
-# Reads (and, with RERAIL_GENERATE_PARSERS=1, writes) the generated parser SQL commits gzipped (build.rs's committed_parser).
-flate2 = "=1.1.10"
 
 [[example]]
 name = "sql-session-verify"

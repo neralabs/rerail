@@ -433,7 +433,7 @@ impl AnchorPlan {
     }
 
     /// Positional SQL postings serve kind-only queries as well as structural predicates.
-    pub(in crate::code_rule_dsl) fn needs_index(&self) -> bool {
+    pub fn needs_index(&self) -> bool {
         match &self.condition {
             Condition::Always => self.root_kinds.is_some(),
             Condition::All(plans) | Condition::Any(plans) => plans.iter().any(Self::needs_index),

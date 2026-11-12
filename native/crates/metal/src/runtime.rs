@@ -141,10 +141,10 @@ struct BufferReservation {
 
 impl BufferReservation {
     fn acquire(bytes: usize, ledger: &'static AtomicUsize, limit: usize) -> Result<Self, Error> {
-        let previous = ledger
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| {
-                used.checked_add(bytes).filter(|next| *next <= limit)
-            })
+        let take = || ledger.fetch_update(Ordering::AcqRel, Ordering::Acquire, |used| used.checked_add(bytes).filter(|next| *next <= limit));
+        // The idle blocks of the device's pool give way to a reservation the budget refuses.
+        let previous = take()
+            .or_else(|used| if std::ptr::eq(ledger, pool()) && crate::pool::give_way(bytes, limit) { take() } else { Err(used) })
             .map_err(|used| {
                 if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
                     eprintln!(
@@ -295,7 +295,7 @@ pub struct PrivateInputUpload {
 impl PrivateInputUpload {
     pub fn new(device: &Device) -> Result<Self, Error> {
         Ok(Self {
-            queue: device.new_command_queue(),
+            queue: crate::queue()?,
             staging: MappedBuffer::zeroed::<u8>(device, METAL_UPLOAD_CHUNK_BYTES)?,
             used: 0,
             copies: Vec::new(),
@@ -521,7 +521,7 @@ impl MappedBuffer {
             reservation,
             MTLResourceOptions::StorageModePrivate,
         )?;
-        let queue = device.new_command_queue();
+        let queue = crate::queue()?;
         for (chunk, input) in bytes.chunks(METAL_UPLOAD_CHUNK_BYTES).enumerate() {
             metal::objc::rc::autoreleasepool(|| -> Result<(), Error> {
                 let staging = Self::new(device, input)?;
@@ -679,7 +679,7 @@ pub fn pipeline_named_constant(
     name: &str,
     constant: Option<u32>,
 ) -> Result<ComputePipelineState, Error> {
-    let device = Device::system_default().ok_or(Error::UnsupportedBackend)?;
+    let device = crate::device()?;
     let mut digest = Sha256::new();
     digest.update(device.registry_id().to_le_bytes());
     digest.update(name.as_bytes());

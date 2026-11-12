@@ -103,3 +103,60 @@ impl rerail_accel::kernel::Program for Unknown {
 fn rerail_forest_config() -> rerail_accel::cost_model::ForestConfig {
     rerail_accel::cost_model::ForestConfig { feature_vector_samplings: 20, ..CostConfig::default().forest }
 }
+
+/// A program of `units`, priced like `Priced` (the model knows its name).
+#[derive(Debug)]
+struct Sized(f64);
+
+impl rerail_accel::kernel::Program for Sized {
+    fn name(&self) -> &'static str {
+        "a model-priced program"
+    }
+    fn units(&self) -> f64 {
+        self.0
+    }
+    fn per_unit(&self, lane: Lane) -> Option<f64> {
+        matches!(lane, Lane::Cpu | Lane::Gpu).then_some(1e-9)
+    }
+    fn run(&self, lane: Lane) -> Result<rerail_accel::kernel::ProgramOutput, String> {
+        Ok(Arc::new(lane))
+    }
+}
+
+/// Placement's prediction with a model installed, CPU and wall a call, by batch size: the model's call for the
+/// batch (`predict_batch`) and the whole placement (`Executor::place`).
+#[test]
+#[ignore = "benchmark: --ignored --nocapture --test-threads 1"]
+fn placement_prediction_cost() {
+    let ex = Executor::new();
+    if !ex.lanes().contains(&Lane::Gpu) {
+        return;
+    }
+    let model = CostModel::train(&samples().iter().map(sample).collect::<Vec<_>>(), &CostConfig::default()).unwrap();
+    install(Some(Arc::new(model)));
+    for n in [1usize, 16, 256, 1024] {
+        let ks: Vec<Kernel> = (0..n).map(|i| Kernel::Program(rerail_accel::kernel::ProgramKernel(Arc::new(Sized(1e9 * (1.0 + (i % 50) as f64 * 0.02)))))).collect();
+        let asked: Vec<(&Kernel, Vec<Lane>)> = ks.iter().map(|k| (k, vec![Lane::Cpu, Lane::Gpu])).collect();
+        let batch = Batch(ks.iter().cloned().map(Launch::new).collect());
+        for _ in 0..3 {
+            predict_batch(&asked, 1.0);
+            ex.place("bench", &batch).unwrap();
+        }
+        let reps = std::env::var("PLACE_REPS").ok().and_then(|r| r.parse().ok()).filter(|_| n == 1024).unwrap_or(if n > 256 { 50 } else { 300 });
+        let time = |f: &dyn Fn()| {
+            let (c, w) = (rerail_accel::exec::process_cpu(), std::time::Instant::now());
+            for _ in 0..reps {
+                f();
+            }
+            (w.elapsed().as_secs_f64() / reps as f64 * 1e6, (rerail_accel::exec::process_cpu() - c) / reps as f64 * 1e6)
+        };
+        let (pw, pc) = time(&|| {
+            predict_batch(&asked, 1.0);
+        });
+        let (lw, lc) = time(&|| {
+            ex.place("bench", &batch).unwrap();
+        });
+        eprintln!("PLACE {n:5} launches: predict_batch {pw:9.1} us wall {pc:9.1} us CPU; place {lw:9.1} us wall {lc:9.1} us CPU");
+    }
+    install(None);
+}

@@ -174,6 +174,30 @@ pub fn template(name: &str) -> Option<GridComputeKernelTemplate> {
             r.set_grid_expression("[ceilDiv(numColumns * columnStride,threadsPerBlock)]", "[threadsPerBlock]").allow_grid_padding();
             r.set_compute_function("randomforest_kernels", "rowBucketsKernel");
         }
+        "bagRows" => {
+            // A tree's row sample (an item is an example).
+            r.add_dimension("e", "numExamples");
+            r.add_parameter("numExamples", "r", "u32")
+                .add_parameter("seed", "r", "u32")
+                .add_parameter("keep24", "r", "u32")
+                .add_parameter("sample", "r", "u32")
+                .add_parameter("scale", "r", "f32")
+                .add_parameter("baseRows", "r", "f32[numExamples * 2]")
+                .add_parameter("decodedRowsOut", "w", "f32[numExamples * 2]");
+            r.add_tuneable("threadsPerBlock", 256);
+            r.set_grid_expression("[ceilDiv(numExamples,threadsPerBlock)]", "[threadsPerBlock]").allow_grid_padding();
+            r.set_compute_function("randomforest_kernels", "bagRowsKernel");
+        }
+        "rootWeights" => {
+            // One group summing the root's buckets in the first active feature.
+            r.add_parameter("bucketNumbers", "r", "u32[nf + 1]")
+                .add_parameter("activeFeatureList", "r", "u32[naf]")
+                .add_parameter("partitionBuckets", "r", "W32[numBuckets]")
+                .add_parameter("wAllOut", "rw", "W32[1]");
+            r.add_tuneable("threadsPerBlock", 256);
+            r.set_grid_expression("[1]", "[threadsPerBlock]");
+            r.set_compute_function("randomforest_kernels", "rootWeightsKernel");
+        }
         "packBuckets" => {
             r.add_dimension("w", "numWords");
             r.add_parameter("numRows", "r", "u32")
@@ -256,7 +280,7 @@ pub fn template(name: &str) -> Option<GridComputeKernelTemplate> {
 /// The threads of a prediction group (`predictForest`): rows times their lanes.
 pub const PREDICT_GROUP_THREADS: u32 = 128;
 
-pub const GRID_KERNELS: [&str; 15] = ["rowBuckets", "decodeRows", "testFeature", "getPartitionSplits", "bestPartitionSplit", "assignPartitionNumbers", "clearBuckets", "updatePartitionNumbers", "updateBuckets", "fixupBuckets", "predictForest", "numericBuckets", "markCodes", "categoricalBuckets", "packBuckets"];
+pub const GRID_KERNELS: [&str; 17] = ["bagRows", "rootWeights", "rowBuckets", "decodeRows", "testFeature", "getPartitionSplits", "bestPartitionSplit", "assignPartitionNumbers", "clearBuckets", "updatePartitionNumbers", "updateBuckets", "fixupBuckets", "predictForest", "numericBuckets", "markCodes", "categoricalBuckets", "packBuckets"];
 
 /// Grid kernel `name`, specialized against its Metal function (once).
 pub fn kernel(name: &str) -> Result<&'static GridComputeKernelSpecialization, String> {

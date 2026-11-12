@@ -35,6 +35,8 @@ use crate::dataset_feature_space::DatasetFeatureSpace;
 use crate::memory_region::MemorySerializer;
 use crate::randomforest::{PartitionData, TrainingScheme};
 use crate::randomforest_types::get_leaf;
+use crate::randomforest::{FeatureSamplingTrainerKernel, FeatureSamplingTrainerPartition, TreeRows};
+use crate::randomforest_predict::{FlatColumns, FlatForest, FlatTree};
 use crate::tree::Tree;
 use std::sync::Arc;
 
@@ -64,13 +66,40 @@ pub struct RandomForestProcedureConfig {
     pub min_leaf_examples: u32,
     /// The threads training takes at most (0: `MAX_BAGS_AT_ONCE`), each with its device memory for a tree.
     pub max_threads: usize,
-    /// Train at the background quality of service (macOS): the threads yield the cores to everything else.
-    pub background: bool,
+    /// The quality of service training's threads run at (macOS).
+    pub qos: Qos,
+    /// Who draws a tree's row sample in the one-trainer scheme (`train_forest_weighted`).
+    pub bags: BagDraw,
+}
+
+/// Who draws a tree's row sample (its bag) in `train_forest_weighted`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BagDraw {
+    /// The device (`bagRows`): from a hash of the bag and the example, each example kept with the sampling's
+    /// proportion and counted Poisson(1) times; the host does nothing a row a tree. The bags are not upstream's (a
+    /// Mersenne Twister's shuffle and draws), only as diverse. Small or lopsided data falls back to `Host`.
+    #[default]
+    Device,
+    /// The host, upstream's draws (`bag_counts`): the trees are those of `train_forest_compacted`.
+    Host,
+}
+
+/// A thread's quality of service on macOS: what the scheduler gives it, on the cores and on the GPU.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Qos {
+    /// The caller's.
+    #[default]
+    Inherit,
+    /// Utility: below the engine's threads, yet run on the performance cores at a fair GPU priority.
+    Utility,
+    /// Background: only on the efficiency cores, at the GPU's lowest priority. Measured (2026-11-11) at about
+    /// 10× the wall and 3× the GPU seconds of utility on an idle machine, far more under load.
+    Background,
 }
 
 impl Default for RandomForestProcedureConfig {
     fn default() -> Self {
-        RandomForestProcedureConfig { feature_vector_samplings: 5, feature_vector_sampling_prop: 0.3, feature_samplings: 20, feature_sampling_prop: 0.3, max_depth: 20, sample_feature_vectors: true, training_scheme: TrainingScheme::Partitioned, categorical_subsets: false, min_leaf_examples: 1, max_threads: 0, background: false }
+        RandomForestProcedureConfig { feature_vector_samplings: 5, feature_vector_sampling_prop: 0.3, feature_samplings: 20, feature_sampling_prop: 0.3, max_depth: 20, sample_feature_vectors: true, training_scheme: TrainingScheme::Partitioned, categorical_subsets: false, min_leaf_examples: 1, max_threads: 0, qos: Qos::Inherit, bags: BagDraw::Device }
     }
 }
 
@@ -312,23 +341,152 @@ pub fn train_forest(all_data: &PartitionData, config: &RandomForestProcedureConf
     train_forest_compacted(all_data, config)
 }
 
-/// Puts the calling thread at the background quality of service (macOS): it runs when the cores are free.
-pub fn set_background_qos() {
+/// Puts the calling thread at `qos` (macOS; `Inherit` leaves it as it is).
+pub fn set_qos(qos: Qos) {
     #[cfg(target_os = "macos")]
     unsafe {
-        libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_BACKGROUND, 0);
+        match qos {
+            Qos::Inherit => {}
+            Qos::Utility => {
+                libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_UTILITY, 0);
+            }
+            Qos::Background => {
+                libc::pthread_set_qos_class_self_np(libc::qos_class_t::QOS_CLASS_BACKGROUND, 0);
+            }
+        }
     }
+    #[cfg(not(target_os = "macos"))]
+    let _ = qos;
 }
 
 /// The most bags trained at once (threads, each with its device memory for a tree).
 const MAX_BAGS_AT_ONCE: usize = 8;
 
 /// The forest from one device trainer over all the rows (`train_forest` on the device): each tree weighs the rows
-/// by its bag's draw (`TreeRows`: the weights `reweight_and_compact` gives the bag's rows, zero for the rest), so a
-/// bag costs its draw and its trees, not a trainer of its own; the trees are those of `train_forest_compacted`.
-/// Bags go to up to `MAX_BAGS_AT_ONCE` threads, each scheduling its trees a few ahead of the one it finishes.
+/// by its bag's draw (`TreeRows`: zero for the rows the bag leaves out), so a bag costs its draw and its trees, not a
+/// trainer of its own. With `BagDraw::Host` the trees are those of `train_forest_compacted`. Bags go to up to
+/// `MAX_BAGS_AT_ONCE` threads, each scheduling its trees a few ahead of the one it finishes.
 pub fn train_forest_weighted(all_data: &PartitionData, config: &RandomForestProcedureConfig) -> Result<Forest, String> {
-    use crate::randomforest::{FeatureSamplingTrainerKernel, FeatureSamplingTrainerPartition, TreeRows};
+    let trees = train_weighted(all_data, config, false)?;
+    let trees: Vec<Tree> = trees.into_iter().map(|t| match t {
+        Trained::Tree(t) => t,
+        Trained::Flat(_) => unreachable!("a flat tree from a tree's training"),
+    }).collect();
+    let total = trees.len();
+    Ok(Forest { fs: all_data.fs.clone(), weights: vec![1.0 / total as f32; total], trees, target_scale: None })
+}
+
+/// `train_forest_weighted`, each tree built flat from the device's splits (`FlatTree`): the forest prediction
+/// takes, with no `Tree` made on the way.
+pub fn train_flat_forest(all_data: &PartitionData, config: &RandomForestProcedureConfig) -> Result<FlatForest, String> {
+    if config.training_scheme != TrainingScheme::Partitioned {
+        return FlatForest::new(&train_forest(all_data, config)?);
+    }
+    let trees: Vec<FlatTree> = train_weighted(all_data, config, true)?.into_iter().map(|t| match t {
+        Trained::Flat(t) => t,
+        Trained::Tree(_) => unreachable!("a tree from a flat training"),
+    }).collect();
+    let total = trees.len();
+    Ok(FlatForest::from_trees(&all_data.fs, trees, vec![1.0 / total as f32; total]))
+}
+
+/// A regression forest as `train_regression_forest` trains it, flat (`train_flat_forest`), and its target scale.
+pub fn train_regression_flat(fs: Arc<DatasetFeatureSpace>, targets: &[f32], wheres: Option<&[f32]>, weights: Option<&[f32]>, config: &RandomForestProcedureConfig) -> Result<(FlatForest, TargetScale), String> {
+    let (all, scale) = regression_training_data(fs, targets, wheres, weights)?;
+    Ok((train_flat_forest(&all, config)?, scale))
+}
+
+/// A tree as `train_weighted` gives it.
+enum Trained {
+    Tree(Tree),
+    Flat(FlatTree),
+}
+
+/// The fewest rows a bag the device draws expects (its proportion of the rows): fewer, and the host draws the bags.
+const DEVICE_BAG_MIN_ROWS: f64 = 256.0;
+
+/// The device's bags (`bagRows`): each example's weight and target ([w, t], zero for an example with no row), once
+/// on the device, and the draw's settings. `None` when the host should draw: too few rows for a bag's total to stay
+/// near 1 (the fixed-point accumulators hold under 2), or a row heavy enough to push it there alone.
+struct DeviceBags {
+    base: metal::Buffer,
+    keep24: u32,
+    sample: u32,
+    scale: f32,
+}
+
+impl DeviceBags {
+    fn new(rows: &[(f32, f32, u32)], num_examples: usize, config: &RandomForestProcedureConfig) -> Result<Option<DeviceBags>, String> {
+        if config.bags != BagDraw::Device {
+            return Ok(None);
+        }
+        let sum: f64 = rows.iter().map(|r| r.0 as f64).sum();
+        let max = rows.iter().map(|r| r.0 as f64).fold(0.0, f64::max);
+        let (prop, sample) = if config.sample_feature_vectors { (config.feature_vector_sampling_prop.clamp(0.0, 1.0) as f64, 1) } else { (1.0, 0) };
+        // The total weight a bag expects is 1: each example kept with `prop` and counted Poisson(1) times.
+        let expected = sum * prop;
+        if sum <= 0.0 || (sample == 1 && (rows.len() as f64 * prop < DEVICE_BAG_MIN_ROWS || 8.0 * max / expected > 0.25)) {
+            return Ok(None);
+        }
+        let mut base = vec![[0f32; 2]; num_examples];
+        for r in rows {
+            base[r.2 as usize] = [r.0, r.1];
+        }
+        let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
+        Ok(Some(DeviceBags {
+            base: crate::compute_kernel_metal::transfer_to_device_immutable(&shared.device, &base),
+            keep24: ((prop * (1u32 << 24) as f64).ceil() as u32).min(1 << 24),
+            sample,
+            scale: (1.0 / expected) as f32,
+        }))
+    }
+
+    /// Bag `b`'s rows, drawn on `partition`'s queue (ahead of its tree's work).
+    fn draw(&self, partition: &FeatureSamplingTrainerPartition, num_examples: usize, b: usize) -> Result<TreeRows, String> {
+        use crate::compute_kernel_grid::ComputeKernelArgument::{Buffer as B, Float, Int};
+        let shared = crate::gpu::shared::get().ok_or("no Metal device")?;
+        let decoded = crate::compute_kernel_metal::alloc_uninitialized_array_sync::<crate::randomforest_types::RowWeights>(&shared.device, num_examples);
+        partition.launch("bagRows", &[
+            ("numExamples", Int(num_examples as i64)),
+            ("seed", Int(bag_seed(b) as i64)),
+            ("keep24", Int(self.keep24 as i64)),
+            ("sample", Int(self.sample as i64)),
+            ("scale", Float(self.scale as f64)),
+            ("baseRows", B(&self.base)),
+            ("decodedRowsOut", B(&decoded)),
+        ], &[num_examples as u32])?;
+        Ok(TreeRows::on_device(decoded))
+    }
+}
+
+/// Bag `b`'s seed for `bagRows`.
+pub fn bag_seed(b: usize) -> u32 {
+    245u32.wrapping_add(b as u32)
+}
+
+/// The host's copy of `bagCount` (the kernels'): example `e`'s count in a bag of `seed`.
+pub fn bag_count(seed: u32, e: u32, keep24: u32, sample: u32) -> u32 {
+    fn hash(mut x: u32) -> u32 {
+        x ^= x >> 16;
+        x = x.wrapping_mul(0x7feb_352d);
+        x ^= x >> 15;
+        x = x.wrapping_mul(0x846c_a68b);
+        x ^ (x >> 16)
+    }
+    const POISSON1_24: [u32; 8] = [6171851, 12343702, 15429615, 16458249, 16715393, 16766823, 16775396, 16776615];
+    if sample == 0 {
+        return 1;
+    }
+    let h = hash(e.wrapping_mul(0x9E37_79B9) ^ hash(seed));
+    if h >> 8 >= keep24 {
+        return 0;
+    }
+    let u = hash(h ^ 0x68E3_1DA4) >> 8;
+    POISSON1_24.iter().filter(|&&t| u >= t).count() as u32
+}
+
+/// The one-trainer forest's trees, bag after bag (each bag's in sampling order), as `Tree`s or flat.
+fn train_weighted(all_data: &PartitionData, config: &RandomForestProcedureConfig, flat: bool) -> Result<Vec<Trained>, String> {
     use rayon::prelude::*;
     const TREES_IN_FLIGHT: usize = 4;
     let n = all_data.rows.row_count();
@@ -342,6 +500,8 @@ pub fn train_forest_weighted(all_data: &PartitionData, config: &RandomForestProc
     let rows: Vec<(f32, f32, u32)> = (0..n).map(|i| { let r = data.rows.get_decoded_row(i); (r.weight, r.target, r.example_num) }).collect();
     let trainer = FeatureSamplingTrainerKernel::init_for_tree_rows("forest", config.max_depth, &data.rows, &data.features, data.bucket_memory.clone(), &data.fs)?;
     let num_examples = trainer.num_rows as usize;
+    let device_bags = DeviceBags::new(&rows, num_examples, config)?;
+    let cols = if flat { Some(FlatColumns::new(&data.features, &data.fs)?) } else { None };
     let mut row_of_example = vec![u32::MAX; num_examples];
     for (i, r) in rows.iter().enumerate() {
         row_of_example[r.2 as usize] = i as u32;
@@ -350,24 +510,38 @@ pub fn train_forest_weighted(all_data: &PartitionData, config: &RandomForestProc
     let samplings: Vec<Vec<Vec<i32>>> = (0..bags).map(|b| bag_feature_samplings(&data, b, config)).collect::<Result<_, _>>()?;
     let threads = bags.clamp(1, if config.max_threads > 0 { config.max_threads } else { MAX_BAGS_AT_ONCE });
     let chunks: Vec<Vec<usize>> = (0..threads).map(|t| (t..bags).step_by(threads).collect()).collect();
-    let background = config.background;
+    let qos = config.qos;
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(threads)
-        .start_handler(move |_| if background { set_background_qos() })
+        .start_handler(move |_| set_qos(qos))
         .build()
         .map_err(|e| e.to_string())?;
-    let trained: Vec<Result<Vec<(usize, Vec<Tree>)>, String>> = pool.install(|| chunks.par_iter().map(|chunk| {
+    let trained: Vec<Result<Vec<(usize, Vec<Trained>)>, String>> = pool.install(|| chunks.par_iter().map(|chunk| {
         let mine: Vec<Vec<i32>> = chunk.iter().flat_map(|&b| samplings[b].iter().cloned()).collect();
         let mut partition = FeatureSamplingTrainerPartition::allocate(&trainer, &mine, "forest")?;
         let mut in_flight = std::collections::VecDeque::new();
-        let mut out: Vec<(usize, Vec<Tree>)> = Vec::new();
-        let finish = |partition: &FeatureSamplingTrainerPartition, (b, i, scheduled, d): (usize, usize, crate::randomforest::ScheduledTree, crate::randomforest::PartitionControlData), out: &mut Vec<(usize, Vec<Tree>)>| -> Result<(), String> {
+        let mut out: Vec<(usize, Vec<Trained>)> = Vec::new();
+        let finish = |partition: &FeatureSamplingTrainerPartition, (b, i, scheduled, d): (usize, usize, crate::randomforest::ScheduledTree, crate::randomforest::PartitionControlData), out: &mut Vec<(usize, Vec<Trained>)>| -> Result<(), String> {
             scheduled.event.await_()?;
-            let mut tree = partition.finish(i as i32, &format!("bag {b}"), &d, &scheduled).map_err(|e| format!("error training bag {b}: {e}"))?;
-            if !tree.root.is_some() {
-                let w_all = d.w_all(&trainer);
-                tree.root = get_leaf(&mut tree, &w_all);
-            }
+            let err = |e: String| format!("error training bag {b}: {e}");
+            let tree = match &cols {
+                Some(cols) => Trained::Flat(match partition.finish_flat(&d, &scheduled, cols).map_err(err)? {
+                    Some(t) => t,
+                    None => {
+                        let mut tree = Tree::new();
+                        tree.root = get_leaf(&mut tree, &d.root_w_all(&trainer)?);
+                        FlatTree::from_tree(&data.fs, &tree)?
+                    }
+                }),
+                None => {
+                    let mut tree = partition.finish(i as i32, &format!("bag {b}"), &d, &scheduled).map_err(err)?;
+                    if !tree.root.is_some() {
+                        tree.root = get_leaf(&mut tree, &d.root_w_all(&trainer)?);
+                    }
+                    Trained::Tree(tree)
+                }
+            };
+            partition.release(&scheduled);
             match out.last_mut() {
                 Some((last, trees)) if *last == b => trees.push(tree),
                 _ => out.push((b, vec![tree])),
@@ -375,14 +549,19 @@ pub fn train_forest_weighted(all_data: &PartitionData, config: &RandomForestProc
             Ok(())
         };
         for &b in chunk {
-            let counts = bag_counts(n, b, config);
-            let total: f64 = rows.iter().zip(&counts).map(|(r, &c)| r.0 as f64 * c as f64).sum();
-            if total == 0.0 {
-                return Err(format!("error training bag {b}: No training weight in RandomForest bag; try training with more examples"));
-            }
-            let scale = 1.0 / total;
-            let row = |e: usize| row_of_example[e] as usize;
-            let tree_rows = TreeRows::new(num_examples, |e| if row_of_example[e] == u32::MAX { 0.0 } else { (rows[row(e)].0 as f64 * counts[row(e)] as f64 * scale) as f32 }, |e| if row_of_example[e] == u32::MAX { 0.0 } else { rows[row(e)].1 })?;
+            let tree_rows = match &device_bags {
+                Some(bags) => bags.draw(&partition, num_examples, b)?,
+                None => {
+                    let counts = bag_counts(n, b, config);
+                    let total: f64 = rows.iter().zip(&counts).map(|(r, &c)| r.0 as f64 * c as f64).sum();
+                    if total == 0.0 {
+                        return Err(format!("error training bag {b}: No training weight in RandomForest bag; try training with more examples"));
+                    }
+                    let scale = 1.0 / total;
+                    let row = |e: usize| row_of_example[e] as usize;
+                    TreeRows::new(num_examples, |e| if row_of_example[e] == u32::MAX { 0.0 } else { (rows[row(e)].0 as f64 * counts[row(e)] as f64 * scale) as f32 }, |e| if row_of_example[e] == u32::MAX { 0.0 } else { rows[row(e)].1 })?
+                }
+            };
             for (i, af) in samplings[b].iter().enumerate() {
                 let d = partition.init_with_rows(i as i32, b as i32, &format!("bag {b}"), af, Some(tree_rows.clone())).map_err(|e| format!("error training bag {b}: {e}"))?;
                 let scheduled = partition.schedule_training(&format!("bag {b}"), &d).map_err(|e| format!("error training bag {b}: {e}"))?;
@@ -397,18 +576,18 @@ pub fn train_forest_weighted(all_data: &PartitionData, config: &RandomForestProc
         }
         Ok(out)
     }).collect());
-    let mut by_bag: Vec<Vec<Tree>> = (0..bags).map(|_| Vec::new()).collect();
+    let mut by_bag: Vec<Vec<Trained>> = (0..bags).map(|_| Vec::new()).collect();
     for t in trained {
         for (b, trees) in t? {
             by_bag[b].extend(trees);
         }
     }
     let total = bags * config.feature_samplings;
-    let trees: Vec<Tree> = by_bag.into_iter().flatten().collect();
+    let trees: Vec<Trained> = by_bag.into_iter().flatten().collect();
     if trees.len() != total {
         return Err(format!("{} trees for {total} samplings", trees.len()));
     }
-    Ok(Forest { fs: all_data.fs.clone(), weights: vec![1.0 / total as f32; total], trees, target_scale: None })
+    Ok(trees)
 }
 
 /// The forest bag by bag (upstream's): each bag's rows compacted (`bag`), and a trainer per bag.
@@ -547,7 +726,7 @@ mod tests {
             return;
         }
         let (all, ..) = training(5000, &|i| 1.0 + (i % 7) as f32 * 0.37);
-        let config = RandomForestProcedureConfig { feature_vector_samplings: 2, feature_samplings: 3, max_depth: 8, ..Default::default() };
+        let config = RandomForestProcedureConfig { feature_vector_samplings: 2, feature_samplings: 3, max_depth: 8, bags: BagDraw::Host, ..Default::default() };
         let device = train_forest(&all, &config).unwrap();
         let again = train_forest(&all, &config).unwrap();
         let recursive = train_forest(&all, &RandomForestProcedureConfig { training_scheme: TrainingScheme::Recursive, ..config.clone() }).unwrap();
@@ -580,7 +759,7 @@ mod tests {
         let mut real = (*d.fs).clone();
         real.label_info = crate::dataset_feature_space::FeatureType::Real;
         let real = Arc::new(real);
-        let base = RandomForestProcedureConfig { feature_vector_samplings: 3, feature_samplings: 2, max_depth: 8, feature_sampling_prop: 0.6, ..Default::default() };
+        let base = RandomForestProcedureConfig { feature_vector_samplings: 3, feature_samplings: 2, max_depth: 8, feature_sampling_prop: 0.6, bags: BagDraw::Host, ..Default::default() };
         let configs = [
             base.clone(),
             RandomForestProcedureConfig { categorical_subsets: true, min_leaf_examples: 4, ..base.clone() },
@@ -600,8 +779,88 @@ mod tests {
                     let mut why = String::new();
                     assert!(compare_trees(b, b.root, a, a.root, PartitionIndex::root(), &all.fs, &mut why), "config {c} regression {regression} tree {i}:\n{why}");
                 }
+                // Built flat from the device's splits, the same forest as the trees flattened.
+                assert!(FlatForest::new(&one).unwrap() == train_flat_forest(&all, config).unwrap(), "config {c} regression {regression}: flat");
             }
         }
+    }
+
+    /// The device's bags (`bagRows`) are the host's copy of the draw (`bag_count`), weight for weight: each example
+    /// kept with the proportion, counted Poisson(1) times, a bag's total near 1.
+    #[test]
+    fn device_bags_are_the_hosts_draw() {
+        let Some(shared) = crate::gpu::shared::get() else { return };
+        let n = 20_000usize;
+        let base: Vec<[f32; 2]> = (0..n).map(|e| if e % 13 == 0 { [0.0, 0.0] } else { [1.0 + (e % 3) as f32, ((e * 7919) % 100) as f32 / 100.0] }).collect();
+        let (prop, keep24) = (0.3f64, ((0.3 * (1u32 << 24) as f64).ceil() as u32));
+        let sum: f64 = base.iter().map(|b| b[0] as f64).sum();
+        let scale = (1.0 / (sum * prop)) as f32;
+        let base_buf = crate::compute_kernel_metal::transfer_to_device_immutable(&shared.device, &base);
+        let out = crate::compute_kernel_metal::alloc_uninitialized_array_sync::<[f32; 2]>(&shared.device, n);
+        let mut q = crate::compute_kernel_metal::MetalComputeQueue::new(&shared.queue);
+        for b in [0usize, 1, 57] {
+            use crate::compute_kernel_grid::ComputeKernelArgument::{Buffer as B, Float, Int};
+            let k = crate::randomforest_kernels_grid::kernel("bagRows").unwrap();
+            let mut ctx = q.new_bind_context(k.function);
+            k.enqueue(&[("numExamples", Int(n as i64)), ("seed", Int(bag_seed(b) as i64)), ("keep24", Int(keep24 as i64)), ("sample", Int(1)), ("scale", Float(scale as f64)), ("baseRows", B(&base_buf)), ("decodedRowsOut", B(&out))], &[n as u32], &mut ctx).unwrap();
+            drop(ctx);
+            q.flush().await_().unwrap();
+            let got = crate::compute_kernel_metal::transfer_to_host_sync::<[f32; 2]>(&out, n);
+            let (mut kept, mut counted, mut total) = (0usize, 0u64, 0f64);
+            for e in 0..n {
+                let c = bag_count(bag_seed(b), e as u32, keep24, 1);
+                let w = base[e][0] * c as f32 * scale;
+                let want = if c == 0 { [0.0, 0.0] } else { crate::randomforest_types::row_weights(w, base[e][1]) };
+                // The same count (zero exactly where the host's is); the weights to the float's last bits (Metal's
+                // fast math orders the products its own way).
+                let close = |a: f32, b: f32| (a - b).abs() <= 1e-6 * b.abs().max(1e-30);
+                assert!((got[e] == [0.0, 0.0]) == (want == [0.0, 0.0]) && close(got[e][0], want[0]) && close(got[e][1], want[1]), "bag {b} example {e} (count {c}): {:?} {want:?}", got[e]);
+                if base[e][0] > 0.0 && (h_kept(bag_seed(b), e as u32, keep24)) {
+                    kept += 1;
+                    counted += c as u64;
+                }
+                total += (got[e][0] + got[e][1]) as f64;
+            }
+            let rows = n - n.div_ceil(13);
+            let (share, mean) = (kept as f64 / rows as f64, counted as f64 / kept as f64);
+            assert!((share - prop).abs() < 0.02 && (mean - 1.0).abs() < 0.05 && (total - 1.0).abs() < 0.05, "bag {b}: kept {share:.3}, mean count {mean:.3}, total {total:.3}");
+        }
+        assert_ne!((0..1000).map(|e| bag_count(bag_seed(0), e, keep24, 1)).collect::<Vec<_>>(), (0..1000).map(|e| bag_count(bag_seed(1), e, keep24, 1)).collect::<Vec<_>>(), "bags differ");
+    }
+
+    /// Whether `bag_count` kept example `e` (before its Poisson count, which may be 0).
+    fn h_kept(seed: u32, e: u32, keep24: u32) -> bool {
+        fn hash(mut x: u32) -> u32 {
+            x ^= x >> 16;
+            x = x.wrapping_mul(0x7feb_352d);
+            x ^= x >> 15;
+            x = x.wrapping_mul(0x846c_a68b);
+            x ^ (x >> 16)
+        }
+        hash(e.wrapping_mul(0x9E37_79B9) ^ hash(seed)) >> 8 < keep24
+    }
+
+    /// With the device's bags, the forest built flat is the trees flattened, and both are deterministic.
+    #[test]
+    fn device_bagged_flat_forest_is_the_trees_flattened() {
+        if crate::gpu::shared::get().is_none() {
+            return;
+        }
+        let n = 3000u32;
+        let d = deep_dataset(n);
+        let bucket = |f: usize, r: u32| d.features[f].buckets.get(r) as f32;
+        let targets: Vec<f32> = (0..n).map(|r| 3.0 * bucket(0, r) - 2.0 * bucket(3, r) + ((r * 7919) % 10) as f32 * 0.1).collect();
+        let mut real = (*d.fs).clone();
+        real.label_info = crate::dataset_feature_space::FeatureType::Real;
+        let all = regression_training_data(Arc::new(real), &targets, None, None).unwrap().0;
+        let config = RandomForestProcedureConfig { feature_vector_samplings: 20, feature_samplings: 1, feature_sampling_prop: 1.0, max_depth: 12, min_leaf_examples: 5, ..Default::default() };
+        assert_eq!(config.bags, BagDraw::Device);
+        let trees = train_forest_weighted(&all, &config).unwrap();
+        let flat = train_flat_forest(&all, &config).unwrap();
+        assert!(FlatForest::new(&trees).unwrap() == flat, "flat");
+        assert!(train_flat_forest(&all, &config).unwrap() == flat, "deterministic");
+        // The device's bags differ from the host's: another forest.
+        assert!(train_flat_forest(&all, &RandomForestProcedureConfig { bags: BagDraw::Host, ..config.clone() }).unwrap() != flat);
     }
 
     /// A regression forest: trained on the device it is the recursive trainer's, tree by tree (soft labels, the
@@ -622,7 +881,7 @@ mod tests {
         // A function of three features, with noise; some rows without a target, or left out.
         let targets: Vec<f32> = (0..n).map(|r| if r % 17 == 4 { f32::NAN } else { 10.0 + 3.0 * bucket(0, r) - 2.0 * bucket(3, r) + bucket(12, r) * bucket(1, r) + ((r * 7919) % 10) as f32 * 0.1 }).collect();
         let wheres: Vec<f32> = (0..n).map(|r| if r % 7 == 3 { 0.0 } else { 1.0 }).collect();
-        let config = RandomForestProcedureConfig { feature_vector_samplings: 2, feature_samplings: 3, max_depth: 8, feature_sampling_prop: 1.0, ..Default::default() };
+        let config = RandomForestProcedureConfig { feature_vector_samplings: 2, feature_samplings: 3, max_depth: 8, feature_sampling_prop: 1.0, bags: BagDraw::Host, ..Default::default() };
         let device = train_regression_forest(fs.clone(), &targets, Some(&wheres), None, &config).unwrap();
         let recursive = train_regression_forest(fs.clone(), &targets, Some(&wheres), None, &RandomForestProcedureConfig { training_scheme: TrainingScheme::Recursive, ..config.clone() }).unwrap();
         let scale = device.target_scale.unwrap();

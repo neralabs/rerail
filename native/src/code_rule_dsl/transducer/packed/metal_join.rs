@@ -58,6 +58,62 @@ pub(in crate::code_rule_dsl) const JOIN: u32 = 0;
 pub(in crate::code_rule_dsl) const SEMI: u32 = 1;
 pub(in crate::code_rule_dsl) const ANTI: u32 = 2;
 pub(in crate::code_rule_dsl) const FILTER: u32 = 3;
+/// An aggregate over the rows that match each binding's keys (`Stage::agg`): one row out per binding with a value.
+pub(in crate::code_rule_dsl) const AGG: u32 = 4;
+pub(in crate::code_rule_dsl) const AGG_COUNT: u32 = 0;
+pub(in crate::code_rule_dsl) const AGG_SUM: u32 = 1;
+pub(in crate::code_rule_dsl) const AGG_MIN: u32 = 2;
+pub(in crate::code_rule_dsl) const AGG_MAX: u32 = 3;
+/// A text test of a slot (`Stage::agg`: `[slot, want]`): a binding passes when its symbol's verdict bit (the right
+/// relation, a bitset of 64 bits a row, by symbol) is `want`.
+pub(in crate::code_rule_dsl) const TEXT: u32 = 5;
+/// A function of symbols' names, each a slot or a constant (keys 0 and 1), their texts the right relation's (a
+/// `DevText`), its value into `bind_slot[0]`: by `agg[0]`, `NAMES_CMP` (`str_cmp`) or `NAMES_LEN` (`strlen`).
+pub(in crate::code_rule_dsl) const STRCMP: u32 = 6;
+pub(in crate::code_rule_dsl) const NAMES_CMP: u32 = 0;
+pub(in crate::code_rule_dsl) const NAMES_LEN: u32 = 1;
+/// A literal text test of a pattern and a subject (keys 0 and 1, 2 and 3), each a symbol or a cat's text never made
+/// (`OPND_*`, `agg[1]`: the pattern's kind, the subject's << 4): `agg[0]` is the want (bit 0), the test (`TEXT_*`
+/// << 1), and `TEXT_SPLIT` when it is a text test (whose pattern a set separator would split).
+pub(in crate::code_rule_dsl) const TEXTOP: u32 = 7;
+pub(in crate::code_rule_dsl) const TEXT_EQ: u32 = 0;
+pub(in crate::code_rule_dsl) const TEXT_PREFIX: u32 = 1;
+pub(in crate::code_rule_dsl) const TEXT_SUFFIX: u32 = 2;
+pub(in crate::code_rule_dsl) const TEXT_SPLIT: u32 = 1 << 4;
+/// An operand: a symbol; `cat`'s text of two; `str_concat`'s.
+pub(in crate::code_rule_dsl) const OPND_SYM: u32 = 0;
+pub(in crate::code_rule_dsl) const OPND_DOT: u32 = 1;
+pub(in crate::code_rule_dsl) const OPND_PLAIN: u32 = 2;
+/// `cat`'s form: b's name alone when a's is empty, else a's, ".", b's.
+pub(in crate::code_rule_dsl) const CAT_DOT: u32 = 0;
+/// `str_concat`'s form: a's name then b's.
+pub(in crate::code_rule_dsl) const CAT_PLAIN: u32 = 1;
+/// Mode 9: a text function's value made into the batch's text arena (`Arena`), or a range of its text, bound to
+/// `bind_slot[0]`: of X (keys 0, 1, kind `agg[1]`), Y and Z (keys 2 and 4, symbols), numbers (keys 5 and 6), by
+/// `agg[0]`. A value with none (the arena full, or `lower` past ASCII) sets the stage's counter word (`TEXTFN_FULL`,
+/// `TEXTFN_HOST`).
+pub(in crate::code_rule_dsl) const TEXTFN: u32 = 9;
+pub(in crate::code_rule_dsl) const TEXTFN_LOWER: u32 = 0;
+pub(in crate::code_rule_dsl) const TEXTFN_HEAD: u32 = 1;
+pub(in crate::code_rule_dsl) const TEXTFN_DIR: u32 = 2;
+pub(in crate::code_rule_dsl) const TEXTFN_SUBSTR: u32 = 3;
+pub(in crate::code_rule_dsl) const TEXTFN_SLICE: u32 = 4;
+pub(in crate::code_rule_dsl) const TEXTFN_TO_STRING: u32 = 5;
+pub(in crate::code_rule_dsl) const TEXTFN_REPLACE: u32 = 6;
+pub(in crate::code_rule_dsl) const TEXTFN_SQL_SUBSTR: u32 = 7;
+pub(in crate::code_rule_dsl) const TEXTFN_ASCII_LOWER: u32 = 8;
+pub(in crate::code_rule_dsl) const TEXTFN_ASCII_UPPER: u32 = 9;
+/// X's text whole: a cat's (operand `OPND_DOT` or `OPND_PLAIN`), made for the head or a text function.
+pub(in crate::code_rule_dsl) const TEXTFN_COPY: u32 = 10;
+/// `replace_all` of a regex (its automaton, `text::table::Replacer`, bound where a join's sort is) and a literal
+/// replacement (Z).
+pub(in crate::code_rule_dsl) const TEXTFN_REGEX: u32 = 11;
+pub(in crate::code_rule_dsl) const TEXTFN_FULL: u32 = 1;
+pub(in crate::code_rule_dsl) const TEXTFN_HOST: u32 = 2;
+/// An operand that is an arena text (a text function's value).
+pub(in crate::code_rule_dsl) const OPND_ARENA: u32 = 3;
+/// An arena text's value: the sign bit, its offset from bit 24, its length in the low 24 bits.
+pub(in crate::code_rule_dsl) const ARENA_TEXT: i64 = i64::MIN;
 
 /// A program column's or a bind's source: a candidate's column, or the binding's slot.
 pub(in crate::code_rule_dsl) const RIGHT: u32 = 0;
@@ -66,6 +122,20 @@ pub(in crate::code_rule_dsl) const LEFT: u32 = 1;
 pub(in crate::code_rule_dsl) const BIND_COLUMN: u32 = 0;
 pub(in crate::code_rule_dsl) const BIND_PARAM: u32 = 1;
 pub(in crate::code_rule_dsl) const BIND_RIGHT: u32 = 2;
+/// A bind's value computed by integer arithmetic (`Stage::arith[bind_idx]`): a row where it has no value (an
+/// overflow, a zero divisor) is dropped, as the CPU's `Func` step drops it.
+pub(in crate::code_rule_dsl) const BIND_ARITH: u32 = 3;
+/// The most arithmetic binds a stage holds.
+pub(in crate::code_rule_dsl) const MAX_ARITH: usize = 8;
+/// An arithmetic bind's operation (`Stage::arith[j][0]`), and its operands' sources (`[j][3]`: bit 0 the first is a
+/// parameter, else a program column; bit 1 the second).
+pub(in crate::code_rule_dsl) const ARITH_ADD: u32 = 0;
+pub(in crate::code_rule_dsl) const ARITH_SUB: u32 = 1;
+pub(in crate::code_rule_dsl) const ARITH_MUL: u32 = 2;
+pub(in crate::code_rule_dsl) const ARITH_DIV: u32 = 3;
+pub(in crate::code_rule_dsl) const ARITH_MOD: u32 = 4;
+pub(in crate::code_rule_dsl) const ARITH_MAX: u32 = 5;
+pub(in crate::code_rule_dsl) const ARITH_MIN: u32 = 6;
 /// A key's or a parameter's source: a slot of the binding, or a constant.
 pub(in crate::code_rule_dsl) const SLOT: u32 = 1;
 pub(in crate::code_rule_dsl) const CONST: u32 = 0;
@@ -122,10 +192,14 @@ pub(in crate::code_rule_dsl) struct Stage {
     pub(in crate::code_rule_dsl) outputs: [u32; MAX_OUTPUTS],
     pub(in crate::code_rule_dsl) noutputs: u32,
     pub(in crate::code_rule_dsl) ncols: u32,
-    pub(in crate::code_rule_dsl) pad: [u32; 2],
+    /// An aggregate stage's fold (mode `AGG`): `[kind | bind << 8, column]` (`AGG_*`; the column `NONE` for none).
+    /// Its value's slot is `bind_slot[0]`; its counter word is set when a sum passes 64 bits.
+    pub(in crate::code_rule_dsl) agg: [u32; 2],
+    /// The arithmetic binds: `[operation, first operand, second operand, sources]` (`ARITH_*`).
+    pub(in crate::code_rule_dsl) arith: [[u32; 4]; MAX_ARITH],
 }
 
-const _: () = assert!(std::mem::size_of::<Stage>() == 2160 && std::mem::size_of::<Stage>() % 16 == 0);
+const _: () = assert!(std::mem::size_of::<Stage>() == 2288 && std::mem::size_of::<Stage>() % 16 == 0);
 
 impl Default for Stage {
     fn default() -> Self {
@@ -158,7 +232,8 @@ struct Stage {
     uint par_kind[16]; uint par_slot[16]; uint par_doc[16];
     uint bind_slot[16]; uint bind_kind[16]; uint bind_idx[16];
     uint passed[16]; uint outputs[16];
-    uint noutputs; uint ncols; uint pad[2];
+    uint noutputs; uint ncols; uint agg[2];
+    uint4 arith[8];
 };
 
 constant uint NONE = 0xffffffffu;
@@ -181,6 +256,50 @@ static inline long colval(constant Stage& s, uint k, device const long* L, uint 
 static inline long parval(constant Stage& s, uint k, device const long* L, uint t) {
     long v = s.par_kind[k] == 0 ? s.par_const[k] : L[ulong(s.par_slot[k]) * s.cap_in + t];
     return s.par_doc[k] != 0 ? (v >> 32) : v;
+}
+
+// Arithmetic bind j's value for one row, as the CPU's checked arithmetic gives it: false where it has none (an
+// overflow, a zero divisor). Wrapping operations on ulong, then the overflow tested, so nothing is undefined.
+static inline bool arith(constant Stage& s, uint j, device const long* L, uint t, device const long* R, uint r, thread long& out) {
+    uint4 a = s.arith[j];
+    long x = (a.w & 1u) != 0 ? parval(s, a.y, L, t) : colval(s, a.y, L, t, R, r);
+    long y = (a.w & 2u) != 0 ? parval(s, a.z, L, t) : colval(s, a.z, L, t, R, r);
+    ulong ux = as_type<ulong>(x), uy = as_type<ulong>(y);
+    bool min_by_neg = x == long(0x8000000000000000ul) && y == -1;
+    bool ok = true;
+    long v = 0;
+    if (a.x == 0u) {
+        v = as_type<long>(ux + uy);
+        ok = ((x ^ v) & (y ^ v)) >= 0;
+    } else if (a.x == 1u) {
+        v = as_type<long>(ux - uy);
+        ok = ((x ^ y) & (x ^ v)) >= 0;
+    } else if (a.x == 2u) {
+        v = as_type<long>(ux * uy);
+        ok = mulhi(x, y) == (v >> 63);
+    } else if (a.x == 3u) {
+        ok = y != 0 && !min_by_neg;
+        v = ok ? x / y : 0;
+    } else if (a.x == 4u) {
+        ok = y != 0 && !min_by_neg;
+        v = ok ? x % y : 0;
+    } else if (a.x == 5u) {
+        v = max(x, y);
+    } else {
+        v = min(x, y);
+    }
+    out = v;
+    return ok;
+}
+
+// Whether every arithmetic bind of the stage has a value for this row.
+static inline bool defined(constant Stage& s, device const long* L, uint t, device const long* R, uint r) {
+    for (uint b = 0; b < s.nbinds && b < 16; b++) {
+        if (s.bind_kind[b] != 3) continue;
+        long v = 0;
+        if (!arith(s, s.bind_idx[b], L, t, R, r, v)) return false;
+    }
+    return true;
 }
 
 // The row program's operations for one row: bit x of the result is operation x's value.
@@ -241,16 +360,367 @@ static inline bool matches(constant Stage& s, device const long* R, uint r, thre
     return true;
 }
 
+// An aggregate's value over the binding's matching rows (mode 4, `Stage::agg`): 0 with `v`, 1 when it has none (a min
+// or max of no rows, or a tested value that differs), 2 when a sum passes 64 bits.
+static inline uint aggregate(constant Stage& s, device const long* L, uint t, device const long* R, device const uint* perm,
+                             uint lo, uint hi, thread const long* kv, thread long& v) {
+    bool keyed = s.nkeys > 0;
+    uint kind = s.agg[0] & 0xff;
+    long cnt = 0, sum = 0, mn = 0, mx = 0;
+    bool any = false, over = false;
+    for (uint q = lo; q < hi; q++) {
+        uint r = keyed ? perm[q] : q;
+        if (!matches(s, R, r, kv)) continue;
+        cnt++;
+        if (s.agg[1] == NONE) continue;
+        long x = R[ulong(s.agg[1]) * s.nr + r];
+        long y = as_type<long>(as_type<ulong>(sum) + as_type<ulong>(x));
+        if ((sum < 0) == (x < 0) && (y < 0) != (sum < 0)) over = true;
+        sum = y;
+        if (!any || x < mn) mn = x;
+        if (!any || x > mx) mx = x;
+        any = true;
+    }
+    if (kind == 1 && over) return 2;
+    if ((kind == 2 || kind == 3) && !any) return 1;
+    v = kind == 0 ? cnt : (kind == 1 ? sum : (kind == 2 ? mn : mx));
+    if (((s.agg[0] >> 8) & 1) == 0 && L[ulong(s.bind_slot[0]) * s.cap_in + t] != v) return 1;
+    return 0;
+}
+
+// A text buffer (`DevText`): its terms' count, their symbols ascending, each one's offset into its bytes, the bytes.
+static inline uint text_count(device const long* T) { return uint(T[0]); }
+static inline device const uint* text_offs(device const long* T) { return (device const uint*)(T + 1 + T[0]); }
+static inline device const uchar* text_chars(device const long* T) { return (device const uchar*)(text_offs(T) + T[0] + 1); }
+
+// Symbol `id`'s text in T (none: the empty text, as a name the store does not hold).
+static inline void text_find(device const long* T, long id, thread uint& off, thread uint& len) {
+    uint n = text_count(T), a = 0, b = n;
+    for (uint k = 0; k < 40 && a < b; k++) { uint m = (a + b) / 2; if (T[1 + m] < id) a = m + 1; else b = m; }
+    if (a < n && T[1 + a] == id) { device const uint* o = text_offs(T); off = o[a]; len = o[a + 1] - o[a]; }
+    else { off = 0; len = 0; }
+}
+
+// Eight bytes of a text from `at`, big-endian, zero past `end`: a window compared at once.
+static inline ulong text_word(device const uchar* p, uint at, uint end) {
+    ulong w = 0;
+    for (uint k = 0; k < 8; k++) w = (w << 8) | ((at + k) < end ? ulong(p[at + k]) : 0ul);
+    return w;
+}
+
+// The order of two texts by their bytes (-1, 0, 1), as Rust's `str::cmp`: a word of eight bytes at a time over the
+// shorter's length, then the lengths.
+static inline long text_cmp(device const uchar* p, uint a, uint alen, uint b, uint blen) {
+    uint m = min(alen, blen);
+    for (uint at = 0; at < m; at += 8) {
+        ulong x = text_word(p + a, at, m), y = text_word(p + b, at, m);
+        if (x != y) return x < y ? -1 : 1;
+    }
+    return alen == blen ? 0 : (alen < blen ? -1 : 1);
+}
+
+// Whether `len` bytes at p+a are those at p+b: a word of eight at a time.
+static inline bool text_same(device const uchar* p, uint a, uint b, uint len) {
+    for (uint at = 0; at < len; at += 8) if (text_word(p + a, at, len) != text_word(p + b, at, len)) return false;
+    return true;
+}
+
+// A key's value: a slot of binding t, or a constant.
+static inline long key_value(constant Stage& s, device const long* L, uint t, uint k) {
+    return s.key_kind[k] == 1 ? L[ulong(s.key_slot[k]) * s.cap_in + t] : s.key_const[k];
+}
+
+// The text arena (`Arena`): its first word the bytes given out (an atomic bump, counting on past the end, so a full
+// one says how much was wanted), its second its capacity, its bytes from the 16th.
+static inline device const uchar* arena_bytes(device atomic_uint* A) { return (device const uchar*)A + 16; }
+
+// An arena text's value: the sign bit, its offset from bit 24, its length in the low 24 bits.
+static inline long arena_value(uint off, uint len) { return long(0x8000000000000000ul | (ulong(off) << 24) | ulong(len)); }
+
+// A text operand: a symbol's name (b's empty), a held cat's text, never made (a's name, "." when `dot`, b's name), or
+// an arena text.
+struct Txt { device const uchar* a; uint al; device const uchar* b; uint bl; uint dot; };
+
+static inline uint txt_len(Txt x) { return x.al + x.dot + x.bl; }
+
+static inline uchar txt_byte(Txt x, uint i) {
+    if (i < x.al) return x.a[i];
+    i -= x.al;
+    if (i < x.dot) return uchar('.');
+    return x.b[i - x.dot];
+}
+
+// Eight bytes of x from `at`, big-endian, zero past `end`.
+static inline ulong txt_word(Txt x, uint at, uint end) {
+    ulong w = 0;
+    for (uint k = 0; k < 8; k++) w = (w << 8) | ((at + k) < end ? ulong(txt_byte(x, at + k)) : 0ul);
+    return w;
+}
+
+// Whether n bytes of x from xs are those of y from ys: a word of eight at a time.
+static inline bool txt_same(Txt x, uint xs, Txt y, uint ys, uint n) {
+    for (uint at = 0; at < n; at += 8) if (txt_word(x, xs + at, xs + n) != txt_word(y, ys + at, ys + n)) return false;
+    return true;
+}
+
+// Operand kind 0: key k's symbol; 1: `cat`'s text of keys k and k + 1 (b's alone when a's is empty); 2:
+// `str_concat`'s; 3: key k's arena text.
+static inline Txt txt_of(constant Stage& s, device const long* L, uint t, device const long* R, device atomic_uint* A, uint k, uint kind) {
+    Txt x;
+    x.b = text_chars(R);
+    x.bl = 0;
+    x.dot = 0;
+    long v = key_value(s, L, t, k);
+    if (kind == 3) {
+        // A value with none (-1: the arena was full) reads as empty: the stage runs again.
+        ulong off = (ulong(v) >> 24) & ((1ul << 39) - 1);
+        uint len = uint(v & 0xffffff);
+        bool ok = v != -1 && off + len <= ulong(((device const uint*)A)[1]);
+        x.a = arena_bytes(A) + (ok ? off : 0);
+        x.al = ok ? len : 0;
+        return x;
+    }
+    uint off;
+    text_find(R, v, off, x.al);
+    x.a = text_chars(R) + off;
+    if (kind != 0) {
+        text_find(R, key_value(s, L, t, k + 1), off, x.bl);
+        x.b = text_chars(R) + off;
+        x.dot = (kind == 1 && x.al > 0) ? 1 : 0;
+    }
+    return x;
+}
+
+// Mode 7: a literal text test of pattern X (keys 0, 1) and subject Y (keys 2, 3), each of kind agg[1] & 15 and
+// agg[1] >> 4: by op agg[0] >> 1 & 3, 0 equal, 1 Y begins with X, 2 Y ends with X; as agg[0] & 1 wants.
+static inline bool textop_pass(constant Stage& s, device const long* L, uint t, device const long* R, device atomic_uint* A) {
+    Txt x = txt_of(s, L, t, R, A, 0, s.agg[1] & 15), y = txt_of(s, L, t, R, A, 2, s.agg[1] >> 4);
+    uint lx = txt_len(x), ly = txt_len(y);
+    uint op = (s.agg[0] >> 1) & 3;
+    bool r;
+    if (op == 0) r = lx == ly && txt_same(x, 0, y, 0, lx);
+    else if (op == 1) r = ly >= lx && txt_same(x, 0, y, 0, lx);
+    else r = ly >= lx && txt_same(x, 0, y, ly - lx, lx);
+    return r == ((s.agg[0] & 1) != 0);
+}
+
+// The characters of x: its bytes less the UTF-8 continuation bytes (`10xxxxxx`), counted a word at a time.
+static inline uint txt_chars(Txt x) {
+    uint n = txt_len(x), cont = 0;
+    for (uint at = 0; at < n; at += 8) {
+        ulong w = txt_word(x, at, n);
+        cont += popcount(w & ~(w << 1) & 0x8080808080808080ul);
+    }
+    return n - cont;
+}
+
+// A function of names (mode 6), of operands X (keys 0, 1) and Y (keys 2, 3) as mode 7's (kinds agg[1] & 15 and
+// agg[1] >> 4), its value into `bind_slot[0]`: by agg[0], 0 `str_cmp` (their order by bytes, a word of eight at a
+// time, then their lengths, as Rust's `str::cmp`), 1 `strlen` of X (its characters).
+static inline long strcmp_value(constant Stage& s, device const long* L, uint t, device const long* R, device atomic_uint* A) {
+    Txt x = txt_of(s, L, t, R, A, 0, s.agg[1] & 15);
+    if (s.agg[0] == 1) return long(txt_chars(x));
+    uint lx = txt_len(x);
+    Txt y = txt_of(s, L, t, R, A, 2, s.agg[1] >> 4);
+    uint ly = txt_len(y), m = min(lx, ly);
+    for (uint at = 0; at < m; at += 8) {
+        ulong u = txt_word(x, at, m), v = txt_word(y, at, m);
+        if (u != v) return u < v ? -1 : 1;
+    }
+    return lx == ly ? 0 : (lx < ly ? -1 : 1);
+}
+
+// The byte offset of character `c` of x (its length past the last).
+static inline uint txt_char_at(Txt x, uint c) {
+    uint n = txt_len(x), seen = 0;
+    for (uint i = 0; i < n; i++) {
+        if ((txt_byte(x, i) & 0xc0) != 0x80) {
+            if (seen == c) return i;
+            seen++;
+        }
+    }
+    return n;
+}
+
+// The end of the match a regex's automaton G (`text::table::Replacer`) prefers from byte s of x (n bytes), NONE for
+// none. Its matches are a byte late: a match state after byte k is a match ending at k.
+static inline uint rx_end(device const uchar* G, Txt x, uint s, uint n) {
+    device const uint* h = (device const uint*)G;
+    uint classes = h[1], dead = h[4];
+    device const uchar* cls = G + 32;
+    device const ushort* next = (device const ushort*)(G + 288);
+    device const ushort* eoi = next + h[0] * classes;
+    device const uchar* acc = (device const uchar*)(eoi + h[0]);
+    uint st = s == 0 ? h[2] : h[3], last = NONE;
+    for (uint k = s; k < n; k++) {
+        st = next[st * classes + cls[txt_byte(x, k)]];
+        if (st == dead) return last;
+        if (acc[st] != 0) last = k;
+    }
+    return acc[eoi[st]] != 0 ? n : last;
+}
+
+// x with each match of G (leftmost first, not overlapping, from a character's first byte) replaced by z: its length,
+// and its bytes into o when `write`.
+static inline uint rx_replace(device const uchar* G, Txt x, Txt z, device uchar* o, bool write) {
+    uint n = txt_len(x), lz = txt_len(z), pos = 0, w = 0, s = 0;
+    while (s < n) {
+        if ((txt_byte(x, s) & 0xc0) != 0x80) {
+            uint e = rx_end(G, x, s, n);
+            if (e != NONE && e > s) {
+                if (write) {
+                    for (uint i = pos; i < s; i++) o[w + i - pos] = txt_byte(x, i);
+                    for (uint k = 0; k < lz; k++) o[w + s - pos + k] = txt_byte(z, k);
+                }
+                w += s - pos + lz;
+                pos = e;
+                s = e;
+                continue;
+            }
+        }
+        s++;
+    }
+    if (write) for (uint i = pos; i < n; i++) o[w + i - pos] = txt_byte(x, i);
+    return w + n - pos;
+}
+
+// Mode 9, a text function (agg[0]: `TEXTFN_*`) of X (keys 0, 1, kind agg[1] & 15), Y and Z (keys 2 and 4, symbols:
+// `replace_all`'s pattern and replacement) and numbers (keys 5 and 6): its text's bytes [from, from + len) of X
+// (`head`, `dir`, `substr`, `slice`), or made into the arena (`lower`, `to_string`, `replace_all`). Its value: an
+// arena text; -1 and a flag in the stage's counter word (1: the arena is full, its first word then says how much
+// was wanted; 2: `lower` of a name past ASCII, which the host's Unicode mapping makes) when it has none.
+static inline long textfn_value(constant Stage& s, device const long* L, uint t, device const long* R, device atomic_uint* A, device atomic_uint* counters,
+                                device const uchar* G) {
+    Txt x = txt_of(s, L, t, R, A, 0, s.agg[1] & 15);
+    uint n = txt_len(x), f = s.agg[0];
+    long n0 = key_value(s, L, t, 5), n1 = key_value(s, L, t, 6);
+    // A range of X (in bytes) when the function copies one.
+    uint from = 0, len = 0, made = 0;
+    Txt y, z;
+    char digits[24];
+    if (f == 8 || f == 9) {
+        // SQLite's lower and upper: ASCII alone.
+        made = n;
+    } else if (f == 0) {
+        // lower: ASCII alone (a name past it is the host's: Unicode's mapping).
+        for (uint i = 0; i < n; i++) if (txt_byte(x, i) >= 0x80) {
+            if (s.counter != NONE) atomic_fetch_or_explicit(&counters[s.counter], 2u, memory_order_relaxed);
+            return -1;
+        }
+        made = n;
+    } else if (f == 1) {
+        // head: up to the first ".".
+        len = n;
+        for (uint i = 0; i < n; i++) if (txt_byte(x, i) == uchar('.')) { len = i; break; }
+    } else if (f == 2) {
+        // dir: up to the last "/" (none: empty).
+        for (uint i = n; i > 0; i--) if (txt_byte(x, i - 1) == uchar('/')) { len = i - 1; break; }
+    } else if (f == 3 || f == 4 || f == 7) {
+        long nc = long(txt_chars(x)), a, b;
+        if (f != 4) {
+            // substr(s, i, n): SQLite's substr(s, i + 1, n) (f 7: SQLite's own), in characters.
+            long p1 = f == 3 ? n0 + 1 : n0, p2 = n1;
+            bool neg = p2 < 0;
+            if (neg) p2 = -p2;
+            if (p1 < 0) {
+                p1 += nc;
+                if (p1 < 0) { p2 = max(p2 + p1, 0l); p1 = 0; }
+            } else if (p1 > 0) p1 -= 1;
+            else if (p2 > 0) p2 -= 1;
+            if (neg) {
+                p1 -= p2;
+                if (p1 < 0) { p2 += p1; p1 = 0; }
+            }
+            a = clamp(p1, 0l, nc);
+            b = clamp(p1 + p2, a, nc);
+        } else {
+            // slice(s, start, end): characters, negative from the end, clamped.
+            a = clamp(n0 < 0 ? nc + n0 : n0, 0l, nc);
+            b = clamp(n1 < 0 ? nc + n1 : n1, 0l, nc);
+            if (a > b) b = a;
+        }
+        from = txt_char_at(x, uint(a));
+        len = txt_char_at(x, uint(b)) - from;
+    } else if (f == 5) {
+        // to_string(n): its decimal digits.
+        ulong u = n0 < 0 ? ulong(-(n0 + 1)) + 1 : ulong(n0);
+        uint k = 0;
+        do { digits[k++] = char('0' + u % 10); u /= 10; } while (u > 0);
+        if (n0 < 0) digits[k++] = '-';
+        made = k;
+    } else if (f == 11) {
+        z = txt_of(s, L, t, R, A, 4, 0);
+        made = rx_replace(G, x, z, (device uchar*)A, false);
+    } else {
+        // replace_all(s, p, r) of a literal p (not empty) and r: the leftmost matches, not overlapping.
+        y = txt_of(s, L, t, R, A, 2, 0);
+        z = txt_of(s, L, t, R, A, 4, 0);
+        uint ly = txt_len(y), lz = txt_len(z), hits = 0;
+        for (uint i = 0; i + ly <= n && ly > 0;) {
+            if (txt_same(x, i, y, 0, ly)) { hits++; i += ly; } else i++;
+        }
+        made = n - hits * ly + hits * lz;
+    }
+    if (f == 10) len = n;
+    if (f >= 1 && f <= 4 || f == 7 || f == 10) made = len;
+    device atomic_uint* used = A;
+    uint cap = ((device const uint*)A)[1];
+    uint off = atomic_fetch_add_explicit(used, made, memory_order_relaxed);
+    if (ulong(off) + made > cap) {
+        if (s.counter != NONE) atomic_fetch_or_explicit(&counters[s.counter], 1u, memory_order_relaxed);
+        return -1;
+    }
+    device uchar* o = (device uchar*)A + 16 + off;
+    if (f == 0 || f == 8) {
+        for (uint i = 0; i < n; i++) { uchar c = txt_byte(x, i); o[i] = (c >= 'A' && c <= 'Z') ? c + 32 : c; }
+    } else if (f == 9) {
+        for (uint i = 0; i < n; i++) { uchar c = txt_byte(x, i); o[i] = (c >= 'a' && c <= 'z') ? c - 32 : c; }
+    } else if (f == 5) {
+        for (uint i = 0; i < made; i++) o[i] = uchar(digits[made - 1 - i]);
+    } else if (f == 11) {
+        rx_replace(G, x, z, o, true);
+    } else if (f == 6) {
+        uint ly = txt_len(y), lz = txt_len(z), w = 0;
+        for (uint i = 0; i < n;) {
+            if (ly > 0 && i + ly <= n && txt_same(x, i, y, 0, ly)) {
+                for (uint k = 0; k < lz; k++) o[w++] = txt_byte(z, k);
+                i += ly;
+            } else o[w++] = txt_byte(x, i++);
+        }
+    } else {
+        for (uint i = 0; i < len; i++) o[i] = txt_byte(x, from + i);
+    }
+    return arena_value(off, made);
+}
+
+// Whether binding t's symbol in slot agg[0] has its verdict bit (mode 5), as agg[1] wants.
+static inline bool text_pass(constant Stage& s, device const long* L, uint t, device const long* R) {
+    long v = L[ulong(s.agg[0]) * s.cap_in + t];
+    bool bit = v >= 0 && ulong(v >> 6) < ulong(s.nr) && ((R[v >> 6] >> (v & 63)) & 1) != 0;
+    return bit == (s.agg[1] != 0);
+}
+
 kernel void stage_count(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]], device const uint* perm [[buffer(2)]],
                         device const uint* starts [[buffer(3)]], device const uint* rkeys [[buffer(4)]], device const uint* nruns [[buffer(5)]],
                         device const uint* totals [[buffer(6)]], device atomic_uint* counters [[buffer(7)]], device uint* counts [[buffer(8)]],
-                        constant Stage& s [[buffer(9)]], uint t [[thread_position_in_grid]]) {
+                        device atomic_uint* A [[buffer(9)]], constant Stage& s [[buffer(10)]], uint t [[thread_position_in_grid]]) {
     if (t > s.cap_in) return;
     uint n = min(totals[s.in_slot], s.cap_in);
     if (t >= n) { counts[t] = 0; return; }
     long kv[8];
     uint lo, hi;
+    if (s.mode == 5) { counts[t] = uint(text_pass(s, L, t, R)); return; }
+    if (s.mode == 6) { counts[t] = 1; return; }
+    if (s.mode == 7) { counts[t] = uint(textop_pass(s, L, t, R, A)); return; }
+    if (s.mode == 9) { counts[t] = 1; return; }
     candidates(s, L, t, starts, rkeys, nruns, kv, lo, hi);
+    if (s.mode == 4) {
+        long v = 0;
+        uint st = aggregate(s, L, t, R, perm, lo, hi, kv, v);
+        if (st == 2 && s.counter != NONE) atomic_store_explicit(&counters[s.counter], 1u, memory_order_relaxed);
+        counts[t] = uint(st == 0);
+        return;
+    }
     bool keyed = s.mode != 3 && s.nkeys > 0;
     bool exists = s.mode == 1 || s.mode == 2;
     uint c = 0, p0 = 0;
@@ -262,9 +732,10 @@ kernel void stage_count(device const long* L [[buffer(0)]], device const long* R
         if (s.mode != 3 && !matches(s, R, r, kv)) continue;
         if (exists) { found = true; break; }
         p0++;
+        bool ok = defined(s, L, t, R, r);
         ulong v = s.nops > 0 ? eval(s, L, t, R, r) : 0;
-        for (uint m = 0; m < s.npassed && m < 16; m++) q_counts[m] += s.passed[m] == NONE ? 1u : uint(out_bit(s, v, s.passed[m]));
-        if (s.last != NONE && !out_bit(s, v, s.last)) continue;
+        for (uint m = 0; m < s.npassed && m < 16; m++) q_counts[m] += s.passed[m] == NONE ? uint(ok) : uint(ok && out_bit(s, v, s.passed[m]));
+        if (!ok || (s.last != NONE && !out_bit(s, v, s.last))) continue;
         c++;
     }
     if (exists) c = uint(found != (s.mode == 2));
@@ -279,7 +750,9 @@ static inline void write_row(constant Stage& s, device const long* L, uint t, de
     for (uint k = 0; k < s.nslots; k++) O[ulong(k) * s.cap_out + at] = L[ulong(k) * s.cap_in + t];
     for (uint b = 0; b < s.nbinds && b < 16; b++) {
         uint kind = s.bind_kind[b];
-        long v = kind == 0 ? colval(s, s.bind_idx[b], L, t, R, r) : (kind == 1 ? parval(s, s.bind_idx[b], L, t) : R[ulong(s.bind_idx[b]) * s.nr + r]);
+        long v = 0;
+        if (kind == 3) arith(s, s.bind_idx[b], L, t, R, r, v);
+        else v = kind == 0 ? colval(s, s.bind_idx[b], L, t, R, r) : (kind == 1 ? parval(s, s.bind_idx[b], L, t) : R[ulong(s.bind_idx[b]) * s.nr + r]);
         O[ulong(s.bind_slot[b]) * s.cap_out + at] = v;
     }
 }
@@ -287,14 +760,41 @@ static inline void write_row(constant Stage& s, device const long* L, uint t, de
 kernel void stage_scatter(device const long* L [[buffer(0)]], device const long* R [[buffer(1)]], device const uint* perm [[buffer(2)]],
                           device const uint* starts [[buffer(3)]], device const uint* rkeys [[buffer(4)]], device const uint* nruns [[buffer(5)]],
                           device uint* totals [[buffer(6)]], device const uint* offsets [[buffer(7)]], device long* O [[buffer(8)]],
-                          constant Stage& s [[buffer(9)]], uint t [[thread_position_in_grid]]) {
-    if (t == 0) totals[s.out_slot] = offsets[s.cap_in];
+                          device atomic_uint* A [[buffer(9)]], device atomic_uint* counters [[buffer(10)]], constant Stage& s [[buffer(11)]],
+                          uint t [[thread_position_in_grid]]) {
     uint n = min(totals[s.in_slot], s.cap_in);
+    // The offsets past the rows' are not scanned when the grids are sized on the device (`Scan::size`).
+    if (t == 0) totals[s.out_slot] = offsets[n];
     if (t >= n) return;
     uint at = offsets[t];
     if (at >= s.cap_out) return;
     long kv[8];
     uint lo, hi;
+    if (s.mode == 5 || s.mode == 7) {
+        if (offsets[t + 1] > at) write_row(s, L, t, R, 0, O, at);
+        return;
+    }
+    if (s.mode == 6) {
+        if (offsets[t + 1] <= at) return;
+        write_row(s, L, t, R, 0, O, at);
+        O[ulong(s.bind_slot[0]) * s.cap_out + at] = strcmp_value(s, L, t, R, A);
+        return;
+    }
+    if (s.mode == 9) {
+        if (offsets[t + 1] <= at) return;
+        write_row(s, L, t, R, 0, O, at);
+        O[ulong(s.bind_slot[0]) * s.cap_out + at] = textfn_value(s, L, t, R, A, counters, (device const uchar*)perm);
+        return;
+    }
+    if (s.mode == 4) {
+        if (offsets[t + 1] <= at) return;
+        candidates(s, L, t, starts, rkeys, nruns, kv, lo, hi);
+        long v = 0;
+        aggregate(s, L, t, R, perm, lo, hi, kv, v);
+        write_row(s, L, t, R, 0, O, at);
+        if ((s.agg[0] >> 8) & 1) O[ulong(s.bind_slot[0]) * s.cap_out + at] = v;
+        return;
+    }
     if (s.mode == 1 || s.mode == 2) {
         // The count pass decided: a row out is the binding as it is.
         if (offsets[t + 1] > at) write_row(s, L, t, R, 0, O, at);
@@ -305,12 +805,85 @@ kernel void stage_scatter(device const long* L [[buffer(0)]], device const long*
     for (uint q = lo; q < hi && at < s.cap_out; q++) {
         uint r = keyed ? perm[q] : q;
         if (s.mode != 3 && !matches(s, R, r, kv)) continue;
+        if (!defined(s, L, t, R, r)) continue;
         if (s.last != NONE) {
             ulong v = eval(s, L, t, R, r);
             if (!out_bit(s, v, s.last)) continue;
         }
         write_row(s, L, t, R, r, O, at);
         at++;
+    }
+}
+
+// A text test's verdicts, once per distinct term (decision 0038's chunked matching): a SIMD group per term walks it
+// 32 bytes at a time, each lane one byte's transition function (a row of the table), the group composing them (a
+// reduction of compositions, its scratch in device memory: 32 rows of `states` bytes a group); the chunk's function
+// takes the state on. A term whose final state, after the end of text, accepts sets its symbol's bit. The groups are
+// persistent: `groups` of them over the terms.
+struct TextParams { uint nterms; uint states; uint classes; uint start; uint groups; uint pad0; uint pad1; uint pad2; };
+
+kernel void text_verdicts(device const long* T [[buffer(0)]], device const uchar* table [[buffer(1)]], device atomic_uint* bits [[buffer(2)]],
+                          device uchar* scratch [[buffer(3)]], constant TextParams& p [[buffer(4)]], uint t [[thread_position_in_grid]],
+                          uint lane [[thread_index_in_simdgroup]]) {
+    device const long* ids = T + 1;
+    device const uint* offs = text_offs(T);
+    device const uchar* bytes = text_chars(T);
+    uint sg = t / 32;
+    if (sg >= p.groups) return;
+    uint S = p.states, C = p.classes;
+    device const uchar* cls = table;
+    device const uchar* next = table + 256;
+    device const uchar* eoi = next + S * C;
+    device const uchar* acc = eoi + S;
+    device uchar* f = scratch + ulong(sg) * 32 * S;
+    for (uint term = sg; term < p.nterms; term += p.groups) {
+        uint lo = offs[term], hi = offs[term + 1];
+        uint state = p.start;
+        for (uint base = lo; base < hi; base += 32) {
+            uint at = base + lane;
+            bool has = at < hi;
+            uint c = has ? uint(cls[bytes[at]]) : 0;
+            for (uint q = 0; q < S; q++) f[lane * S + q] = has ? next[q * C + c] : uchar(q);
+            simdgroup_barrier(mem_flags::mem_device);
+            for (uint d = 1; d < 32; d <<= 1) {
+                uint tasks = (32 / (2 * d)) * S;
+                // The earlier block's function, then the later's, into the earlier's row; then copied to the later's.
+                for (uint k = lane; k < tasks; k += 32) {
+                    uint right = (k / S) * 2 * d + 2 * d - 1, left = right - d, q = k % S;
+                    f[left * S + q] = f[right * S + f[left * S + q]];
+                }
+                simdgroup_barrier(mem_flags::mem_device);
+                for (uint k = lane; k < tasks; k += 32) {
+                    uint right = (k / S) * 2 * d + 2 * d - 1, left = right - d, q = k % S;
+                    f[right * S + q] = f[left * S + q];
+                }
+                simdgroup_barrier(mem_flags::mem_device);
+            }
+            state = f[31 * S + state];
+            simdgroup_barrier(mem_flags::mem_device);
+        }
+        state = eoi[state];
+        if (lane == 0 && acc[state] != 0) {
+            long id = ids[term];
+            if (id >= 0) atomic_fetch_or_explicit(&bits[ulong(id) >> 5], 1u << uint(id & 31), memory_order_relaxed);
+        }
+    }
+}
+
+// Rows copied between column-major buffers (a binding table, a relation): `n` rows of `ncols` columns, column k of
+// the destination from source column `src[k]` (or the constant `konst[k]` where it is NONE), at `dst_off`.
+struct Copy {
+    long konst[16];
+    uint src[16];
+    uint n, ncols, src_stride, dst_stride, dst_off, pad0, pad1, pad2;
+};
+
+kernel void rows_copy(device const long* S [[buffer(0)]], device long* D [[buffer(1)]], constant Copy& c [[buffer(2)]],
+                      uint t [[thread_position_in_grid]]) {
+    if (t >= c.n) return;
+    for (uint k = 0; k < c.ncols && k < 16; k++) {
+        long v = c.src[k] == NONE ? c.konst[k] : S[ulong(c.src[k]) * c.src_stride + t];
+        D[ulong(k) * c.dst_stride + c.dst_off + t] = v;
     }
 }
 
@@ -435,7 +1008,7 @@ kernel void rel_hash(device const long* R [[buffer(0)]], device uint* out [[buff
 "#;
 
 /// Whether this machine has the Metal device the stages run on.
-pub(in crate::code_rule_dsl) fn available() -> bool {
+pub fn available() -> bool {
     rerail_accel::gpu::join::device().is_ok()
 }
 
@@ -471,7 +1044,126 @@ impl DevRel {
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
         8 * self.cols * self.rows
     }
+
+    /// A relation of `cols` columns and `rows` rows that the device fills (`Batch::copy_rows`).
+    pub(in crate::code_rule_dsl) fn empty(cols: usize, rows: usize) -> Result<DevRel, Error> {
+        Ok(DevRel { buffer: Held::new((8 * cols * rows).max(8))?, rows, cols })
+    }
+
+    /// Column `c`'s values, once the command buffer that wrote them completed.
+    pub(in crate::code_rule_dsl) fn column(&self, c: usize) -> &[i64] {
+        // SAFETY: the buffer holds `rows` values per column; the writer completed.
+        unsafe { std::slice::from_raw_parts(self.buffer.buffer.contents().cast::<i64>().add(c * self.rows), self.rows) }
+    }
 }
+
+/// Distinct symbols and their names' bytes on the device, in one buffer: their count, the symbols ascending (a
+/// symbol's text is found by search), each one's offset into the bytes, the bytes. The terms a text test's verdicts
+/// are made for, and the texts `str_cmp` orders.
+pub(in crate::code_rule_dsl) struct DevText {
+    packed: std::rc::Rc<DevRel>,
+    pub(in crate::code_rule_dsl) terms: usize,
+    /// One past the greatest symbol: the verdicts' bits.
+    pub(in crate::code_rule_dsl) span: usize,
+    /// The longest name's bytes.
+    pub(in crate::code_rule_dsl) longest: usize,
+    /// Whether a name holds the set separator (`strings::SET_SEP`): a text test would split it.
+    pub(in crate::code_rule_dsl) sep: bool,
+}
+
+impl DevText {
+    /// The distinct symbols `ids` (in any order), each named by `name` (copied to the device: the host evaluates
+    /// nothing).
+    pub(in crate::code_rule_dsl) fn upload(ids: &[i64], mut name: impl FnMut(i64, &mut Vec<u8>)) -> Result<DevText, Error> {
+        let mut ids = ids.to_vec();
+        ids.sort_unstable();
+        ids.dedup();
+        let n = ids.len();
+        let mut chars = Vec::new();
+        let mut offs = Vec::with_capacity(n + 1);
+        offs.push(0u32);
+        for &id in &ids {
+            name(id, &mut chars);
+            offs.push(u32::try_from(chars.len()).map_err(|_| Error::BackendCapacity)?);
+        }
+        let mut out: Vec<u8> = Vec::with_capacity(8 * (n + 1) + 4 * (n + 1) + chars.len() + 1);
+        out.extend_from_slice(&(n as i64).to_le_bytes());
+        for id in &ids {
+            out.extend_from_slice(&id.to_le_bytes());
+        }
+        for o in &offs {
+            out.extend_from_slice(&o.to_le_bytes());
+        }
+        out.extend_from_slice(&chars);
+        out.push(0);
+        let span = ids.last().map_or(0, |&m| m.max(0) as usize + 1);
+        let rows = out.len().div_ceil(8);
+        let held = Held::of(out.into_iter()).map_err(|_| Error::BackendCapacity)?;
+        let longest = offs.windows(2).map(|w| (w[1] - w[0]) as usize).max().unwrap_or(0);
+        let sep = chars.contains(&0x1f);
+        Ok(DevText { packed: std::rc::Rc::new(DevRel { buffer: held, rows, cols: 1 }), terms: n, span, longest, sep })
+    }
+
+    pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
+        self.packed.buffer.buffer.length() as usize
+    }
+
+    /// The text as a stage's right relation (`STRCMP` reads it).
+    pub(in crate::code_rule_dsl) fn rel(&self) -> std::rc::Rc<DevRel> {
+        self.packed.clone()
+    }
+}
+
+/// A text test's automaton on the device (`text::table`).
+pub(in crate::code_rule_dsl) struct DevTable {
+    table: Held,
+    states: u32,
+    classes: u32,
+    start: u32,
+}
+
+impl DevTable {
+    pub(in crate::code_rule_dsl) fn upload(t: &crate::code_rule_dsl::text::table::Table) -> Result<DevTable, Error> {
+        Ok(DevTable { table: Held::of(t.bytes.iter().copied()).map_err(|_| Error::BackendCapacity)?, states: t.states, classes: t.classes, start: t.start })
+    }
+}
+
+/// Rows a copy reads or writes: a binding table's (its stride its capacity) or a relation's (its rows).
+pub(in crate::code_rule_dsl) enum Rows<'a> {
+    Table(&'a Table),
+    Rel(&'a DevRel),
+}
+
+impl Rows<'_> {
+    fn of(&self) -> (&BufferRef, usize) {
+        match self {
+            Rows::Table(t) => (&t.buffer.buffer, t.cap),
+            Rows::Rel(r) => (&r.buffer.buffer, r.rows.max(1)),
+        }
+    }
+}
+
+/// A destination column of a copy: a source column, or a constant.
+#[derive(Clone, Copy)]
+pub(in crate::code_rule_dsl) enum Col {
+    From(usize),
+    Const(i64),
+}
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CopyParams {
+    konst: [i64; 16],
+    src: [u32; 16],
+    n: u32,
+    ncols: u32,
+    src_stride: u32,
+    dst_stride: u32,
+    dst_off: u32,
+    pad: [u32; 3],
+}
+
+const _: () = assert!(std::mem::size_of::<CopyParams>() == 224);
 
 /// A relation sorted on the device by the hash of key columns: the sorted order (`perm`), the runs of equal hashes
 /// and their count, and the hash's mask.
@@ -567,12 +1259,77 @@ impl Words {
     }
 }
 
+/// A stage whose table's space is past this many rows has its grids sized on the device (`Scan::size`): below it,
+/// the threads past the rows are fewer than the sizing's own dispatch costs. `RERAIL_DEVICE_SIZED_MIN` sets it
+/// (0: every stage's, to test them), `RERAIL_DEVICE_SIZED=off` turns the sizing off.
+fn sized_min() -> usize {
+    static MIN: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *MIN.get_or_init(|| match std::env::var("RERAIL_DEVICE_SIZED") {
+        Ok(v) if v == "off" => usize::MAX,
+        _ => std::env::var("RERAIL_DEVICE_SIZED_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(4096),
+    })
+}
+
+/// Bytes the device reads (a regex's automaton for `TEXTFN_REGEX`).
+pub(in crate::code_rule_dsl) struct DevBytes {
+    held: Held,
+}
+
+impl DevBytes {
+    pub(in crate::code_rule_dsl) fn upload(bytes: &[u8]) -> Result<DevBytes, Error> {
+        Ok(DevBytes { held: Held::of(bytes.iter().copied()).map_err(|_| Error::BackendCapacity)? })
+    }
+}
+
+/// A batch's text arena: the texts its text functions make (`TEXTFN`), shared by every job in the batch. Its first
+/// word is an atomic bump of the bytes given out, which counts on past the end, so a full arena says how much its
+/// jobs wanted (they then run again in one that big, or on the host); its second, its capacity.
+pub(in crate::code_rule_dsl) struct Arena {
+    buffer: Held,
+    pub(in crate::code_rule_dsl) cap: usize,
+}
+
+/// A batch's arena, to start with: most strata make few texts.
+pub(in crate::code_rule_dsl) const ARENA_START: usize = 64 << 10;
+
+impl Arena {
+    pub(in crate::code_rule_dsl) fn new(cap: usize) -> Result<Arena, Error> {
+        let cap = cap.clamp(16, u32::MAX as usize / 2);
+        let buffer = Held::new(16 + cap)?;
+        // SAFETY: 16 bytes of header, written before any command buffer reads them.
+        let head = unsafe { std::slice::from_raw_parts_mut(buffer.buffer.contents().cast::<u32>(), 4) };
+        head.copy_from_slice(&[0, cap as u32, 0, 0]);
+        Ok(Arena { buffer, cap })
+    }
+
+    /// The bytes its jobs asked for (past `cap` when it filled), once they completed.
+    pub(in crate::code_rule_dsl) fn wanted(&self) -> usize {
+        // SAFETY: the header's first word, read once the command buffers that write it completed.
+        unsafe { *self.buffer.buffer.contents().cast::<u32>() as usize }
+    }
+
+    /// The text of arena value `v` (`ARENA_TEXT`'s), once the command buffers that made it completed.
+    pub(in crate::code_rule_dsl) fn text(&self, v: i64) -> Option<&[u8]> {
+        if v & ARENA_TEXT == 0 || v == -1 {
+            return None;
+        }
+        let (off, len) = (((v as u64) >> 24 & ((1 << 39) - 1)) as usize, (v & 0xff_ffff) as usize);
+        if off + len > self.cap {
+            return None;
+        }
+        // SAFETY: within the arena's `cap` bytes past its header.
+        Some(unsafe { std::slice::from_raw_parts(self.buffer.buffer.contents().cast::<u8>().add(16 + off), len) })
+    }
+}
+
 /// What a batch did: its command buffers, dispatches, the GPU's time on them, and the host's CPU encoding them.
 #[derive(Clone, Copy, Debug, Default)]
 pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) submissions: u32,
     pub(in crate::code_rule_dsl) dispatches: u32,
     pub(in crate::code_rule_dsl) gpu_seconds: f64,
+    /// Stages whose grids were sized on the device (`Scan::size`).
+    pub(in crate::code_rule_dsl) sized: u32,
 }
 
 /// Work encoded into one command buffer at a time, committed when the launch budget of one is near and at `finish`;
@@ -586,12 +1343,29 @@ pub(in crate::code_rule_dsl) struct Batch {
     /// Buffers the encoded work reads that nothing else holds: kept until it completes (a pooled buffer is written
     /// by the host when handed out again, and Metal orders no host write after a GPU read).
     keep: Vec<Held>,
+    /// The texts its jobs' text functions make, made the first time a job asks.
+    arena: Option<std::rc::Rc<Arena>>,
+    arena_cap: usize,
 }
 
 impl Batch {
     pub(in crate::code_rule_dsl) fn new() -> Result<Batch, Error> {
         rerail_accel::gpu::join::device()?;
-        Ok(Batch { open: None, pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, keep: Vec::new() })
+        Batch::with_arena(ARENA_START)
+    }
+
+    /// A batch whose text arena holds `cap` bytes.
+    pub(in crate::code_rule_dsl) fn with_arena(cap: usize) -> Result<Batch, Error> {
+        rerail_accel::gpu::join::device()?;
+        Ok(Batch { open: None, pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, keep: Vec::new(), arena: None, arena_cap: cap })
+    }
+
+    /// Its text arena, shared by its jobs.
+    pub(in crate::code_rule_dsl) fn arena(&mut self) -> Result<std::rc::Rc<Arena>, Error> {
+        if self.arena.is_none() {
+            self.arena = Some(std::rc::Rc::new(Arena::new(self.arena_cap)?));
+        }
+        Ok(self.arena.clone().expect("the arena"))
     }
 
     /// The encoder of the open command buffer, with room for `need` more dispatches (a new command buffer when not).
@@ -655,7 +1429,7 @@ impl Batch {
     /// scatter. `stage`'s sizes are set here.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::code_rule_dsl) fn stage(&mut self, mut stage: Stage, left: &Table, right: Option<(&DevRel, Option<&DevIndex>)>, in_slot: usize, out_slot: usize,
-                                          totals: &Words, counters: &Words, counter: Option<usize>, out: &Table) -> Result<(), Error> {
+                                          totals: &Words, counters: &Words, counter: Option<usize>, out: &Table, aux: Option<&DevBytes>) -> Result<(), Error> {
         let count = pipeline("join", "stage_count", || SOURCE.to_owned())?;
         let scatter = pipeline("join", "stage_scatter", || SOURCE.to_owned())?;
         stage.cap_in = left.cap as u32;
@@ -680,6 +1454,8 @@ impl Batch {
         // Retained by the command buffer, which holds every buffer it binds until it completes.
         let (rbuf, perm, starts, rkeys, nruns): (metal::Buffer, metal::Buffer, metal::Buffer, metal::Buffer, metal::Buffer) =
             (rbuf.to_owned(), perm.to_owned(), starts.to_owned(), rkeys.to_owned(), nruns.to_owned());
+        // A text function's automaton, where a join's sort is.
+        let perm = aux.map_or(perm, |a| a.held.buffer.to_owned());
         if left.cap == 1 && stage.mode == JOIN && right.is_some() {
             // From one binding: a thread per candidate row (`scan_count`), its rows in the relation's order.
             let scount = pipeline("join", "scan_count", || SOURCE.to_owned())?;
@@ -697,11 +1473,29 @@ impl Batch {
         let n = left.cap + 1;
         let counts = scratch(FREE, 4 * n)?;
         let scan = Scan::new(n)?;
-        let pass = self.pass(12)?;
+        let arena: metal::Buffer = if stage.mode == TEXTFN || matches!(stage.mode, STRCMP | TEXTOP) && (stage.agg[1] & 15 == OPND_ARENA || stage.agg[1] >> 4 == OPND_ARENA) {
+            self.arena()?.buffer.buffer.to_owned()
+        } else {
+            self.dummy.buffer.to_owned()
+        };
+        let pass = self.pass(13)?;
         let lbuf: &BufferRef = &left.buffer.buffer;
-        pass.run_bytes(&count, &[lbuf, &rbuf, &perm, &starts, &rkeys, &nruns, &totals.buffer.buffer, &counters.buffer.buffer, &counts], stage.bytes(), groups(n));
+        let count_bufs: [&BufferRef; 10] = [lbuf, &rbuf, &perm, &starts, &rkeys, &nruns, &totals.buffer.buffer, &counters.buffer.buffer, &counts, &arena];
+        let scatter_bufs: [&BufferRef; 11] = [lbuf, &rbuf, &perm, &starts, &rkeys, &nruns, &totals.buffer.buffer, &counts, &out.buffer.buffer, &arena, &counters.buffer.buffer];
+        if n > sized_min() {
+            // The table's space is the host's guess: the grids are sized on the device, from the rows the stage
+            // before made (decision 0113's GPU-sized work).
+            let sizes = scan.size(pass, &totals.buffer.buffer, in_slot, left.cap)?;
+            pass.run_bytes_indirect(&count, &count_bufs, stage.bytes(), &sizes.buffer, 4 * 32);
+            scan.encode_sized(pass, &counts, &sizes)?;
+            pass.run_bytes_indirect(&scatter, &scatter_bufs, stage.bytes(), &sizes.buffer, 4 * 32);
+            self.done.sized += 1;
+            self.keep.push(sizes);
+            return Ok(());
+        }
+        pass.run_bytes(&count, &count_bufs, stage.bytes(), groups(n));
         scan.encode(pass, &counts)?;
-        pass.run_bytes(&scatter, &[lbuf, &rbuf, &perm, &starts, &rkeys, &nruns, &totals.buffer.buffer, &counts, &out.buffer.buffer], stage.bytes(), groups(n));
+        pass.run_bytes(&scatter, &scatter_bufs, stage.bytes(), groups(n));
         Ok(())
     }
 
@@ -736,6 +1530,55 @@ impl Batch {
         scan.encode(pass, &counts)?;
         pass.run_bytes(&scatter, &[t, &totals.buffer.buffer, &counts, &out.buffer.buffer], bytes, groups(n));
         self.keep.push(p);
+        Ok(())
+    }
+
+    /// `n` rows of `src` into `dst` at row `dst_off`, column k of `dst` as `cols[k]` says (a column of `src`, or a
+    /// constant): a head's rows into its union, a union's new rows onto its relation.
+    pub(in crate::code_rule_dsl) fn copy_rows(&mut self, src: Rows<'_>, n: usize, cols: &[Col], dst: Rows<'_>, dst_off: usize) -> Result<(), Error> {
+        if n == 0 {
+            return Ok(());
+        }
+        assert!(cols.len() <= 16);
+        let copy = pipeline("join", "rows_copy", || SOURCE.to_owned())?;
+        let (s, src_stride) = src.of();
+        let (d, dst_stride) = dst.of();
+        assert!(dst_off + n <= dst_stride, "a copy of {n} rows at {dst_off} into a destination of {dst_stride}");
+        let mut p = CopyParams { konst: [0; 16], src: [NONE; 16], n: n as u32, ncols: cols.len() as u32, src_stride: src_stride as u32, dst_stride: dst_stride as u32, dst_off: dst_off as u32, pad: [0; 3] };
+        for (k, c) in cols.iter().enumerate() {
+            match *c {
+                Col::From(c) => p.src[k] = c as u32,
+                Col::Const(v) => p.konst[k] = v,
+            }
+        }
+        // SAFETY: `CopyParams` is `repr(C)` integers with no padding (its size asserted above).
+        let bytes = unsafe { std::slice::from_raw_parts((&p as *const CopyParams).cast::<u8>(), std::mem::size_of::<CopyParams>()) };
+        let (s, d) = (s.to_owned(), d.to_owned());
+        let pass = self.pass(1)?;
+        pass.run_bytes(&copy, &[&s, &d], bytes, groups(n));
+        Ok(())
+    }
+
+    /// Keeps `table` until the batch's work completes (its verdicts read it).
+    pub(in crate::code_rule_dsl) fn hold_table(&mut self, table: DevTable) {
+        self.keep.push(table.table);
+    }
+
+    /// The verdicts of `table` for `text`'s terms, as bits by symbol into `bits` (zeroed, at least `text.span` bits).
+    pub(in crate::code_rule_dsl) fn verdicts(&mut self, text: &DevText, table: &DevTable, bits: &DevRel) -> Result<(), Error> {
+        if text.terms == 0 {
+            return Ok(());
+        }
+        assert!(bits.rows * 64 >= text.span);
+        let kernel = pipeline("join", "text_verdicts", || SOURCE.to_owned())?;
+        let groups = text.terms.min(1024);
+        let scratch = Held::new(groups * 32 * table.states as usize)?;
+        let p: [u32; 8] = [text.terms as u32, table.states, table.classes, table.start, groups as u32, 0, 0, 0];
+        // SAFETY: plain integers.
+        let bytes = unsafe { std::slice::from_raw_parts(p.as_ptr().cast::<u8>(), 32) };
+        let pass = self.pass(1)?;
+        pass.run_bytes(&kernel, &[&text.packed.buffer.buffer, &table.table.buffer, &bits.buffer.buffer, &scratch.buffer], bytes, (groups * 32).div_ceil(256));
+        self.keep.push(scratch);
         Ok(())
     }
 
@@ -804,7 +1647,7 @@ pub mod tests {
         scan.bind_slot[..2].copy_from_slice(&[0, 1]);
         scan.bind_kind[..2].copy_from_slice(&[BIND_RIGHT, BIND_RIGHT]);
         scan.bind_idx[..2].copy_from_slice(&[0, 1]);
-        batch.stage(scan, &t0, Some((&ra, None)), 0, 1, &totals, &counters, None, &t1).unwrap();
+        batch.stage(scan, &t0, Some((&ra, None)), 0, 1, &totals, &counters, None, &t1, None).unwrap();
         // Too small on purpose: the stage reports its true count.
         let t2 = Table::new(slots, 1000).unwrap();
         let mut join = Stage { mode: JOIN, nkeys: 1, nbinds: 1, nops: 1, ncols: 1, nparams: 1, noutputs: 1, last: 0, npassed: 1, ..Stage::default() };
@@ -821,7 +1664,7 @@ pub mod tests {
         join.ops[0] = [OP_CMP, 0, RHS_PARAM, 2 | (64 << 8)];
         join.outputs[0] = 0;
         join.passed[0] = 0;
-        batch.stage(join, &t1, Some((&rb, Some(&ib))), 1, 2, &totals, &counters, Some(0), &t2).unwrap();
+        batch.stage(join, &t1, Some((&rb, Some(&ib))), 1, 2, &totals, &counters, Some(0), &t2, None).unwrap();
         batch.finish().unwrap();
         // The nested loops.
         let mut want2: Vec<[i64; 3]> = Vec::new();
@@ -842,18 +1685,18 @@ pub mod tests {
         assert!(want2.len() > 1000, "the test overflows the first table: {}", want2.len());
         // Again with room for every row; then the anti-join and the semi-join.
         let t2 = Table::new(slots, want2.len()).unwrap();
-        batch.stage(join, &t1, Some((&rb, Some(&ib))), 1, 2, &totals, &counters, None, &t2).unwrap();
+        batch.stage(join, &t1, Some((&rb, Some(&ib))), 1, 2, &totals, &counters, None, &t2, None).unwrap();
         let t3 = Table::new(slots, want2.len()).unwrap();
         let mut anti = Stage { mode: ANTI, nkeys: 1, ..Stage::default() };
         anti.key_kind[0] = SLOT;
         anti.key_slot[0] = 2;
-        batch.stage(anti, &t2, Some((&rc, Some(&ic))), 2, 3, &totals, &counters, None, &t3).unwrap();
+        batch.stage(anti, &t2, Some((&rc, Some(&ic))), 2, 3, &totals, &counters, None, &t3, None).unwrap();
         let t4 = Table::new(slots, want2.len()).unwrap();
         let mut semi = Stage { mode: SEMI, nkeys: 1, ..Stage::default() };
         semi.key_kind[0] = SLOT;
         semi.key_slot[0] = 0;
         semi.key_rcol[0] = 1;
-        batch.stage(semi, &t3, Some((&rb, Some(&ib1))), 3, 4, &totals, &counters, None, &t4).unwrap();
+        batch.stage(semi, &t3, Some((&rb, Some(&ib1))), 3, 4, &totals, &counters, None, &t4, None).unwrap();
         batch.finish().unwrap();
         let got = |t: &Table, n: usize| (0..n).map(|r| [t.column(0, n)[r], t.column(1, n)[r], t.column(2, n)[r]]).collect::<Vec<_>>();
         assert_eq!(got(&t2, totals.get(2) as usize), want2, "the join's rows, in the bindings' order");

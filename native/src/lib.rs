@@ -4,6 +4,10 @@
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
+// The self dev-dependency owns the production allocator. Keep it linked even
+// when split-crate tests no longer reference one of its exported types.
+#[cfg(test)]
+extern crate rerail_engine as _;
 /// `build.rs` compiles this file too; the library builds it only for tests, so `cargo test`
 /// checks the identities the build script computes.
 #[cfg(test)]
@@ -15,10 +19,12 @@ mod build_languages;
 // Each test's time limit, enforced inside the test binary (`RERAIL_TEST_TIMEOUT`).
 #[cfg(test)]
 mod test_watchdog;
+#[cfg(test)]
+mod executors_guard_tests;
 mod code_rule_dsl;
 /// The engine's tools without Node (`rerail-engine dump` / `asm`).
 pub use code_rule_dsl::tools;
-#[cfg(any(test, feature = "test-hooks"))]
+#[cfg(test)]
 pub(crate) use code_rule_dsl::prof::purge_allocator_pages;
 pub use rerail_store::content_store;
 pub use rerail_w::git_ignore;
@@ -40,12 +46,13 @@ use rules::{CompileSummary, ModelEncoder, NativeMatch, NativeRuleInput, NativeSa
 use std::path::Path;
 
 // jemalloc does not build for MSVC targets; Windows keeps the system allocator. A test build links the engine
-// again as its own dev-dependency (`test-hooks`), whose copy declares the allocator.
+// again as its own dev-dependency (`test-hooks`), whose copy declares the allocator (kept linked by the
+// `extern crate rerail_engine as _` above; `rust_allocations_reach_the_profile_allocator` checks it).
 #[cfg(not(any(test, windows, target_family = "wasm", feature = "system-allocator")))]
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
-#[cfg(not(any(windows, target_family = "wasm")))]
+#[cfg(not(any(test, windows, target_family = "wasm")))]
 union JemallocConf {
     byte: &'static u8,
     character: &'static std::ffi::c_char,
@@ -55,7 +62,7 @@ union JemallocConf {
 // decay cost a tenth of a storage-heavy benchmark's CPU in mmap/munmap); every apply purges them
 // when it ends and again once its response is freed (`purge_allocator_pages`), so nothing dirty
 // is kept at rest.
-#[cfg(not(any(windows, target_family = "wasm")))]
+#[cfg(not(any(test, windows, target_family = "wasm")))]
 #[allow(non_upper_case_globals)]
 #[unsafe(export_name = "_rjem_malloc_conf")]
 pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
@@ -100,6 +107,11 @@ fn install_store_functions_on_load() {
 #[cfg(not(any(windows, target_family = "wasm")))]
 #[napi_derive::module_init]
 fn install_tree_sitter_allocator() {
+    // Library callers and the test runner can park their main thread. Their pool needs
+    // actual workers, including with RERAIL_THREADS=1. The headless CLI registers its
+    // own main thread explicitly, before its first job.
+    #[cfg(not(feature = "headless"))]
+    threads::configure(false);
     install_store_functions();
     use std::ffi::c_void;
     unsafe extern "C" fn malloc(size: usize) -> *mut c_void {
@@ -472,6 +484,17 @@ pub(crate) use code_rule_dsl::prof::lower_hex;
 mod tests {
     use tikv_jemalloc_ctl::{epoch, raw};
     use tikv_jemalloc_sys::{MALLOCX_ARENA, MALLOCX_TCACHE_NONE, dallocx, mallocx};
+
+    #[cfg(not(any(target_family = "wasm", feature = "system-allocator")))]
+    #[test]
+    fn rust_allocations_reach_the_profile_allocator() {
+        let allocated = || unsafe { raw::read::<u64>(b"thread.allocated\0") }.unwrap();
+        let before = allocated();
+        let bytes = std::hint::black_box(vec![0u8; 1 << 20]);
+        let after = allocated();
+        assert!(after - before >= bytes.len() as u64,
+            "Rust allocations must use production jemalloc and reach its profile counters: {} bytes recorded for {} allocated", after - before, bytes.len());
+    }
 
     #[test]
     fn purge_returns_freed_pages() {

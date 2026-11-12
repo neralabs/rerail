@@ -1,0 +1,1 @@
+Rerail steers an agent for its shell edit of a file a merge or rebase left conflicted, even when the file still holds its side of the conflict, and no longer counts the files that merged cleanly beside a modify/delete conflict as the agent's edits.

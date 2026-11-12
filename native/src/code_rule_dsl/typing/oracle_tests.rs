@@ -104,7 +104,7 @@ fn answers(program: &str, project: &Path, sources: &BTreeMap<String, String>) ->
 
 /// Each call CPython ran where the program answers otherwise: `file:line `text``, with how.
 pub(super) fn score_python(program: &str) -> (usize, BTreeMap<String, Departure>, Vec<String>) {
-    let oracle = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/calls");
+    let oracle = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/calls");
     let expected: Json = serde_json::from_str(&std::fs::read_to_string(oracle.join("python.expected.json")).unwrap()).unwrap();
     let project = oracle.join("project");
     let sources = python_files(&project);
@@ -220,7 +220,7 @@ rr_score_named(f) :- call_target(_, f), field(f, \"name\", _).
 /// agrees when the program names nothing there; one rust-analyzer resolves in the crate agrees when the program
 /// names exactly that definition.
 pub(super) fn score_rust(program: &str) -> (usize, BTreeMap<String, Departure>) {
-    let oracle = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("rust/calls");
+    let oracle = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("rust/calls");
     let recording: Json = serde_json::from_str(&std::fs::read_to_string(oracle.join("calls.expected.json")).unwrap()).unwrap();
     let root = oracle.join("crate");
     let sources: BTreeMap<String, String> = recording["files"]
@@ -341,7 +341,7 @@ struct Typed {
 
 /// `program`'s type relations at each receiver the CPython oracle records, keyed `file:line `text``.
 pub(super) fn score_python_types(program: &str) -> BTreeMap<String, TypeAnswer> {
-    let oracle = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/calls");
+    let oracle = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/calls");
     let expected: Json = serde_json::from_str(&std::fs::read_to_string(oracle.join("python.expected.json")).unwrap()).unwrap();
     let project = oracle.join("project");
     let sources = python_files(&project);
@@ -438,7 +438,7 @@ fn python_type_relations_agree_with_the_runtime() {
 /// own nodes on `core.rr`'s facts, are exactly the program's on T's.
 #[test]
 fn rules_read_the_python_program_through_lib_calls() {
-    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/calls/project");
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/calls/project");
     let keyed = "
 .decl edge(cp: symbol, cs: number, fp: symbol, fs: number)
 edge(cp, cs, fp, fs) :- call_target(c, f), node(d, c, _, cs, _), doc(d, cp, _), node(g, f, _, fs, _), doc(g, fp, _).
@@ -476,7 +476,7 @@ unknown(cp, cs) :- call_open(c), node(d, c, _, cs, _), doc(d, cp, _).
 #[test]
 fn quoted_annotations_are_read_as_their_code() {
     // fixtures/python/quoted_ann: `-> "Node"`, `Optional["Node"]`, `n: "Node"`, `"list[Node]"`, `"Node | None"`.
-    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/quoted_ann");
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/quoted_ann");
     let rule = "
 #include \"python/calls.rr\"
 .decl at(p: symbol, s: number, what: symbol)
@@ -509,7 +509,7 @@ fn imports_resolve_into_a_library_and_load_its_stubs() {
     // fixtures/python/world_load: ws/main.py imports os.path, json and collections; ws/rerail.env says `lib =
     // ../ts/stdlib`, a stub tree with os/__init__.pyi, os/path.pyi, collections/__init__.pyi and a VERSIONS file. The
     // rules walk it with dir_entry and file_line and load what resolves (t21 E1, E2, E4); json is in no root.
-    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/world_load/ws");
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/world_load/ws");
     let rule = r#"
 .decl doc(d: number, path: symbol, module: symbol)
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
@@ -560,7 +560,7 @@ fn calls_into_the_standard_library_reach_its_stubs() {
     // python/modules.rr, which resolves `import os.path` into ts/stdlib/os/path.pyi and loads it: `os.path.join("a",
     // "b")` targets the stub's `join`, and no row is about a stub. The stub defines `join` in both branches of a
     // `sys.version_info` test: only the branch the run's Python (3.13, the default) takes binds it.
-    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/world_load/ws");
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/world_load/ws");
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("stdlib");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let text = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
@@ -581,7 +581,7 @@ fn imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order
     // in site-packages, is not a typed package: its call has no target. `cv.Var("x")` targets Var's `__new__` only:
     // typeshed's `Generic: type[_Generic]` is a special form as a base, not `_Generic` and its subclasses (else Box,
     // another generic class, would be Var's base and its `__init__` a target).
-    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/world_site/ws");
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/world_site/ws");
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("site");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let text = std::fs::read_to_string(out.join("call_target.csv")).unwrap();
@@ -612,7 +612,7 @@ fn declarations_and_installed_sources_type_calls_without_declared_ret_facts() {
     // `typing::deps` and `typing::declare`, as t21 reads them (step 3): the user's declarations are `.pyi` files under
     // `python.declarations`, and the installed package `vendor` (no stubs, no `py.typed`) is read from its sources
     // with `python.untyped = read`. `make`'s declaration comes first (PEP 561's order), over vendor/core.py's int.
-    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/world_decl/app");
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/world_decl/app");
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("decl");
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let text = std::fs::read_to_string(out.join("type_of.csv")).unwrap();
@@ -1244,7 +1244,7 @@ fn a_call_is_typed_by_the_overloads_its_positional_arguments_fit() {
 /// are unknown, so not counted; `catalog.resolve(ref)` has an argument.
 #[test]
 fn leg_083_typed_counts_resolve_by_the_receivers_type() {
-    let project = PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("python/leg083");
+    let project = PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("python/leg083");
     let rule_src = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer/leg-083-typed.rr")).unwrap();
     let spans = "
 .decl at(p: symbol, s: number, what: symbol)

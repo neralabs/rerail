@@ -1,27 +1,5 @@
-
-#[test]
-fn constant_demands_reach_projected_input_columns() {
-    let p=crate::code_rule_dsl::logic::rr::parse(".decl raw(d:number,n:number,k:number)\n.input raw\n.decl tags(n:number,k:number)\ntags(n,k) :- raw(_,n,k).\n.decl alias(n:number,k:number)\nalias(n,k) :- tags(n,k).\n.decl out(n:number)\nout(n) :- alias(n,9).\n").unwrap();
-    let demands=super::constants_tested(&p);
-    assert!(demands["alias"].contains(&(1,9)));
-    assert!(demands["tags"].contains(&(1,9)));
-    assert!(demands["raw"].contains(&(2,9)),"measure the actual source column before planning its consumers");
-}
-
-#[test]
-fn memo_tree_statistics_accumulate_once_without_per_file_maps() {
-    use super::*;
-    let mut first = Own::default();
-    first.kinds.insert(1,(10,20)); first.edges.insert((1,2),5); first.docs=1;
-    first.postings.insert(("kind".into(),"k".into(),1),10);
-    let mut rows=BTreeMap::new(); first.put(&mut rows);
-    let mut totals=Own::default(); totals.add_rows(&rows); totals.add_rows(&rows);
-    assert_eq!(totals.kinds[&1],(20,40)); assert_eq!(totals.edges[&(1,2)],10);
-    assert_eq!(totals.docs,2); assert_eq!(totals.postings.values().sum::<i64>(),20);
-    let projected=BTreeMap::from([(OWN_DOCS.into(),(1,vec![1]))]);
-    let mut narrow=Own::default(); narrow.add_rows(&projected);
-    assert_eq!(narrow.docs,1); assert!(narrow.kinds.is_empty()); assert!(narrow.edges.is_empty());
-}
+//! The corpus runner's tests. The engine compiles them (its facade of `logic::plan::corpus`): they parse files, and
+//! the languages are registered by the crates above `rerail-logic` as the engine loads.
 
 /// Phase 0 alone over `RERAIL_P0_ROOT`: the corpus's files (from Git in a Git work tree, else the walk) and
 /// every Python document's digest, with the observer's counts and the CPU. Run it twice for the warm figure; the
@@ -44,6 +22,9 @@ fn benchmark_phase_0() {
     let digested = super::thread_usage();
     let did = super::observe(|o| {
         o.flush();
+        // Flush queues the final observations. Waiting before it leaves a cold
+        // observer store when the process exits immediately after this run.
+        if !super::phase0::active() { o.written(); }
         o.counts.since(&before)
     });
     let flushed = super::thread_usage();
@@ -289,8 +270,8 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
     std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
     std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
     std::fs::write(src.join("other.py"), "import json\njson.loads('1')\n").unwrap();
-    let rules = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/..")).join("docs/rule-syntax/packs/python");
-    let programs: Vec<String> = ["bandit-b301-pickle.rr", "bandit-b307-eval.rr"].iter().map(|r| crate::code_rule_dsl::tools::flatten(&rules.join(r)).unwrap()).collect();
+    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let programs: Vec<String> = ["bandit-b301-pickle.rr", "bandit-b307-eval.rr"].iter().map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap()).collect();
     let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
     let (maintained, _) = edit(
         &texts,
@@ -317,7 +298,7 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
          .violation CYC(at: node) code \"CYC\" \"This import closes a cycle of imports.\"\nCYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).\n",
     )
     .unwrap();
-    let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+    let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
     let (_, recursive) = edit(&[program.as_str()], &src, &[("c.py", "from d import z\n"), ("d.py", "from a import w\n"), ("b.py", "x = 2\n"), ("b.py", "from c import y\n")]);
     assert!(findings().len() >= 3, "the cycle's imports: {:?}", findings());
     assert!(recursive > 0, "the import cycle's stratum is maintained");
@@ -326,7 +307,7 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
 
 /// A guard that, when the test it guards runs past `after`, samples this process's stacks (macOS `sample`) into
 /// a file beside the temp dir and says where: a hang leaves what each thread was doing. Dropped, it does nothing.
-/// Imports held as a reach index (decision 0115), declared `reach` so a rule that lost the form fails, not runs as
+/// Imports held as a reach index (decision 0119), declared `reach` so a rule that lost the form fails, not runs as
 /// rows. Its readers probe it every way: both columns (`CYC`, an import that closes a cycle), the start alone
 /// (`TOF`, a document that reaches `f`), and the relation through it (`SEESE`, a document that can see module `e`).
 /// `cyclic`, `reachesf` and `seese` read nothing an edit changes but the index (`no_inline`: strata of their own),
@@ -721,37 +702,6 @@ uses(n, f) :- imp(n, q), def(f, q).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-#[cfg(feature = "tape-cache")]
-#[test]
-fn a_warm_run_resumes_deferred_collection() {
-    let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
-    let path = std::env::temp_dir().join(format!("rerail-warm-collection-{}-{nonce}.sqlite", std::process::id()));
-    let store = crate::content_store::ContentStore::open(&path).unwrap();
-    let source = store.put_source(b"rooted", &[]).unwrap();
-    let orphan_hash = crate::content_store::HashKey::sha256(b"unrooted");
-    store.put_source(b"unrooted", &[]).unwrap();
-    store.collect(100, 100).unwrap();
-    let root = path.with_extension("root");
-    let program = [7; 32];
-    // Simulate another active run deferring the first run's background collection.
-    let reader = store.hold_collection().unwrap();
-    super::record_run(&store, &root, &[source], &program, &[], &[], &Default::default(), None, true).unwrap().unwrap().join().unwrap().unwrap().1.unwrap();
-    assert!(store.corpus_collection_due().unwrap());
-    // Same files and plan: the manifest is unchanged, but pending collection must still run.
-    super::record_run(&store, &root, &[source], &program, &[], &[], &Default::default(), Some(reader), true).unwrap().unwrap().join().unwrap().unwrap().1.unwrap();
-    assert!(!store.corpus_collection_due().unwrap());
-    assert_eq!(store.source_by_hash(orphan_hash).unwrap(), None);
-}
-
-#[test]
-fn a_chunks_mix_is_the_file_types_holding_a_tenth_of_its_nodes() {
-    assert_eq!(super::chunk_mix([("a/b.py", 900), ("c.ts", 50), ("d.ts", 60)].into_iter()), "py,ts/4");
-    assert_eq!(super::chunk_mix([("a/b.py", 950), ("c.ts", 50)].into_iter()), "py/4");
-    assert_eq!(super::chunk_mix([("Makefile", 10), ("x.v1/README", 10)].into_iter()), "/1");
-    // Many small files and a few large ones of one language are two mixes.
-    assert_ne!(super::chunk_mix([("a.py", 20), ("b.py", 30)].into_iter()), super::chunk_mix([("c.py", 2000)].into_iter()));
-}
-
 /// Decision 0089: a library is held once, and a request's cone once per distinct request. Two programs ask
 /// `compare.rr` the same, a third asks something else, a fourth asks nothing and reads the library's own copy.
 #[test]
@@ -781,4 +731,45 @@ fn libraries_are_held_once_and_equal_requests_share_one_cone() {
     assert_eq!(one, two);
     assert_ne!(one, three);
     assert_eq!(reads("p3_quiet"), ["cmp_same"]);
+}
+
+/// Each test's store is its own: a copy of the template (the library's phase 0 in it), with an identity of its own,
+/// and closed and removed when the test ends (`test_store`). Two tests at once have two stores.
+#[test]
+fn a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test() {
+    if std::env::var_os("RERAIL_TAPE_CACHE").is_some() {
+        return;
+    }
+    let template = super::test_store::template().to_path_buf();
+    let count = |path: &std::path::Path, sql: &str| -> i64 { rusqlite::Connection::open(path).unwrap().query_row(sql, [], |r| r.get(0)).unwrap() };
+    let tapes = count(&template, "SELECT count(*) FROM tape_objects");
+    assert!(tapes > 0, "the template holds the library's tapes");
+    let identity = count(&template, "SELECT id FROM store_identity");
+    let probe = |n: usize| {
+        let template = template.clone();
+        // A thread named as the harness names a test's.
+        std::thread::Builder::new().name(format!("corpus::tests::probe{n}")).spawn(move || {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::write(dir.path().join("a.py"), "def f():\n    return 1\n").unwrap();
+            let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse("#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n").unwrap()).unwrap();
+            let out = dir.path().join("out");
+            super::run(&text, dir.path(), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+            assert_eq!(std::fs::read_to_string(out.join("defs.csv")).unwrap().trim(), "f");
+            let path = super::tape_cache_path().unwrap();
+            assert_ne!(path, template);
+            assert!(path.to_string_lossy().contains("rerail-test-store-"), "{}", path.display());
+            let count = |sql: &str| -> i64 { rusqlite::Connection::open(&path).unwrap().query_row(sql, [], |r| r.get(0)).unwrap() };
+            assert!(count("SELECT count(*) FROM tape_objects") > tapes, "the library's tapes and the test's own");
+            assert_ne!(count("SELECT id FROM store_identity"), identity, "a copy is a store of its own");
+            path.parent().unwrap().to_path_buf()
+        }).unwrap()
+    };
+    let (a, b) = (probe(0), probe(1));
+    let (a, b) = (a.join().unwrap(), b.join().unwrap());
+    assert_ne!(a, b, "two tests, two stores");
+    for dir in [a, b] {
+        assert!(!dir.exists(), "{} is removed with its test", dir.display());
+        #[cfg(target_vendor = "apple")]
+        assert_eq!(super::test_store::open_under(&dir), 0, "nothing of {} is held open after its test", dir.display());
+    }
 }

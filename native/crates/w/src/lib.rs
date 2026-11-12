@@ -22,7 +22,7 @@ pub mod code_rule_dsl {
         #[path = "vtab"]
         pub mod vtab {
             pub use rerail_facts::code_rule_dsl::facts::vtab::*;
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             pub mod p_table;
             #[allow(unused_imports)]
             use fallible_iterator::FallibleIterator;
@@ -161,6 +161,7 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::semver;
     pub mod soundness;
     pub use rerail_facts::code_rule_dsl::sql_profile;
+    pub use rerail_facts::code_rule_dsl::sql_admission;
     pub mod stats;
     pub mod suppress;
     #[path = "tape"]

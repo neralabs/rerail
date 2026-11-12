@@ -101,12 +101,13 @@ fn the_crate_assembles_only_a_parsers_program() {
 
 /// Shared arms (`native_cpu_stream::shared_runs`) on every ladder step: each place of a body
 /// holds the body's words, runs do share, and refusals inside a place that is not its body's
-/// first say that place's word (the equality above checks the word; this, that it happens).
+/// first say that place's word (the equality above checks the word; this, that it happens
+/// wherever such a place holds a word that can refuse).
 #[test]
 fn shared_arms_are_one_copy_and_refuse_at_their_own_word() {
     let mut steps: Vec<_> = std::fs::read_dir(DIR).expect("the ladder").map(|e| e.expect("an entry").path()).filter(|p| p.extension().is_some_and(|x| x == "bitlex")).collect();
     steps.sort();
-    let (mut runs, mut bodies, mut inside) = (0, 0, 0);
+    let (mut runs, mut bodies, mut inside, mut refusing) = (0, 0, 0, 0);
     for path in steps {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_owned();
         let stmts = ::bitlex::syntax::parse(&std::fs::read_to_string(&path).expect("a step")).expect("parses");
@@ -126,6 +127,9 @@ fn shared_arms_are_one_copy_and_refuse_at_their_own_word() {
             assert_eq!(ops(s, s + len), ops(body.start, body.end), "{name}: the place at {s} holds its body's words");
             assert!(matches!(structure.structural[s + len].operation, native_ir::StructuralOperation::Goto { target } if target == body.targets[ti]), "{name}: the place at {s} goes on to its own target");
         }
+        // The words in a place past its body's first that can refuse: a keyword's (`WORD`), a
+        // length's (`SPAN`).
+        refusing += (0..shared.skipped.len()).filter(|&pc| shared.skipped[pc] && matches!(structure.structural[pc].operation, native_ir::StructuralOperation::Word { test: false, .. } | native_ir::StructuralOperation::Span { .. })).count();
         runs += shared.at.len();
         bodies += shared.bodies.len();
         // Every prefix of every document, each by the interpreters and the compiled code: the
@@ -144,5 +148,8 @@ fn shared_arms_are_one_copy_and_refuse_at_their_own_word() {
         }
     }
     assert!(bodies < runs, "{runs} runs, {bodies} bodies: none shared");
-    assert!(inside > 0, "no document refuses inside a shared place that is not its body's first");
+    // Where such a place holds a word that can refuse, a document refuses there. The switches
+    // name keywords (`ByteSwitch::words`), so on these steps none does: a token is refused at
+    // its state's switch.
+    assert!(inside > 0 || refusing == 0, "{refusing} words that can refuse in shared places, and no document refuses inside one");
 }

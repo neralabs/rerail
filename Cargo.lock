@@ -3168,6 +3168,7 @@ dependencies = [
  "cranelift-jit-wasm",
  "cranelift-module",
  "libc",
+ "rayon",
 ]
 
 [[package]]
@@ -3423,6 +3424,7 @@ dependencies = [
  "base64 0.22.1",
  "bitlex",
  "block",
+ "cc",
  "cranelift-codegen",
  "cranelift-frontend",
  "cranelift-jit",
@@ -3431,6 +3433,7 @@ dependencies = [
  "ed25519-dalek",
  "fallible-iterator",
  "fancy-regex 0.17.0",
+ "flate2",
  "foldhash",
  "gix",
  "globset",
@@ -3474,6 +3477,7 @@ dependencies = [
  "tikv-jemallocator",
  "tokenizers 0.23.2",
  "tree-sitter",
+ "tree-sitter-generate",
  "tree-sitter-language",
  "unicode-normalization",
  "windows-sys 0.61.2",
@@ -4036,6 +4040,7 @@ dependencies = [
  "regex",
  "regex-automata",
  "regex-syntax",
+ "rerail-accel",
  "rerail-rr-syntax",
  "ruff_python_ast",
  "ruff_python_parser",

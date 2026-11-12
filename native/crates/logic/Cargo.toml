@@ -56,7 +56,7 @@ rayon = "=1.12.0"
 serde = { version = "1.0", features = ["derive"] }
 fancy-regex = "=0.17.0"
 regex = "=1.13.1"
-# The reach index (decision 0115): each start's closure as a compressed bitmap.
+# The reach index (decision 0119): each start's closure as a compressed bitmap.
 roaring = "=0.11.5"
 regex-automata = "=0.4.18"
 regex-syntax = "=0.8.11"
@@ -113,6 +113,7 @@ metal = "0.33.0"
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 
 [dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-logic = { path = ".", features = ["test-hooks"] }
 ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
 rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "array"] }

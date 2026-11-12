@@ -83,7 +83,7 @@ pub mod tests {
     use super::*;
     use serde_json::Value as Json;
 
-    use crate::code_rule_dsl::oracle;
+    use crate::code_rule_dsl::fixtures::oracle;
 
     const ORACLE: &str = oracle!("ecma/value/natural.expected.json");
 

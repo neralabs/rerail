@@ -670,14 +670,16 @@ impl Drop for ContentStore {
         if self.atoms.pending() && self.write_back.is_some() {
             self.write_back("the atoms at a handle's close", 0, Vec::new(), Box::new(|store| store.flush_atoms()));
             self.end_writer();
-            return;
+        } else {
+            self.end_writer();
+            if self.atoms.pending()
+                && let Err(error) = self.immediate_transaction(|_| Ok(()))
+            {
+                eprintln!("rerail: atoms: writing the pending atoms at close failed: {error}");
+            }
         }
-        self.end_writer();
-        if self.atoms.pending()
-            && let Err(error) = self.immediate_transaction(|_| Ok(()))
-        {
-            eprintln!("rerail: atoms: writing the pending atoms at close failed: {error}");
-        }
+        // Either way the handle closes: the writer's job runs on its own handle (`sibling`), which keeps the store
+        // open until the job is done. A handle left uncounted kept every connection to its store open for good.
         if self.connection.close() {
             self.atoms.release_reader();
         }
@@ -685,6 +687,14 @@ impl Drop for ContentStore {
 }
 
 impl ContentStore {
+    /// The process forgets the store at `path`, closed and about to be deleted while the process goes on (a test's
+    /// own): what it read of it to hold in memory (its frames, decision 0104) and its identity. Held past the store's
+    /// life, each is memory no run reads again.
+    pub fn forget(path: &Path) {
+        frames::forget_snapshot(&path.to_string_lossy());
+        atoms::forget_identity(&path.to_string_lossy());
+    }
+
     /// A handle of the same store for the writer's thread (`write_back`): the same atoms, caches of its own, no writer
     /// (it writes at once) and each job's holder.
     fn sibling(&self) -> ContentStore {
@@ -743,7 +753,8 @@ impl ContentStore {
             atoms: atoms::Atoms::for_database(path, Some(identity)),
             working_set: working_set::WorkingSet::default(),
             holder: parking_lot::Mutex::new(None),
-            write_back: Some(write_back::register(path)),
+            // A store created again at its path has a writer of its own too.
+            write_back: Some(write_back::register_store(path, identity)),
             lease: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
             git_tree_lookup_count: AtomicUsize::new(0),

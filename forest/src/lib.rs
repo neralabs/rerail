@@ -63,7 +63,9 @@ pub use randomforest_kernels_metal::{function, library, KERNELS, SOURCE};
 
 pub mod cost_model;
 
-/// The process's Metal device, and the forest's queue (its own, apart from the engine's).
+/// The process's one Metal device and command queue. They are made here, in the lowest crate that uses Metal, so
+/// that the forest's training and prediction and the engine's every submission (`rerail_accel::gpu::shared`, which
+/// takes them from here) share one queue: one order of command buffers, no queue apart (decision 0100 §2).
 pub mod gpu {
     pub mod shared {
         use std::sync::OnceLock;
@@ -73,7 +75,7 @@ pub mod gpu {
             pub queue: metal::CommandQueue,
         }
 
-        /// The device and the forest's queue: `None` without a Metal device.
+        /// The process's device and queue: `None` without a Metal device.
         pub fn get() -> Option<&'static Shared> {
             static SHARED: OnceLock<Option<Shared>> = OnceLock::new();
             SHARED

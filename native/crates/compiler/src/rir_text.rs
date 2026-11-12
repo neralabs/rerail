@@ -42,6 +42,25 @@ pub fn switch_rows(out: &mut String, at: usize, s: &crate::stream_ir::ByteSwitch
         }
         b = e + 1;
     }
+    for &(w, t) in &s.words {
+        let _ = writeln!(out, "  switch {at} word s{w} {}", switch_target(t));
+    }
+}
+
+/// Tier 2's rules (`Words::rules`): `rule N @P`, each rule's first place.
+/// The marks' words: `markword K sW` (`Words::mark_words`).
+pub fn mark_word_rows(out: &mut String, mark_words: &[(u8, u16)]) {
+    use std::fmt::Write as _;
+    for &(k, s) in mark_words {
+        let _ = writeln!(out, "  markword {k} s{s}");
+    }
+}
+
+pub fn rule_rows(out: &mut String, rules: &[u16]) {
+    use std::fmt::Write as _;
+    for (at, p) in rules.iter().enumerate() {
+        let _ = writeln!(out, "  rule {at} @{p:04}");
+    }
 }
 
 /// A reading's rows: `reading N #K as #M`, `reading N #K gone`, `reading N #K keep`,

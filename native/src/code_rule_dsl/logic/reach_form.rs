@@ -1,4 +1,4 @@
-//! The reach index's form found in a program (decision 0115): the relations held as each start's closure, not as rows.
+//! The reach index's form found in a program (decision 0119): the relations held as each start's closure, not as rows.
 //!
 //! A relation `r` of two columns is a reach when one of its rules is `r(x, z) :- r(x, y), edge(y, z)` (three distinct
 //! variables, `edge` not reading `r`) and no other rule reads `r`. Its other rules become the rules of
@@ -170,7 +170,7 @@ fn reach_shape(prog: &Program, rel: &str) -> Result<(usize, String), String> {
     if let Some(back) = cycle_through(prog, rel) {
         let why = format!("`{back}` reads it and it reads `{back}`");
         // A closure kept as rows by a cycle through other relations, in the explain output.
-        crate::code_rule_dsl::logic::profile::decision("reach index: cycles and connected graphs (decision 0115)", || {
+        crate::code_rule_dsl::logic::profile::decision("reach index: cycles and connected graphs (decision 0119)", || {
             format!("{rel}: a closure left as rows, in a cycle of relations: {why}")
         });
         return Err(why);

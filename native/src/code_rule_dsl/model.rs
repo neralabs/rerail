@@ -538,7 +538,7 @@ pub struct RegexLines {
 }
 
 #[derive(Clone)]
-pub(super) struct RegexLineState {
+pub struct RegexLineState {
     pub(super) initial: usize,
     pub(super) emit: Vec<bool>,
     pub(super) transitions: Vec<RegexLineTransition>,
@@ -556,7 +556,7 @@ pub(super) struct RegexLineTransition {
 }
 
 #[derive(Clone)]
-pub(super) struct RegexIndentation {
+pub struct RegexIndentation {
     pub(super) exclude_under: Regex,
     pub(super) reset: Regex,
     pub(super) ignore: Vec<Regex>,

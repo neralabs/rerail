@@ -616,6 +616,7 @@ fn lookups_with_a_bound_document_read_that_document_only() {
 
 
 #[test]
+#[cfg(feature = "python-syntax-error")]
 fn python_grammar_verdict_is_demanded_and_shared_across_projections() {
     let store = ContentStore::open(&temp("python-verdict")).unwrap();
     let doc = document(0, "a.py", "python", "print \"legacy\"\n");
@@ -913,6 +914,7 @@ fn definition_ids_follow_granules_in_every_language() {
          &["put", "v", "main", "5"]),
     ];
     for (label, path, before, after, kept) in cases {
+        if crate::code_rule_dsl::language::dialect_by_label(label).is_none_or(|d| !d.built()) { continue; }
         let (a, pa) = leaf_ids(label, path, before);
         let (b, pb) = leaf_ids(label, path, after);
         let id_of = |set: &BTreeSet<(String, i64)>, t: &str| set.iter().filter(|(x, _)| x == t).map(|(_, i)| *i).collect::<BTreeSet<i64>>();

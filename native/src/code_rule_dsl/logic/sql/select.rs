@@ -35,9 +35,9 @@ pub enum Relation {
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Source {
     pub table: String,
-    pub(in crate::code_rule_dsl) columns: Vec<String>,
-    pub(in crate::code_rule_dsl) positional: bool,
-    pub(in crate::code_rule_dsl) batched: bool,
+    pub columns: Vec<String>,
+    pub positional: bool,
+    pub batched: bool,
 }
 
 impl Source {
@@ -170,7 +170,7 @@ impl FromItem {
 impl Select {
     /// Session plans precede materialization. Leave their join order to SQLite, whose tables
     /// and indexes are available when each wave is prepared. Correlated subqueries keep scope.
-    pub(in crate::code_rule_dsl) fn sqlite_order(&mut self) {
+    pub fn sqlite_order(&mut self) {
         let derived = self.from.iter().filter(|i| matches!(i.relation, Relation::Derived { .. })).count();
         let delta = self.from.iter().any(|i| matches!(i.relation, Relation::Derived { delta: true, .. }));
         let cte = self.from.iter().any(|i| matches!(i.relation, Relation::Cte(_)));

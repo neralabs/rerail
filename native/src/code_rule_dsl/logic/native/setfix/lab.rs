@@ -261,3 +261,7 @@ pub(in crate::code_rule_dsl) fn capture_outputs(conn: &Connection, cap: Capture)
         let _ = std::fs::remove_file(&cap.path);
     }
 }
+
+// O-split-logic-tests: reads a crate above rerail-logic; compiled only once the split hosts it in the engine.
+#[cfg(all(test, any()))]
+mod tests;

@@ -3227,6 +3227,9 @@ no corpus session (a session held across the nested run deadlocked against the l
 
 **Closure:** the lease is held only across the atoms write, not the run; or tests default to a per-process store.
 
+**Closed (2026-11-11): decision 0118.** A test's store is its own: a copy of a template made once per build, removed
+when its test ends. No test shares a store, or its atoms lease, with another test or another process.
+
 ## O147. Each phase-0 run costs about 0.25 s, paid once per seed set
 
 **Seen (2026-11-08, t25).** A run of `bootstrap.rr` over one text with includes costs about 0.25 s CPU when nothing
@@ -3600,6 +3603,12 @@ connection address or by path (`""` for in-memory databases). Not yet traced.
 
 **Closure:** the shared state is found and keyed per run, and `base_tests` passes 20 of 20 in parallel.
 
+**Update (2026-11-11), decision 0118.** The same error comes up in `logic::plan::tests::` (for example
+`bounded_value_recursion_and_negated_conjunctions_run`): 4 of 10 runs on one store per process, 0 of 20 on a store
+per test. So the shared state is the shared store. A test's run read the statistics, plans and choices other tests'
+runs had kept there. `base_tests` is compiled only by `rerail-device-metal`'s test binary, which does not build
+(O-device-metal-tests), so its 20 runs are still to do.
+
 ## O-wave-test-shared. `closures_of_one_level_launch_in_one_wave` fails beside other tests
 
 Run with the rest of `logic::plan::tests` on the harness's parallel threads, this test sometimes sees its level's
@@ -3631,10 +3640,10 @@ it, holds the component DAG's closure instead of the documents' pairs.
 **Closure:** a warm run of the 54-file P3 corpus derives no stratum again with no input changed; cold CPU is back
 near 66.6 s (t32); findings unchanged.
 
-**Status (2026-11-11): mostly closed by decision 0115** (the reach index). `rr_cx_reach` is 208 KB of bitmaps,
+**Status (2026-11-11): mostly closed by decision 0119** (the reach index). `rr_cx_reach` is 208 KB of bitmaps,
 not 6.3 M rows. A warm run with nothing changed derives 2 of 480 strata again: the index's own two, rebuilt in
 0.1 s and never kept. It keeps 587 relations in 29.1 MB, and findings agree (4,815). Still open: the cold-CPU
-check against 66.6 s, measured with the per-file memo warm (0115 **Measured**).
+check against 66.6 s, measured with the per-file memo warm (0119 **Measured**).
 
 ## O-logic-tests-link. rerail-logic's test binary checks but does not link: the grammars are the engine's
 
@@ -3665,3 +3674,112 @@ passes in strict mode.
   alone, not `rr_cx_component`.
 
 The 54-file P3 run passes strict, 4,815 agree.
+**Closed (2026-11-11): decision 0118.** With a store per test, the test passed beside the rest of
+`logic::plan::tests::` in 20 of 20 runs; with one store per process it failed 2 of 10. The split wave came from the
+shared store, not the device's lanes: a test's run took plans and choices that other tests' runs had kept there.
+
+## O-split-logic-tests. Six tests of `rerail-logic` read crates above it, and are compiled nowhere
+
+After the crate split, `rerail-logic`'s test target did not build: its tests named the engine's modules (the
+`prefilter` test helpers, `tools::flatten`, `sql_executor`, `waves::policies`, `model::FileInput`, the device's
+`transducer::packed` rows). The helpers had a home below (`fixtures::temp`, `logic::settings::program_text`,
+`ContentStore::open`), and those calls now use it. The corpus runner's tests that parse files (the cone, the shared
+relations, the cross-file frames) need the languages, which the crates above register: they moved to
+`corpus/tests.rs`, which the engine's facade of `logic::plan::corpus` compiles. The ones that parse nothing stay in
+logic. Five tests need a crate above, so they are gated out (`#[cfg(any())]`, marked `O-split-logic-tests`) until
+the split hosts them in the engine:
+
+| Test | Reads |
+|---|---|
+| `corpus::matchers::tests::any_arms_binding_one_name_lower` | `waves::policies` |
+| `corpus::matchers::tests::a_matcher_relaxed_where_it_only_widens` | `waves::policies` |
+| `corpus::matchers::tests::a_nested_file_path_is_the_documents` | `tools::run_policies` |
+| `native_demand::tests::retained_semantic_results_support_sql_outputs_and_isolate_targets_and_runs` | `model::FileInput` |
+| `native::setfix::lab::tests` (the relational lab, ignored) | `transducer::packed` (Metal rows) |
+
+`test-hosts.tsv` already names `logic::native::setfix::lab::tests` as the engine's, but the generator does not move
+an inline test module, and the engine mounts none for it.
+
+**Found on the hub (2026-11-11), after the More-ergonomic and Cratification merges.** `rerail-logic`'s test
+target built only together with the engine: nothing turned on its own `test-hooks` (16 errors: `tempfile`,
+`fixtures`, `drop_unread_core`). It now has the engine's self dev-dependency (`rerail-logic = { path = ".",
+features = ["test-hooks"] }`, the same in `rerail-device-metal`), and `rerail-lang`'s `test-hooks` turns on
+`rerail-store`'s and `rerail-compiler`'s, which no crate's list named. Built alone, 269 pass and 41 fail;
+33 once `corpus::tests` went to the engine (More-ergonomic `b2bfa28d6`).
+Every failing test reads what the engine registers as it loads, through a
+registry that no static read shows, so `hosts.py` leaves them in `rerail-logic`:
+
+- the Rr language pack (`no language registered for Rr`, from `rr::stored_statements`);
+- then the language crates' `.rr` libraries (`#include "python/modules.rr": no such library`) and the Python pack;
+- the `to_precision` function (`TO_PRECISION`, set by the ECMA crate).
+
+**Hosted in the engine (2026-11-11).** A test that reads through a load-time registry reads the crate that
+registers it, so these went to the engine; copying `install_languages` into `rerail-logic` would have been a second
+loader. Each module's facade in the engine (`native/src/code_rule_dsl/mod.rs`, `waves.rs`) mounts the test file,
+and what the tests read became `pub`:
+
+- whole modules: `liveness::tests`, `corpus::{cache_tests, base_tests}`, `phase0::tests`, `phases::tests`,
+  `prepared::{tests, identity_tests}`, `reuse::tests`, `session::tests`, `profile::report::tests`,
+  `typing::phase_tests`, `waves::owner::tests`, `residency::slabs::tests` and
+  `metal_program_backend::tape_tests` (inline ones first moved to files);
+- the one test of a module that needs a language, in `engine_tests.rs` beside the module: `compose`,
+  `native_demand`, `strings` (`to_precision`), `metal_backend` (the launch budget) and `typing::file_local`.
+
+Their rule paths are the engine's manifest's (`CARGO_MANIFEST_DIR` is `native/`). The device tests stay in
+`rerail-device-metal`, which now registers Metal as its own test binary loads (`device_metal::test_load`), as the
+engine does. The launch-guard test cut each file at `#[cfg(test)]\nmod `, which the split's `pub mod` test modules
+no longer match, so it read its own list of forbidden calls; it cuts at either. Results: `rerail-logic` 262 pass,
+0 fail; the 83 hosted tests pass in the engine; `rerail-device-metal` 20 pass, 2 fail (below).
+
+**Still open:** `setfix::device::tests::{text_functions_on_the_device_are_the_cpus,
+text_tests_on_the_device_are_the_cpus}` ran nowhere on the hub until now. In the cases with a 60 × 2000 cross step
+the device reports fewer bindings at that step than the CPU (79,153 against 120,000); every final head count is the
+CPU's. It is Native-and-GPU-strata's to read: either the device drops bindings it should not, or it counts them
+after a filter the CPU applies one step later.
+
+**Closure:** each runs in the engine's test binary (or in a crate that has what it reads), and the gates go.
+
+## O-test-store-cost. A test's own store costs 5–21% more instructions per suite
+
+**Seen (2026-11-11), decision 0118.** Against one store per process: `logic::rr::` 740 G instructions against 668 G,
+and 784 MB against 686 MB; `logic::plan::tests::` 179 G against 148 G, and 329 MB against 240 MB;
+`logic::plan::corpus::tests::` 194 G against 185 G. That is about 0.65 G per test, whatever the template holds. A
+template of the core program alone costs as much, and needs less memory (669 MB for `logic::rr::`). The cost is a
+test's first run on a new store: it opens the store, makes its observer store, and finds the process's caches of the
+store cold (by its path: `setfix`'s `SYMS`, `STORED`, `INPUTS`; the frames read before the first wave). That warmth
+is the sharing between tests that the decision removes.
+
+**Closure:** each first-run step on a new store is measured, and any that is not proportional to what the run reads
+is cut. The memory per concurrent test is judged against the 1 GB budget. Which template, the library's or the core
+program's, is decided by the user.
+
+## O-device-metal-tests. `rerail-device-metal`'s test target does not build
+
+**Seen (2026-11-11).** `cargo test -p rerail-device-metal --lib --features test-hooks` fails in `rerail-transducer`:
+`content_store::positional_search` and the store's bulk search methods are not there under that build (11 errors).
+Without `test-hooks` its own facade fails (`fixtures`, `p_table`, `drop_unread_core`). `corpus::base_tests` is
+compiled only there.
+
+**Closure:** the target builds, and `base_tests` runs (O-p0-stats-flake's 20 runs).
+
+## O-phase0-store-state. Phase 0's include graph depends on what the store already holds
+
+Each test now starts from a copy of a store template that already holds the
+library's facts (decision 0118). In such a store, two runs of phase 0 on the
+same seed disagree:
+
+```text
+seed: the text of python/conditions.rr (its #include lines)
+first run   (graph):  python/env.rr includes core.rr at -1 (the implicit include)
+second run  (derive): python/env.rr has no includes; the absent candidates differ
+module digests: equal
+```
+
+On an empty store the two runs agree, so the derivation depends on the facts
+left in the store by earlier runs. That is maintenance of phase 0's own
+relations, not the observer: the module digests match.
+
+`bootstrap_resolves_as_the_builtin_reader_does` is ignored until this is fixed.
+It passes with `RERAIL_TAPE_CACHE` pointing at an empty store. Next step: find
+whether the first or the second run is wrong (compare both with a run on an
+empty store), then fix the rule or the maintenance that loses the edge.

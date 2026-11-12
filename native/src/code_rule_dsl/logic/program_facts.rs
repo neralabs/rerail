@@ -26,10 +26,10 @@ use super::magic::{Gate, Report};
 use std::collections::BTreeMap;
 
 /// Rows by relation, as a program's `facts` holds them.
-pub(in crate::code_rule_dsl) type Facts = BTreeMap<String, Vec<Vec<Value>>>;
+pub type Facts = BTreeMap<String, Vec<Vec<Value>>>;
 
 /// Each relation of the schema and its columns (`int` or `sym`).
-pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String)>> {
+pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
     const SCHEMA: &[(&str, &[&str])] = &[
         ("program", &["p:sym"]),
         ("rule", &["p:sym", "r:int", "head:int"]),
@@ -375,7 +375,7 @@ impl Writer<'_> {
 }
 
 /// `prog` as facts of program `p`, added to `facts`.
-pub(in crate::code_rule_dsl) fn write(facts: &mut Facts, p: &str, prog: &Program) {
+pub fn write(facts: &mut Facts, p: &str, prog: &Program) {
     Writer { facts, p: p.to_owned(), terms: 0, atoms: 0, literals: 0 }.program(prog);
 }
 
@@ -387,16 +387,62 @@ fn bad(what: impl std::fmt::Display) -> String {
 /// One program's rows of the schema, by relation, and the ids they index.
 struct Reader<'a> {
     rows: BTreeMap<&'a str, Vec<&'a [Value]>>,
-    terms: BTreeMap<i64, &'a [Value]>,
-    call_args: BTreeMap<i64, BTreeMap<i64, i64>>,
-    atoms: BTreeMap<i64, &'a [Value]>,
-    args: BTreeMap<i64, BTreeMap<i64, i64>>,
+    terms: rustc_hash::FxHashMap<i64, &'a [Value]>,
+    call_args: rustc_hash::FxHashMap<i64, BTreeMap<i64, i64>>,
+    atoms: rustc_hash::FxHashMap<i64, &'a [Value]>,
+    args: rustc_hash::FxHashMap<i64, BTreeMap<i64, i64>>,
+}
+
+/// Each program's rows in `facts`, by program and relation, found in one pass: a reader per program scanned every
+/// row for its own (the prepared program's four programs were four scans of all of them, decision 0116 step 4).
+pub(in crate::code_rule_dsl) struct Grouped<'a>(BTreeMap<&'a str, BTreeMap<&'a str, Vec<&'a [Value]>>>);
+
+impl<'a> Grouped<'a> {
+    pub(in crate::code_rule_dsl) fn of(facts: &'a Facts) -> Self {
+        let mut by: BTreeMap<&str, BTreeMap<&str, Vec<&[Value]>>> = BTreeMap::new();
+        for (rel, all) in facts {
+            // Rows of one program come together in a relation's rows as written: each run of them is added at once,
+            // the map looked up when the program changes, not per row.
+            let mut run: Option<(&str, Vec<&[Value]>)> = None;
+            let flush = |run: Option<(&'a str, Vec<&'a [Value]>)>, by: &mut BTreeMap<&'a str, BTreeMap<&'a str, Vec<&'a [Value]>>>| {
+                if let Some((p, rows)) = run {
+                    by.entry(p).or_default().entry(rel.as_str()).or_default().extend(rows);
+                }
+            };
+            for row in all {
+                let Some(Value::Str(q)) = row.first() else { continue };
+                match &mut run {
+                    Some((p, rows)) if *p == q.as_str() => rows.push(&row[1..]),
+                    _ => {
+                        flush(run.take(), &mut by);
+                        run = Some((q.as_str(), vec![&row[1..]]));
+                    }
+                }
+            }
+            flush(run, &mut by);
+        }
+        Grouped(by)
+    }
+
+    /// Program `p`, as it was written.
+    pub(in crate::code_rule_dsl) fn program(&self, p: &str) -> Result<Program, String> {
+        let rows = self.0.get(p).cloned().unwrap_or_default();
+        Reader::from_rows(rows, p)?.program()
+    }
 }
 
 fn int(v: &Value) -> Result<i64, String> {
     match v {
         Value::Int(i) => Ok(*i),
         Value::Str(x) => Err(bad(format!("{x:?} where a number goes"))),
+    }
+}
+
+/// A string value, borrowed: for a kind matched on, not kept.
+fn str_of(v: &Value) -> Result<&str, String> {
+    match v {
+        Value::Str(x) => Ok(x),
+        Value::Int(i) => Err(bad(format!("{i} where a string goes"))),
     }
 }
 
@@ -423,32 +469,36 @@ impl<'a> Reader<'a> {
                 }
             }
         }
+        Self::from_rows(rows, p)
+    }
+
+    fn from_rows(rows: BTreeMap<&'a str, Vec<&'a [Value]>>, p: &str) -> Result<Self, String> {
         if !rows.contains_key("program") {
             return Err(bad(format!("no program {p:?}")));
         }
-        let mut reader = Reader { rows, terms: BTreeMap::new(), call_args: BTreeMap::new(), atoms: BTreeMap::new(), args: BTreeMap::new() };
-        for row in reader.get("term") {
-            reader.terms.insert(int(&row[0])?, row);
+        let (mut terms, mut call_args, mut atoms, mut args) = (rustc_hash::FxHashMap::default(), rustc_hash::FxHashMap::<i64, BTreeMap<i64, i64>>::default(), rustc_hash::FxHashMap::default(), rustc_hash::FxHashMap::<i64, BTreeMap<i64, i64>>::default());
+        for &row in rows.get("term").map_or(&[][..], Vec::as_slice) {
+            terms.insert(int(&row[0])?, row);
         }
-        for row in reader.get("call_arg") {
-            reader.call_args.entry(int(&row[0])?).or_default().insert(int(&row[1])?, int(&row[2])?);
+        for &row in rows.get("call_arg").map_or(&[][..], Vec::as_slice) {
+            call_args.entry(int(&row[0])?).or_default().insert(int(&row[1])?, int(&row[2])?);
         }
-        for row in reader.get("atom") {
-            reader.atoms.insert(int(&row[0])?, row);
+        for &row in rows.get("atom").map_or(&[][..], Vec::as_slice) {
+            atoms.insert(int(&row[0])?, row);
         }
-        for row in reader.get("arg") {
-            reader.args.entry(int(&row[0])?).or_default().insert(int(&row[1])?, int(&row[2])?);
+        for &row in rows.get("arg").map_or(&[][..], Vec::as_slice) {
+            args.entry(int(&row[0])?).or_default().insert(int(&row[1])?, int(&row[2])?);
         }
-        Ok(reader)
+        Ok(Reader { rows, terms, call_args, atoms, args })
     }
 
-    fn get(&self, rel: &str) -> Vec<&'a [Value]> {
-        self.rows.get(rel).cloned().unwrap_or_default()
+    fn get(&self, rel: &str) -> &[&'a [Value]] {
+        self.rows.get(rel).map_or(&[], Vec::as_slice)
     }
 
     fn term(&self, t: i64) -> Result<Term, String> {
         let row = self.terms.get(&t).ok_or_else(|| bad(format!("no term {t}")))?;
-        Ok(match text(&row[1])?.as_str() {
+        Ok(match str_of(&row[1])? {
             "var" => Term::Var(text(&row[3])?),
             "wild" => Term::Wild,
             "int" => Term::Int(int(&row[2])?),
@@ -477,8 +527,8 @@ impl<'a> Reader<'a> {
         Ok(out)
     }
 
-    fn literals(&self) -> Result<BTreeMap<i64, Literal>, String> {
-        let mut out = BTreeMap::new();
+    fn literals(&self) -> Result<rustc_hash::FxHashMap<i64, Literal>, String> {
+        let mut out = rustc_hash::FxHashMap::default();
         for row in self.get("lit_atom") {
             out.insert(int(&row[0])?, Literal::Atom(self.atom(int(&row[1])?)?));
         }
@@ -492,7 +542,7 @@ impl<'a> Reader<'a> {
         let by = self.by_id("agg_by")?;
         for row in self.get("lit_agg") {
             let l = int(&row[0])?;
-            let op = match text(&row[2])?.as_str() {
+            let op = match str_of(&row[2])? {
                 "count" => AggOp::Count,
                 "min" => AggOp::Min,
                 "max" => AggOp::Max,
@@ -557,13 +607,14 @@ impl<'a> Reader<'a> {
             let widen = widens.get(&rel).and_then(|r| r.first()).map(|r| int(&r[0]).map(|k| k as u32)).transpose()?;
             prog.lattice.insert(rel, LatticeDecl { keys: int(&row[1])? as usize, ty: text(&row[2])?, merge, widen });
         }
-        let mut values: BTreeMap<(String, i64), Vec<(i64, Value)>> = BTreeMap::new();
+        // Keyed by the relation's name as the rows hold it, borrowed.
+        let mut values: rustc_hash::FxHashMap<(&str, i64), Vec<(i64, Value)>> = Default::default();
         for row in self.get("fact") {
-            let v = match text(&row[3])?.as_str() {
+            let v = match str_of(&row[3])? {
                 "int" => Value::Int(int(&row[4])?),
                 _ => Value::Str(text(&row[5])?),
             };
-            values.entry((text(&row[0])?, int(&row[1])?)).or_default().push((int(&row[2])?, v));
+            values.entry((str_of(&row[0])?, int(&row[1])?)).or_default().push((int(&row[2])?, v));
         }
         let mut facts: BTreeMap<String, Vec<(i64, Vec<Value>)>> = BTreeMap::new();
         for row in self.get("fact_rel") {
@@ -571,7 +622,7 @@ impl<'a> Reader<'a> {
         }
         for row in self.get("fact_row") {
             let (rel, k) = (text(&row[0])?, int(&row[1])?);
-            let row_values = ordered(values.remove(&(rel.clone(), k)).unwrap_or_default());
+            let row_values = ordered(values.remove(&(str_of(&row[0])?, k)).unwrap_or_default());
             if row_values.len() as i64 != int(&row[2])? {
                 return Err(bad(format!("{rel} row {k} has {} of its {} values", row_values.len(), int(&row[2])?)));
             }
@@ -701,13 +752,13 @@ impl<'a> Reader<'a> {
 }
 
 /// Program `p` of `facts`, as it was written.
-pub(in crate::code_rule_dsl) fn program(facts: &Facts, p: &str) -> Result<Program, String> {
+pub fn program(facts: &Facts, p: &str) -> Result<Program, String> {
     Reader::of(facts, p)?.program()
 }
 
 /// `facts` as a `.rr` document: the schema's declarations and every row as a fact. `rr::parse` reads it back as the
 /// same rows (`document_facts`).
-pub(in crate::code_rule_dsl) fn document(facts: &Facts, extra: &BTreeMap<String, Vec<(String, String)>>) -> Result<String, String> {
+pub fn document(facts: &Facts, extra: &BTreeMap<String, Vec<(String, String)>>) -> Result<String, String> {
     let mut decls = schema();
     decls.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
     let prog = Program { decls, facts: facts.clone(), ..Program::default() };
@@ -715,13 +766,13 @@ pub(in crate::code_rule_dsl) fn document(facts: &Facts, extra: &BTreeMap<String,
 }
 
 /// A document's rows, as `rr::parse` reads them.
-pub(in crate::code_rule_dsl) fn document_facts(text: &str) -> Result<Facts, String> {
+pub fn document_facts(text: &str) -> Result<Facts, String> {
     let prog = super::rr::parse(text).map_err(|e| bad(format!("{e:?}")))?;
     Ok(prog.facts)
 }
 
 /// `facts` as bytes: a compact encoding for the facts memo (strings in a table, each value a tag and a number).
-pub(in crate::code_rule_dsl) fn encode(facts: &Facts) -> Vec<u8> {
+pub fn encode(facts: &Facts) -> Vec<u8> {
     // One pass: each string's id by first use (relation, then its rows' values, in order), the rows written as they
     // are met; the table, which comes first, written after.
     let mut strings: rustc_hash::FxHashMap<&str, u32> = Default::default();
@@ -769,7 +820,7 @@ pub(in crate::code_rule_dsl) fn encode(facts: &Facts) -> Vec<u8> {
 }
 
 /// Bytes `encode` made, as facts.
-pub(in crate::code_rule_dsl) fn decode(bytes: &[u8]) -> Result<Facts, String> {
+pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
     struct At<'a>(&'a [u8], usize);
     impl At<'_> {
         fn take(&mut self, n: usize) -> Result<&[u8], String> {

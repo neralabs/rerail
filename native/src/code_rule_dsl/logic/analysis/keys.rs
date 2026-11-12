@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 pub type Keys = BTreeMap<String, Vec<Vec<usize>>>;
 
 #[derive(Clone, Debug, serde::Serialize)]
-pub(in crate::code_rule_dsl) struct Input {
+pub struct Input {
     pub relation: String,
     pub columns: Vec<String>,
     pub keys: Vec<Vec<usize>>,

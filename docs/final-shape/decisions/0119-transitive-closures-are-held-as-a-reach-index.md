@@ -1,4 +1,4 @@
-# 0115: Transitive closures are held as a reach index, one bitmap per start
+# 0119: Transitive closures are held as a reach index, one bitmap per start
 
 Status: draft (2026-11-11). Built: the form found in a program (`logic/reach_form.rs`), the index
 (`logic/native/reach.rs`), its stratum and its probes. Measured: see **Measured** at the end.
@@ -98,7 +98,7 @@ decisions section of `profile.txt`. Where the nodes are documents, they are name
 invalidation test's last edit:
 
 ```
-reach index: cycles and connected graphs (decision 0115):
+reach index: cycles and connected graphs (decision 0119):
   - reach: 6 nodes, 8 edges; 2 strongly connected components, 1 of them cycles of two or more nodes, 0 nodes with an edge to themselves; 1 connected parts
   - reach: 6 starts share 2 closures; the widest reaches 6
   - reach: largest connected parts: 6 (a.py, b.py, e.py, f.py, …)

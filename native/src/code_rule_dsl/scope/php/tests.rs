@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 fn oracle_root() -> PathBuf {
-    PathBuf::from(crate::code_rule_dsl::fixtures_dir!()).join("php/scope/php")
+    PathBuf::from(crate::code_rule_dsl::fixtures::fixtures_dir!()).join("php/scope/php")
 }
 
 fn line_of(source: &str, offset: usize) -> u64 {

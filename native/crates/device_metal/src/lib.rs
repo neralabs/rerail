@@ -25,6 +25,8 @@ pub mod code_rule_dsl {
         #[path = "vtab"]
         pub mod vtab {
             pub use rerail_facts::code_rule_dsl::facts::vtab::*;
+            #[cfg(any(test, feature = "test-hooks"))]
+            pub use rerail_w::code_rule_dsl::facts::vtab::p_table;
             #[path = "syntax"]
             pub mod syntax {
                 pub use rerail_facts::code_rule_dsl::facts::vtab::syntax::*;
@@ -131,7 +133,7 @@ pub mod code_rule_dsl {
         #[path = "front"]
         pub mod front {
             pub use rerail_rr::code_rule_dsl::logic::front::*;
-            #[path = "caches"]
+            #[path = "."]
             pub mod caches {
                 pub use rerail_rr::code_rule_dsl::logic::front::caches::*;
                 #[allow(unused_imports)]
@@ -249,8 +251,6 @@ pub mod code_rule_dsl {
             #[path = "corpus"]
             pub mod corpus {
                 pub use rerail_logic::code_rule_dsl::logic::plan::corpus::*;
-                #[cfg(test)]
-                pub mod base_tests;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::logic::plan::{Error, Outcome, Result, lower};
                 #[allow(unused_imports)]
@@ -348,7 +348,7 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use std::collections::{BTreeMap, BTreeSet};
             }
-            #[path = "tape_type"]
+            #[path = "."]
             pub mod tape_type {
                 pub use rerail_rr::code_rule_dsl::logic::rr::tape_type::*;
                 #[allow(unused_imports)]
@@ -432,6 +432,7 @@ pub mod code_rule_dsl {
     pub use rerail_w::code_rule_dsl::soundness;
     pub use rerail_transducer::code_rule_dsl::space;
     pub use rerail_facts::code_rule_dsl::sql_profile;
+    pub use rerail_facts::code_rule_dsl::sql_admission;
     pub use rerail_w::code_rule_dsl::stats;
     pub use rerail_w::code_rule_dsl::suppress;
     #[path = "tape"]
@@ -532,7 +533,7 @@ pub mod code_rule_dsl {
             pub mod metal_frame_identity;
             #[cfg(all(test,target_os="macos",feature="metal-tests"))]
             pub mod metal_frame_identity_tests;
-            #[cfg(all(test,target_os="macos",feature="metal-tests"))]
+            #[cfg(all(any(test, feature = "test-hooks"),target_os="macos",feature="metal-tests"))]
             pub mod metal_frontier_conformance;
             #[cfg(target_os="macos")]
             pub mod metal_frontier_reduce;
@@ -731,7 +732,7 @@ pub mod code_rule_dsl {
         #[path = "file_local"]
         pub mod file_local {
             pub use rerail_logic::code_rule_dsl::typing::file_local::*;
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             pub mod tests;
             #[allow(unused_imports)]
             use crate::content_store::{StoreError, StoreResult};

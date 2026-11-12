@@ -702,7 +702,7 @@ impl ContentStore {
         if compatible_version(connection)? != SCHEMA_VERSION || !holds_schema_objects(connection)? {
             // A store made here is made by a writer's thread (decision 0104: a run's own threads only read): once,
             // before anything reads it.
-            std::thread::scope(|scope| {
+            rerail_accel::exec::scoped(|scope| {
                 scope
                     .spawn(|| -> StoreResult<()> {
                         super::hazards::behind_the_run();
@@ -761,7 +761,7 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
 /// database, so it cannot drift from SCHEMA.
 /// Made on a writer's thread (decision 0104: a run's own threads only read).
 static SCHEMA_OBJECTS: LazyLock<Result<Vec<(String, String)>, String>> = LazyLock::new(|| {
-    std::thread::scope(|scope| {
+    rerail_accel::exec::scoped(|scope| {
         scope
             .spawn(|| {
                 super::hazards::behind_the_run();

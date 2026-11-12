@@ -196,7 +196,7 @@ pub(super) fn check_captures(
     }
 }
 
-// cratify: `php` is rerail-lang-php's (it mounts it)
+// cratify: `php` is rerail-engine's (it mounts it)
 // cratify: `ruff` is rerail-lang-python's (it mounts it)
 #[cfg(test)]
 pub mod tests;

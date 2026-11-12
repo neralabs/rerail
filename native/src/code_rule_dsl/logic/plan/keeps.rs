@@ -540,7 +540,7 @@ fn refusals(prog: &Program, rules_of: &BTreeMap<&str, Vec<&Rule>>, sccs: &[BTree
             || prog.natives.contains_key(rel)
             || natives_read.contains(rel)
             // A native's rows are read by the strata its readers open (`components`, `dfs_first`): not copied into others.
-            // The reach index (decision 0115) is read in place by any stratum: its readers may be inlined.
+            // The reach index (decision 0119) is read in place by any stratum: its readers may be inlined.
             || rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| prog.natives.get(a.rel.as_str()).is_some_and(|n| !matches!(n, crate::code_rule_dsl::logic::front::Native::Reach { .. } | crate::code_rule_dsl::logic::front::Native::ReachThrough { .. })))))
         {
             Some("a lattice or a native's")

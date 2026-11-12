@@ -95,6 +95,25 @@ def document_session_request(files, scalar_consumers=False, projection=False):
     }
 
 
+def corpus_session_request(workload):
+    corpus = json.loads(subprocess.check_output([
+        "zstd", "-dc", str(ROOT / "native/src/code_rule_dsl/facts/vtab/golden/corpus.json.zst")]))
+    files = [{"path": path, "language": "python", "source": source} for path, source in corpus]
+    original = next(f for f in files if f["path"] == "json/decoder.py")
+    edited = {**original, "source": original["source"] + "\n\ndef debug_extra(text):\n    return eval(text)\n"}
+    program = (ROOT / f"native/src/code_rule_dsl/logic/plan/golden/programs/{workload}.rr").read_text()
+    outputs = [name.strip() for line in program.splitlines() if line.startswith(".output ")
+               for name in line.removeprefix(".output ").split(",")]
+    return {"program": program, "snapshot": {"files": files}, "steps": [
+        {"file_changes": {"upsert": [edited]}, "limits": {"max_steps": 1}, "expected_error": "execution-limit"},
+        {"file_changes": {"upsert": [edited]}},
+        {"file_changes": {"upsert": [edited]}},
+        {"file_changes": {"upsert": [original]}},
+        {"file_changes": {"delete": [f["path"] for f in files]}},
+        {"snapshot": {"files": files}},
+    ], "queries": [f'SELECT count(*) FROM "{name}"' for name in outputs]}
+
+
 def cases(corpus):
     result = [(f"update-recursive-lattice-{groups}", recursive_lattice(groups)) for groups in [1000, 10000]]
     for n in [64, 128, 256, 512, 1024]:
@@ -469,6 +488,12 @@ if __name__ == "__main__":
         parser.add_argument("output", type=Path)
         args = parser.parse_args()
         args.output.write_text(json.dumps(document_session_request(args.document_session_request, args.scalar_consumers, args.projection)))
+    elif sys.argv[1:2] == ["--corpus-session-request"]:
+        parser = argparse.ArgumentParser(description="Generate a complete CPython replay with rollback, recovery, no-op, empty input, and restoration.")
+        parser.add_argument("--corpus-session-request", choices=["workload", "calls"], required=True)
+        parser.add_argument("output", type=Path)
+        args = parser.parse_args()
+        args.output.write_text(json.dumps(corpus_session_request(args.corpus_session_request)))
     elif sys.argv[1:2] == ["--session-request"]:
         parser = argparse.ArgumentParser(description="Generate a recursive request with rollback and recovery checks.")
         parser.add_argument("--session-request", type=int, required=True, metavar="REGIONS")

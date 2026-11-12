@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
-import { hookText, type AdapterDelivery, type AdapterEvent, type AdapterSession, type RerailEventLoop } from "../../engine/adapter-contract.js";
+import { hookText, stopContinuation, type AdapterDelivery, type AdapterEvent, type AdapterSession, type RerailEventLoop } from "../../engine/adapter-contract.js";
 
 export type ClaudeHookInput = Readonly<Record<string, unknown>>;
 
@@ -19,10 +19,10 @@ function session(input: ClaudeHookInput): AdapterSession {
 
 /**
  * The turn end `Stop` or `StopFailure` reports. A Stop after a Stop hook kept the turn going (`stop_hook_active`) ends
- * the same prompt again, so it is a turn end of its own, as Codex's continued turn is.
+ * the same prompt again, so it is a turn end of its own, as is each continuation after it (`stopContinuation`).
  */
 function turnEndEvent(input: ClaudeHookInput, hook: "Stop" | "StopFailure", descriptor: AdapterSession): AdapterEvent {
-  const continuation = input.stop_hook_active === true ? ":continued" : "";
+  const continuation = stopContinuation(input.stop_hook_active, input.last_assistant_message);
   return {
     kind: "turn-end",
     eventId: `${descriptor.sessionId}:${hook === "Stop" ? "turn" : "turn-failure"}:${requiredText(input, "prompt_id")}${continuation}`,

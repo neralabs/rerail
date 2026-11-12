@@ -352,7 +352,7 @@ pub enum Native {
     /// smallest document) and the component's Merkle key over `own(d, digest)` (`logic::native::components`).
     Components { edge: String, own: String },
     /// `r(x, y) :- seed(x, y). r(x, z) :- r(x, y), edge(y, z).`: each start's nodes reached over `edge` from its seeds,
-    /// held as the reach index (decision 0115, `logic::native::reach`), not as rows.
+    /// held as the reach index (decision 0119, `logic::native::reach`), not as rows.
     Reach { seed: String, edge: String },
     /// `s(x, q) :- r(x, e), map(e, q).` over a `Reach` relation `r`: each start's `map` values over what it reaches,
     /// held the same way.

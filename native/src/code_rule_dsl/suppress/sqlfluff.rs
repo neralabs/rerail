@@ -352,7 +352,7 @@ fn fnmatchcase(globs: &[Glob], text: &str) -> bool {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use crate::code_rule_dsl::oracle;
+    use crate::code_rule_dsl::fixtures::oracle;
     use serde_json::Value;
 
     fn refs(code: &str) -> Vec<String> {
@@ -655,7 +655,7 @@ pub mod tests {
             "range.sql",
             "routine_bodies.sql",
         ] {
-            let path = std::path::Path::new(crate::code_rule_dsl::fixtures_dir!())
+            let path = std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!())
                 .join("sql/suppress/sqlfluff")
                 .join(file);
             let source = std::fs::read_to_string(path).unwrap();

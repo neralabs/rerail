@@ -27,7 +27,7 @@ pub enum Tok {
     Eof,
 }
 
-const PUNCT: [&str; 31] = [
+pub(crate) const PUNCT: [&str; 31] = [
     ":-", "=>", "!=", "<=", ">=", "<:", "->", "(", ")", ",", ".", ";", ":", "=", "<", ">", "!", "{", "}", "|", "@", "*", "[", "]", "-", "+",
     "/", "%", "~", "^", "&",
 ];
@@ -37,7 +37,7 @@ pub type Spanned = (Tok, usize, usize);
 
 /// A string literal's escapes: `\"`, `\\`, `\n`, `\t`, `\r`, `\u{…}` and JSON's `\uXXXX`. Any other backslash is
 /// kept with the character after it, so a regex reads as written (`"\d+\.py"`).
-fn unescape(body: &str) -> Result<String, String> {
+pub(crate) fn unescape(body: &str) -> Result<String, String> {
     let mut out = String::new();
     let mut chars = body.chars().peekable();
     while let Some(c) = chars.next() {
@@ -511,7 +511,13 @@ impl<'s> Parser<'s> {
         }
     }
 
-    /// The next token, as an anonymous leaf (punctuation, a reserved word).
+    /// The next token, a token the grammar implies: the tape leaves it out (a named-only tape, RER-131;
+    /// `docs/parser-generators/32-named-only-rr-tapes.md`). The kind and the named children say where it is.
+    fn implied(&mut self) {
+        self.i += 1;
+    }
+
+    /// The next token, as an anonymous leaf (punctuation, a reserved word): a token the tape stores.
     fn anon(&mut self) {
         if self.tree.is_some() {
             let kind = match self.peek() {
@@ -546,7 +552,18 @@ impl<'s> Parser<'s> {
 
     // Tokens.
 
+    /// The punctuation `p`, implied: the tape leaves it out.
     fn p(&mut self, p: &str) -> Result<(), Error> {
+        if self.is_p(p) {
+            self.implied();
+            Ok(())
+        } else {
+            self.fail(&format!("{p:?}"))
+        }
+    }
+
+    /// The punctuation `p`, stored: where the named children do not say it is there.
+    fn p_stored(&mut self, p: &str) -> Result<(), Error> {
         if self.is_p(p) {
             self.anon();
             Ok(())
@@ -584,7 +601,7 @@ impl<'s> Parser<'s> {
         out.push(item(self)?);
         self.field(field);
         while self.is_p(",") {
-            self.anon();
+            self.implied();
             out.push(item(self)?);
             self.field(field);
         }
@@ -626,10 +643,9 @@ impl<'s> Parser<'s> {
         let from = self.i;
         let text = self.braces()?;
         if self.i - from == 3 && matches!(self.toks[from + 1].0, Tok::Id(_)) {
-            self.anon_over("{", from);
+            // `{` and `}` around one name are implied.
             self.leaf_over(Kind::Identifier as u16, from + 1, from + 2);
             self.field(field);
-            self.anon_over("}", from + 2);
         } else {
             self.leaf_over(Kind::RawText as u16, from, self.i);
             self.field(field);
@@ -642,16 +658,19 @@ impl<'s> Parser<'s> {
         self.open(Kind::Type);
         let mut t = self.id()?;
         self.field(Field::Name);
+        // `<` and `>` around an argument are implied; `<>` is stored.
         if self.is_p("<") {
-            self.anon();
-            let inner = if self.is_p(">") {
+            let inner = if self.is_p_at(1, ">") {
+                self.anon();
+                self.anon();
                 String::new()
             } else {
+                self.implied();
                 let inner = self.id()?;
                 self.field(Field::Argument);
+                self.p(">")?;
                 inner
             };
-            self.p(">")?;
             t = format!("{t}<{inner}>");
         }
         self.close();
@@ -762,7 +781,7 @@ impl<'s> Parser<'s> {
     fn statement(&mut self, line: usize) -> Result<Item, Error> {
         if let Tok::Hash(h) = self.peek().clone() {
             self.open(Kind::Include);
-            self.anon();
+            self.implied();
             if h != "include" {
                 return self.fail("#include");
             }
@@ -788,10 +807,21 @@ impl<'s> Parser<'s> {
             };
             self.open(kind);
             match tape::directive(&d).filter(|_| kind != Kind::Setting) {
+                // A directive's `.word` is implied by its kind, but `.input` and `.output`, which share one.
+                // Under a kind whose tail may hold any punctuation (a declaration's, a functor's
+                // modifiers), a `.` is not implied anywhere: its `.` is stored, its word implied.
                 Some(keyword) => {
-                    self.leaf_over(keyword, self.i, self.i + 2);
-                    self.i += 2;
+                    if kind == Kind::IoDirective {
+                        self.leaf_over(keyword, self.i, self.i + 2);
+                        self.i += 2;
+                    } else if matches!(kind, Kind::Declaration | Kind::FunctorDeclaration) {
+                        self.anon();
+                        self.implied();
+                    } else {
+                        self.i += 2;
+                    }
                 }
+                // A setting's `.`: stored, as its arguments may hold a `.`.
                 None => {
                     self.anon();
                     self.bump_as(Kind::Identifier);
@@ -826,7 +856,8 @@ impl<'s> Parser<'s> {
                 let name = self.id()?;
                 self.field(Field::Name);
                 self.columns()?;
-                self.p(":")?;
+                // Stored: a functor's modifiers may hold a `:`.
+                self.p_stored(":")?;
                 self.ty()?;
                 self.field(Field::ReturnType);
                 let at = self.last_line();
@@ -848,7 +879,9 @@ impl<'s> Parser<'s> {
                     p.field(Field::Name);
                     if p.is_p("(") {
                         let start = p.start();
-                        p.anon();
+                        // The parentheses around parameters are implied; `()` is stored.
+                        let open = p.i;
+                        p.i += 1;
                         let from = p.i;
                         let mut depth = 1;
                         while depth > 0 {
@@ -861,9 +894,15 @@ impl<'s> Parser<'s> {
                             p.i += 1;
                         }
                         let close = p.i - 1;
-                        p.leaf_over(Kind::RawText as u16, from, close);
-                        p.field(Field::Parameters);
-                        p.anon_over(")", close);
+                        if from == close {
+                            // `()`: the `(` takes the field.
+                            p.anon_over("(", open);
+                            p.field(Field::Parameters);
+                            p.anon_over(")", close);
+                        } else {
+                            p.leaf_over(Kind::RawText as u16, from, close);
+                            p.field(Field::Parameters);
+                        }
                         let text = p.src[start + 1..p.toks[close].1].to_owned();
                         params.push((name.clone(), text));
                     }
@@ -893,7 +932,7 @@ impl<'s> Parser<'s> {
                     // A functor named, not called: `Lub -> @shortlex_min`.
                     if p.is_p("@") && matches!(p.peek_at(1), Tok::Id(_)) && !p.is_p_at(2, "(") {
                         p.open(Kind::FunctorCall);
-                        p.anon();
+                        p.implied();
                         let name = p.id()?;
                         p.field(Field::Function);
                         p.close();
@@ -926,18 +965,18 @@ impl<'s> Parser<'s> {
                 let (mut code, mut code_in, mut tag) = (None, None, None);
                 loop {
                     if self.is_id("code") && matches!(self.peek_at(1), Tok::Str(_)) {
-                        self.anon();
+                        self.implied();
                         code = Some(Code::Constant(self.string()?));
                         self.field(Field::Code);
                     } else if (self.is_id("code") || self.is_id("tag")) && self.is_p_at(1, "{") {
                         let is_code = self.is_id("code");
                         self.open(if is_code { Kind::CodeColumn } else { Kind::TagColumn });
-                        self.anon();
+                        self.implied();
                         let column = self.brace_column(Field::Column)?;
                         if is_code {
                             code = Some(Code::Column(column));
                             if self.is_id("in") && matches!(self.peek_at(1), Tok::Str(_)) {
-                                self.anon();
+                                self.implied();
                                 code_in = Some(self.string()?);
                                 self.field(Field::Codes);
                             }
@@ -957,6 +996,8 @@ impl<'s> Parser<'s> {
                 loop {
                     if self.is_id("fix") && matches!(self.peek_at(1), Tok::Id(_)) {
                         self.open(Kind::FixLine);
+                        // `fix` is stored, as `fix safe` is stored whole; and `safe`, as nothing
+                        // else says it is there.
                         self.anon();
                         let safe = self.is_id("safe") && matches!(self.peek_at(1), Tok::Id(_));
                         if safe {
@@ -971,27 +1012,27 @@ impl<'s> Parser<'s> {
                         fixes.push(Fix { name, safe, title });
                     } else if self.is_id("suppress") && matches!(self.peek_at(1), Tok::Id(_)) && matches!(self.peek_at(2), Tok::Str(_)) {
                         self.open(Kind::SuppressLine);
-                        self.anon();
+                        self.implied();
                         let tool = self.id()?;
                         self.field(Field::Tool);
                         let mut rules = vec![self.string()?];
                         self.field(Field::Rule);
                         while self.is_p(",") && matches!(self.peek_at(1), Tok::Str(_)) {
-                            self.anon();
+                            self.implied();
                             rules.push(self.string()?);
                             self.field(Field::Rule);
                         }
                         // `over {c}`: the comment is read on the lines of column c's node too.
                         let mut over = None;
                         if self.is_id("over") && self.is_p_at(1, "{") {
-                            self.anon();
+                            self.implied();
                             over = Some(self.brace_column(Field::Over)?);
                         }
                         self.close();
                         self.field(Field::Suppress);
                         suppress.push(Suppress { tool, rules, over });
                     } else if self.is_id("options") && self.is_p_at(1, "{") {
-                        self.anon();
+                        self.implied();
                         self.json(Field::Options)?;
                     } else {
                         break;
@@ -1045,20 +1086,20 @@ impl<'s> Parser<'s> {
         let mut heads = vec![self.head()?];
         self.field(Field::Head);
         while self.is_p(",") {
-            self.anon();
+            self.implied();
             heads.push(self.head()?);
             self.field(Field::Head);
         }
         let mut body = Vec::new();
         if self.is_p(":-") {
-            self.anon();
+            self.implied();
             let alts = self.disjunction()?;
             self.field(Field::Body);
             body = if alts.len() == 1 { alts.into_iter().next().expect("one") } else { vec![Lit::Group { alts, neg: false }] };
         }
         let mut edits = Vec::new();
         if self.is_p("=>") {
-            self.anon();
+            self.implied();
             edits = self.list(".", Field::Edit, Self::term)?;
         }
         self.p(".")?;
@@ -1074,7 +1115,7 @@ impl<'s> Parser<'s> {
             self.wrap(from, Kind::Disjunction);
             self.field(Field::Alternative);
             while self.is_p(";") {
-                self.anon();
+                self.implied();
                 alts.push(self.conjunction()?);
                 self.field(Field::Alternative);
             }
@@ -1088,7 +1129,7 @@ impl<'s> Parser<'s> {
         let mut out = vec![self.literal()?];
         self.field(Field::Literal);
         while self.is_p(",") {
-            self.anon();
+            self.implied();
             out.push(self.literal()?);
             self.field(Field::Literal);
         }
@@ -1099,7 +1140,7 @@ impl<'s> Parser<'s> {
     fn literal(&mut self) -> Result<Lit, Error> {
         if self.is_p("!") {
             self.open(Kind::Negation);
-            self.anon();
+            self.implied();
             let inner = self.literal()?;
             self.field(Field::Operand);
             self.close();
@@ -1114,7 +1155,7 @@ impl<'s> Parser<'s> {
             // A group `( a ; b )`, or a parenthesized term that a comparison follows: `(a - b) * 10 > o`.
             let save = self.save();
             self.open(Kind::Group);
-            self.anon();
+            self.implied();
             let group = self.disjunction().and_then(|alts| {
                 self.field(Field::Body);
                 self.p(")").map(|()| alts)
@@ -1133,7 +1174,7 @@ impl<'s> Parser<'s> {
         if self.is_p("~") {
             self.wrap(from, Kind::PatternMatch);
             self.field(Field::Subject);
-            self.anon();
+            self.implied();
             let pattern = match self.peek().clone() {
                 Tok::Tick(t) => t,
                 _ => return self.fail("a backtick pattern"),
@@ -1218,8 +1259,13 @@ impl<'s> Parser<'s> {
     /// An aggregate, from its operator word `op`: `count : { … }`, `min x : { … }`, `join x by k sep "," : { … }`.
     fn aggregate(&mut self, op: String) -> Result<Term, Error> {
         self.open(Kind::Aggregate);
-        self.anon();
-        self.field(Field::Operator);
+        // `count` is implied: the only aggregate with a body alone. Any other word is stored.
+        if op == "count" && self.is_p_at(1, ":") {
+            self.implied();
+        } else {
+            self.anon();
+            self.field(Field::Operator);
+        }
         let over = if self.is_p(":") {
             None
         } else {
@@ -1228,12 +1274,16 @@ impl<'s> Parser<'s> {
             Some(Box::new(over))
         };
         let (mut by, mut sep) = (Vec::new(), None);
+        // `by` and `sep` are stored (`by (k)` is stored whole, so `by` is wherever it stands); the
+        // parentheses around keys too (`by (k)` is not `by k`).
+        let mut keys_closed = false;
         if self.is_id("by") {
             self.anon();
             if self.is_p("(") {
                 self.anon();
                 by = self.list(")", Field::Key, Self::term)?;
-                self.p(")")?;
+                self.p_stored(")")?;
+                keys_closed = true;
             } else {
                 by.push(self.agg_part()?);
                 self.field(Field::Key);
@@ -1243,9 +1293,17 @@ impl<'s> Parser<'s> {
             self.anon();
             sep = Some(self.string()?);
             self.field(Field::Separator);
+            keys_closed = false;
         }
-        self.p(":")?;
-        self.p("{")?;
+        // The `:` is stored: `by (k) : {` holds it beside a stored `)`, so the gap is stored whole,
+        // and under an aggregate a `:` is then stored everywhere. The `{` is stored in that gap
+        // alone (after a key list's `)` with no `sep`); elsewhere it is implied.
+        self.p_stored(":")?;
+        if keys_closed {
+            self.p_stored("{")?;
+        } else {
+            self.p("{")?;
+        }
         let alts = self.disjunction()?;
         self.field(Field::Body);
         self.p("}")?;
@@ -1275,9 +1333,9 @@ impl<'s> Parser<'s> {
             }
             // `-x`, `-f(x)`: zero minus it.
             Tok::P("-") => {
+                // The `-` is implied: a unary expression has no other operator.
                 self.open(Kind::UnaryExpression);
-                self.anon();
-                self.field(Field::Operator);
+                self.implied();
                 let operand = self.primary()?;
                 self.field(Field::Operand);
                 self.close();
@@ -1285,7 +1343,7 @@ impl<'s> Parser<'s> {
             }
             Tok::P("(") => {
                 self.open(Kind::ParenthesizedExpression);
-                self.anon();
+                self.implied();
                 let t = self.term()?;
                 self.field(Field::Expression);
                 self.p(")")?;
@@ -1295,7 +1353,7 @@ impl<'s> Parser<'s> {
             Tok::P("{") => return Ok(Term::Json(self.json(Field::None)?)),
             Tok::P("@") => {
                 self.open(Kind::FunctorCall);
-                self.anon();
+                self.implied();
                 let name = self.id()?;
                 self.field(Field::Function);
                 let args = self.arguments()?;
@@ -1330,7 +1388,7 @@ impl<'s> Parser<'s> {
                 self.open(Kind::NamedArgument);
                 self.bump_as(Kind::Identifier);
                 self.field(Field::Name);
-                self.anon();
+                self.implied();
                 let value = self.term()?;
                 self.field(Field::Value);
                 self.close();

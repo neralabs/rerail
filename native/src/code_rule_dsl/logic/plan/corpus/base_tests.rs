@@ -6,6 +6,7 @@ use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::model::{RegexLines, RegexOptions};
 // cratify: a re-export of rerail-engine's, which its facades of this module make
 use crate::code_rule_dsl::typing::file_local::Binding;
+use crate::code_rule_dsl::test_support::{CAPABILITIES, clause_document, compile_document_with, evaluate_file, violation};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::path::PathBuf;

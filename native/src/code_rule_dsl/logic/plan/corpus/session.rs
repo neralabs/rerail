@@ -136,3 +136,6 @@ impl Held {
         true
     }
 }
+
+// Its tests run in the engine's test binary (its facade of this module mounts `session/tests.rs`): they read what the
+// engine registers as it loads (the languages, their `.rr` libraries).

@@ -16,7 +16,7 @@ const WORK_LIMIT: i64 = 3;
 const CAPACITY: i64 = 4;
 
 #[derive(Clone, Copy)]
-pub(super) struct RegexHelpers {
+pub struct RegexHelpers {
     closure: FuncId,
     pub(super) find: FuncId,
 }

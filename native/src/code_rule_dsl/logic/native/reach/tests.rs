@@ -1,4 +1,4 @@
-//! The reach index's tests (decision 0115): the engine hosts them (`test-hosts.tsv`).
+//! The reach index's tests (decision 0119): the engine hosts them (`test-hosts.tsv`).
 use super::Closed;
 use crate::code_rule_dsl::facts::vtab::Source as _;
 

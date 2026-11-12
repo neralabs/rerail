@@ -419,3 +419,33 @@ packBucketsKernel(__constant const PackBucketsArgs & args,
 {
     packBucketsImpl(args.numRows, args.entryBits, args.numWords, buckets, wordsOut, id);
 }
+
+struct BagRowsArgs {
+    uint32_t numExamples;
+    uint32_t seed;
+    uint32_t keep24;
+    uint32_t sample;
+    float scale;
+};
+
+// [example]
+__kernel void
+bagRowsKernel(__constant const BagRowsArgs & args,
+              __global const float * baseRows,
+              __global float * decodedRowsOut,
+              uint32_t id [[thread_position_in_grid]])
+{
+    bagRowsImpl(args.numExamples, args.seed, args.keep24, args.sample, args.scale, baseRows, decodedRowsOut, id);
+}
+
+// [thread]
+__kernel void
+rootWeightsKernel(__global const uint32_t * bucketNumbers,
+                  __global const uint32_t * activeFeatureList,
+                  __global const W * partitionBuckets,
+                  __global W * wAllOut,
+                  uint32_t id [[thread_position_in_grid]],
+                  uint32_t n [[threads_per_grid]])
+{
+    rootWeightsImpl(bucketNumbers, activeFeatureList, partitionBuckets, wAllOut, id, n);
+}

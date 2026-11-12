@@ -97,6 +97,8 @@ fn test(op: &str, s: &Term, pattern: &Term, neg: bool) -> Result<String, Error> 
         Ok(match op {
             "equals" => format!("{s} {} {}", if neg { "!=" } else { "=" }, quote(p)),
             "iequals" => format!("{bang}iglob({}, {s})", quote(&glob_literal(p))),
+            // A search (`rx` of no `^(?:X)$`) is the data-layer builtin `@rx_matches` (`functions::catalogue`).
+            "rx" if whole(p).is_none() => format!("@rx_matches({s}, {}) = {}", quote(p), if neg { 0 } else { 1 }),
             "rx" | "irx" => format!("{bang}match({}, {s})", quote(&search(op, p))),
             _ => format!("{bang}{op}({}, {s})", quote(p)),
         })
@@ -180,7 +182,7 @@ fn native_rule(head: &Atom, native: &Native, prog: &Program) -> Result<String, E
         Native::Components { edge, own } => {
             format!("{} :- components({}, {}, {}).", atom(head, prog)?, terms(&head.args)?, relation(edge), relation(own))
         }
-        // The reach index's relations are plain rules (decision 0115): printed as the closure they hold, which is
+        // The reach index's relations are plain rules (decision 0119): printed as the closure they hold, which is
         // recognized again when read back.
         Native::Reach { seed, edge } => {
             let (r, x, y, z) = (relation(&head.rel), var("rr_x"), var("rr_y"), var("rr_z"));

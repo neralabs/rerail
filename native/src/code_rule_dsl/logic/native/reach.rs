@@ -1,4 +1,4 @@
-//! The reach index (decision 0115): a transitive closure held as one compressed bitmap per start, not as its pairs.
+//! The reach index (decision 0119): a transitive closure held as one compressed bitmap per start, not as its pairs.
 //!
 //! A relation of the shape
 //!

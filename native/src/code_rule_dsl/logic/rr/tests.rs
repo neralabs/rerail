@@ -5,6 +5,19 @@ use super::*;
 use crate::code_rule_dsl::logic::front::{self, Literal, Term};
 use std::collections::BTreeSet;
 
+#[test]
+fn include_seed_ignores_quoted_directives_and_preserves_real_includes() {
+    let quoted = parse(r##".decl x(s:symbol)
+x("#include \"absent.rr\"").
+// #include "absent.rr"
+"##).unwrap();
+    assert_eq!(quoted.facts["x"].len(),1);
+    let included = parse("#include \"core.rr\"\n.decl answer(n:node)\nanswer(n) :- kind(n, \"call\").\n").unwrap();
+    assert!(included.decls.contains_key("doc"), "a real include still supplies its declarations");
+    assert!(parse("#unknown \"x.rr\"\n").is_err());
+    assert!(parse(".decl broken(\n").is_err(), "the lexical shortcut does not bypass compilation errors");
+}
+
 fn finding_contract(source: &str, program: &str) -> Vec<serde_json::Value> {
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("rr-contract");
     std::fs::create_dir_all(&root).unwrap();
@@ -377,6 +390,28 @@ fn a_context_leaves_out_the_clause_head() {
     assert!(ctx.iter().all(|r| !r.contains("cb(")), "{ctx:?}");
 }
 
+/// A context keeps a group of literals that ties two asked variables, even where other groups bind each:
+/// pyi047's `unread_comp_var`, asked for c, v and x, binds c by `in_stub(a), within(c, a)` and v, x by `kind(v, …),
+/// text(v, x)`. Only `child(c, fc, _), field(fc, "left", t), (v = t ; within(v, t))` ties c to v. Left out, the
+/// context is every node of a stub file times every identifier (122 M rows on the ruff fixtures).
+#[test]
+fn a_context_keeps_the_group_tying_its_variables() {
+    let p = parse(concat!(
+        ".decl within(n: node, a: node)\n.decl kind(n: node, k: symbol)\n.decl text(n: node, x: symbol)\n",
+        ".decl child(p: node, c: node, i: number)\n.decl field(p: node, f: symbol, c: node)\n.decl in_stub(n: node)\n",
+        ".input within, kind, text, child, field, in_stub\n",
+        ".decl unread(a: node, v: node, x: symbol)\n.output unread\n",
+        "unread(a, v, x) :- in_stub(a), within(c, a), child(c, fc, _), kind(fc, \"for_in_clause\"),\n",
+        "    field(fc, \"left\", t), (v = t ; within(v, t)), kind(v, \"identifier\"), text(v, x),\n",
+        "    count : { within(r, c), kind(r, \"identifier\"), text(r, x), r != v } = 0.\n",
+    ))
+    .unwrap();
+    let ctx: Vec<String> = p.rules.iter().filter(|r| r.head.rel.starts_with("rr_ctx")).map(|r| r.to_string()).collect();
+    assert!(!ctx.is_empty(), "{:#?}", p.rules.iter().map(|r| r.to_string()).collect::<Vec<_>>());
+    // Every rule of the context reaches v from c through the comprehension's target t.
+    assert!(ctx.iter().all(|r| r.contains("child($c, $fc") && r.contains("field($fc, \"left\", $t)")), "{ctx:#?}");
+}
+
 /// A helper's context (here the demand of strings `parsed` parses) keeps only the literals tied to its variables:
 /// `root(a)`, tied to `s` only through a disjunction the context leaves out, would test that some root exists in any document (`ann_root(_)`), making
 /// every row depend on every file.
@@ -393,6 +428,27 @@ fn a_context_leaves_out_literals_not_tied_to_its_variables() {
     let ctx: Vec<String> = p.rules.iter().filter(|r| r.head.rel.starts_with("rr_ctx")).map(|r| r.to_string()).collect();
     assert!(!ctx.is_empty(), "the parse's demand has a context");
     assert!(ctx.iter().all(|r| !r.contains("root(")), "{ctx:?}");
+}
+
+/// A context's second group binding only what the first binds still narrows it, joined once a binding: as a
+/// relation of the asked variable, not left out (every row the first group gives) and not joined whole (every pair
+/// of the two groups' rows, pyi041's `within(c1, n), within(c2, n)`).
+#[test]
+fn a_context_joins_a_later_group_by_what_it_binds() {
+    let p = parse(concat!(
+        ".decl within(n: node, a: node)\n.decl kind(n: node, k: symbol)\n",
+        ".input within, kind\n",
+        ".decl hit(e: node, s: node)\n.output hit\n",
+        "hit(r, s) :- within(c1, s), kind(c1, \"call\"), within(c2, s), kind(c2, \"name\"), parsed(s, \"annotation\", r).\n",
+    ))
+    .unwrap();
+    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    let shown = |stem: &str| -> Vec<String> { p.rules.iter().filter(|r| r.head.rel.starts_with(stem)).map(|r| r.to_string()).collect() };
+    let (ctx, cover) = (shown("rr_ctx"), shown("rr_cover"));
+    assert!(!ctx.is_empty(), "the parse's demand has a context");
+    assert!(ctx.iter().all(|r| r.contains("\"call\"") && r.contains("rr_cover") && !r.contains("\"name\"")), "{ctx:?}");
+    assert!(!cover.is_empty() && cover.iter().all(|r| r.contains("\"name\"") && !r.contains("\"call\"")), "{cover:?}");
+    assert!(p.decls.iter().any(|(rel, cols)| rel.starts_with("rr_cover") && cols.len() == 1), "a relation of s alone");
 }
 
 /// Tests of one span in a disjunction, folded into one set test, test its text as a single test does
@@ -714,14 +770,15 @@ fn normalized(mut p: front::Program) -> front::Program {
 
 /// A lowered `.rr` program without the requests its lowering derives (`rr_embed_req` for `parsed`, decision 0055;
 /// `rr_parse_req`, `rr_splice_req` for tape operations, 0058;
-/// `rr_dir_req`, `rr_file_req` for the file system, t21) and the context relations only they read: an `.rdl` program
+/// `rr_dir_req`, `rr_file_req` for the file system, t21) and the context relations only they read (a context's
+/// `rr_ctx` and the `rr_cover` groups it joins): an `.rdl` program
 /// asks for nothing, and the requests change no relation the program derives.
 fn without_requests(mut p: front::Program) -> front::Program {
     let mut gone: BTreeSet<String> = ["rr_embed_req", "rr_parse_req", "rr_splice_req"].into_iter().map(str::to_owned).chain(super::WORLD.iter().map(|(_, d)| (*d).to_owned())).collect();
     loop {
         p.rules.retain(|r| !gone.contains(r.head.rel.as_str()));
         let read: BTreeSet<&str> = p.rules.iter().flat_map(|r| &r.body).filter_map(|l| l.atom()).map(|a| a.rel.as_str()).collect();
-        let more: Vec<String> = p.rules.iter().map(|r| r.head.rel.to_string()).filter(|h| h.starts_with("rr_ctx") && !read.contains(h.as_str()) && !gone.contains(h.as_str())).collect();
+        let more: Vec<String> = p.rules.iter().map(|r| r.head.rel.to_string()).filter(|h| (h.starts_with("rr_ctx") || h.starts_with("rr_cover")) && !read.contains(h.as_str()) && !gone.contains(h.as_str())).collect();
         if more.is_empty() {
             break;
         }
