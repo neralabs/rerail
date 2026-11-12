@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import type * as FileSystem from "node:fs/promises";
 import { lstat, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
 import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/code-rule/code-rule.js";
@@ -195,18 +195,28 @@ describe("WorktreeWalks", () => {
     expect(reads.get(path)).toBe(2);
   });
 
-  it("reads another worktree once for two sessions in the main checkout, and each still records a shell write there in Log", async () => {
-    const { main, checkouts, worktrees } = await repository(["w"]);
+  it("reads a worktree added while two sessions in the main checkout are open once for both, and each still records a shell write there in Log", async () => {
+    const { main, checkouts } = await repository([]);
     const walks = new WorktreeWalks({ gapMs: 0 });
     const first = await session(main, checkouts, walks);
     const second = await session(main, checkouts, walks);
-    const path = join(worktrees[0]!, "src", "a.py");
-    await shell(first.bridge, "shell-1", () => writeFile(path, "old\nmine\n"));
+    const worktree = join(dirname(main), "w");
+    git(main, "worktree", "add", "--quiet", "-b", "w", worktree);
+    checkouts.push(worktree);
+    const path = join(worktree, "src", "a.py");
+    await awaitClockAfter(path);
+    // Each session runs a command, so each has read the new worktree.
+    await shell(first.bridge, "shell-1", () => undefined);
     await turn(first);
-    // The other session runs a command that writes nothing.
     await shell(second.bridge, "shell-2", () => undefined);
+    await turn(second);
+    // The first appends to a file there from the shell; the other runs a command that writes nothing.
+    await shell(first.bridge, "shell-3", () => writeFile(path, "old\nmine\n"));
+    await turn(first);
+    await shell(second.bridge, "shell-4", () => undefined);
     await turn(second, first);
-    // Both sessions' walks find the write in one read. Each session still files its own record of it.
+    // One walk reads the file for both sessions, as the worktree first and after the write; each session still files
+    // its own record of the write, where one record of it would do.
     expect(reads.get(path)).toBe(2);
     expect([audited(first), audited(second)]).toEqual([[[["written ../w/src/a.py"], "log"]], [[["written ../w/src/a.py"], "log"]]]);
   });
