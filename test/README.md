@@ -17,7 +17,7 @@ Tests that need a built package and real hosts are in [`integration/`](../integr
 Each vitest run, here and in `integration/`, points the temp folder (`TMPDIR`, `TEMP`, `TMP`) at a folder of its own,
 `rerail-vitest-<pid>-*`, and removes it when the run ends, so a test needs no cleanup to leave nothing behind. A run
 killed before its end leaves the folder, and the next run removes it once that pid has ended
-([`support/temporary/run-folder.ts`](support/temporary/run-folder.ts)). On macOS the folder goes in `/tmp`, since the
-per-user temp folder leaves no room for a daemon's socket path below it. On Linux, keep a `TMPDIR` you set to 24 bytes
-or fewer: the deepest socket a test makes ends 54 bytes below the temp folder, the run folder adds up to 29, and a
-socket path holds at most 107.
+([`support/temporary/run-folder.ts`](support/temporary/run-folder.ts)). On Linux and macOS the folder goes in `/tmp`
+when the temp folder leaves no room below it for the deepest socket a test binds: that socket ends 54 bytes below the
+run folder, the run folder's name is up to 29, and a socket path holds at most 107 bytes on Linux and 103 on macOS.
+macOS's per-user temp folder never leaves the room, and on Linux a `TMPDIR` longer than 24 bytes does not.
