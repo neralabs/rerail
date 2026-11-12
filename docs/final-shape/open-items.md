@@ -3828,7 +3828,7 @@ Measured on the third edit of a build (profiled; 2,987 agree each run):
 | Join-order search | 0.87 s | 0.77 s | 0.25 s |
 | Re-price + strata + replan spans | | 0.33 s | 0.23 s |
 
-## O-live-replan. Live replans search again for orders they already have
+## O-live-replan. Live replans search again for orders they already have (closed)
 
 Profiled on the P3 bench (third edit of a build, 2,987 agree), after O-replan-churn closed. Planning left per
 edit, as own CPU of spans (profiled):
@@ -3879,6 +3879,13 @@ Opportunities, largest first:
 What is not an opportunity: reprobes (0.05 s with the indexes they open) and the plan-time re-prices (30 µs
 each, 0.11 s; they are what stands in for a search). The index builds in `open: joins` (0.36 s) are the joins'
 own cost, not replanning's.
+
+**Closed (2026-11-12, decision 0121 §1).** All five are built. A live replan keeps the re-priced order when its work
+is under what a search costs (`search_rows`), or when it has one positive atom. Its distributions are compared in
+proportion, the state before the last is kept, and a live search's EXPLAIN is made only when its order is taken.
+Live searches went from 1,162 (0.40 s) to 558 (0.04 s) per edit. Planning fell from 4.5% to 3.1% of the edit's
+CPU, and the join work is the same in each later run (8,766,423). 0121 also makes the cold search a third
+cheaper, with the same plans, and sizes greedy-first, classifiers and bulk planning.
 
 ## O-cutoff-phases. The whole-run cutoff never applies to a phased program
 
