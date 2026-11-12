@@ -431,8 +431,9 @@ failed, the coding agent and its version, the Rerail version and the reason, suc
 another daemon; run `rerail daemon stop`, then `rerail daemon start`) or a payload field the coding agent sent in a
 shape Rerail did not expect. The failures are kept in `hook-failures.jsonl` in the Rerail home; past 256 KB it moves
 to `hook-failures.jsonl.1`, replacing the one there. A hook stopped while it moves the log leaves it as
-`hook-failures.jsonl.<pid>.<id>.old`, which the line still counts and which you can delete once it is a day old. Update
-Rerail with `rerail update`; if the line stays, report it with `rerail support-bundle`.
+`hook-failures.jsonl.<pid>.<id>.old`, which the line still counts; a later move removes it once that hook has ended and
+the file holds nothing from the last 24 hours. Update Rerail with `rerail update`; if the line stays, report it with
+`rerail support-bundle`.
 
 When events were recorded since the first failure, the line reads `Hooks: N hook events could not be recorded in the
 last 24 hours` instead. Once the log has moved aside and holds nothing from 24 hours ago, failures from before about its

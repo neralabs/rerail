@@ -3,6 +3,7 @@ import { appendFileSync, closeSync, fstatSync, openSync, readdirSync, readFileSy
 import { join } from "node:path";
 import { renameWithRetrySync } from "../engine/file-replace.js";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
+import { processState } from "../engine/process-liveness.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { makeRerailHome } from "../engine/storage/private-files.js";
 
@@ -55,9 +56,10 @@ export function recordHookFailure(
   try {
     makeRerailHome(home);
     const path = join(home, HOOK_FAILURES_FILE);
-    if (sizeOf(path) > MAX_FAILURE_BYTES) moveAside(path, join(home, MOVED_ASIDE_FILE));
+    const moved = sizeOf(path) > MAX_FAILURE_BYTES && moveAside(path, join(home, MOVED_ASIDE_FILE));
     const line: HookFailure = { at: now, ...failure, agent: env.AI_AGENT ?? null, rerail: rerailVersion() };
     appendFileSync(path, `${JSON.stringify(line)}\n`, { mode: 0o600 });
+    if (moved) removeStrandedLogs(home, now);
   } catch {
     // Nowhere left to say it.
   }
@@ -73,42 +75,49 @@ function sizeOf(path: string): number {
 
 /**
  * A log a hook took to move aside keeps the hook's own name, `<name>.<pid>.<uuid>.old`, until the hook moves it on or
- * gives it back. The uninstall knows the name as a move cut short, and `readHookFailures` counts what such a file holds.
+ * gives it back. The uninstall knows the name as a move cut short, `readHookFailures` counts what such a file holds,
+ * and `removeStrandedLogs` removes one its hook left.
  */
 const takenName = (path: string): string => `${path}.${process.pid}.${randomUUID()}.old`;
-const isTakenName = (name: string): boolean => name.startsWith(`${HOOK_FAILURES_FILE}.`) && name.endsWith(".old");
+const TAKEN_LOG = new RegExp(`^${HOOK_FAILURES_FILE.replaceAll(".", "\\.")}\\.(\\d+)\\.[0-9a-f-]+\\.old$`, "u");
 
 /**
- * Moves the full log at `path` to `<name>.1`. Hooks that fail at once each find the log full, and a rename straight to
- * `.1` made the later ones fail on a log already moved, losing their own line, or move the new log another hook had
- * just begun over the full one. So a hook first takes the log under a name of its own, and moves it to `.1` only when
- * what it took is full; a hook that took the new log another hook began gives its lines back. A hook stopped between
- * those steps, as a coding agent stops a hook past its time limit, leaves the log under its own name, where
- * `readHookFailures` still counts it.
+ * Moves the full log at `path` to `<name>.1`, and says whether this hook did. Hooks that fail at once each find the log
+ * full, and a rename straight to `.1` made the later ones fail on a log already moved, losing their own line, or move
+ * the new log another hook had just begun over the full one. So a hook first takes the log under a name of its own, and
+ * moves it to `.1` only when what it took is full; a hook that took the new log another hook began gives its lines
+ * back. A hook stopped between those steps, as a coding agent stops a hook past its time limit, leaves the log under
+ * its own name, where `readHookFailures` still counts it.
  *
  * On Windows a rename opens the file by name, then renames what it opened: a hook that opened the log before this one
  * took it still moves it on, out from under this hook's name. So each step gives up once the file is gone from that
  * name, leaving it to the hook that holds it last.
  */
-function moveAside(path: string, movedAside: string): void {
+function moveAside(path: string, movedAside: string): boolean {
   const taken = takenName(path);
   try {
     renameWithRetrySync(path, taken);
   } catch {
     // Moved first by another hook, or held through the retries: this hook took nothing.
-    return;
+    return false;
   }
   try {
     // No wait for a `.1` another program holds: the log goes back at once and a later hook moves it, so it stays under
     // this hook's name for the moment of one rename, not for the 2 s of retries.
     if (sizeOf(taken) > MAX_FAILURE_BYTES) {
       renameWithRetrySync(taken, movedAside, { retryMs: 0 });
-      return;
+      return true;
     }
   } catch (error) {
-    // Moved on by another hook. Any other failure leaves `.1` held: the log goes back.
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    // Moved on by another hook, which moves it aside. Any other failure leaves `.1` held: the log goes back.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
   }
+  giveBack(taken, path);
+  return false;
+}
+
+/** Appends the lines of the log taken as `taken` to the live log at `path`. */
+function giveBack(taken: string, path: string): void {
   try {
     const lines = readFileSync(taken);
     // Gone from its name before the lines go back, so a hook that moves it on finds nothing to give back twice.
@@ -116,9 +125,27 @@ function moveAside(path: string, movedAside: string): void {
     appendFileSync(path, lines, { mode: 0o600 });
   } catch {
     // Gone from its name: another hook moved it on, and gives it back or moves it aside. A read or removal refused for
-    // any other reason leaves the lines under this hook's name, where status still counts them; nothing removes that
-    // file, and the uninstall lists it among Rerail's own. An append that fails after the removal loses the lines, as
-    // the same failure loses this hook's own line.
+    // any other reason leaves the lines under this hook's name, where status still counts them until a later move
+    // removes the file. An append that fails after the removal loses the lines, as the same failure loses this hook's
+    // own line.
+  }
+}
+
+/**
+ * Removes each log a hook left under its own name, once that hook has ended and the file was last written before the
+ * period `rerail status` counts, as of `now` (epoch ms): no hook moves such a log on, so without this the Rerail home
+ * would keep it for good. A file stays while the hook named in it runs, since that hook may still move it on, and while
+ * it may hold failures status counts. A hook that moves the log aside calls this, so it runs once per 256 KB of failures.
+ */
+function removeStrandedLogs(home: string, now: number): void {
+  for (const { name, pid } of takenLogs(home)) {
+    const path = join(home, name);
+    try {
+      if (pid === process.pid || statSync(path).mtimeMs >= now - HOOK_FAILURE_WINDOW_MS) continue;
+      if (processState(pid) === "gone") unlinkSync(path);
+    } catch {
+      // Moved on or removed by another hook, or refused: a later move tries again.
+    }
   }
 }
 
@@ -172,7 +199,7 @@ export function readHookFailures(home: string, since: number): HookFailureLog {
     if (part !== null) parts.set(part.id, { name, failures: part.failures });
   };
   read(HOOK_FAILURES_FILE);
-  for (const name of takenLogs(home)) read(name);
+  for (const { name } of takenLogs(home)) read(name);
   read(MOVED_ASIDE_FILE);
   const all = [...parts.values()];
   // How far back the log goes is the oldest failure of `.1` and the live part. A log a hook was stopped holding can be
@@ -201,13 +228,24 @@ function oldestOf(parts: readonly LogPart[]): number | undefined {
   return oldest;
 }
 
-/** The names of the logs hooks took to move aside, in the Rerail home `home`; none when it cannot be listed. */
-function takenLogs(home: string): string[] {
+/** A log a hook took to move aside, by its name, and the pid of that hook. */
+interface TakenLog {
+  name: string;
+  pid: number;
+}
+
+/** The logs hooks took to move aside, in the Rerail home `home`; none when it cannot be listed. */
+function takenLogs(home: string): TakenLog[] {
+  let names: string[];
   try {
-    return readdirSync(home).filter(isTakenName);
+    names = readdirSync(home);
   } catch {
     return [];
   }
+  return names.flatMap(name => {
+    const pid = TAKEN_LOG.exec(name)?.[1];
+    return pid === undefined ? [] : [{ name, pid: Number(pid) }];
+  });
 }
 
 /**

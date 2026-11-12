@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createServer as createNetServer, type AddressInfo } from "node:net";
@@ -159,6 +160,23 @@ describe("the hook failure log", () => {
     expect(readHookFailures(rerailHome, 0).failures).toHaveLength(full);
     recordLast(rerailHome, 3);
     expect(readHookFailures(rerailHome, 0).failures).toHaveLength(full + 1);
+  });
+
+  it("removes a log a stopped hook left at the next move, once it holds nothing from the period status counts", async () => {
+    const rerailHome = await home();
+    const day = 24 * 60 * 60 * 1_000;
+    const now = 3 * day;
+    const takenLog = (pid: number): string => `${HOOK_FAILURES_FILE}.${pid}.${randomUUID()}.old`;
+    // No process holds this pid: Linux's pids stay below 2^22, and Windows' are multiples of 4.
+    const stopped = 2 ** 31 - 1;
+    const left = { stoppedLongAgo: takenLog(stopped), stoppedToday: takenLog(stopped), running: takenLog(process.ppid) };
+    for (const [name, writtenAt] of [[left.stoppedLongAgo, now - day - 1_000], [left.stoppedToday, now - day + 60_000], [left.running, now - 2 * day]] as const) {
+      writeFileSync(join(rerailHome, name), `${fullLine}\n`);
+      utimesSync(join(rerailHome, name), writtenAt / 1_000, writtenAt / 1_000);
+    }
+    writeFullLog(rerailHome);
+    recordLast(rerailHome, now);
+    expect(logFiles(rerailHome)).toEqual([HOOK_FAILURES_FILE, `${HOOK_FAILURES_FILE}.1`, left.running, left.stoppedToday].sort());
   });
 
   it("says since when it counts from the log moved aside, not from an older log a hook was stopped holding", async () => {
