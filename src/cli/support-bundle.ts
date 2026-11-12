@@ -41,7 +41,6 @@ import {
   DAEMON_STATE_FILE,
   type DaemonLookup,
   lookupDaemon,
-  probeDaemon,
 } from "../runtime/daemon-control.js";
 import { workspaceStartState } from "../runtime/repository-start.js";
 import { defaultStorageRoot } from "../runtime/session-paths.js";
@@ -495,15 +494,13 @@ function readLogTail(home: string): { lines: string[]; omitted: number } {
 
 /**
  * The daemon recorded in `home` as `lookupDaemon` finds it, with a busy daemon waited for: one that is alive but missed
- * the 2 s probe is probed once more, for up to `busyWaitMs`, and is running only when the recorded pid answers. One 2 s
- * probe called the same daemon running in one bundle and unresponsive in the next.
+ * the 2 s probe is looked up once more, with up to `busyWaitMs` for its answer. That lookup reads `daemon.json` again,
+ * so a daemon that took the busy one's place meanwhile is the one reported. One 2 s probe called the same daemon running
+ * in one bundle and unresponsive in the next.
  */
 async function patientLookup(home: string, busyWaitMs: number): Promise<DaemonLookup> {
   const lookup = await lookupDaemon(home);
-  if (lookup.status !== "unresponsive") return lookup;
-  const probe = await probeDaemon(lookup.state, undefined, busyWaitMs);
-  if (probe.status === "refused") return { status: "refused", state: lookup.state };
-  return probe.status === "ok" && probe.health.pid === lookup.state.pid ? { status: "running", state: lookup.state, health: probe.health } : lookup;
+  return lookup.status === "unresponsive" ? await lookupDaemon(home, busyWaitMs) : lookup;
 }
 
 async function readDaemon(home: string, busyWaitMs: number): Promise<SupportBundle["daemon"]> {
