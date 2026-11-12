@@ -4451,13 +4451,12 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     // An empty required relation makes the entire conjunction empty. Check once per
     // invocation, before expanding another input; the next wave can grow this relation.
     // Negative atoms and scalar aggregates do not obey this rule.
-    if j.steps.iter().any(|step| match step {
+    // An empty input is the device's test too (`reads_empty_input`); the component's own relations are the store's.
+    if reads_empty_input(j) || j.steps.iter().any(|step| match step {
         Step::Atom { src, neg: false, .. } => match src {
             Src::Delta(r) => store.rels[*r].lo == store.rels[*r].hi,
             Src::Full(r) | Src::FullMulti(r, _) => store.rels[*r].n == 0,
-            // A lazy whole view has no materialized row count. Asking its length
-            // would itself enumerate the producer; absence is not known here.
-            Src::In(r, _) => r.n == 0 && r.view.as_ref().is_none_or(|v| v.ids.is_some()),
+            Src::In(..) => false,
         },
         _ => false,
     }) {

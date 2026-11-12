@@ -1909,12 +1909,12 @@ pub(in crate::code_rule_dsl) fn reads_own(plan: &Plan) -> bool {
 }
 
 /// One round's rules run in one batch: each one's head rows made distinct on the device, with their count. A rule
-/// over an own relation with no rows is not run (`None`).
+/// over an own relation with no rows, or over an empty input (`reads_empty_input`), is not run (`None`).
 fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Interner, rep: &mut Report) -> Result<Vec<Option<(Run<'p>, usize)>>, String> {
     let mut batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
     let mut runs: Vec<Option<Run<'p>>> = Vec::with_capacity(rules.len());
-    for (plan, _, _) in rules {
-        if !own.ready(plan) {
+    for (plan, j, _) in rules {
+        if !own.ready(plan) || super::reads_empty_input(j) {
             runs.push(None);
             continue;
         }
