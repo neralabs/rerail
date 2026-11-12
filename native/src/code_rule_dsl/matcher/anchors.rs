@@ -375,7 +375,7 @@ impl AnchorPlan {
             AstMatcher::Regex(regex) => Self {
                 root_kinds: None,
                 condition: Condition::Text {
-                    regex: Arc::clone(regex),
+                    regex: regex.clone(),
                     probe: TextProbe::compile(regex.as_str()),
                 },
                 exact: true,

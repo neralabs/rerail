@@ -59,11 +59,10 @@ struct Language<'a> {
     origins: OnceCell<Option<Arc<[Option<UtilOrigin>]>>>,
 }
 
-/// A shared table and what compiling each utility in it added to the queries that reach it, by
-/// index: only the utilities compiled so far, as the table holds state for only those.
+/// A shared table and what compiling each utility in it added to the queries that reach it.
 struct Table {
     table: Arc<UtilTable>,
-    added: HashMap<usize, Added>,
+    added: AddedByIndex,
 }
 
 /// What compiling a utility adds to a query that reaches it: its first grammar gap and its
@@ -71,6 +70,28 @@ struct Table {
 struct Added {
     gap: Option<String>,
     instances: BTreeSet<(usize, CallArgs)>,
+}
+
+/// What compiling each utility added, indexed as a list of one entry per utility would be (`None`
+/// until the utility compiles), but holding only the utilities compiled so far: a define of
+/// thousands of utilities has a table per grammar and `languageOptions`, and each compiles only
+/// the utilities its queries reach.
+#[derive(Default)]
+struct AddedByIndex(HashMap<usize, Option<Added>>);
+
+impl std::ops::Index<usize> for AddedByIndex {
+    type Output = Option<Added>;
+
+    fn index(&self, index: usize) -> &Option<Added> {
+        const NOT_COMPILED: &Option<Added> = &None;
+        self.0.get(&index).unwrap_or(NOT_COMPILED)
+    }
+}
+
+impl std::ops::IndexMut<usize> for AddedByIndex {
+    fn index_mut(&mut self, index: usize) -> &mut Option<Added> {
+        self.0.entry(index).or_default()
+    }
 }
 
 /// A query's utilities in a shared table.
@@ -140,7 +161,7 @@ impl<'a> SharedTables<'a> {
         let missing = indices
             .iter()
             .copied()
-            .filter(|index| !table.added.contains_key(index))
+            .filter(|&index| table.added[index].is_none())
             .collect::<Vec<_>>();
         if !missing.is_empty() && table.compile(shared, &missing, dialect, context).is_none() {
             *slot = None;
@@ -149,9 +170,8 @@ impl<'a> SharedTables<'a> {
         let mut gap = None;
         let mut instances = BTreeSet::new();
         for &index in &indices {
-            let added = table
-                .added
-                .get(&index)
+            let added = table.added[index]
+                .as_ref()
                 .expect("a reached utility is compiled");
             gap = gap.or_else(|| added.gap.clone());
             instances.extend(added.instances.iter().cloned());
@@ -186,7 +206,7 @@ impl Language<'_> {
                 Arc::clone(&self.framed),
                 origins,
             )),
-            added: HashMap::new(),
+            added: AddedByIndex::default(),
         })
     }
 }
@@ -252,7 +272,7 @@ impl Table {
         }
         for (&index, (rule, added)) in missing.iter().zip(compiled) {
             self.table.fill(index, rule);
-            self.added.insert(index, added);
+            self.added[index] = Some(added);
         }
         Some(())
     }
