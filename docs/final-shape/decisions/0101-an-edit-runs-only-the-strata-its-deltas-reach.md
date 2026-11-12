@@ -563,7 +563,9 @@ The O125 run above did not compare its steps with a full run (`O125_NO_FULL`).
   default"). §1 applies to them unchanged.
 - §3 is built (above): strata a step go from ≈ 4,000 to ≈ 870, and their fixed cost from ≈ 1.2 s to ≈ 0.26 s. The
   larger lever is still work: the skew-misordered maintained joins, and the strata θ derives again.
-- Under a Metal binding, the device refuses a component with gates (`setfix`, "a component with gates, requests
-  or edge rules"), so a set of pieces would run on the host. Sessions run with the CPU binding today. Before a
-  session runs on Metal, either the device takes unit gates, or `together` is off for that binding.
+- Under a device binding the pieces stay apart (2026-11-12): the device refuses a component with gates ("a
+  component with gates or requests"), so a set would run on the host. Apart, each piece is a stratum of seed
+  joins, which the device runs. Sessions run with the CPU binding today. The device's own form of §3 is one
+  submission with a dispatch per level, separated by barriers: a non-recursive stratum's order is known before
+  it runs, so it needs no gates. Not built.
 - The O125 steps with the pieces together have not yet been compared with a full run (`O125_FULL_EACH`).

@@ -585,6 +585,13 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     Ok(Maintained { program: part, sources, maintained, derived_again, recursive, again, views })
 }
 
+static TOGETHER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The sets of pieces run as one component so far in this process (`together`).
+pub fn pieces_together() -> usize {
+    TOGETHER.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Decision 0101 §3: a maintained stratum's pieces (`h__del`, `h__ins`, its deltas, …) run as one component per
 /// level, not one each, so they pay one component's fixed cost (its spec, open and statistics) between them.
 ///
@@ -594,16 +601,17 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
 /// it is made in place from the kept rows less the deleted ones (`plan::survivors`), which are whole by then. A
 /// recursive stratum, or one with a relation made natively or by a lattice, keeps its pieces apart.
 ///
+/// Not under a device binding: the device takes no component with gates (`plan.rs`, "a component with gates or
+/// requests"), so a set placed there would run on the host. Each piece there stays a stratum of seed joins, which
+/// the device runs. (The device's own form of this is one submission with a dispatch per level, not gates.)
+///
 /// `RERAIL_PIECES_APART` runs each piece as its own component, as before (to compare).
-static TOGETHER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-
-/// The sets of pieces run as one component so far in this process (`together`).
-pub fn pieces_together() -> usize {
-    TOGETHER.load(std::sync::atomic::Ordering::Relaxed)
-}
-
 fn together(prog: &mut front::Program) {
     if std::env::var_os("RERAIL_PIECES_APART").is_some() {
+        return;
+    }
+    if crate::code_rule_dsl::logic::plan::placement::device() {
+        crate::code_rule_dsl::logic::profile::decision("pieces together (decision 0101 §3)", || "apart: the run's binding is the device, which takes no gates".to_owned());
         return;
     }
     let derived: BTreeSet<String> = prog.rules.iter().map(|r| r.head.rel.to_string()).collect();
