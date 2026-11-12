@@ -7,7 +7,7 @@ use crate::code_rule_dsl::typing::file_local::Binding;
 /// P2 resolves imports through re-exports, bases, inherited members and annotations, from struct's exports alone.
 #[test]
 fn types_resolves_names_bases_members_and_annotations_by_symbol() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("types-phase");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("types-phase");
     let _ = std::fs::remove_dir_all(&dir);
     let src = dir.join("src");
     std::fs::create_dir_all(src.join("pkg")).unwrap();
@@ -90,7 +90,7 @@ v(s, d) :- types__vtype(s, _, d).
 /// keyword-only parameter), so a later phase fits a library call to its overloads by symbol.
 #[test]
 fn struct_marks_async_and_overloads_with_their_positional_shapes() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("struct-flags");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("struct-flags");
     let _ = std::fs::remove_dir_all(&dir);
     let src = dir.join("src");
     std::fs::create_dir_all(&src).unwrap();
@@ -131,7 +131,7 @@ sh(f, n, c, w) :- struct__shape(f, n, c, w).
 /// parameters stand for an ancestor's, and the returns that name a type variable or a generic of one.
 #[test]
 fn types_gives_type_parameters_their_map_through_bases_and_the_returns_naming_them() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("types-generics");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("types-generics");
     let _ = std::fs::remove_dir_all(&dir);
     let src = dir.join("src");
     std::fs::create_dir_all(&src).unwrap();

@@ -424,8 +424,8 @@ pub mod tests {
     }
 
     fn connection() -> Connection {
-        let path = crate::code_rule_dsl::prefilter::tests::temp();
-        drop(crate::code_rule_dsl::prefilter::tests::open(&path));
+        let path = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&path));
         Connection::open(path).unwrap()
     }
     fn hex(s: &str) -> String {

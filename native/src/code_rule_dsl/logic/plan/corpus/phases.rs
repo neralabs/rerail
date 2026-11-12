@@ -409,7 +409,7 @@ pub mod tests {
     /// After an edit, only the edited file is built again, in either phase: the others are their memos' entries.
     #[test]
     fn a_runs_documents_come_from_phase_1_and_an_edit_builds_only_its_file() {
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("sources");
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("sources");
         let _ = std::fs::remove_dir_all(&dir);
         let src = dir.join("src");
         std::fs::create_dir_all(&src).unwrap();
@@ -442,7 +442,7 @@ pub mod tests {
     /// nothing. An edit of a library file is followed; the tree's file is not built again.
     #[test]
     fn phase_1_loads_the_libraries_the_imports_reach_and_a_reader_takes_them() {
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("sources-libraries");
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("sources-libraries");
         let _ = std::fs::remove_dir_all(&dir);
         let (src, lib) = (dir.join("src"), dir.join("ts/stdlib"));
         std::fs::create_dir_all(&src).unwrap();
@@ -485,7 +485,7 @@ pub mod tests {
     /// reader's rows follow every edit.
     #[test]
     fn a_phase_hands_on_its_exports_and_its_reader_follows_each_edit() {
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("phases");
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("phases");
         let _ = std::fs::remove_dir_all(&dir);
         let (src, phases) = (dir.join("src"), dir.join("phases"));
         std::fs::create_dir_all(&src).unwrap();
@@ -552,7 +552,7 @@ at(n, s) :- kind(n, "function_definition"), field(n, "name", i), text(i, s).
     /// the reader sees only the last phase's. Phases that read each other are refused, not run forever.
     #[test]
     fn a_phase_reads_an_earlier_phase_and_a_cycle_is_refused() {
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("phases-chain");
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("phases-chain");
         let _ = std::fs::remove_dir_all(&dir);
         let (src, phases) = (dir.join("src"), dir.join("phases"));
         std::fs::create_dir_all(&src).unwrap();
@@ -615,7 +615,7 @@ anc(s, a) :- anc(s, b), p1__base(b, a).
     /// phase: the constants' run starts no phase, so the phase runs once, as itself, and writes its exports.
     #[test]
     fn a_reader_with_constants_runs_its_phases_once_as_themselves() {
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("phases-constants");
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("phases-constants");
         let _ = std::fs::remove_dir_all(&dir);
         let (src, phases) = (dir.join("src"), dir.join("phases"));
         std::fs::create_dir_all(&src).unwrap();
