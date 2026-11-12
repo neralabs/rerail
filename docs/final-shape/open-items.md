@@ -3705,7 +3705,12 @@ On the same binary and rule, with a one-file corpus: on that store, strict stops
 `atom_segment` read inside the waves); on a new store, the run passes and reports B101. `test-rr` uses a store
 of its own (decision 0119 §7) and passes all 8 tests under strict. What remains is O-store-atoms-grow.
 
-## O-store-atoms-grow. The machine's default store's atoms only grow
+## O-store-atoms-grow (closed 2026-11-12). The machine's default store's atoms only grow
+
+**Closed** by decision 0120: there is no machine-wide default store. A run's default store is its project's for
+this build, and other builds' stores are removed after a day. The one-file B101 run passes under
+`RERAIL_SQL_STRICT=1` on it, with a 1.4 MB store. Atoms that no kept row names are still never collected inside
+one store; a project's store for one build stays near its corpus's size.
 
 **Seen (2026-11-12).** `$TMPDIR/rerail-tape-cache.sqlite` is 4.4 GB, with 4,890,262 atoms in 343,213 segments,
 421 MB of text: about 20 times the full corpus's 21 MB (decision 0049). Every run on the machine, from every

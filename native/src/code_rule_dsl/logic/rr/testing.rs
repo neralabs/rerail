@@ -590,22 +590,10 @@ pub fn report(paths: &[PathBuf], filter: Option<&str>) -> Result<serde_json::Val
 }
 
 /// Testing mode's store, one per build of the engine, kept between runs: `$TMPDIR/rerail-test-rr-stores/<build>.sqlite`.
-/// The machine's store (`rerail-tape-cache.sqlite`) is every run's, so a test's run would read what others left there
-/// and wait behind their writes (O-test-rr-busy). Another build's store unused for a day is removed.
+/// Not the project's store (`corpus::tape_cache_path`): a test's run would read what real runs left there, and wait
+/// behind their writes (O-test-rr-busy). Another build's store unused for a day is removed.
 fn testing_store() -> PathBuf {
-    let dir = std::env::temp_dir().join("rerail-test-rr-stores");
-    let _ = std::fs::create_dir_all(&dir);
-    let build = crate::code_rule_dsl::build_ids::engine();
-    let key = &build[..build.len().min(16)];
-    let day = std::time::Duration::from_secs(24 * 3600);
-    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > day);
-        if !name.starts_with(key) && old {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
-    dir.join(format!("{key}.sqlite"))
+    crate::code_rule_dsl::logic::plan::corpus::build_store("rerail-test-rr-stores", None)
 }
 
 /// `rerail-engine test-rr <file or directory>... [--filter <text>] [--json]`: each test of each file, one line each

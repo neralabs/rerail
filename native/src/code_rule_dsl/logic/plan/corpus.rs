@@ -1603,7 +1603,47 @@ pub fn tape_cache_path() -> Option<std::path::PathBuf> {
         #[cfg(any(test, feature = "test-hooks"))]
         Err(_) => Some(test_store::own().unwrap_or_else(|| test_tape_cache().clone())),
         #[cfg(not(any(test, feature = "test-hooks")))]
-        Err(_) => Some(std::env::temp_dir().join("rerail-tape-cache.sqlite")),
+        Err(_) => Some(default_store().clone()),
+    }
+}
+
+/// The store a run uses when none is named: the project's for this build (`build_store`), the project being the
+/// working directory. Every stored key carries the engine's build, so another build's entries are of no use to a run;
+/// and another project's runs would leave their atoms and plans in it, and hold its writer.
+#[cfg(not(any(test, feature = "test-hooks")))]
+fn default_store() -> &'static std::path::PathBuf {
+    static PATH: std::sync::LazyLock<std::path::PathBuf> = std::sync::LazyLock::new(|| {
+        let cwd = std::env::current_dir().ok().and_then(|d| d.canonicalize().ok()).unwrap_or_default();
+        build_store("rerail-stores", Some(&cwd.to_string_lossy()))
+    });
+    &PATH
+}
+
+/// A store of this engine build's in `$TMPDIR/<dir>/`: `<build>.sqlite`, or `<build>-<key>.sqlite` for one `key` (a
+/// project) of several. Another build's files there, unused for a day, are removed (with their `-wal`, `-shm` and
+/// lock files, which start with the same name).
+pub fn build_store(dir: &str, key: Option<&str>) -> std::path::PathBuf {
+    use std::hash::{Hash, Hasher};
+    let dir = std::env::temp_dir().join(dir);
+    let _ = std::fs::create_dir_all(&dir);
+    let build = crate::code_rule_dsl::build_ids::engine();
+    let build = &build[..build.len().min(16)];
+    let day = std::time::Duration::from_secs(24 * 3600);
+    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > day);
+        if !name.starts_with(build) && old {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    match key {
+        // The hasher's keys are fixed: within a build, a project's name is the same in every process.
+        Some(key) => {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            key.hash(&mut h);
+            dir.join(format!("{build}-{:016x}.sqlite", h.finish()))
+        }
+        None => dir.join(format!("{build}.sqlite")),
     }
 }
 
