@@ -1673,7 +1673,9 @@ pub(super) fn submit(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> R
     })?;
     let (wave, runs) = encoded;
     if runs.len() < rules.len() {
-        // Encoded work it will not wait for is harmless: the wave runs it and nothing reads it.
+        // Encoded work it will not wait for: the wave runs it and nothing reads it, but it writes the runs' buffers,
+        // which the wave keeps until it is done (back in the pool, another job's would be written).
+        WAVE.with_borrow_mut(|w| w.as_mut().expect("the open wave").1.hold(Box::new(runs)));
         return Ok(None);
     }
     rep.encode_cpu = thread_cpu() - c0 - rep.upload_cpu;
@@ -1726,8 +1728,19 @@ fn encode_runs(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batch, rep: 
         if !runs.is_empty() && (bytes > BATCH_MAX || mj::device_bytes_left() < HEADROOM) {
             break;
         }
-        let mut r = Run::new(plan)?;
-        r.encode(0, batch, rep, &mut Own::default(), names)?;
+        let mut r = match Run::new(plan) {
+            Ok(r) => r,
+            Err(e) => {
+                batch.hold(Box::new(runs));
+                return Err(e);
+            }
+        };
+        if let Err(e) = r.encode(0, batch, rep, &mut Own::default(), names) {
+            // The runs encoded so far (and this one's stages before the refusal) are in the batch: their buffers stay
+            // with it until it is done.
+            batch.hold(Box::new((runs, r)));
+            return Err(e);
+        }
         bytes += r.bytes();
         runs.push(r);
     }
@@ -1924,7 +1937,11 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Inte
             continue;
         }
         let mut r = Run::new(plan)?;
-        r.encode(0, &mut batch, rep, own, names)?;
+        if let Err(e) = r.encode(0, &mut batch, rep, own, names) {
+            // The batch's work writes the runs' buffers: done before they go back to the pool.
+            let _ = batch.finish();
+            return Err(e);
+        }
         runs.push(Some(r));
     }
     let mut pending: Vec<usize> = (0..runs.len()).filter(|&k| runs[k].is_some()).collect();
@@ -1961,7 +1978,10 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Inte
         rep.reruns += again.len() as u32;
         pending = again.iter().map(|&(k, _)| k).collect();
         for (k, s) in again {
-            runs[k].as_mut().expect("a run").encode(s, &mut batch, rep, own, names)?;
+            if let Err(e) = runs[k].as_mut().expect("a run").encode(s, &mut batch, rep, own, names) {
+                let _ = batch.finish();
+                return Err(e);
+            }
         }
     }
     let mut out = Vec::with_capacity(runs.len());

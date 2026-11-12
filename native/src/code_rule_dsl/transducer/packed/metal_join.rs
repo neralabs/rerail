@@ -1617,6 +1617,9 @@ pub(in crate::code_rule_dsl) struct Batch {
     /// Text buffers its passes read, kept until it is done (a chain's intermediate texts are dropped by their
     /// maker once the next pass is encoded: their buffers must not be reused while the GPU reads them).
     read: Vec<std::rc::Rc<DevRel>>,
+    /// What its passes write that their maker gave up before it was done (a stratum refused after some of its rules
+    /// were encoded): kept until it is, so no buffer it writes goes back to the pool while the GPU may write it.
+    held: Vec<Box<dyn std::any::Any>>,
     /// The texts its jobs' text functions make, made the first time a job asks.
     arena: Option<std::rc::Rc<Arena>>,
     arena_cap: usize,
@@ -1631,7 +1634,12 @@ impl Batch {
     /// A batch whose text arena holds `cap` bytes.
     pub(in crate::code_rule_dsl) fn with_arena(cap: usize) -> Result<Batch, Error> {
         rerail_accel::gpu::join::device()?;
-        Ok(Batch { open: None, pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, keep: Vec::new(), read: Vec::new(), arena: None, arena_cap: cap })
+        Ok(Batch { open: None, pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, keep: Vec::new(), read: Vec::new(), held: Vec::new(), arena: None, arena_cap: cap })
+    }
+
+    /// Keeps `what` (encoded work's buffers, given up by its maker) until the batch is done.
+    pub(in crate::code_rule_dsl) fn hold(&mut self, what: Box<dyn std::any::Any>) {
+        self.held.push(what);
     }
 
     /// Its text arena, shared by its jobs.
@@ -1678,6 +1686,7 @@ impl Batch {
         }
         self.keep.clear();
         self.read.clear();
+        self.held.clear();
         Ok(std::mem::take(&mut self.done))
     }
 

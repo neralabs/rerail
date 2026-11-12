@@ -232,7 +232,7 @@ fn check(fx: &Fixture, cases: &[Case]) -> (Vec<String>, BTreeMap<&'static str, T
         } else if dcounts != ccounts && c.joins.is_empty() {
             // A recursive stratum's counts are its strategy's (the CPU walks a closure without counting rounds): its
             // rows are compared alone.
-            failures.push(format!("{}: counts per step differ: device {dcounts}, CPU {ccounts}", what()));
+            failures.push(format!("{}: counts per step differ: device {dcounts}, CPU {ccounts}; report {report:?}", what()));
         }
     }
     (failures, tally)
@@ -738,3 +738,4 @@ fn parity_row_texts_past_the_arena() {
     assert_eq!(drows, crows, "the device's rows are the CPU's");
     assert_eq!(dcounts, ccounts);
 }
+
