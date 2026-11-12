@@ -100,14 +100,14 @@ macro_rules! kinds {
         /// A node kind; its id is its discriminant.
         #[repr(u16)]
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-        pub(crate) enum Kind {
+        pub enum Kind {
             _Unknown = 0,
             $($kind,)*
         }
 
         /// Kind names, by id (0: no kind). A Blade tape numbers Blade's kinds by these ids
         /// (`language::KindCatalog`).
-        pub(crate) const KIND_NAMES: &[&str] = &["", $($name,)*];
+        pub const KIND_NAMES: &[&str] = &["", $($name,)*];
     };
 }
 
