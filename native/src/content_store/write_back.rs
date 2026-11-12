@@ -356,6 +356,7 @@ impl ContentStore {
                     if first.4 != Run::Batched {
                         let (mut job, bytes, keys, holder, run, what) = first;
                         *store.holder.lock() = holder;
+                        let _span = super::hazards::span(what);
                         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
                             .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into())));
                         w.shared.state.lock().expect("the writer's state").by_what.entry(what).or_default().2 += thread_cpu() - before;
@@ -373,6 +374,7 @@ impl ContentStore {
                                 *store.holder.lock() = holder.clone();
                                 bytes += *b;
                                 let c0 = thread_cpu();
+                                let _span = super::hazards::span(*what);
                                 outcomes.push(
                                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
                                         .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into()))),
@@ -392,6 +394,8 @@ impl ContentStore {
                             }
                         }
                     };
+                    // The batch's span holds its jobs' and its commit.
+                    let batch_span = super::hazards::span("a batch, in one transaction");
                     let outcomes = match store.in_one_transaction(|| {
                         w.shared.state.lock().expect("the writer's state").open = true;
                         let outcomes = run(&mut batch, &mut next);
@@ -401,6 +405,7 @@ impl ContentStore {
                         Ok(outcomes) => outcomes,
                         Err(e) => batch.iter().map(|_| Err(StoreError::Invalid(format!("the batch's commit: {e}")))).collect(),
                     };
+                    drop(batch_span);
                     let cpu = (thread_cpu() - before) / batch.len() as f64;
                     w.shared.state.lock().expect("the writer's state").batches += 1;
                     for ((_, bytes, keys, _, _, _), outcome) in batch.into_iter().zip(outcomes) {

@@ -83,6 +83,8 @@ fn install_store_functions() {
         wait_in_wave: code_rule_dsl::sql_hazards::wait_in_wave,
         behind_the_run: code_rule_dsl::sql_hazards::behind_the_run,
         statement: code_rule_dsl::sql_hazards::strict_statement,
+        // The writer's CPU under the profile's spans, a job at a time.
+        span: |what| Box::new(code_rule_dsl::logic::profile::span(move || format!("store writer: {what}"))),
     });
     code_rule_dsl::sql_hazards::strict_on_every_connection();
 }

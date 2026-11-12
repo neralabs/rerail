@@ -12,6 +12,8 @@ pub struct Hazards {
     pub behind_the_run: fn(),
     /// A statement about to run (its connection and text): the strict mode's check (`RERAIL_SQL_STRICT`).
     pub statement: fn(&'static str, &str),
+    /// A span of the profile, open until the value is dropped: the writer's job, by what it writes.
+    pub span: fn(&'static str) -> Box<dyn std::any::Any>,
 }
 
 static HAZARDS: std::sync::OnceLock<Hazards> = std::sync::OnceLock::new();
@@ -41,6 +43,11 @@ pub(crate) fn wait_in_wave(what: &str, wall: f64) {
     if let Some(h) = HAZARDS.get() {
         (h.wait_in_wave)(what, wall);
     }
+}
+
+/// The profile's span for `what`, open until dropped (`None`: unset).
+pub(crate) fn span(what: &'static str) -> Option<Box<dyn std::any::Any>> {
+    HAZARDS.get().map(|h| (h.span)(what))
 }
 
 pub(crate) fn behind_the_run() {

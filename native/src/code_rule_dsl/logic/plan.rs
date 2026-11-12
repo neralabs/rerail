@@ -4096,25 +4096,28 @@ struct Ambient {
     observed: keeps::SharedObserved,
     device: bool,
     explain: bool,
+    /// The profile's span open where the run issued it: a job's span is under it, on whichever thread runs it.
+    under: Option<String>,
 }
 
 impl Ambient {
     fn here() -> Self {
         let explain = explaining(false);
         explaining(explain);
-        Ambient { plans: share_plans(), memo: super::derived::share(), observed: keeps::share_observed(), device: placement::device(), explain }
+        Ambient { plans: share_plans(), memo: super::derived::share(), observed: keeps::share_observed(), device: placement::device(), explain, under: super::profile::here() }
     }
 
     /// While the guard lives, this thread works in the run's ambient.
     fn enter(&self) -> impl Drop {
-        struct Entered(bool, bool, Box<dyn Drop>, Box<dyn Drop>, Box<dyn Drop>);
+        struct Entered(bool, bool, Box<dyn Drop>, Box<dyn Drop>, Box<dyn Drop>, super::profile::Span);
         impl Drop for Entered {
             fn drop(&mut self) {
                 placement::set_device(self.0);
                 explaining(self.1);
             }
         }
-        Entered(placement::set_device(self.device), explaining(self.explain), Box::new(enter_plans(self.plans.clone())), Box::new(super::derived::enter(self.memo.clone())), Box::new(keeps::enter_observed(self.observed.clone())))
+        let span = super::profile::span_at(self.under.as_deref(), || "issued components (stream job)".into());
+        Entered(placement::set_device(self.device), explaining(self.explain), Box::new(enter_plans(self.plans.clone())), Box::new(super::derived::enter(self.memo.clone())), Box::new(keeps::enter_observed(self.observed.clone())), span)
     }
 }
 

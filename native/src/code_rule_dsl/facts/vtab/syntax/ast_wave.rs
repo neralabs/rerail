@@ -283,7 +283,7 @@ fn captured_rows(
     let per: Vec<StoreResult<(Vec<Vec<i64>>, usize)>> = held
         .par_iter()
         .zip(found.par_iter())
-        .map(|(&i, roots)| {
+        .map(crate::code_rule_dsl::logic::profile::carried("ast captures (pool)", |(&i, roots): (&usize, &BTreeSet<u32>)| {
             let mut rows = Vec::new();
             let mut limited = 0;
             if roots.is_empty() {
@@ -325,7 +325,7 @@ fn captured_rows(
                 rows.extend(product);
             }
             Ok((rows, limited))
-        })
+        }))
         .collect();
     let per = per.into_iter().collect::<StoreResult<Vec<_>>>()?;
     let limited = per.iter().map(|(_, l)| l).sum();

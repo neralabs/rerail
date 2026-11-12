@@ -2964,7 +2964,7 @@ fn execute_batch_packed_with_work_limit(
     // parallel.
     let compiled = crate::code_rule_dsl::prof::time("jit.compile", || programs
         .par_iter()
-        .map(compile_cached)
+        .map(crate::code_rule_dsl::logic::profile::carried("native compile (pool)", compile_cached))
         .collect::<Result<Vec<_>, Error>>())?;
     let allocation_started = std::time::Instant::now();
     let regions = crate::code_rule_dsl::prof::Stage::start("jit.regions");

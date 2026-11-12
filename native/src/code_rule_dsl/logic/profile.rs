@@ -611,6 +611,17 @@ impl Drop for Span {
             }
             let alloc = allocated.saturating_sub(open.alloc.0);
             let rise = peak.saturating_sub(open.peak);
+/// `f` for a parallel iterator's items, each a sizeable piece of work (a file, a tape): on a thread with no span
+/// open (a pool thread that took the item), under `name` in the span open where `carried` was called; on a thread
+/// with one open (the caller's), as it is. Rayon's work taken by another thread is under no span of that thread's.
+pub fn carried<A, R>(name: &'static str, f: impl Fn(A) -> R + Sync + Send) -> impl Fn(A) -> R + Sync + Send {
+    let under = here();
+    move |a| {
+        let _span = (under.is_some() && STACK.with(|s| s.lock().opens.is_empty())).then(|| span_at(under.as_deref(), || name.to_owned()));
+        f(a)
+    }
+}
+
             if let Some(parent) = s.opens.last_mut() {
                 parent.children += total;
                 parent.children_alloc += alloc;

@@ -518,7 +518,7 @@ impl LoweredMatcher {
                 views
                     .par_iter()
                     .zip(sets.par_iter())
-                    .map(|(view, sets)| {
+                    .map(crate::code_rule_dsl::logic::profile::carried("label pass (pool)", |(view, sets): (&TapeDoc, &Arc<Vec<Vec<u64>>>)| {
                         let mut bits = empty(view);
                         let mut bindings = AstBindings::default();
                         for node in domain(starts, view, sets) {
@@ -535,7 +535,7 @@ impl LoweredMatcher {
                             }
                         }
                         Ok(bits)
-                    })
+                    }))
                     .collect()
             }
             Label::Roots(program, starts) | Label::Targets(program, starts) | Label::Count { program, domain: starts, .. } => {
@@ -549,7 +549,7 @@ impl LoweredMatcher {
                 views
                     .par_iter()
                     .zip(sets.par_iter())
-                    .map(|(view, sets)| {
+                    .map(crate::code_rule_dsl::logic::profile::carried("root programs (pool)", |(view, sets): (&TapeDoc, &Arc<Vec<Vec<u64>>>)| {
                         let starts = || domain(starts, view, sets).filter(|&node| entry.admits(view, node));
                         if let Some(walk) = &walk
                             && let Some(bits) = walked(label, walk, program, view, sets, starts())
@@ -560,7 +560,7 @@ impl LoweredMatcher {
                         let outputs = program.execute_roots(view, starts())?;
                         let found = vec![outputs.iter().map(Found::of).collect()];
                         Ok(from_outputs(label, std::slice::from_ref(view), found).pop().expect("one file"))
-                    })
+                    }))
                     .collect()
             }
             Label::Complement(of) => Ok(views
@@ -1286,7 +1286,7 @@ pub fn to_sets(bits: &[u32], labels: usize, words: usize, tapes: &[TapeDoc]) -> 
     tapes
         .par_iter()
         .zip(bases)
-        .map(|(tape, base)| {
+        .map(crate::code_rule_dsl::logic::profile::carried("label rows (pool)", |(tape, base): (&TapeDoc, usize)| {
             let len = tape.transducer_len();
             let sets = (0..labels)
                 .map(|label| {
@@ -1300,7 +1300,7 @@ pub fn to_sets(bits: &[u32], labels: usize, words: usize, tapes: &[TapeDoc]) -> 
                 })
                 .collect();
             Arc::new(sets)
-        })
+        }))
         .collect()
 }
 
@@ -1505,7 +1505,7 @@ impl Packs {
             let on = (0..views.len()).filter(|&tape| members.iter().any(|&at| active(level[at].0, tape))).collect::<Vec<_>>();
             let found = on
                 .par_iter()
-                .map(|&tape| {
+                .map(crate::code_rule_dsl::logic::profile::carried("text walk (pool)", |&tape: &usize| {
                     let (view, sets) = (&views[tape], &sets[tape]);
                     let texts = walk.texts(program, view)?;
                     let mut bits = vec![vec![0_u64; view.transducer_len().div_ceil(64)]; members.len()];
@@ -1520,7 +1520,7 @@ impl Packs {
                         .ok()?;
                     }
                     Some((tape, bits))
-                })
+                }))
                 .collect::<Vec<_>>();
             // A failed tape (text slots, an overflow): the group runs alone.
             let Some(found) = found.into_iter().collect::<Option<Vec<_>>>() else {
@@ -1628,7 +1628,7 @@ fn formulas(
     // as one task; a formula's answer on one small file is too little work for a task of its own.
     let answers = (0..views.len())
         .into_par_iter()
-        .map(|tape| {
+        .map(crate::code_rule_dsl::logic::profile::carried("set formulas (pool)", |tape: usize| {
             let view = &views[tape];
             let index = indexes[tape].get_or_init(Index::default);
             plans
@@ -1660,7 +1660,7 @@ fn formulas(
                     (at, bits)
                 })
                 .collect::<Vec<_>>()
-        })
+        }))
         .collect::<Vec<_>>();
     // By pass: each tape's bits, in tape order; a pass with a tape it could not answer (its texts)
     // is not a formula.
