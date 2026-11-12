@@ -8,6 +8,7 @@
 pub use rerail_compiler::clif_text::{body_of, carried_params, carried_words, hot_loop, loop_costs, machine_loop, opcode, sink_params, state_bits};
 #[allow(unused_imports)]
 use rerail_compiler::*;
+use rerail_compiler::clif_text::{Transfer, count_transfers};
 use rerail_compiler::block::BlockRun;
 use rerail_compiler::program::Words as Program;
 use rerail_compiler::rir_asm as rir;
@@ -156,8 +157,8 @@ fn check_lowering(name: &str, p: &Program) {
     }
     println!("== {name}: machine code ==\n{}", compiled.disassembly);
     // The only calls: of the functions made from the same program (the general body).
-    assert!(!compiled.disassembly.contains(" bl "), "{name}: no near calls");
-    assert_eq!(compiled.disassembly.matches("blr").count(), compiled.own_calls(), "{name}: a call of no function of the program's");
+    assert_eq!(count_transfers(&compiled.disassembly, Transfer::NearCall), 0, "{name}: no near calls");
+    assert_eq!(count_transfers(&compiled.disassembly, Transfer::FarCall), compiled.own_calls(), "{name}: a call of no function of the program's");
 
     let instructions = compiled.disassembly.lines().filter(|l| l.starts_with("  ") && !l.contains("unwind")).count();
     println!("== {name}: {instructions} machine instructions in the function ==");
