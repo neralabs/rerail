@@ -1,7 +1,8 @@
-# 0121: The planner searches only where a search can pay, and could plan in bulk
+# 0124: The planner searches only where a search can pay, and could plan in bulk
 
 Status: draft (2026-11-12). §1 and §2 are built. §3 is a spike behind a switch, off by default. §4 and §5 size
-work that is not built.
+work that is not built. Numbered 0121 on its branch, renumbered at the merge with phased-facts, whose 0121 (node
+order keys) came first. It works under 0122 and 0123 (§6).
 
 ## Intro
 
@@ -195,6 +196,29 @@ the 27% pricing share as shared, and the per-search fixed cost as halved. Both n
   and `plan_rule_reused` per rule.
 - The stratum driver of 0120 §2 collects a level's or a wave's rules before planning them.
 - None of this changes a plan, except under a budget.
+
+## 6. With 0122 and 0123 (merged 2026-11-12)
+
+Three branches had built "a search only where it can pay" in parallel. In the merged engine they are one rule,
+applied cheapest first:
+1. **0122's gate.** A kept order whose rule's line did less work when it last ran than a search costs, scaled by
+   its inputs' growth, is taken unsearched and unpriced (`budget_takes`). The work it ran (`Kept`'s sixth field)
+   is now stored with the plan across processes (`StoredPlan::ran`, written again only when it moves over 2x), so
+   the gate holds for a command-line edit as for a session.
+2. **The re-price rules, where the gate misses.** A kept plan re-priced under `REPLAN_ROWS` is kept, whatever its
+   distributions did (`plan_rule_reused`, O-replan-churn; Typing-support built the same rule). In a run, a live
+   replan keeps the re-priced order when its work is under a search's (`plan_rule_live`, §1).
+3. **0122's drive.** In a run, a probe is replanned only once its work has paid for its searches; §1 then decides
+   whether the replan searches.
+4. **0123's rounds.** Whatever is planned, its statistics are requested and made in one batch first. Statistics
+   already known are read, not made: those kept with a relation's frame (0120 §3), counted as rows came
+   (`InRel::kept_stats`), or a projection's from its input (`projection_of`).
+
+**Open: one cost of a search.** 0122 prices a search at 250 rows (`SEARCH_WORK`: 0.16 ms at 0.74 µs a row, O125
+step 07); §1 at 400 rows plus one per candidate (`search_rows`: 0.3 ms plus 0.7 µs a candidate, the P3 bench). They
+are one quantity measured twice; a long body's search costs many times a short one's, so the form is §1's and the
+fixed part is to be measured once more, on O125, and used by both (O-search-cost).
+
 
 ## Prior art
 

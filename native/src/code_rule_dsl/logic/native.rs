@@ -34,7 +34,7 @@ pub mod match_all;
 #[cfg(any(test, feature = "test-hooks"))]
 #[allow(dead_code)]
 pub mod extension;
-pub use setfix::{flush_symbols, forget_inputs, intern_batch, keep_inputs, register_symbols, sym_text_of};
+pub use setfix::{flush_symbols, wave0_changes, forget_inputs, intern_batch, keep_inputs, register_symbols, sym_text_of};
 /// A connection's identity for the state a run leaves with it (`setfix::scope`).
 pub use setfix::scope as setfix_scope;
 pub use setfix::symbol_text;

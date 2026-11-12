@@ -185,8 +185,9 @@ enum Fold {
     All,
 }
 
-/// The ids of `p`'s nodes and of `tokens` (each token's node, in order): the low 32 bits.
-pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> Vec<u32> {
+/// The ids of `p`'s nodes and of `tokens` (each token's node, in order): the low 32 bits; and each node's order key
+/// (`order`).
+pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> (Vec<u32>, Vec<u32>) {
     let mut fold = Fold::None;
     loop {
         let cut = cut(p, dialect, fold);
@@ -204,8 +205,42 @@ pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> Vec<u32> {
             fold = if fold == Fold::None { Fold::Statements } else { Fold::All };
             continue;
         }
-        return place(&cut, &nodes, tokens);
+        return (place(&cut, &nodes, tokens), order(&cut.of));
     }
+}
+
+/// Bits of an order key's index inside its granule; the rest are its run's rank (`order`).
+const ORDER_INDEX_BITS: u32 = 18;
+
+/// Each node's order key (`node_order`'s low 32 bits, decision 0121): the rank of its *run*, a stretch of nodes
+/// consecutive in preorder that are all one granule's, then its index among its granule's nodes. Runs follow one another
+/// in preorder and a granule's nodes are in preorder in it, so the keys are in preorder; but an edit inside a granule
+/// changes neither the runs (granules nested in it start where they did among its nodes) nor another granule's
+/// indexes, so no other granule's keys move, where a preorder index moves every node after the edit. An edit that
+/// adds or removes a granule moves the ranks after it. A document with more runs, or a granule with more nodes, than
+/// the bits hold is ordered by preorder index (one scheme per document, so its keys still compare).
+fn order(of: &[u32]) -> Vec<u32> {
+    let mut index = vec![0u32; of.iter().max().map_or(1, |&m| m as usize + 1)];
+    let mut rank = 0u32;
+    let mut keys = Vec::with_capacity(of.len());
+    for (l, &g) in of.iter().enumerate() {
+        if l > 0 && g != of[l - 1] {
+            rank += 1;
+        }
+        let i = &mut index[g as usize];
+        if rank >> (32 - ORDER_INDEX_BITS) != 0 || *i >> ORDER_INDEX_BITS != 0 {
+            return (0..of.len() as u32).collect();
+        }
+        keys.push(rank << ORDER_INDEX_BITS | *i);
+        *i += 1;
+    }
+    keys
+}
+
+/// Each node's granule, unfolded (`tests::node_order_keys_census`): an index in preorder of the granules' starts.
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn granule_of(p: &Projected, dialect: &Dialect) -> Vec<u32> {
+    cut(p, dialect, Fold::None).of
 }
 
 /// The granules of `p`, folded as `fold` says.

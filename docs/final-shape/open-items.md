@@ -4139,11 +4139,11 @@ What is not an opportunity: reprobes (0.05 s with the indexes they open) and the
 each, 0.11 s; they are what stands in for a search). The index builds in `open: joins` (0.36 s) are the joins'
 own cost, not replanning's.
 
-**Closed (2026-11-12, decision 0121 §1).** All five are built. A live replan keeps the re-priced order when its work
+**Closed (2026-11-12, decision 0124 §1).** All five are built. A live replan keeps the re-priced order when its work
 is under what a search costs (`search_rows`), or when it has one positive atom. Its distributions are compared in
 proportion, the state before the last is kept, and a live search's EXPLAIN is made only when its order is taken.
 Live searches went from 1,162 (0.40 s) to 558 (0.04 s) per edit. Planning fell from 4.5% to 3.1% of the edit's
-CPU, and the join work is the same in each later run (8,766,423). 0121 also makes the cold search a third
+CPU, and the join work is the same in each later run (8,766,423). 0124 also makes the cold search a third
 cheaper, with the same plans, and sizes greedy-first, classifiers and bulk planning.
 
 ## O-cutoff-phases. The whole-run cutoff never applies to a phased program
@@ -4203,6 +4203,7 @@ document's rows come from its own file alone (`memo::document_of`), so for every
 its rows are this run's. The count arithmetic is kept for value documents, which several files hold. Both tests
 pass again.
 
+
 ## The big rocks of O125's cold run and edit step (found 2026-11-12)
 
 **Seen.** O125's replay has 74 Python files and 33,311 lines. The figures are CPU from span trees, summed over
@@ -4261,9 +4262,9 @@ is about 21% of a warm step's CPU, but in instructions planning is not a big roc
 
 **Merged with O-replan-churn's form (2026-11-12).** Both branches had built the kept-plan rule. The merged engine
 keeps one form, O-replan-churn's (`plan_rule_reused`: re-priced under `REPLAN_ROWS`, whatever the distributions;
-`plan_rule_live`: kept when the re-priced work is under what a search costs, `search_rows`, decision 0121).
+`plan_rule_live`: kept when the re-priced work is under what a search costs, `search_rows`, decision 0124).
 `RERAIL_REPLAN_CHEAP` is gone. The live bound is a search's cost, not `REPLAN_ROWS`: a live search that changes the
-order saves up to the kept order's work, and a flat 10,000 rows gave up some of that (0121 §1). The step 01-03
+order saves up to the kept order's work, and a flat 10,000 rows gave up some of that (0124 §1). The step 01-03
 figures above were measured with the flat bound.
 
 **Closure:** a stratum's plans are kept from step to step and are planned again only when a statistic they read
@@ -4373,3 +4374,16 @@ does not say which test was running when it died.
 
 **Closure:** the test that dies is found (a run with `--test-threads 1` and its whole output kept), and the cause
 is fixed, or it does not recur in ten runs.
+
+## O-search-cost. One cost of a search, measured once (0122, 0124)
+
+**Seen (2026-11-12, at the merge of phased-facts).** Two branches priced a join-order search in rows of join work
+and both prices are in the engine: 0122's `SEARCH_WORK` (250 rows: 0.16 ms a search at 0.74 µs a row, O125 step
+07) gates kept orders, the first wave's whole plans and a run's probe replans; 0124's `search_rows` (400 rows plus
+one per candidate: 0.3 ms plus 0.7 µs a candidate, the P3 bench) gates the re-priced live replan. They are one
+quantity. A long body's search costs many times a short one's (`fgp`: 11,665 rows), so a flat price keeps too few
+long rules' orders and searches short ones it could keep.
+
+**Closure:** one O125 measurement of a search's fixed cost and its cost per candidate, in the build both run; both
+gates read `search_rows`, and `SEARCH_WORK` is its fixed part.
+

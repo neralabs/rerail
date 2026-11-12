@@ -36,6 +36,51 @@ run end     flush: kept answers and new cursors, in one transaction
 A root is asked once per run. A run nested in another run (phase 0's) keeps the outer run's
 answer.
 
+## One stream per root, kept for the process
+
+A one-file edit asked the journal 45 times: each phase is a run of its own, and each run asked
+each root again (the same root also came under two spellings, such as `/var` and
+`/private/var`). Each question made a new FSEvents stream, replayed the history since its
+cursor, and waited for a cookie. That came to 0.9 s of waiting with the machine quiet, and 2.6–5 s
+when it was loaded.
+
+Now the process keeps its streams (`journal::fsevents::LIVE`):
+
+```text
+process start   Observer::open: one stream for each stored root, from its stored cursor
+                (a root under another is the outer stream's, from the older cursor);
+                the replays run beside each other and beside preload
+outermost run   begin (open 0 -> 1): next_epoch
+a question      the stream that covers the root and started at or before the cursor:
+                  first question of the epoch: write a cookie, wait for its event
+                  answer: the events the stream kept with an id after the cursor
+                none: a new stream for the root, from the cursor (one replay)
+```
+
+- **The cursor an answer gives is the cookie's event id.** Every change made before the cookie
+  has a lower id and reached the stream before it, so a replay from that id misses nothing.
+  The system's current id (`FSEventsGetCurrentEventId`, a call into `fseventsd` that took 0.15–
+  0.2 s while the run wrote) is asked only where a stream is started or the answer is `Lost`.
+- **Runs inside a run share its sync.** A change made after the outermost run's cookie is told to
+  the next outermost run, and a later process replays it from the cursor stored. This is what
+  asking once per run already meant.
+- **Lost is per stream.** A stream that sees dropped or renumbered events, or keeps more than
+  2^21 events, is dropped. The next question under its roots replays afresh. A process keeps at
+  most 16 streams; the one used least recently goes first.
+- `volume()` (`FSEventsCopyUUIDForDevice`) is asked once per device for the process. It was
+  asked once per root per run.
+
+Measured on the workload store `n43`, one-file edits, load 37–56:
+
+| | questions | streams started | cookies | waiting |
+|---|---|---|---|---|
+| before | 45 | 45 | 45 | 0.9 s quiet, 2.6 s at load 100 |
+| streams per process | 25 | 5 (one after another) | 9 | 0.61 s |
+| + started at open, cookie id as cursor | 25 | 0 at question time | 6 | 0.07–0.29 s |
+
+The instructions are the same with the journal on or off (325.5 G vs 326.7 G). The findings equal
+the cold run's.
+
 ## What "trusted" means
 
 - When a path has a kept answer under a root the journal trusts, that answer is used as it is:

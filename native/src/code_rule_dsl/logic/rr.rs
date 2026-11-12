@@ -294,6 +294,25 @@ pub fn included_files(src: &str) -> Result<Vec<PathBuf>, Error> {
     Ok(paths)
 }
 
+/// The relations a program's text declares, its includes' with its own, and the phase it names itself (`.phase`):
+/// read off the statements, nothing lowered, for a caller that wants only the names (the whole-run cutoff's phase
+/// files, `corpus::phases::phase_files`).
+pub fn declared_names(src: &str) -> Result<(Vec<String>, Option<String>), Error> {
+    let statements = from_tape::statements(src, &tape(src))?;
+    let (files, own) = if statements.iter().any(|(item, _)| matches!(item, syntax::Item::Include(_))) { resolve(statements)? } else { (Vec::new(), statements) };
+    let (mut names, mut phase) = (Vec::new(), None);
+    for (item, _) in files.iter().flat_map(|(_, st)| st.iter()).chain(own.iter()) {
+        match item {
+            syntax::Item::Decl { name, .. } => names.push(name.clone()),
+            syntax::Item::Setting { key, text } if key == "phase" && phase.is_none() => phase = Some(text.trim().to_owned()),
+            _ => {}
+        }
+    }
+    names.sort();
+    names.dedup();
+    Ok((names, phase))
+}
+
 /// `statements`' `#include`s resolved in the library: its files (`core.rr` first unless the statements are in T's
 /// shape, each once, includes first) and the statements without the includes.
 ///

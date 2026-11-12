@@ -102,28 +102,9 @@ A previous measurement can narrow uncertainty, but stale rule-level averages can
 
 Run the focused tests:
 
-```sh
-nice -n19 python3 -m unittest discover -s scripts/profiling/statistical_planning -v
-```
-
-Capture selected strata using an existing O125 qualification test binary and its replay environment JSON:
-
-```sh
-python3 scripts/profiling/statistical_planning/capture.py \
-  --binary /path/to/qualification-tests \
-  --environment /path/to/o125-environment.json \
-  --output /tmp/new-planner-capture
-```
-
-The wrapper runs the binary at nice level 19 and records binary/environment hashes and its exit status.
-The environment must identify the existing qualification corpus and rules.
-The wrapper does not generate that fixture. Native lab capture serializes strands; capture time is not a throughput benchmark.
-
-```sh
-nice -n19 python3 scripts/profiling/statistical_planning/spike.py \
-  --capture /tmp/new-planner-capture/lab \
-  --seeds 32 --output /tmp/probing.json
-```
+The spike's scripts (`capture.py`, `spike.py`, `test_spike.py`) were removed once its outcome was recorded, at
+the merge into investigate-bend-vs-datalog (2026-11-12): random probing is rejected and nothing of it runs in the
+engine. They are in git at `fc3e8c4f9` to run it again.
 
 Raw local artifacts reside under:
 `/Users/jeremy/orca/artifacts/async-family-comparison/regression-fixes-d1dc128bb/`.
