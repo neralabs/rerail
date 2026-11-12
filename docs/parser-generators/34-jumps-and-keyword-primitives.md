@@ -612,6 +612,67 @@ Two more steps then make fewer words:
   `literal` and `negated`).
   Merged across rules, the words would be 4,405 places, from 6,011.
 
+## Built: words as calls
+
+With a function a grammar rule, these words are generated functions of their own,
+which every place of the word calls:
+
+- `TOKEN`;
+- `LEAF`, `OPEN`, `CLOSE`, `WRAP`;
+- both `MERGE`s;
+- `RETAG` and `NODE_FIELD` on the node made last, the moved node and the open node.
+
+- **Each body is written once,** over what it reads and writes
+  (`WordEnv`: the state's fields, `ctx`'s columns, a refusal).
+  With one function for the whole program (the JSON grammar, the main loop),
+  the same body is made in place.
+- **The state is in `ctx`,** so a call passes `ctx` and the word's kind, nothing more.
+  After it, the caller reads the fields it needs again, as the lean parser reads `self`.
+- **A word that may refuse gives back 1,**
+  and its caller refuses at its own place: the refusals are the interpreter's, place for place.
+- **The functions call nothing, so they have no frame:**
+  each is loads, the row's stores and a `ret`, as the lean parser's inlined `push` is.
+  This is the frame-free path.
+- **A field after its node rides in the call.**
+  A `NODE_FIELD` on the node a `LEAF` or `OPEN` just made is passed with the kind:
+  the row stores the kind and the field as one 32-bit word,
+  so the field costs nothing, and the field word is skipped.
+- **A keyword assertion is one compare and a branch.**
+  It was a `bnot` of a compare, which Cranelift made a `cset`, an `eor` and a `uxtb`.
+
+| | Before | After | Lean parser |
+|---|---|---|---|
+| Machine instructions | 87,152 | 43,654 | 10,008 |
+| Loads | 20,595 | 5,667 | |
+| Stores | 18,166 | 2,541 | |
+| Code bytes | 348,608 | 174,616 | |
+| Tier 2, instructions | 339.0M | 354.2M | 356.7M |
+| Tier 2, cycles | 74.3M | 72.3M | 80.6M |
+
+The machine was loaded (load average 57 to 62) for the last row, so the cycles are rough.
+
+Tried and dropped: a callee taking its caller's token at `RETURN m=0`,
+so that every return lands past the caller's `TOKEN` and the caller tests once.
+The register allocator then kept `ctx` on the stack in many functions
+(1,780 stack accesses, from 439): 49,440 instructions.
+
+What is left, by Cranelift instructions in the rule functions:
+
+| Word | Words | Share |
+|---|---|---|
+| `SWITCH` | 340 | 19% |
+| `PUSH` | 559 | 13% |
+| `LEAF` | 1,097 | 11% |
+| `TOKEN` | 340 | 7% |
+| `ROW` | 373 | 7% |
+
+- **A call** is about 12 instructions, against the lean parser's 3:
+  - the calls open counted and checked against a depth (5);
+  - `ctx` and the place in registers, and the call (3);
+  - a three-way test of its result (4).
+- **Fewer words,** from the two steps above:
+  a leaf of its token's own kind, and code shared across rules.
+
 ## The order
 
 1. One symbol a token: rows and keywords in the record, one switch a state.
@@ -619,7 +680,7 @@ Two more steps then make fewer words:
 2. Marks in the record. Built: the record pass writes them into the code.
 3. A cheaper `TOKEN`, and the state as the lean parser's.
    Built: no select, nothing held across calls, the tape in rows, one exit a function,
-   the state as locals, a token taken for good.
-   Next: words as calls, which gives the frame-free path.
+   the state as locals, a token taken for good, words as calls (and so the frame-free path).
+   Next: cheaper calls, then fewer words.
 4. Keyword marks from the records. Built for the marks of one word.
 5. Tier 1's primitives: the picked hash, then nibble fingerprints.

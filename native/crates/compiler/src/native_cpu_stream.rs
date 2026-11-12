@@ -718,16 +718,38 @@ enum EndAt {
 
 /// A word made as a function of its own (`outline`), which every place of it calls: the lean
 /// parser's helpers (`push`, `bump_as`), called from the grammar's functions. The state is in
-/// `ctx` (`Ctx::state`), as the lean parser's in `self`.
+/// `ctx` (`Ctx::state`), as the lean parser's in `self`. Its kind or field is an argument.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum WordFn {
-    /// `LEAF`, its kind an argument.
     Leaf { deferred: bool, extra: bool, end: EndAt },
+    Open,
+    Close { this: bool, end: EndAt },
+    Wrap,
+    /// `RETAG m=1`: the node the last wrap moved.
+    RetagMoved { remembered: bool },
+    /// `RETAG m=2`, `NODE_FIELD m=2`: the node made last at the level.
+    Made { retag: bool, remembered: bool, dead: bool },
+    /// `RETAG`: the innermost open node.
+    Here,
+    /// `MERGE m=1`.
+    Fold,
+    Merge { end: EndAt },
     /// `TOKEN`, taking a token: 0, or 1 past the stream's end, or `OVERFLOW` out of room.
     Token { any_mark: Option<usize> },
 }
 
-/// A state field of `ctx`, loaded or stored, in an outlined word.
+/// What a word's body reads and writes, wherever it is made (`WordFn`): in its rule's function,
+/// or in a function of its own that each place of the word calls.
+struct WordEnv<'a> {
+    get: &'a dyn Fn(&mut FunctionBuilder<'_>, Mem) -> Value,
+    set: &'a dyn Fn(&mut FunctionBuilder<'_>, Mem, Value),
+    /// A field of `ctx`: a column's address, a count.
+    ctx: &'a dyn Fn(&mut FunctionBuilder<'_>, i32) -> Value,
+    /// Refuse where the value is set, at the word's place; else go on in a new block.
+    guard: &'a dyn Fn(&mut FunctionBuilder<'_>, Value),
+}
+
+/// A state field of `ctx`, loaded or stored, in a function of its own.
 fn field_get(f: &mut FunctionBuilder<'_>, ctx: Value, k: Mem) -> Value {
     f.ins().load(types::I64, MemFlags::trusted(), ctx, STATE + 8 * k as i32)
 }
@@ -736,53 +758,314 @@ fn field_set(f: &mut FunctionBuilder<'_>, ctx: Value, k: Mem, x: Value) {
     f.ins().store(MemFlags::trusted(), x, ctx, STATE + 8 * k as i32);
 }
 
-/// `LEAF`'s body (`WordFn::Leaf`): params `ctx` and the kind. As the inline word: its row (kind
-/// with no field, its bytes, one record), the pending extras, the level's last node.
-fn leaf_word(f: &mut FunctionBuilder<'_>, p: &[Value], deferred: bool, extra: bool, end_at: EndAt, wrapping: bool) {
-    let (ctx, kind) = (p[0], p[1]);
+/// A word's function (`WordFn`): params `ctx` and the word's arguments, its body, then 0 (where
+/// it may refuse, 1 at a refusal, which its caller makes at its own place).
+fn own_word(f: &mut FunctionBuilder<'_>, p: &[Value], refuses: bool, body: &dyn Fn(&mut FunctionBuilder<'_>, &WordEnv<'_>, &[Value])) {
+    let ctx = p[0];
+    let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
+    let set = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| field_set(f, ctx, k, x);
+    let at = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, MemFlags::trusted(), ctx, at);
+    let guard = |f: &mut FunctionBuilder<'_>, bad: Value| {
+        let (ok, no) = (f.create_block(), f.create_block());
+        f.ins().brif(bad, no, &[], ok, &[]);
+        f.switch_to_block(no);
+        f.set_cold_block(no);
+        let one = f.ins().iconst(types::I64, 1);
+        f.ins().return_(&[one]);
+        f.switch_to_block(ok);
+    };
+    let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
+    body(f, &env, &p[1..]);
+    if refuses {
+        let zero = f.ins().iconst(types::I64, 0);
+        f.ins().return_(&[zero]);
+    } else {
+        f.ins().return_(&[]);
+    }
+}
+
+/// The token's end, as a word reads it (`EndAt`).
+fn token_end_at(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, end_at: EndAt) -> Value {
+    match end_at {
+        EndAt::Taken => (e.get)(f, Mem::Limit),
+        EndAt::Field => (e.get)(f, Mem::End),
+        EndAt::Untaken => {
+            let (at_end, limit, start) = ((e.get)(f, Mem::AtEnd), (e.get)(f, Mem::Limit), (e.get)(f, Mem::Start));
+            f.ins().select(at_end, limit, start)
+        }
+    }
+}
+
+/// A u32 column's slot `i`, loaded or stored.
+fn slot_get(f: &mut FunctionBuilder<'_>, c: Value, i: Value) -> Value {
+    let off = f.ins().ishl_imm(i, 2);
+    let a = f.ins().iadd(c, off);
+    f.ins().uload32(MemFlags::trusted(), a, 0)
+}
+
+fn slot_put(f: &mut FunctionBuilder<'_>, c: Value, i: Value, x: Value) {
+    let off = f.ins().ishl_imm(i, 2);
+    let a = f.ins().iadd(c, off);
+    f.ins().istore32(MemFlags::trusted(), x, a, 0);
+}
+
+/// The kind a word names as its level's word (`REMEMBERED`): refused where the level has none.
+fn remembered_kind(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>) -> Value {
+    let w = (e.get)(f, Mem::Word);
+    let none = f.ins().icmp_imm(IntCC::Equal, w, 0);
+    (e.guard)(f, none);
+    w
+}
+
+/// `LEAF`: its row (its kind, with its field above it or none; its bytes; one record), the
+/// pending extras, the level's last node.
+fn leaf_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value, deferred: bool, extra: bool, end_at: EndAt, wrapping: bool) {
     let flags = MemFlags::trusted();
     let zero = f.ins().iconst(types::I64, 0);
     let pending = if deferred {
         // The first pending leaf keeps the end of the token before it.
-        let (q, keep, last_end) = (field_get(f, ctx, Mem::Pending), field_get(f, ctx, Mem::Keep), field_get(f, ctx, Mem::LastEnd));
+        let (q, keep, last_end) = ((e.get)(f, Mem::Pending), (e.get)(f, Mem::Keep), (e.get)(f, Mem::LastEnd));
         let keep = f.ins().select(q, keep, last_end);
-        field_set(f, ctx, Mem::Keep, keep);
+        (e.set)(f, Mem::Keep, keep);
         f.ins().iadd_imm(q, 1)
     } else {
         zero
     };
-    field_set(f, ctx, Mem::Pending, pending);
-    let (nodes, start) = (field_get(f, ctx, Mem::Nodes), field_get(f, ctx, Mem::Start));
-    let end = match end_at {
-        EndAt::Taken => field_get(f, ctx, Mem::Limit),
-        EndAt::Field => field_get(f, ctx, Mem::End),
-        EndAt::Untaken => {
-            let (at_end, limit) = (field_get(f, ctx, Mem::AtEnd), field_get(f, ctx, Mem::Limit));
-            f.ins().select(at_end, limit, start)
-        }
-    };
+    (e.set)(f, Mem::Pending, pending);
+    let (nodes, start, end) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Start), token_end_at(f, e, end_at));
     let one = f.ins().iconst(types::I64, 1);
-    let rows = f.ins().load(types::I64, flags, ctx, ROWS);
+    let rows = (e.ctx)(f, ROWS);
     let row = NodeCol::row(f, rows, nodes);
     f.ins().istore32(flags, kind, row, AT_KIND);
     NodeCol::of(rows, AT_START).put_row(f, row, start);
     NodeCol::of(rows, AT_END).put_row(f, row, end);
     NodeCol::of(rows, AT_SIZE).put_row(f, row, one);
     if wrapping {
-        let head = f.ins().load(types::I64, flags, ctx, HEAD);
-        let off = f.ins().ishl_imm(nodes, 2);
-        let at = f.ins().iadd(head, off);
-        f.ins().istore32(flags, zero, at, 0);
+        let head = (e.ctx)(f, HEAD);
+        slot_put(f, head, nodes, zero);
         if !deferred && !extra {
             // The last node made at the innermost open node's level.
             let n1 = f.ins().iadd_imm(nodes, 1);
-            field_set(f, ctx, Mem::LastMade, n1);
-            field_set(f, ctx, Mem::LastBase, nodes);
+            (e.set)(f, Mem::LastMade, n1);
+            (e.set)(f, Mem::LastBase, nodes);
         }
     }
     let nodes = f.ins().iadd_imm(nodes, 1);
-    field_set(f, ctx, Mem::Nodes, nodes);
-    f.ins().return_(&[]);
+    (e.set)(f, Mem::Nodes, nodes);
+}
+
+/// `OPEN`: its row (its kind, with its field above it or none, and its start), open; with wraps,
+/// its frame.
+fn open_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value, wrapping: bool) {
+    let zero = f.ins().iconst(types::I64, 0);
+    (e.set)(f, Mem::Pending, zero);
+    let (nodes, start, open) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Start), (e.get)(f, Mem::Open));
+    let rows = (e.ctx)(f, ROWS);
+    let row = NodeCol::row(f, rows, nodes);
+    f.ins().istore32(MemFlags::trusted(), kind, row, AT_KIND);
+    NodeCol::of(rows, AT_START).put_row(f, row, start);
+    let open_c = (e.ctx)(f, OPEN);
+    slot_put(f, open_c, open, nodes);
+    if wrapping {
+        // Its frame, at depth + 1 (slot 0 is the root's parent's): its own base, no node made
+        // yet; and its record is no base of a wrap yet.
+        let slot1 = f.ins().iadd_imm(open, 1);
+        let fbase = (e.ctx)(f, FRAME_BASE);
+        slot_put(f, fbase, slot1, nodes);
+        (e.set)(f, Mem::LastMade, zero);
+        let head = (e.ctx)(f, HEAD);
+        slot_put(f, head, nodes, zero);
+    }
+    let open = f.ins().iadd_imm(open, 1);
+    let nodes = f.ins().iadd_imm(nodes, 1);
+    (e.set)(f, Mem::Open, open);
+    (e.set)(f, Mem::Nodes, nodes);
+}
+
+/// `CLOSE`: the innermost open node's end (`this`: the token's; else the last taken's, or
+/// the one before the pending extras) and size; with wraps, the last node made at its parent's
+/// level.
+fn close_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, this: bool, end_at: EndAt, wrapping: bool) {
+    let open = (e.get)(f, Mem::Open);
+    let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
+    (e.guard)(f, none);
+    let open = f.ins().iadd_imm(open, -1);
+    (e.set)(f, Mem::Open, open);
+    let open_c = (e.ctx)(f, OPEN);
+    let at = slot_get(f, open_c, open);
+    let (nodes, pending) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Pending));
+    let end = if this {
+        token_end_at(f, e, end_at)
+    } else {
+        let (keep, last_end) = ((e.get)(f, Mem::Keep), (e.get)(f, Mem::LastEnd));
+        f.ins().select(pending, keep, last_end)
+    };
+    let rows = (e.ctx)(f, ROWS);
+    let at_row = NodeCol::row(f, rows, at);
+    NodeCol::of(rows, AT_END).put_row(f, at_row, end);
+    let base = if wrapping {
+        // Its subtree starts at its base (a wrap's is the moved node's); it is the last node
+        // made at its parent's level.
+        let slot1 = f.ins().iadd_imm(open, 1);
+        let fbase = (e.ctx)(f, FRAME_BASE);
+        let base = slot_get(f, fbase, slot1);
+        let at1 = f.ins().iadd_imm(at, 1);
+        (e.set)(f, Mem::LastMade, at1);
+        (e.set)(f, Mem::LastBase, base);
+        base
+    } else {
+        at
+    };
+    let size = f.ins().isub(nodes, base);
+    let size = f.ins().isub(size, pending);
+    NodeCol::of(rows, AT_SIZE).put_row(f, at_row, size);
+}
+
+/// `WRAP`: around the last node made at the innermost open node's level, its record at the
+/// table's end, linked into the moved node's base's chain; open, its frame's base that base, the
+/// moved node the last made at its level.
+fn wrap_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value) {
+    let zero = f.ins().iconst(types::I64, 0);
+    let open = (e.get)(f, Mem::Open);
+    let (last, base) = ((e.get)(f, Mem::LastMade), (e.get)(f, Mem::LastBase));
+    let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
+    let no_last = f.ins().icmp_imm(IntCC::Equal, last, 0);
+    // A branch each, not the tests joined.
+    (e.guard)(f, none);
+    (e.guard)(f, no_last);
+    let r = f.ins().iadd_imm(last, -1);
+    let (nodes, wraps) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Wraps));
+    let rows = (e.ctx)(f, ROWS);
+    let (kind_c, field_c, start_c) = (NodeCol::of(rows, AT_KIND), NodeCol::of(rows, AT_FIELD), NodeCol::of(rows, AT_START));
+    let rr = NodeCol::row(f, rows, r);
+    let (fld, st) = (field_c.get_row(f, rr), start_c.get_row(f, rr));
+    let row = NodeCol::row(f, rows, nodes);
+    kind_c.put_row(f, row, kind);
+    field_c.put_row(f, row, fld);
+    start_c.put_row(f, row, st);
+    let rr = NodeCol::row(f, rows, r);
+    field_c.put_row(f, rr, zero);
+    let (head, link) = ((e.ctx)(f, HEAD), (e.ctx)(f, LINK));
+    let h = slot_get(f, head, base);
+    slot_put(f, link, nodes, h);
+    let n1 = f.ins().iadd_imm(nodes, 1);
+    slot_put(f, head, base, n1);
+    let mark = f.ins().iconst(types::I64, IS_WRAP);
+    slot_put(f, head, nodes, mark);
+    let open_c = (e.ctx)(f, OPEN);
+    slot_put(f, open_c, open, nodes);
+    let slot1 = f.ins().iadd_imm(open, 1);
+    let fbase = (e.ctx)(f, FRAME_BASE);
+    slot_put(f, fbase, slot1, base);
+    (e.set)(f, Mem::LastMade, last);
+    (e.set)(f, Mem::LastBase, base);
+    (e.set)(f, Mem::Moved, r);
+    (e.set)(f, Mem::Pending, zero);
+    (e.set)(f, Mem::Open, slot1);
+    (e.set)(f, Mem::Nodes, n1);
+    let wraps = f.ins().iadd_imm(wraps, 1);
+    (e.set)(f, Mem::Wraps, wraps);
+}
+
+/// `RETAG m=2`, `NODE_FIELD m=2`: the node made last at the innermost open node's level
+/// (`relabel`), its frame's last one more than its record (0: none), its kind or field `x`.
+fn made_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, x: Value, retag: bool, dead: bool) {
+    let open = (e.get)(f, Mem::Open);
+    let last = (e.get)(f, Mem::LastMade);
+    let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
+    let no_last = f.ins().icmp_imm(IntCC::Equal, last, 0);
+    // A branch each, not the tests joined.
+    (e.guard)(f, none);
+    (e.guard)(f, no_last);
+    let r = f.ins().iadd_imm(last, -1);
+    let rows = (e.ctx)(f, ROWS);
+    NodeCol::of(rows, if retag { AT_KIND } else { AT_FIELD }).put(f, r, x);
+    if dead {
+        // `drop`: the node goes (a token the grammar implies), left out at `ACCEPT`; none is
+        // made last at this level until the next.
+        let d = (e.get)(f, Mem::Dead);
+        let d = f.ins().iadd_imm(d, 1);
+        (e.set)(f, Mem::Dead, d);
+        let zero = f.ins().iconst(types::I64, 0);
+        (e.set)(f, Mem::LastMade, zero);
+    }
+}
+
+/// `RETAG`: the innermost open node's kind.
+fn here_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value) {
+    let open = (e.get)(f, Mem::Open);
+    let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
+    (e.guard)(f, none);
+    let top = f.ins().iadd_imm(open, -1);
+    let open_c = (e.ctx)(f, OPEN);
+    let at = slot_get(f, open_c, top);
+    let rows = (e.ctx)(f, ROWS);
+    NodeCol::of(rows, AT_KIND).put(f, at, kind);
+}
+
+/// `MERGE m=1`: the innermost open node holds two leaves and nothing else, no extra pending:
+/// the first becomes one leaf through the second's end.
+fn fold_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value, wrapping: bool) {
+    let (nodes, pending, open) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Pending), (e.get)(f, Mem::Open));
+    let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
+    (e.guard)(f, none);
+    let top = f.ins().iadd_imm(open, -1);
+    let open_c = (e.ctx)(f, OPEN);
+    let o = slot_get(f, open_c, top);
+    let want = f.ins().iadd_imm(o, 3);
+    let count = f.ins().icmp(IntCC::NotEqual, nodes, want);
+    let waiting = f.ins().icmp_imm(IntCC::NotEqual, pending, 0);
+    // A branch each, not the tests joined.
+    (e.guard)(f, count);
+    (e.guard)(f, waiting);
+    let (a, b) = (f.ins().iadd_imm(o, 1), f.ins().iadd_imm(o, 2));
+    let rows = (e.ctx)(f, ROWS);
+    let (kind_c, end_c, size_c) = (NodeCol::of(rows, AT_KIND), NodeCol::of(rows, AT_END), NodeCol::of(rows, AT_SIZE));
+    let (ra, rb) = (NodeCol::row(f, rows, a), NodeCol::row(f, rows, b));
+    let (sa, sb) = (size_c.get_row(f, ra), size_c.get_row(f, rb));
+    let na = f.ins().icmp_imm(IntCC::NotEqual, sa, 1);
+    let nb = f.ins().icmp_imm(IntCC::NotEqual, sb, 1);
+    (e.guard)(f, na);
+    (e.guard)(f, nb);
+    let end = end_c.get_row(f, rb);
+    kind_c.put_row(f, ra, kind);
+    end_c.put_row(f, ra, end);
+    (e.set)(f, Mem::Nodes, b);
+    if wrapping {
+        // The first is the last node made at this level now.
+        (e.set)(f, Mem::LastMade, b);
+        (e.set)(f, Mem::LastBase, a);
+    }
+}
+
+/// `MERGE`: the grammar's leaf before the pending extras, a leaf inside the innermost open
+/// node; the extras are its text: dropped.
+fn merge_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value, end_at: EndAt) {
+    let zero = f.ins().iconst(types::I64, 0);
+    let (nodes, pending, open) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Pending), (e.get)(f, Mem::Open));
+    let kept = f.ins().isub(nodes, pending);
+    let none = f.ins().icmp_imm(IntCC::Equal, kept, 0);
+    (e.guard)(f, none);
+    let leaf = f.ins().iadd_imm(kept, -1);
+    let rows = (e.ctx)(f, ROWS);
+    let (kind_c, end_c, size_c) = (NodeCol::of(rows, AT_KIND), NodeCol::of(rows, AT_END), NodeCol::of(rows, AT_SIZE));
+    let leaf_row = NodeCol::row(f, rows, leaf);
+    let size = size_c.get_row(f, leaf_row);
+    let not_leaf = f.ins().icmp_imm(IntCC::NotEqual, size, 1);
+    (e.guard)(f, not_leaf);
+    let any = f.ins().icmp_imm(IntCC::NotEqual, open, 0);
+    let top = f.ins().iadd_imm(open, -1);
+    let top = f.ins().select(any, top, zero);
+    let open_c = (e.ctx)(f, OPEN);
+    let o = slot_get(f, open_c, top);
+    let inside = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, o, leaf);
+    let bad = f.ins().band(any, inside);
+    (e.guard)(f, bad);
+    let end = token_end_at(f, e, end_at);
+    kind_c.put_row(f, leaf_row, kind);
+    end_c.put_row(f, leaf_row, end);
+    (e.set)(f, Mem::Nodes, kept);
+    (e.set)(f, Mem::Pending, zero);
 }
 
 /// What `TOKEN` reads besides `ctx`: the room each token's path may need, and the marks.
@@ -881,6 +1164,17 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
     };
     field_set(f, ctx, Mem::Live, live);
     f.ins().return_(&[zero]);
+}
+
+/// `TOKEN`'s function (`WordFn::Token`), made where first called.
+fn token_fn<'a>(module: &mut JITModule, fns: &'a mut std::collections::HashMap<WordFn, (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)>, any_mark: Option<usize>, shape: TokenShape) -> Result<&'a (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function), Error> {
+    let key = WordFn::Token { any_mark };
+    if !fns.contains_key(&key) {
+        let name = format!("tempo_word_{}", fns.len());
+        let made = outline(module, &name, 1, 1, |g, q, _| take_token(g, q, any_mark, shape))?;
+        fns.insert(key, made);
+    }
+    Ok(&fns[&key])
 }
 
 /// A call of an outlined function (`outline`), from `f`.
@@ -1331,6 +1625,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     let phase_of = phases(native, &pushes);
     let flagged = phase_of.iter().any(|&p| p == crate::stream::TAKEN | crate::stream::UNTAKEN);
     let taken = |pc: usize| !flagged && phase_of[pc] == crate::stream::TAKEN;
+    let end_at = |pc: usize| if flagged { EndAt::Field } else if taken(pc) { EndAt::Taken } else { EndAt::Untaken };
     let named = |op: fn(&Op) -> Option<u16>| words.iter().find_map(|b| op(&b.operation)).map(usize::from);
     let starts = named(|o| if let Op::Token { extract, .. } = *o { Some(extract) } else { None });
     // The mask `SPAN m=1` names, as its output's index.
@@ -1607,19 +1902,6 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 f.ins().store(MemFlags::trusted(), x, p, STATE + 8 * k as i32);
             }
         };
-        // The token's end, as a word at `pc` reads it: after its `SPAN`, its record's; before
-        // (its bytes not taken), its start, or at the stream's end the last record's end. Where
-        // a `TOKEN` has both phases, a field says (`flagged`).
-        let token_end = |f: &mut FunctionBuilder<'_>, pc: usize| -> Value {
-            if flagged {
-                mget(f, Mem::End)
-            } else if taken(pc) {
-                mget(f, Mem::Limit)
-            } else {
-                let (at_end, limit, start) = (mget(f, Mem::AtEnd), mget(f, Mem::Limit), mget(f, Mem::Start));
-                f.ins().select(at_end, limit, start)
-            }
-        };
         // The token's kind and word, read from its code in memory as the lean parser reads a
         // token's (`ldrb` of the kind; the word's bytes after it): no shift or mask a test, which
         // Cranelift would make again in every block that tests (`band` with a constant is
@@ -1839,9 +2121,66 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 (v.0, v.1, v.2, v.3, v.4, v.5, v.6, v.7, v.8, v.9, v.10, v.11, v.12, v.13, v.14, v.15, v.16, v.17, v.18, wc)
             };
             // The node rows' fields.
-            let (kind_c, field_c, start_c, end_c, size_c) =
+            let (kind_c, field_c, _start_c, end_c, size_c) =
                 (NodeCol::of(rows_here, AT_KIND), NodeCol::of(rows_here, AT_FIELD), NodeCol::of(rows_here, AT_START), NodeCol::of(rows_here, AT_END), NodeCol::of(rows_here, AT_SIZE));
             let fall = goto(pc + 1);
+            // What a word's body reads and writes here (`WordEnv`): the state's fields, `ctx`'s
+            // columns as this word has them, its refusal at its place.
+            let env_get = |f: &mut FunctionBuilder<'_>, k: Mem| mget(f, k);
+            let env_set = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| mset(f, k, x);
+            let env_ctx = |f: &mut FunctionBuilder<'_>, at: i32| -> Value {
+                match at {
+                    ROWS => rows_here,
+                    OPEN => open_c,
+                    FRAME_BASE if wrapping => wc(fbase_c),
+                    HEAD if wrapping => wc(head_c),
+                    LINK if wrapping => wc(link_c),
+                    _ => {
+                        let c = if clustered { pinned(f) } else { ctx };
+                        f.ins().load(types::I64, MemFlags::trusted(), c, at)
+                    }
+                }
+            };
+            let env_guard = |f: &mut FunctionBuilder<'_>, bad: Value| guard(f, bad, pc);
+            let env = WordEnv { get: &env_get, set: &env_set, ctx: &env_ctx, guard: &env_guard };
+            // A word's body: made here, or with a function a grammar rule, a function of its own
+            // (`WordFn`) every place calls with its arguments, which gives back whether it refuses.
+            macro_rules! word {
+                ($key:expr, $args:expr, $refuses:expr, $body:expr) => {
+                    word!($key, $args, $refuses, $body, fall)
+                };
+                ($key:expr, $args:expr, $refuses:expr, $body:expr, $fall:expr) => {{
+                    let body = $body;
+                    if outlined {
+                        let key = $key;
+                        let args: &[Value] = $args;
+                        if !word_fns.contains_key(&key) {
+                            let name = format!("tempo_word_{}", word_fns.len());
+                            let made = outline(&mut module, &name, 1 + args.len(), usize::from($refuses), |g, q, _| own_word(g, q, $refuses, &body))?;
+                            word_fns.insert(key, made);
+                        }
+                        let (id, sig, _) = &word_fns[&key];
+                        let c = pinned(&mut f);
+                        let all: Vec<Value> = std::iter::once(c).chain(args.iter().copied()).collect();
+                        let r = call_own(&mut f, *id, sig, &all);
+                        if $refuses {
+                            guard(&mut f, r[0], pc);
+                        }
+                    } else {
+                        body(&mut f, &env, $args);
+                    }
+                    f.ins().jump($fall, &[]);
+                }};
+            }
+            // A node's field set by the next word (`NODE_FIELD` on the node just made), stored
+            // with its kind (one 32-bit store of both), the field word passed: as a call's
+            // argument, with a function a grammar rule.
+            let with_field = |kind: u16| -> (i64, Block) {
+                match words.get(pc + 1).map(|w| w.operation) {
+                    Some(Op::NodeField { field, on: On::Here }) if outlined => (i64::from(kind) | i64::from(field) << 16, goto(pc + 2)),
+                    _ => (i64::from(kind), fall),
+                }
+            };
             match w.operation {
                 Op::Token { any, .. } => {
                     // Any mark's mask (`TOKEN m=1+k`): its output.
@@ -1856,14 +2195,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                             f.ins().jump(fall, &[]);
                             continue;
                         }
-                        let key = WordFn::Token { any_mark };
                         let shape = TokenShape { bound, in_code, rest_bits, end_bits };
-                        if !word_fns.contains_key(&key) {
-                            let name = format!("tempo_word_{}", word_fns.len());
-                            let made = outline(&mut module, &name, 1, 1, |g, q, _| take_token(g, q, any_mark, shape))?;
-                            word_fns.insert(key, made);
-                        }
-                        let (id, sig, _) = &word_fns[&key];
+                        let (id, sig, _) = token_fn(&mut module, &mut word_fns, any_mark, shape)?;
                         let c = pinned(&mut f);
                         let r = call_own(&mut f, *id, sig, &[c])[0];
                         // A refusal: past the stream's end at this word, or out of room.
@@ -2120,12 +2453,14 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 Op::Word { string, test } => {
                     // The record's word: its code names the string (`records`), one compare.
                     let w = token_word(&mut f);
-                    let same = f.ins().icmp_imm(IntCC::Equal, w, i64::from(string) + 1);
                     if test {
+                        let same = f.ins().icmp_imm(IntCC::Equal, w, i64::from(string) + 1);
                         let skip = goto(pc + 2);
                         f.ins().brif(same, fall, &[], skip, &[]);
                     } else {
-                        let differs = f.ins().bxor_imm(same, 1);
+                        // One compare and a branch on it, as the lean parser's (no `bnot` of a
+                        // compare, which Cranelift makes a `cset`, an `eor` and a `uxtb`).
+                        let differs = f.ins().icmp_imm(IntCC::NotEqual, w, i64::from(string) + 1);
                         guard(&mut f, differs, pc);
                         f.ins().jump(fall, &[]);
                     }
@@ -2203,113 +2538,19 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     f.ins().brif(bit, fall, &[], skip, &[]);
                 }
                 Op::Open { kind } => {
-                    mset(&mut f, Mem::Pending, zero);
-                    let (nodes, start, open) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Start), mget(&mut f, Mem::Open));
-                    let k = f.ins().iconst(types::I64, i64::from(kind));
-                    // Its row: its kind with no field, one word; its start.
-                    let row = NodeCol::row(&mut f, rows_here, nodes);
-                    f.ins().istore32(flags, k, row, AT_KIND);
-                    start_c.put_row(&mut f, row, start);
-                    put(&mut f, open_c, open, nodes);
-                    if wrapping {
-                        // Its frame, at depth + 1 (slot 0 is the root's parent's): its own base,
-                        // no node made yet; and its record is no base of a wrap yet.
-                        let slot1 = f.ins().iadd_imm(open, 1);
-                        put(&mut f, wc(fbase_c), slot1, nodes);
-                        mset(&mut f, Mem::LastMade, zero);
-                        put(&mut f, wc(head_c), nodes, zero);
-                    }
-                    let open = f.ins().iadd_imm(open, 1);
-                    let nodes = f.ins().iadd_imm(nodes, 1);
-                    mset(&mut f, Mem::Open, open);
-                    mset(&mut f, Mem::Nodes, nodes);
-                    f.ins().jump(fall, &[]);
+                    let (code, next) = with_field(kind);
+                    let k = f.ins().iconst(types::I64, code);
+                    word!(WordFn::Open, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| open_word(g, e, q[0], wrapping), next);
                 }
                 Op::Close { this } => {
-                    let open = mget(&mut f, Mem::Open);
-                    let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
-                    guard(&mut f, none, pc);
-                    let open = f.ins().iadd_imm(open, -1);
-                    mset(&mut f, Mem::Open, open);
-                    let at = {
-                        let a = slot(&mut f, open_c, open);
-                        f.ins().uload32(flags, a, 0)
-                    };
-                    let (nodes, pending) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Pending));
-                    let e = if this {
-                        token_end(&mut f, pc)
-                    } else {
-                        let (keep, last_end) = (mget(&mut f, Mem::Keep), mget(&mut f, Mem::LastEnd));
-                        f.ins().select(pending, keep, last_end)
-                    };
-                    let at_row = NodeCol::row(&mut f, rows_here, at);
-                    end_c.put_row(&mut f, at_row, e);
-                    let base = if wrapping {
-                        // Its subtree starts at its base (a wrap's is the moved node's); it is the
-                        // last node made at its parent's level.
-                        let slot1 = f.ins().iadd_imm(open, 1);
-                        let base = {
-                            let a = slot(&mut f, wc(fbase_c), slot1);
-                            f.ins().uload32(flags, a, 0)
-                        };
-                        let at1 = f.ins().iadd_imm(at, 1);
-                        mset(&mut f, Mem::LastMade, at1);
-                        mset(&mut f, Mem::LastBase, base);
-                        base
-                    } else {
-                        at
-                    };
-                    let size = f.ins().isub(nodes, base);
-                    let size = f.ins().isub(size, pending);
-                    size_c.put_row(&mut f, at_row, size);
-                    f.ins().jump(fall, &[]);
-                }
-                Op::Leaf { kind, deferred, extra } if outlined => {
-                    let end = if flagged { EndAt::Field } else if taken(pc) { EndAt::Taken } else { EndAt::Untaken };
-                    let key = WordFn::Leaf { deferred, extra, end };
-                    if !word_fns.contains_key(&key) {
-                        let name = format!("tempo_word_{}", word_fns.len());
-                        let made = outline(&mut module, &name, 2, 0, |g, q, _| leaf_word(g, q, deferred, extra, end, wrapping))?;
-                        word_fns.insert(key, made);
-                    }
-                    let (id, sig, _) = &word_fns[&key];
-                    let c = pinned(&mut f);
-                    let k = f.ins().iconst(types::I64, i64::from(kind));
-                    call_own(&mut f, *id, sig, &[c, k]);
-                    f.ins().jump(fall, &[]);
+                    let end = end_at(pc);
+                    word!(WordFn::Close { this, end }, &[], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, _: &[Value]| close_word(g, e, this, end, wrapping));
                 }
                 Op::Leaf { kind, deferred, extra } => {
-                    let pending = if deferred {
-                        // The first pending leaf keeps the end of the token before it.
-                        let (p, keep, last_end) = (mget(&mut f, Mem::Pending), mget(&mut f, Mem::Keep), mget(&mut f, Mem::LastEnd));
-                        let keep = f.ins().select(p, keep, last_end);
-                        mset(&mut f, Mem::Keep, keep);
-                        f.ins().iadd_imm(p, 1)
-                    } else {
-                        zero
-                    };
-                    mset(&mut f, Mem::Pending, pending);
-                    let (nodes, start, end) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Start), token_end(&mut f, pc));
-                    let k = f.ins().iconst(types::I64, i64::from(kind));
-                    let one = f.ins().iconst(types::I64, 1);
-                    // Its row: its kind with no field, one word; its bytes; one record.
-                    let row = NodeCol::row(&mut f, rows_here, nodes);
-                    f.ins().istore32(flags, k, row, AT_KIND);
-                    start_c.put_row(&mut f, row, start);
-                    end_c.put_row(&mut f, row, end);
-                    size_c.put_row(&mut f, row, one);
-                    if wrapping {
-                        put(&mut f, wc(head_c), nodes, zero);
-                        if !deferred && !extra {
-                            // The last node made at the innermost open node's level.
-                            let n1 = f.ins().iadd_imm(nodes, 1);
-                            mset(&mut f, Mem::LastMade, n1);
-                            mset(&mut f, Mem::LastBase, nodes);
-                        }
-                    }
-                    let nodes = f.ins().iadd_imm(nodes, 1);
-                    mset(&mut f, Mem::Nodes, nodes);
-                    f.ins().jump(fall, &[]);
+                    let end = end_at(pc);
+                    let (code, next) = with_field(kind);
+                    let k = f.ins().iconst(types::I64, code);
+                    word!(WordFn::Leaf { deferred, extra, end }, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| leaf_word(g, e, q[0], deferred, extra, end, wrapping), next);
                 }
                 Op::Settle { .. } => {
                     // A token the grammar implies: no node; the extras pending stay where they are.
@@ -2344,56 +2585,18 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     }
                 }
                 Op::Retag { kind, on: On::Moved } => {
-                    let m = mget(&mut f, Mem::Moved);
-                    let k = kind_of(&mut f, kind, pc);
-                    kind_c.put(&mut f, m, k);
-                    f.ins().jump(fall, &[]);
+                    let remembered = kind == REMEMBERED;
+                    let k = f.ins().iconst(types::I64, i64::from(kind));
+                    word!(WordFn::RetagMoved { remembered }, &[k], remembered, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| {
+                        let k = if remembered { remembered_kind(g, e) } else { q[0] };
+                        let m = (e.get)(g, Mem::Moved);
+                        let rows = (e.ctx)(g, ROWS);
+                        NodeCol::of(rows, AT_KIND).put(g, m, k);
+                    });
                 }
                 Op::Wrap { kind } if wrapping => {
-                    // Around the last node made at the innermost open node's level: its record
-                    // at the table's end, linked into the moved node's base's chain; open, its
-                    // frame's base that base, the moved node the last made at its level.
-                    let open = mget(&mut f, Mem::Open);
-                    let (last, base) = (mget(&mut f, Mem::LastMade), mget(&mut f, Mem::LastBase));
-                    let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
-                    let no_last = f.ins().icmp_imm(IntCC::Equal, last, 0);
-                    // A branch each, not the tests joined.
-                    guard(&mut f, none, pc);
-                    guard(&mut f, no_last, pc);
-                    let r = f.ins().iadd_imm(last, -1);
-                    let (nodes, wraps) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Wraps));
-                    let (fld, st) = {
-                        let rr = NodeCol::row(&mut f, rows_here, r);
-                        (field_c.get_row(&mut f, rr), start_c.get_row(&mut f, rr))
-                    };
                     let k = f.ins().iconst(types::I64, i64::from(kind));
-                    let row = NodeCol::row(&mut f, rows_here, nodes);
-                    kind_c.put_row(&mut f, row, k);
-                    field_c.put_row(&mut f, row, fld);
-                    start_c.put_row(&mut f, row, st);
-                    let rr = NodeCol::row(&mut f, rows_here, r);
-                    field_c.put_row(&mut f, rr, zero);
-                    let h = {
-                        let a = slot(&mut f, wc(head_c), base);
-                        f.ins().uload32(flags, a, 0)
-                    };
-                    put(&mut f, wc(link_c), nodes, h);
-                    let n1 = f.ins().iadd_imm(nodes, 1);
-                    put(&mut f, wc(head_c), base, n1);
-                    let mark = f.ins().iconst(types::I64, IS_WRAP);
-                    put(&mut f, wc(head_c), nodes, mark);
-                    put(&mut f, open_c, open, nodes);
-                    let slot1 = f.ins().iadd_imm(open, 1);
-                    put(&mut f, wc(fbase_c), slot1, base);
-                    mset(&mut f, Mem::LastMade, last);
-                    mset(&mut f, Mem::LastBase, base);
-                    mset(&mut f, Mem::Moved, r);
-                    mset(&mut f, Mem::Pending, zero);
-                    mset(&mut f, Mem::Open, slot1);
-                    mset(&mut f, Mem::Nodes, n1);
-                    let wraps = f.ins().iadd_imm(wraps, 1);
-                    mset(&mut f, Mem::Wraps, wraps);
-                    f.ins().jump(fall, &[]);
+                    word!(WordFn::Wrap, &[k], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| wrap_word(g, e, q[0]));
                 }
                 Op::NodeField { field, on: On::Inner } => {
                     // The node the node made last, a wrap, holds first: that frame's last base.
@@ -2424,28 +2627,14 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     f.ins().jump(fall, &[]);
                 }
                 Op::Retag { kind, on: On::Made } | Op::NodeField { field: kind, on: On::Made } => {
-                    // The node made last at the innermost open node's level (`relabel`): its
-                    // frame's last, one more than its record (0: none).
-                    let open = mget(&mut f, Mem::Open);
-                    let last = mget(&mut f, Mem::LastMade);
-                    let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
-                    let no_last = f.ins().icmp_imm(IntCC::Equal, last, 0);
-                    // A branch each, not the tests joined.
-                    guard(&mut f, none, pc);
-                    guard(&mut f, no_last, pc);
-                    let r = f.ins().iadd_imm(last, -1);
-                    let x = if matches!(w.operation, Op::Retag { .. }) { kind_of(&mut f, kind, pc) } else { f.ins().iconst(types::I64, i64::from(kind)) };
-                    let col = if matches!(w.operation, Op::Retag { .. }) { kind_c } else { field_c };
-                    col.put(&mut f, r, x);
-                    if matches!(w.operation, Op::Retag { kind: DEAD, .. }) {
-                        // `drop`: the node goes (a token the grammar implies), left out at
-                        // `ACCEPT`; none is made last at this level until the next.
-                        let dead = mget(&mut f, Mem::Dead);
-                        let dead = f.ins().iadd_imm(dead, 1);
-                        mset(&mut f, Mem::Dead, dead);
-                        mset(&mut f, Mem::LastMade, zero);
-                    }
-                    f.ins().jump(fall, &[]);
+                    let retag = matches!(w.operation, Op::Retag { .. });
+                    let remembered = retag && kind == REMEMBERED;
+                    let dead = retag && kind == DEAD;
+                    let k = f.ins().iconst(types::I64, i64::from(kind));
+                    word!(WordFn::Made { retag, remembered, dead }, &[k], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| {
+                        let k = if remembered { remembered_kind(g, e) } else { q[0] };
+                        made_word(g, e, k, retag, dead)
+                    });
                 }
                 Op::Reread { reading } if wrapping => {
                     // The node made last at the innermost open node's level and the nodes inside
@@ -2566,85 +2755,17 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     f.ins().jump(scan, &[BlockArg::from(i1)]);
                 }
                 Op::Retag { kind, on: On::Here } => {
-                    // The innermost open node's kind.
-                    let open = mget(&mut f, Mem::Open);
-                    let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
-                    guard(&mut f, none, pc);
-                    let top = f.ins().iadd_imm(open, -1);
-                    let at = {
-                        let a = slot(&mut f, open_c, top);
-                        f.ins().uload32(flags, a, 0)
-                    };
                     let k = f.ins().iconst(types::I64, i64::from(kind));
-                    kind_c.put(&mut f, at, k);
-                    f.ins().jump(fall, &[]);
+                    word!(WordFn::Here, &[k], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| here_word(g, e, q[0]));
                 }
                 Op::Merge { kind, fold: true } => {
-                    // The innermost open node holds two leaves and nothing else, no extra
-                    // pending: the first becomes one leaf through the second's end.
-                    let (nodes, pending, open) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Pending), mget(&mut f, Mem::Open));
-                    let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
-                    guard(&mut f, none, pc);
-                    let top = f.ins().iadd_imm(open, -1);
-                    let o = {
-                        let a = slot(&mut f, open_c, top);
-                        f.ins().uload32(flags, a, 0)
-                    };
-                    let want = f.ins().iadd_imm(o, 3);
-                    let count = f.ins().icmp(IntCC::NotEqual, nodes, want);
-                    let waiting = f.ins().icmp_imm(IntCC::NotEqual, pending, 0);
-                    // A branch each, not the tests joined.
-                    guard(&mut f, count, pc);
-                    guard(&mut f, waiting, pc);
-                    let (a, b) = (f.ins().iadd_imm(o, 1), f.ins().iadd_imm(o, 2));
-                    let (ra, rb) = (NodeCol::row(&mut f, rows_here, a), NodeCol::row(&mut f, rows_here, b));
-                    let (sa, sb) = (size_c.get_row(&mut f, ra), size_c.get_row(&mut f, rb));
-                    let na = f.ins().icmp_imm(IntCC::NotEqual, sa, 1);
-                    let nb = f.ins().icmp_imm(IntCC::NotEqual, sb, 1);
-                    // A branch each, not the tests joined.
-                    guard(&mut f, na, pc);
-                    guard(&mut f, nb, pc);
-                    let end = end_c.get_row(&mut f, rb);
                     let k = f.ins().iconst(types::I64, i64::from(kind));
-                    kind_c.put_row(&mut f, ra, k);
-                    end_c.put_row(&mut f, ra, end);
-                    mset(&mut f, Mem::Nodes, b);
-                    if wrapping {
-                        // The first is the last node made at this level now.
-                        mset(&mut f, Mem::LastMade, b);
-                        mset(&mut f, Mem::LastBase, a);
-                    }
-                    f.ins().jump(fall, &[]);
+                    word!(WordFn::Fold, &[k], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| fold_word(g, e, q[0], wrapping));
                 }
                 Op::Merge { kind, fold: false } => {
-                    // The grammar's leaf before the pending extras: a leaf, inside the innermost
-                    // open node. The extras are its text: dropped.
-                    let (nodes, pending, open) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Pending), mget(&mut f, Mem::Open));
-                    let kept = f.ins().isub(nodes, pending);
-                    let none = f.ins().icmp_imm(IntCC::Equal, kept, 0);
-                    guard(&mut f, none, pc);
-                    let leaf = f.ins().iadd_imm(kept, -1);
-                    let leaf_row = NodeCol::row(&mut f, rows_here, leaf);
-                    let size = size_c.get_row(&mut f, leaf_row);
-                    let not_leaf = f.ins().icmp_imm(IntCC::NotEqual, size, 1);
-                    guard(&mut f, not_leaf, pc);
-                    let any = f.ins().icmp_imm(IntCC::NotEqual, open, 0);
-                    let top = f.ins().iadd_imm(open, -1);
-                    let top = f.ins().select(any, top, zero);
-                    let o = {
-                        let a = slot(&mut f, open_c, top);
-                        f.ins().uload32(flags, a, 0)
-                    };
-                    let inside = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, o, leaf);
-                    let bad = f.ins().band(any, inside);
-                    guard(&mut f, bad, pc);
+                    let end = end_at(pc);
                     let k = f.ins().iconst(types::I64, i64::from(kind));
-                    let end = token_end(&mut f, pc);
-                    kind_c.put_row(&mut f, leaf_row, k);
-                    end_c.put_row(&mut f, leaf_row, end);
-                    mset(&mut f, Mem::Nodes, kept);
-                    mset(&mut f, Mem::Pending, zero);
-                    f.ins().jump(fall, &[]);
+                    word!(WordFn::Merge { end }, &[k], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| merge_word(g, e, q[0], end));
                 }
                 Op::NodeField { field, on } => {
                     let last = if on == On::Moved {
