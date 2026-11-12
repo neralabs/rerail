@@ -50,7 +50,7 @@ afterEach(async () => {
  * same clone, as `git worktree add` and the walk record a repository's worktrees.
  */
 async function repositoryWith(rows: ReadonlyArray<{ readonly path: (main: string, root: string) => string; readonly started: boolean | null }>) {
-  const root = realpathSync(await mkdtemp(join(tmpdir(), "rerail-checkout-cost-")));
+  const root = realpathSync(await mkdtemp(join(tmpdir(), "rerail-context-cost-")));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const main = join(root, "factory");
   mkdirSync(main, { recursive: true });
