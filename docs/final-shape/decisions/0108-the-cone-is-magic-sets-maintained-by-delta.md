@@ -255,24 +255,56 @@ by the workspace's module".
 **Switches.** `RERAIL_CONE_ROUNDS=off` turns the rounds off; `RERAIL_CONE_ROUNDS=off-<phase>`
 turns them off in one phase. `RERAIL_CONE_STILL=off` turns off the journal's kept answers.
 
+## Built: loads taken back by their documents, the file system as relations (2026-11-11)
+
+**A load is taken back by the document its answer recorded.** The thread that answers loads
+records each loaded file's document in a ledger it shares with the rounds
+(`cone_rounds::LoadLedger`). Taking a load back removes two kinds of row: the `loaded` rows of
+its module and grammar, and the per-file rows located at its document. Nothing is matched by
+value. Before this, a row was taken if any column held the file's symbol, so a `file_digest`
+answer for the same path went too. Its key stayed asked, and the digest was never asked again.
+A file still loaded under a module that is still asked keeps its document.
+
+**A load taken back frees its place in the budget.** The rounds hand the files they took back
+to the answering thread, which unloads them before its next load (`World::unload`). A load
+past the budget is no longer refused for good, and one taken back and asked again is loaded
+again in place, with the rows it was given (`World::reload`).
+
+**The file system's answers are joins.** In the round program, `dir_entry`, `file_line` and
+`file_digest` are derived, not inputs:
+
+```text
+dir_entry(d, n, k) :- rr_dir_req(d), rr_fs_dir_entry(d, n, k).
+```
+
+`rr_fs_*` holds the file system's rows where they were asked. It is the input the answers
+add to, and it is kept in the frames like any input. A request no longer asked takes its
+answer with it. The journal's kept answers and the world digest are over `rr_fs_*`.
+
+Checked on the workload (237 files, 208 loads): an edit, a workspace `csv.py` shadowing the
+stdlib's `csv` (two loads taken back), its removal (loaded again) and the revert each write
+what a fresh cone writes.
+
 ## Open
 
-- **The load budget, across waves.** Within one batch of loads, the budget now admits by the
-  requests themselves: a top-level module before a submodule, then by module and path. Across
-  batches it is still first-come. A carried run asks all its loads in one batch, a fresh one
-  wave by wave, so when the budget binds (over 4000 libraries; the workload loads 208) the two
-  can admit different sets. A load taken back still counts against the budget for the rest of
-  the run. A rank both share needs each load's depth as a fact (a `min` lattice in
-  `modules.rr`).
-- **Taking a load back** finds its rows by value. A row is taken if it holds the loaded file's
-  symbol, or a node of its document in its location column. An integer column that happens to
-  equal that symbol would be taken too.
-- `fs_dir` and `fs_line` as relations of the cone's fact space (t33's K2). The answers are the
-  join `r :- m_r, fs_r` above, but the native step still answers from `World`'s maps.
+- **The load budget is still a function of the order loads are asked in.** Tried: each load's
+  depth as a fact (`load_depth(module, n: min<>) widen 64` in `modules.rr`), sent with its key,
+  with a batch admitted by (depth, dots, module, path). With `load.budget=100` the rounds and
+  a fresh cone (`RERAIL_CONE_ROUNDS=off`) still loaded different sets of 100. The fresh cone is
+  the gated fixpoint, which asks loads as its plan's waves reach them, not level by level. So
+  a deeper module can be admitted before a shallower one. Ordering within a batch cannot
+  close this. Both paths would have to admit a whole depth level only once nothing shallower
+  can still be asked. The patch is kept; it is not merged. The budget binds only past 4000
+  library documents (the workload loads 208).
 - **A segfault in phase 1, once.** After the hub merge (`03125d2d1`), one unchanged run of the
   workload crashed: SIGSEGV, 1.1 s user, after phase 0's profile was written. Phase 1 holds the
-  cone. It left no crash report. Nine more runs, four of them after an edit was made and taken
-  back, did not crash. Next time: run under `lldb` or with `MallocScribble`.
+  cone. It left no crash report. 39 runs since have not crashed, 30 of them under `lldb` with
+  an edit made and taken back every third run. Ruled out: a late FSEvents callback. A test that
+  counted callbacks after `FSEventStreamInvalidate` returned found none in 300 replays under a
+  flood of writes. The stream now holds its own reference to what its callback fills anyway.
+- **The cone's test** (`the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads`) is in
+  `rerail-logic` since the crate split, whose tests do not compile yet. Cratification moves
+  the tests that read what only the engine sees back into the engine (`461227c8b`).
 
 ## Building on it
 
@@ -281,4 +313,4 @@ or a search, such as decision 0083 §4's memoised searches, including misses. De
 relation's adornment, write its answer as `r :- m_r, source`, and the rewrite, the gates and
 maintenance apply unchanged. Two parts are not built yet: adornments over several columns (the
 demand key is only the first column today, which 00-review measured as 13× slower for a
-one-file query), and a load budget that is a function of the requests (a rank, not wave order).
+one-file query), and a load budget that is a function of the requests (see Open).
