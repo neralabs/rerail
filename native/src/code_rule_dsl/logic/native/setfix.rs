@@ -245,6 +245,13 @@ pub fn symbol_text(conn: &Connection, atom: i64) -> Result<String> {
     Ok(s.name(atom).to_owned())
 }
 
+/// `RERAIL_WAVE0=changes` (a spike): a maintained component's first wave is its input changes' seeds, not its kept
+/// rows (`plan::reads_change`).
+pub fn wave0_changes() -> bool {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_WAVE0").is_ok_and(|v| v == "changes"));
+    *ON
+}
+
 /// Appends the symbols pending in `conn`'s database if a flush is due (decision 0049 §4.2): a run's end.
 pub fn flush_symbols(conn: &Connection) -> Result<()> {
     crate::content_store::atoms::Atoms::for_connection(conn).flush_if_due(conn).map_err(|e| err(e.to_string()))
@@ -994,6 +1001,8 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     let mut device_wanted = false;
     let mut leveled = false;
     let mut seed_specs: Vec<(usize, Arc<JoinSpec>)> = Vec::new();
+    // Each relation's kept rows (`Start::Base`), by index: under `wave0_changes` they are no wave's delta.
+    let mut kept_n: Vec<usize> = Vec::new();
     for line in &spec.lines {
         match line {
             Line::Rel { name: table, types, start } => {
@@ -1021,6 +1030,8 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
                             Some(b) => rel = b,
                             None => rel = Rel::compacted(table, types.as_bytes(), &o, g.as_deref()),
                         }
+                        kept_n.resize(rels.len(), 0);
+                        kept_n.push(rel.n);
                         if *seeded {
                             for row in read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)? { rel.push(&row); }
                         }
@@ -1157,7 +1168,9 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     // Rows this run pushes go above every kept row's level in the component (`Rel::level`).
     let lbase = rels.iter().filter(|r| r.level.len() == r.n).flat_map(|r| r.level.iter().copied()).max().unwrap_or(0);
     for r in &mut rels { r.lbase = lbase; }
-    for r in &mut rels { let n = r.n; r.set_delta(0, n); }   // the first wave reads the seeds as its delta
+    // The first wave reads the seeds as its delta; under `wave0_changes`, not a relation's kept rows (`Start::Base`).
+    let wave0 = wave0_changes();
+    for (i, r) in rels.iter_mut().enumerate() { let n = r.n; let lo = if wave0 { kept_n.get(i).copied().unwrap_or(0) } else { 0 }; r.set_delta(lo, n); }
     // Levels (decision 0090): `live`'s rows are shown a level at a time, never a delta, so no probe reads it as
     // one; the other levels relations get small batches from row 0, which a whole plan (one for a delta that is
     // its whole relation) would join by scanning `live` or `old`.

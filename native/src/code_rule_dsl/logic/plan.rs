@@ -1167,6 +1167,11 @@ impl Model {
         body: &[Literal],
         first: Option<usize>,
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
+        // `RERAIL_PLAN_FRESH`: every plan searched, none reused (a measurement: what kept orders cost).
+        static FRESH: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_PLAN_FRESH").is_some());
+        if *FRESH {
+            return self.plan_inner(prog, head, body, first, None, true);
+        }
         let key = self.plan_key("", head, body, first);
         let nodes = self.stats.nodes.max(1.0);
         let Some(kept) = PLANS.with(|p| p.borrow().as_ref().map(|p| p.lock().get(&key).cloned())) else {
@@ -4031,6 +4036,13 @@ fn same_order(a: &[Step], b: &[Step]) -> bool {
 }
 
 /// Positive body atoms of `scc`, by body position.
+/// Whether `body` reads, positively, a change of a relation outside `scc`: rows a lower stratum lost, gained or
+/// decided (decisions 0077, 0090).
+fn reads_change(body: &[Literal], scc: &BTreeSet<String>) -> bool {
+    const CHANGES: [&str; 10] = ["__plus", "__minus", "__ins", "__del", "__gone", "__lost", "__redo", "__cand", "__chk", "__held"];
+    body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && !scc.contains(a.rel.as_str()) && CHANGES.iter().any(|c| a.rel.ends_with(c))))
+}
+
 fn recursive<'r>(body: &'r [Literal], scc: &BTreeSet<String>) -> Vec<(usize, &'r Atom)> {
     body.iter()
         .enumerate()
@@ -5152,7 +5164,14 @@ impl<'a> Run<'a, '_> {
         let mut orders = Vec::new();
         // Each order's rule, for the fanouts its runs observe (`obs_rule`).
         let mut order_rules: Vec<u64> = Vec::new();
-        let seeds: Vec<&Rule> = rules.iter().copied().filter(|r| recursive(&r.body, scc).is_empty()).collect();
+        // `RERAIL_WAVE0=changes` (a spike): a maintained component's first wave is driven by its input changes, not by
+        // its kept rows. A rule that reads a change of a lower stratum (`x__plus`, `x__gone`, …) also runs once as a
+        // seed, and the kept rows start as no wave's delta (`native::setfix::wave0_changes`).
+        let wave0 = !based.is_empty() && super::native::wave0_changes();
+        // Only a rule whose relations of the component all start from kept rows: one that reads a relation starting
+        // empty (`walk__ins`) derives nothing in the first wave, and its delta's probe takes its rows as they come.
+        let from_kept = |r: &Rule| recursive(&r.body, scc).iter().all(|(_, a)| based.contains_key(a.rel.as_str()));
+        let seeds: Vec<&Rule> = rules.iter().copied().filter(|r| recursive(&r.body, scc).is_empty() || (wave0 && reads_change(&r.body, scc) && from_kept(r))).collect();
         // A rule's planning, as a span named by its number and body size (`plan #0009 violation, 15 literals`).
         let planning = |r: &Rule, what: &str| {
             super::profile::span(|| {
@@ -5190,6 +5209,16 @@ impl<'a> Run<'a, '_> {
                 None => "a head term".to_owned(),
             }
         };
+        // A seed that reads the component's own relations (`wave0`'s) prices them by their kept rows' statistics, as
+        // the probes do: unpriced, each read of one was a scan of the component, and the search took cross products.
+        if wave0 {
+            for r in &rels {
+                if let Some(card) = prior_stats(&mut self.model, prog, r) {
+                    self.model.stats.card.insert((*r).clone(), card);
+                }
+            }
+            self.model.resolve(prog, rels.iter().map(|r| r.as_str()))?;
+        }
         for r in &seeds {
             let span = planning(r, "plan");
             let t0 = if profiling { super::profile::now() } else { 0.0 };
