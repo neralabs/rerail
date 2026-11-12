@@ -894,8 +894,8 @@ describe("A runtime's closed sessions", () => {
     }),
   });
 
-  // A checkout's runtime lives while any session in it does, and the idle close ends each killed session there too: after
-  // 30 quiet minutes, or after a day when the session still owed its agent a result, a steer or a held finding.
+  // A checkout's runtime lives while any session in it does, and the idle close lets each killed session there go too:
+  // after 30 quiet minutes, or after a day when the session still owed its agent a result, a steer or a held finding.
   it("are kept for late receipts only while they are among the last sixteen to close", { timeout: 20_000 }, async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-closed-sessions-")));
     directories.push(root);
@@ -937,6 +937,31 @@ describe("A runtime's closed sessions", () => {
     const sessionStore = new SqliteSessionStore(join(root, "rerail.sqlite"));
     try {
       expect(sessionIds.map(sessionId => sessionStore.session(sessionId)?.endedAt)).toEqual(sessionIds.map(() => 1_000_000));
+    } finally {
+      sessionStore.close();
+    }
+  });
+
+  it("stay open once suspended, though sixteen later suspensions push one out while it is still closing", { timeout: 20_000 }, async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-closed-sessions-")));
+    directories.push(root);
+    const runtime = runtimeIn(root);
+    const sessionIds = Array.from({ length: 17 }, (_, index) => `s${index}`);
+    try {
+      for (const sessionId of sessionIds) {
+        await runtime.ingest({ kind: "session-start", eventId: `${sessionId}:start`, session: { host: "claude-code", sessionId, cwd: root } });
+        await runtime.codeRulesOpened(sessionId);
+      }
+      // Every idle close begins at once; `s16`'s pushes `s0` out before `s0` finishes closing.
+      const closes = await Promise.all(sessionIds.map(sessionId => runtime.closeIdleSession(sessionId)));
+      expect(closes.map(close => close.kind)).toEqual(sessionIds.map(() => "suspended"));
+    } finally {
+      await runtime.dispose();
+    }
+
+    const sessionStore = new SqliteSessionStore(join(root, "rerail.sqlite"));
+    try {
+      expect(sessionIds.map(sessionId => sessionStore.session(sessionId)?.endedAt)).toEqual(sessionIds.map(() => null));
     } finally {
       sessionStore.close();
     }
