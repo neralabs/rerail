@@ -19,7 +19,7 @@ fn fixture(store: &ContentStore, count: usize) -> (front::Program, HashMap<Strin
         let result = format!("result{i}");
         let rows: Vec<i64> = (1..=3).map(|d| (d << 32) | i as i64).collect();
         let source = component::columns_source(vec!["c0".into()], vec![Some(rows.clone())]);
-        let docs = docs_of(source.as_ref());
+        let docs = docs_of(source.as_ref(), 0);
         let d = digest(source.as_ref());
         assert_eq!(digest_of_docs(&docs), d);
         now.insert(input.clone(), d);

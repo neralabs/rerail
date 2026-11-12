@@ -40,6 +40,10 @@ pub(super) struct Keeper {
     base_rels: Vec<(String, String, Vec<usize>)>,
     base: super::exports::Counted,
     own: super::Own,
+    /// Per export (by key): each value document its rows name in their location column (`doc_at`), and how many
+    /// counted files' entries hold its rows (decision 0117 step 2). A value document's rows go to every file that
+    /// asked for it; any other owner's to one file. Kept in the blob.
+    holders: BTreeMap<String, rustc_hash::FxHashMap<i64, i64>>,
 }
 
 /// What a session's keeper keeps of its files beyond their statistics (0096 step 3): the exports, and each base
@@ -62,6 +66,7 @@ impl Keeper {
         if rels.iter().any(|(rel, _)| !self.rels.contains_key(rel)) && !self.docs.is_empty() {
             self.docs.clear();
             self.rels.clear();
+            self.holders.clear();
         }
         for (rel, columns) in rels {
             self.rels.entry(rel.clone()).or_insert_with(|| RelStats::new(columns.clone()));
@@ -206,6 +211,25 @@ impl Keeper {
     }
 
     fn count(&mut self, entry: &memo::Entry, sign: i64) {
+        let values = crate::code_rule_dsl::facts::vtab::syntax::HIDDEN_KEYS as i64;
+        for (key, at) in &self.doc_at {
+            let (Some(at), Some((width, rows))) = (at, entry.rows.get(key)) else { continue };
+            if at >= width {
+                continue;
+            }
+            let owners: rustc_hash::FxHashSet<i64> = rows.chunks_exact(*width).map(|r| memo::document_of(r[*at])).filter(|d| *d >= values).collect();
+            if owners.is_empty() {
+                continue;
+            }
+            let held = self.holders.entry(key.clone()).or_default();
+            for o in owners {
+                let n = held.entry(o).or_default();
+                *n += sign;
+                if *n == 0 {
+                    held.remove(&o);
+                }
+            }
+        }
         for (key, stats) in &mut self.rels {
             if let Some((width, values)) = entry.rows.get(key) {
                 match self.doc_at.get(key) {
@@ -241,6 +265,7 @@ impl Keeper {
         if let Some(why) = self.failed.take() {
             self.docs.clear();
             self.rels.clear();
+            self.holders.clear();
             self.exports = None;
             return Err(why);
         }
@@ -253,7 +278,7 @@ impl Keeper {
     /// The keeper as a run of the tape cache keeps it (decision 0096 §2): one blob, the files' contents it counts
     /// and each relation's statistics. Only stored contents are kept (a session's are its memory's).
     pub(super) fn encode(&self) -> Vec<u8> {
-        let mut out = vec![3u8];
+        let mut out = vec![4u8];
         let int = |out: &mut Vec<u8>, v: i64| out.extend_from_slice(&v.to_le_bytes());
         // A content the store does not hold yet is kept by its digest: the next run finds its source (`resolve`).
         let mut docs: Vec<(&String, memo::Content, i64)> = self.docs.iter().filter(|(_, (c, _))| !matches!(c, memo::Content::Held(_))).map(|(p, (c, k))| (p, *c, *k)).collect();
@@ -282,7 +307,24 @@ impl Keeper {
             out.extend_from_slice(rel.as_bytes());
             stats.encode(&mut out);
         }
+        int(&mut out, self.holders.len() as i64);
+        for (rel, held) in &self.holders {
+            int(&mut out, rel.len() as i64);
+            out.extend_from_slice(rel.as_bytes());
+            let mut pairs: Vec<(i64, i64)> = held.iter().map(|(o, n)| (*o, *n)).collect();
+            pairs.sort_unstable();
+            int(&mut out, pairs.len() as i64);
+            for (o, n) in pairs {
+                int(&mut out, o);
+                int(&mut out, n);
+            }
+        }
         out
+    }
+
+    /// Export `key`'s value documents and how many counted files hold each (`holders`).
+    pub(super) fn holders(&self, key: &str) -> Option<&rustc_hash::FxHashMap<i64, i64>> {
+        self.holders.get(key)
     }
 
     /// The contents kept by digest (a run's new sources, written after its blob was made), as the store holds them
@@ -313,7 +355,7 @@ impl Keeper {
             let n = usize::try_from(int(at)?).ok()?;
             String::from_utf8(take(at, n)?.to_vec()).ok()
         };
-        if bytes.first() != Some(&3) {
+        if bytes.first() != Some(&4) {
             return None;
         }
         let mut k = Keeper::default();
@@ -329,6 +371,15 @@ impl Keeper {
         for _ in 0..int(&mut at)? {
             let rel = text(&mut at)?;
             k.rels.insert(rel, RelStats::decode(bytes, &mut at)?);
+        }
+        for _ in 0..int(&mut at)? {
+            let rel = text(&mut at)?;
+            let mut held = rustc_hash::FxHashMap::default();
+            for _ in 0..int(&mut at)? {
+                let o = int(&mut at)?;
+                held.insert(o, int(&mut at)?);
+            }
+            k.holders.insert(rel, held);
         }
         (at == bytes.len()).then_some(k)
     }
