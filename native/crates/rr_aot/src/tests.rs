@@ -30,18 +30,27 @@ fn thread_cpu() -> std::time::Duration {
     std::time::Duration::new(t.tv_sec as u64, t.tv_nsec as u32)
 }
 
-/// Every corpus file: the ahead-of-time build writes the JIT's tape, and refuses where it does.
+const BOTH: crate::Tiers = crate::Tiers { one: true, two: true };
+
+/// Every corpus file: the ahead-of-time tier 1 writes the JIT's masks, positions and counts;
+/// both tiers ahead of time write the JIT's tape, and refuse where it does.
 #[test]
 #[ignore = "the corpus: run by name"]
 fn aot_tapes_are_the_jits() {
     let jit = rerail_rr_parser::compiled().expect("compiles");
-    let aot = crate::aot().expect("the ahead-of-time build");
+    let aot = crate::aot(BOTH).expect("the ahead-of-time build");
     let files = corpus();
-    let mut differ = Vec::new();
+    let (mut differ, mut tier1_differ) = (Vec::new(), Vec::new());
     let mut taken = 0;
     for (i, f) in files.iter().enumerate() {
-        let (a, j) = (aot.parser.columns(f.as_bytes()), jit.parser.columns(f.as_bytes()));
-        match (a, j) {
+        let mut a = rerail_compiler::native_cpu_block::Batch::new(&aot.parser.tier1, &[f.as_bytes()]);
+        let mut j = rerail_compiler::native_cpu_block::Batch::new(&jit.parser.tier1, &[f.as_bytes()]);
+        a.call(&aot.parser.tier1);
+        j.call(&jit.parser.tier1);
+        if a.out != j.out || a.positions != j.positions || a.counts != j.counts {
+            tier1_differ.push(i);
+        }
+        match (aot.parser.columns(f.as_bytes()), jit.parser.columns(f.as_bytes())) {
             (Ok(a), Ok(j)) => {
                 taken += 1;
                 if a != j {
@@ -53,70 +62,122 @@ fn aot_tapes_are_the_jits() {
         }
     }
     eprintln!("{} files, {taken} taken", files.len());
+    assert_eq!(tier1_differ, Vec::<usize>::new(), "files whose tier 1 output is not the JIT's");
     assert_eq!(differ, Vec::<usize>::new(), "files whose tape is not the JIT's");
 }
 
-/// Each variant over the corpus files the grammar parses: tier 1, tier 2 as the JIT built it
-/// and as rustc did, the engine's parser, and the lean parser (lexer, whole). The least of
-/// `RR_ROUNDS` rounds, CPU time, instructions and cycles.
+/// Each variant over the corpus files the grammar parses, the least of `RR_ROUNDS` rounds: CPU
+/// time, instructions, cycles, and MB a second of CPU. Tier 1 and tier 2 as the JIT built them
+/// and as rustc did, each alone on batches and tapes made before; the whole parse a file at a
+/// time (`columns`: the batch, both tiers, the tape and its columns); the engine's parser
+/// (`rr::tape`); the lean parser's lexer and whole.
 #[test]
 #[ignore = "a benchmark: run by name, on an optimized build"]
 fn jit_against_aot() {
     let jit = rerail_rr_parser::compiled().expect("compiles");
-    let aot = crate::aot().expect("the ahead-of-time build");
+    let aot = crate::aot(BOTH).expect("the ahead-of-time build");
     let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(7);
     let files = corpus();
     let ours: Vec<&String> = files.iter().filter(|f| jit.parser.columns(f.as_bytes()).is_ok()).collect();
     let nodes: usize = ours.iter().map(|f| rr::tape(f).len()).sum();
     let bytes: usize = ours.iter().map(|f| f.len()).sum();
-    let p = &jit.parser;
-    let mut batches: Vec<_> = ours.iter().map(|f| rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()])).collect();
-    for b in &mut batches {
-        b.call(&p.tier1);
-    }
-    let mut tapes: Vec<_> = batches.iter().map(|b| p.tape(b)).collect();
+    let batch = |p: &rerail_compiler::native_cpu_stream::Parser| -> Vec<_> {
+        ours.iter()
+            .map(|f| {
+                let mut b = rerail_compiler::native_cpu_block::Batch::new(&p.tier1, &[f.as_bytes()]);
+                b.call(&p.tier1);
+                b
+            })
+            .collect()
+    };
+    let (mut bj, mut ba) = (batch(&jit.parser), batch(&aot.parser));
+    let mut tapes: Vec<_> = bj.iter().map(|b| jit.parser.tape(b)).collect();
     let retired = rerail_compiler::native_cpu_codegen::retired;
-    let names = ["tier 1", "tier 2 (JIT)", "tier 2 (AOT)", "Rust (rr::tape)", "lean: lexer", "lean: whole"];
-    let mut best = [(std::time::Duration::MAX, u64::MAX, u64::MAX); 6];
+    let names = ["tier 1 (JIT)", "tier 1 (AOT)", "tier 2 (JIT)", "tier 2 (AOT)", "whole (JIT)", "whole (AOT)", "Rust (rr::tape)", "lean: lexer", "lean: whole"];
+    let mut best = vec![(std::time::Duration::MAX, u64::MAX, u64::MAX); names.len()];
     for _ in 0..rounds {
         let mut at = (thread_cpu(), retired());
-        let mut lap = |k: usize, best: &mut [(std::time::Duration, u64, u64); 6]| {
+        let mut lap = |k: usize, best: &mut Vec<(std::time::Duration, u64, u64)>| {
             let now = (thread_cpu(), retired());
             let (t, i, c) = (now.0 - at.0, now.1.0 - at.1.0, now.1.1 - at.1.1);
             best[k] = (best[k].0.min(t), best[k].1.min(i), best[k].2.min(c));
             at = (thread_cpu(), retired());
         };
-        for b in &mut batches {
-            b.call(&p.tier1);
+        for b in &mut bj {
+            b.call(&jit.parser.tier1);
         }
         lap(0, &mut best);
-        for (b, t) in batches.iter().zip(&mut tapes) {
-            let _ = jit.parser.words(b, t);
+        for b in &mut ba {
+            b.call(&aot.parser.tier1);
         }
         lap(1, &mut best);
-        for (b, t) in batches.iter().zip(&mut tapes) {
-            let _ = aot.parser.words(b, t);
+        for (b, t) in bj.iter().zip(&mut tapes) {
+            let _ = jit.parser.words(b, t);
         }
         lap(2, &mut best);
+        for (b, t) in bj.iter().zip(&mut tapes) {
+            let _ = aot.parser.words(b, t);
+        }
+        lap(3, &mut best);
         let mut n = 0;
+        for f in &ours {
+            n += jit.parser.columns(f.as_bytes()).map_or(0, |c| c.len());
+        }
+        lap(4, &mut best);
+        for f in &ours {
+            n += aot.parser.columns(f.as_bytes()).map_or(0, |c| c.len());
+        }
+        lap(5, &mut best);
         for f in &ours {
             n += rr::tape(f).len();
         }
-        std::hint::black_box(n);
-        lap(3, &mut best);
+        lap(6, &mut best);
         for f in &ours {
             n += rr::lean::token_count(f);
         }
-        std::hint::black_box(n);
-        lap(4, &mut best);
+        lap(7, &mut best);
         for f in &ours {
             n += rr::lean::tape(f).len();
         }
         std::hint::black_box(n);
-        lap(5, &mut best);
+        lap(8, &mut best);
     }
-    eprintln!("{} files the grammar parses, {:.2} MB, {nodes} nodes; the least of {rounds} rounds", ours.len(), bytes as f64 / 1e6);
-    for (name, (t, i, cy)) in names.iter().zip(best) {
-        eprintln!("  {name:>16}: {t:8.2?} CPU, {:7.1}M instructions, {:7.1}M cycles, IPC {:.2}; {:.0} instructions and {:.0} cycles a node", i as f64 / 1e6, cy as f64 / 1e6, i as f64 / cy as f64, i as f64 / nodes as f64, cy as f64 / nodes as f64);
+    let mb = bytes as f64 / 1e6;
+    eprintln!("{} files the grammar parses, {mb:.2} MB, {nodes} nodes; the least of {rounds} rounds", ours.len());
+    let row = |name: &str, (t, i, cy): (std::time::Duration, u64, u64)| {
+        eprintln!("  {name:>22}: {:8.2} ms CPU, {:7.1} MB/s, {:7.1}M instructions, {:6.1}M cycles, IPC {:.2}; {:.0} instructions and {:.0} cycles a node", t.as_secs_f64() * 1e3, mb / t.as_secs_f64(), i as f64 / 1e6, cy as f64 / 1e6, i as f64 / cy as f64, i as f64 / nodes as f64, cy as f64 / nodes as f64);
+    };
+    for (name, b) in names.iter().zip(&best) {
+        row(name, *b);
     }
+    // Tier 1 by pass, each build's: each pass's least over the rounds, the record pass last.
+    // A pass alone over the corpus finds each file out of the cache: shares, not a sum.
+    let passes = jit.parser.tier1.pass_count();
+    let mut by_pass = vec![[(std::time::Duration::MAX, u64::MAX, u64::MAX); 2]; passes];
+    for _ in 0..rounds {
+        for (w, (p, bs)) in [(&jit.parser, &mut bj), (&aot.parser, &mut ba)].into_iter().enumerate() {
+            for k in 0..passes {
+                let at = (thread_cpu(), retired());
+                for b in bs.iter_mut() {
+                    b.call_pass(&p.tier1, k);
+                }
+                let now = (thread_cpu(), retired());
+                let (t, i, c) = (now.0 - at.0, now.1.0 - at.1.0, now.1.1 - at.1.1);
+                let e = &mut by_pass[k][w];
+                *e = (e.0.min(t), e.1.min(i), e.2.min(c));
+            }
+        }
+    }
+    let shapes = &jit.parser.tier1.passes;
+    for (k, [j, a]) in by_pass.iter().enumerate() {
+        let what = match shapes.get(k) {
+            Some(s) if s.back => "back".to_string(),
+            Some(s) => format!("forward, {} extracts, {} outlined", s.extracts, s.outlined.len()),
+            None => "records".to_string(),
+        };
+        eprintln!("  tier 1 pass {k} ({what}): JIT {:6.1}M instructions {:6.1}M cycles; AOT {:6.1}M {:6.1}M", j.1 as f64 / 1e6, j.2 as f64 / 1e6, a.1 as f64 / 1e6, a.2 as f64 / 1e6);
+    }
+    let sum = |a: usize, b: usize| (best[a].0 + best[b].0, best[a].1 + best[b].1, best[a].2 + best[b].2);
+    row("tier 1 + 2 (JIT)", sum(0, 2));
+    row("tier 1 + 2 (AOT)", sum(1, 3));
 }

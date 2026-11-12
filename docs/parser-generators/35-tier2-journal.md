@@ -147,3 +147,4 @@ Numbers are tier 2's for `.rr`. Each step's commit is listed.
 | One entry a function: each rule's own code, a term's rest a call: 60 entries | `f5357a7df` | 23,981 | 315.7M (70.7M) |
 | Every call at its callee's start (merge, mark, flag on `PUSH`): 55 entries | `9a017c9b9` | 23,758 | 312.6M (61.8M) |
 | The same IR through LLVM, ahead of time (`clif_rust`; a measurement, not a step) | | 22,375 | 276.6M (55.3M) |
+| Tier 1 too through LLVM; the whole parse against the lean parser, by where it goes (page 34) | | | 276.6M (54.4M) |

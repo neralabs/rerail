@@ -1,19 +1,19 @@
-//! Tier 2's Cranelift IR as Rust source, for an ahead-of-time build of the same code: each
-//! function of the JIT's (`CompiledStream::ir`, after the lowering's own passes and before
-//! Cranelift's) a Rust function, compiled by rustc and LLVM. The two builds then differ only in
-//! the compiler: Cranelift's code against LLVM's, of one IR.
+//! The parser's Cranelift IR as Rust source, for an ahead-of-time build of the same code: each
+//! function of the JIT's, tier 1's (`CompiledBlock::ir`) and tier 2's (`CompiledStream::ir`),
+//! as Cranelift is given it, a Rust function, compiled by rustc and LLVM. The two builds then
+//! differ only in the compiler: Cranelift's code against LLVM's, of one IR.
 //!
-//! A function is a loop over a `match` on its block, each block's instructions in order, its
-//! parameters locals set where a branch goes to it (LLVM threads the jumps back into a graph).
-//! Cranelift's pinned register (`ctx`, `get_pinned_reg`) is a parameter of every function,
-//! passed on at each call, as a method's `self`. Each function is `#[inline(never)]`, so the
-//! calls are the JIT's: a function a rule, words as calls.
+//! A function's graph is structured control (`Shape`); each value a local, a block's
+//! parameters set where a branch goes to it. A vector is NEON's (`uint8x16_t`), each vector
+//! operation its intrinsic. Cranelift's pinned register (`ctx`, `get_pinned_reg`) is a
+//! parameter of every function, passed on at each call, as a method's `self`. Each function is
+//! `#[inline(never)]`, so the calls are the JIT's: a function a rule, words as calls.
 
 use cranelift_codegen::ir::{self, InstructionData, Opcode, condcodes::IntCC, types};
 use std::fmt::Write;
 
-/// A fingerprint of the IR's text (FNV-1a), which the generated source carries: the
-/// ahead-of-time build runs only on the JIT's program it was written from.
+/// A fingerprint of a text (FNV-1a). The generated source carries its own (`SOURCE`): the
+/// ahead-of-time build runs only where the JIT's program translates to it again.
 pub fn fingerprint(clif: &str) -> u64 {
     clif.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3))
 }
@@ -29,24 +29,69 @@ fn ty(t: ir::Type) -> Result<(&'static str, &'static str, u32), String> {
     })
 }
 
-/// The functions, by their user name's index (`u0:N`, the JIT's `FuncId`), as Rust: an
-/// `extern "C" fn tier2_aot_entry(ctx) -> u64` calls `entry` with the pinned register 0.
-pub fn translate(funcs: &[(u32, ir::Function)], entry: u32) -> Result<String, String> {
+/// A local's Rust type for a Cranelift type, and its first value.
+fn local(t: ir::Type) -> Result<(&'static str, &'static str), String> {
+    Ok(match t {
+        types::I8X16 => ("uint8x16_t", "unsafe { core::mem::zeroed() }"),
+        types::I64X2 => ("uint64x2_t", "unsafe { core::mem::zeroed() }"),
+        t => (ty(t)?.0, "0"),
+    })
+}
+
+thread_local! {
+    /// The constants that are addresses of the JIT's process (`translate`'s `addresses`).
+    static ADDRESSES: std::cell::RefCell<Vec<(i64, String)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Both tiers' sources, from a parser compiled with `native_cpu_stream::KEEP_IR`: tier 1's
+/// (`tier1_entry_K` a pass, the record pass's tables' address `TABLES`) and tier 2's
+/// (`tier2_entry`). Each ends with its own fingerprint, `SOURCE`.
+pub fn rust_sources(parser: &crate::native_cpu_stream::Parser) -> Result<(String, String), String> {
+    let t1 = &parser.tier1;
+    let names: Vec<String> = (0..t1.entry_ids.len()).map(|k| format!("tier1_entry_{k}")).collect();
+    let entries: Vec<(u32, &str)> = t1.entry_ids.iter().zip(&names).map(|(&id, n)| (id, n.as_str())).collect();
+    let addresses: Vec<(i64, &str)> = t1.tables_address().map(|a| (a, "TABLES")).into_iter().collect();
+    let mut one = translate(&t1.ir, &entries, &addresses).map_err(|e| format!("tier 1: {e}"))?;
+    writeln!(one, "/// The passes' entries, in order.\npub const ENTRIES: &[unsafe extern \"C\" fn(u64, u64, u64, u64, u64, u64, u64)] = &[{}];", names.join(", ")).unwrap();
+    let t2 = &parser.tier2;
+    let two = translate(&t2.ir, &[(t2.entry_id, "tier2_entry")], &[]).map_err(|e| format!("tier 2: {e}"))?;
+    let seal = |src: String| {
+        let h = fingerprint(&src);
+        format!("{src}\n/// This source's fingerprint (`clif_rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};\n")
+    };
+    Ok((seal(one), seal(two)))
+}
+
+/// The functions, by their user name's index (`u0:N`, the JIT's `FuncId`), as Rust: each of
+/// `entries` an `extern "C"` function of its name, its parameters `u64`s, calling it with the
+/// pinned register 0. Each of `addresses` a static of its name, which the build sets to the
+/// running process's address.
+pub fn translate(funcs: &[(u32, ir::Function)], entries: &[(u32, &str)], addresses: &[(i64, &str)]) -> Result<String, String> {
+    ADDRESSES.with(|a| *a.borrow_mut() = addresses.iter().map(|&(v, n)| (v, n.to_owned())).collect());
     let mut out = String::new();
-    out.push_str("// Generated by rerail_compiler::clif_rust from tier 2's Cranelift IR. Do not edit.\n");
-    out.push_str("#![allow(unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, clippy::all)]\n\n");
+    out.push_str("// Generated by rerail_compiler::clif_rust from the parser's Cranelift IR. Do not edit.\n");
+    out.push_str("#![allow(unused_mut, unused_variables, unused_assignments, unreachable_code, unused_labels, unused_unsafe, unused_imports, clippy::all)]\n\n");
+    out.push_str("use core::arch::aarch64::*;\n\n");
+    for (_, n) in addresses {
+        writeln!(out, "/// An address of the running process's (set before the first call).\npub static {n}: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);\n").unwrap();
+    }
     out.push_str("#[inline(always)]\nfn sp() -> u64 {\n    let s: u64;\n    // SAFETY: reads the stack pointer.\n    unsafe { core::arch::asm!(\"mov {}, sp\", out(reg) s, options(nomem, nostack, preserves_flags)) };\n    s\n}\n\n");
     let mut structured = 0;
     for (id, f) in funcs {
         structured += usize::from(function(&mut out, *id, f).map_err(|e| format!("u0:{id}: {e}"))?);
     }
     writeln!(out, "/// The functions whose graph is structured control (the rest irreducible, a loop over a `match`).\npub const STRUCTURED: (usize, usize) = ({structured}, {});\n", funcs.len()).unwrap();
-    let f = &funcs.iter().find(|(id, _)| *id == entry).ok_or("no entry")?.1;
-    let params = f.signature.params.len();
-    if params != 1 || f.signature.returns.len() != 1 {
-        return Err("the entry is not (ctx) -> u64".into());
+    for &(entry, n) in entries {
+        let f = &funcs.iter().find(|(id, _)| *id == entry).ok_or("no entry")?.1;
+        let params: Vec<String> = (0..f.signature.params.len()).map(|i| format!("a{i}: u64")).collect();
+        let args: Vec<String> = (0..f.signature.params.len()).map(|i| format!("a{i}")).collect();
+        let ret = match f.signature.returns.len() {
+            0 => "",
+            1 => " -> u64",
+            _ => return Err("an entry with two returns".into()),
+        };
+        writeln!(out, "/// An entry, as the JIT's.\n///\n/// # Safety\n/// As the JIT's entry.\npub unsafe extern \"C\" fn {n}({}){ret} {{\n    unsafe {{ f{entry}(0, {}) }}\n}}\n", params.join(", "), args.join(", ")).unwrap();
     }
-    writeln!(out, "/// Tier 2's entry, as the JIT's: `ctx`, the run's state; the run's end.\n///\n/// # Safety\n/// As the JIT's entry (`CompiledStream::call`).\npub unsafe extern \"C\" fn tier2_aot_entry(ctx: *const u8) -> u64 {{\n    unsafe {{ f{entry}(0, ctx as u64) }}\n}}").unwrap();
     Ok(out)
 }
 
@@ -54,30 +99,34 @@ pub fn translate(funcs: &[(u32, ir::Function)], entry: u32) -> Result<String, St
 fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<bool, String> {
     let dfg = &f.dfg;
     let name = |v: ir::Value| format!("v{}", dfg.resolve_aliases(v).as_u32());
-    let rets: Vec<&str> = f.signature.returns.iter().map(|p| ty(p.value_type).map(|t| t.0)).collect::<Result<_, _>>()?;
+    let rets: Vec<&str> = f.signature.returns.iter().map(|p| local(p.value_type).map(|t| t.0)).collect::<Result<_, _>>()?;
     let ret_ty = match rets.len() {
         0 => "()".to_string(),
         1 => rets[0].to_string(),
         _ => format!("({})", rets.join(", ")),
     };
     let entry = f.layout.entry_block().ok_or("no entry block")?;
-    let params: Vec<String> = dfg.block_params(entry).iter().map(|&v| Ok(format!("a{}: {}", v.as_u32(), ty(dfg.value_type(v))?.0))).collect::<Result<_, String>>()?;
+    let params: Vec<String> = dfg.block_params(entry).iter().map(|&v| Ok(format!("a{}: {}", v.as_u32(), local(dfg.value_type(v))?.0))).collect::<Result<_, String>>()?;
     writeln!(out, "#[inline(never)]\nunsafe fn f{id}(pin: u64{}{}) -> {ret_ty} {{", if params.is_empty() { "" } else { ", " }, params.join(", ")).unwrap();
     out.push_str("    let mut pin = pin;\n");
     // Every value a local, declared once.
     let mut declared = std::collections::BTreeMap::new();
     for b in f.layout.blocks() {
         for &v in dfg.block_params(b) {
-            declared.insert(v.as_u32(), ty(dfg.value_type(v))?.0);
+            declared.insert(v.as_u32(), local(dfg.value_type(v))?);
         }
         for inst in f.layout.block_insts(b) {
             for &v in dfg.inst_results(inst) {
-                declared.insert(v.as_u32(), ty(dfg.value_type(v))?.0);
+                declared.insert(v.as_u32(), local(dfg.value_type(v))?);
             }
         }
     }
-    for (v, t) in &declared {
-        writeln!(out, "    let mut v{v}: {t} = 0;").unwrap();
+    for (v, (t, zero)) in &declared {
+        writeln!(out, "    let mut v{v}: {t} = {zero};").unwrap();
+    }
+    // Each stack slot a local, in words.
+    for (ss, data) in f.sized_stack_slots.iter() {
+        writeln!(out, "    let mut ss{}: [u64; {}] = [0; {}];", ss.as_u32(), data.size.div_ceil(8), data.size.div_ceil(8)).unwrap();
     }
     for &v in dfg.block_params(entry) {
         writeln!(out, "    v{0} = a{0};", v.as_u32()).unwrap();
@@ -485,9 +534,10 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
     let args: Vec<String> = dfg.inst_args(inst).iter().map(|&v| name(v)).collect();
     let results = dfg.inst_results(inst);
     let r = results.first().map(|&v| name(v));
-    let rty = results.first().map(|&v| ty(dfg.value_type(v))).transpose()?;
+    let rt = results.first().map(|&v| dfg.value_type(v));
+    let at = dfg.inst_args(inst).first().map(|&v| dfg.value_type(v));
     let set = |e: String| -> String { format!("{} = {e};", r.clone().expect("a result")) };
-    let (u, s, bits) = rty.unwrap_or(("u64", "i64", 64));
+    let (u, s, bits) = rt.and_then(|t| ty(t).ok()).unwrap_or(("u64", "i64", 64));
     let imm = || -> Result<i64, String> {
         match data {
             InstructionData::UnaryImm { imm, .. } | InstructionData::BinaryImm64 { imm, .. } | InstructionData::IntCompareImm { imm, .. } => Ok(imm.bits()),
@@ -498,8 +548,34 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         let off = data.load_store_offset().unwrap_or(0);
         if off == 0 { format!("({p} as usize)") } else { format!("(({p} as usize).wrapping_add({off}isize as usize))") }
     };
+    let vector = |t: Option<ir::Type>| t.is_some_and(|t| t.is_vector());
+    if vector(rt) || (vector(at) && !matches!(op, Opcode::Brif | Opcode::Jump | Opcode::Return | Opcode::Call)) {
+        return vector_instruction(f, inst, op, &args, rt, at, &set, &addr);
+    }
+    let slot = |ss: &ir::StackSlot, offset: i64| format!("((ss{}.as_mut_ptr() as usize).wrapping_add({offset}isize as usize))", ss.as_u32());
     Ok(match op {
-        Opcode::Iconst => set(format!("{}i64 as {u}", imm()?)),
+        Opcode::Iconst => match ADDRESSES.with(|a| a.borrow().iter().find(|(v, _)| *v == imm().unwrap_or(0)).map(|(_, n)| n.clone())) {
+            Some(n) => set(format!("{n}.load(core::sync::atomic::Ordering::Relaxed)")),
+            None => set(format!("{}i64 as {u}", imm()?)),
+        },
+        Opcode::BandNot => set(format!("{} & !{}", args[0], args[1])),
+        Opcode::BorNot => set(format!("{} | !{}", args[0], args[1])),
+        Opcode::BxorNot => set(format!("{} ^ !{}", args[0], args[1])),
+        Opcode::Bitrev => set(format!("{}.reverse_bits()", args[0])),
+        Opcode::UaddOverflow => format!("{{ let t = {}.overflowing_add({}); {} = t.0; {} = t.1 as u8; }}", args[0], args[1], name(results[0]), name(results[1])),
+        Opcode::StackAddr => {
+            let InstructionData::StackLoad { stack_slot, offset, .. } = data else { return Err("a stack address of no slot".into()) };
+            set(format!("{} as u64", slot(stack_slot, i64::from(i32::from(*offset)))))
+        }
+        Opcode::StackLoad => {
+            let InstructionData::StackLoad { stack_slot, offset, .. } = data else { return Err("a stack load of no slot".into()) };
+            set(format!("unsafe {{ core::ptr::read_unaligned({} as *const {u}) }}", slot(stack_slot, i64::from(i32::from(*offset)))))
+        }
+        Opcode::StackStore => {
+            let InstructionData::StackStore { stack_slot, offset, .. } = data else { return Err("a stack store of no slot".into()) };
+            let vt = ty(at.ok_or("a store of nothing")?)?.0;
+            format!("unsafe {{ core::ptr::write_unaligned({} as *mut {vt}, {}) }};", slot(stack_slot, i64::from(i32::from(*offset))), args[0])
+        }
         Opcode::Iadd => set(format!("{}.wrapping_add({})", args[0], args[1])),
         Opcode::Isub => set(format!("{}.wrapping_sub({})", args[0], args[1])),
         Opcode::Imul => set(format!("{}.wrapping_mul({})", args[0], args[1])),
@@ -595,6 +671,73 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
     })
 }
 
+/// An instruction on vectors: NEON's intrinsic for it (`uint8x16_t` for `i8x16`).
+#[allow(clippy::too_many_arguments)]
+fn vector_instruction(f: &ir::Function, inst: ir::Inst, op: Opcode, args: &[String], rt: Option<ir::Type>, at: Option<ir::Type>, set: &dyn Fn(String) -> String, addr: &dyn Fn(&str) -> String) -> Result<String, String> {
+    let dfg = &f.dfg;
+    let data = &dfg.insts[inst];
+    let is = |t: Option<ir::Type>, w: ir::Type| t == Some(w);
+    let bytes16 = |b: &[u8]| -> Result<String, String> {
+        if b.len() != 16 {
+            return Err(format!("a vector constant of {} bytes", b.len()));
+        }
+        Ok(format!("unsafe {{ core::mem::transmute::<[u8; 16], uint8x16_t>({b:?}) }}"))
+    };
+    let u = |e: String| set(format!("unsafe {{ {e} }}"));
+    Ok(match op {
+        Opcode::Band if is(rt, types::I8X16) => u(format!("vandq_u8({}, {})", args[0], args[1])),
+        Opcode::Bor if is(rt, types::I8X16) => u(format!("vorrq_u8({}, {})", args[0], args[1])),
+        Opcode::Bxor if is(rt, types::I8X16) => u(format!("veorq_u8({}, {})", args[0], args[1])),
+        Opcode::Bnot if is(rt, types::I8X16) => u(format!("vmvnq_u8({})", args[0])),
+        Opcode::BandNot if is(rt, types::I8X16) => u(format!("vbicq_u8({}, {})", args[0], args[1])),
+        Opcode::BorNot if is(rt, types::I8X16) => u(format!("vornq_u8({}, {})", args[0], args[1])),
+        Opcode::Icmp if is(at, types::I8X16) => {
+            let (a, b) = (&args[0], &args[1]);
+            let sg = |x: &str| format!("vreinterpretq_s8_u8({x})");
+            u(match data.cond_code().ok_or("a compare with no condition")? {
+                IntCC::Equal => format!("vceqq_u8({a}, {b})"),
+                IntCC::NotEqual => format!("vmvnq_u8(vceqq_u8({a}, {b}))"),
+                IntCC::UnsignedGreaterThan => format!("vcgtq_u8({a}, {b})"),
+                IntCC::UnsignedGreaterThanOrEqual => format!("vcgeq_u8({a}, {b})"),
+                IntCC::UnsignedLessThan => format!("vcltq_u8({a}, {b})"),
+                IntCC::UnsignedLessThanOrEqual => format!("vcleq_u8({a}, {b})"),
+                IntCC::SignedGreaterThan => format!("vcgtq_s8({}, {})", sg(a), sg(b)),
+                IntCC::SignedGreaterThanOrEqual => format!("vcgeq_s8({}, {})", sg(a), sg(b)),
+                IntCC::SignedLessThan => format!("vcltq_s8({}, {})", sg(a), sg(b)),
+                IntCC::SignedLessThanOrEqual => format!("vcleq_s8({}, {})", sg(a), sg(b)),
+            })
+        }
+        Opcode::IaddPairwise if is(rt, types::I8X16) => u(format!("vpaddq_u8({}, {})", args[0], args[1])),
+        Opcode::Swizzle if is(rt, types::I8X16) => u(format!("vqtbl1q_u8({}, {})", args[0], args[1])),
+        Opcode::Shuffle if is(rt, types::I8X16) => {
+            let InstructionData::Shuffle { imm, .. } = data else { return Err("a shuffle with no mask".into()) };
+            let mask = dfg.immediates.get(*imm).ok_or("a shuffle's mask")?.as_slice();
+            u(format!("vqtbl2q_u8(uint8x16x2_t({}, {}), {})", args[0], args[1], bytes16(mask)?))
+        }
+        Opcode::Splat if is(rt, types::I8X16) => u(format!("vdupq_n_u8({} as u8)", args[0])),
+        Opcode::Vconst if is(rt, types::I8X16) => {
+            let InstructionData::UnaryConst { constant_handle, .. } = data else { return Err("a vector constant of nothing".into()) };
+            set(bytes16(dfg.constants.get(*constant_handle).as_slice())?)
+        }
+        Opcode::Load if is(rt, types::I8X16) => u(format!("vld1q_u8({} as *const u8)", addr(&args[0]))),
+        Opcode::Store if is(at, types::I8X16) => format!("unsafe {{ vst1q_u8({} as *mut u8, {}) }};", addr(&args[1]), args[0]),
+        Opcode::Bitcast if is(rt, types::I64X2) && is(at, types::I8X16) => u(format!("vreinterpretq_u64_u8({})", args[0])),
+        Opcode::Bitcast if is(rt, types::I8X16) && is(at, types::I64X2) => u(format!("vreinterpretq_u8_u64({})", args[0])),
+        Opcode::Extractlane if is(at, types::I64X2) => {
+            let InstructionData::BinaryImm8 { imm, .. } = data else { return Err("a lane of nothing".into()) };
+            u(format!("vgetq_lane_u64::<{imm}>({})", args[0]))
+        }
+        Opcode::UshrImm if is(rt, types::I8X16) => {
+            let InstructionData::BinaryImm64 { imm, .. } = data else { return Err("a shift by nothing".into()) };
+            match imm.bits() & 7 {
+                0 => set(args[0].clone()),
+                n => u(format!("vshrq_n_u8::<{n}>({})", args[0])),
+            }
+        }
+        op => return Err(format!("the vector opcode {op} ({rt:?} of {at:?})")),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use cranelift_codegen::ir::{AbiParam, InstBuilder, Signature, types::I64};
@@ -638,7 +781,7 @@ mod tests {
 
     #[test]
     fn a_loop_with_two_entries_is_structured() {
-        let src = super::translate(&[(0, two_entries())], 0).expect("translates");
+        let src = super::translate(&[(0, two_entries())], &[(0, "entry")], &[]).expect("translates");
         assert!(src.contains("STRUCTURED: (usize, usize) = (1, 1)"), "{src}");
         assert!(!src.contains("match b {"), "no loop over the blocks: {src}");
         assert!(src.contains("loop {"), "{src}");

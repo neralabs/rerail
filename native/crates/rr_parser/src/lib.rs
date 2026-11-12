@@ -378,6 +378,7 @@ pub mod tests {
             ("lib.rs", "fn metal_tapes("),
             ("../../compiler/src/native_cpu_block.rs", "pub fn new(program: &CompiledBlock, files"),
             ("../../compiler/src/native_cpu_block.rs", "pub fn call(&mut self, program: &CompiledBlock)"),
+            ("../../compiler/src/native_cpu_block.rs", "fn run(&mut self, entry: Entry)"),
         ];
         let walks = [".iter(", ".iter_mut(", ".into_iter(", ".chunks", ".windows(", ".flatten(", ".map(", ".fold(", ".for_each(", ".bytes()", ".chars()", ".collect", ".position(", ".find(", ".any(", ".all(", ".filter(", ".sum(", ".count()", "while ", "loop {", "nodes()"];
         let loops_allowed = ["for file in files", "for entry in &program.entries"];

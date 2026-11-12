@@ -34,7 +34,7 @@ use cranelift_module::{Linkage, Module};
 
 /// The batch's bytes, its rows (`Row`), their count, the mask words, the positions, the counts,
 /// and the slots the passes store for each other (`native_ir::Passes`).
-type Entry = unsafe extern "C" fn(*const u8, *const Row, u64, *mut u64, *mut u32, *mut u64, *mut u64);
+pub type Entry = unsafe extern "C" fn(*const u8, *const Row, u64, *mut u64, *mut u32, *mut u64, *mut u64);
 
 /// A file of a batch, for the function: where its blocks start in the bytes (`FRONT` zero bytes
 /// before them), how many there are, its length, the word at which its mask words start, where
@@ -86,6 +86,10 @@ pub struct CompiledBlock {
     /// The record pass's tables (`records`), which its code reads by address; its function is
     /// the last entry. A file's codes are the column after its extracts'.
     pub records: Option<RecordTables>,
+    /// With `native_cpu_stream::KEEP_IR`: each function's IR as Cranelift was given it (its
+    /// `FuncId`), and the entries' ids in order, for an ahead-of-time build (`clif_rust`).
+    pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
+    pub entry_ids: Vec<u32>,
 }
 
 /// A pass's function, as its checks read it: backward or forward, its Cranelift IR, and (a
@@ -127,6 +131,25 @@ pub fn counted(native: &BlockNative) -> Vec<usize> {
 }
 
 impl CompiledBlock {
+    /// Runs another build of the same code from now on: one entry a pass, as `entries`.
+    ///
+    /// # Safety
+    /// `entries` must be this program's code (`clif_rust` of `ir`), in `entry_ids`' order.
+    pub unsafe fn set_entries(&mut self, entries: Vec<Entry>) {
+        assert_eq!(entries.len(), self.entries.len(), "one entry a pass");
+        self.entries = entries;
+    }
+
+    /// The passes' count, the record pass's included (`Batch::call_pass`).
+    pub fn pass_count(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// The record pass's tables' address, which its code holds as a constant.
+    pub fn tables_address(&self) -> Option<i64> {
+        self.records.as_ref().map(|t| t.words.as_ptr() as i64)
+    }
+
     /// Every output's words over `bytes`; bits past the end are zero.
     /// The calls in the passes' IR: each of a function the same lowering made from the same
     /// program (`native_cpu_shape::check`), the only calls the machine code may have.
@@ -209,11 +232,23 @@ impl Batch {
     }
 
     pub fn call(&mut self, program: &CompiledBlock) {
+        for entry in &program.entries {
+            self.run(*entry);
+        }
+    }
+
+    /// The program's pass `k` alone (the record pass last): for the profile, the passes before
+    /// it run first.
+    pub fn call_pass(&mut self, program: &CompiledBlock, k: usize) {
+        self.run(program.entries[k]);
+    }
+
+    fn run(&mut self, entry: Entry) {
         // SAFETY: each row's blocks lie in `bytes` after `FRONT` zero bytes; its mask words (a
         // spare block, then each block's) in `out`; each extract's `capacity` positions in
         // `positions`; its counts in `counts`; its slots in `scratch`. The functions read and
         // write nothing else.
-        for entry in &program.entries {
+        {
             unsafe {
                 entry(
                     self.bytes.as_ptr(),
@@ -1391,6 +1426,12 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         signature.params.push(AbiParam::new(pointer));
     }
     let passes = native.passes();
+    let mut ir = Vec::new();
+    let keep = |ir: &mut Vec<(u32, cranelift_codegen::ir::Function)>, id: cranelift_module::FuncId, func: &cranelift_codegen::ir::Function| {
+        if crate::native_cpu_stream::KEEP_IR.load(std::sync::atomic::Ordering::Relaxed) {
+            ir.push((id.as_u32(), func.clone()));
+        }
+    };
     let mut ids = Vec::with_capacity(passes.passes.len());
     let mut disassembly = String::new();
     let mut shapes: Vec<PassShape> = Vec::with_capacity(passes.passes.len());
@@ -1416,7 +1457,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                 shape.extracts = body.extracts.len();
                 general_context.func.srclocs.clear();
                 let clif = general_context.func.display().to_string();
-                crate::native_cpu_codegen::define_function(&mut module, general_id, &mut general_context).map_err(|_| Error::BackendFailure)?;
+                { keep(&mut ir, general_id, &general_context.func); crate::native_cpu_codegen::define_function(&mut module, general_id, &mut general_context) }.map_err(|_| Error::BackendFailure)?;
                 let code = general_context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default();
                 shape.outlined.push(Outlined { clif, disassembly: code });
                 module.clear_context(&mut general_context);
@@ -1426,7 +1467,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
                     region_context.set_disasm(true);
                     region_context.func.srclocs.clear();
                     let clif = region_context.func.display().to_string();
-                    crate::native_cpu_codegen::define_function(&mut module, id, &mut region_context).map_err(|_| Error::BackendFailure)?;
+                    { keep(&mut ir, id, &region_context.func); crate::native_cpu_codegen::define_function(&mut module, id, &mut region_context) }.map_err(|_| Error::BackendFailure)?;
                     let code = region_context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default();
                     shape.outlined.push(Outlined { clif, disassembly: code });
                     module.clear_context(&mut region_context);
@@ -1442,7 +1483,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         shape.pressure = crate::native_cpu_pressure::measure(&context.func, &passes.origins[k], &hot);
         context.func.srclocs.clear();
         shape.clif = context.func.display().to_string();
-        crate::native_cpu_codegen::define_function(&mut module, id, &mut context).map_err(|_| Error::BackendFailure)?;
+        { keep(&mut ir, id, &context.func); crate::native_cpu_codegen::define_function(&mut module, id, &mut context) }.map_err(|_| Error::BackendFailure)?;
         shape.disassembly = context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default();
         disassembly.push_str(&shape.disassembly);
         for o in &shape.outlined {
@@ -1461,7 +1502,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
             context.func.signature = signature.clone();
             context.set_disasm(true);
             record_pass(&mut context, r, &t, native.extracts.len(), native.outputs.len())?;
-            crate::native_cpu_codegen::define_function(&mut module, id, &mut context).map_err(|_| Error::BackendFailure)?;
+            { keep(&mut ir, id, &context.func); crate::native_cpu_codegen::define_function(&mut module, id, &mut context) }.map_err(|_| Error::BackendFailure)?;
             disassembly.push_str(&context.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default());
             module.clear_context(&mut context);
             ids.push(id);
@@ -1471,6 +1512,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
     };
     module.finalize_definitions().map_err(|_| Error::BackendFailure)?;
     // SAFETY: each function was declared and defined with `Entry`'s signature.
+    let entry_ids = ids.iter().map(|id| id.as_u32()).collect();
     let entries = ids.iter().map(|&id| unsafe { std::mem::transmute::<*const u8, Entry>(module.get_finalized_function(id)) }).collect();
     let last = shapes.last().expect("a forward pass at least").clone();
     Ok(CompiledBlock {
@@ -1489,6 +1531,8 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         passes: shapes,
         disassembly,
         records,
+        ir,
+        entry_ids,
     })
 }
 

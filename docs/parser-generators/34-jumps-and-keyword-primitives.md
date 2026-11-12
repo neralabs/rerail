@@ -1083,12 +1083,14 @@ and about 40% of the gap to the lean parser:
 
 How much of the gap is Cranelift's, and how much the IR's?
 To find out, the same functions are built a second way, ahead of time:
-`clif_rust` writes tier 2's Cranelift IR as Rust, and rustc compiles it with LLVM.
+`clif_rust` writes the parser's Cranelift IR as Rust, tier 1's and tier 2's,
+and rustc compiles it with LLVM.
 The IR is the one Cranelift is given, after the lowering's own passes,
 so the two builds differ only in the compiler.
 
 Each function becomes one Rust function, `#[inline(never)]`, so the calls stay the JIT's.
-Each value is a local. The graph is written as structured control,
+Each value is a local; a vector is NEON's (`uint8x16_t`), each vector operation its intrinsic.
+The graph is written as structured control,
 as WebAssembly's backends do ("Beyond Relooper", Ramsey 2022):
 
 ```rust
@@ -1106,9 +1108,9 @@ as WebAssembly's backends do ("Beyond Relooper", Ramsey 2022):
 
 A first version wrote every function as a loop over a `match` on the block.
 LLVM does not thread jumps through a loop's header,
-so each branch went through a table: 1,182M instructions, 3.8 times the JIT's.
+so each branch went through a table: 1,182M instructions for tier 2, 3.8 times the JIT's.
 
-Thirteen functions have a loop entered at two places (an irreducible graph).
+Thirteen of tier 2's functions have a loop entered at two places (an irreducible graph).
 Nine are made reducible by copying a block or two for one of the edges,
 about 30 instructions each.
 The other four, the largest rules, would need more than their own size in copies.
@@ -1117,20 +1119,70 @@ which the edges into the loop reach with a small label (`match d`).
 
 `cargo run -p rerail-rr-aot-gen` writes the source;
 the `rerail-rr-aot` crate runs it on the JIT's harness,
-and refuses if the JIT's IR has changed since.
-On the 1,360 corpus files, it writes the JIT's tape on every one.
+and refuses if the JIT's program no longer translates to it.
+On the 1,362 corpus files, tier 1 writes the JIT's masks, positions and counts,
+and the two tiers the JIT's tape.
 
-Over the corpus, on the profiling build (load 28 to 39):
+Over the 1,360 files the grammar parses, on the profiling build (load 15):
 
-| | Machine instructions | Instructions | Cycles |
+| | Cycles, JIT | Cycles, ahead of time |
+|---|---|---|
+| Tier 1 | 138.6M | 130.0M |
+| Tier 2 | 59.4M | 54.4M |
+| The whole parse, a file at a time | 209.2M | 195.8M |
+
+LLVM's code is 6 to 8% faster.
+The gap to the lean parser (68.6M) is in the IR, not in Cranelift.
+
+## Measured: the whole parse against the lean parser
+
+The 1,360 `.rr` files the grammar parses, 8.80 MB:
+one thread's CPU time, the least of 9 rounds, the profiling build (load 15).
+
+| | Time | MB/s | Cycles | Cycles a node |
+|---|---|---|---|---|
+| Lean parser, whole | 15.9 ms | 553 | 68.6M | 59 |
+| Lean parser, its lexer | 7.5 ms | 1,173 | 32.2M | 28 |
+| Bitlex, whole (JIT) | 48.3 ms | 182 | 209.2M | 179 |
+| Bitlex, whole (ahead of time) | 45.3 ms | 194 | 195.8M | 168 |
+| Tier 1 (JIT) | 32.1 ms | 274 | 138.6M | 119 |
+| Tier 2 (JIT) | 13.8 ms | 639 | 59.4M | 51 |
+| The engine's parser (`rr::tape`) | 139.8 ms | 63 | 606.0M | 520 |
+
+The whole parse is three times the lean parser's.
+Tier 1 alone costs twice the lean parser whole.
+Where the 141M cycles of the gap go:
+
+| Where | Bitlex | Lean | Gap |
 |---|---|---|---|
-| Tier 2, Cranelift (JIT) | 23,758 | 308.1M | 59.2M |
-| Tier 2, LLVM (ahead of time) | 22,375 | 276.6M | 55.3M |
-| Lean parser | 10,008 | 356.3M | 68.2M |
+| Tier 1 | 139M | 32M (the lexer) | 106M |
+| Tier 2 | 59M | 36M (the parse) | 23M |
+| The batch's layout, the tape's room, the columns | 11M | | 11M |
 
-LLVM's code is 6% smaller and runs 10% fewer instructions, 7% fewer cycles.
-So the code is 2.2 times lean's under either compiler:
-the gap is in the IR, not in Cranelift.
+Within tier 1, by pass (each run alone over the corpus, so as shares):
+the five forward passes 58%, the four backward passes 24%, the record pass 18%.
+
+- **Tier 1 does every check on every block.**
+  Its block program is 806 operations, 5,500 machine instructions a 64-byte block,
+  whatever the block holds. The lean lexer makes four masks a block,
+  then works a token at a time; a string, a comment, an escape
+  is read by a small lexer from its start.
+  The costliest statements are checks the lean parser makes only where they can fail:
+  a `\u` escape's digits (about 100 operations), JSON's rules (`json_bad`, 33),
+  the braces' depth (`count depth`, 62), an aggregate's word (`agg_word`, 49).
+- **Nine passes over each file.** Each of the 12 `back_fill`s needs a pass backward
+  and a forward pass after it. The four backward passes run at under one instruction a
+  cycle: a quarter of tier 1's time.
+  Each block stores 21 mask words (168 bytes for 64 read) for the passes after.
+- **Spills.** Pass 0 holds 45 vectors live, pass 2 73 integers,
+  against about 30 and 24 registers: 1,305 stack loads and stores.
+- **The record pass** runs 181 instructions a node to turn the masks into records,
+  more than the lean lexer's 114 for the whole token.
+- **Room and copies** (11M cycles). The batch copies the file and zeroes its mask words;
+  the tape is allocated for twice the rows it holds, 55 MB over the corpus.
+  The lean parser reads the file where it is.
+- **Tier 2**: its states test for comments and for the `no_value` mark in every state
+  (above, "where tier 2's code goes").
 
 ## The order
 
