@@ -6,6 +6,27 @@ pub mod crypto;
 pub mod derived;
 #[cfg(test)]
 pub mod facts_only;
+/// This crate's own test binary, which the engine does not load: the store's SQL hazards go to the profile, as the
+/// engine's loader sends them (`crate::install_store_functions` in `native/src/lib.rs`).
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        use crate::code_rule_dsl::logic::profile;
+        crate::content_store::hazards::set(crate::content_store::hazards::Hazards {
+            on: profile::tracing,
+            sql_in_wave: profile::sql_in_wave,
+            wait_in_wave: profile::wait_in_wave,
+            behind_the_run: profile::behind_the_run,
+            statement: profile::strict_statement,
+        });
+        profile::strict_on_every_connection();
+    }
+    // Run as the binary loads, before any test opens a store (as the engine's `module_init` runs).
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}
 pub mod analysis;
 // Nothing emits SQL through them until the planner (Phase 6) does.
 #[path = "logic/front"]

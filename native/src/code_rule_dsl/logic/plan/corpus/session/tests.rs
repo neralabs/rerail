@@ -14,8 +14,8 @@
         std::fs::create_dir_all(&src).unwrap();
         std::fs::write(src.join("a.py"), "import hashlib\nhashlib.md5(b'x')\n").unwrap();
         std::fs::write(src.join("b.py"), "import pickle\npickle.loads(b'x')\n").unwrap();
-        let rule = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/bandit-b301-pickle.rr");
-        let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+        let rule = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../docs/rule-syntax/packs/python/bandit-b301-pickle.rr");
+        let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
         let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
         let findings = || std::fs::read_to_string(out.join("violation.csv")).unwrap();
         let fresh = run();
@@ -46,8 +46,8 @@
         std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
         std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
         std::fs::write(src.join("other.py"), "import json\njson.loads('1')\n").unwrap();
-        let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
-        let programs: Vec<String> = ["bandit-b301-pickle.rr", "bandit-b307-eval.rr"].iter().map(|r| crate::code_rule_dsl::tools::flatten(&rules.join(r)).unwrap()).collect();
+        let rules = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../docs/rule-syntax/packs/python");
+        let programs: Vec<String> = ["bandit-b301-pickle.rr", "bandit-b307-eval.rr"].iter().map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap()).collect();
         let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
         let run = || super::super::run_all(&texts, &src, &out, "program", Binding::Cpu, 1 << 18).unwrap();
         let findings = || {
@@ -126,7 +126,7 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
         for (path, text) in [("a.py", "from b import x\n"), ("b.py", "from c import y\n"), ("c.py", "from a import z\n"), ("d.py", "x = 1\n")] {
             std::fs::write(src.join(path), text).unwrap();
         }
-        let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+        let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
         let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
         let findings = || {
             let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
@@ -193,7 +193,7 @@ IMP(i) :- impmod(i, _), docof(i, a), seen(a).
         for (path, text) in [("a.py", "from h import x\n"), ("h.py", "x = 1\n"), ("d.py", "y = 2\n")] {
             std::fs::write(src.join(path), text).unwrap();
         }
-        let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+        let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
         let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
         let findings = || {
             let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
@@ -251,7 +251,7 @@ BACK(i) :- impmod(i, m), docof(i, a), doc(b, _, m), back(a, b).
         for (path, text) in [("a.py", "from b import x\n"), ("b.py", "from a import y\n"), ("c.py", "x = 1\n")] {
             std::fs::write(src.join(path), text).unwrap();
         }
-        let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+        let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
         let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
         let findings = || {
             let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
@@ -307,7 +307,7 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
         for (path, text) in [("a.py", "from b import x\n"), ("b.py", "from c import y\n"), ("c.py", "from d import z\n"), ("d.py", "x = 1\n")] {
             std::fs::write(src.join(path), text).unwrap();
         }
-        let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+        let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
         let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
         start(&base.join("session")).unwrap();
         run();
@@ -392,7 +392,7 @@ LEAF(i) :- impmod(i, m), doc(b, _, m), leaf(b).
         for (path, text) in [("a.py", "from c import x\n"), ("b.py", "from c import y\n"), ("c.py", "from d import z\n"), ("d.py", "x = 1\n")] {
             std::fs::write(src.join(path), text).unwrap();
         }
-        let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+        let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
         let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
         let findings = || {
             let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
@@ -455,7 +455,7 @@ LONE(i) :- impmod(i, m), docof(i, a), !dep(a, _).
         for (path, text) in [("a.py", "from b import x\nfrom c import y\nfrom zz import z\n"), ("b.py", "x = 1\n"), ("c.py", "y = 2\n"), ("d.py", "from zz import z\n")] {
             std::fs::write(src.join(path), text).unwrap();
         }
-        let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+        let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
         let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
         let findings = || {
             let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
@@ -520,7 +520,7 @@ HUB(i) :- impmod(i, m), doc(b, _, m), fan(b, k), k >= 4.
         for i in 0..n {
             std::fs::write(src.join(format!("m{i}.py")), module(i, "")).unwrap();
         }
-        let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+        let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
         let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
         crate::code_rule_dsl::logic::profile::set(true);
         let show = |what: &str, report: &super::super::Report| {

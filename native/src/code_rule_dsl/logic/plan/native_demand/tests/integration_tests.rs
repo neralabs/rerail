@@ -8,10 +8,13 @@
             plan::{self, Error, Stats, lower},
             rr,
         },
-        model::FileInput,
     };
     use crate::content_store::ContentStore;
     use std::{collections::BTreeSet, sync::Arc};
+
+    // O-split-logic-tests: reads a crate above rerail-logic; compiled only once the split hosts it in the engine.
+
+    #[cfg(any())]
 
     #[test]
     fn retained_semantic_results_support_sql_outputs_and_isolate_targets_and_runs() {
@@ -61,7 +64,7 @@ posts(n,q) :- python_qualified(n,q,wanted,post_target).
             ] {
                 native::component::forget_derived(&db);
                 native::forget_inputs(&db);
-                let file = FileInput::new(
+                let file = crate::code_rule_dsl::model::FileInput::new(
                     "test.py".into(),
                     "python".into(),
                     Arc::new(source.into()),

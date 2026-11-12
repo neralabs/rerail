@@ -54,7 +54,7 @@
         println!("{:>9} {:>9} {:>10}  {:<5} capture", "cpu ms", "solve ms", "rows", "rows");
         for path in captures {
             let store = crate::code_rule_dsl::fixtures::temp();
-            drop(crate::code_rule_dsl::fixtures::open(&store));
+            drop(crate::content_store::ContentStore::open(&store).unwrap());
             let db = Connection::open(&store).unwrap();
             crate::code_rule_dsl::logic::native::register(&db).unwrap();
             crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();

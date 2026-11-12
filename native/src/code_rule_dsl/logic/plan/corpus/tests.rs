@@ -139,6 +139,8 @@ uses(n, f) :- imp(n, q), def(f, q).
     /// entries hold the parts (whose join is the product's rows) and not the product, and a run whose choice differs
     /// from the warm memo's (`factorize: off` then on, and back) misses the memo and finds the same.
     #[cfg(feature = "tape-cache")]
+    // O-split-logic-tests: reads a crate above rerail-logic; compiled only once the split hosts it in the engine.
+    #[cfg(any())]
     #[test]
     #[ignore = "O-factorize-nothing: `uses` is no longer file-local, so no export is handed on as its parts and the factorized run's plan is the unfactorized one's"]
     fn an_export_handed_on_as_its_parts_finds_the_same_and_a_changed_choice_misses_the_memo() {
@@ -288,8 +290,8 @@ outer(f, x) :- named(x), encl(f, p), bound(p, x).
         std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
         std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
         std::fs::write(src.join("other.py"), "import json\njson.loads('1')\n").unwrap();
-        let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
-        let programs: Vec<String> = ["bandit-b301-pickle.rr", "bandit-b307-eval.rr"].iter().map(|r| crate::code_rule_dsl::tools::flatten(&rules.join(r)).unwrap()).collect();
+        let rules = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../docs/rule-syntax/packs/python");
+        let programs: Vec<String> = ["bandit-b301-pickle.rr", "bandit-b307-eval.rr"].iter().map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap()).collect();
         let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
         let (maintained, _) = edit(
             &texts,
@@ -316,7 +318,7 @@ outer(f, x) :- named(x), encl(f, p), bound(p, x).
              .violation CYC(at: node) code \"CYC\" \"This import closes a cycle of imports.\"\nCYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).\n",
         )
         .unwrap();
-        let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+        let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
         let (_, recursive) = edit(&[program.as_str()], &src, &[("c.py", "from d import z\n"), ("d.py", "from a import w\n"), ("b.py", "x = 2\n"), ("b.py", "from c import y\n")]);
         assert!(findings().len() >= 3, "the cycle's imports: {:?}", findings());
         assert!(recursive > 0, "the import cycle's stratum is maintained");

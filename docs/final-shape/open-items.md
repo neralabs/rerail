@@ -3610,3 +3610,25 @@ test's wave.
 
 **Closure:** a wave belongs to its run (or the test counts only its own launches), and the test passes 20 of 20
 beside the others.
+
+## O-split-logic-tests. Six tests of `rerail-logic` read crates above it, and are compiled nowhere
+
+After the crate split, `rerail-logic`'s test target did not build: its tests named the engine's modules (the
+`prefilter` test helpers, `tools::flatten`, `sql_executor`, `waves::policies`, `model::FileInput`, the device's
+`transducer::packed` rows). The helpers had a home below (`fixtures::temp`, `logic::settings::program_text`,
+`ContentStore::open`), and those calls now use it. Six tests need a crate above, so they are gated out
+(`#[cfg(any())]`, marked `O-split-logic-tests`) until the split hosts them in the engine:
+
+| Test | Reads |
+|---|---|
+| `corpus::tests::an_export_handed_on_as_its_parts_finds_the_same_and_a_changed_choice_misses_the_memo` | `sql_executor` |
+| `corpus::matchers::tests::any_arms_binding_one_name_lower` | `waves::policies` |
+| `corpus::matchers::tests::a_matcher_relaxed_where_it_only_widens` | `waves::policies` |
+| `corpus::matchers::tests::a_nested_file_path_is_the_documents` | `tools::run_policies` |
+| `native_demand::tests::retained_semantic_results_support_sql_outputs_and_isolate_targets_and_runs` | `model::FileInput` |
+| `native::setfix::lab::tests` (the relational lab, ignored) | `transducer::packed` (Metal rows) |
+
+`test-hosts.tsv` already names `logic::native::setfix::lab::tests` as the engine's, but the generator does not move
+an inline test module, and the engine mounts none for it.
+
+**Closure:** each runs in the engine's test binary (or in a crate that has what it reads), and the gates go.

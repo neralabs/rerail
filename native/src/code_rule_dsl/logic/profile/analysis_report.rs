@@ -118,7 +118,8 @@ pub fn report(state: &State) -> (String, serde_json::Value) {
 
 /// Explain scalar inputs using actual dependency edges, including native contracts.
 /// Keep one shortest consumer path per requested scalar relation, with cycle guards.
-pub(in crate::code_rule_dsl) fn projection(
+/// Public for the report's tests, which sit in the crate above (`logic::profile::report`).
+pub fn projection(
     prog: &crate::code_rule_dsl::logic::front::Program,
     reads: &BTreeSet<String>,
 ) {
