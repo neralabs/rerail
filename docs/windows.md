@@ -262,9 +262,10 @@ file restored from a branch by its blob id. Under `core.autocrlf=true` neither e
 a tracked file lost its earlier text.
 
 `gitCrlfPaths` (`src/engine/git.ts`) asks Git, in one `git check-attr --stdin`, for each file's `text` and `eol`
-attributes, and reads `core.autocrlf` and `core.eol`. It names the files a checkout writes with CRLF as Git decides:
-an `eol` attribute as it says, never a `-text` file, a file with no `text` attribute only under `core.autocrlf=true`,
-and a text file under `core.autocrlf=true`, else by `core.eol`, whose native default is CRLF on Windows alone. For
+attributes, and reads `core.autocrlf` and `core.eol`, taking a `core.autocrlf` set with no value for true, as Git
+does. It names the files a checkout writes with CRLF as Git decides: an `eol` attribute as it says, never a `-text`
+file, a file with no `text` attribute only under `core.autocrlf=true`, and a text file under `core.autocrlf=true`,
+else by `core.eol`, whose native default is CRLF on Windows alone. For
 those files only, the comparisons also try the CRLF form: in the walk's Git verdicts, the recovery of a preimage the
 session did not capture, and the search of the branches a file was restored from. `src/engine/code-rule/line-endings.ts`
 holds every such comparison: `heldAs` says whether a file holds a blob and in which form, `textAs` gives a blob's text

@@ -618,6 +618,22 @@ function crlfRule(attributes: LineEndingAttributes, config: LineEndingConfig, pl
 }
 
 /**
+ * `core.autocrlf` in `cwd`, the last value set winning, trimmed and lowercased; undefined where unset, without Git,
+ * outside a repository or past the timeout. A key set with no value (`autocrlf` alone on its line) reads as `true`, as
+ * Git reads any boolean key with no value, and a key set empty (`autocrlf =`) reads as empty, which Git takes for false.
+ * `git config --get` prints an empty line for both, so this lists the key with `--get-regexp -z`, which prints a key
+ * with no value as its name alone.
+ */
+async function autocrlfSetting(cwd: string, signal: AbortSignal | undefined): Promise<string | undefined> {
+  const listed = await gitStdout(cwd, ["config", "-z", "--get-regexp", String.raw`^core\.autocrlf$`], signal);
+  // `<key> LF <value> NUL` per value set, in the order Git reads them; `<key> NUL` for a key with no value.
+  const last = listed?.split("\0").filter(entry => entry !== "").at(-1);
+  if (last === undefined) return undefined;
+  const end = last.indexOf("\n");
+  return end < 0 ? "true" : last.slice(end + 1).trim().toLowerCase();
+}
+
+/**
  * The `text`, `crlf` and `eol` attributes of each of `paths` (relative to `cwd`), by one `git check-attr --stdin`; empty
  * without Git, outside a repository or past the timeout.
  */
@@ -654,11 +670,11 @@ export async function gitCrlfPaths(
   const rules = new Map<string, CrlfRule>();
   if (asked.length === 0) return rules;
   const [autocrlf, coreEol, attributes] = await Promise.all([
-    gitOutput(cwd, ["config", "--get", "core.autocrlf"], signal),
+    autocrlfSetting(cwd, signal),
     gitOutput(cwd, ["config", "--get", "core.eol"], signal),
     lineEndingAttributes(cwd, asked, signal),
   ]);
-  const config = { autocrlf: autocrlf?.toLowerCase(), coreEol: coreEol?.toLowerCase() };
+  const config = { autocrlf, coreEol: coreEol?.toLowerCase() };
   for (const path of asked) {
     const attribute = attributes.get(path);
     const rule = attribute === undefined ? undefined : crlfRule(attribute, config, platform);

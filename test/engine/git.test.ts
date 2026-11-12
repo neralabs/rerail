@@ -363,6 +363,22 @@ describe("gitCrlfPaths", () => {
     vi.stubEnv("GIT_CONFIG_GLOBAL", global);
     expect(Object.fromEntries(await gitCrlfPaths(root, ["a.py"], { platform: "linux" }))).toEqual({ "a.py": "auto" });
   });
+
+  it("reads core.autocrlf set with no value as true and set empty as false, as Git checks files out by them", async () => {
+    const root = await repository({ "a.py": "a\n" });
+    const config = join(root, ".git", "config");
+    const settings = await readFile(config, "utf8");
+    /** `a.py` as Git checks it out, and the rules gitCrlfPaths names, with `line` in a `[core]` section of the repository's config. */
+    const under = async (line: string) => {
+      await writeFile(config, `${settings}[core]\n\t${line}\n`);
+      await rm(join(root, "a.py"));
+      git(root, "checkout", "--", "a.py");
+      return { checkedOut: await readFile(join(root, "a.py"), "utf8"), rules: Object.fromEntries(await gitCrlfPaths(root, ["a.py"], { platform: "linux" })) };
+    };
+    // `git config --get core.autocrlf` prints an empty line for both.
+    expect(await under("autocrlf")).toEqual({ checkedOut: "a\r\n", rules: { "a.py": "auto" } });
+    expect(await under("autocrlf =")).toEqual({ checkedOut: "a\n", rules: {} });
+  });
 });
 
 describe("gitHome", () => {
