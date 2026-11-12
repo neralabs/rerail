@@ -969,6 +969,71 @@ pub mod tests {
     /// --ignored`). `RR_FORM`: `lean` (the lean parser whole, by default), `lexer` (its lexer),
     /// `tier1` or `tier2` (the compiled grammar's, on buffers made before). Build as
     /// `rr_against_rust` says.
+    /// Where tier 2's work goes, by opcode: each word's runs over the corpus (the interpreter's,
+    /// `run_seen`) times its machine code in its rule's function (`word_bytes`, every path of
+    /// it: an upper bound), and the runs alone. The functions the words call are not in it.
+    #[test]
+    #[ignore = "a measurement: run by hand"]
+    fn tier2_work_by_opcode() {
+        use rerail_compiler::program::split;
+        let c = crate::compiled().expect("compiles");
+        let program = &c.program;
+        let bytes = &c.parser.tier2.word_bytes;
+        let mut runs = vec![0u64; program.words.len()];
+        let mut tokens = 0u64;
+        for src in corpus() {
+            let run = program.block_programs[0].run(src.as_bytes());
+            tokens += run.codes.len() as u64;
+            let _ = rerail_compiler::stream::run_seen(program, src.as_bytes(), &run, &mut |pc| runs[pc] += 1);
+        }
+        let mut by: std::collections::BTreeMap<(u8, u8), (u64, u64)> = Default::default();
+        for (pc, &n) in runs.iter().enumerate() {
+            let (op, mode, _) = split(program.words[pc]);
+            let e = by.entry((op, if op == rerail_compiler::program::MARK { 0 } else { mode })).or_default();
+            e.0 += n;
+            e.1 += n * u64::from(bytes.get(pc).copied().unwrap_or(0) / 4);
+        }
+        // The switches run, by their ways: distinct targets but the refusal and the end.
+        let mut ways: std::collections::BTreeMap<usize, (u64, u64)> = Default::default();
+        for (pc, &n) in runs.iter().enumerate() {
+            let (op, _, t) = split(program.words[pc]);
+            if op != rerail_compiler::program::SWITCH {
+                continue;
+            }
+            let s = &program.switches[usize::from(t)];
+            let mut d: Vec<u16> = s.targets.iter().chain(s.words.iter().map(|w| &w.1)).copied().filter(|&x| x != rerail_compiler::stream_ir::REFUSE && x != s.end).collect();
+            d.sort_unstable();
+            d.dedup();
+            let e = ways.entry(d.len()).or_default();
+            e.0 += n;
+            e.1 += n * u64::from(bytes.get(pc).copied().unwrap_or(0) / 4);
+        }
+        // The switches run most: each kind's target (by the records' kinds), and the words'.
+        let kinds = &program.block_programs[0].records.as_ref().expect("records").kinds;
+        let mut top: Vec<(u64, usize)> = runs.iter().enumerate().filter(|&(pc, _)| split(program.words[pc]).0 == rerail_compiler::program::SWITCH).map(|(pc, &n)| (n, pc)).collect();
+        top.sort_unstable_by(|a, b| b.cmp(a));
+        for &(n, pc) in top.iter().take(6) {
+            let s = &program.switches[usize::from(split(program.words[pc]).2)];
+            let mut by_kind: std::collections::BTreeMap<u8, u16> = Default::default();
+            for (b, &t) in s.targets.iter().enumerate() {
+                by_kind.insert(kinds[b], t);
+            }
+            let show = |t: u16| if t == rerail_compiler::stream_ir::REFUSE { "R".to_string() } else if t == s.end { "E".to_string() } else { format!("@{t}") };
+            let line: Vec<String> = by_kind.iter().map(|(k, &t)| format!("{k}:{}", show(t))).collect();
+            let words: Vec<String> = s.words.iter().map(|&(w, t)| format!("s{w}:{}", show(t))).collect();
+            eprintln!("  switch @{pc} runs {:.2} a token, {} bytes: {} | words {}", n as f64 / tokens as f64, bytes[pc], line.join(" "), words.join(" "));
+        }
+        for (w, (n, ins)) in &ways {
+            eprintln!("  switches of {w} ways: runs {:.2} a token, at most {:.1} instructions a run", *n as f64 / tokens as f64, *ins as f64 / (*n).max(1) as f64);
+        }
+        let mut rows: Vec<_> = by.into_iter().collect();
+        rows.sort_by_key(|r| std::cmp::Reverse(r.1.1));
+        eprintln!("{tokens} tokens");
+        for ((op, mode), (n, ins)) in rows.iter().take(25) {
+            eprintln!("  op {op:#04x} m={mode:<3} runs {:>6.2} a token, instructions (at most) {:>6.1} a token", *n as f64 / tokens as f64, *ins as f64 / tokens as f64);
+        }
+    }
+
     #[test]
     #[ignore = "a profile's load: run by hand"]
     fn rr_profile_loop() {

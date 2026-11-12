@@ -1249,6 +1249,35 @@ Tapes are identical over the corpus.
 The gain is small: each moved test was a bit test on the record's code, two or three
 instructions a token.
 
+## Measured: where tier 2's run time goes, by word
+
+Each word's runs over the corpus (the interpreter's), times its machine code
+(every path of it, so an upper bound), per token (1,531,635 tokens):
+
+| Word | Runs a token | Instructions a token, at most |
+|---|---|---|
+| `SWITCH` | 2.67 | 55.8 |
+| `TOKEN` | 0.98 | 5.3 |
+| `PUSH` | 0.94 | 1.9 |
+| `RETURN` | 0.97 | 2.7 |
+| `MARK` | 0.30 | 1.2 |
+| All others | | under 1 each |
+
+The switches are the cost. A token is switched on 2.67 times:
+once by its state, again by each callee entered on it,
+and again by its caller where a level ends at it (`RETURN m=1`, 0.73 a token).
+The lean parser also tests a token again in each function it calls,
+but each test is one compare on the token's kind.
+
+A switch here has two levels. First a compare tree on the record's kind, of which there are 8;
+then, for a kind whose words it names (punctuation, keywords), a tree on the word.
+A switch of two ways has up to 17.9 instructions on its paths;
+a `match` on two kinds needs about five.
+
+Tier 2 is 263 instructions a node, against about 191 for the lean parser's parse
+(its 305 whole, less its lexer's 114). That gap is 72 instructions a node,
+about 7% of the whole parse. Tier 1's gap to the lean lexer is 532 a node (646 against 114).
+
 ## The order
 
 1. One symbol a token: rows and keywords in the record, one switch a state.
