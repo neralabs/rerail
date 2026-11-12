@@ -28,7 +28,7 @@ import {
 } from "../engine/catalog/repository-registry.js";
 import { activeCoreVersion, loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { listRepositoryRules } from "../engine/catalog/rule-configuration.js";
-import { resolveRerailBuild } from "../engine/native/rerail-build.js";
+import { contentStoreOverride, type RerailBuild, resolveRerailBuild } from "../engine/native/rerail-build.js";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { sensitiveByName } from "../engine/path-boundary.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
@@ -518,6 +518,21 @@ async function readDaemon(home: string, busyWaitMs: number): Promise<SupportBund
   };
 }
 
+/**
+ * The build the package at `packageRoot` is. The managed installation is a version under the home's `versions/`, which
+ * `current` usually points at; `current` can also point at a checkout or another package. One that is neither has no
+ * content store of its own, so no rule runs, and that throws; unless `RERAIL_CONTENT_STORE_PATH` names a store, which
+ * `contentStorePath` takes before it asks which build runs.
+ */
+function installBuild(packageRoot: string, home: string): RerailBuild | undefined {
+  try {
+    return resolveRerailBuild(packageRoot, { ...process.env, RERAIL_HOME: home });
+  } catch (error) {
+    if (contentStoreOverride() !== undefined) return undefined;
+    throw error;
+  }
+}
+
 function emptyRepository(state: string, git: boolean): SupportBundle["repository"] {
   return { state, git, rules: [], unavailableRules: 0 };
 }
@@ -572,9 +587,7 @@ export async function collectSupportBundle(input: CollectInput): Promise<{ bundl
     problems.push(`daemon: ${error instanceof Error ? error.message : String(error)}`);
     return { status: "unknown" };
   });
-  // The managed installation is a version under the home's `versions/`, which `current` usually points at; `current`
-  // can also point at a checkout or another package, and one that is neither has no content store, so no rule runs.
-  const build = attempt("install", () => resolveRerailBuild(packageRoot, { ...process.env, RERAIL_HOME: home }), undefined);
+  const build = attempt("install", () => installBuild(packageRoot, home), undefined);
   const bundle: SupportBundle = {
     format: SUPPORT_BUNDLE_FORMAT,
     createdAt: Date.now(),
