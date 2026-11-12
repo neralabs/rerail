@@ -217,6 +217,11 @@ fn probes() -> Vec<Probe> {
     for op in [AggOp::Count, AggOp::Sum, AggOp::Min, AggOp::Max, AggOp::Product, AggOp::Join { by: Vec::new(), sep: String::new() }] {
         out.push(aggregate(&op));
     }
+    // `@concat` of more than two texts, as the data-layer programs write it: their concatenation, left to right.
+    out.push(probe("functor @concat of three texts", &["call concat"], "a: symbol", "{HEAD}(v) :- t(a), t(b), v = @concat(a, \"::\", b)."));
+    // `@printf` of a constant format, as the data-layer programs write it: `%d`, `%0Nd` (never truncated) and `%s`.
+    out.push(probe("functor @printf of %012d", &["call printf"], "a: symbol", "{HEAD}(v) :- n(x), v = @printf(\"%03d.\", x)."));
+    out.push(probe("functor @printf of %d and %s", &["call printf"], "a: symbol", "{HEAD}(v) :- p(a, x), v = @printf(\"%d:%s|%%\", x, a)."));
     out.push(probe("membership of a constant set", &["test equals"], "a: symbol", "{HEAD}(a) :- s(a), (a = \"alpha\" ; a = \"x_1\")."));
     out.push(probe("lattice relation (shortest)", &["lattice"], "a: number, d: min<>| widen 8", "{HEAD}(x, 0) :- n(x), x = 1.\n{HEAD}(y, d + 1) :- {HEAD}(x, d), e(x, y)."));
     // A lattice relation holds one row a key: a key's rows fold by its join, and its readers see the folded value only.
