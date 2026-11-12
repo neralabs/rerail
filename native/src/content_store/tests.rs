@@ -44,6 +44,19 @@ fn a_test_store_leaves_no_files_behind() {
         assert_eq!(files.len(), 3, "{files:?}");
         folder
     };
+    // Windows cannot remove a file this process holds open, so there the folder stays when the
+    // guard leaves a connection open. Linux removes open files, and CI runs these tests on Linux:
+    // check here that the guard closed every descriptor into the folder.
+    #[cfg(target_os = "linux")]
+    {
+        let name = folder.file_name().unwrap().to_string_lossy().into_owned();
+        let open: Vec<_> = fs::read_dir("/proc/self/fd")
+            .unwrap()
+            .filter_map(|entry| fs::read_link(entry.unwrap().path()).ok())
+            .filter(|target| target.to_string_lossy().contains(&name))
+            .collect();
+        assert!(open.is_empty(), "still open: {open:?}");
+    }
     assert!(!folder.exists(), "left behind: {}", folder.display());
 }
 
