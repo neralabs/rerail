@@ -14,7 +14,7 @@ pub(crate) const BACKTRACK_LIMIT: usize = 1_000_000;
 
 #[derive(Clone, Debug)]
 pub(crate) enum TextRegex {
-    /// Shared with the document's other terms of the same pattern (`regexes`).
+    /// Shared with every other term of the same pattern (`regexes`).
     Plain(Arc<Regex>),
     /// A pattern with backreferences.
     Backreferences(fancy_regex::Regex),
