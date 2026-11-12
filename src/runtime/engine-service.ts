@@ -1,5 +1,5 @@
 import { lstat, mkdir, unlink } from "node:fs/promises";
-import { createServer, request, type Server } from "node:http";
+import { createServer, request, type Server, type ServerResponse } from "node:http";
 import { connect } from "node:net";
 import { dirname, resolve as resolvePath } from "node:path";
 import { z } from "zod/v4";
@@ -17,9 +17,11 @@ import { SessionLanes } from "./session-lanes.js";
 
 export interface EngineService {
   close(): Promise<void>;
+  /** `signal` aborts once the caller stops waiting for the answer; its steers then stay for the session's next one. */
   ingest(
     event: AdapterEvent,
     configuration?: EngineRuntimeConfiguration,
+    signal?: AbortSignal,
   ): Promise<readonly AdapterDelivery[]>;
 }
 
@@ -213,6 +215,7 @@ async function routeEngineEvent(
   configuration: EngineRuntimeConfiguration | undefined,
   options: EngineServiceOptions,
   state: EngineRoutingState,
+  signal: AbortSignal | undefined,
 ): Promise<readonly AdapterDelivery[]> {
   const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
   const { runtimeKey, runtimeOptions } = resolveRuntimeRoute(event, configuration, options, state);
@@ -228,7 +231,7 @@ async function routeEngineEvent(
       keys.add(runtimeKey);
       state.runtimeKeysBySession.set(sessionId, keys);
     }
-    return runtime.ingest(event);
+    return runtime.ingest(event, { signal });
   });
   state.pending.add(execution);
   void execution.then(
@@ -293,6 +296,18 @@ async function listenOnSocket(server: Server, socketPath: string): Promise<void>
   }
 }
 
+/**
+ * Aborts once `response`'s connection closes before the response is written: the client stopped waiting, as a hook
+ * does at its request deadline (`ingestEngineEvent`), and nothing written after that reaches it.
+ */
+function closedUnanswered(response: ServerResponse): AbortSignal {
+  const unanswered = new AbortController();
+  response.once("close", () => {
+    if (!response.writableFinished) unanswered.abort();
+  });
+  return unanswered.signal;
+}
+
 export async function startEngineService(options: EngineServiceOptions): Promise<EngineService> {
   if (!isWindowsNamedPipe(options.socketPath)) await preparePrivateDirectory(dirname(options.socketPath));
   const routing: EngineRoutingState = {
@@ -314,6 +329,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
       response.writeHead(401).end(JSON.stringify({ error: "engine-access-required" }));
       return;
     }
+    const unanswered = closedUnanswered(response);
     try {
       const chunks: Buffer[] = [];
       let size = 0;
@@ -324,14 +340,14 @@ export async function startEngineService(options: EngineServiceOptions): Promise
         chunks.push(bytes);
       }
       const { event, configuration } = parseEngineRequest(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-      const deliveries = await engineService.ingest(event, configuration);
+      const deliveries = await engineService.ingest(event, configuration, unanswered);
       response.end(encodeRerailEventResult({ eventId: event.eventId, deliveries: [...deliveries] }));
     } catch (error) {
       response.writeHead(400).end(JSON.stringify({ error: error instanceof Error ? error.message : String(error) }));
     }
   });
   const engineService: EngineService = {
-    ingest: (event, configuration) => routeEngineEvent(event, configuration, options, routing),
+    ingest: (event, configuration, signal) => routeEngineEvent(event, configuration, options, routing, signal),
     async close() {
       const closed = Promise.withResolvers<void>();
       server.close((error) => (error ? closed.reject(error) : closed.resolve()));

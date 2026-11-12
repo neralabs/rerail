@@ -45,7 +45,7 @@ import { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "../
 import { ConversationRuleRegistry, type RuleMatch } from "../engine/catalog/registry.js";
 import { LiveConversationRules } from "../engine/catalog/conversation-rule-sync.js";
 import { parseSampleSource, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-schema.js";
-import { RULE_MODES } from "../engine/catalog/rule-mode.js";
+import { RULE_MODES, steers } from "../engine/catalog/rule-mode.js";
 import { restorableRule, type DroppedEvents, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
 import { rewoundSteer, steerBlock, steerRules, subagentSteer } from "../engine/code-rule/rerail-steer.js";
@@ -812,7 +812,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     return this.#startWatch !== undefined && !this.#startWatch.started();
   }
 
-  ingest(event: AdapterEvent): Promise<readonly AdapterDelivery[]> {
+  /**
+   * Takes one event of a session and answers with the steers for its host. `signal` aborts once the host stops waiting
+   * for that answer, as a hook does at its request deadline: the steers it would carry then stay with the session for
+   * its next answer (`#answer`).
+   */
+  ingest(event: AdapterEvent, { signal }: { signal?: AbortSignal | undefined } = {}): Promise<readonly AdapterDelivery[]> {
     const sessionId = event.kind === "session-start" ? event.session.sessionId : event.sessionId;
     if (this.#stopped() && event.kind !== "session-end") return Promise.resolve([]);
     return this.#ingestLanes.run(sessionId, async () => {
@@ -823,7 +828,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         return [];
       }
       const sourceSignature = this.#sessions.get(sessionId)?.ruleSync?.sourceSignature;
-      const deliveries = await this.#ingest(event);
+      const deliveries = await this.#ingest(event, signal);
       if (event.kind !== "assistant-delta" || event.final
           || sourceSignature !== this.#sessions.get(sessionId)?.ruleSync?.sourceSignature) this.recordRuleCoverage(sessionId);
       return deliveries;
@@ -835,7 +840,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     this.#session(sessionId).turn = turn;
   }
 
-  async #ingest(event: AdapterEvent): Promise<readonly AdapterDelivery[]> {
+  async #ingest(event: AdapterEvent, signal: AbortSignal | undefined): Promise<readonly AdapterDelivery[]> {
     if (event.kind === "session-start") {
       this.#sessions.get(event.session.sessionId)?.ruleSync?.refresh();
       return this.#ingestSessionStart(event);
@@ -903,14 +908,28 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       });
     }
     if (event.kind === "session-end") return [];
-    const deliveries = await this.#collectPendingSteers(state);
-    if (yields) {
-      const digest = await this.#takeMissedDigest(state);
-      if (digest !== undefined) deliveries.push(digest);
-    }
-    deliveries.push(...(state.eventDeliveries.get(event.eventId) ?? []));
-    state.eventDeliveries.delete(event.eventId);
-    return deliveries;
+    return await this.#answer(state, event.eventId, yields, signal);
+  }
+
+  /**
+   * An event's answer: the pending steers, the digest at a yield, then what the event's own samples matched. When
+   * `signal` has aborted, the host stopped waiting for it (a hook gave up at its request deadline), so nothing in it
+   * would reach the agent: its steers go back ahead of the pending ones for the session's next answer, which drops one a
+   * later edit made stale as it drops any, and the digest's findings wait for the next yield again.
+   */
+  async #answer(state: RuntimeSessionState, eventId: string, yields: boolean, signal: AbortSignal | undefined): Promise<AdapterDelivery[]> {
+    const taken = await this.#takePendingSteers(state);
+    const held = state.missedFindings;
+    const digest = yields ? await this.#takeMissedDigest(state) : undefined;
+    const matched = state.eventDeliveries.get(eventId) ?? [];
+    state.eventDeliveries.delete(eventId);
+    if (signal?.aborted !== true) return [...taken.map(pending => pending.delivery), ...(digest === undefined ? [] : [digest]), ...matched];
+    // A conversation rule's steer names no source, so no edit makes it stale.
+    const unread = matched.filter(delivery => steers(delivery.requested))
+      .map((delivery): PendingSteer => ({ delivery, revision: Number.POSITIVE_INFINITY, scope: [] }));
+    state.pendingSteers.unshift(...taken, ...unread);
+    if (digest !== undefined) state.missedFindings = [...held, ...state.missedFindings];
+    return [];
   }
 
   /** Runs `wait` as a boundary waiting for the session's edit checks: the steers they produce meanwhile ride its answer. */
@@ -1033,15 +1052,19 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   async #collectPendingSteers(state: RuntimeSessionState): Promise<AdapterDelivery[]> {
+    return (await this.#takePendingSteers(state)).map(pending => pending.delivery);
+  }
+
+  /** The pending steers that go out now, in order, each recorded as delivered and gone from the pending steers. */
+  async #takePendingSteers(state: RuntimeSessionState): Promise<PendingSteer[]> {
     // An evaluator still opening may yet fail, and what it observed with it.
     if (!state.codeRuleReady) return [];
     // Delivery removes entries from the list, so iterate a snapshot.
-    const deliveries: AdapterDelivery[] = [];
+    const taken: PendingSteer[] = [];
     for (const pending of state.pendingSteers.slice()) {
-      const delivery = await this.#deliverSteer(state, pending, false);
-      if (delivery !== undefined) deliveries.push(delivery);
+      if (await this.#deliverSteer(state, pending, false) !== undefined) taken.push(pending);
     }
-    return deliveries;
+    return taken;
   }
 
   /**
