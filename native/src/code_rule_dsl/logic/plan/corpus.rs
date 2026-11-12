@@ -1864,8 +1864,13 @@ fn run_observed(
     let mut last = began;
     let mut last_instructions = crate::code_rule_dsl::logic::settings::process_counters().map_or(0, |c| c.0);
     let mut counted = 0;
+    let timeline = std::env::var_os("RERAIL_TIMELINE").is_some();
     let mut phase = |name: &'static str, statements: usize| {
         let process_now = process_cpu();
+        // A timeline (dev, `RERAIL_TIMELINE`): each section's end, as it ends, with the process's CPU it took.
+        if timeline {
+            eprintln!("RERAIL_TIMELINE {} {name}: {:.3} s CPU", phases::current().unwrap_or_else(|| "main".into()), process_now - process_last);
+        }
         process_phases.push((name, process_now - process_last));
         process_last = process_now;
         let now = main_usage();
@@ -2187,7 +2192,8 @@ fn run_observed(
     // The cost statistics read before the first wave (decision 0104), the executor's prices fitted from them.
     crate::code_rule_dsl::logic::costs::start();
     let statements = Statements::on(&db);
-    statements.enter("stats");
+    // The program's preparation (kept or read, split, its parts' plans), until the files are parsed.
+    statements.enter("prepare");
     // The program as this run prepares it, kept for the process (`Prepared`): a session or a test running one program
     // over many roots prepares it once. The key is what preparing reads besides the store's atoms, which are asked
     // again below.
@@ -2933,7 +2939,7 @@ fn run_observed(
     // (`exports`). Was: a table of `x` per export, filled by SQL and read back.
     let exports = std::cell::RefCell::new(exports::Exports::default());
     drop(section.take());
-    phase("stats", statements.count());
+    phase("prepare", statements.count());
     statements.enter("parse");
     let modules = Modules::default();
     // Every input the cross-file part reads, as bound: a session keeps their digests (decision 0077).

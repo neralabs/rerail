@@ -63,7 +63,9 @@ pub(super) fn lookup(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option
     let set = plan();
     let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?;
     let Some(result) = memo.results.get(&set.plans[0]) else { return Ok(None) };
-    let Ok(facts) = program_facts::decode(&result.entry) else { return Ok(None) };
+    // Read in place (`decode_view`): the program off the encoding's rows, the files it read copied out (a few).
+    let Ok(view) = program_facts::decode_view(&result.entry) else { return Ok(None) };
+    let facts = view.owned(|r| r == READ_FILE);
     let read = facts.get(READ_FILE).into_iter().flatten().map(|row| match row.as_slice() {
         [Value::Str(path), Value::Str(digest)] => Some(LibraryFile { path: PathBuf::from(path), sha256: unhex(digest) }),
         _ => None,
@@ -74,7 +76,7 @@ pub(super) fn lookup(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option
             _ => return Ok(None),
         }
     }
-    Ok(program_facts::program(&facts, P).ok())
+    Ok(program_facts::Grouped::of_views(std::slice::from_ref(&view)).program(P).ok())
 }
 
 fn unhex(text: &str) -> Option<[u8; 32]> {

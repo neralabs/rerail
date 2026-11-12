@@ -471,6 +471,11 @@ pub fn span_at(under: Option<&str>, name: impl FnOnce() -> String) -> Span {
 /// Opens span `name` (made only when profiling) under this thread's open span.
 pub fn span(name: impl FnOnce() -> String) -> Span {
     if !on() {
+        // A timeline (dev, `RERAIL_TIMELINE`): the main thread's spans as they open, nothing measured.
+        static TIMELINE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        if *TIMELINE.get_or_init(|| std::env::var_os("RERAIL_TIMELINE").is_some()) && std::thread::current().name() == Some("main") {
+            eprintln!("RERAIL_TIMELINE span {}", name());
+        }
         return Span(false);
     }
     let name = name();
