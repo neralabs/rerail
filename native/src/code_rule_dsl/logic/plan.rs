@@ -3483,12 +3483,14 @@ fn add_answers(db: &Connection, answered: &mut BTreeMap<String, Vec<Vec<i64>>>, 
         by.entry(p).or_default().extend(got);
     }
     if let Some(log) = log {
-        for (p, rows) in &by {
+        for (p, rows) in by.iter().filter(|(p, _)| !p.starts_with(super::answers::HELD_BACK)) {
             log.entry(p.clone()).or_default().extend(rows.iter().cloned());
         }
     }
     for (p, rows) in by {
-        if scc.contains(&p) {
+        if let Some(req) = p.strip_prefix(super::answers::HELD_BACK) {
+            super::native::component::defer(db, name, req, rows)?;
+        } else if scc.contains(&p) {
             super::native::component::add(db, name, &p, &rows)?;
         } else {
             answered.entry(p).or_default().extend(rows);
