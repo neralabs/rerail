@@ -1138,3 +1138,36 @@ fn a_phase_projects_the_subtrees_its_rules_start_from() {
         }
     }
 }
+
+/// The definition ids of every node, token and span of a set of files, pinned (decision 0094 §2): a change to how
+/// they are computed (which nodes start a granule, their keys, their slots) must leave every id as it was, or the
+/// ids kept across edits and runs move.
+#[test]
+fn definition_ids_are_pinned() {
+    if !definition_ids() {
+        return;
+    }
+    use sha2::{Digest, Sha256};
+    let ruff = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python/upstream/ruff/fixtures");
+    let mut files: Vec<(&str, String, String)> = [
+        ("python", "a.py", "import os\nLIMIT = 3\n\ndef f(a):\n    return a + 1\n\n@dataclass\nclass C:\n    size: int = 0\n    def m(self, x):\n        return [x, x * 2]\n"),
+        ("tsx", "a.tsx", "import React from 'react';\ntype Props = { title: string };\nexport const Header = ({ title }: Props) => <h1>{title}</h1>;\nexport function Footer() {\n  return <footer>ft</footer>;\n}\n"),
+        ("typescript", "a.ts", "class Store {\n  items: number[] = [];\n  add(n: number) { this.items.push(n); }\n}\nfunction helper() { return 'hp'; }\n"),
+        ("sql", "a.sql", "CREATE TABLE users (id INT, name TEXT);\nCREATE VIEW active AS SELECT id FROM users WHERE id > 7;\n"),
+        ("php", "a.php", "<?php\nclass A {\n  public $v = 1;\n  function one() { return 'po'; }\n}\nfunction free() { return 'pf'; }\n"),
+        ("rust", "a.rs", "struct S { n: u32 }\nimpl S {\n    fn get(&self) -> u32 { self.n }\n}\nfn main() { let s = S { n: 5 }; }\n"),
+    ].into_iter().map(|(l, p, s)| (l, p.to_owned(), s.to_owned())).collect();
+    for f in ["pyflakes/F601.py", "pyflakes/F632.py", "flake8_simplify/SIM905.py", "flake8_bugbear/B031.py", "flake8_bugbear/B006_B008.py"] {
+        let source = std::fs::read_to_string(ruff.join(f)).unwrap_or_else(|e| panic!("{f}: {e}"));
+        files.push(("python", f.to_owned(), source));
+    }
+    let mut h = Sha256::new();
+    for (label, path, source) in &files {
+        let (_, p) = leaf_ids(label, path, source);
+        for l in 0..p.locs() {
+            h.update(p.global(l).to_le_bytes());
+        }
+    }
+    let got: String = h.finalize()[..16].iter().map(|b| format!("{b:02x}")).collect();
+    assert_eq!(got, "f280acef04fbe4f44e98f401f7f7d4f8", "the definition ids moved");
+}

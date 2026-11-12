@@ -204,6 +204,7 @@ pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> Vec<u32> {
             fold = if fold == Fold::None { Fold::Statements } else { Fold::All };
             continue;
         }
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "granule slots".into());
         return place(&cut, &nodes, tokens);
     }
 }
@@ -213,6 +214,7 @@ fn cut(p: &Projected, dialect: &Dialect, fold: Fold) -> Cut {
     let f = &*p.facts;
     let n = p.core.len();
     let kind = |l: usize| dialect.name(f, p.core[l]);
+    let starts_span = crate::code_rule_dsl::logic::profile::span(|| "granule starts".into());
     let mut start: Vec<Option<Start>> = vec![None; n];
     // A wrapper's definition is in the wrapper's granule.
     let mut claimed = vec![false; n];
@@ -252,6 +254,8 @@ fn cut(p: &Projected, dialect: &Dialect, fold: Fold) -> Cut {
             of[p.parent(l) as usize]
         };
     }
+    drop(starts_span);
+    let _keys_span = crate::code_rule_dsl::logic::profile::span(|| "granule keys".into());
     // Keys, parents first (preorder).
     let mut keys = vec![String::new()];
     let mut seen: HashMap<String, u32> = HashMap::new();
