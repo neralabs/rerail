@@ -22,6 +22,7 @@ import { INSTALLED_PACKS_DIR, installedPacksPrefix } from "../engine/catalog/rul
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
 import { contentStoreOverride, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import {
+  AUTOSTART_CLAIM_FILE,
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
@@ -372,6 +373,7 @@ const RERAIL_HOME_ENTRIES: readonly string[] = [
   DAEMON_PORT_FILE,
   DAEMON_ACCESS_TOKEN_FILE,
   START_LOCK_DIR,
+  AUTOSTART_CLAIM_FILE,
   RULES_DUMP_FILE,
   PROFILES_DIR,
   ACTIVE_PROFILE_FILE,

@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync, rmSync, statSync } from "node:fs";
 import { mkdir, readFile, realpath, rename, rm, stat, writeFile } from "node:fs/promises";
 import { Agent as HttpsAgent, request as httpsRequest, type RequestOptions as HttpsRequestOptions } from "node:https";
 import { dirname, isAbsolute, join, resolve } from "node:path";
@@ -244,8 +244,12 @@ export function nodeExecutable(): string {
 export { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE };
 /** In the Rerail home: the lock a daemon start holds. */
 export const START_LOCK_DIR = "start.lock";
+/** In the Rerail home: the claim of the one process that launched an autostart (`claimAutostart`). */
+export const AUTOSTART_CLAIM_FILE = "autostart.claim";
 
 const START_TIMEOUT_MS = 15_000;
+/** How long an autostart claim holds: a launcher's whole life, its wait for the start lock and then for the daemon. */
+const AUTOSTART_CLAIM_MS = 2 * START_TIMEOUT_MS;
 const STOP_TIMEOUT_MS = 10_000;
 const KILL_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
@@ -700,9 +704,37 @@ async function spawnDaemon(control: DaemonControl, options: DaemonLaunchOptions)
 
 let autostartAttempted = false;
 
+/** Creates `path` if nothing is there; whether this call made it. */
+function createOnce(path: string): boolean {
+  try {
+    closeSync(openSync(path, "wx", 0o600));
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+    throw error;
+  }
+}
+
+/**
+ * Whether this process launches the autostart: it created the claim in `home`, or found one made more than
+ * `AUTOSTART_CLAIM_MS` from now and replaced it. Sessions and hooks each run in a process of their own, and the ones
+ * that find the daemon gone arrive together; the claim is created exclusively, so one launches and the rest leave the
+ * start to it. The distance counts both ways, so a claim made before the clock moved back expires too. Two processes
+ * that both replace an expired claim can both launch; the start lock still lets only one launcher start a daemon.
+ */
+function claimAutostart(home: string): boolean {
+  const claim = join(home, AUTOSTART_CLAIM_FILE);
+  if (createOnce(claim)) return true;
+  const held = statSync(claim, { throwIfNoEntry: false });
+  if (held !== undefined && Math.abs(Date.now() - held.mtimeMs) < AUTOSTART_CLAIM_MS) return false;
+  rmSync(claim, { force: true });
+  return createOnce(claim);
+}
+
 /**
  * Bring the daemon up from inside a host session so the browser view is
- * live without anyone running `rerail daemon start`. One attempt per process;
+ * live without anyone running `rerail daemon start`. One attempt per process,
+ * and one launch per Rerail home while its claim holds (`claimAutostart`);
  * `RERAIL_AUTOSTART=0` disables it.
  *
  * Truly fire-and-forget: the work is handed to a detached `rerail daemon start`
@@ -725,6 +757,7 @@ export function autostartDaemon(): void {
   const packageRoot = PACKAGE_ROOT;
   try {
     makeRerailHome(home);
+    if (!claimAutostart(home)) return;
     const log = openSync(join(home, DAEMON_LOG_FILE), "a", 0o600);
     try {
       const child = spawn(
