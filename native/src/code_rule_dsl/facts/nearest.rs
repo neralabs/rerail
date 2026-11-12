@@ -5,20 +5,20 @@
 use crate::content_store::{StoreError, StoreResult};
 
 /// No node: a root's parent, or a node with no ancestor in the set.
-pub(crate) const NONE: u32 = u32::MAX;
+pub const NONE: u32 = u32::MAX;
 
 /// Where the file-local FIX runs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Binding {
+pub enum Binding {
     Cpu,
     /// The device work queue; the CPU where there is no device.
     Metal,
 }
 
 /// A chunk's trees: per node (a cell of the chunk), its parent's cell or `NONE`, and its kind atom.
-pub(crate) struct Trees<'a> {
-    pub(crate) parent: &'a [u32],
-    pub(crate) kind: &'a [i64],
+pub struct Trees<'a> {
+    pub parent: &'a [u32],
+    pub kind: &'a [i64],
 }
 
 /// What solves `nearest`: per set, each node's nearest strict ancestor of a kind in the set, or `NONE`.
@@ -27,7 +27,7 @@ pub(crate) type Nearest = fn(&Trees<'_>, &[Vec<i64>], Binding) -> StoreResult<Ve
 static NEAREST: std::sync::OnceLock<Nearest> = std::sync::OnceLock::new();
 
 /// Registers the solve (once, at load).
-pub(crate) fn install_nearest(solve: Nearest) {
+pub fn install_nearest(solve: Nearest) {
     let _ = NEAREST.set(solve);
 }
 

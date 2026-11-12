@@ -265,5 +265,4 @@ fn check_dialects<'u>(
     Err(invalid(message))
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

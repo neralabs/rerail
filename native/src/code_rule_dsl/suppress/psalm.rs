@@ -35,7 +35,7 @@ pub struct Psalm {
 }
 
 /// Psalm's `@psalm-suppress` tags.
-pub(crate) struct Suppressions;
+pub struct Suppressions;
 
 impl super::SuppressionKind for Suppressions {
     const KEY: &'static str = "psalm";
@@ -217,7 +217,7 @@ impl PsalmIndex {
     }
 
     /// Whether the file holds no tag Psalm would apply.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) fn is_empty(&self) -> bool {
         self.directives.is_empty()
     }
@@ -438,7 +438,7 @@ pub(crate) fn psalm_issue(issue: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::{PsalmIndex, parent_issue_type};
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::fixtures::oracle;

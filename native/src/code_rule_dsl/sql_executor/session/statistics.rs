@@ -4,7 +4,7 @@ use super::*;
 use std::cell::RefCell;
 
 #[derive(Default)]
-pub(in crate::code_rule_dsl::sql_executor) struct Statistics {
+pub struct Statistics {
     modules: Modules,
     current: RefCell<Option<Arc<Rows>>>,
 }

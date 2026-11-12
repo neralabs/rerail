@@ -27,7 +27,7 @@ pub(in crate::code_rule_dsl) struct Session {
     pub(super) store: ContentStore,
     /// In a test build, the thread that started the session, the only one whose runs are its: the other tests run
     /// beside it, in the same process, and are no session's.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     thread: std::thread::ThreadId,
     pub(super) memo: memo::Held,
     /// The cross-file part as the last run left it (decision 0077): an edit runs the strata whose inputs changed. One
@@ -57,7 +57,7 @@ pub(super) fn generation() -> Option<u64> {
 static SESSION: Mutex<Option<Session>> = Mutex::new(None);
 
 /// Starts this process's session, its store in `dir`; one already started is kept.
-pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), String> {
+pub fn start(dir: &Path) -> std::result::Result<(), String> {
     let mut session = SESSION.lock().map_err(|_| "the session is poisoned".to_owned())?;
     if session.is_some() {
         return Ok(());
@@ -75,15 +75,15 @@ pub(in crate::code_rule_dsl) fn start(dir: &Path) -> std::result::Result<(), Str
         generation: GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         connections: Arc::new(parking_lot::Mutex::new(super::connections::Connections::kept())),
         own: Default::default(),
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         thread: std::thread::current().id(),
     });
     Ok(())
 }
 
 /// Ends this process's session: later runs are a fresh process's.
-#[cfg(test)]
-pub(in crate::code_rule_dsl) fn stop() {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn stop() {
     *SESSION.lock().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
 }
 
@@ -91,7 +91,7 @@ static FULL: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(
 
 /// Runs `run` as a full run: as a process without a session would, compiling the program and evaluating every file,
 /// so its profile shows every step (`logic --full`). The session is left as it was.
-pub(in crate::code_rule_dsl) fn full<T>(run: impl FnOnce() -> T) -> T {
+pub fn full<T>(run: impl FnOnce() -> T) -> T {
     struct Reset;
     impl Drop for Reset {
         fn drop(&mut self) {
@@ -110,9 +110,9 @@ pub(super) fn current() -> Held {
         return Held(None, true);
     }
     let held = SESSION.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let skip = held.as_ref().is_some_and(|s| s.thread != std::thread::current().id());
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-hooks")))]
     let skip = false;
     Held(Some(held), skip || FULL.load(std::sync::atomic::Ordering::Relaxed))
 }
@@ -130,12 +130,11 @@ impl Held {
     }
     /// Whether a run on this thread is the session's: always, outside tests.
     fn ours(_session: &Session) -> bool {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         return _session.thread == std::thread::current().id();
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-hooks")))]
         true
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

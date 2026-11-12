@@ -14,7 +14,7 @@ struct Failure {
 type ReadResult<T> = std::result::Result<T, Failure>;
 fn malformed(detail: impl Into<String>) -> Failure { Failure { kind: "malformed", detail: detail.into() } }
 
-pub(in crate::code_rule_dsl) fn parameters(text: &str) -> Result<BTreeMap<String, String>> {
+pub fn parameters(text: &str) -> Result<BTreeMap<String, String>> {
     let mut parts = Vec::new();
     let (mut start, mut quoted, mut escaped) = (0, false, false);
     for (i, c) in text.char_indices() {
@@ -150,7 +150,7 @@ impl Readers {
 static FACTS_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
 /// `logic --facts DIR`: the run's facts directory, for the process.
-pub(in crate::code_rule_dsl) fn set_facts_dir(dir: PathBuf) -> std::result::Result<(), String> {
+pub fn set_facts_dir(dir: PathBuf) -> std::result::Result<(), String> {
     FACTS_DIR.set(dir).map_err(|_| "the facts directory is already set".to_owned())
 }
 
@@ -162,7 +162,7 @@ fn facts_dir(root: &Path) -> PathBuf {
 /// stale or malformed fails the run, and so does a failed one unless the policy reports it.
 static REQUIRE_FACTS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-pub(in crate::code_rule_dsl) fn require_facts() {
+pub fn require_facts() {
     REQUIRE_FACTS.store(true, std::sync::atomic::Ordering::Relaxed);
 }
 
@@ -170,7 +170,7 @@ pub(in crate::code_rule_dsl) fn require_facts() {
 /// `git_rev("base", …)`, which `at="base"` inputs are read at, is the merge base of HEAD and it.
 static BASE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
-pub(in crate::code_rule_dsl) fn set_base(rev: String) -> std::result::Result<(), String> {
+pub fn set_base(rev: String) -> std::result::Result<(), String> {
     BASE.set(rev).map_err(|_| "the base revision is already set".to_owned())
 }
 
@@ -249,7 +249,7 @@ fn quoted(text: &str) -> Option<(String, &str)> {
 }
 
 /// Every artifact the program declares. Two declarations of one name must agree (RUN-FACTS.md section 2).
-pub(in crate::code_rule_dsl) fn artifacts(settings: &[(String, String)]) -> Result<BTreeMap<String, Vec<String>>> {
+pub fn artifacts(settings: &[(String, String)]) -> Result<BTreeMap<String, Vec<String>>> {
     let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for (_, text) in settings.iter().filter(|(k, _)| k == "artifact") {
         let (name, globs) = artifact_declaration(text)?;
@@ -343,7 +343,7 @@ fn artifact_data(name: &str, text: &str, digest: &str) -> ReadResult<Json> {
 /// wrapped with the digest of the inputs `declared` names for it, as `DIR/NAME.json`. A `NAME.status` (the
 /// producer's exit status) makes the artifact failed, with the first 4 KB of `NAME.err`; so does output that is not
 /// JSON. A raw file no policy declares is an error. Returns one line per artifact.
-pub(in crate::code_rule_dsl) fn stamp(raw: &Path, out: &Path, root: &Path, declared: &BTreeMap<String, Vec<String>>) -> std::result::Result<String, String> {
+pub fn stamp(raw: &Path, out: &Path, root: &Path, declared: &BTreeMap<String, Vec<String>>) -> std::result::Result<String, String> {
     let mut names: Vec<String> = std::fs::read_dir(raw)
         .map_err(|e| format!("{}: {e}", raw.display()))?
         .filter_map(|e| e.ok().map(|e| e.path()))
@@ -734,7 +734,7 @@ fn withhold(program: &mut front::Program, incomplete: &BTreeMap<String, String>)
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     fn rows(io: &str, source: &str, pointer: &str, records: bool, columns: &[(&str, &str)]) -> ReadResult<Vec<Vec<Value>>> {
         let cols = columns.iter().map(|(name, ty)| ((*name).to_owned(), (*ty).to_owned())).collect::<Vec<_>>();

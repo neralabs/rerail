@@ -151,7 +151,7 @@ fn bulk_indexes_have_the_canonical_shape_and_allow_edits() {
         assert!(Node::get(&changed, &[Some(17)]).is_none());
     }
 }
-pub(super) fn data(db: &rusqlite::Connection, name: &str) -> Vec<Vec<Option<i64>>> {
+pub fn data(db: &rusqlite::Connection, name: &str) -> Vec<Vec<Option<i64>>> {
     let mut stmt = db
         .prepare(&format!("SELECT * FROM {name} ORDER BY 1,2"))
         .unwrap();

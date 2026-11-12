@@ -89,7 +89,7 @@ pub(super) fn delta(changes: &[(Option<Entry>, Option<Entry>)], key: &str, cols:
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     fn entry(key: i64, rel: &str, rows: &[[i64; 2]]) -> Entry {

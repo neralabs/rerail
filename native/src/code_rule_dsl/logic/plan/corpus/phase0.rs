@@ -25,11 +25,11 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 // Whether this thread runs phase 0: the flag is the profiler's (`phase_clock`), which reads it too.
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::phase_clock::{IN_PHASE_0, active};
+pub use crate::code_rule_dsl::phase_clock::{IN_PHASE_0, active};
 
 /// What phase 0 starts from for one program: its text's includes, or its file.
 #[derive(Clone, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub(in crate::code_rule_dsl) enum Seed {
+pub enum Seed {
     /// A program text: in T's shape, and its includes as (offset, name).
     Text { t_shape: bool, includes: Vec<(i64, String)> },
     /// A program file (canonical).
@@ -57,7 +57,7 @@ impl Graph {
     }
 
     /// The program's key: its modules (path and digest) and its edges.
-    pub(in crate::code_rule_dsl) fn digest(&self) -> [u8; 32] {
+    pub fn digest(&self) -> [u8; 32] {
         use sha2::{Digest as _, Sha256};
         let mut h = Sha256::new();
         h.update(b"rerail.module-graph/v1\0");
@@ -110,7 +110,7 @@ impl Graph {
 pub(in crate::code_rule_dsl) const TEXT: &str = "text";
 
 /// The include graph for `seed`: kept in this process while it holds, else derived by running `bootstrap.rr`.
-pub(in crate::code_rule_dsl) fn graph(seed: &Seed) -> std::result::Result<Arc<Graph>, Error> {
+pub fn graph(seed: &Seed) -> std::result::Result<Arc<Graph>, Error> {
     Ok(graphs(std::slice::from_ref(seed))?.remove(0))
 }
 
@@ -118,7 +118,7 @@ pub(in crate::code_rule_dsl) fn graph(seed: &Seed) -> std::result::Result<Arc<Gr
 /// of `bootstrap.rr` over all of them (a pack's programs are one run, not one each).
 static KEPT: OnceLock<Mutex<HashMap<Seed, Arc<Graph>>>> = OnceLock::new();
 
-pub(in crate::code_rule_dsl) fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
+pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     let kept = KEPT.get_or_init(Default::default);
     let mut found: Vec<Option<Arc<Graph>>> = {
         let map = kept.lock().expect("phase 0's graphs");
@@ -192,7 +192,7 @@ fn quote(s: &str) -> String {
 impl Graph {
     /// The part of a run's graph one seed reaches (its `k`, its place among the run's seeds), a text's key named
     /// [`TEXT`].
-    fn of(&self, seed: &Seed, k: usize) -> Graph {
+    pub fn of(&self, seed: &Seed, k: usize) -> Graph {
         let start = match seed {
             Seed::Text { .. } => text_key(k),
             Seed::File(p) => p.to_string_lossy().into_owned(),
@@ -226,7 +226,7 @@ impl Graph {
 }
 
 /// Runs `bootstrap.rr` over the seeds' facts, as a corpus run with no corpus: every document it reads it loads.
-fn derive(seeds: &[Seed]) -> Result<Graph> {
+pub fn derive(seeds: &[Seed]) -> Result<Graph> {
     let lib = crate::code_rule_dsl::logic::rr::library();
     let lib = std::fs::canonicalize(&lib).map_err(|e| PlanError::Plan(format!("{}: {e}", lib.display())))?;
     let bootstrap = lib.join("bootstrap.rr");
@@ -310,12 +310,11 @@ fn derive(seeds: &[Seed]) -> Result<Graph> {
     result
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
 
 
 #[cfg(test)]
-mod benchmarks {
+pub mod benchmarks {
     /// Phase 0 over every `.rr` file of `RERAIL_P0_RULES` (a pack's directory), as a pack's run reads them
     /// (`tools::program_texts`): one run of `bootstrap.rr` for all. Run it twice for the warm figure.
     #[test]

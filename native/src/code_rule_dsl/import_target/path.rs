@@ -122,7 +122,7 @@ pub(crate) fn relative(from: &str, to: &str) -> String {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// The answers `node -p` gives for each (Node 26).

@@ -5,7 +5,7 @@ use crate::code_rule_dsl::{
     waves::schedule,
 };
 
-pub(super) fn normalize(prog: &Program) -> Result<(Program, BTreeSet<String>)> {
+pub fn normalize(prog: &Program) -> Result<(Program, BTreeSet<String>)> {
     let mut out = prog.clone();
     let mut sentinels: BTreeSet<String> = prog
         .decls

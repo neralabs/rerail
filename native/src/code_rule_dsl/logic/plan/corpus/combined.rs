@@ -58,7 +58,7 @@ fn plan() -> FactsPlanSet {
 }
 
 /// The combined program of texts `key`, when the store keeps one whose library files all still read as recorded.
-pub(super) fn lookup(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<Program>> {
+pub fn lookup(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<Program>> {
     let Some(source) = store.held_source_by_hash(HashKey::sha256(source_text(key).as_bytes()))? else { return Ok(None) };
     let set = plan();
     let memo = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH })?;
@@ -90,7 +90,7 @@ fn unhex(text: &str) -> Option<[u8; 32]> {
 
 /// Keeps `program`, combined from texts `key` after reading library files `read`, in the store. A program that does
 /// not read back as written is not kept.
-pub(super) fn remember(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile], program: &Program) -> StoreResult<bool> {
+pub fn remember(store: &ContentStore, key: &[u8; 32], read: &[LibraryFile], program: &Program) -> StoreResult<bool> {
     let mut facts = Facts::new();
     program_facts::write(&mut facts, P, program);
     // A program that does not read back the same is not kept: the next run combines it again.
@@ -119,9 +119,8 @@ pub(super) fn queued(key: &[u8; 32]) -> crate::content_store::write_back::Key {
 
 /// The source and plan the entry of texts `key` lives under, when the store keeps it: for the run's manifest. A
 /// queued write of it first.
-pub(super) fn named(key: &[u8; 32]) -> (String, [u8; 32]) {
+pub fn named(key: &[u8; 32]) -> (String, [u8; 32]) {
     (source_text(key), plan().plans[0])
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

@@ -25,7 +25,7 @@ use std::ops::Range;
 use std::rc::Rc;
 
 /// How one document's bytes map into the document it was read from (its outer document).
-pub(crate) trait Origin {
+pub trait Origin {
     /// The outer ranges the node `id`, spanning `range` here, stands for. A node's ranges hold its
     /// descendants'.
     fn of_node(&self, id: usize, range: Range<usize>) -> Option<FileRanges>;
@@ -73,7 +73,7 @@ enum Lines<'t> {
 /// A document as its file reads it: the file's text, dialect and lines, and the document's origin
 /// in it. `None` from `of` for a literal's parsed tree, whose origin is the document it was parsed
 /// from (`literal::SubTree`), not a file.
-pub(crate) struct InFile<'t> {
+pub struct InFile<'t> {
     source: &'t str,
     dialect: GrammarDialect,
     lines: Lines<'t>,
@@ -82,7 +82,7 @@ pub(crate) struct InFile<'t> {
 
 impl<'t> InFile<'t> {
     /// The file the document of `node` is read from.
-    pub(crate) fn of<D: Doc>(node: &Node<'t, D>) -> Option<Self> {
+    pub fn of<D: Doc>(node: &Node<'t, D>) -> Option<Self> {
         let doc: &'t dyn std::any::Any = node.get_doc();
         if let Some(doc) = doc.downcast_ref::<TapeDoc>() {
             return Some(Self::tape(doc));
@@ -101,7 +101,7 @@ impl<'t> InFile<'t> {
     }
 
     /// The file a tape document is read from: its own, or for a guest its host's.
-    pub(crate) fn tape(doc: &'t TapeDoc) -> Self {
+    pub fn tape(doc: &'t TapeDoc) -> Self {
         Self {
             source: doc.file_source().as_str(),
             dialect: doc.file_dialect(),
@@ -129,14 +129,14 @@ impl<'t> InFile<'t> {
     }
 
     /// The file ranges a node of the document stands for.
-    pub(crate) fn place<D: Doc>(&self, node: &Node<'_, D>) -> FileRanges {
+    pub fn place<D: Doc>(&self, node: &Node<'_, D>) -> FileRanges {
         self.origin
             .of_node(node.node_id(), node.range())
             .expect("a document's node lies in its file")
     }
 
     /// The span a node reports: its primary file range (`FileRanges::primary`).
-    pub(crate) fn node<D: Doc>(&self, node: &Node<'_, D>) -> Range<usize> {
+    pub fn node<D: Doc>(&self, node: &Node<'_, D>) -> Range<usize> {
         self.place(node).primary()
     }
 
@@ -148,12 +148,12 @@ impl<'t> InFile<'t> {
     }
 
     /// The span a range of the document reports: its primary file range.
-    pub(crate) fn range(&self, range: Range<usize>) -> Range<usize> {
+    pub fn range(&self, range: Range<usize>) -> Range<usize> {
         self.places(range).primary()
     }
 
     /// The file bytes a range of the document copies, where it does.
-    pub(crate) fn copied(&self, range: Range<usize>) -> Option<Range<usize>> {
+    pub fn copied(&self, range: Range<usize>) -> Option<Range<usize>> {
         self.origin.copied(range)
     }
 
@@ -174,7 +174,7 @@ impl<'t> InFile<'t> {
 
     /// The file's text a node of the document stands for, where it stands for one range; else the
     /// node's own text (a program's), never the file's bytes between its ranges.
-    pub(crate) fn text<D: Doc>(&self, node: &Node<'t, D>) -> Cow<'t, str> {
+    pub fn text<D: Doc>(&self, node: &Node<'t, D>) -> Cow<'t, str> {
         match self
             .place(node)
             .single()
@@ -245,7 +245,7 @@ impl Origin for TapeDoc {
 /// tokens (structure, names, references) does not know it. A token copied, or written over the
 /// same text (Blade's `@isset(` `isset(`), spells itself. A host document's nodes spell
 /// themselves.
-pub(crate) fn rewritten<D: Doc>(node: &Node<'_, D>) -> bool {
+pub fn rewritten<D: Doc>(node: &Node<'_, D>) -> bool {
     let Some(doc) = crate::code_rule_dsl::tape::tape_doc(node).filter(|doc| doc.is_guest()) else {
         return false;
     };

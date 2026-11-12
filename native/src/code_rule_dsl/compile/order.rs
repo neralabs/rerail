@@ -150,5 +150,4 @@ pub(super) fn order_by_captures(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

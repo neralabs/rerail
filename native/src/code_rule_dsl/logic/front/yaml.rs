@@ -16,10 +16,10 @@ use super::{Atom, Error, Literal, Program, Rule, Term};
 use serde_json::Value;
 
 const HEAD: &str = "violation";
-const MARK: &str = "ast";
+pub const MARK: &str = "ast";
 
 /// A document's text, YAML or JSON (JSON is YAML).
-pub(in crate::code_rule_dsl) fn read(text: &str) -> Result<Value, Error> {
+pub fn read(text: &str) -> Result<Value, Error> {
     serde_yaml_ng::from_str(text).map_err(|e| Error::Syntax(format!("bad policy document: {e}")))
 }
 
@@ -28,7 +28,7 @@ fn str_field<'a>(v: &'a Value, key: &str, what: &str) -> Result<&'a str, Error> 
 }
 
 /// Adds a policy document to `prog`: its forbid matchers as rules into `violation`, the rest as a `.policy`.
-pub(in crate::code_rule_dsl) fn add(prog: &mut Program, doc: &Value) -> Result<(), Error> {
+pub fn add(prog: &mut Program, doc: &Value) -> Result<(), Error> {
     let policy = str_field(doc, "id", "a policy")?.to_owned();
     let mut header = doc.clone();
     let clauses = header
@@ -58,7 +58,7 @@ pub(in crate::code_rule_dsl) fn add(prog: &mut Program, doc: &Value) -> Result<(
 }
 
 /// The policy documents `prog` holds, each with its matchers back from its `violation` rules.
-pub(in crate::code_rule_dsl) fn documents(prog: &Program) -> Result<Vec<Value>, Error> {
+pub fn documents(prog: &Program) -> Result<Vec<Value>, Error> {
     let mut out = Vec::new();
     for header in &prog.policies {
         let mut doc = header.clone();
@@ -86,10 +86,9 @@ pub(in crate::code_rule_dsl) fn documents(prog: &Program) -> Result<Vec<Value>, 
 }
 
 /// The `.rr` text of a program of policies: its declarations, outputs, `.policy` documents and rules.
-pub(in crate::code_rule_dsl) fn text(prog: &Program) -> String {
+pub fn text(prog: &Program) -> String {
     let printed = Program { decls: prog.decls.clone(), outputs: prog.outputs.clone(), policies: prog.policies.clone(), rules: prog.rules.clone(), ..Program::default() };
     crate::code_rule_dsl::logic::rr::print(&printed).expect("matcher rules print as .rr")
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-logic's (it mounts it)

@@ -13,7 +13,7 @@ use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, OnceLock};
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Name(Arc<str>);
+pub struct Name(Arc<str>);
 
 /// The process's names. An entry no name holds any more (its count one: the table's own) goes when the table has
 /// doubled since the last sweep, so a long-lived process preparing many programs does not keep every name it made.
@@ -28,7 +28,7 @@ fn table() -> &'static Mutex<Table> {
 }
 
 impl Name {
-    pub(in crate::code_rule_dsl) fn new(text: &str) -> Name {
+    pub fn new(text: &str) -> Name {
         let mut t = table().lock().expect("the names");
         if let Some(found) = t.names.get(text) {
             return Name(Arc::clone(found));
@@ -42,7 +42,7 @@ impl Name {
         Name(made)
     }
 
-    pub(in crate::code_rule_dsl) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 }

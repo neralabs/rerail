@@ -5,7 +5,7 @@ use super::core_rr::DialectFacts;
 use super::{Dialect, Projected};
 use crate::code_rule_dsl::facts::core::Facts;
 
-pub(crate) struct PythonFacts;
+pub struct PythonFacts;
 
 impl DialectFacts for PythonFacts {
     fn string_body(&self, prefix: &str, text: &str) -> Option<String> {

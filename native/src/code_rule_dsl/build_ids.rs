@@ -8,22 +8,22 @@ static ENGINE: OnceLock<&'static str> = OnceLock::new();
 static GRAMMAR: OnceLock<&'static str> = OnceLock::new();
 
 /// Sets both identities; the first setting holds.
-pub(crate) fn set(engine: &'static str, grammar: &'static str) {
+pub fn set(engine: &'static str, grammar: &'static str) {
     let _ = ENGINE.set(engine);
     let _ = GRAMMAR.set(grammar);
 }
 
 /// The engine's build identity.
-pub(crate) fn engine() -> &'static str {
+pub fn engine() -> &'static str {
     ENGINE.get().copied().expect("the engine sets its build identity as it loads")
 }
 
 /// The parser and grammar build identity.
-pub(crate) fn grammar() -> &'static str {
+pub fn grammar() -> &'static str {
     GRAMMAR.get().copied().expect("the engine sets its build identity as it loads")
 }
 
 /// The grammars' build identity as a number: its first 15 hex digits.
-pub(crate) fn grammar_version() -> i64 {
+pub fn grammar_version() -> i64 {
     i64::from_str_radix(&grammar()[..15], 16).expect("grammar build identity is hex")
 }

@@ -33,7 +33,7 @@ pub(crate) fn collect(
         admits,
     )
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(crate) fn experiment(
     g: &Grammar,
     f: &Facts,
@@ -180,7 +180,7 @@ fn collect_shaped(
 }
 
 /// Preserve the reference's Known / NotApplicable / Unknown distinction on core facts.
-pub(crate) fn eligibility(
+pub fn eligibility(
     g: &Grammar,
     f: &Facts,
     requested: u32,
@@ -270,5 +270,4 @@ pub(crate) fn eligibility(
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

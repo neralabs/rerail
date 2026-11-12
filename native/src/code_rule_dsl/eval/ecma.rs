@@ -9,7 +9,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 /// Derives the snapshot's ECMAScript context (`eval::DeriveContext`).
-pub(crate) fn derive(snapshot: &mut Snapshot, files: Vec<usize>, server_graph: bool) -> Box<dyn SnapshotContext> {
+pub fn derive(snapshot: &mut Snapshot, files: Vec<usize>, server_graph: bool) -> Box<dyn SnapshotContext> {
     Box::new(DerivedPackages::new(snapshot, files, server_graph))
 }
 
@@ -19,10 +19,10 @@ impl SnapshotContext for DerivedPackages {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Package manifests `DerivedPackages` derived on this thread.
-    pub(crate) static DERIVED_MANIFESTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub static DERIVED_MANIFESTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// The `package` a snapshot gives each of its ECMA files without a host one: the nearest
@@ -140,7 +140,7 @@ impl DerivedPackages {
         } = self;
         let ignore_files = ignore_texts(snapshot);
         for directory in directories {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             DERIVED_MANIFESTS.set(DERIVED_MANIFESTS.get() + 1);
             let (parsed, config) = &packages[&directory];
             let (npmignore, gitignore) = ignore_files

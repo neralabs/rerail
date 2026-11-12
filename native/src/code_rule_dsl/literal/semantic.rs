@@ -714,7 +714,7 @@ fn await_end(node: &PNode) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::super::annotation::expression;
     use super::*;
 

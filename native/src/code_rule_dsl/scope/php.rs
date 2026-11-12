@@ -21,7 +21,7 @@
 
 use crate::code_rule_dsl::tree::Tree;
 use super::php_names::{self, PhpNames, Resolved};
-pub(crate) use super::flow::{Defined, Modify, Quiet, Read, Reach};
+pub use super::flow::{Defined, Modify, Quiet, Read, Reach};
 use super::{Binding, BuildError, Builder, Form, NodeRef, ScopeKind, Site, VALUE};
 use crate::code_rule_dsl::value::{Context as Decoding, php as php_value};
 use ast_grep_core::{Doc, Node};
@@ -29,9 +29,9 @@ use foldhash::{HashMap, HashMapExt};
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-mod blade;
+pub mod blade;
 #[path = "php/by_reference.generated.rs"]
-mod by_reference;
+pub mod by_reference;
 
 
 
@@ -60,9 +60,9 @@ enum Outer {
 /// What the flow found in a file: each read, and the scopes whose variables a construct reads or
 /// writes by a name the source does not spell.
 #[derive(Default)]
-pub(crate) struct Flow {
+pub struct Flow {
     /// By the read's start byte.
-    reads: HashMap<usize, Read>,
+    pub reads: HashMap<usize, Read>,
     /// Scopes where every variable may be read (`get_defined_vars()`, `compact` of a name that is
     /// not a literal, `$$name`, `eval`, `include`).
     pub(crate) reads_all: BTreeSet<u32>,
@@ -124,32 +124,32 @@ impl super::flow::VariableFlow for Flow {
 
 impl Flow {
     /// `flow` as PHP's own, where it is.
-    pub(crate) fn of(flow: &dyn super::flow::VariableFlow) -> Option<&Self> {
+    pub fn of(flow: &dyn super::flow::VariableFlow) -> Option<&Self> {
         flow.as_any().downcast_ref()
     }
 
-    pub(crate) fn read(&self, start: usize) -> Option<&Read> {
+    pub fn read(&self, start: usize) -> Option<&Read> {
         self.reads.get(&start)
     }
 
-    pub(crate) fn reads(&self) -> impl Iterator<Item = &Read> {
+    pub fn reads(&self) -> impl Iterator<Item = &Read> {
         self.reads.values()
     }
 
     /// What reaches the binding whose name node starts at `start`.
-    pub(crate) fn reach(&self, start: u32) -> Option<&Reach> {
+    pub fn reach(&self, start: u32) -> Option<&Reach> {
         self.before.get(&start)
     }
 
     /// Whether the binding of `scope` whose name node starts at `start` may be its variable's
     /// value where the scope ends normally; `None` where that is not known.
-    pub(crate) fn latest(&self, scope: u32, start: u32) -> Option<bool> {
+    pub fn latest(&self, scope: u32, start: u32) -> Option<bool> {
         (!self.open_ends.contains(&scope)).then(|| self.ends.contains(&start))
     }
 
     /// Whether the binding whose name node starts at `start` writes an outer variable: on every
     /// path that reaches it, on none, or (`None`) on some.
-    pub(crate) fn outer(&self, start: u32) -> Option<bool> {
+    pub fn outer(&self, start: u32) -> Option<bool> {
         match self.outer.get(&start).copied().unwrap_or(LOCAL) {
             OUTER => Some(true),
             bits if bits & OUTER != 0 => None,
@@ -2542,8 +2542,6 @@ impl Visitor<'_, '_> {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
 
-#[cfg(test)]
-mod flow_tests;
+// cratify: `flow_tests` is rerail-engine's (it mounts it)

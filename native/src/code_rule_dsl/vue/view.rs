@@ -80,10 +80,10 @@ use std::ops::Range;
 use tree_sitter::{Node, Parser, Tree};
 
 /// The program a Vue single-file component embeds and its map back to the file.
-pub(crate) struct View {
+pub struct View {
     /// The program's text, never empty.
-    text: String,
-    segments: SegmentMap,
+    pub text: String,
+    pub segments: SegmentMap,
     tree: Tree,
     dialect: GrammarDialect,
 }
@@ -91,7 +91,7 @@ pub(crate) struct View {
 impl View {
     /// The program the SFC whose tree-sitter-vue tree is `root` embeds; `None` where its script
     /// is in a language other than JavaScript or TypeScript, or nothing it holds is read.
-    pub(crate) fn build(root: Node<'_>, source: &str) -> Option<Self> {
+    pub fn build(root: Node<'_>, source: &str) -> Option<Self> {
         let blocks = sfc::blocks(root, source);
         let dialect = sfc::script_dialect(&blocks)?;
         let language = dialect.get_ts_language();
@@ -144,35 +144,35 @@ impl View {
     }
 
     /// The grammar the program is written in.
-    #[cfg(test)]
-    pub(crate) fn dialect(&self) -> GrammarDialect {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn dialect(&self) -> GrammarDialect {
         self.dialect
     }
 
     /// The program's root node.
-    #[cfg(test)]
-    pub(crate) fn root(&self) -> Node<'_> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn root(&self) -> Node<'_> {
         self.tree.root_node()
     }
 
     /// The program's text.
-    #[cfg(test)]
-    pub(crate) fn text(&self) -> &str {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn text(&self) -> &str {
         &self.text
     }
 
     /// Where the program's text stands in the file. Its placeholders the tape leaves out are the
     /// parameters it writes in an empty `v-for` alias slot (`(,a)`); every other token the view
     /// writes stands for script, a template expression or the Vue syntax around one.
-    #[cfg(test)]
-    pub(crate) fn segments(&self) -> &SegmentMap {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn segments(&self) -> &SegmentMap {
         &self.segments
     }
 
     /// A node's extent in the program: from the first of its leaves standing for file bytes to
     /// the last; a node none of whose leaves does, from its first leaf to its last
     /// (`tape::node_extents`).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn extent(&self, node: Node<'_>) -> Range<usize> {
         let mut leaves = Vec::new();
         let mut stack = vec![node];
@@ -196,8 +196,8 @@ impl View {
 
     /// The ranges of `source`, the `.vue` file, a node of the program stands for, in file order,
     /// as its tape's document places them (`tape::TapeDoc`'s `Origin`).
-    #[cfg(test)]
-    pub(crate) fn ranges(&self, node: Node<'_>, source: &str) -> Vec<Range<usize>> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn ranges(&self, node: Node<'_>, source: &str) -> Vec<Range<usize>> {
         self.segments
             .file_ranges(self.extent(node))
             .bridged(source)
@@ -208,8 +208,8 @@ impl View {
 
     /// The bytes of `source` a node of the program reports: its primary range
     /// (`FileRanges::primary`).
-    #[cfg(test)]
-    pub(crate) fn span(&self, node: Node<'_>, source: &str) -> Range<usize> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn span(&self, node: Node<'_>, source: &str) -> Range<usize> {
         self.segments
             .file_ranges(self.extent(node))
             .bridged(source)
@@ -217,8 +217,8 @@ impl View {
     }
 
     /// The file ranges the program copies byte for byte, in program order.
-    #[cfg(test)]
-    pub(crate) fn copied(&self) -> impl Iterator<Item = Range<usize>> + '_ {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn copied(&self) -> impl Iterator<Item = Range<usize>> + '_ {
         self.segments.copied()
     }
 }
@@ -226,7 +226,7 @@ impl View {
 /// Native tags of compiler-dom 3.5.43's `isNativeTag` (@vue/shared's `HTML_TAGS`, `SVG_TAGS` and
 /// `MATH_TAGS`) that are JavaScript identifiers, sorted bytewise for binary search.
 #[rustfmt::skip]
-const NATIVE_TAGS: &[&str] = &[
+pub const NATIVE_TAGS: &[&str] = &[
     "a", "abbr", "address", "animate", "animateMotion", "animateTransform", "annotation", "area",
     "article", "aside", "audio", "b", "base", "bdi", "bdo", "blockquote", "body", "br", "button",
     "canvas", "caption", "circle", "cite", "clipPath", "code", "col", "colgroup", "data",
@@ -868,5 +868,4 @@ impl<'t> Emitter<'t> {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

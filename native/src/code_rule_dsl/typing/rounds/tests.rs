@@ -4,7 +4,7 @@ use std::path::Path;
 /// `.facts` files, and every strategy checked against T's `workload` goldens.
 #[test]
 fn every_strategy_reproduces_t_workload_goldens() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic/plan/golden");
+    let root = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/logic/plan/golden");
     let dump = zstd::decode_all(std::fs::File::open(root.join("facts.sql.zst")).unwrap()).unwrap();
     let db = rusqlite::Connection::open_in_memory().unwrap();
     db.execute_batch(std::str::from_utf8(&dump).unwrap()).unwrap();

@@ -3,13 +3,13 @@
 //! `rerail-ignore` comments (`rerail`) are read for every code rule.
 
 use ast_grep_core::{Doc, Node};
-pub(crate) use rerail::RerailIgnores;
+pub use rerail::RerailIgnores;
 // The kinds and what a violation asks of them, below the linters (`kinds`, the lang crate's).
-pub(crate) mod kinds;
-pub(crate) use kinds::*;
+pub use rerail_lang::code_rule_dsl::suppress::kinds;
+pub use kinds::*;
 
 /// The root of the tree a node belongs to.
-pub(crate) fn root<'t, D: Doc>(node: &Node<'t, D>) -> Node<'t, D> {
+pub fn root<'t, D: Doc>(node: &Node<'t, D>) -> Node<'t, D> {
     let mut root = node.clone();
     while let Some(parent) = root.parent() {
         root = parent;
@@ -19,7 +19,7 @@ pub(crate) fn root<'t, D: Doc>(node: &Node<'t, D>) -> Node<'t, D> {
 
 /// The end of PHP's comment token for a tree-sitter-php `comment` node: the grammar's `//` or `#`
 /// comment that ends in `?` takes the line break after it, which PHP leaves to white space.
-fn php_comment_end(source: &str, range: &std::ops::Range<usize>) -> usize {
+pub fn php_comment_end(source: &str, range: &std::ops::Range<usize>) -> usize {
     let text = &source[range.clone()];
     if text.starts_with("/*") {
         return range.end;
@@ -30,24 +30,20 @@ fn php_comment_end(source: &str, range: &std::ops::Range<usize>) -> usize {
     range.start + text.len()
 }
 
-pub(crate) mod biome;
-pub(crate) mod clippy;
-pub(crate) mod eslint;
-#[cfg(test)]
-mod eslint_tests;
-pub(crate) mod noqa;
-pub(crate) mod nosec;
-pub(crate) mod oxlint;
-#[cfg(test)]
-mod php_corpus_tests;
-pub(crate) mod phpcs;
-pub(crate) mod phpstan;
-pub(crate) mod psalm;
-mod rerail;
-#[cfg(test)]
-mod ruff;
-pub(crate) mod sqlfluff;
-pub(crate) mod vue;
+// cratify: `biome` is rerail-lang-ecma's (it mounts it)
+// cratify: `clippy` is rerail-lang-rust's (it mounts it)
+// cratify: `eslint` is rerail-lang-ecma's (it mounts it)
+// cratify: `eslint_tests` is rerail-engine's (it mounts it)
+// cratify: `noqa` is rerail-lang-python's (it mounts it)
+// cratify: `nosec` is rerail-lang-python's (it mounts it)
+// cratify: `oxlint` is rerail-lang-ecma's (it mounts it)
+// cratify: `php_corpus_tests` is rerail-lang-php's (it mounts it)
+// cratify: `phpcs` is rerail-lang-php's (it mounts it)
+// cratify: `phpstan` is rerail-lang-php's (it mounts it)
+// cratify: `psalm` is rerail-lang-php's (it mounts it)
+pub mod rerail;
+// cratify: `ruff` is rerail-engine's (it mounts it)
+// cratify: `sqlfluff` is rerail-lang-sql's (it mounts it)
+// cratify: `vue` is rerail-lang-ecma's (it mounts it)
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

@@ -5,15 +5,15 @@ use rusqlite::Connection;
 use std::{collections::HashMap, sync::Arc};
 
 #[derive(Default)]
-pub(super) struct Demands {
+pub struct Demands {
     rows: HashMap<String, Arc<Vec<i64>>>,
 }
 impl Demands {
-    pub(super) fn forget(&mut self, rel: &str) {
+    pub fn forget(&mut self, rel: &str) {
         self.rows.remove(rel);
     }
 
-    pub(super) fn read(
+    pub fn read(
         &mut self,
         db: &Connection,
         rel: &str,
@@ -58,5 +58,4 @@ impl Demands {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

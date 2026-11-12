@@ -68,7 +68,7 @@ fn with_settings(programs: &[&str], root: &Path, options: &serde_json::Value) ->
 }
 
 /// The library files the programs include, each with its digest now: the record's `rule` entries.
-fn rule_files(programs: &[String]) -> Result<Vec<(String, String, String)>> {
+pub fn rule_files(programs: &[String]) -> Result<Vec<(String, String, String)>> {
     let mut out = Vec::new();
     // Phase 1's program (`sources.rr`), which every run's documents come from: its includes are core's, as the
     // programs' are.
@@ -86,11 +86,11 @@ fn rule_files(programs: &[String]) -> Result<Vec<(String, String, String)>> {
     Ok(out)
 }
 
-fn encode_consulted(consulted: &[(String, String, String)]) -> String {
+pub fn encode_consulted(consulted: &[(String, String, String)]) -> String {
     consulted.iter().map(|(w, p, d)| format!("{w}\t{p}\t{d}")).collect::<Vec<_>>().join("\n")
 }
 
-fn decode_consulted(text: &str) -> Vec<(String, String, String)> {
+pub fn decode_consulted(text: &str) -> Vec<(String, String, String)> {
     text.lines()
         .filter_map(|l| {
             let mut f = l.splitn(3, '\t');
@@ -108,7 +108,7 @@ fn outputs_of<'a>(out: &Path, names: impl Iterator<Item=&'a str>) -> Vec<(String
     files.sort(); files
 }
 
-fn encode_outputs(files: &[(String, Vec<u8>)]) -> Vec<u8> {
+pub fn encode_outputs(files: &[(String, Vec<u8>)]) -> Vec<u8> {
     let mut out = Vec::new();
     for (name, bytes) in files {
         out.extend((name.len() as u32).to_le_bytes());
@@ -119,7 +119,7 @@ fn encode_outputs(files: &[(String, Vec<u8>)]) -> Vec<u8> {
     out
 }
 
-fn decode_outputs(mut b: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
+pub fn decode_outputs(mut b: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
     let mut files = Vec::new();
     while !b.is_empty() {
         let n = u32::from_le_bytes(b.get(..4)?.try_into().ok()?) as usize;
@@ -180,5 +180,4 @@ pub(super) fn record(programs: &[&str], root: &Path, out: &Path, modes: &str, ty
     Ok(())
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

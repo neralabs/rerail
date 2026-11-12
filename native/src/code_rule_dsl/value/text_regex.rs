@@ -9,13 +9,13 @@ use regex_syntax::ast::ErrorKind;
 /// Bytes a decoded string or bytes value may hold: UTF-8 for Python `str`, two per UTF-16 code
 /// unit for JavaScript strings. An operation that would build a longer one is `Unknown` before it
 /// allocates.
-pub(crate) const MAX_STRING_BYTES: usize = 64 * 1024;
+pub const MAX_STRING_BYTES: usize = 64 * 1024;
 
 /// Backtracking steps one match may take.
-pub(crate) const BACKTRACK_LIMIT: usize = 1_000_000;
+pub const BACKTRACK_LIMIT: usize = 1_000_000;
 
 #[derive(Clone, Debug)]
-pub(crate) enum TextRegex {
+pub enum TextRegex {
     Plain(Regex),
     /// A pattern with backreferences.
     Backreferences(fancy_regex::Regex),
@@ -24,7 +24,7 @@ pub(crate) enum TextRegex {
 impl TextRegex {
     /// Compiles a pattern: Rust syntax, or Rust syntax with backreferences. `None` for anything
     /// else (look-around, atomic groups, conditionals, a malformed pattern).
-    pub(crate) fn new(pattern: &str) -> Option<Self> {
+    pub fn new(pattern: &str) -> Option<Self> {
         if let Ok(regex) = Regex::new(pattern) {
             return Some(Self::Plain(regex));
         }
@@ -48,7 +48,7 @@ impl TextRegex {
 
     /// Whether the pattern matches `text`: `None` when a backreference pattern ran out of its
     /// backtrack limit or the text is past 64 KiB.
-    pub(crate) fn matches(&self, text: &str) -> Option<bool> {
+    pub fn matches(&self, text: &str) -> Option<bool> {
         match self {
             Self::Plain(regex) => Some(regex.is_match(text)),
             Self::Backreferences(regex) => {
@@ -99,7 +99,7 @@ fn backreferences_only(expr: &fancy_regex::Expr) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

@@ -61,7 +61,7 @@ pub(super) fn admission_matches<'a, K: Eq + std::hash::Hash>(
     keys.iter().all(|k| admitted.get(k).map(|f| &f.stored) == expected(k))
 }
 
-pub(in crate::code_rule_dsl) struct Kept<'s> {
+pub struct Kept<'s> {
     store: &'s ContentStore,
     space: [u8; 32],
     /// Each relation of the program, as its frame names it (`program`).
@@ -69,7 +69,7 @@ pub(in crate::code_rule_dsl) struct Kept<'s> {
     /// What is stored of those relations.
     was: HashMap<String, FrameStored>,
     /// Encoded rows admitted before scheduling. Reading a kept relation never calls SQLite.
-    admitted: HashMap<String, Arc<AdmittedFrame>>,
+    pub admitted: HashMap<String, Arc<AdmittedFrame>>,
     /// The inputs bound before the run, and those bound as their first reader runs (`loaded`, by the caller).
     inputs: HashMap<String, Arc<dyn Source>>,
     pub(in crate::code_rule_dsl) loaded: Rc<RefCell<HashMap<String, Arc<dyn Source>>>>,
@@ -79,11 +79,11 @@ pub(in crate::code_rule_dsl) struct Kept<'s> {
     gone: Vec<(FrameRel, i64)>,
     pub(in crate::code_rule_dsl) written_rows: usize,
     /// The strata the run evaluated, of all (`KeptStrata::counted`).
-    pub(in crate::code_rule_dsl) strata: Option<(usize, usize)>,
+    pub strata: Option<(usize, usize)>,
 }
 
 impl<'s> Kept<'s> {
-    pub(in crate::code_rule_dsl) fn new(store: &'s ContentStore, space: [u8; 32], inputs: &[(String, Arc<dyn Source>)]) -> Self {
+    pub fn new(store: &'s ContentStore, space: [u8; 32], inputs: &[(String, Arc<dyn Source>)]) -> Self {
         Kept {
             store,
             space,
@@ -111,7 +111,7 @@ impl<'s> Kept<'s> {
     }
 
     /// Writes what is left, and marks the program's relations used by this run.
-    pub(in crate::code_rule_dsl) fn finish(mut self) {
+    pub fn finish(mut self) {
         if self.rels.is_empty() {
             return;
         }
@@ -199,8 +199,7 @@ impl KeptStrata for Kept<'_> {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
 
 /// The cross-file part a new process maintains as a session does (t32 4.1): what `retain::after` keeps, kept in
 /// the store's frames under each relation's identity, and read back as the next process's `Retained`. Its strata
@@ -211,10 +210,10 @@ mod tests;
 /// of other inputs than the inputs' frames hold now: it is read back only when every input it records has the
 /// digest the input's frame holds. An input's frame is its program's (`retain::key`), not shared. A program output's rows are kept as any relation's, and its lines decoded from
 /// them when its stratum is clean (`plan::decode_kept`); but `finding`, which SQL decodes, runs again.
-pub(in crate::code_rule_dsl) struct Part {
-    space: [u8; 32],
+pub struct Part {
+    pub space: [u8; 32],
     /// Each relation and input of the program, as its frame names it, and what the store holds of it.
-    frames: HashMap<String, (FrameRel, Option<FrameStored>)>,
+    pub frames: HashMap<String, (FrameRel, Option<FrameStored>)>,
     /// Each derived relation's inputs (`cone`).
     cones: HashMap<String, std::collections::BTreeSet<String>>,
 }
@@ -254,7 +253,7 @@ fn cones(prog: &crate::code_rule_dsl::logic::front::Program, sccs: &[std::collec
 
 /// What the store keeps of program `prog` (of `key`, `retain::key`) at `root`, as a `Retained`; `inputs` the run's,
 /// whose columns an input's kept rows are read under.
-pub(in crate::code_rule_dsl) fn load(
+pub fn load(
     store: &ContentStore,
     root: &Path,
     key: [u8; 32],
@@ -293,7 +292,7 @@ pub(in crate::code_rule_dsl) fn load(
     load_from_snapshot(store, key, inputs, now, Part { space, frames, cones })
 }
 
-fn load_from_snapshot(
+pub fn load_from_snapshot(
     store: &ContentStore, key: [u8; 32], inputs: &[(String, Arc<dyn Source>)],
     now: &HashMap<String, u64>, mut part: Part,
 ) -> super::Result<(Option<super::retain::Retained>, Part)> {

@@ -17,7 +17,7 @@ use crate::code_rule_dsl::language::adapter::pack as language_pack;
 /// violation at its anchor's start (oxlint's and Biome's: over the anchored span). `node` is the
 /// witness's node, which places the file: the family of the file's language reads its comments
 /// (a guest node's are its host file's: `embed`).
-pub(crate) fn suppresses<D: Doc>(
+pub fn suppresses<D: Doc>(
     violation: Option<&ViolationSpec>,
     node: &Node<'_, D>,
     witness: &Witness,
@@ -45,7 +45,7 @@ pub(crate) fn suppresses<D: Doc>(
 /// anchor names: its start, or for `witness.end` the witness's last byte (its end is where the next
 /// node may start). Always honoured, whatever `suppress` and the `suppressions` setting. `node` is
 /// the witness's node, which places the file.
-pub(crate) fn rerail_ignores<D: Doc>(
+pub fn rerail_ignores<D: Doc>(
     violation: Option<&ViolationSpec>,
     node: &Node<'_, D>,
     witness: &Witness,
@@ -72,7 +72,7 @@ pub(crate) fn rerail_ignores<D: Doc>(
 
 /// Whether the file `node` belongs to holds a `rerail-ignore` comment naming the violation's code
 /// rule, which may then drop some of its witnesses.
-pub(crate) fn names_rerail_ignore<D: Doc>(violation: &ViolationSpec, node: &Node<'_, D>) -> bool {
+pub fn names_rerail_ignore<D: Doc>(violation: &ViolationSpec, node: &Node<'_, D>) -> bool {
     violation
         .ignored_by
         .as_deref()

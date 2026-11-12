@@ -1,8 +1,8 @@
 //! Decode Python literal runs and retain each constant's source byte start.
 use super::core_rr::py_unescape;
 
-#[cfg(test)]
-pub(super) fn with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, usize)> {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn with_offsets<N: Copy>(parts: &[(N, &str)]) -> Vec<(String, N, u8, usize)> {
     use crate::code_rule_dsl::{facts::core::{self, Built}, model::FileInput};
     use std::sync::Arc;
     if parts.is_empty() { return Vec::new(); }
@@ -144,5 +144,4 @@ impl Constants<'_> {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

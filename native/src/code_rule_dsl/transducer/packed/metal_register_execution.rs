@@ -296,15 +296,15 @@ fn encode(
     encoder.end_encoding();
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     static PAYLOAD_READS: std::cell::Cell<[usize;4]> = const { std::cell::Cell::new([0;4]) };
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 pub(super) fn take_payload_reads() -> [usize; 4] {
     PAYLOAD_READS.with(|counts| counts.replace([0; 4]))
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn observe_payload_read<T>(count: usize) {
     let name = std::any::type_name::<T>();
     let index = [
@@ -331,7 +331,7 @@ pub(super) fn read<T: Copy>(buffer: &MappedBuffer, count: usize) -> Result<Vec<T
     if length as u64 > buffer.buffer.length() {
         return Err(Error::BackendFailure);
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     observe_payload_read::<T>(count);
     Ok(unsafe { std::slice::from_raw_parts(buffer.buffer.contents().cast::<T>(), count).to_vec() })
 }
@@ -752,7 +752,7 @@ pub(super) fn execute(
 
 /// Assemble already ordered, disjoint evaluation outputs. No semantic comparison,
 /// candidate filtering, or frontier materialization occurs at this public boundary.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn assemble_evaluations(
     resident: &ResidentInput,
     registers: (Vec<ResultRecord>, Vec<FinalCaptureRecord>),
@@ -762,7 +762,7 @@ fn assemble_evaluations(
     assemble_evaluation_streams(resident, &streams)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 fn assemble_evaluation_streams(
     resident: &ResidentInput,
     streams: &[(Vec<ResultRecord>, Vec<FinalCaptureRecord>)],

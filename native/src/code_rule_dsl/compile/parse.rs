@@ -630,13 +630,8 @@ fn compile_sub_relation(
     ))
 }
 
-#[cfg(test)]
-mod annotation_tests;
-#[cfg(test)]
-mod host_tests;
-#[cfg(test)]
-mod m12b_tests;
-#[cfg(test)]
-mod ruff;
-#[cfg(test)]
-mod tests;
+// cratify: `annotation_tests` is rerail-engine's (it mounts it)
+// cratify: `host_tests` is rerail-engine's (it mounts it)
+// cratify: `m12b_tests` is rerail-engine's (it mounts it)
+// cratify: `ruff` is rerail-engine's (it mounts it)
+// cratify: `tests` is rerail-engine's (it mounts it)

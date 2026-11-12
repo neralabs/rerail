@@ -13,7 +13,7 @@ use unicode_normalization::{IsNormalized, UnicodeNormalization, is_nfkc_quick};
 use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// `text` under NFKC; borrowed, without allocating, where it is already normal (any ASCII text).
-pub(crate) fn nfkc(text: &str) -> Cow<'_, str> {
+pub fn nfkc(text: &str) -> Cow<'_, str> {
     if text.is_ascii() || is_nfkc_quick(text.chars()) == IsNormalized::Yes {
         Cow::Borrowed(text)
     } else {
@@ -22,7 +22,7 @@ pub(crate) fn nfkc(text: &str) -> Cow<'_, str> {
 }
 
 /// A Python identifier's text, NFKC-normalized; `text` itself where it is already normal.
-pub(crate) fn python_name(text: Cow<'_, str>) -> Cow<'_, str> {
+pub fn python_name(text: Cow<'_, str>) -> Cow<'_, str> {
     match nfkc(&text) {
         Cow::Borrowed(_) => text,
         Cow::Owned(normal) => Cow::Owned(normal),
@@ -30,7 +30,7 @@ pub(crate) fn python_name(text: Cow<'_, str>) -> Cow<'_, str> {
 }
 
 /// The name a Python identifier node (or a dotted name's part, an attribute) denotes.
-pub(crate) fn python_identifier<'r, D: Doc>(node: &Node<'r, D>) -> Cow<'r, str> {
+pub fn python_identifier<'r, D: Doc>(node: &Node<'r, D>) -> Cow<'r, str> {
     python_name(node.text())
 }
 
@@ -38,7 +38,7 @@ pub(crate) fn python_identifier<'r, D: Doc>(node: &Node<'r, D>) -> Cow<'r, str> 
 /// espree's `Identifier.name` (and so eslint-scope's variable names) holds it, so `\u{20BB7}`
 /// and `𠮷` name one variable. `text` itself where it holds no escape, or one that decodes to no
 /// character (a parse error, which ESLint never reads).
-pub(crate) fn ecma_name(text: Cow<'_, str>) -> Cow<'_, str> {
+pub fn ecma_name(text: Cow<'_, str>) -> Cow<'_, str> {
     if !text.contains('\\') {
         return text;
     }
@@ -73,12 +73,12 @@ pub(crate) fn ecma_name(text: Cow<'_, str>) -> Cow<'_, str> {
 }
 
 /// An identifier's text as `dialect`'s family compares names (`Adapter::name`).
-pub(crate) fn name_in(dialect: GrammarDialect, text: Cow<'_, str>) -> Cow<'_, str> {
+pub fn name_in(dialect: GrammarDialect, text: Cow<'_, str>) -> Cow<'_, str> {
     { let pack = language_pack::pack(Family::of(dialect)); pack.name(text) }
 }
 
 /// A PHP label: a letter, `_` or a byte from 0x80, then those or digits.
-pub(crate) fn php_label(text: &str) -> bool {
+pub fn php_label(text: &str) -> bool {
     let mut chars = text.chars();
     chars
         .next()
@@ -86,5 +86,4 @@ pub(crate) fn php_label(text: &str) -> bool {
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || !c.is_ascii())
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

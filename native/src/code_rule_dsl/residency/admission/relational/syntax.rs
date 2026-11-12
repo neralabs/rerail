@@ -5,7 +5,7 @@ use crate::code_rule_dsl::{
     violations::Span,
 };
 use ast_grep_core::source::SgNode;
-mod packed;
+pub mod packed;
 use packed::{Columns, Fields, Postings};
 use rusqlite::{Connection, types::Value, vtab::Context};
 use std::{
@@ -26,7 +26,7 @@ pub(in crate::code_rule_dsl) struct Owner {
 }
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(in crate::code_rule_dsl) struct Spec {
+pub struct Spec {
     pub name: String,
     pub gate: String,
     #[serde(default)]
@@ -45,7 +45,7 @@ pub(in crate::code_rule_dsl) struct Spec {
     pub owners: BTreeMap<String, Owner>,
 }
 
-pub(in crate::code_rule_dsl) trait Source: Send + Sync {
+pub trait Source: Send + Sync {
     fn columns(&self) -> Vec<String>;
     fn column_types(&self) -> Vec<String>;
     fn len(&self) -> usize;
@@ -126,7 +126,7 @@ pub struct Facts {
     selections: Selections,
 }
 impl Facts {
-    pub(in crate::code_rule_dsl) fn build(file: &FileInput) -> Result<Arc<Self>> {
+    pub fn build(file: &FileInput) -> Result<Arc<Self>> {
         #[cfg(feature = "code-rule-profile")]
         let _span = crate::code_rule_dsl::profile::trace::Span::start("syntax-prepare", "document");
         let language =
@@ -294,18 +294,18 @@ impl Facts {
         cache.insert(key, Arc::clone(&index));
         Ok(index)
     }
-    pub(in crate::code_rule_dsl) fn ast_source(&self) -> String {
+    pub fn ast_source(&self) -> String {
         String::from_utf8(self.doc.transducer_source().to_vec()).expect("UTF-8 source")
     }
     /// A canonical AST root's span and kind.
-    pub(in crate::code_rule_dsl) fn ast_root(&self, id: u32) -> Result<(usize, usize, String)> {
+    pub fn ast_root(&self, id: u32) -> Result<(usize, usize, String)> {
         if self.positions.get(id as usize).is_none_or(Option::is_none) {
             return Err(invalid("invalid Python AST root"));
         }
         let span = self.packed.span(id);
         Ok((span.start, span.end, self.packed.kind(id).into()))
     }
-    pub(in crate::code_rule_dsl) fn subtree_ends(&self) -> &[u32] {
+    pub fn subtree_ends(&self) -> &[u32] {
         &self.packed.subtree_end
     }
     fn visible(&self, excludes: &[String]) -> Result<Arc<Vec<u32>>> {
@@ -424,9 +424,9 @@ struct Selection {
     ordinal: Vec<usize>,
     visible: Arc<Vec<u32>>,
 }
-struct Meter {
-    work: Arc<AtomicUsize>,
-    steps: AtomicUsize,
+pub struct Meter {
+    pub work: Arc<AtomicUsize>,
+    pub steps: AtomicUsize,
 }
 impl Meter {
     fn charge(&self, count: usize) -> rusqlite::Result<()> {
@@ -437,7 +437,7 @@ impl Meter {
             .map_err(|e| rusqlite::Error::UserFunctionError(e.reason.into()))
     }
 }
-struct Nodes {
+pub struct Nodes {
     path: String,
     facts: Arc<Facts>,
     selected: Arc<Selection>,
@@ -807,7 +807,7 @@ fn schema(db: &Connection, spec: &Spec) -> Result<Vec<String>> {
         })
         .collect()
 }
-fn load_one(spec: &Spec, path: &str, facts: Arc<Facts>, meter: Arc<Meter>) -> Result<Vec<Nodes>> {
+pub fn load_one(spec: &Spec, path: &str, facts: Arc<Facts>, meter: Arc<Meter>) -> Result<Vec<Nodes>> {
     let selected = facts.select(&spec.exclude_kinds, false)?;
     let mut result = Vec::new();
     let nodes = Nodes {
@@ -853,7 +853,7 @@ fn load_one(spec: &Spec, path: &str, facts: Arc<Facts>, meter: Arc<Meter>) -> Re
     Ok(result)
 }
 
-struct Union {
+pub struct Union {
     sources: Vec<Nodes>,
     offsets: Vec<usize>,
     by_path: HashMap<String, usize>,
@@ -861,7 +861,7 @@ struct Union {
     estimates: Vec<(usize, usize)>,
 }
 impl Union {
-    fn new(sources: Vec<Nodes>) -> Self {
+    pub fn new(sources: Vec<Nodes>) -> Self {
         let mut offsets = vec![0];
         for source in &sources {
             offsets.push(offsets.last().unwrap() + source.len());
@@ -1156,5 +1156,4 @@ pub(in crate::code_rule_dsl) fn demand(
     })
 }
 
-#[cfg(test)]
-mod scoped_index_tests;
+// cratify: `scoped_index_tests` is rerail-engine's (it mounts it)

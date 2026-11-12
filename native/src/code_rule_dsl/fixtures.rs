@@ -34,7 +34,7 @@ pub use crate::__rerail_fixtures_dir as fixtures_dir;
 pub use crate::__rerail_oracle as oracle;
 
 /// `source`'s tape in `lang`, restored, and its bytes.
-pub(in crate::code_rule_dsl) fn document(source: &str, lang: GrammarDialect) -> (TapeDoc, Vec<u8>) {
+pub fn document(source: &str, lang: GrammarDialect) -> (TapeDoc, Vec<u8>) {
     let native = StrDoc::new(source, lang);
     let grammar = Grammar::new(lang).unwrap();
     let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap().primary;
@@ -44,7 +44,7 @@ pub(in crate::code_rule_dsl) fn document(source: &str, lang: GrammarDialect) -> 
 
 /// A fresh store path: the clock alone is not unique across parallel tests (macOS reads it in
 /// microseconds), so a counter disambiguates.
-pub(in crate::code_rule_dsl) fn temp() -> PathBuf {
+pub fn temp() -> PathBuf {
     static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -52,6 +52,6 @@ pub(in crate::code_rule_dsl) fn temp() -> PathBuf {
 }
 
 /// The store at `path`, opened (created if it is not there).
-pub(in crate::code_rule_dsl) fn open(path: &std::path::Path) -> crate::content_store::ContentStore {
+pub fn open(path: &std::path::Path) -> crate::content_store::ContentStore {
     crate::content_store::ContentStore::open(path).unwrap()
 }

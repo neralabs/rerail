@@ -289,7 +289,7 @@ pub(crate) fn parse<D: Doc>(
 pub(crate) struct PythonFStringGrammar;
 
 /// Its handle, which the engine registers (`literal::install`).
-pub(crate) const GRAMMAR: super::Grammar = super::Grammar::new(&PythonFStringGrammar);
+pub const GRAMMAR: super::Grammar = super::Grammar::new(&PythonFStringGrammar);
 
 impl super::LiteralGrammar for PythonFStringGrammar {
     fn name(&self) -> &'static str {

@@ -26,7 +26,7 @@ pub(crate) type RustVersion = (u32, u32, u32);
 
 /// rustc's and Clippy's lint-level attributes (`#[allow]`, `#[expect]`): the lint and group
 /// names that silence the violation.
-pub(crate) struct Suppressions;
+pub struct Suppressions;
 
 impl super::SuppressionKind for Suppressions {
     const KEY: &'static str = "clippy";
@@ -411,7 +411,7 @@ fn cfg_enabled(predicate: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::{Clippy, ClippyIndex, RustVersion, rust_version};
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_language::LanguageExt;

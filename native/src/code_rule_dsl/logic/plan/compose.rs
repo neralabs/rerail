@@ -7,12 +7,12 @@ thread_local! {static CACHE:RefCell<HashMap<[u8;32],Compiled>>=RefCell::new(Hash
 /// Whether a run may be one composed query: only when asked (`RERAIL_COMPOSE=1`). The integration branch runs its
 /// strata natively, with SQL only where SQL reads a relation (decision 0104). Composition retains ordinary facts
 /// for sessions and persistence; it stays opt-in for comparison (async-family-integration).
-pub(super) fn enabled() -> bool {
-    #[cfg(test)]
+pub fn enabled() -> bool {
+    #[cfg(any(test, feature = "test-hooks"))]
     if experiments::native_only() {
         return false;
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if ASKED.get() {
         return true;
     }
@@ -20,8 +20,8 @@ pub(super) fn enabled() -> bool {
 }
 
 // A test of the composed form asks for it on its own thread (`RERAIL_COMPOSE` would ask for every test's runs).
-#[cfg(test)]
-thread_local! {pub(super) static ASKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };}
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {pub static ASKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };}
 
 pub(super) fn clear() {
     CACHE.with(|c| c.borrow_mut().clear());
@@ -51,7 +51,7 @@ pub(super) fn planned(prog: &Program, db: &Connection, inputs: &mut Inputs) -> R
 }
 
 #[derive(Clone)]
-pub(super) struct Compiled {
+pub struct Compiled {
     pub sql: String,
     outputs: Vec<String>,
     kept: BTreeSet<String>,
@@ -61,7 +61,7 @@ pub(super) struct Compiled {
     prepares: Arc<std::sync::OnceLock<bool>>,
 }
 
-pub(super) fn accepts(prog: &Program) -> Result<bool> {
+pub fn accepts(prog: &Program) -> Result<bool> {
     if !prog.lattice.is_empty()
         || !prog.answers.is_empty()
         || !prog.gates.is_empty()
@@ -102,7 +102,7 @@ pub(super) fn accepts(prog: &Program) -> Result<bool> {
     Ok(true)
 }
 
-pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
+pub fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
     // SQLite folds identifier case, whereas rule relations are case-sensitive.
     // Bind physical names on the typed query; never replace substrings in rendered SQL.
     let mut counts = HashMap::<String, usize>::new();
@@ -371,7 +371,7 @@ pub(super) fn compile(prog: &Program, model: &mut Model) -> Result<Compiled> {
     Ok(Compiled {
         sql: {
             let sql = if defs.is_empty() {body} else {format!("WITH RECURSIVE {} {body}", defs.join(",\n"))};
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             let sql = experiments::physical_sql(sql, prog);
             sql
         },
@@ -429,7 +429,7 @@ impl Compiled {
 
     /// Expanded-read counts identify risky graphs; SQLite determines whether they fit.
     /// Cache structural refusal so subsequent chunks do not repeat a failed preparation.
-    fn prepares(&self, db: &Connection) -> Result<bool> {
+    pub fn prepares(&self, db: &Connection) -> Result<bool> {
         if let Some(fits)=self.prepares.get() { return Ok(*fits); }
         self.bind_aliases(db)?;
         let _span=super::super::profile::span(|| "composed query limit check".into());
@@ -446,7 +446,7 @@ impl Compiled {
         Ok(fits)
     }
 
-    pub(super) fn execute(
+    pub fn execute(
         &self,
         db: &Connection,
         prog: &Program,
@@ -476,7 +476,7 @@ impl Compiled {
             db.prepare_cached(&self.sql)?;
         }
         let mut query = db.prepare_cached(&self.sql)?;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         query.reset_status(rusqlite::StatementStatus::RePrepare);
         let mut cursor = query.query([])?;
         while let Some(row) = cursor.next()? {
@@ -488,7 +488,7 @@ impl Compiled {
             );
         }
         drop(cursor);
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         super::super::profile::decision("composed automatic reprepare",||query.get_status(rusqlite::StatementStatus::RePrepare).to_string());
         drop(query);
         if let Some(before) = counters {
@@ -505,7 +505,7 @@ impl Compiled {
                 }
             }
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         {
             experiments::replay(self, db, &values)?;
             let work = crate::code_rule_dsl::facts::vtab::lookup_spike::take_work();
@@ -616,12 +616,11 @@ impl Compiled {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
 
-#[cfg(test)]
-pub(super) mod experiments;
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod experiments;
 
-mod stages;
-mod retained;
-pub(super) use retained::run;
+pub mod stages;
+pub mod retained;
+pub use retained::run;

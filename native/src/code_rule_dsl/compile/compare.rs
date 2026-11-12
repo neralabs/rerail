@@ -1,4 +1,4 @@
-mod semantic;
+pub mod semantic;
 
 use super::ast_rule::AST_RELATIONS;
 use super::order::AllOrderConflict;
@@ -8,7 +8,7 @@ use crate::code_rule_dsl::json::{invalid, non_empty_str, object, reject_unknown}
 use crate::code_rule_dsl::matcher::{
     Collation, CompareOp, CompareText, Comparison, CountBinding, UtilitySummary,
 };
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use crate::code_rule_dsl::walks::{Walk, record_walk};
 use napi::Result;
 use serde_json::Value;
@@ -272,9 +272,9 @@ pub(super) struct CompareSite<'a> {
 /// A sub-rule that evaluates in an environment of its own: `not` and `count` start from the
 /// caller's bindings and keep what they bind to themselves; a stop rule starts empty.
 #[derive(Clone)]
-pub(super) struct Scope {
+pub struct Scope {
     fresh: bool,
-    names: BTreeSet<String>,
+    pub names: BTreeSet<String>,
 }
 
 impl CompareSite<'_> {
@@ -438,7 +438,7 @@ pub(super) fn binding_site_index(
             Value::Object(fields) => {
                 let mut names = BTreeSet::new();
                 if let Some(pattern) = fields.get("pattern") {
-                    #[cfg(test)]
+                    #[cfg(any(test, feature = "test-hooks"))]
                     record_walk(Walk::BindingSitePatterns);
                     names.extend(pattern_names(pattern));
                 }
@@ -528,7 +528,7 @@ pub(super) fn bound_elsewhere(
 
 /// The scope a parameterized utility's rule runs in: a frame of its own, holding its parameters
 /// (whatever a caller passes) and what it binds itself.
-pub(super) fn frame_scope(
+pub fn frame_scope(
     util: &UtilDef,
     utils: &BTreeMap<String, UtilDef>,
     pattern_names: PatternNames<'_>,
@@ -864,5 +864,4 @@ fn walk_sites<'a>(
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

@@ -9,12 +9,11 @@
 //! by reach.
 
 // The analysis is the compiler crate's (`rerail_compiler::set_mode`).
-pub(in crate::code_rule_dsl) use rerail_compiler::set_mode::*;
+pub use rerail_compiler::set_mode::*;
 
 // The tests read the transducer's names as they did when this file held the code.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[allow(unused_imports)]
 use super::*;
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

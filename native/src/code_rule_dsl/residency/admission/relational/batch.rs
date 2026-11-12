@@ -3,15 +3,14 @@ use super::{Evaluation, Inputs, Job, Preparation, Session, failure, producer, sq
 use crate::code_rule_dsl::model::{CompiledCodeRule, Metrics};
 use crate::code_rule_dsl::{budget::Context, model::CompiledClause};
 use std::collections::VecDeque;
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
 
 const SQL_RESIDENT_BYTES: usize = 256 * 1024 * 1024;
 #[derive(Default)]
 pub struct Stats {
-    partitions: usize,
-    peak_sessions: usize,
-    peak_sql_bytes: usize,
+    pub partitions: usize,
+    pub peak_sessions: usize,
+    pub peak_sql_bytes: usize,
     skipped_empty: usize,
 }
 struct Ready<'a> {
@@ -99,10 +98,10 @@ pub(in crate::code_rule_dsl) fn evaluate_prepared(
     )
     .0
 }
-fn run(jobs: Vec<Job<'_>>, input_limit: usize, sql_limit: usize) -> (Vec<Evaluation>, Stats) {
+pub fn run(jobs: Vec<Job<'_>>, input_limit: usize, sql_limit: usize) -> (Vec<Evaluation>, Stats) {
     run_prepared(jobs, input_limit, sql_limit, |_, _, _, _| Ok(()))
 }
-fn run_prepared(
+pub fn run_prepared(
     jobs: Vec<Job<'_>>,
     input_limit: usize,
     sql_limit: usize,

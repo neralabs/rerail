@@ -6,20 +6,20 @@ use crate::code_rule_dsl::language::Family;
 
 #[rustfmt::skip]
 #[path = "ecma/builtins.generated.rs"]
-pub(crate) mod builtins;
-mod calls;
-mod destructure;
+pub mod builtins;
+pub mod calls;
+pub mod destructure;
 #[path = "ecma/entities.generated.rs"]
-mod entities;
-pub(crate) mod ops;
+pub mod entities;
+pub mod ops;
 
 use super::{ContainerKind, Context, MAX_ELEMENTS, MAX_STRING_BYTES, Value};
 use ast_grep_core::{Doc, Node};
-pub(crate) use calls::to_precision;
-pub(crate) use destructure::destructured;
+pub use calls::to_precision;
+pub use destructure::destructured;
 
 /// Decodes `node` to its value; `Unknown` for anything that is not a literal this knows.
-pub(crate) fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
+pub fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     if !context.enter() {
         return Value::Unknown;
     }
@@ -120,7 +120,7 @@ fn decode_node<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
 /// (tree-sitter-typescript 0.23.2 `node-types.json`, TSX's JSX elements included), sequences, and
 /// shorthand properties. Only an expression has a value; on any other node (a statement, a type,
 /// a property name, punctuation) every value predicate fails.
-pub(crate) const EXPRESSION_KINDS: &[&str] = &[
+pub const EXPRESSION_KINDS: &[&str] = &[
     "array",
     "arrow_function",
     "as_expression",
@@ -165,7 +165,7 @@ pub(crate) const EXPRESSION_KINDS: &[&str] = &[
 ];
 
 /// Kinds whose value `decode` can know; any other expression is `Unknown`.
-pub(crate) const VALUE_KINDS: &[&str] = &[
+pub const VALUE_KINDS: &[&str] = &[
     "number",
     "string",
     "template_string",
@@ -247,7 +247,7 @@ fn binary<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
 }
 
 /// The expression a wrapper holds: its one named child that is not a type or a comment.
-pub(super) fn operand<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
+pub fn operand<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
     let kind = node.kind();
     if kind == "type_assertion" {
         // `<T>x`: type arguments first, then the expression.
@@ -752,11 +752,10 @@ fn object<D: Doc>(node: &Node<'_, D>) -> Value {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
 
 /// ECMAScript's numbers as `toPrecision` reads them (`matcher::transform::NumberText`).
-pub(crate) struct Numbers;
+pub struct Numbers;
 
 impl crate::code_rule_dsl::matcher::NumberText for Numbers {
     fn to_precision(&self, text: &str, digits: u32) -> Option<String> {

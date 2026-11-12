@@ -39,7 +39,7 @@ const INPUT_BYTES: usize = 4 + 4 + 32;
 const READER_BYTES: usize = 4 + 8;
 
 #[derive(Clone, Debug)]
-pub(crate) struct Limits {
+pub struct Limits {
     /// Bytes the top may hold before it freezes into a layer of runs.
     pub top: usize,
     /// Bytes of frozen layers kept in memory; older ones spill to files under `spill`.
@@ -215,19 +215,19 @@ struct Shared {
 }
 
 /// The overlay: a `Graph` whose writes reach SQLite eventually.
-pub(crate) struct Overlay {
+pub struct Overlay {
     shared: Arc<Shared>,
     writer: Option<JoinHandle<()>>,
 }
 
 impl Overlay {
-    pub(crate) fn new(store: Arc<ContentStore>, limits: Limits) -> StoreResult<Self> {
+    pub fn new(store: Arc<ContentStore>, limits: Limits) -> StoreResult<Self> {
         Self::with(StoreHandle::Shared(store), limits)
     }
 
     /// `run` over an overlay of `store`, borrowed: the overlay is flushed and its writer joined
     /// before this returns (or unwinds), so the borrow outlives every use of it.
-    pub(crate) fn scoped<T>(store: &ContentStore, limits: Limits, run: impl FnOnce(&Overlay) -> StoreResult<T>) -> StoreResult<T> {
+    pub fn scoped<T>(store: &ContentStore, limits: Limits, run: impl FnOnce(&Overlay) -> StoreResult<T>) -> StoreResult<T> {
         let overlay = Self::with(StoreHandle::Scoped(std::ptr::NonNull::from(store)), limits)?;
         let result = run(&overlay);
         let flushed = overlay.flush();
@@ -277,7 +277,7 @@ impl Overlay {
     }
 
     /// Freezes the top and writes every layer: afterwards SQLite holds everything.
-    pub(crate) fn flush(&self) -> StoreResult<()> {
+    pub fn flush(&self) -> StoreResult<()> {
         let mut state = self.shared.lock();
         self.shared.freeze(&mut state);
         while !state.frozen.is_empty() {
@@ -349,7 +349,7 @@ impl Overlay {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl Overlay {
     /// A crash: the writer stops where it is and nothing still in memory or spilled is written.
     /// Returns what the overlay did, as it stopped.
@@ -706,4 +706,4 @@ fn failed(state: &State) -> StoreResult<()> {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;

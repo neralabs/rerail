@@ -31,7 +31,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 /// JSON files.
-pub(crate) struct Json;
+pub struct Json;
 
 fn refused(message: impl Into<Cow<'static, str>>) -> Result<(), Refusal> {
     Err(Refusal::Refused(message.into()))
@@ -150,7 +150,7 @@ impl ScopeRules for Json {
         None
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     fn unbound_locally(_: &ScopeTable, _: &Reference, _: &str, _: bool) -> bool {
         false
     }

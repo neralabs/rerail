@@ -5,7 +5,7 @@ pub(crate) enum Mode { Point, Merge, Gallop, Adaptive }
 #[derive(Default, serde::Serialize)]
 pub struct Work { pub requests: usize, pub reads: usize, pub output: usize, pub merge: usize, pub gallop: usize, pub point: usize }
 thread_local! { static WORK: std::cell::RefCell<Work> = std::cell::RefCell::new(Work::default()); }
-pub(crate) fn take_work() -> Work { WORK.with(|w| std::mem::take(&mut *w.borrow_mut())) }
+pub fn take_work() -> Work { WORK.with(|w| std::mem::take(&mut *w.borrow_mut())) }
 fn mode() -> Option<Mode> {
     static MODE: OnceLock<Option<Mode>> = OnceLock::new();
     *MODE.get_or_init(|| std::env::var("RERAIL_LOOKUP_SPIKE").ok().map(|s| match s.as_str() {

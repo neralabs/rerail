@@ -2,7 +2,7 @@
 use super::{Lower, Set, decode::Property};
 #[cfg(test)]
 #[path = "lower/value_tests.rs"]
-mod tests;
+pub mod tests;
 
 impl Lower {
     pub(super) fn text(&mut self, scope: &Set, expression: &str, literal: bool) -> Result<Set, ()> {

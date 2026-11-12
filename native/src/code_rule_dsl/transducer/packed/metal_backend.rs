@@ -5,8 +5,8 @@
 use super::{EMIT, Error, KIND, Program, TEXT, TextPredicate, split};
 use crate::code_rule_dsl::tape::TapeDoc;
 #[allow(unused_imports)]
-pub(in crate::code_rule_dsl) use rerail_metal::runtime::*;
-pub(in crate::code_rule_dsl) use rerail_metal::launch;
+pub use rerail_metal::runtime::*;
+pub use rerail_metal::launch;
 use launch::{CheckedComputeEncoder, commit_checked, wait_checked};
 use metal::{CommandQueue, ComputePipelineState, Device, MTLSize};
 use std::collections::BTreeMap;
@@ -73,7 +73,7 @@ fn anchor_literal(program: &Program) -> Result<(u16, &[u8], u16, u16), Error> {
     ))
 }
 
-pub(super) struct PreparedAnchorScan {
+pub struct PreparedAnchorScan {
     pipeline: ComputePipelineState,
     queue: CommandQueue,
     kinds: MappedBuffer,
@@ -93,7 +93,7 @@ pub(super) struct PreparedAnchorScan {
 
 /// Prepare one specialized GPU dispatch for exact kind/value anchor selection. The generated
 /// kernel groups literals by kind and length, then uses byte tries. It appends only positive hits.
-pub(super) fn prepare_anchor_scan(
+pub fn prepare_anchor_scan(
     programs: &[Program],
     files: &[TapeDoc],
 ) -> Result<PreparedAnchorScan, Error> {
@@ -103,7 +103,7 @@ pub(super) fn prepare_anchor_scan(
 /// `file_program_masks` carries file/check eligibility from SQL into the GPU scan. Each file owns
 /// `ceil(programs / 32)` words. This representation does not split large program sets into more
 /// dispatches.
-pub(super) fn prepare_anchor_scan_with_eligibility(
+pub fn prepare_anchor_scan_with_eligibility(
     programs: &[Program],
     files: &[TapeDoc],
     file_program_masks: Option<&[Vec<u32>]>,
@@ -246,18 +246,18 @@ kernel void anchors(device const ushort* kinds [[buffer(0)]], device const uint2
 
 type AnchorLists = Vec<Vec<Vec<u32>>>;
 
-pub(super) struct AnchorScanProfile {
+pub struct AnchorScanProfile {
     pub dispatch_and_wait: std::time::Duration,
     pub reconstruction: std::time::Duration,
     pub hit_count: usize,
 }
 
 impl PreparedAnchorScan {
-    pub(super) fn run(&self) -> Result<AnchorLists, Error> {
+    pub fn run(&self) -> Result<AnchorLists, Error> {
         self.run_profiled().map(|(anchors, _)| anchors)
     }
 
-    pub(super) fn run_profiled(&self) -> Result<(AnchorLists, AnchorScanProfile), Error> {
+    pub fn run_profiled(&self) -> Result<(AnchorLists, AnchorScanProfile), Error> {
         let mut anchors = (0..self.file_count)
             .map(|_| (0..self.program_count).map(|_| Vec::new()).collect())
             .collect::<Vec<Vec<Vec<u32>>>>();
@@ -346,5 +346,4 @@ impl PreparedAnchorScan {
     }
 }
 
-#[cfg(test)]
-mod launch_tests;
+// cratify: `launch_tests` is rerail-engine's (it mounts it)

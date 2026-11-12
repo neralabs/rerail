@@ -23,34 +23,34 @@ use std::collections::{BTreeMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 
-pub(crate) enum WitnessError {
+pub enum WitnessError {
     TransformLimit,
 }
 
-pub(crate) type Output<'a> = RefCell<&'a mut dyn FnMut(Witness) -> Witness>;
+pub type Output<'a> = RefCell<&'a mut dyn FnMut(Witness) -> Witness>;
 
 type WitnessResult<T> = std::result::Result<T, WitnessError>;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Lookups of one group in one each-set made on this thread to decide which groups the sets
     /// share (`regrouped`).
     static SHARED_GROUP_LOOKUPS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-#[cfg(test)]
-pub(crate) fn reset_shared_group_lookups() {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn reset_shared_group_lookups() {
     SHARED_GROUP_LOOKUPS.set(0);
 }
 
-#[cfg(test)]
-pub(crate) fn shared_group_lookups() -> usize {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn shared_group_lookups() -> usize {
     SHARED_GROUP_LOOKUPS.get()
 }
 
 /// `violation` is the reporting clause's violation spec; `None` for witnesses that only decide a
 /// `select_when` condition and are never reported.
-pub(crate) fn witness_from_match<D: Doc>(
+pub fn witness_from_match<D: Doc>(
     file: &FileInput,
     matched: &NodeMatch<'_, D>,
     language: GrammarDialect,
@@ -84,7 +84,7 @@ fn witness_from_match_to<D: Doc>(
 /// `room`: building ends once `room` witnesses were kept. Once `cancelled` holds, the sets not
 /// yet enumerated or transformed report nothing.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn witnesses_from_match<D: Doc>(
+pub fn witnesses_from_match<D: Doc>(
     file: &FileInput,
     matched: &NodeMatch<'_, D>,
     language: GrammarDialect,
@@ -168,7 +168,7 @@ fn regrouped<'t, D: Doc>(
     let exported =
         |name: &str| transform.reads(name) && matched.get_env().get_match(name).is_none();
     let held = |groups: &[violations::NodeGroup], name: &str| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         SHARED_GROUP_LOOKUPS.set(SHARED_GROUP_LOOKUPS.get() + 1);
         groups
             .iter()
@@ -353,7 +353,7 @@ pub(crate) struct Incomplete {
 /// file evaluated around syntax errors, with its `source-partial` message; `util_limit` the file
 /// where `matches` recursion hit a limit, which ends the query.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn evaluate_query(
+pub fn evaluate_query(
     query: &Query,
     snapshot: &Snapshot,
     _bindings: &BTreeMap<String, &Map<String, Value>>,
@@ -869,7 +869,7 @@ impl Leaves for SnapshotLeaves<'_, '_> {
     }
 }
 
-pub(crate) fn file_language(file: &FileInput) -> Option<GrammarDialect> {
+pub fn file_language(file: &FileInput) -> Option<GrammarDialect> {
     crate::code_rule_dsl::language::dialect_by_label(&file.language)
 }
 
@@ -903,10 +903,10 @@ thread_local! {
     static EVALUATION_TAPE: RefCell<TapeCache> = RefCell::new(TapeCache::default());
 }
 
-pub(crate) struct TapeCacheSlot(bool);
+pub struct TapeCacheSlot(bool);
 
 impl TapeCacheSlot {
-    pub(crate) fn install() -> Self {
+    pub fn install() -> Self {
         let outer = EVALUATION_TAPE.with(|cache| {
             let mut cache = cache.borrow_mut();
             let outer = !cache.active;
@@ -917,7 +917,7 @@ impl TapeCacheSlot {
     }
 
     // Read by P's relational workspace path (test-only, open item O18).
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     pub(crate) fn seed(
         language: GrammarDialect,
         file: &FileInput,
@@ -940,7 +940,7 @@ impl Drop for TapeCacheSlot {
 /// A file's tape, as the workspace stores it, and its line table, reused only within the current
 /// evaluation; `None` where the parser stopped at a limit before it read the file (Forte's
 /// nesting depth or step budget).
-pub(in crate::code_rule_dsl) fn file_tape(
+pub fn file_tape(
     language: GrammarDialect,
     file: &FileInput,
 ) -> Result<Option<(crate::code_rule_dsl::tape::TapeDoc, Arc<LineTable>)>> {
@@ -1000,7 +1000,7 @@ fn restore_file_tape(
     let never = || false;
     let tape_grammar = tape::Grammar::new(language).map_err(invalid)?;
     let lines = Arc::new(LineTable::new(&file.source, Terminators::of(language)));
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     crate::code_rule_dsl::matcher::note_line_table_construction();
     let doc = tape::TapeDoc::restore_with_lines(
         Arc::clone(&file.source),
@@ -1015,7 +1015,7 @@ fn restore_file_tape(
 
 /// W's stateless evaluation walks every root; P's selects them from its anchor corpus (the
 /// `p-anchor-corpus` path below, open item O20).
-#[cfg(not(all(test, feature = "p-anchor-corpus")))]
+#[cfg(not(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus")))]
 fn anchor_roots(
     _target: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
     _grammar: &GrammarMatcher,
@@ -1027,7 +1027,7 @@ fn anchor_roots(
 
 /// Selects candidate ordinals through the same postings used by workspace ingestion. Incomplete
 /// indexes retain the existing bounded root walk. Kind-only queries also use SQL postings.
-#[cfg(all(test, feature = "p-anchor-corpus"))]
+#[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
 fn anchor_roots(
     target: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
     grammar: &GrammarMatcher,
@@ -1062,7 +1062,7 @@ fn anchor_roots(
     selected_roots(&index, &anchors)
 }
 
-#[cfg(all(test, feature = "p-anchor-corpus"))]
+#[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
 fn selected_roots(
     index: &crate::code_rule_dsl::matcher::p_anchors::sql::FileAnchorIndex<
         '_,
@@ -1227,7 +1227,7 @@ fn evaluate_file_clause(
 /// The matcher of `file`'s grammar whose `when` and `file` gates hold for it. A `when.sourceType`
 /// a file's syntax decides (`SourceType::of_file`) and a `file.jsxRuntime` are checked again
 /// once the file is read (`run_clause`).
-pub(crate) fn grammar_matcher<'a>(
+pub fn grammar_matcher<'a>(
     matchers: &'a [GrammarMatcher],
     file: &FileInput,
 ) -> Option<&'a GrammarMatcher> {
@@ -1266,7 +1266,7 @@ fn applies(grammar: &GrammarMatcher, file: &FileInput, source_type: Option<Sourc
 
 /// The matcher of `matchers` that reads `doc`, a document of `file` (`embed`): the file's own tree,
 /// or the program it embeds through a `via`, in the program's dialect. `None` where none reads it.
-pub(crate) fn document_matcher<'a>(
+pub fn document_matcher<'a>(
     matchers: &'a [GrammarMatcher],
     file: &FileInput,
     doc: &crate::code_rule_dsl::tape::TapeDoc,
@@ -1280,5 +1280,4 @@ pub(crate) fn document_matcher<'a>(
     })
 }
 
-#[cfg(test)]
-mod tape_cache_tests;
+// cratify: `tape_cache_tests` is rerail-engine's (it mounts it)

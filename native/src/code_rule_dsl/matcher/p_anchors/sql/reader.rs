@@ -39,14 +39,14 @@ impl Drop for Blob {
         }
     }
 }
-pub(super) struct Reader {
+pub struct Reader {
     database: *mut ffi::sqlite3,
     handles: HashMap<(i64, Column), Blob>,
     record: Option<RecordBlock>,
     spans: Option<SpanBlock>,
     #[cfg(feature = "code-rule-profile")]
     pub counters: Counters,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub read_bytes: usize,
 }
 // Small transport buffers, shared by scalar calls inside a batched SQL statement. The SQL
@@ -100,7 +100,7 @@ unsafe impl Send for Reader {}
 pub(super) type Shared = Arc<parking_lot::Mutex<Reader>>;
 
 /// The owner clears handles before writes and before SQLite destroys its callback closures.
-pub(super) struct Readers(pub Shared);
+pub struct Readers(pub Shared);
 impl Readers {
     pub fn new(db: &Connection) -> Self {
         // SAFETY: Store owns this guard before its connection and cannot outlive that connection.
@@ -111,7 +111,7 @@ impl Readers {
             spans: None,
             #[cfg(feature = "code-rule-profile")]
             counters: Counters::default(),
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             read_bytes: 0,
         })))
     }
@@ -183,7 +183,7 @@ impl Reader {
             self.counters.reads[column as usize] += 1;
             self.counters.bytes[column as usize] += bytes.len() as u64;
         }
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         {
             self.read_bytes += bytes.len();
         }

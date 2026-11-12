@@ -1,70 +1,69 @@
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use super::tape::TapeDoc;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use ast_grep_core::MatchStrictness;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use ast_grep_core::matcher::{Pattern, PatternNode};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use regex::Regex;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::collections::{BTreeMap, BTreeSet};
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use std::ops::Range;
 
 // The packed runtime (05 Phase 4, from ner-1562-scale-test-the-re-railer): every backend over one
 // program. Nothing outside its tests calls it until the demand vtab (Phase 5) drives it.
 #[allow(dead_code)]
-pub(super) mod packed;
+pub mod packed;
 // N's semantic fact rows, which the matcher's families emit for N's catalog backend (tests).
-#[cfg_attr(not(test), allow(dead_code))]
-pub(super) mod semantic_facts;
+pub use rerail_w::code_rule_dsl::transducer::semantic_facts;
 
-#[cfg(test)]
-const STOP: u8 = 0x00;
-#[cfg(test)]
-const KIND: u8 = 0x01;
-#[cfg(test)]
-const FIELD: u8 = 0x02;
-#[cfg(test)]
-const FLAGS: u8 = 0x03;
-#[cfg(test)]
-const TEXT: u8 = 0x04;
-#[cfg(test)]
-const SIZE: u8 = 0x05;
-#[cfg(test)]
-const CHILD: u8 = 0x10;
-#[cfg(test)]
-const NEXT: u8 = 0x11;
-#[cfg(test)]
-const PARENT: u8 = 0x12;
-#[cfg(test)]
-const DESCEND: u8 = 0x13;
-#[cfg(test)]
-const CAPTURE: u8 = 0x20;
-#[cfg(test)]
-const FORK: u8 = 0x30;
-#[cfg(test)]
-const GOTO: u8 = 0x31;
-#[cfg(test)]
-const EMIT: u8 = 0x40;
+#[cfg(any(test, feature = "test-hooks"))]
+pub const STOP: u8 = 0x00;
+#[cfg(any(test, feature = "test-hooks"))]
+pub const KIND: u8 = 0x01;
+#[cfg(any(test, feature = "test-hooks"))]
+pub const FIELD: u8 = 0x02;
+#[cfg(any(test, feature = "test-hooks"))]
+pub const FLAGS: u8 = 0x03;
+#[cfg(any(test, feature = "test-hooks"))]
+pub const TEXT: u8 = 0x04;
+#[cfg(any(test, feature = "test-hooks"))]
+pub const SIZE: u8 = 0x05;
+#[cfg(any(test, feature = "test-hooks"))]
+pub const CHILD: u8 = 0x10;
+#[cfg(any(test, feature = "test-hooks"))]
+pub const NEXT: u8 = 0x11;
+#[cfg(any(test, feature = "test-hooks"))]
+pub const PARENT: u8 = 0x12;
+#[cfg(any(test, feature = "test-hooks"))]
+pub const DESCEND: u8 = 0x13;
+#[cfg(any(test, feature = "test-hooks"))]
+pub const CAPTURE: u8 = 0x20;
+#[cfg(any(test, feature = "test-hooks"))]
+pub const FORK: u8 = 0x30;
+#[cfg(any(test, feature = "test-hooks"))]
+pub const GOTO: u8 = 0x31;
+#[cfg(any(test, feature = "test-hooks"))]
+pub const EMIT: u8 = 0x40;
 
-#[cfg(test)]
-const NAMED: u8 = 1;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
+pub const NAMED: u8 = 1;
+#[cfg(any(test, feature = "test-hooks"))]
 const SIZE_LONG: u8 = 0x80;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 const MAX_STEPS_PER_PATH: usize = 1 << 20;
 
 /// A `TEXT` test.
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone)]
-pub(super) enum TextPredicate {
+pub enum TextPredicate {
     Equal(u16),
     Prefix(u16),
     Regex { source: u16, compiled: Regex },
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl TextPredicate {
     fn string_index(&self) -> u16 {
         match self {
@@ -74,35 +73,35 @@ impl TextPredicate {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone)]
-pub(super) struct Program {
-    words: Vec<u32>,
+pub struct Program {
+    pub words: Vec<u32>,
     strings: Vec<Vec<u8>>,
     predicates: Vec<TextPredicate>,
     labels: Vec<u16>,
     longs: Vec<u64>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Capture {
+pub struct Capture {
     pub(super) label: u16,
     pub(super) node: u32,
-    pub(super) span: Range<usize>,
+    pub span: Range<usize>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Output {
+pub struct Output {
     pub(super) start: u32,
     pub(super) label: u16,
-    pub(super) captures: Vec<Capture>,
+    pub captures: Vec<Capture>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Debug, Eq, PartialEq)]
-pub(super) enum Error {
+pub enum Error {
     InvalidOpcode(usize),
     InvalidMode(usize),
     InvalidOperand(usize),
@@ -113,7 +112,7 @@ pub(super) enum Error {
     InvalidAnchor,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone)]
 struct Path {
     pc: u16,
@@ -123,21 +122,21 @@ struct Path {
     steps: usize,
 }
 
-#[cfg(test)]
-fn split(word: u32) -> (u8, u8, u16) {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn split(word: u32) -> (u8, u8, u16) {
     (word as u8, (word >> 8) as u8, (word >> 16) as u16)
 }
 
-#[cfg(test)]
-pub(super) const fn word(opcode: u8, mode: u8, operand: u16) -> u32 {
+#[cfg(any(test, feature = "test-hooks"))]
+pub const fn word(opcode: u8, mode: u8, operand: u16) -> u32 {
     opcode as u32 | ((mode as u32) << 8) | ((operand as u32) << 16)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl Program {
     /// Compiles the exact root-terminal subset of ast-grep patterns. Structural patterns and
     /// metavariables are rejected rather than delegated to ast-grep inside the transducer.
-    pub(super) fn compile_ast_grep_literal(pattern: &Pattern) -> Result<Self, Error> {
+    pub fn compile_ast_grep_literal(pattern: &Pattern) -> Result<Self, Error> {
         if !matches!(pattern.strictness, MatchStrictness::Smart) {
             return Err(Error::UnsupportedPattern);
         }
@@ -170,7 +169,7 @@ impl Program {
         )
     }
 
-    pub(super) fn new(
+    pub fn new(
         words: Vec<u32>,
         strings: Vec<Vec<u8>>,
         predicates: Vec<TextPredicate>,
@@ -314,11 +313,11 @@ impl Program {
         }
     }
 
-    pub(super) fn execute(&self, tape: &TapeDoc) -> Result<Vec<Output>, Error> {
+    pub fn execute(&self, tape: &TapeDoc) -> Result<Vec<Output>, Error> {
         self.execute_roots(tape, 0..tape.transducer_len() as u32)
     }
 
-    pub(super) fn execute_roots(
+    pub fn execute_roots(
         &self,
         tape: &TapeDoc,
         roots: impl IntoIterator<Item = u32>,
@@ -458,8 +457,8 @@ impl Program {
 
 /// Executes several programs after one tape scan. A leading kind test becomes dispatch data;
 /// every other instruction retains the ordinary transducer semantics.
-#[cfg(test)]
-pub(super) fn execute_batch(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn execute_batch(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: Option<&[Vec<Vec<u32>>]>,
@@ -496,11 +495,11 @@ pub(super) fn execute_batch(
         .collect()
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use super::search_index::persist_search_index_batch;
 
-#[cfg(test)]
-pub(super) fn execute_many(
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn execute_many(
     programs: &[Program],
     tape: &TapeDoc,
 ) -> Result<Vec<Vec<Output>>, Error> {
@@ -539,5 +538,4 @@ pub(super) fn execute_many(
         .collect()
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

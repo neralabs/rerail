@@ -26,7 +26,7 @@ use std::collections::BTreeSet;
 pub(crate) const RELATIONS: [&str; 2] = ["fstring_piece", "fstring_template"];
 
 /// Python's f-string trees as a batch's producer (`syntax::Producer`).
-pub(crate) struct Producer;
+pub struct Producer;
 
 impl super::Producer for Producer {
     fn dialect(&self) -> crate::code_rule_dsl::language::GrammarDialect {

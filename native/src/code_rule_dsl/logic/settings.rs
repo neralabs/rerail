@@ -83,7 +83,7 @@ pub fn with_settings(program: &str, settings: &[(String, String)]) -> String {
 }
 
 /// The process's retired instructions and cycles so far (macOS `proc_pid_rusage`).
-pub(crate) fn process_counters() -> Option<(u64, u64)> {
+pub fn process_counters() -> Option<(u64, u64)> {
     #[cfg(target_os = "macos")]
     {
         // SAFETY: a zeroed `rusage_info_v4` is a valid out-value, and the flavour matches it.

@@ -93,8 +93,8 @@ pub(super) fn install_bound(db: &Connection, binding: SharedBinding) -> Result<(
 
 /// W's `rx_matches`, `rx_extract` and `rx_replace` on `db` with no budget: the reference `.rr`'s `@rx_replace` is
 /// tested against (`logic::plan::tests`).
-#[cfg(test)]
-pub(in crate::code_rule_dsl) fn install_unbounded(db: &Connection) -> Result<()> {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn install_unbounded(db: &Connection) -> Result<()> {
     let binding = binding();
     rebind(&binding, usize::MAX, Arc::new(AtomicUsize::new(usize::MAX)));
     install_bound(db, binding)

@@ -2,35 +2,35 @@
 use super::*;
 
 #[path = "metal_capture_arguments_tests.rs"]
-mod capture_arguments;
+pub mod capture_arguments;
 #[path = "metal_capture_operator_tests.rs"]
-mod capture_operators;
+pub mod capture_operators;
 #[path = "metal_capture_text_tests.rs"]
-mod capture_text;
+pub mod capture_text;
 #[path = "metal_inline_predicate_tests.rs"]
-mod inline_predicates;
+pub mod inline_predicates;
 #[path = "metal_literal_predicate_tests.rs"]
-mod literal_predicates;
+pub mod literal_predicates;
 #[path = "metal_lua_frontier_tests.rs"]
-mod lua_frontier;
+pub mod lua_frontier;
 #[path = "metal_output_operator_tests.rs"]
-mod output_operators;
+pub mod output_operators;
 #[path = "metal_output_page_tests.rs"]
-mod output_pages;
+pub mod output_pages;
 #[path = "metal_program_table_tests.rs"]
-mod program_tables;
+pub mod program_tables;
 #[path = "metal_query_dispatch_tests.rs"]
-mod query_dispatch;
+pub mod query_dispatch;
 #[path = "metal_query_inline_predicate_tests.rs"]
-mod query_inline_predicates;
+pub mod query_inline_predicates;
 #[path = "metal_regex_frontier_tests.rs"]
-mod regex_frontier;
+pub mod regex_frontier;
 #[path = "metal_strip_output_tests.rs"]
-mod strip_output;
+pub mod strip_output;
 #[path = "metal_terminal_repeat_work_tests.rs"]
-mod terminal_repeat_work;
+pub mod terminal_repeat_work;
 #[path = "metal_value_request_contract_tests.rs"]
-mod value_request_contract;
+pub mod value_request_contract;
 
 #[ignore = "O83: G's grid-executor copy, written for the old 600-launch bound; it needs more than KERNEL_LAUNCH_LIMIT (200 since list step 26). The executor is superseded (decision 0028, O33) and stays until list step 31"]#[test]
 fn quantified_middle_captures_preserve_each_owned_node_across_all_resident_roots() {

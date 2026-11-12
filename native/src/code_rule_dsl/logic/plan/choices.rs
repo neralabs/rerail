@@ -44,16 +44,16 @@ pub(super) const GROWTH: f64 = 2.0;
 /// The choices for one program: the program as the rewrites left it (`None`: as it was), what each named, and the
 /// scale they were made at.
 #[derive(Clone)]
-pub(super) struct Chosen {
-    pub(super) program: Option<Arc<Program>>,
+pub struct Chosen {
+    pub program: Option<Arc<Program>>,
     /// The relations inlined (`keeps::choose`) and demanded (`demand::split_negations`), for the profile.
-    pub(super) inlined: Vec<String>,
-    pub(super) demanded: Vec<String>,
-    pub(super) nodes: f64,
+    pub inlined: Vec<String>,
+    pub demanded: Vec<String>,
+    pub nodes: f64,
 }
 
 /// A digest of everything the rewrites read of a program, and of what else changes their choices.
-pub(super) fn key(prog: &Program) -> [u8; 32] {
+pub fn key(prog: &Program) -> [u8; 32] {
     struct Hashing(Sha256);
     impl std::fmt::Write for Hashing {
         fn write_str(&mut self, s: &str) -> std::fmt::Result {
@@ -73,12 +73,12 @@ pub(super) fn key(prog: &Program) -> [u8; 32] {
 }
 
 /// Whether choices made at `kept` nodes are taken at `now`.
-pub(super) fn holds(kept: f64, now: f64) -> bool {
+pub fn holds(kept: f64, now: f64) -> bool {
     now <= kept.max(1.0) * GROWTH
 }
 
 /// The choices kept in this process, by key.
-fn kept() -> &'static Mutex<HashMap<[u8; 32], Chosen>> {
+pub fn kept() -> &'static Mutex<HashMap<[u8; 32], Chosen>> {
     static KEPT: std::sync::OnceLock<Mutex<HashMap<[u8; 32], Chosen>>> = std::sync::OnceLock::new();
     KEPT.get_or_init(Default::default)
 }
@@ -93,12 +93,12 @@ thread_local! {
 }
 
 /// While held, this thread's runs keep their choices in the store at `path`, under prepared program `prepared`.
-pub(in crate::code_rule_dsl) struct Durable;
+pub struct Durable;
 
 impl Durable {
     /// Every entry kept under `prepared` is read here, at once, before the run's first wave (decision 0104): a
     /// lookup in the waves reads memory only.
-    pub(in crate::code_rule_dsl) fn start(path: &std::path::Path, prepared: [u8; 32]) -> Durable {
+    pub fn start(path: &std::path::Path, prepared: [u8; 32]) -> Durable {
         let store = ContentStore::open(path).ok();
         DURABLE.with(|d| {
             *d.borrow_mut() = store.map(|s| {
@@ -117,7 +117,7 @@ impl Drop for Durable {
 }
 
 /// The choices for program `key` that a run at `nodes` takes: this process's, else the store's.
-pub(super) fn lookup(key: &[u8; 32], nodes: f64) -> Option<Chosen> {
+pub fn lookup(key: &[u8; 32], nodes: f64) -> Option<Chosen> {
     // Memory is ahead of the store (decision 0102): choices this process holds are the newest there are, so the store
     // is read only for a program this process has not planned. Nor does the read wait for the writer: what a queued
     // write holds is in memory already.
@@ -130,7 +130,7 @@ pub(super) fn lookup(key: &[u8; 32], nodes: f64) -> Option<Chosen> {
 }
 
 /// Keeps the choices made for program `key`, in this process and in the store.
-pub(super) fn remember(key: [u8; 32], chosen: Chosen) {
+pub fn remember(key: [u8; 32], chosen: Chosen) {
     keep(key, chosen.clone());
     DURABLE.with(|d| {
         let d = d.borrow();
@@ -174,7 +174,7 @@ fn plan() -> FactsPlanSet {
 }
 
 /// One program's entry, by its key, under the prepared program's source.
-fn path(key: &[u8; 32]) -> String {
+pub fn path(key: &[u8; 32]) -> String {
     format!("rerail/plan-choices/{}", hex(key))
 }
 
@@ -185,7 +185,7 @@ const REWRITTEN: &str = "rr_chosen_rewritten";
 
 /// Every program's choices kept under `prepared`, by entry path: one read of the store (the source's pin is the
 /// manifest's, `named`).
-fn read_all(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<HashMap<String, Chosen>> {
+pub fn read_all(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<HashMap<String, Chosen>> {
     let Some(source) = store.sources_by_hashes(&[HashKey::sha256(source_text(prepared).as_bytes())])?.pop().flatten() else { return Ok(HashMap::new()) };
     Ok(store.facts_results_of(source, SCHEMA, plan().plans[0])?.into_iter().filter_map(|(path, entry)| Some((path, decode_chosen(&entry)?))).collect())
 }
@@ -250,9 +250,8 @@ fn write(store: &ContentStore, prepared: &[u8; 32], key: &[u8; 32], chosen: &Cho
 
 /// The source and plan a prepared program's choices live under, for the run's manifest: the source is made when the
 /// store has none yet, so the first run's manifest names the entries it writes.
-pub(in crate::code_rule_dsl) fn named(prepared: &[u8; 32]) -> (String, [u8; 32]) {
+pub fn named(prepared: &[u8; 32]) -> (String, [u8; 32]) {
     (source_text(prepared), plan().plans[0])
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

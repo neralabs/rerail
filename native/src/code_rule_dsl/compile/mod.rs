@@ -1,32 +1,29 @@
-mod arguments;
-pub(in crate::code_rule_dsl) mod ast_rule;
-#[cfg(test)]
-mod binding_tests;
-mod binds;
-mod compare;
-pub(crate) mod config;
-pub(super) mod define;
-mod dialect;
-pub(crate) mod documents;
-pub(super) mod evidence;
-#[cfg(test)]
-mod examples_tests;
-mod format_args;
-pub(crate) mod import_target;
-mod layout;
-mod line_state;
-mod nth_child;
-pub(crate) mod options;
-mod order;
-#[cfg(test)]
-mod params_tests;
-mod parse;
-pub(crate) mod resolve;
-mod shared;
-pub(in crate::code_rule_dsl) mod token_tests;
-mod transform;
-mod utils;
-mod value;
+pub mod arguments;
+pub mod ast_rule;
+// cratify: `binding_tests` is rerail-engine's (it mounts it)
+pub mod binds;
+pub mod compare;
+pub mod config;
+pub mod define;
+pub mod dialect;
+pub mod documents;
+pub mod evidence;
+// cratify: `examples_tests` is rerail-engine's (it mounts it)
+pub mod format_args;
+// cratify: `import_target` is rerail-lang-ecma's (it mounts it)
+pub mod layout;
+pub mod line_state;
+pub mod nth_child;
+pub mod options;
+pub mod order;
+// cratify: `params_tests` is rerail-engine's (it mounts it)
+pub mod parse;
+pub mod resolve;
+pub mod shared;
+pub mod token_tests;
+pub mod transform;
+pub mod utils;
+pub mod value;
 
 use super::json::{
     bounded_text, invalid, json_error, non_empty_str, object, reject_unknown, required_str,
@@ -44,7 +41,7 @@ use super::model::{
 use super::soundness::sound_under_errors;
 use super::violations;
 use crate::code_rule_dsl::language::{GrammarDialect, PatternSource, rule_pattern};
-pub(super) use ast_rule::compile_ast_rule;
+pub use ast_rule::compile_ast_rule;
 use ast_rule::validate_ast_rule;
 use compare::{binding_site_index, bound_elsewhere, compare_sites, frame_scope};
 use define::{CLAUSE_KINDS, Defines, collect_defines, is_define};
@@ -58,13 +55,13 @@ use serde_json::{Map, Value, json};
 use shared::SharedTables;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
-pub(super) use utils::UtilScope;
+pub use utils::UtilScope;
 use utils::{UtilDef, UtilIds, reachable, reject_util_cycles, rule_map, util_map};
 use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// Parses a code-rule document. An object with two equal keys is an error: a plain `Value` keeps the
 /// last one, so the first term would vanish silently (ast-grep 0.45.3 rejects such a rule).
-pub(super) fn parse_document(source: &str, format: &str) -> Result<Value> {
+pub fn parse_document(source: &str, format: &str) -> Result<Value> {
     match format {
         "json" => {
             let mut deserializer = serde_json::Deserializer::from_str(source);
@@ -180,7 +177,7 @@ impl<'de> Visitor<'de> for UniqueKeys {
     }
 }
 
-pub(super) fn parse_capabilities(source: &str) -> Result<Capabilities> {
+pub fn parse_capabilities(source: &str) -> Result<Capabilities> {
     let raw: Value = serde_json::from_str(source).map_err(json_error)?;
     let limits = raw
         .get("limits")
@@ -213,7 +210,7 @@ fn limit(limits: &Map<String, Value>, name: &str) -> Result<usize> {
         })
 }
 
-pub(super) fn compile_scope(value: Option<&Value>) -> Result<CodeRuleScope> {
+pub fn compile_scope(value: Option<&Value>) -> Result<CodeRuleScope> {
     let (include, exclude) = if let Some(value) = value {
         let scope = object(value, "/scope")?;
         reject_unknown(scope, &["include", "exclude"], "/scope")?;
@@ -273,7 +270,7 @@ type CompiledDocument = (
 );
 
 /// The code rule's id, scope, clauses, required capabilities, and aggregate reporting gate.
-pub(super) fn compile_document(
+pub fn compile_document(
     document: &Value,
     capabilities: &Capabilities,
 ) -> Result<CompiledDocument> {
@@ -568,7 +565,7 @@ fn compile_clause(
         &kind,
         &format!("{path}/violation"),
     )?;
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let data_layer = clause.get("relational").and_then(|relational| {
         crate::code_rule_dsl::waves::relational::compile::compile(
             relational,
@@ -586,7 +583,7 @@ fn compile_clause(
         kind,
         synthetic: false,
         decision: false,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         data_layer,
     })
 }
@@ -1881,7 +1878,7 @@ pub(super) fn refuse_unavailable_semantics(
 
 /// The error for `predicate` at `at` when `language`'s registry entry does not support its
 /// capability.
-fn unsupported_semantic(support: Support, at: &str, predicate: &str, language: &str) -> Result<()> {
+pub fn unsupported_semantic(support: Support, at: &str, predicate: &str, language: &str) -> Result<()> {
     gate(
         at,
         match support {
@@ -1896,5 +1893,4 @@ fn unsupported_semantic(support: Support, at: &str, predicate: &str, language: &
     )
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

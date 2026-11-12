@@ -10,7 +10,7 @@ use std::fmt::Write as _;
 /// pack's label, the rule's name, its language and the test, a test reached in several contexts
 /// once, in its worst category.
 fn census(mut each: impl FnMut(&str, &str, &str, Test)) {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs");
+    let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../packs");
     let mut packs: Vec<_> = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().path()).filter(|p| p.is_dir()).collect();
     packs.sort();
     for pack in packs {

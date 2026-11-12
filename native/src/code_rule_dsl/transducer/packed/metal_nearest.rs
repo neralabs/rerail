@@ -6,7 +6,7 @@
 //! one wait per call, whatever the depth. The CPU's one pass in preorder (`typing::file_local`)
 //! is the reference.
 use super::*;
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::device::nearest::{Buffers, Solved};
+pub use crate::code_rule_dsl::logic::device::nearest::{Buffers, Solved};
 
 const SOURCE: &str = include_str!("metal_nearest.metal");
 /// No ancestor.
@@ -64,7 +64,7 @@ pub(in crate::code_rule_dsl) fn solve(nodes: usize, target: &[u32], done: &[u8])
     solve_with(nodes, target, done, Buffers::Blocks)
 }
 
-pub(in crate::code_rule_dsl) fn solve_with(nodes: usize, target: &[u32], done: &[u8], how: Buffers) -> Result<Solved, Error> {
+pub fn solve_with(nodes: usize, target: &[u32], done: &[u8], how: Buffers) -> Result<Solved, Error> {
     use super::metal_backend::launch::{command_times, host_seconds};
     let cells = target.len();
     if cells == 0 {

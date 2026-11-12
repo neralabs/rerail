@@ -59,7 +59,7 @@ fn update(binding: &SharedBinding, snapshot: Option<&Snapshot>, work: Arc<Atomic
         .collect();
     *binding.write() = Binding { files, work };
 }
-pub(super) fn bind(
+pub fn bind(
     db: &super::Database,
     snapshot: Option<&Snapshot>,
     work: Arc<AtomicUsize>,

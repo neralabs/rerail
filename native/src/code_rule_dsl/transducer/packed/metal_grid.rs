@@ -7,14 +7,14 @@ use std::collections::{BTreeMap, BinaryHeap, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
-pub(super) const METAL_GRID_FORMAT_VERSION: u32 = 1;
+pub const METAL_GRID_FORMAT_VERSION: u32 = 1;
 pub(super) const METAL_GRID_BLOCK_WIDTH: u32 = 256;
-const EXECUTION_ROUTE_COUNT: usize = 11;
+pub const EXECUTION_ROUTE_COUNT: usize = 11;
 
-const SELECTOR_RANGE: u32 = 1;
-const SELECTOR_RUNS: u32 = 2;
-const SELECTOR_BITS: u32 = 3;
-const SELECTOR_EXPLICIT: u32 = 4;
+pub const SELECTOR_RANGE: u32 = 1;
+pub const SELECTOR_RUNS: u32 = 2;
+pub const SELECTOR_BITS: u32 = 3;
+pub const SELECTOR_EXPLICIT: u32 = 4;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -75,7 +75,7 @@ pub struct BlockSpan {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct ExecutionRange {
+pub struct ExecutionRange {
     pub block_start: u32,
     pub block_count: u32,
 }
@@ -100,7 +100,7 @@ pub struct GridProgramShape {
     pub dispatch_signature: u32,
 }
 
-pub(super) fn compile_program_shapes(programs: &[Program]) -> Vec<GridProgramShape> {
+pub fn compile_program_shapes(programs: &[Program]) -> Vec<GridProgramShape> {
     let mut signatures = BTreeMap::<Vec<u32>, u32>::new();
     let entries = compile_entry_shapes(programs);
     programs
@@ -229,14 +229,14 @@ pub(super) fn compile_program_shapes(programs: &[Program]) -> Vec<GridProgramSha
         .collect()
 }
 
-pub(super) struct MetalGridInput {
+pub struct MetalGridInput {
     pub packed: Arc<PackedBatch>,
     pub grid: MetalExecutionGrid,
     pub children: super::metal_child_index::ChildIndex,
 }
 
 impl MetalGridInput {
-    pub(super) fn program_shapes(
+    pub fn program_shapes(
         &self,
         programs: &[Program],
     ) -> Result<Vec<GridProgramShape>, Error> {
@@ -247,7 +247,7 @@ impl MetalGridInput {
         Ok(input_shapes(programs, &self.children))
     }
     #[cfg(target_os = "macos")]
-    pub(super) fn build_streamed_with_upload(
+    pub fn build_streamed_with_upload(
         programs: &[Program],
         files: &[crate::code_rule_dsl::tape::TapeSource],
         anchors: &[Vec<Arc<[u32]>>],
@@ -265,7 +265,7 @@ impl MetalGridInput {
         })
     }
 
-    pub(super) fn build(
+    pub fn build(
         programs: &[Program],
         files: &[TapeDoc],
         anchors: &[Vec<Vec<u32>>],
@@ -283,7 +283,7 @@ impl MetalGridInput {
         })
     }
     #[cfg(target_os = "macos")]
-    pub(super) fn build_shared(
+    pub fn build_shared(
         programs: &[Program],
         files: &[TapeDoc],
         anchors: &[Vec<Arc<[u32]>>],
@@ -318,7 +318,7 @@ fn input_shapes(
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(super) struct MetalExecutionGrid {
+pub struct MetalExecutionGrid {
     pub header: MetalGridHeader,
     pub roots: Vec<RootRecord>,
     pub selectors: Vec<RootSelector>,
@@ -331,8 +331,8 @@ pub(super) struct MetalExecutionGrid {
 }
 
 #[derive(Clone)]
-struct SelectorEncoding {
-    kind: u32,
+pub struct SelectorEncoding {
+    pub kind: u32,
     data: Vec<u32>,
     root_count: u32,
 }
@@ -346,7 +346,7 @@ struct SpanChunk {
 }
 
 impl MetalExecutionGrid {
-    pub(super) fn block_indices_for_range(
+    pub fn block_indices_for_range(
         &self,
         range: std::ops::Range<u32>,
     ) -> Result<Vec<u32>, Error> {
@@ -371,7 +371,7 @@ impl MetalExecutionGrid {
         Ok(blocks)
     }
 
-    pub(super) fn build(
+    pub fn build(
         roots_by_file_program: &[Vec<Vec<u32>>],
         shapes: &[GridProgramShape],
     ) -> Result<Self, Error> {
@@ -558,7 +558,7 @@ impl MetalExecutionGrid {
         Ok(())
     }
 
-    pub(super) fn selector_root(&self, selector: u32, offset: u32) -> Result<u32, Error> {
+    pub fn selector_root(&self, selector: u32, offset: u32) -> Result<u32, Error> {
         let selector = *self
             .selectors
             .get(selector as usize)
@@ -573,7 +573,7 @@ impl MetalExecutionGrid {
         decode_selector(selector, data, offset)
     }
 
-    pub(super) fn metadata_bytes(&self) -> usize {
+    pub fn metadata_bytes(&self) -> usize {
         std::mem::size_of_val(self.selectors.as_slice())
             + std::mem::size_of_val(self.evaluation_spans.as_slice())
             + std::mem::size_of_val(self.block_spans.as_slice())
@@ -581,7 +581,7 @@ impl MetalExecutionGrid {
             + std::mem::size_of_val(self.semantic_span_order.as_slice())
     }
 
-    fn validate(&self, shapes: &[GridProgramShape]) -> Result<(), Error> {
+    pub fn validate(&self, shapes: &[GridProgramShape]) -> Result<(), Error> {
         let mut expected_semantic = 0_u32;
         for index in &self.semantic_span_order {
             let span = self
@@ -724,8 +724,8 @@ fn merge_root_slices(lists: &[&[u32]]) -> Vec<u32> {
     merged
 }
 
-#[cfg(test)]
-fn merge_roots(lists: &[Vec<u32>]) -> Vec<u32> {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn merge_roots(lists: &[Vec<u32>]) -> Vec<u32> {
     merge_root_slices(&lists.iter().map(Vec::as_slice).collect::<Vec<_>>())
 }
 
@@ -750,7 +750,7 @@ fn roots_to_ordinals(roots: &[u32], universe: &[u32], base: u32) -> Result<Vec<u
     Ok(ordinals)
 }
 
-fn encode_selector(ordinals: &[u32]) -> Result<SelectorEncoding, Error> {
+pub fn encode_selector(ordinals: &[u32]) -> Result<SelectorEncoding, Error> {
     let first = *ordinals.first().ok_or(Error::InvalidAnchor)?;
     let last = *ordinals.last().ok_or(Error::InvalidAnchor)?;
     if last - first + 1 == ordinals.len() as u32 {
@@ -807,7 +807,7 @@ fn encode_selector(ordinals: &[u32]) -> Result<SelectorEncoding, Error> {
     })
 }
 
-pub(super) fn append_encoded_selector(
+pub fn append_encoded_selector(
     ordinals: &[u32],
     data: &mut Vec<u32>,
 ) -> Result<RootSelector, Error> {
@@ -865,7 +865,7 @@ fn intern_selector(
     Ok(index)
 }
 
-fn decode_selector(selector: RootSelector, data: &[u32], offset: u32) -> Result<u32, Error> {
+pub fn decode_selector(selector: RootSelector, data: &[u32], offset: u32) -> Result<u32, Error> {
     match selector.kind {
         SELECTOR_RANGE => data
             .first()
@@ -943,5 +943,4 @@ const _: [(); 24] = [(); std::mem::size_of::<BlockSpan>()];
 const _: [(); 8] = [(); std::mem::size_of::<ExecutionRange>()];
 const _: [(); 24] = [(); std::mem::size_of::<ExecutionBlock>()];
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

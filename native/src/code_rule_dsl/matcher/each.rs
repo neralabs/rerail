@@ -50,17 +50,17 @@ pub(super) fn excludes(name: &str) -> bool {
     ACTIVE.get() && EXCLUDED.with_borrow(|(excluded, _)| excluded == name)
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
-    static EXCLUSION_PROBES: Cell<usize> = const { Cell::new(0) };
+    pub static EXCLUSION_PROBES: Cell<usize> = const { Cell::new(0) };
 }
 
 /// A sub-tree's rule being matched: while it lives, bindings read through its coordinates. `parse`
 /// and `formatArgs`' `missing` (M11a) enter one around their sub-tree's match.
-pub(crate) struct HostRanges;
+pub struct HostRanges;
 
 impl HostRanges {
-    pub(crate) fn enter(tree: Arc<dyn Origin>) -> Self {
+    pub fn enter(tree: Arc<dyn Origin>) -> Self {
         HOSTS.with_borrow_mut(|hosts| hosts.push(tree));
         Self
     }
@@ -79,7 +79,7 @@ pub(super) fn active() -> bool {
 
 /// A capture's binding as a range of the host file: a node capture's range, mapped out of the
 /// sub-trees being matched, or an exported capture's host range.
-pub(crate) fn binding_range<D: Doc>(env: &MetaVarEnv<'_, D>, name: &str) -> Option<Range<usize>> {
+pub fn binding_range<D: Doc>(env: &MetaVarEnv<'_, D>, name: &str) -> Option<Range<usize>> {
     match env.get_match(name) {
         Some(node) => HOSTS.with_borrow(|hosts| {
             let Some((innermost, outer)) = hosts.split_last() else {
@@ -110,7 +110,7 @@ pub(super) fn excluded<D: Doc>(env: &MetaVarEnv<'_, D>) -> bool {
         let Some(range) = binding_range(env, name) else {
             return false;
         };
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         EXCLUSION_PROBES.set(EXCLUSION_PROBES.get() + 1);
         ranges.contains(&(range.start, range.end))
     })
@@ -187,5 +187,4 @@ impl Drop for Enumeration {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

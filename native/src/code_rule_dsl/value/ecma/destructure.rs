@@ -11,7 +11,7 @@ use ast_grep_core::{Doc, Node};
 
 /// Pairs `pattern`'s names with `value`'s elements, each as the name node's start and the
 /// element as written.
-pub(crate) fn destructured<D: Doc>(
+pub fn destructured<D: Doc>(
     pattern: &Node<'_, D>,
     value: &Node<'_, D>,
     out: &mut Vec<(usize, NodeRef)>,

@@ -17,7 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// Clauses a file's text must all satisfy, each by holding at least one of its literals.
 #[derive(Debug, PartialEq)]
-pub(in crate::code_rule_dsl) struct RequiredText {
+pub struct RequiredText {
     clauses: Vec<Vec<Box<str>>>,
 }
 
@@ -30,13 +30,13 @@ const MAX_CLAUSES: usize = 8;
 
 impl RequiredText {
     /// What a file must contain for `matcher` to match in it, or `None` where nothing is required.
-    pub(in crate::code_rule_dsl) fn of(matcher: &AstMatcher) -> Option<Self> {
+    pub fn of(matcher: &AstMatcher) -> Option<Self> {
         Self::from_clauses(needs(matcher, &mut Utilities::default(), Reach::File))
     }
 
     /// What a node's own text must contain for `matcher` to match at it: only what the node and
     /// its descendants are tested for counts, not what relations read elsewhere in the file.
-    pub(in crate::code_rule_dsl::matcher) fn of_node(matcher: &AstMatcher) -> Option<Self> {
+    pub fn of_node(matcher: &AstMatcher) -> Option<Self> {
         Self::from_clauses(needs(matcher, &mut Utilities::default(), Reach::Node))
     }
 
@@ -53,7 +53,7 @@ impl RequiredText {
     }
 
     /// Whether `text` satisfies every clause.
-    pub(in crate::code_rule_dsl::matcher) fn holds(&self, text: &str) -> bool {
+    pub fn holds(&self, text: &str) -> bool {
         self.holds_with(text, &mut |text, literal| {
             memchr::memmem::find(text.as_bytes(), literal.as_bytes()).is_some()
         })
@@ -61,7 +61,7 @@ impl RequiredText {
 
     /// `holds`, with `found` saying whether `text` holds a literal (a file's clauses share many,
     /// so a caller can remember each search).
-    pub(in crate::code_rule_dsl) fn holds_with<'a>(
+    pub fn holds_with<'a>(
         &'a self,
         text: &str,
         found: &mut impl FnMut(&str, &'a str) -> bool,
@@ -208,5 +208,4 @@ fn pattern_leaves(node: &PatternNode, clauses: &mut Vec<Clause>) {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

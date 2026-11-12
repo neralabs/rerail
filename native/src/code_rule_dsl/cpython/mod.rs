@@ -16,18 +16,18 @@
 //!
 //! Real CPython runs only as the test oracle of `parity` (ignored tests, on the boxes).
 
-pub(crate) mod ast;
-pub(crate) mod dump;
-pub(crate) mod literal;
-pub(crate) mod printed;
-pub(crate) mod syntax;
-pub(crate) mod unparse;
-pub(crate) mod value;
+pub mod ast;
+pub mod dump;
+pub mod literal;
+pub mod printed;
+pub mod syntax;
+pub mod unparse;
+pub mod value;
 
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod parity;
 #[cfg(test)]
-pub(crate) mod parity;
-#[cfg(test)]
-mod tests;
+pub mod tests;
 
 /// The CPython these facts are CPython's: its grammar decides the verdict (3.14's `except A, B:` and t-strings are
 /// syntax errors here, as in 3.13).

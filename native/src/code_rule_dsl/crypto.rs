@@ -64,7 +64,7 @@ pub(super) fn register(db: &Connection) -> rusqlite::Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     #[test]
     fn hashes_signed_artifact_payloads() {
         let db = rusqlite::Connection::open_in_memory().unwrap();

@@ -65,7 +65,7 @@ fn facts_plan() -> FactsPlanSet {
 }
 
 /// The relations a prepared program adds to the program schema, and their columns.
-pub(super) fn schema() -> BTreeMap<String, Vec<(String, String)>> {
+pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
     const SCHEMA: &[(&str, &[&str])] = &[
         ("prepared_domain", &["rel:sym", "i:int", "domain:sym"]),
         ("prepared_op", &["k:int", "atom:int"]),
@@ -119,8 +119,8 @@ fn domain_of(name: &str) -> Option<lower::Domain> {
 }
 
 /// `prepared` as facts.
-#[cfg(test)]
-pub(super) fn facts_of(prepared: &Prepared) -> Facts {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn facts_of(prepared: &Prepared) -> Facts {
     let mut facts = Facts::new();
     for group in groups(prepared) {
         for (rel, rows) in group {
@@ -266,7 +266,7 @@ fn nested<'a>(facts: &'a Facts, rel: &str) -> Result<BTreeMap<i64, Vec<&'a [Valu
 }
 
 /// The prepared program `facts` holds, for `dialect`.
-pub(super) fn prepared_of(facts: &Facts, dialect: GrammarDialect) -> Result<Prepared, String> {
+pub fn prepared_of(facts: &Facts, dialect: GrammarDialect) -> Result<Prepared, String> {
     let (prog, program) = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "read the programs off the facts".into());
         (program_facts::program(facts, "front")?, program_facts::program(facts, "lowered")?)
@@ -412,13 +412,13 @@ fn document_facts(store: &ContentStore, document: SourceId, text: Option<&str>) 
 /// The most rows a part of a stored program's facts holds: each part is its own document, and its tape is parsed
 /// alone, so the parse's memory is bounded by the part, not the program (a 66-rule pack's program is 775k rows, 32 MB
 /// of text, whose one tape peaked at 1.5 GB).
-const PART_ROWS: usize = 20_000;
+pub const PART_ROWS: usize = 20_000;
 
 /// `facts` in parts of at most `PART_ROWS` rows, in order: relations in their order, each one's rows in theirs. The
 /// parts are made as they are asked for, from the rows moved out of `facts`: a part is written and dropped before the
 /// next is made, so the program's facts are held once, not once more as parts (on the Python pack the copy was 2.6 GB
 /// allocated and 442 MB on the peak).
-fn parts(facts: Facts) -> impl Iterator<Item = Facts> {
+pub fn parts(facts: Facts) -> impl Iterator<Item = Facts> {
     let mut rels = facts.into_iter();
     let mut current: Option<(String, std::vec::IntoIter<Vec<crate::code_rule_dsl::logic::front::Value>>)> = None;
     // At least one part, as for a program of no facts.
@@ -557,8 +557,6 @@ impl crate::code_rule_dsl::text::vocabulary::DfaCache for StoredDfas<'_> {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
 
-#[cfg(test)]
-mod identity_tests;
+// cratify: `identity_tests` is rerail-engine's (it mounts it)

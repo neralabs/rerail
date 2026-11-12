@@ -220,5 +220,4 @@ pub(super) fn compile_layout(value: &Value, path: &str) -> Result<AstMatcher> {
     )?))))
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

@@ -27,7 +27,7 @@ pub(crate) fn python() -> &'static tree_sitter::Language {
 }
 
 /// The kind name of a Python symbol id, `ERROR` included.
-pub(crate) fn kind_name(id: u16) -> &'static str {
+pub fn kind_name(id: u16) -> &'static str {
     if id == ERROR_KIND {
         return "ERROR";
     }
@@ -95,7 +95,7 @@ fn error(start: usize, end: usize) -> PNode {
 
 /// The expression `text` holds, as Ruff's expression mode (or, `parenthesized`, its parenthesized
 /// expression mode) reads it; `None` where Ruff reports a syntax error.
-pub(crate) fn expression(text: &str, parenthesized: bool) -> Option<PNode> {
+pub fn expression(text: &str, parenthesized: bool) -> Option<PNode> {
     // Nothing to read, or (outside parentheses) a first line that is indented.
     if text.trim().is_empty() {
         return None;
@@ -315,14 +315,13 @@ fn convert(root: tree_sitter::Node<'_>, clamp: &dyn Fn(Range<usize>) -> Range<us
     node(&mut cursor, clamp, grammar.as_deref())
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
 
 /// The `annotation` grammar (`literal::LiteralGrammar`).
 pub(crate) struct AnnotationGrammar;
 
 /// Its handle, which the engine registers (`literal::install`).
-pub(crate) const GRAMMAR: super::Grammar = super::Grammar::new(&AnnotationGrammar);
+pub const GRAMMAR: super::Grammar = super::Grammar::new(&AnnotationGrammar);
 
 impl super::LiteralGrammar for AnnotationGrammar {
     fn name(&self) -> &'static str {

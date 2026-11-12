@@ -122,11 +122,11 @@ impl Drop for Running {
 /// What a program says of itself as a phase: its name and its exports.
 pub struct Declared {
     pub(crate) name: String,
-    pub(crate) exports: Vec<String>,
+    pub exports: Vec<String>,
 }
 
 /// The phase `prog` declares (`.phase NAME`, `.export a, b`), if any.
-pub(crate) fn declared(prog: &Program) -> Option<Declared> {
+pub fn declared(prog: &Program) -> Option<Declared> {
     let setting = |key: &str| prog.settings.iter().filter(|(k, _)| k == key).map(|(_, v)| v.trim().to_owned()).collect::<Vec<_>>();
     let name = setting("phase").into_iter().next()?;
     let list = |key: &str| setting(key).iter().flat_map(|v| v.split(',').map(|e| e.trim().trim_end_matches('.').to_owned()).collect::<Vec<_>>()).filter(|e| !e.is_empty()).collect::<Vec<_>>();
@@ -136,7 +136,7 @@ pub(crate) fn declared(prog: &Program) -> Option<Declared> {
 /// The phase program `name`, with its `#include`s read in: `<phase_dir>/<name>.rr` when the run's options name a
 /// `phase_dir`, else `typing/programs/<name>.rr`.
 fn source(name: &str, dir: Option<&Path>) -> Result<Option<String>> {
-    let builtin = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs");
+    let builtin = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/typing/programs");
     let Some(path) = dir.into_iter().chain([builtin.as_path()]).map(|d| d.join(format!("{name}.rr"))).find(|p| p.exists()) else {
         return Ok(None);
     };
@@ -170,10 +170,10 @@ pub(crate) fn is_phased(rel: &str) -> bool {
 
 /// One phase's run, as the reader's run reports it.
 pub struct PhaseRun {
-    pub(crate) name: String,
-    pub(crate) report: Report,
+    pub name: String,
+    pub report: Report,
     /// Each export's rows.
-    pub(crate) exports: Vec<(String, usize)>,
+    pub exports: Vec<(String, usize)>,
 }
 
 pub(crate) type Facts = BTreeMap<String, Vec<Vec<Value>>>;
@@ -272,7 +272,7 @@ pub(super) fn current() -> Option<String> {
 
 /// Phase 1's program, the builtin one.
 pub(super) fn sources_path() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/typing/programs/sources.rr")
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/typing/programs/sources.rr")
 }
 
 /// Phase 1, `sources` (decision 0104): the run's source files, each `(path, module, grammar, content digest)`, loaded
@@ -395,5 +395,4 @@ fn hand_on(name: &str, program: &Program, reads: &[(String, String)], rows: &BTr
     Ok(())
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

@@ -16,9 +16,9 @@ use std::{
 type Frames = HashMap<i64, Arc<Vec<i64>>>;
 thread_local! {static FRAMES:RefCell<Option<Frames>>=const{RefCell::new(None)};}
 static NEXT: AtomicI64 = AtomicI64::new(1);
-pub(crate) struct Scope(Option<Frames>);
+pub struct Scope(Option<Frames>);
 impl Scope {
-    pub(crate) fn enter() -> Self {
+    pub fn enter() -> Self {
         Self(FRAMES.with(|f| f.replace(Some(Frames::new()))))
     }
 }
@@ -29,7 +29,7 @@ impl Drop for Scope {
         });
     }
 }
-pub(crate) fn read(id: i64) -> Result<Arc<Vec<i64>>> {
+pub fn read(id: i64) -> Result<Arc<Vec<i64>>> {
     FRAMES
         .with(|f| f.borrow().as_ref().and_then(|f| f.get(&id).cloned()))
         .ok_or_else(|| super::failure("demand frame is outside its statement"))
@@ -65,7 +65,7 @@ pub(super) fn register(db: &Connection) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn frames_share_keys_and_cannot_escape_their_statement() {

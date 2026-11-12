@@ -262,5 +262,4 @@ pub(in crate::code_rule_dsl) fn capture_outputs(conn: &Connection, cap: Capture)
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-device-metal's (it mounts it)

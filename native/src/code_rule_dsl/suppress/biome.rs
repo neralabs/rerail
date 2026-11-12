@@ -48,7 +48,7 @@ use std::ops::Range;
 
 /// Biome's `biome-ignore` comments: the lint rules (`lint/<group>/<rule>`) a comment must
 /// name, or their group, or `lint`.
-pub(crate) struct Suppressions;
+pub struct Suppressions;
 
 impl super::SuppressionKind for Suppressions {
     const KEY: &'static str = "biome";
@@ -74,7 +74,7 @@ pub(super) fn spec(biome: &Value, at: &str) -> napi::Result<Vec<String>> {
 
 #[rustfmt::skip]
 #[path = "biome_registry.generated.rs"]
-mod registry;
+pub mod registry;
 
 /// A suppression's `RuleCategory`: lint rules are the ones a violation names.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -174,7 +174,7 @@ struct RangeSuppression {
 
 /// A file's Biome suppressions, as the analyzer has them once it has read every token.
 #[derive(Debug, Default)]
-pub(crate) struct BiomeSuppressions {
+pub struct BiomeSuppressions {
     /// `biome-ignore-all` at the top of the file: they cover all of it.
     top_level: Vec<Target>,
     ranges: Vec<RangeSuppression>,
@@ -184,7 +184,7 @@ pub(crate) struct BiomeSuppressions {
 impl BiomeSuppressions {
     /// Reads the file `root` is the root of: its comments, and the tokens and line breaks between
     /// them.
-    pub(crate) fn read<D: Doc>(root: &Node<'_, D>, source: &str) -> Self {
+    pub fn read<D: Doc>(root: &Node<'_, D>, source: &str) -> Self {
         let mut comments = root
             .dfs()
             .filter(|node| node.kind() == "comment")
@@ -224,7 +224,7 @@ impl BiomeSuppressions {
     /// Whether a problem of any of `rules` (`lint/<group>/<rule>`) spanning `span` is suppressed
     /// (`Suppressions::suppresses`): by a `biome-ignore-all`, by a `biome-ignore-start` range
     /// holding it, or by a `biome-ignore` whose span holds its start.
-    pub(crate) fn suppresses(&self, rules: &[String], span: Range<usize>) -> bool {
+    pub fn suppresses(&self, rules: &[String], span: Range<usize>) -> bool {
         let keys = rules
             .iter()
             .filter_map(|rule| rule.strip_prefix("lint/")?.split_once('/'))
@@ -244,7 +244,7 @@ impl BiomeSuppressions {
 }
 
 /// Whether `name` (`lint/<group>/<rule>`) is a lint rule of Biome 2.5.15's JavaScript analyzer.
-pub(crate) fn is_lint_rule(name: &str) -> bool {
+pub fn is_lint_rule(name: &str) -> bool {
     name.strip_prefix("lint/")
         .and_then(|name| name.split_once('/'))
         .and_then(|(group, rule)| find_rule(group, rule))
@@ -599,5 +599,4 @@ fn named<'a>(
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

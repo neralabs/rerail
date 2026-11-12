@@ -435,7 +435,7 @@ kernel void rel_hash(device const long* R [[buffer(0)]], device uint* out [[buff
 "#;
 
 /// Whether this machine has the Metal device the stages run on.
-pub(in crate::code_rule_dsl) fn available() -> bool {
+pub fn available() -> bool {
     rerail_accel::gpu::join::device().is_ok()
 }
 
@@ -760,7 +760,7 @@ impl Drop for Batch {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     fn rows(n: usize, seed: u64, modulus: i64) -> Vec<i64> {

@@ -9,9 +9,9 @@ use std::sync::{Arc, OnceLock};
 
 use super::native::setfix::{Fresh, JoinRule, Store};
 
-pub(in crate::code_rule_dsl) mod lattice;
-pub(in crate::code_rule_dsl) mod nearest;
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::profile::{Report};
+pub mod lattice;
+pub mod nearest;
+pub use crate::code_rule_dsl::logic::profile::{Report};
 
 /// A join rule's plan on the device, as the device made it (`SolverDevice::compile_join`).
 #[derive(Clone)]
@@ -19,13 +19,13 @@ pub struct JoinPlan(pub Arc<dyn Any + Send + Sync>);
 
 /// Why the device did not solve: there is none for this work (the caller solves on the CPU), or it failed.
 #[derive(Debug)]
-pub(in crate::code_rule_dsl) enum Refused {
+pub enum Refused {
     NoDevice,
     Failed(String),
 }
 
 /// What the logic runs on a device.
-pub(in crate::code_rule_dsl) trait SolverDevice: Send + Sync {
+pub trait SolverDevice: Send + Sync {
     /// Whether the device's join stages can run here (a device is present and has their pipelines).
     fn join_available(&self) -> bool;
     /// A seed join's plan on the device, or why it takes none (`spec`: the join's text, which keys its history).
@@ -48,7 +48,7 @@ pub(in crate::code_rule_dsl) trait SolverDevice: Send + Sync {
 static SOLVER: OnceLock<&'static dyn SolverDevice> = OnceLock::new();
 
 /// Registers the logic's device; the first registration holds.
-pub(in crate::code_rule_dsl) fn register(device: &'static dyn SolverDevice) {
+pub fn register(device: &'static dyn SolverDevice) {
     let _ = SOLVER.set(device);
 }
 
@@ -58,7 +58,7 @@ pub(in crate::code_rule_dsl) fn solver() -> Option<&'static dyn SolverDevice> {
 }
 
 /// The report of the last stratum the device ran or refused on this thread, when there is a device.
-pub(in crate::code_rule_dsl) fn take_report() -> Option<Report> {
+pub fn take_report() -> Option<Report> {
     solver().and_then(|d| d.take_report())
 }
 

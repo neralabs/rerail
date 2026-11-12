@@ -124,7 +124,7 @@ pub(super) const SUBSCRIPT_MEMBERS: &[&str] = &[
     "WeakValueDictionary",
 ];
 
-pub(crate) use crate::code_rule_dsl::scope::{RootKind, TypeRoot};
+pub use crate::code_rule_dsl::scope::{RootKind, TypeRoot};
 
 /// The name a subscript's value or a call's callee ends with.
 pub(super) fn last_segment<D: Doc>(node: &Node<'_, D>) -> String {
@@ -877,7 +877,7 @@ impl Classifier<'_> {
 /// Classifies the string type definitions under the recorded roots, parses them, reads their
 /// names in the scopes they occur in, and repeats for the strings nested in them. Their names are
 /// deferred forward references: they see every binding, the module's first.
-pub(crate) fn string_type_definitions<D: Doc>(
+pub fn string_type_definitions<D: Doc>(
     builder: &mut Builder,
     root: &Node<'_, D>,
     reading: Reading,

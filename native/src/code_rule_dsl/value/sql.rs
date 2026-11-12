@@ -313,7 +313,7 @@ fn unicode_string(s: &str, ident: bool) -> Option<String> {
     Some(out)
 }
 
-pub(crate) fn literal(text: &str) -> Value {
+pub fn literal(text: &str) -> Value {
     let upper = text.to_ascii_uppercase();
     if upper == "NULL" {
         return Value::None;
@@ -406,7 +406,7 @@ pub(crate) fn literal(text: &str) -> Value {
     float_literal(n).map(signed).unwrap_or(Value::Unknown)
 }
 
-pub(crate) fn equals(left: &Value, right: &Value) -> Option<bool> {
+pub fn equals(left: &Value, right: &Value) -> Option<bool> {
     if matches!(left, Value::None)
         || matches!(right, Value::None)
         || !left.is_known()
@@ -472,7 +472,7 @@ pub(crate) fn to_str(value: &Value) -> Option<String> {
     }
 }
 
-pub(crate) fn name(text: &str) -> Option<String> {
+pub fn name(text: &str) -> Option<String> {
     let mut out = if unicode_prefixed(text, '"') {
         unicode_string(text, true)?
     } else if text.starts_with('"') {
@@ -497,7 +497,7 @@ pub(crate) fn name(text: &str) -> Option<String> {
 
 /// An identifier's text as PostgreSQL names it (`name`), else as written: a MySQL or SQL Server
 /// quoted name, which PostgreSQL does not read. A name already folded is borrowed.
-pub(crate) fn identifier(text: Cow<'_, str>) -> Cow<'_, str> {
+pub fn identifier(text: Cow<'_, str>) -> Cow<'_, str> {
     let folded = text.len() <= 63
         && !text.starts_with(['"', '`', '['])
         && !unicode_prefixed(&text, '"')
@@ -511,7 +511,7 @@ pub(crate) fn identifier(text: Cow<'_, str>) -> Cow<'_, str> {
     }
 }
 
-pub(crate) fn decode<D: ast_grep_core::Doc>(node: &ast_grep_core::Node<'_, D>) -> Value {
+pub fn decode<D: ast_grep_core::Doc>(node: &ast_grep_core::Node<'_, D>) -> Value {
     match node.kind().as_ref() {
         "literal" => literal(&node.text()),
         "parenthesized_expression" | "term" => {
@@ -525,12 +525,11 @@ pub(crate) fn decode<D: ast_grep_core::Doc>(node: &ast_grep_core::Node<'_, D>) -
     }
 }
 
-pub(crate) fn node_name<D: ast_grep_core::Doc>(
+pub fn node_name<D: ast_grep_core::Doc>(
     node: &ast_grep_core::Node<'_, D>,
 ) -> Option<String> {
     (node.kind() == "identifier")
         .then(|| name(&node.text()))
         .flatten()
 }
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

@@ -54,10 +54,10 @@
 //! `dfs_first`/`dfs_first_memo`, and a negated built-in with its other node unnamed (`!within_stop(n, _, s)`,
 //! `!split_dot(q, _, x)`).
 
-mod core;
-#[cfg(test)]
-pub(in crate::code_rule_dsl) use self::core::drop_unread_core;
-pub(in crate::code_rule_dsl) use self::core::is_core;
+pub mod core;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use self::core::drop_unread_core;
+pub use self::core::is_core;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -65,7 +65,7 @@ use rerail_rr_syntax::syntax::{Code, Fix, Head, Item, Lit, Statement, Suppress, 
 use crate::code_rule_dsl::logic::front::{AXIS, AggOp, Atom, DESCENDANTS, Error, LatticeDecl, Literal, Native, Program, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis};
 use crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY;
 use crate::code_rule_dsl::logic::strings::SET;
-mod findings;
+pub mod findings;
 
 /// The text tests: their `.rr` names and the engine's.
 pub(super) const TESTS: [(&str, &str); 11] = [
@@ -288,7 +288,7 @@ fn scope_report_globs(settings: &[(String, String)]) -> Vec<String> {
     scope_list(settings, &["report", "dirs"]).into_iter().map(|d| format!("{}/**", d.trim_end_matches('/'))).collect()
 }
 
-pub(super) fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
+pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     super::tape_type::check(&statements)?;
     let mut l = Lowerer::default();
     let mut clauses = Vec::new();
@@ -3035,7 +3035,7 @@ const TAPE_OPS: [(&str, usize, &str, &[(&str, &str)]); 3] = [
 /// The relations of the file system a rule may read (t21 E1), each with the request its reads make: a directory's
 /// entries, `dir_entry(dir, name, is_dir)`, a file's lines, `file_line(path, i, text)` (from 1), and a file's content
 /// digest, `file_digest(path, c)` (a cache key's, decision 0103: a library's tape is kept by it).
-pub(in crate::code_rule_dsl) const WORLD: [(&str, &str); 3] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req")];
+pub const WORLD: [(&str, &str); 3] = [("dir_entry", "rr_dir_req"), ("file_line", "rr_file_req"), ("file_digest", "rr_digest_req")];
 
 fn world_demand(rel: &str) -> Option<&'static str> {
     WORLD.iter().find(|(r, _)| *r == rel).map(|(_, d)| *d)
@@ -3100,7 +3100,7 @@ fn binds_columns(l: &Lit) -> bool {
 }
 
 /// Adjacent negations of one test of one string, `!glob("a", s), !glob("b", s)`, as one negated test of the set.
-pub(super) fn merge_negated_tests(body: Vec<Literal>) -> Vec<Literal> {
+pub fn merge_negated_tests(body: Vec<Literal>) -> Vec<Literal> {
     let mut out: Vec<Literal> = Vec::new();
     for literal in body {
         let negated_test = |l: &Literal| match l {

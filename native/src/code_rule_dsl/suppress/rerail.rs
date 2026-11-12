@@ -35,24 +35,24 @@ const DIRECTIVE: &str = "rerail-ignore";
 
 /// A byte range covered for the rule ids a directive names.
 #[derive(Debug, PartialEq, Eq)]
-struct Cover {
+pub struct Cover {
     /// Exclusive of its end, as the covered node's; the whole file's runs to `usize::MAX`, past an
     /// anchor at the end of the file.
-    range: Range<usize>,
-    rules: Vec<String>,
+    pub range: Range<usize>,
+    pub rules: Vec<String>,
 }
 
 /// A file's `rerail-ignore` directives, as the ranges they cover.
 #[derive(Debug, Default)]
-pub(crate) struct RerailIgnores {
-    covers: Vec<Cover>,
+pub struct RerailIgnores {
+    pub covers: Vec<Cover>,
 }
 
 impl RerailIgnores {
     /// Reads every comment of the file whose own tree `root` is the root of (`source` is its
     /// text), then each embedded program's (`embed`), each by its own family's kinds; every cover
     /// is a range of the file.
-    pub(crate) fn read<D: Doc>(root: &Node<'_, D>, source: &str) -> Self {
+    pub fn read<D: Doc>(root: &Node<'_, D>, source: &str) -> Self {
         let file = InFile::of(root).expect("a file's own tree lies in its file");
         let kinds = Kinds::of(file.dialect());
         let mut ignores = Self::read_tree(root, source, &file, kinds, true);
@@ -108,7 +108,7 @@ impl RerailIgnores {
     }
 
     /// Each directive's covered range and the code rules it names.
-    pub(crate) fn covers(&self) -> impl Iterator<Item = (&Range<usize>, &[String])> {
+    pub fn covers(&self) -> impl Iterator<Item = (&Range<usize>, &[String])> {
         self.covers.iter().map(|cover| (&cover.range, cover.rules.as_slice()))
     }
 
@@ -155,7 +155,7 @@ impl Kinds {
 /// after the comment's opener and any `*` and white space, `rerail-ignore`, then white space and
 /// ids separated by commas or white space, up to the end of the line or a ` -- ` reason. None
 /// where the comment is no directive, or one naming no rule.
-fn rule_ids(comment: &str) -> Vec<&str> {
+pub fn rule_ids(comment: &str) -> Vec<&str> {
     let mut text = comment.trim_end();
     if let Some(inner) = ["--}}", "-->", "*/"]
         .into_iter()
@@ -321,5 +321,4 @@ fn covered<D: Doc>(
     None
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

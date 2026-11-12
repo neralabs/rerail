@@ -18,12 +18,12 @@ use std::sync::{LazyLock, Mutex};
 /// runs, whatever binds it. The interpreter and the compiled programs are two bindings of the same
 /// plan, so their requests and their readiness are keyed by it, per binding.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub(in crate::code_rule_dsl) struct PlanId(pub(in crate::code_rule_dsl) [u8; 32]);
+pub struct PlanId(pub(in crate::code_rule_dsl) [u8; 32]);
 
 impl PlanId {
     /// A batch of programs' plan: their digests in order (`Program::plain_digest`, which holds
     /// set mode).
-    pub(in crate::code_rule_dsl) fn of_programs(programs: &[Program]) -> Self {
+    pub fn of_programs(programs: &[Program]) -> Self {
         let mut digest = Sha256::new();
         digest.update(b"rerail-plan-programs-v1\0");
         for program in programs {
@@ -34,7 +34,7 @@ impl PlanId {
     }
 
     /// The plan of a part of `self` (a wave's programs `start..end`, as a batch of its roots runs).
-    pub(in crate::code_rule_dsl) fn part(&self, start: usize, end: usize) -> Self {
+    pub fn part(&self, start: usize, end: usize) -> Self {
         let mut digest = Sha256::new();
         digest.update(b"rerail-plan-part-v1\0");
         digest.update(self.0);
@@ -94,14 +94,14 @@ fn request(binding: Binding, plan: PlanId, compile: impl FnOnce() -> Result<(), 
 }
 
 /// The backend a batch of `programs` runs on, as `resolve_plan` under their own plan.
-pub(super) fn resolve(backend: ExecutionBackend, programs: &[Program]) -> Result<ExecutionBackend, Error> {
+pub fn resolve(backend: ExecutionBackend, programs: &[Program]) -> Result<ExecutionBackend, Error> {
     resolve_plan(backend, PlanId::of_programs(programs), programs)
 }
 
 /// The backend a batch of `programs`, plan `plan`, runs on: a background backend's compiled
 /// binding once `plan`'s is ready, else its interpreter, with the compiled binding requested (the
 /// swap is at the next batch of the plan). Others are themselves.
-pub(super) fn resolve_plan(backend: ExecutionBackend, plan: PlanId, programs: &[Program]) -> Result<ExecutionBackend, Error> {
+pub fn resolve_plan(backend: ExecutionBackend, plan: PlanId, programs: &[Program]) -> Result<ExecutionBackend, Error> {
     let resolved = match backend {
         ExecutionBackend::CpuBackground => {
             if ready(Binding::CpuJit, plan) || native_cpu::compiled(programs)? {
@@ -139,11 +139,9 @@ pub(super) fn resolve_plan(backend: ExecutionBackend, plan: PlanId, programs: &[
 }
 
 /// Waits for every running compilation (tests: the batch after it runs compiled).
-#[cfg(test)]
-pub(super) fn settle() {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn settle() {
     rerail_accel::exec::help_until(|| REQUESTS.lock().map_or(true, |requests| requests.running.is_empty()).then_some(()));
 }
 
-#[cfg(test)]
-#[path = "compilation_tests.rs"]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

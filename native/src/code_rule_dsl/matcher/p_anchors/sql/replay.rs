@@ -5,7 +5,7 @@ use serde_json::Value as Json;
 use std::collections::{HashMap, HashSet};
 type CandidateRows = Vec<Vec<(i64, i64, i64)>>;
 
-pub(super) const SCHEMA:&str="
+pub const SCHEMA:&str="
 CREATE TABLE lab_epoch(value INTEGER); INSERT INTO lab_epoch VALUES(0);
 CREATE TABLE lab_revision(fid INTEGER PRIMARY KEY REFERENCES file(fid) ON DELETE CASCADE,revision INTEGER NOT NULL,UNIQUE(fid,revision));
 INSERT INTO lab_revision SELECT fid,row_number() OVER(ORDER BY fid) FROM file;
@@ -220,7 +220,7 @@ fn replay(captures: &[std::path::PathBuf], mode: &str) -> (Json, CandidateRows) 
     )
 }
 
-pub(crate) fn experiment(dir: &std::path::Path, trial: usize) -> Vec<Json> {
+pub fn experiment(dir: &std::path::Path, trial: usize) -> Vec<Json> {
     let mut files: Vec<_> = std::fs::read_dir(dir)
         .unwrap()
         .map(|e| e.unwrap().path())

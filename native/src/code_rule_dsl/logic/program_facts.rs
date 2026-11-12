@@ -26,7 +26,7 @@ use super::magic::{Gate, Report};
 use std::collections::BTreeMap;
 
 /// Rows by relation, as a program's `facts` holds them.
-pub(in crate::code_rule_dsl) type Facts = BTreeMap<String, Vec<Vec<Value>>>;
+pub type Facts = BTreeMap<String, Vec<Vec<Value>>>;
 
 /// Each relation of the schema and its columns (`int` or `sym`).
 pub(in crate::code_rule_dsl) fn schema() -> BTreeMap<String, Vec<(String, String)>> {
@@ -371,7 +371,7 @@ impl Writer<'_> {
 }
 
 /// `prog` as facts of program `p`, added to `facts`.
-pub(in crate::code_rule_dsl) fn write(facts: &mut Facts, p: &str, prog: &Program) {
+pub fn write(facts: &mut Facts, p: &str, prog: &Program) {
     Writer { facts, p: p.to_owned(), terms: 0, atoms: 0, literals: 0 }.program(prog);
 }
 
@@ -691,13 +691,13 @@ impl<'a> Reader<'a> {
 }
 
 /// Program `p` of `facts`, as it was written.
-pub(in crate::code_rule_dsl) fn program(facts: &Facts, p: &str) -> Result<Program, String> {
+pub fn program(facts: &Facts, p: &str) -> Result<Program, String> {
     Reader::of(facts, p)?.program()
 }
 
 /// `facts` as a `.rr` document: the schema's declarations and every row as a fact. `rr::parse` reads it back as the
 /// same rows (`document_facts`).
-pub(in crate::code_rule_dsl) fn document(facts: &Facts, extra: &BTreeMap<String, Vec<(String, String)>>) -> Result<String, String> {
+pub fn document(facts: &Facts, extra: &BTreeMap<String, Vec<(String, String)>>) -> Result<String, String> {
     let mut decls = schema();
     decls.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
     let prog = Program { decls, facts: facts.clone(), ..Program::default() };
@@ -705,13 +705,13 @@ pub(in crate::code_rule_dsl) fn document(facts: &Facts, extra: &BTreeMap<String,
 }
 
 /// A document's rows, as `rr::parse` reads them.
-pub(in crate::code_rule_dsl) fn document_facts(text: &str) -> Result<Facts, String> {
+pub fn document_facts(text: &str) -> Result<Facts, String> {
     let prog = super::rr::parse(text).map_err(|e| bad(format!("{e:?}")))?;
     Ok(prog.facts)
 }
 
 /// `facts` as bytes: a compact encoding for the facts memo (strings in a table, each value a tag and a number).
-pub(in crate::code_rule_dsl) fn encode(facts: &Facts) -> Vec<u8> {
+pub fn encode(facts: &Facts) -> Vec<u8> {
     // One pass: each string's id by first use (relation, then its rows' values, in order), the rows written as they
     // are met; the table, which comes first, written after.
     let mut strings: rustc_hash::FxHashMap<&str, u32> = Default::default();
@@ -759,7 +759,7 @@ pub(in crate::code_rule_dsl) fn encode(facts: &Facts) -> Vec<u8> {
 }
 
 /// Bytes `encode` made, as facts.
-pub(in crate::code_rule_dsl) fn decode(bytes: &[u8]) -> Result<Facts, String> {
+pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
     struct At<'a>(&'a [u8], usize);
     impl At<'_> {
         fn take(&mut self, n: usize) -> Result<&[u8], String> {
@@ -808,7 +808,7 @@ pub(in crate::code_rule_dsl) fn decode(bytes: &[u8]) -> Result<Facts, String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     /// The encoding names each string by its first use and puts the table first: the bytes the two-pass writer made
     /// (strings counted, then the rows written), and they decode to the facts.
     #[test]

@@ -31,7 +31,7 @@ const SEP: &str = "__";
 /// Whether `rel` is a bridged relation's name (`typing_<program>__<output>`). Such a relation is one fact family
 /// shared by every program of a run (`corpus::combine` does not prefix it), as `core.rr`'s are: the program's answers
 /// are the same whichever rule reads them.
-pub(crate) fn is_bridged(rel: &str) -> bool {
+pub fn is_bridged(rel: &str) -> bool {
     rel.strip_prefix(PREFIX).is_some_and(|rest| rest.split_once(SEP).is_some_and(|(p, o)| !p.is_empty() && !o.is_empty()))
 }
 
@@ -57,7 +57,7 @@ fn wanted(prog: &Program) -> Vec<Bridged> {
 
 /// The typing program `name`'s text.
 fn source(name: &str) -> Result<String> {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("src/code_rule_dsl/typing/programs/{name}.rr"));
+    let path = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join(format!("src/code_rule_dsl/typing/programs/{name}.rr"));
     // Its `#include`s read in (`python/modules.rr`, …).
     crate::code_rule_dsl::logic::settings::program_text(&path).map_err(Error::Plan)
 }

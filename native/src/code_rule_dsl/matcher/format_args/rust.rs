@@ -24,7 +24,7 @@ fn leading_arguments(name: &str) -> Option<usize> {
 
 /// One argument after the format string.
 #[derive(Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
 pub(crate) struct CallArgument<'r, D: Doc> {
     /// The identifier of `name = value`.
     pub(crate) name: Option<Node<'r, D>>,
@@ -36,7 +36,7 @@ pub(crate) struct CallArgument<'r, D: Doc> {
 
 /// A format macro call whose format string is a literal.
 #[derive(Clone)]
-#[cfg_attr(not(test), allow(dead_code))]
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
 pub(crate) struct FormatCall<'r, D: Doc> {
     /// The macro's name without its path (`println`).
     pub(crate) macro_name: String,
@@ -275,7 +275,7 @@ fn call_argument<'r, D: Doc>(tokens: &[Node<'r, D>]) -> Option<CallArgument<'r, 
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests;
 
 /// A Rust format macro call (`rust::format_call`) whose template is the string capture: the
 /// arguments no field, width or precision reads (rustc's "argument never used"), by their
@@ -329,7 +329,7 @@ pub(super) fn prepare<'t, D: Doc>(this: &FormatArgs, env: &MetaVarEnv<'t, D>) ->
 }
 
 /// Rust's `format_args!` family (`FormatPreparer`).
-pub(crate) struct Rust;
+pub struct Rust;
 
 impl super::FormatPreparer for Rust {
     fn prepare_tape<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::tape::TapeDoc>) -> Prepared<'t, crate::code_rule_dsl::tape::TapeDoc> {

@@ -13,10 +13,10 @@ pub(super) fn error(source: &str) -> Result<Option<(u32, String)>, String> {
         .map_err(|r| format!("{}: {}", r.class, r.message))
 }
 
-pub(super) use super::core_rr::failure;
+pub use super::core_rr::failure;
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     /// Python's verdict is CPython's grammar's: Python 2's `print "x"`, which tree-sitter accepts, is an error; a
     /// `match` statement is not; the line is the first error's.
     #[test]

@@ -27,7 +27,7 @@ pub(crate) fn is_comment(kind: &str) -> bool {
 }
 
 /// Punctuation the tree's shape already records: separators and brackets.
-pub(crate) fn is_punctuation(kind: &str) -> bool {
+pub fn is_punctuation(kind: &str) -> bool {
     matches!(kind, "," | ";" | "(" | ")" | "[" | "]" | "{" | "}" | ":")
 }
 
@@ -39,36 +39,36 @@ pub struct Token<'r, D: Doc> {
 
 impl<'r, D: Doc> Token<'r, D> {
     /// The token's kind: its text in the grammar (`"+"`, `"async"`, `","`).
-    pub(crate) fn kind(&self) -> Cow<'_, str> {
+    pub fn kind(&self) -> Cow<'_, str> {
         self.node.kind()
     }
     /// The token's text in the source (`B"`, `FUNCTION`): may differ from its kind in case or
     /// prefix.
-    pub(crate) fn text(&self) -> Cow<'r, str> {
+    pub fn text(&self) -> Cow<'r, str> {
         self.node.text()
     }
     /// The token's byte span in the source.
-    pub(crate) fn range(&self) -> Range<usize> {
+    pub fn range(&self) -> Range<usize> {
         self.node.range()
     }
 }
 
 /// A child in source order: a named node, or one of the parent's tokens.
-pub(crate) enum Part<'r, D: Doc> {
+pub enum Part<'r, D: Doc> {
     Named(Node<'r, D>),
     Token(Token<'r, D>),
 }
 
 impl<'r, D: Doc> Part<'r, D> {
     /// The part's kind.
-    pub(crate) fn kind(&self) -> Cow<'_, str> {
+    pub fn kind(&self) -> Cow<'_, str> {
         match self {
             Self::Named(node) => node.kind(),
             Self::Token(token) => token.kind(),
         }
     }
     /// The part's byte span.
-    pub(crate) fn range(&self) -> Range<usize> {
+    pub fn range(&self) -> Range<usize> {
         match self {
             Self::Named(node) => node.range(),
             Self::Token(token) => token.range(),
@@ -82,7 +82,7 @@ impl<'r, D: Doc> Part<'r, D> {
         }
     }
     /// The token, if the part is one.
-    pub(crate) fn token(&self) -> Option<&Token<'r, D>> {
+    pub fn token(&self) -> Option<&Token<'r, D>> {
         match self {
             Self::Named(_) => None,
             Self::Token(token) => Some(token),
@@ -91,7 +91,7 @@ impl<'r, D: Doc> Part<'r, D> {
 }
 
 /// Shape queries on a tree node; see the module documentation.
-pub(crate) trait Tree<'r, D: Doc> {
+pub trait Tree<'r, D: Doc> {
     /// The named children, comments included.
     fn named(&self) -> impl Iterator<Item = Node<'r, D>> + '_;
     /// The named children that are not comments: what a reader of code walks.
@@ -166,5 +166,4 @@ fn part<'r, D: Doc>(child: Node<'r, D>) -> Part<'r, D> {
     if child.is_named() { Part::Named(child) } else { Part::Token(Token { node: child }) }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

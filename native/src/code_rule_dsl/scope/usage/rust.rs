@@ -7,7 +7,7 @@ use super::super::rust::{MACRO, resolve_index};
 use super::super::{Access, Import, NodeRef, Reference, ScopeKind, ScopeTable, TYPE, VALUE};
 use super::{Facts, Steps};
 use crate::code_rule_dsl::scope::BuildError;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use crate::code_rule_dsl::walks::{Walk, record_walk};
 use ast_grep_core::{Doc, Node};
 use foldhash::HashMap;
@@ -233,7 +233,7 @@ fn nodes_at<D: Doc>(
     let wanted: foldhash::HashSet<(usize, usize)> = ranges.collect();
     let mut found = HashMap::default();
     for node in root.dfs() {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         record_walk(Walk::UsageNode);
         let range = node.range();
         let key = (range.start, range.end);
@@ -302,5 +302,4 @@ fn captures(text: &str) -> impl Iterator<Item = (usize, usize)> + '_ {
     })
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

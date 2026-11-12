@@ -3,22 +3,22 @@ use super::super::facts::vtab::Modules;
 use super::*;
 use parking_lot::RwLock;
 use std::cell::RefCell;
-mod bindings;
-mod bulk;
-mod difference;
-pub(super) mod fork;
-mod patch;
-mod probes;
-mod scan;
-mod tree;
+pub mod bindings;
+pub mod bulk;
+pub mod difference;
+pub mod fork;
+pub mod patch;
+pub mod probes;
+pub mod scan;
+pub mod tree;
 use tree::{Key, Link, Node};
 #[derive(Clone)]
-struct Row {
+pub struct Row {
     id: i64,
     values: Key,
 }
 #[derive(Clone, PartialEq, Eq)]
-pub(super) struct Schema {
+pub struct Schema {
     pub columns: Vec<String>,
     pub keys: usize,
     pub nullable: Vec<bool>,
@@ -107,7 +107,7 @@ impl Schema {
 #[derive(Clone)]
 pub struct Version {
     schema: Arc<Schema>,
-    full: Link<Row>,
+    pub full: Link<Row>,
     primary: Link<Row>,
     ids: Link<Row>,
     indexes: Vec<Link<Row>>,
@@ -637,7 +637,7 @@ struct Slot {
     owners: BTreeSet<usize>,
 }
 #[derive(Default)]
-pub(super) struct Store {
+pub struct Store {
     reuse: RefCell<BTreeMap<TableKey, Version>>,
     modules: Modules,
     tables: RefCell<BTreeMap<TableKey, Arc<Mutable>>>,
@@ -753,7 +753,7 @@ impl Store {
             undo: self.undo.clone(),
         })
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub fn columns_read(&self) -> u64 {
         self.slots
             .borrow()
@@ -952,8 +952,7 @@ impl Drop for Transaction<'_> {
 }
 
 #[cfg(test)]
-mod bulk_tests;
-#[cfg(test)]
-mod operators;
-#[cfg(test)]
-mod tests;
+pub mod bulk_tests;
+// cratify: `operators` is rerail-engine's (it mounts it)
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod tests;

@@ -51,14 +51,14 @@ const LABELS: &[&str] = &[
 
 /// A directive comment as ESLint parses it.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Directive {
+pub struct Directive {
     /// `eslint-disable`, `global`, ...
-    pub(crate) label: String,
+    pub label: String,
     pub(crate) label_range: Range<usize>,
     /// The text after the label, trimmed (`value`), before any description.
-    pub(crate) value_range: Range<usize>,
+    pub value_range: Range<usize>,
     /// The text after ` -- `, trimmed (`justification`), when there is one.
-    pub(crate) description: Option<Range<usize>>,
+    pub description: Option<Range<usize>>,
     /// Whether the comment is a line comment: `//`, `<!--` or `-->`.
     pub(crate) line: bool,
 }
@@ -66,17 +66,17 @@ pub(crate) struct Directive {
 /// An item of a directive's list: a rule id of `eslint-disable`, a name of `global` or `exported`,
 /// with its setting (`global a:off`) where it has one.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Item {
-    pub(crate) name: String,
-    pub(crate) range: Range<usize>,
-    pub(crate) setting: Option<(String, Range<usize>)>,
+pub struct Item {
+    pub name: String,
+    pub range: Range<usize>,
+    pub setting: Option<(String, Range<usize>)>,
 }
 
 impl Directive {
     /// A comment's directive, as `getInlineConfigNodes` keeps it: a known label, and in a line
     /// comment only `eslint-disable-line` and `eslint-disable-next-line`. `comment` is the whole
     /// comment text, `//`, `/*`, `<!--` or `-->` included.
-    pub(crate) fn parse(comment: &str) -> Option<Self> {
+    pub fn parse(comment: &str) -> Option<Self> {
         let line = ["//", "<!--", "-->"]
             .into_iter()
             .find(|opener| comment.starts_with(opener));
@@ -154,7 +154,7 @@ impl Directive {
 
     /// The directive's list: `parseListConfig` (rule ids, `exported` names) or `parseStringConfig`
     /// (`global` names and settings); none for `eslint` and `eslint-env`.
-    pub(crate) fn items(&self, comment: &str) -> Vec<Item> {
+    pub fn items(&self, comment: &str) -> Vec<Item> {
         match self.label.as_str() {
             "global" | "globals" => string_config(comment, self.value_range.clone()),
             "eslint" | "eslint-env" => Vec::new(),
@@ -281,14 +281,13 @@ pub(crate) fn tree(comment: &str) -> Option<PNode> {
     Some(root)
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
 
 /// The `eslintDirective` grammar (`literal::LiteralGrammar`).
 pub(crate) struct EslintDirectiveGrammar;
 
 /// Its handle, which the engine registers (`literal::install`).
-pub(crate) const GRAMMAR: super::Grammar = super::Grammar::new(&EslintDirectiveGrammar);
+pub const GRAMMAR: super::Grammar = super::Grammar::new(&EslintDirectiveGrammar);
 
 impl super::LiteralGrammar for EslintDirectiveGrammar {
     fn name(&self) -> &'static str {

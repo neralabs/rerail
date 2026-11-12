@@ -599,7 +599,7 @@ fn define_repeat_equal(
 }
 
 #[path = "native_cpu_capture_relation.rs"]
-mod capture_relation;
+pub mod capture_relation;
 
 fn define_exact_state_equal(
     module: &mut JITModule,

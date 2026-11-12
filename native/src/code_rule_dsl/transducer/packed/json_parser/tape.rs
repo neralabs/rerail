@@ -6,7 +6,7 @@ use crate::code_rule_dsl::tape::{
 };
 
 /// JSON's tree parser: the Bitlex parser, standing in for tree-sitter-json.
-pub(crate) struct Bitlex;
+pub struct Bitlex;
 
 impl TreeParser for Bitlex {
     fn parse(&self, grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Option<Result<FileImage, TemplateError>> {
@@ -35,7 +35,7 @@ impl TreeParser for Bitlex {
 /// The tape of a node table a Bitlex parser wrote (`transducer::packed::json_parser::Columns`), in the
 /// grammar's tree-sitter ids: kinds, fields, spans, parents, extras and supertypes, as `encode_tree` reads them
 /// off a tree-sitter tree.
-pub(in crate::code_rule_dsl) fn encode_columns(
+pub fn encode_columns(
     grammar: &Grammar,
     source: &str,
     columns: &Columns,

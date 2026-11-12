@@ -35,7 +35,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::{Arc, Weak};
 use std::time::Instant;
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::device::{Report};
+pub use crate::code_rule_dsl::logic::device::{Report};
 
 /// The most rows a table is given before its stage has run once (a guess; an overflow runs it again exactly).
 const GUESS_MAX: usize = 1 << 21;
@@ -350,7 +350,7 @@ impl Resident {
 }
 
 /// The report of the last stratum the device ran or refused on this thread (taken).
-pub(in crate::code_rule_dsl) fn take_report() -> Option<Report> {
+pub fn take_report() -> Option<Report> {
     LAST.with_borrow_mut(Option::take)
 }
 
@@ -720,5 +720,4 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, fresh: &mut [Fresh]
     Ok(out)
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

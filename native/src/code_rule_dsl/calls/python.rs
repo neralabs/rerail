@@ -3,7 +3,7 @@
 /// The dotted name a file's path gives it from the deepest directory whose name is no Python
 /// identifier (a checkout's own directory): what `import` finds with that directory on
 /// `sys.path`, namespace packages included. `pkg/__init__.py` is `pkg`.
-pub(crate) fn path_module(path: &str) -> Option<String> {
+pub fn path_module(path: &str) -> Option<String> {
     let path = path
         .strip_suffix(".py")
         .or_else(|| path.strip_suffix(".pyi"))?;

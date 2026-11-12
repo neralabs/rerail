@@ -50,20 +50,20 @@ use crate::code_rule_dsl::facts::core::Facts;
 use std::collections::HashMap;
 
 pub(super) const SLOT_BITS: u32 = 14;
-pub(super) const INDEX_BITS: u32 = 32 - SLOT_BITS;
+pub const INDEX_BITS: u32 = 32 - SLOT_BITS;
 /// Indexes in one slot.
-pub(super) const INDEX: u32 = 1 << INDEX_BITS;
+pub const INDEX: u32 = 1 << INDEX_BITS;
 const SLOTS: u32 = 1 << SLOT_BITS;
 /// The top slots, from `SLOTS - 1` down, hold a document's spans: up to `SPAN_SLOTS << INDEX_BITS` of them.
 pub(super) const SPAN_SLOTS: u32 = 16;
 /// The positions (`span_low`) a document may have: past them a run fails (`super::Batch::build`), never wraps.
-pub(super) const POSITIONS: u64 = SPAN_SLOTS as u64 * INDEX as u64;
+pub const POSITIONS: u64 = SPAN_SLOTS as u64 * INDEX as u64;
 /// The first slot of the spans'.
 const SPAN_FIRST: u32 = SLOTS - SPAN_SLOTS;
 /// Slots of `Extra`'s spans (`ExtraSpan`): one for each kind of line and for the comments, `MATCH_SLOTS` for the
 /// matches, below the positions'.
 const MATCH_SLOTS: u32 = 12;
-pub(super) const EXTRA_SLOTS: u32 = 4 + MATCH_SLOTS;
+pub const EXTRA_SLOTS: u32 = 4 + MATCH_SLOTS;
 const EXTRA_FIRST: u32 = SPAN_FIRST - EXTRA_SLOTS;
 /// Slots granules take: `1..EXTRA_FIRST`.
 const GRANULE_SLOTS: u32 = EXTRA_FIRST - 1;
@@ -71,7 +71,7 @@ const GRANULE_SLOTS: u32 = EXTRA_FIRST - 1;
 /// The kinds of `Extra`'s spans (core.rr's `span`s made beside the projection: `super::Extra::document`), each in slots
 /// of its own between the granules' and the positions', so no node, position or other kind has its id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ExtraSpan {
+pub enum ExtraSpan {
     /// The whole source (index 0) and its physical lines (`src_line`, from 1).
     Line,
     /// The `\n`-lines (`src_line_lf`, from 1).
@@ -95,7 +95,7 @@ impl ExtraSpan {
         }
     }
     /// How many spans of the kind a document may have.
-    pub(crate) const fn capacity(self) -> u32 {
+    pub const fn capacity(self) -> u32 {
         match self {
             ExtraSpan::Match => MATCH_SLOTS * INDEX,
             _ => INDEX,
@@ -104,7 +104,7 @@ impl ExtraSpan {
 }
 
 /// The low bits of span `i` of `kind`, or `None` past the kind's capacity.
-pub(super) fn extra_low(kind: ExtraSpan, i: u32) -> Option<u32> {
+pub fn extra_low(kind: ExtraSpan, i: u32) -> Option<u32> {
     (i < kind.capacity()).then(|| ((EXTRA_FIRST + kind.first() + i / INDEX) << INDEX_BITS) | (i % INDEX))
 }
 
@@ -186,7 +186,7 @@ enum Fold {
 }
 
 /// The ids of `p`'s nodes and of `tokens` (each token's node, in order): the low 32 bits.
-pub(super) fn number(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> Vec<u32> {
+pub fn number(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> Vec<u32> {
     let mut fold = Fold::None;
     loop {
         let cut = cut(p, dialect, fold);
@@ -432,15 +432,15 @@ pub(super) fn span_low(i: u32) -> u32 {
 }
 
 /// The span index of low bits in the spans' slots, or `None` for a node's.
-pub(super) fn span_of(low: u32) -> Option<u32> {
+pub fn span_of(low: u32) -> Option<u32> {
     let slot = low >> INDEX_BITS;
     (slot >= SPAN_FIRST).then(|| (SLOTS - 1 - slot) << INDEX_BITS | (low % INDEX))
 }
 
 /// What a document's numbering came to (for measuring the bit widths): granules, slots past the first, the most
 /// nodes and tokens in one granule, and how far it folded.
-#[cfg(test)]
-pub(super) fn census(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> (usize, usize, u32, u8) {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn census(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> (usize, usize, u32, u8) {
     for (i, fold) in [Fold::None, Fold::Statements, Fold::All].into_iter().enumerate() {
         let cut = cut(p, dialect, fold);
         let mut size = vec![0u32; cut.starts.len()];

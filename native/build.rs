@@ -22,7 +22,7 @@ fn main() {
     let omitted = omitted_languages();
     // The crate that declares the grammars' symbols builds them: this one, until the crate split gives them to
     // `rerail-lang` (tools/cratify sets this to false and writes that crate's build script).
-    const BUILDS_GRAMMARS: bool = true;
+    const BUILDS_GRAMMARS: bool = false;
     if BUILDS_GRAMMARS {
         grammars::build_all(&manifest, &omitted);
     }

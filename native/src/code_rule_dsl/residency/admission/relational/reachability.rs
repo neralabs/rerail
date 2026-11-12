@@ -4,7 +4,7 @@ use super::{Result, Stage, quote, sql_error};
 use std::sync::{Arc, atomic::AtomicUsize};
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Reachability {
+pub struct Reachability {
     pub(super) ordered_first: Option<super::ordered_first::Spec>,
     pub(in crate::code_rule_dsl) roots: String,
     pub(in crate::code_rule_dsl) edges: String,
@@ -173,7 +173,7 @@ pub(in crate::code_rule_dsl) fn create(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     #[test]
     fn empty_catalog_needs_no_graph_storage_but_nonempty_edges_still_require_forest_validation() {

@@ -1,7 +1,7 @@
 //! Canonical persistent indexes. Equal row sets have equal Merkle roots independent of insertion order.
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-mod bulk;
+pub mod bulk;
 #[derive(Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub(super) struct Cells {
     values: Vec<Option<i64>>,
@@ -32,7 +32,7 @@ pub(super) fn key(values: Vec<Option<i64>>) -> Key {
     })
 }
 pub(super) type Link<V> = Option<Arc<Node<V>>>;
-pub(super) struct Node<V> {
+pub struct Node<V> {
     pub key: Key,
     pub value: V,
     pub left: Link<V>,

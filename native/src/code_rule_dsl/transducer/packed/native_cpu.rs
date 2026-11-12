@@ -26,7 +26,7 @@ use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 use std::sync::{Arc, LazyLock, Mutex};
 
-struct DemandZeroRegion<T> {
+pub struct DemandZeroRegion<T> {
     pointer: NonNull<T>,
     count: usize,
     mapped_bytes: usize,
@@ -67,7 +67,7 @@ impl<T> Drop for DemandZeroRegion<T> {
 
 #[cfg(unix)]
 impl<T> DemandZeroRegion<T> {
-    fn new(count: usize) -> Result<Self, Error> {
+    pub fn new(count: usize) -> Result<Self, Error> {
         let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         if page <= 0 {
             return Err(Error::BackendFailure);
@@ -163,7 +163,7 @@ impl<T> Drop for DemandZeroRegion<T> {
 }
 
 #[repr(C)]
-pub(super) struct NativeTaskContext {
+pub struct NativeTaskContext {
     pub nodes: *const MetalNode,
     pub node_count: u32,
     pub children: *const u32,
@@ -247,18 +247,18 @@ pub(super) type NativeTaskEntry = unsafe extern "C" fn(*mut NativeTaskContext);
 
 pub(super) type TaskEntry = unsafe extern "C" fn(*mut TaskStatus);
 
-pub(super) struct CompiledTaskShell {
+pub struct CompiledTaskShell {
     _module: JITModule,
     entry: TaskEntry,
 }
 
 impl CompiledTaskShell {
-    pub(super) fn execute(&self, status: &mut TaskStatus) {
+    pub fn execute(&self, status: &mut TaskStatus) {
         unsafe { (self.entry)(status) };
     }
 }
 
-pub(super) fn compile_task_shell(_native: &NativeModule) -> Result<CompiledTaskShell, Error> {
+pub fn compile_task_shell(_native: &NativeModule) -> Result<CompiledTaskShell, Error> {
     let builder = JITBuilder::new(default_libcall_names()).map_err(|_| Error::BackendFailure)?;
     let mut module = JITModule::new(builder);
     let mut signature = module.make_signature();
@@ -300,27 +300,27 @@ pub(super) fn compile_task_shell(_native: &NativeModule) -> Result<CompiledTaskS
     })
 }
 
-pub(super) struct CompiledStraightLine {
+pub struct CompiledStraightLine {
     _module: JITModule,
     value_tables: PackedValueTables,
     entry: NativeTaskEntry,
-    #[cfg(test)]
-    cursor_equal: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
-    #[cfg(test)]
-    repeat_equal: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
-    #[cfg(test)]
-    capture_contains: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
-    #[cfg(test)]
-    query_admit: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
-    #[cfg(test)]
-    exact_state_equal:
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub cursor_equal: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub repeat_equal: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub capture_contains: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub query_admit: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub exact_state_equal:
         unsafe extern "C" fn(*mut NativeTaskContext, u32, u32, u32, u32, u32, u32) -> u32,
-    #[cfg(test)]
-    queue_insert: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
-    #[cfg(test)]
-    greedy_schedule: unsafe extern "C" fn(*mut NativeTaskContext, u32) -> u64,
-    #[cfg(test)]
-    greedy_take: unsafe extern "C" fn(*mut NativeTaskContext, u32) -> u64,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub queue_insert: unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub greedy_schedule: unsafe extern "C" fn(*mut NativeTaskContext, u32) -> u64,
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub greedy_take: unsafe extern "C" fn(*mut NativeTaskContext, u32) -> u64,
 }
 
 // Finalized JIT modules and packed constants are immutable during execution.
@@ -333,7 +333,7 @@ static CPU_JIT_CACHE: LazyLock<Mutex<BTreeMap<String, Arc<CompiledStraightLine>>
     LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 impl CompiledStraightLine {
-    pub(super) fn execute(&self, context: &mut NativeTaskContext) {
+    pub fn execute(&self, context: &mut NativeTaskContext) {
         context.values = self.value_tables.values.as_ptr();
         context.value_count = self.value_tables.values.len() as u32;
         context.nfa_states = self.value_tables.nfa_states.as_ptr();
@@ -421,7 +421,7 @@ fn context_pointer(
         .load(pointer_type, MemFlags::trusted(), context, offset as i32)
 }
 
-pub(super) fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLine, Error> {
+pub fn compile_straight_line(native: &NativeModule) -> Result<CompiledStraightLine, Error> {
     let mut value_tables = PackedValueTables::with_unicode_word_data();
     value_tables.push_program(&native.value_programs)?;
     for instruction in &native.output_program.instructions {
@@ -479,9 +479,9 @@ pub(super) fn compile_straight_line(native: &NativeModule) -> Result<CompiledStr
     let builder = JITBuilder::new(default_libcall_names()).map_err(|_| Error::BackendFailure)?;
     let mut module = JITModule::new(builder);
     let scheduler = native_cpu_scheduler::define(&mut module).map_err(|error| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         eprintln!("native scheduler definition failed: {error:?}");
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-hooks")))]
         let _ = error;
         Error::BackendFailure
     })?;
@@ -499,18 +499,18 @@ pub(super) fn compile_straight_line(native: &NativeModule) -> Result<CompiledStr
         scheduler.path_enqueue,
     );
     let value_functions = native_cpu_value::define(&mut module, native).map_err(|error| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         eprintln!("native value definition failed: {error:?}");
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-hooks")))]
         let _ = error;
         Error::BackendFailure
     })?;
     let capture_functions =
         native_cpu_capture::define(&mut module, native, &value_functions.evaluators).map_err(
             |error| {
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-hooks"))]
                 eprintln!("native capture definition failed: {error:?}");
-                #[cfg(not(test))]
+                #[cfg(not(any(test, feature = "test-hooks")))]
                 let _ = error;
                 Error::BackendFailure
             },
@@ -526,18 +526,18 @@ pub(super) fn compile_straight_line(native: &NativeModule) -> Result<CompiledStr
         native.tree_sitter_query && native.has_repeats,
     )
     .map_err(|error| {
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         eprintln!("native reduction definition failed: {error:?}");
-        #[cfg(not(test))]
+        #[cfg(not(any(test, feature = "test-hooks")))]
         let _ = error;
         Error::BackendFailure
     })?;
     let output_function =
         native_cpu_output::define(&mut module, native, value_functions.regex_find).map_err(
             |error| {
-                #[cfg(test)]
+                #[cfg(any(test, feature = "test-hooks"))]
                 eprintln!("native output definition failed: {error:?}");
-                #[cfg(not(test))]
+                #[cfg(not(any(test, feature = "test-hooks")))]
                 let _ = error;
                 Error::UnsupportedBackend
             },
@@ -2754,49 +2754,49 @@ pub(super) fn compile_straight_line(native: &NativeModule) -> Result<CompiledStr
         .map_err(|_| Error::BackendFailure)?;
     let code = module.get_finalized_function(function_id);
     let entry = unsafe { mem::transmute::<*const u8, NativeTaskEntry>(code) };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let cursor_equal = unsafe {
         mem::transmute::<*const u8, unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32>(
             module.get_finalized_function(scheduler.cursor_equal),
         )
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let repeat_equal = unsafe {
         mem::transmute::<*const u8, unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32>(
             module.get_finalized_function(scheduler.repeat_equal),
         )
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let capture_contains = unsafe {
         mem::transmute::<*const u8, unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32>(
             module.get_finalized_function(scheduler.capture_contains),
         )
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let query_admit = unsafe {
         mem::transmute::<*const u8, unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32>(
             module.get_finalized_function(scheduler.query_admit),
         )
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let queue_insert = unsafe {
         mem::transmute::<*const u8, unsafe extern "C" fn(*mut NativeTaskContext, u32, u32) -> u32>(
             module.get_finalized_function(scheduler.queue_insert),
         )
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let greedy_schedule = unsafe {
         mem::transmute::<*const u8, unsafe extern "C" fn(*mut NativeTaskContext, u32) -> u64>(
             module.get_finalized_function(scheduler.greedy_schedule),
         )
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let greedy_take = unsafe {
         mem::transmute::<*const u8, unsafe extern "C" fn(*mut NativeTaskContext, u32) -> u64>(
             module.get_finalized_function(scheduler.greedy_take),
         )
     };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     let exact_state_equal = unsafe {
         mem::transmute::<
             *const u8,
@@ -2807,21 +2807,21 @@ pub(super) fn compile_straight_line(native: &NativeModule) -> Result<CompiledStr
         _module: module,
         value_tables,
         entry,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         cursor_equal,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         repeat_equal,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         capture_contains,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         query_admit,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         exact_state_equal,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         queue_insert,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         greedy_schedule,
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         greedy_take,
     })
 }
@@ -2879,7 +2879,7 @@ pub(super) fn compile_cached(program: &Program) -> Result<Arc<CompiledStraightLi
     Ok(compiled)
 }
 
-pub(super) fn execute_batch(
+pub fn execute_batch(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],
@@ -2918,8 +2918,8 @@ pub(super) fn execute_batch_packed_with_result_limits(
     )
 }
 
-#[cfg(all(test, target_os = "macos"))]
-pub(super) fn execute_terminal_reference_with_work_limit(
+#[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+pub fn execute_terminal_reference_with_work_limit(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],
@@ -2936,7 +2936,7 @@ pub(super) fn execute_terminal_reference_with_work_limit(
     execute_batch_packed_with_work_limit(programs, files, anchors, result_limits, work_limit)
 }
 
-fn execute_batch_packed_with_work_limit(
+pub fn execute_batch_packed_with_work_limit(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: &[Vec<Vec<u32>>],
@@ -3356,5 +3356,4 @@ fn execute_batch_packed_with_work_limit(
     Ok(PackedExecution::new(batch, page))
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

@@ -6,21 +6,21 @@ use super::super::logic::sql::{
 };
 use super::maintenance::{Delta, Work};
 use super::*;
-mod compose;
-pub(super) mod pool;
-pub(super) mod cold;
-mod fused;
-mod join_tree;
-mod lattice;
-mod maintain;
-mod plan;
-mod reducer;
-mod sums;
-mod scalar_phase;
-mod properties;
+pub mod compose;
+pub mod pool;
+pub mod cold;
+pub mod fused;
+pub mod join_tree;
+pub mod lattice;
+pub mod maintain;
+pub mod plan;
+pub mod reducer;
+pub mod sums;
+pub mod scalar_phase;
+pub mod properties;
 use plan::{Rule, column, integer, names, plain, source};
 use reducer::Reducer;
-pub(super) use reducer::transition::{Transition,Initial};
+pub use reducer::transition::{Transition,Initial};
 
 #[derive(Clone)]
 pub struct Retained {
@@ -29,7 +29,7 @@ pub struct Retained {
     width: usize,
     rules: Arc<Vec<Rule>>,
     lattice: Option<lattice::Lattice>,
-    pub(super) ready: bool,
+    pub ready: bool,
     cold_reuse: crate::code_rule_dsl::logic::analysis::Decision,
     cold_initialized: bool,
     support_uniqueness: crate::code_rule_dsl::logic::analysis::Decision,
@@ -205,7 +205,7 @@ fn temporary(w: &mut Work<'_>, width: usize, extra: &str, keys: Option<usize>) -
 }
 
 /// Bootstrap once against the old facts, before any source in the atomic batch changes.
-pub(super) fn prepare(
+pub fn prepare(
     w: &mut Work<'_>,
     run: &mut session::Execution,
     potential: &mut BTreeSet<String>,
@@ -255,7 +255,7 @@ pub(super) fn prepare(
     }
     Ok(initialized)
 }
-pub(super) fn planned(db: &rusqlite::Connection, run: &session::Execution, native: bool) -> Result<pool::Plans> {
+pub fn planned(db: &rusqlite::Connection, run: &session::Execution, native: bool) -> Result<pool::Plans> {
     let mut plans = pool::Plans { states: plan_local(db,run,native)?, storage: vec![] };
     pool::combine(&mut plans, &run.emitted.queries);
     Ok(plans)

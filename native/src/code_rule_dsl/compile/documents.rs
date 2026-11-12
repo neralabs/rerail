@@ -16,7 +16,7 @@ use std::sync::Weak;
 
 /// The document a rule reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) enum Side {
+pub enum Side {
     Host,
     Guest,
 }

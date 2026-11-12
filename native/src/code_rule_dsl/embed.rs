@@ -29,16 +29,15 @@
 //! (`file_documents`). A rule reads a guest through `ast.embedded` (the clause runs on it) or the
 //! `embedded` relation (from a host node); a guest node reads the host through `host`.
 
-pub(crate) mod compiled_view;
-pub(crate) mod script_block;
-pub(crate) mod segments;
-#[cfg(test)]
-pub(crate) mod test_script;
-#[cfg(test)]
-mod tests;
+// cratify: `compiled_view` is rerail-lang-php's (it mounts it)
+// cratify: `script_block` is rerail-lang-ecma's (it mounts it)
+pub mod segments;
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod test_script;
+// cratify: `tests` is rerail-engine's (it mounts it)
 
-#[cfg(test)]
-pub(crate) use test_script::TestScript;
+#[cfg(any(test, feature = "test-hooks"))]
+pub use test_script::TestScript;
 
 use crate::code_rule_dsl::language::GrammarDialect;
 
@@ -47,17 +46,17 @@ use std::ops::Range;
 use tree_sitter::Node as TsNode;
 
 /// A program an embedder built from a host file.
-pub(crate) struct Program {
+pub struct Program {
     /// The dialect its tree is parsed with and read as.
-    pub(crate) dialect: GrammarDialect,
+    pub dialect: GrammarDialect,
     /// Its tree, which spans `text`.
-    pub(crate) tree: tree_sitter::Tree,
-    pub(crate) text: String,
+    pub tree: tree_sitter::Tree,
+    pub text: String,
     /// Where its text stands in the host source (indexed: `SegmentMap::index`), and its
     /// placeholders the tape leaves out.
-    pub(crate) segments: SegmentMap,
+    pub segments: SegmentMap,
     /// The host bytes it cannot be read through, sorted: the host's syntax errors it reads.
-    pub(crate) host_errors: Vec<Range<usize>>,
+    pub host_errors: Vec<Range<usize>>,
 }
 
 impl Program {
@@ -71,7 +70,7 @@ impl Program {
 /// A program it built is scoped as its dialect's family reads any program, unless the embedding gives the
 /// program's statements a meaning of its own, which its crate registers too (`scope::install_program_scopes`: a
 /// Blade view's markers define the variables its directives do).
-pub(crate) trait Embedder: Send + Sync {
+pub trait Embedder: Send + Sync {
     /// The program the host tree rooted at `root`, over `source`, embeds; `None` where it embeds
     /// none.
     fn build(&self, root: TsNode<'_>, source: &str) -> Option<Program>;
@@ -81,7 +80,7 @@ static EMBEDDERS: std::sync::OnceLock<Vec<(crate::code_rule_dsl::language::Via, 
     std::sync::OnceLock::new();
 
 /// The engine's embedders, by `Via`; the first call holds.
-pub(crate) fn install_embedders(embedders: Vec<(crate::code_rule_dsl::language::Via, &'static dyn Embedder)>) {
+pub fn install_embedders(embedders: Vec<(crate::code_rule_dsl::language::Via, &'static dyn Embedder)>) {
     let _ = EMBEDDERS.set(embedders);
 }
 

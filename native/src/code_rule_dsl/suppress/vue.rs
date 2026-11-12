@@ -299,7 +299,7 @@ fn strip_description(value: &str) -> &str {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::lines::Terminators;

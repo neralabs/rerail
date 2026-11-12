@@ -8,7 +8,7 @@
 //! The CPU's `lattice_fixpoint` is the reference: a monotone system over a finite lattice has one
 //! least fixpoint, whatever order its cells are evaluated in.
 use super::*;
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::device::lattice::{Solved, System};
+pub use crate::code_rule_dsl::logic::device::lattice::{Solved, System};
 
 const SOURCE: &str = include_str!("metal_lattice.metal");
 /// The absent value (`logic::native::BOT`).
@@ -39,7 +39,7 @@ fn csr(n: usize, mut edges: Vec<(u32, u32)>) -> (Vec<u32>, Vec<u32>) {
 }
 
 /// The system's least fixpoint on the device.
-pub(in crate::code_rule_dsl) fn solve(system: &System<'_>) -> Result<Solved, Error> {
+pub fn solve(system: &System<'_>) -> Result<Solved, Error> {
     let n = system.seeds.len();
     if n == 0 {
         return Ok(Solved { values: Vec::new(), launches: 0, visits: 0, retries: 0, gpu: 0.0, wall: 0.0, phases: [0.0; 7], made: 0, reused: 0 });

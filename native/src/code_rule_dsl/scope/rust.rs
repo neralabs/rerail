@@ -45,7 +45,7 @@ pub(crate) fn finish<D: Doc>(table: &mut ScopeTable, _: &Node<'_, D>) {
 /// The scope and index of the binding `name` resolves to at `reference`: in each scope from the
 /// reference's outwards, the latest binding of the reference's namespace made before it. Past a
 /// function only items stay visible; past a module, only macros (`macro_rules!` is textual).
-pub(crate) fn resolve_index(
+pub fn resolve_index(
     table: &ScopeTable,
     reference: &Reference,
     name: &str,
@@ -273,7 +273,7 @@ pub(crate) fn use_path<'t>(
 /// head a glob import may bind, a path no read holds (a `use` path, a visibility), or `self::`
 /// and `super::` where the module is not known. A `use` path that names neither is read as
 /// written (an extern crate's, or a module of the crate the definitions would tell).
-pub(crate) fn import_path<D: Doc>(
+pub fn import_path<D: Doc>(
     table: &ScopeTable,
     node: &Node<'_, D>,
     file: Option<&str>,
@@ -1293,8 +1293,8 @@ fn defines_items<D: Doc>(node: &Node<'_, D>) -> bool {
 }
 
 /// A Rust file's table, as `ScopeTable::build` builds it.
-#[cfg(test)]
-pub(crate) fn build_for_test(source: &str) -> ScopeTable {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn build_for_test(source: &str) -> ScopeTable {
     use crate::code_rule_dsl::language::GrammarDialect;
     use ast_grep_core::tree_sitter::LanguageExt;
     let root = GrammarDialect::Rust.ast_grep(source);
@@ -1302,5 +1302,4 @@ pub(crate) fn build_for_test(source: &str) -> ScopeTable {
         .expect("Rust scope build")
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

@@ -35,7 +35,7 @@ use std::sync::{Arc, OnceLock};
 
 /// Which containment the rows are.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Mode {
+pub enum Mode {
     /// Strictly below in the tree.
     Tree,
     /// Span inside span, equal spans included.
@@ -46,7 +46,7 @@ pub(super) enum Mode {
 
 /// A kind-set axis: which ancestors of `n` are its rows' `a`.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(super) enum Axis {
+pub enum Axis {
     /// The nearest one in the set.
     Nearest,
     /// Every one in the set.
@@ -68,7 +68,7 @@ const LOOKUP_NS: f64 = 150.0;
 /// and the rows written.
 const SOLVE_NS: f64 = 12.0;
 
-pub(super) struct Within {
+pub struct Within {
     batch: Arc<Batch>,
     mode: Mode,
     /// Per side, each row: inner node row << 32 | outer node row (rows of the batch's `node`).
@@ -117,7 +117,7 @@ fn slot(row: usize) -> (usize, usize) {
 }
 
 impl Within {
-    pub(super) fn new(batch: Arc<Batch>, mode: Mode) -> Self {
+    pub fn new(batch: Arc<Batch>, mode: Mode) -> Self {
         Within {
             batch,
             mode,
@@ -137,7 +137,7 @@ impl Within {
 
     /// The axis `axis` over the set of kind atoms `kinds`, its batch's solve run on `binding`. Nothing is made until
     /// a join reads it.
-    pub(super) fn axis(batch: Arc<Batch>, axis: Axis, kinds: &[i64], binding: crate::code_rule_dsl::facts::nearest::Binding) -> Self {
+    pub fn axis(batch: Arc<Batch>, axis: Axis, kinds: &[i64], binding: crate::code_rule_dsl::facts::nearest::Binding) -> Self {
         use crate::code_rule_dsl::facts::core::{KIND_STRIDE, kind_atom};
         let kinds: rustc_hash::FxHashSet<i64> = kinds.iter().copied().collect();
         let members = batch

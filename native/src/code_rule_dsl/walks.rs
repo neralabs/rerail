@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 /// A utility-graph walk whose work a test counts: each time it expands a utility's rule (for
 /// `BindingSitePatterns`, each binding-site pattern it compiles).
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
-pub(crate) enum Walk {
+pub enum Walk {
     SoundVerdict,
     OptionalCaptures,
     CaptureVariables,
@@ -38,14 +38,14 @@ thread_local! {
     static WALKS: RefCell<BTreeMap<Walk, usize>> = const { RefCell::new(BTreeMap::new()) };
 }
 
-pub(crate) fn record_walk(walk: Walk) {
+pub fn record_walk(walk: Walk) {
     WALKS.with(|walks| *walks.borrow_mut().entry(walk).or_default() += 1);
 }
 
-pub(crate) fn reset_walks() {
+pub fn reset_walks() {
     WALKS.with(|walks| walks.borrow_mut().clear());
 }
 
-pub(crate) fn walks(walk: Walk) -> usize {
+pub fn walks(walk: Walk) -> usize {
     WALKS.with(|walks| walks.borrow().get(&walk).copied().unwrap_or_default())
 }

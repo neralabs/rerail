@@ -8,7 +8,7 @@ use crate::code_rule_dsl::language::adapter::pack as language_pack;
 /// parsed literals, layout or call graph rather than its syntax alone. The structural rule
 /// language holds them as one term (`AstMatcher::Semantic`) and delegates to their families.
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) enum Semantic {
+pub enum Semantic {
     /// `resolves`: what a name or attribute resolves to through the file's scopes.
     Resolves(Box<Resolves>),
     /// `resolves.binding`: sub-rules over the site, value and annotation of the node's binding.

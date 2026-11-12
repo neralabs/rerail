@@ -214,7 +214,7 @@ fn reserve_atomic(cursor: &AtomicU32, capacity: u32, count: u32) -> Result<u32, 
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

@@ -5,11 +5,9 @@
 //! A Vue file is the component's tree-sitter-vue tree and the TypeScript, TSX or JavaScript
 //! program its scripts and template expressions make (`view`), each a document with its own
 //! grammar and spans; the program's text maps back to the `.vue` bytes it came from.
-#[cfg(test)]
-mod oracle_tests;
-mod sfc;
-mod template;
-pub(crate) mod view;
+// cratify: `oracle_tests` is rerail-engine's (it mounts it)
+pub mod sfc;
+pub mod template;
+pub mod view;
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

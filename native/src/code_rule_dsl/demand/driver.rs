@@ -286,7 +286,7 @@ fn production_backend() -> ExecutionBackend {
 /// the one way a batch is driven, by the wave's chunks (`waves::schedule::run_over`) and by
 /// `drive`. With `status`, a batch that did not complete fails, since the relations the
 /// statements read of it would be silently short. The batch is removed however `run` ends.
-pub(in crate::code_rule_dsl) fn with_batch<T>(
+pub fn with_batch<T>(
     registry: &MatchRegistry,
     demand: Option<PackedDemand>,
     status: Option<(&Connection, &str)>,
@@ -458,7 +458,6 @@ fn run(
     })
 }
 
+// cratify: `catalog` is rerail-engine's (it mounts it)
 #[cfg(test)]
-pub(in crate::code_rule_dsl) mod catalog;
-#[cfg(test)]
-mod tests;
+pub mod tests;

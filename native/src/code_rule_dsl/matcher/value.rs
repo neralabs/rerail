@@ -22,26 +22,26 @@ use crate::code_rule_dsl::language::adapter::pack as language_pack;
 /// How a node's value is read: its grammar and the query's language options, which decide what
 /// is a builtin.
 #[derive(Clone)]
-pub(crate) struct Reading {
-    pub(crate) language: GrammarDialect,
+pub struct Reading {
+    pub language: GrammarDialect,
     /// The language's family, whose adapter decodes the values.
     pub(crate) family: Family,
     pub(crate) options: Option<Arc<LanguageOptions>>,
     pub(crate) python: Option<Arc<PythonOptions>>,
     /// The grammar's expression kinds: only these have values.
-    pub(crate) expressions: Arc<BTreeSet<u16>>,
+    pub expressions: Arc<BTreeSet<u16>>,
     /// `follow`: a name is the value its binding carries (see `ScopeTable::binding`).
-    pub(crate) follow: bool,
+    pub follow: bool,
     /// A parsed literal's nodes (`parse`): each has the value its grammar gives it, if any.
     pub(crate) literal: bool,
     /// Stable identity for this reading's cache entries, including its language options.
-    cache_id: usize,
+    pub cache_id: usize,
 }
 
 static NEXT_READING_ID: AtomicUsize = AtomicUsize::new(1);
 
 impl Reading {
-    pub(crate) fn new(
+    pub fn new(
         language: GrammarDialect,
         options: Option<Arc<LanguageOptions>>,
         python: Option<Arc<PythonOptions>>,
@@ -83,7 +83,7 @@ impl Reading {
     }
 
     /// Whether the node is an expression, which has a value (known or not).
-    pub(crate) fn has_value<D: Doc>(&self, node: &Node<'_, D>) -> bool {
+    pub fn has_value<D: Doc>(&self, node: &Node<'_, D>) -> bool {
         if self.literal {
             return literal::sub_tree(node)
                 .is_some_and(|tree| tree.value(node.node_id()).is_some());
@@ -92,14 +92,14 @@ impl Reading {
     }
 
     /// The language whose semantics the reading's values follow.
-    pub(crate) fn lang(&self) -> Family {
+    pub fn lang(&self) -> Family {
         { let pack = language_pack::pack(self.family); pack.value_lang() }
     }
 
     /// The node's value, decoded once per file and reading. Each node decoded spends a step of
     /// the root's utility budget; running out fails the clause for the file (`UtilLimit::Value`)
     /// and a deadline makes the value unknown, never false.
-    pub(crate) fn value<D: Doc>(&self, node: &Node<'_, D>) -> Rc<Value> {
+    pub fn value<D: Doc>(&self, node: &Node<'_, D>) -> Rc<Value> {
         if self.literal {
             return Rc::new(
                 literal::sub_tree(node)
@@ -186,7 +186,7 @@ impl Reading {
 
 /// Spends one step of the root's utility budget for a decode; false once it or the deadline ran
 /// out (the budget then fails the clause for the file with `UtilLimit::Value`).
-pub(super) fn spend_step() -> bool {
+pub fn spend_step() -> bool {
     if UTIL_EXCEEDED.get().is_some() || budget::matcher_call_budget_exhausted() {
         return false;
     }
@@ -204,7 +204,7 @@ pub(super) fn spend_step() -> bool {
 
 /// A bound on a number: `gt`, `ge`, `lt` or `le`.
 #[derive(Clone, Copy)]
-pub(crate) enum Bound {
+pub enum Bound {
     Gt,
     Ge,
     Lt,
@@ -216,16 +216,16 @@ pub(crate) enum Bound {
 /// not known satisfies none of them and fails none of them, except `constant`, which asks exactly
 /// whether it is known.
 #[derive(Clone)]
-pub(crate) struct ValueTest {
-    pub(crate) reading: Reading,
-    pub(crate) eq: Option<Value>,
-    pub(crate) types: Vec<String>,
-    pub(crate) constant: Option<bool>,
-    pub(crate) starts_with: Vec<Value>,
-    pub(crate) regex: Option<TextRegex>,
-    pub(crate) bits_any: Option<u64>,
-    pub(crate) bounds: Vec<(Bound, Value)>,
-    pub(crate) truthy: Option<bool>,
+pub struct ValueTest {
+    pub reading: Reading,
+    pub eq: Option<Value>,
+    pub types: Vec<String>,
+    pub constant: Option<bool>,
+    pub starts_with: Vec<Value>,
+    pub regex: Option<TextRegex>,
+    pub bits_any: Option<u64>,
+    pub bounds: Vec<(Bound, Value)>,
+    pub truthy: Option<bool>,
     /// `name: true`: the predicates read what the node names rather than its value: ESTree's
     /// name (an identifier's, escapes decoded; a private name's without `#`) or a string literal's
     /// value, as `compare`'s `name` text reads it; PHP's symbol name. A node without one fails.
@@ -234,7 +234,7 @@ pub(crate) struct ValueTest {
 
 impl ValueTest {
     /// `Some(true)`, `Some(false)`, or `None` when the verdict is unknown.
-    pub(crate) fn holds<D: Doc>(&self, node: &Node<'_, D>) -> Option<bool> {
+    pub fn holds<D: Doc>(&self, node: &Node<'_, D>) -> Option<bool> {
         let value = if self.name {
             let family = self.reading.family;
             let Some(units) =
@@ -416,7 +416,7 @@ pub(in crate::code_rule_dsl) fn file_values(
 }
 
 /// W's reader of values, which facts asks (`facts::core::ValueReader`).
-pub(crate) struct Values;
+pub struct Values;
 
 impl crate::code_rule_dsl::facts::core::ValueReader for Values {
     fn values(
@@ -444,5 +444,4 @@ impl crate::code_rule_dsl::facts::core::ValueReader for Values {
 /// [`file_values`]' `each(followed, ordinal, text, types)`.
 pub(in crate::code_rule_dsl) type ValueSink<'a> = dyn FnMut(bool, u32, Option<String>, &[&'static str]) + 'a;
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

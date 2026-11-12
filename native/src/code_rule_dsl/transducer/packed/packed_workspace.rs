@@ -24,7 +24,7 @@ pub(super) struct TaskCapacities {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct WorkspaceTotals {
+pub struct WorkspaceTotals {
     pub pending: u32,
     pub captures: u32,
     pub cursors: u32,
@@ -43,7 +43,7 @@ pub(super) struct WorkspaceTotals {
 
 impl WorkspaceTotals {
     /// The larger of each total.
-    pub(super) fn widest(self, other: Self) -> Self {
+    pub fn widest(self, other: Self) -> Self {
         Self {
             pending: self.pending.max(other.pending),
             captures: self.captures.max(other.captures),
@@ -254,7 +254,7 @@ pub(super) fn plan_shared(
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

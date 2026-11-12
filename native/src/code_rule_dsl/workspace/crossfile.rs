@@ -53,7 +53,7 @@ pub(super) struct ConsumerRefresh<'a> {
 
 /// Schedules cross-file adapters without normalizing their storage or closure implementations.
 #[derive(Default)]
-pub(super) struct CrossFileScheduler {
+pub struct CrossFileScheduler {
     calls: calls_state::CallsState,
 }
 
@@ -86,8 +86,8 @@ impl CrossFileScheduler {
         state.crossfile.calls.consumers()
     }
 
-    #[cfg(test)]
-    pub(super) fn summary(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn summary(
         state: &WorkspaceState,
         path: &str,
     ) -> Option<Arc<crate::code_rule_dsl::calls::summary::Summary>> {
@@ -433,8 +433,8 @@ impl CrossFileScheduler {
         state.crossfile.calls.forget(path);
     }
 
-    #[cfg(test)]
-    pub(super) fn calls_state(state: &WorkspaceState) -> &calls_state::CallsState {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn calls_state(state: &WorkspaceState) -> &calls_state::CallsState {
         &state.crossfile.calls
     }
 }

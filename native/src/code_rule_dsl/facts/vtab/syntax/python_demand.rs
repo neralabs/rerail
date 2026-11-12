@@ -19,10 +19,10 @@ use std::{
     sync::Arc,
 };
 
-pub(crate) struct Semantics {
+pub struct Semantics {
     root: AstGrep<TapeDoc>,
     table: ScopeTable,
-    facts: BTreeMap<u32, NodeFacts>,
+    pub facts: BTreeMap<u32, NodeFacts>,
 }
 fn at<'a>(root: &Node<'a, TapeDoc>, id: u32) -> Node<'a, TapeDoc> {
     root.root().adopt(root.get_doc().node(id))
@@ -305,7 +305,7 @@ impl PythonProject for Batch {
 }
 
 /// Python's semantic facts as the batch's registered producer (`syntax::SemanticProducer`).
-pub(crate) struct Semantic;
+pub struct Semantic;
 
 impl super::SemanticProducer for Semantic {
     fn project(&self, batch: &Batch, kind: &str, requests: &[i64], targets: &BTreeSet<String>) -> Result<Vec<Vec<Value>>, String> {
@@ -317,5 +317,4 @@ impl super::SemanticProducer for Semantic {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

@@ -5,7 +5,7 @@
 use crate::code_rule_dsl::value::NodeRef;
 
 /// A family's flow over one file.
-pub(crate) trait VariableFlow: std::any::Any + Send + Sync {
+pub trait VariableFlow: std::any::Any + Send + Sync {
     /// The read starting at byte `start`.
     fn read(&self, start: usize) -> Option<&Read>;
     /// What reaches the binding whose name node starts at `start`.
@@ -20,7 +20,7 @@ pub(crate) trait VariableFlow: std::any::Any + Send + Sync {
 
 /// Whether a variable is defined where it is read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Defined {
+pub enum Defined {
     /// On every path.
     Yes,
     /// On no path.
@@ -33,7 +33,7 @@ pub(crate) enum Defined {
 
 /// How a read may meet an undefined variable without an ordinary warning.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Quiet {
+pub enum Quiet {
     /// An ordinary read: an undefined variable warns, and PHPStan reports it.
     No,
     /// `isset(...)`, `empty(...)`, the left side of `??` and `??=`, a subscript or reference that
@@ -47,26 +47,26 @@ pub(crate) enum Quiet {
 
 /// What reaches one read of a variable.
 #[derive(Clone, Debug)]
-pub(crate) struct Read {
+pub struct Read {
     /// The variable, `$` included.
-    pub(crate) name: Box<str>,
+    pub name: Box<str>,
     /// The node read: the variable, or the string of a `compact` argument.
-    pub(crate) node: NodeRef,
+    pub node: NodeRef,
     /// The scope the read is made in.
-    pub(crate) scope: u32,
+    pub scope: u32,
     /// The bindings some path reaches the read with: their scope and index among that scope's
     /// bindings of the name.
-    pub(crate) bindings: Box<[(u32, usize)]>,
-    pub(crate) defined: Defined,
+    pub bindings: Box<[(u32, usize)]>,
+    pub defined: Defined,
     /// The variable may hold a value none of `bindings` gave it: a reference to it was taken, it
     /// is `global` or `static`, or a callee may have taken it by reference.
-    pub(crate) aliased: bool,
-    pub(crate) quiet: Quiet,
+    pub aliased: bool,
+    pub quiet: Quiet,
     /// A superglobal (`$_GET`, `$GLOBALS`, ...), which every scope sees.
-    pub(crate) superglobal: bool,
+    pub superglobal: bool,
     /// A read that changes the value rather than reads it for another use: the binding the
     /// change makes carries its use back to the bindings this read reaches.
-    pub(crate) modify: Option<Modify>,
+    pub modify: Option<Modify>,
 }
 
 /// What reaches a binding where it is made: the bindings of its variable some path reaches the
@@ -74,17 +74,17 @@ pub(crate) struct Read {
 /// undefined, and whether PHP's dynamic symbol table may have bound the variable on some path, so
 /// that `bindings` may be incomplete.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct Reach {
-    pub(crate) bindings: Box<[(u32, usize)]>,
+pub struct Reach {
+    pub bindings: Box<[(u32, usize)]>,
     /// Read by the oracle tests, which record where a binding meets its variable undefined.
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) undefined: bool,
-    pub(crate) unknown: bool,
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub undefined: bool,
+    pub unknown: bool,
 }
 
 /// How a read changes its variable's value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Modify {
+pub enum Modify {
     /// The base of a subscript assignment (`$a[] = 1`, `$a[k] .= v;`).
     Element,
     /// A compound assignment or increment whose value is discarded (`$a .= v;`, `$i++;`): as

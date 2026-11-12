@@ -19,7 +19,7 @@ static STRINGS: std::sync::LazyLock<Vec<&'static str>> =
     std::sync::LazyLock::new(|| py::CONTEXTS.iter().chain(py::SPREADS.iter()).copied().collect());
 
 /// The `py.*` families of a batch's Python documents.
-pub(crate) struct Families;
+pub struct Families;
 
 impl super::Families for Families {
     fn dialect(&self) -> crate::code_rule_dsl::language::GrammarDialect {
@@ -66,7 +66,7 @@ impl super::Families for Families {
 }
 
 /// The batch's `py.*` families: the producer's grammar, the atoms of its names, and the rows, made on the first read.
-pub(crate) struct Py {
+pub struct Py {
     pub grammar: py::Grammar,
     pub(crate) contexts: [i64; 5],
     pub(crate) spreads: [i64; 3],

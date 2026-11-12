@@ -289,14 +289,14 @@ fn mixed(start: usize, end: usize) -> Error {
     )
 }
 
-#[cfg(test)]
-mod tests;
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod tests;
 
 /// The `scanfFormat` grammar (`literal::LiteralGrammar`).
 pub(crate) struct ScanfGrammar;
 
 /// Its handle, which the engine registers (`literal::install`).
-pub(crate) const GRAMMAR: super::Grammar = super::Grammar::new(&ScanfGrammar);
+pub const GRAMMAR: super::Grammar = super::Grammar::new(&ScanfGrammar);
 
 impl super::LiteralGrammar for ScanfGrammar {
     fn name(&self) -> &'static str {

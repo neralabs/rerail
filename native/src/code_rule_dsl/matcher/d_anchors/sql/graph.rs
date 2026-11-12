@@ -4,7 +4,7 @@ use rusqlite::types::Value;
 use std::collections::HashMap;
 use std::sync::LazyLock;
 #[path = "graph/program.rs"]
-pub(super) mod program;
+pub mod program;
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub(super) enum Class {
@@ -148,7 +148,7 @@ impl Graph {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     #[test]

@@ -90,42 +90,42 @@ impl Atoms {
     }
 }
 #[derive(Default, Debug, serde::Serialize)]
-struct Metrics {
+pub struct Metrics {
     documents: usize,
-    syntax_nodes: usize,
+    pub syntax_nodes: usize,
     calls: usize,
     async_calls: usize,
-    scope_builds: usize,
+    pub scope_builds: usize,
     primary_refs: usize,
-    admitted_primary_refs: usize,
-    semantic_requests: usize,
-    qualified_lookups: usize,
-    binding_lookups: usize,
+    pub admitted_primary_refs: usize,
+    pub semantic_requests: usize,
+    pub qualified_lookups: usize,
+    pub binding_lookups: usize,
     candidates: usize,
-    origin_rows: usize,
-    argument_calls: usize,
-    argument_rows: usize,
+    pub origin_rows: usize,
+    pub argument_calls: usize,
+    pub argument_rows: usize,
     arguments_ns: u64,
-    sql_executions: usize,
+    pub sql_executions: usize,
     vm_steps: i32,
     fullscan_steps: i32,
     autoindex_rows: i32,
-    preparation_ns: u64,
-    diagnostics_ns: u64,
-    diagnostics_wall_ns: u64,
-    execution_ns: u64,
+    pub preparation_ns: u64,
+    pub diagnostics_ns: u64,
+    pub diagnostics_wall_ns: u64,
+    pub execution_ns: u64,
     structure_ns: u64,
     scope_ns: u64,
     projection_ns: u64,
     sql_ns: u64,
-    wall_ns: u64,
-    filters: BTreeMap<String, u64>,
+    pub wall_ns: u64,
+    pub filters: BTreeMap<String, u64>,
     rows: BTreeMap<String, usize>,
     explain: Vec<String>,
 }
 pub struct Run {
-    findings: Findings,
-    metrics: Metrics,
+    pub findings: Findings,
+    pub metrics: Metrics,
 }
 /// S's bound `Relation`: the merged vtab's binding (whose `scans` counter is S's `filters`) and its rows.
 struct Bound {
@@ -138,7 +138,7 @@ fn bind(modules: &Modules, db: &Connection, name: &str, relation: Relation) -> B
     Bound { binding: modules.get(name).unwrap(), len }
 }
 
-fn cpu_ns() -> u64 {
+pub fn cpu_ns() -> u64 {
     let mut time = libc::timespec {
         tv_sec: 0,
         tv_nsec: 0,
@@ -782,15 +782,10 @@ pub fn execute_sql<'t>(
     Run { findings, metrics }
 }
 
-#[cfg(test)]
-mod native_oracle;
-#[cfg(test)]
-mod s_native_oracle;
-#[cfg(test)]
-mod tests;
+// cratify: `native_oracle` is rerail-engine's (it mounts it)
+// cratify: `s_native_oracle` is rerail-engine's (it mounts it)
+// cratify: `tests` is rerail-engine's (it mounts it)
 
-#[cfg(test)]
-mod compiler_admission;
+// cratify: `compiler_admission` is rerail-engine's (it mounts it)
 
-#[cfg(test)]
-mod rr_comparison;
+// cratify: `rr_comparison` is rerail-engine's (it mounts it)

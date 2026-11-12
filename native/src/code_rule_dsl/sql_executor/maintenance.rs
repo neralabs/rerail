@@ -10,7 +10,7 @@ pub struct Delta {
     pub inserted: u64,
     pub deleted: u64,
 }
-pub(super) use super::scratch::Work;
+pub use super::scratch::Work;
 impl Work<'_> {
     pub fn insert(&self, table: &str, query: &str, ignore: bool) -> Result<usize> {
         if let Some(store) = self.versions
@@ -373,7 +373,7 @@ fn targeted(mut q: Query, table: &str) -> Query {
     }
 }
 
-pub(super) fn maintain(
+pub fn maintain(
     w: &mut Work<'_>,
     run: &mut session::Execution,
     changes: &mut BTreeMap<String, Delta>,

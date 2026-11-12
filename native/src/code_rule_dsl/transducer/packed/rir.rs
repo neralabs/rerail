@@ -39,7 +39,7 @@
 
 // The assembler's reader and the word program's rows, the compiler crate's (`rerail_compiler::rir_asm`).
 use rerail_compiler::rir_asm::{Line, NameTable, Token, block_programs_rows, head_rows, index, tokens, word_row, word_rows};
-pub(in crate::code_rule_dsl) use rerail_compiler::rir_asm::IR;
+pub use rerail_compiler::rir_asm::IR;
 use super::*;
 use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog};
 use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE;
@@ -50,7 +50,7 @@ use std::collections::HashMap as Map;
 
 
 /// A grammar's kind and field names, as `rir` prints and reads them.
-pub(in crate::code_rule_dsl) struct Names {
+pub struct Names {
     dialect: GrammarDialect,
     catalog: KindCatalog,
     /// (name, named) to the one id it prints for.
@@ -74,7 +74,7 @@ impl NameTable for Names {
 }
 
 impl Names {
-    pub(in crate::code_rule_dsl) fn of(dialect: GrammarDialect) -> Self {
+    pub fn of(dialect: GrammarDialect) -> Self {
         let catalog = dialect.kinds();
         let mut kinds = Map::new();
         let mut digest = Sha256::new();
@@ -101,7 +101,7 @@ impl Names {
     }
 
     /// The header's `grammar=` value.
-    fn header(&self) -> String {
+    pub fn header(&self) -> String {
         format!("{}@{}", dialect_name(self.dialect), self.digest)
     }
 
@@ -142,7 +142,7 @@ fn field(names: Option<&Names>, id: u16) -> String {
 }
 
 /// Kinds as a list.
-pub(in crate::code_rule_dsl) fn kinds(names: Option<&Names>, ids: &[u16]) -> String {
+pub fn kinds(names: Option<&Names>, ids: &[u16]) -> String {
     format!("[{}]", ids.iter().map(|&id| kind(names, id)).collect::<Vec<_>>().join(" "))
 }
 
@@ -156,7 +156,7 @@ fn strings(items: &[u16]) -> String {
 }
 
 /// The program's capabilities (the module's `caps`).
-pub(in crate::code_rule_dsl) fn caps(program: &Program) -> String {
+pub fn caps(program: &Program) -> String {
     let mut caps = vec!["interp"];
     if Micro::of(program).is_some() {
         caps.push("micro");
@@ -192,9 +192,9 @@ fn pattern(out: &mut String, node: &PackedPattern, names: Option<&Names>) {
 }
 
 // Quoted strings, the compiler's (`rerail_compiler::rir_text`).
-pub(in crate::code_rule_dsl) use rerail_compiler::rir_text::quote;
+pub use rerail_compiler::rir_text::quote;
 
-pub(in crate::code_rule_dsl) fn disassemble(program: &Program, names: Option<&Names>) -> String {
+pub fn disassemble(program: &Program, names: Option<&Names>) -> String {
     let mut out = String::new();
     let grammar = names.map_or("none".to_owned(), Names::header);
     let _ = writeln!(out, "program sha256:{} ir={IR} grammar={grammar} caps={}", program.plain_digest(), caps(program));
@@ -409,12 +409,12 @@ fn grammar(value: &str) -> Result<Option<Names>, String> {
 }
 
 /// One program from `rir`, through the verifier.
-pub(in crate::code_rule_dsl) fn assemble(text: &str) -> Result<Program, String> {
+pub fn assemble(text: &str) -> Result<Program, String> {
     assemble_named(text).map(|(program, _)| program)
 }
 
 /// One program from `rir`, through the verifier, with the grammar its header names.
-pub(in crate::code_rule_dsl) fn assemble_named(text: &str) -> Result<(Program, Option<Names>), String> {
+pub fn assemble_named(text: &str) -> Result<(Program, Option<Names>), String> {
     let mut parts = Parts::default();
     let mut names = None;
     let mut header = false;
@@ -529,7 +529,7 @@ fn build(parts: Parts) -> Result<Program, String> {
 
 /// Every `program` block of `text` (a dump may hold other sections): each from its `program`
 /// line to the next line that is not indented.
-pub(in crate::code_rule_dsl) fn assemble_all(text: &str) -> Result<Vec<(Program, Option<Names>)>, String> {
+pub fn assemble_all(text: &str) -> Result<Vec<(Program, Option<Names>)>, String> {
     let mut blocks: Vec<(usize, String)> = Vec::new();
     let mut open = false;
     for (number, line) in text.lines().enumerate() {
@@ -573,9 +573,7 @@ pub(in crate::code_rule_dsl) fn fused(pack: &super::fusion::Fused, members: &[&P
     out
 }
 
-#[cfg(test)]
-#[path = "rir_tests.rs"]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
 
 
 

@@ -196,9 +196,6 @@ pub(super) fn check_captures(
     }
 }
 
-#[cfg(test)]
-mod php;
-#[cfg(test)]
-mod ruff;
-#[cfg(test)]
-mod tests;
+// cratify: `php` is rerail-engine's (it mounts it)
+// cratify: `ruff` is rerail-engine's (it mounts it)
+// cratify: `tests` is rerail-engine's (it mounts it)

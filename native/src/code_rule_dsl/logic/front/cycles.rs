@@ -464,7 +464,7 @@ fn shrinks(t: &Term) -> Option<bool> {
 
 /// The fewest bytes a match of `re` has outside its group `g` when g takes part (its capture is that much
 /// shorter than the text matched); `None` when `re` does not parse or has no group g.
-pub(super) fn gap(re: &str, g: &str) -> Option<usize> {
+pub fn gap(re: &str, g: &str) -> Option<usize> {
     use regex_syntax::hir::{Hir, HirKind};
     fn min(h: &Hir) -> usize {
         h.properties().minimum_len().unwrap_or(0)
@@ -1024,7 +1024,7 @@ fn constant_keyed(rules: &[&Rule], component: &BTreeSet<String>) -> bool {
 
 /// The components with a value cycle, each bounded by its keys; fails on one that is not
 /// (`Error::UnboundedValueCycle`).
-pub(in crate::code_rule_dsl) fn check(prog: &Program) -> Result<Vec<BTreeSet<String>>, Error> {
+pub fn check(prog: &Program) -> Result<Vec<BTreeSet<String>>, Error> {
     // A program that does not stratify fails there, by name.
     let Ok((sccs, edges_by)) = super::strata(prog) else { return Ok(Vec::new()) };
     let mut treed = Vec::new();

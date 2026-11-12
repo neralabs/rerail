@@ -399,11 +399,8 @@ fn compile_binds_in(
     }))))
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
 
-#[cfg(test)]
-pub(super) mod ruff;
+// cratify: `ruff` is rerail-engine's (it mounts it)
 
-#[cfg(test)]
-mod eslint;
+// cratify: `eslint` is rerail-engine's (it mounts it)

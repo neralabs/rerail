@@ -12,7 +12,7 @@ pub(in crate::code_rule_dsl) const MAX_NAMES: usize = 256;
 /// as it loads (`install`), in the order `suppress` is parsed and checked in. Nothing here assumes comments:
 /// Clippy's are attributes. The host's twin is `suppressionKinds` in
 /// `src/engine/code-rule/code-rule-schema-semantic.ts`.
-pub(crate) trait SuppressionKind: 'static {
+pub trait SuppressionKind: 'static {
     /// The `suppress` key, which is also the kind's name in the registry's `suppressions`
     /// (`languages/*.json`).
     const KEY: &'static str;
@@ -38,33 +38,33 @@ pub(in crate::code_rule_dsl) fn parse_spec<K: SuppressionKind>(value: &Value, at
 
 /// A linter's suppressions a family may honour: a registered kind (`kind::<K>()`).
 #[derive(Clone, Copy)]
-pub(crate) struct Suppression(pub(in crate::code_rule_dsl) &'static Linter);
+pub struct Suppression(pub(in crate::code_rule_dsl) &'static Linter);
 
 /// Kind `K`, as the core reads it.
-pub(crate) fn kind<K: SuppressionKind>() -> Suppression {
+pub fn kind<K: SuppressionKind>() -> Suppression {
     Suppression(const { &Linter { key: K::KEY, detail: K::DETAIL, parse: parse_spec::<K> } })
 }
 
 pub(in crate::code_rule_dsl) static KINDS: std::sync::OnceLock<Vec<Suppression>> = std::sync::OnceLock::new();
 
 /// The engine's suppression kinds, in the order `suppress` is parsed and checked in; the first call holds.
-pub(crate) fn install(kinds: Vec<Suppression>) {
+pub fn install(kinds: Vec<Suppression>) {
     let _ = KINDS.set(kinds);
 }
 
 impl Suppression {
     /// Every registered kind, in order.
-    pub(crate) fn all() -> &'static [Self] {
+    pub fn all() -> &'static [Self] {
         KINDS.get().map_or(&[], Vec::as_slice)
     }
 
     /// Its `suppress` key, which is also its name in the registry's `suppressions`.
-    pub(crate) fn key(self) -> &'static str {
+    pub fn key(self) -> &'static str {
         self.0.key
     }
 
     /// Why only a family that honours it may ask for it: `key: detail`.
-    pub(crate) fn detail(self) -> &'static str {
+    pub fn detail(self) -> &'static str {
         self.0.detail
     }
 }
@@ -123,23 +123,23 @@ impl std::fmt::Debug for Spec {
 
 /// `suppress` on a violation spec: per kind, what the violation asks for, in the kinds' order.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) struct Suppress {
+pub struct Suppress {
     pub(in crate::code_rule_dsl) specs: Vec<(Suppression, Spec)>,
 }
 
 impl Suppress {
     /// The kinds the violation asks for, in the kinds' order.
-    pub(in crate::code_rule_dsl) fn requested(&self) -> impl Iterator<Item = Suppression> + '_ {
+    pub fn requested(&self) -> impl Iterator<Item = Suppression> + '_ {
         self.specs.iter().map(|(kind, _)| *kind)
     }
 
     /// What the violation asks of kind `K`, if anything.
-    pub(in crate::code_rule_dsl) fn get<K: SuppressionKind>(&self) -> Option<&K::Spec> {
+    pub fn get<K: SuppressionKind>(&self) -> Option<&K::Spec> {
         self.specs.iter().find(|(kind, _)| kind.key() == K::KEY).and_then(|(_, spec)| spec.0.any().downcast_ref())
     }
 }
 
-pub(in crate::code_rule_dsl) fn parse(value: &Value, path: &str) -> Result<Suppress> {
+pub fn parse(value: &Value, path: &str) -> Result<Suppress> {
     let suppress = object(value, path)?;
     let kinds = Suppression::all();
     reject_unknown(suppress, &kinds.iter().map(|kind| kind.key()).collect::<Vec<_>>(), path)?;
@@ -168,7 +168,7 @@ pub(in crate::code_rule_dsl) fn one_of(kinds: &[Suppression]) -> String {
 
 /// A non-empty list of at most `MAX_NAMES` strings, each passing `valid`: `what` names the list's
 /// items, `each` one item.
-pub(in crate::code_rule_dsl) fn names(
+pub fn names(
     value: Option<&Value>,
     path: &str,
     valid: fn(&str) -> bool,

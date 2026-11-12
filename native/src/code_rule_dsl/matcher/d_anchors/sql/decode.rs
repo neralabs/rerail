@@ -2,13 +2,13 @@
 use super::{Lower, Set};
 
 #[derive(Clone, Copy, Hash, PartialEq, Eq)]
-pub(super) enum Property {
+pub enum Property {
     Node,
     Span,
     Child(u16),
 }
 #[derive(Clone)]
-pub(super) struct Demand {
+pub struct Demand {
     pub(super) scope: String,
     pub(super) property: Property,
     pub(super) consumers: std::collections::BTreeSet<usize>,
@@ -29,7 +29,7 @@ impl Property {
     }
 }
 impl Lower {
-    pub(super) fn decoded(&mut self, scope: &Set, property: Property) -> String {
+    pub fn decoded(&mut self, scope: &Set, property: Property) -> String {
         let binding = *self.producer_bindings.entry(property).or_insert_with(|| {
             property.binding(
                 &mut self.producers,

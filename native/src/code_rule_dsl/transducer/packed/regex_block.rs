@@ -34,14 +34,14 @@ const MAX_OPS: usize = 2048;
 /// The ends a block program marks, for a pattern over `source` spans (`lines` false) or over each line (`lines`
 /// true: the text anchors `^`, `$`, `\A`, `\z` hold at every line's edges, so they are left unchecked, as is `(?m)$`
 /// before a line's `\r`).
-pub(in crate::code_rule_dsl) struct SpanPrefilter {
+pub struct SpanPrefilter {
     program: BlockProgram,
     /// The program as the native executors take it (Cranelift's and Metal's IR).
     native: super::native_ir::BlockNative,
 }
 
 /// Where a batch's span programs ran (`ends_launch`).
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::facts::span_prefilter::RanOn;
+pub use crate::code_rule_dsl::facts::span_prefilter::RanOn;
 
 /// A batch of span programs as a launch of the executor (decision 0100 §13), the same structure as every other
 /// dispatch: priced by its bytes and operations, placed on the cores or the GPU, claimed by whichever lane reaches it,
@@ -114,7 +114,7 @@ pub(in crate::code_rule_dsl) fn ends_launch(ex: &rerail_accel::Executor, filters
 }
 
 /// [`ends_launch`], pinned to `lane` when given.
-fn ends_on(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<SpanPrefilter>], sources: &[std::sync::Arc<String>], files: &[(usize, usize)], device: bool, lane: Option<rerail_accel::Lane>) -> Result<(Vec<Vec<u64>>, RanOn), String> {
+pub fn ends_on(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<SpanPrefilter>], sources: &[std::sync::Arc<String>], files: &[(usize, usize)], device: bool, lane: Option<rerail_accel::Lane>) -> Result<(Vec<Vec<u64>>, RanOn), String> {
     if files.is_empty() {
         return Ok((Vec::new(), RanOn::Cpu));
     }
@@ -136,7 +136,7 @@ fn ends_on(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<SpanPrefilter>
 impl SpanPrefilter {
     /// `pattern` as a block program, or `None` when it can match the empty string (every position would be an end)
     /// or grows past `MAX_OPS`.
-    pub(in crate::code_rule_dsl) fn compile(pattern: &str, lines: bool) -> Option<Self> {
+    pub fn compile(pattern: &str, lines: bool) -> Option<Self> {
         let hir = regex_syntax::ParserBuilder::new().build().parse(pattern).ok()?;
         if hir.properties().minimum_len().is_none_or(|n| n == 0) {
             return None;
@@ -157,18 +157,18 @@ impl SpanPrefilter {
     }
 
     /// Bit `i` of the words: a match can end after byte `i` of `bytes`.
-    pub(in crate::code_rule_dsl) fn ends(&self, bytes: &[u8]) -> Vec<u64> {
+    pub fn ends(&self, bytes: &[u8]) -> Vec<u64> {
         self.program.interpret(bytes).swap_remove(0)
     }
 
     /// Whether a match can end in `(a, b]`, a span's exclusive end, given `ends`.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(in crate::code_rule_dsl) fn any_in(ends: &[u64], a: usize, b: usize) -> bool {
         crate::code_rule_dsl::facts::span_prefilter::any_in(ends, a, b)
     }
 
-    #[cfg(test)]
-    pub(super) fn program(&self) -> &BlockProgram {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn program(&self) -> &BlockProgram {
         &self.program
     }
 }
@@ -466,5 +466,4 @@ pub fn launch_spans(ex: &rerail_accel::Executor, filters: &[std::sync::Arc<dyn c
     ends_launch(ex, &filters, sources, files, device)
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

@@ -23,13 +23,13 @@ use rusqlite::Connection;
 
 /// The typing inputs of a corpus run.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct Typing {
+pub struct Typing {
     /// `rerail.types/v1` files.
-    pub(crate) declarations: Vec<PathBuf>,
+    pub declarations: Vec<PathBuf>,
     /// An installed site directory, and the summary cache, where imports the corpus does not define are demanded.
-    pub(crate) site: Option<(PathBuf, PathBuf)>,
+    pub site: Option<(PathBuf, PathBuf)>,
     /// Summarize the corpus (a site directory) into this cache.
-    pub(crate) summarize: Option<PathBuf>,
+    pub summarize: Option<PathBuf>,
     /// Modules per package (`Universe::demand`); 0 is the default, 64.
     pub budget: usize,
     /// The language of the files read: `Some(true)` the `.rs` files, `Some(false)` the `.py` files; `None` the more
@@ -39,18 +39,18 @@ pub(crate) struct Typing {
 
 /// What the typing inputs and outputs did.
 #[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) struct TypingReport {
+pub struct TypingReport {
     /// `declared_ret` facts added.
-    pub(crate) declared: usize,
+    pub declared: usize,
     /// Demanded modules whose summaries are pending (requested), by module.
-    pub(crate) pending: Vec<String>,
+    pub pending: Vec<String>,
     /// (name, the corpus's return names, the declared ones) where they differ.
-    pub(crate) conflicts: Vec<(String, String, String)>,
+    pub conflicts: Vec<(String, String, String)>,
     /// Nodes given a term, and the terms.
-    pub(crate) typed_nodes: usize,
+    pub typed_nodes: usize,
     pub(crate) terms: usize,
     /// Summaries written.
-    pub(crate) summaries: usize,
+    pub summaries: usize,
 }
 
 /// A declared callable's return member names: closed unions of named types (and literals' types) only; ⊤ or an

@@ -20,16 +20,16 @@ use std::collections::BTreeSet;
 /// A producer's witnesses across its domain, and the files whose witnesses are unknown.
 #[derive(Default)]
 pub struct Rows {
-    pub(crate) witnesses: Vec<Witness>,
+    pub witnesses: Vec<Witness>,
     /// Files of the domain whose query failed, stopped, or read around syntax errors.
-    pub(crate) incomplete: BTreeSet<String>,
+    pub incomplete: BTreeSet<String>,
 }
 
 /// What a producer's rows are to the clause reading them, and so what a comment over one does.
 /// A suppression comment silences a reported violation where it is reported; it never removes a
 /// fact a violation elsewhere reads.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Side {
+pub enum Side {
     /// A `require_each`'s subject: each row reports its own violation, which a `rerail-ignore`
     /// over it silences by dropping the row.
     Subject,
@@ -49,7 +49,7 @@ pub(crate) fn producer_violation(
 ) -> ViolationSpec {
     let mut violation = clause.violation.clone();
     // P's relational inputs (test-only, open item O18) keep only their anchor and typed fields.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     {
         violation.input_only = matches!(clause.kind, ClauseKind::Relational(_));
     }
@@ -355,7 +355,7 @@ pub(crate) fn require_each(
 /// witness (`Side::Counted`; marked rows still count). With some file unknown the counts are
 /// lower bounds: one over the maximum is still a violation (reported with `partial`), one within
 /// it is unknown, never clean.
-pub(crate) fn budget(
+pub fn budget(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     query: &FactQuery,
@@ -455,5 +455,4 @@ pub(crate) fn budget(
     evaluation
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

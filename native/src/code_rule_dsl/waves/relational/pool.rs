@@ -14,7 +14,7 @@ struct Inner {
     db: OnceCell<Database>,
 }
 #[derive(Clone)]
-pub(super) struct Pool(Rc<Inner>);
+pub struct Pool(Rc<Inner>);
 impl Default for Pool {
     fn default() -> Self {
         Self(Rc::new(Inner {
@@ -223,5 +223,4 @@ impl Drop for Lease {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

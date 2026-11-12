@@ -1,8 +1,8 @@
 use super::{AstMatcher, StopBy, UtilRef};
 use crate::code_rule_dsl::budget;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 use crate::code_rule_dsl::walks::{Walk, record_walk};
-mod semantic;
+pub mod semantic;
 use crate::code_rule_dsl::language::GrammarDialect;
 use ast_grep_core::matcher::{Matcher, PatternNode, kind_utils};
 use ast_grep_core::source::SgNode;
@@ -75,7 +75,7 @@ impl<'tree> AnchorCursor<'tree> for TapeCursor<'tree> {
     }
 }
 
-pub(in crate::code_rule_dsl) trait AnchorNode<'tree>:
+pub trait AnchorNode<'tree>:
     SgNode<'tree> + Copy
 {
     type Cursor: AnchorCursor<'tree, Node = Self>;
@@ -106,21 +106,20 @@ impl<'tree> AnchorNode<'tree> for crate::code_rule_dsl::tape::TapeNode<'tree> {
 use rerail_store::probes::TextProbe;
 use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)
 
 // S073/S256: value predicates name node positions, not just candidate files.
 // Plans only remove impossible roots. The matcher still produces all captures and witnesses at
 // the roots they keep (`run_clause`), including for predicates answered by this index.
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) struct AnchorPlan {
-    pub(in crate::code_rule_dsl) root_kinds: Option<BTreeSet<u16>>,
-    pub(in crate::code_rule_dsl) condition: Condition,
-    pub(in crate::code_rule_dsl) exact: bool,
+pub struct AnchorPlan {
+    pub root_kinds: Option<BTreeSet<u16>>,
+    pub condition: Condition,
+    pub exact: bool,
 }
 
 #[derive(Clone)]
-pub(in crate::code_rule_dsl) enum Condition {
+pub enum Condition {
     Always,
     Pattern(Vec<Requirement>),
     Text {
@@ -152,7 +151,7 @@ pub(in crate::code_rule_dsl) enum Condition {
 }
 
 #[derive(Clone, Copy)]
-pub(in crate::code_rule_dsl) enum Direction {
+pub enum Direction {
     Has,
     Inside,
     Precedes,
@@ -160,16 +159,16 @@ pub(in crate::code_rule_dsl) enum Direction {
 }
 
 #[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl) enum Required {
+pub enum Required {
     Kind(u16),
     Terminal(u16, String),
 }
 
 #[derive(Clone, Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl) struct Requirement {
-    pub(in crate::code_rule_dsl) value: Required,
+pub struct Requirement {
+    pub value: Required,
     // Immediate parent first. Smart skips siblings, not ancestor levels.
-    pub(in crate::code_rule_dsl) parents: Vec<Option<u16>>,
+    pub parents: Vec<Option<u16>>,
 }
 
 /// `matches` references inlined into one query's plan before the rest fall back to unrestricted.
@@ -231,7 +230,7 @@ fn single_kind(rule: &AstMatcher) -> Option<u16> {
 }
 
 impl AnchorPlan {
-    pub(in crate::code_rule_dsl) fn compile(matcher: &AstMatcher) -> Self {
+    pub fn compile(matcher: &AstMatcher) -> Self {
         Self::compile_in(
             matcher,
             &mut Inlining {
@@ -261,7 +260,7 @@ impl AnchorPlan {
             return Self::unrestricted();
         }
         inlining.budget -= 1;
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         record_walk(Walk::AnchorInlining);
         // Under a gate already, the target keeps its relations whatever its shape.
         let gate = match context {
@@ -515,7 +514,7 @@ impl AnchorPlan {
         plan
     }
 
-    pub(in crate::code_rule_dsl) fn root_kinds(&self) -> Option<&BTreeSet<u16>> {
+    pub fn root_kinds(&self) -> Option<&BTreeSet<u16>> {
         self.root_kinds.as_ref()
     }
 
@@ -580,7 +579,7 @@ impl AnchorPlan {
                 let mut kinds = domain.cloned();
                 intersect_kinds(&mut kinds, self.root_kinds.as_ref());
                 if utilities.insert((Arc::as_ptr(plan) as usize, kinds.clone())) {
-                    #[cfg(test)]
+                    #[cfg(any(test, feature = "test-hooks"))]
                     record_walk(Walk::AnchorNeeds);
                     plan.collect_needs(kinds.as_ref(), confirms, utilities, needs);
                 }
@@ -680,8 +679,8 @@ const DIRECT_TEXT_NODES: usize = 8;
 
 #[derive(Default)]
 pub struct Values<'tree> {
-    complete: bool,
-    terms: BTreeMap<&'tree str, Vec<usize>>,
+    pub complete: bool,
+    pub terms: BTreeMap<&'tree str, Vec<usize>>,
     residue: Vec<usize>,
     prefixes: BTreeMap<&'tree str, Vec<usize>>,
 }
@@ -694,7 +693,7 @@ fn postings(grouped: HashMap<&str, Vec<usize>>) -> BTreeMap<&str, Vec<usize>> {
     grouped.into_iter().collect()
 }
 
-pub(in crate::code_rule_dsl) enum Selection<'index> {
+pub enum Selection<'index> {
     All,
     Roots(Cow<'index, [usize]>),
 }
@@ -712,7 +711,7 @@ impl Selection<'_> {
             Self::Roots(roots) => roots.len(),
         }
     }
-    fn contains(&self, ordinal: usize) -> bool {
+    pub fn contains(&self, ordinal: usize) -> bool {
         match self {
             Self::All => true,
             Self::Roots(roots) => roots.binary_search(&ordinal).is_ok(),
@@ -744,20 +743,20 @@ struct UtilitySelections<'index> {
     roots: HashMap<BTreeSet<u16>, Selection<'index>>,
 }
 
-pub(in crate::code_rule_dsl) struct FileAnchorIndex<'tree, D: Doc> {
+pub struct FileAnchorIndex<'tree, D: Doc> {
     root: &'tree AstGrep<D>,
     source: &'tree str,
     entries: Vec<Entry<'tree, D>>,
     kinds: Vec<Vec<usize>>,
     errors: Vec<usize>,
-    values: HashMap<u16, Values<'tree>>,
+    pub values: HashMap<u16, Values<'tree>>,
     text_cache: RefCell<TextCache>,
     visited_nodes: usize,
     complete: bool,
     /// Whether sibling relations use ast-grep's own walk, not preorder ordinals: some node is
     /// zero-width, or some siblings overlap (a Blade tape's embedded program sits among the
     /// template's nodes, `blade::view`).
-    walked_siblings: bool,
+    pub walked_siblings: bool,
     /// Ordinals by node id, filled on first use by that walk.
     by_node_id: RefCell<HashMap<usize, usize>>,
 }
@@ -767,7 +766,7 @@ where
     D: Doc<Source = String, Lang = GrammarDialect>,
     D::Node<'tree>: AnchorNode<'tree>,
 {
-    pub(in crate::code_rule_dsl) fn build(
+    pub fn build(
         root: &'tree AstGrep<D>,
         plans: &[&AnchorPlan],
         max_nodes: usize,
@@ -918,16 +917,16 @@ where
         true
     }
 
-    pub(in crate::code_rule_dsl) fn visited_nodes(&self) -> usize {
+    pub fn visited_nodes(&self) -> usize {
         self.visited_nodes
     }
-    pub(in crate::code_rule_dsl) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.entries.len()
     }
-    pub(in crate::code_rule_dsl) fn complete(&self) -> bool {
+    pub fn complete(&self) -> bool {
         self.complete
     }
-    pub(in crate::code_rule_dsl) fn node(&self, ordinal: usize) -> Node<'tree, D> {
+    pub fn node(&self, ordinal: usize) -> Node<'tree, D> {
         self.root.adopt(self.entries[ordinal].node)
     }
     pub(in crate::code_rule_dsl) fn kind(&self, ordinal: usize) -> u16 {
@@ -971,7 +970,7 @@ where
         bytes
     }
 
-    pub(in crate::code_rule_dsl) fn select(&self, plan: &AnchorPlan) -> Selection<'_> {
+    pub fn select(&self, plan: &AnchorPlan) -> Selection<'_> {
         if !self.complete() || budget::matcher_budget_exhausted() {
             return Selection::All;
         }
@@ -1217,7 +1216,7 @@ where
         };
         // No earlier evaluation reached the scope: its selection is the new one alone.
         let disjoint = missing.len(self.len()) == scope.len(self.len());
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         record_walk(Walk::AnchorSelection);
         let added = self.select_complete(plan, copy_selection(&missing), memo)?;
         let result = if disjoint {
@@ -1267,7 +1266,7 @@ where
         let mut counts = HashMap::<u16, usize>::default();
         for ordinal in scope.ordinals(self.len()) {
             check_budget()?;
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             record_walk(Walk::AnchorTextNode);
             *counts.entry(self.kind(ordinal)).or_default() += 1;
         }
@@ -1685,7 +1684,7 @@ where
                         matched_before: vec![0],
                     };
                     for child in walked_parent.children() {
-                        #[cfg(test)]
+                        #[cfg(any(test, feature = "test-hooks"))]
                         record_walk(Walk::AnchorSibling);
                         // Budget exhaustion makes the whole selection fall back to root kinds.
                         check_budget().ok()?;
@@ -1714,7 +1713,7 @@ where
         }
         let walked = if following { node.next() } else { node.prev() };
         walked.is_some_and(|sibling| {
-            #[cfg(test)]
+            #[cfg(any(test, feature = "test-hooks"))]
             record_walk(Walk::AnchorSibling);
             // Budget exhaustion makes the whole selection fall back to root kinds.
             check_budget().is_err() || matched_child(sibling.node_id())

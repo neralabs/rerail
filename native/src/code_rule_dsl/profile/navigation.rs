@@ -1,6 +1,6 @@
 //! The tape's field-lookup counters (`tape::navigation`), into the profile.
 
-pub(super) use crate::code_rule_dsl::tape::navigation::{Counters, reset, take};
+pub use crate::code_rule_dsl::tape::navigation::{Counters, reset, take};
 
 pub(super) fn flush() {
     let value = take();

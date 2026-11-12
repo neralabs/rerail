@@ -19,14 +19,14 @@ use crate::code_rule_dsl::language::adapter::pack as language_pack;
 /// A scope a filter names: a table scope kind, or (TypeScript) eslint-scope's global scope, a
 /// script's top level, told apart from a module's (`ScopeKind::Module`).
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) enum ScopeName {
+pub enum ScopeName {
     Kind(ScopeKind),
     Global,
 }
 
 /// Filters over a binding: how and where it binds, and whether it is read.
 #[derive(Clone, Default)]
-pub(crate) struct BindingFilter {
+pub struct BindingFilter {
     /// The binding's form is one of these.
     pub(crate) forms: Option<Vec<Form>>,
     /// The scope that holds it is one of these.
@@ -45,7 +45,7 @@ pub(crate) struct BindingFilter {
     /// It is made under a `global` or `nonlocal` declaration.
     pub(crate) outer: Option<bool>,
     /// How many bindings of its name its scope holds, within a captured node or in all.
-    pub(crate) bindings: Option<BindingCount>,
+    pub bindings: Option<BindingCount>,
     /// TypeScript: it is the global variable of a configured global, in a script's top level
     /// (ESLint's `eslintImplicitGlobalSetting`, which no-redeclare's `builtinGlobals` reads).
     pub(crate) builtin: Option<bool>,
@@ -61,9 +61,9 @@ pub(crate) struct BindingFilter {
 /// `bindings`: the bindings of the binding's name in its scope (Ruff's `scope.get_all`, deletions
 /// included), counted where their name node lies inside the node captured as `within`.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct BindingCount {
+pub struct BindingCount {
     /// The capture whose node bounds the count; `None` counts the whole scope.
-    pub(crate) within: Option<String>,
+    pub within: Option<String>,
     pub(crate) min: usize,
     pub(crate) max: Option<usize>,
 }
@@ -334,36 +334,36 @@ fn pragma_variable(table: &ScopeTable, name: &str, fragments_only: bool) -> Opti
 /// `binds.redefines`: the binding shadows one that passes these filters and sub-rules, on the same
 /// fork (Ruff's branch path).
 #[derive(Clone)]
-pub(crate) struct Redefines {
-    pub(crate) filter: BindingFilter,
+pub struct Redefines {
+    pub filter: BindingFilter,
     /// Whether the shadowed binding is of the same scope.
     pub(crate) same_scope: Option<bool>,
     /// TypeScript: every other definition of the variable passes, rather than some earlier one.
-    pub(crate) every: bool,
+    pub every: bool,
     /// Whether both are imports of the same qualified name.
     pub(crate) same_import: Option<bool>,
-    pub(crate) site: Option<AstMatcher>,
-    pub(crate) value: Option<AstMatcher>,
-    pub(crate) annotation: Option<AstMatcher>,
+    pub site: Option<AstMatcher>,
+    pub value: Option<AstMatcher>,
+    pub annotation: Option<AstMatcher>,
 }
 
 /// `binds` (a Rerail extension): the node is the name node of a binding (where a linter reports
 /// it) that passes the filters, and each listed sub-rule matches that binding's node. The
 /// sub-rules share the caller's environment, as `has` does, so they may bind captures.
 #[derive(Clone)]
-pub(crate) struct Binds {
+pub struct Binds {
     pub(crate) language: GrammarDialect,
     /// Kinds a name node can have.
     pub(crate) name_kinds: BTreeSet<u16>,
     pub(crate) options: Option<Arc<LanguageOptions>>,
     pub(crate) python: Option<Arc<PythonOptions>>,
-    pub(crate) filter: BindingFilter,
-    pub(crate) site: Option<AstMatcher>,
-    pub(crate) value: Option<AstMatcher>,
-    pub(crate) annotation: Option<AstMatcher>,
+    pub filter: BindingFilter,
+    pub site: Option<AstMatcher>,
+    pub value: Option<AstMatcher>,
+    pub annotation: Option<AstMatcher>,
     /// TypeScript: matches some definition name or reference of the binding's variable.
-    pub(crate) occurrence: Option<AstMatcher>,
-    pub(crate) redefines: Option<Box<Redefines>>,
+    pub occurrence: Option<AstMatcher>,
+    pub redefines: Option<Box<Redefines>>,
 }
 
 impl Binds {
@@ -745,8 +745,8 @@ fn flow(family: Family) -> bool {
 }
 
 impl Binds {
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn facts<'tree, D: Doc>(
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+    pub fn facts<'tree, D: Doc>(
         &self,
         node: Node<'tree, D>,
         env: &MetaVarEnv<'tree, D>,
@@ -895,7 +895,7 @@ impl Binds {
 }
 
 impl Binds {
-    #[cfg_attr(not(test), allow(dead_code))]
+    #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     fn private_facts<'tree, D: Doc>(
         &self,
         node: &Node<'tree, D>,

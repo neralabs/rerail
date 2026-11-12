@@ -42,7 +42,7 @@ const INDEX_BATCH_BYTES: usize = 1024 * 1024;
 /// never read whole.
 const BINARY_PREFIX_BYTES: u64 = 8000;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Runs inside `plan` on this thread once the scoped files are listed, before the restore.
     static PLAN_GATE: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
@@ -50,8 +50,8 @@ thread_local! {
 }
 
 /// Run `gate` inside the next index plan on this thread, before it restores any file.
-#[cfg(test)]
-pub(super) fn gate_next_plan(gate: impl FnOnce() + 'static) {
+#[cfg(any(test, feature = "test-hooks"))]
+pub fn gate_next_plan(gate: impl FnOnce() + 'static) {
     PLAN_GATE.with(|slot| *slot.borrow_mut() = Some(Box::new(gate)));
 }
 
@@ -85,14 +85,14 @@ pub struct RepositoryIndexOptions {
 pub struct WorkspaceIndexTask {
     pub(super) state: Arc<Mutex<WorkspaceState>>,
     pub(super) closed: Arc<AtomicBool>,
-    pub(super) options: RepositoryIndexOptions,
+    pub options: RepositoryIndexOptions,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 impl WorkspaceIndexTask {
     /// One index call over `state`, with sources above `max_file_bytes` refused and `.git` ignored
     /// as the host ignores it.
-    pub(super) fn for_test(
+    pub fn for_test(
         state: Arc<Mutex<WorkspaceState>>,
         closed: Arc<AtomicBool>,
         max_file_bytes: u32,
@@ -203,7 +203,7 @@ pub(super) fn reusable_directories(
 
 /// The module a host would send for a repository file: derived from the package markers in the
 /// same worktree the source is read from, so repository and host ingestion agree.
-pub(super) fn repository_module(
+pub fn repository_module(
     repository: &git_workspace::GitWorkspace,
     repository_path: &str,
     language: &str,
@@ -214,7 +214,7 @@ pub(super) fn repository_module(
 /// The package a host would send for a repository file: the nearest `package.json` in the same
 /// worktree of a file whose family reads one (`package_manifests`), below the workspace root
 /// `manifests` reads.
-pub(super) fn repository_package(
+pub fn repository_package(
     manifests: &mut dyn RepositoryContext,
     repository: &git_workspace::GitWorkspace,
     repository_path: &str,
@@ -302,7 +302,7 @@ impl WorkspaceIndexTask {
     /// else its longest extension the host lists (`.blade.php` before `.php`) with a nonempty
     /// name before it, as the host's `sourceLanguageOfPath` reads it: a file named only `.php`
     /// has no extension, and `.blade.php` is a `.php` file named `.blade`.
-    pub(super) fn source_language(&self, path: &str) -> Option<String> {
+    pub fn source_language(&self, path: &str) -> Option<String> {
         let name = std::path::Path::new(path)
             .file_name()?
             .to_str()?
@@ -493,7 +493,7 @@ impl WorkspaceIndexTask {
         } else {
             HashSet::new()
         };
-        #[cfg(test)]
+        #[cfg(any(test, feature = "test-hooks"))]
         if let Some(gate) = PLAN_GATE.with(|slot| slot.borrow_mut().take()) {
             gate();
         }
@@ -804,7 +804,7 @@ impl Task for WorkspaceIndexTask {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     /// The index routes a name as the host's `sourceLanguageOfPath` does: a listed whole name,

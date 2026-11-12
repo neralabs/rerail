@@ -25,7 +25,7 @@ use std::ops::Range;
 use std::path::Path;
 
 /// Vue single-file components (`.vue`).
-pub(crate) struct Vue;
+pub struct Vue;
 
 impl Adapter for Vue {
     const FAMILY: Family = Family::Vue;
@@ -124,5 +124,4 @@ impl SyntaxRules for Vue {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

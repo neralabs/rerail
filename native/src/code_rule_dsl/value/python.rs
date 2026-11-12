@@ -4,15 +4,15 @@
 use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::language::Family;
 
-mod ops;
-pub(crate) mod words;
+pub mod ops;
+pub mod words;
 
 use super::{BigInt, ContainerKind, Context, MAX_INT_BITS, MAX_STRING_BYTES, Value, int_to_float};
 use crate::code_rule_dsl::identifier::python_identifier;
 use ast_grep_core::{Doc, Node};
 
 /// Decodes `node` to its value; `Unknown` for anything that is not a literal this knows.
-pub(crate) fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
+pub fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     if !context.enter() {
         return Value::Unknown;
     }
@@ -86,7 +86,7 @@ fn follow<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
 /// Expressions: the subtypes of the grammar's `expression` and `primary_expression` supertypes
 /// (tree-sitter-python 0.25.0 `node-types.json`), and bare tuples. Only an expression has a value;
 /// on any other node (a statement, a keyword argument, punctuation) every value predicate fails.
-pub(crate) const EXPRESSION_KINDS: &[&str] = &[
+pub const EXPRESSION_KINDS: &[&str] = &[
     "as_pattern",
     "attribute",
     "await",
@@ -124,7 +124,7 @@ pub(crate) const EXPRESSION_KINDS: &[&str] = &[
 ];
 
 /// Kinds whose value `decode` can know; any other expression is `Unknown`.
-pub(crate) const VALUE_KINDS: &[&str] = &[
+pub const VALUE_KINDS: &[&str] = &[
     "integer",
     "float",
     "true",
@@ -741,7 +741,7 @@ pub(crate) fn to_str(value: &Value) -> Option<String> {
 /// CPython's `float_repr` (`repr` style `'r'`): the shortest digits that round-trip, positional
 /// where the decimal point falls within 16 digits of them (then with `.0` if integral), else
 /// scientific with a signed exponent of at least two digits.
-pub(crate) fn float_repr(value: f64) -> String {
+pub fn float_repr(value: f64) -> String {
     if value.is_nan() {
         return "nan".to_owned();
     }
@@ -784,5 +784,4 @@ pub(crate) fn float_repr(value: f64) -> String {
     format!("{sign}{body}")
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

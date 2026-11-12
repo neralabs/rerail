@@ -33,38 +33,38 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
 
-mod analysis;
-mod analysis_report;
-mod kinds;
-mod memory;
-mod roofline;
-pub(in crate::code_rule_dsl) mod watch;
-pub(in crate::code_rule_dsl) use roofline::Unit;
-pub(in crate::code_rule_dsl) mod report;
+pub mod analysis;
+pub mod analysis_report;
+pub mod kinds;
+pub mod memory;
+pub mod roofline;
+// cratify: `watch` is rerail-logic's (it mounts it)
+pub use roofline::Unit;
+// cratify: `report` is rerail-logic's (it mounts it)
 
 static ON: LazyLock<AtomicBool> = LazyLock::new(|| AtomicBool::new(std::env::var_os("RERAIL_PROFILE").is_some()));
 
 /// Whether this run is profiled.
-pub(crate) fn on() -> bool {
+pub fn on() -> bool {
     ON.load(Ordering::Relaxed)
 }
 
 /// Turns profiling on or off (a test that profiles without the environment variable).
 #[allow(dead_code)]
-pub(in crate::code_rule_dsl) fn set(on: bool) {
+pub fn set(on: bool) {
     ON.store(on, Ordering::Relaxed);
 }
 
 static DIR: LazyLock<Mutex<Option<std::path::PathBuf>>> = LazyLock::new(|| Mutex::new(std::env::var_os("RERAIL_PROFILE").map(Into::into)));
 
 /// The directory the next report is written to: `RERAIL_PROFILE`'s, unless set (one per rule in a measurement).
-pub(in crate::code_rule_dsl) fn directory() -> Option<std::path::PathBuf> {
+pub fn directory() -> Option<std::path::PathBuf> {
     DIR.lock().unwrap().clone()
 }
 
 /// Sets the directory the next report is written to.
 #[allow(dead_code)]
-pub(in crate::code_rule_dsl) fn set_directory(dir: &Path) {
+pub fn set_directory(dir: &Path) {
     *DIR.lock().unwrap() = Some(dir.to_path_buf());
 }
 
@@ -86,111 +86,111 @@ fn cpu() -> f64 {
 
 #[derive(Default, Clone)]
 pub struct SpanTotal {
-    pub(in crate::code_rule_dsl) calls: u64,
-    pub(in crate::code_rule_dsl) total: f64,
-    pub(in crate::code_rule_dsl) own: f64,
+    pub calls: u64,
+    pub total: f64,
+    pub own: f64,
     /// Bytes its thread allocated while it was open, in all and less the spans inside it, and bytes freed
     /// (`memory`): allocated less freed is what it kept.
-    pub(in crate::code_rule_dsl) alloc: u64,
-    pub(in crate::code_rule_dsl) own_alloc: u64,
-    pub(in crate::code_rule_dsl) freed: u64,
+    pub alloc: u64,
+    pub own_alloc: u64,
+    pub freed: u64,
     /// How far the process's footprint high-water mark rose while it was open, in all and less the spans inside it.
-    pub(in crate::code_rule_dsl) rise: u64,
-    pub(in crate::code_rule_dsl) own_rise: u64,
+    pub rise: u64,
+    pub own_rise: u64,
 }
 
 #[derive(Default, Clone)]
 pub struct SqlTotal {
-    pub(in crate::code_rule_dsl) runs: u64,
-    pub(in crate::code_rule_dsl) ns: u64,
-    pub(in crate::code_rule_dsl) vm: u64,
-    pub(in crate::code_rule_dsl) scan: u64,
-    pub(in crate::code_rule_dsl) sort: u64,
-    pub(in crate::code_rule_dsl) autoindex: u64,
+    pub runs: u64,
+    pub ns: u64,
+    pub vm: u64,
+    pub scan: u64,
+    pub sort: u64,
+    pub autoindex: u64,
 }
 
 #[derive(Default)]
 pub struct State {
-    spans: BTreeMap<String, SpanTotal>,
+    pub spans: BTreeMap<String, SpanTotal>,
     /// By (span path, statement text).
-    sql: BTreeMap<(String, String), SqlTotal>,
+    pub sql: BTreeMap<(String, String), SqlTotal>,
     /// By (span path, plan text): per step, rows in and out.
-    native: BTreeMap<(String, String), Vec<(u64, u64)>>,
+    pub native: BTreeMap<(String, String), Vec<(u64, u64)>>,
     /// By (span path, plan text): the CPU seconds its probes ran, as the native engine timed them.
-    native_cpu: BTreeMap<(String, String), f64>,
-    notes: BTreeMap<String, String>,
+    pub native_cpu: BTreeMap<(String, String), f64>,
+    pub notes: BTreeMap<String, String>,
     /// Run-level decisions by (topic, text): how many times made.
-    decisions: BTreeMap<(String, String), u64>,
+    pub decisions: BTreeMap<(String, String), u64>,
     /// Strata in the order first run: key, engine, why, loops.
     strata: Vec<Stratum>,
     /// The strata that ran in SQLite (the SQL wave kernel), by key: the kind of literal the native engine declined.
     fallbacks: BTreeMap<String, String>,
     /// Plans by (stratum, kind, plan text).
-    plans: BTreeMap<(String, String, String), PlanTotal>,
+    pub plans: BTreeMap<(String, String, String), PlanTotal>,
     /// Device kernels by (span path, kernel).
-    devices: BTreeMap<(String, String), DeviceTotal>,
+    pub devices: BTreeMap<(String, String), DeviceTotal>,
     /// Work charged by (span path, unit) (`work`).
-    work: BTreeMap<(String, Unit), u64>,
+    pub work: BTreeMap<(String, Unit), u64>,
     /// Waits by (the waiter's span path, what it waited on, what that was doing when the wait began) (`wait`).
-    waits: BTreeMap<(String, String, String), WaitTotal>,
+    pub waits: BTreeMap<(String, String, String), WaitTotal>,
     /// Where each native stratum ran, by stratum (`placed`, decision 0095).
-    placements: BTreeMap<String, PlacedTotal>,
+    pub placements: BTreeMap<String, PlacedTotal>,
     /// SQL inside the waves (`sql_in_wave`, `wait_in_wave`), by (hazard class, span path, connection and statement):
     /// runs and nanoseconds.
-    hazards: BTreeMap<(&'static str, String, String), (u64, u64)>,
+    pub hazards: BTreeMap<(&'static str, String, String), (u64, u64)>,
 }
 
 /// A stratum's placements, summed over its runs (chunks, guests, the cross-file part).
 #[derive(Default)]
 pub struct PlacedTotal {
-    runs: u64,
-    on_gpu: u64,
-    gpu_cheaper: u64,
-    device: bool,
-    forms: Vec<&'static str>,
-    missing: Vec<&'static str>,
-    planned_work: f64,
-    work: u64,
-    cpu_estimate: f64,
-    gpu_estimate: f64,
-    cpu: f64,
+    pub runs: u64,
+    pub on_gpu: u64,
+    pub gpu_cheaper: u64,
+    pub device: bool,
+    pub forms: Vec<&'static str>,
+    pub missing: Vec<&'static str>,
+    pub planned_work: f64,
+    pub work: u64,
+    pub cpu_estimate: f64,
+    pub gpu_estimate: f64,
+    pub cpu: f64,
     /// Its join steps by the form placement chose (CPU index, GPU sort and probe, GPU tile): how many, their
     /// estimate on the CPU's index, and on the form chosen (of the steps estimated under `JOIN_ESTIMATE_CAP`), and
     /// how many were estimated over it.
-    joins: [(u64, f64, f64, u64); 3],
+    pub joins: [(u64, f64, f64, u64); 3],
     /// Its runs on the device (decision 0095, step 4), summed: rules, stages, submissions, dispatches, the GPU's
     /// time, this thread's CPU encoding, waiting and reading back, uploads, residency hits; and why the device
     /// refused it, when it was placed there and did not run there.
-    gpu: GpuTotal,
-    refused: Option<String>,
+    pub gpu: GpuTotal,
+    pub refused: Option<String>,
 }
 
 #[derive(Default, Clone)]
 pub struct GpuTotal {
-    runs: u64,
-    rules: u64,
-    stages: u64,
-    submissions: u64,
-    dispatches: u64,
-    reruns: u64,
-    gpu: f64,
-    encode: f64,
-    upload: f64,
-    wait: f64,
-    wait_wall: f64,
-    decode: f64,
-    uploads: u64,
-    upload_bytes: u64,
-    resident: u64,
-    sorts: u64,
-    sort_hits: u64,
-    rows: u64,
-    distinct: u64,
-    bindings: u64,
+    pub runs: u64,
+    pub rules: u64,
+    pub stages: u64,
+    pub submissions: u64,
+    pub dispatches: u64,
+    pub reruns: u64,
+    pub gpu: f64,
+    pub encode: f64,
+    pub upload: f64,
+    pub wait: f64,
+    pub wait_wall: f64,
+    pub decode: f64,
+    pub uploads: u64,
+    pub upload_bytes: u64,
+    pub resident: u64,
+    pub sorts: u64,
+    pub sort_hits: u64,
+    pub rows: u64,
+    pub distinct: u64,
+    pub bindings: u64,
 }
 
 impl GpuTotal {
-    fn add(&mut self, o: &GpuTotal) {
+    pub fn add(&mut self, o: &GpuTotal) {
         self.runs += o.runs;
         self.rules += o.rules;
         self.stages += o.stages;
@@ -220,14 +220,14 @@ impl GpuTotal {
 }
 
 /// What the device reported for a stratum (`logic::device`).
-pub(in crate::code_rule_dsl) type DeviceReport = Report;
+pub type DeviceReport = Report;
 
 #[derive(Default)]
 pub struct WaitTotal {
-    count: u64,
+    pub count: u64,
     /// Wall time blocked, and the waiter's CPU meanwhile (spinning, waking).
-    wall: f64,
-    cpu: f64,
+    pub wall: f64,
+    pub cpu: f64,
 }
 
 /// What a thread is doing, for the threads that wait on it (`wait`): one shared marker, set as it moves between
@@ -236,7 +236,7 @@ pub struct WaitTotal {
 pub struct Activity(parking_lot::Mutex<&'static str>);
 
 impl Activity {
-    pub(in crate::code_rule_dsl) fn set(&self, doing: &'static str) {
+    pub fn set(&self, doing: &'static str) {
         *self.0.lock() = doing;
     }
     pub(in crate::code_rule_dsl) fn get(&self) -> &'static str {
@@ -247,7 +247,7 @@ impl Activity {
 /// Runs `blocking` (a receive, a send on a full channel, a join), recorded as a wait of this thread's span on
 /// `awaited`, and on what it was doing when it began (`doing`, an `Activity` of the awaited thread or a fixed name). The wall
 /// time is the wait; the CPU spent meanwhile is reported with it. Not profiling, it only runs `blocking`.
-pub(in crate::code_rule_dsl) fn wait<T>(awaited: &str, doing: &Activity, blocking: impl FnOnce() -> T) -> T {
+pub fn wait<T>(awaited: &str, doing: &Activity, blocking: impl FnOnce() -> T) -> T {
     if !on() {
         return blocking();
     }
@@ -275,51 +275,51 @@ pub struct Stratum {
 /// the joins it passed over there, each with the rows a binding it was priced at (why this one was taken).
 #[derive(Clone, Debug)]
 pub struct StepPlan {
-    pub(in crate::code_rule_dsl) literal: String,
-    pub(in crate::code_rule_dsl) access: String,
-    pub(in crate::code_rule_dsl) source: String,
-    pub(in crate::code_rule_dsl) rows: f64,
-    pub(in crate::code_rule_dsl) passed: Vec<(String, f64)>,
+    pub literal: String,
+    pub access: String,
+    pub source: String,
+    pub rows: f64,
+    pub passed: Vec<(String, f64)>,
 }
 
 /// A rule's plan as the planner chose it: estimated work and rows, and its search (subsets kept, candidates priced).
 #[derive(Clone, Debug, Default)]
 pub struct RulePlan {
-    pub(in crate::code_rule_dsl) work: f64,
-    pub(in crate::code_rule_dsl) rows: f64,
-    pub(in crate::code_rule_dsl) subsets: u64,
-    pub(in crate::code_rule_dsl) candidates: u64,
-    pub(in crate::code_rule_dsl) steps: Vec<StepPlan>,
+    pub work: f64,
+    pub rows: f64,
+    pub subsets: u64,
+    pub candidates: u64,
+    pub steps: Vec<StepPlan>,
 }
 
 #[derive(Default)]
 pub struct PlanTotal {
-    rule: Option<usize>,
-    plan: RulePlan,
-    loops: u64,
-    planning: f64,
+    pub rule: Option<usize>,
+    pub plan: RulePlan,
+    pub loops: u64,
+    pub planning: f64,
     replans: u64,
-    actual: Vec<(u64, u64)>,
-    measured: bool,
+    pub actual: Vec<(u64, u64)>,
+    pub measured: bool,
     produced: Option<u64>,
 }
 
 #[derive(Default)]
 pub struct DeviceTotal {
-    runs: u64,
-    launches: u64,
-    gpu: f64,
-    wall: f64,
-    cells: u64,
+    pub runs: u64,
+    pub launches: u64,
+    pub gpu: f64,
+    pub wall: f64,
+    pub cells: u64,
     /// Where the host's time went, summed (`device_phases`): seconds per `PHASES` entry.
-    phases: [f64; PHASES.len()],
+    pub phases: [f64; PHASES.len()],
     /// Bytes of buffers made for the runs, and of buffers reused.
-    made: u64,
-    reused: u64,
+    pub made: u64,
+    pub reused: u64,
 }
 
 /// A device run's host-side phases, in order (`device_phases`).
-pub(in crate::code_rule_dsl) const PHASES: [&str; 7] = [
+pub const PHASES: [&str; 7] = [
     "buffers made (map, wire, copy)",
     "command queue made",
     "encode",
@@ -361,7 +361,7 @@ impl Drop for Held {
     }
 }
 
-fn state() -> Held {
+pub fn state() -> Held {
     assert!(!HELD.with(|h| h.replace(true)), "the profile's state was taken again on a thread holding it: a closure ran under its lock");
     Held(STATE.lock().unwrap_or_else(std::sync::PoisonError::into_inner))
 }
@@ -416,7 +416,7 @@ thread_local! {
 }
 
 /// Records the SQL statement this thread starts (`Some`), or that it ended (`None`), for a dump. Only when profiling.
-pub(in crate::code_rule_dsl) fn statement(text: Option<String>) {
+pub fn statement(text: Option<String>) {
     if on() {
         STACK.with(|s| s.lock().statement = text.map(|t| (t, std::time::Instant::now())));
     }
@@ -427,7 +427,7 @@ pub struct Span(bool);
 
 /// This thread's innermost open span's path (only when profiling): a worker the thread starts opens its spans under
 /// it (`span_at`), so the worker's work is charged to what started it (a phase's run, say).
-pub(crate) fn here() -> Option<String> {
+pub fn here() -> Option<String> {
     if !on() {
         return None;
     }
@@ -436,7 +436,7 @@ pub(crate) fn here() -> Option<String> {
 
 /// Opens span `name` under `under`, a path another thread's `here` gave: a pool job's span (`crate::threads`), at
 /// that path whichever thread runs it. Without `under`, under this thread's open span, as `span` opens one.
-pub(crate) fn span_at(under: Option<&str>, name: impl FnOnce() -> String) -> Span {
+pub fn span_at(under: Option<&str>, name: impl FnOnce() -> String) -> Span {
     match under {
         Some(p) => open(format!("{p}/{}", name())),
         None => span(name),
@@ -444,7 +444,7 @@ pub(crate) fn span_at(under: Option<&str>, name: impl FnOnce() -> String) -> Spa
 }
 
 /// Opens span `name` (made only when profiling) under this thread's open span.
-pub(in crate::code_rule_dsl) fn span(name: impl FnOnce() -> String) -> Span {
+pub fn span(name: impl FnOnce() -> String) -> Span {
     if !on() {
         return Span(false);
     }
@@ -512,7 +512,7 @@ fn open_paths() -> (Vec<String>, usize) {
 /// The process's peaks so far, for a caller to print after a run (the run's report is written before its caller's
 /// own work): the high-water mark of the footprint and of the resident set, and the sampler's peak with what was
 /// open then. Also rewrites `memory.tsv` in the profile directory, so the timeline covers the caller's work too.
-pub(in crate::code_rule_dsl) fn peaks() -> String {
+pub fn peaks() -> String {
     let (now, max) = memory::footprint();
     // macOS reports bytes, Linux kilobytes; Windows has its peak working set, the browser build no counter.
     #[cfg(unix)]
@@ -540,7 +540,7 @@ pub(in crate::code_rule_dsl) fn current() -> String {
 }
 
 /// Charges one run of statement `text` to the current span.
-pub(in crate::code_rule_dsl) fn sql(text: String, ns: u64, vm: u64, scan: u64, sort: u64, autoindex: u64) {
+pub fn sql(text: String, ns: u64, vm: u64, scan: u64, sort: u64, autoindex: u64) {
     let path = current();
     let mut state = state();
     let t = state.sql.entry((path, text)).or_default();
@@ -564,13 +564,13 @@ thread_local! {
 /// last stratum). SQL before and after is the run's beginning and end, where it may be; inside, it is a hazard.
 pub struct Waves(bool);
 
-pub(in crate::code_rule_dsl) fn waves() -> Waves {
+pub fn waves() -> Waves {
     WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     Waves(true)
 }
 
 /// Whether a run's waves are under way (`waves`): what is not read before the first wave is not read from SQLite.
-pub(in crate::code_rule_dsl) fn inside_waves() -> bool {
+pub fn inside_waves() -> bool {
     WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0
 }
 
@@ -579,13 +579,13 @@ pub(in crate::code_rule_dsl) fn inside_waves() -> bool {
 /// before its first wave (each run of the process, outside every wave), every wave is given what it reads in memory, and what the run keeps is written behind it by
 /// the store's writer. Any other statement, on any connection of the process, ends it at once (`strict_statement`), naming
 /// the statement, its thread and span, and where it was sent from; so does a wave's wait for the writer.
-pub(crate) fn strict() -> bool {
+pub fn strict() -> bool {
     static STRICT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *STRICT.get_or_init(|| std::env::var("RERAIL_SQL_STRICT").is_ok_and(|v| !matches!(v.as_str(), "" | "0" | "off")))
 }
 
 /// Whether the store's connections trace their statements: for the profile, or the strict mode.
-pub(crate) fn tracing() -> bool {
+pub fn tracing() -> bool {
     on() || strict()
 }
 
@@ -602,7 +602,7 @@ fn reads_only(text: &str) -> bool {
 
 /// A statement about to run on connection `conn` (`run`, `store`, or `sqlite`: any other). In the strict mode
 /// (`strict`), the process ends unless it is the store writer's, or a read before the process's first wave.
-pub(crate) fn strict_statement(conn: &'static str, text: &str) {
+pub fn strict_statement(conn: &'static str, text: &str) {
     if !strict() || BEHIND.with(std::cell::Cell::get) {
         return;
     }
@@ -634,7 +634,7 @@ fn violation(when: &str, what: &str) -> ! {
 
 /// In the strict mode, every SQLite connection the process opens checks its statements (`strict_statement`): one that
 /// sets a trace of its own (the store's, the run's) checks them there.
-pub(crate) fn strict_on_every_connection() {
+pub fn strict_on_every_connection() {
     use rusqlite::ffi;
     unsafe extern "C" fn trace(event: u32, _: *mut std::ffi::c_void, p: *mut std::ffi::c_void, _: *mut std::ffi::c_void) -> std::ffi::c_int {
         if event == ffi::SQLITE_TRACE_STMT as u32 {
@@ -664,7 +664,7 @@ impl Drop for Waves {
 }
 
 /// Marks this thread as working behind the run (the store's writer).
-pub(crate) fn behind_the_run() {
+pub fn behind_the_run() {
     BEHIND.with(|b| b.set(true));
 }
 
@@ -705,7 +705,7 @@ fn hazard_class(conn: &str, path: &str, text: &str) -> &'static str {
 
 /// A statement that connection `conn` (`run`: the run's database; `store`: the content store) ran in `ns`
 /// nanoseconds: inside the waves, on a wave's thread, it is a hazard (decision 0104: no wave waits for SQL).
-pub(crate) fn sql_in_wave(conn: &'static str, text: &str, ns: u64) {
+pub fn sql_in_wave(conn: &'static str, text: &str, ns: u64) {
     if !in_waves() {
         return;
     }
@@ -719,14 +719,14 @@ pub(crate) fn sql_in_wave(conn: &'static str, text: &str, ns: u64) {
 
 /// SQL waits attributed to their connection and span, including the content store's separate connection.
 /// Each row is (span, connection and SQL text, executions, nanoseconds).
-pub(in crate::code_rule_dsl) fn sql_waits() -> Vec<(String, String, u64, u64)> {
+pub fn sql_waits() -> Vec<(String, String, u64, u64)> {
     state().hazards.iter().map(|((_, path, text), (runs, ns))|
         (path.clone(), text.clone(), *runs, *ns)).collect()
 }
 
 /// A wave's thread waited `wall` seconds for SQLite's side of the store (`what`: a queued write it reads, the queue's
 /// back-pressure): a hazard like a statement.
-pub(crate) fn wait_in_wave(what: &str, wall: f64) {
+pub fn wait_in_wave(what: &str, wall: f64) {
     strict_wait(what);
     if !in_waves() {
         return;
@@ -739,7 +739,7 @@ pub(crate) fn wait_in_wave(what: &str, wall: f64) {
 }
 
 /// The hazards: SQL a wave's thread ran or waited on between the run's first wave and its last.
-fn hazards(r: &mut String, state: &State) {
+pub fn hazards(r: &mut String, state: &State) {
     let (runs, ns): (u64, u64) = state.hazards.values().fold((0, 0), |a, v| (a.0 + v.0, a.1 + v.1));
     let _ = writeln!(
         r,
@@ -779,7 +779,7 @@ fn hazards(r: &mut String, state: &State) {
 }
 
 /// Charges `n` units of `unit` work to the current span (the roofline). Off, it costs one load.
-pub(in crate::code_rule_dsl) fn work(unit: Unit, n: u64) {
+pub fn work(unit: Unit, n: u64) {
     if !on() || n == 0 {
         return;
     }
@@ -788,7 +788,7 @@ pub(in crate::code_rule_dsl) fn work(unit: Unit, n: u64) {
 }
 
 /// Adds a native plan's rows in and out per step, and its probes' CPU seconds, to the current span.
-pub(in crate::code_rule_dsl) fn native(plan: String, steps: &[(u64, u64)], cpu_s: f64) {
+pub fn native(plan: String, steps: &[(u64, u64)], cpu_s: f64) {
     let path = current();
     let mut state = state();
     *state.native_cpu.entry((path.clone(), plan.clone())).or_default() += cpu_s;
@@ -803,7 +803,7 @@ pub(in crate::code_rule_dsl) fn native(plan: String, steps: &[(u64, u64)], cpu_s
 }
 
 /// Keeps `text` under `key` (the first one given).
-pub(in crate::code_rule_dsl) fn note(key: String, text: impl FnOnce() -> String) {
+pub fn note(key: String, text: impl FnOnce() -> String) {
     if state().notes.contains_key(&key) {
         return;
     }
@@ -813,12 +813,12 @@ pub(in crate::code_rule_dsl) fn note(key: String, text: impl FnOnce() -> String)
 }
 
 /// A statement's text as the SQL trace keys it: its words, single-spaced.
-pub(in crate::code_rule_dsl) fn normal(sql: &str) -> String {
+pub fn normal(sql: &str) -> String {
     sql.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// Notes `statement`'s query plan (`EXPLAIN QUERY PLAN`, once per text) when profiling.
-pub(in crate::code_rule_dsl) fn plan(db: &rusqlite::Connection, statement: &str) {
+pub fn plan(db: &rusqlite::Connection, statement: &str) {
     if !on() {
         return;
     }
@@ -844,12 +844,12 @@ pub(in crate::code_rule_dsl) fn plan(db: &rusqlite::Connection, statement: &str)
 }
 
 /// This thread's CPU now (to time a part a span cannot hold).
-pub(in crate::code_rule_dsl) fn now() -> f64 {
+pub fn now() -> f64 {
     cpu()
 }
 
 /// A run-level decision or optimization under `topic` (counted when made again, as per chunk).
-pub(in crate::code_rule_dsl) fn decision(topic: &str, text: impl FnOnce() -> String) {
+pub fn decision(topic: &str, text: impl FnOnce() -> String) {
     if !on() {
         return;
     }
@@ -859,7 +859,7 @@ pub(in crate::code_rule_dsl) fn decision(topic: &str, text: impl FnOnce() -> Str
 }
 
 /// The decisions made so far (none when profiling is off): `decisions_since` takes the ones made after.
-pub(in crate::code_rule_dsl) fn decisions() -> BTreeMap<(String, String), u64> {
+pub fn decisions() -> BTreeMap<(String, String), u64> {
     if !on() {
         return BTreeMap::new();
     }
@@ -868,7 +868,7 @@ pub(in crate::code_rule_dsl) fn decisions() -> BTreeMap<(String, String), u64> {
 
 /// The decisions made since `before` (`decisions`), with how often: what a step decided, for a run that reuses the
 /// step's result to state again (`add_decisions`).
-pub(in crate::code_rule_dsl) fn decisions_since(before: &BTreeMap<(String, String), u64>) -> Vec<((String, String), u64)> {
+pub fn decisions_since(before: &BTreeMap<(String, String), u64>) -> Vec<((String, String), u64)> {
     decisions().into_iter().filter_map(|(k, n)| n.checked_sub(before.get(&k).copied().unwrap_or(0)).filter(|d| *d > 0).map(|d| (k, d))).collect()
 }
 
@@ -885,7 +885,7 @@ pub(in crate::code_rule_dsl) fn add_decisions(made: &[((String, String), u64)]) 
 
 /// The strata the device ran (decision 0095, step 4): in all, then the costliest; and the strata placed there that it
 /// refused, by reason (no stratum is moved from the device to the CPU without a line here).
-fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
+pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
     let ran: Vec<(&String, &PlacedTotal)> = all.iter().filter(|(_, t)| t.gpu.runs > 0).collect();
     let refused: Vec<(&String, &PlacedTotal)> = all.iter().filter(|(_, t)| t.refused.is_some()).collect();
     if ran.is_empty() && refused.is_empty() {
@@ -934,18 +934,18 @@ fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
 
 /// A join step estimated over this many seconds is a planned estimate gone wrong (a cross product priced at 10^20
 /// rows): counted, not summed.
-const JOIN_ESTIMATE_CAP: f64 = 1e3;
+pub const JOIN_ESTIMATE_CAP: f64 = 1e3;
 
 /// Records that stratum `key` fell back to SQLite, and the kind of literal the native engine declined (`class`).
 /// A stratum SQLite is about to run inside the waves: under the strict mode, the end of the process, naming it and
 /// what the native engine declined.
-pub(in crate::code_rule_dsl) fn strict_declined(key: &str, why: &str, class: Option<&str>) {
+pub fn strict_declined(key: &str, why: &str, class: Option<&str>) {
     if strict() && inside_waves() {
         violation("inside the waves: a stratum the native engine declined", &format!("stratum {key}: {why}; {}", class.unwrap_or("no class")));
     }
 }
 
-pub(in crate::code_rule_dsl) fn fallback(key: &str, class: String) {
+pub fn fallback(key: &str, class: String) {
     if !on() {
         return;
     }
@@ -954,7 +954,7 @@ pub(in crate::code_rule_dsl) fn fallback(key: &str, class: String) {
 
 /// The strata that fell back to SQLite, costliest first, and the same by the kind of literal declined: each one's
 /// CPU (its `stratum …` spans, wherever they ran) and SQLite's VM steps. What the native engine lacks, by its cost.
-fn fallbacks(r: &mut String, state: &State) {
+pub fn fallbacks(r: &mut String, state: &State) {
     let roots: f64 = state.spans.iter().filter(|(p, _)| !p.contains('/')).map(|(_, t)| t.total).sum();
     let mut rows: Vec<(f64, u64, u64, &String, &String)> = state
         .fallbacks
@@ -995,7 +995,7 @@ fn fallbacks(r: &mut String, state: &State) {
     }
 }
 
-pub(in crate::code_rule_dsl) fn stratum(key: &str, engine: &str, why: impl FnOnce() -> String) {
+pub fn stratum(key: &str, engine: &str, why: impl FnOnce() -> String) {
     if !on() {
         return;
     }
@@ -1026,7 +1026,7 @@ pub(in crate::code_rule_dsl) fn stratum(key: &str, engine: &str, why: impl FnOnc
 /// its planning took, how often it was replanned, the actual rows into and out of each step where measured, and the
 /// rows it produced where known. One loop per call; equal plans add up.
 #[allow(clippy::too_many_arguments)]
-pub(in crate::code_rule_dsl) fn planned(
+pub fn planned(
     key: &str,
     kind: &str,
     rule: Option<usize>,
@@ -1063,7 +1063,7 @@ pub(in crate::code_rule_dsl) fn planned(
 }
 
 /// A device kernel's run in the current span: its launches, GPU seconds, the host's wall seconds waiting, its cells.
-pub(in crate::code_rule_dsl) fn device(kernel: &str, launches: u64, gpu: f64, wall: f64, cells: u64) {
+pub fn device(kernel: &str, launches: u64, gpu: f64, wall: f64, cells: u64) {
     if !on() {
         return;
     }
@@ -1079,7 +1079,7 @@ pub(in crate::code_rule_dsl) fn device(kernel: &str, launches: u64, gpu: f64, wa
 
 /// A device run's host-side phases (seconds, in `PHASES` order) and the buffer bytes it made and reused, added to
 /// the current span's entry for `kernel`.
-pub(in crate::code_rule_dsl) fn device_phases(kernel: &str, phases: [f64; PHASES.len()], made: u64, reused: u64) {
+pub fn device_phases(kernel: &str, phases: [f64; PHASES.len()], made: u64, reused: u64) {
     if !on() {
         return;
     }
@@ -1098,13 +1098,13 @@ pub(in crate::code_rule_dsl) fn device_phases(kernel: &str, phases: [f64; PHASES
 static ONE_RUN: Mutex<()> = Mutex::new(());
 
 /// Holds the profile for one run (`ONE_RUN`).
-pub(in crate::code_rule_dsl) fn one_run() -> std::sync::MutexGuard<'static, ()> {
+pub fn one_run() -> std::sync::MutexGuard<'static, ()> {
     ONE_RUN.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Holds the profile for one run if no run holds it: a run nested in another (phase 0's, inside a run's preparing)
 /// is then the outer run's, and neither resets nor writes the profile.
-pub(in crate::code_rule_dsl) fn one_run_if_free() -> Option<std::sync::MutexGuard<'static, ()>> {
+pub fn one_run_if_free() -> Option<std::sync::MutexGuard<'static, ()>> {
     match ONE_RUN.try_lock() {
         Ok(guard) => Some(guard),
         Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
@@ -1113,7 +1113,7 @@ pub(in crate::code_rule_dsl) fn one_run_if_free() -> Option<std::sync::MutexGuar
 }
 
 /// Forgets everything recorded (a run's start).
-pub(in crate::code_rule_dsl) fn reset() {
+pub fn reset() {
     *state() = State::default();
 }
 
@@ -1126,11 +1126,11 @@ pub fn statements() -> Vec<(String, String, SqlTotal)> {
 }
 
 /// The spans recorded: path and totals.
-pub(in crate::code_rule_dsl) fn spans() -> BTreeMap<String, SpanTotal> {
+pub fn spans() -> BTreeMap<String, SpanTotal> {
     state().spans.clone()
 }
 
-fn short(s: &str, n: usize) -> String {
+pub fn short(s: &str, n: usize) -> String {
     if s.chars().count() <= n { s.to_owned() } else { format!("{}…", s.chars().take(n).collect::<String>()) }
 }
 
@@ -1139,7 +1139,7 @@ fn rows(x: f64) -> String {
     if x < 10.0 { format!("{x:.2}") } else { format!("{x:.0}") }
 }
 
-fn rule_name(rule: Option<usize>, kind: &str) -> String {
+pub fn rule_name(rule: Option<usize>, kind: &str) -> String {
     match rule {
         Some(k) => format!("rule #{k:04} ({kind})"),
         None => kind.to_owned(),
@@ -1147,7 +1147,7 @@ fn rule_name(rule: Option<usize>, kind: &str) -> String {
 }
 
 /// The EXPLAIN ANALYZE section: decisions, then each stratum's engine and its plans, steps with estimates and actuals.
-fn explain(r: &mut String, state: &State) {
+pub fn explain(r: &mut String, state: &State) {
     let _ = writeln!(r, "\n== Decisions and optimizations (times made)");
     if state.decisions.is_empty() {
         r.push_str("(none recorded)\n");
@@ -1219,7 +1219,7 @@ fn explain(r: &mut String, state: &State) {
 
 /// The memory section: the process now, the spans by bytes they allocated themselves, and those that raised the
 /// footprint's high-water mark (`memory`).
-fn memory_report(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
+pub fn memory_report(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
     let (now, max) = memory::footprint();
     let (live, resident) = memory::heap();
     let _ = writeln!(
@@ -1273,7 +1273,7 @@ fn thread_cpu(port: u32) -> Option<f64> {
 
 /// Every thread's open spans now, innermost last, with the CPU and bytes each has taken so far, and the SQL
 /// statement running: what a run was doing when it was dumped (`watch`). Open spans are not yet in the totals.
-pub(in crate::code_rule_dsl) fn open_spans() -> String {
+pub fn open_spans() -> String {
     let threads: Vec<_> = THREADS.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().filter_map(std::sync::Weak::upgrade).collect();
     let mut r = String::new();
     let _ = writeln!(r, "== Open at the dump: each thread's open spans, outermost first, with CPU and bytes allocated since each opened");
@@ -1318,12 +1318,12 @@ pub(in crate::code_rule_dsl) fn open_spans() -> String {
 }
 
 /// Record why expensive input relations are requested, before projection planning.
-pub(in crate::code_rule_dsl) fn projection_plan(prog: &crate::code_rule_dsl::logic::front::Program, reads: &std::collections::BTreeSet<String>) {
+pub fn projection_plan(prog: &crate::code_rule_dsl::logic::front::Program, reads: &std::collections::BTreeSet<String>) {
     if on() { analysis_report::projection(prog, reads); }
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
 
@@ -1431,32 +1431,32 @@ mod tests {
 /// What a stratum's device run did, for the profile.
 #[derive(Clone, Debug, Default)]
 pub struct Report {
-    pub(in crate::code_rule_dsl) rules: u32,
-    pub(in crate::code_rule_dsl) stages: u32,
-    pub(in crate::code_rule_dsl) submissions: u32,
-    pub(in crate::code_rule_dsl) dispatches: u32,
+    pub rules: u32,
+    pub stages: u32,
+    pub submissions: u32,
+    pub dispatches: u32,
     /// Runs again from an overflowing stage.
-    pub(in crate::code_rule_dsl) reruns: u32,
-    pub(in crate::code_rule_dsl) gpu_seconds: f64,
+    pub reruns: u32,
+    pub gpu_seconds: f64,
     /// This thread's CPU: encoding (uploads and sorts' encoding included), waiting, and reading the rows back into
     /// the store.
-    pub(in crate::code_rule_dsl) encode_cpu: f64,
-    pub(in crate::code_rule_dsl) wait_cpu: f64,
-    pub(in crate::code_rule_dsl) wait_wall: f64,
-    pub(in crate::code_rule_dsl) decode_cpu: f64,
+    pub encode_cpu: f64,
+    pub wait_cpu: f64,
+    pub wait_wall: f64,
+    pub decode_cpu: f64,
     /// Head rows left once made distinct on the device (of `rows`).
-    pub(in crate::code_rule_dsl) distinct: u64,
-    pub(in crate::code_rule_dsl) upload_cpu: f64,
+    pub distinct: u64,
+    pub upload_cpu: f64,
     /// Relations uploaded (and their bytes), found resident; sorts made, found resident.
-    pub(in crate::code_rule_dsl) uploads: u32,
-    pub(in crate::code_rule_dsl) upload_bytes: u64,
-    pub(in crate::code_rule_dsl) resident_hits: u32,
-    pub(in crate::code_rule_dsl) sorts: u32,
-    pub(in crate::code_rule_dsl) sort_hits: u32,
+    pub uploads: u32,
+    pub upload_bytes: u64,
+    pub resident_hits: u32,
+    pub sorts: u32,
+    pub sort_hits: u32,
     /// Rows the heads made (before the store's set), and bindings the stages made.
-    pub(in crate::code_rule_dsl) rows: u64,
-    pub(in crate::code_rule_dsl) bindings: u64,
+    pub rows: u64,
+    pub bindings: u64,
     /// Why the device refused the stratum (at open, or at run time: a table past its budget), which then ran on the
     /// CPU; `None` when it ran here.
-    pub(in crate::code_rule_dsl) refused: Option<String>,
+    pub refused: Option<String>,
 }

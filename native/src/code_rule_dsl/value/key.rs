@@ -16,7 +16,7 @@ use num_traits::Zero;
 /// itself, is what its property is named (`getStaticStringValue`: `` `a` `` is `a`, `/a/g` is
 /// `/a/g`, `0x1` is `1`). Anything else, a computed expression or a private name included, is not
 /// known (`None`).
-pub(crate) fn static_property_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
+pub fn static_property_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
     let (key, computed) = match node.kind().as_ref() {
         "pair" | "pair_pattern" => (node.field("key")?, false),
         "method_definition"
@@ -46,7 +46,7 @@ pub(crate) fn static_property_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16
 /// private name's `PrivateIdentifier.name`, without its `#`) or a string literal's value
 /// (`Literal.value`). ESLint rules compare these across the two (func-name-matching's string key
 /// and function name, no-useless-rename's key and local name). `None` for any other node.
-pub(crate) fn node_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
+pub fn node_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
     match node.kind().as_ref() {
         "identifier"
         | "property_identifier"
@@ -68,7 +68,7 @@ pub(crate) fn node_name<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
 /// `static_keys` (the default there), a member access with a static name is the same as one of the
 /// same name on the same object (`a.b` and `a['b']`); without, computed and static accesses
 /// differ. Any other expression is never the same. `None` where a literal does not decode.
-pub(crate) fn same_reference<D: Doc>(
+pub fn same_reference<D: Doc>(
     left: &Node<'_, D>,
     right: &Node<'_, D>,
     static_keys: bool,
@@ -172,7 +172,7 @@ fn equal_literal_value<D: Doc>(left: &Node<'_, D>, right: &Node<'_, D>) -> Optio
 /// `value` folds the key to (eslint-utils' `getStaticValue` in the node's scope: `['f' + '']` is
 /// `f`). It reads a property, method, field, signature or member access, or a key node itself.
 /// `None` where the key's value is not known.
-pub(crate) fn member_access_name<'r, D: Doc>(
+pub fn member_access_name<'r, D: Doc>(
     node: &Node<'r, D>,
     value: &mut dyn FnMut(&Node<'r, D>) -> Value,
 ) -> Option<Vec<u16>> {
@@ -203,10 +203,10 @@ pub(crate) fn member_access_name<'r, D: Doc>(
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 /// The key node that ESLint's `key` or `property` is: a computed name without its brackets and
 /// parentheses, since ESTree has neither.
-pub(crate) fn key_node<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
+pub fn key_node<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
     let key = match node.kind().as_ref() {
         "pair" | "pair_pattern" => node.field("key")?,
         "method_definition"
@@ -289,7 +289,7 @@ pub(crate) fn identifier_name(text: &str) -> Option<Vec<u16>> {
 }
 
 // The DSL's number text, which is ECMAScript's (`matcher::transform`, the engine's).
-pub(crate) use crate::code_rule_dsl::matcher::transform::number_to_string;
+pub use crate::code_rule_dsl::matcher::transform::number_to_string;
 
 /// `StrWhiteSpaceChar`: ECMAScript white space and line terminators.
 fn is_str_white_space(c: char) -> bool {
@@ -329,7 +329,7 @@ fn radix_integer(text: &str) -> Option<(u32, &str)> {
 
 /// StringToNumber: white space trimmed; empty is 0; `Infinity`, decimals and `0x`/`0o`/`0b`
 /// integers read; anything else is NaN. `None` only for a radix integer past 128 bits.
-pub(crate) fn string_to_number(units: &[u16]) -> Option<f64> {
+pub fn string_to_number(units: &[u16]) -> Option<f64> {
     let Some(text) = trimmed(units) else {
         return Some(f64::NAN);
     };
@@ -383,7 +383,7 @@ pub(crate) fn string_to_number(units: &[u16]) -> Option<f64> {
 }
 
 /// StringToBigInt, exactly: `None` where it is undefined (not an integer literal).
-pub(crate) fn string_to_bigint(units: &[u16]) -> Option<BigInt> {
+pub fn string_to_bigint(units: &[u16]) -> Option<BigInt> {
     let text = trimmed(units)?;
     if text.is_empty() {
         return Some(BigInt::zero());
@@ -404,7 +404,7 @@ pub(crate) fn string_to_bigint(units: &[u16]) -> Option<BigInt> {
 }
 
 /// ToUint32: the number truncated, modulo 2^32; NaN and infinities are 0.
-pub(crate) fn to_uint32(value: f64) -> u32 {
+pub fn to_uint32(value: f64) -> u32 {
     if !value.is_finite() {
         return 0;
     }
@@ -412,9 +412,8 @@ pub(crate) fn to_uint32(value: f64) -> u32 {
 }
 
 /// ToInt32: ToUint32 read as two's complement.
-pub(crate) fn to_int32(value: f64) -> i32 {
+pub fn to_int32(value: f64) -> i32 {
     to_uint32(value) as i32
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-engine's (it mounts it)

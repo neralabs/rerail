@@ -154,7 +154,7 @@ impl CaptureProgram {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum ValueProgram {
+pub enum ValueProgram {
     Equal { string: u16 },
     Prefix { string: u16 },
     Regex(ByteNfa),
@@ -303,7 +303,7 @@ impl ValueProgram {
         output
     }
 
-    pub(super) fn is_match(
+    pub fn is_match(
         &self,
         bytes: &[u8],
         strings: &[Vec<u8>],
@@ -382,7 +382,7 @@ impl ValueMatcher {
         }
     }
 
-    pub(super) fn matches(&self, byte: u8) -> bool {
+    pub fn matches(&self, byte: u8) -> bool {
         match self {
             Self::Any => true,
             Self::Byte(expected) => byte == *expected,
@@ -468,16 +468,16 @@ impl LuaProgram {
         }
     }
 
-    #[cfg(test)]
-    pub(super) fn test_work_count(&self, bytes: &[u8]) -> (Result<bool, Error>, usize) {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn test_work_count(&self, bytes: &[u8]) -> (Result<bool, Error>, usize) {
         let mut work = 0;
         let result = self.is_match(bytes, &mut work);
         (result, work)
     }
 
     /// Exercise the shared CPU work counter with exactly `remaining` steps available.
-    #[cfg(all(test, target_os = "macos"))]
-    pub(super) fn test_match_with_budget(
+    #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+    pub fn test_match_with_budget(
         &self,
         bytes: &[u8],
         remaining: usize,
@@ -731,14 +731,14 @@ struct NfaRun<'a> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct ByteNfa {
+pub struct ByteNfa {
     pub(super) start: u32,
     pub(super) anchored_start: u32,
-    pub(super) states: Vec<NfaState>,
+    pub states: Vec<NfaState>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) enum NfaState {
+pub enum NfaState {
     Bytes(Vec<(u8, u8, u32)>),
     Look { kind: Look, next: u32 },
     Split(Vec<u32>),
@@ -764,7 +764,7 @@ impl ByteNfa {
         2 * ranges + edges + 1
     }
 
-    pub(super) fn compile(source: &str) -> Result<Self, Error> {
+    pub fn compile(source: &str) -> Result<Self, Error> {
         let nfa = thompson::NFA::new(source).map_err(|_| Error::UnsupportedPattern)?;
         let states = nfa
             .states()
@@ -827,22 +827,22 @@ impl ByteNfa {
         })
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn is_match(&self, bytes: &[u8]) -> Result<bool, Error> {
         let look = LookMatcher::new();
         self.is_match_with_work(bytes, &mut 0, &look)
     }
 
-    #[cfg(test)]
-    pub(super) fn test_work_count(&self, bytes: &[u8]) -> (Result<bool, Error>, usize) {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn test_work_count(&self, bytes: &[u8]) -> (Result<bool, Error>, usize) {
         let mut work = 0;
         let result = self.is_match_with_work(bytes, &mut work, &LookMatcher::new());
         (result, work)
     }
 
     /// Exercise the same bounded CPU matcher used by the unbounded cost oracle.
-    #[cfg(all(test, target_os = "macos"))]
-    pub(super) fn test_match_with_budget(
+    #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+    pub fn test_match_with_budget(
         &self,
         bytes: &[u8],
         remaining: usize,
@@ -855,13 +855,13 @@ impl ByteNfa {
         (result, work - initial)
     }
 
-    #[cfg(test)]
-    pub(super) fn test_find_work_count(&self, bytes: &[u8]) -> (Option<[u32; 2]>, usize) {
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn test_find_work_count(&self, bytes: &[u8]) -> (Option<[u32; 2]>, usize) {
         self.test_find_work_count_from(bytes, 0)
     }
 
-    #[cfg(test)]
-    pub(super) fn test_find_work_count_from(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn test_find_work_count_from(
         &self,
         bytes: &[u8],
         start: usize,
@@ -870,8 +870,8 @@ impl ByteNfa {
         (result.expect("unbounded CPU find oracle"), work)
     }
 
-    #[cfg(test)]
-    pub(super) fn test_find_with_budget_from(
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn test_find_with_budget_from(
         &self,
         bytes: &[u8],
         start: usize,
@@ -1097,7 +1097,7 @@ impl ByteNfa {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use regex::Regex;
 
