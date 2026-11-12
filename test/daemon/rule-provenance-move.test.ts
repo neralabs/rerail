@@ -11,11 +11,19 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function until(condition: () => boolean, timeoutMs = 15_000): Promise<void> {
+/**
+ * How long a test waits for the move to end. The move's thread loads its modules when it starts, from TypeScript source
+ * through `tsx` as the tests run it, so on a slow Windows machine whose temporary folder starts empty the move can end
+ * tens of seconds after the daemon starts. Each test's own timeout leaves room for the daemon's start and close.
+ */
+const MOVE_MS = 45_000;
+const TEST_MS = MOVE_MS + 20_000;
+
+async function until(condition: () => boolean, timeoutMs = MOVE_MS): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (!condition()) {
     if (Date.now() > deadline) throw new Error("timed out");
-    await new Promise(resolve => setTimeout(resolve, 50));
+    await new Promise(resolve => setTimeout(resolve, 200));
   }
 }
 
@@ -69,7 +77,7 @@ describe("the daemon's move of audit rule provenance", () => {
     cleanups.push(() => daemon.close());
 
     await until(() => moved(databasePath));
-  }, 30_000);
+  }, TEST_MS);
 
   it("keeps its thread free while it moves, however long the move's VACUUM takes", async () => {
     const { home, databasePath } = databaseWithInlineAudits();
@@ -103,5 +111,5 @@ describe("the daemon's move of audit rule provenance", () => {
       clearInterval(ticks);
     }
     expect(longest).toBeLessThan(2_000);
-  }, 30_000);
+  }, TEST_MS);
 });
