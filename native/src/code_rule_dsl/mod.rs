@@ -899,6 +899,9 @@ pub(crate) mod logic {
         pub mod corpus {
             pub use rerail_logic::code_rule_dsl::logic::plan::corpus::*;
             pub mod references;
+            // The corpus runner's tests: they parse files, so they run where the languages are registered.
+            #[cfg(test)]
+            pub mod tests;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::plan::{Error, Outcome, Result, lower};
             #[allow(unused_imports)]
