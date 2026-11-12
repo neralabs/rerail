@@ -28,23 +28,23 @@ fn store(label: &str) -> (TemporaryDatabase, ContentStore) {
     (path, store)
 }
 
-/// A test's store leaves nothing in the temporary folder once the test's bindings drop: not the
-/// database, nor the WAL and shared-memory files its thread's connection holds open.
+/// A test's store keeps its database in a folder of its own, and the folder is gone once the
+/// test's bindings drop, with the WAL and shared-memory files its thread's connection holds open.
 #[test]
 fn a_test_store_leaves_no_files_behind() {
-    let files = {
+    let folder = {
         let (path, store) = store("leaves-no-files");
         store.put_source(b"written", &[]).unwrap();
-        let files = ["", "-wal", "-shm"].map(|suffix| {
-            let mut file = path.as_os_str().to_owned();
-            file.push(suffix);
-            std::path::PathBuf::from(file)
-        });
-        assert!(files.iter().all(|file| file.exists()), "{files:?}");
-        files
+        let folder = path.parent().unwrap().to_path_buf();
+        let files: Vec<_> = fs::read_dir(&folder)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name())
+            .collect();
+        // The database, its WAL and its shared-memory file.
+        assert_eq!(files.len(), 3, "{files:?}");
+        folder
     };
-    let left: Vec<_> = files.iter().filter(|file| file.exists()).collect();
-    assert!(left.is_empty(), "left in the temporary folder: {left:?}");
+    assert!(!folder.exists(), "left behind: {}", folder.display());
 }
 
 fn candidate_catalog(label: &str) -> CandidateCatalogIdentity {
@@ -2723,7 +2723,7 @@ fn set_mode(path: &std::path::Path, mode: u32) {
 #[cfg(unix)]
 #[test]
 fn a_new_store_and_the_wal_beside_it_are_private_to_their_user() {
-    let root = test_support::unique_temporary_path("rerail-content-store-private-new");
+    let root = test_support::TemporaryFolder::new("rerail-content-store-private-new");
     let folder = root.join("cache");
     let path = folder.join(STORE_FILE_NAME);
     drop(ContentStore::open(&path).unwrap());
@@ -2737,29 +2737,25 @@ fn a_new_store_and_the_wal_beside_it_are_private_to_their_user() {
     let mut wal = path.as_os_str().to_owned();
     wal.push("-wal");
     assert_eq!(mode_of(std::path::Path::new(&wal)), 0o600);
-    drop(writer);
-    std::fs::remove_dir_all(&root).unwrap();
 }
 
 #[cfg(unix)]
 #[test]
 fn opening_a_store_others_can_read_takes_their_access_away() {
-    let folder = test_support::unique_temporary_path("rerail-content-store-private-existing");
+    let folder = test_support::TemporaryFolder::new("rerail-content-store-private-existing");
     let path = folder.join(STORE_FILE_NAME);
     drop(ContentStore::open(&path).unwrap());
     set_mode(&folder, 0o755);
     set_mode(&path, 0o644);
-    let store = ContentStore::open(&path).unwrap();
+    let _store = ContentStore::open(&path).unwrap();
     assert_eq!(mode_of(&folder), 0o700);
     assert_eq!(mode_of(&path), 0o600);
-    drop(store);
-    std::fs::remove_dir_all(&folder).unwrap();
 }
 
 #[cfg(unix)]
 #[test]
 fn a_store_folder_that_is_a_symlink_is_not_followed_when_tightening() {
-    let root = test_support::unique_temporary_path("rerail-content-store-private-symlink");
+    let root = test_support::TemporaryFolder::new("rerail-content-store-private-symlink");
     let elsewhere = root.join("elsewhere");
     std::fs::create_dir_all(&elsewhere).unwrap();
     set_mode(&elsewhere, 0o755);
@@ -2768,5 +2764,4 @@ fn a_store_folder_that_is_a_symlink_is_not_followed_when_tightening() {
     drop(ContentStore::open(&linked.join(STORE_FILE_NAME)).unwrap());
     assert_eq!(mode_of(&elsewhere), 0o755);
     assert_eq!(mode_of(&elsewhere.join(STORE_FILE_NAME)), 0o600);
-    std::fs::remove_dir_all(&root).unwrap();
 }
