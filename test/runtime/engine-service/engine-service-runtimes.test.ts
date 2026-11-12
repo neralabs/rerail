@@ -3,6 +3,7 @@ import { mkdir, mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
+import { runInNewContext } from "node:vm";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CheckoutCatalogs, codeRuleSchema, type AdapterEvent } from "../../../src/engine/index.js";
@@ -12,6 +13,9 @@ import { testEmbedder } from "../../support/hook-events.js";
 import { setUpTestRepository, type TestRepositoryRules } from "../../support/repository-rules.js";
 import { startTestRepository } from "../../support/started-repository.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
+
+// The service collects through `runInNewContext("gc")` once a runtime closed; one test makes that collection fail.
+vi.mock("node:vm", { spy: true });
 
 const roots: string[] = [];
 const services: EngineService[] = [];
@@ -164,6 +168,30 @@ describe("the engine service's runtimes", () => {
     }
 
     expect(order).toEqual(["runtime closed", "service closed"]);
+  });
+
+  // The collection after a runtime closed throws if V8 does not expose its collector. Unhandled, the throw would end the
+  // daemon; swallowed, it would hide that the closed runtime's rules may still hold their memory.
+  it("reports a collection that fails after a runtime closed, and still closes", async () => {
+    const { service, first, start, end } = await twoCheckouts(0);
+    const written: string[] = [];
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(chunk => (written.push(String(chunk)), true));
+    vi.mocked(runInNewContext).mockImplementationOnce(() => {
+      throw new Error("gc is not exposed");
+    });
+    try {
+      await start("a", first);
+      await end("a", first);
+      // This test closes the service itself; until here, a failed start or end leaves it to `afterEach`.
+      services.splice(services.indexOf(service), 1);
+      await service.close();
+    } finally {
+      stderr.mockRestore();
+      vi.mocked(runInNewContext).mockReset();
+    }
+
+    expect(service.openRuntimes()).toBe(0);
+    expect(written).toContain("rerail: closing an idle runtime failed: gc is not exposed\n");
   });
 });
 

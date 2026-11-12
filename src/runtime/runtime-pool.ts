@@ -289,13 +289,16 @@ export class RuntimePool {
     this.#idle.set(runtimeKey, timer);
   }
 
-  /** Closes the runtime at `runtimeKey`, and collects once it has, as `close` waits for; a failure is reported. */
+  /**
+   * Closes the runtime at `runtimeKey`, and collects once it has, as `close` waits for. A failure of either is reported:
+   * `#track` drops what the work throws, and a failed collection leaves the closed runtime's rules in memory.
+   */
   #dispose(runtimeKey: string): void {
     const runtime = this.#runtimes.get(runtimeKey);
     if (runtime === undefined) return;
     this.#runtimes.delete(runtimeKey);
     for (const [configuration, key] of this.#runtimeKeysByConfiguration) if (key === runtimeKey) this.#runtimeKeysByConfiguration.delete(configuration);
-    this.#track(runtime.dispose().then(collectGarbage, (error: unknown) => {
+    this.#track(runtime.dispose().then(collectGarbage).catch((error: unknown) => {
       process.stderr.write(`rerail: closing an idle runtime failed: ${error instanceof Error ? error.message : String(error)}\n`);
     }));
   }
