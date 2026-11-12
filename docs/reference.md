@@ -599,7 +599,7 @@ Anything else, including `/native/*`, `/mcp`, `/healthz` and the page, gets `421
 
 ### Daemon state
 
-`~/.rerail/daemon.json` (or `$RERAIL_HOME/daemon.json`) holds pid, port and database path; output goes to `daemon.log` beside it. `RERAIL_AUTOSTART=0` stops automatic daemon creation, so command hooks need an existing daemon or explicit endpoint.
+`~/.rerail/daemon.json` (or `$RERAIL_HOME/daemon.json`) holds pid, port and database path; output goes to `daemon.log` beside it. Each line the daemon writes there starts with the UTC time it was written (`2026-11-11T15:33:02.123Z `); what Node or the engine write to the file directly, such as the report of a fatal error, has no time. `RERAIL_AUTOSTART=0` stops automatic daemon creation, so command hooks need an existing daemon or explicit endpoint.
 
 <details>
 <summary>Ports, reuse and the kernel socket</summary>
