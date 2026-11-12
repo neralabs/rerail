@@ -202,6 +202,8 @@ jobs:
           filters: |
             rust:
               - 'native/**'
+              - 'accel/**'
+              - 'forest/**'
               - 'conformance/**'
               - 'fixtures/**'
               - 'packs/**'
@@ -268,9 +270,12 @@ jobs:
               - 'rust-toolchain.toml'
               - '.cargo/**'
               - '.gitattributes'
-            # The native engine the build job makes: its crate, and the language registry its build.rs reads.
+            # The native engine the build job makes: its crates (native/crates/, and the accelerators' accel/ and
+            # forest/ it depends on), and the language registry its build.rs reads.
             engine: &engine
               - 'native/**'
+              - 'accel/**'
+              - 'forest/**'
               - 'languages/**'
             # The package the build job makes and the daemon runs from source: every source file (tsc compiles all of
             # src/), the page, the bundled model, the hosts' hooks, skills and plugin manifests, the build scripts.
