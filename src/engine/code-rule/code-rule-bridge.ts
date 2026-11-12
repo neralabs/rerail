@@ -1216,27 +1216,36 @@ export class CodeRuleBridge {
     const root = await realpath(this.#cwd);
     const edits: CodeRuleEdit[] = [];
     const uncaptured = new Map<string, string>();
-    const reportedPath = reported === undefined ? undefined : this.#sourceLocation(root, reported.path)?.path;
-    const preimageOfEdit = (source: Source): Preimage | undefined =>
-      editPreimage(source, pending.preimages.get(source.path), source.path === reportedPath ? reported : undefined);
+    const preimages = { captured: pending.preimages, reported: this.#locatedReport(root, reported) };
     for (const configuredPath of [...pending.paths].sort(compareDeterministicStrings)) {
-      const edit = await this.#readToolEdit(discovery, root, configuredPath, preimageOfEdit, uncaptured);
+      const edit = await this.#readToolEdit(discovery, root, configuredPath, preimages, uncaptured);
       if (edit !== undefined) edits.push(edit);
     }
     return { edits, uncaptured };
   }
 
+  /** `reported` with its path as the session names its sources; undefined when it names none the auditor takes. */
+  #locatedReport(root: string, reported: ReportedPreimage | undefined): ReportedPreimage | undefined {
+    const path = reported === undefined ? undefined : this.#sourceLocation(root, reported.path)?.path;
+    return reported === undefined || path === undefined ? undefined : { ...reported, path };
+  }
+
+  /**
+   * The edit of the source at `configuredPath`, read against its preimage (`editPreimage`): the call's own capture, or
+   * what the tool's result reports for that source.
+   */
   async #readToolEdit(
     discovery: SourceDiscovery,
     root: string,
     configuredPath: string,
-    preimageOfEdit: (source: Source) => Preimage | undefined,
+    preimages: { readonly captured: ReadonlyMap<string, Preimage>; readonly reported: ReportedPreimage | undefined },
     uncaptured: Map<string, string>,
   ): Promise<CodeRuleEdit | undefined> {
     const source = await this.#readSource(root, configuredPath);
     if (source === undefined) return undefined;
     this.#touchSource(discovery, source.path);
-    const preimage = preimageOfEdit(source);
+    const reported = preimages.reported?.path === source.path ? preimages.reported : undefined;
+    const preimage = editPreimage(source, preimages.captured.get(source.path), reported);
     const before = this.#observed.get(source.path)?.digest;
     const edit = this.#readEdit(source, preimage);
     if (edit === undefined) return undefined;
