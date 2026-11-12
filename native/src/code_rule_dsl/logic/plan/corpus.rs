@@ -5452,7 +5452,7 @@ fn run_observed(
                                         "rows do not add up: old {:?} + new {} != now {} + gone {}",
                                         kept.input_source(rel).map(|o| o.len()), d.1.len(), new.len(), d.0.len()
                                     ),
-                                    Some(_) => "from the changed documents' entries".to_owned(),
+                                    Some((gone, plus)) => format!("from the changed documents' entries: {} gone, {} new, of {} rows", gone.len(), plus.len(), new.len()),
                                 };
                                 eprintln!("RERAIL_STRATA_LIVE input delta {rel}: {why}");
                             }
