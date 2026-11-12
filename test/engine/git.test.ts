@@ -342,6 +342,9 @@ describe("gitUnmergedReader", () => {
 describe("gitCheckoutReaders().modifiedOrUntracked", () => {
   afterEach(() => { vi.unstubAllEnvs(); });
 
+  /** Keeps a listing however recently Git's files changed: each test writes them just before it lists. */
+  const AT_ONCE = { settleMs: 0 };
+
   /**
    * A checkout in a fresh home whose Git reads no system or global configuration, holding `a.py` committed and changed
    * since, and `b.py` untracked.
@@ -371,7 +374,7 @@ describe("gitCheckoutReaders().modifiedOrUntracked", () => {
 
   it("keeps Git's listing for the same tree while no file Git reads for it changed, and lists again for another tree", async () => {
     const { root } = await changedCheckout();
-    const read = gitCheckoutReaders();
+    const read = gitCheckoutReaders(AT_ONCE);
     const tree = {};
     const first = await read.modifiedOrUntracked(root, tree);
     expect([...first].sort()).toEqual(["a.py", "b.py"]);
@@ -383,7 +386,7 @@ describe("gitCheckoutReaders().modifiedOrUntracked", () => {
 
   it("lists again once the index changed, and answers what Git lists now", async () => {
     const { root } = await changedCheckout();
-    const read = gitCheckoutReaders();
+    const read = gitCheckoutReaders(AT_ONCE);
     const tree = {};
     expect(await listed(read, root, tree)).toEqual(["a.py", "b.py"]);
     git(root, "add", "a.py");
@@ -392,7 +395,7 @@ describe("gitCheckoutReaders().modifiedOrUntracked", () => {
 
   it("lists again once info/exclude, core.excludesFile or the file it names changed", async () => {
     const { root, home } = await changedCheckout();
-    const read = gitCheckoutReaders();
+    const read = gitCheckoutReaders(AT_ONCE);
     const tree = {};
     expect(await listed(read, root, tree)).toEqual(["a.py", "b.py"]);
     await mkdir(join(root, ".git", "info"), { recursive: true });
@@ -417,7 +420,7 @@ describe("gitCheckoutReaders().modifiedOrUntracked", () => {
     await writeFile(join(home, "feature-ignores"), "");
     await writeFile(join(home, "feature.gitconfig"), `[core]\n\texcludesFile = ${join(home, "feature-ignores").replaceAll("\\", "/")}\n`);
     git(root, "config", "includeIf.onbranch:feature.path", join(home, "feature.gitconfig").replaceAll("\\", "/"));
-    const read = gitCheckoutReaders();
+    const read = gitCheckoutReaders(AT_ONCE);
     const [inRoot, inWorktree] = [{}, {}];
     expect(await listed(read, root, inRoot)).toEqual(["a.py", "b.py"]);
     expect(await listed(read, worktree, inWorktree)).toEqual(["b.py"]);
@@ -431,7 +434,7 @@ describe("gitCheckoutReaders().modifiedOrUntracked", () => {
     const { root, home } = await changedCheckout();
     const worktree = join(home, "worktree");
     git(root, "worktree", "add", "--quiet", "--detach", worktree);
-    const read = gitCheckoutReaders();
+    const read = gitCheckoutReaders(AT_ONCE);
     expect(await listed(read, worktree, {})).toEqual([]);
     // Deleted without Git, so its Git folder in `root` stays with its index; a clone then takes the folder.
     await rm(worktree, { recursive: true, force: true });
@@ -442,10 +445,22 @@ describe("gitCheckoutReaders().modifiedOrUntracked", () => {
     expect(await listed(read, worktree, tree)).toEqual(["a.py"]);
   });
 
+  it("keeps no listing while a file Git reads for it changed within the settle time", async () => {
+    const { root } = await changedCheckout();
+    const tree = {};
+    // The index was written moments ago: well within a minute, never within no time at all.
+    const unsettled = gitCheckoutReaders({ settleMs: 60_000 });
+    const first = await unsettled.modifiedOrUntracked(root, tree);
+    expect(await unsettled.modifiedOrUntracked(root, tree)).not.toBe(first);
+    const settled = gitCheckoutReaders(AT_ONCE);
+    const kept = await settled.modifiedOrUntracked(root, tree);
+    expect(await settled.modifiedOrUntracked(root, tree)).toBe(kept);
+  });
+
   it("keeps no listing where Git gave none", async () => {
     const outside = await mkdtemp(join(tmpdir(), "rerail-git-listing-"));
     roots.push(outside);
-    const read = gitCheckoutReaders();
+    const read = gitCheckoutReaders(AT_ONCE);
     const tree = {};
     const first = await read.modifiedOrUntracked(outside, tree);
     expect(first).toEqual([]);

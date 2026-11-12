@@ -6,7 +6,7 @@
  * once, for every session watching it, and keeps what it saw as a snapshot; each session takes from a walk only the
  * sources that changed since the snapshot it took last (`CodeRuleBridge`).
  */
-import { gitCheckoutReaders, gitHead } from "../git.js";
+import { type GitCheckoutReaders, gitCheckoutReaders, gitHead } from "../git.js";
 import type { ObservedSource, ScanError, Source, SourceScan } from "./code-rule-bridge.js";
 
 /**
@@ -194,13 +194,15 @@ export class WorktreeWalks {
   readonly #watching: Watching[] = [];
   readonly #snapshots = new Map<string, WorktreeSnapshot>();
   /** Reads a worktree's unmerged entries only once its index changed, and lists its changed files only once it or its snapshot did. */
-  readonly #git = gitCheckoutReaders();
+  readonly #git: GitCheckoutReaders;
   /** The walk running or timed; undefined while none is due. */
   #walk: Promise<void> | undefined;
   #nextWalkAt = 0;
 
-  constructor(options: { gapMs?: number } = {}) {
+  /** `settleMs`: how long a file Git reads for a listing must stand unchanged before the listing is kept (`gitCheckoutReaders`). */
+  constructor(options: { gapMs?: number; settleMs?: number } = {}) {
     this.#gapMs = options.gapMs ?? WORKTREE_WALK_GAP_MS;
+    this.#git = gitCheckoutReaders(options.settleMs === undefined ? {} : { settleMs: options.settleMs });
   }
 
   watch(watcher: WorktreeWatcher): WorktreeWatch {

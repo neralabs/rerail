@@ -422,6 +422,13 @@ interface CheckoutFiles {
 /** What a file's stamp is while there is no file at its path. */
 const ABSENT = "absent";
 
+/**
+ * How long a file must stand unchanged before its stamp vouches for what it holds. A rewrite changes the file's inode,
+ * but a new file can take an inode an earlier rewrite freed, and within one tick of the file clock it then keeps every
+ * part of the stamp; a write after this long carries a later time.
+ */
+const SETTLE_MS = 2_000;
+
 /** `stat` of `path`, undefined where nothing is there; throws where it cannot be read otherwise. */
 async function statIfPresent(path: string): Promise<Stats | undefined> {
   try {
@@ -433,10 +440,16 @@ async function statIfPresent(path: string): Promise<Stats | undefined> {
   }
 }
 
-/** A file's stamp ({@link fileStamp}), or {@link ABSENT}; throws where it cannot be stamped otherwise. */
-async function stampOrAbsent(path: string): Promise<string> {
+/** A file's stamp ({@link fileStamp}, or {@link ABSENT}) and when it last changed (0 for none). */
+interface Stamped {
+  readonly stamp: string;
+  readonly changedAt: number;
+}
+
+/** {@link Stamped} of the file at `path`; throws where it cannot be stamped otherwise. */
+async function stampOf(path: string): Promise<Stamped> {
   const info = await statIfPresent(path);
-  return info === undefined ? ABSENT : fileStamp(info);
+  return info === undefined ? { stamp: ABSENT, changedAt: 0 } : { stamp: fileStamp(info), changedAt: Math.max(info.mtimeMs, info.ctimeMs) };
 }
 
 /**
@@ -512,10 +525,9 @@ async function includesAnother(paths: readonly string[]): Promise<boolean> {
 
 /**
  * Finds the excludes file Git reads for a checkout (`core.excludesFile`, else Git's default), given its configuration
- * files with their stamps ({@link ABSENT} for one that does not exist). Git is asked once for every checkout whose
- * existing configuration files are the same files with the same stamps, and again once one of them changed; where one has
- * an `include` or `includeIf` section, which can set it for each checkout apart, once per checkout. Undefined where Git
- * gave no answer.
+ * files with their settled stamps ({@link SETTLE_MS}). Git is asked once for every checkout whose existing configuration
+ * files are the same files with the same stamps, and again once one of them changed; where one has an `include` or
+ * `includeIf` section, which can set it for each checkout apart, once per checkout. Undefined where Git gave no answer.
  */
 function excludesFileFinder(): (cwd: string, config: ReadonlyArray<readonly [string, string]>) => Promise<string | undefined> {
   /** By the existing configuration files: their stamps, whether one includes another, and the setting by checkout (`""`: every one). */
@@ -549,33 +561,37 @@ export interface GitCheckoutReaders {
    * {@link gitModifiedOrUntrackedPaths} of the checkout at `cwd`, for a caller whose `tree` is the same object only while
    * no file of the working tree it stands for changed. Git's listing is kept with `tree`, and Git lists again only once
    * `tree` is another object or a file Git reads for the listing besides the working tree changed: the folder's `.git`
-   * entry, its index, `info/exclude`, the excludes file, or a configuration file that can name it. Git replaces the index
-   * on every write, so a write changes its inode even inside one clock tick. The listing answers only for the files
-   * `tree` stands for: another file it names may have changed since. A listing Git did not give (it failed or timed out),
-   * one made while a file could not be found or stamped, and one made without an index are not kept.
+   * file, its index, `info/exclude`, the excludes file, or a configuration file that can name it. The listing answers
+   * only for the files `tree` stands for: another file it names may have changed since. No listing is kept that Git did
+   * not give (it failed or timed out), nor one made without an index, while a file could not be found or stamped, or
+   * while one had changed within the settle time ({@link SETTLE_MS}).
    */
   readonly modifiedOrUntracked: (cwd: string, tree: object) => Promise<readonly string[]>;
 }
 
 /**
  * {@link GitCheckoutReaders}. They find where Git keeps each checkout's files once, by one Git process both share, and the
- * excludes file once for every checkout with the same configuration files.
+ * excludes file once for every checkout with the same configuration files. `settleMs` stands for {@link SETTLE_MS}.
  */
-export function gitCheckoutReaders(): GitCheckoutReaders {
+export function gitCheckoutReaders(options: { readonly settleMs?: number } = {}): GitCheckoutReaders {
+  const settleMs = options.settleMs ?? SETTLE_MS;
   const filesOf = checkoutFilesFinder();
   const excludesFile = excludesFileFinder();
   /** Each listing kept, by the tree it was made for, then by checkout, with the stamp it was made under. */
   const listings = new WeakMap<object, Map<string, { readonly stamp: string; readonly paths: readonly string[] }>>();
+  const settled = (stamped: readonly Stamped[]): boolean => stamped.every(({ changedAt }) => Date.now() - changedAt >= settleMs);
   /** The stamp of every file Git reads to list `cwd` besides its working tree; undefined where no listing is to be kept. */
   const listingStamp = async (cwd: string): Promise<string | undefined> => {
     try {
       const files = await filesOf(cwd);
       if (files === undefined) return undefined;
-      const config = await Promise.all(files.config.map(async path => [path, await stampOrAbsent(path)] as const));
-      const excludes = await excludesFile(cwd, config);
+      const config = await Promise.all(files.config.map(stampOf));
+      if (!settled(config)) return undefined;
+      const excludes = await excludesFile(cwd, files.config.map((path, at) => [path, config[at]!.stamp] as const));
       if (excludes === undefined) return undefined;
-      const stamps = await Promise.all([files.index, files.exclude, excludes].map(stampOrAbsent));
-      return stamps[0] === ABSENT ? undefined : JSON.stringify([files.dotGit, ...stamps, excludes, config]);
+      const stamped = [...await Promise.all([files.index, files.exclude, excludes].map(stampOf)), ...config];
+      if (stamped[0]!.stamp === ABSENT || !settled(stamped)) return undefined;
+      return JSON.stringify([files.dotGit, excludes, ...stamped.map(({ stamp }) => stamp)]);
     } catch {
       return undefined;
     }
@@ -606,8 +622,8 @@ export function gitCheckoutReaders(): GitCheckoutReaders {
  * Reads the index's unmerged entries under a folder ({@link unmergedEntries}), for a caller that asks every pass: it
  * starts a Git process only when the folder's index file changed since the last read, and otherwise costs two `stat`
  * calls, of the index and of the folder's `.git` entry (plus one Git process the first time, and again once that entry
- * changed, to find the file). Git replaces that file with a new one on every write, so a
- * write changes its inode even inside one clock tick. A folder whose file cannot be found or stamped is read every time,
+ * changed, to find the file). Git replaces that file with a new one on every write, so a write changes its inode even
+ * inside one clock tick. A folder whose file cannot be found or stamped is read every time,
  * so this can cost more, never answer with stale entries. When Git cannot list them (it failed or timed out), the
  * answer is undefined and nothing is kept, so the next read asks Git again.
  */

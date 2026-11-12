@@ -54,6 +54,9 @@ const { reads, listings } = counted;
 // Each test opens several sessions and walks four or five checkouts many times over.
 vi.setConfig({ testTimeout: 60_000 });
 
+/** Walks with no gap that keep a listing however recently Git's files changed: each test writes them just before. */
+const KEEPING = { gapMs: 0, settleMs: 0 };
+
 const bridges: CodeRuleBridge[] = [];
 const directories: string[] = [];
 const releases: Array<() => void> = [];
@@ -278,7 +281,7 @@ describe("WorktreeWalks", () => {
   it("lists a worktree's changed files from Git once for all the sessions that first take it in one walk", async () => {
     const { checkouts, worktrees } = await repository(["w1", "w2", "w3", "w4"]);
     await mkdir(join(worktrees[3]!, "deep"));
-    const walks = new WorktreeWalks({ gapMs: 0 });
+    const walks = new WorktreeWalks(KEEPING);
     const first = await opened(worktrees[0]!, checkouts, walks);
     const hold = holdListing(join(worktrees[3]!, "deep"));
     await first.bridge.checkpoint("turn");
@@ -296,7 +299,7 @@ describe("WorktreeWalks", () => {
 
   it("lists each worktree's changed files from Git once for the sessions that first take it, and not for one joining later", async () => {
     const { main, checkouts, worktrees } = await repository(["w1", "w2", "w3", "w4"]);
-    const walks = new WorktreeWalks({ gapMs: 0 });
+    const walks = new WorktreeWalks(KEEPING);
     // Three sessions in `main` open one after the other, so each first takes the four worktrees in a walk of its own.
     for (let opened = 0; opened < 3; opened += 1) await session(main, checkouts, walks);
     expect(listedIn(worktrees)).toBe(4);
@@ -308,17 +311,17 @@ describe("WorktreeWalks", () => {
     const { main, checkouts, worktrees } = await repository(["w1", "w2", "w3", "w4"]);
     const w4 = worktrees[3]!;
     await dirty(w4);
-    const walks = new WorktreeWalks({ gapMs: 0 });
+    const walks = new WorktreeWalks(KEEPING);
     const sessions: Session[] = [];
     for (const folder of [worktrees[0]!, worktrees[1]!, worktrees[2]!, main]) sessions.push(await session(folder, checkouts, walks));
     await turn(...sessions);
     for (const name of ["a.py", "new.py", "ignored.py", "gone.py"]) await appendFile(join(w4, "src", name), "after\n");
     await turn(...sessions);
     // What each session measured the writes from when it listed the worktree itself: its first sight of the modified and
-    // untracked files; none of the file Git ignores, which Git does not list; Git's text of the deleted one.
+    // untracked files; none of the file Git ignores, which Git does not list; nothing of the deleted one, written anew.
     const expected = [
       ["../w4/src/a.py", "old\nbefore\n"],
-      ["../w4/src/gone.py", "gone\n"],
+      ["../w4/src/gone.py", undefined],
       ["../w4/src/ignored.py", "Source changed outside a tool with a captured preimage"],
       ["../w4/src/new.py", "draft\n"],
     ];
@@ -330,7 +333,7 @@ describe("WorktreeWalks", () => {
     const w2 = worktrees[1]!;
     await writeFile(join(w2, "src", "a.py"), "old\nbefore\n");
     await awaitClockAfter(join(w2, "src", "a.py"));
-    const walks = new WorktreeWalks({ gapMs: 0 });
+    const walks = new WorktreeWalks(KEEPING);
     await session(worktrees[0]!, checkouts, walks);
     git(w2, "add", "src/a.py");
     await session(main, checkouts, walks);
@@ -342,7 +345,7 @@ describe("WorktreeWalks", () => {
     const w2 = worktrees[1]!;
     await writeFile(join(w2, "src", "new.py"), "draft\n");
     await awaitClockAfter(join(w2, "src", "new.py"));
-    const walks = new WorktreeWalks({ gapMs: 0 });
+    const walks = new WorktreeWalks(KEEPING);
     const first = await session(worktrees[0]!, checkouts, walks);
     await mkdir(join(main, ".git", "info"), { recursive: true });
     await appendFile(join(main, ".git", "info", "exclude"), "\nsrc/new.py\n");
@@ -363,7 +366,7 @@ describe("WorktreeWalks", () => {
     await writeFile(excludes, "");
     await writeFile(join(w3, "src", "new.py"), "draft\n");
     await awaitClockAfter(join(w3, "src", "new.py"));
-    const walks = new WorktreeWalks({ gapMs: 0 });
+    const walks = new WorktreeWalks(KEEPING);
     const first = await session(worktrees[0]!, checkouts, walks);
     git(main, "config", "core.excludesFile", excludes);
     const second = await session(worktrees[1]!, checkouts, walks);
