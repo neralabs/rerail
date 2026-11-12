@@ -9,7 +9,7 @@ import * as native from "../../../src/engine/native/native.js";
 import type { NativeBinding } from "../../../src/engine/native/native.js";
 import { CheckoutCodeRuleRouter } from "../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { openRerailDatabase } from "../../../src/engine/storage/database.js";
-import { CheckoutCatalogs, startingCheckout } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
+import { CheckoutCatalogs, CheckoutCodeRuleCatalog, startingCheckout } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { SqliteAuditReader } from "../../../src/engine/audit/audit-store.js";
 import type { AuditRecorder, AuditInput, AuditResult } from "../../../src/engine/audit/audit.js";
 import { type CodeRule, codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
@@ -853,11 +853,60 @@ describe("CheckoutCodeRuleRouter questions about a checkout it has no lane in", 
     return counts;
   }
 
+  /**
+   * Git exclude stacks opened from now on fail the next question asked of any of them after `failNext`, as one does
+   * when an ignore file on the way cannot be read.
+   */
+  function failingGitIgnore(): { failNext: () => void } {
+    const binding = native.loadNativeBinding();
+    let failing = false;
+    const openGitIgnoreMatcher = (root: string): native.NativeGitIgnoreMatcher | null => {
+      const matcher = binding.openGitIgnoreMatcher(root);
+      return matcher === null ? null : new Proxy(matcher, {
+        get(target, key) {
+          const value: unknown = Reflect.get(target, key, target);
+          if (typeof value !== "function") return value;
+          return (...args: unknown[]): unknown => {
+            if (failing) {
+              failing = false;
+              throw new Error("cannot read Git excludes for build: Permission denied");
+            }
+            return Reflect.apply(value, target, args);
+          };
+        },
+      });
+    };
+    const spy = vi.spyOn(native, "loadNativeBinding")
+      .mockReturnValue(Object.assign(Object.create(binding) as NativeBinding, { openGitIgnoreMatcher }));
+    cleanups.push(async () => spy.mockRestore());
+    return { failNext: () => { failing = true; } };
+  }
+
   async function writeFiles(root: string, files: Record<string, string>): Promise<void> {
     for (const [path, text] of Object.entries(files)) {
       await mkdir(dirname(join(root, path)), { recursive: true });
       await writeFile(join(root, path), text);
     }
+  }
+
+  /** A session's repository with one rule and `build/` ignored, a worktree of it, and two sessions there: one with a lane in the worktree, one without. */
+  async function twoSessionsAndAWorktree() {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const session = await repository(join(root, "session"));
+    await writeFiles(session, { ".gitignore": "build/\n", "api/x.py": "x = 1\n" });
+    git(session, "add", ".");
+    git(session, "commit", "--quiet", "-m", "files");
+    setUpTestRepository(session, { library: [file(needle("test:session", "SESSION"))] }, databasePath);
+    git(session, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
+    const worktree = await realpath(join(root, "linked"));
+    await writeFiles(worktree, { "build/z.py": "z = 1\n" });
+    const unlaned = router(session, databasePath, recordingAudits().recorder, undefined, true);
+    const laned = router(session, databasePath, recordingAudits().recorder, undefined, true);
+    await unlaned.openWorkspace("unlaned");
+    await laned.openWorkspace("laned");
+    await edit(laned, "laned", 1, join(worktree, "api", "x.py"));
+    return { worktree, unlaned, laned };
   }
 
   /** Links `path` to `target` (a folder by junction on Windows); skips the test where Windows refuses a file link. */
@@ -962,5 +1011,44 @@ describe("CheckoutCodeRuleRouter questions about a checkout it has no lane in", 
     expect(Object.keys(withoutLanes.ignoredEdits)).toEqual(["build/z.py", "api/gen.py"]);
     // The first session answered from the scopes of the worktree's catalog and the nested repository's, opening no lane.
     expect(counts).toEqual({ made: 2, attached: 0 });
+  });
+
+  it("asks a worktree's Git ignore rules again after a question about them failed, as its lane does", async () => {
+    const gitIgnore = failingGitIgnore();
+    const { worktree, unlaned, laned } = await twoSessionsAndAWorktree();
+    const answers = (auditor: CheckoutCodeRuleRouter) => {
+      gitIgnore.failNext();
+      // Rules that cannot be read leave the path in, for that question only.
+      const failed = auditor.ignoresPath(join(worktree, "build"), true);
+      return {
+        failed,
+        ignored: auditor.ignoresPath(join(worktree, "build"), true),
+        accepted: auditor.acceptsPath(join(worktree, "build", "z.py")),
+        edit: auditor.ignoredEdit(join(worktree, "build", "z.py"))?.pattern,
+      };
+    };
+
+    const withoutLane = answers(unlaned);
+    expect(withoutLane).toEqual(answers(laned));
+    expect(withoutLane).toMatchObject({ failed: false, ignored: true, accepted: false });
+    expect(withoutLane.edit).toBeDefined();
+  });
+
+  it("answers from a worktree's rules as last read when they cannot be read again, as its lane does", async () => {
+    const { worktree, unlaned, laned } = await twoSessionsAndAWorktree();
+    const paths = [join(worktree, "api", "x.py"), join(worktree, "README.md")];
+    for (const auditor of [unlaned, laned]) expect(paths.map(path => auditor.acceptsPath(path))).toEqual([true, false]);
+    // A pack being replaced, or a database another process holds, fails every read of the rules for a while.
+    const refresh = vi.spyOn(CheckoutCodeRuleCatalog.prototype, "refresh").mockImplementation(() => {
+      throw new Error("database is locked");
+    });
+    cleanups.push(async () => refresh.mockRestore());
+
+    for (const auditor of [unlaned, laned]) {
+      auditor.refreshCodeRules();
+      // A walk asking this goes on with the rules it had, as the lane's answer does.
+      expect(paths.map(path => auditor.acceptsPath(path))).toEqual([true, false]);
+    }
+    expect(refresh).toHaveBeenCalled();
   });
 });

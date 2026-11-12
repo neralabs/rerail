@@ -32,7 +32,7 @@ import type {
   RepositoryAuditHooks,
   IgnoredEditMatch,
 } from "./code-rule.js";
-import type { CheckoutCatalogs, CheckoutEligibility } from "./code-rule-dsl-catalog.js";
+import type { CheckoutCatalogs, CheckoutEligibility, CodeRuleDslCatalog } from "./code-rule-dsl-catalog.js";
 import type { AuditRecorder, AuditMode } from "../audit/audit.js";
 import { DEFAULT_AUDIT_SETTINGS } from "../audit/audit-control-schema.js";
 
@@ -59,10 +59,27 @@ interface Lane {
   readonly opening: Promise<void>;
 }
 
-/** What a checkout with no lane answers from: its catalog's scopes, as read when `refreshCodeRules` had run `refreshed` times. */
+/**
+ * What a checkout with no lane answers from: its catalog's scopes, as read when `refreshCodeRules` had run `refreshed`
+ * times, and why its catalog could not be read then, reported once while it lasts.
+ */
 interface UnlanedCheckout {
   readonly scopes: CodeRuleScopes;
   readonly refreshed: number;
+  readonly failure?: string;
+}
+
+/**
+ * Reads `catalog` again; why it could not, where it could not. Its rules as last read stand then, as a lane's enforcer
+ * keeps its rules when they cannot be read (`refreshCodeRules`), so a walk's questions still get answers.
+ */
+function readAgain(catalog: CodeRuleDslCatalog): string | undefined {
+  try {
+    catalog.refresh();
+    return undefined;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
 }
 
 function merged(revision: number, responses: readonly CodeRuleResponse[]): CodeRuleResponse {
@@ -181,16 +198,18 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    */
   #askGitIgnore<T>(owner: CheckoutOwner, ask: (matcher: NativeGitIgnoreMatcher) => T): T | undefined {
     if (this.#options.followGitignore !== true) return undefined;
+    const root = owner.checkoutRoot;
     try {
-      let matcher = this.#gitIgnore.get(owner.checkoutRoot);
+      let matcher = this.#gitIgnore.get(root);
       if (matcher === undefined) {
-        matcher = loadNativeBinding().openGitIgnoreMatcher(owner.checkoutRoot);
-        this.#gitIgnore.set(owner.checkoutRoot, matcher);
+        matcher = loadNativeBinding().openGitIgnoreMatcher(root);
+        this.#gitIgnore.set(root, matcher);
       }
       return matcher === null ? undefined : ask(matcher);
     } catch (error) {
-      // As a lane does: rules that cannot be read leave the path in, so a broken `.gitignore` never hides sources.
-      this.#gitIgnore.set(owner.checkoutRoot, null);
+      // As a lane does: rules that cannot be read leave the path in, so a broken `.gitignore` never hides sources. A
+      // stack that opened is kept and asked again at the next question; one that cannot open is not tried again.
+      if (!this.#gitIgnore.has(root)) this.#gitIgnore.set(root, null);
       process.stderr.write(`rerail: cannot read Git ignore rules for ${owner.path || "."}: ${error instanceof Error ? error.message : String(error)}\n`);
       return undefined;
     }
@@ -407,7 +426,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    */
   #lane(root: string): Lane | undefined {
     const sessionId = this.#sessionId;
-    if (sessionId === undefined || this.#closing || !this.#mayRun(root)) return undefined;
+    if (sessionId === undefined || !this.#mayAnswer(root)) return undefined;
     let lane = this.#lanes.get(root);
     if (lane === undefined) {
       // The lane answers for the checkout from now on, with its own exclude stack.
@@ -442,16 +461,19 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
 
   /**
    * The scopes a checkout with no lane answers from, its catalog read at its first question and again at its first
-   * after each `refreshCodeRules`; undefined where no lane may run.
+   * after each `refreshCodeRules`, its rules as last read standing where they cannot be read; undefined where no lane
+   * may run.
    */
   #scopesOf(root: string): CodeRuleScopes | undefined {
     if (!this.#mayAnswer(root)) return undefined;
     const known = this.#unlaned.get(root);
     if (known?.refreshed === this.#refreshes) return known.scopes;
     const catalog = this.#options.catalogs.catalog(root);
-    catalog.refresh();
+    const failure = readAgain(catalog);
+    if (failure !== undefined && failure !== known?.failure)
+      process.stderr.write(`rerail: cannot read the rules of ${root} again, so its walk keeps the rules last read: ${failure}\n`);
     const scopes = known?.scopes.version === catalog.status.version ? known.scopes : CodeRuleScopes.hold(catalog.snapshot(), this);
-    this.#unlaned.set(root, { scopes, refreshed: this.#refreshes });
+    this.#unlaned.set(root, { scopes, refreshed: this.#refreshes, ...(failure === undefined ? {} : { failure }) });
     if (known !== undefined && known.scopes !== scopes) this.#letGo(known.scopes);
     return scopes;
   }
