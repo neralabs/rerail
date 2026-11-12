@@ -2779,6 +2779,12 @@ fn run_observed(
     }
     // The run's constants of the phases' exports (`run_constants`): derived over the bound exports, copied out of the
     // engine, measured and bound as they are.
+    // The atoms' lease, held to the run's end: on a new store, a string not in memory is new (decision 0104). Taken
+    // before the run's first engine run (the constants below), so no engine run's end flushes the symbols it made: the
+    // store's writer writes them behind the run. Taken after, a phase that ran past `DUE_AFTER` (a loaded machine) had
+    // the constants' run write its symbols ahead of the waves, which the strict mode refuses.
+    let complete = store.atoms_handle().ready_for_run().map_err(|e| Error::Plan(e.to_string()))?;
+    crate::code_rule_dsl::logic::profile::decision("atoms before the first wave (decision 0104)", || if complete { "every stored atom held: lookups read nothing".into() } else { "the store's atoms are too many to read whole: lookups read its key".into() });
     let mut repository = repository;
     if let Some((consts, rels)) = &run_constants {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "derive the constants of the phases' exports".into());
@@ -3167,9 +3173,6 @@ fn run_observed(
         // The cone of requests' connection and store, opened before the first wave (decision 0104).
         let (slot, _) = handed.cone();
         connections::Cone::ready(&slot, &path, durable.is_some().then(|| store.database_path()))?;
-        // The atoms' lease, held to the run's end: on a new store, a string not in memory is new (decision 0104).
-        let complete = store.atoms_handle().ready_for_run().map_err(|e| Error::Plan(e.to_string()))?;
-        crate::code_rule_dsl::logic::profile::decision("atoms before the first wave (decision 0104)", || if complete { "every stored atom held: lookups read nothing".into() } else { "the store's atoms are too many to read whole: lookups read its key".into() });
         // And every kept frame (decision 0104): the waves read them from memory.
         let (frames, bytes) = store.preload_frames().map_err(|e| Error::Plan(e.to_string()))?;
         if frames > 0 {
