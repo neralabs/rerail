@@ -3616,12 +3616,14 @@ beside the others.
 After the crate split, `rerail-logic`'s test target did not build: its tests named the engine's modules (the
 `prefilter` test helpers, `tools::flatten`, `sql_executor`, `waves::policies`, `model::FileInput`, the device's
 `transducer::packed` rows). The helpers had a home below (`fixtures::temp`, `logic::settings::program_text`,
-`ContentStore::open`), and those calls now use it. Six tests need a crate above, so they are gated out
-(`#[cfg(any())]`, marked `O-split-logic-tests`) until the split hosts them in the engine:
+`ContentStore::open`), and those calls now use it. The corpus runner's tests that parse files (the cone, the shared
+relations, the cross-file frames) need the languages, which the crates above register: they moved to
+`corpus/tests.rs`, which the engine's facade of `logic::plan::corpus` compiles. The ones that parse nothing stay in
+logic. Five tests need a crate above, so they are gated out (`#[cfg(any())]`, marked `O-split-logic-tests`) until
+the split hosts them in the engine:
 
 | Test | Reads |
 |---|---|
-| `corpus::tests::an_export_handed_on_as_its_parts_finds_the_same_and_a_changed_choice_misses_the_memo` | `sql_executor` |
 | `corpus::matchers::tests::any_arms_binding_one_name_lower` | `waves::policies` |
 | `corpus::matchers::tests::a_matcher_relaxed_where_it_only_widens` | `waves::policies` |
 | `corpus::matchers::tests::a_nested_file_path_is_the_documents` | `tools::run_policies` |

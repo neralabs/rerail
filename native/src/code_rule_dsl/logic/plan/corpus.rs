@@ -181,7 +181,7 @@ pub fn atomized_statistics(t: &Connection, db: &Connection, store: &ContentStore
 
 pub use crate::code_rule_dsl::prof::thread_usage;
 
-pub(crate) fn usage() -> (f64, f64, f64) {
+pub fn usage() -> (f64, f64, f64) {
     // wasm32: the one thread's time as user CPU, and no resident-set counter.
     #[cfg(target_family = "wasm")]
     {
@@ -240,9 +240,9 @@ pub struct Report {
     /// evaluated, of all.
     pub cross_kept: Option<(usize, usize)>,
     /// The cone of requests' strata evaluated, of all, when they are kept (t33 K3); `None` otherwise.
-    pub(crate) cone_kept: Option<(usize, usize)>,
+    pub cone_kept: Option<(usize, usize)>,
     /// The rounds the cone ran from the last run's final round (decision 0108); 0 when it ran the gated fixpoint.
-    pub(crate) cone_rounds: usize,
+    pub cone_rounds: usize,
     /// Of those, strata maintained from deltas, of them recursive, and strata derived again (decision 0077 §3).
     pub cross_maintained: (usize, usize, usize),
     /// A session's run: the cross part's inputs that changed, and why its strata derived again were (each count).
@@ -795,7 +795,7 @@ fn keep_prepared(key: [u8; 32], p: Arc<Prepared>) {
     });
 }
 
-fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
+pub fn combine_texts(programs: &[&str], extra: &str) -> Result<front::Program> {
     use front::{Literal, Program};
     // A program reads only relations it declares: an error here, not the planner's panic later (`front::declared`).
     let parse = |text: &str| -> Result<Program> {
@@ -1438,7 +1438,7 @@ impl Collecting {
 /// Records the run's manifest and relations, then starts collection if a pass is due: queued behind the run's
 /// writes (decision 0102), so the manifest names only what is written, and the lease on collection is let go
 /// once it is.
-fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], also: &[[u8; 32]], relations: &[(String, String)], late: &Late, reading: Option<crate::content_store::CollectionLease>, outer: bool) -> Result<Option<Collecting>> {
+pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_store::SourceId], program: &[u8; 32], also: &[[u8; 32]], relations: &[(String, String)], late: &Late, reading: Option<crate::content_store::CollectionLease>, outer: bool) -> Result<Option<Collecting>> {
     memo::off();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
@@ -6934,11 +6934,11 @@ fn text_document(path: &str) -> bool {
 }
 
 /// A corpus's files by language: Python's, Rust's and `.rr` rule files, and the text-only documents.
-struct CorpusFiles {
+pub struct CorpusFiles {
     /// Each dialect's files, by its label (the language registry's).
-    by_label: BTreeMap<&'static str, Vec<String>>,
+    pub by_label: BTreeMap<&'static str, Vec<String>>,
     /// Files of no grammar: after `scoped`, those a `.scope text` glob reads as text (`front::Program::text_globs`).
-    text: Vec<String>,
+    pub text: Vec<String>,
 }
 
 impl CorpusFiles {
@@ -6951,12 +6951,12 @@ impl CorpusFiles {
     }
 
     /// How many files of `label` there are.
-    fn count(&self, label: &str) -> usize {
+    pub fn count(&self, label: &str) -> usize {
         self.by_label.get(label).map_or(0, Vec::len)
     }
 
     /// How many files of any grammar there are.
-    fn parsed(&self) -> usize {
+    pub fn parsed(&self) -> usize {
         self.by_label.values().map(Vec::len).sum()
     }
 }
@@ -7104,7 +7104,7 @@ fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
 
 /// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and rule files
 /// (`.rr`), skipping hidden directories and `target`.
-fn corpus_files(root: &Path) -> Result<CorpusFiles> {
+pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
     let (mut by_label, mut text): (BTreeMap<&'static str, Vec<String>>, Vec<String>) = (BTreeMap::new(), Vec::new());
     let mut classify = |relative: String| match crate::code_rule_dsl::language::label_of_path(&relative) {
         Some(label) => by_label.entry(label).or_default().push(relative),
@@ -7560,7 +7560,62 @@ impl Own {
 }
 
 #[cfg(test)]
-mod tests;
+pub mod tests {
+    #[test]
+    fn constant_demands_reach_projected_input_columns() {
+        let p=crate::code_rule_dsl::logic::rr::parse(".decl raw(d:number,n:number,k:number)\n.input raw\n.decl tags(n:number,k:number)\ntags(n,k) :- raw(_,n,k).\n.decl alias(n:number,k:number)\nalias(n,k) :- tags(n,k).\n.decl out(n:number)\nout(n) :- alias(n,9).\n").unwrap();
+        let demands=super::constants_tested(&p);
+        assert!(demands["alias"].contains(&(1,9)));
+        assert!(demands["tags"].contains(&(1,9)));
+        assert!(demands["raw"].contains(&(2,9)),"measure the actual source column before planning its consumers");
+    }
+
+    #[test]
+    fn memo_tree_statistics_accumulate_once_without_per_file_maps() {
+        use super::*;
+        let mut first = Own::default();
+        first.kinds.insert(1,(10,20)); first.edges.insert((1,2),5); first.docs=1;
+        first.postings.insert(("kind".into(),"k".into(),1),10);
+        let mut rows=BTreeMap::new(); first.put(&mut rows);
+        let mut totals=Own::default(); totals.add_rows(&rows); totals.add_rows(&rows);
+        assert_eq!(totals.kinds[&1],(20,40)); assert_eq!(totals.edges[&(1,2)],10);
+        assert_eq!(totals.docs,2); assert_eq!(totals.postings.values().sum::<i64>(),20);
+        let projected=BTreeMap::from([(OWN_DOCS.into(),(1,vec![1]))]);
+        let mut narrow=Own::default(); narrow.add_rows(&projected);
+        assert_eq!(narrow.docs,1); assert!(narrow.kinds.is_empty()); assert!(narrow.edges.is_empty());
+    }
+
+    #[cfg(feature = "tape-cache")]
+    #[test]
+    fn a_warm_run_resumes_deferred_collection() {
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let path = std::env::temp_dir().join(format!("rerail-warm-collection-{}-{nonce}.sqlite", std::process::id()));
+        let store = crate::content_store::ContentStore::open(&path).unwrap();
+        let source = store.put_source(b"rooted", &[]).unwrap();
+        let orphan_hash = crate::content_store::HashKey::sha256(b"unrooted");
+        store.put_source(b"unrooted", &[]).unwrap();
+        store.collect(100, 100).unwrap();
+        let root = path.with_extension("root");
+        let program = [7; 32];
+        // Simulate another active run deferring the first run's background collection.
+        let reader = store.hold_collection().unwrap();
+        super::record_run(&store, &root, &[source], &program, &[], &[], &Default::default(), None, true).unwrap().unwrap().join().unwrap().unwrap().1.unwrap();
+        assert!(store.corpus_collection_due().unwrap());
+        // Same files and plan: the manifest is unchanged, but pending collection must still run.
+        super::record_run(&store, &root, &[source], &program, &[], &[], &Default::default(), Some(reader), true).unwrap().unwrap().join().unwrap().unwrap().1.unwrap();
+        assert!(!store.corpus_collection_due().unwrap());
+        assert_eq!(store.source_by_hash(orphan_hash).unwrap(), None);
+    }
+
+    #[test]
+    fn a_chunks_mix_is_the_file_types_holding_a_tenth_of_its_nodes() {
+        assert_eq!(super::chunk_mix([("a/b.py", 900), ("c.ts", 50), ("d.ts", 60)].into_iter()), "py,ts/4");
+        assert_eq!(super::chunk_mix([("a/b.py", 950), ("c.ts", 50)].into_iter()), "py/4");
+        assert_eq!(super::chunk_mix([("Makefile", 10), ("x.v1/README", 10)].into_iter()), "/1");
+        // Many small files and a few large ones of one language are two mixes.
+        assert_ne!(super::chunk_mix([("a.py", 20), ("b.py", 30)].into_iter()), super::chunk_mix([("c.py", 2000)].into_iter()));
+    }
+}
 
 /// What a kept relation's lazy statistics leave the session (decision 0101 §4): its form kept by delta, or its
 /// measure.
