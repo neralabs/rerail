@@ -1108,3 +1108,33 @@ fn text_only_for_the_nodes_read() {
         assert_eq!(text_kind_demand(&program, &matchers).read, read, "{body}");
     }
 }
+
+/// A phase whose exports hold no node projects only the subtrees of the kinds its rules start from (`node_anchors`):
+/// a kind reached below another is no anchor of its own; a parent, an ancestor, a child's place among unnamed
+/// siblings, a node no kind or descent proves, or an export holding a node, keeps every node.
+#[test]
+fn a_phase_projects_the_subtrees_its_rules_start_from() {
+    let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
+    let kinds = |ks: &[&str]| Ok(ks.iter().map(|k| k.to_string()).collect::<BTreeSet<String>>());
+    let phase = |body: &str, out: &str| format!("{prelude}\n.phase p\n.export out\n.decl out({out})\n{body}\n.output out\n");
+    for (src, want) in [
+        (phase("out(t) :- kind(i, \"import_statement\"), field(i, \"name\", n), kind(n, \"dotted_name\"), text(n, t).", "t: symbol"), kinds(&["import_statement"])),
+        (phase(".decl imp(i: node, q: symbol)\nimp(i, q) :- kind(i, \"import_statement\"), child(i, n, 0), text(n, q).\nout(q) :- imp(i, q), kind(i, \"import_statement\"), docof(i, _).", "q: symbol"), kinds(&["import_statement"])),
+        (phase("out(t) :- kind(i, \"import_statement\"), !child(i, _, 1), text(i, t).", "t: symbol"), kinds(&["import_statement"])),
+        (phase("out(t) :- kind(i, \"import_statement\"), child(p, i, _), text(p, t).", "t: symbol"), Err(String::new())),
+        (phase("out(t) :- kind(i, \"import_statement\"), within(i, f), text(f, t).", "t: symbol"), Err(String::new())),
+        (phase("out(t) :- kind(i, \"import_statement\"), child(_, i, k), k = 0, text(i, t).", "t: symbol"), Err(String::new())),
+        (phase("out(t) :- node(_, n, _, _, _), text(n, t).", "t: symbol"), Err(String::new())),
+        (phase("out(i) :- kind(i, \"import_statement\").", "i: node"), Err(String::new())),
+        (format!("{prelude}\n.decl out(t: symbol)\nout(t) :- kind(i, \"import_statement\"), text(i, t).\n.output out\n"), Err(String::new())),
+    ] {
+        let mut program = crate::code_rule_dsl::logic::rr::parse(&src).unwrap();
+        let matchers = crate::code_rule_dsl::logic::plan::corpus::matchers::lower(&mut program);
+        let got = node_anchors(&program, &matchers);
+        let body = src.rsplit(".decl out").next().unwrap_or("");
+        match &want {
+            Ok(k) => assert_eq!(got.as_ref().ok(), Some(k), "{body}: {got:?}"),
+            Err(_) => assert!(got.is_err(), "{body}: {got:?}"),
+        }
+    }
+}
