@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { existsSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createServer as createNetServer, type AddressInfo } from "node:net";
@@ -115,6 +115,24 @@ describe("the hook failure log", () => {
     )]);
   });
 
+  // A hook reads the clock before it writes. One that read it before another hook moved the log aside, and wrote after,
+  // puts a failure older than the move in the new part, while the part moved aside holds failures newer than it.
+  it("leaves out no failure since the time it names when a hook writes a failure from before the move after it", async () => {
+    const rerailHome = await home();
+    // The log moves aside at 4 s and at 8 s; the failure at 6.5 s comes after the move at 8 s, and the move at 12 s
+    // drops the part that holds the one at 7 s.
+    for (const at of [1_000, 2_000, 3_000]) recordLarge(rerailHome, at);
+    recordLast(rerailHome, 4_000);
+    for (const at of [5_000, 6_000, 7_000]) recordLarge(rerailHome, at);
+    recordLast(rerailHome, 8_000);
+    recordLast(rerailHome, 6_500);
+    for (const at of [9_000, 10_000, 11_000]) recordLarge(rerailHome, at);
+    recordLast(rerailHome, 12_000);
+    expect(statusSays(rerailHome, 0, 8_500)).toEqual([expect.stringMatching(
+      /^Hooks: 5 hook events could not be recorded since 1970-01-01T00:00:08\.000Z, as far back as the log goes; /u,
+    )]);
+  });
+
   // A log of failures at 1 ms, just past its size: the next failure finds it full and moves it aside.
   const fullLine = JSON.stringify({ at: 1, host: "claude-code", event: "PostToolUse", agent: null, rerail: "0.1.3", reason: "x".repeat(1_000) });
   const full = Math.ceil((256 * 1024 + 1) / (fullLine.length + 1));
@@ -160,6 +178,22 @@ describe("the hook failure log", () => {
     expect(readHookFailures(rerailHome, 0).failures).toHaveLength(full);
     recordLast(rerailHome, 3);
     expect(readHookFailures(rerailHome, 0).failures).toHaveLength(full + 1);
+  });
+
+  // A hook writes a failure into the full log, with the clock's time, in the moment another hook takes the log.
+  it("names a time later than every failure in the part it no longer has", async () => {
+    const rerailHome = await home();
+    writeFullLog(rerailHome);
+    const writtenAsTaken = Number(await recordWithRename(rerailHome, undefined, `rename => (from, to) => {
+      const at = Date.now();
+      if (to.endsWith(".old")) fs.appendFileSync(from, JSON.stringify({ at, host: "codex", event: "Stop", reason: "as it was taken" }) + "\\n");
+      rename(from, to);
+      if (to.endsWith(".old")) fs.writeSync(1, String(at));
+    }`));
+    // The next move drops that log, and the part the hook began moves to `.1`.
+    appendFileSync(join(rerailHome, HOOK_FAILURES_FILE), `${fullLine}\n`.repeat(full));
+    recordHookFailure({ host: "claude-code", event: "Stop", reason: "after" }, { home: rerailHome, env: {} });
+    expect(readHookFailures(rerailHome, 0).keptSince).toBeGreaterThan(writtenAsTaken);
   });
 
   it("removes a log a stopped hook left at the next move, once it holds nothing from the period status counts", async () => {
@@ -288,11 +322,11 @@ async function stopHookProcesses(hooks: readonly HookProcess[]): Promise<void> {
 }
 
 /**
- * Records one failure at `at` into `rerailHome` in a process of its own whose `fs.renameSync` is the function that
- * `wrapRename`, a function's source, makes of the real one: a hook stopped, or a rename refused, at one step of a move.
- * Resolves with what the process wrote to its standard output, once it has ended.
+ * Records one failure at `at` (the clock's time when undefined) into `rerailHome` in a process of its own whose
+ * `fs.renameSync` is the function that `wrapRename`, a function's source, makes of the real one: a hook stopped, or a
+ * rename refused, at one step of a move. Resolves with what the process wrote to its standard output, once it has ended.
  */
-async function recordWithRename(rerailHome: string, at: number, wrapRename: string): Promise<string> {
+async function recordWithRename(rerailHome: string, at: number | undefined, wrapRename: string): Promise<string> {
   const program = `import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 fs.renameSync = (${wrapRename})(fs.renameSync);
