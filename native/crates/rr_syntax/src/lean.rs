@@ -603,7 +603,7 @@ pub fn token_count(src: &str) -> usize {
     lex(src).n
 }
 
-/// `src`'s tape: `crate::tape(src)`, node for node.
+/// `src`'s tape: `crate::engine_tape(src)`, node for node.
 pub fn tape(src: &str) -> Vec<Node> {
     let Lexed { toks, n, comments } = lex(src);
     let mut out = Vec::with_capacity(n + n / 2 + comments.len() + 8);
@@ -1787,7 +1787,7 @@ mod tests {
             }
             for at in cuts {
                 let src = &text[..at];
-                let (lean, engine) = (super::tape(src), crate::tape(src));
+                let (lean, engine) = (super::tape(src), crate::engine_tape(src));
                 if lean != engine {
                     // The first node that differs, and the text it is at.
                     let k = lean.iter().zip(&engine).position(|(a, b)| a != b).unwrap_or(lean.len().min(engine.len()));
@@ -1806,5 +1806,76 @@ mod tests {
             }
         }
         eprintln!("{} files, {checked} texts", files.len());
+    }
+
+    /// The lean parser stands for the engine's on every rule a user writes, the broken ones included: each
+    /// `.rr` file of the repository, edited at random points (a character of `.rr`'s syntax inserted, a
+    /// character deleted, two swapped), gives the engine's tape. Seeded, so a failure names its text again.
+    #[test]
+    fn lean_tape_is_the_engines_on_edited_files() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let (mut files, mut work) = (Vec::new(), vec![root]);
+        while let Some(dir) = work.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+            for e in entries.flatten() {
+                let p = e.path();
+                let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
+                if p.is_dir() && !skip {
+                    work.push(p);
+                } else if p.extension().is_some_and(|x| x == "rr") {
+                    files.extend(std::fs::read_to_string(&p).ok().map(|t| (p.display().to_string(), t)));
+                }
+            }
+        }
+        files.sort();
+        assert!(files.len() > 1000, "{} files", files.len());
+        const ALPHABET: &[u8] = b"(){}[],.:;!=<>+-*/%@$#_|&~?\\\"'`\n \taz09";
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let mut checked = 0;
+        for (path, text) in &files {
+            for round in 0..4 {
+                let mut bytes = text.as_bytes().to_vec();
+                for _ in 0..1 + round {
+                    if bytes.is_empty() {
+                        break;
+                    }
+                    let at = (next() % bytes.len() as u64) as usize;
+                    match next() % 3 {
+                        0 => bytes.insert(at, ALPHABET[(next() % ALPHABET.len() as u64) as usize]),
+                        1 => {
+                            bytes.remove(at);
+                        }
+                        _ => {
+                            let to = (at + 1 + (next() % 8) as usize).min(bytes.len() - 1);
+                            bytes.swap(at, to);
+                        }
+                    }
+                }
+                // Only texts that are still UTF-8 (an edit inside a multi-byte character is not one).
+                let Ok(src) = String::from_utf8(bytes) else { continue };
+                let (lean, engine) = (super::tape(&src), crate::engine_tape(&src));
+                if lean != engine {
+                    let k = lean.iter().zip(&engine).position(|(a, b)| a != b).unwrap_or(lean.len().min(engine.len()));
+                    let near = engine.get(k).or(lean.get(k)).map_or(0, |x| x.start as usize);
+                    let (from, to) = (near.saturating_sub(60), (near + 60).min(src.len()));
+                    panic!(
+                        "{path}, edit round {round}: node {k} of {} / {}\n lean   {:?}\n engine {:?}\n near {:?}",
+                        lean.len(),
+                        engine.len(),
+                        lean.get(k),
+                        engine.get(k),
+                        src.get(from..to)
+                    );
+                }
+                checked += 1;
+            }
+        }
+        eprintln!("{} files, {checked} edited texts", files.len());
     }
 }

@@ -931,7 +931,7 @@ pub mod tests {
             let (t2, (i2, c2)) = (thread_cpu(), retired());
             let mut n = 0;
             for f in &ours {
-                n += super::rr::tape(f).len();
+                n += super::rr::engine_tape(f).len();
             }
             std::hint::black_box(n);
             let (t3, (i3, c3)) = (thread_cpu(), retired());

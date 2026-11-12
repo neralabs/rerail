@@ -26,10 +26,6 @@ impl TreeParser for Bitlex {
         let _encode = crate::code_rule_dsl::logic::profile::span(|| "tape encode".into());
         Some(encode_columns(grammar, source, &columns, &budget).map(FileImage::single).map_err(TemplateError::Encode))
     }
-
-    fn stands_in_for_tree_sitter(&self) -> bool {
-        true
-    }
 }
 
 /// The tape of a node table a Bitlex parser wrote (`transducer::packed::json_parser::Columns`), in the

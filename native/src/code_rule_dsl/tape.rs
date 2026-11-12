@@ -290,12 +290,6 @@ pub trait TreeParser: Send + Sync {
     ) -> Option<Result<ast_grep_core::matcher::Pattern, ast_grep_core::matcher::PatternError>> {
         None
     }
-
-    /// Whether it stands in for the dialect's tree-sitter grammar, node for node (a file it refuses goes to
-    /// tree-sitter). A workspace that times its own tree-sitter parse reads such a dialect with tree-sitter.
-    fn stands_in_for_tree_sitter(&self) -> bool {
-        false
-    }
 }
 
 static PARSERS: std::sync::OnceLock<Vec<(GrammarDialect, &'static dyn TreeParser)>> = std::sync::OnceLock::new();

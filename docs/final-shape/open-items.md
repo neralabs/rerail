@@ -3206,6 +3206,12 @@ path holds back cone relations that are outputs and expects them to be read from
 
 **Closure:** a cone relation declared `.output` is written with its rows, and `bootstrap.rr` drops the copies.
 
+**Seen again (2026-11-12), after the hub at 026a650ac.** `rr_embed_req`, the embed requests a policy writes as an
+output, is now written empty where it had rows: on dl1, `public-api-triples` had 22 `annotation` requests, now none;
+on dl10, two policies. Every `violation.csv` is unchanged, CPU and device, and the `.rr` parser (engine or lean)
+makes no difference. Likely this item's cause reached by the hub's memo and cross-part changes (041942a64); not yet
+traced.
+
 ## O145. A per-file relation with no node column is lost for documents a `load` brings in
 
 **Seen (2026-11-08, t25).** A loaded document's rows of the per-file relations the cone reads are found by its

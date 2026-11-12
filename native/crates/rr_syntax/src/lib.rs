@@ -19,7 +19,18 @@ pub enum Error {
 /// A `.rr` file's tree, as its tape holds it (decision 0061): its nodes in preorder, comments
 /// as extras, and an ERROR leaf for each statement that does not parse. Never fails: a file
 /// the engine refuses to run still has a tape.
+///
+/// Written by the lean parser (`lean::tape`, docs/parser-generators/30): a block lexer and a
+/// parser that writes each node as it opens, with no statements built. It gives
+/// `engine_tape`'s tree node for node (`lean_tape_is_the_engines`, every `.rr` file of the
+/// repository and seven cuts of each).
 pub fn tape(src: &str) -> Vec<tape::Node> {
+    lean::tape(src)
+}
+
+/// The tree as the statement parser makes it (`syntax::Parser::taped`, flattened): the lean
+/// parser's oracle.
+pub fn engine_tape(src: &str) -> Vec<tape::Node> {
     let mut parser = syntax::Parser::taped(src);
     // A taped parse reads on past an error; what it could not read is in the tree.
     let _ = parser.statements();
