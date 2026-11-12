@@ -144,8 +144,9 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    * `acceptsPath`, `ignoresPath` and `sourceRoot` for one walk. A path's full lookup (`#owner`) resolves its real path,
    * looks for `.git` on disk and reads the recorded checkouts' version, about 0.4 ms on Windows, and the walk asks two
    * questions of every file. A file the walk found is no link, so its checkout is its folder's: each folder is looked
-   * up once, for itself and its files, through the walk's lookups (`CheckoutOwners.walk`), which keep what they learn
-   * of a folder for the next walk. A checkout recorded while the walk runs owns its files from the next walk.
+   * up once, for itself and its files, through the walk's lookups (`CheckoutOwners.walk`), which take a folder's
+   * checkout from the folder above it and its own `.git` entry, and resolve no real path. A checkout recorded while the
+   * walk runs owns its files from the next walk.
    */
   walkView(): Required<WalkView> {
     const lookUp = this.#options.owners.walk();

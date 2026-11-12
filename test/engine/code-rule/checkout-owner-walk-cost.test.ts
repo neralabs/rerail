@@ -32,6 +32,7 @@ import Database from "better-sqlite3";
 import { CheckoutOwners } from "../../../src/engine/catalog/checkout-owner.js";
 import { CheckoutCodeRuleRouter } from "../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { CodeRuleBridge } from "../../../src/engine/code-rule/code-rule-bridge.js";
+import { recordCheckout } from "../../../src/engine/catalog/repository-registry.js";
 import { CheckoutCatalogs, startingCheckout } from "../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { codeRuleSchema } from "../../../src/engine/code-rule/code-rule-schema.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
@@ -80,14 +81,14 @@ async function sources(checkout: string, folders: readonly string[], files: numb
 }
 
 /**
- * A session in a started repository's main checkout with `WORKTREES` worktrees beside it, each holding `FOLDERS` of
+ * A session in a started repository's main checkout with `WORKTREES` worktrees beside it, each holding `folders` of
  * `files` sources, over the checkout lookups and catalogs a runtime gives its sessions.
  */
-async function sessionWithWorktrees(files: number) {
+async function sessionWithWorktrees(files: number, folders: readonly string[] = FOLDERS) {
   const base = await realpath(await mkdtemp(join(tmpdir(), "rerail-owner-walk-")));
   cleanups.push(() => removeFolder(base));
   const main = join(base, "main");
-  await sources(main, FOLDERS, files);
+  await sources(main, folders, files);
   git(base, "init", "--quiet", "-b", "main", main);
   git(main, "add", ".");
   git(main, "commit", "--quiet", "-m", "seed");
@@ -111,7 +112,7 @@ async function sessionWithWorktrees(files: number) {
     await bridge.close();
     catalogs.close();
   });
-  return { main, worktrees, bridge };
+  return { base, main, worktrees, bridge, catalogs };
 }
 
 /** A walk of the session folder, then one of the other worktrees, as a turn's end starts them. */
@@ -152,17 +153,25 @@ describe("checkout lookups of a session's walks", () => {
     expect(costs[1]).toEqual({ ...costs[0], files: 6 });
   });
 
-  it("cost no realpath or statement for a folder an earlier walk looked up", { timeout: 120_000 }, async () => {
-    const { main, worktrees, bridge } = await sessionWithWorktrees(1);
-    await bridge.openWorkspace("session");
-    await walks(bridge);
-    const before = await cost(() => walks(bridge));
-
-    const added = ["lib", "lib/x", "lib/x/y", "lib/x/y/z", "tools", "tools/bin"];
-    for (const checkout of [main, ...worktrees]) await sources(checkout, added, 1);
-    await walks(bridge);
-
-    expect(await cost(() => walks(bridge))).toEqual(before);
+  it("cost the same however many folders each checkout holds, also once an unrelated checkout is recorded", { timeout: 120_000 }, async () => {
+    const costs = [];
+    for (const folders of [FOLDERS, [...FOLDERS, "lib", "lib/x", "lib/x/y", "lib/x/y/z", "tools", "tools/bin"]]) {
+      const { base, bridge, catalogs } = await sessionWithWorktrees(1, folders);
+      const first = await cost(async () => {
+        await bridge.openWorkspace("session");
+        await walks(bridge);
+      });
+      const next = await cost(() => walks(bridge));
+      // Another repository's checkout is recorded in the same database, as a session that starts in it records it.
+      const other = join(base, "other");
+      await sources(other, ["src"], 1);
+      git(base, "init", "--quiet", "-b", "main", other);
+      git(other, "add", ".");
+      git(other, "commit", "--quiet", "-m", "seed");
+      recordCheckout(catalogs.database, other);
+      costs.push({ first, next, recorded: await cost(() => walks(bridge)) });
+    }
+    expect(costs[1]).toEqual(costs[0]);
   });
 
   it("look up no changed file's checkout but to route its audit, however many the walks find", { timeout: 120_000 }, async () => {
@@ -191,7 +200,33 @@ describe("checkout lookups of a session's walks", () => {
 });
 
 describe("a walk's checkout lookups", () => {
-  it("look up again only the folders at and below one whose `.git` entry came or went", async () => {
+  it("resolve no real path again once the recorded checkouts change", async () => {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "rerail-owner-walk-")));
+    cleanups.push(() => removeFolder(base));
+    const main = join(base, "main");
+    await sources(main, FOLDERS, 1);
+    git(base, "init", "--quiet", "-b", "main", main);
+    let version = "1";
+    const owners = new CheckoutOwners(() => version);
+    const walk = (): void => {
+      const lookUp = owners.walk();
+      for (const folder of ["", ...FOLDERS]) lookUp(join(main, folder));
+    };
+    walk();
+
+    version = "2";
+    const before = fsCalls.resolved.length;
+    walk();
+
+    // Git may be asked again whether the checkout's top level is one, which resolves that folder, but no folder below it.
+    const inside = (path: string): boolean => {
+      const rest = relative(main, path);
+      return rest !== "" && !isAbsolute(rest) && rest !== ".." && !rest.startsWith(`..${sep}`);
+    };
+    expect(fsCalls.resolved.slice(before).filter(inside)).toEqual([]);
+  });
+
+  it("resolve the real path of no folder but one whose `.git` entry came, to ask Git about it", async () => {
     const base = await realpath(await mkdtemp(join(tmpdir(), "rerail-owner-walk-")));
     cleanups.push(() => removeFolder(base));
     const main = join(base, "main");
@@ -204,16 +239,12 @@ describe("a walk's checkout lookups", () => {
     };
     walk();
 
-    // `src/a/` becomes a checkout of its own: only it and the folders below it may have another checkout now.
+    // `src/a/` becomes a checkout of its own: Git confirms it, and the folder below it takes it from its folder's answer.
     const nested = join(main, "src", "a");
     git(nested, "init", "--quiet");
     const before = fsCalls.resolved.length;
     walk();
 
-    const below = (path: string): boolean => {
-      const rest = relative(nested, path);
-      return rest === "" || (!isAbsolute(rest) && rest !== ".." && !rest.startsWith(`..${sep}`));
-    };
-    expect(fsCalls.resolved.slice(before).filter(path => !below(path))).toEqual([]);
+    expect(fsCalls.resolved.slice(before).filter(path => relative(nested, path) !== "")).toEqual([]);
   });
 });

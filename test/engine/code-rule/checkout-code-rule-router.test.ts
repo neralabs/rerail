@@ -259,7 +259,7 @@ describe("CheckoutCodeRuleRouter", () => {
       sourceRoots: [parent, parent, parent, parent, sub, sub, parent, sub],
     });
     expect(answers(view)).toEqual(answers(auditor));
-    // A later walk's view answers from what this one learned of each folder.
+    // A later walk's view, which finds Git's answers for the checkouts already kept, answers the same.
     expect(answers(auditor.walkView())).toEqual(answers(auditor));
   });
 

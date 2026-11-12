@@ -50,7 +50,7 @@ describe("CheckoutOwners", () => {
     expect(owners.ownerOf(join(outer, "src", "a.py"))).toEqual({ checkoutRoot: nested, path: "a.py" });
   });
 
-  it("keeps what a walk learned of a folder for the next walk until the folder's `.git` entry comes or goes", async () => {
+  it("answers each walk from the `.git` entries as they are: a folder that became a checkout, then stopped being one", async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
     cleanups.push(() => removeFolder(root));
     const outer = await repository(join(root, "outer"));
@@ -72,21 +72,36 @@ describe("CheckoutOwners", () => {
     expect(walk()).toEqual(inOuter);
   });
 
-  it("forgets what walks learned of each folder once the recorded checkouts change", async () => {
+  it("finds a checkout made above the folders a walk asks of, with no record to say so", async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
     cleanups.push(() => removeFolder(root));
     const outer = await repository(join(root, "outer"));
     const lib = join(outer, "src", "lib");
     await mkdir(lib, { recursive: true });
-    let version = "1";
-    const owners = new CheckoutOwners(() => version);
+    const owners = new CheckoutOwners(() => "1");
 
     expect(owners.walk()(lib)).toEqual({ checkoutRoot: outer, path: "src/lib" });
 
-    // `src/` becomes a checkout above the one folder the walks ask of, so no walk sees its `.git` entry come.
+    // `src/` becomes a checkout above the one folder the walks ask of, and the recorded checkouts stay as they were.
     const nested = await repository(join(outer, "src"));
-    version = "2";
     expect(owners.walk()(lib)).toEqual({ checkoutRoot: nested, path: "lib" });
+  });
+
+  it("finds a nested checkout gone that a tool call's lookup confirmed, and the next lookup agrees", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
+    cleanups.push(() => removeFolder(root));
+    const outer = await repository(join(root, "outer"));
+    const inner = await repository(join(outer, "inner"));
+    const sub = join(inner, "sub");
+    await mkdir(sub);
+    const owners = new CheckoutOwners(() => "1");
+    expect(owners.ownerOf(join(sub, "x.py"))).toEqual({ checkoutRoot: inner, path: "sub/x.py" });
+
+    await removeFolder(join(inner, ".git"));
+    // A file's folder may be asked before the folder above it.
+    const lookUp = owners.walk();
+    expect([lookUp(sub), lookUp(inner)]).toEqual([{ checkoutRoot: outer, path: "inner/sub" }, { checkoutRoot: outer, path: "inner" }]);
+    expect(owners.ownerOf(join(sub, "x.py"))).toEqual({ checkoutRoot: outer, path: "inner/sub/x.py" });
   });
 
   it("tells whether the recorded checkouts changed without preparing a statement on every lookup", async () => {

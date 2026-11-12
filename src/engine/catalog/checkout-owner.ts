@@ -4,7 +4,7 @@
  * checkout judges the file with its own rules, or leaves it to the checkout around it, is the router's decision.
  */
 import { lstatSync } from "node:fs";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { physicalPath } from "./checkout-control.js";
 import { runGit } from "../git.js";
 import { repositoryIdentityLocation } from "./repository-identity.js";
@@ -34,32 +34,41 @@ function within(root: string, candidate: string): boolean {
   return path === "" || (!isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`));
 }
 
-/** What a walk's lookup learned of a folder (`CheckoutOwners.walk`): its checkout, and whether it held a `.git` entry. */
+/** The entry `name` of the folder `owner` names: in the same checkout, one level down. */
+function ownerWithin(owner: CheckoutOwner, name: string): CheckoutOwner {
+  return { checkoutRoot: owner.checkoutRoot, path: owner.path === "" ? name : `${owner.path}/${name}` };
+}
+
+/**
+ * What a walk found of a folder (`CheckoutOwners.walk`): the Git checkout that holds it, if one does, and the checkout
+ * that owns it, which is that one or else a recorded checkout outside Git.
+ */
 interface WalkedFolder {
+  readonly inGit: CheckoutOwner | undefined;
   readonly owner: CheckoutOwner | undefined;
-  readonly gitEntry: boolean;
 }
 
 /**
  * Resolves owning checkouts for one runtime. Each folder's `.git` entry is looked at once, and each candidate root
  * is confirmed once with Git, so a lookup costs a map access per file once its folders are known. When
  * `recordedVersion` is given, every answer is forgotten once it changes: a checkout Rerail records later (a folder that
- * became a checkout) then owns its files from the next lookup, without a restart. A walk's lookups (`walk`) keep each
- * folder's answer from one walk to the next.
+ * became a checkout) then owns its files from the next lookup, without a restart. A walk (`walk`) works each folder's
+ * checkout out again from the folder above it.
  */
 export class CheckoutOwners {
   readonly #recordedVersion: (() => string) | undefined;
   #version: string | undefined;
   /** Lexical folder → physical root of the checkout that owns it (undefined: no Git checkout above it). */
   readonly #roots = new Map<string, string | undefined>();
-  /** Lexical folder → its physical root when it holds `.git` and Git confirms it as a top level. */
+  /**
+   * Lexical folder that held a `.git` entry when Git was asked about it → its physical root when Git confirms it as a
+   * top level. A folder with no entry has no answer here, so a walk tells from it an entry that came or went (`walk`).
+   */
   readonly #confirmed = new Map<string, string | undefined>();
   /** Physical checkout root → whether the checkout around it declares it as a submodule (a gitlink). */
   readonly #submodules = new Map<string, boolean>();
   /** Recorded checkouts outside Git (identity under `.rerail`), physical. */
   readonly #plainRoots = new Set<string>();
-  /** Lexical folder a walk asked of → what its lookup learned (`walk`). */
-  readonly #walked = new Map<string, WalkedFolder>();
 
   /** `recordedVersion` changes whenever the set of recorded checkouts does (see `CheckoutCatalogs.recordedCheckoutsVersion`). */
   constructor(recordedVersion?: () => string) {
@@ -77,58 +86,62 @@ export class CheckoutOwners {
    */
   ownerOf(absolute: string): CheckoutOwner | undefined {
     this.#revalidate();
-    return this.#lookUp(resolve(absolute));
-  }
-
-  /**
-   * `ownerOf` for one walk, which asks it only of real paths and of folders it reached by listing the folder above, never
-   * through a link, so each keeps the real path it had. The recorded checkouts' version is read once, here, not at each
-   * lookup. What a lookup learns of a folder is kept for the walks after it, each of which checks it with one lstat of
-   * the folder's `.git` entry, the first time it asks: a folder that gained or lost that entry may have become a
-   * checkout or stopped being one, which changes the checkout of the folders below it, so those are looked up again;
-   * the others keep their answers. A walk of folders an earlier walk looked up costs no realpath and no statement.
-   */
-  walk(): (folder: string) => CheckoutOwner | undefined {
-    this.#revalidate();
-    const checked = new Map<string, CheckoutOwner | undefined>();
-    return folder => {
-      const lexical = resolve(folder);
-      if (!checked.has(lexical)) checked.set(lexical, this.#walkedFolder(lexical));
-      return checked.get(lexical);
-    };
-  }
-
-  /** What a walk learns of the folder `lexical`: what an earlier walk learned, while its `.git` entry is as it was. */
-  #walkedFolder(lexical: string): CheckoutOwner | undefined {
-    const gitEntry = holdsGitEntry(lexical);
-    const known = this.#walked.get(lexical);
-    if (known?.gitEntry === gitEntry) return known.owner;
-    if (known !== undefined) this.#forgetAt(lexical);
-    const owner = this.#lookUp(lexical);
-    this.#walked.set(lexical, { owner, gitEntry });
-    return owner;
-  }
-
-  /**
-   * Forgets the answers that rest on the `.git` entry of the real folder `folder`, which came or went: whether it is a
-   * checkout, which checkout holds it and each folder below it, and whether the checkout around each checkout below it
-   * declares that one a submodule. A folder below it keeps Git's answer of whether it is a checkout itself, which rests
-   * on its own entry, and a folder outside it keeps every answer.
-   */
-  #forgetAt(folder: string): void {
-    this.#confirmed.delete(folder);
-    for (const answers of [this.#walked, this.#roots, this.#submodules]) {
-      for (const key of answers.keys()) if (within(folder, key)) answers.delete(key);
-    }
-  }
-
-  /** `ownerOf` of the resolved path `lexical`, from the answers as they are. */
-  #lookUp(lexical: string): CheckoutOwner | undefined {
+    const lexical = resolve(absolute);
     const real = physicalPath(lexical);
     const root = this.#rootOf(lexical, real);
     if (root === undefined || !within(root, real)) return undefined;
     if (real !== lexical && this.#rootOf(real, real) !== root) return undefined;
     return { checkoutRoot: root, path: relative(root, real).split(sep).join("/") };
+  }
+
+  /**
+   * `ownerOf` for one walk, which asks it only of real paths: the folders it starts from, and folders it reached by
+   * listing the folder above, never through a link. A folder's checkout is then its own when it holds a `.git` entry
+   * Git confirms, and else the one of the folder above it, so a walk resolves no real path: it looks once at the `.git`
+   * entry of each folder it asks of, and of each folder above those. Each walk looks again, so it finds a folder that
+   * became a checkout or stopped being one wherever it is, with no record to say so; where it finds an entry came or
+   * went, it forgets what `ownerOf` kept at and below that folder, and a tool call's lookup agrees with it. The recorded
+   * checkouts' version is read once, here, not at each lookup.
+   */
+  walk(): (folder: string) => CheckoutOwner | undefined {
+    this.#revalidate();
+    const found = new Map<string, WalkedFolder>();
+    const find = (folder: string): WalkedFolder => {
+      let known = found.get(folder);
+      if (known === undefined) {
+        const parent = dirname(folder);
+        known = this.#walkedFolder(folder, parent === folder ? undefined : find(parent));
+        found.set(folder, known);
+      }
+      return known;
+    };
+    return folder => find(resolve(folder)).owner;
+  }
+
+  /** What a walk finds of the real folder `folder`, below the folder it found `above` (none for a filesystem root). */
+  #walkedFolder(folder: string, above: WalkedFolder | undefined): WalkedFolder {
+    const entry = holdsGitEntry(folder);
+    // Git was asked about each folder that held an entry then: one that came or went since may have made a checkout or
+    // ended one, and what was kept at and below the folder rests on that.
+    if (entry !== this.#confirmed.has(folder)) this.#forgetAt(folder);
+    const root = entry ? this.#confirm(folder) : undefined;
+    const inGit = root === undefined ? above?.inGit && ownerWithin(above.inGit, basename(folder)) : { checkoutRoot: root, path: "" };
+    if (inGit !== undefined) return { inGit, owner: inGit };
+    const plain = this.#plainRoot(folder);
+    return { inGit, owner: plain === undefined ? undefined : { checkoutRoot: plain, path: relative(plain, folder).split(sep).join("/") } };
+  }
+
+  /**
+   * Forgets the answers that rest on the `.git` entry of the real folder `folder`, which came or went: Git's answer for
+   * it, which checkout holds it and each folder below it, and whether the checkout around each checkout below it
+   * declares that one a submodule. A folder below it keeps Git's answer of whether it is a checkout itself, which rests
+   * on its own entry, and a folder outside it keeps every answer.
+   */
+  #forgetAt(folder: string): void {
+    this.#confirmed.delete(folder);
+    for (const answers of [this.#roots, this.#submodules]) {
+      for (const key of answers.keys()) if (within(folder, key)) answers.delete(key);
+    }
   }
 
   /**
@@ -179,7 +192,6 @@ export class CheckoutOwners {
     this.#roots.clear();
     this.#confirmed.clear();
     this.#submodules.clear();
-    this.#walked.clear();
   }
 
   #plainRoot(real: string): string | undefined {
@@ -210,14 +222,14 @@ export class CheckoutOwners {
     return root;
   }
 
+  /** Git's answer of whether `directory` is a checkout's top level, asked once while it holds a `.git` entry. */
   #confirm(directory: string): string | undefined {
     if (this.#confirmed.has(directory)) return this.#confirmed.get(directory);
-    let root: string | undefined;
-    if (holdsGitEntry(directory)) {
-      const location = repositoryIdentityLocation(directory);
-      const top = location.git ? physicalPath(location.workspaceRoot) : undefined;
-      if (top !== undefined && top === physicalPath(directory)) root = top;
-    }
+    // A folder with no entry is no top level; no answer is kept for it, so `#confirmed` holds the folders that had one.
+    if (!holdsGitEntry(directory)) return undefined;
+    const location = repositoryIdentityLocation(directory);
+    const top = location.git ? physicalPath(location.workspaceRoot) : undefined;
+    const root = top !== undefined && top === physicalPath(directory) ? top : undefined;
     this.#confirmed.set(directory, root);
     return root;
   }

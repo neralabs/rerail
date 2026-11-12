@@ -1,1 +1,1 @@
-A session in a repository with many worktrees costs the daemon less CPU. Its walks look up which checkout holds each folder once and keep the answer for later walks, instead of resolving every folder again on each turn and every file of a worktree they see for the first time.
+A session in a repository with many worktrees costs the daemon less CPU. Its walks now tell which checkout holds each folder from the folder above it and its `.git` entry, instead of resolving every folder again on each turn and every file of a worktree they see for the first time.
