@@ -3,6 +3,10 @@
 .violation AdminConfiguration(at:span,key:symbol,value:symbol) code "ADMIN_CONFIG" "admin configuration"
 AdminConfiguration(@place("",0),key,value) :- option("entryPoint","_admin_configuration"),admin_config(key,value).
 
+// Preserve inventory ordinals, including repeated targets. Apply source gates before I/O.
+.violation AdminFile(at:span,ordinal:number,path:symbol,path_order:symbol) code "ADMIN_FILE" "selected admin file"
+AdminFile(@place("",0),i,path,@replace_all(path,"/","\u0000")) :- option("entryPoint","_admin_select"),option_item("adminCandidatePaths",i,path),!admin_skip_probe(path),!admin_allowlisted(path).
+
 #include "data-layer/plugin-production.rr"
 #include "data-layer/supplied-facts.rr"
 

@@ -60,3 +60,6 @@ def install(backend,module,detectors=False):
         return module.LinterPlugin(**config['plugin'],file_scope=module.FileScopeSpec(**scope),
             required_facts=(module.ADMIN_ASYNC_PURITY_EXTRACTOR,),reporter=module._report_admin_async_purity)
     backend.replace(module,'admin_async_purity_plugin',plugin)
+    if detectors:
+        from admin_public_port import install as install_public
+        install_public(backend,module)

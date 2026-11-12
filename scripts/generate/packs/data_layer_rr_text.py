@@ -289,6 +289,9 @@ def admin_async_purity(source, target, header):
     text += '.decl admin_owner(d: number, p: symbol)\n'
     text += 'admin_owner(d,p) :- doc(d,buffer,_), option_item("adminDocuments",i,buffer), option_item("adminPaths",i,p).\n'
     text += 'admin_owner(d,p) :- doc(d,p,_), !option_item("adminDocuments",_,_).\n'
+    text += '.decl admin_file_ordinal(d: number, i: number)\n'
+    text += 'admin_file_ordinal(d,i) :- doc(d,buffer,_), option_item("adminDocuments",i,buffer).\n'
+    text += 'admin_file_ordinal(d,d) :- doc(d,_,_), !option_item("adminDocuments",_,_).\n'
     text += '.decl admin_skip_path(p: symbol)\n'
     for index, pattern in enumerate(original.SKIP_PATTERNS):
         text += f'admin_skip_path(p) :- admin_owner(_, p), match({quote(search(pattern))}, p).\n'
@@ -309,13 +312,14 @@ def admin_async_purity(source, target, header):
     text += '.decl admin_visible(d: number, l: number, t: symbol, ordinal: number, label: symbol)\n'
     text += 'admin_visible(d, l, t, ordinal, label) :- admin_candidate(d, l, t, ordinal, label), !admin_quotes(d, l, _), parity = count : { admin_toggle(d, before), before < l }, parity % 2 = 0.\n'
     trim = space + r'+\z'
-    text += '\n.violation AdminPurity(at: span, ordinal: number, pattern: symbol, text: symbol) code "AAP001"\n    "{pattern}: {text}"\n'
-    text += f'AdminPurity(@place(p, l), ordinal, label, @replace_all(t, {quote(trim)}, "")) :- admin_visible(d, l, t, ordinal, label), admin_owner(d, p).\n'
+    text += '\n.violation AdminPurity(at: span, file_ordinal: number, ordinal: number, pattern: symbol, text: symbol) code "AAP001"\n    "{pattern}: {text}"\n'
+    text += f'AdminPurity(@place(p, l), file_ordinal, ordinal, label, @replace_all(t, {quote(trim)}, "")) :- admin_visible(d, l, t, ordinal, label), admin_owner(d, p), admin_file_ordinal(d,file_ordinal).\n'
     for entry, code, relation in [('_should_skip', 'ADMIN_SKIP', 'admin_skip_probe'), ('_is_allowlisted', 'ADMIN_ALLOWLIST', 'admin_allowlisted')]:
         text += f'\n.violation {code}(at: span) code "{code}" "matched"\n{code}(@place("input.py", 1)) :- option("entryPoint", {quote(entry)}), option("path", p), {relation}(p).\n'
     text += '.decl admin_skip_probe(p: symbol)\n'
+    text += '.decl admin_probe_path(p: symbol)\nadmin_probe_path(p) :- option("path",p).\nadmin_probe_path(p) :- option_item("adminCandidatePaths",_,p).\n'
     for pattern in original.SKIP_PATTERNS:
-        text += f'admin_skip_probe(p) :- option("path", p), match({quote(search(pattern))}, p).\n'
+        text += f'admin_skip_probe(p) :- admin_probe_path(p), match({quote(search(pattern))}, p).\n'
     from data_layer_rr_admin_api import suffix
     return text+suffix(source)
 

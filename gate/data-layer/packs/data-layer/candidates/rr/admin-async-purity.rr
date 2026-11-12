@@ -9,6 +9,9 @@
 .decl admin_owner(d: number, p: symbol)
 admin_owner(d,p) :- doc(d,buffer,_), option_item("adminDocuments",i,buffer), option_item("adminPaths",i,p).
 admin_owner(d,p) :- doc(d,p,_), !option_item("adminDocuments",_,_).
+.decl admin_file_ordinal(d: number, i: number)
+admin_file_ordinal(d,i) :- doc(d,buffer,_), option_item("adminDocuments",i,buffer).
+admin_file_ordinal(d,d) :- doc(d,_,_), !option_item("adminDocuments",_,_).
 .decl admin_skip_path(p: symbol)
 admin_skip_path(p) :- admin_owner(_, p), match("(?s:.*)(?:/tests/)(?s:.*)", p).
 
@@ -44,9 +47,9 @@ admin_toggle(d, l) :- admin_quotes(d, l, n), n % 2 = 1.
 .decl admin_visible(d: number, l: number, t: symbol, ordinal: number, label: symbol)
 admin_visible(d, l, t, ordinal, label) :- admin_candidate(d, l, t, ordinal, label), !admin_quotes(d, l, _), parity = count : { admin_toggle(d, before), before < l }, parity % 2 = 0.
 
-.violation AdminPurity(at: span, ordinal: number, pattern: symbol, text: symbol) code "AAP001"
+.violation AdminPurity(at: span, file_ordinal: number, ordinal: number, pattern: symbol, text: symbol) code "AAP001"
     "{pattern}: {text}"
-AdminPurity(@place(p, l), ordinal, label, @replace_all(t, "[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}-\\x{2029}\\x{202f}\\x{205f}\\x{3000}]+\\z", "")) :- admin_visible(d, l, t, ordinal, label), admin_owner(d, p).
+AdminPurity(@place(p, l), file_ordinal, ordinal, label, @replace_all(t, "[\\x{9}-\\x{d}\\x{1c}-\\x{20}\\x{85}\\x{a0}\\x{1680}\\x{2000}-\\x{200a}\\x{2028}-\\x{2029}\\x{202f}\\x{205f}\\x{3000}]+\\z", "")) :- admin_visible(d, l, t, ordinal, label), admin_owner(d, p), admin_file_ordinal(d,file_ordinal).
 
 .violation ADMIN_SKIP(at: span) code "ADMIN_SKIP" "matched"
 ADMIN_SKIP(@place("input.py", 1)) :- option("entryPoint", "_should_skip"), option("path", p), admin_skip_probe(p).
@@ -54,9 +57,12 @@ ADMIN_SKIP(@place("input.py", 1)) :- option("entryPoint", "_should_skip"), optio
 .violation ADMIN_ALLOWLIST(at: span) code "ADMIN_ALLOWLIST" "matched"
 ADMIN_ALLOWLIST(@place("input.py", 1)) :- option("entryPoint", "_is_allowlisted"), option("path", p), admin_allowlisted(p).
 .decl admin_skip_probe(p: symbol)
-admin_skip_probe(p) :- option("path", p), match("(?s:.*)(?:/tests/)(?s:.*)", p).
-admin_skip_probe(p) :- option("path", p), match("(?s:.*)(?:test_)(?s:.*)", p).
-admin_skip_probe(p) :- option("path", p), match("(?s:.*)(?:__pycache__)(?s:.*)", p).
+.decl admin_probe_path(p: symbol)
+admin_probe_path(p) :- option("path",p).
+admin_probe_path(p) :- option_item("adminCandidatePaths",_,p).
+admin_skip_probe(p) :- admin_probe_path(p), match("(?s:.*)(?:/tests/)(?s:.*)", p).
+admin_skip_probe(p) :- admin_probe_path(p), match("(?s:.*)(?:test_)(?s:.*)", p).
+admin_skip_probe(p) :- admin_probe_path(p), match("(?s:.*)(?:__pycache__)(?s:.*)", p).
 #include "data-layer/admin-api.rr"
 admin_config("constants","{\"LINTER_NAME\": \"lint_admin_async_purity\", \"SCAN_DIRS\": [\"l8000_admin/tools\"], \"ALLOWLISTED_FILES\": [], \"ALLOWLIST_SIGNATURE\": \"xN3ugqWFKXrfdfYHOWH14S9NfLPHCwnni7yf1errzrn17xHvVgd6C3y/QXR7mwfGPnFwpuq/HcCWAx9C2crzDg==\"}").
 admin_config("patterns","[{\"pattern\": \"\\\\basyncio\\\\.to_thread\\\\b\", \"flags\": 32, \"name\": \"asyncio.to_thread()\"}, {\"pattern\": \"\\\\brun_in_executor\\\\b\", \"flags\": 32, \"name\": \"run_in_executor()\"}, {\"pattern\": \"\\\\bdisable_sync_in_async_check\\\\b\", \"flags\": 32, \"name\": \"disable_sync_in_async_check()\"}]").

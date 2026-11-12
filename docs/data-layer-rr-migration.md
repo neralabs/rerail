@@ -4172,3 +4172,16 @@ That red witness is `rr-admin-public-source-red-finalfcce.json.gz`.
 The admin rule remains a draft. Full native original assertions, public scanners, production, CLI, earlier corpora, retained updates, and valid removal controls remain required.
 The inventory remains twenty admitted rules, seventy-nine drafts, and one absent translation.
 No engine source changed, no whole-repository cold run was performed, and no Linear ticket was created.
+
+### 2026-11-12 — Native admin public scanners expose a fixture boundary
+
+The public adapter submits one complete candidate batch to native selection before reading selected files.
+Native detection retains a buffer ordinal, so repeated file targets preserve duplicate findings and requested target order.
+Supplied source uses the same registered native extractor, including files outside default scope.
+Both APIs pass 37 of 38 public cases with no source semantic callbacks.
+
+The read-error fixture globally patches `Path.read_text`, which also blocks the native transport from reading engine result files.
+The upstream read-error test patches only reads of the source fixture file.
+The fixture must target source reads while retaining the same expected source result.
+The complete first replay is `rr-admin-public-read-fixture-red-finalfcce.json.gz`.
+The admin rule remains a draft.
