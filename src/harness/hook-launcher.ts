@@ -1,14 +1,15 @@
 /**
  * Entry point of the Windows Claude Code hooks: `<node> <dist>/hook-launcher.js <recorded node> <dist>/<hook>.js`.
  *
- * Claude Code spawns these exec-form hooks without a shell, so the `cmd` fallback the shell-form registrations use
- * is unavailable. `<node>` is `node`, which Claude Code resolves from PATH, where set-up found the recorded node there,
- * and otherwise the recorded node itself. The launcher runs the hook under the node recorded at registration, in this
- * process when that node started it, falling back to this node once that binary is gone. A version-manager upgrade
- * (nvm-windows, Volta, fnm) removes it and would otherwise break every hook until `rerail setup` runs again. The
- * recorded-first order keeps the shell launchers' version guarantee, so the hook still loads the SQLite binding built for
- * that node when a project pins an older node on PATH. Kept free of dependencies, Node's built-ins and `same-file.ts`
- * aside, so whatever node PATH supplies can run it.
+ * Claude Code spawns these exec-form hooks without a shell, so the `cmd` command line the shell-form registrations use
+ * is unavailable. `<node>` is `node`, which Claude Code resolves from PATH, where set-up found the recorded node there.
+ * Elsewhere the entry starts cmd.exe with each word as an argument of its own, and cmd starts the recorded node itself
+ * as `<node>` while it exists and `node.exe` from PATH once it is gone. The launcher runs the hook under the node
+ * recorded at registration, in this process when that node started it, falling back to this node once that binary is
+ * gone. A version-manager upgrade (nvm-windows, Volta, fnm) removes it and would otherwise break every hook until
+ * `rerail setup` runs again. The recorded-first order keeps the shell launchers' version guarantee, so the hook still
+ * loads the SQLite binding built for that node when a project pins an older node on PATH. Kept free of dependencies,
+ * Node's built-ins and `same-file.ts` aside, so whatever node PATH supplies can run it.
  */
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
