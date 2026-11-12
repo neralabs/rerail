@@ -30,7 +30,7 @@ use std::sync::{Arc, Condvar, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 /// The most bytes queued and unwritten: a few chunks' memo entries, 192 MB of the default 1 GB budget, scaled with the
-/// budget (`rerail_accel::budget::share`, decision 0117).
+/// budget (`rerail_accel::budget::share`, decision 0126).
 fn cap_bytes_default() -> usize {
     rerail_accel::budget::share(192 << 20)
 }

@@ -259,7 +259,7 @@ struct Verdict {
 }
 
 fn fresh() -> (PathBuf, ContentStore, Connection) {
-    let path = crate::code_rule_dsl::prefilter::tests::temp();
+    let path = crate::code_rule_dsl::fixtures::temp();
     let store = ContentStore::open(&path).unwrap();
     let db = Connection::open(&path).unwrap();
     super::super::native::register(&db).unwrap();

@@ -1274,7 +1274,7 @@ kernel void rel_hash(device const long* R [[buffer(0)]], device uint* out [[buff
     out[t] = hash_keys(kv, p[1], p[2]);
 }
 
-// A lattice relation's rounds on the device (decision 0115): a round's rows `U` (a table of `k` slots: the key's
+// A lattice relation's rounds on the device (decision 0124): a round's rows `U` (a table of `k` slots: the key's
 // `nkeys` columns, then the value) folded by key into the held relation `R` (its `k` columns and a change count,
 // stride `had`). `P` groups `U`'s rows by key (each place the least row of its key), `best` the key's chosen row
 // (min and max select one of their values), `flags` a flat key's conflict. A held key's row is updated in place; a
@@ -2321,7 +2321,7 @@ pub(in crate::code_rule_dsl) struct LatCode {
 struct LatParams { top: i64, n: u32, had: u32, nkeys: u32, code: u32, after: u32, pmask: u32, hmask: u32, pad: u32 }
 
 impl Batch {
-    /// A lattice relation's round (decision 0115): the `n` rows of `u` (its key's `nkeys` columns, then the value)
+    /// A lattice relation's round (decision 0124): the `n` rows of `u` (its key's `nkeys` columns, then the value)
     /// folded by key into `total` (the relation's `nkeys + 2` columns, its last a key's changes; `had` rows): a held
     /// key's row updated in place, a new key's row into `new_keys` (as `total`'s columns), each changed key's row (key
     /// and value) into `delta`. `counters`: `[changed, new]`.

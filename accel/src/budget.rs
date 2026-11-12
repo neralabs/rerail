@@ -1,4 +1,4 @@
-//! The process's memory budgets (decision 0117): the one place every bounded part of the engine reads its size from.
+//! The process's memory budgets (decision 0126): the one place every bounded part of the engine reads its size from.
 //!
 //! - **Overall** (`--memory-mb`, `RERAIL_MEMORY_MB`; 1 GB by default): what the process keeps resident on the host.
 //!   The parts sized from it (the write queue, the working set, what a session keeps of its cross-file part) take

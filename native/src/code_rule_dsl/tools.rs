@@ -598,7 +598,7 @@ fn repeat_command(_: &str) -> Result<String, String> {
 }
 
 /// The memory budgets, set by any command's `--memory-mb <n>` (the overall budget, 1 GB by default) and
-/// `--metal-mb <n>` (the Metal budget, on top of it: half the overall budget by default) (decision 0117): the
+/// `--metal-mb <n>` (the Metal budget, on top of it: half the overall budget by default) (decision 0126): the
 /// arguments without them.
 fn budget_options(args: &[String]) -> Result<Vec<String>, String> {
     let mut rest = Vec::with_capacity(args.len());

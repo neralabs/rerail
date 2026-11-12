@@ -770,7 +770,7 @@ fn plan_cache(outcome: usize) {
 
 /// Quiet strata passed on unchanged in this process (decision 0101 §1), for tests.
 static QUIET_STRATA: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-pub(in crate::code_rule_dsl) fn quiet_strata() -> usize {
+pub fn quiet_strata() -> usize {
     QUIET_STRATA.load(std::sync::atomic::Ordering::Relaxed)
 }
 
@@ -4919,7 +4919,7 @@ impl<'a> Run<'a, '_> {
         let prog = self.prog;
         self.why_not = None;
         self.why_class = None;
-        // A lattice relation runs here as one row a key, folded by its lattice's join (decision 0115), except where
+        // A lattice relation runs here as one row a key, folded by its lattice's join (decision 0124), except where
         // the component's other machinery keeps sets: a gate, or a request answered (its SQL seeds and probes insert
         // by key, not by join). A session's `levels` are kept as any relation's: a lattice stratum is not maintained
         // (`maintain::unmaintainable`), it is derived again each run.
@@ -5175,7 +5175,7 @@ impl<'a> Run<'a, '_> {
                 rel_lines.push(SpecLine::Rel { name: (*r).clone(), types: types(r), start: if empty { Start::Empty } else { Start::Rows } });
             }
         }
-        // A lattice relation's key and join, after the relations (decision 0115). One that starts from a kept
+        // A lattice relation's key and join, after the relations (decision 0124). One that starts from a kept
         // relation (a maintained session's survivors) is a set there: it is not folded in place yet.
         for r in &rels {
             let Some(l) = prog.lattice.get(*r) else { continue };

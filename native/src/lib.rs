@@ -115,16 +115,6 @@ fn install_store_functions() {
         code_rule_dsl::text::install(db)?;
         code_rule_dsl::prefilter::tapes::install(db)
     });
-    // And where its SQL hazards go: the engine's profile (decision 0104).
-    content_store::hazards::set(content_store::hazards::Hazards {
-        on: code_rule_dsl::sql_hazards::on,
-        sql_in_wave: code_rule_dsl::sql_hazards::sql_in_wave,
-        wait_in_wave: code_rule_dsl::sql_hazards::wait_in_wave,
-        behind_the_run: code_rule_dsl::sql_hazards::behind_the_run,
-        statement: code_rule_dsl::sql_hazards::strict_statement,
-        // The writer's CPU under the profile's spans, a job at a time.
-        span: |what| Box::new(code_rule_dsl::logic::profile::span(move || format!("store writer: {what}"))),
-    });
     code_rule_dsl::sql_hazards::strict_on_every_connection();
 }
 

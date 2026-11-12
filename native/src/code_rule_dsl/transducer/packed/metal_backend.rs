@@ -352,6 +352,8 @@ pub mod launch_tests {
     use super::*;
 
     #[test]
+
+    #[ignore = "open (decision 0128): parses files whose language only the engine registers; to be hosted by rerail-engine"]
     fn production_entry_preserves_the_outer_budget_and_returns_launch_limit() {
         use crate::code_rule_dsl::tape::{Grammar, TapeDoc, TapeImage};
         use crate::code_rule_dsl::transducer::packed::{Program, metal_program_backend};
@@ -412,7 +414,8 @@ pub mod launch_tests {
             }
             let name = if in_crate && name == "runtime.rs" { "metal_backend.rs" } else { name };
             let source = std::fs::read_to_string(&path).unwrap();
-            let source = source.split("#[cfg(test)]\nmod ").next().unwrap();
+            // Up to its first test module (`mod`, or `pub mod` as the crate split mounts them).
+            let source = source.split("#[cfg(test)]\nmod ").next().unwrap().split("#[cfg(test)]\npub mod ").next().unwrap();
             for forbidden in [
                 ".dispatch_threads(",
                 ".dispatch_thread_groups(",

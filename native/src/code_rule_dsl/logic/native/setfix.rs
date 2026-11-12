@@ -121,7 +121,7 @@ impl Interner {
 /// store's atoms again. They hold no file open: the store's last handle closes them (`ContentStore`'s drop).
 static SYMS: LazyLock<Mutex<HashMap<String, Arc<RwLock<Interner>>>>> = LazyLock::new(Default::default);
 /// The symbols of `conn`'s database: the process's arena of it.
-fn symbols(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
+pub fn symbols(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
     let conn = conn.db();
     // A connection's symbols are found once (by its path) and kept for it until it closes (`forget_scope`).
     let at = conn.at();
@@ -326,7 +326,7 @@ pub struct Rel { table: String, types: Vec<u8>, pub k: usize, pub n: usize, data
              /// key's values derived (`Lat::fold`). `None`: a set.
              lat: Option<Box<Lat>> }
 
-/// A lattice relation's state (decision 0115): its last column is the value, the columns before it the key. A key's
+/// A lattice relation's state (decision 0124): its last column is the value, the columns before it the key. A key's
 /// row is replaced when a wave's values for it join to a new value: the old row dead, the new one the next wave's
 /// delta, so readers and later probes see the folded value only. As the SQL kernel folds (`schedule::lattice::fold`):
 /// absence is bottom, the top absorbs, and after `widen` changes of a key its next value is the lattice's widening.
@@ -1841,20 +1841,20 @@ pub fn stats(conn: &Connection, name: &str) -> Result<String> {
 
 /// A fused filter over an input relation that a device can run alone (`scans`): its row program, its inputs, its
 /// atom's gathered rows, its parameters, and the rows the CPU passes with the CPU it took.
-pub(in crate::code_rule_dsl) struct ScanCase {
-    pub(in crate::code_rule_dsl) rule: String,
-    pub(in crate::code_rule_dsl) program: rerail_compiler::block::BlockProgram,
-    pub(in crate::code_rule_dsl) inputs: Vec<rowcode::Word>,
-    pub(in crate::code_rule_dsl) gathered: Vec<(usize, Vec<i64>)>,
-    pub(in crate::code_rule_dsl) params: Vec<i64>,
-    pub(in crate::code_rule_dsl) passed: Vec<u32>,
-    pub(in crate::code_rule_dsl) cpu_seconds: f64,
+pub struct ScanCase {
+    pub rule: String,
+    pub program: rerail_compiler::block::BlockProgram,
+    pub inputs: Vec<rowcode::Word>,
+    pub gathered: Vec<(usize, Vec<i64>)>,
+    pub params: Vec<i64>,
+    pub passed: Vec<u32>,
+    pub cpu_seconds: f64,
 }
 
 /// Each fused filter of an open component's rules whose atom reads an input relation with constant keys and whose
 /// parameters are constants: the whole of what it filters is known before the run, so a device scan of it can be
 /// checked against the CPU's (the relational lab).
-pub(in crate::code_rule_dsl) fn scans(conn: &Connection, name: &str) -> Result<Vec<ScanCase>> {
+pub fn scans(conn: &Connection, name: &str) -> Result<Vec<ScanCase>> {
     let comp = component(conn, name)?;
     let comp = comp.lock().unwrap();
     let mut out = Vec::new();
@@ -1903,22 +1903,22 @@ pub(in crate::code_rule_dsl) fn scans(conn: &Connection, name: &str) -> Result<V
 /// Two atoms of a rule over input relations, the second's keys all bound by the first (`tiles`): the first's rows (its
 /// constant keys checked) by the columns the second's keys read, the second's rows by its key columns, and the pairs
 /// a CPU hash join gives (left row, right row id) with the CPU it took.
-pub(in crate::code_rule_dsl) struct TileCase {
-    pub(in crate::code_rule_dsl) rule: String,
-    pub(in crate::code_rule_dsl) left: Vec<Vec<i64>>,
-    pub(in crate::code_rule_dsl) right: Vec<Vec<i64>>,
-    pub(in crate::code_rule_dsl) right_ids: Vec<u32>,
+pub struct TileCase {
+    pub rule: String,
+    pub left: Vec<Vec<i64>>,
+    pub right: Vec<Vec<i64>>,
+    pub right_ids: Vec<u32>,
     /// The right side's identity: its relation, key columns and column tests (one sort serves every case of it).
-    pub(in crate::code_rule_dsl) right_key: String,
+    pub right_key: String,
     /// Whether each key holds symbols.
-    pub(in crate::code_rule_dsl) symbols: Vec<bool>,
-    pub(in crate::code_rule_dsl) pairs: Vec<(u32, u32)>,
-    pub(in crate::code_rule_dsl) cpu_seconds: f64,
+    pub symbols: Vec<bool>,
+    pub pairs: Vec<(u32, u32)>,
+    pub cpu_seconds: f64,
 }
 
 /// Each rule's first two steps when both are atoms over input relations and the second's keys are slots the first
 /// binds: a join whose whole input is known before the run (the relational lab's `tile`).
-pub(in crate::code_rule_dsl) fn tiles(conn: &Connection, name: &str) -> Result<Vec<TileCase>> {
+pub fn tiles(conn: &Connection, name: &str) -> Result<Vec<TileCase>> {
     let comp = component(conn, name)?;
     let comp = comp.lock().unwrap();
     let mut out = Vec::new();

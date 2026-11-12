@@ -2,6 +2,8 @@ use super::*;
 use crate::code_rule_dsl::{logic::{front, plan}, typing::file_local::Binding};
 
 #[test]
+
+#[ignore = "open (decision 0128): parses rule files, whose language only the engine registers; to be hosted by rerail-engine"]
 fn fresh_and_restored_programs_have_identical_relation_identities() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();

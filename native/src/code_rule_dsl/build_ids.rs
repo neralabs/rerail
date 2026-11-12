@@ -13,14 +13,21 @@ pub fn set(engine: &'static str, grammar: &'static str) {
     let _ = GRAMMAR.set(grammar);
 }
 
+/// What a test build of a crate below the engine reads when no engine set the identities: its tests store and read
+/// tapes under fixed ones. Any other build without them is a defect, and panics.
+#[cfg(any(test, feature = "test-hooks"))]
+const UNSET: Option<(&str, &str)> = Some(("test-build", "0000000000000000000000000000000000000000000000000000000000000000"));
+#[cfg(not(any(test, feature = "test-hooks")))]
+const UNSET: Option<(&str, &str)> = None;
+
 /// The engine's build identity.
 pub fn engine() -> &'static str {
-    ENGINE.get().copied().expect("the engine sets its build identity as it loads")
+    ENGINE.get().copied().or(UNSET.map(|u| u.0)).expect("the engine sets its build identity as it loads")
 }
 
 /// The parser and grammar build identity.
 pub fn grammar() -> &'static str {
-    GRAMMAR.get().copied().expect("the engine sets its build identity as it loads")
+    GRAMMAR.get().copied().or(UNSET.map(|u| u.1)).expect("the engine sets its build identity as it loads")
 }
 
 /// The grammars' build identity as a number: its first 15 hex digits.

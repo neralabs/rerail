@@ -522,7 +522,7 @@ struct Shape {
     /// Profiling (`RERAIL_GPU_WALK_STEPS`): 1 + the dispatch's first pass's place in its stats
     /// buffer (bound at `WALK_STATS_SLOT`); 0 off.
     profile: u32,
-    /// The spill queue's capacity in frames (`MicroQ`, decision 0116); 0 no spill.
+    /// The spill queue's capacity in frames (`MicroQ`, decision 0125); 0 no spill.
     queue: u32,
     /// A walk's steps between spills (`SPILL_BUDGET`).
     budget: u32,

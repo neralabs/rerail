@@ -39,7 +39,7 @@ pub use crate::code_rule_dsl::logic::device::{Report};
 
 /// The most rows a table is given before its stage has run once (a guess; an overflow runs it again exactly).
 const GUESS_MAX: usize = 1 << 21;
-/// The device's buffers share the Metal budget (`metal_buffer_limit`, 512 MB by default; decision 0117) with the
+/// The device's buffers share the Metal budget (`metal_buffer_limit`, 512 MB by default; decision 0126) with the
 /// buffer pool and the other lanes. The device joins keep within about a quarter of it at the default (their sizes
 /// below are those at 512 MB, scaled with the budget, `metal_share`):
 /// the most bytes one binding table may take: past it the rule is refused at run time and runs on the CPU, named;
@@ -1683,7 +1683,7 @@ fn group(rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, f
 
 /// The first rules of `rules` that fit one submission's space, each encoded into `batch`.
 fn encode_runs(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batch, rep: &mut Report, names: &Interner) -> Result<Vec<Run<'static>>, String> {
-    // A lease past the Metal budget is refused here (decision 0117): the stratum then runs on the CPU, named.
+    // A lease past the Metal budget is refused here (decision 0126): the stratum then runs on the CPU, named.
     rerail_accel::gpu::shared::within_budget(|| encode_runs_bounded(rules, batch, rep, names))
 }
 
@@ -1990,7 +1990,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         }
     }
     let mut own = Own::default();
-    // A lattice head folds each round by key on the device (decision 0115): its fold, and its key table.
+    // A lattice head folds each round by key on the device (decision 0124): its fold, and its key table.
     let mut lattices: HashMap<usize, (mj::LatCode, mj::LatKeys)> = HashMap::new();
     for &h in heads {
         if let Some(lat) = store.rels[h].device_lattice() {
@@ -2227,8 +2227,8 @@ pub mod tests {
         if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
             return;
         }
-        let store = crate::code_rule_dsl::prefilter::tests::temp();
-        drop(crate::code_rule_dsl::prefilter::tests::open(&store));
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -2306,8 +2306,8 @@ pub mod tests {
         if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
             return;
         }
-        let store = crate::code_rule_dsl::prefilter::tests::temp();
-        drop(crate::code_rule_dsl::prefilter::tests::open(&store));
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -2367,8 +2367,8 @@ pub mod tests {
         if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
             return;
         }
-        let store = crate::code_rule_dsl::prefilter::tests::temp();
-        drop(crate::code_rule_dsl::prefilter::tests::open(&store));
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -2476,8 +2476,8 @@ pub mod tests {
             return;
         }
         use crate::code_rule_dsl::logic::lanes::wave;
-        let store = crate::code_rule_dsl::prefilter::tests::temp();
-        drop(crate::code_rule_dsl::prefilter::tests::open(&store));
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();
@@ -2541,8 +2541,8 @@ pub mod tests {
         if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
             return;
         }
-        let store = crate::code_rule_dsl::prefilter::tests::temp();
-        drop(crate::code_rule_dsl::prefilter::tests::open(&store));
+        let store = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::content_store::ContentStore::open(&store).unwrap());
         let db = Connection::open(&store).unwrap();
         crate::code_rule_dsl::logic::native::register(&db).unwrap();
         crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();

@@ -133,7 +133,7 @@ pub enum Line {
     /// Its recursive relations keep each row's level (decision 0090): a session maintains them by levels. Without it
     /// no row has one, and a closure may run on the device (bit rows give reach, not distance).
     Leveled,
-    /// Relation `rel` is a lattice's (decision 0115): its last column the value, joined by the lattice `name`'s join,
+    /// Relation `rel` is a lattice's (decision 0124): its last column the value, joined by the lattice `name`'s join,
     /// the `keys` columns before it the key; after `widen` changes of a key, widened.
     Lattice { rel: usize, keys: usize, name: String, widen: Option<u32> },
     Request(usize),

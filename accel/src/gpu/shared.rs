@@ -205,7 +205,7 @@ pub fn set_other_reserved(reader: fn() -> usize) {
     let _ = OTHER_RESERVED.set(reader);
 }
 
-/// A lease that keeps within the Metal budget (`crate::budget::metal`, decision 0117): refused, as a capacity
+/// A lease that keeps within the Metal budget (`crate::budget::metal`, decision 0126): refused, as a capacity
 /// refusal its caller runs on the CPU, when relational work's leases and the pool's reservations would pass it. The
 /// device joins' buffers are leased so: without it, their waves and the strata run apart from them held up to 600 MB
 /// of a 512 MB budget. Idle buffers are given back first.

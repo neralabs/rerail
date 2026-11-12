@@ -1,5 +1,6 @@
 use super::*;
 use crate::code_rule_dsl::language::{self, GrammarDialect};
+use crate::code_rule_dsl::fixtures::{document, temp};
 // cratify: a re-export of rerail-engine's, which its facades of this module make
 use crate::code_rule_dsl::tape::TAPE_FORMAT_VERSION;
 
@@ -25,6 +26,8 @@ use std::sync::Mutex;
 static SERIAL: Mutex<()> = Mutex::new(());
 
 #[test]
+
+#[ignore = "open (decision 0128): parses files whose language only the engine registers; to be hosted by rerail-engine"]
 fn stored_tapes_are_admitted_into_slabs_and_read_in_place() {
     if metal::Device::system_default().is_none() {
         return;

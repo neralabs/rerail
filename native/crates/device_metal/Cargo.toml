@@ -28,7 +28,7 @@ system-allocator = ["rerail-facts/system-allocator", "rerail-lang/system-allocat
 code-rule-profile = ["rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile", "rerail-logic/code-rule-profile", "rerail-rr/code-rule-profile", "rerail-transducer/code-rule-profile", "rerail-w/code-rule-profile"]
 p-anchor-corpus = ["rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus", "rerail-logic/p-anchor-corpus", "rerail-rr/p-anchor-corpus", "rerail-transducer/p-anchor-corpus", "rerail-w/p-anchor-corpus"]
 metal-tests = ["rerail-facts/metal-tests", "rerail-lang/metal-tests", "rerail-logic/metal-tests", "rerail-rr/metal-tests", "rerail-transducer/metal-tests", "rerail-w/metal-tests"]
-test-hooks = ["rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-logic/test-hooks", "rerail-rr/test-hooks", "rerail-transducer/test-hooks", "rerail-store/test-hooks", "rerail-w/test-hooks", "dep:tempfile"]
+test-hooks = ["rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-logic/test-hooks", "rerail-rr/test-hooks", "rerail-transducer/test-hooks", "rerail-compiler/test-hooks", "rerail-store/test-hooks", "rerail-w/test-hooks", "dep:tempfile"]
 
 [dependencies]
 base64 = "=0.22.1"
@@ -115,5 +115,15 @@ rerail-metal = { path = "../metal" }
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 
 [dev-dependencies]
+# This crate's own tests read its dependencies' test hooks (fixtures, the compiler's relocation checks, the store's
+# positional search): a plain `cargo test -p rerail-device-metal` turns them on.
+rerail-compiler = { path = "../compiler", features = ["test-hooks"] }
+rerail-facts = { path = "../facts", default-features = false, features = ["test-hooks"] }
+rerail-lang = { path = "../lang", default-features = false, features = ["test-hooks"] }
+rerail-logic = { path = "../logic", default-features = false, features = ["test-hooks"] }
+rerail-rr = { path = "../rr", default-features = false, features = ["test-hooks"] }
+rerail-store = { path = "../store", features = ["test-hooks"] }
+rerail-transducer = { path = "../transducer", default-features = false, features = ["test-hooks"] }
+rerail-w = { path = "../w", default-features = false, features = ["test-hooks"] }
 ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
 rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "array"] }

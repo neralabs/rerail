@@ -15,7 +15,7 @@ use std::any::Any;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-/// The working set's bytes (estimated): 96 MB of the default 1 GB budget, scaled with it (decision 0117).
+/// The working set's bytes (estimated): 96 MB of the default 1 GB budget, scaled with it (decision 0126).
 fn cap_bytes() -> usize {
     rerail_accel::budget::share(96 << 20)
 }

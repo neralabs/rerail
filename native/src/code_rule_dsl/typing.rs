@@ -12,5 +12,4 @@ pub mod deps;
 pub mod rounds;
 pub mod terms;
 // cratify: `oracle_tests` is rerail-engine's (it mounts it)
-#[cfg(test)]
-pub mod phase_tests;
+// cratify: `phase_tests` is rerail-engine's (it mounts it: they parse rule files, whose language the engine registers)

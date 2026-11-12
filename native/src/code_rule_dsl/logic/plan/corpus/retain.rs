@@ -370,7 +370,7 @@ impl Cut {
 
 /// The byte budget of what a session keeps of its cross-file part.
 pub(in crate::code_rule_dsl) fn budget() -> usize {
-    // 256 MB of the default 1 GB budget, scaled with it (decision 0117).
+    // 256 MB of the default 1 GB budget, scaled with it (decision 0126).
     std::env::var("RERAIL_CROSS_RETAIN_MB").ok().and_then(|v| v.parse::<usize>().ok()).map_or_else(|| rerail_accel::budget::share(256 << 20), |mb| mb << 20)
 }
 

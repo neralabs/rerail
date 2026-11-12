@@ -549,7 +549,7 @@ fn micro_walks_are_the_interpreters_label_outputs() {
     assert!(compared > 100_000 && overflowed * 100 < compared);
 }
 
-/// A long walk spills its frames to other threads (decision 0116): with a budget of one step, nearly every walk
+/// A long walk spills its frames to other threads (decision 0125): with a budget of one step, nearly every walk
 /// gives frames away (a descendant range halved, a move frame whole), and the wave's roots on Metal are still the
 /// CPU's. A frame lost, walked twice where a tally counts, or given its walk's wrong start shows here.
 #[cfg(target_os = "macos")]

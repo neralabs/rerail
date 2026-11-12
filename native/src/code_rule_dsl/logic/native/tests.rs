@@ -3,8 +3,8 @@ use rusqlite::Connection;
 
 /// A connection to a new content store, whose `atoms` table holds the symbols.
 fn connection() -> Connection {
-    let path = crate::code_rule_dsl::prefilter::tests::temp();
-    drop(crate::code_rule_dsl::prefilter::tests::open(&path));
+    let path = crate::code_rule_dsl::fixtures::temp();
+    drop(crate::content_store::ContentStore::open(&path).unwrap());
     let db = Connection::open(path).unwrap();
     register(&db).unwrap();
     db
@@ -40,7 +40,7 @@ fn computed_sql_inputs_do_not_reenter_a_held_symbol_lock() {
 #[test]
 fn a_store_created_again_at_its_path_gives_a_run_its_symbols() {
     use crate::content_store::ContentStore;
-    let (path, elsewhere) = (crate::code_rule_dsl::prefilter::tests::temp(), crate::code_rule_dsl::prefilter::tests::temp());
+    let (path, elsewhere) = (crate::code_rule_dsl::fixtures::temp(), crate::code_rule_dsl::fixtures::temp());
     // A run interns its symbols (catching up with the store's atoms), then reads them.
     let run = |sql: &[&str]| -> Vec<String> {
         let store = ContentStore::open(&path).unwrap();
@@ -68,7 +68,7 @@ fn a_store_created_again_at_its_path_gives_a_run_its_symbols() {
 #[test]
 fn a_fresh_arena_reads_the_stores_atoms() {
     use crate::content_store::ContentStore;
-    let (path, elsewhere) = (crate::code_rule_dsl::prefilter::tests::temp(), crate::code_rule_dsl::prefilter::tests::temp());
+    let (path, elsewhere) = (crate::code_rule_dsl::fixtures::temp(), crate::code_rule_dsl::fixtures::temp());
     {
         let other = ContentStore::open(&elsewhere).unwrap();
         assert_eq!(other.intern_atoms(&["a", "b"]).unwrap(), [1, 2]);

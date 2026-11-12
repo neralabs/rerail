@@ -194,7 +194,7 @@ fn an_rr_tape_encodes_and_reads_its_kinds_back() {
 /// an input read from outside the repository (`packs/rr/rr-input-outside-repository.rr`).
 #[test]
 fn a_rule_about_rules_runs_over_rule_files() {
-    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-on-rr");
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("rr-on-rr");
     std::fs::create_dir_all(root.join("rules")).unwrap();
     std::fs::write(root.join("rules/a.rr"), ".decl f(x: symbol)\n.input f(IO=file, filename=\"/etc/passwd\")\n").unwrap();
     std::fs::write(root.join("rules/b.rr"), ".decl g(x: symbol)\n.input g(IO=file, filename=\"g.csv\")\n").unwrap();
@@ -218,7 +218,7 @@ fn a_rule_about_rules_runs_over_rule_files() {
 /// backtick literals, `op` of anonymous tokens, `comment`, and `syntax_error` with the message running it gives.
 #[test]
 fn rule_files_have_text_facts() {
-    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-facts");
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("rr-facts");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("a.rr"), "// note\n.decl r(x: number)\nr(n) :- s(\"a\\nb\", -2, 0.5), n ~ `f($X)`, n <= 3.\n").unwrap();
     std::fs::write(root.join("bad.rr"), ".decl q(x: number)\nq(1) :- .\n").unwrap();
@@ -267,7 +267,7 @@ errors(l, m) :- syntax_error(_, l, m).
 /// language's documents through the one store, and the findings of both come back together.
 #[test]
 fn python_and_rr_policies_run_over_one_repository() {
-    let root = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-and-py");
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("rr-and-py");
     std::fs::create_dir_all(root.join("rules")).unwrap();
     std::fs::write(root.join("rules/a.rr"), ".decl f(x: symbol)\n.input f(IO=file, filename=\"/etc/passwd\")\n").unwrap();
     std::fs::write(root.join("x.py"), "eval(\"1\")\nprint(2)\n").unwrap();

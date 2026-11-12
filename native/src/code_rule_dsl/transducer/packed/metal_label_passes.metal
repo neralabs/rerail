@@ -101,7 +101,7 @@ struct MicroFrame { uint pc,node,resume,named,next,end,cursors[8],capture0,captu
 // the same stacks (metal_label_passes.rs's MICRO_POOL, MICRO_DEEP_POOL).
 constant uint MICRO_NONE=0xffffffffu,MICRO_FRAMES=64u,MICRO_POOL=4096u,MICRO_DEEP_FRAMES=128u,MICRO_DEEP_POOL=2048u;
 
-// A walk's spill (decision 0116): past `shape.budget` steps a walk gives its lowest move frame
+// A walk's spill (decision 0125): past `shape.budget` steps a walk gives its lowest move frame
 // with candidates left to the dispatch's work queue (`metal_work_queue.metal`), a descendant
 // range of at least `2 * MICRO_CHUNK` nodes halved, so a long walk is many threads' work, not
 // one's critical path. An item is `MICRO_ITEM` words of `items` (the frame, its walk's start,
