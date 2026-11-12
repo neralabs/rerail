@@ -226,7 +226,8 @@ pub(in crate::code_rule_dsl) struct Shape {
 fn not_row(t: &Term) -> Option<String> {
     match t {
         Term::Call(f, args) if !row_term(t) => Some(args.iter().find_map(not_row).unwrap_or_else(|| format!("@{f}"))),
-        Term::Call(_, args) => args.iter().find_map(not_row),
+        // Row code as a whole (a cat inside `str_cmp` is read from its parts).
+        Term::Call(..) => None,
         _ => None,
     }
 }
@@ -241,9 +242,10 @@ fn row_term(t: &Term) -> bool {
         Term::Call(f, args) if f == crate::code_rule_dsl::logic::strings::SET => args.iter().all(|a| !matches!(a, Term::Call(..))),
         Term::Call(f, args) if DEVICE_ARITHMETIC.contains(&f.as_str()) && args.len() == 2 => args.iter().all(row_term),
         // The order of two symbols' names (`<` of symbols lowers to it): their texts are the device's.
-        Term::Call(f, args) if f == "str_cmp" && args.len() == 2 => args.iter().all(|a| !matches!(a, Term::Call(..))),
-        // A name's characters: counted over the device's names.
-        Term::Call(f, args) if (f == "strlen" || f == "rr_strlen") && args.len() == 1 => !matches!(args[0], Term::Call(..)),
+        // Of names or cats' texts (compared from their parts, never made).
+        Term::Call(f, args) if f == "str_cmp" && args.len() == 2 => args.iter().all(|a| !matches!(a, Term::Call(..)) || is_cat_of_rows(a)),
+        // A name's characters (or a cat's text's): counted over the device's names.
+        Term::Call(f, args) if (f == "strlen" || f == "rr_strlen") && args.len() == 1 => !matches!(args[0], Term::Call(..)) || is_cat_of_rows(&args[0]),
         Term::Call(..) => false,
         _ => true,
     }

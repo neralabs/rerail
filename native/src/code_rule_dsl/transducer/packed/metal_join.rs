@@ -402,27 +402,6 @@ static inline long text_cmp(device const uchar* p, uint a, uint alen, uint b, ui
     return alen == blen ? 0 : (alen < blen ? -1 : 1);
 }
 
-// A function of names (mode 6), its symbols each a slot or a constant (`key_kind`, `key_slot`, `key_const`), their
-// texts in R, the value into `bind_slot[0]`: by agg[0], 0 `str_cmp` of keys 0 and 1 (their order), 1 `strlen` of key
-// 0 (its characters: the bytes less the UTF-8 continuation bytes, `10xxxxxx`, counted a word of eight at a time).
-static inline long strcmp_value(constant Stage& s, device const long* L, uint t, device const long* R) {
-    long v[2];
-    for (uint k = 0; k < 2; k++) v[k] = s.key_kind[k] == 1 ? L[ulong(s.key_slot[k]) * s.cap_in + t] : s.key_const[k];
-    uint ao, al, bo, bl;
-    text_find(R, v[0], ao, al);
-    if (s.agg[0] == 1) {
-        device const uchar* p = text_chars(R) + ao;
-        uint cont = 0;
-        for (uint at = 0; at < al; at += 8) {
-            ulong w = text_word(p, at, al);
-            cont += popcount(w & ~(w << 1) & 0x8080808080808080ul);
-        }
-        return long(al - cont);
-    }
-    text_find(R, v[1], bo, bl);
-    return text_cmp(text_chars(R), ao, al, bo, bl);
-}
-
 // Whether `len` bytes at p+a are those at p+b: a word of eight at a time.
 static inline bool text_same(device const uchar* p, uint a, uint b, uint len) {
     for (uint at = 0; at < len; at += 8) if (text_word(p + a, at, len) != text_word(p + b, at, len)) return false;
@@ -485,6 +464,31 @@ static inline bool textop_pass(constant Stage& s, device const long* L, uint t, 
     else if (op == 1) r = ly >= lx && txt_same(p, x, 0, y, 0, lx);
     else r = ly >= lx && txt_same(p, x, 0, y, ly - lx, lx);
     return r == ((s.agg[0] & 1) != 0);
+}
+
+// A function of names (mode 6), of operands X (keys 0, 1) and Y (keys 2, 3) as mode 7's (kinds agg[1] & 15 and
+// agg[1] >> 4), its value into `bind_slot[0]`: by agg[0], 0 `str_cmp` (their order by bytes, a word of eight at a
+// time, then their lengths, as Rust's `str::cmp`), 1 `strlen` of X (its characters: the bytes less the UTF-8
+// continuation bytes, `10xxxxxx`, counted a word at a time).
+static inline long strcmp_value(constant Stage& s, device const long* L, uint t, device const long* R) {
+    device const uchar* p = text_chars(R);
+    Txt x = txt_of(s, L, t, R, 0, s.agg[1] & 15);
+    uint lx = x.al + x.dot + x.bl;
+    if (s.agg[0] == 1) {
+        uint cont = 0;
+        for (uint at = 0; at < lx; at += 8) {
+            ulong w = txt_word(p, x, at, lx);
+            cont += popcount(w & ~(w << 1) & 0x8080808080808080ul);
+        }
+        return long(lx - cont);
+    }
+    Txt y = txt_of(s, L, t, R, 2, s.agg[1] >> 4);
+    uint ly = y.al + y.dot + y.bl, m = min(lx, ly);
+    for (uint at = 0; at < m; at += 8) {
+        ulong u = txt_word(p, x, at, m), v = txt_word(p, y, at, m);
+        if (u != v) return u < v ? -1 : 1;
+    }
+    return lx == ly ? 0 : (lx < ly ? -1 : 1);
 }
 
 // Mode 8: the made value of a's and b's symbols by form agg[1] (`MADE`); -1 when a part is none a made value holds.

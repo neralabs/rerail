@@ -479,7 +479,10 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
                 if [a, b].iter().any(|k| matches!(k, Key::Slot(s) if deferred.contains_key(s) || made.contains(s))) {
                     return Err("cat of a cat's text has no device form".into());
                 }
-                let compares = |s: &&Step| matches!(s, Step::Eq { .. } | Step::Ne { .. }) || matches!(s, Step::Test { op, .. } if literal_test(op).is_some());
+                let compares = |s: &&Step| {
+                    matches!(s, Step::Eq { .. } | Step::Ne { .. } | Step::Func { name: "str_cmp" | "rr_strlen", bind: true, .. })
+                        || matches!(s, Step::Test { op, .. } if literal_test(op).is_some())
+                };
                 if *bind && in_head && !in_head_cat && later.iter().all(compares) {
                     // Made for the head; compared, where later steps read it, from its parts as a held cat's.
                     if !later.is_empty() {
@@ -493,7 +496,7 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
                     stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
                 } else if *bind {
                     if in_head || in_head_cat || !later.iter().all(compares) {
-                        return Err("a cat's text read past an eq, ne, equals, prefix or suffix and the head has no device form (the device makes no symbol)".into());
+                        return Err("a cat's text read past an eq, ne, equals, prefix, suffix, str_cmp or strlen and the head has no device form (the device makes no symbol)".into());
                     }
                     deferred.insert(*out, (*a, *b, form));
                     stages.push(PStage { first: i, span: 1, kind: Kind::Pass, desc: mj::Stage::default(), npassed: 0 });
@@ -525,15 +528,15 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
             Step::Func { name: name @ ("str_cmp" | "rr_strlen"), args, out, bind: true, .. } => {
                 // A function of names: the order of two (compared a word of eight bytes at a time) or one's
                 // characters, their texts those of the columns that bound the slots (and the constants').
-                let mut d = mj::Stage { mode: mj::STRCMP, ..mj::Stage::default() };
-                d.agg[0] = if *name == "str_cmp" { mj::NAMES_CMP } else { mj::NAMES_LEN };
-                let kind = text_keys(&mut d, args, &origin, &known, name)?;
-                d.bind_slot[0] = *out as u32;
+                let f = if *name == "str_cmp" { mj::NAMES_CMP } else { mj::NAMES_LEN };
+                let y = args.get(1).copied().unwrap_or(args[0]);
+                let mut st = text_stage(mj::STRCMP, i, f, args[0], y, &deferred, &origin, &known)?;
+                st.desc.bind_slot[0] = *out as u32;
                 if *out >= bound.len() {
                     bound.resize(*out + 1, false);
                 }
                 bound[*out] = true;
-                stages.push(PStage { first: i, span: 1, kind, desc: d, npassed: 0 });
+                stages.push(st);
                 i += 1;
             }
             Step::Func { name, kinds, args, out, bind } => {
@@ -672,6 +675,12 @@ fn literal_test(op: &str) -> Option<u32> {
 /// A `TEXTOP` stage: test `op` (`mj::TEXT_*`, with `mj::TEXT_SPLIT` for a text test) of pattern `x` and subject `y`,
 /// each a symbol or a held cat's text (`deferred`).
 fn textop(first: usize, op: u32, want: bool, x: Key, y: Key, deferred: &HashMap<usize, (Key, Key, u32)>, origin: &[Option<(Arc<InRel>, usize)>], known: &HashMap<usize, i64>) -> Result<PStage, String> {
+    text_stage(mj::TEXTOP, first, u32::from(want) | op << 1, x, y, deferred, origin, known)
+}
+
+/// A stage of mode `mode` over operands `x` and `y` (keys 0, 1 and 2, 3), each a symbol or a held cat's text, its
+/// `agg[0]` given.
+fn text_stage(mode: u32, first: usize, agg0: u32, x: Key, y: Key, deferred: &HashMap<usize, (Key, Key, u32)>, origin: &[Option<(Arc<InRel>, usize)>], known: &HashMap<usize, i64>) -> Result<PStage, String> {
     let operand = |k: Key| match k {
         Key::Slot(s) if deferred.contains_key(&s) => {
             let (a, b, form) = deferred[&s];
@@ -680,9 +689,9 @@ fn textop(first: usize, op: u32, want: bool, x: Key, y: Key, deferred: &HashMap<
         k => (k, k, mj::OPND_SYM),
     };
     let ((xa, xb, xk), (ya, yb, yk)) = (operand(x), operand(y));
-    let mut d = mj::Stage { mode: mj::TEXTOP, ..mj::Stage::default() };
-    let kind = text_keys(&mut d, &[xa, xb, ya, yb], origin, known, "a text test")?;
-    d.agg = [u32::from(want) | op << 1, xk | yk << 4];
+    let mut d = mj::Stage { mode, ..mj::Stage::default() };
+    let kind = text_keys(&mut d, &[xa, xb, ya, yb], origin, known, if mode == mj::TEXTOP { "a text test" } else { "a function of names" })?;
+    d.agg = [agg0, xk | yk << 4];
     Ok(PStage { first, span: 1, kind, desc: d, npassed: 0 })
 }
 
@@ -1850,6 +1859,9 @@ mod tests {
             format!("pos {m} v0\npos {n} v1 v2\nfunc str_concat v3 v0 {}\ntest prefix v1 v3 1\nhead v0 v2", sym("_")),
             // A part a let filled with a constant (`q = @dot("builtins", x)`).
             format!("pos {n} v0 v1\nlt v1 i:200\neq v2 {}\ncat v3 v2 v0\nhead v3 v1", sym("builtins")),
+            // A cat's text ordered against a name, and its characters.
+            format!("pos {m} v0\npos {n} v1 v2\nlt v2 i:200\ncat v3 v0 {}\nfunc str_cmp v4 v3 v1\nlt v4 i:0\nhead v1 v2", sym("x9")),
+            format!("pos {m} v0\nfunc str_concat v1 v0 {}\nfunc rr_strlen v2 v1\nhead v0 v2", sym("αβ")),
             // Characters of names (multibyte ones among them, names past a word): strlen bound and compared.
             format!("pos {n} v0 v1\nlt v1 i:300\nfunc rr_strlen v2 v0\nhead v0 v2"),
             format!("pos {m} v0\nfunc rr_strlen v1 v0\nlt i:9 v1\nhead v0 v1"),
