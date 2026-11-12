@@ -286,6 +286,51 @@ impl<'a> Reads<'a> {
     }
 }
 
+/// `RERAIL_CUTOFF_MEASURE`: what a cutoff by content would skip this run. Each derived relation of `prog` the run
+/// derived (not `clean`) is compared with its old rows (`old`) by digest; a stratum run would be cut off when every
+/// relation it reads outside itself is an unchanged input, clean, unchanged, or a cut stratum's. Printed per stratum
+/// (`RERAIL_CUTOFF` lines: whether its outputs came out the same, and whether it would be cut), with a total.
+pub(in crate::code_rule_dsl) fn measure_cutoff(prog: &front::Program, cut: &Cut, now: &[(String, usize, Arc<InRel>)], old: &dyn Fn(&str) -> Option<Arc<InRel>>) {
+    let Ok((sccs, _)) = front::strata(prog) else { return };
+    let digest = |h: &InRel, w: usize| h.live_rows().map(|rows| (crate::code_rule_dsl::logic::plan::rows_digest(w, &rows, h.rows()), h.rows()));
+    let mut same: HashMap<&str, Option<bool>> = HashMap::new();
+    for (rel, w, h) in now {
+        let o = old(rel);
+        let v = match o {
+            Some(o) if Arc::ptr_eq(&o, h) => Some(true),
+            Some(o) => match (digest(&o, *w), digest(h, *w)) { (Some(a), Some(b)) => Some(a == b), _ => None },
+            None => None,
+        };
+        same.insert(rel.as_str(), v);
+    }
+    let changed: BTreeSet<&str> = cut.changed.iter().map(String::as_str).collect();
+    let inputs: BTreeSet<&str> = prog.inputs.iter().map(String::as_str).collect();
+    let reads = Reads::of(prog);
+    let mut cutoff: BTreeSet<String> = BTreeSet::new();
+    let (mut ran, mut cuts, mut same_out, mut wrong) = (0, 0, 0, 0);
+    for scc in &sccs {
+        if scc.iter().all(|r| cut.clean.contains(r)) { continue; }
+        ran += 1;
+        let outs: Vec<Option<bool>> = scc.iter().map(|r| same.get(r.as_str()).copied().flatten()).collect();
+        let all_same = outs.iter().all(|o| *o == Some(true));
+        let unknown = outs.iter().any(Option::is_none);
+        if all_same { same_out += 1; }
+        let would = reads.of_scc(scc).iter().filter(|r| !scc.contains(*r)).all(|r| {
+            if inputs.contains(r.as_str()) { !changed.contains(r.as_str()) }
+            else { cut.clean.contains(r) || cutoff.contains(r) || same.get(r.as_str()).copied().flatten() == Some(true) }
+        });
+        if would {
+            cuts += 1;
+            if !all_same && !unknown { wrong += 1; }
+            cutoff.extend(scc.iter().cloned());
+        }
+        let name: Vec<&str> = scc.iter().map(String::as_str).take(3).collect();
+        eprintln!("RERAIL_CUTOFF {}: outputs {}; {}", name.join("/"), if unknown { "unknown" } else if all_same { "same" } else { "differ" }, if would { "cut" } else { "runs" });
+    }
+    eprintln!("RERAIL_CUTOFF total: {ran} strata run; {same_out} made the same rows; {cuts} would be cut; {wrong} cut but differed");
+    crate::code_rule_dsl::logic::profile::decision("cutoff by content (measured, RERAIL_CUTOFF_MEASURE)", || format!("{ran} strata run; {same_out} made the same rows; {cuts} would be cut; {wrong} cut but differed"));
+}
+
 /// The strata of `prog` that `kept` (of program `key`) lets a run skip, given its inputs' digests.
 pub(in crate::code_rule_dsl) fn cut(kept: Option<&Retained>, key: [u8; 32], prog: &front::Program, inputs: &HashMap<String, u64>) -> Result<Cut> {
     let (sccs, _) = front::strata(prog).map_err(|e| Error::Plan(e.to_string()))?;

@@ -5917,6 +5917,10 @@ fn run_observed(
                     drop(s);
                     // A maintained relation's statistics as next run binds it (`r__old`): those of the relation it
                     // started as, patched by its delta; counted from its rows once, the first run it is maintained.
+                    if std::env::var_os("RERAIL_CUTOFF_MEASURE").is_some() {
+                        let now: Vec<(String, usize, Arc<crate::code_rule_dsl::logic::native::component::InRel>)> = rows.iter().map(|(r, w, h)| ((*r).clone(), *w, Arc::clone(h))).collect();
+                        retain::measure_cutoff(&cross.program, &cut, &now, &|r| bound_old.get(r).map(|(o, _)| Arc::clone(o)));
+                    }
                     let s = span("patch the maintained relations' statistics");
                     // The lazy statistics a plan made are kept as the eager ones are: by delta, or as measured. One no
                     // plan read is left to next run, which binds this run's relation lazily in turn.
