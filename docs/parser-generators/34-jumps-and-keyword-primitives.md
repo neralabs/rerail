@@ -436,6 +436,43 @@ That would mean splitting each rule's function into a leaf and its body.
 The cycles are with the machine loaded (load average 60 to 100).
 Tier 1 runs more: the record pass loads each mark's word at each token.
 
+## Built: the state as locals
+
+The lean parser keeps a rule's values in registers between the lines that use them.
+Tier 2 kept its state in `ctx`, so a value went through memory from one word to the next:
+11,912 stores of the state, and as many loads.
+Two changes bring part of that to the lean parser's shape.
+
+- **A pass over each function** treats `ctx`'s fields as variables:
+  - along blocks of one predecessor (a word falling into the next),
+    a field's load after its store, or an earlier load, is that value;
+  - a field every path into a block leaves one constant is that constant,
+    and a branch on it is a jump (`TOKEN` after a `SPAN` takes a token);
+  - a store of the value the field holds, or one every path writes again
+    before reading, is removed.
+
+  A call or a return reads every field, as the callee and the host read the state.
+- **The innermost level's last node is two fields.**
+  With wraps, each level kept the last node made at it, and its base, in a column by depth.
+  Only the innermost level's is read, and each change of level writes the new one's.
+  So two fields hold it: a leaf no longer stores two columns.
+
+| | Before | After | Lean parser |
+|---|---|---|---|
+| Machine instructions | 100,134 | 91,391 | 10,008 |
+| Loads | 27,604 | 21,097 | |
+| Stores | 22,813 | 21,536 | |
+| Code bytes | 400,540 | 365,564 | |
+| Tier 2, instructions | 351.7M | 347.8M | 356.9M |
+| Tier 2, cycles | 71.2M | 76.5M | 76.7M |
+
+What is left of the state's traffic is the transducer's own:
+`SPAN` sets that the token is taken and its end (1,684 and 1,683 stores),
+and the state that crosses calls, which read every field.
+The lean parser has no such flag: it moves its token index where it takes a token.
+Taking the token at `SPAN` would remove the flag, but changes what the words mean,
+on every executor.
+
 ## The order
 
 1. One symbol a token: rows and keywords in the record, one switch a state.

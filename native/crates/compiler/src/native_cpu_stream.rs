@@ -482,6 +482,11 @@ enum Mem {
     Sel,
     /// A shared arm's words' distance from its body's first place's, for a refusal there.
     Shift,
+    /// With wraps: the last node made at the innermost open node's level, one more than its
+    /// record (0: none), and that node's base. Only the innermost level's is ever read, and
+    /// each change of level writes the new one's: two fields, not a column by depth.
+    LastMade,
+    LastBase,
     /// The level's word (`REMEMBER`) and flags (`FLAG`), kept beside each call's return.
     Word,
     Flags,
@@ -509,7 +514,7 @@ enum Mem {
 }
 
 impl Mem {
-    const COUNT: u32 = 23;
+    const COUNT: u32 = 25;
 }
 
 /// The fields a rule's function holds in registers (`Cut::held`) and passes to its calls, given
@@ -1359,7 +1364,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             Vec::new()
         };
         let _ = &wcols;
-        let (fbase_c, flast_c, flbase_c, head_c, link_c, place_c) = (0, 1, 2, 3, 4, 5);
+        let (fbase_c, head_c, link_c, place_c) = (0, 3, 4, 5);
         let zero = f.ins().iconst(types::I64, 0);
         // The state few words touch, in memory (`Mem`): not carried through every block where
         // paths meet, as an SSA variable is.
@@ -1941,7 +1946,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         // no node made yet; and its record is no base of a wrap yet.
                         let slot1 = f.ins().iadd_imm(open, 1);
                         put(&mut f, wc(fbase_c), slot1, nodes);
-                        put(&mut f, wc(flast_c), slot1, zero);
+                        mset(&mut f, Mem::LastMade, zero);
                         put(&mut f, wc(head_c), nodes, zero);
                     }
                     let open = f.ins().iadd_imm(open, 1);
@@ -1978,8 +1983,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                             f.ins().uload32(flags, a, 0)
                         };
                         let at1 = f.ins().iadd_imm(at, 1);
-                        put(&mut f, wc(flast_c), open, at1);
-                        put(&mut f, wc(flbase_c), open, base);
+                        mset(&mut f, Mem::LastMade, at1);
+                        mset(&mut f, Mem::LastBase, base);
                         base
                     } else {
                         at
@@ -2013,10 +2018,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         put(&mut f, wc(head_c), nodes, zero);
                         if !deferred && !extra {
                             // The last node made at the innermost open node's level.
-                            let open = mget(&mut f, Mem::Open);
                             let n1 = f.ins().iadd_imm(nodes, 1);
-                            put(&mut f, wc(flast_c), open, n1);
-                            put(&mut f, wc(flbase_c), open, nodes);
+                            mset(&mut f, Mem::LastMade, n1);
+                            mset(&mut f, Mem::LastBase, nodes);
                         }
                     }
                     let nodes = f.ins().iadd_imm(nodes, 1);
@@ -2066,11 +2070,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     // at the table's end, linked into the moved node's base's chain; open, its
                     // frame's base that base, the moved node the last made at its level.
                     let open = mget(&mut f, Mem::Open);
-                    let (last, base) = {
-                        let a = slot(&mut f, wc(flast_c), open);
-                        let b = slot(&mut f, wc(flbase_c), open);
-                        (f.ins().uload32(flags, a, 0), f.ins().uload32(flags, b, 0))
-                    };
+                    let (last, base) = (mget(&mut f, Mem::LastMade), mget(&mut f, Mem::LastBase));
                     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
                     let no_last = f.ins().icmp_imm(IntCC::Equal, last, 0);
                     // A branch each, not the tests joined.
@@ -2101,8 +2101,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     put(&mut f, open_c, open, nodes);
                     let slot1 = f.ins().iadd_imm(open, 1);
                     put(&mut f, wc(fbase_c), slot1, base);
-                    put(&mut f, wc(flast_c), slot1, last);
-                    put(&mut f, wc(flbase_c), slot1, base);
+                    mset(&mut f, Mem::LastMade, last);
+                    mset(&mut f, Mem::LastBase, base);
                     mset(&mut f, Mem::Moved, r);
                     mset(&mut f, Mem::Pending, zero);
                     mset(&mut f, Mem::Open, slot1);
@@ -2114,11 +2114,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 Op::NodeField { field, on: On::Inner } => {
                     // The node the node made last, a wrap, holds first: that frame's last base.
                     let open = mget(&mut f, Mem::Open);
-                    let (last, base) = {
-                        let a = slot(&mut f, wc(flast_c), open);
-                        let b = slot(&mut f, wc(flbase_c), open);
-                        (f.ins().uload32(flags, a, 0), f.ins().uload32(flags, b, 0))
-                    };
+                    let (last, base) = (mget(&mut f, Mem::LastMade), mget(&mut f, Mem::LastBase));
                     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
                     let no_last = f.ins().icmp_imm(IntCC::Equal, last, 0);
                     // A branch each, not the tests joined.
@@ -2147,10 +2143,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     // The node made last at the innermost open node's level (`relabel`): its
                     // frame's last, one more than its record (0: none).
                     let open = mget(&mut f, Mem::Open);
-                    let last = {
-                        let a = slot(&mut f, wc(flast_c), open);
-                        f.ins().uload32(flags, a, 0)
-                    };
+                    let last = mget(&mut f, Mem::LastMade);
                     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
                     let no_last = f.ins().icmp_imm(IntCC::Equal, last, 0);
                     // A branch each, not the tests joined.
@@ -2166,8 +2159,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         let dead = mget(&mut f, Mem::Dead);
                         let dead = f.ins().iadd_imm(dead, 1);
                         mset(&mut f, Mem::Dead, dead);
-                        let a = slot(&mut f, wc(flast_c), open);
-                        f.ins().istore32(flags, zero, a, 0);
+                        mset(&mut f, Mem::LastMade, zero);
                     }
                     f.ins().jump(fall, &[]);
                 }
@@ -2179,11 +2171,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     // each, by a run of compares.
                     let r = native.readings.maps.get(usize::from(reading)).ok_or(Error::UnsupportedBackend)?;
                     let open = mget(&mut f, Mem::Open);
-                    let (last, base) = {
-                        let a = slot(&mut f, wc(flast_c), open);
-                        let b = slot(&mut f, wc(flbase_c), open);
-                        (f.ins().uload32(flags, a, 0), f.ins().uload32(flags, b, 0))
-                    };
+                    let (last, base) = (mget(&mut f, Mem::LastMade), mget(&mut f, Mem::LastBase));
                     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
                     let no_last = f.ins().icmp_imm(IntCC::Equal, last, 0);
                     // A branch each, not the tests joined.
@@ -2267,8 +2255,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                             GONE => {
                                 // The node read going: none made last at this level until the next.
                                 let kept = f.ins().select(is_root, zero, last);
-                                let a = slot(&mut f, wc(flast_c), open);
-                                f.ins().istore32(flags, kept, a, 0);
+                                mset(&mut f, Mem::LastMade, kept);
                                 let d = f.ins().iconst(types::I64, i64::from(DEAD));
                                 kind_c.put_row(&mut f, nrow, d);
                                 let dead = mget(&mut f, Mem::Dead);
@@ -2340,8 +2327,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     mset(&mut f, Mem::Nodes, b);
                     if wrapping {
                         // The first is the last node made at this level now.
-                        put(&mut f, wc(flast_c), open, b);
-                        put(&mut f, wc(flbase_c), open, a);
+                        mset(&mut f, Mem::LastMade, b);
+                        mset(&mut f, Mem::LastBase, a);
                     }
                     f.ins().jump(fall, &[]);
                 }
@@ -2717,6 +2704,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         f.seal_all_blocks();
         f.finalize();
         }
+        state_in_registers(&mut func);
         drop_unused_loads(&mut func);
         lowered.push(Lowered { func, heads, targets, exits, tails });
     }
@@ -2833,6 +2821,305 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     Ok(CompiledStream { _module: module, entry, bounds: bounds(native), starts, lasts, marks, wraps, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, clusters: cut.count as usize, crossings, word_insts })
 }
 
+/// What an instruction does to `ctx`'s fields (`state_in_registers`).
+#[derive(Clone, Copy, PartialEq)]
+enum Access {
+    Load(usize),
+    Store(usize, Value),
+    /// A narrow load (the record's byte), or a field not on a word boundary.
+    Reads(u64),
+    /// A narrow store: reads (not all of it written) and changes it.
+    Clobbers(usize),
+    /// A call, a return, `ctx` elsewhere: every field.
+    All,
+    None,
+}
+
+/// The fields' constants (`state_in_registers`): forward, to a fixed point, each field at each
+/// block's start is a constant every predecessor ends with, or not known. A load of a known
+/// field is its constant; a branch on a constant is a jump. Whether anything changed.
+fn constant_fields(func: &mut cranelift_codegen::ir::Function, access: &dyn Fn(&cranelift_codegen::ir::Function, cranelift_codegen::ir::Inst) -> Access) -> bool {
+    use cranelift_codegen::cursor::{Cursor, FuncCursor};
+    use cranelift_codegen::ir::{InstBuilder, InstructionData, Opcode};
+    #[derive(Clone, Copy, PartialEq)]
+    enum C {
+        /// No path seen yet.
+        Top,
+        Is(i64),
+        Unknown,
+    }
+    let meet = |a: C, b: C| match (a, b) {
+        (C::Top, x) | (x, C::Top) => x,
+        (C::Is(x), C::Is(y)) if x == y => C::Is(x),
+        _ => C::Unknown,
+    };
+    let constant = |func: &cranelift_codegen::ir::Function, v: Value| -> Option<i64> {
+        let v = func.dfg.resolve_aliases(v);
+        match func.dfg.value_def(v) {
+            cranelift_codegen::ir::ValueDef::Result(i, _) => match func.dfg.insts[i] {
+                InstructionData::UnaryImm { opcode: Opcode::Iconst, imm } => Some(imm.bits()),
+                _ => None,
+            },
+            _ => None,
+        }
+    };
+    let n = (STATE / 8 + Mem::COUNT as i32) as usize;
+    let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(func);
+    let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(func, &cfg);
+    let order: Vec<Block> = dom.cfg_rpo().copied().collect();
+    let Some(entry) = func.layout.entry_block() else { return false };
+    let transfer = |func: &cranelift_codegen::ir::Function, b: Block, mut at: Vec<C>| -> Vec<C> {
+        for inst in func.layout.block_insts(b) {
+            match access(func, inst) {
+                Access::Store(k, v) => at[k] = constant(func, v).map_or(C::Unknown, C::Is),
+                Access::Clobbers(k) => at[k] = C::Unknown,
+                Access::All => at.iter_mut().for_each(|x| *x = C::Unknown),
+                _ => {}
+            }
+        }
+        at
+    };
+    let mut start: std::collections::HashMap<Block, Vec<C>> = order.iter().map(|&b| (b, vec![C::Top; n])).collect();
+    start.insert(entry, vec![C::Unknown; n]);
+    let mut end: std::collections::HashMap<Block, Vec<C>> = std::collections::HashMap::new();
+    loop {
+        let mut changed = false;
+        for &b in &order {
+            let at = if b == entry {
+                vec![C::Unknown; n]
+            } else {
+                let mut at = vec![C::Top; n];
+                for p in cfg.pred_iter(b) {
+                    if let Some(e) = end.get(&p.block) {
+                        for k in 0..n {
+                            at[k] = meet(at[k], e[k]);
+                        }
+                    }
+                }
+                at
+            };
+            if start.get(&b) != Some(&at) || !end.contains_key(&b) {
+                let e = transfer(func, b, at.clone());
+                start.insert(b, at);
+                if end.get(&b) != Some(&e) {
+                    end.insert(b, e);
+                }
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    // The loads of known fields, then the branches on constants.
+    let mut any = false;
+    for &b in &order {
+        let mut at = start[&b].clone();
+        let insts: Vec<_> = func.layout.block_insts(b).collect();
+        for inst in insts {
+            let a = access(func, inst);
+            if let Access::Load(k) = a
+                && let C::Is(c) = at[k]
+            {
+                let r = func.dfg.inst_results(inst)[0];
+                let mut cur = FuncCursor::new(func).at_inst(inst);
+                let x = cur.ins().iconst(types::I64, c);
+                func.dfg.detach_inst_results(inst);
+                func.dfg.change_to_alias(r, x);
+                func.layout.remove_inst(inst);
+                any = true;
+                continue;
+            }
+            // A store of the constant the field holds: nothing changes.
+            if let Access::Store(k, v) = a
+                && let Some(c) = constant(func, v)
+                && at[k] == C::Is(c)
+            {
+                func.layout.remove_inst(inst);
+                any = true;
+                continue;
+            }
+            match a {
+                Access::Store(k, v) => at[k] = constant(func, v).map_or(C::Unknown, C::Is),
+                Access::Clobbers(k) => at[k] = C::Unknown,
+                Access::All => at.iter_mut().for_each(|x| *x = C::Unknown),
+                _ => {}
+            }
+        }
+        if let Some(last) = func.layout.last_inst(b)
+            && let InstructionData::Brif { arg, blocks: [then, other], .. } = func.dfg.insts[last]
+            && let Some(c) = constant(func, arg)
+        {
+            let taken = if c != 0 { then } else { other };
+            let target = taken.block(&func.dfg.value_lists);
+            let args: Vec<cranelift_codegen::ir::BlockArg> = taken.args(&func.dfg.value_lists).collect();
+            func.layout.remove_inst(last);
+            let mut cur = FuncCursor::new(func).at_bottom(b);
+            cur.ins().jump(target, &args);
+            any = true;
+        }
+    }
+    any
+}
+
+/// `ctx`'s fields as the lean parser's locals: within a function, a field's value goes from
+/// the word that stores it to the word that reads it in a register, not through memory.
+///
+/// - **Forwarded:** along a chain of blocks each of one predecessor (a word falling into the
+///   next), a field's load after its store or an earlier load is that value. A call ends what
+///   is known (the callee may write any field).
+/// - **Dead stores:** a store every path writes again before any read is removed (a backward
+///   pass over the fields, a bit each). A call or a return reads every field (the callee and
+///   the host read the state).
+///
+/// The fields are `ctx`'s, at fixed offsets from its address (the function's first argument);
+/// the tape's buffers are elsewhere. A function where `ctx` goes anywhere but a load's or a
+/// store's address, or a call, is left as it is.
+fn state_in_registers(func: &mut cranelift_codegen::ir::Function) {
+    use cranelift_codegen::ir::{InstructionData, Opcode};
+    let Some(entry) = func.layout.entry_block() else { return };
+    let ctx = func.dfg.block_params(entry)[0];
+    // Field `k` at offset `8k`: a full load or store of it, or another access of it.
+    const FIELDS: i32 = STATE / 8 + Mem::COUNT as i32;
+    const _: () = assert!(FIELDS <= 64);
+    let field_of = |off: i32| -> Option<usize> { (0..8 * FIELDS).contains(&off).then_some((off / 8) as usize) };
+    let access = |func: &cranelift_codegen::ir::Function, inst: cranelift_codegen::ir::Inst| -> Access {
+        let data = &func.dfg.insts[inst];
+        let op = data.opcode();
+        if op.is_call() || op.is_return() {
+            return Access::All;
+        }
+        match *data {
+            InstructionData::Load { opcode, arg, offset, .. } if func.dfg.resolve_aliases(arg) == ctx => {
+                let off = i32::from(offset);
+                let Some(k) = field_of(off) else { return Access::All };
+                let full = opcode == Opcode::Load && off % 8 == 0 && func.dfg.value_type(func.dfg.inst_results(inst)[0]) == types::I64;
+                if full { Access::Load(k) } else { Access::Reads(1 << k) }
+            }
+            InstructionData::Store { opcode, args, offset, .. } if func.dfg.resolve_aliases(args[1]) == ctx => {
+                let off = i32::from(offset);
+                let Some(k) = field_of(off) else { return Access::All };
+                if func.dfg.resolve_aliases(args[0]) == ctx {
+                    return Access::All;
+                }
+                let full = opcode == Opcode::Store && off % 8 == 0 && func.dfg.value_type(args[0]) == types::I64;
+                if full { Access::Store(k, args[0]) } else { Access::Clobbers(k) }
+            }
+            _ => {
+                if func.dfg.inst_values(inst).any(|v| func.dfg.resolve_aliases(v) == ctx) {
+                    Access::All
+                } else {
+                    Access::None
+                }
+            }
+        }
+    };
+    let blocks: Vec<Block> = func.layout.blocks().collect();
+    // `ctx` as a branch's argument: another name for it, which this does not follow.
+    for &b in &blocks {
+        for inst in func.layout.block_insts(b) {
+            if func.dfg.insts[inst].opcode().is_branch() && func.dfg.inst_values(inst).any(|v| func.dfg.resolve_aliases(v) == ctx) {
+                return;
+            }
+        }
+    }
+    // Constants: a field every path into a word gives one constant (the transducer's `need`
+    // after a `SPAN`, `pending` after a node) is that constant there, and a branch on it is a
+    // jump. Folded branches make more chains of one predecessor: again, a few times.
+    for _ in 0..4 {
+        if !constant_fields(func, &access) {
+            break;
+        }
+    }
+    let cfg = cranelift_codegen::flowgraph::ControlFlowGraph::with_function(func);
+    let dom = cranelift_codegen::dominator_tree::DominatorTree::with_function(func, &cfg);
+    let order: Vec<Block> = dom.cfg_rpo().copied().collect();
+
+    // Forwarded, in reverse postorder: a block of one predecessor starts from what its
+    // predecessor knew at its end.
+    let mut known_at_end: std::collections::HashMap<Block, Vec<Option<Value>>> = std::collections::HashMap::new();
+    for &b in &order {
+        let preds: Vec<Block> = cfg.pred_iter(b).map(|p| p.block).collect();
+        let mut known: Vec<Option<Value>> = match preds.as_slice() {
+            [p] if *p != b => known_at_end.get(p).cloned().unwrap_or_else(|| vec![None; FIELDS as usize]),
+            _ => vec![None; FIELDS as usize],
+        };
+        let insts: Vec<_> = func.layout.block_insts(b).collect();
+        for inst in insts {
+            match access(func, inst) {
+                Access::Load(k) => {
+                    let r = func.dfg.inst_results(inst)[0];
+                    match known[k] {
+                        Some(v) => {
+                            func.dfg.detach_inst_results(inst);
+                            func.dfg.change_to_alias(r, v);
+                            func.layout.remove_inst(inst);
+                        }
+                        None => known[k] = Some(r),
+                    }
+                }
+                // A store of the value the field holds (loaded or stored before): none.
+                Access::Store(k, v) if known[k].is_some_and(|x| func.dfg.resolve_aliases(x) == func.dfg.resolve_aliases(v)) => func.layout.remove_inst(inst),
+                Access::Store(k, v) => known[k] = Some(v),
+                Access::Clobbers(k) => known[k] = None,
+                Access::All => known.iter_mut().for_each(|x| *x = None),
+                Access::Reads(_) | Access::None => {}
+            }
+        }
+        known_at_end.insert(b, known);
+    }
+
+    // Dead stores: the fields live (read before written again) at each block's start, to a
+    // fixed point, then each block backward.
+    let all = if FIELDS == 64 { u64::MAX } else { (1u64 << FIELDS) - 1 };
+    let step = |a: Access, live: u64| -> u64 {
+        match a {
+            Access::Load(k) => live | 1 << k,
+            Access::Store(k, _) => live & !(1 << k),
+            Access::Reads(m) => live | m,
+            Access::Clobbers(k) => live | 1 << k,
+            Access::All => all,
+            Access::None => live,
+        }
+    };
+    let succs = |func: &cranelift_codegen::ir::Function, b: Block| -> Vec<Block> {
+        let Some(last) = func.layout.last_inst(b) else { return Vec::new() };
+        func.dfg.insts[last].branch_destination(&func.dfg.jump_tables, &func.dfg.exception_tables).iter().map(|c| c.block(&func.dfg.value_lists)).collect()
+    };
+    let accesses: std::collections::HashMap<Block, Vec<(cranelift_codegen::ir::Inst, Access)>> =
+        blocks.iter().map(|&b| (b, func.layout.block_insts(b).map(|i| (i, access(func, i))).collect())).collect();
+    let next: std::collections::HashMap<Block, Vec<Block>> = blocks.iter().map(|&b| (b, succs(func, b))).collect();
+    let mut live_in: std::collections::HashMap<Block, u64> = blocks.iter().map(|&b| (b, 0)).collect();
+    loop {
+        let mut changed = false;
+        for &b in order.iter().rev() {
+            let mut live = next[&b].iter().fold(0, |m, s| m | live_in[s]);
+            for &(_, a) in accesses[&b].iter().rev() {
+                live = step(a, live);
+            }
+            if live != live_in[&b] {
+                live_in.insert(b, live);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    for &b in &order {
+        let mut live = next[&b].iter().fold(0, |m, s| m | live_in[s]);
+        for &(inst, a) in accesses[&b].iter().rev() {
+            if let Access::Store(k, _) = a
+                && live & 1 << k == 0
+            {
+                func.layout.remove_inst(inst);
+                continue;
+            }
+            live = step(a, live);
+        }
+    }
+}
+
 /// Every load that can not trap and whose value nothing reads, removed, until none is left. A
 /// word loads the `ctx` fields it may read where it starts (`Cut::reload`); those it does not
 /// read on a path are dead, but Cranelift keeps a load that is not read-only (it orders it with
@@ -2904,7 +3191,7 @@ fn ctx_reads(op: &Op, wrapping: bool) -> Vec<i32> {
         _ => vec![],
     };
     if wrapping && matches!(op, Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::Merge { .. }) {
-        r.extend([FRAME_BASE, FRAME_LAST, FRAME_LAST_BASE, HEAD, LINK, PLACE]);
+        r.extend([FRAME_BASE, HEAD, LINK, PLACE]);
     }
     r
 }
