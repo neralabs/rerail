@@ -3227,6 +3227,9 @@ no corpus session (a session held across the nested run deadlocked against the l
 
 **Closure:** the lease is held only across the atoms write, not the run; or tests default to a per-process store.
 
+**Closed (2026-11-11): decision 0118.** A test's store is its own: a copy of a template made once per build, removed
+when its test ends. No test shares a store, or its atoms lease, with another test or another process.
+
 ## O147. Each phase-0 run costs about 0.25 s, paid once per seed set
 
 **Seen (2026-11-08, t25).** A run of `bootstrap.rr` over one text with includes costs about 0.25 s CPU when nothing
@@ -3600,6 +3603,12 @@ connection address or by path (`""` for in-memory databases). Not yet traced.
 
 **Closure:** the shared state is found and keyed per run, and `base_tests` passes 20 of 20 in parallel.
 
+**Update (2026-11-11), decision 0118.** The same error comes up in `logic::plan::tests::` (for example
+`bounded_value_recursion_and_negated_conjunctions_run`): 4 of 10 runs on one store per process, 0 of 20 on a store
+per test. So the shared state is the shared store. A test's run read the statistics, plans and choices other tests'
+runs had kept there. `base_tests` is compiled only by `rerail-device-metal`'s test binary, which does not build
+(O-device-metal-tests), so its 20 runs are still to do.
+
 ## O-wave-test-shared. `closures_of_one_level_launch_in_one_wave` fails beside other tests
 
 Run with the rest of `logic::plan::tests` on the harness's parallel threads, this test sometimes sees its level's
@@ -3610,6 +3619,10 @@ test's wave.
 
 **Closure:** a wave belongs to its run (or the test counts only its own launches), and the test passes 20 of 20
 beside the others.
+
+**Closed (2026-11-11): decision 0118.** With a store per test, the test passed beside the rest of
+`logic::plan::tests::` in 20 of 20 runs; with one store per process it failed 2 of 10. The split wave came from the
+shared store, not the device's lanes: a test's run took plans and choices that other tests' runs had kept there.
 
 ## O-split-logic-tests. Six tests of `rerail-logic` read crates above it, and are compiled nowhere
 
@@ -3634,3 +3647,26 @@ the split hosts them in the engine:
 an inline test module, and the engine mounts none for it.
 
 **Closure:** each runs in the engine's test binary (or in a crate that has what it reads), and the gates go.
+
+## O-test-store-cost. A test's own store costs 5–21% more instructions per suite
+
+**Seen (2026-11-11), decision 0118.** Against one store per process: `logic::rr::` 740 G instructions against 668 G,
+and 784 MB against 686 MB; `logic::plan::tests::` 179 G against 148 G, and 329 MB against 240 MB;
+`logic::plan::corpus::tests::` 194 G against 185 G. That is about 0.65 G per test, whatever the template holds. A
+template of the core program alone costs as much, and needs less memory (669 MB for `logic::rr::`). The cost is a
+test's first run on a new store: it opens the store, makes its observer store, and finds the process's caches of the
+store cold (by its path: `setfix`'s `SYMS`, `STORED`, `INPUTS`; the frames read before the first wave). That warmth
+is the sharing between tests that the decision removes.
+
+**Closure:** each first-run step on a new store is measured, and any that is not proportional to what the run reads
+is cut. The memory per concurrent test is judged against the 1 GB budget. Which template, the library's or the core
+program's, is decided by the user.
+
+## O-device-metal-tests. `rerail-device-metal`'s test target does not build
+
+**Seen (2026-11-11).** `cargo test -p rerail-device-metal --lib --features test-hooks` fails in `rerail-transducer`:
+`content_store::positional_search` and the store's bulk search methods are not there under that build (11 errors).
+Without `test-hooks` its own facade fails (`fixtures`, `p_table`, `drop_unread_core`). `corpus::base_tests` is
+compiled only there.
+
+**Closure:** the target builds, and `base_tests` runs (O-p0-stats-flake's 20 runs).
