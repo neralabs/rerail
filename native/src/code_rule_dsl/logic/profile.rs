@@ -865,6 +865,15 @@ pub fn wait_in_wave(what: &str, wall: f64) {
     e.1 += (wall * 1e9) as u64;
 }
 
+/// Runs `f` on this thread as work behind the run: a write after the run's last wave, as a command's end flushes its
+/// cost samples (decision 0104).
+pub fn behind<T>(f: impl FnOnce() -> T) -> T {
+    let was = BEHIND.with(|b| b.replace(true));
+    let out = f();
+    BEHIND.with(|b| b.set(was));
+    out
+}
+
 /// The hazards: SQL a wave's thread ran or waited on between the run's first wave and its last.
 pub fn hazards(r: &mut String, state: &State) {
     let (runs, ns): (u64, u64) = state.hazards.values().fold((0, 0), |a, v| (a.0 + v.0, a.1 + v.1));

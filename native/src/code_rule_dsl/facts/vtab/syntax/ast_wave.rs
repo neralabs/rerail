@@ -104,9 +104,11 @@ struct MatcherWave {
 type WaveFound = Result<(Vec<Vec<BTreeSet<u32>>>, crate::code_rule_dsl::transducer::packed::WaveRun, f64), String>;
 
 /// The cores' interpreter: seconds a tape node and pass (one thread), and the GPU's. Priors, replaced by the
-/// executor's learned rates once it has measured the form.
+/// executor's learned rates once it has measured the form. Measured over the data layer (M5, under load): the cores
+/// 1.1e-8 to 2.4e-8, the GPU's interpreter 2.5e-8 to 2.5e-7 (one wave of large files 5.6e-5 a node): no faster a
+/// unit than one core, on one lane against the cores' many.
 const WAVE_CPU_PER_NODE_PASS: f64 = 2e-8;
-const WAVE_GPU_PER_NODE_PASS: f64 = 1e-9;
+const WAVE_GPU_PER_NODE_PASS: f64 = 2.5e-8;
 
 impl MatcherWave {
     fn on(&self, backend: crate::code_rule_dsl::transducer::packed::MatcherBackend) -> WaveFound {

@@ -334,7 +334,8 @@ pub(in crate::code_rule_dsl) fn start() {
 
 /// Writes what is left: a run's end.
 pub fn flush() {
-    write();
+    // After the last wave, on the command's thread: behind the run, as the writer's own thread is.
+    crate::code_rule_dsl::logic::profile::behind(write);
 }
 
 /// For the profile: the samples read, the rates fitted and the rates in place.
