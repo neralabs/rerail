@@ -489,11 +489,40 @@ fn row_texts(r: &Rels) -> Vec<Case> {
             v.push(case("row replace", "si", format!("pos {sn} v0 v1\n{m}\nfunc replace_all v4 v2 {} {}\nhead v4 v1", sym(p), sym(w)), true));
         }
         v.push(case("row replace", "si", format!("pos {sn} v0 v1\n{m}\nfunc replace_all v4 v2 {} {}\nfunc rx_replace v5 v4 {} {}\nfunc rr_strlen v6 v5\nhead v5 v6", sym("o"), sym("0"), sym("0+"), sym("-")), true));
+        // Text functions of a made text, per row (a SIMD group a row, 32 bytes at a time).
+        let fns = [
+            "func sql_lower v4 v2".to_owned(),
+            "func sql_upper v4 v2".to_owned(),
+            "func head v4 v2".to_owned(),
+            "func dir v4 v2".to_owned(),
+            "func rr_substr v4 v2 i:1 i:40".to_owned(),
+            "func rr_substr v4 v2 i:-3 v1".to_owned(),
+            "func slice v4 v2 i:-5 i:100".to_owned(),
+            "func slice v4 v2 i:2 i:-1".to_owned(),
+            "func sql_substr v4 v2 i:2 i:-1".to_owned(),
+            "func sql_substr v4 v2 i:33 i:4".to_owned(),
+            format!("func sql_replace v4 v2 {} {}", sym("o"), sym("<o>")),
+            format!("func sql_replace v4 v2 {} {}", sym(""), sym("x")),
+            format!("func sql_replace v4 v2 {} {}", sym("_with"), sym("")),
+            format!("func sql_replace v4 v2 {} {}", sym("a"), sym("aa")),
+        ];
+        for f in &fns {
+            v.push(case("row fn", "si", format!("pos {sn} v0 v1\n{m}\n{f}\nhead v4 v1"), true));
+            v.push(case("row fn", "si", format!("pos {sn} v0 v1\n{m}\n{f}\nfunc rr_strlen v5 v4\nfunc sql_upper v6 v4\nhead v6 v5"), true));
+        }
         v.push(case("row cat", "si", format!("pos {sn} v0 v1\n{m}\ncat v4 v2 v0\nhead v4 v1"), true));
         v.push(case("row cat", "si", format!("pos {sn} v0 v1\n{m}\nfunc str_concat v4 v0 v2\ncat v5 v4 {}\ntest contains v5 {} 1\nhead v5 v1", sym("z"), sym(".p")), true));
         v.push(case("row cat", "si", format!("pos {sn} v0 v1\n{m}\ncat v4 {} v2\nfunc head v5 v4\neq v5 {}\nhead v4 v1", sym(""), sym("pre/foo")), true));
         v.push(case("row cat", "si", format!("pos {} v9\npos {sn} v0 v1\n{m}\ncat v4 v2 v9\nfunc str_cmp v5 v4 v9\nlt v5 i:1\nhead v4 v1", r.sm), true));
     }
+    // Numbers' texts: the extremes, zero and negatives, and lower of them (ASCII: on the device).
+    for a in [&r.ia, &r.ib] {
+        v.push(case("row to_string", "si", format!("pos {a} v0 v1\nfunc rr_to_string v2 v1\nhead v2 v0"), true));
+        v.push(case("row to_string", "si", format!("pos {a} v0 v1\nfunc rr_sub v3 i:0 v0\nfunc rr_to_string v2 v3\nfunc lower v4 v2\nhead v4 v1"), true));
+        v.push(case("row to_string", "si", format!("pos {a} v0 v1\nfunc rr_to_string v2 v1\nfunc rr_substr v3 v2 i:1 i:3\nhead v3 v0"), true));
+    }
+    // lower of a made text past ASCII is the host's: refused, the rows the same.
+    v.push(case("row fn", "si", format!("pos {sn} v0 v1\ncat v2 v0 {}\nfunc lower v3 v2\nhead v3 v1", sym("é")), false));
     v
 }
 

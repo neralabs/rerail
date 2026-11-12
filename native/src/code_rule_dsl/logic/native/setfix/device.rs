@@ -93,7 +93,7 @@ enum RowAuto {
 
 /// Whether a stage makes texts into the arena (its counter word says when the arena was full).
 fn makes_text(mode: u32) -> bool {
-    mode == mj::TEXTFN || mode == mj::ROWTEXT
+    mode == mj::ROWTEXT
 }
 
 /// A `ROWTEXT` stage of op `op` (`mj::ROW_*`, with a test's verdict wanted at bit 8) over operands `x` and `y` (a
@@ -119,7 +119,7 @@ enum TextOp {
 thread_local! {
     /// The step that first bound each slot of the rule being compiled (its name): what a refusal of a slot names.
     static BINDER: std::cell::RefCell<Vec<&'static str>> = const { std::cell::RefCell::new(Vec::new()) };
-    /// The slots of the rule being compiled whose values are arena texts (`mj::TEXTFN`'s).
+    /// The slots of the rule being compiled whose values are arena texts (`mj::ROWTEXT`'s).
     static ARENA: std::cell::RefCell<Vec<usize>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
@@ -670,10 +670,10 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
                     }
                 };
                 ops.extend(op);
-                let mut d = mj::Stage { mode: mj::TEXTFN, ..mj::Stage::default() };
+                let mut d = mj::Stage { mode: mj::ROWTEXT, ..mj::Stage::default() };
                 d.key_kind[0] = mj::SLOT;
                 d.key_slot[0] = src as u32;
-                d.agg = [mj::TEXTFN_COPY, mj::OPND_SYM];
+                d.agg = [mj::ROW_MAP | mj::TEXTFN_COPY << 16, mj::OPND_SYM];
                 d.bind_slot[0] = *out as u32;
                 if *out >= bound.len() {
                     bound.resize(*out + 1, false);
@@ -731,7 +731,7 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
                 if j.out.iter().any(|t| matches!(*t, Term::Cat(x, y) if x == *out || y == *out)) {
                     return Err(format!("cat of the function {name}'s text has no device form"));
                 }
-                let mut d = mj::Stage { mode: mj::TEXTFN, ..mj::Stage::default() };
+                let mut d = mj::Stage { mode: mj::ROWTEXT, ..mj::Stage::default() };
                 let mut xk = mj::OPND_SYM;
                 let kind = if ntexts > 0 {
                     // X (keys 0, 1), Y and Z (keys 2 and 4).
@@ -775,7 +775,7 @@ pub(super) fn compile(j: &JoinRule, spec: &str) -> Result<Plan, String> {
                         }
                     }
                 }
-                d.agg = [f, xk];
+                d.agg = [mj::ROW_MAP | f << 16, xk];
                 d.bind_slot[0] = *out as u32;
                 if *out >= bound.len() {
                     bound.resize(*out + 1, false);
@@ -993,9 +993,9 @@ fn per_symbol(name: &str, args: &[Key], known: &HashMap<usize, i64>, origin: &[O
 /// A `TEXTFN_COPY` stage: the text of `a` and `b` by `form` (`cat`'s or `str_concat`'s) made into the arena, its
 /// value into slot `out`.
 fn copy_stage(first: usize, out: usize, a: Key, b: Key, form: u32, origin: &[Option<(Arc<InRel>, usize)>], known: &HashMap<usize, i64>) -> Result<PStage, String> {
-    let mut d = mj::Stage { mode: mj::TEXTFN, ..mj::Stage::default() };
+    let mut d = mj::Stage { mode: mj::ROWTEXT, ..mj::Stage::default() };
     let kind = text_keys(&mut d, &[a, b], origin, known, "cat")?;
-    d.agg = [mj::TEXTFN_COPY, if form == mj::CAT_PLAIN { mj::OPND_PLAIN } else { mj::OPND_DOT }];
+    d.agg = [mj::ROW_MAP | mj::TEXTFN_COPY << 16, if form == mj::CAT_PLAIN { mj::OPND_PLAIN } else { mj::OPND_DOT }];
     d.bind_slot[0] = out as u32;
     Ok(PStage { first, span: 1, kind, desc: d, npassed: 0 })
 }
@@ -1506,8 +1506,11 @@ impl<'p> Run<'p> {
                         self.arena = Some(batch.arena().map_err(|e| format!("{e:?}"))?);
                     }
                     let left = self.tables[i].as_ref().expect("the stage's input");
-                    if let Kind::RowText { auto, .. } = &s.kind {
-                        let auto = row_automaton(auto, names)?;
+                    if s.desc.mode == mj::ROWTEXT {
+                        let auto = match &s.kind {
+                            Kind::RowText { auto, .. } => row_automaton(auto, names)?,
+                            _ => None,
+                        };
                         let names_rel = right.map(|r| r.0).ok_or("a made text's stage with no names")?;
                         batch.row_stage(s.desc, left, names_rel, auto.as_ref().map(|(b, p)| (&**b, *p)), i, o, &self.totals, &self.counters, self.counter[k], &out)
                     } else {
@@ -1545,7 +1548,7 @@ impl<'p> Run<'p> {
             return Some("an aggregate's sum past 64 bits".to_owned());
         }
         if self.checks.iter().any(|w| w.get(0) != 0)
-            || self.plan.stages.iter().zip(&self.counter).any(|(s, c)| s.desc.mode == mj::TEXTFN && c.is_some_and(|c| self.counters.get(c) & mj::TEXTFN_HOST != 0))
+            || self.plan.stages.iter().zip(&self.counter).any(|(s, c)| makes_text(s.desc.mode) && c.is_some_and(|c| self.counters.get(c) & mj::TEXTFN_HOST != 0))
         {
             return Some("lower of a name past ASCII (Unicode's mapping is the host's)".to_owned());
         }
