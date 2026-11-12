@@ -821,8 +821,41 @@ fn components(prog: &Program) -> (Vec<BTreeSet<String>>, Edges, BTreeSet<(String
             edges.entry(r.head.rel.to_string()).or_default().insert((a.rel.to_string(), (a.neg || agg) && !a.gated));
         }
     }
-    let sccs = tarjan(&derived, &edges);
+    let sccs = together(&derived, &edges, &prog.together);
     (sccs, edges, aggs)
+}
+
+/// The sets of `prog.together` that are not each one component as `strata` makes them (`together`, below).
+pub fn apart(prog: &Program) -> Vec<usize> {
+    let (sccs, _, _) = components(prog);
+    (0..prog.together.len()).filter(|&i| {
+        let t = &prog.together[i];
+        !sccs.iter().any(|s| s == t)
+    }).collect()
+}
+
+/// The components, each set of `together` one of them (decision 0101 §3): its relations joined in a ring for the
+/// search only, so the edges stay the rules' own. A set that would take in a relation outside it (one read by a
+/// member and reading another) is left apart.
+fn together(derived: &BTreeSet<String>, edges: &Edges, sets: &[BTreeSet<String>]) -> Vec<BTreeSet<String>> {
+    let mut sets: Vec<Vec<&String>> = sets.iter().map(|t| t.iter().filter(|r| derived.contains(*r)).collect::<Vec<_>>()).filter(|t| t.len() > 1).collect();
+    loop {
+        if sets.is_empty() {
+            return tarjan(derived, edges);
+        }
+        let mut ring = edges.clone();
+        for t in &sets {
+            for (i, r) in t.iter().enumerate() {
+                ring.entry((*r).clone()).or_default().insert((t[(i + 1) % t.len()].clone(), false));
+            }
+        }
+        let sccs = tarjan(derived, &ring);
+        let n = sets.len();
+        sets.retain(|t| sccs.iter().find(|s| s.contains(t[0])).is_some_and(|s| s.len() == t.len()));
+        if sets.len() == n {
+            return sccs;
+        }
+    }
 }
 
 /// Strongly connected components of `nodes` under `edges`, dependencies first, in the same order every run.

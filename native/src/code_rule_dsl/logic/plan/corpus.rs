@@ -6189,6 +6189,16 @@ fn run_observed(
                         bound_old: HashMap::new(),
                         lazy_kept: std::env::var_os("RERAIL_EAGER_KEPT_STATS").is_none(),
                         lazies: Vec::new(),
+                        copies: {
+                            let is_input = |r: &str| cross_inputs.iter().any(|(i, _)| i == r);
+                            let mut copies: HashMap<String, (String, Vec<String>, Vec<usize>)> = cross_inputs.iter().map(|(i, src)| (i.clone(), (i.clone(), src.columns(), (0..src.columns().len()).collect()))).collect();
+                            for rel in part.program.decls.keys().filter_map(|r| r.strip_suffix("__old")).filter(|r| !is_input(r)) {
+                                let Some((src, map)) = projection_of(&cross.program, &is_input, rel) else { continue };
+                                let Some(columns) = cross_inputs.iter().find(|(i, _)| *i == src).map(|(_, s)| s.columns()) else { continue };
+                                copies.insert(rel.to_owned(), (src, columns, map));
+                            }
+                            copies
+                        },
                     };
                     for (rel, source, held) in clean.into_iter().chain(maintained.sources.iter().cloned()) {
                         let maintains = rel.strip_suffix("__old").is_some_and(|of| part.program.decls.contains_key(&format!("{of}__del")));
@@ -6196,7 +6206,17 @@ fn run_observed(
                     }
                     drop(s);
                     // Each input's statistics as this run plans with them: next run's `__old`'s (`retain::InputStats`).
-                    let input_stats: HashMap<String, retain::InputStats> = cross_inputs.iter().filter_map(|(r, src)| Some((r.clone(), stats.of_relation(r, src.columns().len())?))).collect();
+                    let mut input_stats: HashMap<String, retain::InputStats> = cross_inputs.iter().filter_map(|(r, src)| Some((r.clone(), stats.of_relation(r, &src.columns())?))).collect();
+                    // A copy of an input's columns has the input's statistics of those columns (`projection_of`): kept
+                    // as an input's are, and its `__old` bound with them next run, never counted, when it holds as
+                    // many rows as the input did (none collapsed).
+                    let is_input = |r: &str| cross_inputs.iter().any(|(i, _)| i == r);
+                    for rel in cross.program.decls.keys().filter(|r| !is_input(r)) {
+                        let Some((src, map)) = projection_of(&cross.program, &is_input, rel) else { continue };
+                        let Some(columns) = cross_inputs.iter().find(|(i, _)| *i == src).map(|(_, s)| s.columns()) else { continue };
+                        let Some((cols, vals)) = stats.of_columns(&src, &columns, &map) else { continue };
+                        input_stats.insert(rel.clone(), (cols, vals));
+                    }
                     let derived = cut.derived(&cross.program)?;
                     let mut keep = wanted.clone();
                     // An output is written to its table, where the write phase reads it, and read back from there.
@@ -6556,7 +6576,8 @@ fn run_observed(
                     let mut patched: HashMap<String, retain::Patched> = HashMap::new();
                     for (rel, width, new) in &rows {
                         let Some((old, kept)) = bound_old.get(rel) else { continue };
-                        if unmade.contains(rel) {
+                        // A copy of an input's columns is bound next run with the input's statistics (`projection_of`).
+                        if unmade.contains(rel) || input_stats.contains_key(rel) {
                             continue;
                         }
                         let name = format!("{rel}__old");
@@ -6995,6 +7016,10 @@ pub(in crate::code_rule_dsl) struct Binder<'k> {
     bound_old: HashMap<String, (Arc<crate::code_rule_dsl::logic::native::component::InRel>, Option<retain::Patched>)>,
     lazy_kept: bool,
     lazies: Vec<(String, Arc<crate::code_rule_dsl::logic::native::component::InRel>, Arc<crate::code_rule_dsl::logic::plan::LazyStats<LazyKept>>)>,
+    /// Each input of the cross part, and each relation that copies some of an input's columns (`projection_of`): the
+    /// input, its columns, and the input's column each of the relation's copies. A new process's `r__old` of one has
+    /// this run's statistics of those columns, never counted for it.
+    copies: HashMap<String, (String, Vec<String>, Vec<usize>)>,
 }
 
 /// The driver's side of a session's maintained run (decision 0117 step 3, `plan::Maintain`): a reached stratum's
@@ -7183,16 +7208,29 @@ fn bind_kept(b: &mut Binder, modules: &Modules, db: &rusqlite::Connection, stats
         let tested = tested_of(&b.constants, &rel).cloned().unwrap_or_default();
         // An input's old rows are its rows of the last run: their statistics are those that run planned with,
         // when they cover every constant the rules test it by (decision 0094 §4).
-        let carried = rel.strip_suffix("__old").and_then(|of| b.cell?.input_stats(of)).filter(|(cols, vals)| {
-            cols.len() == source.columns().len() && tested.iter().all(|(c, v)| vals.iter().any(|(vc, vv, _)| vc == c && vv == v))
+        // With none kept (a new process, which reads the kept part from the frames), an input's old rows, or a copy of
+        // an input's columns (`projection_of`), have this run's statistics of the same columns: the two differ by the
+        // documents that changed, not counted again for it.
+        let carried: Option<retain::InputStats> = rel.strip_suffix("__old").and_then(|of| {
+            if let Some(kept) = b.cell.and_then(|c| c.input_stats(of)) {
+                return Some(kept.clone());
+            }
+            let (src, columns, map) = b.copies.get(of)?;
+            stats.of_columns(src, columns, map)
         });
+        // As many rows as the statistics say, within 1%: a copy whose rows collapsed is measured.
+        let carried = carried.filter(|(cols, _)| cols.len() == source.columns().len() && cols.first().is_some_and(|c| (c[0] - source.len() as i64).abs() as f64 <= 0.01 * c[0].max(1) as f64));
         // A derived relation kept is read in place, with its indexes (decision 0090 step 3).
         if let Some(held) = &held {
             crate::code_rule_dsl::logic::native::component::adopt(db, &rel, Arc::clone(held));
         }
         if let Some((cols, vals)) = carried {
-            let names: Vec<String> = (0..cols.len()).map(|c| super::sql_col(&rel, c)).collect();
-            stats.measured(&rel, names.iter().cloned().zip(cols.iter().copied()), vals.iter().map(|(c, v, n)| (names[*c].clone(), *v, *n)));
+            // By the bound source's own column names, as the planner reads them. A constant the rules test that the run
+            // did not count is counted here, by its column alone, not the relation measured.
+            let names: Vec<String> = source.columns();
+            let missing: BTreeSet<(usize, i64)> = tested.iter().filter(|(c, v)| !vals.iter().any(|(vc, vv, _)| vc == c && vv == v)).copied().collect();
+            let extra = constant_counts(Some(&missing), source.as_ref());
+            stats.measured(&rel, names.iter().cloned().zip(cols.iter().copied()), vals.iter().map(|(c, v, n)| (names[*c].clone(), *v, *n)).chain(extra));
         } else {
             let patched = held.as_ref().and_then(|h| b.cell.and_then(|k| k.patched(&rel, h)).filter(|p| p.tested == tested).cloned());
             // Kept, and known neither by delta nor as measured for these constants: its statistics are
@@ -7315,6 +7353,46 @@ pub fn constants_tested(prog: &front::Program) -> HashMap<&str, BTreeSet<(usize,
         }
     }
     by
+}
+
+/// A relation the cross-file part makes as a copy of some columns of one input, or of such a copy
+/// (`kind__sup0(n, k, a, b, c) :- node(a, n, k, b, c)`, `kind(n, k) :- kind__sup0(n, k, _, _, _)`): that input, and
+/// for each of the relation's columns the input's column it copies. When it holds as many rows as the input, its
+/// rows are the input's one for one, so its statistics are the input's by column: kept with the input's, never
+/// counted (a full count of `kind` and `docof` was 0.32 s of a one-file edit's 0.38 s of statistics).
+fn projection_of(prog: &front::Program, is_input: &dyn Fn(&str) -> bool, rel: &str) -> Option<(String, Vec<usize>)> {
+    let (mut at, mut map): (String, Option<Vec<usize>>) = (rel.to_owned(), None);
+    for _ in 0..8 {
+        if is_input(&at) {
+            return map.map(|m| (at, m));
+        }
+        let mut rules = prog.rules.iter().filter(|r| r.head.rel.as_str() == at);
+        let (Some(r), None) = (rules.next(), rules.next()) else { return None };
+        let [front::Literal::Atom(a)] = r.body.as_slice() else { return None };
+        if a.neg {
+            return None;
+        }
+        // Each variable once in the body (no equality between columns), and nothing tested.
+        let mut col: HashMap<&str, usize> = HashMap::new();
+        for (i, t) in a.args.iter().enumerate() {
+            match t {
+                front::Term::Var(v) => {
+                    if col.insert(v.as_str(), i).is_some() {
+                        return None;
+                    }
+                }
+                front::Term::Wild => {}
+                _ => return None,
+            }
+        }
+        let step: Vec<usize> = r.head.args.iter().map(|t| match t { front::Term::Var(v) => col.get(v.as_str()).copied(), _ => None }).collect::<Option<_>>()?;
+        if step.iter().collect::<BTreeSet<_>>().len() != step.len() {
+            return None;
+        }
+        map = Some(match map { None => step, Some(m) => m.iter().map(|&c| step[c]).collect() });
+        at = a.rel.to_string();
+    }
+    None
 }
 
 fn constant_counts(tested: Option<&BTreeSet<(usize, i64)>>, source: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Vec<(String, i64, i64)> {

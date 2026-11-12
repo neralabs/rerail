@@ -1,6 +1,7 @@
 # 0101: An edit runs only the strata its deltas reach
 
-Status: draft (2026-11-09), a spec. §1 and §2 are built (2026-11-10, "Built: §1 and §2" below); §3 is not.
+Status: draft (2026-11-09), a spec. §1 and §2 are built (2026-11-10, "Built: §1 and §2" below); §3 is built
+(2026-11-12, "Built: §3" below).
 
 ## Intro
 
@@ -459,6 +460,99 @@ part of the 0.4 s of `native` and the 0.3 s of strata's own, not seconds. Work i
   `k` (201,000 rows), then filter by `icall` to nothing. That is 0.53 M work, 8% of the step. What `icall`
   first would read is not measured yet.
 
+## Built: a projection's statistics from its input's (2026-11-12)
+
+**The problem.** After a one-file edit, demand is not what costs. Maintenance is: the 165-relation component
+takes 1.2 s, and patching statistics after the run takes 0.38 s. Of that 0.38 s, 0.32 s counted `kind` and
+`docof` again in full. That is a read of unchanged data. Both are projections of `node`:
+
+```text
+kind__sup0($n, $k, $w1, $w2, $w3) :- node($w1, $n, $k, $w2, $w3).
+kind($n, $k) :- kind__sup0($n, $k, _, _, _).
+```
+
+So their columns' statistics are `node`'s columns' statistics.
+
+**The change.**
+
+- **Finding the projections.** `projection_of` (plan/corpus.rs) follows rules of one positive atom over
+  distinct variables, up to 8 hops, back to an input. It returns the map from the projection's columns to the
+  input's.
+- **Recording.** A run records each projection's statistics with its inputs' (`input_stats`), taken from the
+  input's columns (`Stats::of_columns`).
+- **Binding.** The next run binds the projection's statistics from the input's: last run's, or else this
+  run's. It does so only when the projection keeps every row of the input (rows within 1%). A tested constant
+  missing from them is counted alone.
+- **Patching.** The patch after the run skips a relation bound that way.
+- **The column names.** A base relation's statistics are keyed by its declared columns (`node`: d, n, kind,
+  start, end_), not `c0…c4`. Before this, `node`'s were never carried at all.
+
+**Measured** (the one-file query `calls_qd.rr`, first edit after a cold run; loads ≈30 before, ≈85 after):
+
+| span | before | after |
+|---|---:|---:|
+| bind and measure kept | 0.24 s | 0.002 s |
+| patch statistics | 1.02 s | 0.09 s |
+| cross-file part | 3.78 s | 2.62 s |
+| run CPU (user+sys) | 5.52 s | 4.67 s |
+
+The outputs are the same. The full `calls.rr` maintained across the edit gives a cold run's 12 outputs on the
+edited corpus.
+
+## Built: §3, a stratum's pieces as one component per level (2026-11-12)
+
+**The record decided against it** (above): it saves only fixed cost, at most ≈ 0.7 s a step. The user overrode
+that: build it.
+
+**The shape.** No new kind of component was needed. Magic sets already order a fixpoint's sub-steps, with gated
+negations (`done_` gates). Ordering a stratum's pieces is the same thing.
+
+- **Which pieces go together.** `maintain::together` takes each maintained stratum's pieces (`Again::owned`) and
+  puts them in levels. A survivor (`h :- h__old, !h__del`) starts a new level: it is made in place from the kept
+  rows less the deleted ones (`plan::survivors`), so those rows must be whole before its component opens. Each
+  level of two or more pieces is one set in `Program.together`.
+- **How the set becomes one component.** `front::components` joins each set in a ring, for the component search
+  only, so the edges stay the rules' own.
+- **How its pieces are ordered.** A negation of a piece in the same set waits for a unit gate:
+  ```text
+  h__minus(..) :- h__del(..), h__ins__ready(0), !h__ins(..).    // gated: reads h__ins whole
+  h__ins__ready(0) :- h__ins(_, …).                             // the gate's rule only places it
+  ```
+  The gate passes once `h__ins`, and what it reads in the component, are quiet (`gate … quiet … after`).
+- **What stays apart.** Pieces of a recursive stratum (their levels or DRed run in their own components), and a
+  set that would take in a relation outside it. `front::apart` checks that before any rule is gated.
+- **What a set's gates hold.** They hold rows no longer than their component: a set's relations are released as
+  any stratum's are, not kept to the run's end as magic's are. A gate whose readers were all dropped (every rule
+  joined an empty delta) is dropped with them, so a quiet set still opens nothing.
+- **The switch.** `RERAIL_PIECES_APART` runs each piece as its own component, as before.
+
+**Measured.** O125 steps 01–03, spans on, debug build. The apart run was at load 56–120, the together run at
+load 30–53, so compare the counts and the fixed cost, not the totals:
+
+| per step | apart | together |
+|---|---:|---:|
+| strata opened | 3,555 / 4,126 / 3,697 | 871 / 869 / 875 |
+| strata's fixed cost (own + `native` own) | 1.17 / 1.21 / 1.29 s | 0.23 / 0.29 / 0.26 s |
+| plan and evaluate (load differs) | 24.2 / 16.6 / 20.8 s | 17.5 / 16.1 / 16.6 s |
+
+So about 0.95 s a step of fixed cost goes, and the strata count meets the target (≈ 800 base strata).
+
+On the one-file query (`calls_qd.rr`), strata opened go from 275 to 74. CPU is unchanged there:
+- instructions retired, first edit: 49.5–52.7 G either way;
+- instructions retired, the revert: 41–43 G either way;
+- own time in the cross part: 1.41 s together, 1.42 s apart.
+
+The fixed cost there was only 0.08 s. Opening `kind`'s and `docof`'s pieces moved into their components; it did
+not go away.
+
+**Checked.** These were checked:
+- the one-file query's outputs, together against apart, on a cold run, an edit and its revert;
+- the full `calls.rr` maintained across an edit, against a cold run on the edited corpus (12 outputs);
+- `a_maintained_strata_pieces_run_as_one_component` (four edits, each against a run with an empty store);
+- the session, gate and maintenance tests near it.
+
+The O125 run above did not compare its steps with a full run (`O125_NO_FULL`).
+
 ## Open
 
 - Whether §2's base-program form keeps demand's choices identical on the rewritten program. If it does not, the
@@ -467,5 +561,9 @@ part of the 0.4 s of `native` and the 0.3 s of strata's own, not seconds. Work i
   (0100's batches).
 - Recursive components are maintained by delete-and-rederive under counting (0090, "Built: counting the
   default"). §1 applies to them unchanged.
-- §3 (one component per base stratum) is worth at most ≈ 0.7 s a step at O125 after the sort fix (above). The
-  larger lever is work: the skew-misordered maintained joins, and the strata θ derives again.
+- §3 is built (above): strata a step go from ≈ 4,000 to ≈ 870, and their fixed cost from ≈ 1.2 s to ≈ 0.26 s. The
+  larger lever is still work: the skew-misordered maintained joins, and the strata θ derives again.
+- Under a Metal binding, the device refuses a component with gates (`setfix`, "a component with gates, requests
+  or edge rules"), so a set of pieces would run on the host. Sessions run with the CPU binding today. Before a
+  session runs on Metal, either the device takes unit gates, or `together` is off for that binding.
+- The O125 steps with the pieces together have not yet been compared with a full run (`O125_FULL_EACH`).
