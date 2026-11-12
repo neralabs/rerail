@@ -520,7 +520,12 @@ def manifest(c, engine):
             continue
         lines.append(f'{k} = {toml_value(rebase(v, d))}')
     if c == 'rerail-lang':
-        lines += ['', '[build-dependencies]', 'serde = { version = "1.0", features = ["derive"] }', 'serde_json = "1.0"']
+        # the registry's generator and the vendored grammars' build (native/src/build_grammars.rs): the engine's
+        # build-dependencies but the Node addon's
+        lines += ['', '[build-dependencies]']
+        for k, v in engine.get('build-dependencies', {}).items():
+            if k != 'napi-build':
+                lines.append(f'{k} = {toml_value(rebase(v, d))}')
     if 'lints' in engine:
         lines += ['', '[lints]', 'workspace = true'] if engine['lints'].get('workspace') else []
     return '\n'.join(lines) + '\n'
@@ -638,6 +643,11 @@ def main(tree_tsv, join_out, *flags):
         print(f'{c:22} lib.rs {text.count(chr(10)):5} lines')
     if write:
         open(os.path.join(NATIVE, 'Cargo.toml'), 'w').write(engine_manifest_edits(engine_text, crates))
+        # the vendored grammars are built by the crate that declares their symbols: rerail-lang (its build.rs)
+        build = os.path.join(NATIVE, 'build.rs')
+        bt = open(build).read()
+        assert 'const BUILDS_GRAMMARS: bool = true;' in bt, 'native/build.rs: BUILDS_GRAMMARS'
+        open(build, 'w').write(bt.replace('const BUILDS_GRAMMARS: bool = true;', 'const BUILDS_GRAMMARS: bool = false;'))
         ws = os.path.join(ROOT, 'Cargo.toml')
         t = open(ws).read()
         m = re.search(r'members = \[([^\]]*)\]', t)
