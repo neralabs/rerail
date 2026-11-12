@@ -409,7 +409,10 @@ jobs:
   # tool-packs' test data (native/src/code_rule_dsl/test_support.rs's callers), restored from what the test-data job
   # saved, so the job runs where that job does (the note at the top). The tests run in two legs of about equal time on
   # a runner: the workspace's (much of it waiting out the store's busy timeouts) and the anchor index's, then every other,
-  # the second skipping exactly what the first runs.
+  # the second skipping exactly what the first runs. A leg on Windows runs the tests of the modules whose Windows branch
+  # only a Windows build compiles (`cfg(windows)`): import targets under a Windows root (drive-letter paths, specifiers,
+  # tsconfig `extends` and `paths`) and the exit code read from a detached child. It reads no pack test data, so its task
+  # skips those steps, and it checks out with long paths allowed, as unit-windows does.
   rust:
     name: Rust engine (${{ matrix.name }})
     needs: [changes, test-data]
@@ -421,7 +424,7 @@ jobs:
           (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
         )
       }}
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:
       contents: read
@@ -431,19 +434,34 @@ jobs:
         include:
           - task: clippy
             name: fmt, clippy
+            os: ubuntu-24.04
             run: npm run check:native
           - task: test
             name: tests, workspace and anchors
+            os: ubuntu-24.04
             run: "npm run test:native -- -- code_rule_dsl::workspace:: code_rule_dsl::matcher::anchors::"
           - task: test
             name: tests, the rest
+            os: ubuntu-24.04
             run: "npm run test:native -- -- --skip code_rule_dsl::workspace:: --skip code_rule_dsl::matcher::anchors::"
+          - task: windows-test
+            name: tests on Windows, import targets and processes
+            os: windows-2025
+            run: "npm run test:native -- -- import_target:: process::"
     # Line tables keep file:line in panics at a fraction of full debuginfo; incremental state only
     # bloats the cache, since dependencies never build incrementally.
     env:
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
       CARGO_INCREMENTAL: "0"
+    defaults:
+      run:
+        shell: bash
     steps:
+      # Windows refuses paths over 260 characters unless Git is told to use long paths (as in unit-windows).
+      - name: Allow long paths in Git on Windows
+        if: runner.os == 'Windows'
+        run: git config --system core.longpaths true
+
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
