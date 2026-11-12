@@ -2758,3 +2758,97 @@ fn aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps() {
     }
     assert!(read > 20 && demanded > 3, "{read} policies read, {demanded} with aggregate demand");
 }
+
+/// Lowering is idempotent: each program file under `dirs` (shard `k` of `n`, by its place in name order), printed and
+/// lowered again (not from `remember_lowered`'s cache), prints as the same text, statement for statement and in order.
+/// A file that is no program of its own (a library module's part) is passed over. `RERAIL_IDEMPOTENCY_DUMP=<dir>`
+/// writes both prints of each that differs.
+fn lowers_back(dirs: &[&str], k: usize, n: usize) {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
+    let mut paths: Vec<_> = dirs
+        .iter()
+        .flat_map(|d| std::fs::read_dir(root.join(d)).unwrap().map(|e| e.unwrap().path()))
+        .filter(|p| p.extension().is_some_and(|e| e == "rr"))
+        .collect();
+    paths.sort();
+    let (mut read, mut differ) = (0, Vec::new());
+    for path in paths.iter().skip(k).step_by(n) {
+        let Ok((program, _)) = super::read_file(path) else { continue };
+        let Ok(printed) = super::print(&program) else { continue };
+        read += 1;
+        let again = match super::read_text(&printed).and_then(|t| t.lower(true)).and_then(|p| super::print(&p)) {
+            Ok(again) => again,
+            Err(e) => {
+                differ.push(format!("{}: its print does not lower: {e}", path.display()));
+                continue;
+            }
+        };
+        if again != printed {
+            if let Some(dir) = std::env::var_os("RERAIL_IDEMPOTENCY_DUMP") {
+                let name = path.file_stem().unwrap().to_string_lossy().into_owned();
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(std::path::Path::new(&dir).join(format!("{name}.first.rr")), &printed).unwrap();
+                std::fs::write(std::path::Path::new(&dir).join(format!("{name}.again.rr")), &again).unwrap();
+            }
+            let at = printed.lines().zip(again.lines()).position(|(a, b)| a != b).unwrap_or(printed.lines().count().min(again.lines().count()));
+            differ.push(format!("{}: line {at}: {:?} / {:?}", path.display(), printed.lines().nth(at), again.lines().nth(at)));
+        }
+    }
+    assert!(read > 0, "no program read in {dirs:?}");
+    assert!(differ.is_empty(), "{} of {read} lower to another program:\n{}", differ.len(), differ.join("\n"));
+}
+
+#[test]
+fn lowering_is_idempotent_data_layer() {
+    lowers_back(&["data-layer"], 0, 1);
+}
+
+#[test]
+fn lowering_is_idempotent_python_0() {
+    lowers_back(&["packs/python"], 0, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_python_1() {
+    lowers_back(&["packs/python"], 1, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_python_2() {
+    lowers_back(&["packs/python"], 2, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_python_3() {
+    lowers_back(&["packs/python"], 3, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_python_4() {
+    lowers_back(&["packs/python"], 4, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_python_5() {
+    lowers_back(&["packs/python"], 5, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_python_6() {
+    lowers_back(&["packs/python"], 6, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_python_7() {
+    lowers_back(&["packs/python"], 7, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_javascript_typescript() {
+    lowers_back(&["packs/javascript", "packs/typescript"], 0, 1);
+}
+
+#[test]
+fn lowering_is_idempotent_other_packs() {
+    lowers_back(&["packs/react", "packs/node", "packs/rust", "packs/vue", "packs/sql", "packs/next", "packs/php", "packs/blade", "packs/complexity", "packs/rr"], 0, 1);
+}
