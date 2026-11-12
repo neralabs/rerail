@@ -531,8 +531,8 @@ function sameSource(left: ObservedSource | undefined, right: Source | undefined)
 function emptyResponse(revision: number): CodeRuleResponse {
   return { revision, disposition: "continue", violations: [], failures: [] };
 }
-/** The session folder's walk is running after a boundary stopped waiting for it. */
-function sessionWalkAbandoned(discovery: SourceDiscovery): boolean {
+/** The session folder's walk is still running after a boundary stopped waiting for it: it is overdue. */
+function sessionWalkOverdue(discovery: SourceDiscovery): boolean {
   return discovery.idle !== undefined && discovery.pendingReported;
 }
 /** A worktree walk a boundary asked for has yet to finish, and there are worktrees for it to check. */
@@ -695,7 +695,8 @@ export function isCommandTool(toolName: string): boolean {
  * How long a turn checkpoint or a command result waits for a checkout-wide source walk, and a code-rule boundary
  * waits for the session's evaluator to open, before answering with what it has. The work goes on, and what it finds
  * is audited and delivered at a later boundary; waiting longer would hold the session's event lane past the host's
- * per-event timeout. A walk is waited for once: the boundaries that come while it still runs do not wait for it.
+ * per-event timeout. Once a boundary's wait for a walk runs out, the boundaries that come while that walk still runs do
+ * not wait for it.
  */
 export const BOUNDARY_DISCOVERY_WAIT_MS = 10_000;
 /**
@@ -1094,7 +1095,8 @@ export class CodeRuleBridge {
 
   /**
    * Resolves after every requested walk has run, so the checkpoint's violations are delivered with this boundary; a walk
-   * that outlasts the boundary's wait is reported pending, and what it finds reaches a later boundary.
+   * that outlasts the boundary's wait is reported pending, and what it finds reaches a later boundary. Behind a walk an
+   * earlier boundary stopped waiting for, it resolves at once, reported pending.
    */
   async checkpoint(checkpoint: Extract<CodeRuleCheckpoint, "turn" | "final">): Promise<CodeRuleResponse> {
     const discovery = this.#requireDiscovery();
@@ -1160,7 +1162,7 @@ export class CodeRuleBridge {
     discovery.cancelled = true;
     // A walk a boundary already gave up on is abandoned here: what it had not reached is never checked. No boundary waits
     // for the worktree walk, so one still due is always such a walk.
-    if (sessionWalkAbandoned(discovery) || worktreeWalkAbandoned(discovery)) this.#reportDiscoveryPending("close");
+    if (sessionWalkOverdue(discovery) || worktreeWalkAbandoned(discovery)) this.#reportDiscoveryPending("close");
     await this.#enqueue(async () => {
       if (this.#discovery !== discovery) return;
       this.#sessionId = undefined;
@@ -1243,7 +1245,7 @@ export class CodeRuleBridge {
     boundary: Exclude<DiscoveryPendingBoundary, "close">,
   ): Promise<void> {
     const idle = this.#requestDiscovery(discovery, checkpoint);
-    if (sessionWalkAbandoned(discovery)) {
+    if (sessionWalkOverdue(discovery)) {
       if (!discovery.cancelled) this.#reportDiscoveryPending(boundary);
       return;
     }
