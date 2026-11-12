@@ -938,13 +938,20 @@ impl std::ops::DerefMut for RunPlans {
 }
 
 impl RunPlans {
-    /// The plan kept for `key`: the run's, else the store's at the scale of `nodes`, its steps taken from `body`
-    /// by position (the key digests the body, so its literals are the planned ones).
+    /// The plan kept for `key`: the run's, else the store's at the scale of `nodes` or the nearest stored, its steps
+    /// taken from `body` by position (the key digests the body, so its literals are the planned ones).
     fn find(&mut self, key: &PlanKey, body: &[Literal], nodes: f64) -> Option<Kept> {
         if let Some(k) = self.kept.get(key) {
             return Some(k.clone());
         }
-        let k = self.stored.get(&(*key, scale(nodes)))?.kept(body)?;
+        // The plan stored at this scale, else at the nearest scale stored (O-replan-churn: an edit's chunk and the
+        // cross part are a bucket or two apart, and a plan of the other's is re-priced here before it is kept, so
+        // a plan from another scale is a better start than a search from nothing).
+        let at = scale(nodes);
+        let stored = (0..=12u8).find_map(|d| {
+            [at.checked_sub(d), at.checked_add(d)].into_iter().flatten().find_map(|s| self.stored.get(&(*key, s)))
+        })?;
+        let k = stored.kept(body)?;
         plan_cache(7);
         self.kept.insert(*key, k.clone());
         Some(k)
@@ -1387,25 +1394,41 @@ impl Model {
                     plan_cache(4);
                     super::profile::decision("plan cache (decision 0038)", || "replanned: a start much cheaper than when the kept order was searched".into())
                 }
-                Ok(got) if self.valid_live_driver(&got.0.0, body, first) && previous.as_ref().is_some_and(|p| {
-                    let cards = 1 + usize::from(first.is_some()) + body.iter().filter(|l| matches!(l, Literal::Atom(_) | Literal::Agg { .. })).count();
-                    let scale = sizes[0] / p.sizes.first().copied().unwrap_or(1.0).max(1.0);
-                    p.sizes.len() >= cards && sizes.len() >= cards && near_distributions(&p.sizes[cards..], &sizes[cards..], scale, body.len())
-                }) && (got.0.1 / nodes <= REPLAN * per_node.max(1e-12) || got.0.1 - per_node * nodes <= REPLAN_ROWS) => {
-                    super::profile::decision("plan cache (decision 0038)", || "a kept plan reused, re-priced with this chunk's statistics".into());
-                    plan_cache(3);
-                    remember(&key, &got);
-                    return Ok(got);
-                }
                 Ok(got) => {
+                    // Why the kept order is not kept, if it is not: `None` keeps it.
+                    let live = self.valid_live_driver(&got.0.0, body, first);
+                    let cards = 1 + usize::from(first.is_some()) + body.iter().filter(|l| matches!(l, Literal::Atom(_) | Literal::Agg { .. })).count();
+                    let dist_near = previous.as_ref().is_some_and(|p| {
+                        let scale = sizes[0] / p.sizes.first().copied().unwrap_or(1.0).max(1.0);
+                        p.sizes.len() >= cards && sizes.len() >= cards && near_distributions(&p.sizes[cards..], &sizes[cards..], scale, body.len())
+                    });
+                    let grew = !(got.0.1 / nodes <= REPLAN * per_node.max(1e-12) || got.0.1 - per_node * nodes <= REPLAN_ROWS);
+                    // A re-priced order whose whole work is under `REPLAN_ROWS` is kept whatever its distributions:
+                    // a search can save at most that work, and the search costs more than it here (O-replan-churn:
+                    // small relations whose distinct values differ between a chunk and the cross part).
+                    let why = if !live {
+                        Some("the kept order's driver is not live here")
+                    } else if got.0.1 <= REPLAN_ROWS {
+                        None
+                    } else if !dist_near {
+                        Some("the distributions it reads moved, in proportion to the nodes")
+                    } else if grew {
+                        Some("the kept order's work per node grew over 4x, by over 10000 rows")
+                    } else {
+                        None
+                    };
+                    let Some(why) = why else {
+                        super::profile::decision("plan cache (decision 0038)", || "a kept plan reused, re-priced with this chunk's statistics".into());
+                        plan_cache(3);
+                        remember(&key, &got);
+                        return Ok(got);
+                    };
                     plan_cache(5);
                     static SHOWN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
                     if std::env::var_os("RERAIL_PLAN_CACHE_WHY").is_some() && nodes >= 1000.0 && SHOWN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 12 {
-                        let cards = 1 + usize::from(first.is_some()) + body.iter().filter(|l| matches!(l, Literal::Atom(_) | Literal::Agg { .. })).count();
-                        let dist_near = previous.as_ref().map(|p| near(&p.sizes[cards.min(p.sizes.len())..], &sizes[cards.min(sizes.len())..]));
-                        eprintln!("replanned {head} :- {} literals, first {first:?}: nodes {nodes}, work {} (kept per node {per_node} -> {}), distributions near {dist_near:?}, live driver {}, sizes {:?}, kept sizes {:?}", body.len(), got.0.1, per_node * nodes, self.valid_live_driver(&got.0.0, body, first), sizes, previous.as_ref().map(|p| p.sizes.clone()));
+                        eprintln!("replanned {head} :- {} literals, first {first:?}: {why}: nodes {nodes}, work {} (kept per node {per_node} -> {}), sizes {:?}, kept sizes {:?}", body.len(), got.0.1, per_node * nodes, sizes, previous.as_ref().map(|p| p.sizes.clone()));
                     }
-                    super::profile::decision("plan cache (decision 0038)", || format!("replanned: the kept order's work per node grew over {REPLAN}x, by over {REPLAN_ROWS} rows"))
+                    super::profile::decision("plan cache (decision 0038)", || format!("replanned: {why}"))
                 }
                 Err(_) => {
                     plan_cache(6);

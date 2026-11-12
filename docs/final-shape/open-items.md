@@ -3784,7 +3784,7 @@ It passes with `RERAIL_TAPE_CACHE` pointing at an empty store. Next step: find
 whether the first or the second run is wrong (compare both with a run on an
 empty store), then fix the rule or the maintenance that loses the edge.
 
-## O-replan-churn. Every edit replans about 3,350 rules whose kept order "grew over 4x"
+## O-replan-churn. Every edit replans about 3,350 rules whose kept order "grew over 4x" (closed)
 
 Measured on the P3 bench (54 files of `dl-sub40`, `calls_p3`, strict) on 2026-11-12,
 over two edits, each run in a new process:
@@ -3801,22 +3801,32 @@ and replanned at another, run after run, is churn, not a size that moved. Next
 step: print one such rule's kept and new work per node (`RERAIL_PLAN_CACHE_WHY`),
 and find whether the replan's result is kept under the key the next run reads.
 
-**Mostly closed (2026-11-12).** The cause was not work growth. `RERAIL_PLAN_CACHE_WHY` printed "distributions
-near false" for each replan: a rule planned for a chunk (22,146 nodes) and for the cross part (61,997) shares one
-kept plan (0116 keys the scale by powers of 4), and its distinct values were compared as they were. So each scale
-replanned what the other had kept. Now `near_distributions` takes an entry as near either as it was (a column of
-few values) or in proportion to the nodes (a column of node ids).
+**Closed (2026-11-12).** The cause was not work growth. It came in three parts.
 
-Measured, at steady state:
-- replans per edit: 3,350 → 935;
-- kept plans re-priced instead of searched: 228 → 2,710;
-- planning CPU: 1.6 s either way (search 0.87 → 0.74 s, strata 0.77 → 0.89 s), at load 80, with 638 first sights
-  against 186.
+1. **Distributions compared as they were.** `RERAIL_PLAN_CACHE_WHY` printed "distributions near false" for each
+   replan. A rule planned for a chunk (22,146 nodes) and for the cross part (61,997) shares one kept plan (0116
+   keys the scale by powers of 4), and its distinct values were compared as they were. So each scale replanned
+   what the other had kept. Now `near_distributions` takes an entry as near either as it was (a column of few
+   values) or in proportion to the nodes (a column of node ids).
+2. **Small relations whose distinct values differ by part.** The 935 replans left were rules whose re-priced work
+   was 1–600 rows (`rr_embed_req`, `pre_832`, `qann`, `callable_ann`). A search can save at most that work. So a
+   re-priced kept order whose whole work is under `REPLAN_ROWS` is kept, whatever its distributions.
+3. **First sights at a scale not stored.** An edit's chunk is a bucket or two from the scale its plans were stored
+   at, so `RunPlans::find` found none and searched from nothing (638 per edit). It now takes the plan stored at
+   the nearest scale. That plan is re-priced before it is kept, so this is exact as before.
 
-Open:
-- why the time did not fall;
-- the 935 replans left;
-- why the profile's line names "work per node" whatever the cause (it is the guard's fallthrough).
+The profile's replan line now names its cause (driver not live, distributions moved, or work grew), where it said
+"work per node grew" for all of them.
+
+Measured on the third edit of a build (profiled; 2,987 agree each run):
+
+| Per edit | Before | Distributions in proportion | All three |
+|---|---|---|---|
+| Replanned | 3,350 | 935 | 18 (distributions moved, work 11,600–62,000) |
+| First sight | 186 | 638 | 0 |
+| Kept, re-priced | 228 | 2,710 | 3,468 |
+| Join-order search | 0.87 s | 0.77 s | 0.25 s |
+| Re-price + strata + replan spans | | 0.33 s | 0.23 s |
 
 ## O-cutoff-phases. The whole-run cutoff never applies to a phased program
 

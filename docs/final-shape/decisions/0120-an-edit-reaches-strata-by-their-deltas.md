@@ -164,10 +164,13 @@ whole edit is not compared: at loads of 45–70 it varied by more than the savin
   both reach-index invalidation tests failed: after an edit that shortens
   c.py, a run without a session keeps c.py's old line-2 rows. They pass with `RERAIL_KEPT_INPUTS=off`, so the fault
   is in 0117 steps 1–2's kept inputs. Both tests are ignored with the item's name.
-- **O-replan-churn** (mostly closed: distributions compared in proportion to the nodes; 3,350 → 935). Each edit
-  replanned about 3,350 rules whose kept order "grew over 4x, by over 10000 rows", in
-  a new process every time. Plans are kept across processes (0116 step 2), but these are searched again on every
-  edit. It is 1.6 s of the second edit.
+- **O-replan-churn** (closed: 3,350 replans per edit → 18, first sights 186–638 → 0, join-order search 0.87 s →
+  0.25 s). Each edit replanned about 3,350 rules whose kept order "grew over 4x, by over 10000 rows", in a new
+  process every time. There were three causes:
+  - distinct values were compared as they were across a chunk and the cross part, which share a kept plan;
+  - small relations' distributions differ by part, where the re-priced work was under `REPLAN_ROWS`;
+  - plans stored at a neighbouring scale were not found.
+  The fixes are in `open-items.md`.
 - **O-cutoff-phases** (closed: an unchanged P3 run is 1.6 s of CPU). The whole-run cutoff refused any program that reads an earlier phase. So an unchanged run of
   `calls_p3` costs 5.5 s, where a single-phase program costs 0.71 s.
 - **The cold run is cheaper after the merge**: 49.8 s of CPU against 77.6 s, and 571 MB at peak against 925 MB.
