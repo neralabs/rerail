@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import type * as FileSystem from "node:fs/promises";
 import { lstat, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, extname, join, resolve, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
 import type { CodeRuleAuditor, CodeRuleEditBatch } from "../../../../src/engine/code-rule/code-rule.js";
@@ -104,14 +104,26 @@ function innermost(checkouts: readonly string[], absolute: string): string | und
 
 type Session = Awaited<ReturnType<typeof opened>>;
 
-/** A session opened in `folder`, watching the other `checkouts` (read as they are at each walk) through `walks`. */
-async function opened(folder: string, checkouts: readonly string[], walks: WorktreeWalks) {
+/** The file extensions the rules read, as a session's router holds them once it refreshes its rules. */
+interface Rules {
+  readonly extensions: Set<string>;
+}
+
+/**
+ * A session opened in `folder`, watching the other `checkouts` (read as they are at each walk) through `walks`. With
+ * `rules`, it reads only files of their extensions, as they were at its last refresh of its rules; else every file.
+ */
+async function opened(folder: string, checkouts: readonly string[], walks: WorktreeWalks, rules?: Rules) {
   const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => ({
     revision: batch.revision, disposition: "continue" as const, violations: [], failures: [],
   }));
+  let known = new Set(rules?.extensions);
   const auditor: CodeRuleAuditor = {
     openWorkspace: async () => undefined,
-    acceptsPath: () => true,
+    acceptsPath: path => rules === undefined || known.has(extname(path)),
+    refreshCodeRules: () => {
+      known = new Set(rules?.extensions);
+    },
     auditGeneratedEdits,
     close: async () => undefined,
     sourceRoot: path => innermost(checkouts, resolve(folder, path)),
@@ -125,8 +137,8 @@ async function opened(folder: string, checkouts: readonly string[], walks: Workt
 }
 
 /** A session whose first turn, and the walk of the other worktrees after it, are done. */
-async function session(folder: string, checkouts: readonly string[], walks: WorktreeWalks): Promise<Session> {
-  const opening = await opened(folder, checkouts, walks);
+async function session(folder: string, checkouts: readonly string[], walks: WorktreeWalks, rules?: Rules): Promise<Session> {
+  const opening = await opened(folder, checkouts, walks, rules);
   await turn(opening);
   return opening;
 }
@@ -302,6 +314,18 @@ describe("WorktreeWalks", () => {
     expect({ firstWalk, again }).toEqual({ firstWalk: true, again: false });
   });
 
+  it("reads a worktree by the rules its sessions hold now, whichever session it reads through", async () => {
+    const { checkouts, worktrees } = await repository();
+    const rules: Rules = { extensions: new Set([".py"]) };
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    // The first session, which every walk reads through, has no event once a rule for `.ts` files is added.
+    await session(worktrees[0]!, checkouts, walks, rules);
+    const other = await session(worktrees[1]!, checkouts, walks, rules);
+    rules.extensions.add(".ts");
+    await shell(other.bridge, "shell-1", () => writeFile(join(worktrees[2]!, "src", "b.ts"), "export const b = 1;\n"));
+    await other.bridge.settleWorktreeWalk();
+    expect(audited(other)).toEqual([[["written ../w3/src/b.ts"], "log"]]);
+  });
 });
 
 describe("the other worktrees of a session in a nested worktree", () => {

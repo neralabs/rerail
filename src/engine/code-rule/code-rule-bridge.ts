@@ -1541,12 +1541,13 @@ export class CodeRuleBridge {
       return undefined;
     }
     const start: WorktreeStart = { worktrees: new Set(discovery.worktrees.roots), versions: new Map(discovery.versions) };
+    const rules = { current: false };
     return {
       worktrees: new Set(worktrees),
       checkout: this.#owningCheckout(discovery.root, ""),
       firstSight: new Set(worktrees.filter(worktree => this.#mayFirstSee(discovery, sessionPath(discovery.root, worktree)))),
       startedAt: discovery.startedAt,
-      scan: request => this.#scanWorktree(discovery, request),
+      scan: request => this.#scanWorktree(discovery, request, rules),
       take: walk => this.#takeWorktreeWalk(discovery, start, walk),
     };
   }
@@ -1602,10 +1603,16 @@ export class CodeRuleBridge {
   /**
    * Reads another worktree for the shared walk (`WorktreeWalks`), asking this session's auditor which files to read and
    * which Git ignores, as the session would name them. Paths are relative to the worktree, so every session watching it
-   * takes the same snapshot; undefined when this session closed while it read.
+   * takes the same snapshot; undefined when this session closed while it read. The session's rules are refreshed once
+   * per walk, before its first read (`rules`): every session watching takes what it reads, and its rules, as of its
+   * last event, may predate a rule another session's event already applies.
    */
-  async #scanWorktree(discovery: SourceDiscovery, request: WorktreeScan): Promise<SourceScan | undefined> {
+  async #scanWorktree(discovery: SourceDiscovery, request: WorktreeScan, rules: { current: boolean }): Promise<SourceScan | undefined> {
     if (this.#abandoned(discovery)) return undefined;
+    if (!rules.current) {
+      rules.current = true;
+      this.refreshCodeRules();
+    }
     const prefix = sessionPath(discovery.root, request.root);
     const named = (path: string): string => (path === "" ? prefix : `${prefix}/${path}`);
     const auditor = this.#auditor;
