@@ -3734,12 +3734,12 @@ empty store), then fix the rule or the maintenance that loses the edge.
 
 **Seen.** O125's replay has 74 Python files and 33,311 lines. The figures are CPU from span trees, summed over
 threads, in a debug build under RERAIL_SQL_STRICT, at bcf99d12d (the integration hub merged in). The cold run is
-22.9 s of CPU. Step 01 edits one file and changes no rows (over-deleted, inserted, held, truly deleted and truly
-inserted are all 0), yet it costs 12.4 s. Both are more than ten times what the work should cost. The cost is in
+22.9 s of CPU. Step 01 edits one file. Its delta is small, 2,743 input-delta rows and 2,316 rows truly
+inserted and 143 truly deleted, held in 240 of 759 relations, yet it costs 12.4 s (more than half the cold run). Both are more than ten times what the work should cost. The cost is in
 whole kinds of work, not in a few hot functions:
 
 ```text
-step 01 (no rows changed)                     cold run
+step 01 (one file; 240 relations change)      cold run
   planning               4.65 s  37%            join evaluation        9.90 s  43%
   components set up      2.65 s  21%            per-file memo, export  ~4.4 s  19%
   join evaluation        0.80 s   6.5%          planning               1.75 s   7.6%
@@ -3750,13 +3750,16 @@ step 01 (no rows changed)                     cold run
 Each rock below is an item. They are closed in order: first a version of each that is not tuning the
 optimizer, then one optimized build, to measure what the debug build hides (`O-debug-build-gap`).
 
-## O-warm-noop-delta. An edit that changes no rows runs the whole maintenance program (W1)
+## O-warm-noop-delta. A small edit runs nearly the whole maintenance program (W1)
 
-**Seen.** At step 01, 100 inputs report a delta, but no row changes. No stratum is quiet, so 773 of 829 strata run.
+**Seen.** At step 01, 100 inputs change digest, and 240 of 759 maintained relations get a delta
+(`RERAIL_CROSS_DELTA_COUNTS=each`: 184 rows over-deleted, 2,805 inserted, 143 truly deleted, 2,316 truly
+inserted). Yet 773 of 829 strata run, and 2,688 of 7,398 rule runs do no work. (A first reading said "no rows
+changed": the step line's counts are zero unless `RERAIL_CROSS_DELTA_COUNTS` is set.)
 
-**Closure:** an input's plus and minus net each other out before a stratum is reached. A delta that nets to
-nothing makes the stratum quiet (decision 0101 §1), and so on downstream. A step that changes no rows costs
-its parse and the netting.
+**Closure:** a stratum runs only when one of its inputs has a non-empty delta at that step. An input whose plus and
+minus net to nothing, or a relation whose stratum produced no delta, makes its readers quiet (decision 0101 §1).
+The strata run are in proportion to the relations that changed.
 
 ## O-warm-replan. Every rule is planned again at every step (W2)
 
