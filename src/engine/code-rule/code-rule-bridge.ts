@@ -258,19 +258,19 @@ async function modifiedSince(absolute: string, modifiedAt: number): Promise<numb
 }
 /**
  * A text file as a walk observes it, with its text only when it may be an edit (`#discoveredEdit`): its digest is not
- * the one observed before, and it was stamped since the session's start, or the walk captures changes and this is no
- * first sight of a baseline (`firstSightIsBaseline`). A walk reads every file it holds no digest for, such as each file
- * of a worktree it walks first, and text of those would be a string per file that nothing reads.
+ * the one observed before, and it was stamped since the session's start (`changedSinceStart`), or the walk captures
+ * changes and this is no first sight of a baseline (`firstSightIsBaseline`). A walk reads every file it holds no digest
+ * for, such as each file of a worktree it walks first, and text of those would be a string per file that nothing reads.
  */
 function observedText(walk: SourceWalk, stamped: StampedSource, previous: ObservedSource | undefined, source: Buffer): Source {
   const digest = sha256(source);
-  const sinceStart = stamped.modifiedAt >= walk.discovery.startedAt;
-  const changed = previous?.digest !== digest && (sinceStart || (walk.captureChanges && !firstSightIsBaseline(walk, stamped.path, previous)));
+  const changed = previous?.digest !== digest
+    && (changedSinceStart(walk.discovery, stamped) || (walk.captureChanges && !firstSightIsBaseline(walk, stamped.path, previous)));
   return { ...stamped, digest, ...(changed ? { text: source.toString("utf8") } : {}) };
 }
 /**
  * The walk sees `path` for the first time under one of its `baselineRoots`, so `#discoveredEdit` takes it as a baseline
- * unless it was stamped since the session's start.
+ * unless it was stamped since the session's start (`changedSinceStart`).
  */
 function firstSightIsBaseline(walk: SourceWalk, path: string, previous: ObservedSource | undefined): boolean {
   return previous === undefined && underBaselineRoot(walk.baselineRoots, path);
@@ -466,12 +466,7 @@ interface SourceWalk {
   readonly observedAt: number;
   readonly previousSources: ReadonlyMap<string, ObservedSource>;
   readonly captureChanges: boolean;
-  /**
-   * Where a source the walk has no observation of is a baseline (`#baselinePath`), as the walk began: the session
-   * folder's subtrees its last walk could not read, or the worktrees whose first walk is still to finish with the
-   * subtrees the last worktree walk could not read. Walks of one kind run one at a time, so until this one applies none
-   * of these stops being a baseline, but for a worktree that is gone, whose files no walk answers for.
-   */
+  /** Where a source the walk has no observation of is a baseline, as the walk began (`#walkBaselineRoots`). */
   readonly baselineRoots: ReadonlySet<string>;
   readonly scan: SourceScan;
   readonly stack: string[];
@@ -1474,7 +1469,7 @@ export class CodeRuleBridge {
       discovery, observedAt: walk.observedAt,
       previousSources: seed === undefined ? walk.previous : new Map([...seed, ...walk.previous]),
       captureChanges: !walk.baseline,
-      baselineRoots: walk.inSession ? discovery.baselineRoots : new Set([...discovery.worktrees.fresh, ...discovery.worktrees.baselineRoots]),
+      baselineRoots: this.#walkBaselineRoots(discovery, walk),
       scan: { sources: new Map(), failedRoots: new Set(), errors: [], unread: new Map(), firstSeen: new Map(), checkouts: new Set(), unmerged: new Map() },
       stack: walk.inSession ? [discovery.root] : [...worktrees], roots: new Set([discovery.root, ...worktrees]),
     });
@@ -1816,6 +1811,18 @@ export class CodeRuleBridge {
     if (baseline) return true;
     return before === undefined
       && [discovery.baselineRoots, discovery.worktrees.baselineRoots, discovery.worktrees.fresh].some(roots => underBaselineRoot(roots, path));
+  }
+
+  /**
+   * The roots of `#baselinePath` that stay roots until `walk` applies, as it begins: what a walk keeps no text of under
+   * them (`firstSightIsBaseline`) is what `#discoveredEdit` then takes as a baseline. Walks of one kind run one at a time,
+   * so for the session folder's walk these are the subtrees its last walk could not read, and for the worktrees' walk
+   * the worktrees whose first walk is still to finish with the subtrees the last worktree walk could not read. A worktree
+   * removed meanwhile stops being one, but no walk answers for its files then. The session folder's subtrees are left
+   * out of the worktrees' walk: that folder's walk may change them while it runs.
+   */
+  #walkBaselineRoots(discovery: SourceDiscovery, walk: WalkStart): ReadonlySet<string> {
+    return walk.inSession ? discovery.baselineRoots : new Set([...discovery.worktrees.fresh, ...discovery.worktrees.baselineRoots]);
   }
 
   #deletedEdit(path: string, before: ObservedSource | undefined): CodeRuleEdit | undefined {
