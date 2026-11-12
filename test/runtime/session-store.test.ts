@@ -673,6 +673,7 @@ describe("SQLite session persistence", () => {
     });
   });
 
+  // Its 503 receipts each commit with a disk sync (`recordSteer`), which takes seconds in all on a busy disk.
   it("counts successful steers across the full session history, deduplicating only receipt retries", async () => {
     const { store, reader, session: first } = await hudFixture("first");
     const second = { ...first, sessionId: "second" };
@@ -694,7 +695,7 @@ describe("SQLite session persistence", () => {
     store.openSession(first);
     store.startHudTracking(first, false);
     expect(reader.hud(first.sessionId).steeringCount).toBe(501);
-  });
+  }, 30_000);
 
   it("counts one steer per rule a receipt carried, so two rules in one edit read twice", async () => {
     const { store, reader, session } = await hudFixture("per-rule");
