@@ -2435,11 +2435,22 @@ impl Lowerer {
         }
         let groups: Vec<usize> = (0..context.len()).map(|k| root(&mut group, k)).collect();
         let binds = |l: &Lit| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && rel != "earlier");
+        // The variables a binding atom binds: its plain arguments. One it computes from (`jb(@sub(p, 1), 92)`) it
+        // reads: lowered, that is `t = @sub(p, 1), jb(t, 92)`, and a cover of it alone could not place `p`.
+        let bound_by = |l: &Lit| -> BTreeSet<String> {
+            match l {
+                Lit::Atom { args, .. } if binds(l) => args.iter().filter_map(|a| match a { STerm::Var(v) => Some(v.clone()), _ => None }).collect(),
+                _ => BTreeSet::new(),
+            }
+        };
         // Per group: the asked variables its binding atoms bind, and those any of its literals reads.
         let asked_in = |g: usize, only_binding: bool| -> BTreeSet<String> {
             (0..context.len())
-                .filter(|&k| groups[k] == g && (!only_binding || binds(&context[k])))
-                .flat_map(|k| of[k].iter().filter(|v| asked.contains(*v)).cloned().collect::<Vec<_>>())
+                .filter(|&k| groups[k] == g)
+                .flat_map(|k| {
+                    let vars = if only_binding { bound_by(&context[k]) } else { of[k].clone() };
+                    vars.into_iter().filter(|v| asked.contains(v)).collect::<Vec<_>>()
+                })
                 .collect()
         };
         let mut covered: BTreeSet<String> = BTreeSet::new();

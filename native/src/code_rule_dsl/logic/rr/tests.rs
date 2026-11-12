@@ -451,6 +451,21 @@ fn a_context_joins_a_later_group_by_what_it_binds() {
     assert!(p.decls.iter().any(|(rel, cols)| rel.starts_with("rr_cover") && cols.len() == 1), "a relation of s alone");
 }
 
+/// A group that only computes from an asked variable (`jb(p - 1, 92)`) does not bind it: covered alone it would be
+/// `rr_cover(p) :- t = @sub(p, 1), jb(t, 92)`, which cannot place `p` (serverplan-state-tripwires' `jbs_odd`).
+#[test]
+fn a_context_covers_no_group_that_only_computes_from_an_asked_variable() {
+    let p = parse(concat!(
+        ".decl jb(p: number, c: number)\n.input jb\n",
+        ".decl odd(p: number)\n.output odd\n",
+        "odd(p) :- jb(p, _), jb(p - 1, 92), m = max j : { jb(j, 92), j < p }, m > 0.\n",
+    ))
+    .unwrap();
+    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    let cover: Vec<String> = p.rules.iter().filter(|r| r.head.rel.starts_with("rr_cover")).map(|r| r.to_string()).collect();
+    assert!(cover.iter().all(|r| r.contains("jb(p,")), "a cover binds what it is a relation of: {cover:?}");
+}
+
 /// Tests of one span in a disjunction, folded into one set test, test its text as a single test does
 /// (bootstrap-engine-invariants' `source(d, sp), (contains("a", sp) ; contains("b", sp))`).
 #[test]
