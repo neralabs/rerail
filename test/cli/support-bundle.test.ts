@@ -14,10 +14,13 @@ import { startTestRepository } from "../support/started-repository.js";
 const directories: string[] = [];
 const daemons: Array<() => Promise<void>> = [];
 const fileRerailHome = process.env.RERAIL_HOME;
+const fileContentStore = process.env.RERAIL_CONTENT_STORE_PATH;
 
 afterEach(async () => {
   if (fileRerailHome === undefined) delete process.env.RERAIL_HOME;
   else process.env.RERAIL_HOME = fileRerailHome;
+  if (fileContentStore === undefined) delete process.env.RERAIL_CONTENT_STORE_PATH;
+  else process.env.RERAIL_CONTENT_STORE_PATH = fileContentStore;
   await Promise.all(daemons.splice(0).map(close => close()));
   await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
 });
@@ -369,10 +372,21 @@ describe("rerail support-bundle", () => {
 
   it("says Rerail is not the managed install when it runs from a package outside the home's versions, and why it has no content store", async () => {
     const world = await fixture();
+    // The test set-up names a content store for each test file; an install names none.
+    delete process.env.RERAIL_CONTENT_STORE_PATH;
     const elsewhere = activate(world, packageAt(join(world.root, "install", "node_modules", "@neralabs", "rerail")));
     const { bundle } = await runFrom(world, elsewhere);
     expect(bundle.rerail.managedInstall).toBe(false);
     expect(bundle.problems).toEqual([expect.stringMatching(/^install: Rerail at .+ is neither the managed installation .+ so it has no content store$/u)]);
+  });
+
+  it("names no content store problem for a package outside the home's versions when RERAIL_CONTENT_STORE_PATH names a store", async () => {
+    const world = await fixture();
+    process.env.RERAIL_CONTENT_STORE_PATH = join(world.root, "content.sqlite");
+    const elsewhere = activate(world, packageAt(join(world.root, "install", "node_modules", "@neralabs", "rerail")));
+    const { bundle } = await runFrom(world, elsewhere);
+    expect(bundle.rerail.managedInstall).toBe(false);
+    expect(bundle.problems).toEqual([]);
   });
 
   it("says Rerail is the managed install when it runs from a version under the home", async () => {
