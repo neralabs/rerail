@@ -3828,6 +3828,58 @@ Measured on the third edit of a build (profiled; 2,987 agree each run):
 | Join-order search | 0.87 s | 0.77 s | 0.25 s |
 | Re-price + strata + replan spans | | 0.33 s | 0.23 s |
 
+## O-live-replan. Live replans search again for orders they already have
+
+Profiled on the P3 bench (third edit of a build, 2,987 agree), after O-replan-churn closed. Planning left per
+edit, as own CPU of spans (profiled):
+
+| Where | Calls | CPU |
+|---|---|---|
+| Live replans between waves (`plan_rule_live`): searches | 1,162 | 0.40 s |
+| Their EXPLAIN records | 1,162 | 0.085 s |
+| Their re-prices | 1,920 | 0.075 s |
+| The replan step's own work | 3,497 | 0.07–0.09 s |
+| Plan time: re-prices | 3,744 | 0.11 s |
+| Plan time: searches | 211 | 0.02 s |
+| Reprobes after an order changed | 1,255 | 0.05 s |
+
+Every live search had one cause: "the distributions it reads moved". Its guard compares distributions as they
+are, the fault O-replan-churn fixed at plan time. Most of the searched rules are in one recursive stratum of 99
+relations, searched again wave after wave. The costliest is `fgp` (16 literals, about 8 ms a search). Another,
+`sym`, flips between two size vectors (distinct values 1, then 3) on alternate waves, so each search overwrites
+the one priced entry that the next wave needed.
+
+What the searches found, against the kept order re-priced:
+
+| Re-priced work | Same order | Other order, saving < 100 rows | Saving 100–10,000 rows |
+|---|---|---|---|
+| Under `REPLAN_ROWS` (1,014 searches, 0.40 s) | 886 | 105 | 23 |
+| Over it, distributions moved (83, 0.012 s) | 81 | 0 | 2 |
+| One positive literal (55, 0.002 s) | 55 | 0 | 0 |
+| Near in proportion to the nodes (10) | 10 | 0 | 0 |
+
+So 89% of the live searches return the order they had.
+
+Opportunities, largest first:
+1. **Keep a re-priced live order whose work is under what a search costs.** This is the plan-time rule
+   (O-replan-churn, part 2) applied to `plan_rule_live`. A search is about 0.4 ms, roughly 600 rows of join work
+   at this bench's 0.64 µs a row, and grows with the literals (`fgp`: 8 ms). Keeping the order when its
+   re-priced work is under the search's own cost removes about 1,000 searches (0.40 s plus most of the 0.085 s
+   of EXPLAIN). It still searches the 23 that saved 100–10,000 rows. A flat `REPLAN_ROWS` would also skip those
+   23, giving up at most about 150,000 rows over the run's waves.
+2. **Build a live search's EXPLAIN only when its order is taken.** The caller drops the result when
+   `same_order` holds, so 0.085 s of EXPLAIN records are discarded when the order did not change.
+3. **Distributions in proportion, in the live guard** (`near_distributions`, as at plan time). This matters
+   only for the large relations once item 1 is in: 10 searches here.
+4. **Two priced states per live key.** This is for sizes that alternate between waves (`sym`). After item 1 it
+   is needed only when the work is large.
+5. **No search for a body with one positive literal.** Its order is forced: 55 searches, 0.002 s. Not worth it
+   alone.
+
+What is not an opportunity: reprobes (0.05 s with the indexes they open) and the plan-time re-prices (30 µs
+each, 0.11 s; they are what stands in for a search). The index builds in `open: joins` (0.36 s) are the joins'
+own cost, not replanning's.
+
 ## O-cutoff-phases. The whole-run cutoff never applies to a phased program
 
 `RERAIL_REUSE_TRACE` on an unchanged P3 run:

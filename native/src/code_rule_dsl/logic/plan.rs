@@ -1555,10 +1555,23 @@ impl Model {
                 let _span = super::profile::span(|| "re-price".into());
                 self.plan_inner(prog, head, body, first, Some(&priced.got.0.0), false)
             };
+            let why = match &repriced {
+                Err(_) => Some("the kept order no longer runs"),
+                Ok((plan, _)) if !self.valid_live_driver(&plan.0, body, first) => Some("the kept order's driver is not live here"),
+                Ok(_) if !near(&priced.sizes[cardinalities..], &sizes[cardinalities..]) => Some("the distributions it reads moved"),
+                Ok((plan, _)) if !(plan.1 <= REPLAN * then.max(1.0) || plan.1 - then <= REPLAN_ROWS) => Some("its work grew over 4x, by over 10000 rows"),
+                Ok(_) => None,
+            };
+            if let Some(why) = why {
+                super::profile::decision("live replans searched (decision 0038)", || format!("searched again: {why}"));
+                static SHOWN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                if std::env::var_os("RERAIL_PLAN_CACHE_WHY").is_some() && SHOWN.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 40 {
+                    let work = repriced.as_ref().map(|(p, _)| p.1).unwrap_or(-1.0);
+                    eprintln!("live searched {head} :- {} literals, first {first:?}: {why}: work {work} (searched {then}), sizes {sizes:?}, kept sizes {:?}", body.len(), priced.sizes);
+                }
+            }
             if let Ok((plan, _)) = repriced
-                && self.valid_live_driver(&plan.0, body, first)
-                && near(&priced.sizes[cardinalities..], &sizes[cardinalities..])
-                && (plan.1 <= REPLAN * then.max(1.0) || plan.1 - then <= REPLAN_ROWS)
+                && why.is_none()
             {
                 super::profile::decision("plan cache (decision 0038)", || "a live replan kept, re-priced: its work grew little".into());
                 let got = (plan, priced.got.1.clone());
@@ -1569,6 +1582,9 @@ impl Model {
                 });
                 return Ok(got);
             }
+        }
+        if kept.is_none() {
+            super::profile::decision("live replans searched (decision 0038)", || "searched: no plan kept under its key".into());
         }
         let got = {
             let _span = super::profile::span(|| "search".into());
