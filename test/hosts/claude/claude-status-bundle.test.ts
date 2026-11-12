@@ -6,7 +6,8 @@ import { build } from "esbuild";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { REQUIRED_NODE_MAJOR } from "../../../src/engine/index.js";
-import { bundleTarget, OLDER_NODE_VERSION, olderNodeArguments } from "../../support/platform/older-node.js";
+import { scriptBundleOptions } from "../../support/build/script-bundle.js";
+import { OLDER_NODE_VERSION, olderNodeArguments } from "../../support/platform/older-node.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const manifestSchema = z.object({ scripts: z.record(z.string(), z.string()) });
@@ -24,10 +25,9 @@ describe("the Claude Code status line's bundle", () => {
   });
 
   it("links neither Drizzle, the storage schema, the code-rule schemas nor the SQLite reader", async () => {
-    // The same options as `npm run build:claude`.
     const { metafile } = await build({
-      entryPoints: ["src/hosts/claude/claude-status.ts"], bundle: true, platform: "node", format: "esm",
-      external: ["better-sqlite3"], write: false, metafile: true, logLevel: "silent",
+      ...await scriptBundleOptions("build:claude", "src/hosts/claude/claude-status.ts", "."),
+      write: false, metafile: true, logLevel: "silent",
     });
     const inputs = Object.keys(metafile.inputs);
     const imported = Object.values(metafile.inputs).flatMap(input => input.imports.map(entry => entry.path));
@@ -43,12 +43,7 @@ describe("the Claude Code status line's bundle", () => {
     const root = await mkdtemp(join(tmpdir(), "rerail-status-bundle-"));
     try {
       await writeFile(join(root, "package.json"), "{}\n");
-      const entry = "src/hosts/claude/claude-status.ts";
-      // The same options as `npm run build:claude`, its target included.
-      await build({
-        entryPoints: [entry], bundle: true, platform: "node", format: "esm", external: ["better-sqlite3"],
-        ...await bundleTarget("build:claude", entry), outdir: join(root, "dist", "hosts", "claude"), logLevel: "silent",
-      });
+      await build({ ...await scriptBundleOptions("build:claude", "src/hosts/claude/claude-status.ts", root), logLevel: "silent" });
       const status = spawnSync(process.execPath, [...olderNodeArguments(), join(root, "dist", "hosts", "claude", "claude-status.js")], {
         input: JSON.stringify({ session_id: "session", cwd: root }), encoding: "utf8",
       });
