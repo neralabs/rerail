@@ -33,8 +33,21 @@ const INPUT_STRINGS = 512;
 /** How many of a tool input's path-shaped tokens are resolved on disk, in input order; the rest by name alone. */
 const INPUT_RESOLUTIONS = 64;
 
-/** Shell, prose and brace-glob delimiters around a token that may be a path. */
-const TOKEN_BREAK = /[\s"'`|;&<>(),:={}]+/u;
+/**
+ * Shell, prose and brace-glob delimiters around a token that may be a path. The split keeps them, at odd indexes, so a
+ * URL's lone `:` can be told from the rest ({@link startsUrl}).
+ */
+const TOKEN_BREAK = /([\s"'`|;&<>(),:={}]+)/u;
+
+/**
+ * A URL's scheme (`https`, `ssh`, `git+https`). It has two characters or more, so a drive letter (`C:`) is none, and
+ * it is not `file`, whose path names a file on this machine.
+ */
+const URL_SCHEME = /^(?!file$)[a-z][a-z\d+.-]+$/iu;
+
+/** Whether `token`, after `scheme` and a lone `:`, starts a URL's host and path: `https`, then `//host/api`. */
+const startsUrl = (scheme: string | undefined, token: string | undefined): boolean =>
+  token?.startsWith("//") === true && URL_SCHEME.test(scheme ?? "");
 
 /** A segment that is no name: `.`, `..` and runs of dots, or a JavaScript spread or prose ellipsis (`...props`). */
 const NOT_A_NAME = /^(?:\.+|\.{3}.*)$/u;
@@ -52,15 +65,26 @@ interface TokenJudge {
 }
 
 function textNamesPath(text: string, { judge, boundary }: TokenJudge): boolean {
-  for (const token of text.split(TOKEN_BREAK)) {
+  const parts = text.split(TOKEN_BREAK);
+  // Whether the token is part of a URL's host and path, and whether that URL has no path yet: until then a lone `:`
+  // joins the next token to its host, as a password or a port does (`//user`, `pw@host`, `8080/api`). Past it, a `:`
+  // may start a list (`PATH=https://host/bin:/usr/bin`), so the next token is a word of its own.
+  let url = false;
+  let hostOnly = false;
+  for (let index = 0; index < parts.length; index += 2) {
+    const token = parts[index] ?? "";
+    url = parts[index - 1] === ":" && (hostOnly || startsUrl(parts[index - 2], token));
+    hostOnly = url && !token.replace(/^\/\//u, "").includes("/");
     // A bracket class is read as its letters, so `[.]env` is judged as `.env`.
     const path = token.replace(/[[\]]/gu, "");
     if (!/[A-Za-z]/u.test(path)) continue;
     const segments = path.split(/[\\/]+/u).filter(segment => segment !== "" && !NOT_A_NAME.test(segment));
     if (segments.length === 0) continue;
     if (judge(segments.join("/"))) return true;
-    // Where a link leads is judged secret-like or not, never hidden: `node_modules/pkg` leads into `.pnpm/`.
-    if (boundary === undefined || !PATH_SHAPED.test(path)) continue;
+    // Where a link leads is judged secret-like or not, never hidden: `node_modules/pkg` leads into `.pnpm/`. A URL's
+    // host and path name no file here, so they are not looked up: on Windows `//host/api` resolves to the network
+    // share `\\host\api`, and the lookup waits for that host, about 21 s for one that never answers.
+    if (boundary === undefined || url || !PATH_SHAPED.test(path)) continue;
     const led = boundary.leadsTo(path);
     if (led !== undefined && sensitiveByName(led)) return true;
   }
@@ -93,10 +117,10 @@ const callNames = (input: unknown, judge: (path: string) => boolean, root: strin
  * With the checkout the call ran in (`root`), a path is also outside when it links to a secret-like one
  * ({@link sensitiveByName}), so `cat docs/a.md` is outside when `docs/a.md` links to `.env`, while a link into a hidden
  * folder alone (pnpm's `node_modules/pkg` into `.pnpm/`) is not; only a path-shaped token (`docs/a.md`, `.envrc`,
- * `notes.txt`) is resolved, the first `INPUT_RESOLUTIONS` distinct ones, and a bare word by its name alone, as is, on
- * Windows, a token that names another machine (a URL's `//host/api`, a `\\server\share` path) off the checkout's share.
- * It reads names, not a shell: a path built at run time (`cat $(echo .e)nv`) is not seen. An input deeper or larger
- * than it reads counts as naming one.
+ * `notes.txt`) is resolved, the first `INPUT_RESOLUTIONS` distinct ones, and a bare word by its name alone, as is a
+ * URL's host and path (`//host/api` in `https://host/api`), which name no file on this machine; a `file:` URL's path
+ * does, and is resolved. It reads names, not a shell: a path built at run time (`cat $(echo .e)nv`) is not seen. An
+ * input deeper or larger than it reads counts as naming one.
  */
 export function callNamesDeniedPath(input: unknown, root?: string): boolean {
   return callNames(input, deniedByPathBoundary, root);

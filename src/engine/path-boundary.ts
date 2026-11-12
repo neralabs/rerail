@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { isAbsolute, parse, relative, resolve, sep } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 
 /** The extensions of a data file, as opposed to source: `secrets.json` holds secrets, `secret-manager.ts` handles them. */
 const DATA = "{json,yaml,yml,xml,ini,toml,conf,cfg,properties,txt,csv,env}";
@@ -114,8 +114,7 @@ export const CHECKOUT_PATH_RESOLUTIONS = 256;
 export interface CheckoutPathBoundary {
   /**
    * Where `path` leads when a link redirects it: its target's `/`-separated path from the checkout's root, or its
-   * absolute path when it lies outside. Undefined when no link redirects it, when it does not resolve, or when it names
-   * another machine or a device, which is not looked up ({@link checkoutPathBoundary}).
+   * absolute path when it lies outside. Undefined when no link redirects it or it does not resolve.
    */
   leadsTo(path: string): string | undefined;
   /** {@link sensitiveByName}, of the path and of where it leads. */
@@ -130,31 +129,12 @@ function realPath(path: string): string | undefined {
   }
 }
 
-/** The root of an extended-length path on a local drive (`\\?\C:\`): the one `\\` root that names no other machine. */
-const LOCAL_DRIVE_ROOT = /^\\\\\?\\[a-z]:\\$/iu;
-
-/**
- * Whether looking up `named`, an absolute path, may wait on another machine or a device: only a Windows path starts
- * with `\\`, and it names a network share (`\\host\share`, which a URL's `//host/api` resolves to, or
- * `\\?\UNC\host\share`) or a device (`\\.\pipe\name`). Looking up a share blocks until its host answers, about 21 s
- * for one that never does. An extended-length local path (`\\?\C:\`) and a path on the share that one of `roots` lies
- * on are looked up.
- */
-function lookupMayWait(named: string, roots: readonly string[]): boolean {
-  if (!named.startsWith("\\\\")) return false;
-  const share = parse(named).root.toLowerCase();
-  return !LOCAL_DRIVE_ROOT.test(share) && roots.every(root => parse(root).root.toLowerCase() !== share);
-}
-
 /**
  * The path boundary for paths relative to (or absolute within) the checkout at `root`, which also judges where a path
- * leads: a tracked `docs/a.md` linked to `../.env` is judged as `.env` too, and so is a link outside the checkout named
- * by its absolute path or through `..`. A path that does not resolve (it does not exist, or `root` does not) is judged
- * by its name alone, as is any path past the first `resolutions` distinct ones, so a boundary makes at most
- * `resolutions + 1` file system calls. On Windows a path that names another machine or a device (`\\host\share`,
- * `\\?\UNC\`, `\\.\`) off the share the checkout lies on is not looked up, since a lookup there can wait 21 s: it is
- * judged by its name alone and counts among the `resolutions`, as a path that does not resolve does. Meant to live
- * for one judgment's worth of paths: a steer, a tool call's input.
+ * leads: a tracked `docs/a.md` linked to `../.env` is judged as `.env` too. A path that does not resolve (it does not
+ * exist, or `root` does not) is judged by its name alone, as is any path past the first `resolutions` distinct ones,
+ * so a boundary makes at most `resolutions + 1` file system calls. Meant to live for one judgment's worth of paths: a
+ * steer, a tool call's input.
  */
 export function checkoutPathBoundary(root: string, resolutions = CHECKOUT_PATH_RESOLUTIONS): CheckoutPathBoundary {
   // The root is resolved with the first path, so a judgment that resolves none reads nothing on disk.
@@ -169,10 +149,7 @@ export function checkoutPathBoundary(root: string, resolutions = CHECKOUT_PATH_R
     if (realRoot === undefined) return undefined;
     if (targets.has(path)) return targets.get(path);
     if (targets.size >= resolutions) return undefined;
-    const named = resolve(root, path);
-    // Judged as a path that does not resolve: kept, so a repeat costs one map lookup, and counted against the budget,
-    // so an input of many URLs stops at it as on Linux, where `//host/api` is a local path.
-    const resolved = lookupMayWait(named, [root, realRoot]) ? undefined : realPath(named);
+    const resolved = realPath(resolve(root, path));
     let led: string | undefined;
     // A path no link redirects is judged by its own name, already.
     if (resolved !== undefined && resolved !== resolve(realRoot, path)) {
