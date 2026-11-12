@@ -1379,6 +1379,58 @@ describe("mechanical code rule regressions", () => {
     }
   });
 
+  it("closes a workspace whose storage attach fails after it opened, and records why", async () => {
+    const { recorder, audits } = recordingAudits();
+    const { enforcer } = await fixture({ audits: recorder });
+    let closed = false;
+    const workspace = Object.assign(pagingWorkspace(() => { throw new Error("the workspace is never paged"); }), {
+      enableStorageAsync: async () => { throw new Error("the content store is unreadable"); },
+      close: () => { closed = true; },
+    });
+    const binding = nativeWorkspaces(workspace);
+    try {
+      await enforcer.openWorkspace("failing-attach");
+      await vi.waitFor(() => expect(closed).toBe(true));
+      expect([...audits.values()].map(audit => audit.result)).toEqual([expect.objectContaining({
+        status: "failed",
+        failures: [expect.objectContaining({ clauseId: "catalog", code: "adapter-error", message: "the content store is unreadable" })],
+      })]);
+    } finally {
+      binding.mockRestore();
+      await enforcer.close();
+    }
+  });
+
+  it("opens once its code rules are registered, and checks the first edit once its content store has attached", async () => {
+    const { recorder, audits } = recordingAudits();
+    const { enforcer } = await fixture({ audits: recorder });
+    const attachments = gateStorageAttachments();
+    try {
+      let opened = false;
+      const opening = enforcer.openWorkspace("open-before-attach").then(() => { opened = true; });
+      // The store's attach is held: the evaluator is open, its scopes answer, and nothing has been evaluated.
+      await vi.waitFor(() => expect(opened).toBe(true));
+      await opening;
+      expect(enforcer.acceptsPath("api/held.py")).toBe(true);
+      await enforcer.auditGeneratedEdits("open-before-attach", {
+        revision: 1,
+        checkpoints: ["edit"],
+        edits: [{ path: "api/held.py", language: "python", generatedText: "NEEDLE\n" }],
+      });
+      await new Promise<void>(resolve => setTimeout(resolve, 50));
+      expect(auditForPath(audits, "api/held.py")?.result).toBeUndefined();
+      attachments.workspaces[0]!.release();
+      await settled(enforcer);
+      expect(auditForPath(audits, "api/held.py")?.result).toMatchObject({
+        status: "completed", violations: [expect.objectContaining({ code: "NEEDLE", path: "api/held.py" })],
+      });
+    } finally {
+      for (const workspace of attachments.workspaces) workspace.release();
+      attachments.restore();
+      await enforcer.close();
+    }
+  });
+
   it("reports once why repository reuse is disabled when the storage attach says why", async () => {
     const { recorder, audits } = recordingAudits();
     const { enforcer } = await fixture({ audits: recorder });
