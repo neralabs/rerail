@@ -538,7 +538,7 @@ describe("SQLite session persistence", () => {
     expect(connection instanceof Database && connection.pragma("synchronous", { simple: true })).toBe(1);
   });
 
-  it("commits a session's row and HUD baseline with a disk sync, also when an append puts the row back after a reset", async () => {
+  it("commits a session's row, HUD baseline and steer receipts with a disk sync, also when an append puts the row back after a reset", async () => {
     const root = await temporaryDirectory();
     const path = join(root, "rerail.sqlite");
     const store = closeAfterTest(new SqliteSessionStore(path, { repositoryId: "repository" }));
@@ -556,6 +556,7 @@ describe("SQLite session persistence", () => {
       store.openSession(session, 100);
       store.startHudTracking(session, true);
       store.append({ sessionId: session.sessionId, eventId: "event-1", kind: "result", observedAt: 110, payload: { output: "ok" } });
+      store.recordSteer(session, "receipt-1", ["rule:one"]);
       store.closeSession(session.sessionId, 120);
       resetRepositoryHistory(path, "repository");
       store.append({ sessionId: session.sessionId, eventId: "event-2", kind: "result", observedAt: 130, payload: { output: "ok" } }, session);
@@ -566,6 +567,7 @@ describe("SQLite session persistence", () => {
       "sessions 2",
       "events 2",
       "events 1",
+      "events 2",
       // The reset took the row: the event's first insert fails on its foreign key, the row goes back, the event follows.
       "events 1",
       "sessions 2",

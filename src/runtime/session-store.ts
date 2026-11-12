@@ -219,9 +219,9 @@ export class SqliteSessionStore {
     // crashing, since it sits in the operating system's cache. A power cut or system crash loses the events committed
     // since the log was last synced, on Linux up to 30 s or more when nothing else writes. The rows that create a
     // session and start its HUD counts are not among them: they commit at FULL (`#synced`) as the session opens, or as
-    // an append puts the row back after a reset. The session ledger, written after each insert and never synced, can
-    // keep its lines for events the history lost; an agent that sends one again stores it again (`unrecorded` in
-    // runtime.ts).
+    // an append puts the row back after a reset. Nor are steer receipts, one per steer. The session ledger, written
+    // after each insert and never synced, can keep its lines for events the history lost; an agent that sends one
+    // again stores it again (`unrecorded` in runtime.ts).
     this.#database.run(sql`PRAGMA synchronous = NORMAL`);
   }
 
@@ -254,8 +254,8 @@ export class SqliteSessionStore {
 
   /**
    * Runs `write` with each commit it makes synced to disk (FULL), then goes back to NORMAL: for the rows a power cut
-   * must not take, so the history never lists a session's events without the session or reads its HUD counts from the
-   * wrong start. SQLite refuses the change inside a transaction, and this connection opens none around these writes.
+   * must not take, so the history never lists a session's events without the session or shows a HUD count that is
+   * short. SQLite refuses the change inside a transaction, and this connection opens none around these writes.
    */
   #synced<T>(write: () => T): T {
     if (this.#syncing) return write();
@@ -269,19 +269,23 @@ export class SqliteSessionStore {
     }
   }
 
-  /** `ruleIds` credits the steer to the rules whose violations it carried. */
+  /**
+   * `ruleIds` credits the steer to the rules whose violations it carried. The HUD counts receipts as exact once the
+   * session's baseline says complete, so each one commits with a disk sync (`#synced`): a power cut never leaves a
+   * count lower than the steers the person saw.
+   */
   recordSteer(
     session: AdapterSession,
     receiptId: string,
     ruleIds: readonly string[] = [],
     attribution?: SessionAttribution,
   ): void {
-    this.append({
+    this.#synced(() => this.append({
       sessionId: session.sessionId,
       eventId: `steering-delivered:${receiptId}`,
       kind: "steering-delivered",
       payload: { ruleIds: [...ruleIds] },
-    }, session, attribution);
+    }, session, attribution));
   }
 
   /** Marks the session's history incomplete over a stretch of events its host never delivered. */
