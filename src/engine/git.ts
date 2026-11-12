@@ -559,8 +559,12 @@ export async function gitCommitsBetween(cwd: string, from: string, to: string, o
   return commits === undefined || commits === "" ? [] : commits.split("\n");
 }
 
-/** A Git boolean that is true. */
-const GIT_TRUE = /^(?:true|yes|on|1)$/iu;
+/**
+ * A Git boolean that is true, as Git reads one: `true`, `yes` or `on` in any case, or else an integer other than 0, in
+ * decimal, octal (a leading 0) or hex (0x), with an optional `k`, `m` or `g` unit. A value Git cannot read either way
+ * stops Git itself, so no checkout follows it.
+ */
+const GIT_TRUE = /^(?:true|yes|on|[+-]?(?:0x0*[1-9a-f][0-9a-f]*|0*[1-9][0-9]*)[kmg]?)$/iu;
 
 /**
  * The rule by which a checkout writes a file's LF line breaks as CRLF, as Git's convert.c applies it (line-endings.ts

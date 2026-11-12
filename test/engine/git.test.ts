@@ -362,9 +362,12 @@ describe("gitCrlfPaths", () => {
     await writeFile(global, "[core]\n\tautocrlf = true\n");
     vi.stubEnv("GIT_CONFIG_GLOBAL", global);
     expect(Object.fromEntries(await gitCrlfPaths(root, ["a.py"], { platform: "linux" }))).toEqual({ "a.py": "auto" });
+    // Git reads the repository's own setting after the global one, and the last value it reads wins.
+    git(root, "config", "core.autocrlf", "false");
+    expect(Object.fromEntries(await gitCrlfPaths(root, ["a.py"], { platform: "linux" }))).toEqual({});
   });
 
-  it("reads core.autocrlf set with no value as true and set empty as false, as Git checks files out by them", async () => {
+  it("reads core.autocrlf as Git checks files out by it: with no value or an integer but 0 as true, empty or 0 as false", async () => {
     const root = await repository({ "a.py": "a\n" });
     const config = join(root, ".git", "config");
     const settings = await readFile(config, "utf8");
@@ -378,6 +381,9 @@ describe("gitCrlfPaths", () => {
     // `git config --get core.autocrlf` prints an empty line for both.
     expect(await under("autocrlf")).toEqual({ checkedOut: "a\r\n", rules: { "a.py": "auto" } });
     expect(await under("autocrlf =")).toEqual({ checkedOut: "a\n", rules: {} });
+    // Git reads any other boolean as an integer when it can: decimal, octal or hex, with an optional k, m or g unit.
+    for (const value of ["2", "-1", "0x10", "1k"]) expect(await under(`autocrlf = ${value}`)).toEqual({ checkedOut: "a\r\n", rules: { "a.py": "auto" } });
+    for (const value of ["0", "0x0", "0k"]) expect(await under(`autocrlf = ${value}`)).toEqual({ checkedOut: "a\n", rules: {} });
   });
 });
 
