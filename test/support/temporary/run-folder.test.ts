@@ -11,8 +11,8 @@ import { afterEach, describe, expect, it } from "vitest";
 const CHECKOUT = fileURLToPath(new URL("../../../", import.meta.url));
 const VITEST = join(CHECKOUT, "node_modules", "vitest", "vitest.mjs");
 const DAY_MS = 24 * 60 * 60 * 1000;
-/** What the `stuck` test file writes next to itself: the pid of the process in its folder, or the folder it locked. */
-const STUCK_NOTE = "stuck.txt";
+/** What the `stuck` and `locked` test files write next to themselves: the pid of the process in the folder, or the folder. */
+const NOTE = "note.txt";
 const IMPORTS = [
   `import { mkdtempSync } from "node:fs";`,
   `import { tmpdir } from "node:os";`,
@@ -24,27 +24,32 @@ const TEST_FILES = {
   leaves: `${IMPORTS}\nit("leaves a folder behind", () => { mkdtempSync(join(tmpdir(), "left-")); });\n`,
   // The folder's name carries the worker's pid, which killRun ends after vitest's own process.
   holds: `${IMPORTS}\nit("holds a folder until killed", async () => { mkdtempSync(join(tmpdir(), "held-" + process.pid + "-")); await new Promise(() => {}); }, 600_000);\n`,
-  // Leaves a folder no removal takes until releaseStuck lets it go, and writes next to itself what that takes: Windows
-  // removes no folder a process runs in, and elsewhere no file goes from a folder its owner may not write to. The
-  // process takes the folder as it starts, after spawn returns, so the test waits for the file it writes there.
+  // On Windows, leaves a folder no removal takes until releaseHeld ends the process that runs in it, whose pid it writes
+  // next to itself. The process takes the folder as it starts, after spawn returns, so the test waits for the file it
+  // writes there.
   stuck: `${IMPORTS}
 import { spawn } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 it("leaves a folder its run cannot remove", async () => {
   const stuck = mkdtempSync(join(tmpdir(), "stuck-"));
-  const note = new URL("${STUCK_NOTE}", import.meta.url);
-  if (process.platform === "win32") {
-    const holder = spawn(process.execPath, ["-e", "require('node:fs').writeFileSync('running', ''); setTimeout(() => {}, 600000)"], { cwd: stuck, detached: true, stdio: "ignore", windowsHide: true });
-    holder.unref();
-    writeFileSync(note, String(holder.pid));
-    while (!existsSync(join(stuck, "running"))) await new Promise(resolve => setTimeout(resolve, 20));
-  } else {
-    mkdirSync(join(stuck, "locked"));
-    writeFileSync(join(stuck, "locked", "file"), "");
-    chmodSync(join(stuck, "locked"), 0o500);
-    writeFileSync(note, join(stuck, "locked"));
-  }
+  const holder = spawn(process.execPath, ["-e", "require('node:fs').writeFileSync('running', ''); setTimeout(() => {}, 600000)"], { cwd: stuck, detached: true, stdio: "ignore", windowsHide: true });
+  holder.unref();
+  writeFileSync(new URL("${NOTE}", import.meta.url), String(holder.pid));
+  while (!existsSync(join(stuck, "running"))) await new Promise(resolve => setTimeout(resolve, 20));
 }, 60_000);
+`,
+  // Leaves a folder and a file in it read-only, as a test killed before it gives a folder back its write permission
+  // does, and writes the folder's path next to itself for releaseHeld.
+  locked: `${IMPORTS}
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
+it("leaves a folder and a file it made read-only", () => {
+  const locked = join(mkdtempSync(join(tmpdir(), "locked-")), "locked");
+  mkdirSync(locked);
+  writeFileSync(join(locked, "file"), "");
+  chmodSync(join(locked, "file"), 0o400);
+  chmodSync(locked, 0o500);
+  writeFileSync(new URL("${NOTE}", import.meta.url), locked);
+});
 `,
   // Listens on a Unix socket as far below the temp folder as engine-service-socket.test.ts's, the deepest a test binds.
   socket: `${IMPORTS}
@@ -75,7 +80,7 @@ afterEach(async () => {
     if (run.child.exitCode === null && run.child.signalCode === null) kill(run.child.pid);
     await run.ended.catch(() => undefined);
   }
-  for (const root of scratches) await releaseStuck(join(root, "tests"));
+  for (const root of scratches) await releaseHeld(join(root, "tests"));
   await Promise.all(scratches.splice(0).map(path => rm(path, { recursive: true, force: true })));
 });
 
@@ -173,21 +178,28 @@ async function processEnded(pid: number): Promise<void> {
 }
 
 /**
- * Lets go the folder the `stuck` test file in `tests` left, once: ends the process running in it on Windows, and
- * elsewhere makes the folder it locked writable again. Nothing to do when that test file has not run.
+ * Lets go what the `stuck` and `locked` test files in `tests` left, once each: ends the process running in the stuck
+ * folder, and gives the locked folder back its write permission, when a run has not removed it. Nothing to do for a
+ * test file that has not run.
  */
-async function releaseStuck(tests: string): Promise<void> {
-  const note = join(tests, "stuck", STUCK_NOTE);
-  const text = await readFile(note, "utf8").catch(() => undefined);
-  if (text === undefined) return;
-  // Gone before the release, so a second call cannot signal a pid that another process has since been given.
-  await rm(note);
-  if (process.platform === "win32") {
-    kill(Number(text));
-    await processEnded(Number(text));
-  } else {
-    await chmod(text, 0o700);
+async function releaseHeld(tests: string): Promise<void> {
+  const pid = await takeNote(join(tests, "stuck", NOTE));
+  if (pid !== undefined) {
+    kill(Number(pid));
+    await processEnded(Number(pid));
   }
+  const locked = await takeNote(join(tests, "locked", NOTE));
+  if (locked !== undefined) await chmod(locked, 0o700).catch(() => undefined);
+}
+
+/**
+ * The text of the note at `path`, or undefined when there is none. The note goes as it is read, so a second call
+ * cannot signal a pid that another process has since been given.
+ */
+async function takeNote(path: string): Promise<string | undefined> {
+  const text = await readFile(path, "utf8").catch(() => undefined);
+  if (text !== undefined) await rm(path);
+  return text;
 }
 
 describe("a test run's temporary folders", () => {
@@ -226,14 +238,16 @@ describe("a test run's temporary folders", () => {
     expect(await readdir(temp)).toEqual([]);
   }, 120_000);
 
-  it("that a run cannot remove stay, the run says so and does not fail, and a later run removes them", async () => {
+  // Only Windows refuses this user the removal of a folder it made, while a process runs in it: elsewhere a folder stays
+  // only when it holds another user's file, which takes an administrator to make.
+  it.skipIf(process.platform !== "win32")("that a run cannot remove stay, the run says so and does not fail, and a later run removes them", async () => {
     const { temp, tests } = await scratch();
     const stuck = await startRun(join(tests, "stuck"), temp).ended;
     const afterStuck = await readdir(temp);
     // The next run finds the stuck run ended but cannot remove its folder either.
     const blocked = await startRun(join(tests, "leaves"), temp).ended;
     const afterBlocked = await readdir(temp);
-    await releaseStuck(tests);
+    await releaseHeld(tests);
 
     const next = await startRun(join(tests, "leaves"), temp).ended;
 
@@ -246,6 +260,16 @@ describe("a test run's temporary folders", () => {
     expect(next.code, next.output).toBe(0);
     expect(await readdir(temp)).toEqual([]);
   }, 180_000);
+
+  it("that a test left read-only are gone after the run", async () => {
+    const { temp, tests } = await scratch();
+
+    const run = await startRun(join(tests, "locked"), temp).ended;
+
+    expect(run.code, run.output).toBe(0);
+    expect(run.output).not.toContain("could not remove");
+    expect(await readdir(temp)).toEqual([]);
+  }, 120_000);
 
   it.skipIf(process.platform === "win32")("go in /tmp when the deepest socket a test binds would not fit below a run folder in the temp folder", async () => {
     const { tests } = await scratch();
