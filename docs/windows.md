@@ -222,6 +222,14 @@ session opened from it never matched the one Git names `C:\…`: the session rea
 The same mismatch let `c:\users\me` past set-up's refusal of the home folder, and lost audit settings and presentation
 preferences saved under the other spelling.
 
+A database an earlier version wrote can hold keys in the caller's spelling: a folder outside Git as it was typed, and
+the audit settings and presentation preferences of a session opened as `c:\…`. The first time this version opens the
+database, its `path-keys-as-stored` migration step (`src/engine/storage/path-key-spelling.ts`) moves each key to the
+spelling this version looks it up by (`currentPathKey`), so a checkout keeps its start state, its rule settings, its
+audit settings and audit, and its presentation preferences. Two rows that come to one folder merge: the newer one stays
+(last seen, last saved, last started), and a start state either row held is kept. A folder Rerail cannot read keeps
+its key, and the database still opens. On macOS and Linux the step moves nothing.
+
 <details>
 <summary>Other places that compare Windows paths</summary>
 

@@ -32,6 +32,16 @@ export function physicalPath(path: string, platform: NodeJS.Platform = process.p
 }
 
 /**
+ * The key this build gives a path that an earlier build stored as `stored`. On Windows it is the path's
+ * {@link physicalPath}: earlier builds kept the spelling a caller passed (`c:\work\app` from VS Code) where this one
+ * spells each name as stored. Elsewhere it is `stored` itself, since the realpath there did not change. The database's
+ * `path-keys-as-stored` step moves each stored key to it once.
+ */
+export function currentPathKey(stored: string, platform: NodeJS.Platform = process.platform): string {
+  return platform === "win32" ? physicalPath(stored, platform) : stored;
+}
+
+/**
  * `physicalPath` spelled as the filesystem stores each name. On a case-insensitive filesystem (macOS by default)
  * `physicalPath` keeps the case `path` was typed in, while `git rev-parse --show-toplevel` gives the stored case; a path
  * Git records as it was typed, as `git worktree add` does, must be read with this to compare equal to a top level.

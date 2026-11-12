@@ -11,7 +11,9 @@
  * `schema_migrations`; an id this build does not know (a newer build's step) is left alone.
  */
 import { sql } from "drizzle-orm";
+import { currentPathKey } from "../catalog/checkout-control.js";
 import type { RerailDatabase } from "./database.js";
+import { respellPathKeys } from "./path-key-spelling.js";
 import { schemaMigrations } from "./schema.js";
 
 /** One change to the shape of an existing table. Ids and order never change once released. */
@@ -123,6 +125,18 @@ export const RERAIL_MIGRATIONS: readonly Migration[] = [
         database.run(sql.raw(`DROP TRIGGER IF EXISTS \`${trigger}\``));
       if (database.all(sql`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'audit_violations'`).length === 0) return;
       for (const statement of LOGGED_BY_AUDIT_MODE_REPAIR) database.run(sql.raw(statement));
+    },
+  },
+  {
+    // On Windows this build keys a checkout, its settings, its audit settings and audit, and its presentation
+    // preferences by the folder as the file system spells it (`currentPathKey`), where earlier builds kept the spelling
+    // a caller passed, such as `c:\` from VS Code. Each key the file holds moves to that spelling, and rows that come
+    // to one key are merged (`path-key-spelling.ts`), so a checkout keeps its start state and settings. Elsewhere keys
+    // keep their spelling and the step moves nothing. No floor: the shape does not change, and an older build still
+    // finds a checkout under the spelling Git gives its top folder, as it always did.
+    id: "path-keys-as-stored",
+    up(database) {
+      respellPathKeys(database, stored => currentPathKey(stored));
     },
   },
 ];
