@@ -508,24 +508,27 @@ impl LoweredMatcher {
                     Label::Constrained(_, _, constraints) => &constraints[..],
                     _ => &[],
                 };
-                // A file's verdicts are its own: the files run in parallel.
+                // Each constraint's slot in the pattern's bindings: a name the pattern binds nowhere
+                // never constrains.
+                let constraints: Vec<(usize, u16)> =
+                    constraints.iter().filter_map(|(name, label)| Some((pattern.ast_slot(name)?, *label))).collect();
+                // A file's verdicts are its own: the files run in parallel, each with bindings kept
+                // from one node to the next.
                 use rayon::prelude::*;
                 views
                     .par_iter()
                     .zip(sets.par_iter())
                     .map(|(view, sets)| {
                         let mut bits = empty(view);
+                        let mut bindings = AstBindings::default();
                         for node in domain(starts, view, sets) {
-                            let Some(captures) = pattern.execute_ast_pattern(view, node)? else {
+                            if !pattern.matches_ast_pattern(view, node, &mut bindings)? {
                                 continue;
-                            };
+                            }
                             // As W's `Constrained`: an unbound or multi-node capture is not checked.
-                            let holds = constraints.iter().all(|(name, label)| {
-                                captures
-                                    .iter()
-                                    .find(|capture| capture.label == *name)
-                                    .filter(|capture| !capture.multi)
-                                    .is_none_or(|capture| has(sets, *label, capture.node))
+                            let holds = constraints.iter().all(|&(slot, label)| match bindings.bound(slot) {
+                                Bound::Single(node) => has(sets, label, node),
+                                _ => true,
                             });
                             if holds {
                                 set(&mut bits, node);

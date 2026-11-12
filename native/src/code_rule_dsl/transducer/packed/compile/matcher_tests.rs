@@ -587,3 +587,78 @@ fn the_combined_graph_shares_labels_and_keeps_each_clauses_roots() {
     }
     assert!(compared > 0);
 }
+
+/// Patterns of every binding shape: single, repeated, multi before, between and after singles,
+/// and none; and Ruff fixtures to run them on, at every node of each tape.
+const BINDING_PATTERNS: &[&str] = &[
+    "$F($$$A)", "$A = $A", "def $F($$$ARGS): $$$BODY", "$X.format($$$A)", "if $C: $$$B", "[$$$A, $B]",
+    "$A + $B", "f($A, $$$, $B)", "return $$$", "$A[$B]", "for $X in $Y: $$$Z", "print($$$A, $B, $$$C)",
+];
+const BINDING_FIXTURES: &[&str] = &[
+    "pyflakes/F601.py", "pyflakes/F632.py", "flake8_simplify/SIM905.py", "flake8_bugbear/B031.py",
+    "flake8_bugbear/B006_B008.py", "flake8_return/RET504.py",
+];
+fn binding_fixtures() -> Vec<(String, TapeDoc)> {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs/python/upstream/ruff/fixtures");
+    BINDING_FIXTURES
+        .iter()
+        .map(|path| {
+            let source = std::fs::read_to_string(root.join(path)).unwrap_or_else(|e| panic!("{path}: {e}"));
+            ((*path).to_owned(), python_tape(&source))
+        })
+        .collect()
+}
+
+/// What `execute_ast_pattern` gives, at every node of the fixtures for every binding pattern, is
+/// pinned: a change to how bindings are kept must give every capture as before.
+#[test]
+fn ast_pattern_captures_are_pinned() {
+    use sha2::{Digest as _, Sha256};
+    let mut h = Sha256::new();
+    let mut matched = 0;
+    for source in BINDING_PATTERNS {
+        let program = Program::compile_ast_grep_pattern(&Pattern::try_new(source, GrammarDialect::Python).unwrap()).unwrap();
+        for (path, tape) in binding_fixtures() {
+            for node in 0..tape.transducer_len() as u32 {
+                let Some(captures) = program.execute_ast_pattern(&tape, node).unwrap() else { continue };
+                matched += 1;
+                h.update(format!("{source}|{path}|{node}:").as_bytes());
+                for c in captures {
+                    h.update(format!("{}/{}/{}/{};", c.label, c.occurrence, c.node, c.multi).as_bytes());
+                }
+            }
+        }
+    }
+    let got: String = h.finalize().iter().take(16).map(|b| format!("{b:02x}")).collect();
+    assert!(matched > 500, "{matched} matches");
+    assert_eq!(got, "ea71d4437b2c2ba12fc3b08d3c7f982c", "the captures moved ({matched} matches)");
+}
+
+/// The verdict alone (`matches_ast_pattern`, into bindings reused from node to node) is
+/// `execute_ast_pattern`'s, and so is what each name binds: nothing, one node, or several.
+#[test]
+fn ast_pattern_verdicts_reuse_their_bindings() {
+    let mut scratch = AstBindings::default();
+    for source in BINDING_PATTERNS {
+        let program = Program::compile_ast_grep_pattern(&Pattern::try_new(source, GrammarDialect::Python).unwrap()).unwrap();
+        let names: Vec<String> = ["A", "B", "C", "F", "X", "Y", "Z", "ARGS", "BODY", "NONE"].map(String::from).into();
+        for (path, tape) in binding_fixtures() {
+            for node in 0..tape.transducer_len() as u32 {
+                let captures = program.execute_ast_pattern(&tape, node).unwrap();
+                let verdict = program.matches_ast_pattern(&tape, node, &mut scratch).unwrap();
+                assert_eq!(verdict, captures.is_some(), "{source} at {path}:{node}");
+                let Some(captures) = captures else { continue };
+                for name in &names {
+                    let want = match captures.iter().find(|c| c.label == *name) {
+                        None => Bound::Unbound,
+                        Some(c) if c.multi => Bound::Multi,
+                        Some(c) => Bound::Single(c.node),
+                    };
+                    let got = program.ast_slot(name).map_or(Bound::Unbound, |slot| scratch.bound(slot));
+                    assert_eq!(got, want, "{source} at {path}:{node}: ${name}");
+                }
+            }
+        }
+    }
+}
+

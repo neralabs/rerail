@@ -512,6 +512,7 @@ fn build(parts: Parts) -> Result<Program, String> {
         output_program,
         ast_pattern: parts.pattern,
         digest: DigestMemo::default(),
+        slotted: SlotMemo::default(),
     };
     program.validate().map_err(verifier)?;
     if let Some(digest) = parts.digest
