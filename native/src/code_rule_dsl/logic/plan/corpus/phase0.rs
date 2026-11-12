@@ -100,6 +100,12 @@ impl Graph {
         Ok(())
     }
 
+    /// Its includes, missing names and absent candidates, for a test's message.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn describe(&self) -> String {
+        format!("includes {:#?}\nmissing {:?}\nabsent {:?}", self.includes, self.missing, self.absent)
+    }
+
     /// Every module, and every candidate found absent, as `rr::LibraryFile`s check them.
     pub(in crate::code_rule_dsl) fn files(&self) -> Vec<(PathBuf, Option<[u8; 32]>)> {
         self.digests.iter().map(|(p, d)| (p.clone(), Some(*d))).chain(self.absent.iter().map(|p| (p.clone(), None))).collect()

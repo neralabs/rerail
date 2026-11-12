@@ -38,9 +38,9 @@
         for file in [programs.join("calls_cx.rr"), lib.join("python/conditions.rr")] {
             let text = crate::code_rule_dsl::logic::settings::program_text(&file).unwrap();
             let seed = crate::code_rule_dsl::logic::rr::text_seed(&text).unwrap().expect("includes");
-            let kept = super::graph(&seed).unwrap().digest();
-            let derived = super::derive(std::slice::from_ref(&seed)).unwrap().of(&seed, 0).digest();
-            assert_eq!(kept, derived, "{}", file.display());
+            let kept = super::graph(&seed).unwrap();
+            let derived = super::derive(std::slice::from_ref(&seed)).unwrap().of(&seed, 0);
+            assert_eq!(kept.digest(), derived.digest(), "{}:\nkept {}\nderived {}", file.display(), kept.describe(), derived.describe());
         }
         // A name with no file is refused as before.
         let err = crate::code_rule_dsl::logic::rr::parse("#include \"no/such.rr\"\n").err().expect("refused").to_string();
