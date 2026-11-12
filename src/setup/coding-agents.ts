@@ -72,7 +72,8 @@ export async function codingAgentStates(root: string, home: string, options: Dat
 
 async function connection(root: string, home: string, id: Harness): Promise<Pick<CodingAgentState, "connected" | "problem">> {
   try {
-    const plan = await registerHarnesses({ root, home, harnesses: [id], dryRun: true });
+    // Either command a Claude Code hook entry on Windows can have counts as connected, whatever this process's PATH.
+    const plan = await registerHarnesses({ root, home, harnesses: [id], dryRun: true, keepHookCommand: true });
     return { connected: plan.changes.every(change => change.harness !== id || change.action === "unchanged"), problem: null };
   } catch (error) {
     return { connected: false, problem: error instanceof Error ? error.message : String(error) };

@@ -59,6 +59,14 @@ export interface RegistrationOptions {
   /** Test seam for platform-specific command quoting and directory links. */
   platform?: NodeJS.Platform;
   /**
+   * Keep the command of a Claude Code hook entry on Windows that already runs the same launcher, recorded Node and hook,
+   * whether it is `node` or the recorded Node. Which of the two registration writes depends on the PATH of the process
+   * that plans it (`hookExecEntry`), so a check of whether Rerail is connected, run with another PATH, would otherwise
+   * read a current registration as out of date. Set-up and `rerail update` leave it off and write the form their PATH
+   * calls for.
+   */
+  keepHookCommand?: boolean;
+  /**
    * Removal only: whether `root` is the managed install, whose removal takes Pi's gallery entry (`npm:@neralabs/rerail`)
    * out too. `rerail install --remove` sets it when it removes the install itself, which before any set-up is the running
    * package rather than `<Rerail home>/current`. Defaults to whether `root` is `<Rerail home>/current`.
@@ -91,6 +99,8 @@ interface Context {
   nodePath: string;
   dryRun: boolean;
   platform: NodeJS.Platform;
+  /** `RegistrationOptions.keepHookCommand`. */
+  keepHookCommand: boolean;
 }
 
 interface TextFile {
@@ -381,14 +391,28 @@ function powershellHookCommand(context: Context, executable: string): string {
  * the launcher with `node` from PATH only where that is the recorded node, so the launcher runs the hook in its own
  * process and keeps the PATH fallback. Where PATH finds another node, or none, the recorded node starts the launcher:
  * started by `node`, the launcher would start the recorded node as a second process on every hook event, and its
- * fallback would run a node other than the recorded one.
+ * fallback would run a node other than the recorded one. `settings`, given with `keepHookCommand`, are the ones the
+ * entry goes into: an entry there that already runs these arguments keeps its command.
  */
-function hookExecEntry(context: Context, executable: string): JsonObject {
+function hookExecEntry(context: Context, executable: string, settings: JsonObject): JsonObject {
+  const args = [join(context.root, ENTRY_POINTS.hookLauncher), context.nodePath, join(context.root, executable)];
+  const kept = context.keepHookCommand ? registeredExecCommand(settings, args) : undefined;
   return {
     type: "command",
-    command: pathFindsNode(context.nodePath, context.platform) ? "node" : context.nodePath,
-    args: [join(context.root, ENTRY_POINTS.hookLauncher), context.nodePath, join(context.root, executable)],
+    command: kept ?? (pathFindsNode(context.nodePath, context.platform) ? "node" : context.nodePath),
+    args,
   };
+}
+
+/** The command of a hook entry in `settings` that runs `args`, when it is one `hookExecEntry` writes. */
+function registeredExecCommand(settings: JsonObject, args: readonly string[]): string | undefined {
+  const events = Object.values(isObject(settings.hooks) ? settings.hooks : {});
+  const groups = events.flatMap(event => (Array.isArray(event) ? event : []));
+  const entries = groups.flatMap(group => (isObject(group) && Array.isArray(group.hooks) ? group.hooks : []));
+  const wanted = JSON.stringify(args);
+  const commands = entries.flatMap(entry => (isObject(entry) && JSON.stringify(entry.args) === wanted ? [entry.command] : []));
+  const [command] = commands.filter(found => found === "node" || found === args[1]);
+  return typeof command === "string" ? command : undefined;
 }
 
 /** Whether `node` on this process's PATH is the file at `nodePath`, by the hook launcher's own test (`sameFile`). */
@@ -858,7 +882,7 @@ async function planClaudeSettings(
   // Claude Code runs shell-form hooks through Git Bash on Windows, which rewrites `cmd /d /c` into drive paths;
   // cmd then reads the hook's JSON from stdin as commands. Exec form (`args`) spawns node with no shell.
   const hookEntry = context.platform === "win32"
-    ? hookExecEntry(context, ENTRY_POINTS.claudeHook)
+    ? hookExecEntry(context, ENTRY_POINTS.claudeHook, existing.value)
     : { type: "command", command: hookCommand(context, ENTRY_POINTS.claudeHook) };
   const next = global
     ? structuredClone(await updateGroupedHooks(existing.value, path, context, CLAUDE_HOOK_EVENTS, CLAUDE_TOOL_EVENTS, ENTRY_POINTS.claudeHook, hookEntry))
@@ -1410,6 +1434,7 @@ function newContext(options: RegistrationOptions, mode: Mode): Context {
     nodePath: options.nodePath ?? pinnedNodePath(),
     dryRun: options.dryRun === true,
     platform: options.platform ?? process.platform,
+    keepHookCommand: options.keepHookCommand === true,
   };
 }
 

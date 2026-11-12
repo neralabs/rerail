@@ -344,6 +344,29 @@ describe("Claude Code settings.json", () => {
     expect((await readJson(path)).hooks).toEqual(foreign.hooks);
   });
 
+  it("reads a Windows hook entry in either form as current when asked to keep its command, whatever PATH finds", async () => {
+    const { home, root } = await fixture();
+    const path = join(home, ".claude", "settings.json");
+    const nodePath = await windowsPathNode(home, "recorded-node");
+    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const };
+    const plan = async (options: { keepHookCommand?: boolean }) =>
+      change((await registerHarnesses({ ...windows, ...options, dryRun: true })).changes, "claude-code", "settings.json").action;
+    await registerHarnesses(windows);
+
+    // With another node first on PATH, set-up would write the recorded node as the command; whether Rerail is connected
+    // does not depend on it.
+    await windowsPathNode(home, "other-node");
+    expect(await plan({})).toBe("updated");
+    expect(await plan({ keepHookCommand: true })).toBe("unchanged");
+
+    await registerHarnesses(windows);
+    const hooks = (await readJson(path)).hooks as Record<string, unknown[]>;
+    expect(hooks.SessionStart).toEqual([{ hooks: [expect.objectContaining({ command: nodePath })] }]);
+    vi.stubEnv("PATH", dirname(nodePath));
+    expect(await plan({})).toBe("updated");
+    expect(await plan({ keepHookCommand: true })).toBe("unchanged");
+  });
+
   it("registers Windows hooks through the exec-form launcher and replaces the cmd wrapper Git Bash mangles", async () => {
     const { home, root } = await fixture();
     const nodePath = await windowsPathNode(home, "nodejs");
