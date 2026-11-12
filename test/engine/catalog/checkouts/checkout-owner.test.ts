@@ -72,6 +72,23 @@ describe("CheckoutOwners", () => {
     expect(walk()).toEqual(inOuter);
   });
 
+  it("forgets what walks learned of each folder once the recorded checkouts change", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
+    cleanups.push(() => removeFolder(root));
+    const outer = await repository(join(root, "outer"));
+    const lib = join(outer, "src", "lib");
+    await mkdir(lib, { recursive: true });
+    let version = "1";
+    const owners = new CheckoutOwners(() => version);
+
+    expect(owners.walk()(lib)).toEqual({ checkoutRoot: outer, path: "src/lib" });
+
+    // `src/` becomes a checkout above the one folder the walks ask of, so no walk sees its `.git` entry come.
+    const nested = await repository(join(outer, "src"));
+    version = "2";
+    expect(owners.walk()(lib)).toEqual({ checkoutRoot: nested, path: "lib" });
+  });
+
   it("tells whether the recorded checkouts changed without preparing a statement on every lookup", async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
     cleanups.push(() => removeFolder(root));

@@ -58,9 +58,8 @@ export class CheckoutOwners {
   readonly #submodules = new Map<string, boolean>();
   /** Recorded checkouts outside Git (identity under `.rerail`), physical. */
   readonly #plainRoots = new Set<string>();
-  /** Lexical folder a walk asked of → what its lookup learned (`walk`), while the recorded checkouts are `#walkedVersion`. */
+  /** Lexical folder a walk asked of → what its lookup learned (`walk`). */
   readonly #walked = new Map<string, WalkedFolder>();
-  #walkedVersion: string | undefined;
 
   /** `recordedVersion` changes whenever the set of recorded checkouts does (see `CheckoutCatalogs.recordedCheckoutsVersion`). */
   constructor(recordedVersion?: () => string) {
@@ -91,10 +90,6 @@ export class CheckoutOwners {
    */
   walk(): (folder: string) => CheckoutOwner | undefined {
     this.#revalidate();
-    if (this.#walkedVersion !== this.#version) {
-      this.#walked.clear();
-      this.#walkedVersion = this.#version;
-    }
     const checked = new Map<string, CheckoutOwner | undefined>();
     return folder => {
       const lexical = resolve(folder);
@@ -177,6 +172,7 @@ export class CheckoutOwners {
     this.#roots.clear();
     this.#confirmed.clear();
     this.#submodules.clear();
+    this.#walked.clear();
   }
 
   #plainRoot(real: string): string | undefined {
