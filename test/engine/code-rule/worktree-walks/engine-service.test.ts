@@ -223,6 +223,8 @@ describe("the engine service started again", () => {
   it("reads again a file rewritten while no daemon ran, its modification time put back, and records a later write from what it read", { timeout: 90_000 }, async () => {
     const { root, databasePath, worktrees } = await restartRepository();
     const path = join(worktrees[1]!, "src", "x.py");
+    // Text `HEAD` does not hold: a write back to `HEAD`'s text would be Git's (`git restore`), and recorded by no walk.
+    await writeFile(path, "x = 2\n");
     // A modification time in whole seconds, which `utimes` can put back exactly.
     const modified = Math.floor(Date.now() / 1000) - 60;
     await utimes(path, modified, modified);
@@ -243,13 +245,13 @@ describe("the engine service started again", () => {
         readByFirstWalk = reads.get(path);
         // Back to the text the last daemon read: a change from what this one read, which a kept digest would hide.
         await bridge.begin("shell-1", "shell", { command: "./run.sh" });
-        await writeFile(path, "x = 1\n");
+        await writeFile(path, "x = 2\n");
         await bridge.finish("shell-1");
         await bridge.checkpoint("turn");
         await bridge.settleWorktreeWalk();
       },
     });
     const logged = audits.mock.calls.filter(([, batch]) => batch.mode === "log").flatMap(([, batch]) => batch.edits.map(edit => [edit.path, edit.generatedText]));
-    expect({ readByFirstWalk, logged }).toEqual({ readByFirstWalk: 1, logged: [["../w2/src/x.py", "x = 1\n"]] });
+    expect({ readByFirstWalk, logged }).toEqual({ readByFirstWalk: 1, logged: [["../w2/src/x.py", "x = 2\n"]] });
   });
 });

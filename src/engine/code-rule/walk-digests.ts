@@ -54,7 +54,7 @@ const LEFTOVER_MS = 60 * 60 * 1000;
 const FORMAT = 1;
 const SUFFIX = ".reads";
 /** The most a root's first line, which names it, may take. */
-const MAX_HEADER_BYTES = 64 * 1024;
+const MAX_HEADER_BYTES = 8 * 1024;
 
 const gzipped = promisify(gzip);
 const gunzipped = promisify(gunzip);
@@ -199,7 +199,7 @@ interface RootFile {
 export class WalkDigests {
   readonly #folder: string;
   readonly #maxBytes: number;
-  /** What the folder holds, by file name: read once, on the first write or removal, which drops what is stale. */
+  /** What the folder holds, by file name: read once, before the first write, removal or use is noted, dropping what is stale. */
   #files: Map<string, RootFile> | undefined;
   readonly #pending = new Map<string, Pick<WalkReads, "sources" | "observedAt">>();
   readonly #writtenAt = new Map<string, number>();
@@ -246,7 +246,11 @@ export class WalkDigests {
   forget(root: string): void {
     this.#pending.delete(root);
     this.#writtenAt.delete(root);
-    this.#queue(async () => await this.#remove(await this.#opened(), fileName(root)));
+    this.#queue(async () => {
+      const files = await this.#opened();
+      await this.#remove(files, fileName(root));
+      await this.#trim(files);
+    });
   }
 
   /** Writes every root still waiting, then keeps nothing more. */
@@ -356,11 +360,10 @@ export class WalkDigests {
       }
     }));
     this.#files = files;
-    await this.#trim(files);
     return files;
   }
 
-  /** Drops the roots used longest ago until the folder fits the bound. */
+  /** Drops the roots used longest ago until the folder fits the bound: after each write and removal, not on a read. */
   async #trim(files: Map<string, RootFile>): Promise<void> {
     let bytes = 0;
     for (const file of files.values()) bytes += file.bytes;
