@@ -45,6 +45,7 @@ p("alpha", 1). p("alpha", 4). p("Beta", 2). p("a.b", -1).
 q("alpha", "z"). q("alpha", "y"). q("Beta", "w").
 .decl e(a: number, b: number)
 e(1, 2). e(2, 5). e(5, 1). e(0, -3).
+.lattice shortlex_min<symbol> { Lub -> @shortlex_min }
 "#;
 
 /// One probe: what it checks (the ledger's key), the operations it uses (the census's names), and its rule, whose
@@ -218,6 +219,13 @@ fn probes() -> Vec<Probe> {
     }
     out.push(probe("membership of a constant set", &["test equals"], "a: symbol", "{HEAD}(a) :- s(a), (a = \"alpha\" ; a = \"x_1\")."));
     out.push(probe("lattice relation (shortest)", &["lattice"], "a: number, d: min<>| widen 8", "{HEAD}(x, 0) :- n(x), x = 1.\n{HEAD}(y, d + 1) :- {HEAD}(x, d), e(x, y)."));
+    // A lattice relation holds one row a key: a key's rows fold by its join, and its readers see the folded value only.
+    out.push(probe("lattice relation (flat: a key's values differ)", &["lattice"], "a: symbol, v: flat<>", "{HEAD}(a, x) :- p(a, x)."));
+    out.push(probe("lattice relation (max over a key)", &["lattice"], "a: symbol, v: max<>| widen 8", "{HEAD}(a, x) :- p(a, x)."));
+    out.push(probe("lattice relation (shortlex_min over symbols)", &["lattice"], "a: number, r: shortlex_min<>| widen 8",
+        "{HEAD}(x, \"\") :- n(x), x = 1.\n{HEAD}(y, r) :- {HEAD}(x, r0), e(x, y), r = cat(r0, \"z\")."));
+    out.push(probe("lattice relation read by a later stratum", &["lattice"], "a: number, d: number",
+        ".decl {HEAD}_l(a: number, d: min<>) widen 8\n{HEAD}_l(x, 0) :- n(x), x = 1.\n{HEAD}_l(y, d + 1) :- {HEAD}_l(x, d), e(x, y).\n{HEAD}(a, d) :- {HEAD}_l(a, d)."));
     out.push(probe("aggregate count = 0 (a negation)", &["agg count"], "a: symbol", "{HEAD}(a) :- s(a), count : { p(a, _) } = 0."));
     out.push(probe("aggregate over two atoms' bag", &["agg count"], "a: symbol, c: number", "{HEAD}(a, c) :- t(a), c = count : { q(a, _) }."));
     let a = Atom { rel: "n".into(), args: Vec::new(), neg: false, gated: false };
@@ -261,6 +269,8 @@ fn run_probe(src: &str, rel: &str) -> std::result::Result<Verdict, String> {
     let p = parse(src).map_err(|e| format!("unparsed: {e}"))?;
     let lower_run = |modes: &str, binding: placement::Binding| -> std::result::Result<(Vec<String>, bool, Vec<(String, placement::Ran)>), String> {
         let (_path, store, db) = fresh();
+        // `shortlex_min<>` orders the run's symbols by their text: the store's atoms, as a run declares it.
+        crate::code_rule_dsl::logic::native::declare("shortlex_min", std::sync::Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
         let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).map_err(|e| format!("unlowered: {e}"))?;
         let was = placement::set_binding(binding);

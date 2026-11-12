@@ -186,7 +186,11 @@ aggregate max	native	device	p(a, c) :- t(a), c = max v : { p(a, v) }.
 aggregate product	sqlite: aggregate product (the native engine declined: rule #0000: $c = product $v : { p($a, $v) } has no native step)	not native	p(a, c) :- s(a), c = product v : { p(a, v) }.
 aggregate join	native	no string join	p(a, c) :- t(a), c = join b by b sep ", " : { q(a, b) }.
 membership of a constant set	native	device	p(a) :- s(a), (a = "alpha" ; a = "x_1").
-lattice relation (shortest)	sqlite: a lattice relation (the native engine declined: a lattice relation: the native set engine holds sets only)	not native	p(x, 0) :- n(x), x = 1. p(y, d + 1) :- p(x, d), e(x, y).
+lattice relation (shortest)	native	refused: a lattice relation (the device's joins make sets; its rows fold on the CPU)	p(x, 0) :- n(x), x = 1. p(y, d + 1) :- p(x, d), e(x, y).
+lattice relation (flat: a key's values differ)	native	refused: a lattice relation (the device's joins make sets; its rows fold on the CPU)	p(a, x) :- p(a, x).
+lattice relation (max over a key)	native	refused: a lattice relation (the device's joins make sets; its rows fold on the CPU)	p(a, x) :- p(a, x).
+lattice relation (shortlex_min over symbols)	native	no computed term	p(x, "") :- n(x), x = 1. p(y, r) :- p(x, r0), e(x, y), r = cat(r0, "z").
+lattice relation read by a later stratum	native	refused: a lattice relation (the device's joins make sets; its rows fold on the CPU)	.decl p_l(a: number, d: min<>) widen 8 p_l(x, 0) :- n(x), x = 1. p_l(y, d + 1) :- p_l(x, d), e(x, y). p(a, d) :- p_l(a, d).
 aggregate count = 0 (a negation)	native	device	p(a) :- s(a), count : { p(a, _) } = 0.
 aggregate over two atoms' bag	native	device	p(a, c) :- t(a), c = count : { q(a, _) }.
 join	native	device	p(x, y) :- e(x, y), n(y).
