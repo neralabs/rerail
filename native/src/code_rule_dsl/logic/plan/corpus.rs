@@ -3099,23 +3099,31 @@ fn run_observed(
         _ => HashMap::new(),
     });
     // The entries the statistics keeper counted for files changed or gone since (`keptstats`), found before the
-    // first wave too: it counts them out in the waves, and reads none of them from SQLite there.
-    let counted_before: HashMap<String, memo::Found> = match (memo, keeper.borrow().as_ref()) {
+    // first wave too: it counts them out in the waves, and reads none of them from SQLite there. A file asked for
+    // and not found (`None`) has no entry in the waves either.
+    let counted_before: HashMap<String, Option<memo::Found>> = match (memo, keeper.borrow().as_ref()) {
         (Some(memo @ memo::Memo::Stored(_)), Some(k)) if looking => {
             let _before = crate::code_rule_dsl::logic::profile::span(|| "memo lookup, before the first wave".into());
             let now = before.lock();
-            let changed: Vec<(String, memo::Content)> = k.counted_files().into_iter().filter(|(p, c, _)| now.get(p).is_none_or(|b| b.content != Some(*c))).map(|(p, c, _)| (p, c)).collect();
+            // Each file the keeper will count out: one it counted under another content or document key than the
+            // run's (`keptstats::same`, the keeper's own test), or one the run does not have.
+            let key_now: HashMap<&str, i64> = docs.iter().map(|(d, p)| (p.as_str(), *d)).collect();
+            let kept = |p: &String, c: memo::Content, k: i64| match (now.get(p).and_then(|b| b.content), key_now.get(p.as_str())) {
+                (Some(content), Some(&d)) => keptstats::same((c, k), (content, d)),
+                _ => false,
+            };
+            let changed: Vec<(String, memo::Content)> = k.counted_files().into_iter().filter(|(p, c, k)| !kept(p, *c, *k)).map(|(p, c, _)| (p, c)).collect();
             drop(now);
             let keys: Vec<(memo::Content, &str)> = changed.iter().map(|(p, c)| (*c, world::store_path(p))).collect();
             let found = memo.found_all(&memo_program, &keys).map_err(|e| Error::Plan(e.to_string()))?;
-            changed.iter().map(|(p, _)| p.clone()).zip(found).filter_map(|(p, f)| f.map(|f| (p, f))).collect()
+            changed.iter().map(|(p, _)| p.clone()).zip(found).collect()
         }
         _ => HashMap::new(),
     };
-    // The entry a file was counted under: found before the first wave, else (a session's, in memory) looked up.
+    // The entry a file was counted under: as found before the first wave, else (a session's, in memory) looked up.
     let counted_entry = |path: &str, c: memo::Content, key: i64| -> Option<memo::Entry> {
         match counted_before.get(path) {
-            Some(found) => found.entry(key).ok().flatten(),
+            Some(found) => found.as_ref().and_then(|f| f.entry(key).ok().flatten()),
             None => memo.and_then(|m| m.lookup(c, world::store_path(path), key, &memo_program).ok().flatten()),
         }
     };
