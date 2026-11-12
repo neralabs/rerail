@@ -68,7 +68,7 @@ describe("rerail merge-assist", () => {
   });
 
   it("shows the status: what it uses, the last scan, open conflicts in short and dismissed ones in a line", async () => {
-    const conflict = sampleConflict({ summary: { text: "PR #398 (jbarnes) is changing fn compile", via: "judge", at: "2026-11-03T14:05:00Z", reason: null } });
+    const conflict = sampleConflict();
     status = path => sampleStatus(path, {
       lastScan: { at: "2026-11-03T14:05:00Z", peers: { branches: 1, pullRequests: 2 }, problems: ["Rerail could not list open pull requests: HTTP 502"] },
       conflicts: [
@@ -79,7 +79,6 @@ describe("rerail merge-assist", () => {
     expect(await run(["--repo", checkout])).toBe(0);
     expect(stdout).toBe([
       "● Merge Assist is on in app (tbelanger/export-api, base main).",
-      "  Summaries: Claude Code · 3 of 40 calls in the last 60 minutes",
       "  GitHub: gh signed in as tbelanger (acme/app)",
       "  Last scan: 2026-11-03 14:05 UTC, 1 branch and 2 pull requests",
       "    Rerail could not list open pull requests: HTTP 502",
@@ -105,21 +104,17 @@ describe("rerail merge-assist", () => {
       baseBranch: null,
       lastScan: null,
       readiness: {
-        judge: { available: false, runner: null, problem: "Neither claude nor codex is on PATH." },
         github: { state: "missing", login: null, repository: null },
       },
     });
     expect(await run(["--repo", checkout], null)).toBe(0);
     expect(stdout).toBe([
       "● Merge Assist is off in app (detached HEAD).",
-      "  Summaries: unavailable, so each conflict keeps a plain line. Merge Assist runs Claude Code or Codex. Neither claude nor codex is on PATH.",
       "  GitHub: gh is not installed, so open pull requests are not read.",
       "  Turning it on means:",
       "    Rerail compares your work here with other local and remote-tracking branches, and with open pull requests it reads",
       "    through gh with your sign-in, read-only. It writes no file and never merges, commits or pushes.",
       "    When your work overlaps someone else's, it tells you and your coding agent, as loud as the overlap calls for.",
-      "    For each new conflict it asks your agent's CLI (Claude Code or Codex) for a one-line summary. That sends both",
-      "    sides' changed lines to that CLI's provider, under your own sign-in, as your session already does.",
       "  Turn it on with rerail merge-assist on.",
       "",
     ].join("\n"));
@@ -179,7 +174,6 @@ describe("rerail merge-assist", () => {
     const conflict = sampleConflict({
       level: "checkpoint",
       queued: true,
-      summary: { text: "PR #398 (jbarnes) is changing fn compile", via: "fallback", at: "2026-11-03T14:05:00Z", reason: null },
       hook: { event: "detected", ok: false, error: "exited with 2: notify.sh: not found", note: null, status: null, at: "2026-11-03T14:05:01Z" },
     });
     status = path => sampleStatus(path, { conflicts: [conflict] });
@@ -220,13 +214,13 @@ describe("rerail merge-assist", () => {
     expect(service.calls.at(-1)).toEqual({ method: "dismissConflict", checkout, conflictId: conflict.id, actor: "person" });
   });
 
-  it("shows the person's settings, and changes the delivery and the hook command", async () => {
+  it("shows the person's settings, and changes the hook command", async () => {
     expect(await run(["settings", "--repo", checkout], null)).toBe(0);
-    expect(stdout).toBe("● Merge Assist settings for app:\n  Delivery: both\n  Hook: none\n");
+    expect(stdout).toBe("● Merge Assist settings for app:\n  Hook: none\n");
 
     stdout = "";
-    expect(await run(["settings", "--delivery", "chat", "--hook-command", "[\"./notify.sh\",\"--json\"]", "--repo", checkout])).toBe(0);
-    expect(stdout).toBe(`● Saved Merge Assist settings for app:\n  Delivery: chat\n  Hook: ["./notify.sh","--json"] (timeout 10 s)\n  Merge Assist page: ${PAGE}\n`);
+    expect(await run(["settings", "--hook-command", "[\"./notify.sh\",\"--json\"]", "--repo", checkout])).toBe(0);
+    expect(stdout).toBe(`● Saved Merge Assist settings for app:\n  Hook: ["./notify.sh","--json"] (timeout 10 s)\n  Merge Assist page: ${PAGE}\n`);
 
     // A timeout alone changes the current command's.
     stdout = "";
@@ -234,11 +228,11 @@ describe("rerail merge-assist", () => {
     expect(stdout).toContain("  Hook: [\"./notify.sh\",\"--json\"] (timeout 30 s)\n");
     stdout = "";
     expect(await run(["settings", "--hook-command", "[\"notify\"]", "--hook-timeout", "60", "--repo", checkout, "--json"])).toBe(0);
-    expect(JSON.parse(stdout)).toEqual({ delivery: "chat", hook: { command: ["notify"], timeoutSeconds: 60 } });
+    expect(JSON.parse(stdout)).toEqual({ hook: { command: ["notify"], timeoutSeconds: 60 } });
 
     stdout = "";
     expect(await run(["settings", "--no-hook", "--repo", checkout], null)).toBe(0);
-    expect(stdout).toBe("● Saved Merge Assist settings for app:\n  Delivery: chat\n  Hook: none\n");
+    expect(stdout).toBe("● Saved Merge Assist settings for app:\n  Hook: none\n");
 
     // With no hook, there is no timeout to change.
     expect(await run(["settings", "--hook-timeout", "5", "--repo", checkout], null)).toBe(1);
@@ -246,7 +240,7 @@ describe("rerail merge-assist", () => {
 
     expect(service.calls).toEqual([
       { method: "settings", checkout },
-      { method: "updateSettings", checkout, change: { delivery: "chat", hook: { command: ["./notify.sh", "--json"], timeoutSeconds: 10 } } },
+      { method: "updateSettings", checkout, change: { hook: { command: ["./notify.sh", "--json"], timeoutSeconds: 10 } } },
       { method: "settings", checkout },
       { method: "updateSettings", checkout, change: { hook: { command: ["./notify.sh", "--json"], timeoutSeconds: 30 } } },
       { method: "updateSettings", checkout, change: { hook: { command: ["notify"], timeoutSeconds: 60 } } },
@@ -258,7 +252,6 @@ describe("rerail merge-assist", () => {
 
   it("refuses settings flags it cannot use before opening anything", async () => {
     for (const [args, message] of [
-      [["--delivery", "email"], /^--delivery takes chat, terminal or both/u],
       [["--hook-command", "./notify.sh"], /^--hook-command takes a JSON array of non-empty strings/u],
       [["--hook-command", "[]"], /^--hook-command takes a JSON array/u],
       [["--hook-command", "[\"\"]"], /^--hook-command takes a JSON array/u],
@@ -271,7 +264,7 @@ describe("rerail merge-assist", () => {
     ] as const) {
       await expect(run(["settings", ...args, "--repo", checkout]), args.join(" ")).rejects.toThrow(message);
     }
-    await expect(run(["status", "--delivery", "chat", "--repo", checkout])).rejects.toThrow(/^--delivery, --hook-command, --no-hook and --hook-timeout go with merge-assist settings/u);
+    await expect(run(["status", "--hook-command", "[\"notify\"]", "--repo", checkout])).rejects.toThrow(/^--hook-command, --no-hook and --hook-timeout go with merge-assist settings/u);
     await expect(run(["on", "--no-hook", "--repo", checkout])).rejects.toThrow(/go with merge-assist settings/u);
     await expect(run(["settings", "--text", "x", "--repo", checkout])).rejects.toThrow(/^Unknown merge-assist option: --text/u);
     expect(closed).toBe(0);

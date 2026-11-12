@@ -6,14 +6,7 @@
  * Conflict titles, summaries, authors, branch names and links come from other people's work. Every string here is
  * plain text for a text node; `safePeerUrl` is the only way a peer's link becomes an `href`.
  */
-import { andList, fmt, plural } from "./format.js";
-
-/** The agent CLIs Merge Assist runs for conflicts' one-line summaries (`JUDGE_RUNNERS`), by the names people know them by. */
-const RUNNER_NAMES = { claude: "Claude Code", codex: "Codex" };
-/** "Claude Code or Codex": the CLIs a person can install to get one-line summaries. */
-const SUPPORTED_RUNNERS = andList(Object.values(RUNNER_NAMES)).replace(/ and (?=[^,]*$)/u, " or ");
-
-const runnerName = id => RUNNER_NAMES[id] ?? id;
+import { fmt, plural } from "./format.js";
 
 /**
  * A peer's pull request link, only when it is an `https:` URL with no credentials or port, on a GitHub host that is
@@ -113,25 +106,14 @@ export function hookFailure(conflict) {
 
 /* ---------- settings ---------- */
 
-/** The delivery modes in the order the Settings section offers them, as `CONFLICT_DELIVERY_MODES` names them. */
-export const DELIVERY_MODES = ["chat", "terminal", "both"];
-
-/** Each delivery mode's name and what it does, one line each (the person's line and the stop apply in every mode). */
-export const DELIVERY_TEXT = {
-  chat: { label: "Chat", text: "Your coding agent gets a note the first time it meets a conflict, and checkpoints go through it. The status line shows none." },
-  terminal: { label: "Terminal", text: "The status line shows the newest conflict and what to decide. Your coding agent gets no note and no checkpoint." },
-  both: { label: "Both", text: "The note and checkpoints through your coding agent, and the status line. The default." },
-};
-
 export const HOOK_TIMEOUT_DEFAULT = 10;
 export const HOOK_TIMEOUT_MAX = 60;
 const HOOK_ARGS_MAX = 64;
 const HOOK_ARG_MAX = 4_096;
 
-/** The Settings form's fields from the saved settings: the delivery mode, the command as JSON (empty for none), the timeout. */
+/** The Settings form's fields from the saved settings: the command as JSON (empty for none), the timeout. */
 export function settingsDraft(settings) {
   return {
-    delivery: settings.delivery,
     command: settings.hook === null ? "" : JSON.stringify(settings.hook.command),
     timeout: String(settings.hook?.timeoutSeconds ?? HOOK_TIMEOUT_DEFAULT),
   };
@@ -168,19 +150,18 @@ function parseTimeout(text) {
  */
 export function settingsChange(draft) {
   const text = draft.command.trim();
-  if (text === "") return { body: { delivery: draft.delivery, hook: null } };
+  if (text === "") return { body: { hook: null } };
   const argv = parseArgv(text);
   const problem = argvProblem(argv);
   if (problem !== null) return { problem, field: "command" };
   const timeoutSeconds = parseTimeout(draft.timeout);
   if (timeoutSeconds === null) return { problem: `The timeout must be a whole number of seconds from 1 to ${fmt(HOOK_TIMEOUT_MAX)}.`, field: "timeout" };
-  return { body: { delivery: draft.delivery, hook: { command: argv, timeoutSeconds } } };
+  return { body: { hook: { command: argv, timeoutSeconds } } };
 }
 
-/** The Settings fold's summary: the saved delivery mode and whether a hook command is set. */
+/** The Settings fold's summary: whether a conflict hook command is set, and which. */
 export function settingsSummary(settings) {
-  const hook = settings.hook === null ? "no conflict hook" : `conflict hook: ${settings.hook.command[0]}`;
-  return `Settings: delivery ${DELIVERY_TEXT[settings.delivery].label.toLowerCase()}, ${hook}`;
+  return settings.hook === null ? "Settings: no conflict hook" : `Settings: conflict hook ${settings.hook.command[0]}`;
 }
 
 /* ---------- the status strip ---------- */
@@ -191,12 +172,6 @@ export function branchText(status) {
     branch: status.branch ?? "Detached HEAD",
     base: status.baseBranch ?? "no base branch found",
   };
-}
-
-/** The agent CLI that writes conflicts' one-line summaries, or that none was found. */
-export function summarizerText(judge) {
-  if (judge.available && judge.runner !== null) return { ok: true, text: runnerName(judge.runner) };
-  return { ok: false, text: "No agent CLI found", detail: judge.problem };
 }
 
 /** `gh`'s state in a few words for the strip. */
@@ -216,12 +191,6 @@ export function scannedWhat(lastScan) {
   if (branches > 0) parts.push(`${fmt(branches)} local ${plural(branches, "branch", "branches")}`);
   if (pullRequests > 0) parts.push(`${fmt(pullRequests)} open ${plural(pullRequests, "pull request")}`);
   return parts.length === 0 ? "no other branches" : parts.join(" and ");
-}
-
-/** "12 of 40 this hour", or the window's own minutes when it is not an hour. */
-export function budgetText(budget) {
-  const window = budget.windowMinutes === 60 ? "this hour" : `in the last ${fmt(budget.windowMinutes)} minutes`;
-  return { text: `${fmt(budget.used)} of ${fmt(budget.limit)} ${window}`, spent: budget.used >= budget.limit };
 }
 
 /**
@@ -247,26 +216,17 @@ export function scanSummary(before, after) {
  * What Rerail found before it is turned on, one line each: `ok`, and `text` as segments (a string, or `{ code }`
  * for a command or path). The page renders each segment as a text node.
  */
-export function readinessChecks(readiness) {
-  const { judge, github } = readiness;
-  const checks = [];
-  checks.push(judge.available && judge.runner !== null
-    ? { key: "judge", ok: true, text: [`Your agent CLI: ${runnerName(judge.runner)}. Rerail runs it for a one-line summary of each conflict.`] }
-    : { key: "judge", ok: false, text: [`No agent CLI found. One-line summaries of conflicts need ${SUPPORTED_RUNNERS} on your PATH. Without one, conflicts are still found and summed up from their files and lines.`] });
+export function readinessChecks({ github }) {
   switch (github.state) {
     case "signed-in":
-      checks.push({ key: "github", ok: true, text: [{ code: "gh" }, ` is signed in${github.login ? ` as ${github.login}` : ""}. Open pull requests are read with your sign-in.`] });
-      break;
+      return [{ key: "github", ok: true, text: [{ code: "gh" }, ` is signed in${github.login ? ` as ${github.login}` : ""}. Open pull requests are read with your sign-in.`] }];
     case "signed-out":
-      checks.push({ key: "github", ok: false, text: [{ code: "gh" }, " is not signed in, so only local branches are read. Run ", { code: "gh auth login" }, " to read open pull requests."] });
-      break;
+      return [{ key: "github", ok: false, text: [{ code: "gh" }, " is not signed in, so only local branches are read. Run ", { code: "gh auth login" }, " to read open pull requests."] }];
     case "missing":
-      checks.push({ key: "github", ok: false, text: [{ code: "gh" }, " is not installed, so only local branches are read."] });
-      break;
+      return [{ key: "github", ok: false, text: [{ code: "gh" }, " is not installed, so only local branches are read."] }];
     default:
-      checks.push({ key: "github", ok: false, text: ["This repository is not on GitHub, so only local branches are read."] });
+      return [{ key: "github", ok: false, text: ["This repository is not on GitHub, so only local branches are read."] }];
   }
-  return checks;
 }
 
 /* ---------- write errors ---------- */

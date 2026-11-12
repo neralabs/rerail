@@ -1,8 +1,7 @@
 /**
- * Merge Assist (`#merge`) for the scoped checkout. Off: what turning it on does and what Rerail found (the agent CLI,
- * `gh`), then Turn on Merge Assist. On: the status strip (branch and base, the summarising CLI, `gh`, the last scan and
- * its problems, the hourly budget of agent calls, Scan now and Turn off), the Settings fold (how conflicts reach the
- * person: chat, terminal or both; the conflict hook command and its timeout), then the Conflicts: open conflicts as
+ * Merge Assist (`#merge`) for the scoped checkout. Off: what turning it on does and what Rerail found (`gh`), then
+ * Turn on Merge Assist. On: the status strip (branch and base, `gh`, the last scan and its problems, Scan now and Turn
+ * off), the Settings fold (the conflict hook command and its timeout), then the Conflicts: open conflicts as
  * cards, loudest first (each with its level, short id, queued state, its summary, a failed conflict hook, both sides,
  * the dimmer's reasons as its size, the evidence, and who to talk it over with), logged ones muted, then the dismissed
  * ones folded with who dismissed each and when. A card's one action is Dismiss (not a conflict). What each shows comes
@@ -21,9 +20,9 @@ import { data, ui, repoName } from "../state.js";
 import { captureScope, inScope, writeMergeAssist } from "../poll.js";
 import { invalidate, toast } from "../shell.js";
 import {
-  DELIVERY_MODES, DELIVERY_TEXT, HOOK_TIMEOUT_DEFAULT, HOOK_TIMEOUT_MAX, LEVEL_BADGE, LEVEL_TEXT, QUEUED_TEXT,
-  branchText, budgetText, conflictSections, dismissToast, githubText, hookFailure, hunkLines, quoted, readinessChecks,
-  safePeerUrl, scanSummary, scannedWhat, settingsChange, settingsDraft, settingsSummary, sideHeading, summarizerText,
+  HOOK_TIMEOUT_DEFAULT, HOOK_TIMEOUT_MAX, LEVEL_BADGE, LEVEL_TEXT, QUEUED_TEXT,
+  branchText, conflictSections, dismissToast, githubText, hookFailure, hunkLines, quoted, readinessChecks,
+  safePeerUrl, scanSummary, scannedWhat, settingsChange, settingsDraft, settingsSummary, sideHeading,
   writeError,
 } from "../merge-model.js";
 
@@ -97,10 +96,6 @@ function editSettings(change) {
   invalidate();
 }
 
-function chooseDelivery(mode) {
-  if (DELIVERY_MODES.includes(mode)) editSettings({ delivery: mode });
-}
-
 /**
  * The settings change to save, or `null`: nothing to save while the status is unread or a save or switch is out, or
  * the form can't be saved, which it then says why (`settingsChange`).
@@ -116,7 +111,7 @@ function settingsToSave() {
 }
 
 /**
- * Save the Settings form: the delivery mode, and the hook command with its timeout (none when the command is empty).
+ * Save the Settings form: the hook command with its timeout (none when the command is empty).
  * A command that is not a JSON array of non-empty strings, or a timeout out of range, is refused here and says why.
  */
 async function saveSettings() {
@@ -171,7 +166,6 @@ export const actions = {
   maoff: () => setEnabled(false),
   mascan: () => scan(),
   mafold: name => fold(name),
-  madelivery: mode => chooseDelivery(mode),
   masettings: () => saveSettings(),
   madismiss: id => dismiss(id),
 };
@@ -232,11 +226,11 @@ function talkTo(theirs) {
     "). Rerail never picks a side; dismiss it if it isn’t a conflict.");
 }
 
-/** What the other side is doing and why it collides (the quick call's line, or its fallback), and a failed hook. */
+/** What the other side is doing, and a failed hook. */
 function conflictNotes(conflict) {
   const failure = hookFailure(conflict);
   return [
-    conflict.summary?.text ? h("p.msummary", null, conflict.summary.text) : null,
+    h("p.msummary", null, conflict.summary),
     failure === null ? null : h("p.mhookfail", null, icon("logged", 14), failure),
   ];
 }
@@ -354,8 +348,6 @@ function renderOff(status) {
       h("h3", null, "What turning it on does"),
       h("ul.mbul", null,
         h("li", null, "Rerail reads your other local branches, and open pull requests through ", h("code", null, "gh"), " with your sign-in, read-only."),
-        h("li", null, "When your work overlaps theirs, it runs ", h("b", null, "your coding agent’s CLI"),
-          " for a one-line summary of each conflict. That sends the conflicting changes to your agent’s provider, as your session already does."),
         h("li", null, "You and your coding agent are told about each conflict, louder the more rework it risks. Rerail never picks a side, and never writes to your branches or to GitHub.")),
       h("h3", null, "What Rerail found"),
       h("ul.mchecks", null, checks.map(check => h(`li.${check.ok ? "mready" : "mnotready"}`, { "data-check": check.key },
@@ -375,25 +367,14 @@ function cell(label, value, attrs = null) {
   return h("div.mcell", attrs, h("span.k", null, label), h("span.v", null, value));
 }
 
-/** A strip value that is fine as plain text, or a warning with an optional detail under it. */
-const warnable = ({ ok, text, detail = null }) => (ok ? text : [h("span.mwarn-t", null, text), detail ? h("span.sub", null, detail) : null]);
-
-/** The budget of agent calls, warning once the hourly limit is reached. */
-function budgetValue(budget) {
-  if (!budget.spent) return budget.text;
-  return h("span.mwarn-t", { title: "The hourly limit is reached: new conflicts are summed up from their files and lines until it frees up." }, budget.text);
-}
-
-/** The strip's cells: on, branch → base, the summarising CLI, gh, the last scan and the budget of agent calls. */
+/** The strip's cells: on, branch → base, gh and the last scan. */
 function stripCells(status, scan) {
-  const { branch, base } = branchText(status);
+  const { branch, base } = branchText(status), github = githubText(status.readiness.github);
   return h("div.mcells", null,
     cell("Status", h("span.mon-state", null, h("span.dot", { "aria-hidden": "true" }), "On")),
     cell("Branch", [h("span.mono", null, branch), h("span.marrow", { "aria-hidden": "true" }, " → "), h("span.vh", null, " into "), h("span.mono", null, base)]),
-    cell("Summaries", warnable(summarizerText(status.readiness.judge))),
-    cell("GitHub", warnable(githubText(status.readiness.github))),
-    cell("Last scan", scan === null ? "Not scanned yet" : [page.stripWhen, h("span.sub", null, scannedWhat(scan))]),
-    cell("Agent calls", budgetValue(budgetText(status.budget))));
+    cell("GitHub", github.ok ? github.text : h("span.mwarn-t", null, github.text)),
+    cell("Last scan", scan === null ? "Not scanned yet" : [page.stripWhen, h("span.sub", null, scannedWhat(scan))]));
 }
 
 /** What the last scan could not read, folded; nothing when it read everything. */
@@ -423,7 +404,7 @@ function renderStrip(status) {
     return;
   }
   const scan = status.lastScan, problemsOpen = ui.mergeOpen.has("problems");
-  const sig = JSON.stringify([status.branch, status.baseBranch, status.readiness, status.budget, scan, problemsOpen]);
+  const sig = JSON.stringify([status.branch, status.baseBranch, status.readiness, scan, problemsOpen]);
   setContent(page.strip, sig, () => {
     page.stripWhen = scan === null ? null : h("span.when");
     page.scanButton = h("button.btn.sm.solid.mscan", { "data-act": "mascan" });
@@ -441,18 +422,9 @@ function field(spec, attrs, value) {
   return input;
 }
 
-/** The delivery modes, one line each on what it does; the one chosen is checked (`patchSettings`). */
-const deliveryChoice = () => h("fieldset.mdeliv", null,
-  h("legend.k", null, "Where conflicts reach you"),
-  h("div.mopts", { role: "radiogroup", "aria-label": "Delivery" }, DELIVERY_MODES.map(mode =>
-    h("button.mopt", { type: "button", role: "radio", "data-act": "madelivery", "data-i": mode },
-      h("span.mopt-l", null, DELIVERY_TEXT[mode].label), h("span.sub", null, DELIVERY_TEXT[mode].text)))),
-  h("p.mnote2", null, "In every mode you are told on your own line, and your coding agent stops before it edits a contested file."));
-
 /** The form, built with `fields` (the person's edits, else the saved values); `patchSettings` keeps the rest current. */
 function settingsForm(fields) {
   return [
-    deliveryChoice(),
     h("div.mfieldrow", null,
       h("label.k", { for: "ma-hook" }, "Conflict hook command"),
       field("input.mfield.mono", { id: "ma-hook", type: "text", placeholder: "[\"./scripts/on-conflict.sh\"]", "aria-describedby": "ma-hook-hint ma-settings-problem" }, fields.command),
@@ -475,10 +447,9 @@ function patchProblem(form, fields) {
   setAttr(form.querySelector('input[id="ma-timeout"]'), "aria-invalid", fields.field === "timeout" ? "true" : null);
 }
 
-/** While a save or a switch is out: the modes and Save disabled, the fields read-only, Save saying so. */
+/** While a save or a switch is out: the fields read-only, Save disabled and saying so. */
 function patchSaving(form) {
   const busy = ui.mergeSaving || ui.mergeSwitching;
-  for (const option of form.querySelectorAll("button.mopt")) setAttr(option, "disabled", busy);
   for (const input of form.querySelectorAll("input.mfield")) setAttr(input, "readonly", busy);
   const save = form.querySelector('button[data-act="masettings"]');
   setAttr(save, "disabled", busy);
@@ -486,11 +457,8 @@ function patchSaving(form) {
   setText(save, ui.mergeSaving ? "Saving…" : "Save");
 }
 
-/** The checked mode, the problem the last Save found, and Save's busy state, patched in place. */
+/** The problem the last Save found, and Save's busy state, patched in place. */
 function patchSettings(form, fields) {
-  for (const option of form.querySelectorAll("button.mopt")) {
-    setAttr(option, "aria-checked", option.dataset.i === fields.delivery ? "true" : "false");
-  }
   patchProblem(form, fields);
   patchSaving(form);
 }

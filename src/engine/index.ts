@@ -133,7 +133,6 @@ export {
   checkouts,
   events,
   libraryRules,
-  mergeAssistJudgments,
   mergeAssistState,
   policySessionOwners,
   presentationPreferences,
@@ -159,12 +158,10 @@ export {
   mergeAssistSettingsSchema,
   mergeAssistStatusSchema,
   type Conflict,
-  type ConflictDelivery,
   type ConflictSide,
   type ConflictSignals,
   type GithubReadiness,
   type MergeAssistSettings,
   type MergeAssistStatus,
 } from "./merge-assist/model.js";
-export { defaultPolicy, parsePolicy } from "./merge-assist/policy.js";
 export { dimConflict, type DimmerBudget, type DimmerPrevious } from "./merge-assist/dimmer.js";

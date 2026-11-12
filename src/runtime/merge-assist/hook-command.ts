@@ -3,15 +3,13 @@
  * event. It runs from the checkout's root as an argv array, never through a shell, with the person's environment plus
  * `RERAIL_CONFLICT_EVENT` and `RERAIL_CONFLICT_ID`; the conflict reaches it only on stdin, as one JSON object, never in
  * its arguments. It may answer on stdout with `{ "note"?: string, "status"?: string }` (at most 4 KiB): `note` joins
- * the agent's note for the conflict when the delivery includes chat, `status` replaces the conflict's status line text
- * when it includes terminal. A non-zero exit, a timeout or output that is not that JSON is recorded on the conflict
- * (`hook: { ok: false, error }`) and changes nothing else: delivery goes on without it.
+ * the agent's note for the conflict, `status` replaces the conflict's summary wherever its line shows. A non-zero exit,
+ * a timeout or output that is not that JSON is recorded on the conflict (`hook: { ok: false, error }`) and changes
+ * nothing else: delivery goes on without it.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import type { ConflictEvent, ConflictHookCommand, ConflictHookOutcome } from "../../engine/merge-assist/model.js";
-import { KILL_GRACE_MS, sanitizeTail } from "./agent-judge.js";
 import type { ConflictHandler, ConflictHandlerContext } from "./conflict-hook.js";
-import { viaChat } from "./conflict-delivery.js";
 import type { StoredConflict } from "./conflict-store.js";
 import { isoSeconds } from "./state.js";
 
@@ -20,6 +18,11 @@ export const MAX_HOOK_OUTPUT_BYTES = 4 * 1024;
 /** The longest note and status line kept from its answer. */
 export const MAX_HOOK_NOTE = 600;
 export const MAX_HOOK_STATUS = 90;
+/** Grace a timed-out command's process group gets after SIGTERM before SIGKILL. */
+const KILL_GRACE_MS = 2_000;
+/** How much of the command's stderr or rejected output a failure reports. */
+const DETAIL_TAIL_CHARS = 300;
+const ANSI_SEQUENCES = /\u001B\][^\u0007\u001B]*(?:\u0007|\u001B\\)|\u001B\[[0-?]*[ -/]*[@-~]|\u001B[@-Z\\-_]/gu;
 
 /** What the command gets on stdin. */
 export interface HookPayload {
@@ -33,6 +36,18 @@ export interface HookPayload {
 type Answer = Pick<ConflictHookOutcome, "ok" | "error" | "note" | "status">;
 
 const failed = (error: string): Answer => ({ ok: false, error, note: null, status: null });
+
+/** Output fit for a person: no escape sequences or control characters, bearer and API tokens masked, the last 300 characters. */
+function sanitizeTail(text: string): string {
+  const clean = text
+    .replace(ANSI_SEQUENCES, "")
+    .replace(/[\p{Cc}\p{Cf}]+/gu, " ")
+    .replace(/\b(Bearer\s+)[\w.~+/=-]+/giu, "$1[REDACTED]")
+    .replace(/\b(?:sk|ghp|gho|ghs|github_pat|xox[abp])[-_][\w-]{8,}/gu, "[REDACTED]")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return clean.length <= DETAIL_TAIL_CHARS ? clean : `…${clean.slice(-(DETAIL_TAIL_CHARS - 1))}`;
+}
 
 /** Text kept from the command: no control character but new lines in a note, one line for a status, then cut. */
 function kept(text: string | undefined, max: number, oneLine: boolean): string | null {
@@ -176,13 +191,13 @@ function payloadOf(event: ConflictEvent, stored: StoredConflict, context: Confli
 
 /**
  * The person's command, when one is set, run as one of `running`. A conflict's agent note waits for its answer to
- * `detected` and `level-changed` while the delivery includes chat, so its `note` joins the note; never longer than the
- * hook's bound on such a wait (`NOTE_WAIT_MS`): an answer after that follows as a note of its own.
+ * `detected` and `level-changed`, so its `note` joins the note; never longer than the hook's bound on such a wait
+ * (`NOTE_WAIT_MS`): an answer after that follows as a note of its own.
  */
 export function commandHandler(running: RunningCommands): ConflictHandler {
   return {
     name: "command",
-    awaits: (event, context) => context.settings.hook !== null && event !== "closed" && viaChat(context.delivery),
+    awaits: (event, context) => context.settings.hook !== null && event !== "closed",
     on: async (event, stored, context) => {
       const command = context.settings.hook;
       if (command === null) return;

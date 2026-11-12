@@ -2,16 +2,21 @@
  * The dimmer: how loud an open conflict gets, decided from what Git measures (docs/merge-assist-v1-build.md §9.1).
  * Interrupt only when continuing costs more than stopping: the expected rework if the conflict is left to merge is
  * `pLose × growthPerHour × hoursToMerge × lockIn × (1 + log2(1 + blastRadius))` lines, against what one interruption of
- * the person costs (`interruptCost`). Pure: the runtime measures the signals, keeps the budgets and stores the result.
+ * the person costs ({@link INTERRUPT_COST}). Pure: the runtime measures the signals, keeps the budgets and stores the result.
  */
 import { CONFLICT_LEVELS, type ConflictLevel, type ConflictSignals, type LockInClass } from "./model.js";
-import type { DimmerConfig } from "./policy.js";
 
+/** What one interruption of the person costs, in lines of rework: the checkpoint threshold. */
+export const INTERRUPT_COST = 300;
+/** Lines per hour on the contested files above which a lock-in ×4 conflict may stop the line. */
+export const STOP_GROWTH_PER_HOUR = 50;
+/** Checkpoint prompts one person gets per day; the rest wait, queued. */
+export const CHECKPOINTS_PER_DAY = 3;
 /** A level rises only when the score clears the next threshold by this factor, so it doesn't flicker. */
 export const RISE_MARGIN = 1.2;
-/** Below `interruptCost` times this, a conflict is only logged. */
+/** Below {@link INTERRUPT_COST} times this, a conflict is only logged. */
 export const AMBIENT_SHARE = 0.25;
-/** At or above `interruptCost` times this (and only with lock-in ×4 and fast growth), the line stops. */
+/** At or above {@link INTERRUPT_COST} times this (and only with lock-in ×4 and fast growth), the line stops. */
 export const STOP_MULTIPLE = 4;
 /** Stops one session gets. */
 export const STOPS_PER_SESSION = 1;
@@ -33,7 +38,6 @@ export interface DimmerInput {
   readonly signals: ConflictSignals;
   readonly previous: DimmerPrevious | null;
   readonly budget: DimmerBudget;
-  readonly config: DimmerConfig;
 }
 
 export interface DimmerResult {
@@ -58,13 +62,13 @@ export function expectedRework(signals: ConflictSignals): number {
  * The level the score calls for. Each level above the one the conflict already showed needs its threshold cleared by
  * {@link RISE_MARGIN}; a conflict seen for the first time by its threshold alone.
  */
-function wantedLevel(signals: ConflictSignals, score: number, previous: DimmerPrevious | null, config: DimmerConfig): ConflictLevel {
+function wantedLevel(signals: ConflictSignals, score: number, previous: DimmerPrevious | null): ConflictLevel {
   if (signals.quiet) return "logged";
   const margin = (level: ConflictLevel): number => (previous === null || rank(level) <= rank(previous.level) ? 1 : RISE_MARGIN);
-  const stops = signals.lockIn === 4 && signals.growthPerHour > config.stopGrowthPerHour;
-  if (stops && score >= config.interruptCost * STOP_MULTIPLE * margin("stop")) return "stop";
-  if (score >= config.interruptCost * margin("checkpoint")) return "checkpoint";
-  if (score >= config.interruptCost * AMBIENT_SHARE * margin("ambient")) return "ambient";
+  const stops = signals.lockIn === 4 && signals.growthPerHour > STOP_GROWTH_PER_HOUR;
+  if (stops && score >= INTERRUPT_COST * STOP_MULTIPLE * margin("stop")) return "stop";
+  if (score >= INTERRUPT_COST * margin("checkpoint")) return "checkpoint";
+  if (score >= INTERRUPT_COST * AMBIENT_SHARE * margin("ambient")) return "ambient";
   return "logged";
 }
 
@@ -75,11 +79,11 @@ function wantedLevel(signals: ConflictSignals, score: number, previous: DimmerPr
  * it waits it shows as a checkpoint when it waits for a stop and a checkpoint fits today, else at ambient (or the
  * higher level it had).
  */
-export function dimConflict({ signals, previous, budget, config }: DimmerInput): DimmerResult {
+export function dimConflict({ signals, previous, budget }: DimmerInput): DimmerResult {
   const score = expectedRework(signals);
   const reasons = dimmerReasons(signals);
   const floor = previous?.level ?? "logged";
-  const measured = wantedLevel(signals, score, previous, config);
+  const measured = wantedLevel(signals, score, previous);
   const waiting = previous?.queuedFor ?? "logged";
   const wanted = rank(waiting) > rank(measured) ? waiting : measured;
   if (rank(wanted) <= rank(floor)) return { level: floor, score, reasons, queuedFor: null };

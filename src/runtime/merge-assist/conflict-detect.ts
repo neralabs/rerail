@@ -8,13 +8,13 @@
 import { basename } from "node:path";
 import type { CheckoutContext } from "../../engine/catalog/repository-model.js";
 import { mergeAssistEnabled } from "../../engine/catalog/repository-registry.js";
+import { sideName } from "../../engine/code-rule/rerail-steer.js";
 import { gitText, runGit } from "../../engine/git.js";
 import { baseBranch, commitExists, currentBranch, isAncestor, localBranches, mergeBase, remoteBranches } from "../../engine/merge-assist/branch-git.js";
 import { conflictId, overlapQuestion, undimmed } from "../../engine/merge-assist/conflicts.js";
 import type { Conflict, ConflictSide } from "../../engine/merge-assist/model.js";
 import { ADJACENT_LINES, clipLines, contestedAnchor, type GitConflict, HUNK_LINES, identify, ownBase, refHunks, type RefHunk, workspaceRanges } from "../../engine/merge-assist/overlap.js";
 import type { RerailDatabase } from "../../engine/storage/database.js";
-import { withSummary } from "./conflict-delivery.js";
 import { levelConflicts, saveBudget } from "./conflict-level.js";
 import { mergeDetected, readConflicts, type StoredConflict, writeConflicts } from "./conflict-store.js";
 import type { PullRequestSummary } from "./github.js";
@@ -213,7 +213,7 @@ function overlapConflict(context: DetectContext, view: MineView, ref: LiveRef, o
       `Both sides change ${file} within ${ADJACENT_LINES} lines of each other: yours near line ${lineOf(overlap.ours)}, theirs near line ${lineOf(overlap.theirs)} of the base.`,
       `Only ${ref.label}'s own work since it left ${view.base.name} counts; Rerail merged nothing to find this.`,
     ],
-    detectedAt: isoSeconds(context.now()), dismissal: null, summary: null, hook: null,
+    detectedAt: isoSeconds(context.now()), dismissal: null, summary: `${sideName(theirs)} is changing ${symbol ?? file}`, hook: null,
   };
   return { conflict, files: [file], lines, anchor };
 }
@@ -249,9 +249,8 @@ export interface DetectedConflicts {
 }
 
 /**
- * Find the checkout's conflicts and store them with the dismissed ones, give every open one its level from the dimmer,
- * and a new one its fallback summary for the status line. A detection that finishes after Merge Assist was turned off
- * stores nothing and answers null.
+ * Find the checkout's conflicts and store them with the dismissed ones, and give every open one its level from the
+ * dimmer. A detection that finishes after Merge Assist was turned off stores nothing and answers null.
  */
 export async function detectConflicts(context: DetectContext): Promise<DetectedConflicts | null> {
   const root = context.checkout.checkoutPath;
@@ -267,15 +266,14 @@ export async function detectConflicts(context: DetectContext): Promise<DetectedC
     db: context.database, root, base: view.base, start: view.start, head: view.head, person: view.person, sessionId: context.sessionId,
     pulls: context.pulls, touches, now,
   }, result);
-  const entries = levelled.entries.map(entry => (entry.conflict.status === "open" ? withSummary(entry, now) : entry));
-  const examined = new Set([...known, ...entries].map(entry => entry.conflict.id));
+  const examined = new Set([...known, ...levelled.entries].map(entry => entry.conflict.id));
   return context.database.transaction(tx => {
     if (!mergeAssistEnabled(tx, context.checkout.repositoryKey)) return null;
     // A dismissal given while this ran stands, and an open conflict another pass stored meanwhile, which this one
     // never examined, stays as it is: it was not found gone.
     const before = readConflicts(tx, root);
     const unexamined = before.filter(entry => entry.conflict.status === "open" && !examined.has(entry.conflict.id));
-    const after = [...mergeDetected(before, entries), ...unexamined];
+    const after = [...mergeDetected(before, levelled.entries), ...unexamined];
     writeConflicts(tx, root, after, now);
     saveBudget(tx, view.person, levelled.grants, now);
     return { before, after, peers: { branches: refs.branches.length, pullRequests: refs.pulls.length }, problems: [] };

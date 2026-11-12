@@ -3,11 +3,10 @@
  * fires `detected` (first seen in this checkout), `level-changed` (its level rose) and `closed` (dismissed or no longer
  * found) once per conflict, and every registered handler hears each one in the background: the pass, the session's
  * boundary and the agent never wait for a handler. A handler that throws is logged and skipped. The handlers are
- * delivery, summary (the quick call) and the person's command.
+ * delivery and the person's command.
  */
 import type { RerailHost } from "../../engine/adapter-contract.js";
-import { CONFLICT_LEVELS, type ConflictDelivery, type ConflictEvent, type ConflictHookOutcome, type ConflictSummary, type MergeAssistSettings } from "../../engine/merge-assist/model.js";
-import type { AgentJudge } from "./agent-judge.js";
+import { CONFLICT_LEVELS, type ConflictEvent, type ConflictHookOutcome, type MergeAssistSettings } from "../../engine/merge-assist/model.js";
 import type { StoredConflict } from "./conflict-store.js";
 
 /** What every handler hears an event with. */
@@ -15,23 +14,17 @@ export interface ConflictHandlerContext {
   readonly checkout: { readonly path: string; readonly repositoryKey: string; readonly branch: string | null; readonly base: string | null };
   /** The session whose boundary ran the pass, with its host; null for the dashboard, the CLI and the API. */
   readonly session: { readonly id: string; readonly host: RerailHost | null } | null;
-  readonly delivery: ConflictDelivery;
   readonly settings: MergeAssistSettings;
-  /** The person's agent CLI, under the repository's hourly budget. */
-  readonly judge: AgentJudge;
   /** The person's environment, which the command runs with. */
   readonly env: NodeJS.ProcessEnv;
   readonly now: () => number;
   /** Offer the checkout's running sessions what is pending for them now, at their next boundary. */
   readonly deliver: () => void;
-  /** The conflicts these events first detected, newest first. */
-  readonly detected: readonly string[];
 }
 
-/** What a handler records on the conflict: the status line's summary, or the command's answer. */
+/** What a handler records on the conflict: the command's answer. */
 export interface HandlerResult {
-  readonly summary?: ConflictSummary;
-  readonly hook?: ConflictHookOutcome;
+  readonly hook: ConflictHookOutcome;
 }
 
 export interface ConflictHandler {
@@ -152,7 +145,7 @@ export class ConflictHook {
   ): Promise<void> {
     try {
       const result = await handler.on(event, conflict, context);
-      if (result !== undefined && (result.summary !== undefined || result.hook !== undefined)) {
+      if (result !== undefined) {
         apply(conflict.conflict.id, result);
         context.deliver();
       }

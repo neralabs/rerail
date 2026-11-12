@@ -4,24 +4,8 @@
  */
 import { z } from "zod";
 
-/**
- * The agent CLIs Merge Assist can run headless for the quick call, in default preference order. Each must be able to run
- * with no tools at all, MCP servers included; OMP and Pi cannot yet (their MCP servers stay connected in print mode).
- */
-export const JUDGE_RUNNERS = ["claude", "codex"] as const;
-export type JudgeRunnerId = (typeof JUDGE_RUNNERS)[number];
-/** Each judge runner as a person knows it. */
-export const JUDGE_RUNNER_NAMES: Readonly<Record<JudgeRunnerId, string>> = { claude: "Claude Code", codex: "Codex" };
-
 export const GITHUB_STATES = ["signed-in", "signed-out", "missing", "not-github"] as const;
 export type GithubState = (typeof GITHUB_STATES)[number];
-
-export const judgeReadinessSchema = z.object({
-  available: z.boolean(),
-  runner: z.enum(JUDGE_RUNNERS).nullable().describe("The agent CLI Rerail runs for the quick call, or null when none is found."),
-  problem: z.string().nullable().describe("Why the quick call is unavailable, in one sentence for a person."),
-});
-export type JudgeReadiness = z.infer<typeof judgeReadinessSchema>;
 
 export const githubReadinessSchema = z.object({
   state: z.enum(GITHUB_STATES),
@@ -107,19 +91,9 @@ export type ConflictDismissal = z.infer<typeof conflictDismissalSchema>;
 export const CONFLICT_EVENTS = ["detected", "level-changed", "closed"] as const;
 export type ConflictEvent = (typeof CONFLICT_EVENTS)[number];
 
-/**
- * Where a conflict reaches the person: `chat`, through the coding agent (its note and checkpoint card); `terminal`, the
- * status line and the person's line only; `both`. A stop before an edit to a contested file goes out in every mode.
- */
-export const CONFLICT_DELIVERY_MODES = ["chat", "terminal", "both"] as const;
-export type ConflictDelivery = (typeof CONFLICT_DELIVERY_MODES)[number];
-export const DEFAULT_CONFLICT_DELIVERY: ConflictDelivery = "both";
-
 /** The conflict hook command's timeout: 10 seconds unless the person sets another, at most 60. */
 export const DEFAULT_HOOK_TIMEOUT_SECONDS = 10;
 export const MAX_HOOK_TIMEOUT_SECONDS = 60;
-/** The longest summary line, in characters. */
-export const MAX_CONFLICT_SUMMARY = 90;
 
 export const conflictHookCommandSchema = z.object({
   command: z.array(z.string().min(1).max(4_096)).min(1).max(64)
@@ -131,28 +105,18 @@ export type ConflictHookCommand = z.infer<typeof conflictHookCommandSchema>;
 
 /** A person's Merge Assist settings for one repository, kept on this machine only. */
 export const mergeAssistSettingsSchema = z.object({
-  delivery: z.enum(CONFLICT_DELIVERY_MODES).describe("Where conflicts reach the person: chat (through the agent), terminal (status line and the person's line), or both."),
   hook: conflictHookCommandSchema.nullable().describe("The conflict hook command, run on every conflict event; null for none."),
 });
 export type MergeAssistSettings = z.infer<typeof mergeAssistSettingsSchema>;
-export const DEFAULT_MERGE_ASSIST_SETTINGS: MergeAssistSettings = { delivery: DEFAULT_CONFLICT_DELIVERY, hook: null };
-
-/** The conflict's line for the status line: the quick call's summary, or the deterministic fallback until it answers. */
-export const conflictSummarySchema = z.object({
-  text: z.string(),
-  via: z.enum(["judge", "fallback"]),
-  at: z.string(),
-  reason: z.string().nullable().describe("Why the fallback stands: the budget was used, the judge was unavailable, or it failed; null otherwise."),
-});
-export type ConflictSummary = z.infer<typeof conflictSummarySchema>;
+export const DEFAULT_MERGE_ASSIST_SETTINGS: MergeAssistSettings = { hook: null };
 
 /** What the conflict hook command answered to the latest event it ran for. */
 export const conflictHookOutcomeSchema = z.object({
   event: z.enum(CONFLICT_EVENTS),
   ok: z.boolean(),
   error: z.string().nullable().describe("Why it failed: a non-zero exit, a timeout, or output that is not the hook's JSON."),
-  note: z.string().nullable().describe("Added to the agent's note for the conflict when the delivery includes chat."),
-  status: z.string().nullable().describe("Replaces the conflict's status line text when the delivery includes terminal."),
+  note: z.string().nullable().describe("Added to the agent's note for the conflict."),
+  status: z.string().nullable().describe("Replaces the conflict's summary wherever its line shows."),
   at: z.string(),
 });
 export type ConflictHookOutcome = z.infer<typeof conflictHookOutcomeSchema>;
@@ -175,7 +139,7 @@ export const conflictSchema = z.object({
   evidence: z.array(z.string()).describe("Why Rerail thinks it is a conflict, one sentence each."),
   detectedAt: z.string(),
   dismissal: conflictDismissalSchema.nullable().describe("Who dismissed it and when; null while it is open."),
-  summary: conflictSummarySchema.nullable().default(null).describe("The status line's words for it; null only before its first detection is stored."),
+  summary: z.string().describe("Its line: \"<their label> (<author>) is changing <symbol or file>\"; the hook's status replaces it where the line shows."),
   hook: conflictHookOutcomeSchema.nullable().default(null).describe("The conflict hook command's last answer; null while none is set or none ran."),
 });
 export type Conflict = z.infer<typeof conflictSchema>;
@@ -188,10 +152,8 @@ export const mergeAssistStatusSchema = z.object({
   enabled: z.boolean(),
   settings: mergeAssistSettingsSchema,
   readiness: z.object({
-    judge: judgeReadinessSchema,
     github: githubReadinessSchema,
   }),
-  budget: z.object({ used: z.number().int(), limit: z.number().int(), windowMinutes: z.number().int() }),
   scanning: z.boolean(),
   lastScan: lastScanSchema.nullable(),
   conflicts: z.array(conflictSchema).describe("Open first, loudest first, then dismissed (latest 20)."),

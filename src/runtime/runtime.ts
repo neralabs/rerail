@@ -164,7 +164,7 @@ const SLOW_TURN_END_WAIT_MS = 1_000;
 
 /**
  * The most an edit's result waits for the conflict detection it ran, where the person's hook command may hold its
- * notes (one is set, and the delivery includes chat), so Rerail's note and the person's line ride that result. The
+ * notes (when one is set), so Rerail's note and the person's line ride that result. The
  * hook holds a note at most a second (`NOTE_WAIT_MS`); the rest is for the detection itself.
  */
 const MERGE_ASSIST_DETECT_WAIT_MS = 3_000;
@@ -1967,8 +1967,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   /**
    * A Merge Assist note's person's line as it reads when the note is handed over, not when it was queued: the
-   * conflict's status line text may have changed since (the conflict hook's status, the quick call's summary). Never
-   * fails the delivery.
+   * conflict's status line text may have changed since (the conflict hook's status). Never fails the delivery.
    */
   #currentConflictNotice(state: RuntimeSessionState, delivery: AdapterDelivery): AdapterDelivery {
     if (delivery.conflict === undefined || this.#mergeAssist === undefined) return delivery;

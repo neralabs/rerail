@@ -1,14 +1,13 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type { AdapterDelivery, Conflict, ConflictDelivery } from "../../../src/engine/index.js";
+import type { AdapterDelivery, Conflict } from "../../../src/engine/index.js";
 import { claudeHookOutput } from "../../../src/hosts/claude/index.js";
 import { SqliteSessionReader, SqliteSessionStore } from "../../../src/runtime/index.js";
 import type { RerailRuntime } from "../../../src/runtime/runtime.js";
-import type { AgentJudge, JudgeOutcome, JudgeTask } from "../../../src/runtime/merge-assist/agent-judge.js";
 import type { MergeAssistRuntime } from "../../../src/runtime/merge-assist/service.js";
 import { commit, git, writeFiles } from "../../support/git.js";
-import { defaultAnswer, FakeJudge, mergeAssistWorkspaces, SUMMARY, takeNotes, type Workspace } from "../../support/merge-assist/workspace.js";
+import { mergeAssistWorkspaces, takeNotes, type Workspace } from "../../support/merge-assist/workspace.js";
 import { body, grown, open, sessionRuntime } from "./support/conflict-sessions.js";
 
 const workspace = mergeAssistWorkspaces();
@@ -16,6 +15,8 @@ const workspace = mergeAssistWorkspaces();
 /** Lines theirs builds on its change: enough for a checkpoint, and few enough for an ambient overlap. */
 const CHECKPOINT = 30;
 const AMBIENT = 8;
+/** The overlap's line: who on the other side is changing what. */
+const SUMMARY = "jbarnes-1 (Tim Belanger) is changing function retry";
 
 /**
  * The base holds `file` (a `body`), branch `jbarnes-1` changes its line 20 and builds `extra` lines on it, and this
@@ -47,22 +48,6 @@ const deliveryOf = (note: { content: string; conflict?: AdapterDelivery["conflic
   sessionId, requested: "steer", mechanism: "additional-context", content: note.content, ruleIds: [], rules: [], strategy: "message",
   ...(note.conflict === undefined ? {} : { conflict: note.conflict }),
 });
-
-/** A judge whose answers wait until `release`; it counts the calls it was asked. */
-function heldJudge(): { judge: AgentJudge; release: () => void; asked: Array<JudgeTask<unknown>> } {
-  const gate = Promise.withResolvers<void>();
-  const asked: Array<JudgeTask<unknown>> = [];
-  const judge: AgentJudge = {
-    readiness: () => ({ available: true, runner: "claude", problem: null }),
-    budget: () => ({ used: asked.length, limit: 40, windowMinutes: 60 }),
-    judge: async <T>(task: JudgeTask<T>): Promise<JudgeOutcome<T>> => {
-      asked.push(task as JudgeTask<unknown>);
-      await gate.promise;
-      return { ok: true, value: task.parse(defaultAnswer()), runner: "claude", cached: false };
-    },
-  };
-  return { judge, release: () => gate.resolve(), asked };
-}
 
 /** One call a hook command got, as it logged it on starting. */
 interface HookCall {
@@ -131,126 +116,55 @@ function hookScript(ws: Workspace, mode: "answer" | "fail" | "hang" | "garbage" 
 const FILE = "src/retry.ts";
 
 describe("conflict delivery", { timeout: 60_000 }, () => {
-  describe("modes", () => {
-    async function detected(delivery: ConflictDelivery): Promise<{ ws: Workspace; service: MergeAssistRuntime; conflict: Conflict }> {
-      const { ws } = await overlap(FILE, AMBIENT);
+  describe("where a conflict reaches", () => {
+    async function detected(extra: number): Promise<{ ws: Workspace; service: MergeAssistRuntime; conflict: Conflict }> {
+      const { ws } = await overlap(FILE, extra);
       const service = ws.service();
       await service.setEnabled(ws.repo, true);
-      await service.updateSettings(ws.repo, { delivery });
       const [conflict] = open((await service.scan(ws.repo)).conflicts);
       await service.settled();
-      expect(conflict).toMatchObject({ level: "ambient" });
       return { ws, service, conflict: conflict! };
     }
 
-    it("chat: the agent's note once at the first boundary, the person's line with it, and no status line", async () => {
-      const { ws, service, conflict } = await detected("chat");
-      const [note, ...more] = service.pendingNotes("chat-session", ws.repo, new Set(), "claude-code");
+    it("the agent's note once at the first boundary, the person's line with it, and the status line", async () => {
+      const { ws, service, conflict } = await detected(AMBIENT);
+      expect(conflict).toMatchObject({ level: "ambient", summary: SUMMARY });
+      const [note, ...more] = service.pendingNotes("session", ws.repo, new Set(), "claude-code");
       expect(more).toEqual([]);
       expect(note!.content).toContain(`Your edit to ${FILE} overlaps open work: jbarnes-1 (Tim Belanger) Grow retry.`);
       expect(note!.conflict).toEqual({ id: conflict.id, text: "your edit overlaps jbarnes-1 (Tim Belanger): retry.ts · function retry" });
-      expect(takeNotes(service, "chat-session", ws.repo)).toHaveLength(1);
-      expect(takeNotes(service, "chat-session", ws.repo)).toEqual([]);
-      expect(footer(ws, "chat-footer")).toBeUndefined();
-    });
-
-    it("terminal: no context for the agent, only the person's line, and the summary on the status line", async () => {
-      const { ws, service, conflict } = await detected("terminal");
-      const [note, ...more] = service.pendingNotes("terminal-session", ws.repo, new Set(), "claude-code");
-      expect(more).toEqual([]);
-      expect(note).toMatchObject({ content: "", conflict: { id: conflict.id, text: "your edit overlaps jbarnes-1 (Tim Belanger): retry.ts · function retry" } });
-      // Claude Code, at its next tool call: the person's line alone, nothing for the model.
-      const output = claudeHookOutput("PostToolUse", [deliveryOf(note!, "terminal-session")], { links: "plain" });
-      expect(output).toEqual({ systemMessage: expect.stringContaining("Rerail · your edit overlaps jbarnes-1 (Tim Belanger): retry.ts · function retry") });
-      // Codex has no status line: its line carries the summary. OMP and Pi draw no person's line: nothing to hand them.
+      // Claude Code, at its next tool call: the person's line beside the note.
+      const output = claudeHookOutput("PostToolUse", [deliveryOf(note!, "session")], { links: "plain" });
+      expect(output).toMatchObject({ systemMessage: expect.stringContaining("Rerail · your edit overlaps jbarnes-1 (Tim Belanger): retry.ts · function retry") });
+      // Codex has no status line: its line carries the conflict's line.
       expect(service.pendingNotes("codex-session", ws.repo, new Set(), "codex")[0]!.conflict!.text).toBe(`your edit overlaps jbarnes-1 (Tim Belanger): retry.ts · function retry — ${SUMMARY}`);
-      expect(service.pendingNotes("omp-session", ws.repo, new Set(), "omp")).toEqual([]);
-      expect(footer(ws, "terminal-footer")).toEqual({ conflicts: 1, decide: null, summary: { id: conflict.id, text: SUMMARY } });
+      expect(takeNotes(service, "session", ws.repo)).toHaveLength(1);
+      expect(takeNotes(service, "session", ws.repo)).toEqual([]);
+      expect(footer(ws, "footer")).toEqual({ conflicts: 1, decide: null, summary: { id: conflict.id, text: SUMMARY } });
     });
 
-    it("both: the agent's note and the status line", async () => {
-      const { ws, service, conflict } = await detected("both");
-      const [note] = service.pendingNotes("both-session", ws.repo, new Set(), "claude-code");
-      expect(note!.content).toContain(`Your edit to ${FILE} overlaps open work`);
-      expect(footer(ws, "both-footer")).toEqual({ conflicts: 1, decide: null, summary: { id: conflict.id, text: SUMMARY } });
-    });
-
-    it("terminal: a checkpoint reaches the person's line and the status line, not the agent", async () => {
-      const { ws } = await overlap(FILE, CHECKPOINT);
-      const service = ws.service();
-      await service.setEnabled(ws.repo, true);
-      await service.updateSettings(ws.repo, { delivery: "terminal" });
-      const [conflict] = open((await service.scan(ws.repo)).conflicts);
+    it("a checkpoint: the agent's card, the person's line asking them to decide, and the status line", async () => {
+      const { ws, service, conflict } = await detected(CHECKPOINT);
       expect(conflict).toMatchObject({ level: "checkpoint" });
       expect(service.pendingNotes("s", ws.repo, new Set(), "claude-code")).toEqual([
-        expect.objectContaining({ content: "", conflict: { id: conflict!.id, text: "decide: retry.ts · function retry (jbarnes-1)" } }),
+        expect.objectContaining({
+          content: expect.stringContaining(`◆ RERAIL · conflict #${conflict.shortId}`),
+          conflict: { id: conflict.id, text: "decide: retry.ts · function retry (jbarnes-1)" },
+        }),
       ]);
-      expect(footer(ws, "f")).toMatchObject({ decide: { id: conflict!.id, title: conflict!.title } });
+      expect(footer(ws, "f")).toMatchObject({ decide: { id: conflict.id, title: conflict.title } });
     });
 
-    it("stops before an edit to a contested file in every mode", async () => {
+    it("stops before an edit to a contested file", async () => {
       const migration = "db/migrations/users.sql";
       const { ws } = await overlap(migration, 60);
       const service = ws.service();
       await service.setEnabled(ws.repo, true);
       expect(await service.detectAfterEdit(ws.repo, "budget-session")).toBe(true);
       expect(open((await service.status(ws.repo)).conflicts)[0]).toMatchObject({ level: "stop" });
-      for (const delivery of ["chat", "terminal", "both"] as const) {
-        await service.updateSettings(ws.repo, { delivery });
-        const [stop] = service.stopNotes(`stop-${delivery}`, ws.repo, { toolName: "Edit", input: { file_path: join(ws.repo, migration) } }, true, new Set(), "claude-code");
-        expect(stop!.content, delivery).toContain("Rerail asked the user before this edit");
-        expect(stop!.conflict!.ask, delivery).toContain(`Rerail: ${migration} is contested with jbarnes-1 (Tim Belanger)`);
-      }
-    });
-  });
-
-  describe("the quick call", () => {
-    it("shows the fallback line at once, and the summary replaces it when the call answers", async () => {
-      const { ws } = await overlap(FILE, AMBIENT);
-      const held = heldJudge();
-      const service = ws.service({ judge: held.judge });
-      await service.setEnabled(ws.repo, true);
-      const [conflict] = open((await service.scan(ws.repo)).conflicts);
-      expect(conflict!.summary).toMatchObject({ text: "jbarnes-1 (Tim Belanger) is changing function retry", via: "fallback", reason: "pending" });
-      expect(footer(ws, "before")).toMatchObject({ summary: { text: "jbarnes-1 (Tim Belanger) is changing function retry" } });
-      await vi.waitFor(() => expect(held.asked.map(task => task.kind)).toEqual(["summary"]));
-      expect(held.asked[0]!.prompt).toContain("Grow retry");
-      held.release();
-      await service.settled();
-      expect(open((await service.status(ws.repo)).conflicts)[0]!.summary).toMatchObject({ text: SUMMARY, via: "judge" });
-      expect(footer(ws, "after")).toMatchObject({ summary: { text: SUMMARY } });
-    });
-
-    it("keeps the fallback, with why, when the budget is spent", async () => {
-      const { ws } = await overlap(FILE, AMBIENT);
-      const judge = new FakeJudge(task => (task.kind === "summary" ? { ok: false, reason: "budget", detail: "40 judgment calls in the last hour" } : defaultAnswer()));
-      const service = ws.service({ judge });
-      await service.setEnabled(ws.repo, true);
-      await service.scan(ws.repo);
-      await service.settled();
-      expect(open((await service.status(ws.repo)).conflicts)[0]!.summary).toMatchObject({
-        text: "jbarnes-1 (Tim Belanger) is changing function retry", via: "fallback", reason: "budget: 40 judgment calls in the last hour",
-      });
-    });
-
-    it("never holds the boundary: the note goes out while the call is still running", async () => {
-      const { ws } = await overlap(FILE, AMBIENT);
-      const held = heldJudge();
-      const service = ws.service({ judge: held.judge });
-      await service.setEnabled(ws.repo, true);
-      const runtime = sessionRuntime(ws, service);
-      const sessionId = "slow-judge-session";
-      try {
-        await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId, cwd: ws.repo } });
-        await vi.waitFor(() => expect(held.asked).toHaveLength(1), { timeout: 20_000 });
-        // The judge answers only once released, after this boundary: the boundary did not wait for it.
-        const deliveries = await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId, text: "Go on." });
-        expect(deliveries.map(delivery => delivery.content)).toEqual([expect.stringContaining("overlaps open work")]);
-        expect(open((await service.status(ws.repo)).conflicts)[0]!.summary).toMatchObject({ via: "fallback" });
-      } finally {
-        held.release();
-        await runtime.dispose();
-      }
+      const [stop] = service.stopNotes("stop-session", ws.repo, { toolName: "Edit", input: { file_path: join(ws.repo, migration) } }, true, new Set(), "claude-code");
+      expect(stop!.content).toContain("Rerail asked the user before this edit");
+      expect(stop!.conflict!.ask).toContain(`Rerail: ${migration} is contested with jbarnes-1 (Tim Belanger)`);
     });
   });
 
@@ -294,29 +208,20 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       expect(hook.calls().map(call => [call.event, call.stdin.session])).toEqual([["detected", { id: "edit-session", host: "codex" }], ["closed", null]]);
     });
 
-    it("adds its note to the agent's note in chat modes, and its status to the status line in terminal modes", async () => {
+    it("adds its note to the agent's note, and its status to the status line", async () => {
       const { ws } = await overlap(FILE, AMBIENT);
       const hook = hookScript(ws, "held");
       const service = ws.service();
       await service.setEnabled(ws.repo, true);
-      await service.updateSettings(ws.repo, { delivery: "both", hook: { command: hook.command, timeoutSeconds: 10 } });
+      await service.updateSettings(ws.repo, { hook: { command: hook.command, timeoutSeconds: 10 } });
       const [conflict] = open((await service.scan(ws.repo)).conflicts);
-      // The agent's note waits for the command, so its note joins it; the status line does not wait.
-      expect(service.pendingNotes("waiting", ws.repo)).toEqual([]);
-      expect(footer(ws, "f1")).toMatchObject({ summary: { id: conflict!.id } });
+      // The status line does not wait for the command: it shows the conflict's own line meanwhile.
+      expect(footer(ws, "f1")).toMatchObject({ summary: { id: conflict!.id, text: SUMMARY } });
       hook.release();
       await service.settled();
-      const [note] = service.pendingNotes("both", ws.repo);
+      const [note] = service.pendingNotes("session", ws.repo);
       expect(note!.content).toContain("The user's conflict hook adds: Ask Jeremy in #storefront before you go on.");
       expect(footer(ws, "f2")).toMatchObject({ summary: { text: "Jeremy reshapes retry(): ask him first" } });
-
-      await service.updateSettings(ws.repo, { delivery: "chat" });
-      expect(service.pendingNotes("chat", ws.repo)[0]!.content).toContain("The user's conflict hook adds:");
-      expect(footer(ws, "f3")).toBeUndefined();
-
-      await service.updateSettings(ws.repo, { delivery: "terminal" });
-      expect(service.pendingNotes("terminal", ws.repo)[0]!.content).toBe("");
-      expect(footer(ws, "f4")).toMatchObject({ summary: { text: "Jeremy reshapes retry(): ask him first" } });
     });
 
     /**
@@ -398,19 +303,18 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       expect(() => process.kill(-pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
     });
 
-    it("gives a Codex person's line in terminal mode the status line text as it is when the note is handed over", async () => {
+    it("gives a Codex person's line the hook's status as it is when the note is handed over", async () => {
       const { ws } = await overlap(FILE, AMBIENT);
       const hook = hookScript(ws, "held");
       const service = ws.service();
       await service.setEnabled(ws.repo, true);
-      await service.updateSettings(ws.repo, { delivery: "terminal", hook: { command: hook.command, timeoutSeconds: 10 } });
+      await service.updateSettings(ws.repo, { hook: { command: hook.command, timeoutSeconds: 10 } });
       const runtime = sessionRuntime(ws, service);
-      const sessionId = "codex-terminal-session";
+      const sessionId = "codex-session";
       try {
         await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "codex", sessionId, cwd: ws.repo } });
-        // The note is queued at once, with the fallback line, while the command is still answering.
+        // The command answers once released; the note goes out at the next boundary, after it answered.
         await vi.waitFor(() => expect(hook.calls()).toHaveLength(1), { timeout: 20_000 });
-        expect(service.pendingNotes("probe", ws.repo, new Set(), "codex")[0]!.conflict!.text).not.toContain("Jeremy");
         hook.release();
         await service.settled();
         const deliveries = await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId, text: "Go on." });

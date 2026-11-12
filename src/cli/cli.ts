@@ -197,7 +197,7 @@ function usage(): string {
     "  rerail remote exclude|include [--repo <dir>]",
     "  rerail settings --session <id> --steer-strategy message|rewind|subagent   experimental: takes effect with RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1",
     "  rerail merge-assist [status|on|off|scan|conflicts|dismiss <conflict-id>] [--repo <dir>] [--json]",
-    "  rerail merge-assist settings [--delivery chat|terminal|both] [--hook-command '<json argv>' | --no-hook] [--hook-timeout <seconds>] [--repo <dir>] [--json]",
+    "  rerail merge-assist settings [--hook-command '<json argv>' | --no-hook] [--hook-timeout <seconds>] [--repo <dir>] [--json]",
     "  rerail [--profile <name>] events",
     "  rerail [--profile <name>] activate --file <profile.jws> --trust-root <roots.json>",
     "  rerail [--profile <name>] activate --code <code> --activation-url <url> --trust-root <roots.json>",

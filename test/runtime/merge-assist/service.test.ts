@@ -6,7 +6,7 @@ import { mergeAssistState } from "../../../src/engine/index.js";
 import type { PullRequestSummary } from "../../../src/runtime/merge-assist/github.js";
 import { createMergeAssistService } from "../../../src/runtime/merge-assist/service.js";
 import { commit, git } from "../../support/git.js";
-import { FakeGithub, FakeJudge, mergeAssistWorkspaces } from "../../support/merge-assist/workspace.js";
+import { FakeGithub, mergeAssistWorkspaces } from "../../support/merge-assist/workspace.js";
 
 const workspace = mergeAssistWorkspaces();
 
@@ -30,13 +30,10 @@ class HeldGithub extends FakeGithub {
 
 // Each test builds Git repositories; under a full run that outlasts the default 5 s.
 describe("Merge Assist service", { timeout: 30_000 }, () => {
-  it("reports a checkout's state without running a judge or a scan", async () => {
+  it("reports a checkout's state without running a scan", async () => {
     const ws = await workspace();
-    const judge = new FakeJudge(() => {
-      throw new Error("status never judges");
-    });
     const github = new FakeGithub();
-    const status = await ws.service({ judge, github }).status(ws.repo);
+    const status = await ws.service({ github }).status(ws.repo);
 
     expect(status).toEqual({
       repositoryKey: ws.repositoryKey,
@@ -44,17 +41,14 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
       branch: "mine",
       baseBranch: "main",
       enabled: false,
-      settings: { delivery: "both", hook: null },
+      settings: { hook: null },
       readiness: {
-        judge: { available: true, runner: "claude", problem: null },
         github: { state: "not-github", login: null, repository: null },
       },
-      budget: { used: 0, limit: 40, windowMinutes: 60 },
       scanning: false,
       lastScan: null,
       conflicts: [],
     });
-    expect(judge.tasks).toEqual([]);
     // A repository off GitHub never runs gh.
     expect(github.readinessReads).toBe(0);
   });
@@ -156,7 +150,7 @@ describe("Merge Assist service", { timeout: 30_000 }, () => {
     const second = service.scan(ws.repo);
     expect((await service.status(ws.repo)).scanning).toBe(true);
     // Another process sees the scan running and starts none of its own: it answers at once with what is there.
-    const elsewhere = createMergeAssistService({ database: ws.database, judge: new FakeJudge(() => ({ summary: "x" })), github });
+    const elsewhere = createMergeAssistService({ database: ws.database, github });
     expect(await elsewhere.scan(ws.repo)).toMatchObject({ scanning: true, lastScan: null, conflicts: [] });
     github.release();
     const statuses = await Promise.all([first, second]);

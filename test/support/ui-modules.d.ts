@@ -157,7 +157,7 @@ declare module "*/ui/state.js" {
   export const ui: {
     filter: string; query: string; range: number; actRule: string | null; histOutcome: "all" | "steered" | "logged"; view: string; settingUp: boolean;
     selectedSession: string | null; panel: object | null; mergeDismissing: Set<string>; mergeOpen: Set<string>; mergeSwitching: boolean; mergeScanning: boolean;
-    mergeSettings: { delivery: import("../../src/engine/index.js").ConflictDelivery; command: string; timeout: string; problem: string | null; field: "command" | "timeout" | null } | null;
+    mergeSettings: { command: string; timeout: string; problem: string | null; field: "command" | "timeout" | null } | null;
     mergeSaving: boolean;
   };
   export function keptPacks(): readonly string[];
@@ -328,10 +328,8 @@ declare module "*/ui/merge-model.js" {
   export function safePeerUrl(url: unknown, context?: { repositoryKey?: string; repository?: string | null }): string | null;
   export function openConflictCount(status: Status | null | undefined, dismissing?: Set<string>): number;
   export function branchText(status: Status): { branch: string; base: string };
-  export function summarizerText(judge: Status["readiness"]["judge"]): { ok: boolean; text: string; detail?: string | null };
   export function githubText(github: Status["readiness"]["github"]): { ok: boolean; text: string };
   export function scannedWhat(lastScan: NonNullable<Status["lastScan"]>): string;
-  export function budgetText(budget: Status["budget"]): { text: string; spent: boolean };
   export function scanSummary(before: Status | null, after: Status): string;
   export function readinessChecks(readiness: Status["readiness"]): Array<{ key: string; ok: boolean; text: Segment[] }>;
   export function writeError(error: unknown): string;
@@ -344,11 +342,8 @@ declare module "*/ui/merge-model.js" {
   export function hunkLines(hunk: string): Array<{ kind: "add" | "del" | "meta" | "ctx"; text: string }>;
   export function dismissToast(conflict: Conflict): { done: string; fail: string };
   export function hookFailure(conflict: Conflict): string | null;
-  type ConflictDelivery = import("../../src/engine/index.js").ConflictDelivery;
   type MergeAssistSettings = import("../../src/engine/index.js").MergeAssistSettings;
-  export interface SettingsFields { delivery: ConflictDelivery; command: string; timeout: string }
-  export const DELIVERY_MODES: ConflictDelivery[];
-  export const DELIVERY_TEXT: Record<ConflictDelivery, { label: string; text: string }>;
+  export interface SettingsFields { command: string; timeout: string }
   export const HOOK_TIMEOUT_DEFAULT: number;
   export const HOOK_TIMEOUT_MAX: number;
   export function settingsDraft(settings: MergeAssistSettings): SettingsFields;

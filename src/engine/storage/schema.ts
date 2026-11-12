@@ -625,24 +625,6 @@ export const policySessionOwners = sqliteTable("policy_session_owners", {
   updatedAt: integer("updated_at").notNull(),
 });
 
-/**
- * Agent CLI judgments, keyed by a hash of the task kind and its inputs: the cache a repeated task is answered from, and
- * the record the hourly budget counts. A failed attempt is recorded with `task` `<kind>:failed` so it counts too.
- * `created_at` is epoch milliseconds.
- */
-export const mergeAssistJudgments = sqliteTable(
-  "merge_assist_judgments",
-  {
-    key: text("key").primaryKey(),
-    repositoryKey: text("repository_key").notNull(),
-    task: text("task").notNull(),
-    runner: text("runner").notNull(),
-    resultJson: text("result_json").notNull(),
-    createdAt: integer("created_at").notNull(),
-  },
-  table => [index("merge_assist_judgments_repository_created").on(table.repositoryKey, table.createdAt)],
-);
-
 /** Merge Assist's bookkeeping by key (`runtime/merge-assist/state.ts`): `conflicts:<checkout path>` holds a checkout's conflicts, `scan:<checkout path>` its last scan. */
 export const mergeAssistState = sqliteTable("merge_assist_state", {
   key: text("key").primaryKey(),

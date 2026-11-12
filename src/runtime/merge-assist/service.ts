@@ -12,7 +12,6 @@ import { baseBranch, currentBranch, githubRepositoryOf } from "../../engine/merg
 import { orderConflicts } from "../../engine/merge-assist/conflicts.js";
 import {
   githubReadinessSchema,
-  type ConflictDelivery,
   type ConflictHookCommand,
   type GithubReadiness,
   type LastScan,
@@ -22,12 +21,10 @@ import {
 } from "../../engine/merge-assist/model.js";
 import type { RerailDatabase } from "../../engine/storage/database.js";
 import { checkouts, repositories } from "../../engine/storage/schema.js";
-import { createAgentJudge, type AgentJudge } from "./agent-judge.js";
 import { detectConflicts } from "./conflict-detect.js";
-import { deliveryHandler, readSettings, settingsAt, viaChat, writeSettings } from "./conflict-delivery.js";
+import { deliveryHandler, readSettings, settingsAt, writeSettings } from "./conflict-delivery.js";
 import { ConflictHook, conflictEvents, type ConflictFire, type ConflictHandlerContext } from "./conflict-hook.js";
 import { dismissedConflict, readConflicts, recordHandlerResult, replaceConflict } from "./conflict-store.js";
-import { summaryHandler } from "./conflict-summary.js";
 import { createGithubClient, type GithubClient, type PullRequestSummary } from "./github.js";
 import { commandHandler, RunningCommands } from "./hook-command.js";
 import { currentNotice, markNotesDelivered, pendingNotes, stopNotes, type ConflictNoteOptions, type EditCall, type PendingNote } from "./notes.js";
@@ -57,7 +54,7 @@ export interface MergeAssistService {
   scan(checkoutPath: string): Promise<MergeAssistStatus>;
   /** Dismiss an open in-flight conflict as not a conflict. Only a person does: a coding agent is refused. */
   dismissConflict(checkoutPath: string, conflictId: string, actor?: MergeAssistActor): Promise<MergeAssistStatus>;
-  /** The person's settings for the checkout's repository: conflict delivery and the conflict hook command. Reads only. */
+  /** The person's settings for the checkout's repository: the conflict hook command. Reads only. */
   settings(checkoutPath: string): Promise<MergeAssistSettings>;
   /** Change the person's settings for the checkout's repository; a field left out stays, `hook: null` removes the command. */
   updateSettings(checkoutPath: string, change: MergeAssistSettingsChange): Promise<MergeAssistStatus>;
@@ -65,7 +62,6 @@ export interface MergeAssistService {
 
 /** A change to the person's Merge Assist settings for a repository. */
 export interface MergeAssistSettingsChange {
-  readonly delivery?: ConflictDelivery;
   readonly hook?: ConflictHookCommand | null;
 }
 
@@ -75,7 +71,8 @@ export interface MergeAssistRuntime extends MergeAssistService {
   openSession(checkoutPath: string, host: RerailHost, sessionId: string): Promise<void>;
   /**
    * The notes for the session it has not been handed, leaving out items whose marks are in `inFlight`, for a session
-   * whose host is `host` (what it draws decides how a conflict reaches the person in terminal delivery). Reads only.
+   * whose host is `host` (whether it draws a status line decides whether the person's line carries the conflict's
+   * line). Reads only.
    */
   pendingNotes(sessionId: string, checkoutPath: string, inFlight?: ReadonlySet<string>, host?: RerailHost): PendingNote[];
   /**
@@ -90,9 +87,9 @@ export interface MergeAssistRuntime extends MergeAssistService {
    * else when it answers or the hook's note wait passes, whichever is first.
    */
   notesReleased(checkoutPath: string): Promise<void>;
-  /** Whether the person's hook command may hold the checkout's conflict notes: one is set, and the delivery includes chat. */
+  /** Whether the person's hook command may hold the checkout's conflict notes: one is set. */
   hookHoldsNotes(checkoutPath: string): boolean;
-  /** A queued note's person's line as it reads now, from the conflict as stored (its status line text included). Reads only. */
+  /** A queued note's person's line as it reads now, from the conflict as stored (the hook's status included). Reads only. */
   conflictNotice(checkoutPath: string, notice: ConflictNotice, host?: RerailHost): ConflictNotice;
   /**
    * The agent edited files in the checkout: find its in-flight conflicts again, at most once per
@@ -118,8 +115,6 @@ export interface MergeAssistRuntime extends MergeAssistService {
 export interface MergeAssistServiceOptions {
   /** The Rerail database, or how to open it on first use (a daemon creates none until asked to). */
   readonly database: RerailDatabase | (() => RerailDatabase);
-  /** The judge, or the judge for a session's host; by default the person's agent CLI (`createAgentJudge`). */
-  readonly judge?: AgentJudge | ((host?: RerailHost) => AgentJudge);
   /** By default the person's `gh` (`createGithubClient`). */
   readonly github?: GithubClient;
   readonly now?: () => number;
@@ -149,11 +144,10 @@ interface PullListing {
 class DatabaseMergeAssist implements MergeAssistRuntime {
   readonly #options: MergeAssistServiceOptions;
   readonly #now: () => number;
-  /** The conflict hook: delivery, the quick call and the person's command. */
+  /** The conflict hook: delivery and the person's command. */
   readonly #hook: ConflictHook;
   /** The person's hook commands running for this Merge Assist, which {@link stop} ends. */
   readonly #commands = new RunningCommands();
-  readonly #judges = new Map<RerailHost | undefined, AgentJudge>();
   #database: RerailDatabase | undefined;
   #github: GithubClient | undefined;
   /** Scans running in this process, by checkout; a second request joins the first. */
@@ -172,7 +166,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   constructor(options: MergeAssistServiceOptions) {
     this.#options = options;
     this.#now = options.now ?? Date.now;
-    this.#hook = new ConflictHook([deliveryHandler, summaryHandler, commandHandler(this.#commands)]);
+    this.#hook = new ConflictHook([deliveryHandler, commandHandler(this.#commands)]);
   }
 
   get #db(): RerailDatabase {
@@ -184,23 +178,6 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   get #githubClient(): GithubClient {
     this.#github ??= this.#options.github ?? createGithubClient(this.#options.env === undefined ? {} : { env: this.#options.env });
     return this.#github;
-  }
-
-  #judge(host?: RerailHost): AgentJudge {
-    const { judge } = this.#options;
-    if (judge !== undefined && typeof judge !== "function") return judge;
-    let made = this.#judges.get(host);
-    if (made === undefined) {
-      made = judge !== undefined
-        ? judge(host)
-        : createAgentJudge({
-          database: this.#db,
-          ...(host === undefined ? {} : { preferredHost: host }),
-          ...(this.#options.env === undefined ? {} : { env: this.#options.env }),
-        });
-      this.#judges.set(host, made);
-    }
-    return made;
   }
 
   /**
@@ -254,18 +231,13 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   #fire(checkout: CheckoutContext, fires: readonly ConflictFire[], session: { id: string; host: RerailHost | null } | null): void {
     if (fires.length === 0 || this.#stopped) return;
     const root = checkout.checkoutPath;
-    const settings = readSettings(this.#db, checkout.repositoryKey);
     const context: ConflictHandlerContext = {
       checkout: { path: root, repositoryKey: checkout.repositoryKey, branch: currentBranch(root), base: baseBranch(root)?.name ?? null },
       session,
-      delivery: settings.delivery,
-      settings,
-      judge: this.#judge(session?.host ?? undefined),
+      settings: readSettings(this.#db, checkout.repositoryKey),
       env: this.#options.env ?? process.env,
       now: this.#now,
       deliver: () => this.#emit(root),
-      detected: fires.filter(fire => fire.event === "detected").map(fire => fire.conflict.conflict)
-        .sort((left, right) => right.detectedAt.localeCompare(left.detectedAt)).map(conflict => conflict.id),
     };
     this.#hook.fire(fires, context, (conflictId, result) => {
       if (this.#stopped) return;
@@ -376,7 +348,6 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     const checkout = this.#checkout(checkoutPath, false);
     const db = this.#db;
     const root = checkout.checkoutPath;
-    const judge = this.#judge();
     return {
       repositoryKey: checkout.repositoryKey,
       checkout: root,
@@ -385,10 +356,8 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
       enabled: mergeAssistEnabled(db, checkout.repositoryKey),
       settings: readSettings(db, checkout.repositoryKey),
       readiness: {
-        judge: judge.readiness(),
         github: await this.#githubReadiness(checkout.repositoryKey, false),
       },
-      budget: judge.budget(checkout.repositoryKey),
       scanning: this.#scanning(root),
       lastScan: readState(db, STATE_KEYS.scan(root), lastScanSchema) ?? null,
       conflicts: orderConflicts(readConflicts(db, root).map(entry => entry.conflict)),
@@ -440,10 +409,8 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     const checkout = this.#checkout(checkoutPath, true);
     this.#db.transaction(tx => {
       const settings = readSettings(tx, checkout.repositoryKey);
-      writeSettings(tx, checkout.repositoryKey, { delivery: change.delivery ?? settings.delivery, hook: change.hook === undefined ? settings.hook : change.hook }, this.#now());
+      writeSettings(tx, checkout.repositoryKey, { hook: change.hook === undefined ? settings.hook : change.hook }, this.#now());
     }, { behavior: "immediate" });
-    // The mode decides what the checkout's running sessions take at their next boundary.
-    this.#emit(checkout.checkoutPath);
     return await this.status(checkout.checkoutPath);
   }
 
@@ -463,20 +430,19 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
     await this.#scanOnce(checkout, { id: sessionId, host });
   }
 
-  /** How a session on `host` takes the checkout's conflict notes: the person's mode, and what the host draws. */
-  #noteOptions(checkoutPath: string, host: RerailHost | undefined): ConflictNoteOptions {
-    const surfaces = host === undefined ? { personLine: true, statusLine: true } : { personLine: ADAPTER_CAPABILITIES[host].personLine, statusLine: ADAPTER_CAPABILITIES[host].statusLine };
-    return { delivery: settingsAt(this.#db, checkoutPath).delivery, surfaces, now: this.#now() };
+  /** How a session on `host` takes the checkout's conflict notes: whether the host draws the footer. */
+  #noteOptions(host: RerailHost | undefined): ConflictNoteOptions {
+    return { statusLine: host === undefined || ADAPTER_CAPABILITIES[host].statusLine };
   }
 
   pendingNotes(sessionId: string, checkoutPath: string, inFlight: ReadonlySet<string> = new Set(), host?: RerailHost): PendingNote[] {
     return pendingNotes(this.#db, sessionId, checkoutPath, inFlight, {
-      ...this.#noteOptions(checkoutPath, host), awaiting: this.#hook.awaiting(checkoutPath),
+      ...this.#noteOptions(host), awaiting: this.#hook.awaiting(checkoutPath),
     });
   }
 
   stopNotes(sessionId: string, checkoutPath: string, call: EditCall, asks: boolean, inFlight: ReadonlySet<string> = new Set(), host?: RerailHost): PendingNote[] {
-    return stopNotes(this.#db, sessionId, checkoutPath, call, asks, inFlight, this.#noteOptions(checkoutPath, host));
+    return stopNotes(this.#db, sessionId, checkoutPath, call, asks, inFlight, this.#noteOptions(host));
   }
 
   markNotesDelivered(sessionId: string, checkoutPath: string, marks: readonly string[]): void {
@@ -484,7 +450,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   conflictNotice(checkoutPath: string, notice: ConflictNotice, host?: RerailHost): ConflictNotice {
-    return currentNotice(this.#db, checkoutPath, notice, this.#noteOptions(checkoutPath, host));
+    return currentNotice(this.#db, checkoutPath, notice, this.#noteOptions(host));
   }
 
   async notesReleased(checkoutPath: string): Promise<void> {
@@ -492,8 +458,7 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
   }
 
   hookHoldsNotes(checkoutPath: string): boolean {
-    const settings = settingsAt(this.#db, checkoutPath);
-    return settings.hook !== null && viaChat(settings.delivery);
+    return settingsAt(this.#db, checkoutPath).hook !== null;
   }
 
   onConflictsChanged(listener: (checkoutPath: string) => void): () => void {
@@ -521,8 +486,8 @@ class DatabaseMergeAssist implements MergeAssistRuntime {
 }
 
 /**
- * Merge Assist over one database. It runs the person's agent CLI only for the quick call and `gh` only to list open
- * pull requests; a status read runs neither, apart from `gh auth status` at most every five minutes per repository.
+ * Merge Assist over one database. It runs `gh` only to list open pull requests, and the person's hook command on
+ * conflict events; a status read runs neither, apart from `gh auth status` at most every five minutes per repository.
  */
 export function createMergeAssistService(options: MergeAssistServiceOptions): MergeAssistRuntime {
   return new DatabaseMergeAssist(options);

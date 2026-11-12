@@ -33,8 +33,8 @@ export function writeConflicts(db: StateQueries, checkoutPath: string, conflicts
 /**
  * What the store holds after a detection found `detected`: each found conflict, unless the person already settled
  * it, which then stays as it was; every dismissed conflict, found again or not; and no open conflict
- * that was not found again. A conflict found again keeps when it was first detected, its summary and the hook's last
- * answer, and, until the dimmer measures it again, the level it showed.
+ * that was not found again. A conflict found again keeps when it was first detected and the hook's last answer, and,
+ * until the dimmer measures it again, the level it showed.
  */
 export function mergeDetected(stored: readonly StoredConflict[], detected: readonly StoredConflict[]): StoredConflict[] {
   const prior = new Map(stored.map(entry => [entry.conflict.id, entry]));
@@ -42,9 +42,9 @@ export function mergeDetected(stored: readonly StoredConflict[], detected: reado
     const before = prior.get(entry.conflict.id);
     if (before === undefined) return entry;
     if (before.conflict.status !== "open") return before;
-    const { level, signals, score, reasons, queued, queuedFor, summary, hook } = before.conflict;
+    const { level, signals, score, reasons, queued, queuedFor, hook } = before.conflict;
     const dimmed = entry.conflict.signals === null ? { level, signals, score, reasons, queued, queuedFor } : {};
-    return { ...entry, conflict: { ...entry.conflict, ...dimmed, detectedAt: before.conflict.detectedAt, summary: summary ?? entry.conflict.summary, hook } };
+    return { ...entry, conflict: { ...entry.conflict, ...dimmed, detectedAt: before.conflict.detectedAt, hook } };
   });
   const ids = new Set(found.map(entry => entry.conflict.id));
   return [...found, ...stored.filter(entry => entry.conflict.status !== "open" && !ids.has(entry.conflict.id))];
@@ -65,11 +65,10 @@ export function dismissedConflict(stored: StoredConflict, name: string, now: num
   return { ...stored, conflict: { ...stored.conflict, ...undimmed(stored.conflict.id), status: "dismissed", dismissal: { name, at: isoSeconds(now) } } };
 }
 
-/** What a conflict hook handler answered, recorded on the conflict while the store still holds it. */
+/** What the conflict hook command answered, recorded on the conflict while the store still holds it. */
 export function recordHandlerResult(db: StateQueries, checkoutPath: string, conflictId: string, result: HandlerResult, now: number): void {
   const stored = readConflicts(db, checkoutPath);
   const entry = stored.find(item => item.conflict.id === conflictId);
   if (entry === undefined) return;
-  const conflict = { ...entry.conflict, ...(result.summary === undefined ? {} : { summary: result.summary }), ...(result.hook === undefined ? {} : { hook: result.hook }) };
-  replaceConflict(db, checkoutPath, { ...entry, conflict }, now);
+  replaceConflict(db, checkoutPath, { ...entry, conflict: { ...entry.conflict, hook: result.hook } }, now);
 }

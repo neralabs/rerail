@@ -146,25 +146,25 @@ describe("the Merge Assist operations", () => {
     ]);
   });
 
-  it("reads the person's settings and changes them with on or off, the delivery and the hook", async () => {
+  it("reads the person's settings and changes them with on or off and the hook", async () => {
     const read = await request("GET", `/api/merge-assist/settings?${new URLSearchParams({ checkout })}`);
     expect(read.status).toBe(200);
-    expect(mergeAssistSettingsSchema.parse(read.body)).toEqual({ delivery: "both", hook: null });
+    expect(mergeAssistSettingsSchema.parse(read.body)).toEqual({ hook: null });
 
-    const hooked = await request("PUT", "/api/merge-assist/settings", { checkout, delivery: "terminal", hook: { command: ["./notify.sh", "--json"] } });
+    const hooked = await request("PUT", "/api/merge-assist/settings", { checkout, hook: { command: ["./notify.sh", "--json"] } });
     expect(hooked.status).toBe(200);
     // A hook without a timeout gets the default, 10 seconds; the answer is the status, with the saved settings.
-    expect(mergeAssistStatusSchema.parse(hooked.body).settings).toEqual({ delivery: "terminal", hook: { command: ["./notify.sh", "--json"], timeoutSeconds: 10 } });
+    expect(mergeAssistStatusSchema.parse(hooked.body).settings).toEqual({ hook: { command: ["./notify.sh", "--json"], timeoutSeconds: 10 } });
     expect(mergeAssistSettingsSchema.parse((await request("GET", `/api/merge-assist/settings?${new URLSearchParams({ repository: repositoryKey })}`)).body))
-      .toEqual({ delivery: "terminal", hook: { command: ["./notify.sh", "--json"], timeoutSeconds: 10 } });
+      .toEqual({ hook: { command: ["./notify.sh", "--json"], timeoutSeconds: 10 } });
 
     const both = await request("PUT", "/api/merge-assist/settings", { checkout, enabled: true, hook: null });
-    expect(mergeAssistStatusSchema.parse(both.body).settings).toEqual({ delivery: "terminal", hook: null });
+    expect(mergeAssistStatusSchema.parse(both.body).settings).toEqual({ hook: null });
     expect((await request("PUT", "/api/merge-assist/settings", { checkout, hook: { command: ["notify"], timeoutSeconds: 60 } })).status).toBe(200);
 
     expect(service.calls).toEqual([
       { method: "settings", checkout },
-      { method: "updateSettings", checkout, change: { delivery: "terminal", hook: { command: ["./notify.sh", "--json"], timeoutSeconds: 10 } } },
+      { method: "updateSettings", checkout, change: { hook: { command: ["./notify.sh", "--json"], timeoutSeconds: 10 } } },
       { method: "settings", checkout },
       { method: "setEnabled", checkout, enabled: true },
       { method: "updateSettings", checkout, change: { hook: null } },
@@ -176,7 +176,6 @@ describe("the Merge Assist operations", () => {
     for (const [method, path, body] of [
       ["PUT", "/api/merge-assist/settings", { checkout, enabled: "yes" }],
       ["PUT", "/api/merge-assist/settings", { checkout }],
-      ["PUT", "/api/merge-assist/settings", { checkout, delivery: "email" }],
       ["PUT", "/api/merge-assist/settings", { checkout, hook: { command: [] } }],
       ["PUT", "/api/merge-assist/settings", { checkout, hook: { command: [""] } }],
       ["PUT", "/api/merge-assist/settings", { checkout, hook: { command: "./notify.sh" } }],
@@ -212,13 +211,12 @@ describe("the Merge Assist operations", () => {
     expect(mergeAssistStatusSchema.safeParse((await call("merge_assist_scan", {}, checkout)).result).success).toBe(true);
     // A dismissal reaches the service as the agent's, and the service refuses it (below, for real).
     expect((await call("merge_assist_conflict_dismiss", { conflictId: CONFLICT }, checkout)).result).toMatchObject({ checkout });
-    expect((await call("merge_assist_settings_get", {}, checkout)).result).toEqual({ delivery: "both", hook: null });
+    expect((await call("merge_assist_settings_get", {}, checkout)).result).toEqual({ hook: null });
 
     // Turning it on or off is the person's to do.
     expect((await call("merge_assist_settings_set", { enabled: true }, checkout)).result).toEqual(refused);
     expect((await call("merge_assist_settings_set", { enabled: false }, checkout)).result).toEqual(refused);
-    // The delivery and the hook command are the person's too: the hook runs a program as them.
-    expect((await call("merge_assist_settings_set", { delivery: "chat" }, checkout)).result).toEqual(refused);
+    // The hook command is the person's too: it runs a program as them.
     expect((await call("merge_assist_settings_set", { hook: { command: ["./notify.sh"] } }, checkout)).result).toEqual(refused);
     expect((await call("merge_assist_settings_set", { hook: null }, checkout)).result).toEqual(refused);
 
@@ -266,7 +264,7 @@ describe("the Merge Assist operations", () => {
     expect(settings.get?.operationId).toBe("merge_assist_settings_get");
     expect(settings.put?.operationId).toBe("merge_assist_settings_set");
     expect(Object.keys(settings.put!.requestBody!.content["application/json"]!.schema.properties).sort())
-      .toEqual(["checkout", "delivery", "enabled", "hook", "repository"]);
+      .toEqual(["checkout", "enabled", "hook", "repository"]);
   });
 });
 

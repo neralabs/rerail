@@ -1,6 +1,6 @@
 /**
- * Real Git repositories, a Rerail database, and stand-ins for the agent CLI judge and `gh`, for Merge Assist's
- * service-level tests. Nothing here reaches the network or starts an agent CLI.
+ * Real Git repositories, a Rerail database, and a stand-in for `gh`, for Merge Assist's service-level tests. Nothing
+ * here reaches the network.
  */
 import { mkdirSync } from "node:fs";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
@@ -17,11 +17,8 @@ import {
 import {
   createMergeAssistService,
   setRepositoryStarted,
-  type AgentJudge,
   type GithubClient,
   type GithubRepository,
-  type JudgeOutcome,
-  type JudgeTask,
   type MergeAssistRuntime,
   type PullRequestSummary,
 } from "../../../src/runtime/index.js";
@@ -36,36 +33,6 @@ export function takeNotes(service: MergeAssistRuntime, sessionId: string, checko
 
 /** `src/api/orders.ts` as branch `mine` commits it. */
 const ORDERS_CLEAN = "export const orders = () => client.get(\"/orders\");\n";
-
-/** A judge that answers from `answer` (a value the task parses, or a failure) and records every task. */
-export class FakeJudge implements AgentJudge {
-  readonly tasks: Array<JudgeTask<unknown>> = [];
-
-  constructor(private readonly answer: (task: JudgeTask<unknown>) => unknown) {}
-
-  readiness() {
-    return { available: true, runner: "claude" as const, problem: null };
-  }
-
-  budget() {
-    return { used: this.tasks.length, limit: 40, windowMinutes: 60 };
-  }
-
-  async judge<T>(task: JudgeTask<T>): Promise<JudgeOutcome<T>> {
-    this.tasks.push(task as JudgeTask<unknown>);
-    const answer = this.answer(task as JudgeTask<unknown>);
-    if (typeof answer === "object" && answer !== null && "ok" in answer && answer.ok === false) return answer as JudgeOutcome<T>;
-    return { ok: true, value: task.parse(answer), runner: "claude", cached: false };
-  }
-}
-
-/** The quick call's answer for a conflict's status line. */
-export const SUMMARY = "They change the same lines as this branch.";
-
-/** What the default judge answers: the quick call's summary. */
-export function defaultAnswer(): unknown {
-  return { summary: SUMMARY };
-}
 
 export interface FakeGithubOptions {
   readiness?: GithubReadiness;
@@ -97,8 +64,8 @@ export interface Workspace {
   readonly database: RerailDatabase;
   readonly databasePath: string;
   readonly repositoryKey: string;
-  /** A Merge Assist over the workspace's database, with these stand-ins. */
-  service(options?: { judge?: AgentJudge; github?: GithubClient; now?: () => number }): MergeAssistRuntime;
+  /** A Merge Assist over the workspace's database, with this `gh` stand-in. */
+  service(options?: { github?: GithubClient; now?: () => number }): MergeAssistRuntime;
   /** A linked worktree of the repository at `<folder>/<name>`, on a new branch from `main`. */
   worktree(name: string, options?: { record?: boolean }): string;
 }
@@ -144,7 +111,6 @@ export function mergeAssistWorkspaces(): (options?: { setUp?: boolean; remote?: 
       service: (options = {}) => {
         const service = createMergeAssistService({
           database,
-          judge: options.judge ?? new FakeJudge(defaultAnswer),
           github: options.github ?? new FakeGithub(),
           ...(options.now === undefined ? {} : { now: options.now }),
         });

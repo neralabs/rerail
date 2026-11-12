@@ -64,18 +64,20 @@ describe("conflict levels", { timeout: 60_000 }, () => {
     expect(later!.score).toBeLessThan(300);
   });
 
-  it("keeps to the person's checkpoints a day, queueing the rest until the next day, when it rises however quiet it got", async () => {
-    const ws = await overlaps(["src/retry.ts", "src/cache.ts"], 30, { ".rerail/policy.yaml": "version: 1\ndimmer:\n  checkpointsPerDay: 1\n" });
+  it("keeps to the person's three checkpoints a day, queueing the rest until the next day, when it rises however quiet it got", async () => {
+    const ws = await overlaps(["src/retry.ts", "src/cache.ts", "src/queue.ts", "src/store.ts"], 30);
     const start = Date.now();
     let now = start;
     const service = ws.service({ now: () => now });
     await service.setEnabled(ws.repo, true);
     const first = open((await service.scan(ws.repo)).conflicts);
-    expect(first.map(conflict => [conflict.level, conflict.queued, conflict.queuedFor]).sort()).toEqual([["ambient", true, "checkpoint"], ["checkpoint", false, null]]);
+    expect(first.map(conflict => [conflict.level, conflict.queued, conflict.queuedFor]).sort()).toEqual([
+      ["ambient", true, "checkpoint"], ["checkpoint", false, null], ["checkpoint", false, null], ["checkpoint", false, null],
+    ]);
     const queued = first.find(conflict => conflict.queued)!;
     // The queued one is an ambient overlap meanwhile: a note and a line, no card.
     const notes = service.pendingNotes("session-1", ws.repo);
-    expect(notes.map(note => note.conflict?.text.startsWith("decide:"))).toEqual([false, true]);
+    expect(notes.map(note => note.conflict?.text.startsWith("decide:"))).toEqual([false, true, true, true]);
     expect(notes[0]!.conflict!.id).toBe(queued.id);
     // A minute later, the same budget day, it still waits.
     now = start + 60_000;
@@ -129,19 +131,19 @@ describe("conflict levels", { timeout: 60_000 }, () => {
     // Outside a session there is no stop to spend: both wait for one, shown as checkpoints meanwhile.
     expect(open((await scanned.scan(outside.repo)).conflicts).map(conflict => [conflict.level, conflict.queuedFor])).toEqual([["checkpoint", "stop"], ["checkpoint", "stop"]]);
 
-    const ws = await overlaps(files, 60, { ".rerail/policy.yaml": "version: 1\ndimmer:\n  checkpointsPerDay: 1\n" });
+    const ws = await overlaps(files, 60);
     let now = Date.now();
     const service = ws.service({ now: () => now });
     await service.setEnabled(ws.repo, true);
     expect(await service.detectAfterEdit(ws.repo, "session-1")).toBe(true);
-    // The stop counts as the day's one prompt, so the other has no checkpoint to fall back to either.
+    // The other shows as a checkpoint meanwhile: today still has one to spare.
     const first = open((await service.status(ws.repo)).conflicts);
-    expect(first.map(conflict => [conflict.level, conflict.queued, conflict.queuedFor])).toEqual([["stop", false, null], ["ambient", true, "stop"]]);
+    expect(first.map(conflict => [conflict.level, conflict.queued, conflict.queuedFor])).toEqual([["stop", false, null], ["checkpoint", true, "stop"]]);
     const waiting = first[1]!.id;
     // Another pass in the same session keeps it waiting.
     now += 31_000;
     expect(await service.detectAfterEdit(ws.repo, "session-1")).toBe(true);
-    expect(open((await service.status(ws.repo)).conflicts).find(conflict => conflict.id === waiting)).toMatchObject({ level: "ambient", queued: true, queuedFor: "stop" });
+    expect(open((await service.status(ws.repo)).conflicts).find(conflict => conflict.id === waiting)).toMatchObject({ level: "checkpoint", queued: true, queuedFor: "stop" });
     // The next session's first detection has a stop to spend: it rises to it.
     now += 31_000;
     expect(await service.detectAfterEdit(ws.repo, "session-2")).toBe(true);

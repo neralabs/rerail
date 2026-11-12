@@ -11,7 +11,9 @@ import { tmpdir } from "node:os";
 import { z } from "zod";
 import type { GithubReadiness } from "../../engine/merge-assist/model.js";
 import { resolveExecutable } from "../npm.js";
-import { KILL_GRACE_MS } from "./agent-judge.js";
+
+/** Grace a stopped `gh` gets after SIGTERM before SIGKILL. */
+const KILL_GRACE_MS = 2_000;
 
 export interface GithubRepository { readonly host: string; readonly owner: string; readonly name: string }
 

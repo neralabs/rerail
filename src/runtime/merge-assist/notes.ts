@@ -3,19 +3,17 @@
  * conflict at its level (ambient: information; checkpoint: a card to show the person; stop: at an edit of a contested
  * file, see {@link stopNotes}), and what the person's conflict hook command added. A conflict goes to a session once per
  * level it reached: what a session was handed is kept under `delivered:<session>`, and only once a delivery has taken
- * it. A note carries the person's line for its conflict (`conflict`). The person's `conflictDelivery` decides which of a
- * conflict's surfaces a session gets (`conflict-delivery.ts`): in `terminal` mode a conflict's note carries only the
- * person's line, with no text for the agent; a stop goes out in every mode.
+ * it. A note carries the person's line for its conflict (`conflict`).
  */
 import { like } from "drizzle-orm";
 import { isAbsolute, relative, sep } from "node:path";
 import { z } from "zod";
 import type { ConflictNotice } from "../../engine/adapter-contract.js";
 import { checkpointNote, conflictNote, hookFollowUpNote, hookNote, sideName, stopNote, type ConflictCardInput } from "../../engine/code-rule/rerail-steer.js";
-import type { Conflict, ConflictDelivery } from "../../engine/merge-assist/model.js";
+import type { Conflict } from "../../engine/merge-assist/model.js";
 import type { RerailDatabase } from "../../engine/storage/database.js";
 import { mergeAssistState } from "../../engine/storage/schema.js";
-import { settingsAt, statusText, viaChat, viaTerminal } from "./conflict-delivery.js";
+import { statusText } from "./conflict-delivery.js";
 import { readConflicts, type StoredConflict } from "./conflict-store.js";
 import { STATE_KEYS, readState, writeState, type StateQueries } from "./state.js";
 
@@ -31,12 +29,9 @@ export interface PendingNote {
 /** The prefix every mark of a conflict starts with. */
 const conflictMark = (conflict: Conflict): string => `${conflict.id}:`;
 
-/** How a session takes a checkout's conflict notes: the person's settings, the conflict hook's state, and its host. */
+/** How a session takes a checkout's conflict notes: whether its host draws a status line or widget (the footer). */
 export interface ConflictNoteOptions {
-  readonly delivery: ConflictDelivery;
-  /** What the session's host draws: the person's line (`systemMessage`), and a status line or widget. */
-  readonly surfaces: { readonly personLine: boolean; readonly statusLine: boolean };
-  readonly now: number;
+  readonly statusLine: boolean;
 }
 
 export interface PendingNoteOptions extends ConflictNoteOptions {
@@ -45,27 +40,26 @@ export interface PendingNoteOptions extends ConflictNoteOptions {
 }
 
 /**
- * The person's line for an open conflict: what it is at ambient; what to decide at a checkpoint or a stop. When the
- * delivery includes terminal on a host with no status line (Codex), the line carries the conflict's status line text too.
+ * The person's line for an open conflict: what it is at ambient; what to decide at a checkpoint or a stop. On a host
+ * with no status line (Codex), the line carries the conflict's line too.
  */
-function noticeOf(entry: StoredConflict, options: ConflictNoteOptions): ConflictNotice {
-  const { conflict } = entry;
+function noticeOf(conflict: Conflict, options: ConflictNoteOptions): ConflictNotice {
   const text = conflict.level === "checkpoint" || conflict.level === "stop"
     ? `decide: ${conflict.title} (${conflict.theirs.label})`
     : `your edit overlaps ${sideName(conflict.theirs)}: ${conflict.title}`;
-  const summary = viaTerminal(options.delivery) && !options.surfaces.statusLine ? ` — ${statusText(entry, options.now)}` : "";
+  const summary = options.statusLine ? "" : ` — ${statusText(conflict)}`;
   return { id: conflict.id, text: `${text}${summary}` };
 }
 
 /**
- * `notice` as the person's line reads at delivery time: from the conflict as stored now, so a status line text the
- * conflict hook or the quick call gave after the note was queued is the one it carries. Unchanged when the conflict is
- * no longer open here; a stop's question to the person stays.
+ * `notice` as the person's line reads at delivery time: from the conflict as stored now, so a status the conflict
+ * hook gave after the note was queued is the one it carries. Unchanged when the conflict is no longer open here; a
+ * stop's question to the person stays.
  */
 export function currentNotice(db: StateQueries, checkoutPath: string, notice: ConflictNotice, options: ConflictNoteOptions): ConflictNotice {
   const entry = readConflicts(db, checkoutPath).find(({ conflict }) => conflict.id === notice.id && conflict.status === "open");
   if (entry === undefined) return notice;
-  const current = noticeOf(entry, options);
+  const current = noticeOf(entry.conflict, options);
   return notice.ask === undefined ? current : { ...current, ask: notice.ask };
 }
 
@@ -92,37 +86,31 @@ const hookMark = (conflict: Conflict): string[] =>
 /** A checkpoint's mark: once per conflict. */
 const checkpointMark = (conflict: Conflict): string => `${conflictMark(conflict)}checkpoint`;
 
-/**
- * A conflict's note for one surface: through the agent (`content`, with the hook's note) in chat modes; in terminal
- * mode, only the person's line, where the host draws one; nothing otherwise.
- */
-function surfaceNote(entry: StoredConflict, content: () => string, mark: string, options: ConflictNoteOptions): PendingNote[] {
-  const notice = noticeOf(entry, options);
-  if (viaChat(options.delivery)) return [{ content: hookNote(content(), hookNoteOf(entry.conflict)), marks: [mark, ...hookMark(entry.conflict)], conflict: notice }];
-  return options.surfaces.personLine ? [{ content: "", marks: [mark], conflict: notice }] : [];
+/** A conflict's note: through the agent (`content`, with the hook's note), with the person's line. */
+function surfaceNote(conflict: Conflict, content: string, mark: string, options: ConflictNoteOptions): PendingNote {
+  return { content: hookNote(content, hookNoteOf(conflict)), marks: [mark, ...hookMark(conflict)], conflict: noticeOf(conflict, options) };
 }
 
-/** Whether a conflict's note waits: its mark is taken, or (through the agent) a hook handler has not answered yet. */
+/** Whether a conflict's note waits: its mark is taken, or a hook handler has not answered yet. */
 function waits(conflict: Conflict, mark: string, taken: (mark: string) => boolean, options: PendingNoteOptions): boolean {
-  return taken(mark) || (viaChat(options.delivery) && options.awaiting.has(conflict.id));
+  return taken(mark) || options.awaiting.has(conflict.id);
 }
 
 /** One note per ambient overlap the session was not handed: who, what they did, information only. */
 function ambientNotes(conflicts: readonly StoredConflict[], taken: (mark: string) => boolean, options: PendingNoteOptions): PendingNote[] {
   return conflicts.filter(({ conflict }) => conflict.level === "ambient" && !waits(conflict, `${conflictMark(conflict)}open`, taken, options))
-    .flatMap(entry => surfaceNote(entry, () => {
-      const { conflict, files } = entry;
-      return conflictNote({ file: files[0] ?? conflict.title, peer: conflict.theirs.label, author: conflict.theirs.author, summary: conflict.theirs.summary, pullRequest: conflict.theirs.label.startsWith("PR #") });
-    }, `${conflictMark(entry.conflict)}open`, options));
+    .map(({ conflict, files }) => surfaceNote(
+      conflict,
+      conflictNote({ file: files[0] ?? conflict.title, peer: conflict.theirs.label, author: conflict.theirs.author, summary: conflict.theirs.summary, pullRequest: conflict.theirs.label.startsWith("PR #") }),
+      `${conflictMark(conflict)}open`,
+      options,
+    ));
 }
 
-/**
- * One card per checkpoint or stop conflict the session was not handed: through the agent in chat modes; in terminal
- * mode the person's line carries it, with the status line.
- */
+/** One card per checkpoint or stop conflict the session was not handed. */
 function checkpointNotes(conflicts: readonly StoredConflict[], taken: (mark: string) => boolean, options: PendingNoteOptions): PendingNote[] {
   return conflicts.filter(({ conflict }) => (conflict.level === "checkpoint" || conflict.level === "stop") && !waits(conflict, checkpointMark(conflict), taken, options))
-    .flatMap(entry => surfaceNote(entry, () => checkpointNote(cardOf(entry.conflict), entry.files), checkpointMark(entry.conflict), options));
+    .map(({ conflict, files }) => surfaceNote(conflict, checkpointNote(cardOf(conflict), files), checkpointMark(conflict), options));
 }
 
 /** Whether the session was handed (or is about to be handed) a conflict's own note: ambient, checkpoint or stop. */
@@ -133,8 +121,7 @@ const noteGiven = (conflict: Conflict, taken: (mark: string) => boolean): boolea
  * The hook's note on its own, through the agent, for each conflict whose note went out before the person's command
  * answered (Rerail's note waits for it a second at most): once per conflict, event and session, attributed to the hook.
  */
-function hookFollowUps(conflicts: readonly StoredConflict[], taken: (mark: string) => boolean, options: PendingNoteOptions): PendingNote[] {
-  if (!viaChat(options.delivery)) return [];
+function hookFollowUps(conflicts: readonly StoredConflict[], taken: (mark: string) => boolean): PendingNote[] {
   return conflicts.flatMap(({ conflict }) => {
     const marks = hookMark(conflict);
     const note = hookNoteOf(conflict);
@@ -155,7 +142,7 @@ export function pendingNotes(db: StateQueries, sessionId: string, checkoutPath: 
   return [
     ...ambientNotes(conflicts, taken, options),
     ...checkpointNotes(conflicts, taken, options),
-    ...hookFollowUps(conflicts, taken, options),
+    ...hookFollowUps(conflicts, taken),
   ];
 }
 
@@ -230,9 +217,9 @@ function stopAsk({ conflict, files }: StoredConflict): string {
 
 /**
  * The stop notes for a tool call about to edit contested files: one per open stop conflict whose files it edits, once
- * per session, in every delivery mode. Where the host can ask the person (`asks`), the first stop the
- * session gets asks them before the edit (`conflict.ask`); every other one tells the agent not to edit those files and
- * to ask the person now. Each carries the person's line and counts as the conflict's checkpoint card too. Reads only.
+ * per session. Where the host can ask the person (`asks`), the first stop the session gets asks them before the edit
+ * (`conflict.ask`); every other one tells the agent not to edit those files and to ask the person now. Each carries
+ * the person's line and counts as the conflict's checkpoint card too. Reads only.
  */
 export function stopNotes(db: StateQueries, sessionId: string, checkoutPath: string, call: EditCall, asks: boolean, inFlight: ReadonlySet<string>, options: ConflictNoteOptions): PendingNote[] {
   const paths = editedPaths(checkoutPath, call);
@@ -247,11 +234,10 @@ export function stopNotes(db: StateQueries, sessionId: string, checkoutPath: str
       const { conflict, files } = entry;
       const ask = asks && !asked;
       asked ||= ask;
-      const notice = noticeOf(entry, options);
-      const card = stopNote(cardOf(conflict), files, ask);
+      const notice = noticeOf(conflict, options);
       return {
-        content: viaChat(options.delivery) ? hookNote(card, hookNoteOf(conflict)) : card,
-        marks: [`${conflictMark(conflict)}stop`, checkpointMark(conflict), ...(viaChat(options.delivery) ? hookMark(conflict) : [])],
+        content: hookNote(stopNote(cardOf(conflict), files, ask), hookNoteOf(conflict)),
+        marks: [`${conflictMark(conflict)}stop`, checkpointMark(conflict), ...hookMark(conflict)],
         conflict: ask ? { ...notice, ask: stopAsk(entry) } : notice,
       };
     });
@@ -263,22 +249,21 @@ export interface ConflictFooter {
   readonly conflicts: number;
   /** The loudest open checkpoint or stop conflict: `◉ decide: <title>`. */
   readonly decide: { readonly id: string; readonly title: string } | null;
-  /** The newest open conflict above logged: `◐ <summary>`, the hook's status line when it gave one. */
+  /** The newest open conflict above logged: `◐ <line>`, the hook's status when it gave one, else its summary. */
   readonly summary: { readonly id: string; readonly text: string };
 }
 
 /**
  * The footer's Merge Assist segment for a session working in `cwd`: from the conflicts of the checkout that holds it
- * (the longest stored checkout path `cwd` is in); undefined when none is open above logged, or when the person's
- * `conflictDelivery` leaves the status line out (chat). Reads only.
+ * (the longest stored checkout path `cwd` is in); undefined when none is open above logged. Reads only.
  */
-export function conflictFooter(db: StateQueries, cwd: string, now: number): ConflictFooter | undefined {
+export function conflictFooter(db: StateQueries, cwd: string): ConflictFooter | undefined {
   const prefix = STATE_KEYS.conflicts("");
   const checkout = db.select({ key: mergeAssistState.key }).from(mergeAssistState).where(like(mergeAssistState.key, `${prefix}%`)).all()
     .map(row => row.key.slice(prefix.length))
     .filter(path => cwd === path || cwd.startsWith(`${path}${sep}`))
     .sort((left, right) => right.length - left.length)[0];
-  if (checkout === undefined || !viaTerminal(settingsAt(db, checkout).delivery)) return undefined;
+  if (checkout === undefined) return undefined;
   const open = surfacedConflicts(db, checkout);
   const newest = open.toSorted((left, right) => right.conflict.detectedAt.localeCompare(left.conflict.detectedAt))[0];
   if (newest === undefined) return undefined;
@@ -287,7 +272,7 @@ export function conflictFooter(db: StateQueries, cwd: string, now: number): Conf
   return {
     conflicts: open.length,
     decide: loudest === undefined ? null : { id: loudest.id, title: loudest.title },
-    summary: { id: newest.conflict.id, text: statusText(newest, now) },
+    summary: { id: newest.conflict.id, text: statusText(newest.conflict) },
   };
 }
 

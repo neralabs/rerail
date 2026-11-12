@@ -116,8 +116,7 @@ describe("Merge Assist's conflicts", () => {
   it("renders other people's text as text and links only a pull request URL it can trust", () => {
     data.mergeAssist = fixture({
       conflicts: [conflict(OPEN_ID, {
-        title: HOSTILE, evidence: [HOSTILE],
-        summary: { text: HOSTILE, via: "judge", at: "2026-11-02T11:00:00Z", reason: null },
+        title: HOSTILE, evidence: [HOSTILE], summary: HOSTILE,
         theirs: side({ label: "jbarnes/model", author: HOSTILE, summary: HOSTILE, hunk: `+${HOSTILE}`, url: "javascript:alert(1)" }),
       })],
     });
@@ -136,7 +135,6 @@ describe("Merge Assist's conflicts", () => {
   it("shows an open conflict's summary and a failed conflict hook with its event and why", () => {
     data.mergeAssist = fixture({
       conflicts: [conflict(OPEN_ID, {
-        summary: { text: "PR #398 (Tim) is changing matchers", via: "fallback", at: "2026-11-02T11:00:00Z", reason: "budget" },
         hook: { event: "level-changed", ok: false, error: "timed out after 10 s", note: null, status: null, at: "2026-11-02T11:01:00Z" },
       })],
     });
@@ -147,7 +145,7 @@ describe("Merge Assist's conflicts", () => {
 
     data.mergeAssist = fixture({ conflicts: [conflict(OPEN_ID, { hook: { event: "detected", ok: true, error: null, note: "n", status: "s", at: "2026-11-02T11:01:00Z" } })] });
     render(page.root);
-    expect(cards()[0]!.querySelector(".msummary")).toBeNull();
+    expect(cards()[0]!.querySelector(".msummary")!.textContent).toBe("PR #398 (Tim) is changing matchers");
     expect(cards()[0]!.querySelector(".mhookfail")).toBeNull();
   });
 

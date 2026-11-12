@@ -177,7 +177,7 @@ function conflictSegment(dashboard: URL, { decide, conflicts, summary }: NonNull
  * `R E R A I L ● 26 rules · worktree · 2 to approve`, with each rule overlay in force in the checkout after the count
  * (linked to its pack page), what runs in Log waiting for a person's approval (linked to Overview, which lists it),
  * `steered N×` only once Rerail has steered in this session (A1f), and Merge Assist's segment while the checkout has a
- * conflict open above logged and the person's conflict delivery includes the terminal (`conflictSegment`).
+ * conflict open above logged (`conflictSegment`).
  */
 function onPresentation(
   origin: URL,

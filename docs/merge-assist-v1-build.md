@@ -4,9 +4,7 @@
 
 **Delivery status:** Experimental and internal testing; off unless a person turns it on for a repository.
 
-**Scope:** conflicts in flight, as the PRD's [delivered scope](merge-assist-prd.md#delivered-scope) states. The rest
-of the PRD is the design and evaluation record of what was built before and removed. Code comments cite this
-document's section numbers.
+**Scope:** conflicts in flight. Code comments cite this document's section numbers.
 
 **Prior art:** [Amp comparison](branch-coordination-amp-comparison.md).
 
@@ -21,10 +19,9 @@ flight and tells the person and their coding agent when their work collides with
 - **Levels.** The dimmer decides how loud each conflict is from what Git measures: logged, ambient, checkpoint or
   stop. It interrupts only when continuing costs more than stopping (§9.1).
 - **Delivery.** Each level has its surfaces: a note to the agent, a line to the person, a footer segment, a card the
-  agent shows the person, and a question before an edit to a contested file. The person chooses whether conflicts
-  reach them through the agent, the terminal, or both (§9.2, §9.6).
-- **The conflict hook.** Everything after detection is a handler on the conflict's events: delivery, a one-line
-  summary from the person's agent CLI, and a command the person sets (§9.5).
+  agent shows the person, and a question before an edit to a contested file (§9.2, §9.6).
+- **The conflict hook.** Everything after detection is a handler on the conflict's events: delivery, and a command
+  the person sets (§9.5).
 - **Dismiss.** The person's one action on a conflict is to say it is not one (§9.3).
 
 Rerail never picks a side, never merges, and never writes to a branch or to GitHub. The people involved settle the
@@ -59,13 +56,11 @@ hosted service, other Git hosts than GitHub for remote pull requests.
 
 ## 4. Principles
 
-- **Local first, no Rerail network requests.** Rerail runs tools the developer already has, under their existing
-  sign-in: `gh` to list pull requests (read-only), and their coding agent's CLI for a one-line summary. Rerail holds
-  no credentials.
+- **Local first, no Rerail network requests.** Rerail runs a tool the developer already has, under their existing
+  sign-in: `gh` to list pull requests (read-only). Rerail holds no credentials and asks no model.
 - **Git is the source of truth.** Conflicts are read from refs the repository already holds. Rerail never fetches,
   merges, commits or pushes, and writes no file.
-- **Deterministic before intelligent.** Detection and levels come from Git alone; the agent CLI only words a summary,
-  and a deterministic line stands until it answers or when it cannot.
+- **Deterministic.** Detection, levels and each conflict's one-line summary come from Git alone.
 - **Interrupt only when it pays.** Loudness follows expected rework, with hysteresis and budgets on interruptions.
 - **People settle conflicts.** Rerail never chooses between two developers' changes.
 
@@ -80,10 +75,8 @@ Merge Assist is off for every repository. A person turns it on in the dashboard 
 - Rerail compares your work here with your other local and remote-tracking branches, and with open pull requests it
   reads through **`gh`** with your sign-in, read-only. It writes no file and never merges, commits or pushes.
 - When your work overlaps someone else's, it tells you and your coding agent, as loud as the overlap calls for.
-- For each new conflict it asks **your coding agent's CLI** (Claude Code or Codex) for a one-line summary. That sends
-  both sides' changed lines to that CLI's provider, under your own sign-in, as your session already does.
 
-It also shows what Rerail found: which agent CLI it will use, and whether `gh` is signed in.
+It also shows what Rerail found: whether `gh` is signed in.
 
 Turning it off clears the conflicts and the last scan of every checkout of the repository, dismissals included; the
 person's settings (§9.6) stay.
@@ -93,11 +86,10 @@ person's settings (§9.6) stay.
 **Merge Assist** in the sidebar, for the selected checkout. Its pitch: "Rerail watches the branches and pull requests
 in flight and tells you and your coding agent when your work collides with someone else's, before it merges."
 
-- **Off:** what turning it on does, what Rerail found (the agent CLI, `gh`), and **Turn on Merge Assist**.
-- **The status card:** the branch and base, the agent CLI used for summaries, `gh` state, when the last scan ran and
-  what it could not read, how many agent calls the last hour used against the budget, **Scan now** and **Turn off**.
-- **Settings:** where conflicts reach the person (chat, terminal or both) and the conflict hook command with its
-  timeout (§9.6).
+- **Off:** what turning it on does, what Rerail found (`gh`), and **Turn on Merge Assist**.
+- **The status card:** the branch and base, `gh` state, when the last scan ran and what it could not read, **Scan
+  now** and **Turn off**.
+- **Settings:** the conflict hook command with its timeout (§9.6).
 - **Conflicts:** open conflicts as cards, loudest first, each with its level, its short id, whether it is queued, its
   summary, a failed hook, both sides, the dimmer's reasons, the evidence, who to talk it over with, and **Dismiss**;
   logged ones muted; then the dismissed ones, folded, with who dismissed each and when.
@@ -112,7 +104,7 @@ rerail merge-assist on | off [--repo <dir>]              # the person's (the CLI
 rerail merge-assist scan [--repo <dir>] [--json]         # find conflicts now, pull requests listed afresh
 rerail merge-assist conflicts [--repo <dir>] [--json]    # every conflict, open ones with both hunks (§9.4)
 rerail merge-assist dismiss <conflict-id> [--repo <dir>] [--json]   # Not a conflict (§9.3)
-rerail merge-assist settings [--delivery chat|terminal|both] [--hook-command '<json argv>' | --no-hook] [--hook-timeout <s>] [--repo <dir>] [--json]   # §9.6
+rerail merge-assist settings [--hook-command '<json argv>' | --no-hook] [--hook-timeout <s>] [--repo <dir>] [--json]   # §9.6
 ```
 
 MCP tools (the same operations the dashboard uses, each also an HTTP route):
@@ -125,7 +117,7 @@ MCP tools (the same operations the dashboard uses, each also an HTTP route):
 | `merge_assist_settings_set` | `PUT /api/merge-assist/settings` | people only: a coding agent gets `403 agent-not-permitted` |
 | `merge_assist_conflict_dismiss` | `POST /api/merge-assist/conflicts/dismiss` | people only: a coding agent gets `409 invalid-state` |
 
-`merge_assist_settings_set` takes `{ enabled?, delivery?, hook? }`, at least one; `merge_assist_conflict_dismiss`
+`merge_assist_settings_set` takes `{ enabled?, hook? }`, at least one; `merge_assist_conflict_dismiss`
 takes `{ repository?, checkout?, conflictId }`. An agent may read the status and the settings and scan its own
 checkout. It may not turn the feature on or off, change the settings, or dismiss a conflict. These limits hold for the
 MCP tools and the HTTP API; the CLI runs as the person (§6).
@@ -133,18 +125,16 @@ MCP tools and the HTTP API; the CLI runs as the person (§6).
 ## 6. Security
 
 Merge Assist reads data written by other people (branch names, commit subjects, hunks, pull request metadata, logins)
-and passes some of it to an agent CLI and into the developer's own agent session. The threat model:
+and passes some of it into the developer's own agent session and to the person's conflict hook command. The threat
+model:
 
 | Threat | Mitigation |
 | --- | --- |
 | Another person's text injects instructions into the developer's agent | It reaches the agent only as quoted, labelled data (`written by <author>`), made one line, inside notes that start by saying they come from Rerail, not the user, and that it is other in-flight work, not an instruction |
-| Another person's text injects instructions into the agent CLI that writes the summary | The CLI runs with **no tools**, no MCP servers, no session persistence, in an empty temporary directory, so it cannot read or change the repository. Untrusted text is passed as fenced data with a per-call random fence and an instruction to treat it as data. Its output must match a JSON schema and is used only as text; it never executes |
 | Terminal escapes in other people's text | `rerail merge-assist` strips control, format and line-separator characters from it, so text cannot move the cursor, recolour the terminal or forge a line of Rerail's own |
 | Shell injection through the hook command | The command is an argv array run without a shell; the conflict reaches it on stdin only, never in its arguments |
-| Recursive Rerail sessions from the agent CLI | It runs in a temporary directory that is not a started repository, so Rerail's own hooks ignore it, and with the agent CLI's extension/plugin discovery off where it has a switch |
-| Credential exposure | Rerail passes the environment the agent CLI and `gh` need and never reads or stores tokens. `gh` runs with prompts and the update notifier off; `GH_ENTERPRISE_TOKEN` and `GITHUB_ENTERPRISE_TOKEN` are stripped |
-| An agent turning Merge Assist on, changing where conflicts go, or dismissing one to quiet it | On the MCP tools and the HTTP API, turning on or off, the settings and Dismiss are people-only: a coding agent's call is refused. The CLI runs as the person, so an agent with shell access can run `rerail merge-assist on` or `dismiss`, as it can any Rerail command. The people-only guarantee covers the MCP and API surface, not the shell |
-| Runaway spending of the user's tokens | A per-repository budget (40 agent calls an hour), at most 3 summaries per detection pass, results cached by content hash, and the page shows the use |
+| Credential exposure | Rerail passes the environment `gh` needs and never reads or stores tokens. `gh` runs with prompts and the update notifier off; `GH_ENTERPRISE_TOKEN` and `GITHUB_ENTERPRISE_TOKEN` are stripped |
+| An agent turning Merge Assist on, changing its settings, or dismissing a conflict to quiet it | On the MCP tools and the HTTP API, turning on or off, the settings and Dismiss are people-only: a coding agent's call is refused. The CLI runs as the person, so an agent with shell access can run `rerail merge-assist on` or `dismiss`, as it can any Rerail command. The people-only guarantee covers the MCP and API surface, not the shell |
 
 ## 7. Privacy
 
@@ -152,11 +142,10 @@ and passes some of it to an agent CLI and into the developer's own agent session
 
 - **What goes over the network**: Rerail runs `gh` to read the sign-in state and list open pull requests. It is
   read-only and uses the developer's own `gh` sign-in.
-- **Your coding agent's provider**: for each new conflict, Rerail runs the developer's coding agent CLI for a one-line
-  summary. That run sends both sides' summaries and contested hunks, clipped, to the agent's provider, under that
-  provider's terms. Rerail makes no model request itself.
-- **What Rerail keeps**: conflicts, the last scan, the settings and the summary cache, in the Rerail database on this
-  machine only (§8.2). Nothing is written into the checkout.
+- **Your coding agent's provider**: Merge Assist's notes reach the agent's provider through the agent's session, as
+  steers do. Rerail makes no model request.
+- **What Rerail keeps**: conflicts, the last scan and the settings, in the Rerail database on this machine only
+  (§8.2). Nothing is written into the checkout.
 
 The principle stays: Rerail makes no network requests with credentials of its own.
 
@@ -170,14 +159,11 @@ The principle stays: Rerail makes no network requests with credentials of its ow
 | engine | `src/engine/merge-assist/branch-git.ts` | Current and base branch, local branches and tips, ancestry, changed paths |
 | engine | `src/engine/merge-assist/overlap.ts` | Overlapping hunks between this checkout's work and another ref's, read-only |
 | engine | `src/engine/merge-assist/conflicts.ts` | Questions, ids and short ids, quiet files, the order the status lists conflicts in |
-| engine | `src/engine/merge-assist/conflict-signals.ts`, `dimmer.ts` | The dimmer's signals measured from Git, and its levels (pure) |
-| engine | `src/engine/merge-assist/policy.ts` | `.rerail/policy.yaml`: the dimmer's settings, read at the base branch |
-| engine | `src/engine/storage/schema.ts` | `repositories.merge_assist`, `merge_assist_judgments`, `merge_assist_state` |
-| runtime | `src/runtime/merge-assist/agent-judge.ts` | Find the agent CLI, run it headless with a JSON schema, budget and cache |
-| runtime | `src/runtime/merge-assist/judge-prompts.ts` | The summary prompt and its schema, with nonce fences |
+| engine | `src/engine/merge-assist/conflict-signals.ts`, `dimmer.ts` | The dimmer's signals measured from Git, and its levels and thresholds (pure) |
+| engine | `src/engine/storage/schema.ts` | `repositories.merge_assist`, `merge_assist_state` |
 | runtime | `src/runtime/merge-assist/github.ts` | `gh` reads: auth state, open pull requests |
 | runtime | `src/runtime/merge-assist/conflict-detect.ts`, `conflict-level.ts`, `conflict-store.ts` | Detection, the dimmer's pass and budgets, the stored conflicts |
-| runtime | `src/runtime/merge-assist/conflict-hook.ts`, `conflict-summary.ts`, `hook-command.ts`, `conflict-delivery.ts` | The hook, its handlers and the delivery setting |
+| runtime | `src/runtime/merge-assist/conflict-hook.ts`, `hook-command.ts`, `conflict-delivery.ts` | The hook, its handlers and the settings |
 | runtime | `src/runtime/merge-assist/notes.ts`, `people.ts`, `state.ts` | Session notes, people's names, keyed state |
 | runtime | `src/runtime/merge-assist/service.ts` | The facade the runtime, API and CLI call |
 | api | `src/api/merge-assist-contracts.ts`, `merge-assist-operations.ts` | The operations in §5.3 |
@@ -188,32 +174,14 @@ The principle stays: Rerail makes no network requests with credentials of its ow
 
 - `repositories.merge_assist` (boolean, default false): whether a person turned Merge Assist on for the repository;
   migration `repositories-merge-assist`.
-- `merge_assist_judgments`: agent CLI results keyed by a hash of the task and its inputs, with the runner and time:
-  the summary cache, and the count against the hourly budget.
 - `merge_assist_state`: one JSON value per key. `delivered:<session>` (the notes a session was handed),
   `scan:<checkout>` (the last scan), `scanning:<checkout>` (a scan running, since when), `github:<repository>` (`gh`
   readiness, reused for five minutes), `conflicts:<checkout>` (§9.4), `budget:<person>` (interruptions the dimmer
   granted) and `settings:<repository>` (§9.6). A value that does not match what the build expects reads as absent.
 
-An earlier build of this branch had a `merge_assist_items` table for its experiment. It was dropped from the schema
-without a migration because it never shipped in a release (`main` never had it), so no released database holds it. A
-development database made by that earlier build keeps an unused table that nothing reads or writes.
-
-### 8.3 Agent CLI invocations
-
-The summary call must run with no tools at all, MCP servers included, so that text written by other people cannot make
-it act. Each invocation was checked against a real run.
-
-| CLI | Command | Notes |
-| --- | --- | --- |
-| Claude Code | `claude -p --output-format json --json-schema <schema> --tools "" --disallowedTools "mcp__*" --strict-mcp-config --no-session-persistence --max-turns 2` | Reads `structured_output`. Not `--bare`, which would not use the person's subscription |
-| Codex | `codex exec --sandbox read-only --skip-git-repo-check --ephemeral --ignore-user-config --ignore-rules --disable shell_tool --disable unified_exec --disable code_mode_host --disable multi_agent --output-schema <file> -o <file> -` | Prompt on stdin. Without the `--disable` switches the model keeps a read-only shell; without `--ignore-user-config` it loads the person's MCP servers and hooks |
-
-OMP and Pi cannot run it yet: in print mode their MCP servers stay connected even with `--no-tools`, and neither has a
-switch to turn MCP off for one run. A session in OMP or Pi uses Claude Code or Codex when either is installed.
-
-All run in a fresh `0700` temporary directory, with a 120-second timeout, a 1 MiB output cap, and no shell. The
-runner preference is the host of the session that triggered the work, then Claude Code, then Codex.
+Earlier builds of this branch had a `merge_assist_items` and a `merge_assist_judgments` table. They were dropped from
+the schema without a migration because they never shipped in a release (`main` never had them), so no released
+database holds them. A development database made by an earlier build keeps unused tables that nothing reads or writes.
 
 ## 9. Conflicts
 
@@ -253,7 +221,7 @@ The dimmer decides how loud each open conflict is, on every detection, from what
   a constant. `hoursToMerge`: 24 with a pull request open on theirs, else their branch's age, at least 24 and at most
   336.
 - **Score**, in expected rework lines: `pLose × growthPerHour × hoursToMerge × lockIn × (1 + log2(1 + blastRadius))`.
-- **Levels**, against `interruptCost` (300 lines by default): `logged` for quiet files (every file a lockfile, a
+- **Levels**, against `interruptCost` (300 lines): `logged` for quiet files (every file a lockfile, a
   changelog, generated output or under `docs/`) or a score under a quarter of it; `ambient` under it; `checkpoint` at or
   above it; `stop` only with lock-in ×4, growth over `stopGrowthPerHour` (50), and a score of at least four
   interruptions.
@@ -269,19 +237,9 @@ The dimmer decides how loud each open conflict is, on every detection, from what
   `14 callers`, `pull request open: about 24 h to merge`, `even odds either side loses`), shown on the card, the
   agent's checkpoint card and the CLI.
 
-`.rerail/policy.yaml`, read at the base branch, never at either side, sets the three numbers:
-
-```yaml
-version: 1
-dimmer:
-  interruptCost: 300        # lines of rework one interruption costs: the checkpoint threshold
-  stopGrowthPerHour: 50     # growth above which a lock-in ×4 conflict may stop
-  checkpointsPerDay: 3      # checkpoint prompts per person per UTC day
-```
-
-The schema is strict: any other key, or a value out of range, makes the file invalid, and an invalid file counts as
-the defaults. Each conflict in the status carries `level`, `signals`, `score`, `reasons`, `queued`, `queuedFor` and a
-`shortId` (six hex characters the card names it by).
+The three numbers, `interruptCost`, `stopGrowthPerHour` and `checkpointsPerDay`, are fixed in `dimmer.ts`. Each
+conflict in the status carries `level`, `signals`, `score`, `reasons`, `queued`, `queuedFor` and a `shortId` (six hex
+characters the card names it by).
 
 A conflict's id is `conflict:<question>:<8 hex of their ref>`. The question is what the sides collide on:
 `overlapQuestion` over the file and a content anchor of the base lines their overlapping change covers
@@ -303,9 +261,7 @@ none.
 ### 9.2 Surface
 
 Each level has its own surfaces, and none interrupts mid-edit. Logged conflicts never reach the session: the
-Conflicts section only. Which surfaces a session gets also depends on the person's delivery setting (§9.6): the agent's
-notes and the card through the agent only when it includes `chat`, the status line segment only when it includes
-`terminal`; the person's line and the stop in every mode.
+Conflicts section only.
 
 **Ambient.** An ambient overlap goes to each session in the checkout once, through the notes path, as the context of
 the first hook after it was detected:
@@ -340,15 +296,13 @@ task, and not to settle the conflict itself. The card says what the conflict is 
 When the other side's author is not known, the line reads `Talk to the author of <label> about it`.
 
 The person's line is `◆ Rerail · decide: <title> (<their label>)  ·  open` (Claude Code draws `Rerail` as the coloured
-`R E R A I L`; Codex prints the word), and, when the delivery includes `terminal`, the footer shows
-`◉ decide: <title>` (the loudest open checkpoint or stop conflict) in place of the summary segment. With delivery
-`terminal` the card does not go through the agent: the status line and the person's line carry it. A session gets a
-conflict's card once.
+`R E R A I L`; Codex prints the word), and the footer shows `◉ decide: <title>` (the loudest open checkpoint or stop
+conflict) in place of the summary segment. A session gets a conflict's card once.
 
 **Stop.** At `PreToolUse` of an edit (`Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `ast_edit`, `apply_patch`, or a
 shell command that writes the file: a `>`/`>>` redirection, `tee`, `sed -i`, `perl -i`, `mv`/`cp`/`install` onto it,
-`truncate`, `rm`, or a patch naming it) that names a contested file, once per conflict and session, in every delivery
-mode: where the coding agent's adapter can ask the person (`asksPerson`: Claude Code, `permissionDecision: "ask"` with
+`truncate`, `rm`, or a patch naming it) that names a contested file, once per conflict and session: where the coding
+agent's adapter can ask the person (`asksPerson`: Claude Code, `permissionDecision: "ask"` with
 the reason `Rerail: <files> is contested with <label> (<author>): <title>. Allow this edit, or deny it and talk to
 <author> first.`), the first stop of the session asks them, and the agent's context says Rerail asked and carries the
 card; elsewhere the context tells the agent not to edit those files and to ask the person now, with the card. Either
@@ -375,13 +329,15 @@ overlap is gone.
 Conflicts live in `merge_assist_state` under `conflicts:<checkout path>`, open and dismissed, each stored as
 `{ conflict, files, lines, anchor }`: the conflict as the status shows it, its file, the contested base lines and their
 content anchor. Turning Merge Assist off for the repository clears them, dismissals included. Each conflict carries
-`summary` (`{ text, via: "judge" | "fallback", at, reason }`, the quick call's line, §9.5) and `hook` (`{ event, ok,
-error, note, status, at }`, the hook command's last answer, null while none ran).
+`summary`, a deterministic line set at detection: `<their label> (<author>) is changing <symbol or file>`, or
+`<their label> is changing <symbol or file>` when the author is not known; and `hook` (`{ event, ok, error, note,
+status, at }`, the hook command's last answer, null while none ran). Where the line shows (the footer, Codex's
+person's line, the dashboard), the hook command's `status` replaces the summary when it gave one (§9.5); the `summary`
+field itself stays as detected.
 
 The status (`MergeAssistStatus`) is `{ repositoryKey, checkout, branch, baseBranch, enabled, settings, readiness: {
-judge, github }, budget, scanning, lastScan, conflicts }`. `lastScan` is `{ at, peers: { branches, pullRequests },
-problems }` or null before the first scan; `conflicts` lists the open ones, loudest first, then the latest 20
-dismissed.
+github }, scanning, lastScan, conflicts }`. `lastScan` is `{ at, peers: { branches, pullRequests }, problems }` or null
+before the first scan; `conflicts` lists the open ones, loudest first, then the latest 20 dismissed.
 
 ```sh
 rerail merge-assist conflicts [--repo <dir>] [--json]       # every conflict, with both hunks
@@ -393,8 +349,8 @@ applies), its summary, the dimmer's reasons on a `Size:` line, and `Hook failed 
 command failed, then `Not a conflict? rerail merge-assist dismiss <id>`. The dashboard's Conflicts section shows the
 same, with "Conflict hook failed: <error>". Modules: `src/engine/merge-assist/{overlap,conflicts,dimmer}.ts` (the rule,
 ids, the dimmer), `src/runtime/merge-assist/{conflict-detect,conflict-level,conflict-store}.ts`, and
-`src/runtime/merge-assist/{conflict-hook,conflict-summary,hook-command,conflict-delivery}.ts` (the hook, its handlers
-and the delivery setting).
+`src/runtime/merge-assist/{conflict-hook,hook-command,conflict-delivery}.ts` (the hook, its handlers and the
+settings).
 
 ### 9.5 The conflict hook
 
@@ -414,15 +370,12 @@ the one exception below (a command's note joining the agent's note, held at most
 **Internal handlers.** A handler is
 `ConflictHandler { name; on(event, conflict, context): Promise<HandlerResult | void> }`. The context carries the
 checkout (path, repository key, branch, base), the session (its id and host) when a session's boundary ran the pass
-(null for the dashboard, the CLI and the API), the delivery mode and settings, and the judge (the person's agent CLI,
-under the repository's hourly budget). A handler answers what it records on the conflict: a `summary`, or a `hook`
-outcome. A handler that throws is logged and skipped; the other handlers and the pass go on.
+(null for the dashboard, the CLI and the API), and the settings. A handler answers what it records on the conflict: a
+`hook` outcome. A handler that throws is logged and skipped; the other handlers and the pass go on.
 
 Registered, in this order:
 
-- **delivery**: offers the checkout's sessions what is pending for them, per the delivery mode (§9.6), at their next
-  boundary;
-- **summary**: the quick call, below;
+- **delivery**: offers the checkout's sessions what is pending for them at their next boundary (§9.2);
 - **command**: the person's hook command, below.
 
 **The command handler.** The person sets a command for the repository (§9.6): an argv array, run without a shell,
@@ -447,13 +400,13 @@ with a timeout of 10 seconds unless they set another (1 to 60). For each event o
   other people's text: the command must treat them as data.
 - stdout is optional: empty output is a success with nothing to add. Otherwise it is one JSON object, at most 4 KiB:
   `{ "note"?: string, "status"?: string }`. `note` (made one line, cut to 600 characters) is added to the agent's note
-  for that conflict, after `The user's conflict hook adds:`, when the delivery includes `chat`; `status` (made one line,
-  cut to 90 characters) replaces the conflict's text on the status line when the delivery includes `terminal`. While
-  the command runs for `detected` or `level-changed` and the delivery includes `chat`, that conflict's agent note waits
-  for it at most one second (`NOTE_WAIT_MS`), and the edit's result that ran the detection waits that long for the
-  note, so Rerail's note and the person's line ride that result. A command that answers within the second has its
-  note joined; one that answers later has it follow at the session's next boundary, once per conflict, event and
-  session, as a note of its own: `About the conflict with <label>: <title>.` then `The user's conflict hook adds: …`.
+  for that conflict, after `The user's conflict hook adds:`; `status` (made one line, cut to 90 characters) replaces
+  the conflict's summary on the status line (§9.6). While the command runs for `detected` or `level-changed`, that
+  conflict's agent note waits for it at most one second (`NOTE_WAIT_MS`), and the edit's result that ran the detection
+  waits that long for the note, so Rerail's note and the person's line ride that result. A command that answers within
+  the second has its note joined; one that answers later has it follow at the session's next boundary, once per
+  conflict, event and session, as a note of its own: `About the conflict with <label>: <title>.` then `The user's
+  conflict hook adds: …`.
 - The command runs in a process group of its own. Past its timeout the group gets SIGTERM, then SIGKILL 2 seconds
   later, when its output pipes are closed too: a process it left behind holding them (one it detached) cannot keep the
   answer waiting. The answer comes at most its timeout plus 2 seconds after it started. When Merge Assist stops (the
@@ -483,55 +436,35 @@ rerail merge-assist settings --hook-command '["/bin/sh","/Users/me/bin/conflict-
 
 For `level-changed` and `closed` it prints nothing, which is a success with nothing to add.
 
-**The quick call (summary handler).** On `detected`, in the background, one short call through the person's agent CLI
-(`AgentJudge`, under the repository's budget of 40 calls an hour) asks for at most 90 characters, in plain words,
-saying what the other side is doing and why it collides with this branch. Its inputs are both sides' summaries and
-hunks, clipped. Until it answers, and whenever it cannot, the conflict carries a deterministic line at once:
-`<their label> (<author>) is changing <symbol or file>` (without the author when none is known), stored as
-`summary: { text, via: "fallback", reason: "pending" }`. The answer replaces it as `via: "judge"`. When the budget is
-spent, the agent CLI is unavailable or the call fails, the fallback stays, with `reason` saying why (`budget: …`,
-`unavailable: …`, `failed: …`). One pass makes at most 3 quick calls, for the newest conflicts it found; the others
-keep the fallback (`skipped: …`). A process that stops before the call answers leaves the fallback with `pending`.
-The call never delays a boundary or the hook's answer.
+### 9.6 Settings and the status line
 
-### 9.6 The delivery setting
-
-`conflictDelivery` (`delivery` in the settings) is `chat`, `terminal` or `both`, `both` by default. It is a person's
-setting per repository, kept with Merge Assist's state in the Rerail database on this machine (`merge_assist_state`
-under `settings:<repository key>`), never in a committed file, and it applies to every checkout of the repository.
-The same settings hold the hook command (§9.5). A person changes them on the Merge Assist page's Settings section,
-with `rerail merge-assist settings`, or through `PUT /api/merge-assist/settings` (`merge_assist_settings_set`, people
-only); `GET /api/merge-assist/settings` (`merge_assist_settings_get`) reads them.
+The settings are `{ hook }`: the conflict hook command (§9.5), `{ command, timeoutSeconds }` or null. They are a
+person's, per repository, kept with Merge Assist's state in the Rerail database on this machine (`merge_assist_state`
+under `settings:<repository key>`), never in a committed file, and apply to every checkout of the repository. A person
+changes them on the Merge Assist page's Settings section, with `rerail merge-assist settings`, or through
+`PUT /api/merge-assist/settings` (`merge_assist_settings_set`, people only); `GET /api/merge-assist/settings`
+(`merge_assist_settings_get`) reads them.
 
 ```sh
 rerail merge-assist settings [--repo <dir>] [--json]               # the current settings
-rerail merge-assist settings --delivery chat|terminal|both
 rerail merge-assist settings --hook-command '<json argv>' [--hook-timeout <s>]
 rerail merge-assist settings --hook-timeout <s>                    # the current command's timeout
 rerail merge-assist settings --no-hook                             # remove the command
 ```
 
-`--hook-command` takes a JSON array of non-empty strings, which is never run through a shell; `--hook-timeout` alone
-fails when no command is set.
-
-| | `chat` | `terminal` | `both` |
-| --- | --- | --- | --- |
-| The agent's note at the first boundary after `detected`, once per conflict per session (the note of §9.2, plus the hook's `note`) | yes | no | yes |
-| The status line: the conflict's summary segment, and `◉ decide:` | no | yes | yes |
-| The person's line (`systemMessage`) | yes | yes | yes |
-| The checkpoint card through the agent | yes | no: the status line and the person's line carry it | yes |
-| The stop before an edit to a contested file | always | always | always |
+`--hook-command` takes a JSON array of non-empty strings, which is never run through a shell; `--hook-timeout` takes
+whole seconds from 1 to 60 and, alone, fails when no command is set. `rerail merge-assist settings` prints `Hook: none`
+or the command with its timeout, such as `Hook: ["./notify.sh","--json"] (timeout 10 s)`.
 
 **The status line's segment.** It shows the newest conflict open above logged as `◐ <summary>`, followed by ` (+N)`
-when N more are open. The text is the hook command's `status` when it gave one, else the conflict's `summary.text`
-(the quick call's line, or its fallback). While a checkpoint or stop waits on the person, the dimmer's
-`◉ decide: <title>` takes its place.
+when N more are open. The text is the hook command's `status` when it gave one, else the conflict's `summary`. While a
+checkpoint or stop waits on the person, the dimmer's `◉ decide: <title>` takes its place.
 
 **Hosts.** Claude Code draws the segment on its status line, and OMP and Pi on their widget. Codex has no status line,
-so whenever the delivery includes `terminal` (`terminal` or `both`) its person's line carries the summary: `<line> — <summary>`,
-read when the note is handed to the session, not when it was queued, so a status the hook command gave meanwhile is the
-one shown. When a stop and a checkpoint card for the same conflict meet at one boundary, the stop's card and line go
-out and the checkpoint's are dropped: one card and one person's line per conflict per hook answer.
+so its person's line carries the summary: `<line> — <summary>`, read when the note is handed to the session, not when
+it was queued, so a status the hook command gave meanwhile is the one shown. When a stop and a checkpoint card for the
+same conflict meet at one boundary, the stop's card and line go out and the checkpoint's are dropped: one card and one
+person's line per conflict per hook answer.
 
 ## 10. Demo
 
@@ -541,7 +474,8 @@ Two developers, two branches of the same repository, Merge Assist on in Tim's ch
 2. Tim, on `tbelanger/export-api`, starts a session; the scan at session start lists the pull request. Tim's agent
    edits `fetchUser` too. The detection after the edit finds the overlap; the dimmer puts it at ambient. The agent's
    next hook carries the note (`Your edit to src/api/users.ts overlaps open work: PR #412 (jbarnes) …`), Tim sees
-   `◆ Rerail · your edit overlaps PR #412 (jbarnes): fetchUser`, and the footer shows the quick call's summary.
+   `◆ Rerail · your edit overlaps PR #412 (jbarnes): fetchUser`, and the footer shows
+   `◐ PR #412 (jbarnes) is changing fetchUser`.
 3. Both sides keep building on the file; its growth and the open pull request lift the score past `interruptCost`.
    At the next boundary the agent shows Tim the checkpoint card, `→ Talk to jbarnes about it (PR #412 · <url>)`, stops
    deepening `src/api/users.ts` and goes on with the rest of its task.
@@ -552,7 +486,6 @@ Two developers, two branches of the same repository, Merge Assist on in Tim's ch
 
 ## 11. Open questions
 
-- Is a per-repository budget the right unit for agent calls, or per person per day?
 - Should `pLose` be measured rather than a constant 0.5, and from what?
 - Should a dismissal be shared with the other side's author, or stay local to this checkout as it is?
 - Should conflicts between live sessions on this machine, including uncommitted work in other checkouts, count as live

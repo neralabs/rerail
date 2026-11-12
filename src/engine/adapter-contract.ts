@@ -57,8 +57,6 @@ export interface AdapterCapabilityProfile {
   asksPerson: boolean;
   /** Whether it draws Rerail's footer: Claude Code's status line, OMP's and Pi's widget. */
   statusLine: boolean;
-  /** Whether it shows the person a line of Rerail's own beside the agent's context (`systemMessage`). */
-  personLine: boolean;
   /** What Rerail's commands start with in this coding agent, in every text that names one. */
   commandSigil: CommandSigil;
   /** How this coding agent writes a file so that Rerail's hooks see the edit. */
@@ -73,7 +71,6 @@ export const ADAPTER_CAPABILITIES = {
     persistence: "session-entries",
     asksPerson: false,
     statusLine: true,
-    personLine: false,
     delivery: {
       log: "observe",
       steer: "native-queue",
@@ -96,7 +93,6 @@ export const ADAPTER_CAPABILITIES = {
     persistence: "session-entries",
     asksPerson: false,
     statusLine: true,
-    personLine: false,
     delivery: {
       log: "observe",
       steer: "native-queue",
@@ -119,7 +115,6 @@ export const ADAPTER_CAPABILITIES = {
     persistence: "jsonl-ledger",
     asksPerson: true,
     statusLine: true,
-    personLine: true,
     delivery: {
       log: "observe",
       steer: "additional-context",
@@ -142,7 +137,6 @@ export const ADAPTER_CAPABILITIES = {
     persistence: "jsonl-ledger",
     asksPerson: false,
     statusLine: false,
-    personLine: true,
     delivery: {
       log: "observe",
       steer: "additional-context",
@@ -165,7 +159,6 @@ export const ADAPTER_CAPABILITIES = {
     persistence: "jsonl-ledger",
     asksPerson: false,
     statusLine: false,
-    personLine: false,
     delivery: {
       log: "observe",
       steer: "deferred-context",

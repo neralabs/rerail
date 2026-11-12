@@ -6,7 +6,6 @@
  */
 import { z } from "zod";
 import {
-  CONFLICT_DELIVERY_MODES,
   conflictHookCommandSchema,
   DEFAULT_HOOK_TIMEOUT_SECONDS,
   mergeAssistSettingsSchema,
@@ -23,16 +22,14 @@ export const mergeAssistSettingsBodySchema = z.object({
   ...targetShape,
   enabled: z.boolean().optional()
     .describe("true turns Merge Assist on for the checkout's repository; false turns it off and clears the conflicts it found, dismissals included."),
-  delivery: z.enum(CONFLICT_DELIVERY_MODES).optional()
-    .describe("Where conflicts reach the person: chat (a note through the agent), terminal (the status line and the person's line), or both."),
   hook: conflictHookCommandSchema.extend({
     timeoutSeconds: conflictHookCommandSchema.shape.timeoutSeconds.optional()
       .describe(`Seconds before the command is stopped: ${DEFAULT_HOOK_TIMEOUT_SECONDS} when left out.`),
   }).strict().nullable().optional()
     .describe("The conflict hook command, an argv run without a shell on every conflict event; null removes it."),
 }).strict().refine(
-  body => body.enabled !== undefined || body.delivery !== undefined || body.hook !== undefined,
-  { message: "name at least one of enabled, delivery and hook" },
+  body => body.enabled !== undefined || body.hook !== undefined,
+  { message: "name at least one of enabled and hook" },
 );
 
 export const mergeAssistDismissBodySchema = z.object({

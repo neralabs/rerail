@@ -20,16 +20,14 @@ export interface Request {
 }
 
 /**
- * Merge Assist on in checkout `/work/a` of acme/storefront: the agent CLI found, `gh` signed in, no agent call used,
- * scanned two minutes before noon, nothing open. `over` replaces whole fields.
+ * Merge Assist on in checkout `/work/a` of acme/storefront: `gh` signed in, scanned two minutes before noon, nothing
+ * open. `over` replaces whole fields.
  */
 export const storefrontStatus = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => sampleStatus("/work/a", {
   repositoryKey: "remote:github.com/acme/storefront",
   readiness: {
-    judge: { available: true, runner: "claude", problem: null },
     github: { state: "signed-in", login: "tbelanger", repository: "acme/storefront" },
   },
-  budget: { used: 0, limit: 40, windowMinutes: 60 },
   lastScan: { at: "2026-11-02T11:58:00Z", peers: { branches: 2, pullRequests: 1 }, problems: [] },
   ...over,
 });

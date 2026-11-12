@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { ConflictDelivery, MergeAssistStatus } from "../../src/engine/index.js";
+import type { MergeAssistStatus } from "../../src/engine/index.js";
 import {
-  budgetText, conflictSections, dismissToast, githubText, hookFailure, hunkLines, openConflictCount, readinessChecks,
-  safePeerUrl, scanSummary, scannedWhat, settingsChange, settingsDraft, settingsSummary, summarizerText, writeError,
+  conflictSections, dismissToast, githubText, hookFailure, hunkLines, openConflictCount, readinessChecks,
+  safePeerUrl, scanSummary, scannedWhat, settingsChange, settingsDraft, settingsSummary, writeError,
 } from "../../ui/merge-model.js";
 import { sampleStatus } from "../support/merge-assist/status.js";
 import { conflict, dismissed } from "./support/merge-conflicts.js";
@@ -49,22 +49,14 @@ describe("a peer's link", () => {
 });
 
 describe("the status strip", () => {
-  it("names the summarising CLI, or says none was found with why", () => {
-    expect(summarizerText({ available: true, runner: "codex", problem: null })).toEqual({ ok: true, text: "Codex" });
-    expect(summarizerText({ available: false, runner: null, problem: "Neither claude nor codex is on PATH." }))
-      .toEqual({ ok: false, text: "No agent CLI found", detail: "Neither claude nor codex is on PATH." });
-  });
-
   it("says gh's state with the login it is signed in as", () => {
     expect(githubText({ state: "signed-in", login: "tbelanger", repository: "acme/storefront" })).toEqual({ ok: true, text: "Signed in as tbelanger" });
     expect(githubText({ state: "signed-out", login: null, repository: null }).ok).toBe(false);
   });
 
-  it("says what a scan read and the budget used this hour", () => {
+  it("says what a scan read", () => {
     expect(scannedWhat({ at: at(1), peers: { branches: 1, pullRequests: 2 }, problems: [] })).toBe("1 local branch and 2 open pull requests");
     expect(scannedWhat({ at: at(1), peers: { branches: 0, pullRequests: 0 }, problems: [] })).toBe("no other branches");
-    expect(budgetText({ used: 12, limit: 40, windowMinutes: 60 })).toEqual({ text: "12 of 40 this hour", spent: false });
-    expect(budgetText({ used: 40, limit: 40, windowMinutes: 60 }).spent).toBe(true);
   });
 
   it("sums up the open conflicts a scan found that the page did not show before, not the totals", () => {
@@ -86,20 +78,13 @@ describe("the status strip", () => {
 describe("the readiness checklist", () => {
   const text = (segments: Array<string | { code: string }>) => segments.map(s => (typeof s === "string" ? s : s.code)).join("");
 
-  it("says the agent CLI is run for a one-line summary of each conflict, and names the supported CLIs when none is found", () => {
-    const ready = readinessChecks(status().readiness);
-    expect(ready.map(c => [c.key, c.ok])).toEqual([["judge", true], ["github", true]]);
-    expect(text(ready[0]!.text)).toBe("Your agent CLI: Claude Code. Rerail runs it for a one-line summary of each conflict.");
-    const missing = readinessChecks({ ...status().readiness, judge: { available: false, runner: null, problem: null } });
-    expect(missing[0]!.ok).toBe(false);
-    expect(text(missing[0]!.text)).toContain("need Claude Code or Codex on your PATH");
-  });
-
   it("says whether gh is signed in, and how to sign in when it is not", () => {
-    expect(text(readinessChecks(status().readiness)[1]!.text)).toContain("gh is signed in as tbelanger");
+    const ready = readinessChecks(status().readiness);
+    expect(ready.map(c => [c.key, c.ok])).toEqual([["github", true]]);
+    expect(text(ready[0]!.text)).toContain("gh is signed in as tbelanger");
     const signedOut = readinessChecks({ ...status().readiness, github: { state: "signed-out", login: null, repository: null } });
-    expect(signedOut[1]!.ok).toBe(false);
-    expect(text(signedOut[1]!.text)).toContain("Run gh auth login");
+    expect(signedOut[0]!.ok).toBe(false);
+    expect(text(signedOut[0]!.text)).toContain("Run gh auth login");
   });
 });
 
@@ -160,20 +145,20 @@ describe("conflicts", () => {
 });
 
 describe("the settings", () => {
-  const draft = (command: string, timeout = "10", delivery: ConflictDelivery = "terminal") => ({ delivery, command, timeout });
+  const draft = (command: string, timeout = "10") => ({ command, timeout });
 
   it("fills the form from the saved settings: the command as JSON, the timeout, and 10 seconds without a hook", () => {
-    expect(settingsDraft({ delivery: "chat", hook: { command: ["./hook.sh", "--quiet"], timeoutSeconds: 30 } }))
-      .toEqual({ delivery: "chat", command: "[\"./hook.sh\",\"--quiet\"]", timeout: "30" });
-    expect(settingsDraft({ delivery: "both", hook: null })).toEqual({ delivery: "both", command: "", timeout: "10" });
-    expect(settingsSummary({ delivery: "terminal", hook: { command: ["./hook.sh"], timeoutSeconds: 10 } })).toBe("Settings: delivery terminal, conflict hook: ./hook.sh");
-    expect(settingsSummary({ delivery: "both", hook: null })).toBe("Settings: delivery both, no conflict hook");
+    expect(settingsDraft({ hook: { command: ["./hook.sh", "--quiet"], timeoutSeconds: 30 } }))
+      .toEqual({ command: "[\"./hook.sh\",\"--quiet\"]", timeout: "30" });
+    expect(settingsDraft({ hook: null })).toEqual({ command: "", timeout: "10" });
+    expect(settingsSummary({ hook: { command: ["./hook.sh"], timeoutSeconds: 10 } })).toBe("Settings: conflict hook ./hook.sh");
+    expect(settingsSummary({ hook: null })).toBe("Settings: no conflict hook");
   });
 
-  it("saves the delivery and the hook command as an argv with its timeout; an empty command removes the hook", () => {
-    expect(settingsChange(draft(" [\"./hook.sh\", \"a b\"] ", "45"))).toEqual({ body: { delivery: "terminal", hook: { command: ["./hook.sh", "a b"], timeoutSeconds: 45 } } });
-    expect(settingsChange(draft("[\"./hook.sh\"]", " "))).toEqual({ body: { delivery: "terminal", hook: { command: ["./hook.sh"], timeoutSeconds: 10 } } });
-    expect(settingsChange(draft("  ", "nonsense", "chat"))).toEqual({ body: { delivery: "chat", hook: null } });
+  it("saves the hook command as an argv with its timeout; an empty command removes the hook", () => {
+    expect(settingsChange(draft(" [\"./hook.sh\", \"a b\"] ", "45"))).toEqual({ body: { hook: { command: ["./hook.sh", "a b"], timeoutSeconds: 45 } } });
+    expect(settingsChange(draft("[\"./hook.sh\"]", " "))).toEqual({ body: { hook: { command: ["./hook.sh"], timeoutSeconds: 10 } } });
+    expect(settingsChange(draft("  ", "nonsense"))).toEqual({ body: { hook: null } });
   });
 
   it("refuses a command that is not a JSON array of non-empty strings, and a timeout outside 1 to 60 seconds", () => {

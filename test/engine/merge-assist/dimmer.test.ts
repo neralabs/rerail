@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { defaultPolicy, dimConflict, parsePolicy, type ConflictSignals, type DimmerBudget, type DimmerPrevious } from "../../../src/engine/index.js";
+import { dimConflict, type ConflictSignals, type DimmerBudget, type DimmerPrevious } from "../../../src/engine/index.js";
 
-const CONFIG = defaultPolicy().dimmer;
 const ROOMY: DimmerBudget = { stops: 1, checkpoints: 3 };
 
 /**
  * Signals with no blast radius, even odds and a day to merge, so the score is `12 × growthPerHour × lockIn`: against
- * the defaults (interruptCost 300) ambient from 75, checkpoint from 300, stop from 1,200.
+ * the fixed thresholds (interruptCost 300) ambient from 75, checkpoint from 300, stop from 1,200.
  */
 const signals = (over: Partial<ConflictSignals> = {}): ConflictSignals => ({
   quiet: false, lockIn: 1, lockInClass: "local", blastRadius: 0, callers: 0, otherRefs: 0, growthPerHour: 10,
@@ -15,7 +14,7 @@ const signals = (over: Partial<ConflictSignals> = {}): ConflictSignals => ({
 });
 
 const level = (over: Partial<ConflictSignals>, previous: DimmerPrevious | null = null, budget: DimmerBudget = ROOMY) =>
-  dimConflict({ signals: signals(over), previous, budget, config: CONFIG });
+  dimConflict({ signals: signals(over), previous, budget });
 
 describe("the dimmer", () => {
   it("scores expected rework lines: P(lose) × growth × time to merge × lock-in × (1 + log2(1 + blast radius))", () => {
@@ -81,15 +80,5 @@ describe("the dimmer", () => {
     ]);
     expect(level({ callers: 1, linesTheirs: 3, hoursToMerge: 72.4 }).reasons)
       .toEqual(["local code: ×1", "+3 lines on theirs in 1 h", "1 caller", "about 72 h to merge", "even odds either side loses"]);
-  });
-
-  it("reads its settings from the policy's dimmer section, with defaults", () => {
-    expect(CONFIG).toEqual({ interruptCost: 300, stopGrowthPerHour: 50, checkpointsPerDay: 3 });
-    const parsed = parsePolicy("version: 1\ndimmer:\n  interruptCost: 100\n  checkpointsPerDay: 1\n");
-    expect(parsed.ok && parsed.policy.dimmer).toEqual({ interruptCost: 100, stopGrowthPerHour: 50, checkpointsPerDay: 1 });
-    const config = parsed.ok ? parsed.policy.dimmer : CONFIG;
-    expect(dimConflict({ signals: signals({ growthPerHour: 10 }), previous: null, budget: ROOMY, config }).level).toBe("checkpoint");
-    expect(parsePolicy("version: 1\ndimmer:\n  interruptCost: 0\n")).toMatchObject({ ok: false });
-    expect(parsePolicy("version: 1\ndimmer:\n  loud: true\n")).toMatchObject({ ok: false });
   });
 });

@@ -1,15 +1,14 @@
 /**
  * The dimmer's pass over a checkout's open conflicts at every detection (docs/merge-assist-v1-build.md §9.1): measure
  * each one's signals from Git and decide its level with `dimConflict` (never below the level it showed, within the
- * interruption budgets). The budgets are the person's, across checkouts: at most `checkpointsPerDay` checkpoint prompts
- * a day and one stop per session, kept under `budget:<person>`.
+ * interruption budgets). The budgets are the person's, across checkouts: at most `CHECKPOINTS_PER_DAY` checkpoint
+ * prompts a day and one stop per session, kept under `budget:<person>`.
  */
 import { z } from "zod";
 import { measureSignals, type ContestedChange } from "../../engine/merge-assist/conflict-signals.js";
-import { dimConflict, expectedRework, STOPS_PER_SESSION } from "../../engine/merge-assist/dimmer.js";
+import { CHECKPOINTS_PER_DAY, dimConflict, expectedRework, STOPS_PER_SESSION } from "../../engine/merge-assist/dimmer.js";
 import { CONFLICT_LEVELS, type Conflict, type ConflictLevel } from "../../engine/merge-assist/model.js";
 import { hunkLinesAt, ownBase } from "../../engine/merge-assist/overlap.js";
-import { defaultPolicy, loadPolicy, type DimmerConfig } from "../../engine/merge-assist/policy.js";
 import type { StoredConflict } from "./conflict-store.js";
 import type { PullRequestSummary } from "./github.js";
 import { STATE_KEYS, readState, writeState, type StateQueries } from "./state.js";
@@ -47,12 +46,6 @@ export interface LevelContext {
 }
 
 const rank = (level: ConflictLevel): number => CONFLICT_LEVELS.indexOf(level);
-
-/** The dimmer's settings at the base: its `.rerail/policy.yaml`, else the defaults (an invalid file too). */
-export function dimmerConfig(root: string, baseRef: string): DimmerConfig {
-  const loaded = loadPolicy(root, baseRef);
-  return loaded.source === "invalid" ? defaultPolicy().dimmer : loaded.policy.dimmer;
-}
 
 /** Whether a pull request is open on theirs: it is one, or its branch is one's head. */
 function pullRequestOn(conflict: Conflict, pulls: readonly PullRequestSummary[]): boolean {
@@ -94,12 +87,12 @@ function contested(context: LevelContext, entry: StoredConflict): ContestedChang
  * Interruptions the person has left for `conflict`: stops in this session; checkpoint prompts today (UTC), a stop
  * counting as one, since it shows the person the same card.
  */
-function budgetFor(context: LevelContext, grants: readonly Grant[], conflictId: string, config: DimmerConfig): { stops: number; checkpoints: number } {
+function budgetFor(context: LevelContext, grants: readonly Grant[], conflictId: string): { stops: number; checkpoints: number } {
   const today = new Date(context.now).toISOString().slice(0, 10);
   const others = grants.filter(grant => grant.conflictId !== conflictId);
   const stops = new Set(others.filter(grant => grant.level === "stop" && grant.sessionId === context.sessionId).map(grant => grant.conflictId)).size;
   const prompts = new Set(others.filter(grant => grant.day === today).map(grant => grant.conflictId)).size;
-  return { stops: context.sessionId === null ? 0 : STOPS_PER_SESSION - stops, checkpoints: config.checkpointsPerDay - prompts };
+  return { stops: context.sessionId === null ? 0 : STOPS_PER_SESSION - stops, checkpoints: CHECKPOINTS_PER_DAY - prompts };
 }
 
 export interface LevelledConflicts {
@@ -117,7 +110,6 @@ export function levelConflicts(context: LevelContext, entries: readonly StoredCo
   const open = entries.filter(entry => entry.conflict.status === "open");
   const grants = (readState(context.db, STATE_KEYS.budget(context.person), budgetSchema) ?? []).filter(grant => context.now - grant.at < GRANT_KEPT_MS);
   if (open.length === 0) return { entries: [...entries], grants };
-  const config = dimmerConfig(context.root, context.base.ref);
   // Conflicts waiting for a budget have the first claim on it when it frees; then the loudest.
   const waiting = (conflict: Conflict): number => (conflict.queuedFor === null ? -1 : rank(conflict.queuedFor));
   const measured = open.map(entry => ({ entry, signals: measureSignals({ ...context, baseRef: context.base.ref }, contested(context, entry)) }))
@@ -126,7 +118,7 @@ export function levelConflicts(context: LevelContext, entries: readonly StoredCo
   for (const { entry: { conflict }, signals } of measured) {
     // A conflict the dimmer has not measured yet (`undimmed`: logged, no signals) is new: it takes its level at once.
     const previous = conflict.signals === null && conflict.level === "logged" ? null : { level: conflict.level, queuedFor: conflict.queuedFor };
-    const result = dimConflict({ signals, previous, budget: budgetFor(context, grants, conflict.id, config), config });
+    const result = dimConflict({ signals, previous, budget: budgetFor(context, grants, conflict.id) });
     if ((result.level === "checkpoint" || result.level === "stop")
         && !grants.some(grant => grant.conflictId === conflict.id && grant.level === result.level)) {
       grants.push({ conflictId: conflict.id, level: result.level, sessionId: context.sessionId, day: new Date(context.now).toISOString().slice(0, 10), at: context.now });

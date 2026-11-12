@@ -7,11 +7,10 @@ import type { FakeElement } from "./support/fake-dom.js";
 import { conflict } from "./support/merge-conflicts.js";
 import { mergePage, storefrontStatus } from "./support/merge-page.js";
 
-/** Off, with no agent CLI found and gh signed out. */
+/** Off, with gh signed out. */
 const fixture = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => storefrontStatus({
   enabled: false,
   readiness: {
-    judge: { available: false, runner: null, problem: "Neither claude nor codex is on PATH." },
     github: { state: "signed-out", login: null, repository: null },
   },
   lastScan: null,
@@ -43,12 +42,12 @@ describe("the Merge Assist page", () => {
       const card = page.root.querySelector(".mconsent")!;
       expect(card.textContent).toContain("What turning it on does");
       const bullets = card.querySelectorAll("ul.mbul li").map(li => li.textContent);
-      expect(bullets).toHaveLength(3);
+      expect(bullets).toHaveLength(2);
       expect(bullets[0]).toBe("Rerail reads your other local branches, and open pull requests through gh with your sign-in, read-only.");
-      expect(bullets[1]).toContain("for a one-line summary of each conflict");
+      expect(bullets[1]).toContain("You and your coding agent are told about each conflict");
       const checks = card.querySelectorAll("ul.mchecks li");
-      expect(checks.map(li => [li.dataset.check, li.className])).toEqual([["judge", "mnotready"], ["github", "mnotready"]]);
-      expect(checks[0]!.textContent).toContain("need Claude Code or Codex on your PATH");
+      expect(checks.map(li => [li.dataset.check, li.className])).toEqual([["github", "mnotready"]]);
+      expect(checks[0]!.textContent).toContain("gh is not signed in");
       expect(button("maon")!.textContent).toBe("Turn on Merge Assist");
       expect(page.root.querySelector(".mstrip")).toBeNull();
       expect(conflicts().hidden).toBe(true);
@@ -99,8 +98,6 @@ describe("the Merge Assist page", () => {
     it("shows the strip, then the open conflicts with their count", () => {
       const strip = page.root.querySelector(".mstrip")!;
       expect(strip.textContent).toContain("Signed in as tbelanger");
-      expect(strip.textContent).toContain("Claude Code");
-      expect(strip.textContent).toContain("0 of 40 this hour");
       expect(conflicts().querySelector("h2")!.textContent).toBe("Open conflicts1");
       expect(conflicts().querySelectorAll("article.mcard")).toHaveLength(1);
     });
@@ -224,33 +221,26 @@ describe("the Merge Assist page", () => {
         onInput(el);
         render(page.root);
       };
-      const checked = () => settings().querySelectorAll("button.mopt").filter(b => b.getAttribute("aria-checked") === "true").map(b => b.dataset.i);
       const problem = () => settings().querySelector('p[id="ma-settings-problem"]')!;
-      const saved = { delivery: "terminal" as const, hook: { command: ["./scripts/on-conflict.sh", "--quiet"], timeoutSeconds: 20 } };
+      const saved = { hook: { command: ["./scripts/on-conflict.sh", "--quiet"], timeoutSeconds: 20 } };
 
-      it("shows the saved delivery mode, hook command and timeout, with what each mode does, folded until opened", () => {
+      it("shows the saved hook command and timeout, folded until opened", () => {
         data.mergeAssist = { ...onFixture(), settings: saved };
         render(page.root);
         expect(settings().hidden).toBe(false);
         expect(settings().hasAttribute("open")).toBe(false);
-        expect(settings().querySelector("summary")!.textContent).toBe("Settings: delivery terminal, conflict hook: ./scripts/on-conflict.sh");
+        expect(settings().querySelector("summary")!.textContent).toBe("Settings: conflict hook ./scripts/on-conflict.sh");
         click(settings().querySelector("summary"));
         render(page.root);
         expect(settings().hasAttribute("open")).toBe(true);
-        expect(settings().querySelectorAll("button.mopt").map(b => [b.dataset.i, b.querySelector(".mopt-l")!.textContent])).toEqual([["chat", "Chat"], ["terminal", "Terminal"], ["both", "Both"]]);
-        expect(settings().querySelectorAll("button.mopt .sub").every(line => line.textContent.length > 0)).toBe(true);
-        expect(checked()).toEqual(["terminal"]);
         expect(input("ma-hook")!.value).toBe("[\"./scripts/on-conflict.sh\",\"--quiet\"]");
         expect(input("ma-timeout")!.value).toBe("20");
         expect(problem().hidden).toBe(true);
       });
 
-      it("Save sends the delivery and the hook command for the checkout, then shows the saved values", async () => {
-        expect(checked()).toEqual(["both"]);
+      it("Save sends the hook command for the checkout, then shows the saved values", async () => {
+        expect(settings().querySelector("summary")!.textContent).toBe("Settings: no conflict hook");
         expect([input("ma-hook")!.value, input("ma-timeout")!.value]).toEqual(["", "10"]);
-        click(button("madelivery", "terminal"));
-        render(page.root);
-        expect(checked()).toEqual(["terminal"]);
         const field = input("ma-hook");
         type("ma-hook", " [\"./scripts/on-conflict.sh\", \"--quiet\"] ");
         type("ma-timeout", "20");
@@ -261,14 +251,14 @@ describe("the Merge Assist page", () => {
         expect([button("masettings")!.disabled, button("masettings")!.textContent]).toEqual([true, "Saving…"]);
         await vi.waitFor(() => expect(writes()).toHaveLength(1));
         expect(writes()[0]).toMatchObject({ method: "PUT", url: expect.stringMatching(/\/api\/merge-assist\/settings$/u) });
-        expect(writes()[0]!.body).toEqual({ repository: "A", checkout: "/work/a", delivery: "terminal", hook: saved.hook });
+        expect(writes()[0]!.body).toEqual({ repository: "A", checkout: "/work/a", hook: saved.hook });
 
         writes()[0]!.answer(200, { ...onFixture(), settings: saved });
         await saving;
         render(page.root);
         expect(toastText()).toBe("Saved Merge Assist’s settings for storefront.");
         expect(ui.mergeSettings).toBeNull();
-        expect(settings().querySelector("summary")!.textContent).toBe("Settings: delivery terminal, conflict hook: ./scripts/on-conflict.sh");
+        expect(settings().querySelector("summary")!.textContent).toBe("Settings: conflict hook ./scripts/on-conflict.sh");
         expect([input("ma-hook")!.value, input("ma-timeout")!.value]).toEqual(["[\"./scripts/on-conflict.sh\",\"--quiet\"]", "20"]);
         expect([button("masettings")!.disabled, button("masettings")!.textContent]).toEqual([false, "Save"]);
       });
@@ -279,7 +269,7 @@ describe("the Merge Assist page", () => {
         type("ma-hook", "");
         const saving = click(button("masettings"));
         await vi.waitFor(() => expect(writes()).toHaveLength(1));
-        expect(writes()[0]!.body).toEqual({ repository: "A", checkout: "/work/a", delivery: "terminal", hook: null });
+        expect(writes()[0]!.body).toEqual({ repository: "A", checkout: "/work/a", hook: null });
         writes()[0]!.answer(200, onFixture());
         await saving;
       });

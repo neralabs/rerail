@@ -23,7 +23,7 @@ export const STATE_KEYS = {
   conflicts: (checkoutPath: string) => `conflicts:${checkoutPath}`,
   /** The interruptions the dimmer granted a person: checkpoint prompts per day, stops per session (`conflict-level.ts`). */
   budget: (person: string) => `budget:${person}`,
-  /** The person's Merge Assist settings for a repository: conflict delivery and the hook command (`conflict-delivery.ts`). */
+  /** The person's Merge Assist settings for a repository: the conflict hook command (`conflict-delivery.ts`). */
   settings: (repositoryKey: string) => `settings:${repositoryKey}`,
 } as const;
 

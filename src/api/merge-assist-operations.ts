@@ -1,7 +1,7 @@
 /**
  * Merge Assist's operations (docs/merge-assist-v1-build.md §5.3): the checkout's state and in-flight conflicts, a scan,
  * the settings, and dismissing a conflict. Each acts on one checkout, which the target names as every repository
- * operation's does. Changing the settings (on or off, delivery, the hook command) and dismissing a conflict are
+ * operation's does. Changing the settings (on or off, the hook command) and dismissing a conflict are
  * people's; a coding agent may read and scan, in its own checkout only. The people-only guarantee holds for this
  * surface; `rerail merge-assist` runs as the person, so an agent with a shell can run it as it can any Rerail command.
  * Internal testing: every operation here.
@@ -63,11 +63,11 @@ function hookChange(hook: SettingsBody["hook"]): Pick<MergeAssistSettingsChange,
   return { hook: hook === null ? null : { command: hook.command, timeoutSeconds: hook.timeoutSeconds ?? DEFAULT_HOOK_TIMEOUT_SECONDS } };
 }
 
-/** Turn Merge Assist on or off, then change the delivery and the hook, answering the status after the last change. */
+/** Turn Merge Assist on or off, then change the hook, answering the status after the last change. */
 async function applySettings(service: MergeAssistService, checkout: string, body: SettingsBody): Promise<MergeAssistStatus> {
   const status = body.enabled === undefined ? null : await service.setEnabled(checkout, body.enabled);
-  if (status !== null && body.delivery === undefined && body.hook === undefined) return status;
-  return await service.updateSettings(checkout, { ...(body.delivery === undefined ? {} : { delivery: body.delivery }), ...hookChange(body.hook) });
+  if (status !== null && body.hook === undefined) return status;
+  return await service.updateSettings(checkout, hookChange(body.hook));
 }
 
 export const mergeAssistOperations: readonly Operation[] = [
@@ -75,7 +75,7 @@ export const mergeAssistOperations: readonly Operation[] = [
     id: "merge_assist_get",
     method: "GET",
     path: "/api/merge-assist",
-    summary: internalTesting("Show Merge Assist for one checkout: whether it is on, the agent CLI and gh it uses, the settings, the last scan, and its in-flight conflicts with live branches and open pull requests (each with its level, reasons and summary). Reads only. Without a target an MCP call uses the calling agent's checkout."),
+    summary: internalTesting("Show Merge Assist for one checkout: whether it is on, the gh it uses, the settings, the last scan, and its in-flight conflicts with live branches and open pull requests (each with its level, reasons and summary). Reads only. Without a target an MCP call uses the calling agent's checkout."),
     query: mergeAssistTargetSchema,
     output: mergeAssistStatusSchema,
     handler: async (stores, input, caller) => {
@@ -87,7 +87,7 @@ export const mergeAssistOperations: readonly Operation[] = [
     id: "merge_assist_scan",
     method: "POST",
     path: "/api/merge-assist/scan",
-    summary: internalTesting("Find the checkout's in-flight conflicts now: overlapping changes with other local and remote-tracking branches and open pull requests. Runs the person's gh (read-only) to list pull requests, and their agent CLI for a one-line summary of each new conflict. A coding agent may scan only its own checkout."),
+    summary: internalTesting("Find the checkout's in-flight conflicts now: overlapping changes with other local and remote-tracking branches and open pull requests. Runs the person's gh (read-only) to list pull requests. A coding agent may scan only its own checkout."),
     body: mergeAssistTargetSchema,
     output: mergeAssistStatusSchema,
     handler: async (stores, input, caller) => {
@@ -99,7 +99,7 @@ export const mergeAssistOperations: readonly Operation[] = [
     id: "merge_assist_settings_get",
     method: "GET",
     path: "/api/merge-assist/settings",
-    summary: internalTesting("Show the person's Merge Assist settings for the checkout's repository: where conflicts reach them (delivery: chat, terminal or both) and the conflict hook command (null for none). Reads only."),
+    summary: internalTesting("Show the person's Merge Assist settings for the checkout's repository: the conflict hook command (null for none). Reads only."),
     query: mergeAssistTargetSchema,
     output: mergeAssistSettingsSchema,
     handler: async (stores, input, caller) => {
@@ -111,7 +111,7 @@ export const mergeAssistOperations: readonly Operation[] = [
     id: "merge_assist_settings_set",
     method: "PUT",
     path: "/api/merge-assist/settings",
-    summary: internalTesting("Change the person's Merge Assist settings for the checkout's repository: turn it on or off (enabled; off clears the conflicts it found), where conflicts reach them (delivery: chat, terminal or both), and the conflict hook command (hook: an argv run without a shell on each conflict event, timeoutSeconds 1-60, default 10; null removes it). Name at least one. People only: it runs the person's agent CLI and gh, and the hook command as them."),
+    summary: internalTesting("Change the person's Merge Assist settings for the checkout's repository: turn it on or off (enabled; off clears the conflicts it found) and the conflict hook command (hook: an argv run without a shell on each conflict event, timeoutSeconds 1-60, default 10; null removes it). Name at least one. People only: it runs the person's gh, and the hook command as them."),
     body: mergeAssistSettingsBodySchema,
     output: mergeAssistStatusSchema,
     handler: async (stores, input, caller) => {

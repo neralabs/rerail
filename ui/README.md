@@ -22,9 +22,9 @@ daemon's `/api` operations and `/healthz` (`api.js`).
 - `views/` holds one module per view (`overview`, `pack` for a pack page and Created by you, `packs` for the catalog
   and the review, `create`, `history`, `sessions`, `settings`, `merge` for Merge Assist) and the pages shown in their
   place (`no-repo`, `missing`, `not-set-up`); `views/index.js` lists them and says what each module exports.
-  Merge Assist's page shows, while it is on, its status strip, its Settings (where conflicts reach the person, and
-  the conflict hook command) and the conflicts with work in flight: open ones as cards, loudest first, with Dismiss
-  (not a conflict) as the one action, then the dismissed ones folded with who dismissed each and when. It renders
+  Merge Assist's page shows, while it is on, its status strip, its Settings (the conflict hook command) and the
+  conflicts with work in flight: open ones as cards, loudest first, with Dismiss (not a conflict) as the one action,
+  then the dismissed ones folded with who dismissed each and when. It renders
   other people's titles, summaries, hunks, names and links as text nodes only, and links a pull request only when
   `safePeerUrl` accepts it.
 - `render/` holds what several views or the sheet share: a pack page's rule table and its controls (`rules.js`,

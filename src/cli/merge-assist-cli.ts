@@ -13,13 +13,10 @@ import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/re
 import { sideName } from "../engine/code-rule/rerail-steer.js";
 import { plural } from "../engine/merge-assist/dimmer.js";
 import {
-  CONFLICT_DELIVERY_MODES,
   conflictHookCommandSchema,
   DEFAULT_HOOK_TIMEOUT_SECONDS,
-  JUDGE_RUNNER_NAMES,
   MAX_HOOK_TIMEOUT_SECONDS,
   type Conflict,
-  type ConflictDelivery,
   type MergeAssistSettings,
   type MergeAssistStatus,
 } from "../engine/merge-assist/model.js";
@@ -56,7 +53,7 @@ function openDefaultService(): MergeAssistCommandSession {
   const service = createMergeAssistService({ database });
   return {
     service,
-    // The conflict hook's handlers (the quick call, the person's command) record their answers in the database.
+    // The conflict hook's handlers (the person's command) record their answers in the database.
     close: async () => {
       await service.settled();
       database.$client.close();
@@ -111,11 +108,6 @@ function levelWords(conflict: Conflict): string {
   return `${conflict.level}${conflict.queued ? ", queued" : ""}`;
 }
 
-/** The conflict's line in plain words: the quick call's summary, or the fallback until it answers. */
-function summaryLines(conflict: Conflict): string[] {
-  return conflict.summary === null ? [] : [`  Summary: ${plain(conflict.summary.text)}`];
-}
-
 /** The conflict hook command's failure on the conflict's latest event, when it failed. */
 function hookLines(conflict: Conflict): string[] {
   const { hook } = conflict;
@@ -128,7 +120,7 @@ function openConflictEntry(conflict: Conflict, hunks: boolean): string[] {
   const hunk = (side: Conflict["mine"]): string[] => (hunks && side.hunk !== null ? side.hunk.split("\n").map(line => `      ${plain(line)}`) : []);
   return [
     `${conflict.id}  #${plain(conflict.shortId)}  ${quoted(conflict.title)}  (${levelWords(conflict)})`,
-    ...summaryLines(conflict),
+    `  Summary: ${plain(conflict.summary)}`,
     ...(conflict.reasons.length === 0 ? [] : [`  Size:   ${conflict.reasons.map(plain).join(" · ")}`]),
     `  Yours:  ${sideLine(conflict.mine)}`,
     ...hunk(conflict.mine),
@@ -175,17 +167,6 @@ function githubLine(status: MergeAssistStatus): string {
   return "  GitHub: the repository's remote is not on GitHub, so only local branches are read.";
 }
 
-function readinessLines(status: MergeAssistStatus): string[] {
-  const { judge } = status.readiness;
-  const { budget } = status;
-  return [
-    judge.available && judge.runner !== null
-      ? `  Summaries: ${JUDGE_RUNNER_NAMES[judge.runner]} · ${budget.used} of ${budget.limit} calls in the last ${budget.windowMinutes} minutes`
-      : `  Summaries: unavailable, so each conflict keeps a plain line. Merge Assist runs Claude Code or Codex.${judge.problem === null ? "" : ` ${plain(judge.problem)}`}`,
-    githubLine(status),
-  ];
-}
-
 function scanLines(status: MergeAssistStatus, scanRequested: boolean): string[] {
   const lines: string[] = [];
   // A scan request that found another process's scan running started none: what follows is the previous scan's.
@@ -206,8 +187,6 @@ const TURNING_ON = [
   "    Rerail compares your work here with other local and remote-tracking branches, and with open pull requests it reads",
   "    through gh with your sign-in, read-only. It writes no file and never merges, commits or pushes.",
   "    When your work overlaps someone else's, it tells you and your coding agent, as loud as the overlap calls for.",
-  "    For each new conflict it asks your agent's CLI (Claude Code or Codex) for a one-line summary. That sends both",
-  "    sides' changed lines to that CLI's provider, under your own sign-in, as your session already does.",
   "  Turn it on with rerail merge-assist on.",
 ];
 
@@ -218,12 +197,12 @@ export function formatMergeAssistStatus(status: MergeAssistStatus, dashboardUrl:
   const base = status.baseBranch === null ? "" : `, base ${plain(status.baseBranch)}`;
   const page = dashboardUrl === null ? [] : [`  Merge Assist page: ${dashboardUrl}`];
   if (!status.enabled) {
-    return [`● Merge Assist is off in ${name} (${branch}${base}).`, ...readinessLines(status), ...TURNING_ON, ...page].join("\n");
+    return [`● Merge Assist is off in ${name} (${branch}${base}).`, githubLine(status), ...TURNING_ON, ...page].join("\n");
   }
   const empty = status.conflicts.length === 0;
   return [
     `● Merge Assist is on in ${name} (${branch}${base}).`,
-    ...readinessLines(status),
+    githubLine(status),
     ...scanLines(status, scanRequested),
     ...conflictSections(status, false),
     ...(empty ? ["  No conflicts. When your work here overlaps a live branch or an open pull request, Rerail lists it."] : []),
@@ -248,16 +227,15 @@ function resultText(step: StatusStep, status: MergeAssistStatus, dashboardUrl: s
 
 /**
  * The change `rerail merge-assist settings` asks for, each field undefined where its flags leave the setting as it is:
- * where conflicts reach the person, the hook command's argv (null removes the hook) and its timeout.
+ * the hook command's argv (null removes the hook) and its timeout.
  */
 interface SettingsRequest {
-  readonly delivery: ConflictDelivery | undefined;
   readonly command: string[] | null | undefined;
   readonly timeoutSeconds: number | undefined;
 }
 
-const NO_SETTINGS_CHANGE: SettingsRequest = { delivery: undefined, command: undefined, timeoutSeconds: undefined };
-const SETTINGS_OPTIONS = ["--delivery", "--hook-command", "--hook-timeout"] as const;
+const NO_SETTINGS_CHANGE: SettingsRequest = { command: undefined, timeoutSeconds: undefined };
+const SETTINGS_OPTIONS = ["--hook-command", "--hook-timeout"] as const;
 
 type Step =
   | { readonly action: Exclude<MergeAssistAction, "dismiss" | "settings"> }
@@ -291,14 +269,6 @@ function stepOf(action: MergeAssistAction, rest: readonly string[], usage: () =>
   return { step: { action }, rest };
 }
 
-/** `--delivery chat|terminal|both`. */
-function deliveryOption(value: string | undefined, usage: () => string): ConflictDelivery | undefined {
-  if (value === undefined) return undefined;
-  const known = CONFLICT_DELIVERY_MODES.find(mode => mode === value);
-  if (known === undefined) throw new Error(`--delivery takes chat, terminal or both\n\n${usage()}`);
-  return known;
-}
-
 function parsedJson(text: string): unknown {
   try {
     return JSON.parse(text) as unknown;
@@ -324,18 +294,17 @@ function timeoutOption(value: string | undefined, usage: () => string): number |
 }
 
 function settingsRequest(flags: ReadonlySet<string>, options: ReadonlyMap<string, string>, usage: () => string): SettingsRequest {
-  const delivery = deliveryOption(options.get("--delivery"), usage);
   const command = commandOption(options.get("--hook-command"), usage);
   const timeoutSeconds = timeoutOption(options.get("--hook-timeout"), usage);
-  if (!flags.has("--no-hook")) return { delivery, command, timeoutSeconds };
+  if (!flags.has("--no-hook")) return { command, timeoutSeconds };
   if (command !== undefined || timeoutSeconds !== undefined) throw new Error(`--no-hook removes the hook, so it takes no --hook-command or --hook-timeout\n\n${usage()}`);
-  return { delivery, command: null, timeoutSeconds };
+  return { command: null, timeoutSeconds };
 }
 
 /** Options that go with another command than the step's. */
 function refuseStrayOptions(step: Step, flags: ReadonlySet<string>, options: ReadonlyMap<string, string>, usage: () => string): void {
   const settings = flags.has("--no-hook") || SETTINGS_OPTIONS.some(option => options.has(option));
-  if (settings && step.action !== "settings") throw new Error(`--delivery, --hook-command, --no-hook and --hook-timeout go with merge-assist settings\n\n${usage()}`);
+  if (settings && step.action !== "settings") throw new Error(`--hook-command, --no-hook and --hook-timeout go with merge-assist settings\n\n${usage()}`);
 }
 
 /** The step with what its options add: the settings' change. */
@@ -367,7 +336,7 @@ function invocation(args: readonly string[], usage: () => string): Invocation {
 }
 
 function changesSettings(request: SettingsRequest): boolean {
-  return request.delivery !== undefined || request.command !== undefined || request.timeoutSeconds !== undefined;
+  return request.command !== undefined || request.timeoutSeconds !== undefined;
 }
 
 /**
@@ -387,8 +356,7 @@ async function hookChange(service: MergeAssistService, root: string, request: Se
 /** The settings after the request's change; the current ones when it changes nothing. */
 async function settingsAfter(service: MergeAssistService, root: string, request: SettingsRequest): Promise<MergeAssistSettings> {
   if (!changesSettings(request)) return await service.settings(root);
-  const delivery = request.delivery === undefined ? {} : { delivery: request.delivery };
-  return (await service.updateSettings(root, { ...delivery, ...await hookChange(service, root, request) })).settings;
+  return (await service.updateSettings(root, await hookChange(service, root, request))).settings;
 }
 
 async function run(service: MergeAssistService, step: StatusStep, root: string): Promise<MergeAssistStatus> {
@@ -408,12 +376,11 @@ async function outcomeOf(service: MergeAssistService, step: Step, root: string):
   return { step, status: await run(service, step, root) };
 }
 
-/** The settings as text: where conflicts reach the person, and the conflict hook command. */
+/** The settings as text: the conflict hook command. */
 function formatSettings(root: string, settings: MergeAssistSettings, changed: boolean, dashboardUrl: string | null): string {
   const { hook } = settings;
   return [
     `● ${changed ? "Saved Merge Assist settings" : "Merge Assist settings"} for ${repositoryName(root)}:`,
-    `  Delivery: ${settings.delivery}`,
     `  Hook: ${hook === null ? "none" : `${plain(JSON.stringify(hook.command))} (timeout ${hook.timeoutSeconds} s)`}`,
     ...(dashboardUrl === null ? [] : [`  Merge Assist page: ${dashboardUrl}`]),
   ].join("\n");
@@ -425,7 +392,7 @@ function outcomeText(outcome: Outcome, root: string, dashboardUrl: string | null
 }
 
 /**
- * `rerail merge-assist [status|on|off|scan|conflicts|dismiss <conflict-id>|settings [--delivery chat|terminal|both]
+ * `rerail merge-assist [status|on|off|scan|conflicts|dismiss <conflict-id>|settings
  * [--hook-command '<json argv>'|--no-hook] [--hook-timeout <s>]] [--repo <dir>] [--json]`.
  */
 export async function runMergeAssistCommand(args: readonly string[], usage: () => string, io: MergeAssistCommandIo = {}): Promise<number> {

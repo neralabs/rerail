@@ -51,22 +51,13 @@
 .mstrip .mproblems summary{color:var(--warning-foreground);padding:10px 16px}
 .mstrip .mproblems .in{border-top:0;padding:0 16px 14px}
 
-/* ---- on: the Settings fold: delivery, the conflict hook command and its timeout ---- */
+/* ---- on: the Settings fold: the conflict hook command and its timeout ---- */
 .msettings{margin:-16px 0 28px}
 .msettings[hidden]{display:none}
 .msettings > summary{padding:10px 16px}
 .msettings > .in{display:block;padding:14px 16px 16px;border-top:1px solid var(--border)}
 .msetform{display:grid;gap:16px;max-width:var(--measure)}
 .msetform .k{display:block;margin-bottom:6px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
-.mdeliv{margin:0;padding:0;border:0;min-width:0}
-.mdeliv legend{padding:0}
-.mopts{display:grid;gap:6px;margin-bottom:6px}
-.mopt{display:grid;gap:2px;width:100%;padding:8px 12px;text-align:left;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);font:inherit;color:var(--foreground)}
-.mopt:hover{background:var(--hover)}
-.mopt[aria-checked="true"]{border-color:var(--brand);box-shadow:inset 3px 0 0 var(--brand)}
-.mopt[disabled]{opacity:.6}
-.mopt-l{font-size:13px;font-weight:600}
-.mopt .sub{font-size:12px;line-height:1.45;color:var(--muted-foreground)}
 .mfieldrow{display:grid;gap:4px}
 .mfield{width:100%;padding:6px 10px;font-size:13px;line-height:1.5;color:var(--foreground);background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg)}
 .mfield.mono{font-family:var(--font-mono);font-size:12.5px}
@@ -138,7 +129,7 @@
 .mwhy li{overflow-wrap:anywhere}
 .mwhy li::marker{color:var(--muted-foreground)}
 .mlogged{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--muted-foreground)}
-/* The quick call's line (what the other side is doing, why it collides), a failed conflict hook, and who to talk to. */
+/* The conflict's line (what the other side is doing), a failed conflict hook, and who to talk to. */
 .msummary{margin:0;font-size:13px;line-height:1.5;color:var(--foreground);overflow-wrap:anywhere;max-width:var(--measure)}
 .mhookfail{display:flex;align-items:flex-start;gap:6px;margin:0;font-size:12.5px;line-height:1.5;color:var(--warning-foreground);overflow-wrap:anywhere}
 .mhookfail > .ico{margin-top:2px;flex:none}

@@ -1,9 +1,10 @@
 # Branch coordination: comparison with Amp
 
-> **Historical.** This note compared the decision-sharing design, since removed (pull request #526 keeps it, at commit
-> `51f748b563`); what Merge Assist delivers is in the PRD's [Delivered scope](merge-assist-prd.md#delivered-scope).
+> **Historical.** This note compared the decision-sharing design and its judging through the user's agent CLI, both
+> since removed (pull request #526 keeps them, at commit `51f748b563`); what Merge Assist delivers is in the build
+> document's [Summary](merge-assist-v1-build.md#1-summary).
 
-Spike note for Merge Assist ([PRD](merge-assist-prd.md)). It compares Amp (ampcode.com) with the four candidate designs: landing gate, continuous radar, intent ledger and speculative integration. Amp docs were read on 2026-11-02 (docs index: [idx]). Unmarked statements about Amp are documented and cited. `[INFERENCE]` marks our own reasoning. "Not found" means we searched all 64 markdown pages listed in [idx] for `conflict|overlap|collid|collision|lock|same files|semantic|incompatib|rebase|stale`, plus the Chronicle news list [news], and found nothing beyond what is cited here.
+Spike note for Merge Assist ([build](merge-assist-v1-build.md)). It compares Amp (ampcode.com) with the four candidate designs: landing gate, continuous radar, intent ledger and speculative integration. Amp docs were read on 2026-11-02 (docs index: [idx]). Unmarked statements about Amp are documented and cited. `[INFERENCE]` marks our own reasoning. "Not found" means we searched all 64 markdown pages listed in [idx] for `conflict|overlap|collid|collision|lock|same files|semantic|incompatib|rebase|stale`, plus the Chronicle news list [news], and found nothing beyond what is cited here.
 
 ## Summary
 

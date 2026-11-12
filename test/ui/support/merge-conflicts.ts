@@ -21,7 +21,7 @@ export const conflict = (id: string, over: Partial<Conflict> = {}): Conflict => 
   evidence: ["Both change native/src/model.rs lines 465–472."],
   detectedAt: "2026-11-02T11:00:00Z",
   dismissal: null,
-  summary: null,
+  summary: "PR #398 (Tim) is changing matchers",
   hook: null,
   ...over,
 });

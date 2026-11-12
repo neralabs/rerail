@@ -294,17 +294,7 @@ When the other side's author is not known, its line reads `Talk to the author of
 
 Each open conflict has a level from the dimmer ([§9.1](merge-assist-v1-build.md#91-detection)), and each level its own surfaces; none interrupts mid-edit. `logged` stays on the dashboard's Conflicts section. `ambient` is the note above, the person's line `◆ Rerail · your edit overlaps <label> (<author>): <title>  ·  open` (in Claude Code's and Codex's `systemMessage` beside the steer lines, `open` linking the conflict's card), and the footer's summary segment below. `checkpoint` is the card through the agent and the person's line `◆ Rerail · decide: <title> (<their label>)  ·  open` (the coloured `R E R A I L` in Claude Code, the word in Codex). `stop`: at `PreToolUse` of an edit that names a contested file, once per conflict and session, Claude Code asks the person first (`permissionDecision: "ask"`, with Rerail's reason, which ends `Allow this edit, or deny it and talk to <author> first.`), and the agent's context says so and carries the card; coding agents that cannot ask get context telling the agent not to edit those files and to ask the person now; the person's line goes with either.
 
-Where these go is the person's delivery setting for the repository, `chat`, `terminal` or `both` (the default), set on the Merge Assist page or with `rerail merge-assist settings --delivery` ([§9.6](merge-assist-v1-build.md#96-the-delivery-setting)):
-
-| | `chat` | `terminal` | `both` |
-| --- | --- | --- | --- |
-| The agent's note at the first boundary after the conflict is detected, once per conflict per session, with the hook's `note` | yes | no | yes |
-| The footer's conflict segment and `◉ decide:` | no | yes | yes |
-| The person's line (`systemMessage`) | yes | yes | yes |
-| The checkpoint card through the agent | yes | no: the footer and the person's line carry it | yes |
-| The stop before an edit to a contested file | always | always | always |
-
-Codex has no footer, so in `terminal` mode its person's line carries the conflict's summary: `<line> — <summary>`, read when the note is handed over, so a status the conflict hook command gave after the note was queued is the one shown. When a stop and a checkpoint card for the same conflict land at one boundary, only the stop's card and line go out: one card and one person's line per conflict per hook answer.
+Codex has no footer, so its person's line carries the conflict's line: `<line> — <summary>`, read when the note is handed over, so a status the conflict hook command gave after the note was queued is the one shown. When a stop and a checkpoint card for the same conflict land at one boundary, only the stop's card and line go out: one card and one person's line per conflict per hook answer.
 
 ## What the footer means
 
@@ -336,7 +326,7 @@ It refreshes every five seconds and only reads: it never starts a daemon, runs a
 - `engine unavailable` if the rule engine could not load.
 - `audit failed (N failures)` if the latest audit failed; N counts every failure, including any beyond its list of at most 20.
 - For a completed audit with gaps: `N files not checked`, `N rules ran out of work`, `N rules stopped by file work`.
-- ` · ◐ <summary>` after the steering count where Merge Assist is on and the person's conflict delivery includes `terminal` (`terminal` or `both`, the default; `chat` leaves the footer without it), while any in-flight conflict in the session's checkout is open above logged. Links to the Merge Assist page. It is the newest such conflict's line, with ` (+N)` when N more are open: the conflict hook command's `status` when it gave one, else the conflict's summary, a deterministic `<their label> (<author>) is changing <symbol or file>` at once, replaced by the quick call's plain-words line (at most 90 characters) when it answers ([§9.5](merge-assist-v1-build.md#95-the-conflict-hook)). ` · ◉ decide: <title>` replaces the segment while a checkpoint or stop conflict is open, linking its card; the title is cut at 48 characters.
+- ` · ◐ <summary>` after the steering count where Merge Assist is on, while any in-flight conflict in the session's checkout is open above logged. Links to the Merge Assist page. It is the newest such conflict's line, with ` (+N)` when N more are open: the conflict hook command's `status` when it gave one ([§9.5](merge-assist-v1-build.md#95-the-conflict-hook)), else the conflict's summary, `<their label> (<author>) is changing <symbol or file>` (without the author when none is known). ` · ◉ decide: <title>` replaces the segment while a checkpoint or stop conflict is open, linking its card; the title is cut at 48 characters.
 
 The footer never animates. Full audits and rule lists are on the dashboard.
 

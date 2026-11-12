@@ -63,12 +63,9 @@ export function deliveryRules(deliveries: readonly AdapterDelivery[]): SteerRule
   return latestPerConflict(deliveries).filter(carriesText).flatMap(delivery => [...delivery.rules]);
 }
 
-/**
- * The conflicts behind the deliveries, in order: the person's line for each, after the rules', one per conflict. A
- * conflict's note in terminal delivery carries no text for the agent, only this line.
- */
+/** The conflicts behind the deliveries `deliveryText` rendered, in order: the person's line for each, after the rules', one per conflict. */
 export function deliveryConflicts(deliveries: readonly AdapterDelivery[]): ConflictNotice[] {
-  return latestPerConflict(deliveries).filter(delivery => steers(delivery.requested)).flatMap(delivery => (delivery.conflict === undefined ? [] : [delivery.conflict]));
+  return latestPerConflict(deliveries).filter(carriesText).flatMap(delivery => (delivery.conflict === undefined ? [] : [delivery.conflict]));
 }
 
 /** Distinct rule ids behind the deliveries `deliveryText` rendered, so the hook's receipt can credit them. */
@@ -203,8 +200,7 @@ export async function holdStopSteers(path: string, deliveries: readonly AdapterD
 /**
  * Steers reach the model as `additionalContext` at a context event, after `note`, and the person as one line per rule,
  * in the same output, which records the receipt once written (D5): what the person sees, what the agent is told and
- * what is counted agree. A steer held past the end of a turn (`late`) is led as a late steer. A conflict's line with no
- * text for the model (terminal delivery) goes out alone, as the person's line.
+ * what is counted agree. A steer held past the end of a turn (`late`) is led as a late steer.
  */
 export function steerHookOutput(
   hook: string,
@@ -216,7 +212,7 @@ export function steerHookOutput(
   if (contextEvents[hook] !== true) return {};
   const content = deliveryText(deliveries.map(delivery => (delivery.late === true ? { ...delivery, content: asLateSteer(delivery.content) } : delivery)));
   const context = [note, content].filter(text => text !== undefined).join("\n\n");
-  if (context === "") return lines(deliveries);
+  if (context === "") return {};
   const output = { ...lines(deliveries), hookSpecificOutput: { hookEventName: hook, additionalContext: context } };
   // A note that names no rule (a Merge Assist note) shows the person no steer line, so it is not counted as a steer.
   const ruleIds = deliveryRuleIds(deliveries);

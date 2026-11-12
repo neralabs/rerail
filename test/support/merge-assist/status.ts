@@ -31,7 +31,7 @@ export function sampleConflict(overrides: Partial<Conflict> = {}): Conflict {
     evidence: ["Both sides change native/src/model.rs within 3 lines of each other."],
     detectedAt: "2026-11-03T14:05:00Z",
     dismissal: null,
-    summary: null,
+    summary: "PR #398 (jbarnes) is changing fn compile",
     hook: null,
     ...overrides,
   };
@@ -46,10 +46,8 @@ export function sampleStatus(checkout: string, overrides: Partial<MergeAssistSta
     enabled: true,
     settings: DEFAULT_MERGE_ASSIST_SETTINGS,
     readiness: {
-      judge: { available: true, runner: "claude", problem: null },
       github: { state: "signed-in", login: "tbelanger", repository: "acme/app" },
     },
-    budget: { used: 3, limit: 40, windowMinutes: 60 },
     scanning: false,
     lastScan: { at: "2026-11-03T14:05:00Z", peers: { branches: 2, pullRequests: 1 }, problems: [] },
     conflicts: [],

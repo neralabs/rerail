@@ -20,7 +20,7 @@ export const sessionResponseSchema = z.object({
       decide: z.object({ id: z.string(), title: z.string() }).nullable()
         .describe("The loudest open checkpoint or stop conflict, waiting on the person's decision; null when none is open."),
       summary: z.object({ id: z.string(), text: z.string() }).describe("The newest open conflict's status line text: the hook's status, else its summary."),
-    }).optional().describe("Merge Assist's footer segment: absent while no conflict in the session's checkout is open above logged, or while the person's conflict delivery is chat."),
+    }).optional().describe("Merge Assist's footer segment: absent while no conflict in the session's checkout is open above logged."),
   }),
   audit: createSelectSchema(audits)
     .pick({ workspaceRoot: true, scope: true, mode: true, status: true })
