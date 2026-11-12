@@ -81,9 +81,10 @@ export class CheckoutOwners {
    * Drops the answers kept at and below each folder on the way up from `path` that a lookup found with no `.git` entry
    * and that holds one now, so the next lookup asks the disk and Git again. `git worktree add`, from any repository, or
    * `git init` can make a folder a session already looked up a checkout's top level; the answers from before name the
-   * checkout around it, or none, for its files, and would stay until the recorded checkouts change. Costs a stat per
-   * folder kept as plain on the way up from `path`, and from its real path when that differs. Returns whether it
-   * dropped any.
+   * checkout around it, or none, for its files, and would stay until the recorded checkouts change. A lookup of such a
+   * folder itself drops them on its own (`#confirm`), but a file's lookup reads the answers kept for the folders above
+   * it without looking at them. Costs a stat per folder kept as plain on the way up from `path`, and from its real path
+   * when that differs. Returns whether it dropped any.
    */
   lookAgainAt(path: string): boolean {
     this.#revalidate();
@@ -163,6 +164,7 @@ export class CheckoutOwners {
     this.#roots.clear();
     this.#confirmed.clear();
     this.#submodules.clear();
+    this.#unconfirmedGitEntries.clear();
   }
 
   #plainRoot(real: string): string | undefined {
@@ -193,8 +195,18 @@ export class CheckoutOwners {
     return root;
   }
 
+  /**
+   * Whether `directory` holds a `.git` entry that Git confirms as a checkout's top level: its physical root, or
+   * undefined. A folder kept as plain that holds a `.git` entry now became a checkout after a lookup passed it; the
+   * answers kept at and below it predate that, so they go and Git is asked. A lookup asks this of the folder it starts
+   * at only when that folder holds a `.git` entry, so a walk, which asks for each folder before the files in it, finds
+   * such a checkout at its folder without a stat more.
+   */
   #confirm(directory: string): string | undefined {
-    if (this.#confirmed.has(directory)) return this.#confirmed.get(directory);
+    if (this.#confirmed.has(directory)) {
+      if (!this.#outgrown(directory)) return this.#confirmed.get(directory);
+      this.#forgetWithin(directory);
+    }
     const gitEntry = holdsGitEntry(directory);
     let root: string | undefined;
     if (gitEntry) {
@@ -212,9 +224,14 @@ export class CheckoutOwners {
   #outgrownAbove(path: string): string | undefined {
     let outgrown: string | undefined;
     for (let folder = path; ; folder = dirname(folder)) {
-      if (this.#keptAsPlain(folder) && holdsGitEntry(folder)) outgrown = folder;
+      if (this.#outgrown(folder)) outgrown = folder;
       if (dirname(folder) === folder) return outgrown;
     }
+  }
+
+  /** Whether a lookup found `folder` with no `.git` entry and it holds one now. A stat, only for a folder kept as plain. */
+  #outgrown(folder: string): boolean {
+    return this.#keptAsPlain(folder) && holdsGitEntry(folder);
   }
 
   /** Whether the kept answer for `folder` is that it held no `.git` entry. */

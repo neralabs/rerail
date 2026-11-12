@@ -29,14 +29,20 @@ const printRule = codeRuleSchema.parse({
   clauses: [{ id: "print", violation: { code: "P", anchor: "witness.span", message: "No print" }, forbid: { ast: { language: "python", rule: { pattern: "print($ARG)" } } } }],
 });
 
-/** A started repository at `path` holding `FOLDERS`, set up with the print rule; returns `path`. */
-async function startedRepository(path: string, databasePath: string): Promise<string> {
+/** A rule `print(1)` does not break: a checkout set up with it alone leaves a write of it unsteered. */
+const evalRule = codeRuleSchema.parse({
+  format: "rerail.policy/v1", id: "test:eval", revision: 1, mode: "steer", scope: { include: ["**/*.py"], exclude: [] },
+  clauses: [{ id: "eval", violation: { code: "E", anchor: "witness.span", message: "No eval" }, forbid: { ast: { language: "python", rule: { pattern: "eval($ARG)" } } } }],
+});
+
+/** A started repository at `path` holding `FOLDERS`, set up with `rule` (the print rule by default); returns `path`. */
+async function startedRepository(path: string, databasePath: string, rule = printRule): Promise<string> {
   await mkdir(join(path, ...FOLDERS.at(-1)!), { recursive: true });
   await writeFile(join(path, ...FOLDERS.at(-1)!, "x.py"), "x = 1\n");
   git(path, "init", "--quiet");
   git(path, "add", ".");
   git(path, "commit", "--quiet", "-m", "seed");
-  setUpTestRepository(path, { library: [{ kind: "code", rule: printRule }] }, databasePath);
+  setUpTestRepository(path, { library: [{ kind: "code", rule }] }, databasePath);
   return path;
 }
 
@@ -66,6 +72,15 @@ async function write(runtime: RerailRuntime, sessionId: string, path: string, te
   await mkdir(join(path, ".."), { recursive: true });
   await writeFile(path, text);
   const deliveries = await runtime.ingest({ kind: "result", eventId: `result-${path}`, sessionId, toolCallId, toolName: "Write", output: "ok" });
+  return deliveries.flatMap(delivery => delivery.content.split("\n").filter(line => line.includes("No print")));
+}
+
+/** Writes `text` to `path` from a shell command of `sessionId`, which the session's walk finds at the command's result. */
+async function shellWrite(runtime: RerailRuntime, sessionId: string, path: string, text: string): Promise<string[]> {
+  const toolCallId = `shell-${path}`;
+  await runtime.ingest({ kind: "call", eventId: `call-${toolCallId}`, sessionId, toolCallId, toolName: "Bash", input: { command: "./write.sh" } });
+  await writeFile(path, text);
+  const deliveries = await runtime.ingest({ kind: "result", eventId: `result-${toolCallId}`, sessionId, toolCallId, toolName: "Bash", output: "" });
   return deliveries.flatMap(delivery => delivery.content.split("\n").filter(line => line.includes("No print")));
 }
 
@@ -174,6 +189,31 @@ describe("a runtime's checkout lookups", () => {
       // That event saw the registry change and looked again at a folder with no .git entry yet; nothing looked again
       // once Git wrote it, as the registry did not change again.
       expect({ plain, between, worktree }).toEqual({ plain: [], between: [], worktree: [expect.stringMatching(/later\/src\/a\/b\/c\/b\.py:1:1/u)] });
+      await runtime.ingest({ kind: "session-end", eventId: "end", sessionId: SESSION });
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it("judge a shell write by the rules of a worktree another started repository made in the session's folder over a folder its walk had found plain", { timeout: 120_000 }, async () => {
+    const root = await realpath(await temporaryDirectory({ started: false }));
+    const databasePath = join(root, "rerail.sqlite");
+    // The session's checkout has no rule against print; the other repository has.
+    const main = await startedRepository(join(root, "main"), databasePath, evalRule);
+    const other = await startedRepository(join(root, "other"), databasePath);
+    const nested = join(main, "nested");
+    await mkdir(join(nested, ...FOLDERS.at(-1)!), { recursive: true });
+    await writeFile(join(nested, ...FOLDERS.at(-1)!, "x.py"), "x = 1\n");
+    const runtime = await openedSession(root, main, databasePath);
+    try {
+      await rm(nested, { recursive: true, force: true });
+      git(other, "worktree", "add", "--quiet", "--detach", nested);
+
+      const shell = await shellWrite(runtime, SESSION, join(nested, ...FOLDERS.at(-1)!, "x.py"), "print(1)\n");
+
+      // The session's first walk looked up the folders of `nested` while it was plain. Those answers named the session's
+      // checkout, so its walks judged the worktree's files by that checkout's rules for as long as the session was open.
+      expect(shell).toEqual([expect.stringMatching(/nested\/src\/a\/b\/c\/x\.py:1:1/u)]);
       await runtime.ingest({ kind: "session-end", eventId: "end", sessionId: SESSION });
     } finally {
       await runtime.dispose();

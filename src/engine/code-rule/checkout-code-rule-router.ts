@@ -159,18 +159,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     const starting = this.#options.startingCheckout;
     return (worktreeRegistry(starting)?.worktrees ?? [])
       .map(worktree => storedPath(worktree))
-      .filter(root => root !== starting && existsSync(root) && this.#ownsWorktree(root) && this.#mayRun(root));
-  }
-
-  /**
-   * Whether `root`, a folder Git's registry lists, is the top level of a checkout that owns its files. When the owners'
-   * kept answers say it is not, they look again (`CheckoutOwners.lookAgainAt`): answers from a lookup made while it was a
-   * plain folder, or while `git worktree add` had listed it and not yet written its `.git` file, would keep it out of
-   * the walk for as long as the runtime keeps them. A listed folder Git takes for a top level costs nothing more.
-   */
-  #ownsWorktree(root: string): boolean {
-    if (this.#owner(root)?.checkoutRoot === root) return true;
-    return this.#options.owners.lookAgainAt(root) && this.#owner(root)?.checkoutRoot === root;
+      .filter(root => root !== starting && existsSync(root) && this.#owner(root)?.checkoutRoot === root && this.#mayRun(root));
   }
 
   /**
