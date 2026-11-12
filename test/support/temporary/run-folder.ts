@@ -11,7 +11,7 @@
  * A run picks those folders at its start and removes them while its tests run, so its first test file waits for none
  * of them; its end waits for that removal.
  */
-import { lstat, mkdtemp, readdir, rm } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -32,6 +32,8 @@ const DEEPEST_SOCKET_BYTES = 54;
 const REMOVAL_TRIES = 5;
 /** The errors Windows gives while a process still holds a file in a folder being removed. */
 const HELD = new Set(["EBUSY", "EPERM", "ENOTEMPTY", "EACCES"]);
+/** The errors a removal gives for want of permission, on Linux and macOS when a folder in the tree is read-only. */
+const DENIED = new Set(["EPERM", "EACCES"]);
 
 /**
  * Makes this run's folder and points the temp folder variables at it, and starts removing ended runs' folders, which
@@ -108,10 +110,11 @@ async function removeAll(paths: readonly string[]): Promise<string[]> {
 }
 
 /**
- * Removes `path`; returns why it stays, or undefined once it is gone. While Windows refuses because a process holds a
- * file in it, it tries again for a second and a half: vitest ends its workers only after the run's teardown starts,
- * and a killed run's processes let go a moment after they end. Node's own `maxRetries` would retry at every level of
- * the tree, so one file held deep down would keep it trying for minutes.
+ * Removes `path`; returns why it stays, or undefined once it is gone. When the first try is refused for want of
+ * permission, every folder in it is made writable before the next. While Windows refuses because a process holds a
+ * file in it, it tries again for about a second: vitest ends its workers only after the run's teardown starts, and a
+ * killed run's processes let go a moment after they end. Node's own `maxRetries` would retry at every level of the
+ * tree, so one file held deep down would keep it trying for minutes.
  */
 async function remove(path: string): Promise<string | undefined> {
   for (let attempt = 1; ; attempt += 1) {
@@ -119,10 +122,26 @@ async function remove(path: string): Promise<string | undefined> {
       await rm(path, { recursive: true, force: true });
       return undefined;
     } catch (error) {
-      if (attempt === REMOVAL_TRIES || !HELD.has((error as NodeJS.ErrnoException).code ?? "")) return String(error);
+      const code = (error as NodeJS.ErrnoException).code ?? "";
+      if (attempt === REMOVAL_TRIES || !HELD.has(code)) return String(error);
+      if (attempt === 1 && DENIED.has(code)) await unlock(path);
       await delay(100 * attempt);
     }
   }
+}
+
+/**
+ * Gives this user every permission on each folder in the tree at `path`, so a removal can empty them. A test that makes
+ * a folder read-only to see a write fail, killed before it gives the permission back, leaves one that `rm` cannot empty
+ * on Linux and macOS (on Windows, Node's `rm` clears a read-only flag itself). Links are not followed, so nothing
+ * outside the tree changes. A folder this user may not change (another user's) stays as it is, and the removal says why.
+ */
+async function unlock(path: string): Promise<void> {
+  const info = await lstat(path).catch(() => undefined);
+  if (info?.isDirectory() !== true) return;
+  await chmod(path, 0o700).catch(() => undefined);
+  const names = await readdir(path).catch(() => []);
+  await Promise.all(names.map(async name => await unlock(join(path, name))));
 }
 
 /** Says on stderr what stayed, which the next run tries to remove again. */
