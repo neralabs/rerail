@@ -71,9 +71,20 @@ function contextOf<C extends string | null>(
   return { checkoutPath, repositoryKey, cloneId, git: location.git, main: location.main };
 }
 
+/** The most paths one statement binds: SQLite refuses a statement with more than 32,766 variables (999 before 3.32). */
+const PATHS_PER_STATEMENT = 500;
+
+/** `paths` in runs of at most {@link PATHS_PER_STATEMENT}, one run per statement; none for none. */
+function statementRuns(paths: readonly string[]): string[][] {
+  const runs: string[][] = [];
+  for (let start = 0; start < paths.length; start += PATHS_PER_STATEMENT) runs.push(paths.slice(start, start + PATHS_PER_STATEMENT));
+  return runs;
+}
+
 function deleteCheckoutSettings(db: Writer, checkoutPaths: readonly string[]): void {
-  if (checkoutPaths.length === 0) return;
-  db.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "checkout"), inArray(ruleSettings.ownerId, [...checkoutPaths]))).run();
+  for (const paths of statementRuns(checkoutPaths)) {
+    db.delete(ruleSettings).where(and(eq(ruleSettings.ownerKind, "checkout"), inArray(ruleSettings.ownerId, paths))).run();
+  }
 }
 
 /** Clone-keyed repositories whose remote this process already tried to adopt; a clone with no remote is checked again. */
@@ -562,13 +573,13 @@ function onDiskOf(path: string, present: boolean | undefined): OnDisk {
 
 /** Forget those of `gone` not recorded or seen again since `now`, with their own settings, and return their paths. */
 function forgetCheckouts(tx: Writer, gone: readonly string[], now: number): string[] {
-  const forgotten = tx.select({ path: checkouts.checkoutPath, lastSeenAt: checkouts.lastSeenAt }).from(checkouts)
-    .where(inArray(checkouts.checkoutPath, [...gone])).all()
+  const forgotten = statementRuns(gone)
+    .flatMap(paths => tx.select({ path: checkouts.checkoutPath, lastSeenAt: checkouts.lastSeenAt }).from(checkouts)
+      .where(inArray(checkouts.checkoutPath, paths)).all())
     .filter(row => row.lastSeenAt < now)
     .map(row => row.path);
-  if (forgotten.length === 0) return forgotten;
   deleteCheckoutSettings(tx, forgotten);
-  tx.delete(checkouts).where(inArray(checkouts.checkoutPath, forgotten)).run();
+  for (const paths of statementRuns(forgotten)) tx.delete(checkouts).where(inArray(checkouts.checkoutPath, paths)).run();
   return forgotten;
 }
 

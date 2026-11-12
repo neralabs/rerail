@@ -68,6 +68,16 @@ function settingOwners(database: RerailDatabase): unknown[] {
   return database.$client.prepare("SELECT owner_kind, owner_id FROM rule_settings ORDER BY owner_kind, owner_id").all();
 }
 
+/** Rows for checkouts of `clone` at `paths` that could not be recorded now, as their folders are not there, seen long ago. */
+function recordRows(database: RerailDatabase, clone: { readonly repositoryKey: string; readonly cloneId: string }, paths: readonly string[]): void {
+  const insert = database.$client.prepare(
+    "INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at) VALUES (?, ?, ?, NULL, 1, 1)",
+  );
+  database.$client.transaction(() => {
+    for (const path of paths) insert.run(path, clone.repositoryKey, clone.cloneId);
+  })();
+}
+
 describe("the repository registry", () => {
   it("puts clones that share a remote and worktrees that share a clone in one repository", async () => {
     const root = await temporary("rerail-registry-join-");
@@ -377,6 +387,18 @@ describe("the repository registry", () => {
     expect(await pruneCheckouts(database)).toEqual([]);
     expect(settingOwners(database)).toEqual(own.map(path => ({ owner_kind: "checkout", owner_id: path })));
   });
+
+  it("forgets more gone checkouts than one SQLite statement can bind", async () => {
+    const root = await temporary("rerail-registry-prune-many-");
+    const database = open(join(root, "rerail.sqlite"));
+    const main = gitRepository(join(root, "main"));
+    // SQLite binds at most 32,766 variables in one statement, and the settings delete binds one more than it has paths.
+    const gone = Array.from({ length: 32_766 }, (_, index) => join(root, "gone", String(index)));
+    recordRows(database, recordCheckout(database, main), gone);
+
+    expect((await pruneCheckouts(database)).length).toBe(gone.length);
+    expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath)).toEqual([main]);
+  }, 60_000);
 
   it("looks a checkout up without writing anything or creating a clone id", async () => {
     const root = await temporary("rerail-registry-lookup-");
