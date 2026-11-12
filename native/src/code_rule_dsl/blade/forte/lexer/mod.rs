@@ -35,13 +35,13 @@ use super::token::{ErrorReason, LexerError, State, Token, TokenType};
 use super::{Budget, Exhausted};
 
 /// What the lexer produces (`Lexer::tokenizeCompact`).
-pub(crate) struct Lexed {
-    pub(crate) tokens: Vec<Token>,
-    pub(crate) errors: Vec<LexerError>,
+pub struct Lexed {
+    pub tokens: Vec<Token>,
+    pub errors: Vec<LexerError>,
 }
 
 /// `(new Lexer($source, $directives))->tokenizeCompact()`.
-pub(crate) fn tokenize(
+pub fn tokenize(
     source: &[u8],
     directives: &Directives,
     budget: &mut Budget,

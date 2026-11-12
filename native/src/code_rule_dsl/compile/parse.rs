@@ -107,7 +107,7 @@ fn sub_rule(parse: &Map<String, Value>) -> Value {
 
 /// `hosted`: the tree has a host node, which `host` tests (a `parse`'s literal; formatArgs' fields
 /// have none).
-pub(super) fn validate_sub_rule(
+pub fn validate_sub_rule(
     value: &Value,
     path: &str,
     grammar: Grammar,
@@ -308,7 +308,7 @@ fn validate_sub_relation(
 }
 
 /// A capture's name: a metavariable name without `$`.
-pub(super) fn capture_name<'a>(value: &'a Value, path: &str) -> Result<&'a str> {
+pub fn capture_name<'a>(value: &'a Value, path: &str) -> Result<&'a str> {
     let name = non_empty_str(Some(value), path)?;
     let valid = |c: char| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_';
     if !name.chars().all(valid) {
@@ -413,7 +413,7 @@ fn host_rules<'r>(matcher: &'r AstMatcher, negated: bool, found: &mut Vec<(&'r A
 
 /// Compiles a validated rule of a text grammar. `host` is where it reaches its host node (`None`
 /// for formatArgs' fields, which have none).
-pub(super) fn compile_sub_rule(
+pub fn compile_sub_rule(
     value: &Value,
     grammar: Grammar,
     path: &str,
@@ -630,12 +630,8 @@ fn compile_sub_relation(
     ))
 }
 
-#[cfg(test)]
-pub mod annotation_tests;
-#[cfg(test)]
-pub mod host_tests;
-#[cfg(test)]
-pub mod m12b_tests;
+// annotation_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
+// host_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
+// m12b_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 // cratify: `ruff` is rerail-lang-python's (it mounts it)
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

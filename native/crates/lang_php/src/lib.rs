@@ -858,8 +858,7 @@ pub mod code_rule_dsl {
     #[path = "tape"]
     pub mod tape {
         pub use rerail_lang::code_rule_dsl::tape::*;
-        #[cfg(test)]
-        pub mod corpus_parity;
+        // corpus_parity: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
         #[allow(unused_imports)]
         use crate::code_rule_dsl::embed::segments::SegmentMap;
         #[allow(unused_imports)]

@@ -40,29 +40,29 @@ pub fn selected(trace_width: usize, w: &Work<'_>) -> bool {
 
 #[derive(Clone)]
 pub struct History {
-    plan: Arc<Plan>,
+    pub plan: Arc<Plan>,
     waves: Arc<Vec<Wave>>,
     explanation: Value,
 }
 
-struct Rule {
-    relation: usize,
+pub struct Rule {
+    pub relation: usize,
     reads: Vec<usize>,
     external: BTreeSet<String>,
     reusable: bool,
     candidate: versions::Version,
-    incremental: Option<incremental::Rule>,
+    pub incremental: Option<incremental::Rule>,
     incremental_analysis: crate::code_rule_dsl::logic::analysis::Decision,
 }
-struct Output {
-    name: String,
+pub struct Output {
+    pub name: String,
     spec: Relation,
     readers: Vec<usize>,
     empty: state::Roots,
 }
-struct Plan {
-    rules: Vec<Rule>,
-    outputs: Vec<Output>,
+pub struct Plan {
+    pub rules: Vec<Rule>,
+    pub outputs: Vec<Output>,
     after: BTreeSet<(u32, u32)>,
     strata: Vec<u32>,
     width: usize,
@@ -320,5 +320,4 @@ impl Aggregate<ResultRows, i64> for Collect {
     }
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

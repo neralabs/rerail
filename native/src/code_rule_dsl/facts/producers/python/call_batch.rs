@@ -121,7 +121,7 @@ fn named(node: &Node<'_, TapeDoc>, kinds: &Kinds) -> bool {
 /// Calls have empty argument ranges by contract; collect_arguments is a separate
 /// producer for the calls selected by relational target composition.
 /// Each root must be a document (or subtree) of a Python TapeDoc.
-pub(crate) fn collect<'t>(
+pub fn collect<'t>(
     roots: &[(u32, Node<'t, TapeDoc>)],
     wanted: ContextKind,
     mut observe: impl FnMut(u32, &Node<'t, TapeDoc>),

@@ -91,7 +91,7 @@ pub(super) fn execution_class(program: &Program) -> ExecutionClass {
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct ProgramRequirements {
+pub struct ProgramRequirements {
     pub cursor_slots: u32,
     pub capture_operations: u32,
     pub child_sites: u32,
@@ -679,7 +679,7 @@ fn entry_route(program: &Program, boundary: u32, supported: bool) -> ExecutionRo
     }
 }
 
-pub(super) fn program_requirements(program: &Program) -> ProgramRequirements {
+pub fn program_requirements(program: &Program) -> ProgramRequirements {
     let mut requirements = ProgramRequirements {
         instruction_count: program.words.len() as u32,
         cursor_slots: cursor_layouts(std::slice::from_ref(program)).0[0].1,

@@ -73,5 +73,4 @@ pub fn push(decoded: &mut Decoded, c: char, start: usize, end: usize) {
 
 
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

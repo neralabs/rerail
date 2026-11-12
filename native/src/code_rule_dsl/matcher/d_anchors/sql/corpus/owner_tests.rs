@@ -1,3 +1,4 @@
+use crate::code_rule_dsl::matcher::d_anchors::tests::compile_rule;
 use super::*;
 use crate::code_rule_dsl::language::GrammarDialect;
 // cratify: a re-export of rerail-engine's, which its facades of this module make

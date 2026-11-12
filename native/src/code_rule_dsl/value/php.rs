@@ -20,7 +20,7 @@ use std::cmp::Ordering;
 /// Expressions: the subtypes of the grammar's `expression`, `primary_expression` and `literal`
 /// supertypes (tree-sitter-php 0.24.2 `node-types.json`). Only an expression has a value; on any
 /// other node every value predicate fails.
-pub(crate) const EXPRESSION_KINDS: &[&str] = &[
+pub const EXPRESSION_KINDS: &[&str] = &[
     "anonymous_function",
     "array_creation_expression",
     "arrow_function",
@@ -108,7 +108,7 @@ impl Num {
 
 /// Decodes `node` to its value; `Unknown` for anything that is not a constant expression this
 /// knows.
-pub(crate) fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
+pub fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     if !context.enter() {
         return Value::Unknown;
     }
@@ -1625,5 +1625,4 @@ fn subscript<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Option<Va
     })
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

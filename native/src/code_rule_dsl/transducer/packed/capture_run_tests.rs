@@ -11,7 +11,7 @@ fn tape(source: &str) -> TapeDoc {
     let image = TapeImage::encode(native.tree.root_node(), &grammar, source, &|| false).unwrap();
     TapeDoc::restore(Arc::new(source.to_owned()), grammar, &image, &|| false).unwrap()
 }
-pub(super) fn program() -> Program {
+pub fn program() -> Program {
     let lang = SupportLang::Python.get_ts_language();
     let kind = |name| lang.id_for_node_kind(name, true);
     Program::new(

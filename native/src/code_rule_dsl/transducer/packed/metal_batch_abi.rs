@@ -1,7 +1,7 @@
 use std::mem::{align_of, size_of};
 
 pub const FORMAT_VERSION: u32 = 4;
-pub(super) const ARENA_KIND_COUNT: usize = 14;
+pub const ARENA_KIND_COUNT: usize = 14;
 pub const NONE: u32 = u32::MAX;
 
 #[repr(C)]
@@ -150,7 +150,7 @@ pub struct LuaSetMemberRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct PathRecord {
+pub struct PathRecord {
     pub pc: u32,
     pub node: u32,
     pub start: u32,
@@ -195,9 +195,9 @@ pub(super) struct QueryStateRecord {
     pub repeats: u32,
 }
 
-pub(super) const PENDING_PATH: u32 = 0;
-pub(super) const PENDING_GREEDY: u32 = 1;
-pub(super) const PENDING_FOLLOWING: u32 = 2;
+pub const PENDING_PATH: u32 = 0;
+pub const PENDING_GREEDY: u32 = 1;
+pub const PENDING_FOLLOWING: u32 = 2;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -209,7 +209,7 @@ pub struct PendingRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct QueryBucketRecord {
+pub struct QueryBucketRecord {
     pub occupied: u32,
     pub hash: u32,
     pub pc: u32,
@@ -222,7 +222,7 @@ pub(super) struct QueryBucketRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct QueryMemberRecord {
+pub struct QueryMemberRecord {
     pub next_member: u32,
     pub captures: u32,
     pub capture_count: u32,
@@ -231,7 +231,7 @@ pub(super) struct QueryMemberRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct QueuedStateRecord {
+pub struct QueuedStateRecord {
     pub occupied: u32,
     pub hash: u32,
     pub pc: u32,
@@ -244,7 +244,7 @@ pub(super) struct QueuedStateRecord {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct GreedyEntryRecord {
+pub struct GreedyEntryRecord {
     pub occupied: u32,
     pub hash: u32,
     pub pc: u32,

@@ -63,11 +63,11 @@ pub fn node_group_enumerations() -> usize {
 }
 
 /// Longest capture text a message interpolates before it is cut with an ellipsis.
-pub(super) const MESSAGE_CAPTURE_CHARS: usize = 80;
+pub const MESSAGE_CAPTURE_CHARS: usize = 80;
 
 /// A capture's text as a message shows it: the first line, at most `MESSAGE_CAPTURE_CHARS`
 /// characters, with `…` marking anything cut.
-pub(super) fn message_capture(text: &str) -> Cow<'_, str> {
+pub fn message_capture(text: &str) -> Cow<'_, str> {
     let first = text.split('\n').next().unwrap_or("");
     let cut_line = first.len() < text.len();
     if !cut_line && first.chars().count() <= MESSAGE_CAPTURE_CHARS {
@@ -99,7 +99,7 @@ fn emitting(query: &Query) -> &Query {
 /// bind; upstream's `defined_vars` lists them for `inside`/`precedes`/`follows` anyway, and a
 /// message there renders them empty. Each utility is summarized once per `summaries` (recursive
 /// ones together with the utilities they reach); walks sharing `summaries` reuse each other's.
-pub(super) fn ast_captures<'a>(
+pub fn ast_captures<'a>(
     matcher: &'a AstMatcher,
     utils: &'a UtilTable,
     summaries: &mut CaptureSummaries<'a>,
@@ -264,7 +264,7 @@ fn utility_exports<'a>(
 }
 
 /// The named groups of the regexes that test the witness node itself (`node_regexes`).
-pub(super) fn witness_groups(matcher: &AstMatcher, utils: &UtilTable) -> Vec<String> {
+pub fn witness_groups(matcher: &AstMatcher, utils: &UtilTable) -> Vec<String> {
     let mut regexes = Vec::new();
     node_regexes(matcher, utils, &mut regexes);
     regexes
@@ -274,7 +274,7 @@ pub(super) fn witness_groups(matcher: &AstMatcher, utils: &UtilTable) -> Vec<Str
 }
 
 /// The same-node regexes a matcher contributes to a violation or evidence projection.
-pub(super) fn witness_regexes(matcher: &AstMatcher, utils: &UtilTable) -> Vec<Regex> {
+pub fn witness_regexes(matcher: &AstMatcher, utils: &UtilTable) -> Vec<Regex> {
     let mut regexes = Vec::new();
     node_regexes(matcher, utils, &mut regexes);
     regexes.into_iter().cloned().collect()
@@ -730,7 +730,7 @@ fn ast_capture_text<'e, D: Doc>(
 }
 
 /// A sub-node regex group of the witness: its name, text, and absolute byte range.
-pub(super) type NodeGroup = (String, std::sync::Arc<str>, Range<usize>);
+pub type NodeGroup = (String, std::sync::Arc<str>, Range<usize>);
 
 /// Named groups of the same-node regexes that match the witness text, each name once, first
 /// regex first.
@@ -775,7 +775,7 @@ pub(super) fn node_groups<D: Doc>(
 /// yet is one set: that match's groups, then the other regexes' as `node_groups` reads them. A
 /// witness where no match binds it has none: it reports nothing, as the linter reports nothing
 /// where no run is found. `cancelled` is polled before each match; once it holds, the walk ends.
-pub(super) fn each_node_group_set<D: Doc>(
+pub fn each_node_group_set<D: Doc>(
     violation: &ViolationSpec,
     language: GrammarDialect,
     matched: &NodeMatch<'_, D>,
@@ -1021,7 +1021,7 @@ impl Captures {
         self.projection.as_ref()
     }
 
-    pub(crate) fn set_projection(&mut self, projection: Option<Value>) {
+    pub fn set_projection(&mut self, projection: Option<Value>) {
         self.projection = projection.map(projection::Row::from_json);
     }
 
@@ -1167,8 +1167,6 @@ pub fn anchored_span(anchor: &Anchor, witness: &Witness) -> (Option<Span>, bool)
     }
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
-#[cfg(test)]
-mod each_limit_tests;
+// each_limit_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

@@ -106,7 +106,7 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
     pub(in crate::code_rule_dsl) fn len(&self) -> usize {
         self.nodes
     }
-    pub(in crate::code_rule_dsl) fn visited_nodes(&self) -> usize {
+    pub fn visited_nodes(&self) -> usize {
         self.visited
     }
     #[cfg(any(any(test, feature = "test-hooks"), feature = "code-rule-profile"))]
@@ -163,10 +163,8 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
     }
 }
 
-#[cfg(test)]
-pub mod preparation_tests;
+// preparation_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 #[cfg(all(test, feature = "code-rule-profile"))]
 pub mod retention_spikes;
 // cratify: `lab` is rerail-engine's (it mounts it)
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

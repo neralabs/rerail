@@ -22,7 +22,7 @@ use std::collections::BTreeSet;
 pub struct Rows {
     pub witnesses: Vec<Witness>,
     /// Files of the domain whose query failed, stopped, or read around syntax errors.
-    pub(crate) incomplete: BTreeSet<String>,
+    pub incomplete: BTreeSet<String>,
 }
 
 /// What a producer's rows are to the clause reading them, and so what a comment over one does.
@@ -355,7 +355,7 @@ pub(crate) fn require_each(
 /// witness (`Side::Counted`; marked rows still count). With some file unknown the counts are
 /// lower bounds: one over the maximum is still a violation (reported with `partial`), one within
 /// it is unknown, never clean.
-pub(crate) fn budget(
+pub fn budget(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     query: &FactQuery,
@@ -455,5 +455,4 @@ pub(crate) fn budget(
     evaluation
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

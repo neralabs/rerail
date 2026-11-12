@@ -840,8 +840,8 @@ pub fn sql_col(rel: &str, col: usize) -> String {
 
 /// The kept-plan outcomes of `plan_rule_reused` in this process, by `CacheOutcome`: `RERAIL_PLAN_CACHE_COUNTS`
 /// prints them at the end of each corpus run (`KeepPlans`).
-static PLAN_CACHE: [std::sync::atomic::AtomicU64; 8] = [const { std::sync::atomic::AtomicU64::new(0) }; 8];
-const PLAN_CACHE_NAMES: [&str; 8] = ["no cache", "first sight", "kept price", "re-priced", "replanned: cheaper start", "replanned: work grew", "replanned: no longer runs", "taken from the store"];
+static PLAN_CACHE: [std::sync::atomic::AtomicU64; 9] = [const { std::sync::atomic::AtomicU64::new(0) }; 9];
+const PLAN_CACHE_NAMES: [&str; 9] = ["no cache", "first sight", "kept price", "re-priced", "replanned: cheaper start", "replanned: work grew", "replanned: no longer runs", "taken from the store", "re-priced, cheap"];
 fn plan_cache(outcome: usize) {
     PLAN_CACHE[outcome].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
@@ -5795,6 +5795,11 @@ impl<'a> Run<'a, '_> {
             }
             if produced.contains_key(r.as_str()) {
                 lines.push(SpecLine::Produced(ri[*r]));
+            }
+            // Stored for a session's next run (decision 0099): its statistics kept as its rows come, so that run
+            // does not count them from its rows (decision 0096 step 4).
+            if prog.qualified(r, "no_inline") {
+                lines.push(SpecLine::Stats(ri[*r]));
             }
         }
         let mut est: HashMap<&str, f64> = HashMap::new();

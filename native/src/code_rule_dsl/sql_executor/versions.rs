@@ -13,7 +13,7 @@ pub mod scan;
 pub mod tree;
 use tree::{Key, Link, Node};
 #[derive(Clone)]
-struct Row {
+pub struct Row {
     id: i64,
     values: Key,
 }
@@ -107,7 +107,7 @@ impl Schema {
 #[derive(Clone)]
 pub struct Version {
     schema: Arc<Schema>,
-    full: Link<Row>,
+    pub full: Link<Row>,
     primary: Link<Row>,
     ids: Link<Row>,
     indexes: Vec<Link<Row>>,
@@ -116,7 +116,7 @@ pub struct Version {
     distinct: Vec<usize>,
     next: i64,
 }
-fn key(values: impl IntoIterator<Item = Option<i64>>) -> Key {
+pub fn key(values: impl IntoIterator<Item = Option<i64>>) -> Key {
     tree::key(values.into_iter().collect())
 }
 impl Version {
@@ -649,7 +649,7 @@ struct Slot {
 #[derive(Default)]
 pub struct Store {
     reuse: RefCell<BTreeMap<TableKey, Version>>,
-    modules: Modules,
+    pub modules: Modules,
     tables: RefCell<BTreeMap<TableKey, Arc<Mutable>>>,
     slots: RefCell<BTreeMap<String, Slot>>,
     scope: std::cell::Cell<usize>,
@@ -964,7 +964,5 @@ impl Drop for Transaction<'_> {
 
 #[cfg(test)]
 pub mod bulk_tests;
-#[cfg(any(test, feature = "test-hooks"))]
-pub mod operators;
-#[cfg(test)]
-pub mod tests;
+// operators: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

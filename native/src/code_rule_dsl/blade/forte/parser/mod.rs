@@ -42,7 +42,7 @@ use std::collections::HashMap;
 
 /// `(new TreeBuilder($tokens, $source, $directives))->setDepthLimits(...)->buildCompact()`:
 /// the flat nodes.
-pub(crate) fn build(
+pub fn build(
     tokens: &[Token],
     source: &[u8],
     directives: &Directives,

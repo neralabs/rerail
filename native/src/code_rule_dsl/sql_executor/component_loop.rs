@@ -8,13 +8,13 @@ use crate::code_rule_dsl::logic::sql::select::Query;
 use rusqlite::functions::FunctionFlags;
 pub mod arena;
 
-struct Plan {
+pub struct Plan {
     analysis: Arc<Analysis>,
     members: Vec<String>,
     widths: Vec<usize>,
     steps: Vec<(schedule::Step, Query)>,
 }
-fn eligibility(e: &plan::emit::Emitted, members: &BTreeSet<String>) -> (Analysis, Option<Plan>) {
+pub fn eligibility(e: &plan::emit::Emitted, members: &BTreeSet<String>) -> (Analysis, Option<Plan>) {
     let steps = e
         .program
         .steps
@@ -181,11 +181,11 @@ fn elapsed(start: Option<u128>) -> Option<u128> {
         .zip(cpu())
         .map(|(start, end)| end.saturating_sub(start))
 }
-struct Outcome {
+pub struct Outcome {
     roots: Vec<versions::Version>,
     metrics: Value,
 }
-fn execute(db: &Database, plan: &Plan, sql_loop: bool, limit: u32) -> Result<Outcome> {
+pub fn execute(db: &Database, plan: &Plan, sql_loop: bool, limit: u32) -> Result<Outcome> {
     if limit == 0 {
         return Err(error("component comparison: no fixpoint in 0 waves"));
     }
@@ -313,8 +313,7 @@ fn execute(db: &Database, plan: &Plan, sql_loop: bool, limit: u32) -> Result<Out
     }
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 pub fn compare(
     db: &Database,

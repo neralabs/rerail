@@ -14,7 +14,7 @@ pub struct TextProbe {
 }
 
 impl TextProbe {
-    pub(super) fn compile(pattern: &str) -> Self {
+    pub fn compile(pattern: &str) -> Self {
         // Parsing and extraction are optional optimizations. Bound their work,
         // and leave authoritative syntax/size validation to the actual matcher.
         if pattern.len() > MAX_PATTERN_BYTES {

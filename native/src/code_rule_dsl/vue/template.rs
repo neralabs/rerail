@@ -8,17 +8,17 @@ use std::ops::Range;
 use tree_sitter::{Node, Parser};
 
 #[derive(Clone)]
-pub(crate) enum Arg {
+pub enum Arg {
     None,
     Static(Range<usize>),
     Dynamic(Range<usize>),
 }
 /// A normalized Vue directive.
-pub(crate) struct Directive<'t> {
-    pub(crate) node: Node<'t>,
-    pub(crate) name: &'t str,
+pub struct Directive<'t> {
+    pub node: Node<'t>,
+    pub name: &'t str,
     pub(crate) arg: Arg,
-    pub(crate) value: Option<Range<usize>>,
+    pub value: Option<Range<usize>>,
 }
 fn text<'t>(n: Node<'t>, s: &'t str) -> &'t str {
     &s[n.byte_range()]
@@ -73,7 +73,7 @@ impl<'t> Directive<'t> {
     /// Reads a grammar directive attribute, including Vue 2 scope aliases: `slot-scope` on any
     /// element, `scope` on a `<template>` only (vue-eslint-parser's reading; `<th scope="col">`
     /// is HTML's attribute). An attribute that belongs to the tag name (`in_tag_name`) is none.
-    pub(crate) fn read(node: Node<'t>, source: &'t str) -> Option<Self> {
+    pub fn read(node: Node<'t>, source: &'t str) -> Option<Self> {
         if in_tag_name(node) {
             return None;
         }
@@ -236,7 +236,7 @@ pub(crate) fn parse_for(source: &str, value: Range<usize>) -> Option<ForParse> {
     })
 }
 /// How compiler-dom treats a directive expression.
-pub(crate) enum Parse {
+pub enum Parse {
     /// An expression (the oracle's regions; the view writes expressions without asking).
     #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
     Expression,

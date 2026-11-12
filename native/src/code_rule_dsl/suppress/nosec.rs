@@ -146,7 +146,7 @@ fn test_id(word: &str) -> Option<&'static str> {
 
 /// `_parse_nosec_comment`: `None` for a comment without `# nosec`, else the tests it names. An
 /// empty list is a blanket `# nosec`: no list, or a list naming no known test (`# nosec TODO`).
-pub(crate) fn parse(comment: &str) -> Option<Vec<&'static str>> {
+pub fn parse(comment: &str) -> Option<Vec<&'static str>> {
     let found = NOSEC_COMMENT.captures(comment)?;
     let mut ids = Vec::new();
     if let Some(tests) = found.name("tests") {
@@ -165,7 +165,7 @@ pub(crate) fn parse(comment: &str) -> Option<Vec<&'static str>> {
 /// `# nosec`).
 #[derive(Debug, Default)]
 pub struct NosecIndex {
-    lines: BTreeMap<usize, Option<Vec<&'static str>>>,
+    pub lines: BTreeMap<usize, Option<Vec<&'static str>>>,
 }
 
 impl NosecIndex {
@@ -193,7 +193,7 @@ impl NosecIndex {
     /// with those of the first `# nosec` among the node's lines (`get_nosec` over
     /// `context["linerange"]`). Neither present: not suppressed. Present but naming no test: a
     /// blanket `# nosec`. Otherwise only the named tests.
-    pub(crate) fn suppresses(
+    pub fn suppresses(
         &self,
         codes: &[String],
         at: usize,
@@ -220,5 +220,4 @@ impl NosecIndex {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

@@ -190,7 +190,7 @@ impl Database {
     }
 
     /// The owned connection, to set a hook of its own (an anchor store's budget, a test's step counter).
-    pub(in crate::code_rule_dsl) fn connection_mut(&mut self) -> &mut Connection {
+    pub fn connection_mut(&mut self) -> &mut Connection {
         &mut self.connection
     }
 }

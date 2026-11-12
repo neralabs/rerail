@@ -436,7 +436,7 @@ impl Corpus {
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(super) fn batch_queries(&self) -> usize {
+    pub fn batch_queries(&self) -> usize {
         self.state
             .lock()
             .as_ref()
@@ -444,7 +444,7 @@ impl Corpus {
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(super) fn data_statements(&self) -> usize {
+    pub fn data_statements(&self) -> usize {
         self.state
             .lock()
             .as_ref()
@@ -460,7 +460,7 @@ impl Corpus {
         Ok(self.prepared_file(path, lang, digest).is_some())
     }
 
-    pub(in crate::code_rule_dsl) fn remove(&self, path: &str) -> Result<()> {
+    pub fn remove(&self, path: &str) -> Result<()> {
         let mut state = self.state.lock();
         if let Some(state) = state.as_mut()
             && let Some(file) = state.files.get(path)
@@ -487,7 +487,7 @@ impl Corpus {
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(super) fn connection(self: &Arc<Self>) -> Result<Connection> {
+    pub fn connection(self: &Arc<Self>) -> Result<Connection> {
         let mut guard = self.state.lock();
         let state = guard.as_mut().expect("publish before querying corpus");
         let store = match state.idle.pop() {
@@ -507,7 +507,7 @@ impl Corpus {
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
-pub(super) struct Connection {
+pub struct Connection {
     store: Option<Store>,
     corpus: Arc<Corpus>,
 }

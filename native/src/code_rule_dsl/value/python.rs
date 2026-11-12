@@ -12,7 +12,7 @@ use crate::code_rule_dsl::identifier::python_identifier;
 use ast_grep_core::{Doc, Node};
 
 /// Decodes `node` to its value; `Unknown` for anything that is not a literal this knows.
-pub(crate) fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
+pub fn decode<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Value {
     if !context.enter() {
         return Value::Unknown;
     }
@@ -741,7 +741,7 @@ pub(crate) fn to_str(value: &Value) -> Option<String> {
 /// CPython's `float_repr` (`repr` style `'r'`): the shortest digits that round-trip, positional
 /// where the decimal point falls within 16 digits of them (then with `.0` if integral), else
 /// scientific with a signed exponent of at least two digits.
-pub(crate) fn float_repr(value: f64) -> String {
+pub fn float_repr(value: f64) -> String {
     if value.is_nan() {
         return "nan".to_owned();
     }
@@ -784,5 +784,4 @@ pub(crate) fn float_repr(value: f64) -> String {
     format!("{sign}{body}")
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

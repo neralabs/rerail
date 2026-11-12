@@ -52,15 +52,15 @@ pub(super) fn excludes(name: &str) -> bool {
 
 #[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
-    static EXCLUSION_PROBES: Cell<usize> = const { Cell::new(0) };
+    pub static EXCLUSION_PROBES: Cell<usize> = const { Cell::new(0) };
 }
 
 /// A sub-tree's rule being matched: while it lives, bindings read through its coordinates. `parse`
 /// and `formatArgs`' `missing` (M11a) enter one around their sub-tree's match.
-pub(crate) struct HostRanges;
+pub struct HostRanges;
 
 impl HostRanges {
-    pub(crate) fn enter(tree: Arc<dyn Origin>) -> Self {
+    pub fn enter(tree: Arc<dyn Origin>) -> Self {
         HOSTS.with_borrow_mut(|hosts| hosts.push(tree));
         Self
     }
@@ -187,5 +187,4 @@ impl Drop for Enumeration {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

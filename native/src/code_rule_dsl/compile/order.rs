@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 /// leaves to authors): an item that reads a capture which only a later item binds would read it
 /// unbound, so it is refused, naming the reorder. `context` holds what the rule object's other terms
 /// bind, which runs before the `all` (atomic terms first, siblings by capture ordering).
-pub(super) fn all_order_conflicts(
+pub fn all_order_conflicts(
     items: &[AstMatcher],
     context: &BTreeSet<String>,
     path: &str,
@@ -65,7 +65,7 @@ impl AllOrderConflict {
 /// Orders `terms[from..]`, each with its path, so that a term reading a capture runs after every
 /// sibling that binds it, unless a term before `from` binds it already. Terms keep their order
 /// otherwise. A cycle (two terms each reading what the other binds) is a compile-time error.
-pub(super) fn order_by_captures(
+pub fn order_by_captures(
     terms: &mut Vec<(AstMatcher, String)>,
     from: usize,
     path: &str,
@@ -150,5 +150,4 @@ pub(super) fn order_by_captures(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

@@ -27,8 +27,7 @@ use literal_anchors::*;
 #[allow(dead_code)]
 pub mod sql_backend;
 pub mod capture_run;
-#[cfg(test)]
-pub mod capture_run_entry_tests;
+// capture_run_entry_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod capture_run_tests;
 
@@ -493,7 +492,7 @@ impl LuaPattern {
         })
     }
 
-    fn matches_with_work(&self, bytes: &[u8], work: &mut usize) -> Result<bool, ()> {
+    pub fn matches_with_work(&self, bytes: &[u8], work: &mut usize) -> Result<bool, ()> {
         fn suffix(
             pattern: &LuaPattern,
             item: usize,
@@ -617,7 +616,7 @@ impl LuaPattern {
         Ok(false)
     }
 
-    fn matches(&self, bytes: &[u8]) -> bool {
+    pub fn matches(&self, bytes: &[u8]) -> bool {
         self.matches_with_work(bytes, &mut 0).unwrap_or(false)
     }
 }
@@ -857,7 +856,7 @@ pub enum ExecutionBackend {
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
-pub(super) fn interpreter_reference(
+pub fn interpreter_reference(
     programs: &[Program],
     file: &TapeDoc,
     roots: &[Vec<u32>],
@@ -1052,11 +1051,11 @@ enum SiblingRequirement {
 
 #[derive(Clone, Copy, Debug, Default)]
 #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
-struct ExecutionStats {
-    explored_states: usize,
-    max_pending_paths: usize,
-    peak_retained_bytes: usize,
-    sibling_edge_visits: usize,
+pub struct ExecutionStats {
+    pub explored_states: usize,
+    pub max_pending_paths: usize,
+    pub peak_retained_bytes: usize,
+    pub sibling_edge_visits: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
@@ -1652,7 +1651,7 @@ impl Program {
         )
     }
 
-    pub(super) fn compile_ast_grep_literal(pattern: &Pattern) -> Result<Self, Error> {
+    pub fn compile_ast_grep_literal(pattern: &Pattern) -> Result<Self, Error> {
         if !matches!(pattern.strictness, MatchStrictness::Smart) {
             return Err(Error::UnsupportedPattern);
         }
@@ -2109,11 +2108,11 @@ impl Program {
         rerail_compiler::rir_asm::label_name(self, label)
     }
 
-    pub(in crate::code_rule_dsl) fn string_value(&self, string: u16) -> Option<&str> {
+    pub fn string_value(&self, string: u16) -> Option<&str> {
         std::str::from_utf8(self.strings.get(usize::from(string))?).ok()
     }
 
-    pub(in crate::code_rule_dsl) fn capture_names(&self) -> impl Iterator<Item = &str> {
+    pub fn capture_names(&self) -> impl Iterator<Item = &str> {
         self.words
             .iter()
             .filter(|word| (**word & 0xff) as u8 == CAPTURE)
@@ -2962,7 +2961,7 @@ impl Program {
         None
     }
 
-    fn apply_directives(
+    pub fn apply_directives(
         &self,
         captures: &mut Vec<Capture>,
         source: &[u8],
@@ -3149,12 +3148,12 @@ impl Program {
             .collect()
     }
 
-    pub(in crate::code_rule_dsl) fn execute(&self, tape: &TapeDoc) -> Result<Vec<Output>, Error> {
+    pub fn execute(&self, tape: &TapeDoc) -> Result<Vec<Output>, Error> {
         self.execute_roots(tape, 0..tape.transducer_len() as u32)
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    fn execute_with_stats(&self, tape: &TapeDoc) -> Result<(Vec<Output>, ExecutionStats), Error> {
+    pub fn execute_with_stats(&self, tape: &TapeDoc) -> Result<(Vec<Output>, ExecutionStats), Error> {
         let mut stats = ExecutionStats::default();
         let output =
             self.execute_roots_from(tape, 0..tape.transducer_len() as u32, 0, Some(&mut stats))?;
@@ -3169,7 +3168,7 @@ impl Program {
         self.execute_roots_from(tape, roots, 0, None)
     }
 
-    fn execute_roots_from(
+    pub fn execute_roots_from(
         &self,
         tape: &TapeDoc,
         roots: impl IntoIterator<Item = u32>,
@@ -3192,7 +3191,7 @@ impl Program {
         self.execute_roots_from_with_work_limit(tape, roots, 0, None, work_limit)
     }
 
-    fn execute_roots_from_with_work_limit(
+    pub fn execute_roots_from_with_work_limit(
         &self,
         tape: &TapeDoc,
         roots: impl IntoIterator<Item = u32>,
@@ -3942,7 +3941,7 @@ pub fn execute_with_backend_outcomes(
     }
 }
 
-fn execute_with_backend_bounded_limit(
+pub fn execute_with_backend_bounded_limit(
     backend: ExecutionBackend,
     programs: &[Program],
     files: &[TapeDoc],
@@ -4188,10 +4187,10 @@ pub fn execute_production_corpus_pages(
     }
 }
 
-pub(in crate::code_rule_dsl) const POSITIONAL_INDEX_VERSION: i64 = 5;
+pub const POSITIONAL_INDEX_VERSION: i64 = 5;
 const VALUE_INDEX_LIMIT: usize = 96;
 
-pub(in crate::code_rule_dsl) fn execute_many(
+pub fn execute_many(
     programs: &[Program],
     tape: &TapeDoc,
 ) -> Result<Vec<Vec<Output>>, Error> {
@@ -4231,5 +4230,4 @@ pub(in crate::code_rule_dsl) fn execute_many(
         .collect()
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

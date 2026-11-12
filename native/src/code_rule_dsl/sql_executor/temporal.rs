@@ -135,15 +135,15 @@ pub struct Trace {
     prefix: String,
     emitted: Arc<plan::emit::Emitted>,
     relations: BTreeMap<String, Relation>,
-    steps: Arc<Vec<(schedule::Step, Option<Query>)>>,
+    pub steps: Arc<Vec<(schedule::Step, Option<Query>)>>,
     producers: Arc<BTreeMap<String, Vec<String>>>,
     publications: opaque::Publications,
     stage_decisions: BTreeMap<String, crate::code_rule_dsl::logic::analysis::Decision>,
     cache_decisions:Arc<Vec<Value>>,
     components: Arc<crate::code_rule_dsl::logic::analysis::stages::Components>,
     after: BTreeSet<(u32, u32)>,
-    frames: Vec<Frame>,
-    batch: Option<batch::History>,
+    pub frames: Vec<Frame>,
+    pub batch: Option<batch::History>,
     limit: u32,
 }
 
@@ -163,28 +163,7 @@ pub fn loop_analyses(emitted:&plan::emit::Emitted)->Arc<Vec<Value>> {
     Arc::new(groups.into_iter().map(|members|json!({"component":members,"analysis":plan::acyclic::version_loop(&steps,&members,&lattices),"purpose":"Logical eligibility only; actual scheduling is reported separately"})).collect())
 }
 
-#[cfg(test)]
-mod replay_tests {
-    use super::*;
-    #[test]
-    fn equal_versions_and_cursors_reuse_frames_without_sql_phases() {
-        let (_dir, mut e) = super::super::tests::executor();
-        e.bind_relation(json!({"name":"seed","columns":["v"],"rows":[[1],[2]]}).to_string()).unwrap();
-        e.run(".decl seed(v:number)\n.input seed\n.decl r(v:number)\nr(v) :- seed(v).\nr(v) :- r(v), n=count : {seed(_)}, n>0.\n.output r\n".into(),"python".into(),None).unwrap();
-        let pool = e.scratch.clone();
-        let mut work = Work::new(&e.db, &pool);
-        work.versions = Some(&e.versions);
-        let trace = e.executions[0].temporal.get_mut(&0).unwrap();
-        assert!(trace.frames.iter().any(|f| !f.observation["recursive_components"].as_array().unwrap().is_empty()));
-        let before = trace.frames.last().unwrap().versions(&e.versions);
-        trace.replay(&mut work, &e.versions, &BTreeMap::new(), 100).unwrap();
-        assert!(trace.frames.iter().all(|f| f.observation["reused"] == true), "{}", trace.explain());
-        assert!(trace.frames.iter().all(|f| f.phase_batches == 0));
-        let after = trace.frames.last().unwrap().versions(&e.versions);
-        for (r, version) in before.published { assert!(version.same(&after.published[&r])); }
-        work.cleanup().unwrap();
-    }
-}
+// replay_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 impl Trace {
     pub fn planning_statistics(&self) -> Option<Value> {
@@ -266,7 +245,7 @@ impl Trace {
         }
         ready
     }
-    fn replay(
+    pub fn replay(
         &mut self,
         w: &mut Work<'_>,
         store: &versions::Store,
