@@ -4144,3 +4144,15 @@ Their extraction, projection, and reporter callbacks still reach original semant
 These are missing port implementations. No missing engine feature is established by these failures.
 The complete red component replay is `rr-admin-metadata-progress-finalfcce.json.gz`.
 The admin rule remains a draft. The inventory remains twenty admissions, seventy-nine drafts, and one absent translation.
+
+### 2026-11-12 — Admin components now execute natively; severity is red
+
+The corpus now contains 128 cases, including reporter ordering by decimal line strings, messages, external paths, and caller working directories.
+Native clauses handle registered source extraction, exact projection, typed raw-family selection, required-field errors, Python coercion, paths, and stable-key ordering.
+The adapter transports the complete supplied fact family. It does not select the `violations` member or filter its rows.
+
+Both APIs pass 57 cases and fail 71. No source semantic callback executes.
+Every mismatch is the structured finding's severity: the source uses the default `error`, while the candidate incorrectly uses plugin enforcement `hard-fail`.
+The complete failing cohort is `rr-admin-components-severity-red-finalfcce.json.gz`.
+The correction must export the source DTO's default severity separately from plugin enforcement.
+The rule remains a draft; no additional engine feature is required.

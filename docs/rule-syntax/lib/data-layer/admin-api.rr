@@ -2,3 +2,72 @@
 .decl admin_config(key:symbol,value:symbol)
 .violation AdminConfiguration(at:span,key:symbol,value:symbol) code "ADMIN_CONFIG" "admin configuration"
 AdminConfiguration(@place("",0),key,value) :- option("entryPoint","_admin_configuration"),admin_config(key,value).
+
+#include "data-layer/plugin-production.rr"
+#include "data-layer/supplied-facts.rr"
+
+// Projection preserves the caller's field values without coercion.
+.decl admin_project_file(i:number,value:symbol)
+.input admin_project_file(IO=json,filename="admin-project.json",path="/rows/*/file",projection="json")
+.decl admin_project_line(i:number,value:symbol)
+.input admin_project_line(IO=json,filename="admin-project.json",path="/rows/*/line",projection="json")
+.decl admin_project_pattern(i:number,value:symbol)
+.input admin_project_pattern(IO=json,filename="admin-project.json",path="/rows/*/pattern",projection="json")
+.decl admin_project_text(i:number,value:symbol)
+.input admin_project_text(IO=json,filename="admin-project.json",path="/rows/*/text",projection="json")
+.violation AdminValue(at:span,ordinal:number,value_json:symbol) code "ADMIN_VALUE" "admin value"
+AdminValue(@place("",0),i,cat("{\"file\":",p,",\"line\":",l,",\"pattern\":",pattern,",\"text\":",text,"}")) :- option("entryPoint","_admin_to_fact"),admin_project_file(i,p),admin_project_line(i,l),admin_project_pattern(i,pattern),admin_project_text(i,text).
+
+// Transport the complete typed family. Select its 'violations' member in the rule.
+.decl ar_root(b:number,kind:symbol)
+.input ar_root(IO=json,filename="admin-values.json",path="/bundles/*/value/0",projection="python-str")
+.decl ar_key(b:number,k:number,key:symbol)
+.input ar_key(IO=json,filename="admin-values.json",path="/bundles/*/value/1/*/0",projection="python-str")
+.decl ar_list(b:number,k:number,kind:symbol)
+.input ar_list(IO=json,filename="admin-values.json",path="/bundles/*/value/1/*/1/0",projection="python-str")
+.decl ar_raw_shape(b:number,k:number,r:number,kind:symbol)
+.input ar_raw_shape(IO=json,filename="admin-values.json",path="/bundles/*/value/1/*/1/1/*/0",projection="python-str")
+.decl ar_raw_key(b:number,k:number,r:number,f:number,key:symbol)
+.input ar_raw_key(IO=json,filename="admin-values.json",path="/bundles/*/value/1/*/1/1/*/1/*/0",projection="python-str")
+.decl ar_raw_text(b:number,k:number,r:number,f:number,value:symbol)
+.input ar_raw_text(IO=json,filename="admin-values.json",path="/bundles/*/value/1/*/1/1/*/1/*/1",projection="python-value-str")
+.decl ar_raw_int(b:number,k:number,r:number,f:number,value:symbol,error_type:symbol,detail:symbol)
+.input ar_raw_int(IO=json,filename="admin-values.json",path="/bundles/*/value/1/*/1/1/*/1/*/1",projection="python-value-int")
+.decl ar_container(b:number,k:number)
+ar_container(b,k) :- ar_root(b,"dict"),ar_key(b,k,"violations"),ar_list(b,k,"list").
+.decl ar_row(b:number,k:number,r:number)
+ar_row(b,k,r) :- ar_container(b,k),ar_raw_shape(b,k,r,"dict").
+.decl ar_field(b:number,r:number,key:symbol,value:symbol)
+ar_field(b,r,key,value) :- ar_row(b,k,r),ar_raw_key(b,k,r,f,key),ar_raw_text(b,k,r,f,value).
+.decl ar_line(b:number,r:number,value:symbol)
+ar_line(b,r,value) :- ar_row(b,k,r),ar_raw_key(b,k,r,f,"line"),ar_raw_int(b,k,r,f,value,"",_).
+.decl ar_error(b:number,r:number,stage:number,error_type:symbol,detail:symbol)
+ar_error(b,r,0,"KeyError","pattern") :- ar_row(b,_,r),!ar_field(b,r,"pattern",_).
+ar_error(b,r,1,"KeyError","text") :- ar_row(b,_,r),ar_field(b,r,"pattern",_),!ar_field(b,r,"text",_).
+ar_error(b,r,2,"KeyError","file") :- ar_row(b,_,r),ar_field(b,r,"pattern",_),ar_field(b,r,"text",_),!ar_field(b,r,"file",_).
+ar_error(b,r,3,"KeyError","line") :- ar_row(b,_,r),ar_field(b,r,"pattern",_),ar_field(b,r,"text",_),ar_field(b,r,"file",_),!ar_field(b,r,"line",_).
+ar_error(b,r,3,error_type,detail) :- ar_row(b,k,r),ar_field(b,r,"pattern",_),ar_field(b,r,"text",_),ar_field(b,r,"file",_),ar_raw_key(b,k,r,f,"line"),ar_raw_int(b,k,r,f,_,error_type,detail),error_type!="".
+.violation AdminReportError(at:span,bundle:number,ordinal:number,stage:number,error_type:symbol,detail:symbol) code "ADMIN_REPORT_ERROR" "admin supplied-fact conversion error"
+AdminReportError(@place("",0),b,r,stage,error_type,detail) :- option("entryPoint","_report_facts"),ar_error(b,r,stage,error_type,detail).
+
+sf_container(b,"array") :- ar_container(b,_).
+sf_shape(b,r,"object") :- ar_row(b,_,r).
+sf_property(b,r,key,value) :- ar_field(b,r,key,value).
+sf_line(b,r,value,value) :- ar_line(b,r,value).
+sf_config("strict_line","true").
+sf_config("code","AAP001").
+pp_config("findingSeverity","hard-fail").
+sf_message(b,r,cat(pattern,": ",text)) :- sf_active(b,r),ar_field(b,r,"pattern",pattern),ar_field(b,r,"text",text).
+sf_path_input(b,r,path) :- sf_active(b,r),ar_field(b,r,"file",path),prefix("/",path).
+sf_path_input(b,r,cat(root,"/",path)) :- sf_active(b,r),ar_field(b,r,"file",path),!prefix("/",path),option("adminReportRoot",root),!suffix("/",root).
+sf_path_input(b,r,cat(root,path)) :- sf_active(b,r),ar_field(b,r,"file",path),!prefix("/",path),option("adminReportRoot",root),suffix("/",root).
+
+// StructuredViolation.stable_key is a string; its line component sorts lexically.
+.decl ar_relative(b:number,r:number,value:symbol)
+ar_relative(b,r,".") :- sf_path(b,r,path),option("adminReportCwd",path).
+ar_relative(b,r,@slice(path,strlen(cwd)+1,strlen(path))) :- sf_path(b,r,path),option("adminReportCwd",cwd),cwd!="/",prefix(cat(cwd,"/"),path).
+ar_relative(b,r,@slice(path,1,strlen(path))) :- sf_path(b,r,path),option("adminReportCwd","/"),path!="/",prefix("/",path),!prefix("//",path).
+.decl ar_display(b:number,r:number,value:symbol)
+ar_display(b,r,value) :- ar_relative(b,r,value).
+ar_display(b,r,path) :- sf_path(b,r,path),!ar_relative(b,r,_).
+sf_order(b,r,cat(path,":",line,":",message),0,0,"","") :- sf_active(b,r),ar_display(b,r,path),sf_line(b,r,line,_),sf_message(b,r,message).
