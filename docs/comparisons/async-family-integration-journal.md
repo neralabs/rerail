@@ -2309,3 +2309,72 @@ Acceptance evidence remains separate: `accepted-gate.json` proves the join-work 
 `ffi-build.log` proves encoder/native parity; `ffi-focused.log` covers demand, cache, and cross-file behavior.
 The store's `frame-touch-green.log` records all 11 passing retention and bulk-publication tests.
 The allocator, worker count, projection, scheduling, and demand assertions remain in the workload harness.
+
+### 2026-11-11 — Bound statistics work independently of execution chunks
+
+The previous merge repair left increased local statistics measurement.
+Execution chunks determine its sample population, and tape node counts determine its size buckets.
+The named-only format therefore changes both sample size and sample selection.
+
+Use source bytes for size buckets. Carry each document's existing source length with its chunk metadata.
+This requires no filesystem read and does not change execution chunk limits.
+
+Give fallback statistics measurement an independent 8,192-row budget.
+Read source statistics and retained value counts before sampling.
+Stratify column samples over the relation's row positions; scale estimates to its full cardinality.
+Keep small relations exact. Do not enumerate lookup-driven producers to obtain samples.
+Bound fallback tree-count and constant-count scans as well.
+Tree samples retain a contiguous prefix so parent-child counting stays coherent.
+Document cardinality comes from the document relation when available.
+These estimates affect planning only, never the relation's actual rows.
+
+The regression test uses a million-row synthetic source and counts value reads.
+It requires bounded measurement, correct cardinality and key estimates, and zero reads for known statistics.
+The maintenance replay must still pass the existing work ceilings and output parity.
+A faster statistics pass is insufficient if it increases execution work.
+
+The first engine test filter selects zero tests after the crate split.
+That run is not validation. The owning crate's unit-test target then fails to compile:
+58 errors refer to engine-owned tools, model types, and transducer modules.
+Keep that failure in `stats-red-logic.log`; it is separate from this change.
+
+Use a separate `rerail-logic` integration-test target against the production sampler.
+`stats-red-integration.log` runs one test and fails on the full-chunk read bound.
+`stats-green.log` runs the same test and passes after bounded sampling is implemented.
+Known metadata causes zero source value reads. Million-row keys retain their cardinality estimate.
+
+Version stored own-count names as `own-counts/sample-v1/...`.
+Otherwise an old node-based bucket can collide with a new byte-based bucket of the same name.
+Execution chunks still obey their memory and node budgets; statistics have their own read limit.
+The profiler records actual sampled value reads and reports each sample's population and limit.
+
+The engine's 11 focused integration checks pass. The O125 gate passes unchanged:
+
+| Recorded join work | Premerge ceiling | Bounded statistics |
+|---|---:|---:|
+| Cold replay | 10,675,974 | 10,584,698 |
+| Incremental replay | 7,946,476 | 7,251,458 |
+| Full recomputation | 10,767,166 | 10,734,169 |
+
+The insertion check remains 633, and normalized output parity passes.
+The smaller samples change plan choices. Full-recomputation work increases about 1% from the preceding repair's 10,629,409.
+That tradeoff remains below the existing ceiling; do not describe join work as unchanged.
+
+On 5,725 files, local statistics CPU falls from 170.6 to 15.5 ms in the profiles.
+Its allocated bytes fall from 71,683,360 to 17,320,312 (75.8%).
+Every reported fallback column sample stays at or below 8,192 rows.
+These samples retain their actual population size in the profiling decisions.
+
+The alternating whole-job comparison has substantial timing variation:
+premerge versus candidate execution CPU is 15,575 versus 17,707 ms cold and 145 versus 156 ms warm.
+Loading plus execution is 15,855 versus 17,801 ms cold and 186.2 versus 185.4 ms warm.
+Thus this run does not establish a whole-job CPU improvement.
+
+Instruction counters support the narrower work reduction. The preceding repair records about 177.3 billion cold-process instructions;
+the bounded-statistics build records 174.7 billion. Mean cycle counts also fall slightly, from 53.67 to 53.41 billion.
+These are separate experiment sets on a shared host. Core placement and frequency can affect CPU time;
+the counters alone do not prove the cause of its variation. Do not claim a stable whole-job timing win.
+
+Artifacts: `stats-red-integration.log`, `stats-green.log`, `stats-engine-build.log`, `stats-gate.json`,
+`stats-o125`, `stats-after`, and `stats-comparison`, beside the preceding repair's artifacts.
+The production path has one sampling policy and no opt-in switch.

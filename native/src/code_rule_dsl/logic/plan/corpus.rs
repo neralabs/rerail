@@ -412,9 +412,9 @@ fn external_inputs(prog: &mut front::Program, root: &Path) -> Result<()> {
 }
 
 /// A chunk's mix, for which statistics measured on one chunk stand for another, scaled by nodes: the file types
-/// (extensions) holding a tenth of its nodes or more, in order, and its files' size, as the power of 4 of its mean
-/// nodes per file. Per-document relations (`doc`, `path_part`) grow with files, not nodes, so a chunk of many small
-/// files is not a chunk of a few large ones scaled. Documents are `(path, nodes)`.
+/// (extensions) holding a tenth of its source bytes or more, in order, and its files' size, as the power of 4 of its mean
+/// bytes per file. Per-document relations (`doc`, `path_part`) grow with files, not nodes, so a chunk of many small
+/// files is not a chunk of a few large ones scaled. Documents are `(path, source bytes)`, independent of the tape representation.
 fn chunk_mix<'a>(docs: impl Iterator<Item = (&'a str, usize)>) -> String {
     let mut by: BTreeMap<&str, usize> = BTreeMap::new();
     let mut files = 0;
@@ -2903,7 +2903,7 @@ fn run_observed(
     // measured on their threads and reported as `parse` and `batch`; the main thread's own as the other phases.
     // A chunk: its nodes and sources (none when it is only memo hits), its documents (key, path, source, nodes) and
     // the memo hits read since the last chunk.
-    type Chunk = (usize, Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Vec<(i64, String, Option<memo::Content>, u64)>, Vec<(String, memo::Entry, Option<memo::Content>)>, Vec<syntax::Document>);
+    type Chunk = (usize, Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Vec<(i64, String, Option<memo::Content>, u64, usize)>, Vec<(String, memo::Entry, Option<memo::Content>)>, Vec<syntax::Document>);
     // What each side of the channel is doing, for the other's waits (`profile::wait`).
     let (worker_doing, main_doing) = (crate::code_rule_dsl::logic::profile::Activity::default(), crate::code_rule_dsl::logic::profile::Activity::default());
     worker_doing.set("parse");
@@ -3377,7 +3377,7 @@ fn run_observed(
     type Made = Result<Option<(Option<memo::Content>, std::result::Result<memo::Entry, syntax::Document>)>>;
     type Sources = Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>;
     // A chunk's documents, hits and kept documents while it is projected.
-    type Cutting = (usize, Vec<(i64, String, Option<memo::Content>, u64)>, Vec<(String, memo::Entry, Option<memo::Content>)>, Vec<syntax::Document>);
+    type Cutting = (usize, Vec<(i64, String, Option<memo::Content>, u64, usize)>, Vec<(String, memo::Entry, Option<memo::Content>)>, Vec<syntax::Document>);
     let build = |docs: &Docs, i: usize| -> Made {
         // A window that failed resolves none of its files: its first holds the error, which ends the builder.
         let resolved = docs.resolved.lock().remove(&i).ok_or_else(|| Error::Plan("a file of a window that failed".to_owned()))?;
@@ -3420,7 +3420,7 @@ fn run_observed(
         next: usize,
         spawned: usize,
         pending: Vec<syntax::Document>,
-        pending_docs: Vec<(i64, String, Option<memo::Content>, u64)>,
+        pending_docs: Vec<(i64, String, Option<memo::Content>, u64, usize)>,
         hits: Vec<(String, memo::Entry, Option<memo::Content>)>,
         pending_nodes: usize,
         out: std::collections::VecDeque<Out>,
@@ -3692,7 +3692,7 @@ fn run_observed(
                         self.run_docs.lock().expect("the run's documents").insert(path.clone(), (content, *d));
                     }
                     c.pending_nodes += doc.facts.len();
-                    c.pending_docs.push((*d, path.clone(), source_id, doc.facts.len() as u64));
+                    c.pending_docs.push((*d, path.clone(), source_id, doc.facts.len() as u64, doc.facts.source.len()));
                     c.pending.push(doc);
                 }
                 Ok(None) => {}
@@ -3912,7 +3912,7 @@ fn run_observed(
         chunks += 1;
         let mut stats = t_stats.clone();
         repository_stats(&mut stats);
-        let mix = chunk_mix(chunk_docs.iter().map(|(_, path, _, n)| (path.as_str(), *n as usize)));
+        let mix = chunk_mix(chunk_docs.iter().map(|(_, path, _, _, bytes)| (path.as_str(), *bytes)));
         let mut chunk_own: Option<Own> = None;
         if own {
             let chunk = match own_once.get(&mix) {
@@ -3954,7 +3954,7 @@ fn run_observed(
                         if slice_reads.contains(rel) {
                             let m = measured.entry(rel.clone()).or_insert_with(|| {
                                 let _m = crate::code_rule_dsl::logic::profile::span(|| "guest statistics".into());
-                                syntax::statistics(source.as_ref())
+                                sampled_statistics(source.as_ref())
                             });
                             round.measured(rel, m.iter().cloned().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
                         }
@@ -4059,14 +4059,7 @@ fn run_observed(
                 Some((first, measured)) if *first > 0 => scaled_statistics(measured, *first, source.estimated_len()),
                 _ => {
                     let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel} ({mix})"));
-                    let measured = syntax::statistics(source.as_ref());
-                    // Counted only when profiling, and a source made per looked-up node (an axis, `within`) by its
-                    // estimate: its `len` makes every row, every node's ancestors in the chunk (8 s of the pack's
-                    // cold run, profiled or not), which its statistics, read off the tree, never needed.
-                    if crate::code_rule_dsl::logic::profile::on() {
-                        let rows = if source.made_on_lookup() { source.estimated_len() } else { source.len() };
-                        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, (rows * source.columns().len()) as u64);
-                    }
+                    let measured = sampled_statistics(source.as_ref());
                     measured_once.insert(key, (source.estimated_len(), measured.clone()));
                     measured
                 }
@@ -4131,7 +4124,7 @@ fn run_observed(
         let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
         // Per document of the chunk, what it hands on (`memo::Entry`), when the run is memoised. A row is its
         // document's by its first location column.
-        let mut entries: HashMap<i64, memo::Entry> = if memoised { chunk_docs.iter().map(|(d, _, _, n)| (*d, memo::Entry { nodes: *n, ..memo::Entry::default() })).collect() } else { HashMap::new() };
+        let mut entries: HashMap<i64, memo::Entry> = if memoised { chunk_docs.iter().map(|(d, _, _, n, _)| (*d, memo::Entry { nodes: *n, ..memo::Entry::default() })).collect() } else { HashMap::new() };
         let mut attributable = memoised && base_whole && chunk_own.is_some();
         if memoised && !base_whole {
             memo_why.insert("a base relation the cross-file part reads has no stored columns".to_owned());
@@ -4344,7 +4337,7 @@ fn run_observed(
             let _remember = crate::code_rule_dsl::logic::profile::span(|| "memo remember".into());
             // The chunk's entries are written as one wave, not one transaction per document.
             let mut publish: Vec<(memo::Content, String, i64, memo::Entry)> = Vec::with_capacity(chunk_docs.len());
-            for (d, path, source_id, _) in &chunk_docs {
+            for (d, path, source_id, _, _) in &chunk_docs {
                 // Counted in before it is remembered: the content it replaces is the memo's still.
                 if let (Some(k), Some(entry), Some(memo)) = (keeper.borrow_mut().as_mut(), entries.get(d), memo) {
                     own_seen.add(&Own::taken(&entry.rows));
@@ -4502,7 +4495,7 @@ fn run_observed(
             let modules = Modules::default();
             let mut load_stats = load_stats;
             let mut bind = |rel: &str, source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>| -> Result<()> {
-                load_stats.measured(rel, syntax::statistics(source.as_ref()).into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
+                load_stats.measured(rel, sampled_statistics(source.as_ref()).into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
                 modules.bind(&db2, rel, source)?;
                 Ok(())
             };
@@ -7223,6 +7216,33 @@ fn scaled_statistics(measured: &[(String, i64, i64, i64, i64)], first: usize, ro
         .collect()
 }
 
+// A statistics sample has its own row budget, independent of execution chunks.
+#[doc(hidden)]
+pub const STAT_SAMPLE_ROWS: usize = 8192;
+#[doc(hidden)]
+pub fn sampled_statistics(source: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Vec<(String, i64, i64, i64, i64)> {
+    if let Some(known) = source.statistics() { return known; }
+    // Sampling must not force a lookup-driven producer to enumerate its domain.
+    if source.made_on_lookup() { return Vec::new(); }
+    let rows = source.len();
+    let count = rows.min(STAT_SAMPLE_ROWS);
+    let names = source.columns();
+    let columns: Vec<usize> = (0..names.len()).collect();
+    let mut values = vec![Vec::with_capacity(count); names.len()];
+    let mut row = vec![0; names.len()];
+    for i in 0..count {
+        // Deterministic strata cover the whole relation without a full scan.
+        let at = (i as u128 * rows as u128 / count as u128) as usize;
+        source.row_at(at, &columns, &mut row);
+        for (column, value) in values.iter_mut().zip(&row) { column.push(*value); }
+    }
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, (count * names.len()) as u64);
+    let sample = Rows { columns: names, values };
+    let measured = syntax::measured(&sample);
+    crate::code_rule_dsl::logic::profile::decision("statistics sample", || format!("{count} of {rows} rows (limit {STAT_SAMPLE_ROWS})"));
+    if count == rows { measured } else { scaled_statistics(&measured, count, rows) }
+}
+
 /// A digest as lowercase hex.
 fn hex(digest: &[u8]) -> String {
     digest.iter().map(|b| format!("{b:02x}")).collect()
@@ -7241,7 +7261,7 @@ const OWN_POSTINGS: &str = "own:postings:";
 /// a document is in one chunk, so every count adds exactly.
 /// The store name of a chunk mix's measured tree counts under the file-local program `program`.
 fn own_name(program: &[u8; 32], mix: &str) -> String {
-    format!("own-counts/{}/{mix}", memo::plan_digest(program).iter().map(|b| format!("{b:02x}")).collect::<String>())
+    format!("own-counts/sample-v1/{}/{mix}", memo::plan_digest(program).iter().map(|b| format!("{b:02x}")).collect::<String>())
 }
 
 /// The tree counts a session's runs stored or read (`Session::own`), by name (`own_name`), with their stored source
@@ -7342,16 +7362,16 @@ impl Own {
         let of = |rel: &str| sources.iter().find(|(r, _)| r == rel).map(|(_, s)| s.as_ref());
         let column = |source: &dyn crate::code_rule_dsl::facts::vtab::Source, name: &str| source.columns().iter().position(|c| c == name);
         // Kinds by node id, then the tape's sizes and parents against them. Counted in hash maps (a chunk is a
-        // quarter million nodes: an ordered map per node was most of this measure's time) and ordered once.
+        // bounded prefix: an ordered map per node was most of this measure's time) and ordered once.
         let mut kind_of = FxHashMap::default();
         let mut kinds: FxHashMap<i64, (i64, i64)> = FxHashMap::default();
         let mut edges: FxHashMap<(i64, i64), i64> = FxHashMap::default();
         if let Some(node) = of("node")
             && let (Some(n), Some(k), Some(d)) = (column(node, "n"), column(node, "kind"), column(node, "d"))
         {
-            kind_of.reserve(node.len());
+            kind_of.reserve(node.len().min(STAT_SAMPLE_ROWS));
             let mut docs = FxHashSet::default();
-            for r in 0..node.len() {
+            for r in 0..node.len().min(STAT_SAMPLE_ROWS) {
                 let kind = node.value(r, k);
                 kind_of.insert(node.value(r, n), kind);
                 kinds.entry(kind).or_default().0 += 1;
@@ -7362,7 +7382,7 @@ impl Own {
         if let Some(tape) = of("tape")
             && let (Some(n), Some(par), Some(size)) = (column(tape, "n"), column(tape, "par"), column(tape, "size"))
         {
-            for r in 0..tape.len() {
+            for r in 0..tape.len().min(STAT_SAMPLE_ROWS) {
                 let Some(&kind) = kind_of.get(&tape.value(r, n)) else { continue };
                 kinds.entry(kind).or_default().1 += tape.value(r, size);
                 if let Some(&parent) = kind_of.get(&tape.value(r, par)) {
@@ -7372,6 +7392,11 @@ impl Own {
         }
         own.kinds = kinds.into_iter().collect();
         own.edges = edges.into_iter().collect();
+        if let Some(node) = of("node") {
+            let sampled = node.len().min(STAT_SAMPLE_ROWS);
+            if sampled > 0 { own = own.scaled(node.len() as f64 / sampled as f64); }
+        }
+        if let Some(doc) = of("doc") { own.docs = doc.estimated_len() as i64; }
         own.postings = Self::postings(sources, constants, |_| true);
         own
     }
@@ -7390,15 +7415,24 @@ impl Own {
             }
             let Some(source) = sources.iter().find(|(r, _)| r == rel).map(|(_, s)| s.as_ref()) else { continue };
             let Some(c) = source.columns().iter().position(|n| n == col) else { continue };
+            let asked: Vec<_> = values.iter().map(|&v| (c,v)).collect();
+            if let Some(counts) = source.value_counts(&asked) {
+                out.extend(asked.into_iter().zip(counts).map(|((_,v),n)| ((rel.clone(),col.clone(),v),n)));
+                continue;
+            }
             let wanted: FxHashSet<i64> = values.iter().copied().collect();
             let mut counts: FxHashMap<i64, i64> = FxHashMap::default();
-            for r in 0..source.len() {
-                let v = source.value(r, c);
+            if source.made_on_lookup() { continue; }
+            let rows = source.len();
+            let sampled = rows.min(STAT_SAMPLE_ROWS);
+            for r in 0..sampled {
+                let at = (r as u128 * rows as u128 / sampled as u128) as usize;
+                let v = source.value(at, c);
                 if wanted.contains(&v) {
                     *counts.entry(v).or_default() += 1;
                 }
             }
-            out.extend(counts.into_iter().map(|(v, n)| ((rel.clone(), col.clone(), v), n)));
+            out.extend(counts.into_iter().map(|(v, n)| ((rel.clone(), col.clone(), v), (n as f64 * rows as f64 / sampled.max(1) as f64).round() as i64)));
         }
         out
     }
@@ -8220,7 +8254,7 @@ uses(n, f) :- imp(n, q), def(f, q).
     }
 
     #[test]
-    fn a_chunks_mix_is_the_file_types_holding_a_tenth_of_its_nodes() {
+    fn a_chunks_mix_is_the_file_types_holding_a_tenth_of_its_source_bytes() {
         assert_eq!(super::chunk_mix([("a/b.py", 900), ("c.ts", 50), ("d.ts", 60)].into_iter()), "py,ts/4");
         assert_eq!(super::chunk_mix([("a/b.py", 950), ("c.ts", 50)].into_iter()), "py/4");
         assert_eq!(super::chunk_mix([("Makefile", 10), ("x.v1/README", 10)].into_iter()), "/1");
