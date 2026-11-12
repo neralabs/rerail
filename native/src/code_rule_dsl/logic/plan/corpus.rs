@@ -4596,7 +4596,10 @@ fn run_observed(
             let on = lowered_round.as_ref().zip(rounds_key).zip(cone_handle.as_ref()).map(|((lowered, key), store)| cone_rounds::On { store, space: rounds_space, db: &db2, modules: &modules, lowered, key, stats: &rounds_stats, keep: &keep_rounds, modes: &modes, still: still_ref });
             let mut gave_up = None;
             if let (Some(r), Some(on), Some(k)) = (&round, &on, from_rounds) {
-                match r.run(on, &rounds_in, cone_rounds::Start::Kept(k), cone_rounds::Answers::default(), &mut answer) {
+                load_ledger_in.lock().unwrap_or_else(|e| e.into_inner()).rounds = true;
+                let ran = r.run(on, &rounds_in, cone_rounds::Start::Kept(k), cone_rounds::Answers::default(), &mut answer);
+                load_ledger_in.lock().unwrap_or_else(|e| e.into_inner()).rounds = false;
+                match ran {
                     Ok(done) => {
                         let mut out = Vec::new();
                         for rel in kept_in.iter().filter(|r| !lowered_round.as_ref().is_some_and(|l| l.program.inputs.contains(*r))) {
@@ -4617,6 +4620,16 @@ fn run_observed(
                 }
             }
             if let Some(why) = &gave_up {
+                let mut ledger = load_ledger_in.lock().unwrap_or_else(|e| e.into_inner());
+                ledger.restarted = true;
+                ledger.relevel = std::mem::take(&mut ledger.bound);
+                drop(ledger);
+                // What the rounds derived and held on the cone's connection is not the fixpoint's, nor are the inputs
+                // they bound there (the corpus's rows with their loads' rows): the fixpoint's are bound again.
+                crate::code_rule_dsl::logic::native::component::forget_derived(&db2);
+                for (rel, source) in &cone_inputs {
+                    modules.bind(&db2, rel, Arc::clone(source))?;
+                }
                 crate::code_rule_dsl::logic::profile::decision("the cone's rounds (decision 0108)", || format!("given up ({why}): the gated fixpoint runs"));
             }
             // The gated fixpoint, its answers recorded for a closing round.
@@ -4627,9 +4640,25 @@ fn run_observed(
             if let Some(r) = &round {
                 fixpoint_keeps.extend(r.asks().cloned());
             }
-            let got = super::run_atoms_native_answering(&lowered_load, &db2, "main", load_stats, fixpoint_keeps, &modes, &mut recording, Some(&mut posting), cone_kept.as_mut().map(|k| k as &mut dyn super::KeptStrata))?;
+            load_ledger_in.lock().unwrap_or_else(|e| e.into_inner()).bound = false;
+            let mut got = super::run_atoms_native_answering(&lowered_load, &db2, "main", load_stats.clone(), fixpoint_keeps.clone(), &modes, &mut recording, Some(&mut posting), cone_kept.as_mut().map(|k| k as &mut dyn super::KeptStrata))?;
+            // Where the budget bound, strata kept from the last run carried its loads, which need not be the nearest
+            // ones now: the fixpoint runs again with none kept, its loads in levels (decision 0108).
+            let mut cone_strata = cone_kept.as_ref().and_then(|k| k.strata);
+            let kept_some = cone_strata.is_some_and(|(ran, all)| ran < all);
+            if kept_some && std::mem::take(&mut load_ledger_in.lock().unwrap_or_else(|e| e.into_inner()).bound) {
+                crate::code_rule_dsl::logic::profile::decision("the load budget (decision 0108)", || "the budget bound with strata kept from the last run: the cone runs again with none kept".to_owned());
+                {
+                    let mut ledger = load_ledger_in.lock().unwrap_or_else(|e| e.into_inner());
+                    ledger.restarted = true;
+                    ledger.relevel = true;
+                }
+                cone_kept = None;
+                asks.borrow_mut().recorded = Some(cone_rounds::Answers::default());
+                got = super::run_atoms_native_answering(&lowered_load, &db2, "main", load_stats, fixpoint_keeps, &modes, &mut recording, Some(&mut posting), None)?;
+                cone_strata = None;
+            }
             let recorded = asks.borrow_mut().recorded.take().unwrap_or_default();
-            let cone_strata = cone_kept.as_ref().and_then(|k| k.strata);
             if let Some(k) = cone_kept {
                 k.finish();
             }
@@ -4667,6 +4696,10 @@ fn run_observed(
         let text = |atom: i64| -> Result<String> { Ok(crate::code_rule_dsl::logic::native::sym_text_of(&db, atom)?) };
         let atoms = |texts: &[&str]| -> Result<Vec<i64>> { Ok(crate::code_rule_dsl::logic::native::intern_batch(&db, texts.iter().copied())?) };
         let mut pauses = 0;
+        // The load budget's levels (decision 0108): the loads held back until the cone is quiet, and the levels taken.
+        let levels = std::env::var("RERAIL_LOAD_LEVELS").map_or(true, |v| v != "off");
+        let mut held: std::collections::HashSet<Vec<i64>> = std::collections::HashSet::new();
+        let mut load_levels = 0usize;
         // Where an answer's time goes (decision 0114 §6): reported once the cone ends.
         let times = std::cell::RefCell::new(AnswerTimes::default());
         let mut answer_one = |rel: &str, rows: &[Vec<i64>], process: &mut dyn FnMut(Chunk) -> Result<()>| -> Result<Vec<(String, Vec<Vec<i64>>)>> {
@@ -4707,6 +4740,47 @@ fn run_observed(
                 return Err(Error::Plan(format!("{rel}: a request this run does not answer")));
             }
             let _s = crate::code_rule_dsl::logic::profile::span(|| format!("answer {rel}"));
+            // The load budget's levels (decision 0108): a fresh cone holds back each load the budget bounds until it
+            // is otherwise quiet, then takes the loads held back together. The k-th quiet point's loads are those k
+            // loads from the corpus, so where the budget binds the loads taken are the nearest, whatever the order
+            // they were asked in. The rounds answer at once, and give up where the budget binds (`LoadLedger::bound`).
+            // `RERAIL_LOAD_LEVELS=off` answers every load at once.
+            let in_rounds = {
+                let mut ledger = load_ledger.lock().unwrap_or_else(|e| e.into_inner());
+                if std::mem::take(&mut ledger.relevel) {
+                    // The cone runs again in levels: what was loaded from beyond the corpus is taken back, and asked
+                    // again level by level.
+                    held.clear();
+                    let n = world.take_back_libraries();
+                    crate::code_rule_dsl::logic::profile::decision("the load budget (decision 0108)", || format!("loaded past the budget out of level order: {n} documents taken back, to be loaded again level by level"));
+                }
+                ledger.rounds
+            };
+            let mut hold: Vec<Vec<i64>> = Vec::new();
+            let mut now: Vec<Vec<i64>> = Vec::new();
+            if levels && !in_rounds && !no_loads {
+                let mut quiet = false;
+                for row in rows {
+                    if !world.bounded(&text(row[0])?) {
+                        now.push(row.clone());
+                    } else if held.remove(row) {
+                        quiet = true;
+                        now.push(row.clone());
+                    } else {
+                        hold.push(row.clone());
+                    }
+                }
+                if !hold.is_empty() {
+                    held.extend(hold.iter().cloned());
+                } else if quiet {
+                    load_levels += 1;
+                }
+            } else {
+                now.extend(rows.iter().cloned());
+            }
+            let over_before = world.over_budget;
+            let rows: &[Vec<i64>] = &now;
+            let mut out = 'load: {
             let mut fresh = Vec::new();
             let mut fresh_files: Vec<i64> = Vec::new();
             let mut again: std::collections::HashSet<i64> = std::collections::HashSet::new();
@@ -4749,7 +4823,7 @@ fn run_observed(
             let mut out = vec![(world::LOADED.to_owned(), loaded_rows)];
             if fresh.is_empty() && again.is_empty() {
                 out.extend(per_file.iter().map(|r| (r.clone(), Vec::new())));
-                return Ok(out);
+                break 'load out;
             }
             if fresh.is_empty() {
                 for rel in &per_file {
@@ -4757,7 +4831,7 @@ fn run_observed(
                     let width = lowered.program.decls[rel].len();
                     out.push((rel.clone(), exports.borrow().rows_of(rel, width, at, &again)));
                 }
-                return Ok(out);
+                break 'load out;
             }
             // A document's key is a function of its path (decision 0052).
             all_paths.extend(fresh.iter().map(|d| d.path.clone()));
@@ -4800,6 +4874,14 @@ fn run_observed(
                 let width = lowered.program.decls[rel].len();
                 out.push((rel.clone(), exports.borrow().rows_of(rel, width, at, &new)));
             }
+            out
+            };
+            if world.over_budget > over_before {
+                load_ledger.lock().unwrap_or_else(|e| e.into_inner()).bound = true;
+            }
+            if !hold.is_empty() {
+                out.push((format!("{}{rel}", crate::code_rule_dsl::logic::answers::HELD_BACK), hold));
+            }
             Ok(out)
         };
         let mut idle = 0.0;
@@ -4813,6 +4895,12 @@ fn run_observed(
             idle += t.elapsed().as_secs_f64();
             got
         } {
+            // The rounds gave up: the fresh cone's answers are the run's, not those given to the rounds.
+            if std::mem::take(&mut load_ledger.lock().unwrap_or_else(|e| e.into_inner()).restarted) {
+                for rows in answered.values_mut() {
+                    rows.clear();
+                }
+            }
             let reply = answer_one(&rel, &rows, &mut process).map_err(|e| e.to_string());
             if let Ok(given) = &reply {
                 for (r, rows) in given {
@@ -4827,6 +4915,9 @@ fn run_observed(
         }
         drop(reply_tx);
         drop(answer_one);
+        if load_levels > 0 {
+            crate::code_rule_dsl::logic::profile::decision("the load budget (decision 0108)", || format!("loads taken in {load_levels} levels, each once the cone was otherwise quiet; {} past the budget", world.over_budget));
+        }
         {
             let mut t = times.into_inner();
             t.idle = idle;
@@ -4835,7 +4926,10 @@ fn run_observed(
         (loading_rows, cone_kept, cone_rounds) = cone.join().map_err(|_| Error::Plan("the cone of requests panicked".to_owned()))??;
         // The documents the rounds loaded and took back (decision 0108): neither the run's documents nor rows of its
         // exports.
-        let gone = std::mem::take(&mut *rounds_withdrawn.lock().unwrap_or_else(|e| e.into_inner()));
+        let mut gone = std::mem::take(&mut *rounds_withdrawn.lock().unwrap_or_else(|e| e.into_inner()));
+        // And any document taken back and not loaded again (the budget's levels after the rounds gave up).
+        let taken: std::collections::HashSet<&String> = world.taken_paths().collect();
+        gone.extend(loaded_docs.iter().filter(|(_, p)| taken.contains(p)).map(|(d, _)| *d));
         if !gone.is_empty() {
             loaded_docs.retain(|(d, _)| !gone.contains(d));
             for rel in &per_file {

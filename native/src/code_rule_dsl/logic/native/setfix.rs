@@ -741,6 +741,11 @@ pub struct Store { pub rels: Vec<Rel>, syms: Arc<RwLock<Interner>> }
 /// one at run time.
 struct Component { store: Arc<RwLock<Store>>, edges: Vec<EdgeRule>, probes: Vec<ProbeRule>, gates: Vec<Gate>, seeded: bool, write: bool, done: bool,
                    requests: Vec<(usize, usize)>, produced: Vec<usize>, closure: Option<closure::Closure>, levels: Levels,
+                   /// Request rows the caller held back (`defer`): asked again once the run is otherwise quiet. Until
+                   /// then they are as rows not yet asked (they keep no gate shut).
+                   deferred: Vec<(usize, Vec<Vec<i64>>)>,
+                   /// The run paused quiet with rows held back: `pending` gives them again.
+                   presenting: bool,
                    /// A closure whose launches wait in this thread's device wave (`lanes::wave`), with their tickets.
                    waiting: Option<(closure::Closure, closure::Prepared, Vec<u64>)>,
                    device: Option<Vec<(usize, JoinPlan)>>,
@@ -1190,7 +1195,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     let key = (conn.at(), name.clone());
     reg.retain(|(k, _)| *k != key);
     let mut comp = Component { store, edges, probes, gates, seeded: false, write, done: false, requests, produced, closure: None, waiting: None, device_wait: None,
-                               device: device_plans, seed_specs, levels };
+                               device: device_plans, seed_specs, levels, deferred: Vec::new(), presenting: false };
     // A stratum placed on the device runs there whole: a recursive one as the device's rounds (`fixpoint`), not as
     // a closure (decision 0098 §1's form, for a stratum on the CPU).
     let on_device_rounds = match (solver(), comp.device.as_ref()) {
@@ -1282,6 +1287,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
     };
     let mut gates = std::mem::take(&mut comp.gates);
     let mut levels = std::mem::take(&mut comp.levels);
+    let (held_back, mut present) = (!comp.deferred.is_empty(), false);
     let gates_done: Vec<usize> = gates.iter().map(|g| g.done).collect();
     // The closure form (decision 0098 §1): seeds once, then the walk's reach over distinct nodes, in two halves around
     // its launches. When the caller can wait (`lanes::wave::can_wait`: the stratum driver, which runs a level's
@@ -1619,6 +1625,8 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         }
         // Quiet: a recursive stratum's levels decide the next rows gone, or check the next level (`Levels`).
         if !any { any = levels.step(store); }
+        // Quiet, with request rows held back: the caller is asked them again (`defer`).
+        if !any && held_back { present = true; paused = true; break; }
         if !any { done = true; break; }
         if max_waves > 0 && waves >= max_waves { break; }
         if planning_counts.iter().any(|(r, before)| {
@@ -1631,6 +1639,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         }
     }
     comp.seeded = seeded;
+    comp.presenting = present;
     comp.gates = gates;
     comp.levels = levels;
     // A symbol a wave could not intern fails the run.
@@ -1672,7 +1681,7 @@ pub fn pending(conn: impl Scoped, name: &str) -> Result<Vec<(String, Vec<Vec<i64
     let mut comp = comp.lock().unwrap();
     let store = Arc::clone(&comp.store);
     let store = store.read().unwrap();
-    let mut out = Vec::new();
+    let mut out: Vec<(String, Vec<Vec<i64>>)> = Vec::new();
     for (r, answered) in &mut comp.requests {
         let rel = &store.rels[*r];
         if rel.n > *answered {
@@ -1680,7 +1689,29 @@ pub fn pending(conn: impl Scoped, name: &str) -> Result<Vec<(String, Vec<Vec<i64
             *answered = rel.n;
         }
     }
+    // Quiet with rows held back: those rows, asked again.
+    if std::mem::take(&mut comp.presenting) {
+        for (r, rows) in std::mem::take(&mut comp.deferred) {
+            let table = store.rels[r].table.clone();
+            match out.iter_mut().find(|(t, _)| *t == table) {
+                Some((_, got)) => got.extend(rows),
+                None => out.push((table, rows)),
+            }
+        }
+    }
     Ok(out)
+}
+
+/// Holds back request rows the caller does not answer yet (a load past the budget's current level, decision 0108):
+/// they are asked again once the run is otherwise quiet. Until then they are as rows not yet asked.
+pub fn defer(conn: impl Scoped, name: &str, table: &str, rows: Vec<Vec<i64>>) -> Result<()> {
+    let conn = conn.db();
+    let comp = component(conn, name)?;
+    let mut comp = comp.lock().unwrap();
+    let r = comp.store.read().unwrap().rels.iter().position(|rel| rel.table == table).ok_or_else(|| err(format!("{name}: no relation {table}")))?;
+    if !comp.requests.iter().any(|(q, _)| *q == r) { return Err(err(format!("{name}: {table} is not a request"))); }
+    if !rows.is_empty() { comp.deferred.push((r, rows)); }
+    Ok(())
 }
 
 /// Adds an answer's rows to a produced relation (by table), as its delta for the next wave: once per relation per

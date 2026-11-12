@@ -285,17 +285,49 @@ Checked on the workload (237 files, 208 loads): an edit, a workspace `csv.py` sh
 stdlib's `csv` (two loads taken back), its removal (loaded again) and the revert each write
 what a fresh cone writes.
 
+## Built: the load budget admits by level (2026-11-11)
+
+Where the budget binds, what is loaded must not depend on the order the loads were asked in. Otherwise a run that
+reused work (the rounds, or the fixpoint's kept strata) loads a different set from a fresh one.
+
+**A fresh cone takes loads level by level.** A load the budget bounds (a file beyond the corpus root, not loaded
+yet) is held back until the cone is otherwise quiet (`setfix::defer`). At that point the loads held back are taken
+together, in the requests' own order (a top-level module first, then by module and path), up to the budget.
+
+- **Why this is the nearest set.** The loads taken at the k-th quiet point are exactly those k loads from the
+  corpus: the corpus's imports at the first, their documents' imports at the second, and so on. So where the
+  budget binds, the documents loaded are the nearest ones: breadth first, by depth.
+- **No depth facts are needed.** An earlier try, `load_depth(module, n: min<>)` with each batch sorted by depth,
+  could not close the gap: a fresh cone asks loads as its waves reach them, not level by level.
+- **Gates.** A request held back keeps no gate shut: it is as a load not yet asked, which the gates' condition
+  (0065 §2a.3) already allows.
+- **Cost.** On the workload's cold cone it cost nothing measurable: 5 levels, the cone's job 5.7 s with levels and
+  without (load 75–92).
+- **Switch.** `RERAIL_LOAD_LEVELS=off` answers every load at once.
+
+**Work carried from the last run gives up where the budget binds:**
+
+- the rounds, at the first load past the budget;
+- the gated fixpoint with strata kept from the last run, which runs again with none kept.
+
+The documents they loaded are taken back (`World::take_back_libraries`) and asked again, in levels. A document
+taken back and not loaded again is withdrawn from the run's documents and its exports.
+
+**Fixed on the way.** A fresh cone after the rounds gave up was not fresh, for any reason they gave up:
+
+- it read the inputs the rounds had bound on the cone's connection;
+- it read the relations the rounds held there;
+- the main thread kept the answers it had given the rounds.
+
+Now all three are reset: the inputs are bound again, the held relations are forgotten, and the answers are
+cleared.
+
+**Checked** with `load.budget=100` on the workload (208 loads wanted). Unchanged, an import edit, a `csv.py`
+shadowing the stdlib's and its removal each load the 100 that a fresh cone loads (`RERAIL_CONE_ROUNDS=off`, with
+keys of its own). With the default budget the outputs are as before.
+
 ## Open
 
-- **The load budget is still a function of the order loads are asked in.** Tried: each load's
-  depth as a fact (`load_depth(module, n: min<>) widen 64` in `modules.rr`), sent with its key,
-  with a batch admitted by (depth, dots, module, path). With `load.budget=100` the rounds and
-  a fresh cone (`RERAIL_CONE_ROUNDS=off`) still loaded different sets of 100. The fresh cone is
-  the gated fixpoint, which asks loads as its plan's waves reach them, not level by level. So
-  a deeper module can be admitted before a shallower one. Ordering within a batch cannot
-  close this. Both paths would have to admit a whole depth level only once nothing shallower
-  can still be asked. The patch is kept; it is not merged. The budget binds only past 4000
-  library documents (the workload loads 208).
 - **A segfault in phase 1, once.** After the hub merge (`03125d2d1`), one unchanged run of the
   workload crashed: SIGSEGV, 1.1 s user, after phase 0's profile was written. Phase 1 holds the
   cone. It left no crash report. 39 runs since have not crashed, 30 of them under `lldb` with
@@ -311,6 +343,5 @@ what a fresh cone writes.
 The same shape holds for any relation read with a bound key that is answered by a native step
 or a search, such as decision 0083 §4's memoised searches, including misses. Declare the
 relation's adornment, write its answer as `r :- m_r, source`, and the rewrite, the gates and
-maintenance apply unchanged. Two parts are not built yet: adornments over several columns (the
-demand key is only the first column today, which 00-review measured as 13× slower for a
-one-file query), and a load budget that is a function of the requests (see Open).
+maintenance apply unchanged. One part is not built yet: adornments over several columns (the demand key is only the
+first column today, which 00-review measured as 13× slower for a one-file query).
