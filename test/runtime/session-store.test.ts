@@ -567,7 +567,7 @@ describe("SQLite session persistence", () => {
     expect(reader.events("session-1").map(event => event.eventId)).toEqual(Array.from({ length: 20 }, (_, i) => `event-${i + 1}`));
   }, 30_000);
 
-  describe("after a power cut kept the session ledger's lines for events the history lost", () => {
+  describe("after a power cut or a reset left the session ledger's lines for events the history lost", () => {
     const sessionId = "cut-session";
 
     /**
@@ -595,9 +595,11 @@ describe("SQLite session persistence", () => {
       return { databasePath, ledgerBefore, ledgerAfter: await ledger() };
     }
 
+    // A reset removes an ended session's row with its events and keeps the ledger. A power cut leaves the same state
+    // only between the session row's insert and the owner claim whose commit syncs it.
     it.each([
       { lost: "its last events", cut: (database: Database.Database) => database.exec("DELETE FROM events WHERE event_id IN ('prompt-2', 'turn-2')") },
-      { lost: "the session itself", cut: (database: Database.Database) => database.exec("DELETE FROM events; DELETE FROM sessions") },
+      { lost: "the events of a session a reset removed", cut: (database: Database.Database) => database.exec("DELETE FROM events; DELETE FROM sessions") },
     ])("stores $lost again when the agent sends them again, and does nothing else for them twice", async ({ cut }) => {
       const root = await temporaryDirectory();
       const sent: AdapterEvent[] = [

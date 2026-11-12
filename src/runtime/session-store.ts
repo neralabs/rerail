@@ -211,13 +211,15 @@ export class SqliteSessionStore {
     this.path = path;
     this.#repositoryId = repositoryId ?? null;
     this.#database = openRerailDatabase(path);
-    // Events arrive with every hook, and a disk sync at each commit (FULL) held the daemon tens of milliseconds an
-    // event on a busy disk. NORMAL syncs the write-ahead log only before a checkpoint, and the file stays consistent.
-    // A committed event survives the daemon crashing, since it sits in the operating system's cache. A power cut or
-    // system crash loses what that cache had not written back, on Linux the last 30 s or more: the latest events, and
-    // a session opened in that time with all of its events. The session ledger, written after each insert and never
-    // synced, can keep its lines for events the history lost; an agent that sends one again stores it again
-    // (`unrecorded` in runtime.ts).
+    // Events arrive with every hook, and a disk sync at each commit (FULL) held the daemon's only thread for each one:
+    // up to hundreds of milliseconds on a busy Linux disk, 1.7 to 3.2 on a Windows desktop. NORMAL syncs the
+    // write-ahead log only before a checkpoint, and the file stays consistent. A committed event survives the daemon
+    // crashing, since it sits in the operating system's cache. A power cut or system crash loses the events committed
+    // since the log was last synced, on Linux up to 30 s or more when nothing else writes. A daemon's session row and
+    // HUD baseline are not among them: the runtime claims the session's owner right after writing them, and that
+    // commit runs at FULL on the audit control store's connection, which syncs the log every connection shares. The
+    // session ledger, written after each insert and never synced, can keep its lines for events the history lost; an
+    // agent that sends one again stores it again (`unrecorded` in runtime.ts).
     this.#database.run(sql`PRAGMA synchronous = NORMAL`);
   }
 
