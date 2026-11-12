@@ -164,7 +164,30 @@ pub fn optimize(program: &mut Program) {
             _ => None,
         })
         .collect();
-    for name in names {
+    // Kept as candidates are placed, not made again for each (O-lower-aggregate-demand): the dependency map (each
+    // placed candidate adds its demand's edges), the rules that read each candidate and the rules that make it (by
+    // index; a placed candidate's demand rules join them), and whether the program is declared (a candidate adds a
+    // declared demand relation, so it stays as it was, and only the demand rules' reads are checked). A candidate is
+    // placed in the program itself, and taken out again where stratifying refuses it.
+    let mut deps = dependencies(program);
+    let declared = front::declared(program).is_ok();
+    let mut readers: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    let mut makers: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    let index = |readers: &mut BTreeMap<String, Vec<usize>>, i: usize, rule: &Rule| {
+        let mut seen = BTreeSet::new();
+        for a in rule.body.iter().filter_map(Literal::atom) {
+            if names.contains(a.rel.as_str()) && seen.insert(a.rel.as_str()) {
+                readers.entry(a.rel.to_string()).or_default().push(i);
+            }
+        }
+    };
+    for (i, rule) in program.rules.iter().enumerate() {
+        index(&mut readers, i, rule);
+        if names.contains(rule.head.rel.as_str()) {
+            makers.entry(rule.head.rel.to_string()).or_default().push(i);
+        }
+    }
+    for name in names.iter().cloned() {
         if program.outputs.contains(&name)
             || program.inputs.contains(&name)
             || program.natives.contains_key(name.as_str())
@@ -173,11 +196,11 @@ pub fn optimize(program: &mut Program) {
         {
             continue;
         }
-        let deps = dependencies(program);
         let mut mask: Option<Vec<usize>> = None;
         let mut demands = Vec::new();
         let mut refused = false;
-        for rule in &program.rules {
+        for &ri in readers.get(&name).into_iter().flatten() {
+            let rule = &program.rules[ri];
             for l in &rule.body {
                 if l.atom().is_none_or(|a| a.rel != name) {
                     continue;
@@ -237,48 +260,44 @@ pub fn optimize(program: &mut Program) {
             continue;
         }
         let positions = mask.unwrap();
-        let mut next = program.clone();
         let demand = format!("rr_demand_agg_{name}");
-        next.decls.insert(
-            demand.clone(),
-            positions
-                .iter()
-                .map(|&i| program.decls[name.as_str()][i].clone())
-                .collect(),
-        );
-        for rule in next.rules.iter_mut().filter(|r| r.head.rel == name) {
-            rule.body.insert(
-                0,
-                Literal::Atom(Atom {
-                    rel: demand.clone().into(),
-                    args: positions
-                        .iter()
-                        .map(|&i| rule.head.args[i].clone())
-                        .collect(),
-                    neg: false,
-                    gated: false,
-                }),
-            );
+        if !declared || demands.iter().any(|r| front::rule_declared(program, r).is_err()) {
+            continue;
         }
         let guards: BTreeSet<String> = demands.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom)).map(|a| a.rel.to_string()).collect();
         let closes = known.as_ref().is_none_or(|edges| guards.iter().any(|g| depends(edges, g, &name))) || full_checks();
-        next.rules.extend(demands);
-        if front::declared(&next).is_err() {
-            continue;
+        // Placed: the demand declared, read first by the aggregate's rules, made by its demand rules.
+        let decl = positions.iter().map(|&i| program.decls[name.as_str()][i].clone()).collect();
+        program.decls.insert(demand.clone(), decl);
+        for &mi in makers.get(&name).into_iter().flatten() {
+            let rule = &mut program.rules[mi];
+            let args = positions.iter().map(|&i| rule.head.args[i].clone()).collect();
+            rule.body.insert(0, Literal::Atom(Atom { rel: demand.clone().into(), args, neg: false, gated: false }));
         }
+        let first = program.rules.len();
+        program.rules.extend(demands);
         if closes {
-            match front::strata(&next) {
-                Ok((_, edges)) => {
-                    known = Some(edges);
-                    *program = next;
+            match front::strata(program) {
+                Ok((_, edges)) => known = Some(edges),
+                Err(_) => {
+                    // Refused: taken out again, the program as it was.
+                    program.rules.truncate(first);
+                    for &mi in makers.get(&name).into_iter().flatten() {
+                        program.rules[mi].body.remove(0);
+                    }
+                    program.decls.remove(&demand);
+                    continue;
                 }
-                Err(_) => {}
             }
         } else {
             let edges = known.as_mut().expect("the edges of a stratified program");
             edges.entry(name.clone()).or_default().insert((demand.clone(), false));
-            edges.entry(demand.clone()).or_default().extend(guards.into_iter().map(|g| (g, false)));
-            *program = next;
+            edges.entry(demand.clone()).or_default().extend(guards.iter().map(|g| (g.clone(), false)));
+        }
+        deps.entry(name.clone()).or_default().insert(demand.clone());
+        deps.entry(demand.clone()).or_default().extend(guards);
+        for i in first..program.rules.len() {
+            index(&mut readers, i, &program.rules[i]);
         }
     }
     // Count zero is existence, provided its scalar result has no other consumer.
