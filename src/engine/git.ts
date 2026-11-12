@@ -440,26 +440,69 @@ async function statIfPresent(path: string): Promise<Stats | undefined> {
   }
 }
 
-/** A file's stamp ({@link fileStamp}, or {@link ABSENT}) and when it last changed (0 for none). */
-interface Stamped {
+/** A file's stamp ({@link fileStamp}, or {@link ABSENT}), and whether it has stood unchanged long enough to vouch for it. */
+interface SettledStamp {
   readonly stamp: string;
-  readonly changedAt: number;
+  readonly settled: boolean;
 }
 
-/** {@link Stamped} of the file at `path`; throws where it cannot be stamped otherwise. */
-async function stampOf(path: string): Promise<Stamped> {
-  const info = await statIfPresent(path);
-  return info === undefined ? { stamp: ABSENT, changedAt: 0 } : { stamp: fileStamp(info), changedAt: Math.max(info.mtimeMs, info.ctimeMs) };
+/**
+ * {@link SettledStamp} of the file at `path`: settled once it has stood unchanged for `settleMs`, as a file that is not
+ * there always has; undefined where it cannot be stamped otherwise.
+ */
+async function settledStamp(path: string, settleMs: number): Promise<SettledStamp | undefined> {
+  let info: Stats | undefined;
+  try {
+    info = await statIfPresent(path);
+  } catch {
+    return undefined;
+  }
+  if (info === undefined) return { stamp: ABSENT, settled: true };
+  return { stamp: fileStamp(info), settled: Date.now() - Math.max(info.mtimeMs, info.ctimeMs) >= settleMs };
+}
+
+/** The stamps of `paths`, in order, where each has settled ({@link settledStamp}); undefined where one has not or cannot be stamped. */
+async function settledStamps(paths: readonly string[], settleMs: number): Promise<string[] | undefined> {
+  const stamps: string[] = [];
+  for (const stamped of await Promise.all(paths.map(async path => await settledStamp(path, settleMs)))) {
+    if (stamped?.settled !== true) return undefined;
+    stamps.push(stamped.stamp);
+  }
+  return stamps;
 }
 
 /**
  * The folder's `.git` entry as far as it says where Git keeps the checkout's files: a `.git` file (a linked worktree's,
  * a submodule's) by its stamp, since it names that place; a `.git` folder is the place, and Git writes in it all the time.
+ * Undefined where the entry cannot be stamped.
  */
-async function dotGitStamp(cwd: string): Promise<string> {
-  const info = await statIfPresent(join(cwd, ".git"));
+async function dotGitStamp(cwd: string): Promise<string | undefined> {
+  let info: Stats | undefined;
+  try {
+    info = await statIfPresent(join(cwd, ".git"));
+  } catch {
+    return undefined;
+  }
   if (info === undefined) return ABSENT;
   return info.isDirectory() ? "folder" : fileStamp(info);
+}
+
+/**
+ * Where Git keeps each of `names` for the checkout at `cwd` (`git rev-parse --git-path`), absolute and in order, by one
+ * Git process; undefined where Git cannot say.
+ */
+async function gitPaths(cwd: string, names: readonly string[]): Promise<string[] | undefined> {
+  // Git prints each path relative to `cwd` unless it is elsewhere; `--path-format` would need Git 2.31.
+  const printed = await gitOutput(cwd, ["rev-parse", ...names.flatMap(name => ["--git-path", name])]);
+  const paths = printed === undefined || printed === "" ? [] : printed.split("\n");
+  return paths.length === names.length ? paths.map(path => resolve(cwd, path)) : undefined;
+}
+
+/** {@link CheckoutFiles} of the folder `cwd`, whose `.git` entry was `dotGit`; undefined where Git cannot say. */
+async function readCheckoutFiles(cwd: string, dotGit: string): Promise<CheckoutFiles | undefined> {
+  const [index, exclude, ...local] = await gitPaths(cwd, ["index", "info/exclude", "config", "config.worktree"]) ?? [];
+  if (index === undefined || exclude === undefined) return undefined;
+  return { dotGit, index, exclude, config: [...local, ...globalConfigFiles().map(path => resolve(cwd, path))] };
 }
 
 /**
@@ -470,21 +513,13 @@ async function dotGitStamp(cwd: string): Promise<string> {
 function checkoutFilesFinder(): (cwd: string) => Promise<CheckoutFiles | undefined> {
   const found = new Map<string, CheckoutFiles>();
   return async cwd => {
-    let dotGit: string;
-    try {
-      dotGit = await dotGitStamp(cwd);
-    } catch {
-      return undefined;
-    }
+    const dotGit = await dotGitStamp(cwd);
+    if (dotGit === undefined) return undefined;
     const known = found.get(cwd);
     if (known?.dotGit === dotGit) return known;
     found.delete(cwd);
-    // Git prints each path relative to `cwd` unless it is elsewhere; `--path-format` would need Git 2.31.
-    const printed = await gitOutput(cwd, ["rev-parse", "--git-path", "index", "--git-path", "info/exclude", "--git-path", "config", "--git-path", "config.worktree"]);
-    const [index, exclude, ...local] = printed === undefined || printed === "" ? [] : printed.split("\n").map(path => resolve(cwd, path));
-    if (index === undefined || exclude === undefined || local.length !== 2) return undefined;
-    const files = { dotGit, index, exclude, config: [...local, ...globalConfigFiles().map(path => resolve(cwd, path))] };
-    found.set(cwd, files);
+    const files = await readCheckoutFiles(cwd, dotGit);
+    if (files !== undefined) found.set(cwd, files);
     return files;
   };
 }
@@ -558,15 +593,15 @@ export interface GitCheckoutReaders {
   /** The index's unmerged entries under a folder, as {@link gitUnmergedReader} reads them. */
   readonly unmerged: (cwd: string) => Promise<ReadonlyMap<string, string> | undefined>;
   /**
-   * {@link gitModifiedOrUntrackedPaths} of the checkout at `cwd`, for a caller whose `tree` is the same object only while
-   * no file of the working tree it stands for changed. Git's listing is kept with `tree`, and Git lists again only once
-   * `tree` is another object or a file Git reads for the listing besides the working tree changed: the folder's `.git`
-   * file, its index, `info/exclude`, the excludes file, or a configuration file that can name it. The listing answers
-   * only for the files `tree` stands for: another file it names may have changed since. No listing is kept that Git did
-   * not give (it failed or timed out), nor one made without an index, while a file could not be found or stamped, or
-   * while one had changed within the settle time ({@link SETTLE_MS}).
+   * {@link gitModifiedOrUntrackedPaths} of the checkout at `cwd`, for a caller whose `snapshot` is the same object only
+   * while no file of the working tree it stands for changed. Git's listing is kept with `snapshot`, and Git lists again
+   * only once `snapshot` is another object or a file Git reads for the listing besides the working tree changed: the
+   * folder's `.git` file, its index, `info/exclude`, the excludes file, or a configuration file that can name it. The
+   * listing answers only for the files `snapshot` stands for: another file it names may have changed since. No listing is
+   * kept that Git did not give (it failed or timed out), nor one made without an index, while a file could not be found
+   * or stamped, or while one had changed within the settle time ({@link SETTLE_MS}).
    */
-  readonly modifiedOrUntracked: (cwd: string, tree: object) => Promise<readonly string[]>;
+  readonly modifiedOrUntracked: (cwd: string, snapshot: object) => Promise<readonly string[]>;
 }
 
 /**
@@ -577,41 +612,39 @@ export function gitCheckoutReaders(options: { readonly settleMs?: number } = {})
   const settleMs = options.settleMs ?? SETTLE_MS;
   const filesOf = checkoutFilesFinder();
   const excludesFile = excludesFileFinder();
-  /** Each listing kept, by the tree it was made for, then by checkout, with the stamp it was made under. */
+  /** Each listing kept, by the snapshot it was made for, then by checkout, with the stamp it was made under. */
   const listings = new WeakMap<object, Map<string, { readonly stamp: string; readonly paths: readonly string[] }>>();
-  const settled = (stamped: readonly Stamped[]): boolean => stamped.every(({ changedAt }) => Date.now() - changedAt >= settleMs);
-  /** The stamp of every file Git reads to list `cwd` besides its working tree; undefined where no listing is to be kept. */
+  /**
+   * The stamp of every file Git reads to list `cwd` besides its working tree; undefined where no listing is to be kept.
+   * The configuration files settle before Git is asked which excludes file they name.
+   */
   const listingStamp = async (cwd: string): Promise<string | undefined> => {
-    try {
-      const files = await filesOf(cwd);
-      if (files === undefined) return undefined;
-      const config = await Promise.all(files.config.map(stampOf));
-      if (!settled(config)) return undefined;
-      const excludes = await excludesFile(cwd, files.config.map((path, at) => [path, config[at]!.stamp] as const));
-      if (excludes === undefined) return undefined;
-      const stamped = [...await Promise.all([files.index, files.exclude, excludes].map(stampOf)), ...config];
-      if (stamped[0]!.stamp === ABSENT || !settled(stamped)) return undefined;
-      return JSON.stringify([files.dotGit, excludes, ...stamped.map(({ stamp }) => stamp)]);
-    } catch {
-      return undefined;
-    }
+    const files = await filesOf(cwd);
+    if (files === undefined) return undefined;
+    const config = await settledStamps(files.config, settleMs);
+    if (config === undefined) return undefined;
+    const excludes = await excludesFile(cwd, files.config.map((path, at) => [path, config[at]!] as const));
+    if (excludes === undefined) return undefined;
+    const stamps = await settledStamps([files.index, files.exclude, excludes], settleMs);
+    if (stamps === undefined || stamps[0] === ABSENT) return undefined;
+    return JSON.stringify([files.dotGit, excludes, ...stamps, ...config]);
   };
   return {
     unmerged: unmergedReader(async cwd => {
       const files = await filesOf(cwd);
       return files === undefined ? undefined : await stat(files.index).then(fileStamp, () => undefined);
     }),
-    modifiedOrUntracked: async (cwd, tree) => {
+    modifiedOrUntracked: async (cwd, snapshot) => {
       // Stamped before Git lists: a file written between the two reads as changed next time.
       const stamp = await listingStamp(cwd);
-      const kept = listings.get(tree)?.get(cwd);
+      const kept = listings.get(snapshot)?.get(cwd);
       if (stamp !== undefined && kept?.stamp === stamp) return kept.paths;
       const paths = await modifiedOrUntrackedPaths(cwd);
       if (paths === undefined) return [];
       if (stamp !== undefined) {
-        const byCheckout = listings.get(tree) ?? new Map<string, { readonly stamp: string; readonly paths: readonly string[] }>();
+        const byCheckout = listings.get(snapshot) ?? new Map<string, { readonly stamp: string; readonly paths: readonly string[] }>();
         byCheckout.set(cwd, { stamp, paths });
-        listings.set(tree, byCheckout);
+        listings.set(snapshot, byCheckout);
       }
       return paths;
     },
