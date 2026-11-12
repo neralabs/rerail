@@ -3729,7 +3729,7 @@ impl Run<'_, '_> {
     /// The reach index (decision 0115, `front::Native::Reach` and `ReachThrough`) over relations the engine holds:
     /// held as the index, read in place by its readers, no row made. `None`: an input is not held natively (the rows
     /// are then made by `reach_rows`).
-    fn native_reach(&mut self, rel: &str, native: &crate::code_rule_dsl::logic::front::Native) -> Result<Option<usize>> {
+    fn native_reach(&mut self, rel: &str, native: &crate::code_rule_dsl::logic::front::Native) -> Result<Option<(usize, String)>> {
         use super::native::{component, reach::Closed};
         use crate::code_rule_dsl::facts::vtab::Source as _;
         use crate::code_rule_dsl::logic::front::Native;
@@ -3763,6 +3763,8 @@ impl Run<'_, '_> {
         };
         let n = closed.len();
         let bytes = closed.bytes();
+        let over = match native { Native::ReachThrough { reach, .. } => Some(reach.as_str()), _ => None };
+        let why = if super::profile::on() { self.reach_shape(rel, &closed, over) } else { String::new() };
         let stats = closed.statistics().expect("the index counts its statistics");
         component::hold_source(self.db, rel, Arc::new(closed), vec![b'i'; self.prog.decls[rel].len()]);
         self.native_rels.insert(rel.to_owned());
@@ -3774,7 +3776,65 @@ impl Run<'_, '_> {
             freq: Vec::new(),
         });
         super::profile::note(format!("{rel} index bytes"), || bytes.to_string());
-        Ok(Some(n))
+        Ok(Some((n, why)))
+    }
+
+    /// The explain output's account of a reach index (decision 0115): the graph's cycles and its connected parts,
+    /// the largest named (a document by its path, where the nodes are documents), as a decision each; and the
+    /// stratum's one-line summary, returned. A relation through a reach (`over`) closes over that reach's graph,
+    /// whose shape its own lines give.
+    fn reach_shape(&self, rel: &str, closed: &super::native::reach::Closed, over: Option<&str>) -> String {
+        let shape = closed.shape();
+        let (starts, distinct, widest) = closed.spread();
+        let doc = crate::code_rule_dsl::facts::vtab::bound_source(self.db, "doc");
+        let name = |v: i64| -> String {
+            let found = doc.as_ref().and_then(|d| {
+                let cols = d.columns();
+                let (dc, pc) = (cols.iter().position(|c| c == "d")?, cols.iter().position(|c| c == "path")?);
+                let row = *d.lookup(dc, &[v])?.first()?;
+                super::native::symbol_text(&self.db, d.value(row, pc)).ok()
+            });
+            found.unwrap_or_else(|| v.to_string())
+        };
+        let list = |parts: &[(usize, Vec<i64>)]| -> String {
+            parts
+                .iter()
+                .map(|(size, first)| {
+                    let mut names: Vec<String> = first.iter().map(|&v| name(v)).collect();
+                    names.sort();
+                    let more = if *size > first.len() { ", …" } else { "" };
+                    format!("{size} ({}{more})", names.join(", "))
+                })
+                .collect::<Vec<_>>()
+                .join("; ")
+        };
+        let topic = "reach index: cycles and connected graphs (decision 0115)";
+        if let Some(reach) = over {
+            super::profile::decision(topic, || format!("{rel}: through {reach}, over its graph; {starts} starts share {distinct} closures; the widest reaches {widest}"));
+            return format!("reach index (decision 0115) through {reach}: {starts} starts, {distinct} closures, widest {widest}");
+        }
+        super::profile::decision(topic, || {
+            format!(
+                "{rel}: {} nodes, {} edges; {} strongly connected components, {} of them cycles of two or more nodes, {} nodes with an edge to themselves; {} connected parts",
+                shape.nodes, shape.edges, shape.components, shape.cyclic, shape.self_loops, shape.connected
+            )
+        });
+        if !shape.largest_cycles.is_empty() {
+            super::profile::decision(topic, || format!("{rel}: largest cycles: {}", list(&shape.largest_cycles)));
+        }
+        if !shape.largest_connected.is_empty() {
+            super::profile::decision(topic, || format!("{rel}: largest connected parts: {}", list(&shape.largest_connected)));
+        }
+        super::profile::decision(topic, || format!("{rel}: {starts} starts share {distinct} closures; the widest reaches {widest}"));
+        format!(
+            "reach index (decision 0115): {} nodes, {} edges, {} cycles (largest {}), {} connected parts (largest {}); {starts} starts, {distinct} closures, widest {widest}",
+            shape.nodes,
+            shape.edges,
+            shape.cyclic,
+            shape.largest_cycles.first().map_or(0, |c| c.0),
+            shape.connected,
+            shape.largest_connected.first().map_or(0, |c| c.0)
+        )
     }
 
     /// The reach index's rows written to `rel`'s table, from its inputs' tables: for a run that holds no relation
@@ -3784,21 +3844,36 @@ impl Run<'_, '_> {
         use crate::code_rule_dsl::facts::vtab::Source as _;
         use crate::code_rule_dsl::logic::front::Native;
         let ident = crate::code_rule_dsl::logic::sql::ident;
-        let pairs = |this: &Self, r: &str| -> Result<Vec<(i64, i64)>> {
+        // The tables' values, text or numbers, coded as integers in their order for the index, and decoded after.
+        let mut codes: BTreeMap<SqlKey, i64> = BTreeMap::new();
+        let pairs = |this: &Self, r: &str| -> Result<Vec<(SqlKey, SqlKey)>> {
             let (c0, c1) = (this.model.col(r, 0), this.model.col(r, 1));
             let mut st = this.db.prepare(&format!("SELECT DISTINCT {c0}, {c1} FROM {}", ident(r)))?;
-            let rows = st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            let rows = st.query_map([], |r| Ok((SqlKey::of(r.get(0)?), SqlKey::of(r.get(1)?))))?;
             Ok(rows.collect::<rusqlite::Result<_>>()?)
         };
-        let closed = match native {
-            Native::Reach { seed, edge } => Closed::reach(&pairs(self, seed)?, &pairs(self, edge)?),
+        let (seed, edge, map) = match native {
+            Native::Reach { seed, edge } => (seed, edge, None),
             Native::ReachThrough { reach, map } => {
                 let Some(Native::Reach { seed, edge }) = self.prog.natives.get(reach) else { return Err(Error::Plan(format!("{rel}: {reach} is not a reach"))) };
-                Closed::reach(&pairs(self, seed)?, &pairs(self, edge)?).through(&pairs(self, map)?)
+                (seed, edge, Some(map))
             }
             _ => unreachable!("a reach index"),
         };
-        let values = (0..closed.len()).map(|r| vec![SqlValue::Integer(closed.value(r, 0)), SqlValue::Integer(closed.value(r, 1))]).collect();
+        let read = [Some(pairs(self, seed)?), Some(pairs(self, edge)?), map.map(|m| pairs(self, m)).transpose()?];
+        for (a, b) in read.iter().flatten().flatten() {
+            codes.entry(a.clone()).or_insert(0);
+            codes.entry(b.clone()).or_insert(0);
+        }
+        let mut values_of: Vec<SqlKey> = Vec::with_capacity(codes.len());
+        for (i, (k, code)) in codes.iter_mut().enumerate() {
+            *code = i as i64;
+            values_of.push(k.clone());
+        }
+        let coded = |p: &Option<Vec<(SqlKey, SqlKey)>>| -> Vec<(i64, i64)> { p.iter().flatten().map(|(a, b)| (codes[a], codes[b])).collect() };
+        let reach = Closed::reach(&coded(&read[0]), &coded(&read[1]));
+        let closed = if map.is_some() { reach.through(&coded(&read[2])) } else { reach };
+        let values = (0..closed.len()).map(|r| vec![values_of[closed.value(r, 0) as usize].value(), values_of[closed.value(r, 1) as usize].value()]).collect();
         let before = self.db.total_changes();
         insert_many(&self.db, &format!("INSERT OR IGNORE INTO {}", ident(rel)), values)?;
         Ok((self.db.total_changes() - before) as usize)
@@ -7474,9 +7549,9 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         // The reach index (decision 0115) over the relations the engine holds: no row made, read in place.
         if let [rel] = scc.iter().collect::<Vec<_>>().as_slice()
             && let Some(native @ (super::front::Native::Reach { .. } | super::front::Native::ReachThrough { .. })) = prog.natives.get(*rel)
-            && let Some(n) = run.native_reach(rel, native)?
+            && let Some((n, why)) = run.native_reach(rel, native)?
         {
-            super::profile::stratum(&skey, "reach index over held relations (decision 0115)", String::new);
+            super::profile::stratum(&skey, "reach index over held relations (decision 0115)", || why);
             super::profile::note(format!("{rel} rows"), || n.to_string());
             outcome.native.insert(key);
             continue;
@@ -8086,4 +8161,32 @@ fn sql_names(sql: &str, name: &str) -> bool {
         i += 1;
     }
     false
+}
+
+/// A table's value as an ordered key (`reach_rows`): integers before text, as SQLite orders them; a real or a blob
+/// by its text.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum SqlKey {
+    Null,
+    Int(i64),
+    Text(String),
+}
+
+impl SqlKey {
+    fn of(v: SqlValue) -> SqlKey {
+        match v {
+            SqlValue::Null => SqlKey::Null,
+            SqlValue::Integer(i) => SqlKey::Int(i),
+            SqlValue::Text(t) => SqlKey::Text(t),
+            SqlValue::Real(f) => SqlKey::Text(f.to_string()),
+            SqlValue::Blob(b) => SqlKey::Text(String::from_utf8_lossy(&b).into_owned()),
+        }
+    }
+    fn value(&self) -> SqlValue {
+        match self {
+            SqlKey::Null => SqlValue::Null,
+            SqlKey::Int(i) => SqlValue::Integer(*i),
+            SqlKey::Text(t) => SqlValue::Text(t.clone()),
+        }
+    }
 }

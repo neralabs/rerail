@@ -49,6 +49,19 @@ fn a_relation_through_the_closure_maps_what_each_start_reaches() {
     assert!(through.row_of(11, 100).is_none());
 }
 
+#[test]
+fn the_shape_names_the_cycles_and_the_connected_parts_largest_first() {
+    // Two parts: a cycle 1 2 3 with a tail to 4, and a self loop 7 joined to 8; 9 alone (a seed's node, no edge).
+    let edges = [(1, 2), (2, 3), (3, 1), (3, 4), (7, 7), (7, 8)];
+    let c = Closed::reach(&[(10, 1), (11, 7), (12, 9)], &edges);
+    let s = c.shape();
+    assert_eq!((s.nodes, s.edges, s.components, s.cyclic, s.self_loops), (7, 6, 5, 1, 1));
+    assert_eq!(s.largest_cycles, vec![(3, vec![1, 2, 3])]);
+    assert_eq!(s.connected, 3);
+    assert_eq!(s.largest_connected, vec![(4, vec![1, 2, 3, 4]), (2, vec![7, 8]), (1, vec![9])]);
+    assert_eq!(c.spread(), (3, 3, 4));
+}
+
 mod form {
     use crate::code_rule_dsl::logic::front::Native;
     use crate::code_rule_dsl::logic::reach_form::find;

@@ -29,7 +29,33 @@ pub struct Graph {
     comp: Vec<u32>,
     members: Vec<Vec<u32>>,
     succ: Vec<Vec<u32>>,
+    /// The distinct edges, and those from a node to itself.
+    edges: usize,
+    loops: usize,
+    /// Each node's weakly connected component (the edges taken both ways), numbered from 0.
+    weak: Vec<u32>,
 }
+
+/// The graph's shape for the run's explain output: its cycles and its connected parts, largest first.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Shape {
+    pub nodes: usize,
+    pub edges: usize,
+    /// Strongly connected components, and the cycles among them: components of two or more nodes, and nodes with
+    /// an edge to themselves.
+    pub components: usize,
+    pub cyclic: usize,
+    pub self_loops: usize,
+    /// The largest cycles: each one's size and its first nodes' values (at most `SAMPLE`).
+    pub largest_cycles: Vec<(usize, Vec<i64>)>,
+    /// Weakly connected components: how many, and the largest ones' sizes with their first nodes' values.
+    pub connected: usize,
+    pub largest_connected: Vec<(usize, Vec<i64>)>,
+}
+
+/// How many of the largest cycles and connected parts the shape lists, and how many nodes of each.
+pub const LARGEST: usize = 5;
+pub const SAMPLE: usize = 4;
 
 impl Graph {
     /// The graph of `edges` with `extra` nodes (seeds' targets that no edge touches).
@@ -114,7 +140,38 @@ impl Graph {
             s.sort_unstable();
             s.dedup();
         }
-        Graph { nodes, comp, members, succ }
+        let loops = pairs.iter().filter(|(a, b)| a == b).count();
+        let weak = weak_components(n, &pairs);
+        Graph { nodes, comp, members, succ, edges: pairs.len(), loops, weak }
+    }
+
+    /// Its cycles and connected parts (`Shape`).
+    pub fn shape(&self) -> Shape {
+        let sample = |ids: &mut Vec<u32>| {
+            ids.sort_unstable();
+            ids.iter().take(SAMPLE).map(|&i| self.nodes[i as usize]).collect::<Vec<i64>>()
+        };
+        let self_loops = self.loops;
+        let mut cycles: Vec<&Vec<u32>> = self.members.iter().filter(|m| m.len() > 1).collect();
+        cycles.sort_by_key(|m| std::cmp::Reverse(m.len()));
+        let largest_cycles = cycles.iter().take(LARGEST).map(|m| (m.len(), sample(&mut m.to_vec()))).collect();
+        let connected = self.weak.iter().map(|&w| w as usize + 1).max().unwrap_or(0);
+        let mut parts: Vec<Vec<u32>> = vec![Vec::new(); connected];
+        for (i, &w) in self.weak.iter().enumerate() {
+            parts[w as usize].push(i as u32);
+        }
+        parts.sort_by_key(|p| std::cmp::Reverse(p.len()));
+        let largest_connected = parts.iter_mut().take(LARGEST).map(|p| (p.len(), sample(p))).collect();
+        Shape {
+            nodes: self.nodes.len(),
+            edges: self.edges,
+            components: self.members.len(),
+            cyclic: cycles.len(),
+            self_loops,
+            largest_cycles,
+            connected,
+            largest_connected,
+        }
     }
 
     fn id(&self, v: i64) -> Option<u32> {
@@ -158,6 +215,42 @@ impl Graph {
         }
         closed
     }
+}
+
+/// Each node's weakly connected component, numbered in order of each component's smallest node (union by size).
+fn weak_components(n: usize, pairs: &[(u32, u32)]) -> Vec<u32> {
+    let mut parent: Vec<u32> = (0..n as u32).collect();
+    let mut size = vec![1u32; n];
+    fn find(parent: &mut [u32], mut x: u32) -> u32 {
+        while parent[x as usize] != x {
+            parent[x as usize] = parent[parent[x as usize] as usize];
+            x = parent[x as usize];
+        }
+        x
+    }
+    for &(a, b) in pairs {
+        let (mut ra, mut rb) = (find(&mut parent, a), find(&mut parent, b));
+        if ra == rb {
+            continue;
+        }
+        if size[ra as usize] < size[rb as usize] {
+            std::mem::swap(&mut ra, &mut rb);
+        }
+        parent[rb as usize] = ra;
+        size[ra as usize] += size[rb as usize];
+    }
+    let mut number = vec![u32::MAX; n];
+    let mut next = 0;
+    (0..n as u32)
+        .map(|x| {
+            let r = find(&mut parent, x) as usize;
+            if number[r] == u32::MAX {
+                number[r] = next;
+                next += 1;
+            }
+            number[r]
+        })
+        .collect()
 }
 
 /// A relation `(x, z)` held as each start's bitmap over `domain`'s values (`z = domain[id]`).
@@ -256,6 +349,17 @@ impl Closed {
         let id = self.domain.binary_search(&z).ok()? as u32;
         let set = &self.sets[i];
         set.contains(id).then(|| self.off[i] + set.rank(id) as usize - 1)
+    }
+
+    /// The graph it closes over: its cycles and connected parts.
+    pub fn shape(&self) -> Shape {
+        self.graph.shape()
+    }
+
+    /// The starts, the distinct bitmaps among them, and the widest start's row count.
+    pub fn spread(&self) -> (usize, usize, usize) {
+        let distinct = self.sets.iter().map(Arc::as_ptr).collect::<std::collections::HashSet<_>>().len();
+        (self.xs.len(), distinct, self.sets.iter().map(|s| s.len() as usize).max().unwrap_or(0))
     }
 
     /// The bytes held: each distinct bitmap once, the starts, offsets and domain.

@@ -168,7 +168,12 @@ fn reach_shape(prog: &Program, rel: &str) -> Result<(usize, String), String> {
     }
     // Its only cycle is its own rule: nothing its rules read (the seeds' bodies and the edges) reads it back.
     if let Some(back) = cycle_through(prog, rel) {
-        return Err(format!("`{back}` reads it and it reads `{back}`"));
+        let why = format!("`{back}` reads it and it reads `{back}`");
+        // A closure kept as rows by a cycle through other relations, in the explain output.
+        crate::code_rule_dsl::logic::profile::decision("reach index: cycles and connected graphs (decision 0115)", || {
+            format!("{rel}: a closure left as rows, in a cycle of relations: {why}")
+        });
+        return Err(why);
     }
     Ok((at, edge))
 }

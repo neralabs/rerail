@@ -91,6 +91,54 @@ The index is a `Source`, so every reader reaches it through the interface it alr
   reads unchanged": it runs again and its readers stay clean.
 - **Its readers may be inlined** (`keeps`). Unlike other natives, the index is read in place by any stratum.
 
+## 4. The explain output
+
+A profiled run (`RERAIL_PROFILE`) lists each index under "reach index: cycles and connected graphs" in the
+decisions section of `profile.txt`. Where the nodes are documents, they are named by path. For example, from the
+invalidation test's last edit:
+
+```
+reach index: cycles and connected graphs (decision 0115):
+  - reach: 6 nodes, 8 edges; 2 strongly connected components, 1 of them cycles of two or more nodes, 0 nodes with an edge to themselves; 1 connected parts
+  - reach: 6 starts share 2 closures; the widest reaches 6
+  - reach: largest connected parts: 6 (a.py, b.py, e.py, f.py, …)
+  - reach: largest cycles: 5 (a.py, b.py, e.py, f.py, …)
+  - sees: through reach, over its graph; 6 starts share 2 closures; the widest reaches 6
+```
+
+The lines name:
+
+- the graph's size;
+- its cycles: strongly connected components of two or more nodes, and nodes with an edge to themselves;
+- its weakly connected parts;
+- the five largest of each, with their first four nodes;
+- how many closures the starts share, and the widest closure.
+
+The stratum's `why:` line carries the same in one line. A closure left as rows because it sits in a cycle through
+other relations is listed too, with the relation that closes that cycle.
+
+## 5. Invalidation
+
+The index is never kept, so its rows are always this run's. What can go wrong is a reader kept clean when the
+index changed. Two tests run one rule through ten edits:
+
+- `corpus::tests::the_reach_index_is_derived_again_when_cycles_and_connections_change_in_a_new_process` reads the
+  store back as a new process does.
+- `session::tests::a_session_derives_the_reach_index_again_when_cycles_and_connections_change` runs in a session.
+
+The edits connect two import components, close a cycle across them, break it, break the last cycle, disconnect
+the parts, make a second cycle, join a lone document and merge every cycle into one. After each edit the findings
+must equal a run with an empty store.
+
+The rule reads the index every way: both columns, the start alone, and the relation through it. Three of its
+readers (`cyclic`, `reachesf`, `seese`, all `no_inline`) read nothing an edit changes except the index. A reader
+that also reads `impmod` is made again on every edit whatever the index does, so it cannot show a missed
+invalidation.
+
+Both tests were checked against a planted fault: the cut changed so that an index stratum that ran again did not
+mark its relation dirty. The new-process test failed at "connect the cycle to the chain", the session test at
+"close a cycle across both". Both pass with the cut as it is.
+
 ## Measured
 
 The strict P3 bench (54 files, `RERAIL_SQL_STRICT=1`, debug build, machine load 37–130), 2026-11-11:

@@ -100,6 +100,48 @@ fn a_session_maintains_a_recursive_cross_file_stratum() {
     recursive_cross_file_stratum();
 }
 
+/// The reach index in a session (decision 0115): after each edit, closing or breaking a cycle, joining two import
+/// components or splitting them, the session's findings are a full run's.
+#[test]
+fn a_session_derives_the_reach_index_again_when_cycles_and_connections_change() {
+    use super::super::tests::{REACH_EDITS, REACH_RULE, REACH_START};
+    let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let base = std::env::temp_dir().join(format!("rerail-session-reach-index-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&base);
+    let (src, out) = (base.join("src"), base.join("out"));
+    std::fs::create_dir_all(&src).unwrap();
+    for (path, text) in REACH_START {
+        std::fs::write(src.join(path), text).unwrap();
+    }
+    let rule = base.join("reach.rr");
+    std::fs::write(&rule, REACH_RULE).unwrap();
+    let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+    let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let findings = || {
+        let mut rows: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap_or_default().lines().map(str::to_owned).collect();
+        rows.sort();
+        rows
+    };
+    let full = || {
+        full(run);
+        findings()
+    };
+    start(&base.join("session")).unwrap();
+    run();
+    assert_eq!(findings(), full());
+    for (path, text, what) in REACH_EDITS {
+        std::fs::write(src.join(path), text).unwrap();
+        run();
+        let got = findings();
+        assert_eq!(got, full(), "after editing {path} ({what}), the session's findings are a full run's");
+        // An unchanged run after the edit reads the same.
+        run();
+        assert_eq!(findings(), got, "an unchanged run after editing {path} ({what})");
+    }
+    stop();
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 fn recursive_cross_file_stratum() {
     let base = std::env::temp_dir().join(format!("rerail-session-reach-{}", std::process::id()));
     let (src, out) = (base.join("src"), base.join("out"));
