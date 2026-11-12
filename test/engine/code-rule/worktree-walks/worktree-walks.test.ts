@@ -131,6 +131,19 @@ async function session(folder: string, checkouts: readonly string[], walks: Work
   return opening;
 }
 
+/** Whether `settling` resolves within `ms`. */
+async function within(settling: Promise<void>, ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<boolean>(wake => {
+    timer = setTimeout(() => wake(false), ms);
+  });
+  try {
+    return await Promise.race([settling.then(() => true), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function turn(...sessions: Session[]): Promise<void> {
   for (const { bridge } of sessions) {
     await bridge.checkpoint("turn");
@@ -271,6 +284,24 @@ describe("WorktreeWalks", () => {
     // `w4` is new to each session: listed once for the first session's walk and once for the walk the other two share.
     expect(listings.get(worktrees[3]!)).toBe(2);
   });
+
+  it("walks at once for a session whose own last walk is past the gap, whatever walk another session just had", async () => {
+    const { checkouts, worktrees } = await repository();
+    // A gap no test waits out: it spaces the walks each session asks for, not the walks of the repository.
+    const walks = new WorktreeWalks({ gapMs: 60_000 });
+    const first = await opened(worktrees[0]!, checkouts, walks);
+    await first.bridge.checkpoint("turn");
+    await vi.waitFor(() => expect(walks.observations()).toBe(3), { timeout: 10_000, interval: 20 });
+    // The first session's walk has just ended. The second asks for its first walk as its folder's walk ends.
+    const second = await opened(worktrees[1]!, checkouts, walks);
+    await second.bridge.checkpoint("turn");
+    const firstWalk = await within(second.bridge.settleWorktreeWalk(), 10_000);
+    // Its own gap holds: a walk it asks for again at once waits for it.
+    await shell(second.bridge, "shell-1", () => writeFile(join(worktrees[2]!, "src", "a.py"), "old\nmine\n"));
+    const again = await within(second.bridge.settleWorktreeWalk(), 2_000);
+    expect({ firstWalk, again }).toEqual({ firstWalk: true, again: false });
+  });
+
 });
 
 describe("the other worktrees of a session in a nested worktree", () => {

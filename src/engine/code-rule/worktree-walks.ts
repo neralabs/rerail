@@ -10,8 +10,10 @@ import { gitHead, gitModifiedOrUntrackedPaths, gitUnmergedReader } from "../git.
 import type { ObservedSource, ScanError, Source, SourceScan } from "./code-rule-bridge.js";
 
 /**
- * The least time between walks of the other worktrees, which take time per worktree and nothing waits for; a walk that
- * took longer than this waits as long as it took, so walking never takes more than half the time.
+ * The least time between two walks of the other worktrees that answer one session's asks, which take time per worktree
+ * and nothing waits for; after a walk that took longer than this, the session waits as long as it took. So no session
+ * keeps walks going more than half the time, as when each session walked them on its own, and one session's walk never
+ * holds back another's.
  */
 export const WORKTREE_WALK_GAP_MS = 5_000;
 
@@ -101,7 +103,8 @@ export interface WorktreeWatcher {
 export interface WorktreeWatch {
   /**
    * Asks for a walk, which reads the session's worktrees and those of every session sharing one with them. It starts
-   * once the last walk has been over for the gap; one asked for while a walk runs runs again after it.
+   * once the last walk that answered this session's asks has been over for the gap (`WORKTREE_WALK_GAP_MS`), whatever
+   * walk another session had; one asked for while a walk runs starts as that walk ends, or once that gap is over.
    */
   request(): void;
   /** Whether a walk the session asked for has yet to be taken. */
@@ -119,6 +122,8 @@ interface Watching {
   /** How many walks it asked for, and how many of those asks the walks it took answered. */
   asked: number;
   answered: number;
+  /** When a walk may next begin for its asks: the gap after the last walk that answered one (`WORKTREE_WALK_GAP_MS`). */
+  nextWalkAt: number;
   /** Taking walks, one after the other; the newest it has yet to take waits in `waiting`, replacing any older. */
   taking: Promise<void> | undefined;
   waiting: { readonly walk: WatcherWalk; readonly found: WorktreeWalk; readonly answers: number } | undefined;
@@ -199,9 +204,10 @@ export class WorktreeWalks {
   readonly #watching: Watching[] = [];
   readonly #snapshots = new Map<string, WorktreeSnapshot>();
   readonly #readUnmerged = gitUnmergedReader();
-  /** The walk running or timed; undefined while none is due. */
+  /** The walk running or timed; undefined while no session asks for one. */
   #walk: Promise<void> | undefined;
-  #nextWalkAt = 0;
+  /** Starts the timed walk now, to answer an ask whose gap is over; undefined while no walk is timed. */
+  #wake: (() => void) | undefined;
 
   constructor(options: { gapMs?: number } = {}) {
     this.#gapMs = options.gapMs ?? WORKTREE_WALK_GAP_MS;
@@ -209,7 +215,7 @@ export class WorktreeWalks {
 
   watch(watcher: WorktreeWatcher): WorktreeWatch {
     const watching: Watching = {
-      watcher, requested: false, asked: 0, answered: 0, taking: undefined, waiting: undefined, worktrees: new Set(), closed: false,
+      watcher, requested: false, asked: 0, answered: 0, nextWalkAt: 0, taking: undefined, waiting: undefined, worktrees: new Set(), closed: false,
     };
     this.#watching.push(watching);
     return {
@@ -239,22 +245,52 @@ export class WorktreeWalks {
     this.#schedule();
   }
 
+  /**
+   * Times the next walk for the session asking whose gap ends first, or starts the timed one now when an ask's gap is
+   * already over. A walk running is never joined: an ask made meanwhile is the next walk's.
+   */
   #schedule(): void {
-    if (this.#walk !== undefined || !this.#watching.some(watching => watching.requested)) return;
-    const delay = Math.max(0, this.#nextWalkAt - Date.now());
-    this.#walk = this.#walkAfter(delay).finally(() => {
+    const due = this.#dueAt();
+    if (this.#walk !== undefined) {
+      if (due !== undefined && due <= Date.now()) this.#wake?.();
+      return;
+    }
+    if (due === undefined) return;
+    this.#walk = this.#walkWhenDue().finally(() => {
       this.#walk = undefined;
       this.#schedule();
     });
   }
 
-  async #walkAfter(delay: number): Promise<void> {
-    if (delay > 0) await new Promise(wake => { setTimeout(wake, delay).unref?.(); });
+  /** When the next walk may begin: the earliest a session asking for one may have it; undefined while none asks. */
+  #dueAt(): number | undefined {
+    let due: number | undefined;
+    for (const watching of this.#watching) if (watching.requested) due = Math.min(due ?? Infinity, watching.nextWalkAt);
+    return due;
+  }
+
+  /** Waits until a session asking for a walk may have one, then walks; returns without one once none is left asking. */
+  async #walkWhenDue(): Promise<void> {
+    for (let due = this.#dueAt(); due !== undefined && due > Date.now(); due = this.#dueAt()) {
+      const wait = due - Date.now();
+      await new Promise<void>(wake => {
+        const timer = setTimeout(wake, wait);
+        timer.unref?.();
+        this.#wake = () => {
+          clearTimeout(timer);
+          wake();
+        };
+      });
+      this.#wake = undefined;
+    }
+    if (this.#dueAt() === undefined) return;
     const startedAt = Date.now();
+    let askers: readonly Watching[] = [];
     try {
-      await this.#walkOnce();
+      askers = await this.#walkOnce();
     } finally {
-      this.#nextWalkAt = Date.now() + Math.max(this.#gapMs, Date.now() - startedAt);
+      const end = Date.now();
+      for (const watching of askers) watching.nextWalkAt = end + Math.max(this.#gapMs, end - startedAt);
     }
   }
 
@@ -272,6 +308,8 @@ export class WorktreeWalks {
     watching.waiting = undefined;
     this.#watching.splice(this.#watching.indexOf(watching), 1);
     this.#forget(this.#watching.map(other => other.worktrees));
+    // A walk timed for its ask alone is called off; one timed for another session's waits on.
+    this.#wake?.();
   }
 
   /** Drops the snapshot of each worktree no session watches. */
@@ -279,15 +317,18 @@ export class WorktreeWalks {
     for (const root of this.#snapshots.keys()) if (!watched.some(worktrees => worktrees.has(root))) this.#snapshots.delete(root);
   }
 
-  async #walkOnce(): Promise<void> {
+  /** One walk, for every session asking and every session sharing a worktree with one; returns the sessions that asked. */
+  async #walkOnce(): Promise<Watching[]> {
     const starts = this.#start();
     this.#forget([...starts.values()].map(walk => walk.worktrees));
+    const askers = [...starts.keys()].filter(watching => watching.requested);
     const walking = this.#walkers(starts);
-    if (walking.size === 0) return;
+    if (walking.size === 0) return askers;
     // The asks each session had made as the walk began are what this walk answers.
     const answers = new Map([...walking.keys()].map(watching => [watching, watching.asked]));
     const found = await this.#read(walking);
     for (const [watching, walk] of walking) this.#deliver(watching, { walk, found, answers: answers.get(watching)! });
+    return askers;
   }
 
   /** Each open session's part in the walk beginning now; one that cannot say has its request dropped. */
