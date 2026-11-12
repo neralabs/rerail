@@ -163,6 +163,16 @@ pub(super) fn sample() {
     STARTED.call_once(|| {
         let every_ms = std::env::var("RERAIL_PROF_MEMORY_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(5u64).max(1);
         SAMPLED.lock().unwrap().every_ms = every_ms;
+        // Relational work's device leases are sampled as the heap is, under the span that leased them.
+        if rerail_prof::heap::on() {
+            rerail_accel::gpu::shared::set_lease_hook(|ptr, len| {
+                if len == 0 {
+                    rerail_prof::heap::free(ptr);
+                } else {
+                    rerail_prof::heap::alloc_by(ptr, len, rerail_prof::heap::DEVICE);
+                }
+            });
+        }
         let _ = rerail_accel::exec::service("profile memory", None, move || {
             let start = std::time::Instant::now();
             let mut last_max = footprint().1;
@@ -266,7 +276,7 @@ pub(super) fn sampled_report(r: &mut String) {
         heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), driver, reserved, leased, idle, sqlite, heap_mb(t.footprint).saturating_sub(accounted));
     if !s.heap.is_empty() {
         let total: u64 = s.heap.iter().map(|h| h.1).sum();
-        let _ = writeln!(r, "Live heap by the span that allocated it, near the peak (at {} MB footprint; sampled 1 in {} KB, all of 64 KB and more; {} MB in all, {} samples dropped):",
+        let _ = writeln!(r, "Live heap (and device leases) by the span that allocated it, near the peak (at {} MB footprint; sampled 1 in {} KB, all of 64 KB and more; {} MB in all, {} samples dropped):",
             mb(s.heap_at as f64), rerail_prof::heap::INTERVAL >> 10, mb(total as f64), rerail_prof::heap::DROPPED.load(std::sync::atomic::Ordering::Relaxed));
         for (id, bytes) in s.heap.iter().take(30) {
             let _ = writeln!(r, "{:>10} MB  {}", mb(*bytes as f64), super::short(&rerail_prof::heap::name(*id), 150));

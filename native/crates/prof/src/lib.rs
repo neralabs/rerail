@@ -248,6 +248,8 @@ pub mod heap {
     /// The allocators a sample can name beside Rust's (`alloc_by`): a high bit of its span id.
     pub const SQLITE: u32 = 1 << 31;
     pub const TREE_SITTER: u32 = 1 << 30;
+    /// Device buffers relational work leases (shared memory, outside jemalloc's heap).
+    pub const DEVICE: u32 = 1 << 29;
 
     /// An allocation of `size` bytes at `ptr`: sampled when its thread's countdown runs out, or when big.
     #[inline]
@@ -344,6 +346,9 @@ pub mod heap {
     pub fn name(id: u32) -> String {
         if id & SQLITE != 0 {
             return format!("SQLite's, in {}", name(id & !SQLITE));
+        }
+        if id & DEVICE != 0 {
+            return format!("device leases, in {}", name(id & !DEVICE));
         }
         if id & TREE_SITTER != 0 {
             return format!("Tree-sitter's, in {}", name(id & !TREE_SITTER));

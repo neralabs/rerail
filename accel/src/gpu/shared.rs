@@ -27,6 +27,22 @@ const IDLE_LIMIT: usize = 32 << 20;
 /// The bytes leased now (and not yet dropped): what relational work holds on the device, for the profile.
 static LIVE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
+/// A profiler's hook (`set_lease_hook`): told each lease's buffer address and length when it is leased, and its address
+/// with length 0 when it is dropped.
+static LEASE_HOOK: OnceLock<fn(usize, usize)> = OnceLock::new();
+
+/// Sets the hook told of every lease and its drop (the engine's heap sampler, which names the span that leased it).
+pub fn set_lease_hook(hook: fn(usize, usize)) {
+    let _ = LEASE_HOOK.set(hook);
+}
+
+fn leased(b: &Buffer) {
+    LIVE.fetch_add(b.length() as usize, std::sync::atomic::Ordering::Relaxed);
+    if let Some(hook) = LEASE_HOOK.get() {
+        hook(b.contents() as usize, b.length() as usize);
+    }
+}
+
 /// The bytes leased now, and the bytes the pool keeps idle: relational work's share of the device's memory.
 pub fn held_bytes() -> (usize, usize) {
     let idle = pool().lock().map_or(0, |p| p.held);
@@ -139,6 +155,9 @@ impl Drop for Pooled {
     fn drop(&mut self) {
         let Some(b) = self.buffer.take() else { return };
         LIVE.fetch_sub(b.length() as usize, std::sync::atomic::Ordering::Relaxed);
+        if let Some(hook) = LEASE_HOOK.get() {
+            hook(b.contents() as usize, 0);
+        }
         if !self.keep {
             return;
         }
@@ -160,20 +179,20 @@ pub fn lease(bytes: usize) -> Result<Pooled, String> {
             return Err(format!("a buffer of {bytes} bytes is past the device's largest ({})", shared.max_buffer));
         }
         let b = objc::rc::autoreleasepool(|| shared.device.new_buffer(bytes as u64, MTLResourceOptions::StorageModeShared));
-        LIVE.fetch_add(b.length() as usize, std::sync::atomic::Ordering::Relaxed);
+        leased(&b);
         return Ok(Pooled { buffer: Some(b), keep: false });
     }
     let mut p = pool().lock().expect("the pool");
     if let Some(b) = p.idle.get_mut(&class).and_then(Vec::pop) {
         p.held -= class;
         p.reused += 1;
-        LIVE.fetch_add(b.length() as usize, std::sync::atomic::Ordering::Relaxed);
+        leased(&b);
         return Ok(Pooled { buffer: Some(b), keep: true });
     }
     p.made += 1;
     drop(p);
     let b = crate::score::phase("new buffer", || objc::rc::autoreleasepool(|| shared.device.new_buffer(class as u64, MTLResourceOptions::StorageModeShared)));
-    LIVE.fetch_add(b.length() as usize, std::sync::atomic::Ordering::Relaxed);
+    leased(&b);
     Ok(Pooled { buffer: Some(b), keep: true })
 }
 
