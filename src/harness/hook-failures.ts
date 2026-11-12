@@ -1,4 +1,5 @@
-import { appendFileSync, readFileSync, statSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { appendFileSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { renameWithRetrySync } from "../engine/file-replace.js";
 import { PACKAGE_ROOT } from "../engine/package-root.js";
@@ -54,18 +55,52 @@ export function recordHookFailure(
   try {
     makeRerailHome(home);
     const path = join(home, HOOK_FAILURES_FILE);
-    const size = (() => {
-      try {
-        return statSync(path).size;
-      } catch {
-        return 0;
-      }
-    })();
-    if (size > MAX_FAILURE_BYTES) renameWithRetrySync(path, `${path}.1`);
+    if (sizeOf(path) > MAX_FAILURE_BYTES) moveAside(path);
     const line: HookFailure = { at: now, ...failure, agent: env.AI_AGENT ?? null, rerail: rerailVersion() };
     appendFileSync(path, `${JSON.stringify(line)}\n`, { mode: 0o600 });
   } catch {
     // Nowhere left to say it.
+  }
+}
+
+function sizeOf(path: string): number {
+  try {
+    return statSync(path).size;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Moves the full log at `path` to `<name>.1`. Hooks that fail at once each find the log full, and a rename straight to
+ * `.1` made the later ones fail on a log already moved, losing their own line, or move the new log another hook had
+ * just begun over the full one. So a hook first takes the log under a name of its own, and moves it to `.1` only when
+ * what it took is full; a hook that took the new log another hook began gives its lines back.
+ *
+ * On Windows a rename opens the file by name, then renames what it opened: a hook that opened the log before this one
+ * took it still moves it on, out from under this hook's name. So each step gives up once the file is gone from that
+ * name, leaving it to the hook that holds it last.
+ */
+function moveAside(path: string): void {
+  // `<name>.<pid>.<uuid>.old`, which the uninstall knows as a move cut short.
+  const taken = `${path}.${process.pid}.${randomUUID()}.old`;
+  try {
+    renameWithRetrySync(path, taken);
+    if (sizeOf(taken) > MAX_FAILURE_BYTES) {
+      renameWithRetrySync(taken, `${path}.1`);
+      return;
+    }
+  } catch (error) {
+    // Moved first, or on, by another hook. Any other failure leaves `.1` held through the retries: the log goes back.
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+  }
+  try {
+    const lines = readFileSync(taken);
+    // Gone from its name before the lines go back, so a hook that moves it on finds nothing to give back twice.
+    unlinkSync(taken);
+    appendFileSync(path, lines, { mode: 0o600 });
+  } catch {
+    // Moved on by another hook, which gives it back or moves it aside.
   }
 }
 
