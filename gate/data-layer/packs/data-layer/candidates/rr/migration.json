@@ -1575,7 +1575,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/async-executor.rr",
-      "sha256": "c375d18556efc62a85dad74f21b5f04550cd2d13914cf78bb1ef0cecfeea127e",
+      "sha256": "061c203eefc3f5fe3a7d61e0ee9d089eb4fa7fa918b6717dd5eae29245f674b5",
       "origin": "authored",
       "upstreamPath": "scripts/lint_async_executor.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -3042,14 +3042,14 @@
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_async_executor.py",
-      "sha256": "7028e3c52f4168072a375a7ca52c6f46b1268364ca28446d238d3dc1746bd3f5"
+      "sha256": "923db224e67d017f9c427560c7ef42e3c563cc27361b028a7edcde69c4be68c7"
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/executor-cli.rr",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_async_executor.py",
-      "sha256": "586aad360f22c80ba726e3dd45589b562ac9868ba311fb5d8188d94da973762b"
+      "sha256": "e6fdc01fb79190df07a884544b0436b59dd63816db24ae160a3cb61defe56f79"
     }
   ],
   "rules": [
@@ -4115,9 +4115,94 @@
       "batch": 2,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-async-executor.json",
       "legacySha256": "0e64fd634326c0bb3676f2cf8ed817f4508cde8a5dbc33ea8934afae6b88751b",
-      "status": "draft",
+      "status": "full-contract-passed",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/async-executor.rr",
-      "ruleSha256": "c375d18556efc62a85dad74f21b5f04550cd2d13914cf78bb1ef0cecfeea127e"
+      "ruleSha256": "061c203eefc3f5fe3a7d61e0ee9d089eb4fa7fa918b6717dd5eae29245f674b5",
+      "evidence": {
+        "assertions": 117,
+        "positives": 28,
+        "failures": 0,
+        "skipped": 0,
+        "semanticFallbacks": 0,
+        "ruleSha256": "061c203eefc3f5fe3a7d61e0ee9d089eb4fa7fa918b6717dd5eae29245f674b5",
+        "engineCommit": "4e07746800e7fb958a57c5208c1ea956bc8f7412",
+        "engineSha256": "f4db14313662e14ca1e1924296c91acb48107035461e85db4a2977d61b6ce6e2",
+        "corpusSha256": "5905cab75ad37bf564ecff1eb9f12e69c98782d65f154c2f7de0dacb6493ae74",
+        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "originalInventory": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory-v2.json",
+          "sha256": "a3636d7f8dbb210cfec64aa05b20ff37a97899365b68b3ba2a4ab855ccdda0db"
+        },
+        "reports": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-executor-complete-native-snapshot.json",
+            "sha256": "9658d472e4edfb7538298c673cfada75dd6d66678396ed1b04aa033ddb74ac55"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-executor-complete-native-workspace.json",
+            "sha256": "3e9e84be425e46e2bbb8978f5ebf535696e9da5e284f68e79a58b42b530a2f67"
+          }
+        ],
+        "acceptanceCheckpoints": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-executor-complete-finalfcce.json.gz",
+            "sha256": "6c7cd063a47bef17e95a7a4fac80d29b6a83fed053f8ed2b35a18879ba8fe082"
+          }
+        ],
+        "supplemental": {
+          "admitted": true,
+          "fullMigrationAcceptance": false,
+          "originalCasesPerAPI": 117,
+          "originalPositiveObservationsPerAPI": 28,
+          "originalConfigurationOrPassiveCasesPerAPI": 25,
+          "configurationCasesPerAPI": 16,
+          "storageCasesPerAPI": 0,
+          "protocolCasesPerAPI": 9,
+          "casesPerAPI": {
+            "public": 61,
+            "components": 32,
+            "production": 15,
+            "cli": 28,
+            "legacy": 50
+          },
+          "nativeExecutions": 1232,
+          "fullRuleMigrationAcceptance": true,
+          "persistentStepsPerAPI": 20,
+          "controls": 48
+        },
+        "scope": "All 117 original assertions, including 28 finding-positive observations. Native configuration and parser protocols are identified. Public APIs, registered collectors, supplied facts, CLI, production, all earlier inputs, persistent updates and removal controls pass through both APIs."
+      },
+      "migrationProgress": {
+        "status": "full-contract-passed",
+        "admitted": true,
+        "verifiedNativeExecutions": 1232,
+        "checkpoint": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-executor-complete-finalfcce.json.gz",
+          "sha256": "6c7cd063a47bef17e95a7a4fac80d29b6a83fed053f8ed2b35a18879ba8fe082"
+        },
+        "summary": {
+          "admitted": true,
+          "fullMigrationAcceptance": false,
+          "originalCasesPerAPI": 117,
+          "originalPositiveObservationsPerAPI": 28,
+          "originalConfigurationOrPassiveCasesPerAPI": 25,
+          "configurationCasesPerAPI": 16,
+          "storageCasesPerAPI": 0,
+          "protocolCasesPerAPI": 9,
+          "casesPerAPI": {
+            "public": 61,
+            "components": 32,
+            "production": 15,
+            "cli": 28,
+            "legacy": 50
+          },
+          "nativeExecutions": 1232,
+          "fullRuleMigrationAcceptance": true,
+          "persistentStepsPerAPI": 20,
+          "controls": 48
+        },
+        "remaining": []
+      }
     },
     {
       "check": "async_patterns",

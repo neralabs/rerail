@@ -56,6 +56,12 @@ class Admission(unittest.TestCase):
     def test_weakened_update(self):
         value=copy.deepcopy(self.value);row=value['updates']['workspace'][0]['cases'][1];row['expected']=row['actual']={};self.rejected(value)
 
+    def test_missing_native_warning(self):
+        value=copy.deepcopy(self.value)
+        for report in value['originals']['snapshot']:
+            report['calls'][:]=[r for r in report['calls'] if r['entry']!='_exec_warnings']
+        self.rejected(value)
+
     def test_missing_control(self):
         value=copy.deepcopy(self.value);value['controls'][0]['cases'].pop();self.rejected(value)
 

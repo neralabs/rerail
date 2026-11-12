@@ -3688,3 +3688,52 @@ The native replay fails because the complete executor adapter does not exist yet
 The red contract is committed before implementing that adapter.
 The source receipt is `rr-executor-cli-source-finalfcce.json.gz`.
 Executor remains a draft. Full admission remains at seventeen rules.
+
+### 2026-11-11 — Executor native execution and complete original observations
+
+Both native APIs pass all 117 unchanged original assertions.
+Each API retains all 42 recorded detector observations, including 28 finding-positive observations.
+No source linter function supplies scanner, reporter, or CLI behavior.
+Sixteen assertions inspect native configuration. Nine assertions inspect module exports, callability, documentation, or argparse protocols.
+All original assertions execute with their original identities.
+
+The first native component run exposed an incorrect severity.
+Source findings default to `error`, while plugin enforcement remains `hard-fail`.
+The rule now preserves that distinction.
+A CLI callback contract also exposed a count over files instead of finding rows.
+The native aggregate now binds each finding ordinal.
+
+The CLI scanner executes one native batch over selected file contents.
+The original-observation harness now compares each returned result with its recorded source observation.
+This comparison reuses the batch output and adds no per-file engine query.
+Earlier original assertions passed while their nested CLI observations remained unbound. Those reports cannot support admission.
+The repaired reports retain every nested observation and report no missing result or source fallback.
+
+Expanded contracts and retained updates are running against the final adapter revision.
+Full admission still requires behavior-removal controls and the strict admission verifier.
+The inventory remains at seventeen full admissions.
+
+### 2026-11-11 — Complete executor admission
+
+Both APIs pass all original assertions and expanded contracts on the same rule, adapter, and engine revision.
+The complete receipt retains 1,232 native executions.
+Each API passes 117 original assertions and all 28 finding-positive observations.
+Each API also passes 61 public cases, 32 component cases, fifteen production cases, 28 CLI cases, and fifty historical inputs.
+All twenty retained repository-update steps pass through each API.
+All 48 behavior-removal controls detect the intended semantic changes. Invalid native programs cannot satisfy these controls.
+
+Sixteen admission tests reject omitted positives, hidden passive assertions, missing contracts, weakened updates, invalid controls, and mixed engines.
+They also reject removal of native read-warning evidence from the original I/O cases.
+The broader Python tooling suite passes all 566 tests.
+The generator reproduces the executor rule exactly. The manifest inventory audit passes.
+
+The admission identifies sixteen configuration assertions and nine protocol assertions without per-test inference calls.
+Three original I/O observations lack the earlier normalized DTO.
+Their complete source results remain bound, and their original assertions execute.
+The verifier requires the exact original identities, fixture bodies, retained reasons, and native warning executions.
+No original assertion is omitted or delegated to a source linter function.
+
+The complete receipt is `rr-executor-complete-finalfcce.json.gz`.
+The inventory now records eighteen full admissions, eighty-one drafts, and one absent translation.
+The engine binary and source remain unchanged. Compilation time is zero.
+No full-repository cold run or new Linear issue forms part of this admission.

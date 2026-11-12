@@ -108,6 +108,8 @@ def install(backend,module,detectors=False):
                 except Exception as error:texts.append('');errors.append(str(error));error_paths.append(p['path'])
             values=sources(backend,'_exec_batch',texts)
             if errors:warnings(backend,error_paths,errors)
+            if hasattr(backend,'compare_original'):
+                for p,value in zip(selected,values,strict=True):backend.compare_original(CHECK,'check_file',module,(Path(p['path']),),{},value)
         else:values=[module.check_file(Path(p['path'])) for p in selected]
         files=[dict(path=p['relative'],group=p['group'],violations=v) for p,v in zip(selected,values,strict=True)]
         rows=query(backend,'_exec_cli_report',[dict(path='executor-cli.json',source=json.dumps(dict(files=files),ensure_ascii=False))],dict(execStrict=str(int(args.strict))))

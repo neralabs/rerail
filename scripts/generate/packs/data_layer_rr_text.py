@@ -344,7 +344,8 @@ def async_executor(source, target, header):
         name = 'ExecutorStrictProbe' if entry == 'should_check_file' else 'ExecutorAllowedProbe'
         text += f'\n.violation {name}(at: span) code "{code}" "matched"\n{name}(@place("input.py", 1)) :- option("entryPoint", {q(entry)}), option("path", p), {relation}(p).\n'
     from data_layer_rr_executor import suffix
-    return text + suffix(source)
+    from data_layer_rr_production import production
+    return production(source,'async_executor',text) + suffix(source)
 
 
 def rust_sql_grammar_boundary(source, target, header):

@@ -9,7 +9,7 @@ ExecutorWarning(@place("",0),i,cat("Warning: Could not read ",p,": ",e,"\n")) :-
 
 // The reporter uses the view's key, rather than the bundle's path.
 .decl pp_config(key:symbol,value:symbol)
-pp_config("findingSeverity","hard-fail").
+pp_config("findingSeverity",s) :- exec_config("findingSeverity",s).
 #include "data-layer/supplied-facts.rr"
 #include "data-layer/typed-supplied-facts.rr"
 .input sfe_member(IO=json,filename="reporter-facts.json",path="/bundles/*/rows/*/fields/*/key",projection="python-str")

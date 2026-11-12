@@ -9,6 +9,7 @@ from data_layer_rr_text import module, character_class, search
 CLAUSES = {
     'classvar_check': ['ClassVarComparison'],
     'type_safety_patterns': ['TypeSafety'],
+    'async_executor': ['Executor'],
     'forwardref': ['ForwardRefInstance', 'ForwardRefSubclass', 'ForwardRefCallable'],
     'removed_compat_surfaces': ['Removed'], 'versioned_lifecycle_legacy_surfaces': ['Lifecycle'],
     'no_api_root_imports': ['RootImport', 'RootExample'],
@@ -99,7 +100,7 @@ def production(source, check, text):
         'no_api_root_imports':'nari_file', 'backend_type_strings':'bts_doc', 'hasattr_async':'async_selected',
         'no_source_inspection':'inspection_selected', 'serverplan_name_inference':'name_selected',
         'no_blanket_grammar_bypass':'bypass_selected', 'serverplan_grammar_surface':'sgp_admitted',
-        'permission_error':'permission_selected', 'classvar_check':'cv_selected', 'forwardref':'fr_selected','type_safety_patterns':'tsp_policy_doc'}[check]
+        'permission_error':'permission_selected', 'classvar_check':'cv_selected', 'forwardref':'fr_selected','type_safety_patterns':'tsp_policy_doc','async_executor':'executor_input'}[check]
     pattern = re.compile(r'(?m)^'+selector+r'\([^\n]* :- [\s\S]*?\.\n')
     text = pattern.sub(lambda m: '' if 'pp_run()' in m.group() else m.group(), text)
     text += f'\n{selector}(d) :- pp_run(), pp_doc(d,_), pp_fact_present(d).\n'
@@ -121,6 +122,10 @@ def production(source, check, text):
     if check == 'hasattr_async':
         for pattern in original.EXCLUDE_PATTERNS:
             suffix += 'pp_report_excluded(p) :- pp_absolute(p,full), match('+json.dumps(search(re.compile(pattern)))+',full).\n'
+    if check == 'async_executor':
+        suffix += 'executor_path(full) :- pp_absolute(_,full).\n'
+        suffix += 'pp_report_excluded(p) :- pp_absolute(p,full), !executor_strict(full).\n'
+        suffix += 'pp_report_excluded(p) :- pp_absolute(p,full), executor_allowed(full).\n'
     declarations = re.compile(r'(?ms)^\.violation (\w+)\((.*?)\) code (\{\w+\}|"(?:\\.|[^"\\])*")\s+("(?:\\.|[^"\\])*")')
     found = {m.group(1): m for m in declarations.finditer(text)}
     fact_decl = None
@@ -152,6 +157,7 @@ def production(source, check, text):
                 body += ', tsp_event_order(d,l,ordinal,ppe_phase,ppe_a,ppe_b)'
                 order = ['ppe_phase','ppe_a','ppe_b']
             elif check == 'backend_type_strings': order = [line,names['pattern'],names['occurrence']]
+            elif check == 'async_executor': order = [line,'0','0']
             elif check == 'hasattr_async': order = [line,'0' if clause == 'Asynchasattr' else '1','0']
             elif check == 'no_source_inspection': order = [line,names['ordinal'],'0']
             elif check == 'serverplan_name_inference': order = [line,str(int(clause[-1])-1),'0']
@@ -188,11 +194,11 @@ def production(source, check, text):
             message = 'lc_message'
             suffix += '.violation LifecycleReport(at: span, source_message: symbol, event0: number, event1: number, event2: number) code "VLL001" "{source_message}"\n'
             suffix += 'LifecycleReport(@place(p,l),lc_message,o0,o1,o2) :- '+event+', pp_run(), pp_fact_allowed(p), pp_report_allowed(p).\n'
-        pkey = '@replace_all(p,"/","\\u0000")' if check in {'hasattr_async','serverplan_name_inference'} else 'p'
+        pkey = '@replace_all(p,"/","\\u0000")' if check in {'hasattr_async','serverplan_name_inference','async_executor'} else 'p'
         sort = [pkey,'l',message,'0']
         if check in {'backend_type_strings', 'forwardref'}: sort = ['p','l',code,'0']
         elif check in {'removed_compat_surfaces','serverplan_grammar_surface'}: sort = ['p','o0','""','o1']
-        elif check in {'hasattr_async','serverplan_name_inference'}: sort = [pkey,'o0','""','o1']
+        elif check in {'hasattr_async','serverplan_name_inference','async_executor'}: sort = [pkey,'o0','""','o1']
         elif check == 'permission_error': sort = ['p','l','""','o0']
         suffix += 'pp_report('+','.join(['p','l',code,message,*sort,'o0','o1','o2'])+') :- '+event+', pp_run(), pp_fact_allowed(p), pp_report_allowed(p).\n'
         if check == 'removed_compat_surfaces': payload = [('path','p','symbol'),('line','l','number'),('name','name','symbol')]
@@ -201,6 +207,7 @@ def production(source, check, text):
         elif check == 'classvar_check': payload = [('file','full','symbol'),('line','l','number'),('col','column','number'),('message',message,'symbol'),('code',code,'symbol')]
         elif check == 'forwardref': payload = [('file','p','symbol'),('line','l','number'),('col','column','number'),('message',message,'symbol'),('code',code,'symbol')]
         elif check == 'type_safety_patterns': payload = [('category','category','symbol'),('file_path','full','symbol'),('line_number','l','number'),('column','column','number'),('code_snippet','snippet','symbol'),('suggestion','suggestion','symbol')]
+        elif check == 'async_executor': payload = [('line','l','number'),('source','source','symbol')]
         elif check == 'backend_type_strings': payload = [('file','full','symbol'),('line','l','number'),('column','column','number'),('message',message,'symbol'),('code',code,'symbol'),('snippet','snippet','symbol')]
         elif check == 'hasattr_async': payload = [('line','l','number'),('pattern_type',code,'symbol'),('method_name','method','symbol')]
         elif check == 'no_source_inspection': payload = [('file_path','full','symbol'),('line','l','number'),('line_content','snippet','symbol'),('pattern_name','label','symbol')]

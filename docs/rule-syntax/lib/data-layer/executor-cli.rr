@@ -42,8 +42,8 @@ exc_later(f) :- exc_file(f,p),exc_file_group(f,g),exc_file(other,p),exc_file_gro
 .decl exc_active(f:number,path:symbol,group:symbol)
 exc_active(f,p,g) :- option("entryPoint","_exec_cli_report"),exc_file(f,p),exc_file_group(f,g),exc_positive(f),!exc_later(f).
 .decl exc_total(group:symbol,n:number)
-exc_total("strict",n) :- option("entryPoint","_exec_cli_report"),n=count:{exc_active(f,_,"strict"),exc_line(f,_,_)}.
-exc_total("allowed",n) :- option("entryPoint","_exec_cli_report"),n=count:{exc_active(f,_,"allowed"),exc_line(f,_,_)}.
+exc_total("strict",n) :- option("entryPoint","_exec_cli_report"),n=count:{exc_active(f,_,"strict"),exc_line(f,r,_)}.
+exc_total("allowed",n) :- option("entryPoint","_exec_cli_report"),n=count:{exc_active(f,_,"allowed"),exc_line(f,r,_)}.
 .decl exc_show(group:symbol)
 exc_show("strict") :- exc_total("strict",n),n>0.
 exc_show("allowed") :- exc_total("allowed",n),n>0,option("execStrict","1").
