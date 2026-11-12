@@ -21,10 +21,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Instant, SystemTime};
 use timing::{Started, Timing};
+// The SQL executor's planning and batches read the thread's CPU clock in every build.
 #[path = "clock.rs"]
-#[cfg(any(any(test, feature = "test-hooks"), feature = "headless"))]
 pub mod clock;
-#[cfg(any(any(test, feature = "test-hooks"), feature = "headless"))]
 pub use clock::thread_cpu_ns;
 
 static DIRECTORY: LazyLock<Option<PathBuf>> =
