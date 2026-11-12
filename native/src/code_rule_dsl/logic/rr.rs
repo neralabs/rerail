@@ -341,6 +341,31 @@ fn modules_of(paths: Vec<PathBuf>) -> Result<Files, Error> {
 /// for a text that includes nothing, or while phase 0 itself runs.
 pub(in crate::code_rule_dsl) fn text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>, Error> {
     use super::plan::corpus::phase0;
+    use sha2::Digest as _;
+    use std::sync::{Mutex, OnceLock};
+    // An include is the lexer's `#include` (`syntax::Tok::Hash`): a text without those letters includes nothing.
+    // A printed program, its includes resolved, is not read for it; its parse errors are its parse's to report.
+    if phase0::active() || !src.contains("#include") {
+        return Ok(None);
+    }
+    // A function of the text alone, so read once a process: every digest of a run's texts (`texts_digest`) asks it.
+    static SEEDS: OnceLock<Mutex<std::collections::HashMap<[u8; 32], Option<phase0::Seed>>>> = OnceLock::new();
+    let key: [u8; 32] = sha2::Sha256::digest(src.as_bytes()).into();
+    let seeds = SEEDS.get_or_init(Default::default);
+    if let Some(seed) = seeds.lock().expect("text seeds").get(&key) {
+        return Ok(seed.clone());
+    }
+    let seed = read_text_seed(src)?;
+    let mut kept = seeds.lock().expect("text seeds");
+    if kept.len() >= 256 {
+        kept.clear();
+    }
+    kept.insert(key, seed.clone());
+    Ok(seed)
+}
+
+fn read_text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>, Error> {
+    use super::plan::corpus::phase0;
     let statements = from_tape::statements(src, &tape(src))?;
     let names: Vec<(i64, String)> = statements
         .iter()
