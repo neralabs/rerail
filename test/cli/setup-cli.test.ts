@@ -31,7 +31,7 @@ import {
 } from "../../src/setup/index.js";
 import { ACTIVE_PROFILE_FILE, DEVICE_SECRETS_DIR, PROFILES_DIR } from "../../src/activation/index.js";
 import { DAEMON_PORT_FILE } from "../../src/daemon/index.js";
-import { INSTALLED_PACKS_DIR, openRerailDatabase, RERAIL_DATABASE_FILE, RULES_DUMP_FILE } from "../../src/engine/index.js";
+import { CLOCK_PROBE_FILE, INSTALLED_PACKS_DIR, openRerailDatabase, RERAIL_DATABASE_FILE, RULES_DUMP_FILE } from "../../src/engine/index.js";
 import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, START_LOCK_DIR } from "../../src/runtime/index.js";
 
 const temporaryDirectories: string[] = [];
@@ -361,6 +361,7 @@ describe("rerail install --root", () => {
       CONSENT_FILE, SEEN_AGENTS_FILE, LAUNCHER_PATH_FILE, DAEMON_STATE_FILE, DAEMON_PORT_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE,
       RULES_DUMP_FILE, ACTIVE_PROFILE_FILE, UPDATE_STATE_FILE, RERAIL_DATABASE_FILE, `${RERAIL_DATABASE_FILE}-wal`, `${RERAIL_DATABASE_FILE}.pre-update`,
       CLAUDE_STATUS_DATABASE_FILE, `${CLAUDE_STATUS_DATABASE_FILE}-shm`, `${DAEMON_ACCESS_TOKEN_FILE}.4242.tmp`, `${CURRENT_LINK}.4242.0b8f6a3e-6d1c.old`,
+      CLOCK_PROBE_FILE,
     ];
     for (const name of folders) await mkdir(join(context.home, name), { recursive: true });
     for (const name of files) if (!existsSync(join(context.home, name))) await writeFile(join(context.home, name), "");

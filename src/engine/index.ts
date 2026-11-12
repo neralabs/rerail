@@ -67,7 +67,7 @@ export {
 export { type ConversationRule, parseConversationRule } from "./catalog/rule-schema.js";
 export { engineRegexIssues, type RegexIssue } from "./catalog/rule-regexes.js";
 export { type RuleDocument, SqliteRuleStore } from "./catalog/rule-store.js";
-export { CodeRuleBridge } from "./code-rule/code-rule-bridge.js";
+export { CLOCK_PROBE_FILE, CodeRuleBridge } from "./code-rule/code-rule-bridge.js";
 export {
   bundledCodeRuleDslDirectory,
   CheckoutCatalogs,

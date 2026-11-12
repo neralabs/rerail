@@ -409,7 +409,7 @@ interface SourceDiscovery {
  * clock an edit stamps a source with, so a sample makes and removes no folder, and a process killed mid-sample leaves
  * nothing new behind.
  */
-const CLOCK_PROBE_FILE = "clock-probe";
+export const CLOCK_PROBE_FILE = "clock-probe";
 const CLOCK_PROBE_BYTE = Buffer.from(".");
 
 /**

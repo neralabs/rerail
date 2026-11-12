@@ -19,6 +19,7 @@ import {
 import { RERAIL_DATABASE_FILE } from "../engine/storage/database.js";
 import { RULES_DUMP_FILE } from "../engine/catalog/rule-bootstrap.js";
 import { INSTALLED_PACKS_DIR, installedPacksPrefix } from "../engine/catalog/rule-catalog.js";
+import { CLOCK_PROBE_FILE } from "../engine/code-rule/code-rule-bridge.js";
 import { MAIN_INSTANCE_HOLDER_FILE } from "../engine/native/main-instance.js";
 import { contentStoreOverride, mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import {
@@ -362,7 +363,8 @@ export const CONSENT_FILE = "consent.json";
 
 /**
  * What Rerail itself writes in its home, by the name its writer gives it: settings, records, locks, `rerail activate`'s
- * profiles and device secrets, `rules export`'s dump and the installation.
+ * profiles and device secrets, `rules export`'s dump, the file code rules read the file system's clock from and the
+ * installation.
  */
 const RERAIL_HOME_ENTRIES: readonly string[] = [
   CONSENT_FILE,
@@ -383,6 +385,7 @@ const RERAIL_HOME_ENTRIES: readonly string[] = [
   CURRENT_LINK,
   LAUNCHER_DIR,
   SCRUB_HINT_FILE,
+  CLOCK_PROBE_FILE,
 ];
 
 /** What Rerail writes in its home under these names and longer ones: SQLite's `-wal` and `-shm`, `rerail update`'s `.pre-update` copy. */
