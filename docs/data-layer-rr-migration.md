@@ -4014,3 +4014,16 @@ All 632 Python tooling tests pass.
 
 This checkpoint does not admit the rule. Production, file selection, rendering, CLI, earlier inputs, retained edits, and removal controls remain required.
 The global inventory remains nineteen admitted rules, eighty drafts, and one absent translation.
+
+### 2026-11-11 — Boundary production passes; public selection is red
+
+Both APIs pass all 22 complete production cases.
+Findings now retain the requested owner path when aliases share one parsed AST.
+An allowlisted original file can share its AST with an actionable alias. Informational aliases retain their own classification too.
+
+Thirty-two new public scanner cases compare complete results, counts, and I/O exceptions.
+The current adapter passes 29 cases through snapshot execution and 24 through workspace execution.
+It must select eligible files before opening them, exclude the bare basename `.py`, and use stable transport paths for caller-selected roots.
+Skipped non-Python files and broken links still contribute to the source's checked-file count.
+The red receipt is `rr-boundary-public-selection-red-finalfcce.json.gz`.
+These are port defects, not missing engine features. The rule remains a draft.

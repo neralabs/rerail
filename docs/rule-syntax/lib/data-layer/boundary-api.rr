@@ -1,6 +1,5 @@
 #include "project.rr"
 #include "data-layer/supplied-facts.rr"
-.decl pp_config(key:symbol,value:symbol)
 .decl bs_config(key:symbol,value:symbol)
 .violation BoundaryConfiguration(at:span,key:symbol,value:symbol) code "BS_CONFIG" "boundary configuration"
 BoundaryConfiguration(@place("",0),k,v) :- option("entryPoint","_bs_configuration"),bs_config(k,v).

@@ -6,6 +6,7 @@ from data_layer_rr_text import module
 def async_sync_boundary(source, target, header):
     original=module(source,'async_sync_boundary');q=json.dumps
     text=re.sub(r'^\.scope exclude .*$', '.scope exclude "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**"',header('async_sync_boundary', target),flags=re.M)
+    text+='#include "data-layer/plugin-production.rr"\n'
     for relation,values in [('bs_trigger',original.SOURCE_TRIGGERS),('bs_information_dir',original.INFORMATIONAL_DIRS)]:
         text+=f'.decl {relation}(text: symbol)\n'+''.join(f'{relation}({q(v)}).\n' for v in sorted(values))
     text+='.decl bs_static_allow(file: symbol, function: symbol)\n'+''.join(f'bs_static_allow({q(p)}, {q(f)}).\n' for p,f in sorted(original.ALLOWLIST))
@@ -44,11 +45,8 @@ bs_context(c, @nfkc(name), 1) :- !bs_api_helper(), bs_call(c, _), def_frame(c, f
 bs_context(c, @nfkc(name), 0) :- !bs_api_helper(), bs_call(c, _), def_frame(c, f), def_name(f, name), !op(f, "async").
 bs_context(c, "<module>", 0) :- !bs_api_helper(), bs_call(c, _), !def_frame(c, _).
 .decl bs_document(d: number, path: symbol)
-bs_document(d, p) :- doc(d, p, _), option("entryPoint", "scan_tree"), file_name(d, nm), suffix(".py", nm), !syntax_error(d, _, _).
-bs_document(d, p) :- doc(d, p, _), !option("entryPoint", _), file_name(d, nm), suffix(".py", nm),
- (prefix("api/", p) ; prefix("impl/", p) ; prefix("conform/", p)), !bs_hidden(d), !syntax_error(d, _, _).
-.decl bs_hidden(d: number)
-bs_hidden(d) :- path_part(d, part), (part = ".git" ; part = ".venv" ; part = "venv" ; part = "__pycache__" ; part = "tmp").
+bs_document(d, p) :- pp_doc(d,p), option("entryPoint", "scan_tree"), file_name(d, nm), suffix(".py", nm), !syntax_error(d, _, _).
+bs_document(d, p) :- pp_run(),pp_doc(d,p),pp_fact_present(d).
 .decl bs_source_enabled(d: number)
 bs_source_enabled(d) :- bs_document(d, _), !option("hasReadError", "true"), source(d, span), text(span, source), bs_trigger(trigger), contains(trigger, source).
 .decl bs_enabled(c:node)
@@ -80,17 +78,17 @@ bs_info_path(p) :- bs_document(_, p).
 bs_info_path(p) :- option("entryPoint", "_is_informational"), option("file_rel", p).
 .decl bs_informational(path: symbol)
 bs_informational(p) :- bs_info_path(p), bs_info_pattern(part), contains(part, p).
-.decl bs_emit(c: node, category: symbol, function_name: symbol, async_: number, call_text: symbol)
-bs_emit(c, cat, fn, a, call_text) :- bs_detect(c, cat, fn, a, call_text), option("entryPoint", "scan_tree").
-bs_emit(c, cat, fn, a, call_text) :- bs_detect(c, cat, fn, a, call_text), !option("entryPoint", _),
+.decl bs_emit(c: node, path:symbol, category: symbol, function_name: symbol, async_: number, call_text: symbol)
+bs_emit(c, p, cat, fn, a, call_text) :- bs_detect(c, cat, fn, a, call_text),docof(c,d),bs_document(d,p),option("entryPoint", "scan_tree").
+bs_emit(c, p, cat, fn, a, call_text) :- bs_detect(c, cat, fn, a, call_text), pp_run(),
  docof(c, d), bs_document(d, p), !bs_allowed(p, fn), !bs_informational(p).
 
-.violation Sync(at: node, function_name: symbol, async_: number, call_text: symbol, column: number, ordinal: number, message: symbol) code "SYNC_WRAPS_ASYNC" "{message}"
-Sync(c, fn, a, t, col, ordinal, cat(label, ": ", fn, ": ", t)) :- bs_emit(c, "SYNC_WRAPS_ASYNC", fn, a, t), col(c, col), visit_index(c, ordinal), bs_label("SYNC_WRAPS_ASYNC", label).
-.violation Async(at: node, function_name: symbol, async_: number, call_text: symbol, column: number, ordinal: number, message: symbol) code "ASYNC_WRAPS_SYNC" "{message}"
-Async(c, fn, a, t, col, ordinal, cat(label, ": ", fn, ": ", t)) :- bs_emit(c, "ASYNC_WRAPS_SYNC", fn, a, t), col(c, col), visit_index(c, ordinal), bs_label("ASYNC_WRAPS_SYNC", label).
-.violation Executor(at: node, function_name: symbol, async_: number, call_text: symbol, column: number, ordinal: number, message: symbol) code "EXECUTOR_ESCAPE" "{message}"
-Executor(c, fn, a, t, col, ordinal, cat(label, ": ", fn, ": ", t)) :- bs_emit(c, "EXECUTOR_ESCAPE", fn, a, t), col(c, col), visit_index(c, ordinal), bs_label("EXECUTOR_ESCAPE", label).
+.violation Sync(at: span, function_name: symbol, async_: number, call_text: symbol, column: number, ordinal: number, message: symbol) code "SYNC_WRAPS_ASYNC" "{message}"
+Sync(@place(p,l), fn, a, t, col, ordinal, cat(label, ": ", fn, ": ", t)) :- bs_emit(c,p,"SYNC_WRAPS_ASYNC",fn,a,t),line(c,l),col(c,col),visit_index(c,ordinal),bs_label("SYNC_WRAPS_ASYNC",label),!option("entryPoint","_production_contract").
+.violation Async(at: span, function_name: symbol, async_: number, call_text: symbol, column: number, ordinal: number, message: symbol) code "ASYNC_WRAPS_SYNC" "{message}"
+Async(@place(p,l), fn, a, t, col, ordinal, cat(label, ": ", fn, ": ", t)) :- bs_emit(c,p,"ASYNC_WRAPS_SYNC",fn,a,t),line(c,l),col(c,col),visit_index(c,ordinal),bs_label("ASYNC_WRAPS_SYNC",label),!option("entryPoint","_production_contract").
+.violation Executor(at: span, function_name: symbol, async_: number, call_text: symbol, column: number, ordinal: number, message: symbol) code "EXECUTOR_ESCAPE" "{message}"
+Executor(@place(p,l), fn, a, t, col, ordinal, cat(label, ": ", fn, ": ", t)) :- bs_emit(c,p,"EXECUTOR_ESCAPE",fn,a,t),line(c,l),col(c,col),visit_index(c,ordinal),bs_label("EXECUTOR_ESCAPE",label),!option("entryPoint","_production_contract").
 
 .decl bs_graph_kind(n: node, kind: symbol)
 bs_graph_kind(n, k) :- bs_api_helper(), option_item("astKinds", n, k).
@@ -108,4 +106,5 @@ Allow(@place("<allow>", 1)) :- option("entryPoint", "_is_allowlisted"), option("
 Info(@place("<info>", 1)) :- option("entryPoint", "_is_informational"), option("file_rel", p), bs_informational(p).
 '''
     from data_layer_rr_boundary_api import suffix
-    return text+suffix(source)
+    from data_layer_rr_boundary_production import production
+    return text+production(source)+suffix(source)

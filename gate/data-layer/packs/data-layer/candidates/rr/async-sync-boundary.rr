@@ -7,6 +7,7 @@
 .scope exclude "**/.git/**", "**/.venv/**", "**/venv/**", "**/__pycache__/**", "**/tmp/**"
 // Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_async_sync_boundary.py
 #include "python/ast.rr"
+#include "data-layer/plugin-production.rr"
 .decl bs_trigger(text: symbol)
 bs_trigger("asyncio.run").
 bs_trigger("run_in_executor").
@@ -115,11 +116,8 @@ bs_context(c, @nfkc(name), 1) :- !bs_api_helper(), bs_call(c, _), def_frame(c, f
 bs_context(c, @nfkc(name), 0) :- !bs_api_helper(), bs_call(c, _), def_frame(c, f), def_name(f, name), !op(f, "async").
 bs_context(c, "<module>", 0) :- !bs_api_helper(), bs_call(c, _), !def_frame(c, _).
 .decl bs_document(d: number, path: symbol)
-bs_document(d, p) :- doc(d, p, _), option("entryPoint", "scan_tree"), file_name(d, nm), suffix(".py", nm), !syntax_error(d, _, _).
-bs_document(d, p) :- doc(d, p, _), !option("entryPoint", _), file_name(d, nm), suffix(".py", nm),
- (prefix("api/", p) ; prefix("impl/", p) ; prefix("conform/", p)), !bs_hidden(d), !syntax_error(d, _, _).
-.decl bs_hidden(d: number)
-bs_hidden(d) :- path_part(d, part), (part = ".git" ; part = ".venv" ; part = "venv" ; part = "__pycache__" ; part = "tmp").
+bs_document(d, p) :- pp_doc(d,p), option("entryPoint", "scan_tree"), file_name(d, nm), suffix(".py", nm), !syntax_error(d, _, _).
+bs_document(d, p) :- pp_run(),pp_doc(d,p),pp_fact_present(d).
 .decl bs_source_enabled(d: number)
 bs_source_enabled(d) :- bs_document(d, _), !option("hasReadError", "true"), source(d, span), text(span, source), bs_trigger(trigger), contains(trigger, source).
 .decl bs_enabled(c:node)
@@ -151,17 +149,17 @@ bs_info_path(p) :- bs_document(_, p).
 bs_info_path(p) :- option("entryPoint", "_is_informational"), option("file_rel", p).
 .decl bs_informational(path: symbol)
 bs_informational(p) :- bs_info_path(p), bs_info_pattern(part), contains(part, p).
-.decl bs_emit(c: node, category: symbol, function_name: symbol, async_: number, call_text: symbol)
-bs_emit(c, cat, fn, a, call_text) :- bs_detect(c, cat, fn, a, call_text), option("entryPoint", "scan_tree").
-bs_emit(c, cat, fn, a, call_text) :- bs_detect(c, cat, fn, a, call_text), !option("entryPoint", _),
+.decl bs_emit(c: node, path:symbol, category: symbol, function_name: symbol, async_: number, call_text: symbol)
+bs_emit(c, p, cat, fn, a, call_text) :- bs_detect(c, cat, fn, a, call_text),docof(c,d),bs_document(d,p),option("entryPoint", "scan_tree").
+bs_emit(c, p, cat, fn, a, call_text) :- bs_detect(c, cat, fn, a, call_text), pp_run(),
  docof(c, d), bs_document(d, p), !bs_allowed(p, fn), !bs_informational(p).
 
-.violation Sync(at: node, function_name: symbol, async_: number, call_text: symbol, column: number, ordinal: number, message: symbol) code "SYNC_WRAPS_ASYNC" "{message}"
-Sync(c, fn, a, t, col, ordinal, cat(label, ": ", fn, ": ", t)) :- bs_emit(c, "SYNC_WRAPS_ASYNC", fn, a, t), col(c, col), visit_index(c, ordinal), bs_label("SYNC_WRAPS_ASYNC", label).
-.violation Async(at: node, function_name: symbol, async_: number, call_text: symbol, column: number, ordinal: number, message: symbol) code "ASYNC_WRAPS_SYNC" "{message}"
-Async(c, fn, a, t, col, ordinal, cat(label, ": ", fn, ": ", t)) :- bs_emit(c, "ASYNC_WRAPS_SYNC", fn, a, t), col(c, col), visit_index(c, ordinal), bs_label("ASYNC_WRAPS_SYNC", label).
-.violation Executor(at: node, function_name: symbol, async_: number, call_text: symbol, column: number, ordinal: number, message: symbol) code "EXECUTOR_ESCAPE" "{message}"
-Executor(c, fn, a, t, col, ordinal, cat(label, ": ", fn, ": ", t)) :- bs_emit(c, "EXECUTOR_ESCAPE", fn, a, t), col(c, col), visit_index(c, ordinal), bs_label("EXECUTOR_ESCAPE", label).
+.violation Sync(at: span, function_name: symbol, async_: number, call_text: symbol, column: number, ordinal: number, message: symbol) code "SYNC_WRAPS_ASYNC" "{message}"
+Sync(@place(p,l), fn, a, t, col, ordinal, cat(label, ": ", fn, ": ", t)) :- bs_emit(c,p,"SYNC_WRAPS_ASYNC",fn,a,t),line(c,l),col(c,col),visit_index(c,ordinal),bs_label("SYNC_WRAPS_ASYNC",label),!option("entryPoint","_production_contract").
+.violation Async(at: span, function_name: symbol, async_: number, call_text: symbol, column: number, ordinal: number, message: symbol) code "ASYNC_WRAPS_SYNC" "{message}"
+Async(@place(p,l), fn, a, t, col, ordinal, cat(label, ": ", fn, ": ", t)) :- bs_emit(c,p,"ASYNC_WRAPS_SYNC",fn,a,t),line(c,l),col(c,col),visit_index(c,ordinal),bs_label("ASYNC_WRAPS_SYNC",label),!option("entryPoint","_production_contract").
+.violation Executor(at: span, function_name: symbol, async_: number, call_text: symbol, column: number, ordinal: number, message: symbol) code "EXECUTOR_ESCAPE" "{message}"
+Executor(@place(p,l), fn, a, t, col, ordinal, cat(label, ": ", fn, ": ", t)) :- bs_emit(c,p,"EXECUTOR_ESCAPE",fn,a,t),line(c,l),col(c,col),visit_index(c,ordinal),bs_label("EXECUTOR_ESCAPE",label),!option("entryPoint","_production_contract").
 
 .decl bs_graph_kind(n: node, kind: symbol)
 bs_graph_kind(n, k) :- bs_api_helper(), option_item("astKinds", n, k).
@@ -177,6 +175,25 @@ CallName(@place("<call-name>", 1), name) :- bs_graph_kind(0, "Call"), bs_graph_e
 Allow(@place("<allow>", 1)) :- option("entryPoint", "_is_allowlisted"), option("file_rel", p), option("function_name", f), bs_allowed(p, f).
 .violation Info(at: span) code "BS_INFO" "informational"
 Info(@place("<info>", 1)) :- option("entryPoint", "_is_informational"), option("file_rel", p), bs_informational(p).
+pp_config("name","async_sync_boundary").
+pp_config("description","Async and sync execution boundaries must not hide blocking work").
+pp_config("enforcement","ratchet").
+pp_config("findingSeverity","hard-fail").
+pp_config("extractor","async_sync_boundary.violations").
+pp_config("parser","ast_collect").
+pp_config("scope","static").
+pp_config("include_tests","true").
+pp_config("fact_kind","list").
+pp_static_root("api").
+pp_static_root("impl").
+pp_static_root("conform").
+pp_trigger("asyncio.run").
+pp_trigger("to_thread").
+pp_trigger("run_in_executor").
+
+pp_report(p,l,code,cat(label,": ",fn,": ",text),p,l,code,0,i,0,0) :- pp_run(),bs_emit(c,p,code,fn,_,text),line(c,l),visit_index(c,i),bs_label(code,label).
+.violation BoundaryProductionFact(at:span,path:symbol,path_order:symbol,order0:number,order1:number,order2:number,f_file:symbol,f_line:number,f_col:number,f_category:symbol,f_function_name:symbol,f_call_text:symbol,f_is_async_ctx:number) code "DL_FACT" "boundary production fact"
+BoundaryProductionFact(@place(p,l),p,@replace_all(p,"/","\u0000"),i,0,0,p,l,col,code,fn,text,a) :- option("entryPoint","_production_contract"),bs_detect(c,code,fn,a,text),docof(c,d),bs_document(d,p),line(c,l),col(c,col),visit_index(c,i).
 bs_config("constants","{\"SOURCE_TRIGGERS\": {\"kind\": \"tuple\", \"value\": [\"asyncio.run\", \"to_thread\", \"run_in_executor\"]}, \"ALLOWLIST\": {\"kind\": \"set\", \"value\": [[\"conform/l7000_versioned/test_column_evolution_versioned_e2e.py\", \"test_versioned_column_evolution_e2e\"], [\"conform/l9800_rippling/test_async_handler_support.py\", \"_process_event_with_async_connection\"], [\"impl/browser/*\", \"*\"], [\"impl/common/l1000_cache/invalidation_broadcast.py\", \"_drain_loop\"], [\"impl/common/l2070_server_plan/base_server_plan.py\", \"_execute_query_execute_aggregate_async\"], [\"impl/common/l2070_server_plan/base_server_plan.py\", \"_execute_query_execute_windowed_async\"], [\"impl/common/l2070_server_plan/base_server_plan.py\", \"_execute_query_keyset_paginate_async\"], [\"impl/common/l2550_storage_backend/backend.py\", \"delete_async\"], [\"impl/common/l2550_storage_backend/backend.py\", \"exists_async\"], [\"impl/common/l2550_storage_backend/backend.py\", \"get_metadata_async\"], [\"impl/common/l2550_storage_backend/backend.py\", \"get_stats_async\"], [\"impl/common/l2550_storage_backend/backend.py\", \"iter_content_hashes_async\"], [\"impl/common/l2550_storage_backend/backend.py\", \"retrieve_async\"], [\"impl/common/l2550_storage_backend/backend.py\", \"store_async\"], [\"impl/l1570_llm_client/client.py\", \"_run_sync\"], [\"impl/mariadb/connection.py\", \"_common_close_resources\"], [\"impl/mariadb/connection.py\", \"close\"], [\"impl/postgres/connection.py\", \"_close_async_conn_sync\"], [\"impl/postgres/connection.py\", \"close\"], [\"impl/sqlite/native_async_wrapper.py\", \"*\"], [\"l2000_connection/async_executor.py\", \"_run_sync\"], [\"l2000_connection/connection_pool.py\", \"_cleanup_connection_state\"], [\"l2000_connection/connection_pool.py\", \"_create_connection\"], [\"l2050_transaction/transaction.py\", \"_execute_fragment_async\"], [\"l2050_transaction/transaction.py\", \"_execute_vector_query_async\"], [\"l2060_query_builder/query_builder.py\", \"_execute_aggregate_async\"], [\"l2060_query_builder/query_builder.py\", \"count_async\"], [\"l2060_query_builder/query_builder.py\", \"cursor_paginate_async\"], [\"l2060_query_builder/query_builder.py\", \"execute_async\"], [\"l2060_query_builder/query_builder.py\", \"execute_one_async\"], [\"l2060_query_builder/query_builder.py\", \"execute_raw_async\"], [\"l2060_query_builder/query_builder.py\", \"execute_with_meta_async\"], [\"l2060_query_builder/query_builder.py\", \"exists_async\"], [\"l2060_query_builder/query_builder.py\", \"first_async\"], [\"l2060_query_builder/tuple_query.py\", \"execute_async\"], [\"l2060_query_builder/tuple_query.py\", \"execute_one_async\"], [\"l2550_storage_backend/azure_backend.py\", \"*\"], [\"l2550_storage_backend/database_backend.py\", \"*\"], [\"l2550_storage_backend/dual_write.py\", \"*\"], [\"l2550_storage_backend/encryption.py\", \"*\"], [\"l2550_storage_backend/gcs_backend.py\", \"*\"], [\"l2550_storage_backend/local_backend.py\", \"*\"], [\"l2550_storage_backend/memory_backend.py\", \"*\"], [\"l2550_storage_backend/resilient_backend.py\", \"*\"], [\"l2550_storage_backend/s3_backend.py\", \"*\"], [\"l2550_storage_backend/tiered_backend.py\", \"*\"], [\"l4170_inbound_bridge/process.py\", \"_run_sync\"], [\"l4200_event_pipeline/persistent_metrics.py\", \"run_in_thread\"], [\"l4200_event_pipeline/persistent_metrics.py\", \"snapshot_now\"], [\"l4300_ipc/client.py\", \"*\"], [\"l4300_ipc/server_mixin.py\", \"*\"], [\"l5000_subscriptions/deferred_dispatch.py\", \"_run_async_callback_sync\"], [\"l5000_subscriptions/deferred_dispatch.py\", \"dispatch_queued_events\"], [\"l5000_subscriptions/dispatcher.py\", \"dispatch_branch_event\"], [\"l6600_cleanup/reaper.py\", \"cleanup_expired_data_async\"], [\"l8000_admin/tools/ipc_tools.py\", \"list_backends_handler\"]]}, \"INFORMATIONAL_DIRS\": {\"kind\": \"list\", \"value\": [\"tests/\", \"benchmarks/\", \"scripts/\", \"data_layer_testing/\", \"demos/\", \"examples/\", \"exploration/\", \"integration_tests/\"]}, \"CATEGORY_LABELS\": {\"kind\": \"dict\", \"value\": {\"SYNC_WRAPS_ASYNC\": \"sync wraps async (asyncio.run)\", \"ASYNC_WRAPS_SYNC\": \"async wraps sync (asyncio.to_thread)\", \"EXECUTOR_ESCAPE\": \"async wraps sync (run_in_executor)\"}}}").
 bs_config("extractor","{\"extractor_id\": \"async_sync_boundary.violations\", \"schema_version\": \"1\", \"implementation_version\": \"async-sync-boundary-v2\", \"parser_mode\": \"ast_collect\", \"source_triggers\": [\"asyncio.run\", \"to_thread\", \"run_in_executor\"], \"source_trigger_groups\": [], \"cacheable\": true, \"workload_scope\": \"file\", \"project_input_facts\": [], \"project_input_scope\": null, \"implementation_digest\": \"f7c87e3410374991\", \"node_kinds\": [\"FunctionDef\", \"AsyncFunctionDef\", \"Call\"]}").
 bs_config("scope","{\"directories\": [\"api\", \"impl\", \"conform\"], \"explicit_files\": [], \"include_tests\": true, \"broad_repo_scope\": false}").
