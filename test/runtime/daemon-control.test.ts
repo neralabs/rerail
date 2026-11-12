@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type * as ChildProcessModule from "node:child_process";
 import { EventEmitter, once } from "node:events";
-import { createServer, type AddressInfo } from "node:net";
+import { connect, createServer, type AddressInfo } from "node:net";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -26,6 +26,7 @@ import {
   type DaemonState,
   AUTOSTART_CLAIM_FILE,
   autostartDaemon,
+  DAEMON_ACCESS_HEADER,
   DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
   dashboardAccessLink,
@@ -344,6 +345,30 @@ describe("Rerail daemon control", () => {
       blocker.close();
     }
   });
+
+  it("stops a daemon that has a hook's request still unanswered, without the kill that follows its wait", async () => {
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const { state } = (await startDaemon(
+      { home, packageRoot, ensureSqlite: async root => ({ prefix: root, rebuilt: false }) },
+      { dev: true, port: 0 },
+    )).daemon;
+    // A hook's event the daemon has not answered yet: its request is open on the engine socket.
+    const hook = connect(state.kernelSocketPath);
+    hook.on("error", () => undefined);
+    await once(hook, "connect");
+    hook.write(`POST /events HTTP/1.1\r\nHost: localhost\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n${DAEMON_ACCESS_HEADER}: ${state.accessToken ?? ""}\r\n\r\n{`);
+    const kill = vi.spyOn(process, "kill");
+    try {
+      expect(await stopDaemon(home)).toBe("stopped");
+      // The daemon ended itself; before, it waited on the hook and stop killed it once its 10 s were up.
+      expect(kill.mock.calls.filter(([, signal]) => signal === "SIGKILL")).toEqual([]);
+      expect(processAlive(state.pid)).toBe(false);
+    } finally {
+      kill.mockRestore();
+      hook.destroy();
+      if (processAlive(state.pid)) process.kill(state.pid, "SIGKILL");
+    }
+  }, 30_000);
 
   it("replaces a healthy daemon from the previous managed package before using the active package", async () => {
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");

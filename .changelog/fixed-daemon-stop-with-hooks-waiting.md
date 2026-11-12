@@ -1,0 +1,1 @@
+`rerail daemon stop` no longer waits 10 s and then kills a daemon that still has coding agent hooks waiting for an answer. The daemon now cuts those hooks off and skips the events still queued behind the ones it is running, so it stops in about a second and cleans up after itself.
