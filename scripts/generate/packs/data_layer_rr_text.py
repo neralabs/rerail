@@ -313,7 +313,8 @@ def admin_async_purity(source, target, header):
     text += '.decl admin_skip_probe(p: symbol)\n'
     for pattern in original.SKIP_PATTERNS:
         text += f'admin_skip_probe(p) :- option("path", p), match({quote(search(pattern))}, p).\n'
-    return text
+    from data_layer_rr_admin_api import suffix
+    return text+suffix(source)
 
 
 def async_executor(source, target, header):

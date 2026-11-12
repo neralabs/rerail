@@ -1,0 +1,4 @@
+// Configuration is exported from the pinned source at authoring time.
+.decl admin_config(key:symbol,value:symbol)
+.violation AdminConfiguration(at:span,key:symbol,value:symbol) code "ADMIN_CONFIG" "admin configuration"
+AdminConfiguration(@place("",0),key,value) :- option("entryPoint","_admin_configuration"),admin_config(key,value).

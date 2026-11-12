@@ -14,7 +14,7 @@ def install(backend,module,detectors=False):
     backend.replace(module,'FORBIDDEN_PATTERNS',[(re.compile(p['pattern'],p['flags']),p['name']) for p in config['patterns']])
     backend.replace(module,'SKIP_PATTERNS',[re.compile(p['pattern'],p['flags']) for p in config['skips']])
     spec=dict(config['extractor'])
-    for name in ['source_triggers','project_input_facts','node_kinds']:spec[name]=tuple(spec[name])
+    for name in ['source_triggers','project_input_facts']:spec[name]=tuple(spec[name])
     spec['source_trigger_groups']=tuple(tuple(group) for group in spec['source_trigger_groups'])
     backend.replace(module,'ADMIN_ASYNC_PURITY_EXTRACTOR',type(module.ADMIN_ASYNC_PURITY_EXTRACTOR)(**spec))
     if hasattr(backend,'configuration_bindings'):

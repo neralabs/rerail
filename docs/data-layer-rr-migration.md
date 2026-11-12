@@ -4132,3 +4132,15 @@ The retained failing query is backed by the actual engine response and both cons
 The source contracts and native rejection are retained in `rr-admin-components-source-red-finalfcce.json.gz`.
 The configuration adapter now requires those native exports. Extraction and reporting remain unported.
 The inventory remains twenty admitted rules, seventy-nine drafts, and one absent translation.
+
+### 2026-11-12 — Admin metadata passes; component callback guards remain red
+
+The admin rule now exports constants, regex descriptors, extractor registration, plugin scope, and CLI parser metadata from the pinned source.
+The adapter supplies native configuration and passive DTOs. Regex compilation supplies metadata objects; rule decisions use native queries.
+The complete metadata contract passes through both APIs.
+
+Both APIs replay all 124 component cases: one metadata case passes, and 123 cases fail.
+Their extraction, projection, and reporter callbacks still reach original semantic functions. The guard rejects each call.
+These are missing port implementations. No missing engine feature is established by these failures.
+The complete red component replay is `rr-admin-metadata-progress-finalfcce.json.gz`.
+The admin rule remains a draft. The inventory remains twenty admissions, seventy-nine drafts, and one absent translation.

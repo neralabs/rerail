@@ -1568,7 +1568,7 @@
     },
     {
       "destination": "gate/data-layer/packs/data-layer/candidates/rr/admin-async-purity.rr",
-      "sha256": "129f66b23d3b0cac00cfeeb28e9e8ea6a3bbf3ff6ee5e234d7d382f3e8e5f8f2",
+      "sha256": "eee37171da78a419339645b8c1794d3c147d5424ee778e80eb89ebee17350d06",
       "origin": "authored",
       "upstreamPath": "scripts/lint_admin_async_purity.py",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a"
@@ -3106,6 +3106,13 @@
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_async_sync_boundary.py",
       "sha256": "f33c4741fee3e29a48e6d9645081d15513e2622f76a15fb0394473bff7149088"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/admin-api.rr",
+      "sha256": "aba4ea23c38a6cedf02d8ae3a5be4e76af4daead44568ff1033df967b3bae38f",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_admin_async_purity.py"
     }
   ],
   "rules": [
@@ -4588,7 +4595,7 @@
       "legacySha256": "7c77aef231725a946398a941b9b1a9d2adac72f1506073b5881dd84796bfeb2a",
       "status": "draft",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/admin-async-purity.rr",
-      "ruleSha256": "129f66b23d3b0cac00cfeeb28e9e8ea6a3bbf3ff6ee5e234d7d382f3e8e5f8f2"
+      "ruleSha256": "eee37171da78a419339645b8c1794d3c147d5424ee778e80eb89ebee17350d06"
     },
     {
       "check": "plan_scope_side_effects",
