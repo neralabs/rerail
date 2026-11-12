@@ -36,9 +36,13 @@ When a checkout of a clone-keyed repository later has a remote, the remote's rep
 - **Not set up:** the two merge, and the old key becomes an alias.
 - **Set up:** only the checkouts move.
 
-A checkout whose folder is gone, or that Git no longer lists, is forgotten with its own settings: the daemon looks
-when it starts and every hour after. The last checkout of a clone stays while sessions are recorded under the clone's
-id, so those sessions stay in the repository's history.
+A checkout Git no longer lists as a checkout of its clone is forgotten with its own settings, as after
+`git worktree remove`, `git worktree prune` or `git worktree move`: the daemon looks when it starts and every hour
+after, and asks Git in a checkout of the same clone that is on disk. A checkout Git can't answer for stays, with its
+start state and settings, so it has them when it comes back: a clone's own checkout (a submodule's too) while its `.git`
+entry is there, a folder outside Git, a folder renamed away, one on a drive that is not mounted or a share that does not
+answer, and a clone with no checkout on disk. Git keeps a worktree whose folder is gone listed until it prunes it, and
+so does Rerail. The checkout Git is asked in stays, so sessions recorded under the clone's id stay in its history.
 
 </details>
 
@@ -243,7 +247,7 @@ Each file is judged by the checkout that owns it, with that checkout's configura
 
 The owner is the nearest folder above the file holding a `.git` entry that Git confirms as a checkout's top level. Only checkouts that are recorded, started and set up evaluate files.
 
-A worktree of a repository where Rerail runs is recorded the first time a session looks at it, wherever it sits and whichever folder the session started in, and judges its files itself. A session looks at it when a path it names falls in it, or when it first walks the repository's other worktrees (below), so any session of the repository records every such worktree, edited or not. Its record stays until the worktree is gone, as every recorded checkout's does. Git decides what counts: `git worktree list`, run in a recorded checkout of the same clone, must name it. Another clone of the same remote doesn't count.
+A worktree of a repository where Rerail runs is recorded the first time a session looks at it, wherever it sits and whichever folder the session started in, and judges its files itself. A session looks at it when a path it names falls in it, or when it first walks the repository's other worktrees (below), so any session of the repository records every such worktree, edited or not. Its record stays until Git no longer lists it, as every recorded checkout's does. Git decides what counts: `git worktree list`, run in a recorded checkout of the same clone, must name it. Another clone of the same remote doesn't count.
 
 Shell writes are found by walking files, so each session also walks the repository's other worktrees that may run rules, behind its own folder's walk. A command doesn't wait for this. The walk can't tell who wrote a file, so what it finds is recorded under the repository, in Log, and steers no session: an agent is steered only on its own tool calls and on its own folder's shell writes. A shell write an agent makes in another worktree is therefore recorded but not steered. What Git wrote is left out, as in the session's own folder. In its own folder, a change made while none of the session's tool calls ran is another writer's and doesn't steer it ([the session's own write](reference.md#how-ai-output-scope-finds-changed-lines)).
 
