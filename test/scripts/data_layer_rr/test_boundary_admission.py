@@ -86,6 +86,14 @@ class Admission(unittest.TestCase):
         v=copy.deepcopy(self.value);v['supplemental']['report']['reports'][0]['results'][0]['programInputs']=None;self.rejected(v)
     def test_missing_native_program_inputs(self):
         v=copy.deepcopy(self.value);del v['supplemental']['report']['reports'][0]['results'][0]['programInputs'];self.rejected(v)
+    def test_missing_source_order_evidence(self):
+        v=copy.deepcopy(self.value);v['sourceCompletionOrder']['runs']=[];self.rejected(v)
+    def test_changed_supplemental_count(self):
+        v=copy.deepcopy(self.value)
+        for report in v['supplemental']['api']['reports']:
+            for row in report['results']:
+                if row['id']=='overlap':row['value']['result']['fields']['files_checked']=999
+        self.rejected(v)
 
 
 if __name__=='__main__':unittest.main()
