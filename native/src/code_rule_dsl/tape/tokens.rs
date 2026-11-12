@@ -810,6 +810,7 @@ pub fn grammar_json(lang: GrammarDialect) -> Option<&'static str> {
         GrammarDialect::Vue => grammar!("tree-sitter-vue/src"),
         GrammarDialect::Rust => grammar!("token-grammars/rust"),
         GrammarDialect::Php => grammar!("token-grammars/php"),
+        GrammarDialect::Json => grammar!("token-grammars/json"),
         _ => return None,
     })
 }
