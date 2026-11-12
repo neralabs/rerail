@@ -157,14 +157,14 @@ pub(in crate::code_rule_dsl) const MAX_REPLACE_STATES: usize = 4096;
 /// transitions (`states` rows of `classes` 16-bit states), the end-of-text transition per state, then whether each
 /// state is a match (the DFA's matches are a byte late: a match state after byte k is a match ending at k).
 #[derive(Debug)]
-pub(in crate::code_rule_dsl) struct Replacer {
-    pub(in crate::code_rule_dsl) bytes: Vec<u8>,
+pub struct Replacer {
+    pub bytes: Vec<u8>,
 }
 
 /// The replacement automaton of regex `pattern`, made once per pattern. Refused (the replacement runs on the
 /// CPU): a pattern that may match the empty text (Rust's rules for empty matches are not the device's), a look
 /// other than the text's start and end, an automaton past `MAX_REPLACE_STATES`.
-pub(in crate::code_rule_dsl) fn replacer(pattern: &str) -> Result<Arc<Replacer>, String> {
+pub fn replacer(pattern: &str) -> Result<Arc<Replacer>, String> {
     static MADE: LazyLock<Mutex<HashMap<String, Result<Arc<Replacer>, String>>>> = LazyLock::new(Default::default);
     if let Some(r) = MADE.lock().expect("replacers").get(pattern) {
         return r.clone();
