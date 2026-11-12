@@ -3908,3 +3908,16 @@ These are bounded fixture replays. No repository-wide cold execution or engine r
 
 Helper, component, CLI, supplemental reporter, and removal-control acceptance is still running on this final rule revision.
 The rule remains a draft, with eighteen admissions overall.
+
+### 2026-11-11 — Read exclusions block admission
+
+A source-recorded I/O audit adds thirteen cases for invalid UTF-8, broken links, exclusions, and bare filenames.
+The native directory adapter opens an excluded invalid file and prints a warning. The source counts that file without opening it.
+The source also propagates decoding failures from `_violations_for_files`; the current adapter incorrectly suppresses them.
+Directory discovery must count broken `.py` links even though `is_file()` returns false.
+
+The first failing witness is retained in `rr-async-pattern-read-exclusion-red-finalfcce.json.gz`.
+The incomplete acceptance replay was cancelled before changing its consumed code. Its four live workers were terminated and their exit was verified.
+Completed reports remain available, but they cannot admit the next rule revision.
+The ineffective reporter control was also retained in `rr-async-pattern-ineffective-control-red-finalfcce.json.gz`.
+The replacement control removes the actual message producer. It must fail parity through both APIs.
