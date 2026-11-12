@@ -399,7 +399,7 @@ pub fn compile_shaped(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         low.program.masks = (0..mark_masks.len()).map(|k| at[l + 1 + k]).collect();
         if let Some(r) = &mut low.program.records {
             // Its output (`Records::marks`): where the mask's value is among the outputs.
-            for m in &mut r.marks {
+            for m in r.marks.iter_mut().filter(|m| m.0 != crate::records::WORD_ALONE) {
                 let v = low.program.masks[usize::from(m.0)];
                 m.0 = low.program.outputs.iter().position(|&o| o == v).ok_or("a mark's mask not an output")? as u16;
             }
@@ -2213,6 +2213,16 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
     // The marks in the code, by order (the first `MARKS`): each its mask (an index into the
     // program's masks here, its output once they are placed) and its word's code.
     let mut in_code: Vec<(u16, u16)> = marks.iter().take(crate::records::MARKS).enumerate().map(|(k, m)| (m.mask, lowered.mark_words.iter().find(|&&(x, _)| usize::from(x) == k).map_or(0, |&(_, s)| s + 1))).collect();
+    // A token mark of one first word: its mask is every grammar token's start, so where no
+    // extra's token can begin with the word's first byte, its bit is the word's alone
+    // (`records::WORD_ALONE`): no mask read a token.
+    for (k, m) in marks.iter().take(crate::records::MARKS).enumerate() {
+        let (Some(w), true) = (&m.word, m.tokens.is_some()) else { continue };
+        let extra_first = (0..rows.len()).any(|r| low.extra.contains(&token_rows[r].0) && rows[r].first[usize::from(w[0]) / 64] >> (w[0] % 64) & 1 == 1);
+        if in_code[k].1 != 0 && !extra_first {
+            in_code[k].0 = crate::records::WORD_ALONE;
+        }
+    }
     // The extra's bit, after the marks': its rows' starts (`TOKEN_EXTRAS`, `Words::extras`).
     if token_extras {
         let mut starts: Option<Val> = None;

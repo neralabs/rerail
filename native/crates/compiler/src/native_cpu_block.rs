@@ -1700,6 +1700,14 @@ fn record_pass(context: &mut Context, r: &crate::records::Records, t: &RecordTab
         let row_at = f.ins().iadd(h[9], row_off);
         let sh = f.ins().band_imm(s, 63);
         for (k, &(o, wc)) in r.marks.iter().enumerate() {
+            // A mark of its word alone: one compare, no load.
+            if o == crate::records::WORD_ALONE {
+                let same = f.ins().icmp_imm(IntCC::Equal, word, i64::from(wc));
+                let bit = f.ins().uextend(types::I64, same);
+                let placed = f.ins().ishl_imm(bit, i64::from(crate::records::MARK_SHIFT) + k as i64);
+                code = f.ins().bor(code, placed);
+                continue;
+            }
             let x = f.ins().load(types::I64, fl, row_at, 8 * i32::from(o));
             let bit = f.ins().ushr(x, sh);
             let mut bit = f.ins().band_imm(bit, 1);

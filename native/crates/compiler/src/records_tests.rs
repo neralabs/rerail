@@ -75,7 +75,7 @@ fn records_are_each_tokens_bytes_and_code() {
                         let text = &bytes[s as usize..=l as usize];
                         let w = r.words.iter().position(|w| w[..] == *text).map_or(0, |i| i as u32 + 1);
                         // Each mark: its bit at the start, and its word where it names one.
-                        let marks: u32 = r.marks.iter().enumerate().filter(|&(_, &(o, mw))| run.outputs[usize::from(o)].get(s as usize / 64).is_some_and(|x| x >> (s % 64) & 1 == 1) && (mw == 0 || u32::from(mw) == w)).map(|(k, _)| 1 << k).sum();
+                        let marks: u32 = r.marks.iter().enumerate().filter(|&(_, &(o, mw))| crate::records::mark_holds(o, mw, w, || run.outputs[usize::from(o)].get(s as usize / 64).is_some_and(|x| x >> (s % 64) & 1 == 1))).map(|(k, _)| 1 << k).sum();
                         u32::from(r.kinds[usize::from(bytes[s as usize])]) | w << crate::records::KIND_BITS | marks << crate::records::MARK_SHIFT
                     })
                     .collect();

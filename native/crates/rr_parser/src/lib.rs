@@ -1044,6 +1044,9 @@ pub mod tests {
     #[test]
     fn token_marks_refuse_and_take() {
         let c = crate::compiled().expect("compiles");
+        // Each token mark's bit in the record is its first word's alone: no mask read.
+        let alone = c.block.records.as_ref().expect("records").marks.iter().filter(|m| m.0 == rerail_compiler::records::WORD_ALONE).count();
+        assert_eq!(alone, c.program.token_marks.len(), "the token marks' bits by their words");
         let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
         let head = ".decl a(n: number, j: number)\n.decl d(n: number, k: number)\n";
         let rule = |agg: &str| format!("{head}d(n, k) :- a(n, _), k = {agg} : {{ a(n, j) }}.\n");
