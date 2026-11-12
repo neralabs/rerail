@@ -113,6 +113,9 @@ pub struct Lowered {
     pub rules: Vec<u16>,
     /// The marks of one word: (order, string), rising (`Words::mark_words`).
     pub mark_words: Vec<(u8, u16)>,
+    /// The token marks (`Mark::tokens`), rising by order: each element's offset, its kinds'
+    /// names and its words (strings). The kinds become the records' (`Words::token_marks`).
+    pub token_marks: Vec<(u8, Vec<(i8, Vec<String>, Vec<u16>)>)>,
 }
 
 /// A mark (a token of no width) as tier 2 tests it: its kind, the mask of its bits at token
@@ -130,6 +133,8 @@ pub struct Mark {
     /// The bytes a token it holds at can begin with (`bitlex_prove::never` of its mask and the
     /// other rows' starts).
     pub first: ByteSet,
+    /// A token mark (decision 0129): the token before (none: any), then the run from the mark's.
+    pub tokens: Option<(Vec<::bitlex::syntax::TokenElem>, Vec<Vec<::bitlex::syntax::TokenElem>>)>,
 }
 
 struct Emit<'a> {
@@ -979,6 +984,24 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
     for (_, w) in &keywords {
         e.string(w);
     }
+    // The token marks' words, and their elements by offset.
+    let mut token_marks = Vec::new();
+    for (k, m) in marks.iter().enumerate() {
+        let Some((before, seq)) = &m.tokens else { continue };
+        let mut elems = Vec::new();
+        let at = std::iter::once((-1i8, before)).filter(|(_, b)| !b.is_empty()).chain(seq.iter().enumerate().map(|(i, x)| (i as i8, x)));
+        for (offset, choices) in at {
+            let (mut kinds, mut words) = (Vec::new(), Vec::new());
+            for c in choices {
+                match c {
+                    ::bitlex::syntax::TokenElem::Kind(name) => kinds.push(name.clone()),
+                    ::bitlex::syntax::TokenElem::Word(w) => words.push(e.string(w)),
+                }
+            }
+            elems.push((offset, kinds, words));
+        }
+        token_marks.push((k as u8, elems));
+    }
     for t in 0..empties {
         e.push("EMPTY", 0, Arg::Num(t));
     }
@@ -1090,7 +1113,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
     if let Some(at) = std::env::var_os("RR_LOWERED_TEXT") {
         let _ = std::fs::write(at, &text);
     }
-    Ok(Lowered { text, switches: e.switches, strings: e.strings, tested: e.tested.into_iter().collect(), rules: firsts, mark_words })
+    Ok(Lowered { text, switches: e.switches, strings: e.strings, tested: e.tested.into_iter().collect(), rules: firsts, mark_words, token_marks })
 }
 
 /// The words laid out as compiled code is, with no jump a layout can spare (the lean parser's

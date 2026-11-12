@@ -70,6 +70,20 @@ pub fn extra_rows(out: &mut String, extras: &[(u8, u16)]) {
     }
 }
 
+pub fn token_mark_rows(out: &mut String, marks: &[crate::program::TokenMark]) {
+    use std::fmt::Write as _;
+    for m in marks {
+        let _ = write!(out, "  tokenmark {}", m.order);
+        for e in &m.elems {
+            let _ = write!(out, " o{} k{:x}", e.offset, e.kinds);
+            for s in &e.words {
+                let _ = write!(out, " s{s}");
+            }
+        }
+        out.push('\n');
+    }
+}
+
 pub fn rule_rows(out: &mut String, rules: &[u16]) {
     use std::fmt::Write as _;
     for (at, p) in rules.iter().enumerate() {

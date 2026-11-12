@@ -1278,6 +1278,43 @@ Tier 2 is 263 instructions a node, against about 191 for the lean parser's parse
 (its 305 whole, less its lexer's 114). That gap is 72 instructions a node,
 about 7% of the whole parse. Tier 1's gap to the lean lexer is 532 a node (646 against 114).
 
+## Built: token marks, tested from the records
+
+Eight of `.rr`'s marks say what the next tokens are: `empty_parens` is a `(` whose next
+token is `)`; `no_value` is an aggregate's word, then `(`, `)` and `:`.
+Tier 1 computed each one as byte masks. "The next token is X" was
+`next(back_fill(X, solid))`, and each `back_fill` cost a pass backward over the file
+and a forward pass after it.
+
+Now a mark may be written as its tokens (decision 0129):
+
+```
+# A `(` whose next token is `)`.
+mark empty_parens = tokens "(" ")"
+# After `min` (or another aggregate's word): `(`, `)`, `:`.
+mark no_value     = tokens after "min" | "max" | "sum" | "mean" | "join" "(" ")" ":"
+```
+
+Tier 1 makes no mask for it. In the record, the mark's bit is set at each token whose word
+is the first element's, so tier 2's `Live` gates it as any mark.
+Then `MARK` calls the pattern's function, which reads the records after the token
+(and the one before, for `after`), skipping comments, as the lean parser's `kind_at(1)` does.
+
+The reference evaluator places the marks the same way under both grammars, over the corpus
+and samples written for each mark (1,385 files). Tapes are identical over the corpus.
+
+| | Before | After |
+|---|---|---|
+| Tier 1's passes | 9 and the records (5 forward, 4 backward) | 3 and the records (2 forward, 1 backward) |
+| Tier 1, instructions (cycles) | 752.8M (140.5M) | 634.5M (116.3M) |
+| Tier 2, instructions (cycles) | 307.1M (58.4M) | 321.5M (56.1M) |
+| The whole parse, JIT | 48.97 ms, 180 MB/s | 45.32 ms, 194 MB/s |
+| The whole parse, ahead of time | 46.73 ms, 188 MB/s | 40.83 ms, 216 MB/s |
+
+The backward pass left is `tt_later`'s: whether a two-backtick literal has its closer later in
+the file (3.7M cycles). Tier 1 now costs pass 2 (259.7M instructions), the record pass (234.4M)
+and pass 0 (137.5M).
+
 ## The order
 
 1. One symbol a token: rows and keywords in the record, one switch a state.

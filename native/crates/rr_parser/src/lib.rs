@@ -1034,6 +1034,31 @@ pub mod tests {
         }
     }
 
+    /// A token mark (decision 0129), `no_value`: an aggregate's word, then `(`, `)`, `:`, with
+    /// comments between or none, is refused by every shape and the interpreter; with a value,
+    /// taken, as the engine's tape.
+    #[test]
+    fn token_marks_refuse_and_take() {
+        let c = crate::compiled().expect("compiles");
+        let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        let head = ".decl a(n: number, j: number)\n.decl d(n: number, k: number)\n";
+        let rule = |agg: &str| format!("{head}d(n, k) :- a(n, _), k = {agg} : {{ a(n, j) }}.\n");
+        for (agg, taken) in [("max j", true), ("max (j)", true), ("max ()", false), ("min /* c */ ( /* d */ )", false), ("join ()", false), ("count", true)] {
+            let src = rule(agg);
+            let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
+            assert_eq!(interp.is_ok(), taken, "{agg}: the interpreter");
+            for p in [&c.parser, &machine.parser] {
+                match p.columns(src.as_bytes()) {
+                    Ok(t) => {
+                        assert!(taken, "{agg}: taken");
+                        assert_eq!(t, crate::engine_columns(&crate::rr::tape(&src)), "{agg}: the engine's tape");
+                    }
+                    Err(_) => assert!(!taken, "{agg}: refused"),
+                }
+            }
+        }
+    }
+
     #[test]
     #[ignore = "a profile's load: run by hand"]
     fn rr_profile_loop() {

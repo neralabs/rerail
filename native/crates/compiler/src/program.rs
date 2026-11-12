@@ -141,4 +141,34 @@ pub struct Words {
     /// record's code has mark bit `B` (`records::MARK_SHIFT + B`) is an extra of kind `K`. Rising
     /// by bit.
     pub extras: Vec<(u8, u16)>,
+    /// The token marks (decision 0129; `tokenmark K oO kK sW …`): mark `K` holds where its
+    /// record's bit does and its tokens follow, each element one record (the extras between
+    /// skipped). Rising by mark.
+    pub token_marks: Vec<TokenMark>,
+}
+
+/// A token mark (`Words::token_marks`): its order, and its elements.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct TokenMark {
+    pub order: u8,
+    pub elems: Vec<TokenElem>,
+}
+
+/// One token of a token mark: its offset from the mark's token (-1 the one before), and what
+/// the token's record may be: a kind of `kinds` (bit `k`: the records' kind `k`), or a word of
+/// `words` (strings).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
+pub struct TokenElem {
+    pub offset: i8,
+    pub kinds: u64,
+    pub words: Vec<u16>,
+}
+
+impl TokenElem {
+    /// Whether a record's code is one of the element's.
+    pub fn takes(&self, code: u32) -> bool {
+        let kind = code & 0xff;
+        let word = crate::records::word_of(code);
+        (kind < 64 && self.kinds >> kind & 1 == 1) || (word > 0 && self.words.contains(&((word - 1) as u16)))
+    }
 }
