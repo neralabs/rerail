@@ -781,13 +781,34 @@ pub fn sql_col(rel: &str, col: usize) -> String {
 /// The kept-plan outcomes of `plan_rule_reused` in this process, by `CacheOutcome`: `RERAIL_PLAN_CACHE_COUNTS`
 /// prints them at the end of each corpus run (`KeepPlans`).
 static PLAN_CACHE: [std::sync::atomic::AtomicU64; 9] = [const { std::sync::atomic::AtomicU64::new(0) }; 9];
-const PLAN_CACHE_NAMES: [&str; 9] = ["no cache", "first sight", "kept price", "re-priced", "replanned: cheaper start", "replanned: work grew", "replanned: no longer runs", "taken from the store", "re-priced, cheap"];
+const PLAN_CACHE_NAMES: [&str; 9] = ["no cache", "first sight", "kept price", "re-priced", "replanned: cheaper start", "replanned: work grew", "replanned: no longer runs", "taken from the store", "kept: ran below a search"];
+/// Why a kept plan was not taken as it is (decision 0122), under `RERAIL_PLAN_CACHE_COUNTS`: no price kept, never
+/// ran, ran over a search's work, or its inputs grew past what that allows.
+static BUDGET_MISS: [std::sync::atomic::AtomicU64; 4] = [const { std::sync::atomic::AtomicU64::new(0) }; 4];
+/// Decision 0123's statistics, under `RERAIL_PLAN_CACHE_COUNTS`: batches made, relations they made, relations made
+/// late (one line at a time, `Model::late`).
+static STATISTICS: [std::sync::atomic::AtomicU64; 3] = [const { std::sync::atomic::AtomicU64::new(0) }; 3];
+/// `RERAIL_PLAN_FRESH`: every plan searched, none reused (a measurement: what kept orders cost).
+fn plan_fresh() -> bool {
+    static FRESH: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_PLAN_FRESH").is_some());
+    *FRESH
+}
+thread_local! {
+    /// Where a plan is being made, for the profile's account of the planning budget's misses.
+    static PLAN_SITE: std::cell::Cell<&'static str> = const { std::cell::Cell::new("elsewhere") };
+    /// The keys planned in this run (profiled), for the same account.
+    static PLANNED_NOW: std::cell::RefCell<rustc_hash::FxHashSet<PlanKey>> = std::cell::RefCell::new(Default::default());
+}
+fn plan_site(site: &'static str) {
+    PLAN_SITE.with(|c| c.set(site));
+}
 fn plan_cache(outcome: usize) {
     PLAN_CACHE[outcome].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Quiet strata passed on unchanged in this process (decision 0101 §1), for tests.
 static QUIET_STRATA: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
 pub fn quiet_strata() -> usize {
     QUIET_STRATA.load(std::sync::atomic::Ordering::Relaxed)
 }
@@ -944,8 +965,31 @@ thread_local! {
 type PlanKey = u128;
 
 /// A kept plan: its order, its work per node when searched, when profiling its EXPLAIN, its work over its body's
-/// cheapest start (`SEED`) when searched, and its last price with the sizes it was priced at (`Priced`).
-type Kept = (Arc<[Step]>, f64, Option<super::profile::RulePlan>, f64, Option<Arc<Priced>>);
+/// cheapest start (`SEED`) when searched, its last price with the sizes it was priced at (`Priced`), and the work
+/// its rule's line did in the engine when it last ran (`ran`, decision 0122), if it has run.
+type Kept = (Arc<[Step]>, f64, Option<super::profile::RulePlan>, f64, Option<Arc<Priced>>, Option<f64>);
+
+/// Decision 0122: planning costs no more than running. A search costs about as much as this many rows of the
+/// engine's join work (O125 step 07: 0.16 ms a search, 0.74 µs a row of work), so a rule whose line did less work
+/// when it last ran, its inputs grown by no more than that allows, keeps its order with no search and no pricing;
+/// in a run, a probe is searched again only once its work has paid for its searches. `RERAIL_PLAN_BUDGET=off`
+/// plans as before (a measurement aid).
+pub(in crate::code_rule_dsl) const SEARCH_WORK: f64 = 250.0;
+
+pub(in crate::code_rule_dsl) fn plan_budget() -> bool {
+    static ON: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| !std::env::var("RERAIL_PLAN_BUDGET").is_ok_and(|v| v == "off"));
+    *ON
+}
+
+/// How many times an order's work may have grown from sizes `then` to `now`: the product of each size's growth (each
+/// at least one row, a shrinking one counted as 1), since a fixed order's work is bounded by the product of what it
+/// reads; unbounded where they do not compare.
+fn growth(then: &[f64], now: &[f64]) -> f64 {
+    if then.len() != now.len() {
+        return f64::INFINITY;
+    }
+    then.iter().zip(now).map(|(a, b)| if *a < 0.0 || *b < 0.0 { if a == b { 1.0 } else { f64::INFINITY } } else { (b.max(1.0) / a.max(1.0)).max(1.0) }).product()
+}
 
 /// A run's kept plans, shared by the threads its strata run on (decision 0113): a stratum's job enters them
 /// (`enter_plans`). Each stratum plans its own rules, so no two jobs write one key.
@@ -1005,6 +1049,9 @@ pub struct StoredPlan {
     gap: f64,
     /// The last price: the sizes it read, its order, work and rows.
     priced: Option<(Vec<f64>, Vec<StoredStep>, f64, f64)>,
+    /// The work its rule's line did when it last ran (decision 0122), kept with a price: a new process's planning
+    /// budget reads it as a session's does.
+    ran: Option<f64>,
 }
 
 /// The plans the store keeps for a prepared program, by plan key and the scale they were priced at (`scale`): an
@@ -1018,13 +1065,25 @@ fn scale(nodes: f64) -> u8 {
 }
 
 impl StoredPlan {
+    /// Whether `other` need not be written over this one: the same but for the work its line last ran (`ran`), where
+    /// that is within 2x (the budget compares it with a search's cost, so an edit's few rows more or less are the
+    /// same answer, and every plan is not written again each run).
+    fn same(&self, other: &StoredPlan) -> bool {
+        let ran = match (self.ran, other.ran) {
+            (None, None) => true,
+            (Some(a), Some(b)) => a.max(1.0) <= 2.0 * b.max(1.0) && b.max(1.0) <= 2.0 * a.max(1.0),
+            _ => false,
+        };
+        ran && self.order == other.order && self.per_node == other.per_node && self.gap == other.gap && self.priced == other.priced
+    }
+
     fn of(k: &Kept) -> Option<StoredPlan> {
         let steps = |order: &[Step]| order.iter().map(|s| Some((u16::try_from(s.at).ok().filter(|&a| a < 1 << 14)?, s.mode))).collect::<Option<Vec<_>>>();
         let priced = match &k.4 {
             Some(p) => Some((p.sizes.clone(), steps(&p.got.0.0)?, p.got.0.1, p.got.0.2)),
             None => None,
         };
-        Some(StoredPlan { order: steps(&k.0)?, per_node: k.1, gap: k.3, priced })
+        Some(StoredPlan { order: steps(&k.0)?, per_node: k.1, gap: k.3, ran: k.5.filter(|_| priced.is_some()), priced })
     }
 
     fn kept(&self, body: &[Literal]) -> Option<Kept> {
@@ -1033,11 +1092,12 @@ impl StoredPlan {
             Some((sizes, order, work, rows)) => Some(Arc::new(Priced { sizes: sizes.clone(), got: ((steps(order)?, *work, *rows), None) })),
             None => None,
         };
-        Some((steps(&self.order)?.into(), self.per_node, None, self.gap, priced))
+        Some((steps(&self.order)?.into(), self.per_node, None, self.gap, priced, self.ran))
     }
 
     /// As integers, one row per plan: `[key high, key low, scale, per node, gap, steps, the steps four to an
-    /// integer, then when priced: work, rows, sizes, the sizes, steps, the steps]` (floats by their bits).
+    /// integer, then when priced: work, rows, sizes, the sizes, steps, the steps, and when it ran: its work]` (floats
+    /// by their bits; a row without the last reads as not run).
     pub fn row((key, scale): (PlanKey, u8), p: &StoredPlan) -> Vec<i64> {
         let mut row = vec![(key >> 64) as i64, key as i64, i64::from(scale), p.per_node.to_bits() as i64, p.gap.to_bits() as i64];
         let steps = |row: &mut Vec<i64>, order: &[StoredStep]| {
@@ -1058,6 +1118,9 @@ impl StoredPlan {
             row.push(sizes.len() as i64);
             row.extend(sizes.iter().map(|s| s.to_bits() as i64));
             steps(&mut row, order);
+            if let Some(ran) = p.ran {
+                row.push(ran.to_bits() as i64);
+            }
         }
         row
     }
@@ -1082,16 +1145,17 @@ impl StoredPlan {
             Some(out)
         };
         let order = steps(&mut next)?;
-        let priced = match next() {
-            None => None,
+        let (priced, ran) = match next() {
+            None => (None, None),
             Some(work) => {
                 let rows = f64::from_bits(next()? as u64);
                 let n = usize::try_from(next()?).ok()?;
                 let sizes = (0..n).map(|_| next().map(|b| f64::from_bits(b as u64))).collect::<Option<Vec<_>>>()?;
-                Some((sizes, steps(&mut next)?, f64::from_bits(work as u64), rows))
+                let order = steps(&mut next)?;
+                (Some((sizes, order, f64::from_bits(work as u64), rows)), next().map(|b| f64::from_bits(b as u64)))
             }
         };
-        Some((key, StoredPlan { order, per_node, gap, priced }))
+        Some((key, StoredPlan { order, per_node, gap, priced, ran }))
     }
 }
 
@@ -1116,7 +1180,7 @@ pub fn plans_to_store() -> Option<StoredPlans> {
         let Some(nodes) = k.4.as_ref().and_then(|p| p.sizes.first().copied()) else { continue };
         let Some(s) = StoredPlan::of(k) else { continue };
         let key = (*key, scale(nodes));
-        if plans.stored.get(&key) != Some(&s) {
+        if !plans.stored.get(&key).is_some_and(|t| t.same(&s)) {
             out.get_or_insert_with(|| (*plans.stored).clone()).insert(key, s);
         }
     }
@@ -1190,6 +1254,7 @@ thread_local! {
 impl KeepPlans {
     pub fn start(across: Option<u64>) -> Self {
         compose::clear();
+        PLANNED_NOW.with(|p| p.borrow_mut().clear());
         let kept = across.and_then(|g| SESSION_PLANS.with(|s| s.borrow_mut().take().filter(|(k, _)| *k == g).map(|(_, p)| p)));
         PLANS.with(|p| *p.borrow_mut() = Some(Arc::new(parking_lot::Mutex::new(RunPlans { kept: kept.unwrap_or_default(), stored: Arc::default() }))));
         keeps::observing(true);
@@ -1201,7 +1266,9 @@ impl Drop for KeepPlans {
     fn drop(&mut self) {
         if std::env::var_os("RERAIL_PLAN_CACHE_COUNTS").is_some() {
             let counts: Vec<String> = PLAN_CACHE.iter().zip(PLAN_CACHE_NAMES).map(|(c, n)| format!("{n} {}", c.swap(0, std::sync::atomic::Ordering::Relaxed))).collect();
-            eprintln!("plan cache: {}", counts.join(", "));
+            let miss: Vec<String> = BUDGET_MISS.iter().zip(["no price", "never ran", "ran over a search", "inputs grew"]).map(|(c, n)| format!("{n} {}", c.swap(0, std::sync::atomic::Ordering::Relaxed))).collect();
+            let st: Vec<u64> = STATISTICS.iter().map(|c| c.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
+            eprintln!("plan cache: {}; budget missed: {}; statistics: {} batches of {} relations, {} late", counts.join(", "), miss.join(", "), st[0], st[1], st[2]);
         }
         compose::clear();
         // Every job that entered them has ended: the run's thread holds the last handle.
@@ -1381,6 +1448,136 @@ impl Model {
     /// re-priced with this chunk's statistics, and searched again only where its work per node grew more than
     /// `REPLAN` times, or it no longer runs (a relation it reads is missing). The planner's cache lives for a
     /// corpus run (`reset_plans`).
+    /// The plan a kept one gives as it is under the planning budget (decision 0122), or `None` if it is to be priced:
+    /// its line did less work than a search when it last ran, scaled by how much what it reads grew (`sizes`, this
+    /// plan's `live_sizes`). It reads the relations' rows only, never their columns' statistics (decision 0123).
+    fn budget_takes(&self, kept: &Kept, body: &[Literal], first: Option<usize>, sizes: &[f64]) -> Option<(Plan, Option<super::profile::RulePlan>)> {
+        let (order, _, _, _, Some(previous), Some(ran)) = kept else { return None };
+        if !plan_budget() {
+            return None;
+        }
+        // The rows of what it reads (not the corpus's nodes, nor distributions): their product bounds its growth.
+        let cards = 1 + usize::from(first.is_some()) + body.iter().filter(|l| matches!(l, Literal::Atom(_) | Literal::Agg { .. })).count();
+        let grew = match (previous.sizes.get(1..cards), sizes.get(1..cards)) {
+            (Some(a), Some(b)) => growth(a, b),
+            _ => f64::INFINITY,
+        };
+        // A line that did nothing tells nothing of its order's cost but that one row of input costs about that:
+        // counted as one row of work (an order kept from an empty input, with 5,000 rows now, is searched).
+        (ran.max(1.0) * grew < SEARCH_WORK && self.valid_live_driver(order, body, first))
+            .then(|| if same_order(&previous.got.0.0, order) { previous.got.clone() } else { ((order.to_vec(), *ran, ran.max(1.0)), None) })
+    }
+
+    /// Whether planning this line (`plan_rule_reused` of the rule with `first` its delta) reads statistics: every line
+    /// but one whose kept order is taken as it is (`budget_takes`). The component the line is
+    /// planned in is the one this model is solving (`Stats::solve`): its digest is in the key.
+    fn needs_statistics(&self, head: &Atom, body: &[Literal], first: Option<usize>) -> bool {
+        self.priced_why(head, body, first).is_some()
+    }
+
+    /// Why a line will be priced (`needs_statistics`), or `None` where its kept order is taken as it is.
+    fn priced_why(&self, head: &Atom, body: &[Literal], first: Option<usize>) -> Option<&'static str> {
+        if plan_fresh() || !plan_budget() {
+            return Some("no budget");
+        }
+        let key = self.plan_key("", head, body, first);
+        let Some(Some(kept)) = PLANS.with(|p| p.borrow().as_ref().map(|p| p.lock().get(&key).cloned())) else { return Some("no kept plan") };
+        if self.budget_takes(&kept, body, first, &self.live_sizes(body, first)).is_some() {
+            return None;
+        }
+        Some(match (&kept.4, kept.5) {
+            (None, _) => "no price",
+            (_, None) if PLANNED_NOW.with(|p| p.borrow().contains(&key)) => "never ran, planned before in this run",
+            (_, None) => "never ran",
+            (_, Some(r)) if r >= SEARCH_WORK => "ran over a search",
+            _ => "inputs grew",
+        })
+    }
+
+    /// Whether any statistics are still to be made (`deferred`): a round asks nothing where none is.
+    pub(in crate::code_rule_dsl) fn has_deferred(&self) -> bool {
+        !self.stats.lazy.0.is_empty() || !self.stats.prior_later.is_empty()
+    }
+
+    /// A relation whose statistics are still to be made: bound lazily (`Stats::lazily`), or quiet and taking its
+    /// kept rows' (`prior_stats`).
+    fn deferred(&self, rel: &str) -> bool {
+        self.stats.lazy.0.contains_key(rel) || self.stats.prior_later.contains(rel)
+    }
+
+    /// Decision 0123, step 1: the statistics a planning round requests. Of the lines it will plan (a rule and its
+    /// delta atom; `None`: its seed or whole plan), those that will be priced (`needs_statistics`) request the
+    /// relations they read whose statistics are still to be made. `plain` lines read none (`read_by`).
+    pub(in crate::code_rule_dsl) fn wants<'r>(&self, lines: impl IntoIterator<Item = (&'r Rule, Option<usize>)>, into: &mut BTreeSet<String>) {
+        if self.stats.lazy.0.is_empty() && self.stats.prior_later.is_empty() {
+            return;
+        }
+        for (r, first) in lines {
+            let rels = Self::read_by([r]);
+            if rels.iter().all(|x| !self.deferred(x) || into.contains(*x)) {
+                continue;
+            }
+            if let Some(why) = self.priced_why(&r.head, &r.body, first) {
+                let before = into.len();
+                into.extend(rels.into_iter().filter(|x| self.deferred(x)).map(str::to_owned));
+                let n = into.len() - before;
+                if n > 0 {
+                    super::profile::decision("statistics requested (decision 0123)", || format!("by a line priced: {why}, {} delta ({} relations)", if first.is_some() { "with a" } else { "no" }, if n > 3 { "4+".to_owned() } else { n.to_string() }));
+                }
+            }
+        }
+    }
+
+    /// `wants` for the strata a level or a scoreboard runs next (each a component and its rules), before any of them
+    /// runs: each stratum's seeds (a rule with no atom of the component, or one reading a change) and probes (each
+    /// atom of the component), asked as solving that component, whose digest is in their keys and whose relations
+    /// their delta tests read. A stratum's own rounds make what these miss (its whole plans; a line whose rows moved).
+    pub(in crate::code_rule_dsl) fn wants_strata<'r>(&mut self, strata: impl IntoIterator<Item = (&'r BTreeSet<String>, Vec<&'r Rule>)>, into: &mut BTreeSet<String>) {
+        if self.stats.lazy.0.is_empty() && self.stats.prior_later.is_empty() {
+            return;
+        }
+        let was = std::mem::take(&mut self.stats.solving);
+        for (scc, rules) in strata {
+            let lines: Vec<(&Rule, Option<usize>)> = rules.iter().flat_map(|r| {
+                let rec = recursive(&r.body, scc);
+                let seed = rec.is_empty() || reads_change(&r.body, scc);
+                rec.into_iter().map(|(ai, _)| (*r, Some(ai))).chain(seed.then_some((*r, None))).collect::<Vec<_>>()
+            }).collect();
+            self.stats.solve(solving_of(scc, &rules).unwrap_or_default());
+            self.wants(lines, into);
+        }
+        self.stats.solve(was);
+    }
+
+    /// Decision 0123, step 2: a round's requested statistics, made in one batch before any of its plans is made
+    /// (step 3). Each is made as a kept relation's are (`resolve`): counted from its postings, or measured. This is
+    /// where one batch goes to another maker (a classifier on the device) as a whole.
+    pub(in crate::code_rule_dsl) fn make_statistics(&mut self, prog: &Program, wanted: &BTreeSet<String>) -> Result<()> {
+        let wanted: Vec<&str> = wanted.iter().map(String::as_str).filter(|r| self.deferred(r)).collect();
+        if wanted.is_empty() {
+            return Ok(());
+        }
+        STATISTICS[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        STATISTICS[1].fetch_add(wanted.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        let _span = super::profile::span(|| "statistics batch".into());
+        super::profile::decision("statistics (decision 0123)", || format!("one batch of {} relations: {}", wanted.len(), wanted.join(", ")));
+        self.resolve(prog, wanted)
+    }
+
+    /// A line about to be planned whose statistics no round requested (its key moved once the round's batch was made,
+    /// or it was not foreseen): they are made now, one line at a time, and counted (`RERAIL_PLAN_CACHE_COUNTS`:
+    /// `late`), as what the rounds should have asked. `priced`: a line that is searched whatever was kept
+    /// (`plan_rule_live`).
+    pub(in crate::code_rule_dsl) fn late(&mut self, prog: &Program, r: &Rule, first: Option<usize>, priced: bool) -> Result<()> {
+        let rels: Vec<&str> = Self::read_by([r]).into_iter().filter(|x| self.deferred(x)).collect();
+        if rels.is_empty() || !priced && !self.needs_statistics(&r.head, &r.body, first) {
+            return Ok(());
+        }
+        STATISTICS[2].fetch_add(rels.len() as u64, std::sync::atomic::Ordering::Relaxed);
+        super::profile::decision("statistics (decision 0123)", || format!("made late, for one line: {}", rels.join(", ")));
+        self.resolve(prog, rels)
+    }
+
     pub fn plan_rule_reused(
         &self,
         prog: &Program,
@@ -1388,6 +1585,9 @@ impl Model {
         body: &[Literal],
         first: Option<usize>,
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
+        if plan_fresh() {
+            return self.plan_inner(prog, head, body, first, None, true);
+        }
         let key = self.plan_key("", head, body, first);
         let nodes = self.stats.nodes.max(1.0);
         let Some(kept) = PLANS.with(|p| p.borrow().as_ref().map(|p| p.lock().find(&key, body, nodes))) else {
@@ -1395,6 +1595,9 @@ impl Model {
             return self.plan_inner(prog, head, body, first, None, true);
         };
         let sizes = self.live_sizes(body, first);
+        if super::profile::on() {
+            PLANNED_NOW.with(|p| { p.borrow_mut().insert(key); });
+        }
         let remember = |key: &PlanKey, got: &(Plan, Option<super::profile::RulePlan>)| {
             PLANS.with(|p| {
                 if let Some(p) = p.borrow().as_ref() && let Some(k) = p.lock().get_mut(key) {
@@ -1402,7 +1605,48 @@ impl Model {
                 }
             })
         };
-        if let Some((_, _, _, _, Some(priced))) = &kept
+        // A rule whose line did less work than a search when it last ran (scaled by how much what it reads grew)
+        // keeps its order as it is: neither searched nor priced (decision 0122).
+        if let Some(k) = &kept && let Some(got) = self.budget_takes(k, body, first, &sizes) {
+            plan_cache(8);
+            super::profile::decision("plan cache (decision 0038)", || format!("a kept plan taken as it is: its rule did {} rows of work when it last ran, less than a search costs (decision 0122)", k.5.unwrap_or(0.0)));
+            // Its sizes now, against which the next run's growth is measured.
+            remember(&key, &got);
+            return Ok(got);
+        }
+        // Why a kept plan was not taken as it is (`RERAIL_PLAN_CACHE_COUNTS`).
+        if plan_budget() && let Some(k) = &kept {
+            let why = match (&k.4, k.5) {
+                (None, _) => 0,
+                (_, None) => 1,
+                (_, Some(r)) if r >= SEARCH_WORK => 2,
+                // Ran under a search's work: its inputs grew past what that allows, or its order is no longer led by
+                // its delta.
+                _ => 3,
+            };
+            BUDGET_MISS[why].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if why == 1 && super::profile::on() {
+                let again = PLANNED_NOW.with(|p| p.borrow().contains(&key));
+                super::profile::decision("planning budget missed: never ran (decision 0122)", || format!("planned by {}, {}", PLAN_SITE.with(std::cell::Cell::get), if again { "planned before in this run" } else { "kept from an earlier run" }));
+            }
+            // What grew, by kind of size and how far (the profile's decisions).
+            if why == 3 && super::profile::on() && let Some(previous) = &k.4 {
+                let cards = 1 + usize::from(first.is_some()) + body.iter().filter(|l| matches!(l, Literal::Atom(_) | Literal::Agg { .. })).count();
+                let (a, b) = (&previous.sizes[1..cards.min(previous.sizes.len())], &sizes[1..cards.min(sizes.len())]);
+                let atoms: Vec<&Atom> = body.iter().filter_map(|l| match l { Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a), _ => None }).collect();
+                let (at, g) = a.iter().zip(b).enumerate().map(|(i, (x, y))| (i, (y.max(1.0) / x.max(1.0)).max(1.0))).fold((0, 1.0), |m, (i, g)| if g > m.1 { (i, g) } else { m });
+                let what = if first.is_some() && at == atoms.len() { "the delta".to_owned() } else { atoms.get(at).map_or("?".into(), |a| {
+                    let r = a.rel.as_str();
+                    if r.ends_with("__old") { "an old relation".to_owned() } else if self.stats.solving.contains(r) { "a relation of the component".to_owned() } else if r.contains("__") { format!("a change ({})", r.rsplit_once("__").map_or("", |x| x.1)) } else { "a relation".to_owned() }
+                }) };
+                let from = a.get(at).copied().unwrap_or(0.0);
+                let bucket = |x: f64| if x <= 1.0 { "≤1" } else if x <= 10.0 { "≤10" } else if x <= 100.0 { "≤100" } else if x <= 1e4 { "≤10k" } else { ">10k" };
+                let product = if a.len() == b.len() { growth(a, b) } else { f64::INFINITY };
+                let driver = self.valid_live_driver(&k.0, body, first);
+                super::profile::decision("planning budget missed: inputs grew (decision 0122)", || format!("{}product ×{}; most by {what}, from {} rows, ×{}; ran {}", if driver { "" } else { "kept order not led by its delta; " }, bucket(product), bucket(from), bucket(g), bucket(k.5.unwrap_or(0.0))));
+            }
+        }
+        if let Some((_, _, _, _, Some(priced), _)) = &kept
             && near(&priced.sizes, &sizes)
             && self.valid_live_driver(&priced.got.0.0, body, first)
         {
@@ -1410,7 +1654,7 @@ impl Model {
             plan_cache(2);
             return Ok(priced.got.clone());
         }
-        if let Some((order, per_node, searched, gap, previous)) = kept {
+        if let Some((order, per_node, searched, gap, previous, _)) = kept {
             let priced = {
                 let _span = super::profile::span(|| "re-price".into());
                 // The search's EXPLAIN (its steps' rows as the search priced them), with this pricing's work, rows and
@@ -1481,7 +1725,9 @@ impl Model {
         PLANS.with(|p| {
             if let Some(p) = p.borrow().as_ref() {
                 let gap = got.0.1 / SEED.with(|c| c.get()).max(1.0);
-                p.lock().insert(key.clone(), (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone(), gap, None));
+                let mut p = p.lock();
+                let ran = p.get(&key).and_then(|k| k.5);
+                p.insert(key.clone(), (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone(), gap, None, ran));
             }
         });
         remember(&key, &got);
@@ -1557,6 +1803,21 @@ impl Model {
         first.is_none_or(|f| order.first().is_some_and(|s| s.at == f || self.smaller_change(body, f, s.at)))
     }
 
+    /// Records the work a rule's line did in the engine (`plan_work`, every order it ran in) on its kept plan, for
+    /// the next run's planning budget (decision 0122).
+    pub(in crate::code_rule_dsl) fn ran(key: PlanKey, work: f64) {
+        PLANS.with(|p| {
+            if let Some(p) = p.borrow().as_ref() && let Some(k) = p.lock().get_mut(&key) {
+                k.5 = Some(work);
+            }
+        });
+    }
+
+    /// The key `plan_rule_reused` keeps a rule's plan under now (it reads the statistics: taken when planned).
+    pub(in crate::code_rule_dsl) fn reused_key(&self, head: &Atom, body: &[Literal], first: Option<usize>) -> PlanKey {
+        self.plan_key("", head, body, first)
+    }
+
     /// A stratum's plan searched again from its live counts between waves (`plan_rule_explained`), kept with the
     /// sizes it saw: while no size moved over `PRICE_DRIFT` times, the same search is not made again (decision
     /// 0090 step 5: in a session's run these searches were most of its planning). Outside a corpus run every one
@@ -1585,6 +1846,8 @@ impl Model {
                 if let Some(p) = p.borrow().as_ref() {
                     let mut p = p.lock();
                     let then = p.get(&key).cloned();
+                    // The work its line did when it last ran (decision 0122), kept with the plan.
+                    let ran = then.as_ref().and_then(|k| k.5);
                     // A search's order, at its work; or the kept order re-priced, as it was kept.
                     let entry: (Arc<[Step]>, f64, Option<super::profile::RulePlan>, f64) = match (searched, &then) {
                         (Some(work), _) => (got.0.0.clone().into(), work, None, 0.0),
@@ -1594,7 +1857,7 @@ impl Model {
                     if let Some(then) = then {
                         p.insert(earlier, then);
                     }
-                    p.insert(key, (entry.0, entry.1, entry.2, entry.3, Some(Arc::new(Priced { sizes, got: got.clone() }))));
+                    p.insert(key, (entry.0, entry.1, entry.2, entry.3, Some(Arc::new(Priced { sizes, got: got.clone() })), ran));
                 }
             });
         };
@@ -3631,6 +3894,10 @@ struct Driving<'a> {
     chunk: i64,
     /// Relation/column versions and their dependent probe plans.
     replanned_at: replanning::Watch,
+    /// Per probe, the searches made for it in this run: its work pays for each before the next (decision 0122).
+    searched: Vec<u32>,
+    /// Per line (seeds, then probes), the key its plan is kept under, for its work to be recorded (decision 0122).
+    keys: Vec<Option<PlanKey>>,
     started: std::time::Instant,
     placed: placement::Placement,
     shape: placement::Shape,
@@ -4664,6 +4931,21 @@ fn cyclic_relations(scc: &BTreeSet<String>, rules: &[&Rule]) -> BTreeSet<String>
 }
 
 /// Positive body atoms of `scc`, by body position.
+/// Whether `body` reads, positively, a change of a relation outside `scc`: rows a lower stratum lost, gained or
+/// decided (decisions 0077, 0090).
+fn reads_change(body: &[Literal], scc: &BTreeSet<String>) -> bool {
+    const CHANGES: [&str; 10] = ["__plus", "__minus", "__ins", "__del", "__gone", "__lost", "__redo", "__cand", "__chk", "__held"];
+    // An aggregate's changed groups (`h__grpR_K`, `maintain`): a row of the head that read one is derived again.
+    let groups = |rel: &str| rel.rsplit_once("__").is_some_and(|(_, s)| s.starts_with("grp"));
+    body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && !scc.contains(a.rel.as_str()) && (CHANGES.iter().any(|c| a.rel.ends_with(c)) || groups(&a.rel))))
+}
+
+/// The component a stratum's plans are made as solving (`Stats::solve`, in their keys): itself when a rule reads it,
+/// else none. Its seeds planned ahead (`seed_specs`, `Model::wants_strata`) are keyed as the stratum keys them.
+fn solving_of(scc: &BTreeSet<String>, rules: &[&Rule]) -> Option<BTreeSet<String>> {
+    rules.iter().any(|r| !recursive(&r.body, scc).is_empty()).then(|| scc.clone())
+}
+
 fn recursive<'r>(body: &'r [Literal], scc: &BTreeSet<String>) -> Vec<(usize, &'r Atom)> {
     body.iter()
         .enumerate()
@@ -5508,6 +5790,23 @@ impl<'a> Run<'a, '_> {
         Some(JoinSpec { items: lines })
     }
 
+    /// The rules of a stratum not known now to derive nothing (decision 0123: what a level's batch asks statistics
+    /// for): none joins a lower relation known to hold no rows, one run natively and held empty or an input delta
+    /// bound empty. A relation not run yet is not known; the stratum leaves out what it finds empty then
+    /// (`native_stratum_`), and a quiet stratum is one left with no rule.
+    fn runnable<'r>(&self, scc: &BTreeSet<String>, rules: &[&'r Rule]) -> Vec<&'r Rule> {
+        let empty = |rel: &str| {
+            if scc.contains(rel) {
+                return false;
+            }
+            if self.inputs.contains(rel) && (rel.ends_with("__minus") || rel.ends_with("__plus")) {
+                return crate::code_rule_dsl::facts::vtab::bound_source(self.db, rel).is_some_and(|s| s.len() == 0);
+            }
+            self.native_rels.contains(rel) && super::native::component::held(self.db, rel).is_some_and(|h| h.rows() == 0)
+        };
+        rules.iter().copied().filter(|r| !r.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && empty(&a.rel)))).collect()
+    }
+
     /// T's `native_stratum`: plans with the stratum as the component being solved when a rule reads it.
     /// The join specs of a stratum's seed rules whose every atom reads a relation already run natively (decision
     /// 0100 §5): what a level's batch can pair before the stratum runs. Planned as the stratum will plan them
@@ -5520,16 +5819,24 @@ impl<'a> Run<'a, '_> {
         }
         let ri: BTreeMap<String, usize> = scc.iter().enumerate().map(|(i, r)| (r.clone(), i)).collect();
         let mut out = Vec::new();
-        for r in rules.iter().filter(|r| recursive(&r.body, scc).is_empty()) {
-            if !r.body.iter().filter_map(Literal::atom).all(|a| self.native_rels.contains(a.rel.as_str())) {
-                continue;
-            }
-            // One that joins a relation holding no rows derives nothing, and the stratum leaves it out (its rules
-            // over empty relations): not planned here either, nor its relations' statistics made.
-            if r.body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && super::native::component::held(self.db, &a.rel).is_some_and(|h| h.rows() == 0))) {
-                continue;
-            }
-            if self.model.resolve(prog, Model::read_by([*r])).is_err() {
+        // One that joins a relation holding no rows derives nothing, and the stratum leaves it out (its rules over
+        // empty relations): not planned here either, nor its relations' statistics made (`runnable`).
+        let seeds: Vec<&Rule> = self.runnable(scc, rules).into_iter().filter(|r| recursive(&r.body, scc).is_empty())
+            .filter(|r| r.body.iter().filter_map(Literal::atom).all(|a| self.native_rels.contains(a.rel.as_str())))
+            .collect();
+        // Planned as solving what the stratum will (`solving_of`): their keys are the stratum's.
+        let was = std::mem::take(&mut self.model.stats.solving);
+        self.model.stats.solve(solving_of(scc, rules).unwrap_or_default());
+        // A round (decision 0123): the statistics of the seeds that will be priced, in one batch.
+        let mut wanted = BTreeSet::new();
+        self.model.wants(seeds.iter().map(|r| (*r, None)), &mut wanted);
+        if self.model.make_statistics(prog, &wanted).is_err() {
+            self.model.stats.solve(was);
+            return out;
+        }
+        plan_site("a level's seed joins");
+        for r in seeds {
+            if self.model.late(prog, r, None, false).is_err() {
                 continue;
             }
             let Ok(((order, _, _), _)) = self.model.plan_rule_reused(prog, &r.head, &r.body, None) else { continue };
@@ -5538,6 +5845,7 @@ impl<'a> Run<'a, '_> {
                 out.push(spec);
             }
         }
+        self.model.stats.solve(was);
         out
     }
 
@@ -5550,7 +5858,6 @@ impl<'a> Run<'a, '_> {
     }
 
     fn native_stratum(&mut self, scc: &BTreeSet<String>, rules: &[&'a Rule]) -> Result<Native<'a>> {
-        let reads = rules.iter().any(|r| !recursive(&r.body, scc).is_empty());
         // `RERAIL_STRATA_LIVE`: each native stratum as it starts and ends, so a stalled run names its stratum (the
         // trace, `RERAIL_STRATA_TRACE`, is written when the loop ends).
         static LIVE: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_STRATA_LIVE").is_some());
@@ -5558,7 +5865,7 @@ impl<'a> Run<'a, '_> {
             eprintln!("RERAIL_STRATA_LIVE start {scc:?} ({} rules)", rules.len());
             std::time::Instant::now()
         });
-        let out = self.lent(reads.then(|| scc.clone()), |this, native_rels, numbers| this.native_stratum_(scc, rules, native_rels, numbers));
+        let out = self.lent(solving_of(scc, rules), |this, native_rels, numbers| this.native_stratum_(scc, rules, native_rels, numbers));
         if let Some(t0) = t0 {
             eprintln!("RERAIL_STRATA_LIVE end {scc:?} {:.3} s", t0.elapsed().as_secs_f64());
         }
@@ -5762,8 +6069,8 @@ impl<'a> Run<'a, '_> {
                 return Ok(Native::Ran);
             }
         }
-        // The statistics of what its rules read, if they are made when first planned with (`Model::resolve`).
-        self.model.resolve(prog, Model::read_by(rules.iter().copied()))?;
+        // The statistics its plans read are requested in two rounds, each made in one batch before its plans
+        // (decision 0123): its seeds', then, once its relations' rows are known, its probes' and whole plans'.
         // The component's spec: its relations, and each rule planned and written as a native join (`spec`'s own CPU
         // is the joins' specs and their checks; planning is in its `plan #…` spans).
         let spec_span = super::profile::span(|| "spec".into());
@@ -5802,9 +6109,21 @@ impl<'a> Run<'a, '_> {
             *est.entry(h.as_str()).or_default() += n as f64;
         }
         let mut orders = Vec::new();
+        // Each line's kept-plan key (`Driving::keys`).
+        let mut keys: Vec<Option<PlanKey>> = Vec::new();
         // Each order's rule, for the fanouts its runs observe (`obs_rule`).
         let mut order_rules: Vec<u64> = Vec::new();
-        let seeds: Vec<&Rule> = rules.iter().copied().filter(|r| recursive(&r.body, scc).is_empty()).collect();
+        // `RERAIL_WAVE0=changes` (a spike): a maintained component's first wave is driven by its input changes, not by
+        // its kept rows. A rule that reads a change of a lower stratum (`x__plus`, `x__gone`, …) also runs once as a
+        // seed, and the kept rows start as no wave's delta (`native::setfix::wave0_changes`).
+        let wave0 = !based.is_empty() && super::native::wave0_changes();
+        if wave0 {
+            lines.push(SpecLine::KeptOld);
+        }
+        // Only a rule whose relations of the component all start from kept rows: one that reads a relation starting
+        // empty (`walk__ins`) derives nothing in the first wave, and its delta's probe takes its rows as they come.
+        let from_kept = |r: &Rule| recursive(&r.body, scc).iter().all(|(_, a)| based.contains_key(a.rel.as_str()));
+        let seeds: Vec<&Rule> = rules.iter().copied().filter(|r| recursive(&r.body, scc).is_empty() || (wave0 && reads_change(&r.body, scc) && from_kept(r))).collect();
         // A rule's planning, as a span named by its number and body size (`plan #0009 violation, 15 literals`).
         let planning = |r: &Rule, what: &str| {
             super::profile::span(|| {
@@ -5842,7 +6161,22 @@ impl<'a> Run<'a, '_> {
                 None => "a head term".to_owned(),
             }
         };
+        // A seed that reads the component's own relations (`wave0`'s) prices them by their kept rows' statistics, as
+        // the probes do: unpriced, each read of one was a scan of the component, and the search took cross products.
+        if wave0 {
+            for r in &rels {
+                if let Some(card) = prior_stats(&mut self.model, prog, r) {
+                    self.model.stats.card.insert((*r).clone(), card);
+                }
+            }
+        }
+        // Round 1 (decision 0123): the seeds' statistics, those that will be priced.
+        let mut wanted = BTreeSet::new();
+        self.model.wants(seeds.iter().map(|r| (*r, None)), &mut wanted);
+        self.model.make_statistics(prog, &wanted)?;
+        plan_site("a stratum's seed");
         for r in &seeds {
+            self.model.late(prog, r, None, false)?;
             let span = planning(r, "plan");
             let t0 = if profiling { super::profile::now() } else { 0.0 };
             let ((order, work, rows), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, None)?;
@@ -5870,6 +6204,7 @@ impl<'a> Run<'a, '_> {
                 expect_axis_lookups(self.db, x);
             }
             explained.push((format!("seed {}", r.head.rel), rule_no(r), x, took, 0));
+            keys.push(Some(self.model.reused_key(&r.head, &r.body, None)));
             *est.entry(r.head.rel.as_str()).or_default() += rows;
             lines.push(SpecLine::Seed { head: ri[r.head.rel.as_str()], join: spec });
             orders.push(order);
@@ -5900,15 +6235,28 @@ impl<'a> Run<'a, '_> {
             let card = prior_stats(&mut self.model, prog, r).map_or(seeded, |n| n.max(seeded));
             self.model.stats.card.insert((*r).clone(), card);
         }
+        // Round 2 (decision 0123): the probes' statistics, and the whole plans' where one is made (below).
+        let whole_wanted = |this: &Self, a: &Atom| !(wave0 && based.contains_key(a.rel.as_str()) || plan_budget() && this.model.card(&a.rel) < SEARCH_WORK);
+        let mut wanted = BTreeSet::new();
+        let round: Vec<(&Rule, Option<usize>)> = rules.iter().flat_map(|r| {
+            let rec = recursive(&r.body, scc);
+            let whole = rec.iter().any(|(_, a)| whole_wanted(self, a));
+            rec.into_iter().map(|(ai, _)| (*r, Some(ai))).chain(whole.then_some((*r, None))).collect::<Vec<_>>()
+        }).collect();
+        self.model.wants(round, &mut wanted);
+        self.model.make_statistics(prog, &wanted)?;
         let mut probes = Vec::new();
         for r in &rules {
             // The rule's whole plan, and its spec once one is wanted: one per rule, whichever atom is its delta.
             let mut whole_plan: Option<Vec<Step>> = None;
             let mut whole_spec: Option<Option<Arc<JoinSpec>>> = None;
             for (ai, a) in recursive(&r.body, scc) {
+                self.model.late(prog, r, Some(ai), false)?;
+                plan_site("a stratum's probe");
                 let _span = planning(r, "plan");
                 let t0 = if profiling { super::profile::now() } else { 0.0 };
                 let ((order, work, _), x) = self.model.plan_rule_reused(prog, &r.head, &r.body, Some(ai))?;
+                let key = self.model.reused_key(&r.head, &r.body, Some(ai));
                 let took = if profiling { super::profile::now() - t0 } else { 0.0 };
                 shape.add(&order, &r.head.args, work, true);
                 if let Some(x) = &x {
@@ -5927,6 +6275,7 @@ impl<'a> Run<'a, '_> {
                         let sql = self.model.sql_select(prog, &r.head, &order, Some(at), Some(&views))?;
                         explained.push((format!("probe {} (delta {})", r.head.rel, a.rel), rule_no(r), None, took, 0));
                         lines.push(SpecLine::Probe { head: ri[r.head.rel.as_str()], delta: ri[a.rel.as_str()], sql });
+                        keys.push(None);
                         probes.push((*r, ai, order));
                         sql_probe.push(true);
                         continue;
@@ -5941,7 +6290,19 @@ impl<'a> Run<'a, '_> {
                 }
                 explained.push((format!("join {} (delta {})", r.head.rel, a.rel), rule_no(r), x, took, 0));
                 // The wave whose delta is all of the relation (it was empty before): any order, the atom read in full.
+                // Under `wave0` a relation started from kept rows never has that wave (its kept rows are no delta).
+                // Nor, under the planning budget (decision 0122), one whose relation is expected to start with fewer
+                // rows than a search costs: the probe's own order reads them.
+                if !whole_wanted(self, a) {
+                    lines.push(SpecLine::Join { head: ri[r.head.rel.as_str()], delta: ri[a.rel.as_str()], join: spec, whole: None });
+                    keys.push(Some(key));
+                    probes.push((*r, ai, order));
+                    sql_probe.push(false);
+                    continue;
+                }
                 if whole_plan.is_none() {
+                    plan_site("a stratum's whole plan");
+                    self.model.late(prog, r, None, false)?;
                     whole_plan = Some(self.model.plan_rule_reused(prog, &r.head, &r.body, None)?.0.0);
                 }
                 let whole = whole_plan.as_ref().expect("planned");
@@ -5951,6 +6312,7 @@ impl<'a> Run<'a, '_> {
                     None
                 };
                 lines.push(SpecLine::Join { head: ri[r.head.rel.as_str()], delta: ri[a.rel.as_str()], join: spec, whole: wspec });
+                keys.push(Some(key));
                 probes.push((*r, ai, order));
                 sql_probe.push(false);
             }
@@ -6044,6 +6406,8 @@ impl<'a> Run<'a, '_> {
             timed,
             chunk: 1,
             replanned_at,
+            searched: Vec::new(),
+            keys,
             started,
             placed,
             shape,
@@ -6060,7 +6424,7 @@ impl<'a> Run<'a, '_> {
     /// the wave ran.
     fn drive(&mut self, d: Box<Driving<'a>>, native_rels: &BTreeSet<String>, numbers: &rustc_hash::FxHashMap<*const Rule, usize>) -> Result<Native<'a>> {
         let prog = self.prog;
-        let Driving { scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut earlier, mut timed, mut chunk, mut replanned_at, started, placed, shape, cpu_own, lab, not_taken } = *d;
+        let Driving { scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, mut probes, order_rules, nseeds, seeds, ngates, mut explained, mut counted, mut earlier, mut timed, mut chunk, mut replanned_at, mut searched, keys, started, placed, shape, cpu_own, lab, not_taken } = *d;
         let scc = &scc_owned;
         let rels: Vec<&String> = rels_owned.iter().collect();
         let planning = |r: &Rule, what: &str| {
@@ -6091,7 +6455,7 @@ impl<'a> Run<'a, '_> {
                     drop(rels);
                     Box::new(Driving {
                         scc: scc_owned, solving, name, spec, rels: rels_owned, ri, views, sql_views, sql_probe, orders, probes, order_rules, nseeds, seeds, ngates,
-                        explained, counted, earlier, timed, chunk, replanned_at, started, placed, shape, lab, not_taken,
+                        explained, counted, earlier, timed, chunk, replanned_at, searched, keys, started, placed, shape, lab, not_taken,
                         cpu_own: if profiling { let (u, s) = corpus::thread_usage(); u + s - cpu_at } else { 0.0 },
                     })
                 }};
@@ -6114,12 +6478,18 @@ impl<'a> Run<'a, '_> {
                 return Ok(Native::Waiting(suspended!()));
             }
             let steps = self.fx().steps(&name)?;
+            // A line that did nothing this chunk observed nothing (decision 0122: no planning work for it).
+            let idle = |line: &[(i64, i64)]| line.iter().all(|&(a, b)| a == 0 && b == 0);
             for ((o, &rule), line) in orders.iter().chain(probes.iter().map(|p| &p.2)).zip(&order_rules).zip(&steps) {
-                observe(&mut self.model.stats, rule, o, line);
+                if !idle(line) {
+                    observe(&mut self.model.stats, rule, o, line);
+                }
             }
             // A step whose fanout was observed, or moved, is priced by it now: its probe is planned again.
             for (k, p) in probes.iter().enumerate() {
-                replanned_at.observed(k, observed_fans(&self.model.stats, obs_rule(&p.0.head, &p.0.body), &p.2));
+                if steps.get(nseeds + k).is_some_and(|l| !idle(l)) {
+                    replanned_at.observed(k, observed_fans(&self.model.stats, order_rules[nseeds + k], &p.2));
+                }
             }
             for (k, line) in steps.iter().enumerate() {
                 if counted.len() <= k {
@@ -6151,18 +6521,28 @@ impl<'a> Run<'a, '_> {
                 // distinct counts), again from the live counts: once per rule, the same plan for each of its probes
                 // (`setfix` runs it once a wave).
                 let mut whole: Vec<(*const Rule, Arc<JoinSpec>)> = Vec::new();
+                let wants_whole = |k: usize, this: &Self| {
+                    let r = probes[k].0;
+                    !sql_probe[k]
+                        && !r.body[probes[k].1].atom().is_some_and(|a| small_batches(&a.rel))
+                        // A whole plan runs over its relation's delta, all its rows: searched again only where that
+                        // delta costs more than the search (decision 0122).
+                        && !(plan_budget() && r.body[probes[k].1].atom().is_some_and(|a| this.model.stats.delta_rows.get(a.rel.as_str()).is_none_or(|&d| d < SEARCH_WORK)))
+                };
+                // A round (decision 0123): the whole plans' statistics in one batch, then the plans.
+                // Searched whatever was kept (`plan_rule_live`): every deferred relation they read.
+                let wanted: BTreeSet<String> = (0..probes.len()).filter(|&k| wants_whole(k, self)).flat_map(|k| Model::read_by([probes[k].0])).map(str::to_owned).collect();
+                self.model.make_statistics(prog, &wanted)?;
                 for k in 0..probes.len() {
-                    if sql_probe[k] {
+                    if !wants_whole(k, self) {
                         continue;
                     }
                     let r = probes[k].0;
-                    if r.body[probes[k].1].atom().is_some_and(|a| small_batches(&a.rel)) {
-                        continue;
-                    }
                     if !replanned_at.take_whole(k) { continue; }
                     let spec = match whole.iter().find(|(p, _)| std::ptr::eq(*p, r)) {
                         Some((_, w)) => w.clone(),
                         None => {
+                            self.model.late(prog, r, None, true)?;
                             let _span = planning(r, "replan whole");
                             let ((new, _, _), _) = self.model.plan_rule_live(prog, &r.head, &r.body, None)?;
                             let Some(w) = self.whole_join_spec(&r.head, &new, None, &ri, scc, &native_rels) else { continue };
@@ -6175,14 +6555,35 @@ impl<'a> Run<'a, '_> {
                 // Maintenance probes deliberately have no whole plan. They must also use the seed wave's
                 // measured domains before their first delta runs, rather than waiting two further waves.
             }
+            // The probes searched again this chunk, then a round (decision 0123): their statistics in one batch.
+            let mut replan: Vec<usize> = Vec::new();
             for k in 0..probes.len() {
                 if sql_probe[k] {
                     continue;
                 }
-                let (r, ai) = (probes[k].0, probes[k].1);
+                // Decision 0122: a probe is searched again only once its work so far, and the delta it is about to
+                // read, pay for its searches; until then a dirty plan stays dirty.
+                if plan_budget() {
+                    if searched.len() <= k { searched.resize(probes.len(), 0); }
+                    let line = nseeds + k;
+                    let done = counted.get(line).map_or(0, |c| super::profile::plan_work(c)) + earlier.get(line).map_or(0, |e| e.iter().map(|(_, c)| super::profile::plan_work(c)).sum());
+                    if (done as f64 + replanned_at.delta_rows(k) as f64) < SEARCH_WORK * f64::from(searched[k] + 1) { continue; }
+                }
                 // The dependency index invalidates only affected plans. An empty delta leaves its plan dirty
                 // until it can run; unchanged probes never rebuild keys or statistics signatures.
                 if !replanned_at.take(k) { continue; }
+                if let Some(n) = searched.get_mut(k) { *n += 1; }
+                replan.push(k);
+            }
+            let mut wanted = BTreeSet::new();
+            for &k in &replan {
+                // Searched whatever was kept (`plan_rule_live`): every deferred relation it reads.
+                wanted.extend(Model::read_by([probes[k].0]).into_iter().map(str::to_owned));
+            }
+            self.model.make_statistics(prog, &wanted)?;
+            for k in replan {
+                let (r, ai) = (probes[k].0, probes[k].1);
+                self.model.late(prog, r, Some(ai), true)?;
                 let span = planning(r, "replan");
                 let t0 = if profiling { super::profile::now() } else { 0.0 };
                 let ((new, _, _), x) = self.model.plan_rule_live(prog, &r.head, &r.body, Some(ai))?;
@@ -6312,6 +6713,17 @@ impl<'a> Run<'a, '_> {
             for r in &rels {
                 let (full, delta) = &views[*r];
                 self.db.execute_batch(&format!("DROP TABLE temp.{full}; DROP TABLE temp.{delta};"))?;
+            }
+        }
+        // Each line's work, for the next run's planning budget (decision 0122): a seed's under its rule, a probe's
+        // under its rule and delta.
+        {
+            let empty = Vec::new();
+            let work = |line: usize| (super::profile::plan_work(counted.get(line).unwrap_or(&empty)) + earlier.get(line).map_or(0, |e| e.iter().map(|(_, c)| super::profile::plan_work(c)).sum())) as f64;
+            for (line, key) in keys.iter().enumerate() {
+                if let Some(key) = key {
+                    Model::ran(*key, work(line));
+                }
             }
         }
         {
@@ -8171,15 +8583,24 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             // it). `RERAIL_LEVEL_JOINS=on` batches them as before.
             let batched = super::native::setfix::level::on() && (prog.again.is_empty() || std::env::var("RERAIL_LEVEL_JOINS").is_ok_and(|v| v == "on"));
             let native_ones: Vec<usize> = if !batched { Vec::new() } else { level.iter().copied().filter(|&j| !sccs[j].iter().all(|r| run.views.contains(r))).collect() };
-            let mut specs: Vec<Arc<JoinSpec>> = native_ones.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])).collect();
             // Chained (decision 0100 §11): the next level's seed joins whose relations are already held go in this
             // batch too, so their launch and its latency run under this level's strata, not before the next's.
             // `seed_specs` keeps only those whose every atom is a relation run natively so far.
-            let own = specs.len();
-            if let Some(next) = (at..sccs.len()).map(|j| level_of[j]).filter(|&l| l > level_of[at]).min().filter(|_| batched) {
-                let later: Vec<usize> = (at..sccs.len()).filter(|&j| level_of[j] == next && !waved[j] && !sccs[j].iter().all(|r| run.views.contains(r))).collect();
-                specs.extend(later.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])));
+            let later: Vec<usize> = if !batched { Vec::new() } else { (at..sccs.len()).map(|j| level_of[j]).filter(|&l| l > level_of[at]).min().map_or_else(Vec::new, |next| {
+                (at..sccs.len()).filter(|&j| level_of[j] == next && !waved[j] && !sccs[j].iter().all(|r| run.views.contains(r))).collect()
+            }) };
+            // Decision 0123: the statistics the level's plans will read (and the next level's, chained, where its joins
+            // are batched), requested by each line that will be priced and made in one batch, before any of them is
+            // planned. Made whether or not the level's seed joins are batched: its strata plan with them either way.
+            if run.model.has_deferred() {
+                let mut wanted = BTreeSet::new();
+                let strata: Vec<(&BTreeSet<String>, Vec<&Rule>)> = level.iter().chain(&later).map(|&j| (&sccs[j], run.runnable(&sccs[j], &by_stratum[j]))).collect();
+                run.model.wants_strata(strata, &mut wanted);
+                run.model.make_statistics(prog, &wanted)?;
             }
+            let mut specs: Vec<Arc<JoinSpec>> = native_ones.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])).collect();
+            let own = specs.len();
+            specs.extend(later.iter().flat_map(|&j| run.seed_specs(&sccs[j], &by_stratum[j])));
             if !specs.is_empty() {
                 let _wave = super::profile::span(|| "level wave (joins)".into());
                 let sent = super::native::component::prefetch_joins(db, &specs)?;
@@ -8294,9 +8715,14 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         }
         let mut planned = Vec::new();
         let mut explained = Vec::new();
-        run.model.resolve(prog, Model::read_by(rules.iter().copied()))?;
+        // A round (decision 0123): the statistics its priced plans read, in one batch.
+        let mut wanted = BTreeSet::new();
+        run.model.wants(rules.iter().map(|r| (*r, None)), &mut wanted);
+        run.model.make_statistics(prog, &wanted)?;
         let planning = super::profile::span(|| "plan".into());
+        plan_site("SQL");
         for rule in &rules {
+            run.model.late(prog, rule, None, false)?;
             let t0 = if super::profile::on() { super::profile::now() } else { 0.0 };
             let ((order, work, _), x) = run.model.plan_rule_reused(prog, &rule.head, &rule.body, None)?;
             explained.push((x, if super::profile::on() { super::profile::now() - t0 } else { 0.0 }));

@@ -2918,6 +2918,12 @@ fn run_observed(
     }
     // The run's constants of the phases' exports (`run_constants`): derived over the bound exports, copied out of the
     // engine, measured and bound as they are.
+    // The atoms' lease, held to the run's end: on a new store, a string not in memory is new (decision 0104). Taken
+    // before the run's first engine run (the constants below), so no engine run's end flushes the symbols it made: the
+    // store's writer writes them behind the run. Taken after, a phase that ran past `DUE_AFTER` (a loaded machine) had
+    // the constants' run write its symbols ahead of the waves, which the strict mode refuses.
+    let complete = store.atoms_handle().ready_for_run().map_err(|e| Error::Plan(e.to_string()))?;
+    crate::code_rule_dsl::logic::profile::decision("atoms before the first wave (decision 0104)", || if complete { "every stored atom held: lookups read nothing".into() } else { "the store's atoms are too many to read whole: lookups read its key".into() });
     let mut repository = repository;
     if let Some((consts, rels)) = &run_constants {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "derive the constants of the phases' exports".into());
@@ -3371,9 +3377,6 @@ fn run_observed(
         // The cone of requests' connection and store, opened before the first wave (decision 0104).
         let (slot, _) = handed.cone();
         connections::Cone::ready(&slot, &path, durable.is_some().then(|| store.database_path()))?;
-        // The atoms' lease, held to the run's end: on a new store, a string not in memory is new (decision 0104).
-        let complete = store.atoms_handle().ready_for_run().map_err(|e| Error::Plan(e.to_string()))?;
-        crate::code_rule_dsl::logic::profile::decision("atoms before the first wave (decision 0104)", || if complete { "every stored atom held: lookups read nothing".into() } else { "the store's atoms are too many to read whole: lookups read its key".into() });
         // And every kept frame (decision 0104): the waves read them from memory.
         let (frames, bytes) = store.preload_frames().map_err(|e| Error::Plan(e.to_string()))?;
         if frames > 0 {
@@ -6036,7 +6039,7 @@ fn run_observed(
                                         "rows do not add up: old {:?} + new {} != now {} + gone {}",
                                         kept.input_source(rel).map(|o| o.len()), d.1.len(), new.len(), d.0.len()
                                     ),
-                                    Some(_) => "from the changed documents' entries".to_owned(),
+                                    Some((gone, plus)) => format!("from the changed documents' entries: {} gone, {} new, of {} rows", gone.len(), plus.len(), new.len()),
                                 };
                                 eprintln!("RERAIL_STRATA_LIVE input delta {rel}: {why}");
                             }
@@ -6171,10 +6174,12 @@ fn run_observed(
                             // made when a stratum first plans with it (decision 0101 §4), as the eager path below would
                             // make them. Most strata a step reaches are quiet or join an empty delta and never do.
                             let measured_before = held.as_ref().and_then(|h| cell.as_ref().and_then(|k| k.measured(&rel, h)).filter(|m| m.2 == tested).cloned());
-                            if patched.is_none() && measured_before.is_none() && lazy_kept
+                            // Decision 0123: made only when a planning round requests them, measured before or not.
+                            if patched.is_none() && lazy_kept
                                 && let Some(h) = &held
                             {
-                                let maintains = rel.strip_suffix("__old").is_some_and(|of| part.program.decls.contains_key(&format!("{of}__del")));
+                                // Every relation this run maintains has its inserts (`r__ins`); one derived again has none.
+                                let maintains = rel.strip_suffix("__old").is_some_and(|of| part.program.decls.contains_key(&format!("{of}__ins")));
                                 let (h2, source2, tested2, rel2) = (Arc::clone(h), Arc::clone(&source), tested.clone(), rel.clone());
                                 let wanted = constants.get(rel.as_str()).cloned();
                                 let lazy = crate::code_rule_dsl::logic::plan::LazyStats::new(move || {
@@ -6192,13 +6197,31 @@ fn run_observed(
                                         let measured = stats.statistics(&|_| true);
                                         return (cols, counts.clone(), LazyKept::Measured(measured, counts, tested2));
                                     }
+                                    // Counted in the form patched by delta: from its postings where every column has them, else
+                                    // from its rows (its indexes dropped once no later stratum read it), as the run that first
+                                    // maintained it counted it before decision 0123.
                                     if maintains {
-                                        let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel2}"));
-                                        if let Some(stats) = super::statkeep::RelStats::from_postings(source2.columns(), h2.rows() as i64, &mut |c, visit| h2.each_posting(c, visit)) {
+                                        let names = source2.columns();
+                                        let stats = if h2.posts_all() {
+                                            let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel2}"));
+                                            super::statkeep::RelStats::from_postings(names.clone(), h2.rows() as i64, &mut |c, visit| h2.each_posting(c, visit))
+                                        } else {
+                                            let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel2} from its rows"));
+                                            h2.live_rows().map(|live| {
+                                                let mut stats = super::statkeep::RelStats::paired(names.clone());
+                                                stats.documents(&live, names.len(), 1);
+                                                stats
+                                            })
+                                        };
+                                        if let Some(stats) = stats {
                                             let counts = constant_counts(Some(&tested2), source2.as_ref());
                                             let p = retain::Patched { at: Arc::as_ptr(&h2) as *const u8 as usize, stats, counts: counts.clone(), tested: tested2.clone() };
                                             return (as_cols(&p.stats.statistics(&|_| true)), counts, LazyKept::Patched(p));
                                         }
+                                    }
+                                    // Measured by an earlier run of the same relation: as it was.
+                                    if let Some((measured, counts, tested)) = measured_before {
+                                        return (as_cols(&measured), counts.clone(), LazyKept::Measured(measured, counts, tested));
                                     }
                                     let _m = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel2}"));
                                     let measured = syntax::statistics(source2.as_ref());
@@ -6589,23 +6612,11 @@ fn run_observed(
                                 let counts = kept_counts(&stats, &tested, new.source(stats.columns().to_vec()).as_ref());
                                 Some(retain::Patched { at: Arc::as_ptr(new) as *const u8 as usize, stats, counts, tested })
                             }
-                            // Counted here once, the first run it is maintained, and patched by delta from then on. Left
-                            // to next run's lazy statistics instead, a relation is measured again at every step it is
-                            // planned with (a measure is not kept by delta): O125 steps 06-08 took 2.5, 2.5 and 3.0 s
-                            // so, against 5.6, 0.7 and 0.2 s counted here.
-                            None if new.delta_since(old).is_some() => new.live_rows().map(|live| {
-                                let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}"));
-                                let names: Vec<String> = (0..*width).map(|c| super::sql_col(&name, c)).collect();
-                                // From its postings, else its rows.
-                                let stats = super::statkeep::RelStats::from_postings(names.clone(), new.rows() as i64, &mut |c, visit| new.each_posting(c, visit)).unwrap_or_else(|| {
-                                    let mut stats = super::statkeep::RelStats::paired(names.clone());
-                                    stats.documents(&live, *width, 1);
-                                    stats
-                                });
-                                let tested = constants.get(name.as_str()).cloned().unwrap_or_default();
-                                let counts = constant_counts(Some(&tested), new.source(names).as_ref());
-                                retain::Patched { at: Arc::as_ptr(new) as *const u8 as usize, stats, counts, tested }
-                            }),
+                            // Not counted here (decision 0123): the next run counts it from its postings when a round
+                            // requests it, and patches it by delta from then on. Before 0123 it was counted here, the
+                            // first run it was maintained, as a lazy statistic was measured (not counted) at every step
+                            // it was planned with (O125 steps 06-08: 2.5, 2.5 and 3.0 s so, against 5.6, 0.7 and 0.2 s
+                            // counted here).
                             None => None,
                         };
                         if let Some(p) = next {
@@ -7103,6 +7114,7 @@ fn projection_of(prog: &front::Program, is_input: &dyn Fn(&str) -> bool, rel: &s
         at = a.rel.to_string();
     }
     None
+}
 }
 
 fn constant_counts(tested: Option<&BTreeSet<(usize, i64)>>, source: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Vec<(String, i64, i64)> {

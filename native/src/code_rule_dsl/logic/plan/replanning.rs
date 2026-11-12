@@ -118,6 +118,10 @@ impl Watch {
             self.fans[probe] = fans;
         }
     }
+    /// The rows of probe `probe`'s delta relation's last delta (0 where its delta is not a relation of the component).
+    pub fn delta_rows(&self, probe: usize) -> i64 {
+        self.delta_of[probe].map_or(0, |r| self.deltas[r])
+    }
     pub fn take(&mut self, probe: usize) -> bool {
         if self.delta_of[probe].is_some_and(|r| self.deltas[r] == 0) { return false; }
         if self.required[probe].iter().any(|&r| self.rows[r] == Some(0)) { return false; }

@@ -46,12 +46,18 @@
             Step { at: 2, lit: body[2].clone(), mode: Some(Mode::Descend) },
         ];
         let priced = Priced { sizes: vec![3700.0, 10.0, 0.0, -2.0], got: ((order.clone(), 12.5, 3.0), None) };
-        let kept: Kept = (order.clone().into(), 0.25, None, 1.5, Some(Arc::new(priced)));
+        let kept: Kept = (order.clone().into(), 0.25, None, 1.5, Some(Arc::new(priced)), Some(40.0));
         let stored = StoredPlan::of(&kept).expect("a plan the store keeps");
         assert_eq!((scale(3700.0), scale(55_000.0), scale(0.0)), (5, 7, 0), "scales by powers of 4");
         let key = (0x0123_4567_89ab_cdef_fedc_ba98_7654_3210_u128, scale(3700.0));
         let row = StoredPlan::row(key, &stored);
         assert_eq!(StoredPlan::of_row(&row), Some((key, stored.clone())));
+        // The work its line last ran is kept with it (decision 0122), and a row stored without it reads as not run.
+        assert_eq!(StoredPlan::of_row(&row).and_then(|(_, p)| p.kept(body)).and_then(|k| k.5), Some(40.0));
+        assert_eq!(StoredPlan::of_row(&row[..row.len() - 1]).and_then(|(_, p)| p.kept(body)).map(|k| k.5), Some(None));
+        // Within 2x of that work it is the same plan, not written again; past it, written.
+        let ran = |r: f64| StoredPlan::of(&(kept.0.clone(), kept.1, None, kept.3, kept.4.clone(), Some(r))).unwrap();
+        assert!(stored.same(&ran(70.0)) && !stored.same(&ran(90.0)));
         let back = stored.kept(body).expect("rebuilt over its body");
         let same = |a: &[Step], b: &[Step]| a.len() == b.len() && a.iter().zip(b).all(|(a, b)| a.at == b.at && a.lit == b.lit && a.mode == b.mode);
         assert!(same(&back.0, &order) && (back.1, back.3) == (0.25, 1.5));

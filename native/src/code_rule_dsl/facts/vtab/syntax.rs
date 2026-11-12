@@ -1023,6 +1023,8 @@ struct DefIds {
     low: Vec<u32>,
     /// `(low, local)`, ascending: the way back.
     back: Vec<(u32, u32)>,
+    /// Each node's order key, by local id (`granules::order`): `node_order`'s low 32 bits.
+    order: Vec<u32>,
 }
 
 use granules::INDEX_BITS;
@@ -1048,10 +1050,10 @@ pub fn shown_local(low: i64) -> String {
 impl DefIds {
     /// The ids of `p`'s nodes, and of `tokens` (each token's node, in order), by definition.
     fn new(p: &Projected, dialect: &Dialect, tokens: &[u32]) -> Self {
-        let low = granules::number(p, dialect, tokens);
+        let (low, order) = granules::number(p, dialect, tokens);
         let mut back: Vec<(u32, u32)> = low.iter().enumerate().map(|(l, &g)| (g, l as u32)).collect();
         back.sort_unstable();
-        DefIds { low, back }
+        DefIds { low, back, order }
     }
 }
 
@@ -1263,6 +1265,17 @@ impl Projected {
         };
         i64::from(key) << 32 | i64::from(low)
     }
+    /// Node `local`'s order key: `node_order`'s low 32 bits (`granules::order`; its preorder index without `DefIds`).
+    pub fn order(&self, local: u32) -> u32 {
+        self.defs.as_ref().map_or(local, |d| d.order[local as usize])
+    }
+    /// The node whose order key (`node_order`'s low 32 bits) is `key`: the keys ascend with the local ids.
+    pub fn local_of_order(&self, key: u32) -> Option<u32> {
+        match &self.defs {
+            Some(d) => d.order.binary_search(&key).ok().map(|l| l as u32),
+            None => (key < self.len()).then_some(key),
+        }
+    }
     /// The node or span whose id's low 32 bits are `low` (`global`'s inverse).
     pub fn local_of(&self, low: u32) -> Option<u32> {
         match &self.defs {
@@ -1473,8 +1486,9 @@ pub enum View {
 
     /// `ast_depth(n, k)`: the node's depth, the root's 0.
     Depth,
-    /// `node_order(n, k)`: the node's preorder key, `document << 32 | its preorder index`: the order node ids had
-    /// before they were numbered per definition (`granules`). Rules that order nodes read it (`rr::lower`).
+    /// `node_order(n, k)`: the node's place in preorder, `document << 32 | its order key`: by definition, its granule
+    /// run's rank and its index in the granule (`granules::order`, which an edit elsewhere leaves alone); under
+    /// `RERAIL_NODE_IDS=preorder`, its preorder index. Rules that order nodes read it (`front::order_nodes`).
     Order,
     /// `core.rr`'s place of a node or span (`loc`): `line(n, l)`, `end_line(n, l)`, `col(n, c)`, `docof(n, d)`,
     /// read from the document's lines (`core_rr::Lines`), rows laid out over `Projected::locs`. A batch that makes
@@ -2777,9 +2791,9 @@ impl Viewed {
                     rows.extend(b.docs[doc].children(local).filter_map(|c| b.row(self.view, doc, c)));
                 }
             } else if matches!(self.view, View::Order) && column == 1 {
-                // A preorder key: its document and its local id.
-                let local = (v & 0xffff_ffff) as u32;
-                rows.extend(b.doc(v >> 32).filter(|&doc| v >= 0 && local < b.docs[doc].len()).and_then(|doc| b.row(self.view, doc, local)));
+                // An order key: its document, and the node with that key (`Projected::local_of_order`).
+                let key = (v & 0xffff_ffff) as u32;
+                rows.extend(b.doc(v >> 32).filter(|_| v >= 0).and_then(|doc| b.docs[doc].local_of_order(key).and_then(|local| b.row(self.view, doc, local))));
             } else if matches!(self.view, View::Node | View::Core) && column == 0 {
                 rows.extend(b.doc(v).map_or(0..0, |doc| b.nodes[doc]..b.nodes[doc + 1]));
             } else if matches!(self.view, View::Core) && column == 1 {
@@ -2865,7 +2879,7 @@ impl Viewed {
             (View::Tape, 2) => i64::from(p.size(l)),
             (View::Tape, 3) => i64::from(p.depth(l)),
             (View::Depth, 1) => i64::from(p.depth(l)),
-            (View::Order, 1) => i64::from(p.key) << 32 | i64::from(local),
+            (View::Order, 1) => i64::from(p.key) << 32 | i64::from(p.order(local)),
             _ => p.global(local),
         }
     }

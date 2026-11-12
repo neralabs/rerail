@@ -247,6 +247,13 @@ pub fn symbol_text(conn: &Connection, atom: i64) -> Result<String> {
     Ok(s.name(atom).to_owned())
 }
 
+/// Whether a maintained component's first wave is its input changes' seeds, not its kept rows (`plan::reads_change`,
+/// decision 0122 §2): the default; `RERAIL_WAVE0=kept` makes the kept rows the first wave's delta, as before (a
+/// measurement aid). Read at each stratum planned, so a test can set it; the spec carries the choice (`KeptOld`).
+pub fn wave0_changes() -> bool {
+    !std::env::var("RERAIL_WAVE0").is_ok_and(|v| v == "kept")
+}
+
 /// Appends the symbols pending in `conn`'s database if a flush is due (decision 0049 §4.2): a run's end.
 pub fn flush_symbols(conn: &Connection) -> Result<()> {
     crate::content_store::atoms::Atoms::for_connection(conn).flush_if_due(conn).map_err(|e| err(e.to_string()))
@@ -382,8 +389,9 @@ impl Rel {
               level: Vec::new(), lbase: 0, leveled: true, stats: None, stats_dead: Vec::new() }
     }
     /// A relation that starts as `old` (a kept one: its rows copied as memory; its orders' runs and its sketches
-    /// shared, not built again) less the rows of `gone`, marked dead in place (decision 0090 step 4). Its rows are the
-    /// first wave's delta, so each rule's whole plan reads them once. `None` when `old` has no orders to start from,
+    /// shared, not built again) less the rows of `gone`, marked dead in place (decision 0090 step 4). Its rows are
+    /// stamped the first wave's delta, as the survivors rule it replaced derived them (b3d4958c3); a component whose
+    /// spec says `KeptOld` (the default, decision 0122 §2) stamps them no wave's. `None` when `old` has no orders to start from,
     /// or when too many of its rows would be dead (then it is made from its rows, compacted). No `gone`: all of
     /// `old`'s rows.
     fn based(table: &str, types: &[u8], old: &InRel, gone: Option<&InRel>) -> Option<Rel> {
@@ -1034,7 +1042,10 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     // The relations whose statistics are kept as their rows come (`Line::Stats`).
     let mut counted: Vec<usize> = Vec::new();
     let mut cyclic: Vec<usize> = Vec::new();
+    let mut kept_old = false;
     let mut seed_specs: Vec<(usize, Arc<JoinSpec>)> = Vec::new();
+    // Each relation's kept rows (`Start::Base`), by index: under `wave0_changes` they are no wave's delta.
+    let mut kept_n: Vec<usize> = Vec::new();
     for line in &spec.lines {
         match line {
             Line::Rel { name: table, types, start } => {
@@ -1062,6 +1073,8 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
                             Some(b) => rel = b,
                             None => rel = Rel::compacted(table, types.as_bytes(), &o, g.as_deref()),
                         }
+                        kept_n.resize(rels.len(), 0);
+                        kept_n.push(rel.n);
                         if *seeded {
                             for row in read_rows(conn, &rel.table, &rel.types.clone(), &mut syms)? { rel.push(&row); }
                         }
@@ -1085,6 +1098,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
             Line::Probe { head, delta, sql } => probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Sql(sql.clone()), whole: None, wkey: None }),
             Line::Device => device_wanted = solver().is_some(),
             Line::Leveled(rels) => { leveled = true; cyclic.extend(rels.iter().copied()); }
+            Line::KeptOld => kept_old = true,
             Line::Seed { head, join } => {
                 let j = { let _j = crate::code_rule_dsl::logic::profile::span(|| "open: joins".into()); join_rule_with(conn, join, &mut syms, !device_wanted)? };
                 if device_wanted { seed_specs.push((probes.len(), join.clone())); }
@@ -1213,7 +1227,18 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
             rel.stats = Some(KeptStats::of(rel.k));
         }
     }
-    for r in &mut rels { let n = r.n; r.set_delta(0, n); }   // the first wave reads the seeds as its delta
+    // The first wave reads the seeds as its delta; under `KeptOld`, not a relation's kept rows (`Start::Base`): their
+    // orders' runs (`Rel::based` stamps them the first wave's) are of no wave, so a keyed delta read skips them too.
+    for (i, r) in rels.iter_mut().enumerate() {
+        let n = r.n;
+        let kept = if kept_old { kept_n.get(i).copied().unwrap_or(0) } else { 0 };
+        if kept > 0 {
+            for ix in &mut r.idx {
+                ix.restamp(0);
+            }
+        }
+        r.set_delta(kept, n);
+    }
     // Levels (decision 0090): `live`'s rows are shown a level at a time, never a delta, so no probe reads it as
     // one; the other levels relations get small batches from row 0, which a whole plan (one for a delta that is
     // its whole relation) would join by scanning `live` or `old`.
@@ -3324,6 +3349,11 @@ impl InRel {
             }
         });
         true
+    }
+    /// Whether every column has its postings (`each_posting`): what its statistics are counted from without reading
+    /// its rows (decision 0123: else they are counted from its rows, not begun from postings and then dropped).
+    pub fn posts_all(&self) -> bool {
+        self.view.is_none() && (0..self.k).all(|c| self.chains.iter().any(|ix| ix.cols.first() == Some(&c) && ix.rows() >= self.n))
     }
     /// Its live rows, row-major.
     pub fn live_rows(&self) -> Option<Vec<i64>> {

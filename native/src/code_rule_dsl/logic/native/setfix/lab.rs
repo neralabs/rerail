@@ -147,7 +147,7 @@ fn capture_(conn: &Connection, name: &str, spec: &ComponentSpec, path: &Path) ->
         match line {
             // The run held its rows in memory, not in tables; the replay writes them, to compare them.
             // Where the run put it (`Device`): the replay runs every capture on the CPU, and again on the device.
-            Line::NoWrite | Line::Device | Line::Leveled(_) | Line::Stats(_) | Line::Seed { .. } | Line::Join { .. } => {}
+            Line::NoWrite | Line::Device | Line::Leveled(_) | Line::Stats(_) | Line::KeptOld | Line::Seed { .. } | Line::Join { .. } => {}
             Line::Rel { name, types, start } => {
                 let empty = match start {
                     Start::Rows => false,
