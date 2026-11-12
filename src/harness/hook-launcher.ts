@@ -44,6 +44,10 @@ if (existsSync(recordedNode) && !sameFile(recordedNode, process.execPath)) {
   // Run in this process exactly as `node <hook>` would: a hook serves only when it is the launched script, argv[1].
   // The hook is chosen by the registration's argument, so it cannot be a static import.
   process.argv.splice(1, 3, hookScript);
+  // A hook that ends the process itself, or throws after it has loaded, exits 0 as well, as a hook run as a child does.
+  process.on("exit", code => {
+    if (code !== 0) quiet(`exited ${code}`, true);
+  });
   try {
     await import(pathToFileURL(hookScript).href);
     if (process.exitCode !== undefined && process.exitCode !== 0) quiet(`exited ${process.exitCode}`, true);
