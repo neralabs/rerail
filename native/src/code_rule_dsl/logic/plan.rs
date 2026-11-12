@@ -6941,13 +6941,15 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let mut again_chosen: Vec<Option<bool>> = vec![None; prog.again.len()];
     // A stratum derived again makes its deltas against its old rows only when a stratum that runs reads them
     // (`RERAIL_AGAIN_DEFER`): those not yet made, by name, with the group and rule that make each and the size taken
-    // for it. A group reading one decides by its estimate (`estimate`, the default) and makes it if maintained; or is
-    // derived again without deciding (`propagate`); or makes it and measures (`measure`). `off` makes every delta
-    // where its stratum is derived again.
+    // for it. A group reading one makes it and measures it (`measure`, the default); or decides by its estimate
+    // (`estimate`) and makes it if maintained; or is derived again without deciding (`propagate`). `off` makes every
+    // delta where its stratum is derived again. An estimate is its maker's input deltas, an upper bound, and bounds
+    // compound down the strata: at O125 step 08 `possible_type` was taken at 347,616 input delta rows, where no delta
+    // made was over 5,497 (except `node_order`'s), and 379 strata were derived again; measured, work fell 26%.
     let defer_mode = std::env::var("RERAIL_AGAIN_DEFER").unwrap_or_default();
     let defer = defer_mode != "off";
     let propagate = defer_mode == "propagate";
-    let estimate = defer && !propagate && defer_mode != "measure";
+    let estimate = defer && !propagate && defer_mode == "estimate";
     let mut again_delta: Vec<usize> = vec![0; prog.again.len()];
     let mut deferred: HashMap<String, (usize, usize, usize)> = HashMap::new();
     let mut unloaded: BTreeSet<String> = BTreeSet::new();
