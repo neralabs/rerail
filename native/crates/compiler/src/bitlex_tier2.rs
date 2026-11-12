@@ -109,17 +109,22 @@ pub struct Lowered {
     /// A function a rule (`lower`'s `rules`): each rule's first place (`Words::rules`); else
     /// empty.
     pub rules: Vec<u16>,
+    /// The marks of one word: (order, string), rising (`Words::mark_words`).
+    pub mark_words: Vec<(u8, u16)>,
 }
 
 /// A mark (a token of no width) as tier 2 tests it: its kind, the mask of its bits at token
 /// starts, and whether it is hidden (skipped where no arm takes it).
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct Mark {
     pub kind: u16,
     pub mask: u16,
     pub hidden: bool,
     /// The file's end has it, after the last token.
     pub end: bool,
+    /// It holds only at a token whose text is this word (`Words::mark_words`): its mask is the
+    /// rest of it.
+    pub word: Option<Vec<u8>>,
 }
 
 struct Emit<'a> {
@@ -152,6 +157,8 @@ struct Emit<'a> {
     marked: Vec<u16>,
     /// Each arm's code, once per test before it.
     arm_code: HashMap<(usize, Span, Pre), u16>,
+    /// The marks of one word, by order: their strings (`Lowered::mark_words`).
+    mark_words: std::collections::BTreeMap<u8, u16>,
     /// Where the state being lowered goes on a token none of its arms takes: its level's end
     /// (the caller then switches on the token), or `REFUSE`.
     default: u16,
@@ -600,6 +607,10 @@ impl Emit<'_> {
     /// A state's mark tests (`state`): each a `MARK` and its arm's jump, or a refusal.
     fn mark_tests_here(&mut self, tests: &[(usize, Option<usize>)], mark_arms: &mut Vec<(u16, usize)>) {
         for &(k, arm) in tests {
+            if let Some(w) = self.marks[k].word.clone() {
+                let s = self.string(&w);
+                self.mark_words.insert(k as u8, s);
+            }
             let m = &self.marks[k];
             // Its order, and 32 when the end has it.
             self.push("MARK", k as u8 | if m.end { 32 } else { 0 }, Arg::Num(m.mask));
@@ -798,6 +809,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         switch_at: vec![REFUSE; states.len()],
         marked: vec![0; states.len()],
         arm_code: HashMap::new(),
+        mark_words: Default::default(),
     };
     for t in 0..empties {
         e.push("EMPTY", 0, Arg::Num(t));
@@ -881,6 +893,8 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
     for (at, s) in e.switches.iter().enumerate() {
         crate::rir_text::switch_rows(&mut text, at, s);
     }
+    let mark_words: Vec<(u8, u16)> = e.mark_words.iter().map(|(&k, &s)| (k, s)).collect();
+    crate::rir_text::mark_word_rows(&mut text, &mark_words);
     crate::rir_text::rule_rows(&mut text, &firsts);
     for (pc, (op, mode, arg)) in e.words.iter().enumerate() {
         let _ = write!(text, "  {pc:04} {op}");
@@ -902,7 +916,7 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         };
         text.push('\n');
     }
-    Ok(Lowered { text, switches: e.switches, strings: e.strings, tested: e.tested.into_iter().collect(), rules: firsts })
+    Ok(Lowered { text, switches: e.switches, strings: e.strings, tested: e.tested.into_iter().collect(), rules: firsts, mark_words })
 }
 
 /// The words laid out as compiled code is, with no jump a layout can spare (the lean parser's

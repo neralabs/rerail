@@ -18,9 +18,14 @@ fn rr_facts_hold_on_the_corpus() {
     // Every 25th file, and the longest: a few hundred kilobytes.
     let mut sample: Vec<&[u8]> = corpus.iter().step_by(25).map(|f| f.as_bytes()).collect();
     sample.extend(corpus.iter().max_by_key(|f| f.len()).map(|f| f.as_bytes()));
-    // The keyword masks are checks of one identifier: anchored on its first byte.
+    // The marks of one word are the token's record's word in tier 2: their masks are gone from
+    // tier 1 (`bitlex_masks::tree_section`).
+    for word in ["fix_w", "suppress_w", "options_w", "over_w"] {
+        assert!(c.values.iter().all(|v| v.name != word), "`{word}` is the record's word, not a mask");
+    }
+    // The other keyword masks are checks of one identifier: anchored on its first byte.
     let id = starts.iter().position(|v| v.name == "token identifier start").expect("identifiers");
-    for word in ["fix_w", "suppress_w", "options_w", "over_w", "input_w", "output_w", "agg_word"] {
+    for word in ["input_w", "output_w", "agg_word"] {
         let v = c.values.iter().find(|v| v.name == word).unwrap_or_else(|| panic!("no `{word}`"));
         let fact = &facts[usize::from(v.op)];
         let shifts: Vec<i32> = fact.anchors.iter().filter(|a| a.0 == id).map(|&(_, s)| s + i32::from(starts[id].delay) - i32::from(v.delay)).collect();

@@ -126,7 +126,8 @@ pub enum StructuralOperation {
     Settle { kind: u16 },
     /// Mark `order` (its bit in mask `mask` at the token's start; at the stream's end, `end`),
     /// if not yet taken nor passed: take it and run the next word; else skip that word.
-    Mark { mask: u16, order: u8, end: bool },
+    /// `word`: the string the token's record must name too (`Words::mark_words`).
+    Mark { mask: u16, order: u8, end: bool, word: Option<u16> },
     /// The token starts at a bit of mask `mask`: run the next word; else skip it.
     Row { mask: u16 },
     /// A node becomes a `kind`: the innermost open node, or another (`On`).
@@ -207,7 +208,7 @@ impl StructuralOperation {
             Self::Close { this } => (CLOSE, u8::from(this), 0),
             Self::Leaf { kind, deferred, extra } => (LEAF, if extra { 2 } else { u8::from(deferred) }, kind),
             Self::Settle { kind } => (LEAF, 3, kind),
-            Self::Mark { mask, order, end } => (MARK, order | if end { 32 } else { 0 }, mask),
+            Self::Mark { mask, order, end, .. } => (MARK, order | if end { 32 } else { 0 }, mask),
             Self::Row { mask } => (ROW, 0, mask),
             Self::Retag { kind, on } => (RETAG, on as u8, kind),
             Self::Reread { reading } => (RETAG, 3, reading),
@@ -441,7 +442,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             CLOSE => StructuralOperation::Close { this: mode != 0 },
             LEAF if mode == 3 => StructuralOperation::Settle { kind: operand },
             LEAF => StructuralOperation::Leaf { kind: operand, deferred: mode == 1, extra: mode == 2 },
-            MARK => StructuralOperation::Mark { mask: operand, order: mode % 32, end: mode & 32 != 0 },
+            MARK => StructuralOperation::Mark { mask: operand, order: mode % 32, end: mode & 32 != 0, word: program.mark_words.iter().find(|&&(k, _)| k == mode % 32).map(|&(_, s)| s) },
             ROW => StructuralOperation::Row { mask: operand },
             RETAG if mode == 3 => StructuralOperation::Reread { reading: operand },
             RETAG => StructuralOperation::Retag { kind: operand, on: On::of(mode) },
