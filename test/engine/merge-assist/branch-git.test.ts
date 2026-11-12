@@ -1,8 +1,7 @@
-import { execFileSync } from "node:child_process";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { realpathSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   baseBranch,
@@ -13,29 +12,12 @@ import {
   localBranches,
   mergeBase,
 } from "../../../src/engine/merge-assist/branch-git.js";
+import { commit, git } from "../../support/git.js";
 
 const roots: string[] = [];
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
 });
-
-function git(cwd: string, ...args: string[]): string {
-  return execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" }).trim();
-}
-
-function write(root: string, files: Record<string, string>): void {
-  for (const [path, content] of Object.entries(files)) {
-    mkdirSync(dirname(join(root, path)), { recursive: true });
-    writeFileSync(join(root, path), content);
-  }
-}
-
-function commit(root: string, files: Record<string, string>, message: string): string {
-  write(root, files);
-  git(root, "add", ".");
-  git(root, "commit", "--quiet", "-m", message);
-  return git(root, "rev-parse", "HEAD");
-}
 
 async function repository(): Promise<string> {
   const root = realpathSync(await mkdtemp(join(tmpdir(), "rerail-branch-git-")));

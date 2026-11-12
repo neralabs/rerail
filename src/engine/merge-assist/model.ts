@@ -10,6 +10,8 @@ import { z } from "zod";
  */
 export const JUDGE_RUNNERS = ["claude", "codex"] as const;
 export type JudgeRunnerId = (typeof JUDGE_RUNNERS)[number];
+/** Each judge runner as a person knows it. */
+export const JUDGE_RUNNER_NAMES: Readonly<Record<JudgeRunnerId, string>> = { claude: "Claude Code", codex: "Codex" };
 
 export const GITHUB_STATES = ["signed-in", "signed-out", "missing", "not-github"] as const;
 export type GithubState = (typeof GITHUB_STATES)[number];
@@ -78,15 +80,15 @@ export const conflictSignalsSchema = z.object({
 export type ConflictSignals = z.infer<typeof conflictSignalsSchema>;
 
 export const conflictSideSchema = z.object({
-  label: z.string().describe("\"This branch\", \"This session\", \"PR #398\" or a branch name."),
+  label: z.string().describe("\"This branch\" for this checkout's side; \"PR #398\" or a branch name for theirs."),
   ref: z.string(),
   sha: z.string(),
   author: z.string().nullable(),
   tip: z.object({ at: z.string(), pushed: z.boolean() }).nullable()
     .describe("When the side's commit was made, and whether it is pushed (on a remote-tracking ref or a pull request) or only committed locally; null for this branch's working state."),
   url: z.string().nullable(),
-  summary: z.string().describe("One sentence: the side's design or change."),
-  location: z.string().nullable().describe("Where: \"src/x.ts:469\" or \"docs/x.md §9\"."),
+  summary: z.string().describe("One line: the subject of the commit that changed the side's contested lines, else theirs' pull request title, else \"edits <file>\"."),
+  location: z.string().nullable().describe("Where the side's overlapping hunk starts: \"src/x.ts:469\"."),
   hunk: z.string().nullable().describe("That side's conflicting hunk, at most 40 lines of unified diff."),
 });
 export type ConflictSide = z.infer<typeof conflictSideSchema>;

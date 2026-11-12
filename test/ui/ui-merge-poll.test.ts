@@ -3,6 +3,7 @@ import type { MergeAssistStatus } from "../../src/engine/index.js";
 import { captureScope, refresh, setNeeds, writeMergeAssist } from "../../ui/poll.js";
 import { data, setScope, ui } from "../../ui/state.js";
 import { currentNeeds } from "../../ui/views/index.js";
+import { sampleStatus } from "../support/merge-assist/status.js";
 import { conflict } from "./support/merge-conflicts.js";
 
 /** A request the test answers itself: every Merge Assist write, and its reads while `holding`. */
@@ -17,23 +18,12 @@ let mergeRead: () => Response;
 const json = (body: unknown, code = 200): Response => new Response(JSON.stringify(body), { status: code });
 
 /** Merge Assist on, with one conflict open (`open`) or dismissed (`dismissed`). */
-function status(conflictStatus: "open" | "dismissed"): MergeAssistStatus {
-  return {
-    repositoryKey: "A", checkout: "/work/a", branch: "mine", baseBranch: "main", enabled: true,
-    settings: { delivery: "both", hook: null },
-    readiness: {
-      judge: { available: true, runner: "claude", problem: null },
-      github: { state: "not-github", login: null, repository: null },
-    },
-    budget: { used: 0, limit: 40, windowMinutes: 60 },
-    scanning: false,
-    lastScan: null,
-    conflicts: [conflict("c1", {
-      status: conflictStatus,
-      dismissal: conflictStatus === "dismissed" ? { name: "tbelanger", at: "2026-11-02T11:00:00Z" } : null,
-    })],
-  };
-}
+const status = (conflictStatus: "open" | "dismissed"): MergeAssistStatus => sampleStatus("/work/a", {
+  conflicts: [conflict("c1", {
+    status: conflictStatus,
+    dismissal: conflictStatus === "dismissed" ? { name: "tbelanger", at: "2026-11-02T11:00:00Z" } : null,
+  })],
+});
 
 /** Every other read a poll makes, each empty. */
 function emptyDaemon(url: URL): Response {

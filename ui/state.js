@@ -143,7 +143,7 @@ export const ui = {
   mergeDismissing: new Set(),
   /** Merge Assist's open disclosures: "problems", "dismissed", "settings". */
   mergeOpen: new Set(),
-  /** The Settings form while the person edits it: `{ delivery, command, timeout, problem }`, or `null` for the saved values. */
+  /** The Settings form while the person edits it: `{ delivery, command, timeout, problem, field }`, or `null` for the saved values. */
   mergeSettings: null,
   /** Merge Assist's settings being saved, while their request is out for the repository shown. */
   mergeSaving: false,

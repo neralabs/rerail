@@ -7,8 +7,6 @@
 
 .mpage{margin-top:16px;max-width:960px;--measure:72ch}
 .mpage > div:empty{display:none}
-/* Text read only by a screen reader: the strip's "into", a checklist line's Ready / Note, a conflict side's name. */
-.mpage .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
 
 /* ---- heading ---- */
 .mhead{display:block;margin:0 0 18px}
@@ -17,7 +15,6 @@
 .mhead p.pitch{margin:6px 0 0;max-width:var(--measure);font-size:13.5px;line-height:20px;color:var(--muted-foreground)}
 .mnote{margin:0 0 16px}
 .mnote > div{min-width:0}
-.mnote p.acts{margin-top:8px}
 
 /* ---- off: the consent card ---- */
 .mconsent{padding:20px 24px 22px}
@@ -31,7 +28,6 @@
 .mchecks li > .ico{margin-top:3px}
 .mchecks li.mready > .ico{color:var(--success-foreground)}
 .mchecks li.mnotready > .ico{color:var(--warning-foreground)}
-.mchecks .btn.ghost.link{padding-block:0;vertical-align:baseline}
 .mon{display:flex;flex-wrap:wrap;align-items:center;gap:10px 16px;margin-top:22px;padding-top:18px;border-top:1px solid var(--border)}
 .mon .btn{min-width:196px;justify-content:center}
 .mon p{margin:0;font-size:12.5px;line-height:1.5;color:var(--muted-foreground);flex:1 1 280px}
@@ -85,7 +81,6 @@
 .msec[hidden]{display:none}
 .msec > .ghead h2 .n2{vertical-align:1px}
 .msec > div:empty{display:none}
-.mlist[hidden]{display:none}
 .mrow{display:grid;gap:8px;padding:14px 16px;border-top:1px solid var(--border)}
 .mlist > .mrow:first-child{border-top:0}
 .mmeta{display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;font-size:12px;color:var(--muted-foreground)}
@@ -152,7 +147,6 @@
 .mtalk .mono{font-size:12px}
 
 .mnote2{margin:0;font-size:12px;line-height:1.5;color:var(--muted-foreground)}
-.mnote2 code{font-size:11.5px}
 
 /* Dismissed, folded: who dismissed each and when. */
 .mclosed .mctitle{font-weight:500}

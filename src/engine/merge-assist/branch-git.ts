@@ -1,7 +1,8 @@
 /**
  * What Merge Assist asks Git about a checkout's branches: the current and base branch, local and remote-tracking
- * branches and their tips, merge bases and ancestry, and the GitHub repository a key names. Every call goes through
- * `runGit`, so a repository's own config cannot run hooks or an fsmonitor; nothing here writes a ref or the index.
+ * branches and their tips, merge bases and ancestry, and the GitHub repository a key names; and the read every Merge
+ * Assist Git call shares ({@link gitRead}). Every call goes through `runGit`, so a repository's own config cannot run
+ * hooks or an fsmonitor; nothing here writes a ref or the index.
  */
 import { runGit, type RunGitOptions } from "../git.js";
 
@@ -22,29 +23,29 @@ export interface LocalBranch {
 }
 
 /**
- * Stdout of a successful `git -C root <args>`, untrimmed so NUL-separated output stays whole; undefined when Git
- * fails, times out or overflows.
+ * Stdout of a successful read-only `git -C root <args>`, paths unquoted (`core.quotePath=false`) and untrimmed so
+ * NUL-separated output stays whole; undefined when Git fails, times out or overflows.
  */
-function gitOutput(root: string, args: readonly string[], options?: RunGitOptions): string | undefined {
-  const result = runGit(root, args, options);
+export function gitRead(root: string, args: readonly string[], options?: RunGitOptions): string | undefined {
+  const result = runGit(root, ["-c", "core.quotePath=false", ...args], options);
   return result.status === 0 && result.error === undefined ? result.stdout : undefined;
 }
 
-/** A revision a caller passes: never read as an option, never empty. */
-function revisionArgument(revision: string): boolean {
-  return revision.length > 0 && !revision.startsWith("-") && !/[\0\n]/u.test(revision);
+/** A revision a caller passes: never read as an option, never empty, and no `<rev>:<path>` naming a file in a tree. */
+export function revisionArgument(revision: string): boolean {
+  return revision.length > 0 && !revision.startsWith("-") && !/[\0\n:]/u.test(revision);
 }
 
 /** The full name of a ref that resolves to a commit, or undefined. */
 function verifiedCommit(root: string, revision: string): string | undefined {
   if (!revisionArgument(revision)) return undefined;
-  const output = gitOutput(root, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${revision}^{commit}`]);
+  const output = gitRead(root, ["rev-parse", "--verify", "--quiet", "--end-of-options", `${revision}^{commit}`]);
   return output?.trim() || undefined;
 }
 
 /** The branch checked out in `root`, or null when HEAD is detached. */
 export function currentBranch(root: string): string | null {
-  const ref = gitOutput(root, ["symbolic-ref", "--quiet", "HEAD"])?.trim();
+  const ref = gitRead(root, ["symbolic-ref", "--quiet", "HEAD"])?.trim();
   return ref?.startsWith("refs/heads/") === true ? ref.slice("refs/heads/".length) : null;
 }
 
@@ -53,7 +54,7 @@ export function currentBranch(root: string): string | null {
  * `origin/master`, `main` and `master` that exists. `ref` is the full ref name; `name` the short one.
  */
 export function baseBranch(root: string): { ref: string; name: string } | null {
-  const originHead = gitOutput(root, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])?.trim();
+  const originHead = gitRead(root, ["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"])?.trim();
   const refs = [
     ...(originHead?.startsWith("refs/remotes/") === true ? [originHead] : []),
     "refs/remotes/origin/main",
@@ -72,7 +73,7 @@ export function baseBranch(root: string): { ref: string; name: string } | null {
  */
 function branchRemotes(root: string): Map<string, string> {
   // `-z` prints `<key>\n<value>\0`; Git exits 1 when no key matches.
-  const output = gitOutput(root, ["config", "-z", "--get-regexp", String.raw`^branch\..*\.remote$`]) ?? "";
+  const output = gitRead(root, ["config", "-z", "--get-regexp", String.raw`^branch\..*\.remote$`]) ?? "";
   const remotes = new Map<string, string>();
   for (const entry of output.split("\0")) {
     const newline = entry.indexOf("\n");
@@ -86,7 +87,7 @@ function branchRemotes(root: string): Map<string, string> {
 
 /** Every branch under `refs/heads`, with its tip, the checkout that has it checked out, and the remote it tracks. */
 export function localBranches(root: string): LocalBranch[] {
-  const output = gitOutput(root, ["for-each-ref", "--format=%(refname)%00%(objectname)%00%(worktreepath)", "refs/heads"], LIST_OPTIONS);
+  const output = gitRead(root, ["for-each-ref", "--format=%(refname)%00%(objectname)%00%(worktreepath)", "refs/heads"], LIST_OPTIONS);
   if (output === undefined) return [];
   const remotes = branchRemotes(root);
   return output.split("\n").flatMap(line => {
@@ -99,7 +100,7 @@ export function localBranches(root: string): LocalBranch[] {
 
 /** Remote-tracking branches with their tips, without the `<remote>/HEAD` symbolic refs. */
 export function remoteBranches(root: string): Array<{ readonly ref: string; readonly commit: string }> {
-  const output = gitOutput(root, ["for-each-ref", "--format=%(refname)%00%(objectname)%00%(symref)", "refs/remotes"], LIST_OPTIONS) ?? "";
+  const output = gitRead(root, ["for-each-ref", "--format=%(refname)%00%(objectname)%00%(symref)", "refs/remotes"], LIST_OPTIONS) ?? "";
   return output.split("\n").flatMap(line => {
     const [ref, commit, symref] = line.split("\0");
     return ref === undefined || ref === "" || commit === undefined || commit === "" || symref !== "" ? [] : [{ ref, commit }];
@@ -109,7 +110,7 @@ export function remoteBranches(root: string): Array<{ readonly ref: string; read
 /** The best common ancestor of two commits, or null when they share none or either is unknown. */
 export function mergeBase(root: string, a: string, b: string): string | null {
   if (!revisionArgument(a) || !revisionArgument(b)) return null;
-  return gitOutput(root, ["merge-base", "--end-of-options", a, b])?.trim().split("\n")[0] || null;
+  return gitRead(root, ["merge-base", "--end-of-options", a, b])?.trim().split("\n")[0] || null;
 }
 
 /** Whether `ancestor` is `descendant` or one of its ancestors; false when either is unknown. */

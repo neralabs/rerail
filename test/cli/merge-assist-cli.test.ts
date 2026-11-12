@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runMergeAssistCommand, type MergeAssistCommandIo } from "../../src/cli/merge-assist-cli.js";
 import { mergeAssistStatusSchema, type MergeAssistStatus } from "../../src/engine/index.js";
 import { MergeAssistError } from "../../src/runtime/index.js";
-import { RecordingMergeAssistService, sampleConflict, sampleStatus } from "../support/merge-assist-status.js";
+import { RecordingMergeAssistService, sampleConflict, sampleStatus } from "../support/merge-assist/status.js";
 
 const usage = (): string => "Usage: rerail merge-assist";
 const PAGE = "http://127.0.0.1:4737/?repository=remote%3Agithub.com%2Facme%2Fapp#merge";

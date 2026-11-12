@@ -6,6 +6,7 @@
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import { runGit } from "../git.js";
+import { revisionArgument } from "./branch-git.js";
 
 export const POLICY_PATH = ".rerail/policy.yaml";
 
@@ -51,7 +52,7 @@ export type LoadedPolicy =
 
 /** The policy at `revision` (the base branch a checkout's conflicts are levelled at): its file, the default when it has none, or why it is invalid. */
 export function loadPolicy(root: string, revision: string): LoadedPolicy {
-  if (revision.startsWith("-") || /[\0\n:]/u.test(revision)) return { source: "invalid", problems: [`not a revision: ${revision}`] };
+  if (!revisionArgument(revision)) return { source: "invalid", problems: [`not a revision: ${revision}`] };
   const result = runGit(root, ["cat-file", "blob", `${revision}:${POLICY_PATH}`], { maxBuffer: 1024 * 1024 });
   if (result.status !== 0) return { source: "default", policy: defaultPolicy() };
   const parsed = parsePolicy(result.stdout);

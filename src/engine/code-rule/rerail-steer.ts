@@ -227,11 +227,19 @@ export interface ConflictNoteInput {
 const sentence = (text: string): string => `${plainLine(text)}${/[.!?]$/u.test(plainLine(text)) ? "" : "."}`;
 
 /**
+ * A conflict's side as a person names it, `<label> (<author>)`, or its label alone while its author is unknown; `clean`
+ * makes each part fit where it is shown (one line, no control characters), and leaves them as they are by default.
+ */
+export function sideName(side: { readonly label: string; readonly author: string | null }, clean: (text: string) => string = text => text): string {
+  return side.author === null ? clean(side.label) : `${clean(side.label)} (${clean(side.author)})`;
+}
+
+/**
  * What the coding agent reads when its work overlaps another branch's in flight (lane 2): who, and what they change,
  * as information only. It never asks the agent to align: the person decides, on the Merge Assist page.
  */
 export function conflictNote(note: ConflictNoteInput): string {
-  const who = note.author === null ? plainLine(note.peer) : `${plainLine(note.peer)} (${plainLine(note.author)})`;
+  const who = sideName({ label: note.peer, author: note.author }, plainLine);
   return [
     MERGE_ASSIST_NOTE_LEAD,
     `Your edit to ${plainLine(note.file)} overlaps open work: ${who} ${sentence(note.summary)}`,

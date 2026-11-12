@@ -1,10 +1,10 @@
-import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { conflictId, quietFiles } from "../../../src/engine/merge-assist/conflicts.js";
 import { contestedAnchor, identify, overlaps, ownBase, refHunks, workspaceRanges } from "../../../src/engine/merge-assist/overlap.js";
+import { git as gitIn } from "../../support/git.js";
 
 const roots: string[] = [];
 afterEach(() => {
@@ -23,11 +23,7 @@ interface Repository {
 function repository(): Repository {
   const root = mkdtempSync(join(tmpdir(), "rerail-overlap-"));
   roots.push(root);
-  const git = (...args: string[]) => execFileSync("git", args, {
-    cwd: root,
-    encoding: "utf8",
-    env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null", GIT_AUTHOR_NAME: "Ann", GIT_AUTHOR_EMAIL: "ann@example.com", GIT_COMMITTER_NAME: "Ann", GIT_COMMITTER_EMAIL: "ann@example.com" },
-  }).trim();
+  const git = (...args: string[]) => gitIn(root, ...args);
   const write = (changes: Readonly<Record<number, string>>) => writeFileSync(join(root, "f.txt"), `${LINES.map((line, index) => changes[index + 1] ?? line).join("\n")}\n`);
   git("init", "-q", "-b", "main");
   write({});

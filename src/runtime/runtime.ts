@@ -40,6 +40,7 @@ import { keepPrivate } from "../engine/storage/private-files.js";
 import { callNamesSecretPath, WITHHELD_OUTPUT, type Withheld } from "../engine/transcript-boundary.js";
 import { scrubSecrets, scrubValue } from "../engine/secret-scrub.js";
 import { mergeAssistEnabled, recordCheckout } from "../engine/catalog/repository-registry.js";
+import type { PendingNote } from "./merge-assist/notes.js";
 import { createMergeAssistService, type MergeAssistRuntime } from "./merge-assist/service.js";
 import { RepositoryStartWatch } from "./repository-start.js";
 import { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "../engine/native/semantic-primitives.js";
@@ -686,6 +687,14 @@ function publicProjection(projection: SemanticProjection): unknown {
       renderedText: vector.renderedText,
       renderedHash: vector.renderedHash,
     })),
+  };
+}
+
+/** A Merge Assist note as the steer that carries it to `session`: a message naming no rule, with its conflict's line for the person. */
+function mergeAssistDelivery({ sessionId, host }: AdapterSession, note: PendingNote): AdapterDelivery {
+  return {
+    sessionId, requested: "steer", mechanism: ADAPTER_CAPABILITIES[host].delivery.steer, content: note.content, ruleIds: [], rules: [], strategy: "message",
+    ...(note.conflict === undefined ? {} : { conflict: note.conflict }),
   };
 }
 
@@ -1930,10 +1939,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       this.#supersedeConflictNotes(state, new Set(notes.flatMap(note => (note.conflict === undefined ? [] : [note.conflict.id]))));
       const deliveries: AdapterDelivery[] = [];
       for (const note of notes) {
-        const delivery: AdapterDelivery = {
-          sessionId, requested: "steer", mechanism: ADAPTER_CAPABILITIES[host].delivery.steer, content: note.content, ruleIds: [], rules: [], strategy: "message",
-          ...(note.conflict === undefined ? {} : { conflict: note.conflict }),
-        };
+        const delivery = mergeAssistDelivery(state.descriptor, note);
         await this.#append(state, { type: "delivery", delivery });
         deliveries.push(delivery);
       }
@@ -1987,10 +1993,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     for (const note of service.pendingNotes(sessionId, checkoutPath, state.mergeAssistNotesInFlight, host)) {
       for (const mark of note.marks) state.mergeAssistNotesInFlight.add(mark);
       const pending: PendingSteer = {
-        delivery: {
-          sessionId, requested: "steer", mechanism: ADAPTER_CAPABILITIES[host].delivery.steer, content: note.content, ruleIds: [], rules: [], strategy: "message",
-          ...(note.conflict === undefined ? {} : { conflict: note.conflict }),
-        },
+        delivery: mergeAssistDelivery(state.descriptor, note),
         // A note speaks for no source: no edit makes it stale.
         revision: Number.POSITIVE_INFINITY,
         scope: [],

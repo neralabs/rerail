@@ -17,7 +17,8 @@ export const sessionResponseSchema = z.object({
       .describe("How many rules and packs that are on run in Log in the session's checkout, waiting for a person's approval; null when the rule count is not current."),
     mergeAssist: z.object({
       conflicts: z.number().int().nonnegative(),
-      decide: z.object({ id: z.string(), title: z.string() }).nullable(),
+      decide: z.object({ id: z.string(), title: z.string() }).nullable()
+        .describe("The loudest open checkpoint or stop conflict, waiting on the person's decision; null when none is open."),
       summary: z.object({ id: z.string(), text: z.string() }).describe("The newest open conflict's status line text: the hook's status, else its summary."),
     }).optional().describe("Merge Assist's footer segment: absent while no conflict in the session's checkout is open above logged, or while the person's conflict delivery is chat."),
   }),

@@ -10,14 +10,16 @@ import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseArguments } from "../daemon/daemon.js";
 import { repositoryIdentityLocation, repositoryName } from "../engine/catalog/repository-identity.js";
+import { sideName } from "../engine/code-rule/rerail-steer.js";
+import { plural } from "../engine/merge-assist/dimmer.js";
 import {
   CONFLICT_DELIVERY_MODES,
   conflictHookCommandSchema,
   DEFAULT_HOOK_TIMEOUT_SECONDS,
+  JUDGE_RUNNER_NAMES,
   MAX_HOOK_TIMEOUT_SECONDS,
   type Conflict,
   type ConflictDelivery,
-  type JudgeRunnerId,
   type MergeAssistSettings,
   type MergeAssistStatus,
 } from "../engine/merge-assist/model.js";
@@ -29,7 +31,6 @@ const ACTIONS = ["status", "on", "off", "scan", "conflicts", "dismiss", "setting
 type MergeAssistAction = (typeof ACTIONS)[number];
 /** The dashboard's Merge Assist page, as its route spells it. */
 const DASHBOARD_PAGE = "merge";
-const RUNNER_NAMES: Record<JudgeRunnerId, string> = { claude: "Claude Code", codex: "Codex" };
 
 interface Output {
   write(text: string): unknown;
@@ -84,10 +85,6 @@ function quoted(text: string): string {
   return `"${plain(text)}"`;
 }
 
-function count(n: number, one: string, many: string): string {
-  return `${n} ${n === 1 ? one : many}`;
-}
-
 function timeText(iso: string): string {
   const time = new Date(iso);
   return Number.isNaN(time.getTime()) ? plain(iso) : `${time.toISOString().slice(0, 16).replace("T", " ")} UTC`;
@@ -99,14 +96,9 @@ function section(heading: string, entries: readonly string[][]): string[] {
   return [`  ${heading} (${entries.length}):`, ...entries.flat().map(line => `    ${line}`)];
 }
 
-/** Who is on a conflict's side: its label, with its author when known. */
-function sideText(side: Conflict["mine"]): string {
-  return `${plain(side.label)}${side.author === null ? "" : ` (${plain(side.author)})`}`;
-}
-
 /** A side's one sentence and where it is. */
 function sideLine(side: Conflict["mine"]): string {
-  return `${sideText(side)}: ${quoted(side.summary)}${side.location === null ? "" : ` at ${plain(side.location)}`}`;
+  return `${sideName(side, plain)}: ${quoted(side.summary)}${side.location === null ? "" : ` at ${plain(side.location)}`}`;
 }
 
 /** Who dismissed a conflict. */
@@ -166,7 +158,7 @@ function conflictSections(status: MergeAssistStatus, hunks: boolean): string[] {
 export function formatConflicts(status: MergeAssistStatus, dashboardUrl: string | null): string {
   const open = status.conflicts.filter(conflict => conflict.status === "open").length;
   return [
-    `● ${count(open, "open conflict", "open conflicts")} in ${repositoryName(status.checkout)}${status.branch === null ? "" : ` (${plain(status.branch)})`}.`,
+    `● ${plural(open, "open conflict", "open conflicts")} in ${repositoryName(status.checkout)}${status.branch === null ? "" : ` (${plain(status.branch)})`}.`,
     ...(status.enabled ? [] : ["  Merge Assist is off here, so Rerail finds no conflicts. Turn it on with rerail merge-assist on."]),
     ...conflictSections(status, true),
     ...(dashboardUrl === null ? [] : [`  Merge Assist page: ${dashboardUrl}`]),
@@ -188,7 +180,7 @@ function readinessLines(status: MergeAssistStatus): string[] {
   const { budget } = status;
   return [
     judge.available && judge.runner !== null
-      ? `  Summaries: ${RUNNER_NAMES[judge.runner]} · ${budget.used} of ${budget.limit} calls in the last ${budget.windowMinutes} minutes`
+      ? `  Summaries: ${JUDGE_RUNNER_NAMES[judge.runner]} · ${budget.used} of ${budget.limit} calls in the last ${budget.windowMinutes} minutes`
       : `  Summaries: unavailable, so each conflict keeps a plain line. Merge Assist runs Claude Code or Codex.${judge.problem === null ? "" : ` ${plain(judge.problem)}`}`,
     githubLine(status),
   ];
@@ -203,7 +195,7 @@ function scanLines(status: MergeAssistStatus, scanRequested: boolean): string[] 
     if (!status.scanning) lines.push("  No scan yet. Scan for conflicts with rerail merge-assist scan.");
     return lines;
   }
-  lines.push(`  Last scan: ${timeText(scan.at)}, ${count(scan.peers.branches, "branch", "branches")} and ${count(scan.peers.pullRequests, "pull request", "pull requests")}`);
+  lines.push(`  Last scan: ${timeText(scan.at)}, ${plural(scan.peers.branches, "branch", "branches")} and ${plural(scan.peers.pullRequests, "pull request", "pull requests")}`);
   for (const problem of scan.problems) lines.push(`    ${plain(problem)}`);
   return lines;
 }

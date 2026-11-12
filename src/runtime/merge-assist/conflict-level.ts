@@ -1,8 +1,8 @@
 /**
- * The dimmer's pass over a checkout's open conflicts at every detection (CONTRACT: Dimmer): measure each one's signals
- * from Git and decide its level with `dimConflict` (never below the level it showed, within the interruption budgets).
- * The budgets are the person's, across checkouts:
- * at most `checkpointsPerDay` checkpoint prompts a day and one stop per session, kept under `budget:<person>`.
+ * The dimmer's pass over a checkout's open conflicts at every detection (docs/merge-assist-v1-build.md §9.1): measure
+ * each one's signals from Git and decide its level with `dimConflict` (never below the level it showed, within the
+ * interruption budgets). The budgets are the person's, across checkouts: at most `checkpointsPerDay` checkpoint prompts
+ * a day and one stop per session, kept under `budget:<person>`.
  */
 import { z } from "zod";
 import { measureSignals, type ContestedChange } from "../../engine/merge-assist/conflict-signals.js";
@@ -124,7 +124,7 @@ export function levelConflicts(context: LevelContext, entries: readonly StoredCo
     .sort((left, right) => waiting(right.entry.conflict) - waiting(left.entry.conflict) || expectedRework(right.signals) - expectedRework(left.signals));
   const levelled = new Map<string, Conflict>();
   for (const { entry: { conflict }, signals } of measured) {
-    // A conflict the dimmer has not measured is new, unless it came back open at a level (reopened, at ambient).
+    // A conflict the dimmer has not measured yet (`undimmed`: logged, no signals) is new: it takes its level at once.
     const previous = conflict.signals === null && conflict.level === "logged" ? null : { level: conflict.level, queuedFor: conflict.queuedFor };
     const result = dimConflict({ signals, previous, budget: budgetFor(context, grants, conflict.id, config), config });
     if ((result.level === "checkpoint" || result.level === "stop")

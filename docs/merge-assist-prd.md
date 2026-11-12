@@ -29,8 +29,8 @@ and their coding agent when their work collides with someone else's, before it m
 **Removed.** Decision capture (corrections saved as decisions on the branch), decision delivery (the tiers, session
 focus, area ranking, coordination units, notes about decisions), the decision ledger (verdicts written as files that
 travelled with their branch) and the resolver (a policy that named the winning side) were built and evaluated as
-recorded below, then removed. Git history keeps them under the tags `merge-assist-capture-experiment` (capture,
-delivery, verdicts and the resolver, up to their removal) and `merge-assist-ledger-experiment` (the decision ledger).
+recorded below, then removed. The commits of pull request #526 keep them: `51f748b563` (capture, delivery, verdicts
+and the resolver, the last commit before their removal) and `96c2c406d2` (the decision ledger).
 Sections below that present them as current carry a **Removed** line; their text and numbers are unchanged.
 
 ## 1. Summary
@@ -106,7 +106,7 @@ a merge, a hosted service, Git hosts other than GitHub for pull requests.
 ## 5. The model: a decision is a rule
 
 > **Removed.** Decisions as rules in `.rerail/rules/` were designed, never built; the demo build's candidate files that
-> stood in for them were removed (tag `merge-assist-capture-experiment`).
+> stood in for them were removed (commit `51f748b563`, [Delivered scope](#delivered-scope)).
 
 ### 5.1 What a decision is
 

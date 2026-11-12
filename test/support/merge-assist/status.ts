@@ -2,9 +2,9 @@
  * A Merge Assist status as the service reports it, and a recording service that answers with it, for the layers that
  * only call the service (API, CLI).
  */
-import { DEFAULT_MERGE_ASSIST_SETTINGS } from "../../src/engine/index.js";
-import type { Conflict, MergeAssistSettings, MergeAssistStatus } from "../../src/engine/index.js";
-import type { MergeAssistActor, MergeAssistError, MergeAssistService, MergeAssistSettingsChange } from "../../src/runtime/index.js";
+import { DEFAULT_MERGE_ASSIST_SETTINGS } from "../../../src/engine/index.js";
+import type { Conflict, MergeAssistSettings, MergeAssistStatus } from "../../../src/engine/index.js";
+import type { MergeAssistActor, MergeAssistError, MergeAssistService, MergeAssistSettingsChange } from "../../../src/runtime/index.js";
 
 export function sampleConflict(overrides: Partial<Conflict> = {}): Conflict {
   return {

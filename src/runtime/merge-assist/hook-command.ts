@@ -9,7 +9,7 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import type { ConflictEvent, ConflictHookCommand, ConflictHookOutcome } from "../../engine/merge-assist/model.js";
-import { sanitizeTail } from "./agent-judge.js";
+import { KILL_GRACE_MS, sanitizeTail } from "./agent-judge.js";
 import type { ConflictHandler, ConflictHandlerContext } from "./conflict-hook.js";
 import { viaChat } from "./conflict-delivery.js";
 import type { StoredConflict } from "./conflict-store.js";
@@ -20,8 +20,6 @@ export const MAX_HOOK_OUTPUT_BYTES = 4 * 1024;
 /** The longest note and status line kept from its answer. */
 export const MAX_HOOK_NOTE = 600;
 export const MAX_HOOK_STATUS = 90;
-/** Grace a stopped command gets after SIGTERM before SIGKILL. */
-const KILL_GRACE_MS = 2_000;
 
 /** What the command gets on stdin. */
 export interface HookPayload {

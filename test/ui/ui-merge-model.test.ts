@@ -1,31 +1,18 @@
 import { describe, expect, it } from "vitest";
 import type { ConflictDelivery, MergeAssistStatus } from "../../src/engine/index.js";
 import {
-  budgetText, conflictSections, dismissToast, githubText, hookFailure, hunkLines, judgeText, openConflictCount,
-  readinessChecks, safePeerUrl, scanSummary, scannedWhat, settingsChange, settingsDraft, settingsSummary, writeError,
+  budgetText, conflictSections, dismissToast, githubText, hookFailure, hunkLines, openConflictCount, readinessChecks,
+  safePeerUrl, scanSummary, scannedWhat, settingsChange, settingsDraft, settingsSummary, summarizerText, writeError,
 } from "../../ui/merge-model.js";
+import { sampleStatus } from "../support/merge-assist/status.js";
 import { conflict, dismissed } from "./support/merge-conflicts.js";
 
 const NOW = Date.parse("2026-11-02T12:00:00Z");
 const at = (minutesAgo: number) => new Date(NOW - minutesAgo * 60_000).toISOString();
 
-const status = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({
-  repositoryKey: "remote:github.com/acme/storefront",
-  checkout: "/work/storefront",
-  branch: "tbelanger/export-api",
-  baseBranch: "main",
-  enabled: true,
-  settings: { delivery: "both", hook: null },
-  readiness: {
-    judge: { available: true, runner: "claude", problem: null },
-    github: { state: "signed-in", login: "tbelanger", repository: "acme/storefront" },
-  },
-  budget: { used: 3, limit: 40, windowMinutes: 60 },
-  scanning: false,
-  lastScan: { at: at(4), peers: { branches: 3, pullRequests: 2 }, problems: [] },
-  conflicts: [],
-  ...over,
-});
+/** Merge Assist on, its last scan four minutes ago over 3 local branches and 2 open pull requests. */
+const status = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus =>
+  sampleStatus("/work/storefront", { lastScan: { at: at(4), peers: { branches: 3, pullRequests: 2 }, problems: [] }, ...over });
 
 describe("a peer's link", () => {
   const onGithub = { repositoryKey: "remote:github.com/acme/storefront", repository: "acme/storefront" };
@@ -63,8 +50,8 @@ describe("a peer's link", () => {
 
 describe("the status strip", () => {
   it("names the summarising CLI, or says none was found with why", () => {
-    expect(judgeText({ available: true, runner: "codex", problem: null })).toEqual({ ok: true, text: "Codex" });
-    expect(judgeText({ available: false, runner: null, problem: "Neither claude nor codex is on PATH." }))
+    expect(summarizerText({ available: true, runner: "codex", problem: null })).toEqual({ ok: true, text: "Codex" });
+    expect(summarizerText({ available: false, runner: null, problem: "Neither claude nor codex is on PATH." }))
       .toEqual({ ok: false, text: "No agent CLI found", detail: "Neither claude nor codex is on PATH." });
   });
 

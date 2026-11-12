@@ -22,8 +22,8 @@ import { captureScope, inScope, writeMergeAssist } from "../poll.js";
 import { invalidate, toast } from "../shell.js";
 import {
   DELIVERY_MODES, DELIVERY_TEXT, HOOK_TIMEOUT_DEFAULT, HOOK_TIMEOUT_MAX, LEVEL_BADGE, LEVEL_TEXT, QUEUED_TEXT,
-  branchText, budgetText, conflictSections, dismissToast, githubText, hookFailure, hunkLines, judgeText, quoted,
-  readinessChecks, safePeerUrl, scanSummary, scannedWhat, settingsChange, settingsDraft, settingsSummary, sideHeading,
+  branchText, budgetText, conflictSections, dismissToast, githubText, hookFailure, hunkLines, quoted, readinessChecks,
+  safePeerUrl, scanSummary, scannedWhat, settingsChange, settingsDraft, settingsSummary, sideHeading, summarizerText,
   writeError,
 } from "../merge-model.js";
 
@@ -184,11 +184,14 @@ const segments = parts => parts.map(part => (typeof part === "string" ? part : h
 /** A time a row shows ("4m ago"); patched on every render, so it moves on without rebuilding the row. */
 const ageSlot = () => h("span.mago");
 
-/** A peer's pull request link when `safePeerUrl` accepts it for this repository, else `null`. */
-function safeLink(url) {
+/**
+ * A side's pull request as a link that opens it on GitHub, or `null` when `safePeerUrl` does not accept its URL for
+ * this repository.
+ */
+function peerLink(side) {
   const status = data.mergeAssist;
-  if (status === null) return null;
-  return safePeerUrl(url, { repositoryKey: status.repositoryKey, repository: status.readiness.github.repository });
+  const href = status === null ? null : safePeerUrl(side.url, { repositoryKey: status.repositoryKey, repository: status.readiness.github.repository });
+  return href === null ? null : h("a.mlink", { href, target: "_blank", rel: "noopener noreferrer", title: `Open ${side.label} on GitHub` }, side.label);
 }
 
 /* ---------- conflict cards ---------- */
@@ -206,9 +209,8 @@ function sideWhere(side) {
 
 /** One side of a conflict: who (a link when its pull request is safe to open), what, the hunk and where. */
 function sideBox(side, which) {
-  const href = safeLink(side.url);
-  const who = href === null ? sideHeading(side)
-    : [h("a.mlink", { href, target: "_blank", rel: "noopener noreferrer", title: `Open ${side.label} on GitHub` }, side.label), side.author ? ` · ${side.author}` : null];
+  const link = peerLink(side);
+  const who = link === null ? sideHeading(side) : [link, side.author ? ` · ${side.author}` : null];
   return h(`div.mside.${which}`, null,
     h("span.k", null, h("span.vh", null, which === "mine" ? "Mine: " : "Theirs: "), who),
     h("p.msum", null, side.summary),
@@ -225,9 +227,7 @@ function whyConflict(evidence) {
 
 /** Who to settle it with, and their branch or pull request (a link when it is safe to open). */
 function talkTo(theirs) {
-  const href = safeLink(theirs.url);
-  const where = href === null ? h("span.mono", null, theirs.label)
-    : h("a.mlink", { href, target: "_blank", rel: "noopener noreferrer", title: `Open ${theirs.label} on GitHub` }, theirs.label);
+  const where = peerLink(theirs) ?? h("span.mono", null, theirs.label);
   return h("p.mtalk", null, "Talk it over with ", theirs.author ? h("b.mauthor", null, theirs.author) : "the author", " (", where,
     "). Rerail never picks a side; dismiss it if it isn’t a conflict.");
 }
@@ -390,7 +390,7 @@ function stripCells(status, scan) {
   return h("div.mcells", null,
     cell("Status", h("span.mon-state", null, h("span.dot", { "aria-hidden": "true" }), "On")),
     cell("Branch", [h("span.mono", null, branch), h("span.marrow", { "aria-hidden": "true" }, " → "), h("span.vh", null, " into "), h("span.mono", null, base)]),
-    cell("Summaries", warnable(judgeText(status.readiness.judge))),
+    cell("Summaries", warnable(summarizerText(status.readiness.judge))),
     cell("GitHub", warnable(githubText(status.readiness.github))),
     cell("Last scan", scan === null ? "Not scanned yet" : [page.stripWhen, h("span.sub", null, scannedWhat(scan))]),
     cell("Agent calls", budgetValue(budgetText(status.budget))));

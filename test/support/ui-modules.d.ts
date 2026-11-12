@@ -325,12 +325,10 @@ declare module "*/ui/merge-model.js" {
   type Status = import("../../src/engine/index.js").MergeAssistStatus;
   type Conflict = import("../../src/engine/index.js").Conflict;
   type Segment = string | { code: string };
-  export const RUNNER_NAMES: Record<string, string>;
-  export function runnerName(id: string): string;
   export function safePeerUrl(url: unknown, context?: { repositoryKey?: string; repository?: string | null }): string | null;
   export function openConflictCount(status: Status | null | undefined, dismissing?: Set<string>): number;
   export function branchText(status: Status): { branch: string; base: string };
-  export function judgeText(judge: Status["readiness"]["judge"]): { ok: boolean; text: string; detail?: string | null };
+  export function summarizerText(judge: Status["readiness"]["judge"]): { ok: boolean; text: string; detail?: string | null };
   export function githubText(github: Status["readiness"]["github"]): { ok: boolean; text: string };
   export function scannedWhat(lastScan: NonNullable<Status["lastScan"]>): string;
   export function budgetText(budget: Status["budget"]): { text: string; spent: boolean };

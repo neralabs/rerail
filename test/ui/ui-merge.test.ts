@@ -1,99 +1,46 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MergeAssistStatus } from "../../src/engine/index.js";
 import { changeScope } from "../../ui/poll.js";
 import { data, ui } from "../../ui/state.js";
-import { actions, onInput, render } from "../../ui/views/merge.js";
-import { FakeElement, FakeNode, fakeDocument, type FakeDocument } from "./support/fake-dom.js";
+import { onInput, render } from "../../ui/views/merge.js";
+import type { FakeElement } from "./support/fake-dom.js";
 import { conflict } from "./support/merge-conflicts.js";
+import { mergePage, storefrontStatus } from "./support/merge-page.js";
 
-type Request = { method: string; url: string; body: Record<string, unknown> | undefined; answer: (status: number, body?: unknown) => void };
-
-const fixture = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => ({
-  repositoryKey: "remote:github.com/acme/storefront",
-  checkout: "/work/a",
-  branch: "tbelanger/export-api",
-  baseBranch: "main",
+/** Off, with no agent CLI found and gh signed out. */
+const fixture = (over: Partial<MergeAssistStatus> = {}): MergeAssistStatus => storefrontStatus({
   enabled: false,
-  settings: { delivery: "both", hook: null },
   readiness: {
     judge: { available: false, runner: null, problem: "Neither claude nor codex is on PATH." },
     github: { state: "signed-out", login: null, repository: null },
   },
-  budget: { used: 0, limit: 40, windowMinutes: 60 },
-  scanning: false,
   lastScan: null,
-  conflicts: [],
   ...over,
 });
 
 /** On, signed in, scanned two minutes before noon, with one open conflict. */
-const onFixture = (): MergeAssistStatus => fixture({
-  enabled: true,
-  readiness: {
-    judge: { available: true, runner: "claude", problem: null },
-    github: { state: "signed-in", login: "tbelanger", repository: "acme/storefront" },
-  },
-  lastScan: { at: "2026-11-02T11:58:00Z", peers: { branches: 2, pullRequests: 1 }, problems: [] },
-  conflicts: [conflict("conflict:a")],
-});
+const onFixture = (): MergeAssistStatus => storefrontStatus({ conflicts: [conflict("conflict:a")] });
 
 describe("the Merge Assist page", () => {
-  let requests: Request[] = [];
-  let root: FakeElement;
-  let document: FakeDocument;
-  const writes = () => requests.filter(r => r.method !== "GET");
-  const button = (act: string, id?: string) =>
-    root.querySelector(id === undefined ? `button[data-act="${act}"]` : `button[data-act="${act}"][data-i="${id}"]`);
-  const toastText = () => document.getElementById("toast")!.textContent;
-  /** What a click on `el` runs, as `app.js` dispatches it; nothing for a disabled button. */
-  const click = (el: FakeElement | null) => {
-    if (el === null) throw new Error("no such button");
-    if (el.disabled) return undefined;
-    return actions[el.dataset.act!]!(el.dataset.i, el);
-  };
-  const conflicts = () => root.querySelector('section[data-section="conflicts"]')!;
-
-  beforeEach(() => {
-    requests = [];
-    document = fakeDocument();
-    vi.stubGlobal("document", document);
-    vi.stubGlobal("Node", FakeNode);
-    vi.stubGlobal("location", { origin: "http://127.0.0.1:4000" });
-    vi.stubGlobal("fetch", (input: URL, init: { method?: string; body?: string } = {}) => {
-      const { promise, resolve } = Promise.withResolvers<Response>();
-      requests.push({
-        method: init.method ?? "GET",
-        url: String(input),
-        body: init.body === undefined ? undefined : JSON.parse(init.body) as Record<string, unknown>,
-        answer: (status, body) => resolve(new Response(body === undefined ? null : JSON.stringify(body), { status })),
-      });
-      return promise;
-    });
-    data.repository = null;
-    changeScope({ repository: "A", checkout: "/work/a" });
-    data.repository = { setUp: true, repositoryKey: "A", name: "storefront" };
-    root = new FakeElement("div");
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
+  const page = mergePage();
+  const { button, click, toastText, writes } = page;
+  const conflicts = () => page.root.querySelector('section[data-section="conflicts"]')!;
 
   it("pitches catching collisions with work in flight", () => {
     data.mergeAssist = fixture();
-    render(root);
-    expect(root.querySelector("p.pitch")!.textContent).toBe(
+    render(page.root);
+    expect(page.root.querySelector("p.pitch")!.textContent).toBe(
       "Rerail watches the branches and pull requests in flight and tells you and your coding agent when your work collides with someone else’s, before it merges.");
   });
 
   describe("while off", () => {
     beforeEach(() => {
       data.mergeAssist = fixture();
-      render(root);
+      render(page.root);
     });
 
     it("says what turning it on does and what Rerail found, with the one button", () => {
-      const card = root.querySelector(".mconsent")!;
+      const card = page.root.querySelector(".mconsent")!;
       expect(card.textContent).toContain("What turning it on does");
       const bullets = card.querySelectorAll("ul.mbul li").map(li => li.textContent);
       expect(bullets).toHaveLength(3);
@@ -103,13 +50,13 @@ describe("the Merge Assist page", () => {
       expect(checks.map(li => [li.dataset.check, li.className])).toEqual([["judge", "mnotready"], ["github", "mnotready"]]);
       expect(checks[0]!.textContent).toContain("need Claude Code or Codex on your PATH");
       expect(button("maon")!.textContent).toBe("Turn on Merge Assist");
-      expect(root.querySelector(".mstrip")).toBeNull();
+      expect(page.root.querySelector(".mstrip")).toBeNull();
       expect(conflicts().hidden).toBe(true);
     });
 
     it("turning on sends the setting for the checkout the page shows, holds the button, then shows the page on", async () => {
       const turning = click(button("maon"));
-      render(root);
+      render(page.root);
       expect(button("maon")!.disabled).toBe(true);
       expect(button("maon")!.textContent).toBe("Turning on…");
       await vi.waitFor(() => expect(writes()).toHaveLength(1));
@@ -120,11 +67,11 @@ describe("the Merge Assist page", () => {
 
       writes()[0]!.answer(200, { ...fixture(), enabled: true });
       await turning;
-      render(root);
+      render(page.root);
 
       expect(toastText()).toBe("Merge Assist is on in storefront. You and your coding agent are told when your work here collides with work in flight.");
-      expect(root.querySelector(".mconsent")).toBeNull();
-      expect(root.querySelector(".mstrip")!.textContent).toContain("Not scanned yet");
+      expect(page.root.querySelector(".mconsent")).toBeNull();
+      expect(page.root.querySelector(".mstrip")!.textContent).toContain("Not scanned yet");
       expect(conflicts().hidden).toBe(false);
       expect(conflicts().textContent).toContain("No open conflicts");
       expect(conflicts().textContent).toContain("Rerail looks for conflicts on every scan and after your coding agent’s edits");
@@ -135,7 +82,7 @@ describe("the Merge Assist page", () => {
       await vi.waitFor(() => expect(writes()).toHaveLength(1));
       writes()[0]!.answer(403, { error: "agent-not-permitted", message: "Only a person can turn Merge Assist on." });
       await turning;
-      render(root);
+      render(page.root);
 
       expect(toastText()).toContain("Couldn’t turn on Merge Assist. Only a person can turn Merge Assist on.");
       expect(button("maon")!.disabled).toBe(false);
@@ -146,29 +93,28 @@ describe("the Merge Assist page", () => {
   describe("while on", () => {
     beforeEach(() => {
       data.mergeAssist = onFixture();
-      render(root);
+      render(page.root);
     });
 
-    it("shows the strip, then the open conflicts with their count, and no tabs", () => {
-      const strip = root.querySelector(".mstrip")!;
+    it("shows the strip, then the open conflicts with their count", () => {
+      const strip = page.root.querySelector(".mstrip")!;
       expect(strip.textContent).toContain("Signed in as tbelanger");
       expect(strip.textContent).toContain("Claude Code");
       expect(strip.textContent).toContain("0 of 40 this hour");
       expect(conflicts().querySelector("h2")!.textContent).toBe("Open conflicts1");
       expect(conflicts().querySelectorAll("article.mcard")).toHaveLength(1);
-      expect(root.querySelector(".mtabs")).toBeNull();
     });
 
     it("Scan now posts a scan for the checkout and says how many conflicts it found that were not shown before", async () => {
       const scanning = click(button("mascan"));
-      render(root);
+      render(page.root);
       expect(button("mascan")!.textContent).toBe("Scanning…");
       expect(button("mascan")!.disabled).toBe(true);
       await vi.waitFor(() => expect(writes()).toHaveLength(1));
       expect(writes()[0]).toMatchObject({ method: "POST", url: expect.stringMatching(/\/api\/merge-assist\/scan$/u), body: { repository: "A", checkout: "/work/a" } });
       writes()[0]!.answer(200, { ...onFixture(), conflicts: [conflict("conflict:a"), conflict("conflict:b")] });
       await scanning;
-      render(root);
+      render(page.root);
 
       expect(toastText()).toBe("Scanned 2 local branches and 1 open pull request. New: 1 conflict.");
       expect(conflicts().querySelectorAll("article.mcard")).toHaveLength(2);
@@ -179,7 +125,7 @@ describe("the Merge Assist page", () => {
       await vi.waitFor(() => expect(writes()).toHaveLength(1));
       writes()[0]!.answer(200, { ...onFixture(), scanning: true });
       await scanning;
-      render(root);
+      render(page.root);
 
       expect(toastText()).toBe("Another scan is running; showing the last results.");
       expect(button("mascan")!.disabled).toBe(true);
@@ -188,25 +134,25 @@ describe("the Merge Assist page", () => {
     it("keeps the focused button through Scan now and Turn off: it is updated in place, not rebuilt", async () => {
       const scanButton = button("mascan"), offButton = button("maoff");
       const scanning = click(scanButton);
-      render(root);
+      render(page.root);
       expect(button("mascan")).toBe(scanButton);
       expect(scanButton!.disabled).toBe(true);
       await vi.waitFor(() => expect(writes()).toHaveLength(1));
       writes()[0]!.answer(200, onFixture());
       await scanning;
-      render(root);
+      render(page.root);
       expect(button("mascan")).toBe(scanButton);
       expect([scanButton!.disabled, scanButton!.textContent]).toEqual([false, "Scan now"]);
 
       const turningOff = click(offButton);
-      render(root);
+      render(page.root);
       expect(button("maoff")).toBe(offButton);
       expect([offButton!.disabled, offButton!.textContent]).toEqual([true, "Turning off…"]);
       expect(button("madismiss", "conflict:a")!.disabled).toBe(true);
       await vi.waitFor(() => expect(writes()).toHaveLength(2));
       writes()[1]!.answer(500, { error: "internal", message: "Disk full." });
       await turningOff;
-      render(root);
+      render(page.root);
       expect(button("maoff")).toBe(offButton);
       expect(offButton!.disabled).toBe(false);
       expect(button("madismiss", "conflict:a")!.disabled).toBe(false);
@@ -218,34 +164,34 @@ describe("the Merge Assist page", () => {
       expect(writes()[0]!.body).toEqual({ repository: "A", checkout: "/work/a", enabled: false });
       writes()[0]!.answer(200, { ...onFixture(), enabled: false });
       await turningOff;
-      render(root);
+      render(page.root);
       expect(toastText()).toBe("Merge Assist is off in storefront. Rerail no longer looks for conflicts here.");
-      expect(root.querySelector(".mconsent")).not.toBeNull();
+      expect(page.root.querySelector(".mconsent")).not.toBeNull();
       expect(conflicts().hidden).toBe(true);
     });
 
     it("unfolds what the last scan could not read, and keeps it open across renders", () => {
       data.mergeAssist = { ...onFixture(), lastScan: { at: "2026-11-02T11:58:00Z", peers: { branches: 2, pullRequests: 1 }, problems: ["gh: rate limited"] } };
-      render(root);
-      const fold = root.querySelector("details.mproblems")!;
+      render(page.root);
+      const fold = page.root.querySelector("details.mproblems")!;
       expect(fold.querySelector("summary")!.textContent).toBe("1 thing the last scan could not read");
       click(fold.querySelector("summary"));
-      render(root);
-      expect(root.querySelector("details.mproblems")!.hasAttribute("open")).toBe(true);
+      render(page.root);
+      expect(page.root.querySelector("details.mproblems")!.hasAttribute("open")).toBe(true);
       expect(ui.mergeOpen.has("problems")).toBe(true);
     });
 
     it("shows why it cannot read Merge Assist and nothing to act on, not the last status", () => {
       data.mergeAssistError = "/api/merge-assist?repository=A answered 500";
-      render(root);
-      expect(root.querySelector('[role="alert"]')!.textContent).toContain("Couldn’t read Merge Assist for this checkout.");
-      expect(root.querySelectorAll("button[data-act]").filter(b => b.closest("[hidden]") === null).map(b => b.dataset.act)).toEqual([]);
+      render(page.root);
+      expect(page.root.querySelector('[role="alert"]')!.textContent).toContain("Couldn’t read Merge Assist for this checkout.");
+      expect(page.root.querySelectorAll("button[data-act]").filter(b => b.closest("[hidden]") === null).map(b => b.dataset.act)).toEqual([]);
       expect(conflicts().hidden).toBe(true);
-      expect(root.querySelector(".mstrip")).toBeNull();
+      expect(page.root.querySelector(".mstrip")).toBeNull();
 
       data.mergeAssistError = null;
-      render(root);
-      expect(root.querySelector('[role="alert"]')).toBeNull();
+      render(page.root);
+      expect(page.root.querySelector('[role="alert"]')).toBeNull();
       expect(button("mascan")!.disabled).toBe(false);
     });
 
@@ -256,7 +202,7 @@ describe("the Merge Assist page", () => {
       changeScope({ repository: "B", checkout: "/work/b" });
       data.repository = { setUp: true, repositoryKey: "B", name: "billing" };
       data.mergeAssist = { ...onFixture(), checkout: "/work/b" };
-      render(root);
+      render(page.root);
       expect([button("mascan")!.disabled, button("mascan")!.textContent]).toEqual([false, "Scan now"]);
       expect(button("maoff")!.disabled).toBe(false);
 
@@ -264,19 +210,19 @@ describe("the Merge Assist page", () => {
       writes()[0]!.answer(200, onFixture());
       writes()[1]!.answer(200, { ...onFixture(), enabled: false });
       await Promise.all([scanning, turningOff]);
-      render(root);
+      render(page.root);
       expect(data.mergeAssist!.checkout).toBe("/work/b");
       expect([ui.mergeScanning, ui.mergeSwitching]).toEqual([false, false]);
     });
 
     describe("the Settings section", () => {
-      const settings = () => root.querySelector("details.msettings")!;
-      const input = (id: string) => root.querySelector(`input[id="${id}"]`) as (FakeElement & { value: string }) | null;
+      const settings = () => page.root.querySelector("details.msettings")!;
+      const input = (id: string) => page.root.querySelector(`input[id="${id}"]`) as (FakeElement & { value: string }) | null;
       const type = (id: string, text: string) => {
         const el = input(id)!;
         el.value = text;
         onInput(el);
-        render(root);
+        render(page.root);
       };
       const checked = () => settings().querySelectorAll("button.mopt").filter(b => b.getAttribute("aria-checked") === "true").map(b => b.dataset.i);
       const problem = () => settings().querySelector('p[id="ma-settings-problem"]')!;
@@ -284,12 +230,12 @@ describe("the Merge Assist page", () => {
 
       it("shows the saved delivery mode, hook command and timeout, with what each mode does, folded until opened", () => {
         data.mergeAssist = { ...onFixture(), settings: saved };
-        render(root);
+        render(page.root);
         expect(settings().hidden).toBe(false);
         expect(settings().hasAttribute("open")).toBe(false);
         expect(settings().querySelector("summary")!.textContent).toBe("Settings: delivery terminal, conflict hook: ./scripts/on-conflict.sh");
         click(settings().querySelector("summary"));
-        render(root);
+        render(page.root);
         expect(settings().hasAttribute("open")).toBe(true);
         expect(settings().querySelectorAll("button.mopt").map(b => [b.dataset.i, b.querySelector(".mopt-l")!.textContent])).toEqual([["chat", "Chat"], ["terminal", "Terminal"], ["both", "Both"]]);
         expect(settings().querySelectorAll("button.mopt .sub").every(line => line.textContent.length > 0)).toBe(true);
@@ -303,7 +249,7 @@ describe("the Merge Assist page", () => {
         expect(checked()).toEqual(["both"]);
         expect([input("ma-hook")!.value, input("ma-timeout")!.value]).toEqual(["", "10"]);
         click(button("madelivery", "terminal"));
-        render(root);
+        render(page.root);
         expect(checked()).toEqual(["terminal"]);
         const field = input("ma-hook");
         type("ma-hook", " [\"./scripts/on-conflict.sh\", \"--quiet\"] ");
@@ -311,7 +257,7 @@ describe("the Merge Assist page", () => {
         expect(input("ma-hook")).toBe(field); // typing never rebuilds the form
 
         const saving = click(button("masettings"));
-        render(root);
+        render(page.root);
         expect([button("masettings")!.disabled, button("masettings")!.textContent]).toEqual([true, "Saving…"]);
         await vi.waitFor(() => expect(writes()).toHaveLength(1));
         expect(writes()[0]).toMatchObject({ method: "PUT", url: expect.stringMatching(/\/api\/merge-assist\/settings$/u) });
@@ -319,7 +265,7 @@ describe("the Merge Assist page", () => {
 
         writes()[0]!.answer(200, { ...onFixture(), settings: saved });
         await saving;
-        render(root);
+        render(page.root);
         expect(toastText()).toBe("Saved Merge Assist’s settings for storefront.");
         expect(ui.mergeSettings).toBeNull();
         expect(settings().querySelector("summary")!.textContent).toBe("Settings: delivery terminal, conflict hook: ./scripts/on-conflict.sh");
@@ -329,7 +275,7 @@ describe("the Merge Assist page", () => {
 
       it("an empty command removes the hook", async () => {
         data.mergeAssist = { ...onFixture(), settings: saved };
-        render(root);
+        render(page.root);
         type("ma-hook", "");
         const saving = click(button("masettings"));
         await vi.waitFor(() => expect(writes()).toHaveLength(1));
@@ -341,7 +287,7 @@ describe("the Merge Assist page", () => {
       it("refuses a hook command that is not a JSON array of non-empty strings, sending nothing, until it is fixed", async () => {
         type("ma-hook", "./scripts/on-conflict.sh --quiet");
         await click(button("masettings"));
-        render(root);
+        render(page.root);
         expect(writes()).toHaveLength(0);
         expect(problem().hidden).toBe(false);
         expect(problem().textContent).toBe("The hook command must be a JSON array of non-empty strings, like [\"./scripts/on-conflict.sh\", \"--quiet\"].");
@@ -352,7 +298,7 @@ describe("the Merge Assist page", () => {
         expect(input("ma-hook")!.hasAttribute("aria-invalid")).toBe(false);
         type("ma-timeout", "90");
         await click(button("masettings"));
-        render(root);
+        render(page.root);
         expect(writes()).toHaveLength(0);
         expect(problem().textContent).toBe("The timeout must be a whole number of seconds from 1 to 60.");
         expect(input("ma-timeout")!.getAttribute("aria-invalid")).toBe("true");
@@ -360,7 +306,7 @@ describe("the Merge Assist page", () => {
 
       it("is not shown while off", () => {
         data.mergeAssist = fixture();
-        render(root);
+        render(page.root);
         expect(settings().hidden).toBe(true);
       });
     });

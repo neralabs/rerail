@@ -41,6 +41,8 @@ export {
   type MergeAssistServiceOptions,
   type MergeAssistSettingsChange,
 } from "./merge-assist/service.js";
+export { type AgentJudge, type JudgeOutcome, type JudgeTask } from "./merge-assist/agent-judge.js";
+export { type GithubClient, type GithubRepository, type PullRequestSummary } from "./merge-assist/github.js";
 export {
   isRerailStarted,
   setCheckoutStarted,

@@ -1,11 +1,12 @@
 /**
- * The dimmer's signals for one open conflict, measured from Git (CONTRACT: Dimmer): how hard the contested change is
- * to undo (lock-in), how much depends on it (blast radius), how fast both sides build on it (growth), and how long
- * until it meets the other side at merge. Reads only; merges and writes nothing.
+ * The dimmer's signals for one open conflict, measured from Git (docs/merge-assist-v1-build.md §9.1): how hard the
+ * contested change is to undo (lock-in), how much depends on it (blast radius), how fast both sides build on it
+ * (growth), and how long until it meets the other side at merge. Reads only; merges and writes nothing.
  */
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { runGit } from "../git.js";
+import { gitRead } from "./branch-git.js";
 import { quietFiles } from "./conflicts.js";
 import type { ConflictSignals, LockInClass } from "./model.js";
 
@@ -71,11 +72,6 @@ export interface SignalCheckout {
   readonly now: number;
 }
 
-function gitRead(root: string, args: readonly string[]): string {
-  const result = runGit(root, ["--no-optional-locks", "-c", "core.quotePath=false", ...args], GIT_OPTIONS);
-  return result.status === 0 ? result.stdout : "";
-}
-
 /** Exported names a side's hunk declares on its removed lines and on its added lines. */
 function exportedNames(hunk: string | null): { removed: Set<string>; added: Set<string> } {
   const removed = new Set<string>();
@@ -127,7 +123,7 @@ export function contestedSymbols(hunks: ContestedChange["hunks"]): string[] {
 /** Files in the base, other than the contested ones, that name one of `symbols` as a whole word; at most {@link MAX_CALLERS}. */
 export function callersOf(checkout: SignalCheckout, symbols: readonly string[], contested: readonly string[]): number {
   if (symbols.length === 0) return 0;
-  const output = gitRead(checkout.root, ["grep", "-l", "-w", "-F", ...symbols.flatMap(symbol => ["-e", symbol]), checkout.baseRef, "--"]);
+  const output = gitRead(checkout.root, ["grep", "-l", "-w", "-F", ...symbols.flatMap(symbol => ["-e", symbol]), checkout.baseRef, "--"], GIT_OPTIONS) ?? "";
   const prefix = `${checkout.baseRef}:`;
   const skip = new Set(contested);
   const files = output.split("\n").filter(line => line !== "").map(line => (line.startsWith(prefix) ? line.slice(prefix.length) : line));
@@ -136,7 +132,7 @@ export function callersOf(checkout: SignalCheckout, symbols: readonly string[], 
 
 /** Lines added by the commits in `range` to `specs`. */
 function linesAdded(root: string, range: string, specs: readonly string[]): number {
-  return sumAdded(gitRead(root, ["log", "--no-renames", "--numstat", "--format=", range, "--", ...specs]));
+  return sumAdded(gitRead(root, ["log", "--no-renames", "--numstat", "--format=", range, "--", ...specs], GIT_OPTIONS) ?? "");
 }
 
 /** The first column of `--numstat` output, binary files left out. */
@@ -151,8 +147,8 @@ function sumAdded(numstat: string): number {
 
 /** Lines this checkout's working files add to `specs` against HEAD, untracked files counted whole. */
 function workingLines(root: string, specs: readonly string[]): number {
-  const tracked = sumAdded(gitRead(root, ["diff", "--no-renames", "--numstat", "HEAD", "--", ...specs]));
-  const untracked = gitRead(root, ["ls-files", "--others", "--exclude-standard", "-z", "--", ...specs]).split("\0").filter(path => path !== "");
+  const tracked = sumAdded(gitRead(root, ["diff", "--no-renames", "--numstat", "HEAD", "--", ...specs], GIT_OPTIONS) ?? "");
+  const untracked = (gitRead(root, ["ls-files", "--others", "--exclude-standard", "-z", "--", ...specs], GIT_OPTIONS) ?? "").split("\0").filter(path => path !== "");
   let lines = 0;
   for (const path of untracked) {
     try {
@@ -167,14 +163,14 @@ function workingLines(root: string, specs: readonly string[]): number {
 
 /** A commit's committer time in ms; null when it cannot be read. */
 function commitTime(root: string, sha: string): number | null {
-  const seconds = Number(gitRead(root, ["log", "-1", "--format=%ct", sha, "--"]).trim());
+  const seconds = Number((gitRead(root, ["log", "-1", "--format=%ct", sha, "--"], GIT_OPTIONS) ?? "").trim());
   return Number.isFinite(seconds) && seconds > 0 ? seconds * 1_000 : null;
 }
 
 /** Hours until theirs merges: a day with a pull request open, else its age, at least a day and at most two weeks. */
 function hoursToMergeOf(checkout: SignalCheckout, change: ContestedChange): number {
   if (change.pullRequest || change.theirs.own === null) return PULL_REQUEST_HOURS;
-  const times = gitRead(checkout.root, ["log", "--format=%ct", `${change.theirs.own}..${change.theirs.sha}`, "--"])
+  const times = (gitRead(checkout.root, ["log", "--format=%ct", `${change.theirs.own}..${change.theirs.sha}`, "--"], GIT_OPTIONS) ?? "")
     .split("\n").map(Number).filter(seconds => Number.isFinite(seconds) && seconds > 0);
   const age = times.length === 0 ? 0 : (checkout.now - Math.min(...times) * 1_000) / HOUR_MS;
   return Math.min(MAX_HOURS_TO_MERGE, Math.max(PULL_REQUEST_HOURS, age));

@@ -342,12 +342,7 @@ export class CheckoutCatalogs {
    * checkout's configuration signature, so the next refresh rebuilds its rules.
    */
   #ruleCatalogOf(root: string): RuleCatalog {
-    return worktreeRuleCatalog(this.ruleCatalog, root);
-  }
-
-  /** The installed packs' catalog, without any checkout's own rules: fixed by `options.ruleCatalog`, else read now. */
-  get ruleCatalog(): RuleCatalog {
-    return this.#ruleCatalog ?? loadRuleCatalog();
+    return worktreeRuleCatalog(this.#ruleCatalog ?? loadRuleCatalog(), root);
   }
 
   /** The checkout at `root` (a physical checkout top level) as last read; refreshed with `refresh`. */

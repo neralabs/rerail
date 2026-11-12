@@ -154,6 +154,17 @@ export {
 export { bundledModelPath, ENTRY_POINTS, PACKAGE_ROOT, REQUIRED_NODE_MAJOR } from "./package-root.js";
 export { RERAIL_HOSTS, type CodingAgentState } from "./adapter-contract.js";
 export { type ApiCaller } from "./catalog/repository-model.js";
-export * from "./merge-assist/model.js";
-export * from "./merge-assist/policy.js";
-export * from "./merge-assist/dimmer.js";
+export {
+  DEFAULT_MERGE_ASSIST_SETTINGS,
+  mergeAssistSettingsSchema,
+  mergeAssistStatusSchema,
+  type Conflict,
+  type ConflictDelivery,
+  type ConflictSide,
+  type ConflictSignals,
+  type GithubReadiness,
+  type MergeAssistSettings,
+  type MergeAssistStatus,
+} from "./merge-assist/model.js";
+export { defaultPolicy, parsePolicy } from "./merge-assist/policy.js";
+export { dimConflict, type DimmerBudget, type DimmerPrevious } from "./merge-assist/dimmer.js";

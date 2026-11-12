@@ -5,7 +5,8 @@ import { describe, expect, it } from "vitest";
 import { mergeAssistState } from "../../../src/engine/index.js";
 import type { PullRequestSummary } from "../../../src/runtime/merge-assist/github.js";
 import { createMergeAssistService } from "../../../src/runtime/merge-assist/service.js";
-import { commit, FakeGithub, FakeJudge, git, mergeAssistWorkspaces } from "./support/merge-assist-workspace.js";
+import { commit, git } from "../../support/git.js";
+import { FakeGithub, FakeJudge, mergeAssistWorkspaces } from "../../support/merge-assist/workspace.js";
 
 const workspace = mergeAssistWorkspaces();
 

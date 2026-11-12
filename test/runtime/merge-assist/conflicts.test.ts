@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mergeAssistStatusSchema, type Conflict } from "../../../src/engine/index.js";
-import { commit, mergeAssistWorkspaces, takeNotes, writeFiles, type Workspace } from "./support/merge-assist-workspace.js";
+import { commit, writeFiles } from "../../support/git.js";
+import { mergeAssistWorkspaces, takeNotes, type Workspace } from "../../support/merge-assist/workspace.js";
 
 const workspace = mergeAssistWorkspaces();
 

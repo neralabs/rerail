@@ -5,6 +5,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
+import { sideName } from "../../engine/code-rule/rerail-steer.js";
 import { MAX_CONFLICT_SUMMARY } from "../../engine/merge-assist/model.js";
 
 /** The most contested files the summary prompt lists. */
@@ -100,7 +101,7 @@ const SUMMARY_INSTRUCTIONS = `Two branches of this repository change the same co
 /** The summary prompt for one conflict, with both sides fenced as data. */
 export function summaryPrompt(input: SummaryInput, nonce: string): string {
   const side = (summary: string, hunk: string | null): string => [cut(summary, MAX_SUMMARY_SIDE_CHARS), ...(hunk === null ? [] : ["", cut(hunk, MAX_SUMMARY_HUNK_CHARS)])].join("\n");
-  const theirs = input.theirs.author === null ? input.theirs.label : `${input.theirs.label} (${input.theirs.author})`;
+  const theirs = sideName(input.theirs);
   return [
     framing(nonce, "When unsure, say plainly which code both sides change."),
     "",

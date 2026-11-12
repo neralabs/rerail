@@ -2,11 +2,10 @@
  * Real Git repositories, a Rerail database, and stand-ins for the agent CLI judge and `gh`, for Merge Assist's
  * service-level tests. Nothing here reaches the network or starts an agent CLI.
  */
-import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { afterEach } from "vitest";
 import {
   openRerailDatabase,
@@ -14,11 +13,19 @@ import {
   setUpRepository,
   type GithubReadiness,
   type RerailDatabase,
-} from "../../../../src/engine/index.js";
-import { setRepositoryStarted } from "../../../../src/runtime/index.js";
-import type { AgentJudge, JudgeOutcome, JudgeTask } from "../../../../src/runtime/merge-assist/agent-judge.js";
-import type { GithubClient, GithubRepository, PullRequestSummary } from "../../../../src/runtime/merge-assist/github.js";
-import { createMergeAssistService, type MergeAssistRuntime } from "../../../../src/runtime/merge-assist/service.js";
+} from "../../../src/engine/index.js";
+import {
+  createMergeAssistService,
+  setRepositoryStarted,
+  type AgentJudge,
+  type GithubClient,
+  type GithubRepository,
+  type JudgeOutcome,
+  type JudgeTask,
+  type MergeAssistRuntime,
+  type PullRequestSummary,
+} from "../../../src/runtime/index.js";
+import { commit, git } from "../git.js";
 
 /** The notes the session has not been handed, recorded as handed, as a delivery that takes them all would. */
 export function takeNotes(service: MergeAssistRuntime, sessionId: string, checkoutPath: string): string[] {
@@ -28,34 +35,7 @@ export function takeNotes(service: MergeAssistRuntime, sessionId: string, checko
 }
 
 /** `src/api/orders.ts` as branch `mine` commits it. */
-export const ORDERS_CLEAN = "export const orders = () => client.get(\"/orders\");\n";
-
-const GIT_ENV: NodeJS.ProcessEnv = {
-  ...process.env,
-  GIT_AUTHOR_NAME: "Tim Belanger",
-  GIT_AUTHOR_EMAIL: "tim@example.com",
-  GIT_COMMITTER_NAME: "Tim Belanger",
-  GIT_COMMITTER_EMAIL: "tim@example.com",
-  GIT_CONFIG_NOSYSTEM: "1",
-};
-
-export function git(cwd: string, ...args: string[]): string {
-  return execFileSync("git", args, { cwd, env: GIT_ENV, encoding: "utf8" }).trim();
-}
-
-export function writeFiles(root: string, files: Readonly<Record<string, string>>): void {
-  for (const [path, content] of Object.entries(files)) {
-    mkdirSync(dirname(join(root, path)), { recursive: true });
-    writeFileSync(join(root, path), content);
-  }
-}
-
-export function commit(root: string, files: Readonly<Record<string, string>>, message = "change"): string {
-  writeFiles(root, files);
-  git(root, "add", "-A");
-  git(root, "commit", "-q", "-m", message);
-  return git(root, "rev-parse", "HEAD");
-}
+const ORDERS_CLEAN = "export const orders = () => client.get(\"/orders\");\n";
 
 /** A judge that answers from `answer` (a value the task parses, or a failure) and records every task. */
 export class FakeJudge implements AgentJudge {
@@ -76,10 +56,6 @@ export class FakeJudge implements AgentJudge {
     const answer = this.answer(task as JudgeTask<unknown>);
     if (typeof answer === "object" && answer !== null && "ok" in answer && answer.ok === false) return answer as JudgeOutcome<T>;
     return { ok: true, value: task.parse(answer), runner: "claude", cached: false };
-  }
-
-  count(kind: JudgeTask<unknown>["kind"]): number {
-    return this.tasks.filter(task => task.kind === kind).length;
   }
 }
 

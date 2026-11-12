@@ -1,6 +1,6 @@
 /**
- * The dimmer: how loud an open conflict gets, decided from what Git measures (CONTRACT: Dimmer). Interrupt only when
- * continuing costs more than stopping: the expected rework if the conflict is left to merge is
+ * The dimmer: how loud an open conflict gets, decided from what Git measures (docs/merge-assist-v1-build.md §9.1).
+ * Interrupt only when continuing costs more than stopping: the expected rework if the conflict is left to merge is
  * `pLose × growthPerHour × hoursToMerge × lockIn × (1 + log2(1 + blastRadius))` lines, against what one interruption of
  * the person costs (`interruptCost`). Pure: the runtime measures the signals, keeps the budgets and stores the result.
  */
@@ -97,7 +97,8 @@ const LOCK_IN_TEXT: Readonly<Record<LockInClass, string>> = {
   local: "local code",
 };
 
-const plural = (count: number, one: string, many: string): string => `${count} ${count === 1 ? one : many}`;
+/** `count` with its noun: `1 caller`, `3 callers`. */
+export const plural = (count: number, one: string, many: string): string => `${count} ${count === 1 ? one : many}`;
 const hours = (value: number): string => `${Math.max(1, Math.round(value))} h`;
 
 /** One plain sentence per signal, as the conflict's card shows them. */

@@ -1,35 +1,14 @@
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { RerailRuntime } from "../../../src/runtime/runtime.js";
 import type { PullRequestSummary } from "../../../src/runtime/merge-assist/github.js";
-import type { MergeAssistRuntime } from "../../../src/runtime/merge-assist/service.js";
-import { commit, FakeGithub, mergeAssistWorkspaces, writeFiles, type Workspace } from "./support/merge-assist-workspace.js";
+import { commit, writeFiles } from "../../support/git.js";
+import { FakeGithub, mergeAssistWorkspaces } from "../../support/merge-assist/workspace.js";
+import { sessionRuntime } from "./support/conflict-sessions.js";
 
 const workspace = mergeAssistWorkspaces();
 
 /** Their change to line 10 of the model, and 7 lines that build on it: enough growth for the dimmer to make it ambient. */
 const SHARED = ["  shared 10", ...Array.from({ length: 7 }, (_, index) => `  built ${index + 1}`)].join("\n");
-
-/** A session runtime over the workspace's database with Merge Assist `service`, and an evaluator that finds nothing. */
-function sessionRuntime(ws: Workspace, service: MergeAssistRuntime): RerailRuntime {
-  return new RerailRuntime({
-    autostart: false,
-    workspaceRoot: ws.repo,
-    storageRoot: join(ws.folder, "sessions"),
-    databasePath: ws.databasePath,
-    mergeAssist: service,
-    embedder: {
-      fingerprint: () => ({ modelId: "test", revision: "1", dimensions: 2, weightsSha256: "test", tokenizerSha256: "test", kernelFormatVersion: 1 }),
-      embed: async texts => texts.map(() => new Float32Array([1, 0])),
-    },
-    createAuditor: () => ({
-      openWorkspace: async () => undefined,
-      acceptsPath: () => true,
-      auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
-      close: async () => undefined,
-    }),
-  });
-}
 
 describe("Merge Assist in a session", { timeout: 30_000 }, () => {
   it("closes a session without waiting for its scan", async () => {

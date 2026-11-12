@@ -1,10 +1,10 @@
-import { execFileSync } from "node:child_process";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { defaultPolicy, loadPolicy, parsePolicy, POLICY_PATH } from "../../../src/engine/merge-assist/policy.js";
+import { commit, git } from "../../support/git.js";
 
 const DEFAULTS = { version: 1, dimmer: { interruptCost: 300, stopGrowthPerHour: 50, checkpointsPerDay: 3 } };
 
@@ -46,20 +46,11 @@ describe("loadPolicy", () => {
     await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
   });
 
-  const git = (cwd: string, ...args: string[]): string =>
-    execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" }).trim();
-
   async function repository(policy: string | null): Promise<string> {
     const root = realpathSync(await mkdtemp(join(tmpdir(), "rerail-policy-")));
     roots.push(root);
     git(root, "init", "--quiet", "-b", "main");
-    writeFileSync(join(root, "README.md"), "app\n");
-    if (policy !== null) {
-      mkdirSync(join(root, ".rerail"));
-      writeFileSync(join(root, POLICY_PATH), policy);
-    }
-    git(root, "add", ".");
-    git(root, "commit", "--quiet", "-m", "start");
+    commit(root, { "README.md": "app\n", ...(policy === null ? {} : { [POLICY_PATH]: policy }) }, "start");
     return root;
   }
 

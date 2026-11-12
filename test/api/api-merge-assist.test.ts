@@ -1,4 +1,3 @@
-import { execFileSync } from "node:child_process";
 import { mkdirSync, realpathSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,18 +10,11 @@ import { operations } from "../../src/api/operations.js";
 import { DatabaseApiStores } from "../../src/api/stores.js";
 import { CALLER_CWD_HEADER, mergeAssistSettingsSchema, mergeAssistStatusSchema, recordCheckout } from "../../src/engine/index.js";
 import { MERGE_ASSIST_ERROR_CODES, MergeAssistError } from "../../src/runtime/index.js";
-import { RecordingMergeAssistService } from "../support/merge-assist-status.js";
-import { commit, mergeAssistWorkspaces, writeFiles } from "../runtime/merge-assist/support/merge-assist-workspace.js";
+import { commit, git, writeFiles } from "../support/git.js";
+import { RecordingMergeAssistService } from "../support/merge-assist/status.js";
+import { mergeAssistWorkspaces } from "../support/merge-assist/workspace.js";
 
 const CONFLICT = "conflict:overlap:0123456789abcdef01234567:89abcdef";
-
-function git(cwd: string, ...args: string[]): void {
-  execFileSync("git", args, {
-    cwd,
-    stdio: "ignore",
-    env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com" },
-  });
-}
 
 function gitRepository(path: string, origin: string): string {
   mkdirSync(path, { recursive: true });

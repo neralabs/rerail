@@ -4,41 +4,13 @@ import type { AdapterDelivery, Conflict } from "../../../src/engine/index.js";
 import { claudeHookOutput } from "../../../src/hosts/claude/index.js";
 import { codexHookEvents, codexHookOutput } from "../../../src/hosts/codex/index.js";
 import { SqliteSessionReader, SqliteSessionStore } from "../../../src/runtime/index.js";
-import { RerailRuntime } from "../../../src/runtime/runtime.js";
-import type { MergeAssistRuntime } from "../../../src/runtime/merge-assist/service.js";
-import { commit, mergeAssistWorkspaces, takeNotes, writeFiles, type Workspace } from "./support/merge-assist-workspace.js";
-
-/** A session runtime over the workspace's database with Merge Assist `service`, and an evaluator that finds nothing. */
-function sessionRuntime(ws: Workspace, service: MergeAssistRuntime): RerailRuntime {
-  return new RerailRuntime({
-    autostart: false,
-    workspaceRoot: ws.repo,
-    storageRoot: join(ws.folder, "sessions"),
-    databasePath: ws.databasePath,
-    mergeAssist: service,
-    embedder: {
-      fingerprint: () => ({ modelId: "test", revision: "1", dimensions: 2, weightsSha256: "test", tokenizerSha256: "test", kernelFormatVersion: 1 }),
-      embed: async texts => texts.map(() => new Float32Array([1, 0])),
-    },
-    createAuditor: () => ({
-      openWorkspace: async () => undefined,
-      acceptsPath: () => true,
-      auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
-      close: async () => undefined,
-    }),
-  });
-}
+import { commit, writeFiles } from "../../support/git.js";
+import { mergeAssistWorkspaces, takeNotes, type Workspace } from "../../support/merge-assist/workspace.js";
+import { body, grown, open, sessionRuntime } from "./support/conflict-sessions.js";
 
 const workspace = mergeAssistWorkspaces();
 
 const HOUR = 3_600_000;
-/** `function <name>() {`, 38 numbered lines, `}`: a file whose line 20 both sides change. */
-const body = (name: string, changes: Readonly<Record<number, string>> = {}): string =>
-  `${[`function ${name}() {`, ...Array.from({ length: 38 }, (_, index) => `  const ${name}${index + 2} = ${index + 2};`), "}"]
-    .map((line, index) => changes[index + 1] ?? line).join("\n")}\n`;
-/** Line 20 changed and `extra` lines built on it, as theirs commits it. */
-const grown = (name: string, extra: number): string =>
-  body(name, { 20: [`  const ${name}20 = "theirs";`, ...Array.from({ length: extra }, (_, index) => `  const grown${index} = ${name}20;`)].join("\n") });
 
 /**
  * The base holds `files` (each a `body`), and one branch per file, `jbarnes-<n>`, changes its line 20 and builds `extra`
@@ -52,7 +24,6 @@ async function overlaps(files: readonly string[], extra: number, base: Record<st
 }
 
 const nameOf = (file: string): string => file.replace(/^.*\//u, "").replace(/\W.*$/u, "");
-const open = (conflicts: readonly Conflict[]): Conflict[] => conflicts.filter(conflict => conflict.status === "open");
 const byFile = (conflicts: readonly Conflict[], file: string): Conflict => {
   const found = conflicts.find(conflict => conflict.mine.location?.startsWith(`${file}:`) === true);
   if (found === undefined) throw new Error(`no conflict in ${file}`);

@@ -11,7 +11,7 @@ import { like } from "drizzle-orm";
 import { isAbsolute, relative, sep } from "node:path";
 import { z } from "zod";
 import type { ConflictNotice } from "../../engine/adapter-contract.js";
-import { checkpointNote, conflictNote, hookFollowUpNote, hookNote, stopNote, type ConflictCardInput } from "../../engine/code-rule/rerail-steer.js";
+import { checkpointNote, conflictNote, hookFollowUpNote, hookNote, sideName, stopNote, type ConflictCardInput } from "../../engine/code-rule/rerail-steer.js";
 import type { Conflict, ConflictDelivery } from "../../engine/merge-assist/model.js";
 import type { RerailDatabase } from "../../engine/storage/database.js";
 import { mergeAssistState } from "../../engine/storage/schema.js";
@@ -30,8 +30,6 @@ export interface PendingNote {
 
 /** The prefix every mark of a conflict starts with. */
 const conflictMark = (conflict: Conflict): string => `${conflict.id}:`;
-
-const who = (side: Conflict["theirs"]): string => (side.author === null ? side.label : `${side.label} (${side.author})`);
 
 /** How a session takes a checkout's conflict notes: the person's settings, the conflict hook's state, and its host. */
 export interface ConflictNoteOptions {
@@ -54,7 +52,7 @@ function noticeOf(entry: StoredConflict, options: ConflictNoteOptions): Conflict
   const { conflict } = entry;
   const text = conflict.level === "checkpoint" || conflict.level === "stop"
     ? `decide: ${conflict.title} (${conflict.theirs.label})`
-    : `your edit overlaps ${who(conflict.theirs)}: ${conflict.title}`;
+    : `your edit overlaps ${sideName(conflict.theirs)}: ${conflict.title}`;
   const summary = viaTerminal(options.delivery) && !options.surfaces.statusLine ? ` — ${statusText(entry, options.now)}` : "";
   return { id: conflict.id, text: `${text}${summary}` };
 }
@@ -227,7 +225,7 @@ function editedPaths(root: string, call: EditCall): string[] {
 /** The question a host that can ask the person puts before an edit to a contested file. */
 function stopAsk({ conflict, files }: StoredConflict): string {
   const contested = files.length === 1 ? `${files[0]} is` : `${files.join(", ")} are`;
-  return `Rerail: ${contested} contested with ${who(conflict.theirs)}: ${conflict.title}. Allow this edit, or deny it and talk to ${conflict.theirs.author ?? `the author of ${conflict.theirs.label}`} first.`;
+  return `Rerail: ${contested} contested with ${sideName(conflict.theirs)}: ${conflict.title}. Allow this edit, or deny it and talk to ${conflict.theirs.author ?? `the author of ${conflict.theirs.label}`} first.`;
 }
 
 /**

@@ -8,12 +8,12 @@
  */
 import { andList, fmt, plural } from "./format.js";
 
-/** The agent CLIs Merge Assist runs for judgment (`JUDGE_RUNNERS`), by the names people know them by. */
-export const RUNNER_NAMES = { claude: "Claude Code", codex: "Codex" };
-/** "Claude Code or Codex": the CLIs a person can install to get judgment. */
+/** The agent CLIs Merge Assist runs for conflicts' one-line summaries (`JUDGE_RUNNERS`), by the names people know them by. */
+const RUNNER_NAMES = { claude: "Claude Code", codex: "Codex" };
+/** "Claude Code or Codex": the CLIs a person can install to get one-line summaries. */
 const SUPPORTED_RUNNERS = andList(Object.values(RUNNER_NAMES)).replace(/ and (?=[^,]*$)/u, " or ");
 
-export const runnerName = id => RUNNER_NAMES[id] ?? id;
+const runnerName = id => RUNNER_NAMES[id] ?? id;
 
 /**
  * A peer's pull request link, only when it is an `https:` URL with no credentials or port, on a GitHub host that is
@@ -193,8 +193,8 @@ export function branchText(status) {
   };
 }
 
-/** The agent CLI used for judgment, or that none was found. */
-export function judgeText(judge) {
+/** The agent CLI that writes conflicts' one-line summaries, or that none was found. */
+export function summarizerText(judge) {
   if (judge.available && judge.runner !== null) return { ok: true, text: runnerName(judge.runner) };
   return { ok: false, text: "No agent CLI found", detail: judge.problem };
 }

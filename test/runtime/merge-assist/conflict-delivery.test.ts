@@ -4,20 +4,14 @@ import { describe, expect, it, vi } from "vitest";
 import type { AdapterDelivery, Conflict, ConflictDelivery } from "../../../src/engine/index.js";
 import { claudeHookOutput } from "../../../src/hosts/claude/index.js";
 import { SqliteSessionReader, SqliteSessionStore } from "../../../src/runtime/index.js";
-import { RerailRuntime } from "../../../src/runtime/runtime.js";
+import type { RerailRuntime } from "../../../src/runtime/runtime.js";
 import type { AgentJudge, JudgeOutcome, JudgeTask } from "../../../src/runtime/merge-assist/agent-judge.js";
 import type { MergeAssistRuntime } from "../../../src/runtime/merge-assist/service.js";
-import { commit, defaultAnswer, FakeJudge, git, mergeAssistWorkspaces, SUMMARY, takeNotes, writeFiles, type Workspace } from "./support/merge-assist-workspace.js";
+import { commit, git, writeFiles } from "../../support/git.js";
+import { defaultAnswer, FakeJudge, mergeAssistWorkspaces, SUMMARY, takeNotes, type Workspace } from "../../support/merge-assist/workspace.js";
+import { body, grown, open, sessionRuntime } from "./support/conflict-sessions.js";
 
 const workspace = mergeAssistWorkspaces();
-
-/** `function <name>() {`, 38 numbered lines, `}`: a file whose line 20 both sides change. */
-const body = (name: string, changes: Readonly<Record<number, string>> = {}): string =>
-  `${[`function ${name}() {`, ...Array.from({ length: 38 }, (_, index) => `  const ${name}${index + 2} = ${index + 2};`), "}"]
-    .map((line, index) => changes[index + 1] ?? line).join("\n")}\n`;
-/** Line 20 changed and `extra` lines built on it, as theirs commits it. */
-const grown = (name: string, extra: number): string =>
-  body(name, { 20: [`  const ${name}20 = "theirs";`, ...Array.from({ length: extra }, (_, index) => `  const grown${index} = ${name}20;`)].join("\n") });
 
 /** Lines theirs builds on its change: enough for a checkpoint, and few enough for an ambient overlap. */
 const CHECKPOINT = 30;
@@ -34,8 +28,6 @@ async function overlap(file: string, extra: number): Promise<{ ws: Workspace; th
   writeFiles(ws.repo, { [file]: body("retry", { 22: "  const retry22 = \"mine\";" }) });
   return { ws, theirs };
 }
-
-const open = (conflicts: readonly Conflict[]): Conflict[] => conflicts.filter(conflict => conflict.status === "open");
 
 /** The footer a session working in the checkout reads. */
 function footer(ws: Workspace, sessionId: string): unknown {
@@ -72,62 +64,68 @@ function heldJudge(): { judge: AgentJudge; release: () => void; asked: Array<Jud
   return { judge, release: () => gate.resolve(), asked };
 }
 
-/** A hook command for a test: its argv, and each call it got, as it logged it. */
+/** One call a hook command got, as it logged it on starting. */
+interface HookCall {
+  readonly argv: string[];
+  readonly event: string;
+  readonly id: string;
+  readonly cwd: string;
+  readonly pid: number;
+  readonly stdin: Record<string, unknown>;
+}
+
+/** A hook command for a test: its argv, what it logged, and the gate a held command waits on. */
 interface HookScript {
   readonly command: string[];
-  readonly calls: () => Array<{ argv: string[]; event: string; id: string; cwd: string; pid: number; at: number; stdin: Record<string, unknown> }>;
+  readonly calls: () => HookCall[];
+  /** What it did, in order: `call <event>` on starting, `answer <event>` as it answered. */
+  readonly steps: () => string[];
+  /** The process an `orphan` command left behind. */
+  readonly orphan: () => number;
+  /** Lets a `held` command answer, and the process an `orphan` command left behind exit. */
+  readonly release: () => void;
 }
 
 /**
  * A conflict hook command (`node <script> <log>`): it appends what it got (argv, the two variables, its folder, its
- * stdin and its pid) to the log, then answers as `mode` says: a note and a status (at once, after 1.5 s, or after 3 s),
- * a failure, a hang, or output that is not JSON. Its waits are a real command's, in its own process.
+ * stdin and its pid) to the log, then answers as `mode` says: a note and a status (at once, or, `held`, once the test
+ * releases it), a failure, a hang, output that is not JSON, or nothing while a process it left behind holds its
+ * output until the test releases it. The release is a file next to the log, which both processes poll for.
  */
-function hookScript(ws: Workspace, mode: "answer" | "fail" | "hang" | "garbage" | "slow" | "late" | "orphan" = "answer"): HookScript {
+function hookScript(ws: Workspace, mode: "answer" | "fail" | "hang" | "garbage" | "held" | "orphan" = "answer"): HookScript {
   const script = join(ws.folder, `hook-${mode}.cjs`);
   const log = join(ws.folder, `hook-${mode}.jsonl`);
+  const release = `${log}.release`;
   writeFileSync(log, "");
+  const released = (then: string): string => `const poll = setInterval(() => { if (require('node:fs').existsSync(${JSON.stringify(release)})) { clearInterval(poll); ${then}; } }, 20);`;
   writeFileSync(script, [
     "const fs = require('node:fs');",
+    "const record = entry => fs.appendFileSync(process.argv[2], JSON.stringify(entry) + '\\n');",
     "let input = '';",
     "process.stdin.on('data', chunk => { input += chunk; });",
     "process.stdin.on('end', () => {",
-    "  fs.appendFileSync(process.argv[2], JSON.stringify({ argv: process.argv.slice(2), event: process.env.RERAIL_CONFLICT_EVENT, id: process.env.RERAIL_CONFLICT_ID, cwd: process.cwd(), pid: process.pid, at: Date.now(), stdin: JSON.parse(input) }) + '\\n');",
+    "  const event = process.env.RERAIL_CONFLICT_EVENT;",
+    "  record({ kind: 'call', argv: process.argv.slice(2), event, id: process.env.RERAIL_CONFLICT_ID, cwd: process.cwd(), pid: process.pid, stdin: JSON.parse(input) });",
     `  const mode = ${JSON.stringify(mode)};`,
     "  if (mode === 'fail') { process.stderr.write('no channel'); process.exit(3); }",
     "  if (mode === 'hang') { setTimeout(() => undefined, 60000); return; }",
     "  if (mode === 'garbage') { process.stdout.write('not json'); return; }",
-    // A process it leaves behind in a group of its own, holding its stdout: the command's answer must not wait for it.
-    "  if (mode === 'orphan') { require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => undefined, 6000)'], { detached: true, stdio: ['ignore', 'inherit', 'ignore'] }).unref(); return; }",
-    "  const answer = () => process.stdout.write(JSON.stringify({ note: 'Ask Jeremy in #storefront before you go on.', status: 'Jeremy reshapes retry(): ask him first' }));",
-    "  if (mode === 'slow') setTimeout(answer, 1500); else if (mode === 'late') setTimeout(answer, 3000); else answer();",
+    // A process it leaves behind in a group of its own, holding its stdout until released (at most a minute, should the
+    // test stop first): the command's answer must not wait for it.
+    `  if (mode === 'orphan') { const orphan = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(`${released("process.exit(0)")} setTimeout(() => process.exit(0), 60000);`)}], { detached: true, stdio: ['ignore', 'inherit', 'ignore'] }); record({ kind: 'orphan', event, pid: orphan.pid }); orphan.unref(); return; }`,
+    "  const answer = () => { record({ kind: 'answer', event }); process.stdout.write(JSON.stringify({ note: 'Ask Jeremy in #storefront before you go on.', status: 'Jeremy reshapes retry(): ask him first' })); };",
+    `  if (mode === 'held') { ${released("answer()")} } else answer();`,
     "});",
   ].join("\n"));
+  const entries = (): Array<{ kind: string; event: string; pid: number }> =>
+    readFileSync(log, "utf8").split("\n").filter(line => line !== "").map(line => JSON.parse(line) as never);
   return {
     command: [process.execPath, script, log],
-    calls: () => readFileSync(log, "utf8").split("\n").filter(line => line !== "").map(line => JSON.parse(line) as never),
+    calls: () => entries().filter(entry => entry.kind === "call") as never,
+    steps: () => entries().filter(entry => entry.kind !== "orphan").map(entry => `${entry.kind} ${entry.event}`),
+    orphan: () => entries().find(entry => entry.kind === "orphan")!.pid,
+    release: () => writeFileSync(release, ""),
   };
-}
-
-/** A session runtime over the workspace's database with Merge Assist `service`, and an evaluator that finds nothing. */
-function sessionRuntime(ws: Workspace, service: MergeAssistRuntime): RerailRuntime {
-  return new RerailRuntime({
-    autostart: false,
-    workspaceRoot: ws.repo,
-    storageRoot: join(ws.folder, "sessions"),
-    databasePath: ws.databasePath,
-    mergeAssist: service,
-    embedder: {
-      fingerprint: () => ({ modelId: "test", revision: "1", dimensions: 2, weightsSha256: "test", tokenizerSha256: "test", kernelFormatVersion: 1 }),
-      embed: async texts => texts.map(() => new Float32Array([1, 0])),
-    },
-    createAuditor: () => ({
-      openWorkspace: async () => undefined,
-      acceptsPath: () => true,
-      auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
-      close: async () => undefined,
-    }),
-  });
 }
 
 const FILE = "src/retry.ts";
@@ -245,9 +243,8 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       try {
         await runtime.ingest({ kind: "session-start", eventId: "start", session: { host: "claude-code", sessionId, cwd: ws.repo } });
         await vi.waitFor(() => expect(held.asked).toHaveLength(1), { timeout: 20_000 });
-        const started = Date.now();
+        // The judge answers only once released, after this boundary: the boundary did not wait for it.
         const deliveries = await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId, text: "Go on." });
-        expect(Date.now() - started).toBeLessThan(2_000);
         expect(deliveries.map(delivery => delivery.content)).toEqual([expect.stringContaining("overlaps open work")]);
         expect(open((await service.status(ws.repo)).conflicts)[0]!.summary).toMatchObject({ via: "fallback" });
       } finally {
@@ -299,7 +296,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
 
     it("adds its note to the agent's note in chat modes, and its status to the status line in terminal modes", async () => {
       const { ws } = await overlap(FILE, AMBIENT);
-      const hook = hookScript(ws, "slow");
+      const hook = hookScript(ws, "held");
       const service = ws.service();
       await service.setEnabled(ws.repo, true);
       await service.updateSettings(ws.repo, { delivery: "both", hook: { command: hook.command, timeoutSeconds: 10 } });
@@ -307,6 +304,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       // The agent's note waits for the command, so its note joins it; the status line does not wait.
       expect(service.pendingNotes("waiting", ws.repo)).toEqual([]);
       expect(footer(ws, "f1")).toMatchObject({ summary: { id: conflict!.id } });
+      hook.release();
       await service.settled();
       const [note] = service.pendingNotes("both", ws.repo);
       expect(note!.content).toContain("The user's conflict hook adds: Ask Jeremy in #storefront before you go on.");
@@ -325,7 +323,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
      * A Claude Code session in a checkout whose branch has not yet overlapped jbarnes-1's committed change, the hook
      * command `mode` set; `edit` makes the overlapping edit through a tool call, and answers its result's deliveries.
      */
-    async function editSession(mode: "answer" | "late"): Promise<{ ws: Workspace; service: MergeAssistRuntime; runtime: RerailRuntime; hook: HookScript; sessionId: string; edit: () => Promise<AdapterDelivery[]> }> {
+    async function editSession(mode: "answer" | "held"): Promise<{ ws: Workspace; service: MergeAssistRuntime; runtime: RerailRuntime; hook: HookScript; sessionId: string; edit: () => Promise<AdapterDelivery[]> }> {
       const ws = await workspace({ files: { [FILE]: body("retry") } });
       commit(ws.worktree("jbarnes-1"), { [FILE]: grown("retry", AMBIENT) }, "Grow retry");
       const hook = hookScript(ws, mode);
@@ -363,15 +361,15 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
     });
 
     it("holds Rerail's note at most a second for a slow command: the note goes out with the edit's result, the hook's note at the next boundary, once", async () => {
-      const { service, runtime, sessionId, edit } = await editSession("late");
+      const { service, runtime, hook, sessionId, edit } = await editSession("held");
       try {
-        const started = Date.now();
-        const handed = await edit();
-        expect(Date.now() - started).toBeLessThan(3_000);
-        const [note, ...others] = overlapNotes(handed);
+        // The command answers only once released: the edit's result hands out Rerail's note while it is still running.
+        const [note, ...others] = overlapNotes(await edit());
+        expect(hook.steps()).not.toContain("answer detected");
         expect(others).toEqual([]);
         expect(note!.content).not.toContain("conflict hook");
         expect(note!.conflict).toMatchObject({ text: expect.stringContaining("your edit overlaps jbarnes-1") });
+        hook.release();
         await service.settled();
         const next = await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId, text: "Go on." });
         expect(overlapNotes(next)).toEqual([]);
@@ -396,15 +394,13 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       await vi.waitFor(() => expect(hook.calls()).toHaveLength(1), { timeout: 20_000 });
       const { pid } = hook.calls()[0]!;
       expect(() => process.kill(-pid, 0)).not.toThrow();
-      const started = Date.now();
       await service.stop(2_000);
-      expect(Date.now() - started).toBeLessThan(2_500);
       expect(() => process.kill(-pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
     });
 
     it("gives a Codex person's line in terminal mode the status line text as it is when the note is handed over", async () => {
       const { ws } = await overlap(FILE, AMBIENT);
-      const hook = hookScript(ws, "slow");
+      const hook = hookScript(ws, "held");
       const service = ws.service();
       await service.setEnabled(ws.repo, true);
       await service.updateSettings(ws.repo, { delivery: "terminal", hook: { command: hook.command, timeoutSeconds: 10 } });
@@ -415,6 +411,7 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
         // The note is queued at once, with the fallback line, while the command is still answering.
         await vi.waitFor(() => expect(hook.calls()).toHaveLength(1), { timeout: 20_000 });
         expect(service.pendingNotes("probe", ws.repo, new Set(), "codex")[0]!.conflict!.text).not.toContain("Jeremy");
+        hook.release();
         await service.settled();
         const deliveries = await runtime.ingest({ kind: "user-prompt", eventId: "next", sessionId, text: "Go on." });
         const lines = deliveries.flatMap(delivery => (delivery.conflict === undefined ? [] : [delivery.conflict.text]));
@@ -430,11 +427,17 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
       const service = ws.service();
       await service.setEnabled(ws.repo, true);
       await service.updateSettings(ws.repo, { hook: { command: hook.command, timeoutSeconds: 1 } });
-      const started = Date.now();
       await service.scan(ws.repo);
       await service.settled();
-      expect(Date.now() - started).toBeLessThan(5_000);
-      expect(open((await service.status(ws.repo)).conflicts)[0]!.hook).toMatchObject({ ok: false, error: "timed out after 1 s" });
+      const orphan = hook.orphan();
+      try {
+        expect(open((await service.status(ws.repo)).conflicts)[0]!.hook).toMatchObject({ ok: false, error: "timed out after 1 s" });
+        // The process it left behind exits only once released: the answer came while it still held the output.
+        expect(() => process.kill(orphan, 0)).not.toThrow();
+      } finally {
+        hook.release();
+        await vi.waitFor(() => expect(() => process.kill(orphan, 0)).toThrow(expect.objectContaining({ code: "ESRCH" })), { timeout: 20_000 });
+      }
     });
     for (const [mode, timeoutSeconds, error] of [
       ["fail", 10, /^exited with code 3: no channel$/u],
@@ -461,17 +464,18 @@ describe("conflict delivery", { timeout: 60_000 }, () => {
   describe("the order of a conflict's events", () => {
     it("hands a command hook a dismissal right after a scan only once it has answered detected", async () => {
       const { ws } = await overlap(FILE, AMBIENT);
-      const hook = hookScript(ws, "slow");
+      const hook = hookScript(ws, "held");
       const service = ws.service();
       await service.setEnabled(ws.repo, true);
       await service.updateSettings(ws.repo, { hook: { command: hook.command, timeoutSeconds: 10 } });
       const [conflict] = open((await service.scan(ws.repo)).conflicts);
       await service.dismissConflict(ws.repo, conflict!.id);
+      // The command holds its answer to detected until released; closed is not handed to it meanwhile.
+      await vi.waitFor(() => expect(hook.steps()).toEqual(["call detected"]), { timeout: 20_000 });
+      hook.release();
       await service.settled();
-      const calls = hook.calls();
-      expect(calls.map(call => [call.event, call.id])).toEqual([["detected", conflict!.id], ["closed", conflict!.id]]);
-      // The slow command answers 1.5 s after it starts: closed started only after detected's run ended.
-      expect(calls[1]!.at - calls[0]!.at).toBeGreaterThanOrEqual(1_400);
+      expect(hook.calls().map(call => [call.event, call.id])).toEqual([["detected", conflict!.id], ["closed", conflict!.id]]);
+      expect(hook.steps()).toEqual(["call detected", "answer detected", "call closed", "answer closed"]);
       expect((await service.status(ws.repo)).conflicts[0]!.hook).toMatchObject({ event: "closed", ok: true });
     });
   });

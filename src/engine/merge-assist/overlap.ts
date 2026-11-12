@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runGit } from "../git.js";
+import { gitRead } from "./branch-git.js";
 
 /** The most unchanged base lines two hunks may leave between them and still conflict. */
 export const ADJACENT_LINES = 3;
@@ -45,12 +46,6 @@ export interface GitConflict {
   readonly file: string;
   readonly theirs: readonly RefHunk[];
   readonly ours: readonly LineRange[];
-}
-
-/** A read-only git command's output; null when it fails. */
-function gitRead(cwd: string, args: readonly string[]): string | null {
-  const result = runGit(cwd, ["--no-optional-locks", "-c", "core.quotePath=false", ...args], DIFF_OPTIONS);
-  return result.status === 0 ? result.stdout : null;
 }
 
 /** One parsed `@@` hunk: both sides' starts and counts, and its text. */
@@ -137,8 +132,8 @@ function parseDiff(text: string): Map<string, RawHunk[]> {
 function diffHunks(repo: string, from: string, to: string | null, paths?: readonly string[]): Map<string, RawHunk[]> {
   if (paths !== undefined && paths.length === 0) return new Map();
   const args = ["diff", "--no-color", "--no-ext-diff", "--no-renames", "--unified=0", "--src-prefix=a/", "--dst-prefix=b/", from, ...(to === null ? [] : [to])];
-  const text = gitRead(repo, paths === undefined ? args : [...args, "--", ...paths.map(path => `:(literal)${path}`)]);
-  if (text === null) throw new Error(`git diff ${from} ${to ?? "(working files)"} failed in ${repo}`);
+  const text = gitRead(repo, paths === undefined ? args : [...args, "--", ...paths.map(path => `:(literal)${path}`)], DIFF_OPTIONS);
+  if (text === undefined) throw new Error(`git diff ${from} ${to ?? "(working files)"} failed in ${repo}`);
   return parseDiff(text);
 }
 
@@ -196,7 +191,7 @@ export function refHunks(repo: string, base: string, own: string, sha: string, p
  * or the base branch itself) or the two share no history.
  */
 export function ownBase(repo: string, sha: string, baseTip: string, checkoutBase: string): string | null {
-  const mergeBase = (a: string, b: string): string | null => gitRead(repo, ["merge-base", "--end-of-options", a, b])?.trim().split("\n")[0] || null;
+  const mergeBase = (a: string, b: string): string | null => gitRead(repo, ["merge-base", "--end-of-options", a, b], DIFF_OPTIONS)?.trim().split("\n")[0] || null;
   const own = mergeBase(sha, baseTip);
   if (own === null) return mergeBase(sha, checkoutBase);
   if (own === sha) return null;
@@ -209,7 +204,7 @@ export function ownBase(repo: string, sha: string, baseTip: string, checkoutBase
 export function workspaceRanges(root: string, base: string): Map<string, RefHunk[]> {
   const ranges = new Map<string, RefHunk[]>();
   for (const [path, hunks] of diffHunks(root, base, null)) ranges.set(path, hunks.map(refHunk));
-  const untracked = gitRead(root, ["ls-files", "--others", "--exclude-standard", "-z"]) ?? "";
+  const untracked = gitRead(root, ["ls-files", "--others", "--exclude-standard", "-z"], DIFF_OPTIONS) ?? "";
   for (const path of untracked.split("\0").filter(item => item !== "")) ranges.set(path, [{ lo: 0.5, hi: 0.5, sig: "untracked", text: "(new file)" }]);
   return ranges;
 }
@@ -221,7 +216,7 @@ export function workspaceRanges(root: string, base: string): Map<string, RefHunk
  */
 export function hunkLinesAt(repo: string, from: string, to: string | null, path: string, lines: readonly { readonly lo: number; readonly hi: number }[]): string[] {
   const hunks = diffHunks(repo, from, to, [path]).get(path) ?? [];
-  if (hunks.length === 0 && to === null && (gitRead(repo, ["ls-files", "--others", "--exclude-standard", "--", `:(literal)${path}`]) ?? "").trim() !== "") {
+  if (hunks.length === 0 && to === null && (gitRead(repo, ["ls-files", "--others", "--exclude-standard", "--", `:(literal)${path}`], DIFF_OPTIONS) ?? "").trim() !== "") {
     // An untracked file: all of it is new, as `workspaceRanges` counts it. Only a regular file within the size limit
     // is read, never through a symbolic link.
     const file = lstatSync(join(repo, path), { throwIfNoEntry: false });

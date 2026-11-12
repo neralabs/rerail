@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { z } from "zod";
 import type { GithubReadiness } from "../../engine/merge-assist/model.js";
 import { resolveExecutable } from "../npm.js";
+import { KILL_GRACE_MS } from "./agent-judge.js";
 
 export interface GithubRepository { readonly host: string; readonly owner: string; readonly name: string }
 
@@ -53,7 +54,6 @@ export class GithubError extends Error {
 
 const GH_TIMEOUT_MS = 20_000;
 const GH_OUTPUT_LIMIT_BYTES = 4 * 1024 * 1024;
-const KILL_GRACE_MS = 2_000;
 const STDERR_TAIL_CHARS = 2_000;
 const DETAIL_CHARS = 300;
 const PULL_REQUEST_LIMIT = 50;

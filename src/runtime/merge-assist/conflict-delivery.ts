@@ -8,6 +8,7 @@
  */
 import { basename } from "node:path";
 import { eq } from "drizzle-orm";
+import { sideName } from "../../engine/code-rule/rerail-steer.js";
 import {
   DEFAULT_MERGE_ASSIST_SETTINGS,
   mergeAssistSettingsSchema,
@@ -51,7 +52,7 @@ export function viaTerminal(mode: ConflictDelivery): boolean {
  * `<their label> (<author>) is changing <symbol or file>`.
  */
 export function fallbackSummary({ conflict, files }: Pick<StoredConflict, "conflict" | "files">, now: number): ConflictSummary {
-  const who = conflict.theirs.author === null ? conflict.theirs.label : `${conflict.theirs.label} (${conflict.theirs.author})`;
+  const who = sideName(conflict.theirs);
   // An overlap's title is `<file> · <symbol>` when Git names the symbol, else the file's name.
   const [, symbol] = conflict.title.split(" · ");
   const what = symbol ?? files[0] ?? basename(conflict.title);
