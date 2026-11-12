@@ -3932,6 +3932,12 @@ launches), a closure not recognized (the stratum placed on device rounds), and a
 
 **Closure:** make the assertion name which of the three it was, then fix that one at its root.
 
+**Closed (2026-11-12): the count was read on the wrong thread.** None of the three. A level's closures run as a
+component's job on an executor thread, and they did go out as one wave of three, but the wave was counted on the
+job's thread while the test read the run's thread. A job now carries its waves back to the thread that takes it
+(`wave::since`, the `Strand`, `absorb` / `absorb_forms`): 4dde583e2 on `investigate-bend-vs-datalog`, merged into
+the hub. On the hub, 10 of 10 alone.
+
 ## O-metal-slice-cpu. The Metal backends take three times the CPU backends' process CPU on the slice
 
 **Seen (2026-11-12)** in `slice::tests::the_backends_find_the_same_keys_on_real_files`, once the Metal backends
