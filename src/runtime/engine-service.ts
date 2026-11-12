@@ -16,7 +16,7 @@ import { defaultRerailDatabasePath } from "../engine/storage/database.js";
 import { DAEMON_ACCESS_HEADER, sameSecret, type EngineEndpoint } from "./daemon-control.js";
 import { ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, engineHoldsCapability, engineProof, isEngineChallenge } from "./engine-proof.js";
 import { isNamedPipe } from "./engine-pipe.js";
-import { WorktreeWalks } from "../engine/code-rule/worktree-walks.js";
+import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
 import { RerailRuntime, type RerailRuntimeOptions } from "./runtime.js";
 import { SessionLanes } from "./session-lanes.js";
 
@@ -215,7 +215,7 @@ interface EngineRoutingState {
    * folder, so sessions in different worktrees of one repository run in different runtimes, and each walking every
    * worktree for itself held every file of every worktree once per session.
    */
-  worktreeWalks: WorktreeWalks;
+  worktreeWalks: RepositoryWorktreeWalks;
 }
 
 /** The lane one session's work in one runtime runs in, one at a time. */
@@ -537,7 +537,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     pending: new Set(),
     idle: new Map(),
     idleRuntimeMs: options.idleRuntimeMs ?? IDLE_RUNTIME_MS,
-    worktreeWalks: new WorktreeWalks(),
+    worktreeWalks: options.worktreeWalks ?? new RepositoryWorktreeWalks(),
   };
   const sweepIdleSessions = (): Promise<void> => closeIdleSessions(routing, options.idleSessionMs ?? IDLE_SESSION_MS, options.now ?? Date.now);
   const server = createServer(async (incoming, response) => {
