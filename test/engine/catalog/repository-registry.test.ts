@@ -2,12 +2,16 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, parse, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
+import { checkouts, repositories } from "../../../src/engine/storage/schema.js";
+import type { RepositoryStatus } from "../../../src/engine/catalog/repository-model.js";
 import {
   adoptRemote,
+  checkoutStatus,
   linkAlias,
+  listedCheckoutStates,
   listRepositories,
   lookupCheckout,
   parentCheckouts,
@@ -68,6 +72,37 @@ function settingOwners(database: RerailDatabase): unknown[] {
   return database.$client.prepare("SELECT owner_kind, owner_id FROM rule_settings ORDER BY owner_kind, owner_id").all();
 }
 
+/**
+ * A stopped, set-up repository with `rows` (path, own on/off) recorded straight into the table in that order, one
+ * millisecond apart, in spellings `recordCheckout` would not write but older builds and other tools left.
+ */
+async function recordedRows(rows: ReadonlyArray<readonly [string, boolean | null]>) {
+  const database = open(join(await temporary("rerail-registry-listed-"), "rerail.sqlite"));
+  const repositoryKey = "remote:github.com/acme/web";
+  database.insert(repositories).values({ repositoryKey, displayName: "web", configuredAt: 1, started: false, createdAt: 1, updatedAt: 1 }).run();
+  database.insert(checkouts).values(rows.map(([checkoutPath, started], index) => ({
+    checkoutPath, repositoryKey, cloneId: "clone", started, createdAt: index + 1, lastSeenAt: 1,
+  }))).run();
+  return { database, repositoryKey };
+}
+
+/** Each recorded checkout's on/off, what decided it and its nearest parent: as the dashboard's listing gives them, and as the runtime reads them. */
+function bothReads(database: RerailDatabase, repositoryKey: string) {
+  const listing = listRepositories(database).find(repository => repository.repositoryKey === repositoryKey)!;
+  const stateAt = listedCheckoutStates(listing);
+  const read = (status: RepositoryStatus, parent: string | null) => [status.started, status.startedBy, parent];
+  return {
+    listed: new Map(listing.checkouts.map(row => {
+      const { status, parentCheckoutPath } = stateAt(row.checkoutPath);
+      return [row.checkoutPath, read(status, parentCheckoutPath)];
+    })),
+    runtime: new Map(listing.checkouts.map(row => [
+      row.checkoutPath,
+      read(checkoutStatus(database, { ...row, git: true, main: true }), parentCheckouts(database, row)[0]?.checkoutPath ?? null),
+    ])),
+  };
+}
+
 describe("the repository registry", () => {
   it("puts clones that share a remote and worktrees that share a clone in one repository", async () => {
     const root = await temporary("rerail-registry-join-");
@@ -124,6 +159,31 @@ describe("the repository registry", () => {
     git(main, "worktree", "add", "-q", "-b", "beside", beside);
     const [, , innerCheckout] = [main, outer, inner, beside].map(path => recordCheckout(database, path));
     expect(parentCheckouts(database, innerCheckout!).map(row => row.checkoutPath)).toEqual([outer, main]);
+  });
+
+  it("gives each checkout in the dashboard's listing the state and parent the runtime gives it, in whatever spelling a folder was recorded", async () => {
+    const base = join(parse(tmpdir()).root, "rerail-listed");
+    const { database, repositoryKey } = await recordedRows([
+      // The filesystem's root holds every other row.
+      [parse(base).root, null],
+      // A trailing separator and a `.` segment: the folders a and b, as path.relative reads them.
+      [`${join(base, "a")}${sep}`, true],
+      [join(base, "a", "inner"), null],
+      [`${join(base, "b")}${sep}.`, true],
+      [join(base, "b", "inner"), null],
+      [join(base, "beside"), null],
+      // One folder on Windows, where path.relative ignores letter case; two elsewhere.
+      [join(base, "CASE"), true],
+      [join(base, "case", "inner"), null],
+      // A share root recorded without the separator path.resolve gives it.
+      ...process.platform === "win32" ? [["\\\\server\\share", true], ["\\\\server\\share\\inner", null]] as const : [],
+    ]);
+    const { listed, runtime } = bothReads(database, repositoryKey);
+    expect(listed).toEqual(runtime);
+    // The inner checkouts follow their parents in the runtime's reads, so the two reads agree on more than the repository.
+    expect(runtime.get(join(base, "a", "inner"))).toEqual([true, "parent", `${join(base, "a")}${sep}`]);
+    expect(runtime.get(join(base, "b", "inner"))).toEqual([true, "parent", `${join(base, "b")}${sep}.`]);
+    if (process.platform === "win32") expect(runtime.get("\\\\server\\share\\inner")).toEqual([true, "parent", "\\\\server\\share"]);
   });
 
   it("puts a submodule checked out under two worktrees of its parent in one repository", async () => {

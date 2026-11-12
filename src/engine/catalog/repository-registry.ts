@@ -5,7 +5,7 @@
  */
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, parse } from "node:path";
+import { dirname, parse, resolve } from "node:path";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 import { physicalPath, storedPath, withinCheckout } from "./checkout-control.js";
 import type { RerailDatabase } from "../storage/database.js";
@@ -410,15 +410,21 @@ export interface ListedCheckoutState {
   readonly parentCheckoutPath: string | null;
 }
 
-/** A folder as {@link withinCheckout} compares it: on Windows path.relative ignores letter case, elsewhere it does not. */
+/**
+ * A folder as {@link withinCheckout} compares it: resolved, as path.relative resolves both sides, so a trailing
+ * separator, a `.` segment or a share root without its separator names the folder it is in; and on Windows, where
+ * path.relative ignores letter case, lower-cased.
+ */
 function listedFolderKey(path: string): string {
-  return process.platform === "win32" ? path.toLowerCase() : path;
+  const folder = resolve(path);
+  return process.platform === "win32" ? folder.toLowerCase() : folder;
 }
 
-/** `path` and each folder above it, nearest first. */
+/** `path` resolved, and each folder above it, nearest first. */
 function folderAndAbove(path: string): string[] {
-  const folders = [path];
-  for (let folder = path; dirname(folder) !== folder; folder = dirname(folder)) folders.push(dirname(folder));
+  const resolved = resolve(path);
+  const folders = [resolved];
+  for (let folder = resolved; dirname(folder) !== folder; folder = dirname(folder)) folders.push(dirname(folder));
   return folders;
 }
 
