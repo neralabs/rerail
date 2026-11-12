@@ -25,15 +25,20 @@ export interface WorktreeRead {
   readonly leftOut: ReadonlySet<string>;
 }
 
-/** Which worktrees a walk must read again (`WorktreeWalks`). */
+/**
+ * Which worktrees a walk must read again (`WorktreeWalks`). A walk asks `changed` of each worktree; one it reads it
+ * marks with `reading` as the read begins and `read` as it ends. Between the two every notice counts, and outside them
+ * a notice counts unless the last read's `WorktreeRead` says otherwise, whether or not the walks since read it.
+ */
 export interface WorktreeNotices {
   /**
-   * Whether the worktree at `root` (physical) may hold a change since the last call for it, which starts watching it.
-   * True until a watch of it was up for a whole read, after a notice that counts, and when it cannot be watched. Clears
-   * the mark: from now until `read`, every notice counts.
+   * Whether the worktree at `root` (physical) may hold a change since its last read; the first call starts watching it.
+   * True until a watch of it was up for a whole read, after a notice that counts, and when it cannot be watched.
    */
   changed(root: string): boolean;
-  /** What the read of `root` that followed `changed` saw; a watch per folder follows its folders. */
+  /** A read of `root` begins: what `changed` said is answered, and from now until `read` every notice counts. */
+  reading(root: string): void;
+  /** What the read of `root` saw; a watch per folder follows its folders. */
   read(root: string, seen: WorktreeRead): void;
   /** Stops watching each worktree not in `roots`. */
   retain(roots: ReadonlySet<string>): void;
@@ -174,12 +179,14 @@ export class WatchedWorktrees implements WorktreeNotices {
   }
 
   changed(root: string): boolean {
-    const watched = this.#watched.get(root) ?? this.#open(root);
-    if (watched === undefined) return true;
-    const changed = watched.changed;
+    return (this.#watched.get(root) ?? this.#open(root))?.changed ?? true;
+  }
+
+  reading(root: string): void {
+    const watched = this.#watched.get(root);
+    if (watched === undefined) return;
     watched.changed = false;
     watched.seen = undefined;
-    return changed;
   }
 
   read(root: string, seen: WorktreeRead): void {

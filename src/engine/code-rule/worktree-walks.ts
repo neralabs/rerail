@@ -7,8 +7,8 @@
  * sources that changed since the snapshot it took last (`CodeRuleBridge`).
  *
  * A walk reads only the worktrees that may have changed since it last read them: each a change notice named
- * (`WorktreeNotices`) or that cannot be watched, and each whose `HEAD`, unmerged entries or nested worktrees moved, which
- * every walk reads. It hands each session what it saw of the others last time. Reading them all stat'ed every file of
+ * (`WorktreeNotices`) or that cannot be watched, and each whose `HEAD`, index or nested worktrees moved, which every
+ * walk reads. It hands each session what it saw of the others last time. Reading them all stat'ed every file of
  * every worktree on each walk: with 190 worktrees, about 5 s of the daemon's main thread a walk.
  */
 import { sep } from "node:path";
@@ -210,13 +210,6 @@ function skippedIn(root: string, skip: ReadonlySet<string>): string {
   return [...skip].filter(folder => folder.startsWith(`${root}${sep}`)).sort().join("\n");
 }
 
-function sameEntries(left: ReadonlyMap<string, string> | undefined, right: ReadonlyMap<string, string> | undefined): boolean {
-  if (left === right) return true;
-  if (left === undefined || right === undefined || left.size !== right.size) return false;
-  for (const [path, entries] of left) if (right.get(path) !== entries) return false;
-  return true;
-}
-
 /** Whether a read must be tried again: a folder it could not list, or a file whose read failed (an error with no stamp). */
 function retried(scan: SourceScan): boolean {
   if (scan.failedRoots.size > 0) return true;
@@ -408,7 +401,7 @@ export class WorktreeWalks {
       const read = new Map<string, Kept>();
       for (const root of roots) {
         const state = { ...checkouts.get(root)!, observedAt, skipped: skippedIn(root, skip) };
-        // Asked first, of every worktree: it starts the watch before a first read, and a notice from now on counts.
+        // Asked first, of every worktree: it starts the watch before a first read.
         const noticed = this.#notices.changed(root);
         const kept = this.#kept.get(root);
         if (kept !== undefined && !noticed && !full && !this.#mustRead(root, kept, state)) {
@@ -416,6 +409,7 @@ export class WorktreeWalks {
           continue;
         }
         this.#owed.add(root);
+        this.#notices.reading(root);
         const result = await this.#readWorktree(root, skip, walking, state);
         if (result === undefined) continue;
         found.set(root, result.findings);
@@ -443,11 +437,14 @@ export class WorktreeWalks {
 
   /**
    * Whether `root` is read though no notice named it: its last read did not finish or left something to try again, or
-   * what no notice tells of moved: its `HEAD`, its unmerged entries, or the worktrees and sessions' checkouts inside it.
+   * what no notice tells of moved: its `HEAD`, its index, or the worktrees and sessions' checkouts inside it. The index
+   * moved when the unmerged entries are a new map, since `gitUnmergedReader` hands back the same one while the index
+   * file's stamp holds; a path the index tracks is never ignored, so a file the last read left out as ignored may count
+   * now. An index that cannot be stamped is a new map each walk, and the worktree is read on every walk, as before notices.
    */
   #mustRead(root: string, kept: Kept, state: Pick<WorktreeFindings, "head" | "unmerged"> & { readonly skipped: string }): boolean {
     if (this.#owed.has(root) || kept.retry || kept.skipped !== state.skipped) return true;
-    return kept.findings.head !== state.head || !sameEntries(kept.findings.unmerged, state.unmerged);
+    return kept.findings.head !== state.head || kept.findings.unmerged !== state.unmerged;
   }
 
   /** What a walk hands on of a worktree it did not read: what was kept, no text, and Git's listing for a session's first sight. */

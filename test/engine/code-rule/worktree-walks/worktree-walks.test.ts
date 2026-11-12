@@ -299,6 +299,21 @@ async function bothWays(folder: string, checkouts: readonly string[]): Promise<{
   return { noticed, everyWorktree };
 }
 
+/** `fs.watch` for the walks, keeping the name of each notice it passes on. */
+function namedWatches(): { named: Array<string | null>; watch: WatchPath } {
+  const named: Array<string | null> = [];
+  const watch: WatchPath = (path, { recursive }, listener) => watchPath(path, { recursive, persistent: false }, (event, name) => {
+    named.push(name);
+    listener(event, name);
+  });
+  return { named, watch };
+}
+
+/** Resolves once a notice naming a path that ends in `suffix` has reached the walks. */
+async function noticed(named: ReadonlyArray<string | null>, suffix: string): Promise<void> {
+  while (!named.some(name => name?.endsWith(suffix) === true)) await new Promise(resolve => { setTimeout(resolve, 10); });
+}
+
 describe("a walk of the other worktrees with change notices", () => {
   it("stats no entry of the other worktrees when nothing changed in them since the last walk", async () => {
     const { main, worktrees, checkouts } = await repository();
@@ -308,6 +323,43 @@ describe("a walk of the other worktrees with change notices", () => {
     stats.length = 0;
     await turn(watching);
     expect(statsUnder(main, worktrees[1]!, worktrees[2]!)).toEqual([0, 0, 0]);
+  });
+
+  it("stats no entry when a file Git ignores changes after a walk that read no worktree", async () => {
+    const { main, worktrees, checkouts } = await repository();
+    const cache = join(worktrees[2]!, "src", "cache.tmp");
+    await writeFile(cache, "x\n");
+    const { named, watch } = namedWatches();
+    const walks = new WorktreeWalks({ gapMs: 0, notices: new WatchedWorktrees({ watch }) });
+    const watching = await session(worktrees[0]!, checkouts, walks, path => path.endsWith(".tmp"));
+    // The second walk reads again on Linux, where folders are watched once a read is over; the third reads none.
+    await turn(watching);
+    await turn(watching);
+    named.length = 0;
+    await writeFile(cache, "y\n");
+    await noticed(named, "cache.tmp");
+    stats.length = 0;
+    await turn(watching);
+    expect(statsUnder(main, worktrees[1]!, worktrees[2]!)).toEqual([0, 0, 0]);
+  });
+
+  it("records a shell write to a file Git ignored once the index tracks it, though nothing in the worktree changed", async () => {
+    const { worktrees, checkouts } = await repository();
+    const w3 = worktrees[2]!;
+    const generated = join(w3, "src", "gen.py");
+    await writeFile(generated, "x = 1\n");
+    await awaitClockAfter(generated);
+    // As Git answers: a path the index tracks is never ignored.
+    let tracked = false;
+    const watching = await session(worktrees[0]!, checkouts, new WorktreeWalks({ gapMs: 0 }), path => path.endsWith("gen.py") && !tracked);
+    await turn(watching);
+    await turn(watching);
+    git(w3, "add", "--force", "src/gen.py");
+    tracked = true;
+    await turn(watching);
+    await writeFile(generated, "x = 2\n");
+    await turn(watching);
+    expect(audited(watching)).toEqual([[["written ../w3/src/gen.py"], "log"]]);
   });
 
   it("stats only the worktree a file changed in, and each session watching it records the change", async () => {
@@ -455,11 +507,7 @@ describe("a walk of the other worktrees with change notices", () => {
       execFileSync(process.execPath, ["-e", script.join("\n")]);
     };
     flood("x");
-    const named: Array<string | null> = [];
-    const watch: WatchPath = (path, { recursive }, listener) => watchPath(path, { recursive, persistent: false }, (event, name) => {
-      named.push(name);
-      listener(event, name);
-    });
+    const { named, watch } = namedWatches();
     const walks = new WorktreeWalks({ gapMs: 0, notices: new WatchedWorktrees({ watch }) });
     const watching = await session(worktrees[0]!, checkouts, walks, path => path.endsWith(".tmp"));
     await turn(watching);
