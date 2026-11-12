@@ -15,8 +15,8 @@ export const HOOK_FAILURES_FILE = "hook-failures.jsonl";
 /** Past this size the file is moved to `<name>.1`, replacing the one before; a failing hook writes on every event. */
 const MAX_FAILURE_BYTES = 256 * 1024;
 
-/** The log's files, the part moved aside first: oldest first. */
-const LOG_FILES = [`${HOOK_FAILURES_FILE}.1`, HOOK_FAILURES_FILE] as const;
+/** Where the full log moves, replacing the one before: the older part of the log. */
+const MOVED_ASIDE_FILE = `${HOOK_FAILURES_FILE}.1`;
 
 export interface HookFailure {
   /** Epoch ms. */
@@ -55,7 +55,7 @@ export function recordHookFailure(
   try {
     makeRerailHome(home);
     const path = join(home, HOOK_FAILURES_FILE);
-    if (sizeOf(path) > MAX_FAILURE_BYTES) moveAside(path);
+    if (sizeOf(path) > MAX_FAILURE_BYTES) moveAside(path, join(home, MOVED_ASIDE_FILE));
     const line: HookFailure = { at: now, ...failure, agent: env.AI_AGENT ?? null, rerail: rerailVersion() };
     appendFileSync(path, `${JSON.stringify(line)}\n`, { mode: 0o600 });
   } catch {
@@ -81,7 +81,7 @@ function sizeOf(path: string): number {
  * took it still moves it on, out from under this hook's name. So each step gives up once the file is gone from that
  * name, leaving it to the hook that holds it last.
  */
-function moveAside(path: string): void {
+function moveAside(path: string, movedAside: string): void {
   // `<name>.<pid>.<uuid>.old`, which the uninstall knows as a move cut short.
   const taken = `${path}.${process.pid}.${randomUUID()}.old`;
   try {
@@ -92,7 +92,7 @@ function moveAside(path: string): void {
   }
   try {
     if (sizeOf(taken) > MAX_FAILURE_BYTES) {
-      renameWithRetrySync(taken, `${path}.1`);
+      renameWithRetrySync(taken, movedAside);
       return;
     }
   } catch (error) {
@@ -105,7 +105,9 @@ function moveAside(path: string): void {
     unlinkSync(taken);
     appendFileSync(path, lines, { mode: 0o600 });
   } catch {
-    // Moved on by another hook, which gives it back or moves it aside.
+    // Gone from its name: another hook moved it on, and gives it back or moves it aside. A read or removal refused for
+    // any other reason leaves the lines under this hook's name, where no status read counts them and the uninstall
+    // removes them; an append that fails after the removal loses them, as the same failure loses this hook's own line.
   }
 }
 
@@ -149,26 +151,24 @@ export function hookFailureLines({ failures, keptSince }: HookFailureLog, lastRe
  * missing or unreadable holds none.
  */
 export function readHookFailures(home: string, since: number): HookFailureLog {
-  const kept: HookFailure[] = [];
-  let movedAside = false;
-  for (const name of LOG_FILES) {
-    let text: string;
-    try {
-      text = readFileSync(join(home, name), "utf8");
-    } catch {
-      continue;
-    }
-    movedAside ||= name !== HOOK_FAILURES_FILE;
-    kept.push(...parseFailures(text));
-  }
-  // Hooks take the time before they append, so lines from hooks running at once can be a little out of order.
-  kept.sort((left, right) => left.at - right.at);
+  const movedAside = readLogFile(join(home, MOVED_ASIDE_FILE));
+  const current = readLogFile(join(home, HOOK_FAILURES_FILE));
+  // Hooks take the time before they append, and a hook gives back the lines of a log it took after other hooks wrote
+  // theirs, so lines from hooks running at once can be a little out of order.
+  const kept = [...movedAside ?? [], ...current ?? []].sort((left, right) => left.at - right.at);
   const oldest = kept[0];
-  const keptSince = movedAside && oldest !== undefined && oldest.at >= since ? oldest.at : null;
+  const keptSince = movedAside !== null && oldest !== undefined && oldest.at >= since ? oldest.at : null;
   return { failures: kept.filter(failure => failure.at >= since), keptSince };
 }
 
-function parseFailures(text: string): HookFailure[] {
+/** The failures one of the log's files holds; null when it is missing or unreadable. */
+function readLogFile(path: string): HookFailure[] | null {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
   const failures: HookFailure[] = [];
   for (const line of text.split("\n")) {
     if (line.trim() === "") continue;
