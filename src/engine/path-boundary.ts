@@ -154,12 +154,13 @@ export function checkoutPathBoundary(root: string, resolutions = CHECKOUT_PATH_R
       rootRead = true;
     }
     if (realRoot === undefined) return undefined;
+    // Only a path in the checkout is kept, so one seen before, or past the budget, needs no test of where it lies.
+    if (targets.has(path)) return targets.get(path);
+    if (targets.size >= resolutions) return undefined;
     const named = resolve(root, path);
     // Anywhere outside the checkout may be another machine: on Windows a URL's `//host/api` is the network share
     // `\\host\api`, and resolving it blocks until the host answers, about 21 s for one that never does.
     if (pathFrom(root, named) === undefined && pathFrom(realRoot, named) === undefined) return undefined;
-    if (targets.has(path)) return targets.get(path);
-    if (targets.size >= resolutions) return undefined;
     const resolved = realPath(named);
     let led: string | undefined;
     // A path no link redirects is judged by its own name, already.
