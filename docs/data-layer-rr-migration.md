@@ -7,7 +7,7 @@ Keep rule logic in Datalog. Do not add SQL stages or rule-specific native detect
 The migration covers the **100 existing ports**, including their complete public contracts.
 The remaining 42 checks will use `.rr` when ported.
 The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
-The current inventory has twenty-one admitted rules, seventy-eight drafts, and one absent translation.
+The current inventory has twenty-two admitted rules, seventy-seven drafts, and one absent translation.
 Draft policies do not count as completed migrations.
 
 ## Unresolved forward references: component failures
@@ -102,6 +102,26 @@ No engine code or optional execution mode was added.
 The full tooling suite now passes 720 tests in 55.083 seconds.
 The 74 historical inputs have been source-recorded again. Their native replay and retained workspace sequences are running next.
 The production change requires a final replay of the original and supplemental contracts before admission.
+
+## Unresolved forward references: complete admission
+
+Unresolved references now passes complete rule admission on root CLI `f4db14313662e14c…`.
+All 119 owned original assertions pass through both APIs. All 63 complete original observations match, including 37 finding-positive observations.
+Both APIs also pass fifty component contracts, 206 adversarial public contracts, thirty-two CLI contracts, twenty-five production contracts, and 74 historical inputs.
+Three retained-workspace sequences pass nineteen steps per API, including a no-op, source removal, aliases, and changes in annotation resolution.
+All fifteen full-rule mutations cause valid parity failures in each API. The shared structural helper separately passes 117 cases and twelve mutation runs.
+
+The [complete receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-complete-finalfcce.json.gz) binds 1,772 rule executions and the helper's 264 additional executions.
+Twenty-seven TDD admission tests reject incomplete originals, lost positives, changed DTOs, missing updates, ineffective mutations, wrong programs, and unapproved declaration calls.
+No original case is skipped. Native execution does not invoke Python linter logic. The one passive type-alias evaluation per API remains recorded.
+Argparse cases preserve full streams and raised status. Invalid extraction syntax stops at the fact framework before its callback.
+One old UTF-8 capture contains no readable bytes; its unchanged original assertion and explicit invalid-UTF-8 public fixture both run through native detection.
+These boundaries are named in the receipt; they do not remove any original assertion.
+
+`migration.require_complete` now accepts this rule. The inventory is twenty-two admitted rules, seventy-seven drafts, and one absent translation.
+The remaining migration objective still covers all 100 rules.
+The final full tooling suite passes 747 tests in 56.959 seconds. Inventory verification and completion checks pass for all twenty-two admitted rules.
+Compile time for this delivery is zero: the engine binary and source trees did not change.
 
 ## Dynamic loading: complete original snapshot audit
 

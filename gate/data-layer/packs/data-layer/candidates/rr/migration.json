@@ -3950,9 +3950,114 @@
       "batch": 2,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-unresolved-forward-refs.json",
       "legacySha256": "084da92045c5621c0305bfaeee185abc331c46a6e1ad45de61e89ee3c382d231",
-      "status": "draft",
+      "status": "full-contract-passed",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/unresolved-forward-refs.rr",
-      "ruleSha256": "f6300601706430d4f32a08328753a326257f2d8c7e4c1e8e2d11caa5832d889f"
+      "ruleSha256": "f6300601706430d4f32a08328753a326257f2d8c7e4c1e8e2d11caa5832d889f",
+      "evidence": {
+        "assertions": 119,
+        "positives": 37,
+        "failures": 0,
+        "skipped": 0,
+        "semanticFallbacks": 0,
+        "ruleSha256": "f6300601706430d4f32a08328753a326257f2d8c7e4c1e8e2d11caa5832d889f",
+        "engineCommit": "4e07746800e7fb958a57c5208c1ea956bc8f7412",
+        "engineSha256": "f4db14313662e14ca1e1924296c91acb48107035461e85db4a2977d61b6ce6e2",
+        "corpusSha256": "b95a419201620fef6abfc55b6316b88226957c2c40d7f764540693c5a722e802",
+        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "originalInventory": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory-v2.json",
+          "sha256": "a3636d7f8dbb210cfec64aa05b20ff37a97899365b68b3ba2a4ab855ccdda0db"
+        },
+        "reports": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-complete-native-snapshot.json",
+            "sha256": "858f51b5169213257be7c7089ed7a0795adc7f01efa6582f7b0ad807bd0169d2"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-complete-native-workspace.json",
+            "sha256": "87c4569ebf1a02c9b77b1f4b7b9ee00ef910d9c8df823419c3af865021ba1d83"
+          }
+        ],
+        "acceptanceCheckpoints": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-complete-finalfcce.json.gz",
+            "sha256": "cf9df8c2c8e1f13ea43cca7a593aad2c2635b7334831b0f09f268d52db3b349d"
+          }
+        ],
+        "supplemental": {
+          "check": "unresolved_forward_refs",
+          "admitted": true,
+          "fullRuleMigrationAcceptance": true,
+          "fullMigrationAcceptance": false,
+          "originalCasesPerAPI": 119,
+          "originalObservationsPerAPI": 63,
+          "originalPositiveObservationsPerAPI": 37,
+          "casesPerAPI": {
+            "components": 50,
+            "public": 206,
+            "cli": 32,
+            "production": 25,
+            "legacy": 74
+          },
+          "persistentStepsPerAPI": 19,
+          "controls": 30,
+          "sharedHelper": {
+            "helperComplete": true,
+            "casesPerAPI": 117,
+            "controls": 12,
+            "nativeExecutions": 264,
+            "fullRuleMigrationAcceptance": false
+          },
+          "nativeExecutions": 1772,
+          "platformCases": {
+            "components:extract-syntax": "The fact framework rejects invalid syntax before calling extraction; native syntax behavior also runs in production and public contracts.",
+            "cli:help,unknown": "Argparse renders help or rejects an unknown flag before rule evaluation; complete streams and SystemExit values are compared.",
+            "legacy:batch-02-recording.json:91": "The old UTF-8 observation retained no readable source bytes. Its original unchanged assertion and the public invalid-utf8 byte fixture both run natively."
+          }
+        },
+        "scope": "All 119 unchanged assertions, 63 complete original observations, exact native public and supplied-AST APIs, components, CLI, production, historical inputs, retained updates, valid mutations and the shared structural helper through both APIs."
+      },
+      "migrationProgress": {
+        "status": "full-contract-passed",
+        "admitted": true,
+        "verifiedNativeExecutions": 1772,
+        "checkpoint": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-unresolved-complete-finalfcce.json.gz",
+          "sha256": "cf9df8c2c8e1f13ea43cca7a593aad2c2635b7334831b0f09f268d52db3b349d"
+        },
+        "summary": {
+          "check": "unresolved_forward_refs",
+          "admitted": true,
+          "fullRuleMigrationAcceptance": true,
+          "fullMigrationAcceptance": false,
+          "originalCasesPerAPI": 119,
+          "originalObservationsPerAPI": 63,
+          "originalPositiveObservationsPerAPI": 37,
+          "casesPerAPI": {
+            "components": 50,
+            "public": 206,
+            "cli": 32,
+            "production": 25,
+            "legacy": 74
+          },
+          "persistentStepsPerAPI": 19,
+          "controls": 30,
+          "sharedHelper": {
+            "helperComplete": true,
+            "casesPerAPI": 117,
+            "controls": 12,
+            "nativeExecutions": 264,
+            "fullRuleMigrationAcceptance": false
+          },
+          "nativeExecutions": 1772,
+          "platformCases": {
+            "components:extract-syntax": "The fact framework rejects invalid syntax before calling extraction; native syntax behavior also runs in production and public contracts.",
+            "cli:help,unknown": "Argparse renders help or rejects an unknown flag before rule evaluation; complete streams and SystemExit values are compared.",
+            "legacy:batch-02-recording.json:91": "The old UTF-8 observation retained no readable source bytes. Its original unchanged assertion and the public invalid-utf8 byte fixture both run natively."
+          }
+        },
+        "remaining": []
+      }
     },
     {
       "check": "classvar_check",
