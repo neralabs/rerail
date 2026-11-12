@@ -549,6 +549,8 @@ read it first and replace anything you'd rather not post with `<redacted>`.
 - `--output <file>` writes elsewhere. The file is readable by your user only.
 - It covers the repository's latest session; `--session <id>` names another (the id is in its dashboard address).
 - It works where Rerail won't start or set-up never finished, and says which parts it could not read.
+- A daemon that misses the first 2-second health check gets 10 more seconds to answer before the bundle calls it
+  unresponsive; one that answers is recorded with how long it took.
 
 | In the file | Left out |
 | --- | --- |

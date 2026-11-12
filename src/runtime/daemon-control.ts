@@ -408,15 +408,17 @@ export async function readDaemonState(stateFile: string): Promise<DaemonState | 
 /**
  * What the daemon `state` records answers on `/healthz`, with the capability it records, over its own transport
  * (`daemonFetch`) unless `fetchImpl` names another, as the MCP bridge's tests do. A `401` is a refusal, kept apart from
- * silence: the daemon is up, and "not answering" would send the person after the wrong cause.
+ * silence: the daemon is up, and "not answering" would send the person after the wrong cause. `timeoutMs` bounds the
+ * wait for the answer; a caller that can wait out a busy daemon passes more.
  */
 export async function probeDaemon(
   state: Pick<DaemonState, "url" | "accessToken" | "tlsFingerprint256">,
   fetchImpl?: DaemonFetch,
+  timeoutMs: number = PROBE_TIMEOUT_MS,
 ): Promise<DaemonProbe> {
   try {
     const endpoint = daemonEndpoint(state, "/healthz");
-    const response = await (fetchImpl ?? endpoint.fetch)(endpoint.url, { headers: endpoint.headers, signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
+    const response = await (fetchImpl ?? endpoint.fetch)(endpoint.url, { headers: endpoint.headers, signal: AbortSignal.timeout(timeoutMs) });
     if (response.status === 401) return { status: "refused" };
     if (!response.ok) return { status: "unreachable" };
     const body = await response.json() as DaemonHealth;
