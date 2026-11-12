@@ -22,7 +22,7 @@
 
 use super::{Result, lower, maintained, retain};
 use crate::code_rule_dsl::facts::vtab::{Modules, Source};
-use crate::code_rule_dsl::logic::front::{self, Literal};
+use crate::code_rule_dsl::logic::front::{self, Atom, Literal, Rule, Term};
 use rusqlite::Connection;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -37,8 +37,18 @@ pub(in crate::code_rule_dsl) struct RoundProgram {
     gates: Vec<(String, Option<String>)>,
     /// Each request relation and its width.
     requests: Vec<(String, usize)>,
-    /// The relations answers add rows to, other than the per-file ones.
+    /// The relations answers add rows to, other than the per-file ones: `loaded`, and the file system's relations
+    /// (`fs_input`) in place of the answers they make.
     produced: Vec<(String, usize)>,
+    /// Each answer of the file system (`rr::WORLD`'s `dir_entry`, `file_line`, `file_digest`) the program reads, with
+    /// its request: a join of the two, `dir_entry(d, n, k) :- rr_dir_req(d), rr_fs_dir_entry(d, n, k)`.
+    fs: Vec<(String, String)>,
+}
+
+/// The relation of the file system an answer is the join of its request with (decision 0108, t33's K2): its rows are
+/// the file system's where asked, kept as inputs, and the answer is derived.
+pub(in crate::code_rule_dsl) fn fs_input(answer: &str) -> String {
+    format!("rr_fs_{answer}")
 }
 
 impl RoundProgram {
@@ -62,6 +72,34 @@ impl RoundProgram {
         if produced.iter().any(|(r, _)| heads.contains(r.as_str())) {
             return None;
         }
+        // The file system's answers as joins: each request with a relation of the file system, the input.
+        let mut fs = Vec::new();
+        for (answer, req) in crate::code_rule_dsl::logic::rr::WORLD {
+            let Some(width) = produced.iter().find(|(r, _)| r == answer).map(|(_, w)| *w) else { continue };
+            if !load.answers.contains_key(req) || load.decls.get(req).is_none_or(|d| d.len() != 1) {
+                continue;
+            }
+            let input = fs_input(answer);
+            program.decls.insert(input.clone(), load.decls[answer].clone());
+            let vars: Vec<Term> = (0..width).map(|c| Term::Var(format!("rr_c{c}"))).collect();
+            program.rules.push(Rule {
+                head: Atom { rel: (answer).to_owned().into(), args: vars.clone(), neg: false, gated: false },
+                body: vec![
+                    Literal::Atom(Atom { rel: (req).to_owned().into(), args: vec![vars[0].clone()], neg: false, gated: false }),
+                    Literal::Atom(Atom { rel: input.clone().into(), args: vars, neg: false, gated: false }),
+                ],
+            });
+            // Read back by the rest of the cross part: kept, not inlined.
+            program.qualifiers.entry((answer).to_owned()).or_default().insert("no_inline".to_owned());
+            program.inputs.retain(|r| r != answer);
+            fs.push(((answer).to_owned(), input));
+        }
+        let mut produced = produced;
+        for (answer, input) in &fs {
+            for p in produced.iter_mut().filter(|(r, _)| r == answer) {
+                p.0 = input.clone();
+            }
+        }
         for rel in gates.iter().map(|(d, _)| d.clone()).chain(produced.iter().map(|(r, _)| r.clone())) {
             if !program.inputs.contains(&rel) {
                 program.inputs.push(rel);
@@ -74,7 +112,7 @@ impl RoundProgram {
         // each is kept in the frames as any derived relation, with its rows.
         program.outputs.clear();
         front::strata(&program).ok()?;
-        Some(RoundProgram { program, gates, requests, produced })
+        Some(RoundProgram { program, gates, requests, produced, fs })
     }
 
     /// The relations a round's caller reads: its requests and asks.
@@ -253,7 +291,7 @@ pub(in crate::code_rule_dsl) struct On<'a> {
 /// The digest of the file system's answers `kept` holds as inputs (`rr::WORLD`'s relations): what a record of the
 /// journal's cursors is checked against, so its cursors are trusted only over the answers kept with them.
 pub(in crate::code_rule_dsl) fn world_digest(digest: impl Fn(&str) -> Option<u64>) -> u64 {
-    crate::code_rule_dsl::logic::rr::WORLD.iter().fold(0x5157_0001u64, |h, (rel, _)| h.rotate_left(17) ^ digest(rel).unwrap_or(0))
+    crate::code_rule_dsl::logic::rr::WORLD.iter().fold(0x5157_0001u64, |h, (rel, _)| h.rotate_left(17) ^ digest(&fs_input(rel)).unwrap_or(0))
 }
 
 /// Where the rounds start.
@@ -278,6 +316,11 @@ impl RoundProgram {
             Start::Kept(k) => (Some(k), None),
             Start::Closing(asks) => (None, Some(asks)),
         };
+        // The answers recorded before the rounds (the gated fixpoint's), kept where the rounds keep them.
+        answers.rows = std::mem::take(&mut answers.rows).into_iter().fold(BTreeMap::new(), |mut m: BTreeMap<String, Vec<Vec<i64>>>, (r, rows)| {
+            m.entry(self.kept_as(&r)).or_default().extend(rows);
+            m
+        });
         let mut provisional: BTreeMap<String, Vec<Vec<i64>>> = BTreeMap::new();
         let mut still_n = 0;
         // The documents loaded this run and taken back (`Answers::withdraw`).
@@ -322,8 +365,9 @@ impl RoundProgram {
             // answers are its answer again, and it is not asked.
             if let Some(still) = on.still {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "rounds/answers the journal keeps".into());
-                for (produced, req) in crate::code_rule_dsl::logic::rr::WORLD {
-                    let Some(rows) = provisional.get(produced) else { continue };
+                for (answer, req) in crate::code_rule_dsl::logic::rr::WORLD {
+                    let produced = self.kept_as(answer);
+                    let Some(rows) = provisional.get(&produced) else { continue };
                     let mut by: HashMap<i64, Vec<&Vec<i64>>> = HashMap::new();
                     for r in rows.iter().filter(|r| !r.is_empty()) {
                         by.entry(r[0]).or_default().push(r);
@@ -332,7 +376,7 @@ impl RoundProgram {
                     let given: Vec<Vec<i64>> = keys.iter().flat_map(|k| by.get(&k[0]).into_iter().flatten().map(|r| (*r).clone())).collect();
                     still_n += keys.len();
                     answers.asked.extend(keys.into_iter().map(|k| ((*req).to_owned(), k.clone())));
-                    answers.rows.entry((*produced).to_owned()).or_default().extend(given);
+                    answers.rows.entry(produced).or_default().extend(given);
                 }
             }
         }
@@ -398,7 +442,7 @@ impl RoundProgram {
             let batch = [pick(true, false), pick(true, true), pick(false, false), pick(false, true)].into_iter().find(|b| !b.is_empty());
             if let Some(batch) = batch {
                 for (req, keys) in batch {
-                    let given = answer(&req, &keys)?;
+                    let given: Vec<(String, Vec<Vec<i64>>)> = answer(&req, &keys)?.into_iter().map(|(r, rows)| (self.kept_as(&r), rows)).collect();
                     // A document taken back and loaded again is the run's again.
                     if req == super::world::LOAD && !withdrawn.is_empty() {
                         let ledger = inputs.ledger.lock().unwrap_or_else(|e| e.into_inner());
@@ -473,9 +517,19 @@ impl RoundProgram {
             }
             None => 0,
         };
-        let produced = self.produced.iter().map(|(rel, _)| (rel.clone(), bound.get(rel).map(|(s, _)| rows(s.as_ref())).unwrap_or_default())).collect();
+        let mut produced: Vec<(String, Vec<Vec<i64>>)> = self.produced.iter().filter(|(rel, _)| !self.fs.iter().any(|(_, i)| i == rel)).map(|(rel, _)| (rel.clone(), bound.get(rel).map(|(s, _)| rows(s.as_ref())).unwrap_or_default())).collect();
+        // The file system's answers as the last round derived them: each request's rows of the file system.
+        for (answer, _) in &self.fs {
+            produced.push((answer.clone(), next.read_derived(on.store, answer)?.ok_or_else(|| Gave::Up(format!("{answer} is not kept")))?));
+        }
         let world = world_digest(|rel| bound.get(rel).map(|(_, d)| *d));
         Ok(Done { next, rounds, strata, maintained: maintained_n, derived_again: again, again_why, still: still_n, world, withdrawn, written, produced, answered })
+    }
+
+    /// Where the rounds keep an answer's rows: the file system's relation for one of its answers (`fs`), else the
+    /// answer's own.
+    fn kept_as(&self, rel: &str) -> String {
+        self.fs.iter().find(|(a, _)| a == rel).map_or_else(|| rel.to_owned(), |(_, i)| i.clone())
     }
 
     /// The ask relations, by gate.
