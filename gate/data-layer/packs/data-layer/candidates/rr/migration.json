@@ -3091,7 +3091,7 @@
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_async_sync_boundary.py",
-      "sha256": "5f6064e87ce1e84be4540c3b637d4c3f4d9a031b8ee95e05be96a99a0b9a7a5a"
+      "sha256": "f484d3551881506ee4d7a75efa7d49b2516842ee9f2b493500a6091e17d0574e"
     }
   ],
   "rules": [
@@ -4439,19 +4439,34 @@
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/async-sync-boundary.rr",
       "ruleSha256": "41b3fdf7951c12fad6270fc63c1267f3ecf8797c2cf2fde5b871e366e862a2c7",
       "migrationProgress": {
-        "status": "native-component-progress",
+        "status": "native-scanner-progress",
         "admitted": false,
-        "verifiedNativeExecutions": 398,
+        "verifiedNativeExecutions": 640,
         "checkpoint": {
-          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-boundary-components-finalfcce.json.gz",
-          "sha256": "26821a6bd80cf24c0a76682ac4951ddec82ed29292c60ea910464a36cad3dbbb"
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-boundary-scanners-finalfcce.json.gz",
+          "sha256": "8fac40b40f880e93702b9824f2b8f734f4c19b753d6cd347713201b2570c2b2a"
         },
         "remaining": [
-          "Production and file selection",
-          "Rendering, CLI and ratchet administration",
+          "Native rendering and CLI/ratchet administration",
           "Earlier inputs, retained edits, removal controls and full admission"
         ]
-      }
+      },
+      "migrationProgressHistory": [
+        {
+          "status": "native-component-progress",
+          "admitted": false,
+          "verifiedNativeExecutions": 398,
+          "checkpoint": {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-boundary-components-finalfcce.json.gz",
+            "sha256": "26821a6bd80cf24c0a76682ac4951ddec82ed29292c60ea910464a36cad3dbbb"
+          },
+          "remaining": [
+            "Production and file selection",
+            "Rendering, CLI and ratchet administration",
+            "Earlier inputs, retained edits, removal controls and full admission"
+          ]
+        }
+      ]
     },
     {
       "check": "admin_async_purity",

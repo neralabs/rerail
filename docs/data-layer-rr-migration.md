@@ -4027,3 +4027,25 @@ It must select eligible files before opening them, exclude the bare basename `.p
 Skipped non-Python files and broken links still contribute to the source's checked-file count.
 The red receipt is `rr-boundary-public-selection-red-finalfcce.json.gz`.
 These are port defects, not missing engine features. The rule remains a draft.
+
+### 2026-11-11 — Boundary scanners pass on one coherent revision
+
+The scanner now submits the complete candidate inventory to one native selection query before opening files.
+The query applies explicit-file eligibility, basename handling, and duplicate removal.
+The original inventory remains separate so checked-file counts retain skipped and repeated entries.
+Selected sources use stable transport buffers. Findings retain the caller's requested filenames, including paths outside the default roots.
+
+Both APIs pass all 173 component cases, all 32 public scanner cases, all 22 complete production cases, and all five unchanged original tests.
+All three original finding-positive observations remain present.
+The strict checkpoint `rr-boundary-scanners-finalfcce.json.gz` retains 640 native executions from this coherent revision.
+Eight additional checkpoint tests reject missing aliases, missing selection cases, changed facts, missing native work, source callbacks, and mixed cohorts.
+All 640 Python tooling tests pass. The manifest audit passes.
+
+The next frontend corpus records 37 complete CLI observations, including stdout, stderr, status, context, discovery, and baseline bytes.
+Signing cases use only the public synthetic fixture key.
+The current CLI still reaches the source `cli_main`; the guard rejects it.
+This red witness is retained in `rr-boundary-cli-source-red-finalfcce.json.gz`.
+
+The rule remains a draft. Native rendering and CLI administration, all earlier inputs, retained updates, removal controls, and strict admission remain open.
+The global inventory remains nineteen admitted rules, eighty drafts, and one absent translation.
+No native engine source changed. No repository-wide cold run or additional Linear ticket was created.

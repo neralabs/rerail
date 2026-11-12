@@ -69,15 +69,19 @@ def scan(suite, entry, module, args):
         elif candidate.is_dir():
             paths.extend(sorted(candidate.rglob('*.py')))
     checked = [p.relative_to(root).as_posix() for p in paths]
-    files, error = {}, None
-    for path, logical in zip(paths, checked):
+    selected = suite.native('async_sync_boundary','_bs_select',[],dict(bsCandidatePaths=checked,bsCandidateIsFile=[str(int(p.is_file())) for p in paths]))
+    if any(r['code']!='BS_FILE' for r in selected):raise AssertionError('Invalid native boundary file selection')
+    files, owners, error = [], {}, None
+    for row in sorted(selected,key=lambda r:r['parameters']['ordinal']):
+        i=row['parameters']['ordinal'];path=paths[i];logical=checked[i]
+        if row['parameters']['path']!=logical:raise AssertionError('Native boundary selected a different input path')
         try:
             source = path.read_text(encoding='utf-8')
         except (OSError, UnicodeError) as caught:
             error = caught
             break
-        files[logical] = dict(path=logical, source=source)
-    rows = suite.native('async_sync_boundary', entry, list(files.values()),
+        key=f'api/_bs_buffers/{i}.py';files.append(dict(path=key,source=source));owners[key]=logical
+    rows = suite.native('async_sync_boundary', entry, files,
                         dict(checkedPaths=checked, hasReadError=str(error is not None).lower()))
     failures = [r for r in rows if r['code'] == 'BS_READ_ERROR']
     if failures:
@@ -88,8 +92,8 @@ def scan(suite, entry, module, args):
     findings = [r for r in rows if r['code'] != 'BS_COUNT']
     if len(metadata) != 1 or any(r['code'] not in {'SYNC_WRAPS_ASYNC', 'ASYNC_WRAPS_SYNC', 'EXECUTOR_ESCAPE'} for r in findings):
         raise AssertionError('Invalid native boundary scan result')
-    violations = [module.Violation(file=r['path'], line=r['line'], col=r['parameters']['column'],
+    violations = [module.Violation(file=owners[r['path']], line=r['line'], col=r['parameters']['column'],
         category=r['code'], function_name=r['parameters']['function_name'], call_text=r['parameters']['call_text'],
         is_async_ctx=bool(r['parameters']['async_']))
-        for r in sorted(findings, key=lambda r: (r['path'], r['parameters']['ordinal']))]
+        for r in sorted(findings, key=lambda r: (owners[r['path']], r['parameters']['ordinal']))]
     return module.LintResult(violations=violations, files_checked=metadata[0]['parameters']['count'])

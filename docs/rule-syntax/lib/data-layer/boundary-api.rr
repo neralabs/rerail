@@ -4,6 +4,14 @@
 .violation BoundaryConfiguration(at:span,key:symbol,value:symbol) code "BS_CONFIG" "boundary configuration"
 BoundaryConfiguration(@place("",0),k,v) :- option("entryPoint","_bs_configuration"),bs_config(k,v).
 
+// Source inventory counts are independent from the explicit-file scope's eligibility.
+.decl bsf_candidate(i:number,path:symbol)
+bsf_candidate(i,p) :- option_item("bsCandidatePaths",i,p),option_item("bsCandidateIsFile",i,"1"),suffix(".py",p),p!=".py",!suffix("/.py",p).
+.decl bsf_duplicate(i:number)
+bsf_duplicate(i) :- bsf_candidate(i,p),bsf_candidate(j,p),j<i.
+.violation BoundaryFile(at:span,ordinal:number,path:symbol) code "BS_FILE" "selected boundary file"
+BoundaryFile(@place("",0),i,p) :- option("entryPoint","_bs_select"),bsf_candidate(i,p),!bsf_duplicate(i).
+
 // The registered framework owns its source prefilter. Collection consumes its entire supplied tree.
 bs_api_helper() :- option("entryPoint","_bs_ast_collect").
 bs_call(n,f) :- option("entryPoint","_bs_ast_collect"),bs_graph_kind(n,"Call"),bs_graph_edge(n,"func",f).
