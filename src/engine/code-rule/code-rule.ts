@@ -1522,9 +1522,10 @@ export interface CodeRuleAuditor {
    * `acceptsPath`, `ignoresPath` and `sourceRoot` for one walk, which asks them only of the files and folders it found,
    * never of a link, and `sourceRoot` only of its files and `.git` entries, each owned as the files of its folder are. It
    * may keep what it learns of a folder for the rest of the walk, or longer, so a walk costs a lookup per folder where
-   * the auditor would make one per file. Absent: the walk asks the auditor itself.
+   * the auditor would make one per file. Absent: the walk asks the auditor itself. A view answers all three, so a walk
+   * never takes one answer from its view and another from the auditor.
    */
-  walkView?(): WalkView;
+  walkView?(): Required<WalkView>;
   /**
    * Why an edit of the file `path` (as for `acceptsPath`) goes unchecked though the rules would read it: the pattern
    * by which Git ignores it, while the session follows `.gitignore`, with its file (absolute) and line. Undefined for a

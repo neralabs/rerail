@@ -2187,12 +2187,11 @@ export class CodeRuleBridge {
   }
 
   /**
-   * The checkout that owns `path`: the session folder for an auditor that judges one folder. A walk's view (`walkView`)
-   * answers for the files and `.git` entries the walk found from what it knows of their folder.
+   * The checkout that owns `path`, as `asked` names it: the session folder for an auditor that judges one folder. A
+   * walk's view (`walkView`) answers for the files and `.git` entries the walk found from what it knows of their folder.
    */
   #owningCheckout(root: string, path: string, asked: Pick<CodeRuleAuditor, "sourceRoot"> = this.#auditor): string | undefined {
-    if (asked.sourceRoot !== undefined) return asked.sourceRoot(path);
-    return this.#auditor.sourceRoot === undefined ? root : this.#auditor.sourceRoot(path);
+    return asked.sourceRoot === undefined ? root : asked.sourceRoot(path);
   }
 
   /**
