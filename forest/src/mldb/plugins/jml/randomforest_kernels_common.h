@@ -2272,3 +2272,82 @@ packBucketsImpl) (uint32_t numRows,
     }
     wordsOut[w] = word;
 }
+
+// A tree's row sample drawn on the device (bagRows; `bag_count` on the host, the same draw): an example is kept with
+// probability keep24 / 2^24, then counted Poisson(1) times (as a draw of n from n with replacement counts it), from
+// two hashes of its number and the bag's seed. Not a Mersenne Twister's sequence (upstream's): diversity between
+// bags is all a bag needs.
+UKL_FUNCTION(v1,uint32_t,bagHash)(uint32_t x)
+{
+    x ^= x >> 16;
+    x *= 0x7feb352dU;
+    x ^= x >> 15;
+    x *= 0x846ca68bU;
+    x ^= x >> 16;
+    return x;
+}
+
+// P(Poisson(1) <= k) * 2^24, k = 0..7 (a count past 8 is left out: probability 1e-6).
+static const __constant uint32_t POISSON1_24[8] = { 6171851u, 12343702u, 15429615u, 16458249u, 16715393u, 16766823u, 16775396u, 16776615u };
+
+UKL_FUNCTION(v1,uint32_t,bagCount)(uint32_t seed, uint32_t e, uint32_t keep24, uint32_t sample)
+{
+    if (sample == 0)
+        return 1;
+    uint32_t h = bagHash(e * 0x9E3779B9U ^ bagHash(seed));
+    if ((h >> 8) >= keep24)
+        return 0;
+    uint32_t u = bagHash(h ^ 0x68E31DA4U) >> 8;
+    uint32_t count = 0;
+    for (uint32_t k = 0;  k < 8;  ++k)
+        count += u >= POISSON1_24[k];
+    return count;
+}
+
+// [example]: example e's weights in the bag: its base weight (zero for an example with no row) times its count times
+// `scale`, as row_weights gives them ([w (1 - t), w t]); zero when it is not in the bag.
+UKL_FUNCTION(v1,void,
+bagRowsImpl) (uint32_t numExamples,
+              uint32_t seed,
+              uint32_t keep24,
+              uint32_t sample,
+              float scale,
+              ROBUFFER(float) baseRows,
+              RWBUFFER(float) decodedRowsOut,
+              uint32_t e)
+{
+    if (e >= numExamples)
+        return;
+    uint32_t count = bagCount(seed, e, keep24, sample);
+    float w = baseRows[2 * e] * (float)count * scale;
+    float t = baseRows[2 * e + 1];
+    decodedRowsOut[2 * e] = count == 0 ? 0.0f : fma(-w, t, w);
+    decodedRowsOut[2 * e + 1] = count == 0 ? 0.0f : w * t;
+}
+
+// [thread]: the root's weights (wAllOut[0], zeroed before) as the sum of the root's buckets in the first active
+// feature, which every weighed row is in one of: for a tree whose bag the device drew, whose total the host does not
+// know. The integer sums are those of the rows, in any order.
+UKL_FUNCTION(v1,void,
+rootWeightsImpl) (ROBUFFER(uint32_t) bucketNumbers,
+                  ROBUFFER(uint32_t) activeFeatureList,
+                  ROBUFFER(W) partitionBuckets,
+                  RWBUFFER(W) wAllOut,
+                  uint32_t i,
+                  uint32_t n)
+{
+    uint32_t f = activeFeatureList[0];
+    int32_t v0 = 0, v1 = 0, c = 0;
+    for (uint32_t b = bucketNumbers[f] + i;  b < bucketNumbers[f + 1];  b += n) {
+        v0 += partitionBuckets[b].vals[0];
+        v1 += partitionBuckets[b].vals[1];
+        c += partitionBuckets[b].count;
+    }
+    UKL_GLOBAL_PTR(WAtomic) w = UKL_GLOBAL_PTR_CAST(WAtomic)wAllOut;
+    if (v0 != 0)
+        atom_add(&w->vals[0], v0);
+    if (v1 != 0)
+        atom_add(&w->vals[1], v1);
+    if (c != 0)
+        atom_add(&w->count, c);
+}

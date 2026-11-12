@@ -10,6 +10,12 @@
 //!
 //! **Read without a lock.** Each thread keeps its copy of the installed model, taken again only when the version
 //! moves, as the learned rates are.
+//!
+//! **No strings, no trees, on the placement path.** With its copy a thread keeps, for that model: each (kernel name,
+//! lane)'s job key, found by the name's address (`Kernel::name` is a `&'static str`) the first time it is asked;
+//! and a memo of predictions by the job's buckets (`CostMemo`): the forests see a job only through its buckets, and
+//! a batch's jobs share all but their units'. A launch is a lookup by address, its units' bucket (a binary search)
+//! and a lookup in the memo; the forests are walked only for buckets not seen.
 
 use crate::kernel::Kernel;
 use crate::lanes::Lane;
@@ -99,7 +105,7 @@ impl std::fmt::Display for Comparison {
 #[cfg(target_os = "macos")]
 mod on {
     use super::*;
-    use rerail_forest::cost_model::{CostConfig, CostModel, CostQuery, CostSample};
+    use rerail_forest::cost_model::{CostConfig, CostMemo, CostModel, CostQuery, CostSample, JobKey};
     use std::sync::{Arc, RwLock};
 
     static MODEL: RwLock<Option<Arc<CostModel>>> = RwLock::new(None);
@@ -107,6 +113,29 @@ mod on {
 
     thread_local! {
         static COPY: std::cell::RefCell<(u64, Option<Arc<CostModel>>)> = const { std::cell::RefCell::new((0, None)) };
+        /// This thread's keys and memo, for the model of the version it holds.
+        static PRICED: std::cell::RefCell<Priced> = std::cell::RefCell::new(Priced::default());
+    }
+
+    /// A thread's job keys by (kernel name's address, lane), and its memo of predictions, for one model version.
+    #[derive(Default)]
+    struct Priced {
+        version: u64,
+        jobs: Vec<((usize, usize, u8), Option<JobKey>)>,
+        memo: CostMemo,
+    }
+
+    impl Priced {
+        /// The job key of `name` on `lane`, found by address (the string looked up once).
+        fn job(&mut self, model: &CostModel, name: &'static str, lane: Lane) -> Option<JobKey> {
+            let key = (name.as_ptr() as usize, name.len(), lane.index() as u8);
+            if let Some((_, j)) = self.jobs.iter().find(|(k, _)| *k == key) {
+                return *j;
+            }
+            let j = model.job(lane.name(), name);
+            self.jobs.push((key, j));
+            j
+        }
     }
 
     pub fn sample(s: &Sample) -> CostSample {
@@ -137,21 +166,23 @@ mod on {
     pub fn predict_batch(kernels: &[(&Kernel, Vec<Lane>)], load: f64) -> Vec<[Option<Predicted>; 4]> {
         let mut out = vec![[None; 4]; kernels.len()];
         let Some(model) = current() else { return out };
-        let threads = crate::exec::threads() as u32;
-        let mut at = Vec::new();
-        let mut qs = Vec::new();
-        for (i, (k, lanes)) in kernels.iter().enumerate() {
-            for &l in lanes {
-                at.push((i, l.index()));
-                qs.push(CostQuery { lane: l.name(), forms: k.name(), launches: 1, units: k.units(), cold: false, load, threads });
+        let version = VERSION.load(std::sync::atomic::Ordering::Acquire);
+        let shared = model.shared_buckets(1, false, load, crate::exec::threads() as u32);
+        PRICED.with_borrow_mut(|priced| {
+            if priced.version != version {
+                *priced = Priced { version, ..Default::default() };
             }
-        }
-        // A failed prediction leaves the rates' prices: placement never fails on the model.
-        if let Ok(p) = model.predict(&qs) {
-            for ((i, l), p) in at.into_iter().zip(p) {
-                out[i][l] = p.map(|p| Predicted { wall: p.wall, cpu: p.cpu });
+            for (i, (k, lanes)) in kernels.iter().enumerate() {
+                let (name, units) = (k.name(), k.units());
+                for &l in lanes {
+                    let Some(job) = priced.job(&model, name, l) else { continue };
+                    // A failed prediction leaves the rates' price: placement never fails on the model.
+                    if let Ok(p) = priced.memo.get(&model, model.key(job, shared, units)) {
+                        out[i][l.index()] = Some(Predicted { wall: p.wall, cpu: p.cpu });
+                    }
+                }
             }
-        }
+        });
         out
     }
 
@@ -211,9 +242,9 @@ pub use rerail_forest::cost_model::{CostConfig, CostModel};
 #[cfg(target_os = "macos")]
 pub use rerail_forest::randomforest_procedure::RandomForestProcedureConfig as ForestConfig;
 
-/// Puts the calling thread at the background quality of service (the model's training).
+/// Puts the calling thread at a quality of service (the model's training runs at utility).
 #[cfg(target_os = "macos")]
-pub use rerail_forest::randomforest_procedure::set_background_qos;
+pub use rerail_forest::randomforest_procedure::{Qos, set_qos};
 
 /// Every launch's predicted cost on each of its lanes (by lane index), one model call for the batch: `None` where
 /// there is no model, it does not know the launch's lane and name, or the prediction failed.
@@ -249,6 +280,8 @@ pub fn train(samples: &[Sample], config: &CostConfig, min: usize) -> Result<Trai
     }
     let all: Vec<_> = samples.iter().map(sample).collect();
     let model = std::sync::Arc::new(CostModel::train(&all, config)?);
+    // Its kernels compiled here, not on the first placement that asks; one that fails leaves the rates.
+    model.warm()?;
     install(Some(model.clone()));
     Ok(Trained { comparison, model: Some(model) })
 }
