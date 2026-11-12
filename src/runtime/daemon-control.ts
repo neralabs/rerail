@@ -248,7 +248,10 @@ export const START_LOCK_DIR = "start.lock";
 export const AUTOSTART_CLAIM_FILE = "autostart.claim";
 
 const START_TIMEOUT_MS = 15_000;
-/** How long an autostart claim holds: a launcher's whole life, its wait for the start lock and then for the daemon. */
+/**
+ * How long an autostart claim holds unless a start ends it: a launcher's whole life, its wait for the start lock and
+ * then for the daemon.
+ */
 const AUTOSTART_CLAIM_MS = 2 * START_TIMEOUT_MS;
 const STOP_TIMEOUT_MS = 10_000;
 const KILL_TIMEOUT_MS = 5_000;
@@ -558,9 +561,22 @@ async function repairSqlite(control: DaemonControl): Promise<void> {
   if (result.rebuilt) process.stderr.write(`Rebuilt better-sqlite3 in ${result.prefix}\n`);
 }
 
+/**
+ * Runs `start` under the start lock in `home`. A start that leaves a daemon answering ends the autostart claim
+ * (`claimAutostart`): the launch it held other processes off for is done, so the next process to find the daemon gone
+ * starts it again at once. A start that fails keeps the claim, which holds off launches for the rest of its 30 s
+ * instead of letting every process that finds the daemon down launch a start that fails too.
+ */
+async function startUnderLock(home: string, start: () => Promise<StartDaemonResult>): Promise<StartDaemonResult> {
+  makeRerailHome(home);
+  const result = await withStartLock(home, start);
+  // A claim that cannot be removed holds only until it is 30 s old.
+  await rm(join(home, AUTOSTART_CLAIM_FILE), { force: true }).catch(() => undefined);
+  return result;
+}
+
 export async function startDaemon(control: DaemonControl, options: DaemonLaunchOptions): Promise<StartDaemonResult> {
-  makeRerailHome(control.home);
-  return await withStartLock(control.home, async () => {
+  return await startUnderLock(control.home, async () => {
     const lookup = await lookupDaemon(control.home);
     if (lookup.status === "running") return { started: false, daemon: { state: lookup.state, health: lookup.health } };
     if (lookup.status === "unresponsive" || lookup.status === "refused") throw new Error(liveDaemonProblem(lookup));
@@ -574,8 +590,7 @@ export async function startDaemon(control: DaemonControl, options: DaemonLaunchO
  * an older daemon cannot safely accept fields introduced by the active hook.
  */
 export async function startDaemonForPackage(control: DaemonControl, options: DaemonLaunchOptions): Promise<StartDaemonResult> {
-  makeRerailHome(control.home);
-  return await withStartLock(control.home, async () => {
+  return await startUnderLock(control.home, async () => {
     const lookup = await lookupDaemon(control.home);
     if (lookup.status === "running") {
       if (await daemonUsesPackageRoot(lookup.state, control.packageRoot)) {
@@ -719,8 +734,9 @@ function createOnce(path: string): boolean {
  * Whether this process launches the autostart: it created the claim in `home`, or found one made more than
  * `AUTOSTART_CLAIM_MS` from now and replaced it. Sessions and hooks each run in a process of their own, and the ones
  * that find the daemon gone arrive together; the claim is created exclusively, so one launches and the rest leave the
- * start to it. The distance counts both ways, so a claim made before the clock moved back expires too. Two processes
- * that both replace an expired claim can both launch; the start lock still lets only one launcher start a daemon.
+ * start to it. A start that leaves a daemon answering removes the claim (`startUnderLock`). The distance counts both
+ * ways, so a claim made before the clock moved back expires too. Two processes that both replace an expired claim can
+ * both launch; the start lock still lets only one launcher start a daemon.
  */
 function claimAutostart(home: string): boolean {
   const claim = join(home, AUTOSTART_CLAIM_FILE);

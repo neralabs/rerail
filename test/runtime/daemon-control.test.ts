@@ -304,6 +304,28 @@ describe("Rerail daemon control", () => {
     expect(existsSync(join(home, "start.lock"))).toBe(false);
   });
 
+  it("ends the autostart claim once a start leaves a daemon answering, and keeps it after a start that fails", async () => {
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const control = { home, packageRoot, ensureSqlite: async (root: string) => ({ prefix: root, rebuilt: false }) };
+    const claim = join(home, AUTOSTART_CLAIM_FILE);
+    await writeFile(claim, "");
+    const failure = new Error("better-sqlite3 cannot load");
+    await expect(startDaemon({ ...control, ensureSqlite: async () => { throw failure; } }, { dev: true, port: 0 })).rejects.toBe(failure);
+    // No daemon came up, so the claim still holds other processes off their own launches.
+    expect(existsSync(claim)).toBe(true);
+    try {
+      expect((await startDaemon(control, { dev: true, port: 0 })).started).toBe(true);
+      // The start the claim waited for is done: the next process to find the daemon gone starts it again.
+      expect(existsSync(claim)).toBe(false);
+      await writeFile(claim, "");
+      // A launch that finds the daemon running ends its claim too.
+      expect((await startDaemon(control, { dev: true, port: 0 })).started).toBe(false);
+      expect(existsSync(claim)).toBe(false);
+    } finally {
+      await stopDaemon(home);
+    }
+  }, 30_000);
+
   it("shows only this start's output when the daemon exits before it is ready, not earlier runs' log", async () => {
     const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
     await writeFile(join(home, DAEMON_LOG_FILE), "rerail daemon 0.0.0-earlier listening at http://127.0.0.1:1/ (pid 1)\n");
