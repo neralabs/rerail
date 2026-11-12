@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { adoptRemote, openRerailDatabase, recordCheckout } from "../../src/engine/index.js";
 import { SqliteSessionStore } from "../../src/runtime/index.js";
 import {
@@ -38,19 +38,36 @@ async function repository(files: Record<string, string> = {}): Promise<string> {
 }
 
 const NOW = Date.UTC(2026, 9, 15);
-const DAY = 24 * 60 * 60 * 1000;
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
 
-/** A database where `repo`'s repository has one Claude Code session: a task, two calls, a correction, a steer. */
-async function recordedSession(repo: string, startedAt = NOW - DAY): Promise<string> {
+/** A new database that knows `repo`, and a session store attributing sessions to its repository. */
+async function sessionDatabase(repo: string): Promise<{ databasePath: string; store: SqliteSessionStore }> {
   const databasePath = join(await temporary("rerail-rule-evidence-db-"), "rerail.sqlite");
   const database = openRerailDatabase(databasePath);
   const { repositoryKey } = recordCheckout(database, repo);
   database.$client.close();
-  const store = new SqliteSessionStore(databasePath, { repositoryId: repositoryKey });
+  return { databasePath, store: new SqliteSessionStore(databasePath, { repositoryId: repositoryKey }) };
+}
+
+/** `recordSteer` stamps a steer with the clock; this sets the clock to `observedAt` for it. */
+function recordSteerAt(store: SqliteSessionStore, observedAt: number, ...steer: Parameters<SqliteSessionStore["recordSteer"]>): void {
+  vi.useFakeTimers({ toFake: ["Date"], now: observedAt });
+  try {
+    store.recordSteer(...steer);
+  } finally {
+    vi.useRealTimers();
+  }
+}
+
+/** A database where `repo`'s repository has one Claude Code session: a task, two calls, a correction, a steer. */
+async function recordedSession(repo: string, startedAt = NOW - DAY): Promise<string> {
+  const { databasePath, store } = await sessionDatabase(repo);
   try {
     const session = { host: "claude-code" as const, sessionId: "s1", cwd: repo };
     store.openSession(session, startedAt);
-    const at = (minutes: number) => startedAt + minutes * 60_000;
+    const at = (minutes: number) => startedAt + minutes * MINUTE;
     store.append({ sessionId: "s1", kind: "user-prompt", payload: { text: "Never use console.log, add the logging" }, observedAt: at(1) });
     store.append({ sessionId: "s1", kind: "call", payload: { toolName: "Edit", input: { file_path: "src/a.ts" } }, observedAt: at(2) });
     store.append({ sessionId: "s1", kind: "call", payload: { toolName: "Bash", input: { command: "git push --force origin main" } }, observedAt: at(3) });
@@ -58,8 +75,8 @@ async function recordedSession(repo: string, startedAt = NOW - DAY): Promise<str
     store.append({ sessionId: "s1", kind: "call", payload: { toolName: "Bash", input: { command: "cat .env && rm -rf .ssh" } }, observedAt: at(3) });
     store.append({ sessionId: "s1", kind: "user-prompt", payload: { text: "Don't use console.log, we use the logger in src/log.ts" }, observedAt: at(4) });
     store.append({ sessionId: "s1", kind: "user-prompt", payload: { text: "Thanks, now add a test" }, observedAt: at(5) });
-    store.recordSteer(session, "r1", ["n-no-sync", "local:no-console"]);
-    store.recordSteer(session, "r2", ["n-no-sync"]);
+    recordSteerAt(store, at(6), session, "r1", ["n-no-sync", "local:no-console"]);
+    recordSteerAt(store, at(7), session, "r2", ["n-no-sync"]);
   } finally {
     store.close();
   }
@@ -177,6 +194,43 @@ describe("rerail rules evidence", () => {
     expect(evidence.corrections).toEqual([]);
     const wider = await collectRuleEvidence(repo, { databasePath, now: NOW, days: 60 });
     expect(wider.correctionCount).toBe(1);
+  });
+
+  it("counts a session that started before the window and ran in it, and only what it did in the window", async () => {
+    const repo = await repository();
+    const { databasePath, store } = await sessionDatabase(repo);
+    try {
+      const event = (sessionId: string, kind: string, payload: unknown, observedAt: number) => {
+        store.append({ sessionId, kind, payload, observedAt });
+      };
+      // Started three days ago and still running: its task, a risky command, a correction and a steer come before the
+      // window, and its latest work falls in it.
+      const running = { host: "claude-code" as const, sessionId: "running", cwd: repo };
+      store.openSession(running, NOW - 3 * DAY);
+      event("running", "user-prompt", { text: "Add the logging" }, NOW - 3 * DAY + MINUTE);
+      event("running", "call", { toolName: "Bash", input: { command: "rm -rf build" } }, NOW - 3 * DAY + 2 * MINUTE);
+      event("running", "user-prompt", { text: "Never delete build" }, NOW - 3 * DAY + 3 * MINUTE);
+      recordSteerAt(store, NOW - 3 * DAY + 3 * MINUTE, running, "r1", ["no-recursive-delete"]);
+      event("running", "call", { toolName: "Bash", input: { command: "git push --force origin main" } }, NOW - HOUR);
+      event("running", "user-prompt", { text: "Don't force push" }, NOW - HOUR + MINUTE);
+      recordSteerAt(store, NOW - HOUR + MINUTE, running, "r2", ["no-force-push"]);
+      // Started and ended before the window.
+      store.openSession({ host: "codex", sessionId: "ended", cwd: repo }, NOW - 3 * DAY);
+      event("ended", "user-prompt", { text: "Fix the build" }, NOW - 3 * DAY + MINUTE);
+      store.closeSession("ended", NOW - 3 * DAY + HOUR);
+    } finally {
+      store.close();
+    }
+    const evidence = await collectRuleEvidence(repo, { databasePath, now: NOW, days: 1 });
+    expect(evidence.window).toEqual({ days: 1, sessions: 1, hosts: { "claude-code": 1 }, prompts: 1 });
+    // The task came before the window, so the first prompt in it is a correction, after the session's last calls.
+    expect(evidence.corrections).toEqual([expect.objectContaining({
+      sessionId: "running",
+      text: "Don't force push",
+      before: ["Bash rm -rf build", "Bash git push --force origin main"],
+    })]);
+    expect(evidence.riskyCommands).toEqual([{ label: "force push", count: 1, example: "git push --force origin main" }]);
+    expect(evidence.steers).toEqual([{ ruleId: "no-force-push", count: 1 }]);
   });
 
   it("reports a repository Rerail has never seen, and still lists its standards files", async () => {

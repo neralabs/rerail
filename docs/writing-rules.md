@@ -61,7 +61,8 @@ rerail rules evidence [--repo <dir>] [--days <n>] [--limit <n>] [--json]
 <details>
 <summary>What it lists, with sample output</summary>
 
-It covers the last 30 days, across every coding agent and every worktree of the repository.
+It covers the last 30 days, across every coding agent and every worktree of the repository. A session that started
+earlier counts when it was still active in that time, and only what it did then is listed.
 
 | It lists | Which can become |
 |---|---|
