@@ -11,9 +11,11 @@ import {
   DAEMON_TRANSPORT_FLAGS,
   DAEMON_TRANSPORT_OPTIONS,
   loadDaemonTls,
+  loopbackArguments,
   parseArguments,
   parseDaemonTransport,
   RerailDaemon,
+  TlsKeyExposedError,
 } from "../../src/daemon/daemon.js";
 import { DAEMON_STATE_FILE, daemonFetch, probeDaemon, readDaemonState, type DaemonState } from "../../src/runtime/index.js";
 import { selfSignedCertificate } from "../support/self-signed-certificate.js";
@@ -54,6 +56,15 @@ describe("daemon transport arguments", () => {
     expect(refusal("win32")).not.toContain("chmod");
     expect(refusal("win32")).toContain("icacls key.pem /inheritance:r /grant:r");
     expect(refusal("linux")).toContain("chmod 600 key.pem");
+  });
+
+  it("leaves out only what reaches other machines when the daemon serves this computer alone", () => {
+    const remote = [
+      "--state-file", "daemon.json", "--host", "0.0.0.0", "--allow-remote", "--public-host", "rerail.example",
+      "--tls-cert", "cert.pem", "--tls-key", "key.pem", "--port", "4737", "--dev", "--workspace-root", "repo",
+    ];
+    expect(loopbackArguments(remote)).toEqual(["--state-file", "daemon.json", "--port", "4737", "--dev", "--workspace-root", "repo"]);
+    expect(loopbackArguments(["--insecure-http", "--host", "::"])).toEqual([]);
   });
 });
 
@@ -118,6 +129,22 @@ describe("TLS daemon", () => {
       throw new Error("Get-Acl failed");
     } } };
     await expect(loadDaemonTls(files, unread)).rejects.toThrow(`Could not read who may read ${files.keyFile}: Get-Acl failed`);
+    // Both refusals are the one the daemon answers by serving this computer alone.
+    await expect(loadDaemonTls(files, shared)).rejects.toBeInstanceOf(TlsKeyExposedError);
+    await expect(loadDaemonTls(files, unread)).rejects.toBeInstanceOf(TlsKeyExposedError);
+  });
+
+  it("records in its state file why it serves this computer alone, for rerail status to say", async () => {
+    root = await mkdtemp(join(tmpdir(), "rerail-daemon-tls-"));
+    const home = join(root, "home");
+    await mkdir(home, { recursive: true });
+    process.env.RERAIL_HOME = home;
+    const remoteRefused = `${join(root, "key.pem")} can be read by other accounts (BU)`;
+    daemons.push(await RerailDaemon.start({
+      version: "0.0.0-test", databasePath: join(root, "rerail.sqlite"), workspaceRoot: root, port: 0,
+      nativeHealth: () => ({ ok: true, kernelVersion: "1" }), stateFile: join(home, DAEMON_STATE_FILE), remoteRefused,
+    }));
+    expect(await readDaemonState(join(home, DAEMON_STATE_FILE))).toMatchObject({ url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+\/$/u), remoteRefused });
   });
 
   it("names a refused key's path in its fix as it is, a `$&` in it too", async () => {

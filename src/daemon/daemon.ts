@@ -106,6 +106,11 @@ export interface RerailDaemonOptions {
    */
   tls?: DaemonTlsMaterial;
   /**
+   * Why a daemon whose arguments asked to be reachable from other machines serves this computer alone, on loopback: its
+   * TLS key is not its owner's alone (`serveRerailDaemon`). The state file records it, for `rerail status` to say.
+   */
+  remoteRefused?: string;
+  /**
    * Called when a Rerail process asks the daemon to stop (`POST /native/shutdown`, which `rerail daemon stop` sends on
    * Windows, where no signal reaches a handler). Omitted, the daemon serves no such request.
    */
@@ -552,6 +557,7 @@ export class RerailDaemon {
       nativeToken: this.#nativeToken,
       accessToken: this.#accessToken,
       ...(this.#tlsFingerprint256 === undefined ? {} : { tlsFingerprint256: this.#tlsFingerprint256 }),
+      ...(this.#options.remoteRefused === undefined ? {} : { remoteRefused: this.#options.remoteRefused }),
     };
   }
 
@@ -751,11 +757,20 @@ function privateKeyHint(platform: NodeJS.Platform): string {
 }
 
 /**
+ * A TLS private key the daemon may not serve with: other accounts can read it, or who may read it could not be read.
+ * Its message names the key and the command that makes it its owner's alone.
+ */
+export class TlsKeyExposedError extends Error {
+  override readonly name = "TlsKeyExposedError";
+}
+
+/**
  * The PEM files `tls` names, read once at start. The private key must be its owner's alone (`openToOthers`): a key
  * other users can read lets any of them impersonate the daemon, so a key with any group or other permission is refused,
  * as ssh refuses one, and on Windows, which has no mode bits, a key whose ACL lets any account beyond the person,
  * SYSTEM and Administrators read it, as OpenSSH for Windows refuses one. A key outside the profile folder, under
- * `C:\certs` say, inherits an ACL that lets every local user read it. `access` is for tests.
+ * `C:\certs` say, inherits an ACL that lets every local user read it. Either refusal is a `TlsKeyExposedError`, on which
+ * the daemon serves this computer alone (`serveRerailDaemon`). `access` is for tests.
  */
 export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = {}): Promise<DaemonTlsMaterial> {
   let others: string | undefined;
@@ -763,12 +778,12 @@ export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = 
     others = await openToOthers(tls.keyFile, access);
   } catch (error) {
     // Unread is refused, as a key others can read is: the daemon would otherwise serve with it unchecked.
-    throw new Error(`Could not read who may read ${tls.keyFile}: ${errorText(error)}`, { cause: error });
+    throw new TlsKeyExposedError(`Could not read who may read ${tls.keyFile}: ${errorText(error)}`, { cause: error });
   }
   if (others !== undefined) {
     // A function, so a `$` in the key's path is never read as a replacement pattern.
     const hint = privateKeyHint(access.platform ?? process.platform).replace("key.pem", () => `"${tls.keyFile}"`);
-    throw new Error(`${tls.keyFile} ${others}; a TLS private key must be readable by its owner only: ${hint}`);
+    throw new TlsKeyExposedError(`${tls.keyFile} ${others}; a TLS private key must be readable by its owner only: ${hint}`);
   }
   const [cert, key] = await Promise.all([readFile(tls.certFile, "utf8"), readFile(tls.keyFile, "utf8")]);
   return { cert, key };
@@ -819,8 +834,51 @@ async function packageVersion(): Promise<string> {
   return typeof manifest.version === "string" ? manifest.version : "0.0.0";
 }
 
-/** What the process entry point (`src/cli/daemon-entry.ts`) supplies from the layers above the daemon. */
-export type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents">;
+/**
+ * What the process entry point (`src/cli/daemon-entry.ts`) supplies from the layers above the daemon, and why it serves
+ * this computer alone when it does (`serveRerailDaemon`).
+ */
+export type RerailDaemonServices = Pick<RerailDaemonOptions, "codingAgents" | "remoteRefused">;
+
+/** The daemon options that make it reachable from other machines, each with how many values follow it. */
+const REMOTE_OPTIONS: ReadonlyMap<string, number> = new Map([
+  ["--host", 1], ["--public-host", 1], ["--tls-cert", 1], ["--tls-key", 1], ["--allow-remote", 0], ["--insecure-http", 0],
+]);
+
+/** `argv` without the options that make a daemon reachable from other machines (`REMOTE_OPTIONS`): a loopback daemon's. */
+export function loopbackArguments(argv: readonly string[]): string[] {
+  const kept: string[] = [];
+  let index = 0;
+  while (index < argv.length) {
+    const argument = argv[index] ?? "";
+    const remote = REMOTE_OPTIONS.get(argument);
+    if (remote === undefined) kept.push(argument);
+    index += 1 + (remote ?? 0);
+  }
+  return kept;
+}
+
+/** What daemon.log, `rerail daemon start` and `rerail status` say of a daemon that serves this computer alone. */
+export function loopbackOnlyNotice(reason: string): string {
+  return `Other machines cannot reach this daemon, which serves this computer alone, on loopback, until its TLS key is fixed: ${reason}`;
+}
+
+/**
+ * The daemon process: `runRerailDaemon`, except that a TLS key it may not serve with (`TlsKeyExposedError`), which keeps
+ * it from other machines, no longer keeps it from this one. The daemon starts again without the options that reach
+ * other machines (`loopbackArguments`): on loopback, over http, as a daemon started with no options is, so hooks keep
+ * recording and steering, and the state file, daemon.log, `rerail daemon start` and `rerail status` say why
+ * (`loopbackOnlyNotice`). The refusal comes before anything is opened, so the second start begins from nothing.
+ */
+export async function serveRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
+  try {
+    await runRerailDaemon(argv, services);
+  } catch (error) {
+    if (!(error instanceof TlsKeyExposedError)) throw error;
+    process.stderr.write(`rerail daemon: ${loopbackOnlyNotice(error.message)}\n`);
+    await runRerailDaemon(loopbackArguments(argv), { ...services, remoteRefused: error.message });
+  }
+}
 
 export async function runRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
   const arguments_ = parseDaemonArguments(argv);

@@ -33,6 +33,7 @@ import {
   DAEMON_TRANSPORT_FLAGS,
   DAEMON_TRANSPORT_OPTIONS,
   DEFAULT_DAEMON_HOST,
+  loopbackOnlyNotice,
   parseArguments,
   parseDaemonTransport,
   parsePort,
@@ -221,6 +222,8 @@ function printDaemon(daemon: RunningDaemon): void {
     ? `Engine: ok (version ${health.native.kernelVersion})\n`
     : `Engine: unavailable: ${health.native.error}\n`);
   process.stdout.write(`${modelStatusLine(health.model)}\n`);
+  // Asked to be reachable from other machines, it serves this one alone until its TLS key is fixed.
+  if (state.remoteRefused !== undefined) process.stdout.write(`${loopbackOnlyNotice(state.remoteRefused)}\n`);
 }
 
 async function runDaemonStartCommand(args: readonly string[], home: string): Promise<number> {

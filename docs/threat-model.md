@@ -297,7 +297,8 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
 - Windows ignores modes. A Rerail home or `.rerail\sessions` folder made outside the profile folder, whose ACL would
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
   everything written in it inherits; a home an earlier release made gets it at the next daemon launch
-  (`src/engine/storage/windows-acl.ts`). A daemon TLS key whose ACL lets anyone else read it is refused.
+  (`src/engine/storage/windows-acl.ts`). A daemon TLS key whose ACL lets anyone else read it is never served with: the
+  daemon then serves this computer alone, on loopback (T9).
 - The repository identity file is read without following a symlink (`openNoFollowSync`) plus size and format checks,
   and created with `wx` (`src/engine/catalog/repository-identity.ts`).
 - A ledger root in `.rerail/` gets a `.gitignore` of `*`, rewritten whenever it differs, and nothing in it is written
@@ -634,7 +635,11 @@ capability.
 
 **Mitigated** (`src/daemon/daemon.ts:loadDaemonTls`, `src/runtime/daemon-control.ts:daemonFetch`):
 
-- `rerail daemon start --tls-cert <pem> --tls-key <pem>` serves HTTPS, and refuses a key file other users could read.
+- `rerail daemon start --tls-cert <pem> --tls-key <pem>` serves HTTPS, and never serves with a key file other users
+  could read, or whose readers it could not read: the daemon then starts without `--host`, `--public-host` and the TLS
+  files (`serveRerailDaemon`), so it binds loopback alone, as a daemon started with no options does, and other
+  machines reach nothing. `daemon.json` (`remoteRefused`), `daemon.log`, `rerail daemon start` and `rerail status` name
+  the key and the command that makes it private.
 - A daemon other machines can reach (judged from its bind address or `--public-host`) refuses to start without TLS
   unless `--insecure-http` is passed.
 - `daemon.json` records the certificate's SHA-256. Rerail's clients (probe, MCP bridge, CLI, native session client)

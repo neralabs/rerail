@@ -5,7 +5,7 @@
 import { PACKAGE_ROOT } from "../engine/package-root.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { scrubWrites } from "../engine/secret-scrub.js";
-import { runRerailDaemon } from "../daemon/daemon.js";
+import { serveRerailDaemon } from "../daemon/daemon.js";
 import { codingAgentHome, codingAgentStates, registrationRoot } from "../setup/coding-agents.js";
 import { checkNodeVersion } from "../setup/node-version.js";
 
@@ -21,8 +21,9 @@ if (!node.ok) {
   process.exit(1);
 }
 
+// A TLS key other accounts can read keeps the daemon from other machines only: it then serves this one (`serveRerailDaemon`).
 try {
-  await runRerailDaemon(process.argv.slice(2), {
+  await serveRerailDaemon(process.argv.slice(2), {
     codingAgents: () => codingAgentStates(registrationRoot(defaultRerailHome(), PACKAGE_ROOT), codingAgentHome()),
   });
 } catch (error) {
