@@ -22,6 +22,8 @@ use std::cmp::Ordering;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
+use super::placed::Placed;
+
 /// Ids between fences.
 const FENCE: usize = 64;
 
@@ -91,18 +93,23 @@ fn tag_span(tags: &[u16], t: u16, from: usize, place: bool) -> (usize, usize) {
     (s, e)
 }
 
-/// An order on the columns `cols` (every key set it answers is a prefix of them).
+/// An order on the columns `cols` (every key set it answers is a prefix of them); or, for the order on every column
+/// of a relation no probe reads by a key, its ids placed by row hash instead (`placed`, `Index::by_hash`): it then
+/// answers the dedup test and a whole row's probe, and holds no runs.
 pub(super) struct Index {
     pub(super) cols: Vec<usize>,
     /// The runs, oldest first, each with the wave whose rows it holds (0: of no wave's delta).
     runs: Vec<(Arc<Run>, u32)>,
     /// Runs read past the first by probes since the last merge.
     rent: AtomicU64,
+    /// Its ids by row hash, in place of runs (`placed::Placed`): a growing relation's dedup test, read by no probe
+    /// (`Rel::want` makes a probed one an order; a frozen one is an order, `Rel::index_rest`).
+    placed: Option<Placed>,
 }
 
 impl Clone for Index {
     fn clone(&self) -> Index {
-        Index { cols: self.cols.clone(), runs: self.runs.clone(), rent: AtomicU64::new(0) }
+        Index { cols: self.cols.clone(), runs: self.runs.clone(), rent: AtomicU64::new(0), placed: self.placed.clone() }
     }
 }
 
@@ -343,12 +350,6 @@ fn gallop<T>(v: &[T], start: usize, less: impl Fn(&T) -> bool) -> usize {
 /// Runs an order's probes keep their place in (`Index::find_at`); past them, a run is searched from scratch.
 pub(super) const HINTS: usize = 8;
 
-/// Spike (index lever C): `RERAIL_SPIKE_PLACED=1`, a dedup-only relation's dedup test by row hash (`Fresh::settle_placed`).
-pub(super) fn placed_on() -> bool {
-    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var_os("RERAIL_SPIKE_PLACED").is_some())
-}
-
 /// `ids` sorted as `cmp` orders them, where `cmp` orders by the leading value's tag (`tagged`) and then the order's
 /// columns in turn, `val(id, i)` being an id's value in the order's column `i` (of `ncols`): the ids are sorted with
 /// their tag and first two values held beside them, read once a row, and rows are compared (`cmp`) only within a
@@ -385,24 +386,57 @@ pub(super) fn sort_keyed(ids: &mut [u32], tagged: bool, ncols: usize, val: impl 
 
 impl Index {
     pub(super) fn new(cols: Vec<usize>) -> Index {
-        Index { cols, runs: Vec::new(), rent: AtomicU64::new(0) }
+        Index { cols, runs: Vec::new(), rent: AtomicU64::new(0), placed: None }
     }
 
-    /// Whether the set `keys` is a prefix of this order's columns (in any order).
+    /// The order on all `k` columns as ids placed by row hash (`placed`): the dedup test of a relation no probe
+    /// reads by a key.
+    pub(super) fn by_hash(k: usize) -> Index {
+        Index { placed: Some(Placed::default()), ..Index::new((0..k).collect()) }
+    }
+
+    /// Whether its ids are placed by row hash, not ordered.
+    pub(super) fn is_placed(&self) -> bool {
+        self.placed.is_some()
+    }
+
+    /// Whether the set `keys` is a prefix of this order's columns (in any order). Placed by hash: none.
     pub(super) fn answers(&self, keys: &[usize]) -> bool {
+        if self.placed.is_some() {
+            return false;
+        }
         !keys.is_empty() && keys.len() <= self.cols.len() && keys.iter().all(|c| self.cols[..keys.len()].contains(c))
     }
 
-    /// The rows `lo..hi` as a new run of wave `wave` (dead rows are indexed as any; readers skip them).
+    /// The rows `lo..hi` as a new run of wave `wave` (dead rows are indexed as any; readers skip them). Placed by
+    /// hash: each placed (they are distinct, and none was placed: the dedup test passed them).
     pub(super) fn add_run(&mut self, data: &[i64], k: usize, lo: usize, hi: usize, wave: u32) {
+        if let Some(p) = &mut self.placed {
+            let hash_of = |id: u32| super::hash_vals(data[id as usize * k..][..k].iter().copied());
+            p.reserve(hi.saturating_sub(lo), hash_of);
+            for id in lo..hi {
+                p.insert(hash_of(id as u32), id as u32, hash_of);
+            }
+            return;
+        }
         if lo < hi {
             self.runs.push((Arc::new(Run::of(data, k, &self.cols, (lo as u32..hi as u32).collect())), wave));
         }
     }
 
+    /// The live placed id (`live`) whose row is `row` (every column), by its hash. `None` for an order not placed.
+    #[inline]
+    pub(super) fn placed_find(&self, data: &[i64], k: usize, row: &[i64], live: impl Fn(u32) -> bool) -> Option<Option<u32>> {
+        let p = self.placed.as_ref()?;
+        Some(p.find(super::hash_vals(row.iter().copied()), |id| live(id) && &data[id as usize * k..][..k] == row))
+    }
+
     /// At a wave's start (before its run is added): merges the runs older than wave `wave` into one when the rent
     /// probes paid since the last merge (runs read past the first) passes what the merge costs.
     pub(super) fn settle(&mut self, data: &[i64], k: usize, wave: u32) {
+        if self.placed.is_some() {
+            return;
+        }
         let old = self.runs.iter().take_while(|(_, w)| *w < wave).count();
         if old < 2 {
             return;
@@ -447,6 +481,7 @@ impl Index {
 
     /// The same rows ordered by `cols` instead, each run re-sorted (its wave kept).
     pub(super) fn reorder(&mut self, data: &[i64], k: usize, cols: Vec<usize>) {
+        assert!(self.placed.is_none(), "an order placed by hash is made again as an order (`Rel::want`), not reordered");
         if cols == self.cols {
             return;
         }
@@ -469,6 +504,7 @@ impl Index {
     pub(super) fn find<'a>(&'a self, data: &[i64], k: usize, key: &[i64], delta: Option<u32>) -> Found<'a> {
         let mut found = Found::default();
         let mut read = 0u64;
+        debug_assert!(self.placed.is_none(), "an order placed by hash is read by no probe (`best_order` passes it by)");
         for (run, w) in &self.runs {
             if delta.is_some_and(|d| d != *w) {
                 continue;
@@ -517,6 +553,12 @@ impl Index {
     /// test). Each run is searched once, in order (decision 0112: the dedup test a wave at a time).
     pub(super) fn held_sorted(&self, data: &[i64], k: usize, rows: &[i64], order: &[u32], live: impl Fn(u32) -> bool, held: &mut [bool]) {
         debug_assert_eq!(self.cols.len(), k, "the dedup test is the order on every column");
+        if self.placed.is_some() {
+            for (h, &q) in held.iter_mut().zip(order) {
+                *h = *h || self.placed_find(data, k, &rows[q as usize * k..][..k], &live).flatten().is_some();
+            }
+            return;
+        }
         for (run, _) in &self.runs {
             run.held_sorted(data, k, &self.cols, rows, order, &live, held);
         }
@@ -527,17 +569,21 @@ impl Index {
 
     /// Rows indexed.
     pub(super) fn rows(&self) -> usize {
-        self.runs.iter().map(|(r, _)| r.ids.len()).sum()
+        match &self.placed {
+            Some(p) => p.len(),
+            None => self.runs.iter().map(|(r, _)| r.ids.len()).sum(),
+        }
     }
 
-    /// Runs held.
+    /// Runs held (a placed order: one).
     pub(super) fn runs(&self) -> usize {
-        self.runs.len()
+        if self.placed.is_some() { 1 } else { self.runs.len() }
     }
 
     /// Calls `f` on each group of ids equal on the first `m` columns, over every run, in order (the runs merged for
     /// it when there are several; the index is not changed).
     pub(super) fn each_group(&self, data: &[i64], k: usize, m: usize, f: impl FnMut(&[u32])) {
+        debug_assert!(self.placed.is_none(), "an order placed by hash has no groups");
         match self.runs.as_slice() {
             [] => {}
             [(r, _)] => r.each_group(data, k, &self.cols, m, f),
@@ -547,13 +593,17 @@ impl Index {
 
     /// Whether every run of `self` is one of `other`'s, shared (`Arc`), not a copy.
     pub(super) fn shares(&self, other: &Index) -> bool {
+        if self.placed.is_some() {
+            return false;
+        }
         self.runs.iter().all(|(r, _)| other.runs.iter().any(|(o, _)| Arc::ptr_eq(r, o)))
     }
 
     /// Bytes held: an id a row, its tag (a tagged order), its fences, and each run's own allocation (shared runs
     /// counted by each holder).
     pub(super) fn bytes(&self) -> usize {
-        self.runs.iter().map(|(r, _)| r.ids.capacity() * 4 + r.tags.capacity() * 2 + r.fences.capacity() * 8 + 64).sum::<usize>() + self.runs.capacity() * 16
+        let placed = self.placed.as_ref().map_or(0, Placed::bytes);
+        placed + self.runs.iter().map(|(r, _)| r.ids.capacity() * 4 + r.tags.capacity() * 2 + r.fences.capacity() * 8 + 64).sum::<usize>() + self.runs.capacity() * 16
     }
 }
 

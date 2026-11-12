@@ -42,6 +42,7 @@ pub mod liveness;
 pub mod ordered;
 /// A relation's indexes (decision 0112): sorted orders of row ids for the key sets probes bind, one run a wave.
 pub mod runs;
+pub mod placed;
 use runs::Index;
 /// A column's statistics in a fixed size (decision 0112): no index is kept for them.
 pub mod sketch;
@@ -322,8 +323,6 @@ pub struct Rel { table: String, types: Vec<u8>, k: usize, n: usize, data: Vec<i6
              /// Whether its rows get levels: only a relation of a recursive stratum reads them (`open`), and at 4
              /// bytes a row they are not held for the others.
              leveled: bool,
-             /// Spike (`RERAIL_SPIKE_PLACED`): a dedup-only relation's row ids by row hash, holding ids `..upto`.
-             placed: std::sync::Mutex<(HashTable<u32>, usize)>,
              /// Its statistics kept as its rows come (`kept_stats`), the planner's form of them kept by delta
              /// (decision 0096): rows `..indexed` counted in, and those `stats_dead` marks counted out.
              stats: Option<KeptStats>, stats_dead: Vec<u64> }
@@ -331,9 +330,22 @@ pub struct Rel { table: String, types: Vec<u8>, k: usize, n: usize, data: Vec<i6
 /// The id of a live row equal to `row` in the relation of `orders` (its first holds every column), not `skip`.
 fn find_row(orders: &[Index], data: &[i64], k: usize, row: &[i64], skip: impl Fn(u32) -> bool) -> Option<u32> {
     let o = orders.first()?;
+    if let Some(found) = o.placed_find(data, k, row, |id| !skip(id)) {
+        return found;
+    }
     let mut key = [0i64; MAX_KEY];
     let key = permuted(&o.cols, |c| row[c], &mut key);
     o.find(data, k, key, None).parts().flatten().copied().find(|&id| !skip(id) && &data[id as usize * k..][..k] == row)
+}
+
+/// A new relation's order on every column, its dedup test (decision 0112). `RERAIL_PLACED_DEDUP` places its ids by
+/// row hash instead (`placed`, index lever C) while it grows, until a probe binds a key of it (`Rel::want` then
+/// makes it an order) or it is frozen (`index_rest`: an order, sorted once; later strata probe it by its leading
+/// columns). Measured off (O125 cold, debug: 360.5 G placed against 343 G ordered; no fewer bytes a row kept), so
+/// a switch, to measure again.
+fn first_order(k: usize) -> Index {
+    static PLACED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *PLACED.get_or_init(|| std::env::var_os("RERAIL_PLACED_DEDUP").is_some()) { Index::by_hash(k) } else { Index::new((0..k).collect()) }
 }
 
 /// The widest key an order is probed with inline; a relation of more columns is not indexed (`Rel::new`).
@@ -375,9 +387,9 @@ impl Rel {
         let k = types.len();
         assert!(k <= MAX_KEY, "{table}: {k} columns, past the {MAX_KEY} an order is probed with");
         Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Vec::new(), stored: 0, lo: 0, hi: 0, wave: 0,
-              idx: vec![Index::new((0..k).collect())], serves: vec![Vec::new()], indexed: 0, pending: HashTable::new(),
+              idx: vec![first_order(k)], serves: vec![Vec::new()], indexed: 0, pending: HashTable::new(),
               sketches: vec![Sketch::default(); k], dead: Vec::new(), ndead: 0, summaries: Default::default(), from: None,
-              level: Vec::new(), lbase: 0, leveled: true, placed: Default::default(), stats: None, stats_dead: Vec::new() }
+              level: Vec::new(), lbase: 0, leveled: true, stats: None, stats_dead: Vec::new() }
     }
     /// A relation that starts as `old` (a kept one: its rows copied as memory; its orders' runs and its sketches
     /// shared, not built again) less the rows of `gone`, marked dead in place (decision 0090 step 4). Its rows are the
@@ -424,7 +436,7 @@ impl Rel {
         let from = Some(Origin::Based { at: old as *const InRel as usize, n: old.n });
         Some(Rel { table: table.to_string(), types: types.to_vec(), k, n: old.n, data: data.clone(), stored: 0, lo: 0, hi: 0, wave: 0, idx, serves,
                    indexed: old.n, pending: HashTable::new(), sketches: old.sketches.clone(), dead, ndead, summaries: Default::default(), from, level,
-                   lbase: 0, leveled: true, placed: Default::default(), stats: old.stats.clone(), stats_dead: old.dead.clone() })
+                   lbase: 0, leveled: true, stats: old.stats.clone(), stats_dead: old.dead.clone() })
     }
     /// `based`'s relation, made from `old`'s rows less those of `gone` rather than in place (compacted).
     fn compacted(table: &str, types: &[u8], old: &InRel, gone: Option<&InRel>) -> Rel {
@@ -464,9 +476,22 @@ impl Rel {
         }
         find_row(&self.idx, data, k, row, skip)
     }
-    /// Spike: whether its only order is the full row and no probe binds a key of it (index lever C's relations).
-    fn dedup_only(&self) -> bool {
-        self.idx.len() == 1 && self.serves.first().is_none_or(Vec::is_empty) && self.idx[0].cols.len() == self.k
+    /// Its order on every column as an order, made from its placed ids (`Index::by_hash`) as a new order is made
+    /// (`want`): the rows before the delta as of wave 0, the delta's as of its wave.
+    fn ordered(&self, cols: Vec<usize>) -> Index {
+        let (data, k) = (&self.data, self.k);
+        let mut ix = Index::new(cols);
+        charge(Unit::IndexEntry, self.indexed as u64);
+        let lo = self.lo.min(self.indexed);
+        ix.add_run(data, k, 0, lo, 0);
+        ix.add_run(data, k, lo, self.indexed, self.wave);
+        ix
+    }
+    /// Its placed order made an order before it outgrows the ids a placed table holds (`placed::MAX_ROWS`).
+    fn unplace_if_full(&mut self) {
+        if self.idx.first().is_some_and(Index::is_placed) && !placed::Placed::fits(self.n) {
+            self.idx[0] = self.ordered((0..self.k).collect());
+        }
     }
     pub fn contains(&self, row: &[i64]) -> bool {
         self.find(row, |id| is_dead(&self.dead, id)).is_some()
@@ -491,6 +516,11 @@ impl Rel {
         if let Some(i) = (0..self.idx.len()).find(|&i| chain(&self.serves[i])) {
             self.serves[i].push(set);
             let cols = chained(&self.serves[i], k);
+            if self.idx[i].is_placed() {
+                // Placed by hash while no probe bound a key of it: an order now, sorted on the key's columns first.
+                self.idx[i] = self.ordered(cols);
+                return;
+            }
             charge(Unit::IndexEntry, self.idx[i].rows() as u64);
             self.idx[i].reorder(data, k, cols);
         } else {
@@ -600,6 +630,7 @@ impl Rel {
     /// before `lo` as of the wave ending, the rest as the new wave's (its delta). First, each order's older runs merge
     /// if its probes paid for it (`Index::settle`).
     fn set_delta(&mut self, lo: usize, hi: usize) {
+        self.unplace_if_full();
         let w = self.wave + 1;
         let (from, n, k) = (self.indexed, self.n, self.k);
         let split = lo.clamp(from, n);
@@ -617,6 +648,13 @@ impl Rel {
     /// most `FROZEN_RUNS` runs an order: its probes cannot merge them later.
     fn index_rest(&mut self) {
         let (from, n, k) = (self.indexed, self.n, self.k);
+        // Placed by hash while it grew: frozen, an order, sorted once (later strata probe it by its leading columns,
+        // as by any order; placed, it would answer only whole rows, at no fewer bytes a row).
+        if self.idx.first().is_some_and(Index::is_placed) {
+            let mut ix = Index::new((0..k).collect());
+            ix.add_run(&self.data, k, 0, n, 0);
+            self.idx[0] = ix;
+        }
         for ix in &mut self.idx {
             ix.settle(&self.data, k, u32::MAX);
             ix.add_run(&self.data, k, from, n, 0);
@@ -659,7 +697,7 @@ impl Rel {
 /// The order of `orders` whose leading columns hold the most of the columns `keys` (all of them leading), with how
 /// many: `None` when none leads with one of them.
 fn best_order<'a>(orders: &'a [Index], keys: &[usize]) -> Option<(&'a Index, usize)> {
-    orders.iter().map(|ix| (ix, ix.cols.iter().take_while(|c| keys.contains(c)).count())).filter(|&(_, m)| m > 0).max_by_key(|&(_, m)| m)
+    orders.iter().filter(|ix| !ix.is_placed()).map(|ix| (ix, ix.cols.iter().take_while(|c| keys.contains(c)).count())).filter(|&(_, m)| m > 0).max_by_key(|&(_, m)| m)
 }
 
 /// A frozen relation's runs an index at most (`Rel::index_rest`): one, as its probes cannot merge it later, and
@@ -684,12 +722,13 @@ impl Cands<'_> {
 }
 
 /// The tuples of one relation derived in a wave, flat, not yet checked against it (decision 0112: the dedup test a
-/// batch at a time). Rows `..settled` are distinct, not held by the relation, and sorted by its first order; the rest
+/// batch at a time). Rows `..settled` are distinct, not held by the relation, and sorted by its first order (in the
+/// order they came, where that order is placed by hash: `settle_placed`); the rest
 /// are as derived. `emitted`: every row a rule derived this wave, new or not (`RERAIL_SPIKE_DERIVATIONS`: the
 /// derivations a counting scheme would count).
 #[derive(Clone, Default)]
 pub struct Fresh { data: Vec<i64>, n: usize, emitted: u64, settled: usize,
-                   /// Spike (`RERAIL_SPIKE_PLACED`): the settled rows by row hash, for a dedup-only relation.
+                   /// The settled rows by row hash, for a relation whose dedup test is placed by hash (`settle_placed`).
                    seen: HashTable<u32> }
 
 /// Rows a wave's derived tuples hold before they are checked against their relation (`Fresh::offer`): a wave that
@@ -715,7 +754,7 @@ impl Fresh {
         if settled == n {
             return;
         }
-        if runs::placed_on() && rel.dedup_only() {
+        if rel.idx[0].is_placed() {
             return self.settle_placed(rel);
         }
         // The first order's sort (`runs::cmp_vals`: tagged, by the leading value's tag first, then the columns).
@@ -756,28 +795,27 @@ impl Fresh {
     }
 }
 impl Fresh {
-    /// Spike (`RERAIL_SPIKE_PLACED`, index lever C): `settle` for a relation whose only order is the full row, which
-    /// no probe reads by a key: the dedup test by row hash (the relation's ids placed by it, as mldb's IdHash, and
-    /// the batch's), not a sort and a search of the order. The rows kept stay in no order: `set_delta` sorts its runs.
+    /// `settle` for a relation whose order on every column is placed by row hash (`Index::by_hash`): each row looked
+    /// up there, among the rows pushed since the last wave (`pending`), and among the batch's own (`seen`), not the
+    /// batch sorted and the order's runs searched. The rows kept stay in the order they came: `set_delta` places them.
     fn settle_placed(&mut self, rel: &Rel) {
         let (k, n, settled) = (rel.k, self.n, self.settled);
-        let mut placed = rel.placed.lock().expect("the placed ids");
-        let (table, upto) = &mut *placed;
+        let ix = &rel.idx[0];
         let rd = &rel.data;
-        let hash_of = |d: &[i64], i: u32| hash_vals(d[i as usize * k..][..k].iter().copied());
-        while *upto < rel.n {
-            table.insert_unique(hash_of(rd, *upto as u32), *upto as u32, |&i| hash_of(rd, i));
-            *upto += 1;
-        }
         let Fresh { data, seen, .. } = self;
+        let hash_of = |d: &[i64], i: u32| hash_vals(d[i as usize * k..][..k].iter().copied());
+        let pending = rel.indexed < rel.n;
         let mut w = settled;
         for q in settled..n {
-            let h = hash_of(data, q as u32);
             let row = &data[q * k..][..k];
+            let h = hash_vals(row.iter().copied());
             if seen.find(h, |&i| &data[i as usize * k..][..k] == row).is_some() {
                 continue;
             }
-            if table.find(h, |&id| !rel.dead(id) && &rd[id as usize * k..][..k] == row).is_some() {
+            if ix.placed_find(rd, k, row, |id| !rel.dead(id)).flatten().is_some() {
+                continue;
+            }
+            if pending && rel.pending.find(h, |&id| !rel.dead(id) && &rd[id as usize * k..][..k] == row).is_some() {
                 continue;
             }
             if w != q {
@@ -3199,7 +3237,7 @@ impl InRel {
             return false;
         }
         probed::note(&format!("{} [postings]", self.name.get().map_or("?", String::as_str)), std::iter::once(c));
-        let Some(ix) = self.chains.iter().find(|ix| ix.cols.first() == Some(&c)).filter(|ix| ix.rows() >= self.n) else { return false };
+        let Some(ix) = self.chains.iter().find(|ix| !ix.is_placed() && ix.cols.first() == Some(&c)).filter(|ix| ix.rows() >= self.n) else { return false };
         let (k, data) = (self.k, &self.rows);
         let mut firsts: Vec<i64> = Vec::new();
         ix.each_group(data, k, 1, |ids| {
@@ -3264,7 +3302,7 @@ impl InRel {
         cols.iter()
             .enumerate()
             .filter_map(|(j, &c)| {
-                let i = self.chains.iter().position(|ix| ix.cols.first() == Some(&c))?;
+                let i = self.chains.iter().position(|ix| !ix.is_placed() && ix.cols.first() == Some(&c))?;
                 let ix = &self.chains[i];
                 let ndv = self.sketches.get(c).map_or(0, Sketch::ndv);
                 (ix.rows() >= self.n && ndv > 0).then(|| (self.n.div_ceil(ndv), i, j))
@@ -3306,7 +3344,7 @@ impl InRel {
         let mut out = Vec::with_capacity(k);
         let mut docs: Vec<i64> = Vec::new();
         for c in 0..k {
-            let ix = self.chains.iter().find(|ix| ix.cols.first() == Some(&c))?;
+            let ix = self.chains.iter().find(|ix| !ix.is_placed() && ix.cols.first() == Some(&c))?;
             if ix.rows() < self.n {
                 return None;
             }
