@@ -211,7 +211,19 @@ fn named_heads(rule: &Rule) -> Rule {
 /// `given` answers for an input whose delta it has (its rows new and gone, found by its documents), bound as
 /// `r__plus` and `r__minus` in place of their diff of every old and new row; asked only for the inputs a maintained
 /// stratum reads the delta of.
+/// One stratum's form, made when a run reaches it (decision 0117 step 3): `rewrite` over a program of that stratum
+/// alone. Its relations' deltas are always made, since the run asks whether they are empty; a delta or an old
+/// source that is a relation of the run already (an earlier stratum's form made or bound it) is read, not made again.
+pub(in crate::code_rule_dsl) struct One<'m> {
+    pub(in crate::code_rule_dsl) has_delta: &'m dyn Fn(&str) -> bool,
+    pub(in crate::code_rule_dsl) has_old: &'m dyn Fn(&str) -> bool,
+}
+
 pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cross: &lower::Lowered, given: &mut dyn FnMut(&str) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>) -> Result<Maintained> {
+    rewrite_with(cut, kept, cross, given, None)
+}
+
+pub(in crate::code_rule_dsl) fn rewrite_with(cut: &Cut, kept: Option<&Retained>, cross: &lower::Lowered, given: &mut dyn FnMut(&str) -> Option<(Arc<dyn Source>, Arc<dyn Source>)>, one: Option<&One>) -> Result<Maintained> {
     let mut part = cut.program(cross);
     let (sccs, _) = front::strata(&cross.program).map_err(|e| Error::Plan(e.to_string()))?;
     let dirty: Vec<&BTreeSet<String>> = sccs.iter().filter(|scc| scc.iter().all(|r| !cut.clean.contains(r))).collect();
@@ -474,6 +486,18 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
         changed.extend(scc.iter().cloned());
         groups.push((scc.clone(), start, rules.len(), as_given));
     }
+    // One stratum's form: its relations' deltas, each as its form makes it (maintained), or by a diff of its old rows
+    // (derived again, where they are kept).
+    if one.is_some() {
+        for rel in sccs.iter().filter(|scc| scc.iter().all(|r| !cut.clean.contains(r))).flatten() {
+            if maint.contains(rel) {
+                deltas.insert(rel.clone());
+            } else if old(rel) {
+                deltas.insert(rel.clone());
+                olds.insert(rel.clone());
+            }
+        }
+    }
     let mut sources = Vec::new();
     // A view's delta and old rows are the view over its input's: the input's are made or bound too.
     let input_of = |rel: &str| views.get(rel).and_then(|r| r.body[0].atom()).map(|a| a.rel.to_string());
@@ -490,7 +514,13 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
     for rel in &deltas {
         let v = row(part.program.decls[rel].len());
         let head = |suffix: &str| Atom { rel: named(rel, suffix).into(), args: v.clone(), neg: false, gated: false };
-        if views.contains_key(rel) {
+        if one.is_some_and(|o| !maint.contains(rel) && (o.has_delta)(rel)) {
+            // A relation of the run already: an earlier stratum's form made it, or it was given.
+            if !part.program.inputs.contains(&named(rel, "minus")) {
+                part.program.inputs.push(named(rel, "minus"));
+                part.program.inputs.push(named(rel, "plus"));
+            }
+        } else if views.contains_key(rel) {
             rules.push(over_input(rel, "minus"));
             rules.push(over_input(rel, "plus"));
         } else if maint.contains(rel) {
@@ -558,9 +588,11 @@ pub(in crate::code_rule_dsl) fn rewrite(cut: &Cut, kept: Option<&Retained>, cros
             fresh.push((rel.clone(), named(rel, "old")));
             continue;
         }
-        // Named as the planner reads its statistics (`sql_col`).
-        let (source, held) = kept.old_source(rel, &named(rel, "old")).expect("a maintained read's old rows");
-        sources.push((named(rel, "old"), source, held));
+        // Named as the planner reads its statistics (`sql_col`). One bound already (an earlier form's) is read.
+        if !one.is_some_and(|o| (o.has_old)(rel)) {
+            let (source, held) = kept.old_source(rel, &named(rel, "old")).expect("a maintained read's old rows");
+            sources.push((named(rel, "old"), source, held));
+        }
         fresh.push((rel.clone(), named(rel, "old")));
         part.program.inputs.push(named(rel, "old"));
     }

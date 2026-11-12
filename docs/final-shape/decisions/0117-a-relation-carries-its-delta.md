@@ -1,6 +1,6 @@
 # 0117: A relation carries its delta; maintenance is the core's, driven by the deltas that are not empty
 
-Status: accepted (2026-11-11). Steps 1 and 2 are built (below); steps 3–4 are not.
+Status: accepted (2026-11-11). Steps 1–3 are built (below); step 4 is measured and in progress.
 
 ## Intro
 
@@ -265,3 +265,50 @@ derived again), with 148 inputs changed. That is steps 3's and 4's work, not thi
 **The deletion costs more than a cold run** (1089.5 G against 922.2 G). Deleting 100 lines changes nearly every row of
 that file (its nodes move), so the deltas are most of the file's rows, and maintaining from deltas that large costs
 more than deriving again. The driver of step 3 should choose between the two by the size of the delta.
+
+## Built: step 3 (2026-11-12): the run walks the base program; a reached stratum's form is made there
+
+**What it does.**
+- **The run is given the base program** (the cut's: clean strata left out, as before), with a driver
+  (`plan::Maintain`, `Hooks::maintain`). The changed inputs' deltas are bound first (step 2), and they seed the set
+  of relations that moved.
+- **Each stratum is a slot of the walk** (`plan::run`, decision 0117 step 3 in its loop):
+  - *No read moved:* each relation is its kept rows, held in place (`hold_as`); nothing is rewritten, planned,
+    opened or read.
+  - *A read moved:* the driver makes the stratum's form (`corpus::Driver::form`): `maintain::rewrite_with` over a
+    program of that stratum alone, its reads declared as inputs and the moved ones as changed
+    (`maintain::One`). The old rows it reads are bound there, with their statistics (`bind_kept`, the binding the
+    whole rewrite did for every relation before the run). Its pieces (`__del`, survivors, `__redo`, `__ins`, its
+    deltas) are the form's own strata, each run by the same native engine (`native_stratum_now`), with the form as
+    the program.
+  - *After it:* a relation whose delta (`r__minus`, `r__plus`) holds rows moves its readers. One derived again
+    with no old rows to diff against moves them with no delta, and they derive again. The form's pieces are
+    released; its relations, deltas and old rows stay.
+- **A form always makes its relations' deltas**, since the walk asks whether they are empty. A delta or old source
+  an earlier form made or bound is read, not made again.
+- **The device waves' prefetch and the strata scoreboard (0113) are off in a driven run.** Both work over the base
+  program's strata ahead of the walk, which would plan and launch the strata that are not reached.
+- `RERAIL_MAINTAIN_WHOLE` rewrites the whole program first, as before.
+
+**Measured** (20 files, unprofiled, findings equal to the cold run's each time; load 27–45):
+
+| | Whole rewrite (hub) | Driven |
+|---|---|---|
+| First edit after cold | 283.1 G | 250.7 G |
+| Later edits | 261.3, 257.2 G | 219.0, 208.7, 210.4 G |
+| Strata | 8,438 rewritten (189,301 rules), 45,321 maintained strata walked | 3,719 of 8,438 reached and maintained, 4,719 held as kept |
+| Main thread (sampled) | 12.24 s | 10.06 s |
+
+**What an edit costs now** (sampled, 16.1 s CPU in all, 10.1 s on the main thread):
+- statistics 1.6 s: the reached strata's lazy statistics (0.6 s), patching kept statistics by delta (0.35 s), the
+  given deltas measured (0.17 s);
+- opening strata 1.2 s;
+- the prepared program from the store 1.2 s (0116 step 2's; not this step's);
+- the kept part 0.7 s;
+- the memo 0.5 s, joins 0.5 s, planning 0.4 s;
+- and on the store's writer, 2.4 s, with the main thread waiting 1.7 s for it.
+
+**What step 4 has to remove, measured.** Each edit reads 12,960,053 rows of 9,671 relations from the frames, and
+writes back 12,227,715 rows:
+- 2,752 relations whose rows changed: 9,323,541 rows, each relation written whole, though a delta changed it;
+- 2,674 relations whose rows did not change, rewritten only because their reads' digests changed: 2,904,174 rows.

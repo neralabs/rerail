@@ -6272,6 +6272,42 @@ pub struct Hooks<'a> {
     pub asking: Option<&'a mut dyn Asking>,
     /// The strata an earlier run of the program kept (decision 0077 §4): a stratum whose reads are unchanged is not run.
     pub strata: Option<&'a mut dyn KeptStrata>,
+    /// A session's maintained run, driven by its deltas (decision 0117 step 3): the program is the base one, and
+    /// each stratum is maintained, if a read of it changed, by a form made when the run reaches it.
+    pub maintain: Option<&'a mut dyn Maintain>,
+}
+
+/// The driver's side of a maintained run (decision 0117 step 3): what was kept, and each reached stratum's form.
+pub trait Maintain {
+    /// Relation `rel`'s rows as the last run kept them, read in place: a stratum no changed read reaches holds them.
+    fn kept(&mut self, rel: &str) -> Option<Arc<super::native::component::InRel>>;
+    /// The maintained form of stratum `scc` (its rules `rules`), whose reads `moved` changed: a program of its own
+    /// (its rules over the deltas and old rows, and its relations' deltas), with the old rows it reads bound and
+    /// their statistics in `model`, and the relations bound as the engine's (adopted).
+    fn form(&mut self, base: &Program, scc: &BTreeSet<String>, rules: &[&Rule], moved: &BTreeSet<String>, model: &mut Model) -> Result<(Program, Vec<String>)>;
+    /// Whether `rel`'s deltas (`rel__minus`, `rel__plus`) are relations of the run now: given, or made by its form.
+    fn has_delta(&self, rel: &str) -> bool;
+    /// `rel` changed and has no deltas (derived again, and its old rows not kept): its readers derive again.
+    fn no_delta(&mut self, rel: &str);
+    /// The run's end: how many strata were reached, of those the driver walked.
+    fn walked(&mut self, reached: usize, quiet: usize, of: usize);
+    /// The inputs that changed with a delta not empty, or with none: the walk's first moved reads.
+    fn seeds(&mut self) -> Vec<String>;
+}
+
+/// Programs made while a run goes (a maintained stratum's form, decision 0117 step 3), each kept where it is until
+/// the run ends: the run's rules are borrowed from them.
+#[derive(Default)]
+struct Forms(RefCell<Vec<Box<Program>>>);
+
+impl Forms {
+    fn add(&self, p: Program) -> &Program {
+        let b = Box::new(p);
+        let at: *const Program = &*b;
+        self.0.borrow_mut().push(b);
+        // SAFETY: a box's contents do not move when the vector grows, and no box is dropped before `self` is.
+        unsafe { &*at }
+    }
 }
 
 /// What an earlier run of a program kept of its strata, and what this run gives back (decision 0077 §4).
@@ -6966,6 +7002,11 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     if !(atoms && !native.is_empty()) {
         crate::code_rule_dsl::facts::vtab::setup_now(db)?;
     }
+    // The maintained run's driver (decision 0117 step 3), and the forms it makes, which outlive the run's state.
+    let forms = Forms::default();
+    let mut maintaining = hooks.maintain.take();
+    let mut moved_rels: HashSet<String> = maintaining.as_deref_mut().map(|m| m.seeds().into_iter().collect()).unwrap_or_default();
+    let (mut reached, mut quiet_slots) = (0usize, 0usize);
     let mut run = Run { prog, db: crate::code_rule_dsl::facts::vtab::Db::of(db), model, views: Default::default(), made: HashSet::new(), orders: HashMap::new(), keyless: HashSet::new(), native_rels: adopted, demands: Default::default(), pending: HashMap::new(), why_not: None, projections: Arc::new(projections(prog)), inputs: Arc::new(prog.inputs.iter().map(String::as_str).collect()), numbers: Arc::new(prog.rules.iter().enumerate().map(|(k, x)| (x as *const Rule, k)).collect()), answer: hooks.answer.take(), asking: None, why_class: None, answered: BTreeMap::new(), logging: None, answer_logs: HashMap::new() };
     // A native run makes no views: a projection of an input is a stratum like any, run from the input where it is
     // held (decision 0104: no SQL in the run's waves). A SQL run reads its inputs through views in place.
@@ -7284,7 +7325,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let mut evaluated: Vec<usize> = Vec::new();
     let (mut clean_strata, mut held_again, mut held_rows) = (0usize, 0usize, 0usize);
     // Decision 0113: native strata issued ahead, as components on the executor's host stream, retired here in order.
-    let mut board = (issue::on() && native.contains("program") && prog.again.is_empty() && strata_kept.is_none()).then(|| issue::Board::new(&sccs, &deps));
+    let mut board = (issue::on() && native.contains("program") && prog.again.is_empty() && strata_kept.is_none() && maintaining.is_none()).then(|| issue::Board::new(&sccs, &deps));
     let ambient = Ambient::here();
     // Requests are posted, not waited for, where strata retire from the scoreboard (`RERAIL_ASK_ASYNC=off`: waited).
     if board.is_some() && std::env::var("RERAIL_ASK_ASYNC").as_deref() != Ok("off") {
@@ -7397,6 +7438,83 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
         let read_out: Vec<String> = read_out.into_iter().filter(|r| !run.model.inputs.kept.contains(r)).collect();
         if !read_out.is_empty() {
             super::native::component::unindex(db, &read_out);
+        }
+        // Decision 0117 step 3: a maintained run walks the base program's strata. A stratum no read of which changed
+        // holds its kept rows; one that a changed read reaches is maintained by its own form, made here.
+        if let Some(m) = maintaining.as_deref_mut() {
+            let rules: Vec<&Rule> = scc.iter().flat_map(|rel| rules_by.get(rel.as_str()).into_iter().flatten().copied()).collect();
+            let reads = stratum_reads(prog, scc, &rules);
+            let moved: BTreeSet<String> = reads.iter().filter(|r| !scc.contains(*r) && moved_rels.contains(r.as_str())).cloned().collect();
+            let key = stratum_key(scc);
+            if moved.is_empty() {
+                let kept: Option<Vec<(&String, Arc<super::native::component::InRel>)>> = scc.iter().map(|r| m.kept(r).map(|k| (r, k))).collect();
+                if let Some(kept) = kept.filter(|_| scc.iter().all(|r| prog.facts.get(r).is_none_or(|f| f.is_empty()))) {
+                    for (r, o) in kept {
+                        let seeded = (o.rows() as f64).max(1.0);
+                        let card = prior_stats(&mut run.model, prog, r).map_or(seeded, |n| n.max(seeded));
+                        run.model.stats.card.insert(r.clone(), card);
+                        super::native::component::hold_as(db, r, o);
+                        run.native_rels.insert(r.clone());
+                    }
+                    quiet_slots += 1;
+                    super::profile::stratum(&key, "native set engine", || "quiet: no read changed; each relation is its kept one (decision 0117 step 3)".to_owned());
+                    continue;
+                }
+                // Not kept: derived from its reads, as they were, so its rows are as they were.
+            } else {
+                reached += 1;
+                let _span = super::profile::span(|| format!("stratum {} maintained", if key.len() > 80 { format!("{}…({} relations)", &key[..80], scc.len()) } else { key.clone() }));
+                let (form, adopted) = m.form(prog, scc, &rules, &moved, &mut run.model)?;
+                let form: &Program = forms.add(form);
+                run.native_rels.extend(adopted);
+                {
+                    let inputs = Arc::make_mut(&mut run.inputs);
+                    inputs.extend(form.inputs.iter().map(String::as_str));
+                }
+                Arc::make_mut(&mut run.projections).extend(projections(form));
+                let (pieces, _) = strata(form)?;
+                let mut by_head: HashMap<&str, Vec<&Rule>> = HashMap::new();
+                for r in &form.rules {
+                    by_head.entry(r.head.rel.as_str()).or_default().push(r);
+                }
+                run.prog = form;
+                let mut made: Vec<String> = Vec::new();
+                for piece in &pieces {
+                    let piece_rules: Vec<&Rule> = piece.iter().flat_map(|r| by_head.get(r.as_str()).into_iter().flatten().copied()).collect();
+                    if piece_rules.is_empty() && piece.iter().all(|r| form.facts.get(r).is_none_or(|f| f.is_empty())) {
+                        continue;
+                    }
+                    let ok = run.native_stratum_now(piece, &piece_rules);
+                    if !matches!(ok, Ok(true)) {
+                        run.prog = prog;
+                        let why = run.why_not.take().unwrap_or_default();
+                        return Err(ok.err().unwrap_or_else(|| Error::Plan(format!("{piece:?}, of the maintained form of {key}: the native engine declined: {why}"))));
+                    }
+                    made.extend(piece.iter().cloned());
+                }
+                run.prog = prog;
+                // Its relations' deltas: one that is not empty moves its readers; one not made (no old rows to diff
+                // against) moves them with no delta, so they derive again.
+                for r in scc {
+                    if m.has_delta(r) {
+                        let rows = |d: &str| super::native::component::held(db, &format!("{r}__{d}")).map_or(0, |h| h.rows());
+                        if rows("minus") + rows("plus") > 0 {
+                            moved_rels.insert(r.clone());
+                        }
+                    } else {
+                        m.no_delta(r);
+                        moved_rels.insert(r.clone());
+                    }
+                }
+                // What the form made for itself goes; its relations, their deltas and old rows stay.
+                let done: Vec<String> = made.into_iter().filter(|r| !scc.contains(r) && !r.ends_with("__minus") && !r.ends_with("__plus") && !r.ends_with("__old")).collect();
+                if !done.is_empty() {
+                    super::native::component::release(db, &done);
+                    done.iter().for_each(|r| { run.native_rels.remove(r); });
+                }
+                outcome.native.insert(key);
+                continue;
+            }
         }
         // Decision 0090 §4: a maintained stratum's form is chosen at its first piece, by its input deltas' size; one
         // derived again is made where it was placed (`again_at`), and its pieces are not run.
@@ -7651,7 +7769,7 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
             outcome.native.insert(key);
             continue;
         }
-        if native.contains("program") && !waved[at] {
+        if native.contains("program") && !waved[at] && maintaining.is_none() {
             let level: Vec<usize> = (at..sccs.len()).filter(|&j| level_of[j] == level_of[at] && !waved[j]).collect();
             let wants: BTreeSet<(String, Vec<usize>)> = level.iter().flat_map(|&j| wants_of[j].iter().cloned()).collect();
             level.iter().for_each(|&j| waved[j] = true);
@@ -7920,6 +8038,9 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     }
     finish_wave(&mut run, &mut waiting, &mut outcome, &mut carry, &sccs, &last, &mut asked)?;
     super::lanes::prof::level(None);
+    if let Some(m) = maintaining.as_deref_mut() {
+        m.walked(reached, quiet_slots, sccs.len());
+    }
     if let Some(ks) = strata_kept.as_deref_mut() {
         for k in std::mem::take(&mut evaluated) {
             let reads = with_answers(prog, &sccs[k], stratum_read_digests.remove(&k).flatten(), run.answer_logs.remove(&k));

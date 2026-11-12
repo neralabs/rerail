@@ -1560,6 +1560,8 @@ impl Retained {
         }
         let derived: BTreeSet<&String> = sccs.iter().flatten().collect();
         let all_reads = Reads::of(prog);
+        let trace = std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some();
+        let mut tally = [(0usize, 0usize); 2];
         for scc in &sccs {
             let reads: Vec<String> = all_reads.of_scc(scc).into_iter().filter(|r| !scc.contains(r) && !literals.contains(r.as_str())).collect();
             for rel in scc {
@@ -1587,9 +1589,17 @@ impl Retained {
                 if was.derived.get(rel).is_some_and(|s| s.digest == d && s.reads == read_digests) {
                     continue;
                 }
+                if trace {
+                    let i = usize::from(was.derived.get(rel).is_some_and(|s| s.digest == d));
+                    tally[i].0 += 1;
+                    tally[i].1 += n;
+                }
                 written += n;
                 puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest: d, reads: read_digests, rows: FrameRows { types: k.rel.types().to_vec(), rows, n } });
             }
+        }
+        if trace {
+            eprintln!("rerail: derived frames written: {} relations ({} rows) whose rows changed; {} ({} rows) whose rows are the same and whose reads changed", tally[0].0, tally[0].1, tally[1].0, tally[1].1);
         }
         store.queue_frames(was.space, puts, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token())));
         Ok(written)
