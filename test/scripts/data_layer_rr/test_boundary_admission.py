@@ -9,6 +9,17 @@ import unittest
 ROOT=Path(__file__).resolve().parents[3]
 sys.path.insert(0,str(ROOT/'scripts/dsl/data_layer_rr'))
 from boundary_admission import validate
+import boundary_admission
+
+
+class ExecutionScope(unittest.TestCase):
+    def test_source_metadata_is_not_an_execution_report(self):
+        source=dict(results=[dict(programInputs=None)])
+        reports=[dict(identity=i) for i in range(6)]
+        value=dict(groups=dict(display=dict(source=source,reports=dict(snapshot=[reports[0]],workspace=[reports[1]]))),
+            supplemental=dict(report=dict(source=source,reports=[reports[2]])),
+            updates=dict(snapshot=[reports[3]],workspace=[reports[4]]),controls=[reports[5]])
+        self.assertEqual(list(boundary_admission.execution_reports(value)),reports)
 
 
 class Admission(unittest.TestCase):
@@ -67,6 +78,8 @@ class Admission(unittest.TestCase):
         v=copy.deepcopy(self.value);v['updates']['workspace'][0]['engineSha256']='other';self.rejected(v)
     def test_wrong_program(self):
         v=copy.deepcopy(self.value);v['programs'][v['rulePath']]['sha256']='other';self.rejected(v)
+    def test_null_native_program_inputs(self):
+        v=copy.deepcopy(self.value);v['supplemental']['report']['reports'][0]['results'][0]['programInputs']=None;self.rejected(v)
 
 
 if __name__=='__main__':unittest.main()

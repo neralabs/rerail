@@ -4072,3 +4072,15 @@ All 44 valid removal controls pass through both APIs: each native mutation chang
 The remaining acceptance run covers the final rule revision across components, scanners, rendering, CLI, all seventeen historical inputs, and retained repository updates.
 It also replays all 295 earlier API cases and 158 earlier reporter cases.
 The rule remains a draft until the complete receipt, strict admission tests, and tooling suite pass.
+
+### 2026-11-12 — Boundary acceptance passes; receipt traversal is red
+
+All 238 acceptance jobs finish with exit code zero on the final candidate revision.
+Both APIs pass components, scanners, production, rendering, CLI, all five original tests, seventeen historical inputs, and twenty-two retained update steps.
+All 295 earlier API cases and all 158 earlier reporter cases pass through snapshot execution.
+All 44 valid removal controls reject the altered behavior through both APIs.
+
+Receipt assembly fails because it traverses source observations as execution records.
+The source reporter recording contains `programInputs: null`; source observations have no native program inputs.
+The fix must traverse native reports separately and still reject null program inputs in native evidence.
+A new regression test fails before that change. The rule remains a draft.
