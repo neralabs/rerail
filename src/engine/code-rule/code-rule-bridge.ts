@@ -256,11 +256,24 @@ async function modifiedSince(absolute: string, modifiedAt: number): Promise<numb
   const after = await lstat(absolute);
   return Math.max(modifiedAt, after.mtimeMs, after.ctimeMs);
 }
-/** A text file as a walk observes it, with its text when it changed since the session's start. */
+/**
+ * A text file as a walk observes it, with its text only when it may be an edit (`#discoveredEdit`): its digest is not
+ * the one observed before, and it was stamped since the session's start, or the walk captures changes and this is no
+ * first sight of a baseline (`firstSightIsBaseline`). A walk reads every file it holds no digest for, such as each file
+ * of a worktree it walks first, and text of those would be a string per file that nothing reads.
+ */
 function observedText(walk: SourceWalk, stamped: StampedSource, previous: ObservedSource | undefined, source: Buffer): Source {
   const digest = sha256(source);
-  const changed = (walk.captureChanges || stamped.modifiedAt >= walk.discovery.startedAt) && previous?.digest !== digest;
+  const sinceStart = stamped.modifiedAt >= walk.discovery.startedAt;
+  const changed = previous?.digest !== digest && (sinceStart || (walk.captureChanges && !firstSightIsBaseline(walk, stamped.path, previous)));
   return { ...stamped, digest, ...(changed ? { text: source.toString("utf8") } : {}) };
+}
+/**
+ * The walk sees `path` for the first time under one of its `baselineRoots`, so `#discoveredEdit` takes it as a baseline
+ * unless it was stamped since the session's start.
+ */
+function firstSightIsBaseline(walk: SourceWalk, path: string, previous: ObservedSource | undefined): boolean {
+  return previous === undefined && underBaselineRoot(walk.baselineRoots, path);
 }
 /** An unlisted file too large to read is unread, reported once per stamp (`newlyUnread`); any other read error is the walk's. */
 function recordReadError(scan: SourceScan, source: Source): void {
@@ -453,6 +466,13 @@ interface SourceWalk {
   readonly observedAt: number;
   readonly previousSources: ReadonlyMap<string, ObservedSource>;
   readonly captureChanges: boolean;
+  /**
+   * Where a source the walk has no observation of is a baseline (`#baselinePath`), as the walk began: the session
+   * folder's subtrees its last walk could not read, or the worktrees whose first walk is still to finish with the
+   * subtrees the last worktree walk could not read. Walks of one kind run one at a time, so until this one applies none
+   * of these stops being a baseline, but for a worktree that is gone, whose files no walk answers for.
+   */
+  readonly baselineRoots: ReadonlySet<string>;
   readonly scan: SourceScan;
   readonly stack: string[];
   /** Where the walk starts: a folder reached again from another is not walked twice. */
@@ -1454,6 +1474,7 @@ export class CodeRuleBridge {
       discovery, observedAt: walk.observedAt,
       previousSources: seed === undefined ? walk.previous : new Map([...seed, ...walk.previous]),
       captureChanges: !walk.baseline,
+      baselineRoots: walk.inSession ? discovery.baselineRoots : new Set([...discovery.worktrees.fresh, ...discovery.worktrees.baselineRoots]),
       scan: { sources: new Map(), failedRoots: new Set(), errors: [], unread: new Map(), firstSeen: new Map(), checkouts: new Set(), unmerged: new Map() },
       stack: walk.inSession ? [discovery.root] : [...worktrees], roots: new Set([discovery.root, ...worktrees]),
     });
