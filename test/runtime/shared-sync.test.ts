@@ -111,8 +111,10 @@ describe("SqliteSessionStore.appendSynced", () => {
       await Promise.all([1, 2, 3].map(index => store.appendSynced({
         sessionId: "session-1", eventId: `event-${index}`, kind: "result", observedAt: 100 + index, payload: { output: "ok" },
       })));
-      // One sync for the first event, one shared by the two that committed while it ran.
-      expect(synced.map(file => realpathSync.native(file))).toEqual(Array.from({ length: 2 }, () => realpathSync.native(`${path}-wal`)));
+      // One sync for the first event, one shared by the two that committed while it ran; none on macOS, where the
+      // events commit at FULL.
+      const syncs = process.platform === "darwin" ? 0 : 2;
+      expect(synced.map(file => realpathSync.native(file))).toEqual(Array.from({ length: syncs }, () => realpathSync.native(`${path}-wal`)));
     } finally {
       store.close();
     }

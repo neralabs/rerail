@@ -575,7 +575,9 @@ describe("SQLite session persistence", () => {
     ]);
   });
 
-  it("commits a hook's event without a disk sync on the calling thread, and settles once a sync of the log covers it", async () => {
+  it("commits a hook's event without a disk sync on the calling thread (at FULL on macOS), and settles once its row is on disk", async () => {
+    // macOS keeps FULL for it, as Node's sync there costs more than SQLite's (`#logSync`).
+    const level = process.platform === "darwin" ? 2 : 1;
     const { path, commits, levelsAfter } = await commitLevels(async (store, path) => {
       store.openSession(levelSession, 100);
       await store.appendSynced(levelEvent("event-1"), levelSession);
@@ -584,13 +586,13 @@ describe("SQLite session persistence", () => {
       // The session row an append puts back after the reset commits at the event's level, and the sync covers both.
       await store.appendSynced(levelEvent("event-2"), levelSession);
     });
-    expect(commits).toEqual(["sessions 2", "events 1", "sessions 2", "events 1", "sessions 1", "events 1"]);
+    expect(commits).toEqual(["sessions 2", `events ${level}`, "sessions 2", `events ${level}`, `sessions ${level}`, `events ${level}`]);
     expect(levelsAfter).toEqual([2]);
     const connection = closeAfterTest(new Database(path, { readonly: true }));
     expect(connection.prepare("SELECT event_id FROM events ORDER BY sequence").pluck().all()).toEqual(["event-2"]);
   });
 
-  it("marks a hook's event processed in the session ledger only once a disk sync covers its row", async () => {
+  it.skipIf(process.platform === "darwin")("marks a hook's event processed in the session ledger only once a disk sync covers its row", async () => {
     const root = await temporaryDirectory();
     const storageRoot = join(root, "sessions");
     const runtime = new RerailRuntime({ storageRoot, databasePath: defaultRerailDatabasePath(), workspaceRoot: root, embedder: testEmbedder });

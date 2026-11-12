@@ -364,7 +364,7 @@ export class SqliteSessionStore {
    * Windows desktop, up to hundreds on a busy Linux disk. This commit runs at NORMAL, which does not sync, and the log's
    * sync follows on Node's thread pool: the thread serves other sessions while the disk works, and the events that
    * commit meanwhile share one sync. Every other write keeps FULL. A file without a log (in memory, or where WAL is
-   * unavailable) commits at FULL.
+   * unavailable) commits at FULL, and so does every event on macOS (`#logSync`).
    */
   async appendSynced(event: SessionEvent, session?: AdapterSession): Promise<string> {
     const log = this.#logSync();
@@ -381,11 +381,15 @@ export class SqliteSessionStore {
     return eventId;
   }
 
-  /** The sync of this file's write-ahead log, named from the path SQLite opened; null when the file keeps no log. */
+  /**
+   * The sync of this file's write-ahead log, named from the path SQLite opened; null when the file keeps no log, and on
+   * macOS. There Node's sync is F_FULLFSYNC, which waits for the drive to empty its cache, while the FULL commit's sync
+   * is a plain fsync that does not: each hook would wait longer than it does now.
+   */
   #logSync(): SharedSync | null {
     if (this.#log === undefined) {
       const wal = this.#database.all<{ journal_mode: string }>(sql`PRAGMA journal_mode`)[0]?.journal_mode === "wal";
-      const file = wal ? this.#database.all<{ file: string }>(sql`SELECT file FROM pragma_database_list WHERE name = 'main'`)[0]?.file : undefined;
+      const file = wal && process.platform !== "darwin" ? this.#database.all<{ file: string }>(sql`SELECT file FROM pragma_database_list WHERE name = 'main'`)[0]?.file : undefined;
       this.#log = file === undefined || file === "" ? null : new SharedSync(() => syncLog(file));
     }
     return this.#log;
