@@ -5,14 +5,15 @@
  * TMPDIR, TEMP and TMP at the folder, which `os.tmpdir()` reads, and the workers and every process they start inherit.
  *
  * A run killed before it ends (a closed terminal, a tool call's time limit) leaves its folder behind. The next run
- * removes it, once no process has the pid in its name. Folders that test runs made straight in the temp folder before
- * there was a run folder (`rerail-vitest-home-*`, `rerail-vitest-store-*`) go once they are a day old, since a
- * checkout on an older commit may still be running its tests in one. A run picks those folders at its start and
- * removes them while its tests run, so its first test file waits for none of them; its end waits for that removal.
+ * removes it, once no process has the pid in its name. Any other `rerail-vitest-*` folder goes once it is a day old:
+ * test runs made each test file's home and store (`rerail-vitest-home-*`, `rerail-vitest-store-*`) straight in the
+ * temp folder before there was a run folder, and a checkout on an older commit may still be running its tests in one.
+ * A run picks those folders at its start and removes them while its tests run, so its first test file waits for none
+ * of them; its end waits for that removal.
  */
 import { lstat, mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 const PREFIX = "rerail-vitest-";
@@ -20,6 +21,14 @@ const PREFIX = "rerail-vitest-";
 const RUN_FOLDER = /^rerail-vitest-(\d+)-[A-Za-z0-9]{6}$/u;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const VARIABLES = ["TMPDIR", "TEMP", "TMP"] as const;
+/** The longest Unix socket path in bytes, the terminating NUL aside, as src/runtime/engine-service.ts counts it. */
+const SOCKET_PATH_BYTES = process.platform === "linux" || process.platform === "android" ? 107 : 103;
+/**
+ * How far below its temp folder the deepest Unix socket a test binds ends, in bytes: engine-service-socket.test.ts's
+ * `/rerail-socket-XXXXXX/rerail-socket/nested/engine.sock`. A daemon's default socket, `/rerail-<uid>/<24 hex>.sock`,
+ * ends 42 bytes below it.
+ */
+const DEEPEST_SOCKET_BYTES = 54;
 const REMOVAL_TRIES = 5;
 /** The errors Windows gives while a process still holds a file in a folder being removed. */
 const HELD = new Set(["EBUSY", "EPERM", "ENOTEMPTY", "EACCES"]);
@@ -46,14 +55,18 @@ export default async function setUpRunFolder(): Promise<() => Promise<void>> {
 }
 
 /**
- * Where run folders go: the temp folder, except macOS's per-user one (`/var/folders/<2>/<28>/T`, 46 bytes), where
- * `/tmp` takes its place. A daemon a test starts listens on a socket below the temp folder (`rerail-<uid>/<24 hex>
- * .sock`, or below the test's own folder), and macOS fits at most 104 bytes in a socket path: one folder more below
- * the per-user folder does not fit. A TMPDIR set by hand is used as it is.
+ * Where this run's folder goes: the temp folder, unless the deepest Unix socket a test binds would not fit below a run
+ * folder there, when `/tmp` takes its place. Tests, and the daemons they start, listen on sockets below the temp
+ * folder, and a socket path holds at most 107 bytes on Linux and 103 on macOS: macOS's per-user temp folder
+ * (`/var/folders/<2>/<28>/T`, 46 bytes) never leaves the room, and a TMPDIR set by hand may not. Windows sockets are
+ * named pipes, with no such limit. A run started inside another run's folder stays there, so that run's end removes
+ * what this one leaves.
  */
 function runFolderParent(): string {
   const temp = tmpdir();
-  return process.platform === "darwin" && temp.startsWith("/var/folders/") ? "/tmp" : temp;
+  if (process.platform === "win32" || temp.split(sep).some(part => RUN_FOLDER.test(part))) return temp;
+  const deepestSocket = Buffer.byteLength(join(temp, `${PREFIX}${process.pid}-XXXXXX`)) + DEEPEST_SOCKET_BYTES;
+  return deepestSocket <= SOCKET_PATH_BYTES ? temp : "/tmp";
 }
 
 /** The folders in `parent` that no running test run uses. */
@@ -64,8 +77,8 @@ async function endedRuns(parent: string, now: number): Promise<string[]> {
 }
 
 /**
- * Whether no running test run uses the folder at `path`: a run folder whose process has ended, or a folder of a
- * run from before run folders that is a day old. A folder named for this process's pid can only be an ended process's,
+ * Whether no running test run uses the folder at `path`: a run folder whose process has ended, or another
+ * `rerail-vitest-*` folder that is a day old. A folder named for this process's pid can only be an ended process's,
  * since this run picks the ended runs before it makes its own. A folder that cannot be read stays, and another user's
  * folder, in a shared /tmp, is never this run's to remove.
  */

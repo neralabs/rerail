@@ -46,6 +46,18 @@ it("leaves a folder its run cannot remove", async () => {
   }
 }, 60_000);
 `,
+  // Listens on a Unix socket as far below the temp folder as engine-service-socket.test.ts's, the deepest a test binds.
+  socket: `${IMPORTS}
+import { mkdirSync } from "node:fs";
+import { createServer } from "node:net";
+it("listens on a socket 54 bytes below the temp folder", async () => {
+  const folder = join(mkdtempSync(join(tmpdir(), "rerail-socket-")), "rerail-socket", "nested");
+  mkdirSync(folder, { recursive: true });
+  const server = createServer();
+  await new Promise((resolve, reject) => { server.once("error", reject); server.listen(join(folder, "engine.sock"), resolve); });
+  await new Promise(resolve => server.close(resolve));
+});
+`,
 };
 
 interface Run {
@@ -234,4 +246,20 @@ describe("a test run's temporary folders", () => {
     expect(next.code, next.output).toBe(0);
     expect(await readdir(temp)).toEqual([]);
   }, 180_000);
+
+  it.skipIf(process.platform === "win32")("go in /tmp when the deepest socket a test binds would not fit below a run folder in the temp folder", async () => {
+    const { tests } = await scratch();
+    // Straight in /tmp, the temp folder is 32 bytes, as a TMPDIR set by hand may be: a socket 54 bytes below it fits,
+    // and one below a run folder there too does not. Named rerail-vitest-*, it goes with a later run a day after a kill
+    // left it.
+    const temp = await mkdtemp("/tmp/rerail-vitest-socket-");
+    scratches.push(temp);
+    const run = startRun(join(tests, "socket"), temp);
+
+    const result = await run.ended;
+
+    expect(result.code, result.output).toBe(0);
+    expect(await readdir(temp)).toEqual([]);
+    expect((await readdir("/tmp")).filter(name => name.startsWith(`rerail-vitest-${run.child.pid}-`))).toEqual([]);
+  }, 120_000);
 });
