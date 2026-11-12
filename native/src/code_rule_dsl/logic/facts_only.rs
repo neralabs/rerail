@@ -50,6 +50,10 @@ const FACT_STORE: &[&str] = &[
     "node_type",
     "frames",
     "frame_spaces",
+    // The frames' own bookkeeping (decision 0117): those found unchanged under new reads, kept as the frames are.
+    "frame_confirmed",
+    // And each run's use of a space (decision 0117 step 5): one row a run, which the frames' sweep reads.
+    "frame_used",
     // The executor's measured jobs (decision 0100 §14), the cost model's data: kept as the measurements they are.
     "samples",
     // The SQL executor's planning observations (`costs::sql_plans`), its plan model's data: measurements, as `samples`.
@@ -154,12 +158,24 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("context_check_results", "8"),
 ];
 /// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised. Raised once, 61 to 62, by the merge of
-/// the cost classifier's per-machine `models` (2026-11-10), which a move to facts has yet to take.
-const NOT_YET_TABLES_PIN: usize = 62;
+/// the cost classifier's per-machine `models` (2026-11-10), which a move to facts has yet to take. Lowered to 61 by the
+/// merge of the planning trees (2026-11-12).
+const NOT_YET_TABLES_PIN: usize = 61;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
 const STATE: &[(&str, &str)] = &[
+    // A job's own plans (decision 0113): read before the run's `PLANS` and taken into them as the job ends.
+    ("code_rule_dsl/logic/plan.rs", "OWN_PLANS"),
+    // The profile's account of the planning budget's misses (decision 0122): where a plan is made, and what was.
+    ("code_rule_dsl/logic/plan.rs", "PLAN_SITE"),
+    ("code_rule_dsl/logic/plan.rs", "PLANNED_NOW"),
+    // A switch read once (the greedy probe's), and that probe's measurement of bulk planning's sharing.
+    ("code_rule_dsl/logic/plan.rs", "PROBE"),
+    ("code_rule_dsl/logic/plan.rs", "SEEN"),
+    ("code_rule_dsl/logic/plan.rs", "SUMS"),
+    // A job's own observations (decision 0113): added to the run's `OBSERVED_AT` once, as the job ends.
+    ("code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED"),
     // What a crate above registers at load, as the crate split made them (a function or a device, set once).
     ("code_rule_dsl/logic/device.rs", "SOLVER"),
     ("code_rule_dsl/logic/plan/corpus.rs", "CROSS_FILE"),
@@ -305,6 +321,15 @@ const STATE: &[(&str, &str)] = &[
     // The store's frames as this process holds them, ahead of SQLite (decision 0104): the facts themselves, read
     // once before a run's first wave, not a cache of anything else.
     ("content_store/frames.rs", "SNAPSHOTS"),
+    // With them, as the frames are: each space's confirmations (`frame_confirmed`, decision 0117 step 5), and the memo
+    // entries each space has admitted this process (read once a space, decision 0104).
+    ("content_store/frames.rs", "CONFIRMS"),
+    ("content_store/frames.rs", "ADMITTED"),
+    // Registries: which stores have a table made when first needed, the journal's open streams, and each device's
+    // volume, asked of the system once.
+    ("content_store/frames.rs", "KNOWN"),
+    ("content_store/journal.rs", "LIVE"),
+    ("content_store/journal.rs", "BY_DEV"),
     ("content_store/observe.rs", "OBSERVERS"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
