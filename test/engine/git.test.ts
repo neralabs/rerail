@@ -363,6 +363,9 @@ describe("gitCrlfPaths", () => {
     await writeFile(global, "[core]\n\tautocrlf = true\n");
     vi.stubEnv("GIT_CONFIG_GLOBAL", global);
     expect(Object.fromEntries(await reads.crlfPaths(root, ["a.py"], { platform: "linux" }))).toEqual({ "a.py": "auto" });
+    // Git reads the repository's own setting after the global one, and the last value it reads wins.
+    git(root, "config", "core.autocrlf", "false");
+    expect(Object.fromEntries(await reads.crlfPaths(root, ["a.py"], { platform: "linux" }))).toEqual({});
   });
 });
 

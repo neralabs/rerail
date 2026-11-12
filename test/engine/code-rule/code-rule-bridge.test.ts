@@ -53,8 +53,18 @@ vi.mock("node:child_process", async importOriginal => {
     }
     return (actual.execFile as (...forwarded: unknown[]) => ReturnType<typeof actual.execFile>)(...call);
   };
+  // The Git reads that stream (`cat-file --batch`, `check-attr --stdin`) are recorded as they start; Rerail runs every
+  // Git with `-C <folder>`.
+  const spawn = (command: string, args: readonly string[], options: ChildProcess.SpawnOptions) => {
+    if (args.includes("-C")) asyncGitCalls.args.push([...args]);
+    return actual.spawn(command, args, options);
+  };
   // `promisify(execFile)` resolves to `{ stdout, stderr }` through this symbol: the wrapper keeps it.
-  return { ...actual, execFile: Object.assign(execFile, { [promisify.custom]: (actual.execFile as unknown as Record<symbol, unknown>)[promisify.custom] }) };
+  return {
+    ...actual,
+    execFile: Object.assign(execFile, { [promisify.custom]: (actual.execFile as unknown as Record<symbol, unknown>)[promisify.custom] }),
+    spawn,
+  };
 });
 vi.mock("node:fs/promises", async importOriginal => {
   const actual = await importOriginal<typeof FileSystem>();
@@ -1057,6 +1067,14 @@ async function gitReads(run: () => Promise<unknown>): Promise<{ heads: number; e
   const named = (name: string) => asyncGitCalls.args.filter(args => args.includes(name)).length;
   return { heads: named("--verify"), entries: named("--unmerged") };
 }
+/** How many Git processes `run` started to read blobs (`cat-file --batch`), line-ending attributes and configuration. */
+async function lineEndingReads(run: () => Promise<unknown>): Promise<{ blobs: number; attributes: number; config: number }> {
+  asyncGitCalls.args.length = 0;
+  await run();
+  const command = (args: readonly string[]) => args[args.indexOf("-C") + 2];
+  const started = (name: string) => asyncGitCalls.args.filter(args => command(args) === name);
+  return { blobs: started("cat-file").filter(args => args.includes("--batch")).length, attributes: started("check-attr").length, config: started("config").length };
+}
 /**
  * A repository with a checkout in `lib` that owns its files: a repository of its own, or with `linked` a worktree of one
  * elsewhere, whose `.git` is a file. `lib` is on `ours`, which changed `src/gone.py`; `other` removed it, so merging
@@ -1680,6 +1698,23 @@ describe("CodeRuleBridge and Git's own writes", () => {
     // The pass after an index write reads it once, and the one after that does not.
     expect((await gitReads(() => shell(bridge, () => git(root, "add", "src/a.py")))).entries).toBe(1);
     expect(await gitReads(() => bridge.checkpoint("turn"))).toEqual({ heads: 1, entries: 0 });
+  });
+
+  it("reads a checkout's blobs and line-ending rules once a pass, for the preimages it recovers too", async () => {
+    const root = await twoBranches();
+    const { bridge, auditGeneratedEdits } = await opened(root);
+    // One call switches branches and writes a new file: the files Git wrote need no preimage.
+    const switched = await lineEndingReads(() => shell(bridge, async () => {
+      git(root, "switch", "--quiet", "other");
+      await writeFile(join(root, "src", "mine.py"), "mine\n");
+    }));
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => batch.edits)).toEqual([[{ path: "src/mine.py", language: "python", generatedText: "mine\n" }]]);
+    // The next edits a file that held HEAD's blob, which gives the edit its preimage.
+    const edited = await lineEndingReads(() => shell(bridge, () => writeFile(join(root, "src", "a.py"), "old\nviolation\nmine\n")));
+    expect(auditGeneratedEdits.mock.calls.at(-1)?.[1].edits).toEqual([
+      { path: "src/a.py", language: "python", previousText: "old\nviolation\n", generatedText: "old\nviolation\nmine\n" },
+    ]);
+    expect([switched, edited]).toEqual([{ blobs: 1, attributes: 1, config: 1 }, { blobs: 1, attributes: 1, config: 1 }]);
   });
 
   it("reads one checkout each pass for a session opened in a subfolder of it, once a walk has found a change there too", async () => {
