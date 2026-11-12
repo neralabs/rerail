@@ -14,6 +14,7 @@ import {
   moveRuleProvenances, moveRuleProvenancesInWorker, type RuleProvenanceMoveOptions,
 } from "../../../src/engine/storage/rule-provenance-move.js";
 import { tableColumns } from "../../../src/engine/storage/table-probe.js";
+import { slowVacuumNext, untilExists } from "../../support/slow-vacuum.js";
 
 // Every export calls the real one; a test that needs a disk with little free space overrides `statfsSync`.
 vi.mock("node:fs", { spy: true });
@@ -464,7 +465,46 @@ describe("audit rule provenance", () => {
     }
     // Nothing is left: the next run reads that and starts no thread.
     expect(await moveRuleProvenancesInWorker(path)).toBe(0);
-  }, 30_000);
+  }, 60_000);
+
+  it("ends its VACUUM at once when stopped, however long the VACUUM would hold the database, and leaves the file whole", async () => {
+    const path = await fileOfTheBuildBefore();
+    const written = writeInlineAudits(path, Array.from({ length: 30 }, () => provenanceOf("/home/dev/app", 200)));
+    // A VACUUM that would hold the write lock 30 s, as one of a large file on a loaded machine does.
+    const held = join(dirname(path), "vacuum-held");
+    const stop = new AbortController();
+    const restore = slowVacuumNext(held, 30_000);
+    let moving: Promise<number>;
+    try {
+      moving = moveRuleProvenancesInWorker(path, stop.signal);
+    } finally {
+      restore();
+    }
+    await untilExists(held, 60_000);
+
+    const asked = performance.now();
+    stop.abort();
+    expect(await moving).toBe(30);
+    // The daemon's close waits for this. Run on the move's thread, the VACUUM held it the whole 30 s.
+    expect(performance.now() - asked).toBeLessThan(2_000);
+
+    // SQLite dropped the VACUUM: the write lock is free, the file is whole, and every audit reads its provenance.
+    const writer = new Database(path);
+    try {
+      writer.pragma("busy_timeout = 0");
+      writer.exec("BEGIN IMMEDIATE; ROLLBACK");
+      expect(writer.pragma("integrity_check", { simple: true })).toBe("ok");
+    } finally {
+      writer.close();
+    }
+    expect(inlineAudits(path)).toBe(0);
+    const store = new SqliteAuditStore(path);
+    try {
+      for (const { auditId, text } of written) expect(JSON.stringify(store.get(auditId)?.ruleProvenance), auditId).toBe(text);
+    } finally {
+      store.close();
+    }
+  }, 120_000);
 
   it("leaves the free space in the file when there is no provenance to move", async () => {
     const path = await fileOfTheBuildBefore();

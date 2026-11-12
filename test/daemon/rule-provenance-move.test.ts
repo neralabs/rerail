@@ -4,7 +4,10 @@ import { join } from "node:path";
 import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RerailDaemon } from "../../src/daemon/index.js";
-import { openRerailDatabase } from "../../src/engine/index.js";
+import { openRerailDatabase, SqliteAuditStore } from "../../src/engine/index.js";
+import { ingestEngineEvent } from "../../src/runtime/index.js";
+import { slowVacuumNext, untilExists } from "../support/slow-vacuum.js";
+import { startTestRepository } from "../support/started-repository.js";
 
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
@@ -18,6 +21,9 @@ afterEach(async () => {
  */
 const MOVE_MS = 45_000;
 const TEST_MS = MOVE_MS + 20_000;
+
+/** As `MOVE_MS`, for a move whose `VACUUM` starts a process of its own, which loads its modules through `tsx` too. */
+const SLOW_MOVE_MS = 2 * MOVE_MS;
 
 async function until(condition: () => boolean, timeoutMs = MOVE_MS): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -69,6 +75,38 @@ function moved(databasePath: string): boolean {
   return inline === 0 && freePages === 0;
 }
 
+/**
+ * The longest time this thread ran no timer while `run` ran: the longest gap between two ticks of a 10 ms timer,
+ * counting the gap that ends as `run` resolves, which a tick after it would come too late to see.
+ */
+async function longestGapWhile(run: () => Promise<void>): Promise<number> {
+  let longest = 0;
+  let last = performance.now();
+  const tick = (): void => {
+    const now = performance.now();
+    longest = Math.max(longest, now - last);
+    last = now;
+  };
+  const ticks = setInterval(tick, 10);
+  try {
+    await run();
+    tick();
+  } finally {
+    clearInterval(ticks);
+  }
+  return longest;
+}
+
+/** How many rows of `table` have `column` equal to `value`. */
+function rowsWith(databasePath: string, table: string, column: string, value: string): number {
+  const database = new Database(databasePath, { readonly: true });
+  try {
+    return database.prepare(`SELECT count(*) FROM ${table} WHERE ${column} = ?`).pluck().get(value) as number;
+  } finally {
+    database.close();
+  }
+}
+
 describe("the daemon's move of audit rule provenance", () => {
   it("moves the provenance audits recorded before the upgrade hold inline once it starts, and gives the space back", async () => {
     const { home, databasePath } = databaseWithInlineAudits();
@@ -112,4 +150,51 @@ describe("the daemon's move of audit rule provenance", () => {
     }
     expect(longest).toBeLessThan(2_000);
   }, TEST_MS);
+
+  it("records an edit's audit and event while the move's VACUUM holds the database, and the file still shrinks", async () => {
+    const { home, databasePath } = databaseWithInlineAudits();
+    startTestRepository(home, databasePath);
+    // The store the daemon records an edit's audit through, open before the move as the daemon's stores are, on this
+    // thread, which is the daemon's: it waits for the write lock here, up to its 5 s busy timeout.
+    const audits = new SqliteAuditStore(databasePath);
+    cleanups.push(() => audits.close());
+    // A VACUUM that holds the write lock 12 s, past the 5 s any Rerail writer waits for it: the VACUUM after 4,000
+    // audits held it 8.9 s on a loaded Windows machine.
+    const held = join(home, "vacuum-held");
+    const restore = slowVacuumNext(held, 12_000);
+    let daemon: RerailDaemon;
+    try {
+      daemon = await RerailDaemon.start({
+        version: "test", databasePath, workspaceRoot: home, port: 0, remoteSink: false, nativeHealth: () => ({ ok: true, kernelVersion: "1" }),
+      });
+    } finally {
+      restore();
+    }
+    cleanups.push(() => daemon.close());
+    await untilExists(held, SLOW_MOVE_MS);
+
+    let failure: string | undefined;
+    const longest = await longestGapWhile(async () => {
+      try {
+        audits.finish(audits.start({
+          sessionId: "during-vacuum", workspaceRoot: home, scope: "touched-files", mode: "steer", revision: 1,
+          catalogRevision: "catalog", ruleRevisions: [], paths: ["src/a.ts"], ruleProvenance: [],
+        }), { status: "completed" });
+        await ingestEngineEvent({ socketPath: daemon.kernelSocketPath, accessToken: daemon.state().accessToken! }, {
+          kind: "session-start", eventId: "start-during-vacuum", session: { host: "claude-code", sessionId: "during-vacuum", cwd: home },
+        });
+      } catch (error) {
+        failure = (error as { code?: string }).code ?? String(error);
+      }
+    });
+
+    // Neither write fails, and the thread answered within the 2 s a hook's health probe waits. Waiting out the lock, the
+    // audit failed with SQLITE_BUSY after 5 s.
+    expect({ failure, heldTwoSeconds: longest >= 2_000 }, `longest gap ${Math.round(longest)} ms`)
+      .toEqual({ failure: undefined, heldTwoSeconds: false });
+    expect(rowsWith(databasePath, "audits", "session_id", "during-vacuum")).toBe(1);
+    expect(rowsWith(databasePath, "sessions", "session_id", "during-vacuum")).toBe(1);
+    // The VACUUM that gave way runs again once no one writes, and gives the space back.
+    await until(() => moved(databasePath), SLOW_MOVE_MS);
+  }, 3 * SLOW_MOVE_MS);
 });

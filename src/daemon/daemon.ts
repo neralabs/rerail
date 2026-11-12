@@ -520,9 +520,10 @@ export class RerailDaemon {
   /**
    * Moves the rule provenance that audits an older Rerail recorded hold inline, a batch per short transaction while the
    * daemon serves (`rule-provenance-move.ts`), so no open holds the write lock for the whole history. The move runs on
-   * a worker thread, so this thread keeps answering through its batches and its `VACUUM`. It finds nothing to move on a
-   * file it has already moved, and starts no thread then. A failure goes to the daemon log; the audits read the same
-   * either way.
+   * a worker thread, so this thread keeps answering through its batches and its `VACUUM`; the `VACUUM` runs in a process
+   * of its own and gives way whenever this thread waits for the write lock it holds (`vacuum-giving-way.ts`). It finds
+   * nothing to move on a file it has already moved, and starts no thread then. A failure goes to the daemon log; the
+   * audits read the same either way.
    */
   #startProvenanceMove(): void {
     const stop = new AbortController();

@@ -6,7 +6,9 @@
  * to hold the lock about 100 ms (`moveInBatches`), with a pause before it, so other writers keep recording while it
  * runs; a process stopped partway loses at most one batch, and the next run goes on from what is left. Until an audit moves, the audit store reads its provenance
  * inline. The move never waits inside SQLite for another connection: it awaits a pause and tries again (`whenFree`),
- * so a stop reaches it between two tries.
+ * so a stop reaches it between two tries. The `VACUUM` that ends the move holds the write lock for as long as it copies
+ * the file, so in the daemon it runs in a process of its own and gives way whenever the daemon's thread waits for that
+ * lock (`vacuum-giving-way.ts`).
  */
 import { createHash } from "node:crypto";
 import { existsSync, statfsSync, statSync } from "node:fs";
@@ -17,6 +19,10 @@ import { Worker } from "node:worker_threads";
 import Database from "better-sqlite3";
 import { openRerailDatabase, type RerailDatabase } from "./database.js";
 import { RULE_PROVENANCE_STEP } from "./migrations.js";
+import { PING, PONG, type ThreadWatch, vacuumGivingWay, VacuumStopped } from "./vacuum-giving-way.js";
+
+/** What `moveRuleProvenancesInWorker` posts to stop the move's thread (`rule-provenance-move-worker.ts`). */
+export const MOVE_STOP = "rerail-move-stop";
 
 /** The most audits one transaction moves: it bounds the memory the move holds. */
 const MOVED_PER_BATCH = 100;
@@ -51,8 +57,14 @@ export interface RuleProvenanceMoveOptions {
   readonly pause?: () => Promise<void>;
   /** The milliseconds that time each batch; tests pass their own. */
   readonly now?: () => number;
-  /** Stops the move before its next batch; what it moved stays moved. */
+  /** Stops the move before its next batch, and a `VACUUM` run beside it at once; what it moved stays moved. */
   readonly signal?: AbortSignal;
+  /**
+   * The thread whose writes the `VACUUM` gives way to: with it, `VACUUM` runs in a process of its own once the file is
+   * quiet, and ends whenever that thread stops answering, until one attempt commits (`vacuumGivingWay`). Without it,
+   * `VACUUM` runs on the move's connection, holding the write lock until it ends.
+   */
+  readonly watch?: ThreadWatch;
 }
 
 /** What the batches of one move take from its options. */
@@ -90,11 +102,22 @@ export async function moveRuleProvenances(path: string, options: RuleProvenanceM
     const { moved, ended } = await moveInBatches(database, upTo, free, batching);
     // A run stopped before the end skips this, and the run that moves the rest gives the space back. One stopped after
     // its last batch leaves the free pages to new history.
-    if (ended && moved > 0) await giveBackFreedSpace(database.$client, path, free);
+    const client = database.$client;
+    if (ended && moved > 0) await giveBackFreedSpace(client, path, free, vacuumFor(client, path, free, options));
     return moved;
   } finally {
     database.$client.close();
   }
+}
+
+/** The move's `VACUUM`: beside the move, giving way to the thread `options.watch` watches, or on its connection. */
+function vacuumFor(client: Client, path: string, free: Free, { watch, signal }: RuleProvenanceMoveOptions): () => Promise<void> {
+  if (watch === undefined) {
+    return () => free(() => {
+      client.exec("VACUUM");
+    });
+  }
+  return () => vacuumGivingWay(client, path, { watch, signal });
 }
 
 /**
@@ -142,15 +165,17 @@ function nextBatchSize(size: number, took: number, most: number): number {
 
 /**
  * Runs `moveRuleProvenances` on a worker thread with a connection of its own, and resolves to how many audits it moved
- * once that thread ends. Its batches, checkpoints and `VACUUM` then never hold the calling thread, which in the daemon
+ * once that thread ends. Its batches, checkpoints and `VACUUM` then never run on the calling thread, which in the daemon
  * answers the requests hooks send: on a loaded Windows machine one batch of 100 audits took 3.6 s, and the `VACUUM` of
- * 4,000 audits 8.9 s, past the 2 s a hook's health probe waits. `signal` stops the move before its next step, as
- * `moveRuleProvenances` stops. A file with nothing to move, read on the calling thread, starts no thread.
+ * 4,000 audits 8.9 s, past the 2 s a hook's health probe waits. The calling thread's own writes still wait for the
+ * write lock the `VACUUM` holds, so the `VACUUM` gives way to them: the worker pings this thread while it runs, and ends
+ * it once this thread stops answering (`watchThread`). `signal` stops the move before its next step, and a running
+ * `VACUUM` at once. A file with nothing to move, read on the calling thread, starts no thread.
  */
 export async function moveRuleProvenancesInWorker(path: string, signal?: AbortSignal): Promise<number> {
   if (signal?.aborted === true || !existsSync(path) || !leftToMove(path)) return 0;
   const worker = moveWorker(path);
-  const stop = (): void => worker.postMessage("stop");
+  const stop = (): void => worker.postMessage(MOVE_STOP);
   signal?.addEventListener("abort", stop, { once: true });
   try {
     return await movedBy(worker);
@@ -169,12 +194,13 @@ function moveWorker(path: string): Worker {
   return new Worker(entry, { workerData: path, ...(fromSource ? { execArgv: ["--import", "tsx"] } : {}) });
 }
 
-/** How many audits `worker` moved, once it ends; what it threw, when it fails. */
+/** How many audits `worker` moved, once it ends; what it threw, when it fails. Answers each of its pings meanwhile. */
 function movedBy(worker: Worker): Promise<number> {
   return new Promise((resolve, reject) => {
     let moved = 0;
-    worker.on("message", (count: number) => {
-      moved = count;
+    worker.on("message", (message: unknown) => {
+      if (message === PING) worker.postMessage(PONG);
+      else if (typeof message === "number") moved = message;
     });
     worker.once("error", reject);
     worker.once("exit", code => {
@@ -222,8 +248,13 @@ function isBusy(error: unknown): boolean {
   return error instanceof WalInUse || (error instanceof Database.SqliteError && error.code.startsWith("SQLITE_BUSY"));
 }
 
-/** Writes the WAL into the database file and empties it (`wal_checkpoint(TRUNCATE)`); throws `WalInUse` when it could not. */
+/**
+ * Writes the WAL into the database file and empties it (`wal_checkpoint(TRUNCATE)`); throws `WalInUse` when it could not.
+ * A TRUNCATE checkpoint holds the write lock while it copies the WAL into the file, so a PASSIVE one, which takes no
+ * write lock, copies what it can first: after `VACUUM` the WAL can hold the whole rewritten file.
+ */
 function emptyWal(client: Client): void {
+  client.pragma("wal_checkpoint(PASSIVE)");
   const [checkpoint] = client.pragma("wal_checkpoint(TRUNCATE)") as Checkpoint[];
   if (checkpoint?.busy !== 0) throw new WalInUse(checkpoint);
 }
@@ -283,16 +314,17 @@ function moveBatch(
 /**
  * Once the move has freed much of the file, `VACUUM` once so the space goes back to the disk: without it the file keeps
  * its size, mostly free pages (1.3 GB of 1.4 GB for 4,000 audits). It runs `eraseFreedPages`' three steps (`database.ts`)
- * one by one, each through `free`: empty the WAL into the file, `VACUUM`, which copies the pages in use to a temporary
- * file and writes them back through the WAL while it holds the write lock, and empty the WAL again. `VACUUM` is skipped,
- * and stderr says why, when the WAL cannot be emptied first (another connection keeps it busy through every try, or the
- * checkpoint fails), when a disk has less free space than the copies `VACUUM` writes to it (`shortOfDisk`), or when
- * `VACUUM` fails (another writer holding the lock through every try, a full disk), which leaves the file as it was.
- * Stderr also says when the WAL stays full after `VACUUM` (`sayWalInUse`, `sayWalNotEmptied`). Never throws: the move
- * has committed, and a step that fails here only leaves the file larger than it could be.
+ * one by one, each through `free` or `vacuum`: empty the WAL into the file, `VACUUM`, which copies the pages in use to a
+ * temporary file and writes them back through the WAL while it holds the write lock, and empty the WAL again. `VACUUM`
+ * is skipped, and stderr says why, when the WAL cannot be emptied first (another connection keeps it busy through every
+ * try, or the checkpoint fails), when a disk has less free space than the copies `VACUUM` writes to it (`shortOfDisk`),
+ * when `VACUUM` fails (another writer holding the lock through every try, a full disk), or when a stop ends it, each of
+ * which leaves the file as it was. Stderr also says when the WAL stays full after `VACUUM` (`sayWalInUse`,
+ * `sayWalNotEmptied`). Never throws: the move has committed, and a step that fails here only leaves the file larger
+ * than it could be.
  */
-async function giveBackFreedSpace(client: Client, path: string, free: Free): Promise<void> {
-  const skipped = await vacuumSkipped(client, path, free);
+async function giveBackFreedSpace(client: Client, path: string, free: Free, vacuum: () => Promise<void>): Promise<void> {
+  const skipped = await vacuumSkipped(client, path, free, vacuum);
   if (skipped !== undefined) {
     sayKeepsItsSize(client, path, skipped);
     return;
@@ -305,15 +337,15 @@ async function giveBackFreedSpace(client: Client, path: string, free: Free): Pro
   }
 }
 
-/** Empties the WAL into the file, then runs `VACUUM`; why it did not, or undefined once it ran. */
-async function vacuumSkipped(client: Client, path: string, free: Free): Promise<string | undefined> {
+/** Empties the WAL into the file, then runs `vacuum`; why it did not, or undefined once it ran. */
+async function vacuumSkipped(client: Client, path: string, free: Free, vacuum: () => Promise<void>): Promise<string | undefined> {
   const before = (await walNotEmptied(client, free)) ?? shortOfDisk(client, path);
   if (before !== undefined) return before;
   try {
-    await free(() => client.exec("VACUUM"));
+    await vacuum();
     return undefined;
   } catch (error) {
-    return `VACUUM failed (${errorText(error)})`;
+    return error instanceof VacuumStopped ? error.message : `VACUUM failed (${errorText(error)})`;
   }
 }
 

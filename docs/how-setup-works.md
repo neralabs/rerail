@@ -557,12 +557,23 @@ Each transaction moves as many audits as fit in about 100 ms, at most 100, with 
 upgrades the file returns at once and other processes keep writing during the move. While another process holds the
 database, the move tries again for up to 5 s. A daemon stopped partway goes on at its next start, and a later start
 finds nothing left to move with one read and takes no write lock. Once the move ends, the daemon runs one `VACUUM`,
-which gives the space it freed back to the disk; other writers wait for it as for any write. It skips the `VACUUM`,
-and says why in `daemon.log`, when another process is still using the database after those tries, when emptying the
-WAL into the file fails, or when a disk has less free space than `VACUUM` writes to it. `VACUUM` writes a copy of the
-database's pages in use, not its free ones, to the temporary folder, and another through the WAL beside the database,
-so the disk of each folder needs room for one copy, and a disk that holds both folders room for two. The file then
-keeps its size, and new history reuses the free space. The audits stay moved whatever happens to the `VACUUM`.
+which gives the space it freed back to the disk.
+
+`VACUUM` holds the database's write lock until it ends, which takes seconds on a large file, and the daemon's own
+writes wait for that lock on the thread that answers hooks. So the daemon runs `VACUUM` in a process of its own, once
+no process has written to the database for 2 s, and that process gives way to the daemon: when the daemon's thread
+has not answered for half a second, the daemon ends the process, SQLite drops the unfinished `VACUUM`, and the write
+that was waiting goes through. The next try waits for a quiet spell twice as long, up to 5 minutes, and `daemon.log`
+says so. Stopping the daemon ends a running `VACUUM` at once. Another process that writes while a `VACUUM` runs (a
+`rerail` command, or a daemon of another Rerail version sharing the database) waits for it as for any write, up to 5 s,
+then fails with `database is locked`.
+
+The daemon skips the `VACUUM`, and says why in `daemon.log`, when another process is still using the database after
+the move's tries, when emptying the WAL into the file fails, when a disk has less free space than `VACUUM` writes to
+it, or when it stops before a `VACUUM` has finished. `VACUUM` writes a copy of the database's pages in use, not its
+free ones, to the temporary folder, and another through the WAL beside the database, so the disk of each folder needs
+room for one copy, and a disk that holds both folders room for two. The file then keeps its size, and new history
+reuses the free space; `rerail scrub` gives it back. The audits stay moved whatever happens to the `VACUUM`.
 
 Most steps add a column or a table, which older versions read correctly: the floor stays, an older Rerail still opens
 the file, and a hook or the status line runs such steps itself. A step an older version would misread raises the
