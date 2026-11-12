@@ -223,7 +223,8 @@ In short: macOS, glibc Linux and Windows 11 on arm64 or x64, with Node.js 24+, f
   - Cursor's IDE agent and its CLI (`cursor-agent`).
   - OMP and Pi.
   - On Windows, Claude Code runs Rerail's commands in Git Bash, and Codex and Cursor in PowerShell; set-up writes each
-    agent's commands for its shell.
+    agent's commands for its shell. Claude Code there needs Git Bash, from Git for Windows, even though Claude Code
+    itself does not require it.
 - **Containers and devcontainers** with a glibc image, including the default `node:24` and `node:24-slim`, with or
   without an init process.
 - **WSL 2**, as Linux, with the coding agent running in WSL too: install Rerail on the same side as the coding agent. A
@@ -244,6 +245,9 @@ In short: macOS, glibc Linux and Windows 11 on arm64 or x64, with Node.js 24+, f
 - Agent config folders moved with `CLAUDE_CONFIG_DIR` or `CODEX_HOME`. A config file that is not strict JSON (comments,
   trailing commas) is left alone; that coding agent stays unconnected until the file is fixed.
 - A coding agent on Windows with Rerail in WSL, or the other way round.
+- Claude Code on Windows without Git Bash, where Claude Code runs commands in PowerShell instead. Rerail's hooks still
+  record and steer, but its status line, `/rerail` commands and set-up's answers are written for Git Bash
+  ([#558](https://github.com/neralabs/rerail/issues/558)).
 - Installing offline: set-up, `rerail update` and rule packs need the npm registry.
 
 </details>

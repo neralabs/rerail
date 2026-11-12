@@ -128,11 +128,13 @@ export interface ProcessTreeOptions {
  * Ends `child` and the processes it started. On Windows killing a process leaves its children running (Git for
  * Windows' launcher runs the real Git as its child, Git Bash's launcher the real bash), so `taskkill /T /F` ends the
  * tree from `child` while it still runs, since taskkill finds the tree from a live root, and `child` alone is killed
- * only when taskkill cannot start or fails. On macOS and Linux a child started `detached` leads its own process group,
- * which goes whole; any other child is killed alone.
+ * only when taskkill cannot start or fails. A child that has exited is left alone there: no tree is reachable from it,
+ * and its pid may name an unrelated process by now, whose tree taskkill would end. On macOS and Linux a child started
+ * `detached` leads its own process group, which goes whole, even after the child exits: the group's id is not reused
+ * while any process in it runs. Any other child is killed alone.
  */
 export function endProcessTree(
-  child: Pick<childProcess.ChildProcess, "pid" | "kill">,
+  child: Pick<childProcess.ChildProcess, "pid" | "kill" | "exitCode" | "signalCode">,
   { group = false, platform = process.platform, killTree = taskkillTree }: ProcessTreeOptions = {},
 ): void {
   const killChild = (): void => {
@@ -141,14 +143,18 @@ export function endProcessTree(
     } catch { /* It may have exited already. */ }
   };
   if (child.pid === undefined) killChild();
-  else if (platform === "win32") killTree(child.pid, killChild);
-  else if (!group) killChild();
-  else {
-    try {
-      process.kill(-child.pid, "SIGKILL");
-    } catch {
-      killChild();
-    }
+  else if (platform === "win32") {
+    if (child.exitCode === null && child.signalCode === null) killTree(child.pid, killChild);
+  } else if (group) killGroup(child.pid, killChild);
+  else killChild();
+}
+
+/** SIGKILL to the process group `pid` leads, or `killChild` when no such group can be signalled. */
+function killGroup(pid: number, killChild: () => void): void {
+  try {
+    process.kill(-pid, "SIGKILL");
+  } catch {
+    killChild();
   }
 }
 

@@ -97,7 +97,7 @@ describe("the child-process helper", () => {
 describe("endProcessTree", () => {
   it("on Windows ends the tree from the child while it runs, and kills the child alone only when that fails", () => {
     const events: string[] = [];
-    const child = { pid: 4242, kill: () => events.push("kill child") > 0 };
+    const child = { pid: 4242, exitCode: null, signalCode: null, kill: () => events.push("kill child") > 0 };
     let failed: (() => void) | undefined;
     endProcessTree(child, {
       platform: "win32",
@@ -112,6 +112,19 @@ describe("endProcessTree", () => {
     expect(events).toEqual(["taskkill /T /F /PID 4242", "kill child"]);
   });
 
+  it("on Windows leaves alone a child that has exited, whose pid may name an unrelated process by now", () => {
+    // A status line command that exits while a process it started still holds its output is still being waited on
+    // when its budget runs out; taskkill /T on its pid would end whatever process tree reuses that pid.
+    for (const ended of [{ exitCode: 0, signalCode: null }, { exitCode: null, signalCode: "SIGTERM" as const }]) {
+      const events: string[] = [];
+      endProcessTree({ pid: 4242, ...ended, kill: () => events.push("kill child") > 0 }, {
+        platform: "win32",
+        killTree: pid => events.push(`taskkill /T /F /PID ${pid}`),
+      });
+      expect(events).toEqual([]);
+    }
+  });
+
   it("on Windows kills the child alone, and throws nothing, when taskkill cannot start", () => {
     // A spawn that throws, and one that answers with no child, as a test's stand-in for spawn can.
     const cannotStart = [() => { throw new Error("spawn EPERM"); }, () => undefined];
@@ -119,7 +132,7 @@ describe("endProcessTree", () => {
       // The stand-ins break spawn's promise of a child on purpose. Windows pids are multiples of 4, so 4242 names no process.
       vi.mocked(childProcess.spawn).mockImplementationOnce(start as unknown as typeof childProcess.spawn);
       const kills: string[] = [];
-      expect(() => endProcessTree({ pid: 4242, kill: () => kills.push("kill child") > 0 }, { platform: "win32" })).not.toThrow();
+      expect(() => endProcessTree({ pid: 4242, exitCode: null, signalCode: null, kill: () => kills.push("kill child") > 0 }, { platform: "win32" })).not.toThrow();
       expect(kills).toEqual(["kill child"]);
     }
     expect(vi.mocked(childProcess.spawn).mock.calls.map(([program, args]) => [win32.basename(program), args]))

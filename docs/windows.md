@@ -304,6 +304,11 @@ its exact text, so `src/setup/harness-registration.ts` writes and reads those it
 
 OMP and Pi load Rerail as an extension and run no hook command; a steer writes their commands for Git Bash.
 
+Claude Code on Windows needs Git Bash. Claude Code itself runs without it, running commands in PowerShell instead.
+But `windowsCommandShell` is fixed per agent, not per machine, so Rerail's status line, command files and set-up's
+answers for Claude Code stay POSIX words that PowerShell cannot run. Its exec-form hooks run without any shell.
+Supporting Claude Code without Git Bash is [#558](https://github.com/neralabs/rerail/issues/558).
+
 <details>
 <summary>Why each form</summary>
 
@@ -459,8 +464,10 @@ On a timeout, the status line ends the shell's tree with `endProcessTree` (`src/
 helper that ends a child and what it started. On Windows it runs `taskkill /T /F` on the shell first, while it still
 runs, since taskkill finds the tree from a live root, and kills the shell alone only when taskkill fails. Killing the
 shell first left Git Bash's real `bash.exe`, and everything the status command started, running with its folder open
-after every slow refresh. The line settles at the budget, without waiting for the pipe to close. A Git batch read that
-times out and the updater's health check end their children the same way.
+after every slow refresh. A shell that has already exited, while a process it started still holds its output, is left
+alone: no tree is reachable from it, and Windows may have given its pid to an unrelated process, whose tree taskkill
+would end. The line settles at the budget, without waiting for the pipe to close. A Git batch read that times out and
+the updater's health check end their children the same way.
 
 ## Private folders
 
