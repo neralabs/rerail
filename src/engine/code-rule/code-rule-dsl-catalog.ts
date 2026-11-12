@@ -3,7 +3,6 @@
  * configuration makes present and places each one per folder (on at a mode, or off), so one native workspace
  * evaluates every folder of the checkout. Executables are compiled once per process and shared by every catalog.
  */
-import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -311,21 +310,6 @@ export interface ConversationRuleSource {
   close(): void;
 }
 
-/** One of the runtime's events (`inEvent`) and what it read of the rules while it was open. */
-interface RuntimeEvent {
-  open: boolean;
-  /** The installed packs' catalog, read once in the event for every checkout. */
-  installed: RuleCatalog | undefined;
-  readonly reads: Map<CheckoutEntry, EventRead>;
-}
-
-/** What one event read of a checkout's rules. */
-interface EventRead {
-  ruleCatalog?: RuleCatalog;
-  /** The source signature, with the record it was read with: once the record reads otherwise, it is read again. */
-  signature?: { readonly record: string; readonly value: string };
-}
-
 interface CheckoutEntry {
   readonly root: string;
   location: RepositoryIdentityLocation | undefined;
@@ -334,21 +318,6 @@ interface CheckoutEntry {
   status: RepositoryStatus | undefined;
   eligibility: CheckoutEligibility;
   catalog: CheckoutCodeRuleCatalog | undefined;
-}
-
-/** What `event` has read of `entry`'s rules so far. */
-function eventRead(event: RuntimeEvent, entry: CheckoutEntry): EventRead {
-  let read = event.reads.get(entry);
-  if (read === undefined) {
-    read = {};
-    event.reads.set(entry, read);
-  }
-  return read;
-}
-
-/** What a checkout's source signature depends on in its record: its eligibility, repository and parent checkouts. */
-function recordOf(entry: CheckoutEntry): string {
-  return [entry.eligibility, entry.checkout?.repositoryKey ?? "", ...entry.parents].join("\0");
 }
 
 /**
@@ -364,8 +333,6 @@ export class CheckoutCatalogs {
   readonly #entries = new Map<string, CheckoutEntry>();
   readonly #recorded: (checkoutPaths: readonly string[]) => Map<string, RecordedCheckoutStatus>;
   readonly #recordedWithin: (folder: string) => string[];
-  /** The event the work running now belongs to (`inEvent`): it follows the work through every await and timer it sets. */
-  readonly #events = new AsyncLocalStorage<RuntimeEvent>();
 
   /**
    * `options.ruleCatalog` fixes the installed packs; without it each read follows them (`loadRuleCatalog`). Either way a
@@ -381,49 +348,12 @@ export class CheckoutCatalogs {
   }
 
   /**
-   * Runs `run` as one of the runtime's events. Until it settles, the first refresh of a checkout in its work reads the
-   * checkout's rule catalog and configuration signature, and every later one there (the conversation rules', each
-   * lane's, the enforcer's before an audit) takes that answer: an event reads them once however many of its steps ask.
-   * Only the event's own work takes them. A refresh outside any event, in another event, or in work the event left
-   * running once it settled (a walk timed from it) reads them, so a change made elsewhere reaches it. `refresh` and
-   * `refreshAll` always read the record, and a record that reads otherwise reads the signature again.
-   */
-  async inEvent<T>(run: () => Promise<T>): Promise<T> {
-    const event: RuntimeEvent = { open: true, installed: undefined, reads: new Map() };
-    try {
-      return await this.#events.run(event, run);
-    } finally {
-      event.open = false;
-      event.installed = undefined;
-      event.reads.clear();
-    }
-  }
-
-  /** The event the work running now belongs to, while it is open; undefined outside one, when nothing is kept. */
-  #openEvent(): RuntimeEvent | undefined {
-    const event = this.#events.getStore();
-    return event?.open === true ? event : undefined;
-  }
-
-  /**
-   * The catalog `entry`'s rules come from: the installed packs and the checkout's own rules (`worktree-pack.ts`). A pack
+   * The catalog `root`'s rules come from: the installed packs and the checkout's own rules (`worktree-pack.ts`). A pack
    * installed or removed, or a file in the checkout's `.rerail/rules` changed, changes its digest, and with it the
-   * checkout's configuration signature, so the next refresh rebuilds its rules. Both are checked on disk once an event.
+   * checkout's configuration signature, so the next refresh rebuilds its rules.
    */
-  #ruleCatalogOf(entry: CheckoutEntry): RuleCatalog {
-    const event = this.#openEvent();
-    const read = event === undefined ? undefined : eventRead(event, entry);
-    if (read?.ruleCatalog !== undefined) return read.ruleCatalog;
-    const catalog = worktreeRuleCatalog(this.#installedCatalog(event), entry.root);
-    if (read !== undefined) read.ruleCatalog = catalog;
-    return catalog;
-  }
-
-  #installedCatalog(event: RuntimeEvent | undefined): RuleCatalog {
-    if (this.#ruleCatalog !== undefined) return this.#ruleCatalog;
-    if (event === undefined) return loadRuleCatalog();
-    event.installed ??= loadRuleCatalog();
-    return event.installed;
+  #ruleCatalogOf(root: string): RuleCatalog {
+    return worktreeRuleCatalog(this.#ruleCatalog ?? loadRuleCatalog(), root);
   }
 
   /** The checkout at `root` (a physical checkout top level) as last read; refreshed with `refresh`. */
@@ -477,7 +407,7 @@ export class CheckoutCatalogs {
     return this.#recordedWithin(root);
   }
 
-  /** The compiled code rules of `root`; its `refresh()` reads eligibility and configuration again, once an event (`inEvent`). */
+  /** The compiled code rules of `root`; its `refresh()` re-reads eligibility and configuration. */
   catalog(root: string): CheckoutCodeRuleCatalog {
     const entry = this.#entry(root);
     entry.catalog ??= new CheckoutCodeRuleCatalog({
@@ -556,25 +486,17 @@ export class CheckoutCatalogs {
     return recordStartedWorktree(this.database, entry.root, location) ? this.#recorded([entry.root]).get(entry.root) : undefined;
   }
 
-  /**
-   * `<eligibility>` while unrecorded, else `<eligibility>\0<configuration signature>`; see `configurationSignatureOf`.
-   * Read with the record at the first call of an event, and taken from it at the later ones while the record is the same.
-   */
+  /** `<eligibility>` while unrecorded, else `<eligibility>\0<configuration signature>`; see `configurationSignatureOf`. */
   #signature(entry: CheckoutEntry): string {
-    const event = this.#openEvent();
-    const read = event === undefined ? undefined : eventRead(event, entry);
-    if (read?.signature !== undefined && read.signature.record === recordOf(entry)) return read.signature.value;
     this.#read([entry]);
-    const value = entry.checkout === undefined
-      ? entry.eligibility
-      : `${entry.eligibility}\0${ruleConfigurationSignature(this.database, this.#ruleCatalogOf(entry), entry.checkout.repositoryKey, this.ownerCheckoutPaths(entry.root))}`;
-    if (read !== undefined) read.signature = { record: recordOf(entry), value };
-    return value;
+    if (entry.checkout === undefined) return entry.eligibility;
+    const signature = ruleConfigurationSignature(this.database, this.#ruleCatalogOf(entry.root), entry.checkout.repositoryKey, this.ownerCheckoutPaths(entry.root));
+    return `${entry.eligibility}\0${signature}`;
   }
 
   #ruleSet(entry: CheckoutEntry): CheckoutRuleSet | undefined {
     if (entry.checkout === undefined || entry.status === undefined) return undefined;
-    return loadCheckoutRuleSet(this.database, this.#ruleCatalogOf(entry), entry.checkout, entry.status, entry.parents);
+    return loadCheckoutRuleSet(this.database, this.#ruleCatalogOf(entry.root), entry.checkout, entry.status, entry.parents);
   }
 
   #load(entry: CheckoutEntry): LoadedCheckoutRules {

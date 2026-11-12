@@ -701,56 +701,6 @@ describe("repository settings that reach evaluation", () => {
   });
 });
 
-describe("sessions that share a runtime's checkout catalogs", () => {
-  it("audits a Log batch sent outside any event, as a timed walk of the other worktrees sends one, by the rules as they are, though another session's event read them before a change", async () => {
-    const root = await temporaryRoot();
-    const databasePath = join(root, "rerail.sqlite");
-    const main = await repository(join(root, "main"));
-    const repositoryKey = setUpTestRepository(main, { library: [file(needle("test:main", "MAIN"))] }, databasePath);
-    // The runtime gives every session the same owners and catalogs.
-    const owners = new CheckoutOwners();
-    const catalogs = new CheckoutCatalogs(databasePath);
-    const { recorder, audits } = recordingAudits();
-    const open = async (sessionId: string) => {
-      const auditor = new CheckoutCodeRuleRouter({
-        sessionRoot: main, startingCheckout: startingCheckout(owners, main).checkoutRoot, owners, catalogs,
-        steerDelivery: { requestSteer: async () => undefined }, audits: recorder,
-      });
-      cleanups.push(async () => { await auditor.close(); });
-      await auditor.openWorkspace(sessionId);
-      return auditor;
-    };
-    cleanups.push(async () => { catalogs.close(); });
-    const holder = await open("holder");
-    const walker = await open("walker");
-    const logBatch = async (revision: number) => {
-      const edits = [{ path: "api/a.py", language: "python" as const, generatedText: "NEEDLE\n" }];
-      await walker.auditGeneratedEdits("walker", { revision, checkpoints: ["edit"], mode: "log", edits });
-      await walker.settleGeneratedEdits();
-    };
-    await logBatch(1);
-    expect(violations(audits)).toEqual([{ checkout: main, path: "api/a.py", code: "MAIN", mode: "block" }]);
-    const before = audits.length;
-
-    // The other session's event reads the rules, then stays open, as a result event waiting for its edit checks does.
-    const hold = Promise.withResolvers<void>();
-    const held = catalogs.inEvent(async () => {
-      holder.refreshCodeRules();
-      await hold.promise;
-    });
-    const database = openRerailDatabase(databasePath);
-    try {
-      setRuleSetting(database, { owner: { kind: "repository", repositoryKey }, folder: "", targetKind: "rule", targetId: "test:main", on: false, mode: null });
-    } finally {
-      database.$client.close();
-    }
-    await logBatch(2);
-    hold.resolve();
-    await held;
-    expect(violations(audits.slice(before))).toEqual([]);
-  }, 60_000);
-});
-
 describe("repository audit through the runtime", () => {
   it("records one repository audit per checkout that owns its files; a nested repository nobody set up, or a stray .git, is audited with the checkout around it", async () => {
     vi.stubEnv("RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT", "1");
