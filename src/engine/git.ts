@@ -243,28 +243,18 @@ async function gitOutput(cwd: string, args: readonly string[]): Promise<string |
 
 /** Stdout, as Git wrote it, of a successful Git command run as `gitOutput` runs one; undefined past `maxBuffer` bytes. */
 async function gitStdout(cwd: string, args: readonly string[], maxBuffer = 1024 * 1024): Promise<string | undefined> {
-  const run = await gitRun(cwd, args, maxBuffer);
-  return run?.code === 0 ? run.stdout : undefined;
-}
-
-/**
- * Stdout, as Git wrote it, and the exit code of a Git command run as `gitOutput` runs one, whatever code it exits with;
- * undefined when Git could not start, was ended (its timeout), or wrote more than `maxBuffer` bytes.
- */
-async function gitRun(cwd: string, args: readonly string[], maxBuffer = 1024 * 1024): Promise<{ readonly stdout: string; readonly code: number } | undefined> {
   let executable: string;
   try {
     executable = gitExecutable();
   } catch {
     return undefined;
   }
-  const { promise, resolve: settle } = Promise.withResolvers<{ readonly stdout: string; readonly code: number } | undefined>();
+  const { promise, resolve: settle } = Promise.withResolvers<string | undefined>();
   execFile(
     executable,
     [...SAFE_CONFIG, "-C", cwd, ...args],
     { encoding: "utf8", maxBuffer, timeout: DEFAULT_TIMEOUT_MS, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" } },
-    // A number is the code Git exited with, unless its timeout ended it; a string names why it did not run or was cut off.
-    (error, stdout) => settle(error === null ? { stdout, code: 0 } : typeof error.code === "number" && error.killed !== true ? { stdout, code: error.code } : undefined),
+    (error, stdout) => settle(error === null ? stdout : undefined),
   );
   return await promise;
 }
@@ -404,16 +394,17 @@ function filesLayout(cwd: string): HeadLayout | undefined {
 
 /**
  * `HEAD`'s commit in `cwd`, as {@link gitHead} names it, and where Git found the Git folders it read it from, by one Git
- * process. The layout is undefined unless `cwd` is the top folder of a checkout.
+ * process. Both are undefined where Git names no commit, and the layout is undefined unless `cwd` is the top folder of
+ * a checkout.
  */
 async function gitLayoutAndHead(cwd: string): Promise<{ readonly layout: HeadLayout | undefined; readonly head: string | undefined }> {
-  const run = await gitRun(cwd, ["rev-parse", "--show-cdup", "--git-dir", "--git-common-dir", "--verify", "--quiet", "HEAD"]);
+  const printed = await gitStdout(cwd, ["rev-parse", "--show-cdup", "--git-dir", "--git-common-dir", "--verify", "--quiet", "HEAD"]);
   // An empty line first when `cwd` is the top folder (a folder below prints the way up, a bare repository or a Git
   // folder prints nothing), then the Git folder and the common one, each absolute or relative to `cwd`, then HEAD's
-  // commit. Where HEAD names no commit Git prints no commit and exits 1; outside a repository it exits 128.
-  const lines = run?.code === 0 || run?.code === 1 ? run.stdout.split(/\r?\n/u) : [];
+  // commit. Where HEAD names no commit, Git exits 1 after the layout, and with no commit to keep the layout goes unused.
+  const lines = printed?.split(/\r?\n/u) ?? [];
   if (lines.at(-1) === "") lines.pop();
-  const head = run?.code === 0 ? lines.pop() : undefined;
+  const head = lines.pop();
   const [cdup, gitDir, commonDir] = lines;
   const layout = lines.length === 3 && cdup === "" && gitDir !== undefined && commonDir !== undefined
     ? { gitDir: resolve(cwd, gitDir), commonDir: resolve(cwd, commonDir) }
