@@ -1,6 +1,8 @@
 import { execFile, spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
@@ -80,6 +82,34 @@ describe("Rerail with no daemon running", () => {
     expect(await rerailSession(root, env, ["cursor"])).toBe(notRunning);
     expect(await rerailSession(root, env, ["claude-code", "abc"])).toBe(notRunning);
     expect(await claudeStatus(root, env)).toBe("R E R A I L ✕ not running");
+  }, 30_000);
+});
+
+describe("Rerail with a daemon that does not answer", () => {
+  test("rerail session says the daemon is running, not how to start it, after one read", async () => {
+    const { root, env } = await checkout();
+    const home = env.RERAIL_HOME!;
+    startSetUp(root, join(home, "rerail.sqlite"));
+    // A listener that takes every request and never answers it, as a daemon whose main thread is busy does.
+    const asked: string[] = [];
+    const daemon = createServer(request => { asked.push(new URL(request.url ?? "/", "http://daemon").pathname); });
+    await new Promise<void>(resolve => daemon.listen(0, "127.0.0.1", () => resolve()));
+    try {
+      const { port } = daemon.address() as AddressInfo;
+      await writeFile(join(home, "daemon.json"), JSON.stringify({
+        pid: process.pid, host: "127.0.0.1", port, url: `http://127.0.0.1:${port}/`, version: "test", ui: "bundled",
+        databasePath: join(home, "rerail.sqlite"), kernelSocketPath: join(home, "engine.sock"), startedAt: 1, packageRoot: process.cwd(),
+      }));
+      const notAnswering = "● Rerail is running, but its daemon did not answer in time.\n"
+        + "  Ask again in a moment; if it keeps happening, run `rerail status` in a terminal.";
+      expect(await rerailSession(root, env, ["cursor"])).toBe(notAnswering);
+      expect(await rerailSession(root, env, ["claude-code", "abc"])).toBe(notAnswering);
+      // One read per run: a second, for the dashboard link, would wait out its own 2 seconds too.
+      expect(asked).toEqual(["/api/presentation", "/api/presentation"]);
+    } finally {
+      daemon.closeAllConnections();
+      await new Promise<void>(resolve => daemon.close(() => resolve()));
+    }
   }, 30_000);
 });
 
