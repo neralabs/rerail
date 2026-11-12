@@ -129,12 +129,19 @@ function realPath(path: string): string | undefined {
   }
 }
 
+/** The absolute `path` from the absolute `folder`, or undefined when it lies outside: above it, on another drive or host. */
+function pathFrom(folder: string, path: string): string | undefined {
+  const inside = relative(folder, path);
+  return inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside) ? undefined : inside;
+}
+
 /**
  * The path boundary for paths relative to (or absolute within) the checkout at `root`, which also judges where a path
- * leads: a tracked `docs/a.md` linked to `../.env` is judged as `.env` too. A path that does not resolve (it does not
- * exist, or `root` does not) is judged by its name alone, as is any path past the first `resolutions` distinct ones,
- * so a boundary makes at most `resolutions + 1` file system calls. Meant to live for one judgment's worth of paths: a
- * steer, a tool call's input.
+ * leads: a tracked `docs/a.md` linked to `../.env` is judged as `.env` too. Only a path in the checkout is resolved; a
+ * path outside it, one that does not resolve (it does not exist, or `root` does not), and any path past the first
+ * `resolutions` distinct ones are judged by their name alone, so a boundary makes at most `resolutions + 1` file
+ * system calls, each on the root or a path in it. Meant to live for one judgment's worth of paths: a steer, a tool
+ * call's input.
  */
 export function checkoutPathBoundary(root: string, resolutions = CHECKOUT_PATH_RESOLUTIONS): CheckoutPathBoundary {
   // The root is resolved with the first path, so a judgment that resolves none reads nothing on disk.
@@ -147,15 +154,18 @@ export function checkoutPathBoundary(root: string, resolutions = CHECKOUT_PATH_R
       rootRead = true;
     }
     if (realRoot === undefined) return undefined;
+    const named = resolve(root, path);
+    // Anywhere outside the checkout may be another machine: on Windows a URL's `//host/api` is the network share
+    // `\\host\api`, and resolving it blocks until the host answers, about 21 s for one that never does.
+    if (pathFrom(root, named) === undefined && pathFrom(realRoot, named) === undefined) return undefined;
     if (targets.has(path)) return targets.get(path);
     if (targets.size >= resolutions) return undefined;
-    const resolved = realPath(resolve(root, path));
+    const resolved = realPath(named);
     let led: string | undefined;
     // A path no link redirects is judged by its own name, already.
     if (resolved !== undefined && resolved !== resolve(realRoot, path)) {
-      const inside = relative(realRoot, resolved);
-      const outside = inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside);
-      led = inside === "" ? undefined : (outside ? resolved : inside).split(sep).join("/");
+      const inside = pathFrom(realRoot, resolved);
+      led = inside === "" ? undefined : (inside ?? resolved).split(sep).join("/");
     }
     targets.set(path, led);
     return led;

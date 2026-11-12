@@ -484,8 +484,9 @@ boundary judges paths by secret-like name and, where a checkout is known, by sym
   `tokens.json`, stay outside.
 - **Symlink targets count** wherever a checkout root is known (`checkoutPathBoundary`): a tracked
   `docs/a.md -> ../.env` is secret-like. Targets are judged by secret-like name only, so a pnpm `node_modules/<pkg>`
-  link into `.pnpm/` passes. Only path-shaped words (a `/` or `\`, a leading `.` or `~`, or a dot-extension) are
-  looked up on disk; every word is still judged by name.
+  link into `.pnpm/` passes. Only path-shaped words (a `/` or `\`, a leading `.` or `~`, or a dot-extension) that name
+  a place in the checkout are looked up on disk, so a URL's `//host/api`, which Windows would open as a network share,
+  is not; every word is still judged by name.
 
 </details>
 
@@ -498,6 +499,8 @@ boundary judges paths by secret-like name and, where a checkout is known, by sym
   only, not symlink target.
 - A link named without a separator, leading dot or extension (`notes -> .env`, read as `cat notes`) is not looked up
   on disk, so its target is not judged.
+- Nor is a link outside the checkout, named by its own path (`cat /home/me/notes.txt` where it links to
+  `/home/me/.aws/credentials`).
 
 </details>
 

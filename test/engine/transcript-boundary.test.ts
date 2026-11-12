@@ -1,15 +1,30 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { type EncodingOption, mkdirSync, mkdtempSync, type PathLike, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { isAbsolute, join, relative, sep } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   agentTranscriptPayload, callNamesDeniedPath, callNamesSecretPath, WITHHELD_INPUT, WITHHELD_OUTPUT, WITHHELD_PAYLOAD,
 } from "../../src/engine/transcript-boundary.js";
 
 const roots: string[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
+
+/** An empty checkout folder, removed after the test. */
+function checkout(prefix: string): string {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  roots.push(root);
+  return root;
+}
+
+/** URLs and a network share, as agents name them; 192.0.2.1 is a documentation address no host answers on. */
+const NETWORK_INPUTS = [
+  { command: "curl -s https://192.0.2.1/api/v1 | jq ." },
+  { url: "https://192.0.2.1/docs/a.md" },
+  { command: "type \\\\192.0.2.1\\share\\notes.txt" },
+];
 
 describe("the transcript boundary for coding agents", () => {
   it("finds a hidden or secret-like path wherever a call's input carries it", () => {
@@ -122,6 +137,37 @@ describe("the transcript boundary for coding agents", () => {
     expect(agentTranscriptPayload("call", read, root)).toBe(read);
     // The hidden path itself, named, is still outside.
     expect(callNamesDeniedPath({ command: "cat node_modules/.pnpm/left-pad@1.3.0/node_modules/left-pad/index.js" }, root)).toBe(true);
+  });
+
+  it("looks up on disk only paths in the session's checkout, never a URL's host or a network share", () => {
+    const root = checkout("rerail-transcript-lookups-");
+    const outside = (path: string): boolean => {
+      const named = relative(root, path);
+      return named === ".." || named.startsWith(`..${sep}`) || isAbsolute(named);
+    };
+    const lookUp = realpathSync.native;
+    const lookups: string[] = [];
+    vi.spyOn(realpathSync, "native").mockImplementation((path: PathLike, options?: EncodingOption) => {
+      lookups.push(String(path));
+      // Refused, not made: on Windows a `\\host\share` path waits about 21 s for the host to answer.
+      if (outside(String(path))) throw Object.assign(new Error(`ENOENT: no such file or directory, realpath '${String(path)}'`), { code: "ENOENT" });
+      return lookUp(path, options);
+    });
+    for (const input of [...NETWORK_INPUTS, { command: `cat ${join(tmpdir(), "notes.txt")}` }])
+      expect(callNamesSecretPath(input, root), JSON.stringify(input)).toBe(false);
+    // A path in the checkout is still looked up, to see where it leads.
+    expect(callNamesSecretPath({ command: "cat docs/guide.md" }, root)).toBe(false);
+    expect(lookups.filter(outside)).toEqual([]);
+    expect(lookups).toContain(join(root, "docs", "guide.md"));
+  });
+
+  it.runIf(process.platform === "win32")("answers at once for a URL on Windows, where its host part names a network share", () => {
+    const root = checkout("rerail-transcript-share-");
+    for (const input of NETWORK_INPUTS) {
+      const started = performance.now();
+      expect(callNamesSecretPath(input, root), JSON.stringify(input)).toBe(false);
+      expect(performance.now() - started, JSON.stringify(input)).toBeLessThan(50);
+    }
   });
 
   it("judges only secret-like names as secret, not every hidden path", () => {
