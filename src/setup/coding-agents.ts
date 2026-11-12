@@ -198,7 +198,9 @@ export interface ConnectResult {
   /**
    * Every coding agent on this computer that holds a registration of the root now, these included: one whose
    * registration is out of date (its hooks name a Node that has moved since, say) is still connected, its hooks
-   * still run, and `rerail update` brings it up to date.
+   * still run through the fallback to `node` on PATH, and `rerail update` brings it up to date. Claude Code's hooks on
+   * Windows that name the recorded Node as their command, as set-up writes them where PATH finds another `node`, have
+   * no fallback: they fail until that update.
    */
   all: Harness[];
   /**
