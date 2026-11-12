@@ -22,6 +22,9 @@ fn benchmark_phase_0() {
     let digested = super::thread_usage();
     let did = super::observe(|o| {
         o.flush();
+        // Flush queues the final observations. Waiting before it leaves a cold
+        // observer store when the process exits immediately after this run.
+        if !super::phase0::active() { o.written(); }
         o.counts.since(&before)
     });
     let flushed = super::thread_usage();

@@ -426,9 +426,9 @@ fn external_inputs(prog: &mut front::Program, root: &Path) -> Result<()> {
 }
 
 /// A chunk's mix, for which statistics measured on one chunk stand for another, scaled by nodes: the file types
-/// (extensions) holding a tenth of its nodes or more, in order, and its files' size, as the power of 4 of its mean
-/// nodes per file. Per-document relations (`doc`, `path_part`) grow with files, not nodes, so a chunk of many small
-/// files is not a chunk of a few large ones scaled. Documents are `(path, nodes)`.
+/// (extensions) holding a tenth of its source bytes or more, in order, and its files' size, as the power of 4 of its mean
+/// bytes per file. Per-document relations (`doc`, `path_part`) grow with files, not nodes, so a chunk of many small
+/// files is not a chunk of a few large ones scaled. Documents are `(path, source bytes)`, independent of the tape representation.
 fn chunk_mix<'a>(docs: impl Iterator<Item = (&'a str, usize)>) -> String {
     let mut by: BTreeMap<&str, usize> = BTreeMap::new();
     let mut files = 0;
@@ -1541,14 +1541,20 @@ pub fn observe<T>(f: impl FnOnce(&mut crate::content_store::observe::Observer) -
     #[cfg(any(test, feature = "test-hooks"))]
     {
         static OFF: std::sync::Once = std::sync::Once::new();
-        OFF.call_once(|| crate::content_store::observe::set_journal(false));
+        OFF.call_once(|| {
+            // Explicit workload caches use production observer semantics. Ordinary unit
+            // tests keep stat-based isolation; RERAIL_JOURNAL still controls benchmarks.
+            if std::env::var_os("RERAIL_TAPE_CACHE").is_none() {
+                crate::content_store::observe::set_journal(false);
+            }
+        });
     }
     let store = tape_cache_path().map(|p| crate::content_store::observe::store_beside(&p));
     // Each test thread its own observer, unless the test set its own tape cache: another test's run flushes a shared
     // one's journal, after which it answers for this test's edits until the next flush (decision 0105).
     #[cfg(any(test, feature = "test-hooks"))]
     let store = store.map(|p| {
-        if TEST_TAPE_CACHE.with(|t| t.borrow().is_some()) {
+        if TEST_TAPE_CACHE.with(|t| t.borrow().is_some()) || std::env::var_os("RERAIL_TAPE_CACHE").is_some() {
             return p;
         }
         let thread: String = format!("{:?}", std::thread::current().id()).chars().filter(char::is_ascii_digit).collect();
@@ -1641,6 +1647,10 @@ pub fn run_with_options(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
+    let lifecycle_start = usage();
+    // Library and test callers do not pass through the CLI/Node pool setup.
+    // Initialize before phase 0 or a parallel read can create rayon's default pool.
+    crate::threads::configure(false);
     // Whether the native strata may be placed on the device (`plan::placement`, decision 0095), for this run.
     struct Device(super::placement::Binding);
     impl Drop for Device {
@@ -1660,21 +1670,34 @@ pub fn run_with_options(
         o.watch(&[root.to_path_buf(), library]);
         o.counts
     });
+    let lifecycle_observed = usage();
     // Phase 0 first: each text's include graph, from `bootstrap.rr`'s run, before anything reads a text (the later
     // reads keep it while its files hold).
-    // The engine's own `components.rr` (read by the cross-file memo) is resolved in the same run, so no phase-0 run
-    // starts inside this one.
+    // Resolve `components.rr` only when the program or one of its modules can use
+    // it, before the main run takes its execution lock.
     let seeding = crate::code_rule_dsl::logic::profile::span(|| "phase 0: the texts' include graphs".into());
-    let mut seeds: Vec<phase0::Seed> = programs.iter().map(|t| crate::code_rule_dsl::logic::rr::text_seed(t)).collect::<std::result::Result<Vec<_>, _>>()?.into_iter().flatten().collect();
+    let seeds: Vec<phase0::Seed> = programs.iter().map(|t| crate::code_rule_dsl::logic::rr::text_seed(t)).collect::<std::result::Result<Vec<_>, _>>()?.into_iter().flatten().collect();
+    let mut component_seeded = false;
     if !phase0::active() {
-        if let Ok(components) = crate::code_rule_dsl::logic::rr::library().join("components.rr").canonicalize() {
-            seeds.push(phase0::Seed::File(components));
+        let graphs = phase0::graphs(&seeds)?;
+        // Includes alone do not imply component demand. Inspect each observed
+        // module once; comments can conservatively request preparation. Missing
+        // or malformed modules remain the parser's error, not a proof of no demand.
+        let uses_components = |text: &str| text.contains("cross-memo") || text.contains("rr_cx_");
+        let modules: BTreeSet<_> = graphs.iter().flat_map(|g| g.digests.keys()).collect();
+        component_seeded = programs.iter().any(|t| uses_components(t)) || modules.into_iter().any(|path| {
+            observe(|o| o.read(path)).is_none_or(|(bytes, _)| {
+                std::str::from_utf8(&bytes).map_or(true, uses_components)
+            })
+        });
+        if component_seeded {
+            if let Ok(components) = crate::code_rule_dsl::logic::rr::library().join("components.rr").canonicalize() {
+                phase0::graph(&phase0::Seed::File(components))?;
+            }
         }
     }
-    if !seeds.is_empty() && !phase0::active() {
-        phase0::graphs(&seeds)?;
-    }
     drop(seeding);
+    let lifecycle_seeded = usage();
     // Phase 0's cutoff (`reuse`): a run whose every read is as it was writes the outputs it wrote.
     let reuse = reuse::wanted(options, typing, t_facts);
     let kept = if reuse { reuse::reused(programs, root, out, modes, typing, options) } else { Ok(None) };
@@ -1688,11 +1711,15 @@ pub fn run_with_options(
             Ok(report)
         }),
     };
+    let lifecycle_executed = usage();
     // Phase 0's observations, written once the run has read everything (they may lag the run, never lead it).
     let did = {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "phase 0's observations written".into());
         let did = observe(|o| {
             o.flush();
+            // Flush queues the final observations. Waiting before it leaves a cold
+            // observer store when the process exits immediately after this run.
+            if !phase0::active() { o.written(); }
             o.counts.since(&before)
         });
         // The outermost run's last writes, its whole-run record (`reuse::record`) and this flush, are queued after
@@ -1706,6 +1733,25 @@ pub fn run_with_options(
     // `RERAIL_OBSERVED`: what the run's observer did, on stderr (the profile is written before this).
     if std::env::var_os("RERAIL_OBSERVED").is_some() {
         eprintln!("rerail: files observed: {did}");
+    }
+    let lifecycle_written = usage();
+    crate::code_rule_dsl::logic::profile::decision("run lifecycle CPU", || {
+        let cpu = |a: (f64,f64,f64), b: (f64,f64,f64)| b.0 + b.1 - a.0 - a.1;
+        serde_json::json!({"root":root,"componentGraphRequested":component_seeded,"observer":cpu(lifecycle_start,lifecycle_observed),
+            "phase0":cpu(lifecycle_observed,lifecycle_seeded),"execution":cpu(lifecycle_seeded,lifecycle_executed),
+            "observerFlush":cpu(lifecycle_executed,lifecycle_written)}).to_string()
+    });
+    if report.is_ok() && crate::code_rule_dsl::logic::profile::on() && !phase0::active()
+        && RUNS_UNDER_WAY.with(std::cell::Cell::get) == 0
+        && let Some(dir) = crate::code_rule_dsl::logic::profile::directory()
+    {
+        use std::io::Write as _;
+        let cpu = |a: (f64,f64,f64), b: (f64,f64,f64)| b.0 + b.1 - a.0 - a.1;
+        let mut file = std::fs::OpenOptions::new().append(true).open(dir.join("profile.txt")).map_err(|e| Error::Plan(format!("profile lifecycle: {e}")))?;
+        writeln!(file, "\n== Whole run lifecycle (process CPU, including workers)\nobserver {:.6} s; include graphs {:.6} s; execution {:.6} s; final observations {:.6} s\nThese intervals partition the run; do not add them to nested span totals.",
+            cpu(lifecycle_start,lifecycle_observed),cpu(lifecycle_observed,lifecycle_seeded),
+            cpu(lifecycle_seeded,lifecycle_executed),cpu(lifecycle_executed,lifecycle_written))
+            .map_err(|e| Error::Plan(format!("profile lifecycle: {e}")))?;
     }
     report.map(|mut r| {
         r.files_observed = did;
@@ -1760,6 +1806,8 @@ fn run_observed(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
+    let process_cpu = || { let u = usage(); u.0 + u.1 };
+    let process_started = process_cpu();
     // The store's writer held from the run's start to its end (decision 0102): the handles the run opens and closes on
     // the way (the combined program's) queue their writes and go, and the run's end waits for every one. Declared
     // first, so dropped last.
@@ -1777,12 +1825,17 @@ fn run_observed(
     let main_usage = || { let (u, s) = thread_usage(); (u - rerail_accel::exec::helped(), s, usage().2) };
     // When the run began: the first phase counts combining.
     let began = main_usage();
+    let mut process_last = process_cpu();
+    let mut process_phases = vec![("settings", process_last - process_started)];
     let mut phases: Vec<(&'static str, f64, f64, f64, usize)> = Vec::new();
     let mut phase_instructions: Vec<(&'static str, u64)> = Vec::new();
     let mut last = began;
     let mut last_instructions = crate::code_rule_dsl::logic::settings::process_counters().map_or(0, |c| c.0);
     let mut counted = 0;
     let mut phase = |name: &'static str, statements: usize| {
+        let process_now = process_cpu();
+        process_phases.push((name, process_now - process_last));
+        process_last = process_now;
         let now = main_usage();
         let instructions = crate::code_rule_dsl::logic::settings::process_counters().map_or(0, |c| c.0);
         match phase_instructions.iter_mut().find(|p| p.0 == name) {
@@ -1984,7 +2037,10 @@ fn run_observed(
     let mut docs = docs;
     // What the run consults (`Report::consulted`): first the workspace documents, when they are files under `root`.
     let mut consulted: Vec<(String, String, String)> =
-        if t.is_none() { docs.iter().map(|(_, p)| ("doc".to_owned(), p.clone(), world::bytes_digest(&root.join(p)))).collect() } else { Vec::new() };
+        if t.is_none() {
+            let _span = crate::code_rule_dsl::logic::profile::span(|| "observe document digests".into());
+            docs.iter().map(|(_, p)| ("doc".to_owned(), p.clone(), world::bytes_digest(&root.join(p)))).collect()
+        } else { Vec::new() };
     let mut paths: HashMap<i64, String> = docs.iter().cloned().collect();
     // The documents requests loaded (decision 0065 §2a), whose rows are not the run's findings: their keys.
     let mut loaded_keys: std::collections::HashSet<i64> = std::collections::HashSet::new();
@@ -2041,7 +2097,10 @@ fn run_observed(
     // The run's connections, set up by their owner and passed through (`connections`): a session's are kept from run
     // to run, readied here, before the scratch files are made again; a run of its own opens its own. (A run that
     // fails leaves its session new ones to open.)
-    let handed = connections::Handed::take(session.as_ref().map(|s| Arc::clone(&s.connections)))?;
+    let handed = {
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "prepare connections".into());
+        connections::Handed::take(session.as_ref().map(|s| Arc::clone(&s.connections)))?
+    };
     let own_kept = session.as_ref().map(|s| Arc::clone(&s.own));
     let (path, cross_path) = match &session {
         Some(s) => (s.path.clone(), out.join("cross.sqlite")),
@@ -2061,7 +2120,10 @@ fn run_observed(
     // atoms. Without the store, or reproducing T, the atoms are the run's own; in a session, the session's store's.
     // Without the `tape-cache` feature (the browser build) there is no store to keep: `tapes` is `None` where the
     // compiler can see it, so the memo, the run record and their zstd frames are not linked.
-    let tapes = if cfg!(feature = "tape-cache") { handed.tapes().map_err(|e| Error::Plan(e.to_string()))? } else { &None };
+    let tapes = if cfg!(feature = "tape-cache") {
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "open tape store".into());
+        handed.tapes().map_err(|e| Error::Plan(e.to_string()))?
+    } else { &None };
     // Hold before any source/stat lookup, through parsing, memo publication and the run manifest. This shared lock is
     // the run's one hold on collection (O108): every collector takes it exclusively first (`try_collect`), and a run
     // that dies releases it with its process.
@@ -2082,7 +2144,10 @@ fn run_observed(
     };
     // `shortlex_min<>` orders the run's symbols by their text: the store's atoms (decision 0108).
     crate::code_rule_dsl::logic::native::declare("shortlex_min", Arc::new(crate::code_rule_dsl::logic::native::ShortlexMin(store.atoms_handle())));
-    let db = handed.run(&path)?;
+    let db = {
+        let _span = crate::code_rule_dsl::logic::profile::span(|| "open run connection".into());
+        handed.run(&path)?
+    };
     // The run's databases are scratch, made again by every run (removed above): a commit need not reach the disk. Set
     // when SQL first runs on it (`vtab::setup_now`).
     crate::code_rule_dsl::facts::vtab::defer_setup(&db, "PRAGMA synchronous=OFF;");
@@ -2872,7 +2937,7 @@ fn run_observed(
     // measured on their threads and reported as `parse` and `batch`; the main thread's own as the other phases.
     // A chunk: its nodes and sources (none when it is only memo hits), its documents (key, path, source, nodes) and
     // the memo hits read since the last chunk.
-    type Chunk = (usize, Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Vec<(i64, String, Option<memo::Content>, u64)>, Vec<(String, memo::Entry, Option<memo::Content>)>, Vec<syntax::Document>);
+    type Chunk = (usize, Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>, Vec<(i64, String, Option<memo::Content>, u64, usize)>, Vec<(String, memo::Entry, Option<memo::Content>)>, Vec<syntax::Document>);
     // What each side of the channel is doing, for the other's waits (`profile::wait`).
     let (worker_doing, main_doing) = (crate::code_rule_dsl::logic::profile::Activity::default(), crate::code_rule_dsl::logic::profile::Activity::default());
     worker_doing.set("parse");
@@ -3422,7 +3487,7 @@ fn run_observed(
     type Made = Result<Option<(Option<memo::Content>, std::result::Result<memo::Entry, syntax::Document>)>>;
     type Sources = Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)>;
     // A chunk's documents, hits and kept documents while it is projected.
-    type Cutting = (usize, Vec<(i64, String, Option<memo::Content>, u64)>, Vec<(String, memo::Entry, Option<memo::Content>)>, Vec<syntax::Document>);
+    type Cutting = (usize, Vec<(i64, String, Option<memo::Content>, u64, usize)>, Vec<(String, memo::Entry, Option<memo::Content>)>, Vec<syntax::Document>);
     let build = |docs: &Docs, i: usize| -> Made {
         // A window that failed resolves none of its files: its first holds the error, which ends the builder.
         let resolved = docs.resolved.lock().remove(&i).ok_or_else(|| Error::Plan("a file of a window that failed".to_owned()))?;
@@ -3465,7 +3530,7 @@ fn run_observed(
         next: usize,
         spawned: usize,
         pending: Vec<syntax::Document>,
-        pending_docs: Vec<(i64, String, Option<memo::Content>, u64)>,
+        pending_docs: Vec<(i64, String, Option<memo::Content>, u64, usize)>,
         hits: Vec<(String, memo::Entry, Option<memo::Content>)>,
         pending_nodes: usize,
         out: std::collections::VecDeque<Out>,
@@ -3493,6 +3558,8 @@ fn run_observed(
         projected: parking_lot::Mutex<BTreeMap<usize, std::thread::Result<(Result<Sources>, (f64, f64))>>>,
         /// The documents' and windows' jobs' CPU: parse time.
         jobs_cpu: parking_lot::Mutex<(f64, f64)>,
+        build_jobs: std::sync::atomic::AtomicUsize,
+        ready_hits: std::sync::atomic::AtomicUsize,
         /// At most this many documents built ahead of the next taken, and chunks projected at once beside the one
         /// waiting for the main thread.
         ahead: usize,
@@ -3611,6 +3678,9 @@ fn run_observed(
                 };
             };
             let len = docs.asked.len();
+            // Ready memo rows can be consumed before the resolver publishes its
+            // new horizon. They need no job when that horizon becomes visible.
+            c.spawned = c.spawned.max(c.next);
             let horizon = (c.next + self.ahead).min(len);
             // The next window, once the last is resolved, while a document within `ahead` needs it.
             let to = docs.resolved_to.load(Acquire);
@@ -3622,7 +3692,19 @@ fn run_observed(
                     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (&mut *self.resolve.lock())(&docs.asked[to..end])));
                     Self::add(&mut self.jobs_cpu.lock(), from);
                     match r {
-                        Ok(Ok(r)) => docs.resolved.lock().extend((to..end).zip(r)),
+                        Ok(Ok(r)) => {
+                            let (mut resolved, mut built) = (docs.resolved.lock(), docs.built.lock());
+                            for (i, row) in (to..end).zip(r) {
+                                match row {
+                                    Some((content, Ok(entry))) => {
+                                        self.ready_hits.fetch_add(1, Relaxed);
+                                        built.insert(i, Ok(Some((content, Ok(entry)))));
+                                    }
+                                    None => { built.insert(i, Ok(None)); }
+                                    miss => { resolved.insert(i, miss); }
+                                }
+                            }
+                        }
                         Ok(Err(e)) => {
                             docs.built.lock().insert(to, Err(e));
                         }
@@ -3652,6 +3734,7 @@ fn run_observed(
             ready.sort_by(|a, b| b.cmp(a));
             for (_, i) in ready {
                 let docs = Arc::clone(&docs);
+                self.build_jobs.fetch_add(1, Relaxed);
                 jobs.spawn("a document built", move |jobs| {
                     let from = thread_usage();
                     let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (self.build)(&docs, i))).unwrap_or_else(|_| Err(Error::Plan("the chunk builder panicked".to_owned())));
@@ -3719,7 +3802,7 @@ fn run_observed(
                         self.run_docs.lock().expect("the run's documents").insert(path.clone(), (content, *d));
                     }
                     c.pending_nodes += doc.facts.len();
-                    c.pending_docs.push((*d, path.clone(), source_id, doc.facts.len() as u64));
+                    c.pending_docs.push((*d, path.clone(), source_id, doc.facts.len() as u64, doc.facts.source.len()));
                     c.pending.push(doc);
                 }
                 Ok(None) => {}
@@ -3802,6 +3885,8 @@ fn run_observed(
         stopped: false.into(),
         projected: Default::default(),
         jobs_cpu: Default::default(),
+        build_jobs: 0.into(),
+        ready_hits: 0.into(),
         ahead: builders * 8,
         in_flight: 2,
         resolve: &resolver,
@@ -3941,7 +4026,7 @@ fn run_observed(
         chunks += 1;
         let mut stats = t_stats.clone();
         repository_stats(&mut stats);
-        let mix = chunk_mix(chunk_docs.iter().map(|(_, path, _, n)| (path.as_str(), *n as usize)));
+        let mix = chunk_mix(chunk_docs.iter().map(|(_, path, _, _, bytes)| (path.as_str(), *bytes)));
         let mut chunk_own: Option<Own> = None;
         if own {
             let chunk = match own_once.get(&mix) {
@@ -3983,7 +4068,7 @@ fn run_observed(
                         if slice_reads.contains(rel) {
                             let m = measured.entry(rel.clone()).or_insert_with(|| {
                                 let _m = crate::code_rule_dsl::logic::profile::span(|| "guest statistics".into());
-                                syntax::statistics(source.as_ref())
+                                sampled_statistics(source.as_ref())
                             });
                             round.measured(rel, m.iter().cloned().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
                         }
@@ -4095,14 +4180,7 @@ fn run_observed(
                 Some((first, measured)) if *first > 0 => scaled_statistics(measured, *first, source.estimated_len()),
                 _ => {
                     let _measure = crate::code_rule_dsl::logic::profile::span(|| format!("measure {rel} ({mix})"));
-                    let measured = syntax::statistics(source.as_ref());
-                    // Counted only when profiling, and a source made per looked-up node (an axis, `within`) by its
-                    // estimate: its `len` makes every row, every node's ancestors in the chunk (8 s of the pack's
-                    // cold run, profiled or not), which its statistics, read off the tree, never needed.
-                    if crate::code_rule_dsl::logic::profile::on() {
-                        let rows = if source.made_on_lookup() { source.estimated_len() } else { source.len() };
-                        crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, (rows * source.columns().len()) as u64);
-                    }
+                    let measured = sampled_statistics(source.as_ref());
                     measured_once.insert(key, (source.estimated_len(), measured.clone()));
                     measured
                 }
@@ -4167,7 +4245,7 @@ fn run_observed(
         let outputs_of = |rel: &str| prog.outputs.iter().any(|o| o == rel);
         // Per document of the chunk, what it hands on (`memo::Entry`), when the run is memoised. A row is its
         // document's by its first location column.
-        let mut entries: HashMap<i64, memo::Entry> = if memoised { chunk_docs.iter().map(|(d, _, _, n)| (*d, memo::Entry { nodes: *n, ..memo::Entry::default() })).collect() } else { HashMap::new() };
+        let mut entries: HashMap<i64, memo::Entry> = if memoised { chunk_docs.iter().map(|(d, _, _, n, _)| (*d, memo::Entry { nodes: *n, ..memo::Entry::default() })).collect() } else { HashMap::new() };
         let mut attributable = memoised && base_whole && chunk_own.is_some();
         if memoised && !base_whole {
             memo_why.insert("a base relation the cross-file part reads has no stored columns".to_owned());
@@ -4414,7 +4492,7 @@ fn run_observed(
             let _remember = crate::code_rule_dsl::logic::profile::span(|| "memo remember".into());
             // The chunk's entries are written as one wave, not one transaction per document.
             let mut publish: Vec<(memo::Content, String, i64, memo::Entry)> = Vec::with_capacity(chunk_docs.len());
-            for (d, path, source_id, _) in &chunk_docs {
+            for (d, path, source_id, _, _) in &chunk_docs {
                 // Counted in before it is remembered: the content it replaces is the memo's still.
                 if let (Some(k), Some(entry), Some(memo)) = (keeper.borrow_mut().as_mut(), entries.get(d), memo) {
                     let rows: usize = entry.rows.values().map(|(_, v)| v.len()).sum();
@@ -4578,7 +4656,7 @@ fn run_observed(
             let modules = Modules::default();
             let mut load_stats = load_stats;
             let mut bind = |rel: &str, source: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>| -> Result<()> {
-                load_stats.measured(rel, syntax::statistics(source.as_ref()).into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
+                load_stats.measured(rel, sampled_statistics(source.as_ref()).into_iter().map(|(c, rows, ndv, sq, sqd)| (c, [rows, ndv, sq, sqd])), []);
                 modules.bind(&db2, rel, source)?;
                 Ok(())
             };
@@ -5041,6 +5119,10 @@ fn run_observed(
     // The builder's CPU: its own steps and its documents' jobs as parse time, its chunks' projections as batch time.
     let mut c = builder.cut.lock();
     let jobs_cpu = *builder.jobs_cpu.lock();
+    crate::code_rule_dsl::logic::profile::decision("input scheduling", || serde_json::json!({
+        "root":root,"buildJobs":builder.build_jobs.load(std::sync::atomic::Ordering::Relaxed),
+        "cachedDocuments":builder.ready_hits.load(std::sync::atomic::Ordering::Relaxed)
+    }).to_string());
     Ok(((c.parse.0 + jobs_cpu.0, c.parse.1 + jobs_cpu.1), c.batch, std::mem::take(&mut c.read_sources), std::mem::take(&mut *stats_read.lock())))
     })?;
     (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
@@ -6787,12 +6869,14 @@ fn run_observed(
         }
         outcome.map_err(|e| Error::Plan(e.to_string()))?;
     }
-    // And the observer's (decision 0105), queued behind the run as the store's are.
-    if !phase0::active() {
-        crate::content_store::observe::written();
-    }
     store.atoms_handle().run_over();
     crate::code_rule_dsl::logic::profile::decision("chunks", || format!("{chunks} chunks of about {chunk_nodes} nodes; the next chunk is parsed and batched on a worker while this one runs"));
+    process_phases.push(("finalize", process_cpu() - process_last));
+    crate::code_rule_dsl::logic::profile::decision("run process CPU by phase", || {
+        let mut totals: BTreeMap<&str, f64> = BTreeMap::new();
+        for &(name, cpu) in &process_phases { *totals.entry(name).or_default() += cpu; }
+        serde_json::json!({"root":root,"phases":totals}).to_string()
+    });
     if profiling && let Some(dir) = crate::code_rule_dsl::logic::profile::directory().map(|d| if phase0::active() { d.join("phase-0") } else { d }) {
         let mut header = format!(
             "Profile of a corpus run: {} files, {nodes} nodes, {chunks} chunks; text tests {} relations, {tested} strings, {text_cpu:.3} s CPU\n\n== Phases (CPU = user + system; worker phases run beside the main thread)\n",
@@ -7586,6 +7670,33 @@ fn scaled_statistics(measured: &[(String, i64, i64, i64, i64)], first: usize, ro
         .collect()
 }
 
+// A statistics sample has its own row budget, independent of execution chunks.
+#[doc(hidden)]
+pub const STAT_SAMPLE_ROWS: usize = 8192;
+#[doc(hidden)]
+pub fn sampled_statistics(source: &dyn crate::code_rule_dsl::facts::vtab::Source) -> Vec<(String, i64, i64, i64, i64)> {
+    if let Some(known) = source.statistics() { return known; }
+    // Sampling must not force a lookup-driven producer to enumerate its domain.
+    if source.made_on_lookup() { return Vec::new(); }
+    let rows = source.len();
+    let count = rows.min(STAT_SAMPLE_ROWS);
+    let names = source.columns();
+    let columns: Vec<usize> = (0..names.len()).collect();
+    let mut values = vec![Vec::with_capacity(count); names.len()];
+    let mut row = vec![0; names.len()];
+    for i in 0..count {
+        // Deterministic strata cover the whole relation without a full scan.
+        let at = (i as u128 * rows as u128 / count as u128) as usize;
+        source.row_at(at, &columns, &mut row);
+        for (column, value) in values.iter_mut().zip(&row) { column.push(*value); }
+    }
+    crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, (count * names.len()) as u64);
+    let sample = Rows { columns: names, values };
+    let measured = syntax::measured(&sample);
+    crate::code_rule_dsl::logic::profile::decision("statistics sample", || format!("{count} of {rows} rows (limit {STAT_SAMPLE_ROWS})"));
+    if count == rows { measured } else { scaled_statistics(&measured, count, rows) }
+}
+
 /// A digest as lowercase hex.
 fn hex(digest: &[u8]) -> String {
     digest.iter().map(|b| format!("{b:02x}")).collect()
@@ -7604,7 +7715,7 @@ const OWN_POSTINGS: &str = "own:postings:";
 /// a document is in one chunk, so every count adds exactly.
 /// The store name of a chunk mix's measured tree counts under the file-local program `program`.
 fn own_name(program: &[u8; 32], mix: &str) -> String {
-    format!("own-counts/{}/{mix}", memo::plan_digest(program).iter().map(|b| format!("{b:02x}")).collect::<String>())
+    format!("own-counts/sample-v1/{}/{mix}", memo::plan_digest(program).iter().map(|b| format!("{b:02x}")).collect::<String>())
 }
 
 /// The tree counts a session's runs stored or read (`Session::own`), by name (`own_name`), with their stored source
@@ -7705,16 +7816,16 @@ impl Own {
         let of = |rel: &str| sources.iter().find(|(r, _)| r == rel).map(|(_, s)| s.as_ref());
         let column = |source: &dyn crate::code_rule_dsl::facts::vtab::Source, name: &str| source.columns().iter().position(|c| c == name);
         // Kinds by node id, then the tape's sizes and parents against them. Counted in hash maps (a chunk is a
-        // quarter million nodes: an ordered map per node was most of this measure's time) and ordered once.
+        // bounded prefix: an ordered map per node was most of this measure's time) and ordered once.
         let mut kind_of = FxHashMap::default();
         let mut kinds: FxHashMap<i64, (i64, i64)> = FxHashMap::default();
         let mut edges: FxHashMap<(i64, i64), i64> = FxHashMap::default();
         if let Some(node) = of("node")
             && let (Some(n), Some(k), Some(d)) = (column(node, "n"), column(node, "kind"), column(node, "d"))
         {
-            kind_of.reserve(node.len());
+            kind_of.reserve(node.len().min(STAT_SAMPLE_ROWS));
             let mut docs = FxHashSet::default();
-            for r in 0..node.len() {
+            for r in 0..node.len().min(STAT_SAMPLE_ROWS) {
                 let kind = node.value(r, k);
                 kind_of.insert(node.value(r, n), kind);
                 kinds.entry(kind).or_default().0 += 1;
@@ -7725,7 +7836,7 @@ impl Own {
         if let Some(tape) = of("tape")
             && let (Some(n), Some(par), Some(size)) = (column(tape, "n"), column(tape, "par"), column(tape, "size"))
         {
-            for r in 0..tape.len() {
+            for r in 0..tape.len().min(STAT_SAMPLE_ROWS) {
                 let Some(&kind) = kind_of.get(&tape.value(r, n)) else { continue };
                 kinds.entry(kind).or_default().1 += tape.value(r, size);
                 if let Some(&parent) = kind_of.get(&tape.value(r, par)) {
@@ -7735,6 +7846,11 @@ impl Own {
         }
         own.kinds = kinds.into_iter().collect();
         own.edges = edges.into_iter().collect();
+        if let Some(node) = of("node") {
+            let sampled = node.len().min(STAT_SAMPLE_ROWS);
+            if sampled > 0 { own = own.scaled(node.len() as f64 / sampled as f64); }
+        }
+        if let Some(doc) = of("doc") { own.docs = doc.estimated_len() as i64; }
         own.postings = Self::postings(sources, constants, |_| true);
         own
     }
@@ -7753,15 +7869,24 @@ impl Own {
             }
             let Some(source) = sources.iter().find(|(r, _)| r == rel).map(|(_, s)| s.as_ref()) else { continue };
             let Some(c) = source.columns().iter().position(|n| n == col) else { continue };
+            let asked: Vec<_> = values.iter().map(|&v| (c,v)).collect();
+            if let Some(counts) = source.value_counts(&asked) {
+                out.extend(asked.into_iter().zip(counts).map(|((_,v),n)| ((rel.clone(),col.clone(),v),n)));
+                continue;
+            }
             let wanted: FxHashSet<i64> = values.iter().copied().collect();
             let mut counts: FxHashMap<i64, i64> = FxHashMap::default();
-            for r in 0..source.len() {
-                let v = source.value(r, c);
+            if source.made_on_lookup() { continue; }
+            let rows = source.len();
+            let sampled = rows.min(STAT_SAMPLE_ROWS);
+            for r in 0..sampled {
+                let at = (r as u128 * rows as u128 / sampled as u128) as usize;
+                let v = source.value(at, c);
                 if wanted.contains(&v) {
                     *counts.entry(v).or_default() += 1;
                 }
             }
-            out.extend(counts.into_iter().map(|(v, n)| ((rel.clone(), col.clone(), v), n)));
+            out.extend(counts.into_iter().map(|(v, n)| ((rel.clone(), col.clone(), v), (n as f64 * rows as f64 / sampled.max(1) as f64).round() as i64)));
         }
         out
     }
@@ -7987,7 +8112,7 @@ pub mod tests {
     }
 
     #[test]
-    fn a_chunks_mix_is_the_file_types_holding_a_tenth_of_its_nodes() {
+    fn a_chunks_mix_is_the_file_types_holding_a_tenth_of_its_source_bytes() {
         assert_eq!(super::chunk_mix([("a/b.py", 900), ("c.ts", 50), ("d.ts", 60)].into_iter()), "py,ts/4");
         assert_eq!(super::chunk_mix([("a/b.py", 950), ("c.ts", 50)].into_iter()), "py/4");
         assert_eq!(super::chunk_mix([("Makefile", 10), ("x.v1/README", 10)].into_iter()), "/1");

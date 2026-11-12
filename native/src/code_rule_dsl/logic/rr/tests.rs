@@ -5,6 +5,19 @@ use super::*;
 use crate::code_rule_dsl::logic::front::{self, Literal, Term};
 use std::collections::BTreeSet;
 
+#[test]
+fn include_seed_ignores_quoted_directives_and_preserves_real_includes() {
+    let quoted = parse(r##".decl x(s:symbol)
+x("#include \"absent.rr\"").
+// #include "absent.rr"
+"##).unwrap();
+    assert_eq!(quoted.facts["x"].len(),1);
+    let included = parse("#include \"core.rr\"\n.decl answer(n:node)\nanswer(n) :- kind(n, \"call\").\n").unwrap();
+    assert!(included.decls.contains_key("doc"), "a real include still supplies its declarations");
+    assert!(parse("#unknown \"x.rr\"\n").is_err());
+    assert!(parse(".decl broken(\n").is_err(), "the lexical shortcut does not bypass compilation errors");
+}
+
 fn finding_contract(source: &str, program: &str) -> Vec<serde_json::Value> {
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("rr-contract");
     std::fs::create_dir_all(&root).unwrap();

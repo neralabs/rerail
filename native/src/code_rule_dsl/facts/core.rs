@@ -727,7 +727,7 @@ pub fn input_columns(rel: &str) -> Option<&'static [&'static str]> {
         "op" | "op_t" => &["n", "s"],
         // `core.rr`'s (`facts::vtab::syntax`, decision 0046).
         "syntax_error" => &["d", "l", "msg"],
-        "spread" => &["n"],
+        "spread" | "rr_long_text_node" => &["n"],
         "next_sibling" => &["a", "b"],
         "visit_index" => &["n", "i"],
         "node_order" => &["n", "k"],

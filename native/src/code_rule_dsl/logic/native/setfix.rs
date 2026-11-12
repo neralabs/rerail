@@ -4378,6 +4378,28 @@ fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fr
 #[allow(clippy::too_many_arguments)]
 fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], preset: &[(usize, i64)], collect: Option<&mut Vec<i64>>,
                     paired: Option<&level::Paired>, each: Option<(usize, &mut dyn FnMut(&mut Vec<i64>) -> Option<i64>)>) -> Result<u64> {
+    // An empty required relation makes the entire conjunction empty. Check once per
+    // invocation, before expanding another input; the next wave can grow this relation.
+    // Negative atoms and scalar aggregates do not obey this rule.
+    if j.steps.iter().any(|step| match step {
+        Step::Atom { src, neg: false, .. } => match src {
+            Src::Delta(r) => store.rels[*r].lo == store.rels[*r].hi,
+            Src::Full(r) | Src::FullMulti(r, _) => store.rels[*r].n == 0,
+            // A lazy whole view has no materialized row count. Asking its length
+            // would itself enumerate the producer; absence is not known here.
+            Src::In(r, _) => r.n == 0 && r.view.as_ref().is_none_or(|v| v.ids.is_some()),
+        },
+        _ => false,
+    }) {
+        // The per-binding driver also records empty answers (closure adjacency,
+        // for example). Drain it even though this join cannot emit any rows.
+        if let Some((_, next)) = each {
+            let out = collect.expect("a join run for each value collects");
+            out.clear();
+            while next(out).is_some() { out.clear(); }
+        }
+        return Ok(0);
+    }
     struct Ctx<'a, 'c> { j: &'a JoinRule, head: usize, store: &'a Store, syms: &'a mut Interner, fresh: &'a mut [Fresh], n: u64,
                      key: Vec<i64>, row: Vec<i64>, error: Option<Error>, pending: Vec<(usize,i128)>, scratch: Vec<rowcode::Scratch>,
                      /// Each step's place in the runs of the order it probes (`Index::find_at`): the step's keys come

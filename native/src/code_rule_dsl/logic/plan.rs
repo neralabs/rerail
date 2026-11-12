@@ -1755,6 +1755,11 @@ impl Model {
                 basis_hit.set(hit);
             }
             // Every column bound: a membership test, at most one row of a set.
+            // A tree child is also unique by (parent, ordinal). Marginal hot-value
+            // frequencies cannot multiply this lookup into several children.
+            if a.rel == "child" && self.is_input(prog, &a.rel) && cols.contains(&0) && cols.contains(&2) {
+                rows = rows.min(1.0);
+            }
             if cols.len() == a.args.len() && !prog.lattice.contains_key(a.rel.as_str()) {
                 if rows > 1.0 { basis.set("membership"); }
                 rows = rows.min(1.0);
@@ -2571,7 +2576,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "tree_digest" | "def_digest" => &[&["n"], &["s", "n"]],
         "rx_span" => &[&["c"], &["m"]],
         "ast_match" => &[&["n"], &["c"]],
-        "intval" | "op" | "op_t" | "tape" | "line" | "end_line" | "col" | "docof" | "visit_index" | "ast_depth" | "spread" | "reference_open" => &[&["n"]],
+        "intval" | "op" | "op_t" | "tape" | "line" | "end_line" | "col" | "docof" | "visit_index" | "ast_depth" | "spread" | "reference_open" | "rr_long_text_node" => &[&["n"]],
         "node_order" => &[&["n"], &["k"]],
         "first_token" | "last_token" => &[&["n"]],
         "token_before" | "token_after" => &[&["x"]],
@@ -5658,6 +5663,7 @@ impl<'a> Run<'a, '_> {
             let text_symbols = |i: usize, c: usize| self.model.inputs.atoms.is_none() && prog_types(prog, rels[i]).get(c) == Some(&"sym");
             let live = self.fx().stats(&name, &text_symbols)?;
             for (i, (r, l)) in rels.iter().zip(live).enumerate() {
+                replanned_at.rows(i, l.n);
                 replanned_at.delta(i, l.delta);
                 self.model.stats.delta_rows.insert((*r).clone(), l.delta as f64);
                 for slot in live_stats(&mut self.model, r, l) {
@@ -5667,7 +5673,7 @@ impl<'a> Run<'a, '_> {
             if f.last() == Some(&"1") || chunk == 0 {
                 break;
             }
-            if chunk == 1 {
+            {
                 // The whole plans, planned from seed estimates (a derived relation empty, its columns without
                 // distinct counts), again from the live counts: once per rule, the same plan for each of its probes
                 // (`setfix` runs it once a wave).
@@ -5680,6 +5686,7 @@ impl<'a> Run<'a, '_> {
                     if r.body[probes[k].1].atom().is_some_and(|a| small_batches(&a.rel)) {
                         continue;
                     }
+                    if !replanned_at.take_whole(k) { continue; }
                     let spec = match whole.iter().find(|(p, _)| std::ptr::eq(*p, r)) {
                         Some((_, w)) => w.clone(),
                         None => {

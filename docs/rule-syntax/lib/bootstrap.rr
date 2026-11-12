@@ -38,13 +38,12 @@ p0_declares_doc(i, f) :- kind(i, "declaration"), field(i, "name", n), text(n, "d
 .decl p0_file_t_shape(path: symbol)
 p0_file_t_shape(f) :- p0_file(f), p0_declares_doc(_, f).
 
-// What each text and each loaded module names. A text names `core.rr` first unless it is in T's shape; the engine's
-// own library programs (the import components of decision 0076) are named by the engine itself.
+// What each text and each loaded module names. A text names `core.rr` first unless it is in T's shape.
+// The engine requests components.rr as a file seed only when a program consumes its relations.
 .decl p0_from(from: symbol, at: number, name: symbol)
 p0_from(t, at, n) :- p0_ask(t, at, n).
 p0_from(t, -1, "core.rr") :- p0_text(t), !p0_t_shape(t).
 p0_from(f, -1, "core.rr") :- p0_file(f), loaded(f, _, _), !p0_file_t_shape(f).
-p0_from("engine", 0, "components.rr").
 p0_from(f, at, n) :- p0_names(_, f, at, n).
 
 // The candidates, in order: the library, then (for a module) the file's own directory.

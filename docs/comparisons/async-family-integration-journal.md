@@ -1936,3 +1936,445 @@ the failed work gate. `baseline-semantic2`, `hub-semantic2`, and
 `warm-check` holds the repeat measurement. `focused.log` and `positive.json`
 record the six restored tests and the 120 positive findings. The artifact drivers
 preserve environment settings and test filters. All runs use nice level 19.
+
+
+### 2026-11-11 — Repair the work regressions after the local integration merge
+
+The comparison starts at `d1dc128bb`, with local integration `20644b585` included.
+The preserved premerge baseline remains `b335aa7ee`. Artifacts are in
+`/Users/jeremy/orca/artifacts/async-family-comparison/regression-fixes-d1dc128bb`.
+
+The investigation found four causes:
+
+- `2cb7b18cf1` adds `Lowerer::covering` to prevent witness cross products in contexts.
+  It also drops membership restrictions on keys that another group already binds.
+  Annotation demand loses `kind(s, "string")`. Requests rise from 125 to 11,679.
+  The extra guests increase work in later name, type, and maintenance rules.
+- The new selectivity and held-fanout estimates change join orders. Empty required
+  inputs are checked after expansion. The `pfn__ins` expansion alone adds 1,216,170
+  recorded work units. Its later replan obscures the initial order in the profile.
+- Merge `c3675628d` restores a per-node scalar loop without its demand guard.
+  The profile still reports zero scalar nodes from the demand flag, hiding this work.
+  Named-only tape encoding also walks children again to identify implied tokens.
+- The observer writer becomes asynchronous, but the corpus run waits for it before
+  the final flush. Process exit can discard those queued observations. A measured
+  warm run hashes 5,728 files, including all 5,725 workload files. Its observer
+  database contains only 18 entries. This is not memo reconstruction.
+
+`def70ef87` also disables the filesystem journal in engine tests. Explicit workload
+caches now use production observer settings. That measurement repair alone does
+not fix warm execution. The missing writes explain the repeated document hashing;
+other warm CPU costs require separate measurement.
+
+The empty-input test first fails with four scan work units. The fix makes it pass
+and still derives results after the required relation grows. Initial validation
+also catches an unsafe shortcut: a lazy view's stored row count can be zero while
+its producer has rows. The guard now applies only where materialized emptiness is
+known. Lazy producers are neither enumerated nor treated as empty.
+
+The first repaired replay (`stage1-o125`) retains incremental/full parity.
+Maintenance work falls from 12,058,157 to 9,581,337. `pfn__ins` falls to zero and
+`decval__ins` falls from 241,650 to 37,668. Remaining work is still above baseline.
+The initial cold async measurement falls from 19.807 to 15.936 CPU seconds.
+These are intermediate results; they exclude the demand and final-flush repairs.
+
+The demand regression test uses ordinary and quoted Python annotations. Before
+repair, its requests include `generic_type`, `identifier`, and `string`. The
+expected request kind is only `string`, with the quoted annotation still resolved.
+The repair retains non-expanding membership tests on demand keys while preserving
+the existing removal of independent witness products.
+
+The final observer wait must follow the flush. The benchmark report now includes
+observed file counts, so warm reuse can be checked directly. The next measurements
+must establish both reduced work and unchanged answers before this repair is complete.
+
+The second measurement confirms that final-flush repair: warm observer hashes fall
+from 5,728 to one environment file. All workload files reuse their observed digests.
+Maintenance work falls to 7,230,073, below the original 7,945,858 baseline. The
+changed-scope gates and the 633-work insertion ceiling pass. Cold async CPU falls
+from 19.807 to 14.546 seconds in this sample. Warm CPU remains above baseline.
+
+The old full-replay comparison contains a cache contamination error. The baseline
+binary uses the machine's default tape cache; the merged binary isolates test caches.
+The baseline reuses 57 of 78 files during full recomputation, versus zero after merge.
+An isolated-cache baseline, with its original rule files, records 10,767,166 full
+work units. The previous 9,638,295 figure is not an equivalent cold-cache comparison.
+`baseline-isolated` preserves the corrected run and its incremental/full parity.
+
+Commit `c28f4be9c5` adds long-text fallback rules. Their scalar text functor hides its
+candidate domain from planning. The new `rr_long_text_node(n)` base relation exposes
+only nodes over the inline byte limit. It contains keys, not copied text. Fallback
+rules join this relation before calling the functor. The structural regression test
+fails without this predicate and passes with it. The replay retains identical outputs.
+
+After this repair, recorded work is 10,521,064 cold, 7,215,358 for maintenance, and
+10,662,825 for full recomputation. All are below the isolated baseline. These remain
+intermediate results: the final review also checks inactive whole-plan searches and
+the small `retval` ordering regression. Warm lifecycle counters now include process
+CPU, because the original main-thread phase totals omit substantial background work.
+
+Whole-join replanning now waits until required component inputs have rows. A later
+empty-to-nonempty transition still triggers its first replan. Whole searches fall
+from 2,323 to 1,770; delta searches fall from 13,088 to 11,012. A child lookup by
+parent and ordinal is priced as at most one result. Hot marginal frequencies had
+priced it as several, moving the existence restriction after scope lookup. This
+repairs the remaining `retval` ceiling without changing the rule.
+
+The next replay records 10,499,517 cold work units, 7,210,250 maintenance units,
+and 10,640,595 full units. Every work ceiling passes. Outputs remain byte-identical
+to the merged engine. Baseline outputs remain byte-identical to the earlier baseline
+capture. Their 70,083 rows agree by file, kind, and source range across tape formats.
+The gate now accepts both node-location captures for that comparison. It refuses
+unmapped identities, ambiguous IDs, and ambiguous locations; work ceilings stay fixed.
+
+Warm profiling exposes 5,725 document-build jobs for 5,725 memo hits. The resolver
+now publishes ready entries directly to the ordered chunk builder. Only misses get
+build jobs. A new full-workload assertion requires zero build jobs on complete memo
+reuse. Its first run finds three jobs: ready rows can be consumed before the resolver
+publishes its horizon. The scheduler now advances past consumed rows before posting
+jobs. This removes the race instead of relaxing the zero-job assertion.
+
+Broader validation also catches a closure protocol violation in the empty-join guard.
+The callback that visits closure seeds must receive empty answers even when an input
+relation is empty. Skipping it leaves the adjacency vector shorter than the seed list.
+The existing library-scope test passes on the merged binary and fails after the guard.
+The repaired guard drains that callback with empty results and performs no join work.
+
+Include discovery first scans tokens. A flattened program with no include directives
+needs no second syntax tree. Comments and quoted directives remain inert; real includes
+and syntax errors retain their behavior. The runner also avoids resolving components.rr
+when flattened programs declare no cross-file memo. Programs with includes remain
+conservative because an included library can introduce that declaration.
+
+The regular profile now reports input scheduling and process CPU by phase. Its final
+lifecycle section includes observer setup, include graphs, execution, and final writes.
+These intervals include worker CPU and partition the run; they are not extra work to
+add to nested spans. The benchmark can repeat complete runs in one process with
+RERAIL_RR_REPEAT for sampling and separate process-start costs from steady execution.
+
+
+The final lifecycle check still finds 47 ms in include preparation. The earlier
+assumption about `tools::flatten` was wrong: since the hub changes, it preserves
+library includes. Therefore, the conservative include test still prepared the
+unused component graph. Resolve the actual include graphs first, then inspect each
+observed module once for component consumers. Prepare components only for a
+`cross-memo` pragma or an `rr_cx_` consumer. An unreadable module remains conservative.
+This also covers direct component consumers, which need no cache pragma.
+
+The full async profile now requires `componentGraphRequested=false`, in addition
+to zero build jobs on complete memo reuse. The benchmark also uses the production
+`program_texts` batch API for its four rule files. Its previous loop resolved four
+include graphs separately. Rule loading remains separately timed.
+
+Validation before that final setup repair: 93 rule-language tests pass, including
+the closure regression. The 78-file replay passes every original work ceiling and
+incremental/full parity. Its recorded work is 10,489,625 cold, 7,202,915 maintenance,
+and 10,638,987 full. The targeted insertion remains 633. The full async warm profile
+reports 5,725 cached documents, zero build jobs, and one hashed environment file.
+Warm CPU remains above baseline at this point; the graph-demand change needs its
+own measurement. Do not present the passing work ceilings as proof of CPU parity.
+
+
+The component-demand assertion first fails. `bootstrap.rr` itself contains the
+unconditional fact `p0_from("engine", 0, "components.rr")` from `6a61e56697`.
+Thus every include graph already contains the component module. Remove that fact;
+the runner now supplies the component file seed only when a consumer demands it.
+The unchanged cross-file cache test passes, and the async demand assertion turns
+green. Its next unprofiled warm run takes 160.144 ms CPU. Earlier attempts to fix
+only the runner could not eliminate this work; the rule producer also needed repair.
+
+An alternating comparison before removing that unconditional fact records cold
+medians of 18.244 s baseline and 19.921 s candidate. The remaining cold increase
+is primarily in parsing/encoding: median worker CPU is 12.185 s versus 13.239 s.
+The tape filter allocates child masks, token gaps, and missing-token buffers for
+each parent. Reuse these buffers within one tree traversal. Live ancestors retain
+their masks; completed masks return to the traversal's scratch pool. The public
+single-node filter retains its contract. Compare allocation totals and CPU on the
+same full cold workload, and run native/restored-tape parity before accepting it.
+
+
+The pre-reuse cold profile attributes 4.587 CPU seconds and 1,057,096,960 allocated
+bytes to tape encoding. The buffer experiment must reduce those allocations,
+not merely shorten its measured time. Removing the unconditional bootstrap input
+also removes the unrelated component module from every program's dependency key.
+
+
+The encoder experiment exposes a measurement failure instead of a proven win.
+Both runs report exactly 1,057,096,960 encoding allocation bytes. The maintenance
+profile reports zero Rust allocation bytes during 4,739 plan searches, versus
+156,783,584 bytes for 5,547 baseline searches. Neither is a plausible measurement
+of the new Rust search allocations.
+
+Commit `6f14b70449` disables the global allocator under `cfg(test)`, assuming the
+engine's self dev-dependency supplies it. After the split, these tests no longer
+reference that dependency, so the test executable uses the system allocator.
+Production and the preserved baseline use jemalloc. Tree-sitter and SQLite still
+call jemalloc explicitly, which explains the partial, nonzero allocation readings.
+The earlier CPU comparisons therefore mix allocators; they cannot establish a
+production CPU regression. The recorded relation-work regressions remain valid.
+
+Explicitly link the self dev-dependency in tests. Add a regression test that allocates
+one MiB through Rust and requires jemalloc's thread counter to record it. Revert
+the buffer-pool experiment: its allocation comparison was invalid and gives no
+acceptance evidence. Repeat the CPU and allocation measurements with production's
+allocator before drawing conclusions about the remaining encoding or search cost.
+
+
+A second control was missing. `5389cf3321` moves pool initialization from the
+library constructor to CLI/Node entry points to avoid the loader-lock deadlock.
+Direct corpus callers, including this benchmark, bypass those entry points.
+`RERAIL_THREADS=4` therefore did not prove that Rayon used four workers. The cold
+sample contains 27 threads, including the unnamed default-pool workers.
+
+Initialize the pool at `run_with_options` before phase 0. Earlier CLI/Node setup
+remains authoritative. The workload report now records `workerThreads`, and the
+benchmark requires it to equal the requested count. For the preserved baseline,
+set Rayon's own thread limit too. Repeat the isolated-cache replay with that
+control, and use the same limit for both binaries in the full workload comparison.
+
+
+The controlled replay removes the remaining apparent search regression. The
+candidate driver alone set `RDL_EXPLAIN` for six heads. That diagnostic rebuilds
+prefix plans and prints them inside the search span. It accounts for almost all
+the apparent excess in `vopen__ins` and `bv__redo`.
+
+Keep that trace in `explain-o125` as join-order evidence. Use `o125` for timings,
+with verbose tracing disabled for both binaries. All other settings match,
+including four workers and separate empty caches. Replanning own CPU totals fall
+from 122.5 to 73.5 ms. Delta and whole replan calls fall from 15,411 to 12,768.
+Actual searches fall from 5,547 to 4,729. Their allocated bytes fall from
+155,931,984 to 121,928,176. Do not use the verbose run to compare search CPU.
+
+The gate passes on the trace run: all work ceilings, the 633-work insertion limit,
+and 70,083 normalized output rows. The timing run passes the same numeric ceilings
+and parity. It lacks only the verbose trace that the gate requires for join-order
+evidence. Preserve both runs; do not weaken that check.
+
+The first fully controlled workload comparison alternates three cold and six warm
+samples per binary. Execution CPU medians are 16.241 versus 16.011 seconds cold,
+and 158.120 versus 136.685 ms warm. These exclude separately recorded rule loading.
+Including that loading gives 16.556 versus 16.080 seconds cold, but 200.053 versus
+211.121 ms warm. Do not hide this last increase behind the execution-only figure.
+
+The driver changes `RERAIL_RR_OUT` and `RERAIL_RR_REPORT` between samples. The
+whole-run reuse key includes every `RERAIL_` variable, so this invalidates phase 0
+on each warm sample. Keep those paths fixed within each trial, then copy the report
+to the sample's filename. This matches a repeated call with unchanged settings.
+Repeat both binaries with that control before reporting the full warm comparison.
+The production reuse key remains conservative and unchanged.
+
+
+The final work gate compares the local merge against the isolated premerge replay.
+The trace run records these totals:
+
+| Recorded native work | Premerge baseline | Local merge, before repair | Repaired |
+|---|---:|---:|---:|
+| Cold | 10,675,974 | 16,335,975 | 10,499,748 |
+| Maintenance | 7,946,476 | 12,058,157 | 7,206,287 |
+| Full recomputation | 10,767,166 | 16,505,128 | 10,630,507 |
+
+These counters describe join-step work, not retired CPU or SQLite VM instructions.
+The profiling limitation for whole-plan step counts still applies. Small changes
+between repeated totals reflect chunk scheduling. Every original ceiling remains
+unchanged. Source and annotation insertion probes together remain at 633.
+
+Warm profiling records 5,725 cached documents and zero document-build jobs. The
+observer hashes one environment file and no corpus file. The async family requests
+no component graph. A separate cross-file fixture checks that a consumer still
+gets its graph and reuses both files' cached results on the second run.
+
+Validation covers 11 focused comparison tests, 93 rule-language tests, 45 planner
+tests, and 24 tape/catalog tests. The positive async fixture requires all 120
+expected keys; the empty full-corpus finding set is not sufficient parity evidence.
+The allocator test also requires Rust allocations to reach production's counters.
+The workload test now checks the actual worker count and memo-hit scheduling.
+
+Remove duplicate jemalloc configuration export from the test crate: its explicitly
+linked self-dependency owns both the allocator and configuration. This removes the
+linker's duplicate-symbol warning without changing the production configuration.
+
+Cleanup removes 154 superseded fixture-cache files (1,647,939,336 bytes) and the
+178,654,016-byte system-allocator diagnostic binary. Earlier cleanup removed six
+intermediate executables, about 1.07 GB. Profiles, logs, baseline executables, and
+the final workload caches remain available.
+
+
+A later timing batch still shows an increase. Whole-process retired instructions
+confirm extra work: 174.799 billion baseline versus 181.407 billion candidate on
+a cold job. Warm samples show 2.020–2.283 billion versus 2.142–2.351 billion.
+These include test-process startup and rule loading. CPU timing alone was not
+enough: the host's load average rose above 80 during the comparison.
+
+Repeat the encoder experiment with the repaired allocator. Reusing child masks,
+token gaps, and missing-token buffers reduces encoding allocations from
+4,345,625,592 to 3,994,312,472 bytes (8.1%). Native/restored/catalog checks all pass.
+An unprofiled cold run records 178.119 billion instructions, down from 181.407
+billion. The profiled instruction totals move in the opposite direction, so report
+these as distinct measurements. Neither the old invalid allocation experiment nor
+profile rendering is an acceptance test for production CPU.
+
+The filter still creates a Tree-sitter cursor for each parent. Reuse one cursor
+for the encoding walk and reset it to each parent. Ancestor masks remain live on
+the encoder stack; only completed masks return to its pool. Check allocation totals
+and the existing native/restored-tape parity suite before accepting cursor reuse.
+
+Warm profiling finds the other remaining source: `the frames' parts used` takes
+45 ms of writer CPU. Commit `472c8bfaa` converts per-file memo entries into frames.
+It adds partition-use updates and 32-run expiry. Usage splits each demand into
+512-key SQL statements. The old memo does not incur these frame updates.
+
+The new store regression test first fails: 8,192 requested partitions require
+26 statements and 451,208 VM instructions. It uses shuffled keys, duplicates,
+an absent key, and a relation larger than the configured page cache. It records
+894 page writes for a 958-page database. Thus this fixture does not demonstrate
+repeated dirty-page spills; do not claim that as the measured cause.
+
+Replace the chunks with one prepared UPDATE over `rarray`: a typed integer demand
+set bound once. Keep the full space/relation/identity key and the same expiry rule.
+The test also checks unrelated identities, unrelated spaces, missing keys, and
+expiry after empty-demand runs. SQL work and statement counts must stay bounded.
+
+
+The bulk frame test passes: 26 statements become 10, including setup and expiry.
+VM instructions fall from 451,208 to 417,935. All 11 frame tests pass.
+The full warm profile records 18 ms in frame-use writes, versus 45 ms before.
+This is writer CPU, not the main connection's statement counter.
+
+Cursor reuse reduces encoding allocations further, to 2,959,148,328 bytes.
+That is 31.9% below the valid 4,345,625,592-byte measurement before buffer reuse.
+All 24 anchor, catalog, and native/restored-tape checks pass.
+
+`accepted-o125` passes the unchanged gate against `baseline-controlled`:
+
+| Recorded join work | Premerge | Unrepaired merge | Repaired |
+|---|---:|---:|---:|
+| Cold replay | 10,675,974 | 16,335,975 | 10,501,018 |
+| Incremental replay | 7,946,476 | 12,058,157 | 7,209,789 |
+| Full recomputation | 10,767,166 | 16,505,128 | 10,629,409 |
+
+The insertion check remains 633. All 70,083 normalized output rows match.
+The normalization changes node identities across tape formats, not rule values or multiplicity.
+The existing changed-scope ordering checks pass. No work ceiling was raised.
+
+The paired `accepted-comparison` runs expose a remaining cold CPU increase.
+They use four workers, production allocation, fresh explicit caches, and unchanged paths within each trial.
+Execution CPU excludes rule loading. The sum includes both:
+
+| CPU median, milliseconds | Premerge | Repaired, before FFI cleanup |
+|---|---:|---:|
+| Cold execution | 17,322.7 | 18,344.9 |
+| Cold loading plus execution | 17,685.7 | 18,437.0 |
+| Warm execution | 154.3 | 163.5 |
+| Warm loading plus execution | 199.8 | 193.9 |
+
+The process instruction counters confirm the cold increase: roughly 173.5 versus 179.0 billion.
+These counters include startup and rule loading. They are not SQL VM instructions.
+The machine is heavily shared; wall-time differences alone cannot establish a scheduling improvement.
+
+A fresh baseline profile locates the cold increase in named-only tape encoding.
+Its exclusive CPU rises from 3.22 to 4.27 seconds despite fewer stored nodes.
+Tree-sitter parsing itself stays near 6.6 seconds. The token filter adds a second child walk.
+The merged format stores 13.48 million nodes instead of 19.01 million.
+Keep that format and its semantics; do not hide its extra encoding cost.
+
+The sample also reveals repeated native property reads in the encoder.
+Read each node's symbol, missing flag, span, and extra flag once.
+An implied token needs no TSNode construction: it has no stored record or descendants.
+An empty token gap still needs a valid transition, but needs no implied-word lookup.
+The pending build checks these changes against native/restored behavior before measuring their effect.
+
+Statistics sampling also grew with the changed tape layout and chunk mix.
+The first chunks measured by mix now contain more files; local measurement costs about 0.31 versus 0.05 seconds.
+This is separate from replanning and the fixed join expansions.
+The profiles retain this cost rather than attributing every remaining difference to SQL.
+
+
+The FFI cleanup passes all 24 anchor and native/restored-tape checks.
+`ffi-comparison` repeats two alternating premerge/candidate trials, each cold and twice warm.
+The median execution CPU is 16,021.5 versus 16,340.6 ms cold, and 145.7 versus 142.4 ms warm.
+Loading plus execution is 16,389.9 versus 16,423.9 ms cold, and 185.0 versus 165.5 ms warm.
+Thus total measured cold CPU is within 0.3%; warm CPU falls 10.5%.
+The separate execution interval still rises 2%. Do not claim every cold cost disappeared.
+These are whole-corpus CPU measurements over 5,725 files, not prepared-tape matching timings.
+The candidate's main execution connection records zero SQL executions; this excludes store connections.
+
+The new cold profile records 3.64 seconds in tape encoding and 2,954,961,352 allocated bytes.
+The previous same-format profile recorded 4.27 seconds and 2,959,148,328 bytes.
+The additional native calls were redundant; their removal preserves the format and token decisions.
+The remaining statistics sampling increase is measured and explained above, but has not been removed.
+A durable fix should obtain source statistics from retained facts or ingestion metadata.
+Changing sample populations or removing mix distinctions without checking plan work would conceal that cost.
+
+Acceptance evidence remains separate: `accepted-gate.json` proves the join-work ceilings and semantic parity;
+`ffi-build.log` proves encoder/native parity; `ffi-focused.log` covers demand, cache, and cross-file behavior.
+The store's `frame-touch-green.log` records all 11 passing retention and bulk-publication tests.
+The allocator, worker count, projection, scheduling, and demand assertions remain in the workload harness.
+
+### 2026-11-11 — Bound statistics work independently of execution chunks
+
+The previous merge repair left increased local statistics measurement.
+Execution chunks determine its sample population, and tape node counts determine its size buckets.
+The named-only format therefore changes both sample size and sample selection.
+
+Use source bytes for size buckets. Carry each document's existing source length with its chunk metadata.
+This requires no filesystem read and does not change execution chunk limits.
+
+Give fallback statistics measurement an independent 8,192-row budget.
+Read source statistics and retained value counts before sampling.
+Stratify column samples over the relation's row positions; scale estimates to its full cardinality.
+Keep small relations exact. Do not enumerate lookup-driven producers to obtain samples.
+Bound fallback tree-count and constant-count scans as well.
+Tree samples retain a contiguous prefix so parent-child counting stays coherent.
+Document cardinality comes from the document relation when available.
+These estimates affect planning only, never the relation's actual rows.
+
+The regression test uses a million-row synthetic source and counts value reads.
+It requires bounded measurement, correct cardinality and key estimates, and zero reads for known statistics.
+The maintenance replay must still pass the existing work ceilings and output parity.
+A faster statistics pass is insufficient if it increases execution work.
+
+The first engine test filter selects zero tests after the crate split.
+That run is not validation. The owning crate's unit-test target then fails to compile:
+58 errors refer to engine-owned tools, model types, and transducer modules.
+Keep that failure in `stats-red-logic.log`; it is separate from this change.
+
+Use a separate `rerail-logic` integration-test target against the production sampler.
+`stats-red-integration.log` runs one test and fails on the full-chunk read bound.
+`stats-green.log` runs the same test and passes after bounded sampling is implemented.
+Known metadata causes zero source value reads. Million-row keys retain their cardinality estimate.
+
+Version stored own-count names as `own-counts/sample-v1/...`.
+Otherwise an old node-based bucket can collide with a new byte-based bucket of the same name.
+Execution chunks still obey their memory and node budgets; statistics have their own read limit.
+The profiler records actual sampled value reads and reports each sample's population and limit.
+
+The engine's 11 focused integration checks pass. The O125 gate passes unchanged:
+
+| Recorded join work | Premerge ceiling | Bounded statistics |
+|---|---:|---:|
+| Cold replay | 10,675,974 | 10,584,698 |
+| Incremental replay | 7,946,476 | 7,251,458 |
+| Full recomputation | 10,767,166 | 10,734,169 |
+
+The insertion check remains 633, and normalized output parity passes.
+The smaller samples change plan choices. Full-recomputation work increases about 1% from the preceding repair's 10,629,409.
+That tradeoff remains below the existing ceiling; do not describe join work as unchanged.
+
+On 5,725 files, local statistics CPU falls from 170.6 to 15.5 ms in the profiles.
+Its allocated bytes fall from 71,683,360 to 17,320,312 (75.8%).
+Every reported fallback column sample stays at or below 8,192 rows.
+These samples retain their actual population size in the profiling decisions.
+
+The alternating whole-job comparison has substantial timing variation:
+premerge versus candidate execution CPU is 15,575 versus 17,707 ms cold and 145 versus 156 ms warm.
+Loading plus execution is 15,855 versus 17,801 ms cold and 186.2 versus 185.4 ms warm.
+Thus this run does not establish a whole-job CPU improvement.
+
+Instruction counters support the narrower work reduction. The preceding repair records about 177.3 billion cold-process instructions;
+the bounded-statistics build records 174.7 billion. Mean cycle counts also fall slightly, from 53.67 to 53.41 billion.
+These are separate experiment sets on a shared host. Core placement and frequency can affect CPU time;
+the counters alone do not prove the cause of its variation. Do not claim a stable whole-job timing win.
+
+Artifacts: `stats-red-integration.log`, `stats-green.log`, `stats-engine-build.log`, `stats-gate.json`,
+`stats-o125`, `stats-after`, and `stats-comparison`, beside the preceding repair's artifacts.
+The production path has one sampling policy and no opt-in switch.

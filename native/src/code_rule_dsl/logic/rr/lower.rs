@@ -2458,7 +2458,17 @@ impl Lowerer {
             return context;
         }
         let groups: Vec<usize> = (0..context.len()).map(|k| root(&mut group, k)).collect();
-        context.into_iter().zip(groups).filter(|(_, g)| kept.contains(g)).map(|(l, _)| l).collect()
+        // A test of the requested keys introduces no witness cross product. Keep it
+        // even when an earlier group already binds every key: dropping kind(s,"string")
+        // from annotation demand otherwise asks to parse every type expression.
+        let membership = |l: &Lit| match l {
+            Lit::Atom { args, neg, .. } => {
+                body_vars(std::slice::from_ref(l)).is_subset(&asked)
+                    && (*neg || args.iter().all(|a| matches!(a, STerm::Var(_) | STerm::Str(_) | STerm::Num(_) | STerm::Float(_))))
+            }
+            _ => false,
+        };
+        context.into_iter().zip(groups).filter(|(l, g)| kept.contains(g) || membership(l)).map(|(l, _)| l).collect()
     }
 
     /// A context's atoms and the comparisons it can evaluate, in order, and the variables they bind.
