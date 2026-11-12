@@ -82,7 +82,7 @@ function moveBatch(
   { after, upTo, limit }: { after: number; upTo: number; limit: number },
 ): { last: number; moved: number } | undefined {
   const client = database.$client;
-  return withFreedPagesKept(client, () => client.transaction(() => {
+  return client.transaction(() => {
     const rows = client.prepare<[number, number, number], { row: number; json: string }>(`SELECT rowid AS row, rule_provenance_json AS json
       FROM audits WHERE rowid > ? AND started_at <= ? AND rule_provenance_id IS NULL AND rule_provenance_json <> '[]'
       ORDER BY rowid LIMIT ?`).all(after, upTo, limit);
@@ -95,26 +95,7 @@ function moveBatch(
     }
     const last = rows.at(-1);
     return last === undefined ? undefined : { last: last.row, moved: rows.length };
-  }).immediate());
-}
-
-/**
- * Runs `work` with `secure_delete` FAST, then sets back what the connection had. Writers zero what they free (ON,
- * `database.ts`), and SQLite writes each zeroed page through the WAL, so the move would write what it moves a second
- * time: about a third of a batch's time and four fifths of the WAL it fills. FAST leaves a freed page as it was. Every
- * page a batch frees holds a copy of provenance that `audit_rule_provenances` keeps, and the `VACUUM` after the move
- * drops it; when that `VACUUM` is skipped, the copies stay in free pages until new history reuses them or
- * `rerail reset` or `rerail scrub` rewrites the file. The pragma reads FAST back as 2 but takes `= 2` as ON, so FAST is
- * set back by its keyword.
- */
-function withFreedPagesKept<T>(client: RerailDatabase["$client"], work: () => T): T {
-  const previous = client.pragma("secure_delete", { simple: true });
-  client.pragma("secure_delete = FAST");
-  try {
-    return work();
-  } finally {
-    client.pragma(`secure_delete = ${previous === 2 ? "FAST" : String(previous)}`);
-  }
+  }).immediate();
 }
 
 /**

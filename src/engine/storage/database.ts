@@ -53,8 +53,7 @@ function connectSqlite(path: string, readonly: boolean): RerailDatabase {
  * What a writer owns: the file mode, WAL, and the connection's integrity settings. The file and every file named after
  * it (WAL, journal, pre-update copies) lose any group or other access (`keepFilesPrivate`); SQLite gives a WAL it
  * creates the database file's mode. `secure_delete` zeroes what a delete frees (cells and pages), so deleted history
- * does not linger in free space; it costs writes only on deletes. The move of audits' rule provenance, whose freed
- * pages hold copies of what the file keeps, runs its batches with FAST (`rule-provenance-move.ts`).
+ * does not linger in free space; it costs writes only on deletes.
  */
 function prepareWriter(database: RerailDatabase, path: string): void {
   keepFilesPrivate(dirname(path), [basename(path)]);

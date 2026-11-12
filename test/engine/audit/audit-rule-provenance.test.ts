@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, statfsSync, statSync } from "node:fs";
+import { readFileSync, statfsSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -312,25 +312,29 @@ describe("audit rule provenance", () => {
     }
   });
 
-  it("writes no zeroed copy of what the move frees through the WAL", async () => {
+  it("zeroes the pages the move frees, so none keeps a copy of what it moved when no VACUUM follows", async () => {
     const path = await fileOfTheBuildBefore();
-    const provenance = provenanceOf("/home/dev/app", 200);
+    const marker = "/home/dev/zeroed-by-the-move";
+    const provenance = provenanceOf(marker, 200);
     writeInlineAudits(path, Array.from({ length: 30 }, () => provenance));
-    const wal = (): number => (existsSync(`${path}-wal`) ? statSync(`${path}-wal`).size : 0);
+    const occurrences = (text: string): number => text.split(marker).length - 1;
+    // Too little disk for `VACUUM`: the move empties the WAL into the file and leaves the pages it freed there.
+    vi.mocked(statfsSync).mockImplementation(() => ({ type: 0, bsize: 4096, frsize: 4096, blocks: 1 << 20, bfree: 16, bavail: 16, files: 0, ffree: 0 }));
+    const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
+    try {
+      expect(await move(path)).toBe(30);
+    } finally {
+      stderr.mockRestore();
+    }
 
-    let largest = 0;
-    const moved = await move(path, {
-      perBatch: 10,
-      pause: () => {
-        largest = Math.max(largest, wal());
-        return Promise.resolve();
-      },
-    });
-
-    // The WAL holds the pages the batches changed. Zeroing what they freed would write each batch's 10 copies again.
-    expect(moved).toBe(30);
-    expect(largest).toBeGreaterThan(0);
-    expect(largest).toBeLessThan(10 * Buffer.byteLength(JSON.stringify(provenance)));
+    expect(pageBytes(path).free).toBeGreaterThan(0);
+    expect(statSync(`${path}-wal`).size).toBe(0);
+    // The stored copy's worth and less than a second copy: the 30 inline copies whose pages the move freed held 30 times
+    // as many.
+    const perCopy = occurrences(JSON.stringify(provenance));
+    const inFile = occurrences(readFileSync(path).toString("latin1"));
+    expect(inFile).toBeGreaterThanOrEqual(perCopy / 2);
+    expect(inFile).toBeLessThan(2 * perCopy);
   });
 
   it("gives the space the move freed back to the disk once it ends, and no later move rewrites the file", async () => {

@@ -119,8 +119,7 @@ What Rerail deliberately does not do, as stated in the code or docs or following
   [privacy.md](privacy.md) says so for the capability.
 - `block` mode is not built; everywhere it is set says the rule steers instead.
 - Rerail redacts secrets it recognizes, by format or secret-like key, before anything reaches disk.
-- Writers use `secure_delete`, except for the one-time move of audits' rule provenance after an update, and
-  `rerail reset` and `rerail scrub` rewrite the file.
+- Writers use `secure_delete`, and `rerail reset` and `rerail scrub` rewrite the file.
 - A daemon other machines can reach refuses to start without `--tls-cert`/`--tls-key`, unless `--insecure-http` is
   passed.
 
@@ -533,11 +532,7 @@ audit errors, and Rerail's `daemon.log` lines. Rule matching and steers use the 
   (`secret-call`, `secret-result`), so a result arriving after a daemon restart or host reconnect is withheld too.
   Preimages of a secret-like file, or one whose text holds a secret, keep only a hash and size.
 - **Erasure.** Database writers use `secure_delete`. `rerail reset` checkpoints the WAL, runs `VACUUM`, and checkpoints
-  again, so deleted history cannot be read back from the file. The daemon's one-time move of audits' rule provenance
-  after an update frees pages without zeroing them (`secure_delete` FAST), since each holds a copy of provenance the
-  database keeps, and runs `VACUUM` once it ends. When that `VACUUM` is skipped (another process reading, too little
-  disk), the copies stay in free pages until new history reuses them or `rerail reset` or `rerail scrub` rewrites the
-  file.
+  again, so deleted history cannot be read back from the file.
 - **History stored by older versions.** `rerail scrub` redacts the database, its pre-update copy, every recorded
   checkout's ledgers and held steers, and `daemon.log`, then rewrites the database file. Daemon and sessions keep
   running: ledgers and `daemon.log` are rewritten in place without losing concurrent appends, and held steers under
