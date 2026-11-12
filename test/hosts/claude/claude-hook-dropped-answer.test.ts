@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -91,12 +91,19 @@ async function engineSession() {
     await writeFile(join(root, "a.ts"), BAD);
     expect((await hook({ hook_event_name: "PostToolUse", ...input, tool_response: { type: "update" } })).output).toEqual({});
   };
+  /** The rule ids of each steer the session's ledger records as given to the agent, in order. */
+  const recordedSteers = async () => {
+    const ledger = await readFile(join(root, "sessions", createHash("sha256").update("claude-session").digest("hex"), "events.jsonl"), "utf8");
+    return ledger.split("\n").filter(line => line !== "")
+      .map(line => JSON.parse(line) as { type: string; delivery?: { ruleIds: string[] } })
+      .flatMap(entry => (entry.type === "delivery" && entry.delivery !== undefined ? [entry.delivery.ruleIds] : []));
+  };
   const close = async () => {
     check.resolve();
     await service.close();
     await rm(root, { recursive: true, force: true, maxRetries: 5 });
   };
-  return { socketPath, check, waitingForChecks, receipts, hook, badEdit, close };
+  return { socketPath, check, waitingForChecks, receipts, recordedSteers, hook, badEdit, close };
 }
 
 /**
@@ -143,6 +150,8 @@ describe("Claude Code hook whose answer from the daemon never arrived", () => {
       expect(session.receipts).toEqual([["test:no-bad"]]);
       expect((await session.hook({ ...READ, tool_use_id: "tool-3" })).output).toEqual({});
       expect(session.receipts).toEqual([["test:no-bad"]]);
+      // Recorded once, when it went out, not also for the answer nobody read.
+      expect(await session.recordedSteers()).toEqual([["test:no-bad"]]);
     } finally {
       await session.close();
     }
@@ -161,6 +170,7 @@ describe("Claude Code hook whose answer from the daemon never arrived", () => {
       expect((await session.hook({ ...READ, tool_use_id: "tool-2" })).output).toEqual({});
       expect((await session.hook({ ...READ, tool_use_id: "tool-3" })).output).toEqual({});
       expect(session.receipts).toEqual([["test:no-bad"]]);
+      expect(await session.recordedSteers()).toEqual([["test:no-bad"]]);
     } finally {
       await session.close();
     }

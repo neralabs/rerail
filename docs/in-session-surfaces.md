@@ -193,8 +193,7 @@ Each coding agent waits briefly after an edit for its check, so the steer lands 
 
 Slower checks steer at the next hook, reply or poll. The waits are fixed, not per rule.
 
-A Claude Code, Codex or Cursor hook that gives up waiting for Rerail's answer (after 30 seconds, on a busy computer)
-loses no steer: the steers that answer held ride the session's next hook that carries context.
+A Claude Code, Codex or Cursor hook that gives up waiting for Rerail's answer (after 30 seconds, on a busy computer) loses no steer: the steers that answer would have carried ride the session's next hook that carries context, once.
 
 </details>
 

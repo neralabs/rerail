@@ -508,6 +508,11 @@ interface RuntimeSessionState {
   /** Generated-edit findings no boundary waited for, in the order they arrived, until the session's next yield. */
   missedFindings: MissedFinding[];
   /**
+   * The conversation rules' steers of answers their host stopped waiting for, in order, until the session's next
+   * answer (`#answer`). They name no source, so no edit makes one stale.
+   */
+  unansweredMatches: AdapterDelivery[];
+  /**
    * The session's tool calls whose input names a secret-like path (`callNamesSecretPath`), until their result is stored.
    * The ledger records both ends (`secret-call`, `secret-result`), so a session reopened between them still knows.
    */
@@ -912,23 +917,25 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   }
 
   /**
-   * An event's answer: the pending steers, the digest at a yield, then what the event's own samples matched. When
-   * `signal` has aborted, the host stopped waiting for it (a hook gave up at its request deadline), so nothing in it
-   * would reach the agent: its steers go back ahead of the pending ones for the session's next answer, which drops one a
-   * later edit made stale as it drops any, and the digest's findings wait for the next yield again.
+   * An event's answer: the pending steers, the digest at a yield, then the conversation rules' steers, those of earlier
+   * answers nobody read first. When `signal` has aborted, the host stopped waiting for the answer (a hook gave up at its
+   * request deadline), so none of it would reach the agent and it takes nothing: the pending steers stay pending, each
+   * recorded once when it goes out, the held findings stay held for the next yield, and the conversation rules' steers
+   * wait for the session's next answer (`unansweredMatches`).
    */
   async #answer(state: RuntimeSessionState, eventId: string, yields: boolean, signal: AbortSignal | undefined): Promise<AdapterDelivery[]> {
-    const taken = await this.#takePendingSteers(state);
-    const held = state.missedFindings;
-    const digest = yields ? await this.#takeMissedDigest(state) : undefined;
-    const matched = state.eventDeliveries.get(eventId) ?? [];
+    const matched = [...state.unansweredMatches, ...(state.eventDeliveries.get(eventId) ?? [])];
+    state.unansweredMatches = [];
     state.eventDeliveries.delete(eventId);
+    const taken = signal?.aborted === true ? [] : await this.#takePendingSteers(state);
+    const held = state.missedFindings;
+    const digest = yields && signal?.aborted !== true ? await this.#takeMissedDigest(state) : undefined;
     if (signal?.aborted !== true) return [...taken.map(pending => pending.delivery), ...(digest === undefined ? [] : [digest]), ...matched];
-    // A conversation rule's steer names no source, so no edit makes it stale.
-    const unread = matched.filter(delivery => steers(delivery.requested))
-      .map((delivery): PendingSteer => ({ delivery, revision: Number.POSITIVE_INFINITY, scope: [] }));
-    state.pendingSteers.unshift(...taken, ...unread);
+    // The host stopped waiting while the answer was put together: what it took goes back, and is recorded again when it
+    // goes out.
+    state.pendingSteers.unshift(...taken);
     if (digest !== undefined) state.missedFindings = [...held, ...state.missedFindings];
+    state.unansweredMatches = matched.filter(delivery => steers(delivery.requested));
     return [];
   }
 
@@ -1502,6 +1509,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       editCheckWaits: 0,
       yieldWaits: 0,
       missedFindings: [],
+      unansweredMatches: [],
       secretCalls: secrets.calls,
       withheldResults: secrets.results,
       closed: false,
