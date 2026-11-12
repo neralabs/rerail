@@ -45,7 +45,7 @@
         assert!(!kept(&run(&with_env("defs"))), "the root's settings, for a program that declares `env`");
         assert!(!kept(&run(&program("names"))), "another text");
         // Each library file a text includes is in the record, with its digest (a flattened text includes none).
-        let rules = super::rule_files(&["#include \"core.rr\"\n.decl x(s: symbol)\n".to_owned()]).unwrap();
+        let rules = super::rule_files(&["#include \"core.rr\"\n.decl x(s: symbol)\n".to_owned()], &serde_json::Value::Null).unwrap();
         assert!(rules.iter().any(|r| r.1.ends_with("core.rr") && !r.2.is_empty()) && rules.iter().any(|r| r.1.ends_with("components.rr")), "{rules:?}");
         // A policy file the program reads (`.input … filename=`) is consulted: its edit runs it again.
         std::fs::write(src.join("allow.txt"), "a\n").unwrap();

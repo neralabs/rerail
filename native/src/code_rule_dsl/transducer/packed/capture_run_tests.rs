@@ -102,23 +102,6 @@ fn capture_runs_execute_zero_capture_joins_and_preserve_complete_results_and_raw
     eprintln!("CAPTURE_RUN_REPORT {:?}", actual.report);
 }
 
-thread_local! {
-    static TASK_LIMIT: std::cell::Cell<usize> = const { std::cell::Cell::new(MAX_WORK_PER_TASK) };
-}
-pub(super) fn task_work_limit() -> usize {
-    TASK_LIMIT.with(std::cell::Cell::get)
-}
-pub(super) struct TaskLimit(usize);
-impl TaskLimit {
-    pub(super) fn enter(limit: usize) -> Self {
-        Self(TASK_LIMIT.with(|value| value.replace(limit)))
-    }
-}
-impl Drop for TaskLimit {
-    fn drop(&mut self) {
-        TASK_LIMIT.with(|value| value.set(self.0));
-    }
-}
 
 #[test]
 fn capture_runs_preserve_work_failures_before_joins_and_suppress_work_after_duplicate_joins() {

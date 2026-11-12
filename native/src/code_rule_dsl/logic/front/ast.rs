@@ -289,7 +289,7 @@ pub struct Again {
 }
 
 /// The `.decl` qualifiers that choose what a relation keeps (decision 0099), as Soufflé spells them.
-pub const QUALIFIERS: &[&str] = &["inline", "no_inline", "magic", "no_magic"];
+pub const QUALIFIERS: &[&str] = &["inline", "no_inline", "magic", "no_magic", "reach", "no_reach"];
 
 impl Program {
     /// Whether `.decl rel(…)` carries the qualifier `word` (one of `QUALIFIERS`).
@@ -351,6 +351,12 @@ pub enum Native {
     /// `components(d, c, key, edge, own)`: each document's strongly connected component of `edge(d, e)` (its
     /// smallest document) and the component's Merkle key over `own(d, digest)` (`logic::native::components`).
     Components { edge: String, own: String },
+    /// `r(x, y) :- seed(x, y). r(x, z) :- r(x, y), edge(y, z).`: each start's nodes reached over `edge` from its seeds,
+    /// held as the reach index (decision 0119, `logic::native::reach`), not as rows.
+    Reach { seed: String, edge: String },
+    /// `s(x, q) :- r(x, e), map(e, q).` over a `Reach` relation `r`: each start's `map` values over what it reaches,
+    /// held the same way.
+    ReachThrough { reach: String, map: String },
     Python { kind: String, input: String, targets: Option<String> },
     /// Conservative call candidates over demanded documents; exact semantic operators remain separate.
     PythonCandidates { input: String, targets: String, context: String, member: String },
@@ -372,6 +378,14 @@ impl Native {
                 *edge = rename(edge);
                 *own = rename(own);
             }
+            Native::Reach { seed, edge } => {
+                *seed = rename(seed);
+                *edge = rename(edge);
+            }
+            Native::ReachThrough { reach, map } => {
+                *reach = rename(reach);
+                *map = rename(map);
+            }
         }
     }
     /// The relations it reads.
@@ -382,6 +396,8 @@ impl Native {
             Native::PythonCandidates {input,targets,..} => vec![input.as_str(),targets.as_str()],
             Native::Python {input,targets,..} => std::iter::once(input.as_str()).chain(targets.as_deref()).collect(),
             Native::Components { edge, own } => vec![edge.as_str(), own.as_str()],
+            Native::Reach { seed, edge } => vec![seed.as_str(), edge.as_str()],
+            Native::ReachThrough { reach, map } => vec![reach.as_str(), map.as_str()],
         }
     }
 }

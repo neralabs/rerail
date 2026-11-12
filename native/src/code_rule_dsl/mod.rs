@@ -824,11 +824,24 @@ pub(crate) mod logic {
     #[path = "native"]
     pub mod native {
         pub use rerail_logic::code_rule_dsl::logic::native::*;
+        #[path = "reach"]
+        pub mod reach {
+            pub use rerail_logic::code_rule_dsl::logic::native::reach::*;
+            #[cfg(test)]
+            pub mod tests;
+        }
         #[path = "setfix"]
         pub mod setfix {
             pub use rerail_logic::code_rule_dsl::logic::native::setfix::*;
             #[cfg(target_os="macos")]
             pub use rerail_device_metal::code_rule_dsl::logic::native::setfix::device;
+            // The lab's tests run strata on the Metal device (the transducer's), which the engine alone sees.
+            #[path = "lab"]
+            pub mod lab {
+                pub use rerail_logic::code_rule_dsl::logic::native::setfix::lab::*;
+                #[cfg(test)]
+                pub mod tests;
+            }
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::analysis::scalars::Kind as ScalarKind;
             #[allow(unused_imports)]

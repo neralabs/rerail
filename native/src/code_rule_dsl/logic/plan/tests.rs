@@ -2145,3 +2145,16 @@ fn empty_required_inputs_defer_both_plan_shapes_until_growth() {
     assert!(w.take(0)); assert!(w.take_whole(0));
     assert!(!w.take(0)); assert!(!w.take_whole(0));
 }
+
+/// A kept plan's distributions at another scale (O-replan-churn): a count of node ids in proportion to the nodes, a
+/// column of few values as it was, and the bit per literal as it is.
+#[test]
+fn kept_distributions_are_near_in_proportion_to_the_nodes() {
+    use super::near_distributions;
+    let scale = 61997.0 / 22146.0;
+    // ndv of node ids, fan, a kind's ndv; then one literal's bit.
+    assert!(near_distributions(&[22089.0, 1.0, 81.0, 1.0], &[61994.0, 1.0, 85.0, 1.0], scale, 1));
+    assert!(!near_distributions(&[22089.0, 1.0, 81.0, 1.0], &[61994.0, 1.0, 85.0, 4.0], scale, 1), "a literal's bit moved");
+    assert!(!near_distributions(&[22089.0, 1.0, 81.0, 1.0], &[400000.0, 1.0, 85.0, 1.0], scale, 1), "grew far past the scale");
+    assert!(!near_distributions(&[-2.0, 1.0], &[5.0, 1.0], scale, 1), "proven empty against present");
+}

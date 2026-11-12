@@ -90,7 +90,7 @@ fn streaming_runs_preserve_joins(p: Program, lengths: std::ops::RangeInclusive<u
                 }
                 let total = ranges.report.task_work;
                 for task in [0, 1, total / 2, total - 1, total, total + 1] {
-                    let _budget = capture_run_tests::TaskLimit::enter(task);
+                    let _budget = crate::code_rule_dsl::transducer::packed::TaskLimit::enter(task);
                     let expected = p.execute_roots(&doc, [root]);
                     let actual = prepared
                         .execute_streaming(

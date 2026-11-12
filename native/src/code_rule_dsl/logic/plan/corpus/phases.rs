@@ -136,11 +136,40 @@ pub fn declared(prog: &Program) -> Option<Declared> {
 /// The phase program `name`, with its `#include`s read in: `<phase_dir>/<name>.rr` when the run's options name a
 /// `phase_dir`, else `typing/programs/<name>.rr`.
 fn source(name: &str, dir: Option<&Path>) -> Result<Option<String>> {
-    let builtin = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/typing/programs");
-    let Some(path) = dir.into_iter().chain([builtin.as_path()]).map(|d| d.join(format!("{name}.rr"))).find(|p| p.exists()) else {
+    let Some(path) = locate(name, dir) else {
         return Ok(None);
     };
     crate::code_rule_dsl::logic::settings::program_text(&path).map(Some).map_err(Error::Plan)
+}
+
+/// The file of phase program `name` (`source`).
+fn locate(name: &str, dir: Option<&Path>) -> Option<PathBuf> {
+    let builtin = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("src/code_rule_dsl/typing/programs");
+    dir.into_iter().chain([builtin.as_path()]).map(|d| d.join(format!("{name}.rr"))).find(|p| p.exists())
+}
+
+/// The files of every phase program `programs` read, and of the phases those read: each phase's `.rr` and its
+/// `#include`s. A run of a phased program is a function of them too, so the whole-run cutoff names them
+/// (O-cutoff-phases).
+pub(super) fn phase_files(programs: &[String], dir: Option<&Path>) -> Result<Vec<PathBuf>> {
+    let (mut seen, mut out) = (BTreeSet::new(), Vec::new());
+    let mut todo: Vec<String> = programs.to_vec();
+    while let Some(text) = todo.pop() {
+        let prog = crate::code_rule_dsl::logic::rr::parse(&text)?;
+        for name in wanted(&prog, dir)?.into_keys() {
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            let Some(path) = locate(&name, dir) else { continue };
+            let raw = std::fs::read_to_string(&path).map_err(|e| Error::Plan(format!("{}: {e}", path.display())))?;
+            out.extend(crate::code_rule_dsl::logic::rr::included_files(&raw)?);
+            out.push(path);
+            if let Some(src) = source(&name, dir)? {
+                todo.push(src);
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// The relations `prog` reads from earlier phases, by phase: `(the reader's relation, the export)`. A relation named

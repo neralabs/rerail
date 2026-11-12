@@ -132,7 +132,7 @@ fn outer_capture_runs_preserve_all_results_and_exact_work_boundaries_across_pref
         );
         let total = full.report.task_work;
         for task in [total - 1, total, total + 1] {
-            let _limit = capture_run_tests::TaskLimit::enter(task);
+            let _limit = crate::code_rule_dsl::transducer::packed::TaskLimit::enter(task);
             let expected = p.execute_roots(&doc, [root]);
             let actual = prepared
                 .execute(
@@ -156,7 +156,7 @@ fn outer_capture_runs_preserve_all_results_and_exact_work_boundaries_across_pref
         }
         for path in 0..=100 {
             for task in (0..=500).step_by(19) {
-                let _limit = capture_run_tests::TaskLimit::enter(task);
+                let _limit = crate::code_rule_dsl::transducer::packed::TaskLimit::enter(task);
                 let expected = p.execute_roots_from_with_work_limit(&doc, [root], 0, None, path);
                 let actual = prepared
                     .execute(&doc, root, Limits { path, task })

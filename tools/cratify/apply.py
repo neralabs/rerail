@@ -221,6 +221,20 @@ def thread_local_cfg_edits(nodes, edits):
                 edits.add(n.file, a, a + 4, HOOKS, 'cfg test')
 
 
+def cfg_macro_edits(nodes, edits):
+    """`cfg!(test)` (a macro the cfgtest tool does not see) in a crate other than the engine: test-hooks, as every
+    `#[cfg(test)]` is, so the engine's tests see the same switch (costs.rs: tests write no statistics)."""
+    seen = set()
+    for p, n in nodes.items():
+        if n.inline or n.owner == ENGINE or n.file in seen:
+            continue
+        seen.add(n.file)
+        data = open(n.file, 'rb').read()
+        for m in re.finditer(rb'cfg!\(\s*test\s*\)', data):
+            a = m.start() + data[m.start():m.end()].index(b'test')
+            edits.add(n.file, a, a + 4, HOOKS, 'cfg test')
+
+
 def use_vis_edits(nodes, edits):
     """Every restricted re-export (`pub(crate) use`, `pub(in ...) use`) in a crate other than the engine: `pub`. Other
     crates path through them, and the index names the definition, not the re-export, so widen.py cannot see them."""
@@ -513,7 +527,9 @@ def manifest(c, engine):
                     if k.startswith('rerail-') and (sect == 'dev-dependencies' or c != 'rerail-device-metal'):
                         continue  # Metal's runtime is the Metal device's alone
                     lines.append(f'{k} = {toml_value(rebase(v, d))}')
-    lines += ['', '[dev-dependencies]']
+    # A crate's own test build turns on its test hooks, as the engine's does: its tests read what test-hooks builds
+    # in the crates below it (`fixtures`, tempfile), which no test build of theirs would otherwise compile.
+    lines += ['', '[dev-dependencies]', f'{c} = {{ path = ".", features = ["test-hooks"] }}']
     for k, v in engine.get('dev-dependencies', {}).items():
         # the rerail crates outside the split (the parsers' tests, the compiler's hooks) serve every crate's own tests
         if (k.startswith('rerail-') and k in DIRS) or k in test_only:
@@ -670,6 +686,7 @@ def main(tree_tsv, join_out, *flags):
     # (the engine's own files keep `cfg(test)`, as its declarations do)
     cfg_test_edits(nodes, [f for f in files if file_owner.get(f) != ENGINE], keep, edits)
     thread_local_cfg_edits(nodes, edits)
+    cfg_macro_edits(nodes, edits)
     manifest_dir_edits(nodes, edits)
     bad = edits.apply(write)
     print('edits:', dict(edits.why))

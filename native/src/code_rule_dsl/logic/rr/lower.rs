@@ -475,7 +475,7 @@ impl Lowerer {
                 q if crate::code_rule_dsl::logic::front::QUALIFIERS.contains(&q) => {
                     let own = self.prog.qualifiers.entry(name.clone()).or_default();
                     own.insert(q.to_owned());
-                    for (a, b) in [("inline", "no_inline"), ("magic", "no_magic"), ("inline", "magic")] {
+                    for (a, b) in [("inline", "no_inline"), ("magic", "no_magic"), ("inline", "magic"), ("reach", "no_reach")] {
                         if own.contains(a) && own.contains(b) {
                             return Err(Error::Syntax(format!(".decl {name}: `{a}` and `{b}` together")));
                         }

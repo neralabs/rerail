@@ -69,10 +69,6 @@ const SCRATCH: &[&str] = &[
     "m",
     "n",
     "x",
-    "a",
-    "b",
-    "c",
-    "h0",
     "t",
     "input",
     "value",
@@ -101,7 +97,6 @@ const SCRATCH: &[&str] = &[
 const NOT_YET_TABLES: &[(&str, &str)] = &[
     // The cost model fitted from `samples`, per machine (planning's placement).
     ("models", "6"),
-    ("constant_rows", "1"),
     ("run_record", "1"),
     ("observed", "1"),
     ("observer_meta", "1"),

@@ -99,7 +99,7 @@ impl Semantics {
 }
 
 /// Python's semantic facts over a batch's demands (`SemanticProducer::project`).
-pub(crate) trait PythonProject {
+pub trait PythonProject {
     /// Operations return facts, never rule findings. Node IDs include document and world identity.
     fn python_project(
         &self,
