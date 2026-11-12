@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { constants, type Dirent, type Stats } from "node:fs";
-import { type FileHandle, lstat, mkdir, open, opendir, readFile, realpath, rename, unlink, writeFile } from "node:fs/promises";
+import { type FileHandle, lstat, mkdir, open, opendir, readFile, realpath, rename, unlink } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
   AuditorCloseOptions,
@@ -435,19 +435,20 @@ async function filesystemClock(): Promise<number> {
 
 /**
  * Opens `CLOCK_PROBE_FILE` to rewrite its byte, making it (private, as Rerail's other files are) and the Rerail home the
- * first time. It is opened `r+`, never `w`: on Linux, emptying the file at each open made the later of two samples taken
- * together finish first, which turned round the order of a walk's sample and a tool call's.
+ * first time. The open makes the file when it is missing but never empties it, as `w` would: on Linux, emptying the file
+ * at each open made the later of two samples taken together finish first, which turned round the order of a walk's
+ * sample and a tool call's.
  */
 async function openClockProbe(): Promise<FileHandle> {
-  const path = join(defaultRerailHome(), CLOCK_PROBE_FILE);
+  const home = defaultRerailHome();
+  const path = join(home, CLOCK_PROBE_FILE);
+  const flags = constants.O_RDWR | constants.O_CREAT;
   try {
-    return await open(path, "r+");
+    return await open(path, flags, 0o600);
   } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    // `a` makes the file without emptying one another process made meanwhile.
-    await writeFile(path, CLOCK_PROBE_BYTE, { flag: "a", mode: 0o600 });
-    return await open(path, "r+");
+    if (!hasErrorCode(error, "ENOENT")) throw error;
+    await mkdir(home, { recursive: true, mode: 0o700 });
+    return await open(path, flags, 0o600);
   }
 }
 
