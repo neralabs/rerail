@@ -86,7 +86,6 @@ const SCRATCH: &[&str] = &[
     "stat_val",
     "stat_docrange",
     "{table} in code_rule_dsl/logic/native/setfix/lab.rs",
-    "{t} in code_rule_dsl/logic/native/setfix/lab.rs",
     "{} in code_rule_dsl/slice.rs",
 ];
 /// Caches between runs not yet facts: (table, the 0104 step that moves it).
