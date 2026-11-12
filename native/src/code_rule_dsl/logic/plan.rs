@@ -432,8 +432,26 @@ impl Stats {
     /// `rel`'s statistics by column (`width` of them), and its exact postings of integer values (`measured`'s
     /// `vals`, by column), when every column is known: what a session's next run gives `rel__old`, whose rows are
     /// these (decision 0094 §4: statistics kept like data, not measured again).
-    pub fn of_relation(&self, rel: &str, width: usize) -> Option<(Vec<[i64; 4]>, Vec<(usize, i64, i64)>)> {
-        let names: Vec<String> = (0..width).map(|c| sql_col(rel, c)).collect();
+    /// `of_relation` of the columns `cols` of `rel`, in that order (a copy of them: `corpus::projection_of`).
+    pub fn of_columns(&self, rel: &str, columns: &[String], cols: &[usize]) -> Option<(Vec<[i64; 4]>, Vec<(usize, i64, i64)>)> {
+        let names: Vec<String> = cols.iter().map(|&c| columns.get(c).cloned()).collect::<Option<_>>()?;
+        let stats = names.iter().map(|n| self.col.get(&(rel.to_owned(), n.clone())).copied()).collect::<Option<Vec<_>>>()?;
+        let vals = self
+            .memo
+            .get(rel)
+            .into_iter()
+            .flatten()
+            .filter_map(|((c, v), n)| match v {
+                Constant::Int(v) => Some((names.iter().position(|x| x == c)?, *v, *n)),
+                _ => None,
+            })
+            .collect();
+        Some((stats, vals))
+    }
+    /// `columns`: its columns' names, as its source names them (a base relation's are its declaration's: `node`'s
+    /// `d, n, kind, start, end_`).
+    pub fn of_relation(&self, rel: &str, columns: &[String]) -> Option<(Vec<[i64; 4]>, Vec<(usize, i64, i64)>)> {
+        let names: Vec<String> = columns.to_vec();
         let cols = names.iter().map(|n| self.col.get(&(rel.to_owned(), n.clone())).copied()).collect::<Option<Vec<_>>>()?;
         let vals = self
             .memo
@@ -4623,6 +4641,28 @@ fn same_order(a: &[Step], b: &[Step]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.at == y.at && x.mode == y.mode && x.lit == y.lit)
 }
 
+/// The relations of `scc` that reach themselves through `rules` (any read: positive, negated or aggregated).
+fn cyclic_relations(scc: &BTreeSet<String>, rules: &[&Rule]) -> BTreeSet<String> {
+    let mut next: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for r in rules {
+        for a in r.body.iter().filter_map(Literal::atom).filter(|a| scc.contains(a.rel.as_str())) {
+            next.entry(a.rel.as_str()).or_default().insert(r.head.rel.as_str());
+        }
+    }
+    scc.iter().filter(|start| {
+        let (mut seen, mut todo): (BTreeSet<&str>, Vec<&str>) = (BTreeSet::new(), next.get(start.as_str()).into_iter().flatten().copied().collect());
+        while let Some(x) = todo.pop() {
+            if x == start.as_str() {
+                return true;
+            }
+            if seen.insert(x) {
+                todo.extend(next.get(x).into_iter().flatten().copied());
+            }
+        }
+        false
+    }).cloned().collect()
+}
+
 /// Positive body atoms of `scc`, by body position.
 fn recursive<'r>(body: &'r [Literal], scc: &BTreeSet<String>) -> Vec<(usize, &'r Atom)> {
     body.iter()
@@ -5581,6 +5621,9 @@ impl<'a> Run<'a, '_> {
     /// relations join `native_rels`. False (and nothing run) where a rule has a literal with no native step.
     fn native_stratum_(&mut self, scc: &BTreeSet<String>, rules: &[&'a Rule], native_rels: &BTreeSet<String>, numbers: &rustc_hash::FxHashMap<*const Rule, usize>) -> Result<Native<'a>> {
         let prog = self.prog;
+        // The relations that reach themselves through the stratum's rules as written, before any is left out
+        // (`SpecLine::Leveled`).
+        let cyclic = cyclic_relations(scc, rules);
         self.why_not = None;
         self.why_class = None;
         if scc.iter().any(|r| prog.lattice.contains_key(r)) {
@@ -5668,6 +5711,8 @@ impl<'a> Run<'a, '_> {
             }
             kept
         };
+        // A gate ordering pieces (decision 0101 §3) that no rule left reads has nothing to order.
+        gates.retain(|(g, _)| !prog.together.iter().any(|t| t.contains(g)) || rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| a.rel.as_str() == g.as_str()))));
         let typed: HashMap<String, String> = rels.iter().map(|r| ((*r).clone(), prog_types(prog, r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>())).collect();
         let types = |r: &str| typed[r].clone();
         // Nothing left to run (every rule joined an empty relation, and no relation of the stratum has facts): the
@@ -5728,7 +5773,7 @@ impl<'a> Run<'a, '_> {
         lines.push(SpecLine::NoWrite);
         // Its rows keep levels where a session maintains it by them (decision 0090, the `levels` qualifier).
         if scc.iter().any(|r| prog.qualified(r, "levels")) {
-            lines.push(SpecLine::Leveled);
+            lines.push(SpecLine::Leveled(rels.iter().enumerate().filter(|(_, r)| cyclic.contains(r.as_str())).map(|(i, _)| i).collect()));
         }
         // A component that answers requests (decision 0065 §2a) cannot fall back to SQL whole: a rule with no native
         // step is a SQL seed, run before the component opens, or a SQL probe over its relations' `set_rel` views.
@@ -7585,8 +7630,14 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let mut again_delta: Vec<usize> = vec![0; prog.again.len()];
     let mut deferred: HashMap<String, (usize, usize, usize)> = HashMap::new();
     let mut unloaded: BTreeSet<String> = BTreeSet::new();
-    let gated: BTreeSet<String> = prog.gates.iter().flat_map(|(g, d)| [g, &d.rel].into_iter().chain(&d.src).chain(&d.quiet).chain(&d.deps)).cloned().collect();
-    let stays: BTreeSet<String> = prog.outputs.iter().chain(&run.model.inputs.kept).chain(&gated).cloned().collect();
+    // A gate that orders a maintained stratum's pieces (decision 0101 §3) holds nothing past its component.
+    let gated: BTreeSet<String> = prog.gates.iter().filter(|(g, _)| !prog.together.iter().any(|t| t.contains(g))).flat_map(|(g, d)| [g, &d.rel].into_iter().chain(&d.src).chain(&d.quiet).chain(&d.deps)).cloned().collect();
+    let mut stays: BTreeSet<String> = prog.outputs.iter().chain(&run.model.inputs.kept).chain(&gated).cloned().collect();
+    // The dump (`RERAIL_REL_DIR`, a debugging aid) keeps every derived relation to the run's end, so it holds the
+    // pieces a run releases as it goes (`h__ins`, `h__del`, …).
+    if std::env::var_os("RERAIL_REL_DIR").is_some() {
+        stays.extend(sccs.iter().flatten().cloned());
+    }
     // What stays, and what the views among it read (through views): SQL reads a view's inputs once the run ends.
     let mut pinned: BTreeSet<String> = stays.clone();
     loop {
