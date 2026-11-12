@@ -4091,6 +4091,20 @@ Two ways to remove it, either or both:
 `pv__ins` by class runs at most one batch; the step's work drops by about 83 k units and its outputs equal a
 full run's.
 
+**Part built (2026-11-12): whole plans priced from the members' rows at open.** A wider form of the same cause:
+a rule's whole plan, which runs in the first wave, was priced before the component opened. Every member scan was
+floored at the corpus's nodes (180,831), so `decval__ins`'s whole plan scanned `pv` (65 k rows) before `decfn`
+(1 k), the two tied. Now, right after the component opens, the members that already have rows (survivors, rows
+SQL wrote) are measured. A first scan of one is priced by its rows (`Stats::sized`), and the whole plans are
+planned again before the first wave (`RERAIL_SIZED_AT_OPEN=off` turns it off).
+
+At O125 step 07, work went from 4.05 M to 3.38 M and `__ins` work from 2.31 M to 1.67 M; `decval__ins`,
+`fbind__ins`, `fv__ins` and `pfn__ins` left the top. Instructions over the whole replay (cold run included) went
+from 918.1 to 913.6 G, and the step's CPU didn't change measurably (19.7 vs 20.7 s, load 25–30): the plans made at
+open (7,696, 1.13 s) take back most of what the joins save. The `ifn__ins` case above, a delta plan whose member
+is empty at open, is not covered. At step 07, planning (search, plan, replan, re-price, 4.8 s) costs about as much
+as the joins it plans (4.7 s), against decision 0122.
+
 ## O-search-cost. One cost of a search, measured once (0122, 0124)
 
 **Seen (2026-11-12, at the merge of phased-facts).** Two branches priced a join-order search in rows of join work
@@ -4102,4 +4116,3 @@ long rules' orders and searches short ones it could keep.
 
 **Closure:** one O125 measurement of a search's fixed cost and its cost per candidate, in the build both run; both
 gates read `search_rows`, and `SEARCH_WORK` is its fixed part.
-

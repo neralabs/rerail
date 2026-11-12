@@ -1576,18 +1576,18 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             if device_fixed { break; }
             if p.delta == SEED { if seeded || on_device { continue } }
             else if store.rels[p.delta].lo == store.rels[p.delta].hi { skips += 1; continue; }
-            let j = match (&p.whole, &p.wkey) {
+            let (j, whole) = match (&p.whole, &p.wkey) {
                 (Some(w), Some(k)) if p.delta != SEED && store.rels[p.delta].lo == 0 => {
                     if wholes_run.iter().any(|&(h, w)| h == p.head && (Arc::ptr_eq(w, k) || **w == **k)) { skips += 1; continue; }
                     wholes_run.push((p.head, k));
-                    w
+                    (w, true)
                 }
-                _ => j,
+                _ => (j, false),
             };
             runs += 1;
             if wave_trace {
                 let d = if p.delta == SEED { 0 } else { store.rels[p.delta].hi - store.rels[p.delta].lo };
-                eprintln!("      wave {waves} probe {pi} of {name} starts, head {}, delta {d}", store.rels[p.head].table);
+                eprintln!("      wave {waves} probe {pi} of {name} starts, head {}, delta {} {d} (lo {}){}", store.rels[p.head].table, store.rels[p.delta.min(store.rels.len() - 1)].table, if p.delta == SEED { 0 } else { store.rels[p.delta].lo }, if whole { ", its whole plan" } else if p.whole.is_some() { ", has a whole plan" } else { "" });
             }
             let c0 = cpu_now();
             let n = if p.delta == SEED { run_seed(j, p.head, store, &mut syms, &mut fresh)? } else { run_join(j, p.head, store, &mut syms, &mut fresh)? };
