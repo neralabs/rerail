@@ -189,8 +189,13 @@ pub(super) fn sample() {
                 if !(keep || rose > 0 || top) {
                     continue;
                 }
+                // The threads' open spans are read without this lock held: a thread closing a span holds its own lock
+                // and waits for the profile's state, which a dump holds while it waits for this one (a run stopped by
+                // `timeout` hung so, its profile never written).
+                drop(s);
                 let (mut open, threads) = super::open_paths();
                 open.extend(doing());
+                let mut s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 for p in &open {
                     let e = s.rise.entry(p.clone()).or_default();
                     e.0 += rose;
