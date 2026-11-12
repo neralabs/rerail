@@ -19,7 +19,7 @@ Each file is judged by the checkout that owns it; conversation rules come from t
 
 Rule settings also choose whether linters' suppression comments (`eslint-disable`, `noqa`, ...) silence a rule, and can set a By Rerail code rule's option values.
 
-Changes made through the daemon, dashboard or MCP apply on the next event or tool call. OMP and Pi load conversation rules at session start and re-read configuration before every ingested event. Every runtime compiles code rules into the kernel and re-reads them once per event, before any of its audits, and again when a scan starts. The Rust kernel only loads and evaluates what the database hands it.
+Changes made through the daemon, dashboard or MCP apply on the next event or tool call. OMP and Pi load conversation rules at session start and re-read configuration before every ingested event. Every runtime compiles code rules into the kernel and re-reads them once per event, before any of its audits, and again when a scan starts. An audit outside an event, such as a walk of the repository's other worktrees that runs after the event that set it off, re-reads them first. The Rust kernel only loads and evaluates what the database hands it.
 
 </details>
 

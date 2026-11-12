@@ -3,6 +3,7 @@
  * configuration makes present and places each one per folder (on at a mode, or off), so one native workspace
  * evaluates every folder of the checkout. Executables are compiled once per process and shared by every catalog.
  */
+import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -310,9 +311,16 @@ export interface ConversationRuleSource {
   close(): void;
 }
 
-/** What one event read of a checkout's rules (`openEvent`). */
+/** One of the runtime's events (`inEvent`) and what it read of the rules while it was open. */
+interface RuntimeEvent {
+  open: boolean;
+  /** The installed packs' catalog, read once in the event for every checkout. */
+  installed: RuleCatalog | undefined;
+  readonly reads: Map<CheckoutEntry, EventRead>;
+}
+
+/** What one event read of a checkout's rules. */
 interface EventRead {
-  readonly event: number;
   ruleCatalog?: RuleCatalog;
   /** The source signature, with the record it was read with: once the record reads otherwise, it is read again. */
   signature?: { readonly record: string; readonly value: string };
@@ -326,7 +334,16 @@ interface CheckoutEntry {
   status: RepositoryStatus | undefined;
   eligibility: CheckoutEligibility;
   catalog: CheckoutCodeRuleCatalog | undefined;
-  read: EventRead | undefined;
+}
+
+/** What `event` has read of `entry`'s rules so far. */
+function eventRead(event: RuntimeEvent, entry: CheckoutEntry): EventRead {
+  let read = event.reads.get(entry);
+  if (read === undefined) {
+    read = {};
+    event.reads.set(entry, read);
+  }
+  return read;
 }
 
 /** What a checkout's source signature depends on in its record: its eligibility, repository and parent checkouts. */
@@ -347,11 +364,8 @@ export class CheckoutCatalogs {
   readonly #entries = new Map<string, CheckoutEntry>();
   readonly #recorded: (checkoutPaths: readonly string[]) => Map<string, RecordedCheckoutStatus>;
   readonly #recordedWithin: (folder: string) => string[];
-  /** The events open now, and the number of the last one opened (`openEvent`). */
-  #openEvents = 0;
-  #event = 0;
-  /** The installed packs' catalog as the event `event` read it. */
-  #installed: { readonly event: number; readonly catalog: RuleCatalog } | undefined;
+  /** The event the work running now belongs to (`inEvent`): it follows the work through every await and timer it sets. */
+  readonly #events = new AsyncLocalStorage<RuntimeEvent>();
 
   /**
    * `options.ruleCatalog` fixes the installed packs; without it each read follows them (`loadRuleCatalog`). Either way a
@@ -367,28 +381,28 @@ export class CheckoutCatalogs {
   }
 
   /**
-   * Opens one of the runtime's events; the function it returns closes it. While an event is open, the first refresh of
-   * a checkout after the last event opened reads its rule catalog and configuration signature, and every later one in
-   * it (the conversation rules', each lane's, the enforcer's before an audit) takes that answer: an event reads them
-   * once however many callers ask. A change made elsewhere reaches the next event. While none is open, every refresh
-   * reads them. `refresh` and `refreshAll` always read the record, and a record that reads otherwise reads the
-   * signature again.
+   * Runs `run` as one of the runtime's events. Until it settles, the first refresh of a checkout in its work reads the
+   * checkout's rule catalog and configuration signature, and every later one there (the conversation rules', each
+   * lane's, the enforcer's before an audit) takes that answer: an event reads them once however many of its steps ask.
+   * Only the event's own work takes them. A refresh outside any event, in another event, or in work the event left
+   * running once it settled (a walk timed from it) reads them, so a change made elsewhere reaches it. `refresh` and
+   * `refreshAll` always read the record, and a record that reads otherwise reads the signature again.
    */
-  openEvent(): () => void {
-    this.#openEvents += 1;
-    this.#event += 1;
-    let open = true;
-    return () => {
-      if (open) this.#openEvents -= 1;
-      open = false;
-    };
+  async inEvent<T>(run: () => Promise<T>): Promise<T> {
+    const event: RuntimeEvent = { open: true, installed: undefined, reads: new Map() };
+    try {
+      return await this.#events.run(event, run);
+    } finally {
+      event.open = false;
+      event.installed = undefined;
+      event.reads.clear();
+    }
   }
 
-  /** What the current event read of `entry`'s rules; undefined while no event is open, when nothing is kept. */
-  #eventRead(entry: CheckoutEntry): EventRead | undefined {
-    if (this.#openEvents === 0) return undefined;
-    if (entry.read?.event !== this.#event) entry.read = { event: this.#event };
-    return entry.read;
+  /** The event the work running now belongs to, while it is open; undefined outside one, when nothing is kept. */
+  #openEvent(): RuntimeEvent | undefined {
+    const event = this.#events.getStore();
+    return event?.open === true ? event : undefined;
   }
 
   /**
@@ -397,19 +411,19 @@ export class CheckoutCatalogs {
    * checkout's configuration signature, so the next refresh rebuilds its rules. Both are checked on disk once an event.
    */
   #ruleCatalogOf(entry: CheckoutEntry): RuleCatalog {
-    const read = this.#eventRead(entry);
+    const event = this.#openEvent();
+    const read = event === undefined ? undefined : eventRead(event, entry);
     if (read?.ruleCatalog !== undefined) return read.ruleCatalog;
-    const catalog = worktreeRuleCatalog(this.#installedCatalog(read?.event), entry.root);
+    const catalog = worktreeRuleCatalog(this.#installedCatalog(event), entry.root);
     if (read !== undefined) read.ruleCatalog = catalog;
     return catalog;
   }
 
-  #installedCatalog(event: number | undefined): RuleCatalog {
+  #installedCatalog(event: RuntimeEvent | undefined): RuleCatalog {
     if (this.#ruleCatalog !== undefined) return this.#ruleCatalog;
-    if (event !== undefined && this.#installed?.event === event) return this.#installed.catalog;
-    const catalog = loadRuleCatalog();
-    if (event !== undefined) this.#installed = { event, catalog };
-    return catalog;
+    if (event === undefined) return loadRuleCatalog();
+    event.installed ??= loadRuleCatalog();
+    return event.installed;
   }
 
   /** The checkout at `root` (a physical checkout top level) as last read; refreshed with `refresh`. */
@@ -463,7 +477,7 @@ export class CheckoutCatalogs {
     return this.#recordedWithin(root);
   }
 
-  /** The compiled code rules of `root`; its `refresh()` reads eligibility and configuration again, once an event (`openEvent`). */
+  /** The compiled code rules of `root`; its `refresh()` reads eligibility and configuration again, once an event (`inEvent`). */
   catalog(root: string): CheckoutCodeRuleCatalog {
     const entry = this.#entry(root);
     entry.catalog ??= new CheckoutCodeRuleCatalog({
@@ -498,7 +512,7 @@ export class CheckoutCatalogs {
     if (entry === undefined) {
       entry = {
         root, location: undefined, checkout: undefined,
-        parents: [], status: undefined, eligibility: "unrecorded", catalog: undefined, read: undefined,
+        parents: [], status: undefined, eligibility: "unrecorded", catalog: undefined,
       };
       this.#entries.set(root, entry);
       if (read) this.#read([entry]);
@@ -547,7 +561,8 @@ export class CheckoutCatalogs {
    * Read with the record at the first call of an event, and taken from it at the later ones while the record is the same.
    */
   #signature(entry: CheckoutEntry): string {
-    const read = this.#eventRead(entry);
+    const event = this.#openEvent();
+    const read = event === undefined ? undefined : eventRead(event, entry);
     if (read?.signature !== undefined && read.signature.record === recordOf(entry)) return read.signature.value;
     this.#read([entry]);
     const value = entry.checkout === undefined

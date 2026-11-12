@@ -823,16 +823,13 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         return [];
       }
       // Each checkout's rules are read once in the event, however many of its steps refresh them.
-      const closeEvent = this.#catalogs.openEvent();
-      try {
+      return await this.#catalogs.inEvent(async () => {
         const sourceSignature = this.#sessions.get(sessionId)?.ruleSync?.sourceSignature;
         const deliveries = await this.#ingest(event);
         if (event.kind !== "assistant-delta" || event.final
             || sourceSignature !== this.#sessions.get(sessionId)?.ruleSync?.sourceSignature) this.recordRuleCoverage(sessionId);
         return deliveries;
-      } finally {
-        closeEvent();
-      }
+      });
     });
   }
 
@@ -1646,16 +1643,13 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         this.#controls.finishRepositoryAudit(sessionId, checkoutRoot, auditId ?? null, status, error);
       },
     };
-    // An event of its own, as an audit request is: each claim records the rules as they are when the audit starts.
-    const closeEvent = this.#catalogs.openEvent();
     try {
-      await state.codeRuleBridge!.audit({ scope: "repository", mode: "log", audit });
+      // An event of its own, as an audit request is: each claim records the rules as they are when the audit starts.
+      await this.#catalogs.inEvent(() => state.codeRuleBridge!.audit({ scope: "repository", mode: "log", audit }));
     } catch (error) {
       for (const checkoutRoot of claimed) {
         this.#controls.finishRepositoryAudit(sessionId, checkoutRoot, null, "failed", error instanceof Error ? error.message : String(error));
       }
-    } finally {
-      closeEvent();
     }
   }
 
@@ -1770,18 +1764,14 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         else this.#controls.finish(request.id, "failed", [], `Code rules are off for this session: ${state.codeRuleOffReason ?? "the policy evaluator did not open"}`);
         return;
       }
-      // An event of its own: the scan runs on the rules as they are when it starts, not as an event open now read them.
-      const closeEvent = this.#catalogs.openEvent();
-      let auditIds: readonly string[];
-      try {
-        auditIds = await workspace.audit({
-          scope: request.scope,
-          mode: request.mode,
-          ...(request.paths.length === 0 ? {} : { paths: request.paths }),
-        });
-      } finally {
-        closeEvent();
-      }
+      const scan = {
+        scope: request.scope,
+        mode: request.mode,
+        ...(request.paths.length === 0 ? {} : { paths: request.paths }),
+      };
+      // An event of its own: the scan reads the rules once, as they are when it starts, not as an event that picked the
+      // request up read them.
+      const auditIds = await this.#catalogs.inEvent(() => workspace.audit(scan));
       if (state.closed) {
         this.#controls.finish(request.id, "interrupted", auditIds, "Session closed during scan");
         return;

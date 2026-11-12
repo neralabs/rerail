@@ -313,7 +313,7 @@ describe("checkout code-rule catalog", () => {
     }
   });
 
-  it("reads a checkout's start state and rule configuration once in an event, however many refreshes ask", () => {
+  it("reads a checkout's start state and rule configuration once in an event, however many refreshes ask", async () => {
     const { root, databasePath } = checkout();
     const key = setUpTestRepository(root, {}, databasePath);
     const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: loadRuleCatalog() });
@@ -321,50 +321,98 @@ describe("checkout code-rule catalog", () => {
       const catalog = catalogs.catalog(root);
       const conversation = catalogs.conversationRules(root, "");
       const loaded = catalog.status.sourceSignature;
-      const closeEvent = catalogs.openEvent();
-      const counted = countStatements(catalogs.database, () => {
-        expect(catalog.refresh()).toBe(false);
-        expect(conversation.signature()).toBe(loaded);
-        expect(catalog.refresh()).toBe(false);
-      });
-      // The first refresh reads the start state and set-up, then the rule configuration; the others take that answer.
-      expect(counted).toEqual({ prepared: 0, run: 2 });
+      await catalogs.inEvent(async () => {
+        const counted = countStatements(catalogs.database, () => {
+          expect(catalog.refresh()).toBe(false);
+          expect(conversation.signature()).toBe(loaded);
+          expect(catalog.refresh()).toBe(false);
+        });
+        // The first refresh reads the start state and set-up, then the rule configuration; the others take that answer.
+        expect(counted).toEqual({ prepared: 0, run: 2 });
 
-      // A setting another process makes reaches the next event, one that opens while this one is still open included.
-      const other = openRerailDatabase(databasePath);
-      try {
-        setRuleSetting(other, { owner: { kind: "repository", repositoryKey: key }, folder: "docs", targetKind: "rule", targetId: "test:any", on: false, mode: null });
-      } finally {
-        other.$client.close();
-      }
-      const closeNext = catalogs.openEvent();
-      expect(conversation.signature()).not.toBe(loaded);
-      catalog.refresh();
-      expect(catalog.status.sourceSignature).toBe(conversation.signature());
-      closeNext();
-      closeEvent();
+        // A setting another process makes reaches the next event, one that opens while this one is still open included.
+        turnRuleOff(databasePath, key, "docs");
+        await catalogs.inEvent(async () => {
+          expect(conversation.signature()).not.toBe(loaded);
+          catalog.refresh();
+          expect(catalog.status.sourceSignature).toBe(conversation.signature());
+        });
+      });
     } finally {
       catalogs.close();
     }
   });
 
-  it("reads a checkout recorded during an event as recorded once a refresh reads its record", () => {
+  it("reads a checkout's rules at a refresh in no open event, though another event that read them before a change is open", async () => {
+    const { root, databasePath } = checkout();
+    const key = setUpTestRepository(root, {}, databasePath);
+    const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: loadRuleCatalog() });
+    try {
+      const conversation = catalogs.conversationRules(root, "");
+      const loaded = conversation.signature();
+      // Work an event sets off and does not wait for, as a boundary times the walk of the other worktrees. Once released,
+      // it reads the rules, another setting is made, and it reads them again.
+      const release = Promise.withResolvers<void>();
+      const leftRunning = await catalogs.inEvent(async () => {
+        expect(conversation.signature()).toBe(loaded);
+        return {
+          signatures: release.promise.then(() => {
+            const before = conversation.signature();
+            turnRuleOff(databasePath, key, "api");
+            return [before, conversation.signature()] as const;
+          }),
+        };
+      });
+      // Another session's event reads the rules, then stays open, as a result event waiting for its edit checks does.
+      const hold = Promise.withResolvers<void>();
+      const held = catalogs.inEvent(async () => {
+        expect(conversation.signature()).toBe(loaded);
+        await hold.promise;
+      });
+      turnRuleOff(databasePath, key, "docs");
+
+      // Outside any event, a refresh reads the setting.
+      const changed = conversation.signature();
+      expect(changed).not.toBe(loaded);
+      // So does each refresh in the work the first event left running, once that event is over: a closed event keeps nothing.
+      release.resolve();
+      const [first, second] = await leftRunning.signatures;
+      expect(first).toBe(changed);
+      expect(second).not.toBe(changed);
+      hold.resolve();
+      await held;
+    } finally {
+      catalogs.close();
+    }
+  });
+
+  it("reads a checkout recorded during an event as recorded once a refresh reads its record", async () => {
     const { root, databasePath } = checkout();
     const catalogs = new CheckoutCatalogs(databasePath, { ruleCatalog: loadRuleCatalog() });
     try {
-      const closeEvent = catalogs.openEvent();
-      const conversation = catalogs.conversationRules(root, "");
-      expect(conversation.signature()).toBe("unrecorded");
-      // The runtime records the folder a session starts in, then refreshes it, in the session's start event.
-      setUpTestRepository(root, {}, databasePath);
-      expect(catalogs.refresh(root)).toBe("ok");
-      expect(conversation.signature()).toMatch(/^ok\0sha256:/u);
-      closeEvent();
+      await catalogs.inEvent(async () => {
+        const conversation = catalogs.conversationRules(root, "");
+        expect(conversation.signature()).toBe("unrecorded");
+        // The runtime records the folder a session starts in, then refreshes it, in the session's start event.
+        setUpTestRepository(root, {}, databasePath);
+        expect(catalogs.refresh(root)).toBe("ok");
+        expect(conversation.signature()).toMatch(/^ok\0sha256:/u);
+      });
     } finally {
       catalogs.close();
     }
   });
 });
+
+/** Turns a rule off in the repository's `folder` from another connection, as `rerail rules` does from another process. */
+function turnRuleOff(databasePath: string, repositoryKey: string, folder: string): void {
+  const other = openRerailDatabase(databasePath);
+  try {
+    setRuleSetting(other, { owner: { kind: "repository", repositoryKey }, folder, targetKind: "rule", targetId: "test:any", on: false, mode: null });
+  } finally {
+    other.$client.close();
+  }
+}
 
 /** The statements `work` prepares and runs on `database`'s connection. */
 function countStatements(database: RerailDatabase, work: () => void): { prepared: number; run: number } {

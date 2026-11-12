@@ -193,16 +193,12 @@ describe("CheckoutCodeRuleRouter in a repository with many worktrees", () => {
     const conversation = catalogs.conversationRules(main, "");
     const toolCall = async (revision: number, inEvent: boolean) => {
       const reads = ruleCatalogReads.count;
-      const closeEvent = inEvent ? catalogs.openEvent() : () => undefined;
-      try {
-        const { statements } = await cost(catalogs.database, async () => {
-          conversation.signature();
-          await editToolCall(auditor, revision);
-        });
-        return { statements, ruleCatalogReads: ruleCatalogReads.count - reads };
-      } finally {
-        closeEvent();
-      }
+      const work = () => cost(catalogs.database, async () => {
+        conversation.signature();
+        await editToolCall(auditor, revision);
+      });
+      const { statements } = await (inEvent ? catalogs.inEvent(work) : work());
+      return { statements, ruleCatalogReads: ruleCatalogReads.count - reads };
     };
     await toolCall(1, false);
     // With no event open, each of the six refreshes reads the checkout's record, its rule configuration and the installed
