@@ -705,11 +705,12 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const language = languageFor(path);
     const workspace = (this.#replacement ?? this.#workspace)?.workspace;
     if (language === undefined) return (workspace?.acceptsTextPath(path) ?? false) && !sensitiveByName(path);
-    const graphInput = loadNativeBinding().readsPackageManifests(language) || inAppFolder(path);
+    // The engine is asked whether the language reads package manifests only where a code rule reads server graphs,
+    // since a walk asks readsPath of every file it keeps.
     return (
       ((manifestDirectory(path) !== undefined || ignoreFileDirectory(path) !== undefined || isModuleConfig(path)) &&
         (workspace?.readsPackageManifests() ?? true)) ||
-      (workspace?.readsServerGraph() === true && graphInput) ||
+      (workspace?.readsServerGraph() === true && (loadNativeBinding().readsPackageManifests(language) || inAppFolder(path))) ||
       (workspace?.acceptsPath(path) ?? true)
     );
   }

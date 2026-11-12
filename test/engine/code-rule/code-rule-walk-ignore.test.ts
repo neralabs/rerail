@@ -1,12 +1,15 @@
 import { execFileSync } from "node:child_process";
 import type * as FileSystem from "node:fs";
-import { appendFile, lstat, mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { appendFile, lstat, mkdir, mkdtemp, realpath, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-/** What the walks under test ask of Git's ignore rules, and how often they look for the engine's file. */
-const asked = vi.hoisted(() => ({ paths: 0, folders: 0, engineLookups: 0 }));
+/**
+ * What the walks under test ask of Git's ignore rules, how often they look for the engine's file, and how often they
+ * ask the engine whether a language reads package manifests.
+ */
+const asked = vi.hoisted(() => ({ paths: 0, folders: 0, engineLookups: 0, manifests: 0 }));
 /** Whether the engine's Git ignore matchers are those of an engine built before `ignoredEntries` and `reread`. */
 const engine = vi.hoisted(() => ({ older: false }));
 vi.mock("node:fs", async importOriginal => {
@@ -47,6 +50,12 @@ vi.mock("../../../src/engine/native/native.js", async importOriginal => {
           if (matcher === null) return null;
           const answers = counted(matcher);
           return engine.older ? { ignored: answers.ignored, ignoredBy: answers.ignoredBy } : answers;
+        },
+      });
+      Object.defineProperty(counting, "readsPackageManifests", {
+        value: (label: string) => {
+          asked.manifests += 1;
+          return binding.readsPackageManifests(label);
         },
       });
       return counting;
@@ -164,19 +173,25 @@ async function touchEveryPythonFile(bridge: CodeRuleBridge, root: string, paths:
 }
 
 describe("a walk of a session that follows .gitignore", () => {
-  it("asks Git's ignore rules once per folder, never per file, and finds the engine's file once", async () => {
+  it("asks Git's ignore rules once per folder, never per file, and finds the engine's file once, asking it no file's language", async () => {
     const files: Record<string, string> = { ".gitignore": "*.log\nout/\n" };
     for (let top = 0; top < 2; top += 1)
       for (let folder = 0; folder < 5; folder += 1)
         for (let name = 0; name < 10; name += 1) files[`src/a${top}/b${folder}/f${name}.py`] = "x = 1\n";
     const { root, databasePath } = await checkout(files, { "src/a0/b0/x.log": "log\n", "out/x.py": "x = 1\n" });
     const { bridge } = await session(root, databasePath);
-    Object.assign(asked, { paths: 0, folders: 0, engineLookups: 0 });
+    // Every file's stamp moves while its text stays, so the walk looks at each file again and audits none of them.
+    const pythonFiles = Object.keys(files).filter(path => path.endsWith(".py"));
+    const now = new Date();
+    for (const path of pythonFiles) await utimes(join(root, path), now, now);
+    await awaitClockAfter(root, pythonFiles);
+    Object.assign(asked, { paths: 0, folders: 0, engineLookups: 0, manifests: 0 });
 
     await bridge.checkpoint("turn");
 
-    // The folders the walk enters, Git ignoring out/: the checkout, src, src/a0, src/a1 and the ten src/aN/bM.
-    expect(asked).toEqual({ paths: 0, folders: 14, engineLookups: 0 });
+    // The folders the walk enters, Git ignoring out/: the checkout, src, src/a0, src/a1 and the ten src/aN/bM. No rule
+    // reads server graphs, so whether Python reads package manifests is never asked.
+    expect(asked).toEqual({ paths: 0, folders: 14, engineLookups: 0, manifests: 0 });
   });
 
   it("observes the files Git keeps, as Git's rules stand at each walk: nested, negated, excluded and tracked ones", async () => {
