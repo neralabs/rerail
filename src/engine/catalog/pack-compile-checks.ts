@@ -7,11 +7,11 @@
  * capabilities rules compile against. Any change to either asks the engine again.
  */
 import { createHash } from "node:crypto";
-import { readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { z } from "zod";
 import { bundledCodeRuleDslDirectory } from "../code-rule/code-rule-compile.js";
-import { renameWithRetrySync } from "../file-replace.js";
+import { replaceFileSync } from "../file-replace.js";
 import { resolveNativeBindingPath } from "../native/native.js";
 
 /** In the Rerail home: the verdicts of the last catalog read, per engine build. */
@@ -58,13 +58,10 @@ function readKept(path: string): KeptChecks {
 }
 
 function writeKept(path: string, checks: KeptChecks): void {
-  const staged = `${path}.${process.pid}.tmp`;
   try {
-    writeFileSync(staged, `${JSON.stringify(checks, null, 2)}\n`, { mode: 0o600 });
-    renameWithRetrySync(staged, path);
+    replaceFileSync(path, `${JSON.stringify(checks, null, 2)}\n`, { mode: 0o600 });
   } catch {
-    // A verdict not kept costs the next process a compile, never a wrong answer.
-    rmSync(staged, { force: true });
+    // A verdict not kept costs the next process a compile, never a wrong answer; replaceFileSync removed its new file.
   }
 }
 

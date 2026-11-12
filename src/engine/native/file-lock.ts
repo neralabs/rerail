@@ -22,7 +22,7 @@ import { readFileSync, rmdirSync, rmSync, unlinkSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
-import { heldOnWindows, removeWithRetry, renameWithRetry } from "../file-replace.js";
+import { heldOnWindows, removeWithRetry, renameWithRetry, replaceFile } from "../file-replace.js";
 import { keepFolderPrivate, type PrivateMachine } from "../storage/private-files.js";
 import { loadNativeBinding, type NativeBinding } from "./native.js";
 
@@ -187,12 +187,10 @@ async function takeOsLock(engine: LockEngine, locks: string, request: LockReques
  * holds the lock all the same.
  */
 async function writeRecord(record: string): Promise<void> {
-  const staged = `${record}.${process.pid}.${randomUUID()}.tmp`;
   try {
-    await writeFile(staged, holderText(), { mode: 0o600 });
-    await renameWithRetry(staged, record);
+    await replaceFile(record, holderText(), { mode: 0o600 });
   } catch {
-    await rm(staged, { force: true }).catch(() => undefined);
+    // replaceFile removed its new file; the lock is held without a record.
   }
 }
 
