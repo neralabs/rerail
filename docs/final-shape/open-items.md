@@ -3783,3 +3783,61 @@ relations, not the observer: the module digests match.
 It passes with `RERAIL_TAPE_CACHE` pointing at an empty store. Next step: find
 whether the first or the second run is wrong (compare both with a run on an
 empty store), then fix the rule or the maintenance that loses the edge.
+
+## O-replan-churn. Every edit replans about 3,350 rules whose kept order "grew over 4x"
+
+Measured on the P3 bench (54 files of `dl-sub40`, `calls_p3`, strict) on 2026-11-12,
+over two edits, each run in a new process:
+
+```text
+first edit:  planned (first sight) x1190; replanned, work per node grew over 4x, by over 10000 rows x3330
+second edit: planned (first sight) x186;  replanned, work per node grew over 4x, by over 10000 rows x3350
+```
+
+The plans are kept across processes (0116 step 2), but almost the same 3,350 are
+searched again on every edit. That is 0.87 s of join-order search and 0.77 s of
+strata planning in the second edit (profiled). A kept order priced at one scale
+and replanned at another, run after run, is churn, not a size that moved. Next
+step: print one such rule's kept and new work per node (`RERAIL_PLAN_CACHE_WHY`),
+and find whether the replan's result is kept under the key the next run reads.
+
+## O-cutoff-phases. The whole-run cutoff never applies to a phased program
+
+`RERAIL_REUSE_TRACE` on an unchanged P3 run:
+
+```text
+changes: not comparable: declared_ret false, phases ["(\"sources\", …)"]
+whole-run cutoff not applied: a consulted file or read changed
+whole-run cutoff not applied: not recorded: 54 consulted, other phases ["struct", "types"]
+```
+
+`corpus::changes` refuses any program that reads an earlier phase, and the
+outermost run is not recorded because it read other phases. So an unchanged run
+of `calls_p3` costs 5.5 s of CPU, where a single-phase program costs 0.71 s
+(b8819272f). The phases are derived from the same consulted documents and
+requests, so a record over the union of every phase's consulted things would be
+exact. Next step: record the outermost run with its phases' consulted things,
+and check each phase's requests in `changes` as for a phase-free program.
+
+## O-kept-inputs-stale. A run in a new process keeps an edited file's old rows (kept inputs, 0117)
+
+`a_session_derives_the_reach_index_again_when_cycles_and_connections_change` fails after the hub merge
+(d0f1297e5), on every run, with or without decision 0120's kept statistics, and on an empty store
+(`TEST_TAPE_CACHE`):
+
+```text
+edit: c.py "from a import z\nfrom d import v\n" -> "from d import v\n"  (break the first cycle)
+session run:  CYC, INCYC, SEESE at c.py:1                    (right: c.py has one line)
+full run:     CYC, INCYC, SEESE at c.py:1 and at c.py:2      (c.py's old line 2)
+```
+
+The full run is the one without a session (`session::full`), which reads the kept part from the
+store. With `RERAIL_KEPT_INPUTS=off` the test passes, so the stale rows come from 0117's kept-inputs
+route. The whole-run cutoff is not involved: the full runs don't ask for it. `RERAIL_CROSS_VERIFY` finds
+"0 relations differ" in the inputs, so the stale rows come in after them, from rows kept by owner
+or from the kept part's derived frames. The statistics keeper does count c.py as changed, under both
+memo keys. The test passed once right after the merge, under heavy load, so the route may depend on timing
+(write-behind, 0114). So does `the_reach_index_is_derived_again_when_cycles_and_connections_change_in_a_new_process`, on the same edit, against
+a run with an empty store; it too passes with `RERAIL_KEPT_INPUTS=off`. Both tests are ignored with this item's name. Next step: dump the full run's
+`impmod` (or the reach index's edge relation) rows for c.py with and without kept inputs, and find
+the owner range that was not marked dead.
