@@ -580,6 +580,10 @@ describe("source-scoped steers", () => {
       })).toEqual([]);
       attachments.workspaces[0]!.release();
       await runtime.codeRulesOpened(session.sessionId);
+      // A turn end (OMP ends one at every model call) waits for the evaluator's first walk. A walk that sees the edit
+      // while the call's window is open checks it as the session's own, and its steer rides the next answer, which
+      // would be the result's when the walk is that quick.
+      expect(await runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId: session.sessionId, text: "" })).toEqual([]);
       await writeFile(join(root, "edited.py"), "NEEDLE\n");
       expect(await runtime.ingest({
         kind: "result", eventId: "result", sessionId: session.sessionId,
@@ -803,6 +807,8 @@ describe("source-scoped steers", () => {
         expect(await test.call("write")).toEqual([]);
         test.attachments.workspaces[0]!.release();
         await test.runtime.codeRulesOpened(test.session.sessionId);
+        // The first walk is over before the edit: a turn end waits for it (`starts a session before its evaluator opens`).
+        expect(await test.runtime.ingest({ kind: "turn-end", eventId: "turn", sessionId: test.session.sessionId, text: "" })).toEqual([]);
         await writeFile(join(test.root, "edited.py"), "NEEDLE\n");
         expect(await test.result("write")).toEqual([]);
       } finally { await test.close(); }
