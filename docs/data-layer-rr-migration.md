@@ -3968,3 +3968,24 @@ All acceptance commands remain bounded at 110 seconds. No repository-wide cold e
 The supplemental launcher initially omitted its required original baseline argument. The corrected invocation passed all 32 supplemental shards.
 
 The global migration remains active. The remaining eighty-one rules still need full admission, including the absent `serverplan_quality` translation.
+
+### 2026-11-11 — Boundary components start from source witnesses
+
+The next rule is `async_sync_boundary`.
+Both APIs pass all five unchanged original tests, including all three finding-positive observations.
+The lossless source recorder is `scripts/dsl/data_layer_rr/source.py`; the older recorder lacks complete DTOs required by native replay.
+
+A new component corpus records 173 complete source results.
+Registered extraction includes positives for sync wrappers, async thread bridges, executor escapes, nested functions, lambdas, classes, and module calls.
+The corpus also covers metadata, permissive fact conversion, projection, reporting, call names, collector state, and category properties.
+Positive extractor outputs are checked before retaining the source recording.
+
+The current native candidate passes nine component cases and fails 164.
+The source-execution guard rejects the missing metadata, collector registry, fact converters, reporter, and collector state adapters.
+These failures identify missing ports. They do not prove a missing engine feature.
+No source callback was accepted as a native implementation, and no Linear ticket was created.
+
+The red receipt is `rr-boundary-components-source-red-finalfcce.json.gz`.
+It retains the source recording, complete failed native results, unchanged original replays, and consumed harness and policy snapshots.
+The rule remains a draft. Full native component implementation, production, CLI, history, retained edits, and valid controls remain required.
+The migration count remains nineteen admissions, eighty drafts, and one absent translation.
