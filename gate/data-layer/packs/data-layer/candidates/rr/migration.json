@@ -4244,30 +4244,46 @@
       "batch": 2,
       "legacyPath": "gate/data-layer/packs/data-layer/candidates/rules/data-layer-async-patterns.json",
       "legacySha256": "1c3b5cae27b159d4c71665594c0978c02333725e41cba8e006a734859438bb5d",
-      "status": "draft",
+      "status": "full-contract-passed",
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/async-patterns.rr",
       "ruleSha256": "fad390ebbc5b17d9d33d87c621168f180e7007215102e8d3043677c8624add82",
       "migrationProgress": {
-        "status": "native-files-and-cli-progress",
-        "admitted": false,
-        "verifiedNativeExecutions": 774,
+        "status": "full-contract-passed",
+        "admitted": true,
+        "verifiedNativeExecutions": 2726,
         "checkpoint": {
-          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-async-pattern-frontends-finalfcce.json.gz",
-          "sha256": "ebfbc14440a98011d46634fb7ae4983e73ee70b9b52595cff70c2eb608b3f101"
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-async-pattern-complete-finalfcce.json.gz",
+          "sha256": "90db8ff2d7d0fbd371e9076b84cb18ba6be3c4e222b9bce54211fdec3ab5fdbd"
         },
         "summary": {
-          "admitted": false,
+          "check": "async_patterns",
+          "originalCasesPerAPI": 11,
+          "originalPositiveObservationsPerAPI": 8,
+          "nativeExecutions": 2726,
+          "admitted": true,
           "fullMigrationAcceptance": false,
-          "casesPerAPI": {
-            "files": 28,
-            "cli": 40
+          "recordedCasesPerAPI": 19,
+          "sourceFormat": "rerail.async_patterns-production/v1",
+          "supplementalCasesSnapshot": {
+            "api": 158,
+            "report": 136
           },
-          "nativeExecutions": 774
+          "fullRuleMigrationAcceptance": true,
+          "casesPerAPI": {
+            "helpers": 137,
+            "components": 162,
+            "files": 41,
+            "cli": 40,
+            "legacy": 38,
+            "io": 14,
+            "production": 19
+          },
+          "persistentStepsPerAPI": 20,
+          "controls": 52,
+          "nativeRuleExecutions": 2722,
+          "nativeUtilityExecutions": 4
         },
-        "remaining": [
-          "Recheck all rule families on one final cohort.",
-          "Historical inputs, retained updates, behavior-removal controls and strict admission remain required."
-        ]
+        "remaining": []
       },
       "migrationProgressHistory": [
         {
@@ -4321,8 +4337,91 @@
             "File/directory helpers and CLI/ratchet integration require native acceptance.",
             "Historical inputs, retained updates, behavior-removal controls and strict full admission remain required."
           ]
+        },
+        {
+          "status": "native-files-and-cli-progress",
+          "admitted": false,
+          "verifiedNativeExecutions": 774,
+          "checkpoint": {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-async-pattern-frontends-finalfcce.json.gz",
+            "sha256": "ebfbc14440a98011d46634fb7ae4983e73ee70b9b52595cff70c2eb608b3f101"
+          },
+          "summary": {
+            "admitted": false,
+            "fullMigrationAcceptance": false,
+            "casesPerAPI": {
+              "files": 28,
+              "cli": 40
+            },
+            "nativeExecutions": 774
+          },
+          "remaining": [
+            "Recheck all rule families on one final cohort.",
+            "Historical inputs, retained updates, behavior-removal controls and strict admission remain required."
+          ]
         }
-      ]
+      ],
+      "evidence": {
+        "assertions": 11,
+        "positives": 8,
+        "failures": 0,
+        "skipped": 0,
+        "semanticFallbacks": 0,
+        "ruleSha256": "fad390ebbc5b17d9d33d87c621168f180e7007215102e8d3043677c8624add82",
+        "engineCommit": "4e07746800e7fb958a57c5208c1ea956bc8f7412",
+        "engineSha256": "f4db14313662e14ca1e1924296c91acb48107035461e85db4a2977d61b6ce6e2",
+        "corpusSha256": "27356be1985b59cdeff5714807da7c0b8da69fa10b0c55e3a8ee0250519f9013",
+        "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+        "originalInventory": {
+          "path": "gate/data-layer/fixtures/host/data-layer-port/rr-original-test-inventory-v2.json",
+          "sha256": "a3636d7f8dbb210cfec64aa05b20ff37a97899365b68b3ba2a4ab855ccdda0db"
+        },
+        "reports": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-async-pattern-complete-native-snapshot.json",
+            "sha256": "92889c5dff6839ea15ada8b7d8195f2f780aa36d4c47632651914a222f23b986"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-async-pattern-complete-native-workspace.json",
+            "sha256": "eed909b1e437d6a9b4978ebd0aba6d69b24a8a2241c9a2eba84e2836fbf7f879"
+          }
+        ],
+        "acceptanceCheckpoints": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-async-pattern-complete-finalfcce.json.gz",
+            "sha256": "90db8ff2d7d0fbd371e9076b84cb18ba6be3c4e222b9bce54211fdec3ab5fdbd"
+          }
+        ],
+        "supplemental": {
+          "check": "async_patterns",
+          "originalCasesPerAPI": 11,
+          "originalPositiveObservationsPerAPI": 8,
+          "nativeExecutions": 2726,
+          "admitted": true,
+          "fullMigrationAcceptance": false,
+          "recordedCasesPerAPI": 19,
+          "sourceFormat": "rerail.async_patterns-production/v1",
+          "supplementalCasesSnapshot": {
+            "api": 158,
+            "report": 136
+          },
+          "fullRuleMigrationAcceptance": true,
+          "casesPerAPI": {
+            "helpers": 137,
+            "components": 162,
+            "files": 41,
+            "cli": 40,
+            "legacy": 38,
+            "io": 14,
+            "production": 19
+          },
+          "persistentStepsPerAPI": 20,
+          "controls": 52,
+          "nativeRuleExecutions": 2722,
+          "nativeUtilityExecutions": 4
+        },
+        "scope": "All eleven unchanged original assertions, twelve observations and eight finding-positive observations. Native configuration, collectors, helpers, raw facts, file APIs, CLI, production, earlier inputs, retained edits and valid removal controls pass through both APIs. Supplemental APIs and reporters also pass their full recorded corpora."
+      }
     },
     {
       "check": "async_sync_boundary",

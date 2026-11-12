@@ -3936,3 +3936,35 @@ These controls include actual reporter output, excluded reads, and broken-link c
 
 The code is frozen for the complete replay. Final admission, the strict verifier tests, and the complete tooling suite remain required.
 The manifest still records eighteen admissions. No engine source changed, and compilation time remains zero.
+
+### 2026-11-11 — Async patterns fully admitted
+
+Async patterns now passes full rule admission. The manifest records nineteen admissions, eighty drafts, and one absent translation.
+The complete receipt is `rr-async-pattern-complete-finalfcce.json.gz`.
+It retains the exact source recordings, consumed programs, harness bytes, engine identity, native outputs, and control mutations.
+
+Both APIs pass the eleven unchanged original tests, all twelve detector observations, and all eight finding-positive observations.
+They also pass these complete source-recorded contracts:
+
+| Group | Cases per API |
+| --- | ---: |
+| Collector helpers | 137 |
+| Registered collectors, raw facts, projections, and metadata | 162 |
+| Explicit files, directories, and API abstractions | 41 |
+| Read failures, exclusions, warnings, and broken links | 14 |
+| CLI output, status, parser behavior, and ratchet writes | 40 |
+| Complete production discovery, facts, and findings | 19 |
+| All earlier batch-two inputs | 38 |
+
+The snapshot API also passes all 158 supplemental API cases and all 136 supplemental reporter cases.
+Three retained-update sequences pass twenty steps per API. All 52 valid removal controls change their complete source-recorded witness outputs.
+The receipt retains 2,722 native rule executions and four native signing utility executions.
+No source detector, collector, formatter, ratchet, or discovery callback supplies native rule decisions.
+The native engine retains its existing Final `fcce32b26` cohort and `f4db14313662e14c` CLI. Compilation time is zero.
+
+Twenty-five admission tests reject missing positives, omitted cases, changed complete values, suppressed read errors, invalid controls, and mixed programs or harnesses.
+All 622 Python tooling tests pass. The manifest audit and original-assertion evidence checks pass for all nineteen admitted rules.
+All acceptance commands remain bounded at 110 seconds. No repository-wide cold execution occurred.
+The supplemental launcher initially omitted its required original baseline argument. The corrected invocation passed all 32 supplemental shards.
+
+The global migration remains active. The remaining eighty-one rules still need full admission, including the absent `serverplan_quality` translation.
