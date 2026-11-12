@@ -300,7 +300,11 @@ connection. Members that wait on their device wave share one wave.
 
 **The host stream** (`accel::stream`) claims largest first and scores each job on the executor's scoreboard. It
 starts workers only while the queued estimate per worker is above the measured floor and the cores leave a
-thread. The waiter runs its own job if no one claimed it. A job never runs inside another on one thread.
+thread, at most one per queued job, and never again for a worker that ended while it was starting them. (It once
+did: a worker that found nothing to claim ended at once, and the submit started another, until every thread the
+cores leave happened to serve at once. On the data-layer replay the issuing thread spent most of its time there,
+and the pool's threads spun on the workers it started.) The
+waiter runs its own job if no one claimed it. A job never runs inside another on one thread.
 
 **Switches.** `RERAIL_STRANDS=off` gives the serial loop. `RERAIL_STRATA_PARALLEL=off` runs components at
 their retire. `RERAIL_STRATA_MERGE=off` gives one stratum per component.
