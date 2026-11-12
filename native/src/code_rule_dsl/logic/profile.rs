@@ -790,6 +790,13 @@ pub fn work(unit: Unit, n: u64) {
     *state().work.entry((path, unit)).or_default() += n;
 }
 
+/// A native plan's work from its rows in and out per step: the bindings each step was entered with, and the rows
+/// its last step made, as the planner prices a plan (`est work`). Summing the bindings in alone charged a scan that
+/// made 243,092 rows as 1 (`kind__sup0`, O125).
+pub fn plan_work(steps: &[(u64, u64)]) -> u64 {
+    steps.iter().map(|(a, _)| a).sum::<u64>() + steps.last().map_or(0, |s| s.1)
+}
+
 /// Adds a native plan's rows in and out per step, and its probes' CPU seconds, to the current span.
 pub fn native(plan: String, steps: &[(u64, u64)], cpu_s: f64) {
     let path = current();

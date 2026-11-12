@@ -119,6 +119,8 @@ impl Interner {
 
 /// The process's symbols of each database, kept from run to run with their arena: a run need not read a large
 /// store's atoms again. They hold no file open: the store's last handle closes them (`ContentStore`'s drop).
+/// `RERAIL_LEVELS_ON_CYCLES`: a leveled component keeps levels only on its relations on a cycle (`open`).
+static LEVELS_ON_CYCLES: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_LEVELS_ON_CYCLES").is_some());
 static SYMS: LazyLock<Mutex<HashMap<String, Arc<RwLock<Interner>>>>> = LazyLock::new(Default::default);
 /// The symbols of `conn`'s database: the process's arena of it.
 fn symbols(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
@@ -1133,6 +1135,13 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
         for r in 0..n {
             if keep[r] || (rels[r].n > 0 && rels[r].level.len() == rels[r].n) { keep[r] = true; continue; }
             if !leveled { continue; }
+            // In a component that keeps levels, every relation keeps them: a session maintains a recursive stratum by
+            // levels only when every relation of it has them (`maintain`), and a relation of the stratum that its
+            // rules here leave off every cycle (`garg`, `gcall` once `gpar`'s rules joined empty relations) held
+            // none, so the whole stratum (174 relations, O125 `acls`) was overdeleted and derived again instead. A
+            // row's wave orders its supports whether or not a cycle reads it. `RERAIL_LEVELS_ON_CYCLES` keeps them
+            // only on cycles, as before.
+            if !*LEVELS_ON_CYCLES { keep[r] = true; continue; }
             // Whether `r` reaches itself.
             let mut seen = vec![false; n];
             let mut stack = next[r].clone();

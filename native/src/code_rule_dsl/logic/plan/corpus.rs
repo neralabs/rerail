@@ -4262,6 +4262,8 @@ fn run_observed(
             for (d, path, source_id, _) in &chunk_docs {
                 // Counted in before it is remembered: the content it replaces is the memo's still.
                 if let (Some(k), Some(entry), Some(memo)) = (keeper.borrow_mut().as_mut(), entries.get(d), memo) {
+                    let rows: usize = entry.rows.values().map(|(_, v)| v.len()).sum();
+                    let _keep = crate::code_rule_dsl::logic::profile::span(|| format!("keep a file's entry ({rows} values)"));
                     own_seen.add(&Own::taken(&entry.rows));
                     k.file(path, *source_id, *d, entry, &|c, key| counted_entry(path, c, key));
                 }
@@ -4271,6 +4273,7 @@ fn run_observed(
             }
             if let Some(memo) = memo {
                 let n = publish.len();
+                let _publish = crate::code_rule_dsl::logic::profile::span(|| format!("publish {n} documents' entries"));
                 memo.remember_all(&memo_program, publish).map_err(|e| Error::Plan(format!("memo publication of {n} documents: {e}")))?;
             }
         } else if memoised {
@@ -5950,6 +5953,10 @@ fn run_observed(
                             // finds what was measured of it by the same relation, or binds it lazily, and it is
                             // counted once it changes (O125 step 1: 238 counts instead of 521).
                             None if std::ptr::eq(Arc::as_ptr(old), Arc::as_ptr(new)) => None,
+                            // Counted here once, the first run it is maintained, and patched by delta from then on. Left
+                            // to next run's lazy statistics instead, a relation is measured again at every step it is
+                            // planned with (a measure is not kept by delta): O125 steps 06-08 took 2.5, 2.5 and 3.0 s
+                            // so, against 5.6, 0.7 and 0.2 s counted here.
                             None if new.delta_since(old).is_some() => new.live_rows().map(|live| {
                                 let _c = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}"));
                                 let names: Vec<String> = (0..*width).map(|c| super::sql_col(&name, c)).collect();
