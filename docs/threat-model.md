@@ -548,7 +548,9 @@ audit errors, and Rerail's `daemon.log` lines. Rule matching and steers use the 
 - **Secret-like files.** A tool result for a call naming a secret-like path is stored without its output
   (`callNamesSecretPath` in `persistEvent`, `src/runtime/runtime.ts`). The judgment goes to the session ledger
   (`secret-call`, `secret-result`), so a result arriving after a daemon restart or host reconnect is withheld too.
-  Preimages of a secret-like file, or one whose text holds a secret, keep only a hash and size.
+  Preimages of a secret-like file, or one whose text holds a secret, keep only a hash and size. A finding in a
+  secret-like file that a closed session still owes its agent is kept in the ledger without its message or fix, as
+  its steer withholds them.
 - **Erasure.** Database writers use `secure_delete`. `rerail reset` checkpoints the WAL, runs `VACUUM`, and checkpoints
   again, so deleted history cannot be read back from the file.
 - **History stored by older versions.** `rerail scrub` redacts the database, its pre-update copy, every recorded

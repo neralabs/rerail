@@ -1,0 +1,1 @@
+A steer Rerail had not yet delivered when the daemon stopped, restarted or closed a quiet session is no longer lost: the session's next event carries it. A finding held for the experimental missed-steer digest waits for the next digest the same way.

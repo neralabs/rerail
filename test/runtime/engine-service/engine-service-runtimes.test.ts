@@ -7,6 +7,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CheckoutCatalogs, codeRuleSchema, SqliteAuditControlStore, type AdapterEvent, type AuditRecorder, type CodeRuleAuditor,
+  type RuleSteerDelivery,
 } from "../../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
 import { testEmbedder } from "../../support/hook-events.js";
@@ -709,6 +710,51 @@ describe("the engine service's idle close", () => {
     await service.closeIdleSessions();
     expect(service.openRuntimes()).toBe(0);
     expect(ended("a")).toBeNull();
+  });
+
+  /** `idleService` whose sessions' rule checks steer only when the test calls `steer`, as a scan finishing late does. */
+  async function steeringService() {
+    let delivery: RuleSteerDelivery | undefined;
+    const service = await idleService({
+      createAuditor: ({ steerDelivery }) => {
+        delivery = steerDelivery;
+        return {
+          openWorkspace: async () => undefined,
+          acceptsPath: () => true,
+          auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue" as const, violations: [], failures: [] }),
+          close: async () => undefined,
+        };
+      },
+    });
+    const steer = async (sessionId: string, content: string) => await delivery!.requestSteer(sessionId, "steer", content, {
+      revision: 0, scope: [], ruleIds: ["test:owed"], rules: [{ id: "test:owed", state: "steered" }],
+    });
+    return { ...service, steer };
+  }
+
+  it("gives the agent the steer a session quiet for a day still owed, with the session's next event", async () => {
+    const { clock, service, session, send, start, prompt, ended, steer } = await steeringService();
+    await start("a");
+    // Left at a permission prompt overnight: the session waits on a tool call, so only the day closes it.
+    await send({ kind: "call", eventId: "a:call", sessionId: "a", session: session("a"), toolCallId: "t1", toolName: "Bash", input: { command: "rm -rf build" } });
+    await steer("a", "Fix a.py.");
+    clock.now += 24 * 60 * 60_000;
+    await service.closeIdleSessions();
+    // Suspended, not ended: its memory is freed and its record stays open.
+    expect(service.openRuntimes()).toBe(0);
+    expect(ended("a")).toBeNull();
+    expect((await prompt("a", "next morning")).map(delivery => delivery.content)).toEqual(["Fix a.py."]);
+  });
+
+  it("suspends a quiet session that owes its agent only a steer at the idle limit, and its next event carries the steer", async () => {
+    const { clock, service, start, prompt, ended, steer } = await steeringService();
+    await start("a");
+    await steer("a", "Fix a.py.");
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(0);
+    expect(ended("a")).toBeNull();
+    expect((await prompt("a", "back")).map(delivery => delivery.content)).toEqual(["Fix a.py."]);
   });
 
   it("keeps a session open whose event came in while the sweep waited behind the one before it", async () => {

@@ -236,6 +236,11 @@ are not waited for further: that edit is checked by the first pass once they ope
   a rule that judges only the agent's lines judges only those.
 - A change another program made while the session was quiet, to a file the session had edited, is recorded in Log
   when the session opens again, as it is while a session is active.
+- A steer the session had not yet delivered waits in the session's records and goes out with its next event, as it
+  would have; so does one owed when the daemon stops or restarts. A finding held for the missed-steer digest waits for
+  the next digest the same way.
+- A session waiting on a tool call (a permission prompt, a long command), holding a finding for the digest, or still
+  running a check keeps its memory for up to a day.
 - A session running a scan, or with one waiting to start, keeps its memory until the scan has run.
 - Stopping the daemon ends the session, as it ends every open one.
 
