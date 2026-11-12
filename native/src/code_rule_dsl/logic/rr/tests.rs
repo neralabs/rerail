@@ -2858,6 +2858,248 @@ fn quoting_escapes_only_what_needs_it() {
     assert_eq!(super::quote("a\"b\\c\nd\te\u{1}"), "\"a\\\"b\\\\c\\nd\\te\\u{1}\"");
 }
 
+// ---------------------------------------------------------------- tests in rule files (decision 0119)
+
+/// `text` with each `.test` … `.end` block's lines blank: its program, were tests part of it, would differ.
+fn without_tests(text: &str) -> String {
+    let mut inside = false;
+    text.lines()
+        .map(|l| {
+            let t = l.trim_start();
+            let blank = inside || t.starts_with(".test ");
+            if t.starts_with(".test ") {
+                inside = true;
+            } else if t == ".end" {
+                inside = false;
+            }
+            if blank { "" } else { l }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn files_with_tests() -> Vec<PathBuf> {
+    let files: Vec<PathBuf> = rr_files().into_iter().filter(|f| super::testing::may_hold_tests(&std::fs::read_to_string(f).unwrap())).collect();
+    assert!(files.len() >= 2, "the B101 pack rule and the spike carry tests: {files:?}");
+    files
+}
+
+/// Every test a rule file carries passes (`rerail-engine test-rr` over `docs/rule-syntax/`).
+#[test]
+fn rule_files_pass_their_own_tests() {
+    let work = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-tests");
+    let mut failed = Vec::new();
+    let mut ran = 0;
+    for (k, file) in files_with_tests().iter().enumerate() {
+        for (j, test) in super::testing::tests(file).unwrap().iter().enumerate() {
+            ran += 1;
+            match super::testing::run(file, test, &work.join(format!("{k}-{j}"))) {
+                Ok(outcome) if outcome.passed() => {}
+                Ok(outcome) => failed.push(format!("{}::{}: {:?} (findings {:?})", file.display(), test.name, outcome.failures, outcome.findings)),
+                Err(e) => failed.push(format!("{}::{}: {e}", file.display(), test.name)),
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&work);
+    assert!(ran >= 6, "{ran} tests");
+    assert!(failed.is_empty(), "{failed:#?}");
+}
+
+/// A test is no part of its file's program (decision 0119): the program, and so every key made of it, is the one the
+/// file has with its tests' lines blank.
+#[test]
+fn a_rule_files_tests_are_no_part_of_its_program() {
+    for file in files_with_tests() {
+        let text = std::fs::read_to_string(&file).unwrap();
+        let with = super::parse(&text).unwrap();
+        let without = super::parse(&without_tests(&text)).unwrap();
+        assert_eq!(format!("{with:?}"), format!("{without:?}"), "{}", file.display());
+        assert!(!super::testing::tests(&file).unwrap().is_empty());
+    }
+}
+
+/// A failed `.expect` names its line and what the run had instead; `exactly` names the findings no `.expect` lists.
+#[test]
+fn failed_expectations_say_what_the_run_had() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-test-fail");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("t.rr");
+    std::fs::write(&file, r#".policy "t:fail" revision 1
+.language python
+.scope include "**/*.py"
+.violation Call(at: node) code "C1" "a call"
+Call(c) :- kind(c, "call").
+.test wrong exactly
+    .fixture "a.py" ```
+        f()
+        g()
+        ```
+    .decl called(l: number)
+    called(l) :- Call(c), line(c, l).
+    .expect C1 at "a.py":1
+    .expect called(7)
+    .expect count C1 = 3
+.end
+"#).unwrap();
+    let tests = super::testing::tests(&file).unwrap();
+    let outcome = super::testing::run(&file, &tests[0], &dir.join("work")).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(outcome.failures, [
+        "line 14: .expect called(7): called has 2 rows: (1), (2)",
+        "line 15: .expect count C1 = 3: counted 2",
+        "line 6: exactly: also reported C1 at \"a.py\":2",
+    ], "{outcome:?}");
+}
+
+/// A test's block is checked as it is parsed: closed by `.end`, not nested, and no `.end` outside one.
+#[test]
+fn test_blocks_parse_only_whole() {
+    for (text, why) in [
+        (".test a\n.expect X\n", "`.end`"),
+        (".test a\n.test b\n.end\n.end\n", "do not nest"),
+        (".fixtures s\n.test b\n.end\n.end\n", "do not nest"),
+        (".end\n", "a `.test` or `.fixtures` before its `.end`"),
+    ] {
+        let error = super::parse(text).map(|_| ()).unwrap_err().to_string();
+        assert!(error.contains(why), "{text:?}: {error}");
+    }
+    assert_eq!(super::testing::dedent("\n    a\n      b\n\n    c\n    "), "a\n  b\n\nc\n");
+    // The closing fence says the indent: lines deeper than it keep the rest.
+    assert_eq!(super::testing::dedent("\n      a\n        b\n    "), "  a\n    b\n");
+    // A closing fence after text: the indent the lines share.
+    assert_eq!(super::testing::dedent("\n    a\n      b"), "a\n  b\n");
+}
+
+/// A file of `text` in a directory of its own, its tests, and each one's outcome (or its error).
+fn run_tests_of(name: &str, text: &str) -> Vec<(String, Result<Vec<String>, String>)> {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("t.rr");
+    std::fs::write(&file, text).unwrap();
+    let out = match super::testing::tests(&file) {
+        Ok(tests) => tests
+            .iter()
+            .enumerate()
+            .map(|(k, t)| (t.name.clone(), super::testing::run(&file, t, &dir.join(format!("w{k}"))).map(|o| o.failures)))
+            .collect(),
+        Err(e) => vec![(String::new(), Err(e))],
+    };
+    let _ = std::fs::remove_dir_all(&dir);
+    out
+}
+
+/// A unit test (decision 0119): `.given r` drops r's rules, so r holds the test's facts alone, and the test reads
+/// no file. A file of rules with no `.violation` (a library's) is tested so too. `.expect only` names every row.
+#[test]
+fn a_unit_test_gives_a_relation_its_rows_and_reads_no_file() {
+    let library = r#"
+.decl seed(x: symbol)
+seed("from the rule").
+.decl edge(a: symbol, b: symbol)
+edge(x, "end") :- seed(x).
+.decl reach(a: symbol, b: symbol)
+reach(a, b) :- edge(a, b).
+reach(a, c) :- reach(a, b), edge(b, c).
+.test given_edges uses chain
+    .expect only reach("a", "b")
+    .expect only reach("b", "c")
+    .expect only reach("a", "c")
+    .expect no reach(_, "end")
+.end
+.fixtures chain
+    .given edge
+    edge("a", "b").
+    edge("b", "c").
+.end
+.test only_names_every_row
+    .given edge
+    edge("a", "b").
+    edge("b", "c").
+    .expect only reach("a", "b")
+.end
+.test the_rules_left_alone
+    .expect only reach("from the rule", "end")
+    .expect count reach = 1
+.end
+"#;
+    let got = run_tests_of("rr-unit", library);
+    assert_eq!(got, [
+        ("given_edges".to_owned(), Ok(vec![])),
+        ("only_names_every_row".to_owned(), Ok(vec!["line 24: .expect only reach: also 2: (a, c), (b, c)".to_owned()])),
+        ("the_rules_left_alone".to_owned(), Ok(vec![])),
+    ]);
+}
+
+/// What a test may not do is refused with its line: give a core relation, give one no rule declares, use a set that
+/// is not there, or have two fixtures at one path.
+#[test]
+fn a_test_that_cannot_run_is_refused_with_its_line() {
+    let head = ".decl r(x: symbol)\nr(\"a\").\n";
+    for (test, why) in [
+        (".test t\n    .given kind\n.end\n", "t.rr:4: .given kind: a core relation is the engine's"),
+        (".test t\n    .given nothing\n.end\n", "t.rr:4: .given nothing: no rule declares it"),
+        (".test t uses absent\n.end\n", "t.rr:3: no fixture set named absent"),
+        (".test t\n    .fixture \"a.py\" ```\n        x\n        ```\n    .fixture \"a.py\" ```\n        y\n        ```\n.end\n", "t.rr:3: two fixtures at \"a.py\""),
+        (".test t\n    .expect r(\"a\"\n.end\n", "t.rr:4: `.expect"),
+    ] {
+        let got = run_tests_of("rr-refused", &format!("{head}{test}"));
+        let error = match &got[0].1 { Err(e) => e.clone(), Ok(f) => format!("ran: {f:?}") };
+        assert!(error.contains(why), "{test:?}: {error}");
+    }
+}
+
+/// A test printed (`print_test`, as the converter prints a case) reads back as written: its fixture's bytes, however
+/// many backticks and blank lines they hold, and its expectations.
+#[test]
+fn a_printed_test_reads_back_as_written() {
+    // Every line indented: the closing fence keeps it.
+    let content = "  x = ```a```\n\n    y = \"````\"\n";
+    let text = format!(
+        ".decl r(x: symbol)\nr(\"a\").\n{}",
+        super::testing::print_test("printed", false, &[("src/a.py".to_owned(), content.to_owned())], &["no _ at \"src/a.py\"".to_owned(), "r(\"a\")".to_owned()])
+    );
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-printed");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("t.rr"), &text).unwrap();
+    let tests = super::testing::tests(&dir.join("t.rr")).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(tests.len(), 1, "{text}");
+    assert_eq!(tests[0].fixtures, [("src/a.py".to_owned(), content.as_bytes().to_vec())], "{text}");
+    assert_eq!(tests[0].expects.iter().map(ToString::to_string).collect::<Vec<_>>(), ["no _ at \"src/a.py\"", "r(\"a\")"]);
+}
+
+/// `flatten` keeps a file's text as written (`program_text`), so its tests and fixture sets go with it.
+#[test]
+fn a_flattened_file_keeps_its_tests() {
+    let file = rule_syntax().join("spikes/rr-tests/print-calls.rr");
+    let flat = crate::code_rule_dsl::tools::flatten(&file).unwrap();
+    let blocks = super::testing::blocks(&std::fs::read_to_string(&file).unwrap());
+    assert!(blocks.len() >= 6 && blocks.iter().any(|b| b.starts_with(".fixtures logging_app")), "{blocks:?}");
+    assert_eq!(super::testing::blocks(&flat), blocks);
+    assert_eq!(format!("{:?}", super::parse(&flat).unwrap()), format!("{:?}", super::parse(&without_tests(&flat)).unwrap()));
+}
+
+/// `convert-rr --cases` prints a draft's cases as tests: a caught case expects a finding in its file, a passed one
+/// none. They are printed for a rule that needs a hand-written port too, and read back one test a case.
+#[test]
+fn converted_cases_are_tests() {
+    let rule = repo().join("packs/rerail/rules/rerail-fixed-value-lists.json");
+    let cases = repo().join("fixtures/rerail/rerail-fixed-value-lists.cases.json");
+    let report = crate::code_rule_dsl::tools::convert_rr_with(&[(rule, Some(cases.clone()))]);
+    let tests = report[0]["tests"].as_str().unwrap_or_else(|| panic!("{report}"));
+    let n: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&cases).unwrap()).unwrap();
+    let (caught, passed) = (n["caught"].as_array().unwrap().len(), n["passed"].as_array().unwrap().len());
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-cases");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("t.rr"), tests).unwrap();
+    let read = super::testing::tests(&dir.join("t.rr")).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(read.len(), caught + passed);
+    assert_eq!(read.iter().filter(|t| t.expects[0].negated).count(), passed);
+    let first = &n["caught"][0];
+    assert_eq!(read[0].fixtures, [(first["path"].as_str().unwrap().to_owned(), first["content"].as_str().unwrap().as_bytes().to_vec())]);
+}
+
 /// A policy file's program, printed, reads back as the program itself once remembered (`remember_lowered`): what
 /// `run-rr` hands the run. Every data-layer policy, by its print.
 #[test]

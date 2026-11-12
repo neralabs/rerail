@@ -275,6 +275,15 @@ const CASES: &[(&str, &str)] = &[
     (".policy {\"a\": \"\\u{41}\"}", "never"),
     // The same bytes outside JSON: no refusal.
     ("r(x) :- x = a -b, s(\"a\\qb\", \"two\nlines\", 007) // c\n.", "06"),
+    // A rule file's tests (decision 0119): a fixture set, a test that uses it, with `exactly`, its
+    // statements a file's; `.end` past a comment; `exactly` and `uses` as names.
+    (".fixtures app\n  .fixture \"a.py\" ```\n    x = 1\n    ```\n.end\n.test t exactly uses app, b\n  #include \"c.rr\"\n  seen(1).\n  r(x) :- seen(x).\n  .expect B101 at \"a.py\":1\n.end\nr(x) :- s(x).", "22"),
+    (".test exactly\n.end\n.test uses uses a\n. // c\n end\n.fixtures f exactly(1).\n.end", "22"),
+    // Blocks do not nest; a `.end` outside a block; a block with no `.end`.
+    (".test a\n.test b\n.end\n.end", "never"),
+    (".fixtures a\n.fixtures b\n.end\n.end", "never"),
+    ("r(x).\n.end", "never"),
+    (".test a\nr(x).", "never"),
 ];
 
 /// A node by names: kind, field ("" for none), start, end, size.
@@ -336,10 +345,26 @@ fn without_tokens(nodes: Vec<Named>) -> Vec<Named> {
 }
 
 /// The engine's tree against the step's, for a document the step parses.
+/// The step that reads a rule file's tests (decision 0119).
+const TEST_BLOCKS: &str = "22";
+
+/// Whether a line of `src` starts with `.test`, `.fixtures` or `.end`, the lines of a test block.
+fn has_block_lines(src: &str) -> bool {
+    src.lines().any(|l| {
+        let l = l.trim_start();
+        [".test", ".fixtures", ".end"].iter().any(|w| l.strip_prefix(w).is_some_and(|rest| !rest.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')))
+    })
+}
+
 fn against_the_engine(step: &str, c: &Compiled, bytes: &[u8], want: &Option<Vec<IdNode>>) -> Option<String> {
     let nodes = want.as_ref()?;
     // A `.rr` file is text: the engine reads only UTF-8.
     let src = std::str::from_utf8(bytes).ok()?;
+    // A step before the test blocks reads a block's lines as settings, as the engine did then: a document with
+    // them is the engine's from that step on.
+    if step < TEST_BLOCKS && has_block_lines(src) {
+        return None;
+    }
     let (theirs, error) = engine(src);
     let ours = named(c, nodes);
     // A step before the named-only one writes every token: its named structure is the engine's.

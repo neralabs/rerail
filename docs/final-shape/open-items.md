@@ -3708,6 +3708,83 @@ compiled only there.
 
 **Closure:** the target builds, and `base_tests` runs (O-p0-stats-flake's 20 runs).
 
+## O-rr-tests-bitlex (closed 2026-11-12). The compiled `.rr` grammar does not know `.test` blocks
+
+**Closed.** Step 22 of the ladder (`22-test-blocks.bitlex`), now `rerail-rr-parser`'s grammar, reads `.test` and
+`.fixtures` blocks to the engine's tape, as rules and as one machine, and refuses what the engine refuses
+(decision 0119 §4). `rule_files_with_tests_are_the_engines` checks the two files with tests; the ladder's step 22
+passes (`RERAIL_LADDER=22`). Two fixes outside the grammar came with it:
+- The reference (`tools/bitlex/src/tree.rs`) refused a file where a mark that is not hidden came after a nested
+  level's last token, though its caller takes it. It now ends the level there, as the machine does and as its
+  own comment says.
+- The one-machine shape refused a call that returns to state 0 ("extras with the root's start state entered
+  again"). For a `whole` root, state 0 is like any other state, so the guard now holds only for a root that is
+  not whole.
+
+The tier 2 ratchets rose: per rule, 371 states and 8,860 words to 380 and 9,348; one machine, 266 states and
+2,590 arms to 271 and 2,621.
+
+**Seen (2026-11-12), decision 0119.** The engine's parser (`syntax.rs`) and the lean parser (`lean.rs`) read a
+`.test` … `.end` block into a `test_block` node. The Bitlex grammar (`rr_syntax/bitlex_ladder/21-named-only.bitlex`,
+compiled by `rerail-rr-parser`) does not: it reads each of the block's lines as a setting and does not refuse the
+file, so its tape differs from the engine's on a file with tests. The compiled parser is on no read path yet
+(`transducer/packed.rs`), and its corpus test (`corpus_tapes_are_the_engines`) is ignored and was not run.
+
+**Closure:** the grammar reads the block as the engine does, and `corpus_tapes_are_the_engines` passes on the
+files with tests (`packs/python/bandit-b101-assert-used.rr`, `spikes/rr-tests/print-calls.rr`).
+
+## O-run-rr-strict (closed 2026-11-12). `run-rr` reads atoms inside the waves under `RERAIL_SQL_STRICT`
+
+**Closed: the store, not `run-rr`.** Decision 0104 reads a store's atoms whole before the first wave when they
+are at most 64 MB of text, and has a larger store look them up by key during the run, "which the strict mode
+reports". The machine's default store (`$TMPDIR/rerail-tape-cache.sqlite`) holds 4.9 M atoms, 421 MB of text.
+On the same binary and rule, with a one-file corpus: on that store, strict stops (exit 134, at an
+`atom_segment` read inside the waves); on a new store, the run passes and reports B101. `test-rr` uses a store
+of its own (decision 0119 §7) and passes all 8 tests under strict. What remains is O-store-atoms-grow.
+
+## O-store-atoms-grow (closed 2026-11-12). The machine's default store's atoms only grow
+
+**Closed** by decision 0120: there is no machine-wide default store. A run's default store is its project's for
+this build, and other builds' stores are removed after a day. The one-file B101 run passes under
+`RERAIL_SQL_STRICT=1` on it, with a 1.4 MB store. Atoms that no kept row names are still never collected inside
+one store; a project's store for one build stays near its corpus's size.
+
+**Seen (2026-11-12).** `$TMPDIR/rerail-tape-cache.sqlite` is 4.4 GB, with 4,890,262 atoms in 343,213 segments,
+421 MB of text: about 20 times the full corpus's 21 MB (decision 0049). Every run on the machine, from every
+worktree and build, adds its strings, and nothing removes an atom. Past 64 MB a run finds atoms by key inside
+its waves (decision 0104), so `RERAIL_SQL_STRICT=1` stops any run on that store.
+
+**Closure:** a store's atoms stay near what its kept facts name (atoms no kept row names are collected), or the
+CLI's default store is per build as testing mode's is; then a strict run on the default store passes.
+
+**Seen (2026-11-12).** `rerail-engine run-rr docs/rule-syntax/packs/python/bandit-b101-assert-used.rr <a one-file
+corpus> <out>` with `RERAIL_SQL_STRICT=1` stops at `SELECT id FROM atom_key WHERE h IN rarray(?1)`. The read is
+`atoms::find`, from `intern_atoms` while a chunk builds its matchers (`facts::vtab::syntax::with_matchers`,
+`run_observed`'s `cut_chunk`). `test-rr` runs through `run-rr`, so it stops the same way. Without strict SQL, both
+run and their results are right. Decision 0119's work does not touch that path. Whether it fails on the hub was not
+checked.
+
+**Closure:** a chunk's matchers intern their atoms before the first wave, or from what the run read then, and
+`run-rr` and `test-rr` pass under `RERAIL_SQL_STRICT=1`.
+
+## O-test-rr-busy (closed 2026-11-12). Back-to-back runs in one `test-rr` process can find the store's writer busy
+
+**Closed.** The cause was the store, not the runs. `test-rr`, and the addon's `testRr`, used the machine's store
+(`$TMPDIR/rerail-tape-cache.sqlite`, 4.4 GB), which every engine run on the machine writes. Its WAL was being
+written by another process while the tests failed, and the addon's first test failed the same way. Testing mode now
+has a store of its own per build (decision 0119 §7). Then `test-rr docs/rule-syntax` passed six times in a row, and
+the addon's `testRr` three times.
+
+**Seen (2026-11-12), decision 0119.** `rerail-engine test-rr docs/rule-syntax` runs six tests, each a run, one
+after another in one process, on the CLI's default store. Once in four tries, one test failed with "a write queued
+behind the run failed: … the batch's commit: content store writer is busy". The other three tries passed all six.
+A run's writes may lag it (decision: SQLite durable, memory ahead), so the next run's write can meet the last one's.
+No other `rerail-engine` process was running. The engine's tests did not show it: each test has its own store
+(decision 0118).
+
+**Closure:** a write queued behind one run waits for or joins the next run's writer, rather than failing. Or a run
+in a process waits for the last run's queued writes before it writes. Then twenty tries of `test-rr` pass.
+
 **Status (2026-11-12):** the target builds (the engine hosts the tests that read above the crate); 20 pass,
 the two text tests fail (O-device-step-counts).
 
@@ -3944,3 +4021,14 @@ from 918.1 to 913.6 G, and the step's CPU didn't change measurably (19.7 vs 20.7
 open (7,696, 1.13 s) take back most of what the joins save. The `ifn__ins` case above, a delta plan whose member
 is empty at open, is not covered. At step 07, planning (search, plan, replan, re-price, 4.8 s) costs about as much
 as the joins it plans (4.7 s), against decision 0122.
+
+## O-rr-tests-sigill. One run of `logic::rr::` and `logic::plan::corpus::tests::` died of SIGILL
+
+**Seen (2026-11-12), after merging the hub into `More-ergonomic-rule-syntax`.** `cargo test -p rerail-engine
+--lib -- logic::rr:: logic::plan::corpus::tests::` ended with "signal: 4, SIGILL: illegal instruction" after
+92.7 s, with a peak of 4.1 GB resident (load about 33). The next two runs of the same test binary
+(`rerail_engine-5a2aa8607bf76fd1`) passed all 136 tests, in 55 s and 51 s, with peaks of 1.7 GB. The output kept
+does not say which test was running when it died.
+
+**Closure:** the test that dies is found (a run with `--test-threads 1` and its whole output kept), and the cause
+is fixed, or it does not recur in ten runs.

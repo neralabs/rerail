@@ -558,6 +558,16 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
         return Ok((program.clone(), files.clone()));
     }
     let (statements, files) = program(path)?;
+    let program = lower_files(path, statements)?;
+    cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
+    Ok((program, files))
+}
+
+/// A file's program from its modules' statements (`program`): its names checked, its own rules grounded, and lowered,
+/// as `read_file` reads it. Testing mode (`rr::testing`, decision 0119) gives the file's statements with a test's
+/// spliced in.
+pub fn lower_files(path: &Path, statements: Files) -> Result<Program, Error> {
+    let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     check_names(&statements, false)?;
     // The file's own rules grounded (`refuse_ungrounded`), its includes' `fix` relations given.
     let own_path = path.canonicalize().unwrap_or_else(|_| path.to_owned());
@@ -579,8 +589,7 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     if !library.is_empty() {
         program.settings.push((super::front::GLOBAL.to_owned(), format!("{} {}", super::front::LIBRARY, library.join(", "))));
     }
-    cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
-    Ok((program, files))
+    Ok(program)
 }
 
 /// The names a program's files may not declare or derive: `core.rr`'s, but in `core.rr` (decision 0047), and names
@@ -720,7 +729,7 @@ fn stored_statements(_path: &Path, src: String) -> Result<Vec<syntax::Statement>
     from_tape::statements(&src, &tape(&src))
 }
 
-type Files = Vec<(PathBuf, Vec<syntax::Statement>)>;
+pub type Files = Vec<(PathBuf, Vec<syntax::Statement>)>;
 
 /// `path` and what it includes, each once (`seen`), includes first, added to `out`; every library file read or
 /// probed, to `read_files`. An `included` file's `.output`s are left out, as are those of what it includes.

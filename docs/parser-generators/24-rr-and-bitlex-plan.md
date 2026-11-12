@@ -313,6 +313,7 @@ reference on the corpus.
 | rr-18 | `min (a + b) : { … }`: after an aggregate's word a `(` makes a call; at a `:` after its `)`, an aggregate is wrapped around it and the call read again into it (`root gone`), its arguments the value in parentheses; two terms, none (a mark at `()`) or a named argument refuse, as the engine | A20 |
 | rr-19 | an aggregate as another's value (`sum min x : {…} : {…}`), its word read as in any term; `min (x) : {…}` at a literal's start, the atom read again into the aggregate; `min()` and a `:`, which the engine refuses, refused anywhere by a mark the grammar takes nowhere | A20 |
 | rr-20 | a count of the code's `{` `[` less `}` `]`, at most 127: a `.policy` document as deep as serde_json refuses (128) goes to the engine, which refuses it; a run of four backticks or more still goes to the engine. The parser for other worktrees: `packed::rr_parser::tape`, the engine's tape from this step, the engine's parser for what it refuses | — |
+| rr-22 | a rule file's tests (decision 0119): a `.test` or `.fixtures` block to its `.end`, the setting opened at its `.` retagged; its statements a nested level read with a flag, so blocks do not nest; `.end`'s `.` a mark that is not hidden, so a `.end` outside a block refuses the file. The reference now ends a nested level at a mark it can not take, as the machine does, and its caller takes it (step 21, named-only tapes, is in `32-named-only-rr-tapes.md`) | — |
 
 At rr-11:
 - every corpus file is parsed by both parsers;

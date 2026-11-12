@@ -1893,6 +1893,7 @@ pub(crate) mod logic {
         }
         #[cfg(test)]
         pub mod tests;
+        pub mod testing;
         #[allow(unused_imports)]
         use rerail_rr_syntax::syntax;
         #[allow(unused_imports)]
@@ -1949,6 +1950,8 @@ pub(crate) mod sql_hazards {
 }
 #[path = "sql_executor"]
 mod sql_executor {
+    // Only in builds that have them in rerail-sessions (its own `cfg`): its tests, `test-hooks`, `headless`.
+    #[cfg(any(test, feature = "test-hooks", feature = "headless"))]
     pub mod verification {
         pub use rerail_sessions::code_rule_dsl::sql_executor::verification::*;
         #[cfg(test)]
@@ -2024,6 +2027,8 @@ mod sql_executor {
         #[allow(unused_imports)]
         use frame::Frame;
     }
+    // Only in builds that have them in rerail-sessions (its own `cfg`): its tests, `test-hooks`, `headless`.
+    #[cfg(any(test, feature = "test-hooks", feature = "headless"))]
     pub mod component_loop {
         pub use rerail_sessions::code_rule_dsl::sql_executor::component_loop::*;
         #[cfg(test)]
@@ -4441,6 +4446,16 @@ impl CodeRuleDslRuntime {
         let response =
             value::python_ast::batch_with_metrics(&documents).map_err(|error| invalid(error.0))?;
         serde_json::to_string(&response).map_err(json_error)
+    }
+
+    /// The tests the `.rr` files under `paths_json` (a JSON array of files and directories) carry, each run (decision
+    /// 0119, `rerail-engine test-rr`): `[{file, test, line, status, failures, findings}]` as JSON. `rerail rules test`
+    /// calls it for a `.rr` file.
+    #[napi(catch_unwind)]
+    pub fn test_rr(paths_json: String, filter: Option<String>) -> Result<String> {
+        let paths: Vec<std::path::PathBuf> = serde_json::from_str(&paths_json).map_err(json::json_error)?;
+        let report = logic::rr::testing::report(&paths, filter.as_deref()).map_err(json::invalid)?;
+        serde_json::to_string(&report).map_err(json::json_error)
     }
 
     #[napi(catch_unwind)]

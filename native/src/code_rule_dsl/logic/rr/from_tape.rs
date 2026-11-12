@@ -213,6 +213,16 @@ impl<'a> Tree<'a> {
                 let text = self.text(self.one(s, Field::Document)?);
                 Item::Policy(serde_json::from_str(text).map_err(|e| Error::Syntax(format!("line {}: bad .policy document: {e}", self.line(s))))?)
             }
+            k if k == Kind::TestBlock as u16 => Item::Test {
+                name: self.name(s, Field::Name)?,
+                exactly: self.get(s, Field::Modifier).is_some(),
+                uses: self.all(s, Field::Argument).map(|c| self.text(c).to_owned()).collect(),
+                items: self.all(s, Field::Body).map(|c| Ok((self.statement(c)?, self.line(c)))).collect::<Result<_, Error>>()?,
+            },
+            k if k == Kind::FixturesBlock as u16 => Item::Fixtures {
+                name: self.name(s, Field::Name)?,
+                items: self.all(s, Field::Body).map(|c| Ok((self.statement(c)?, self.line(c)))).collect::<Result<_, Error>>()?,
+            },
             k if k == Kind::Setting as u16 => {
                 let name = self.one(s, Field::Name)?;
                 let first = self.children[s as usize].iter().copied().skip_while(|&c| c != name).nth(1);

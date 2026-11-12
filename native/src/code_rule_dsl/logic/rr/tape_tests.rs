@@ -164,7 +164,7 @@ fn every_rule_file_tapes_and_its_leaves_cover_it() {
         const IMPLIED: &[&str] = &[
             "(", ")", ",", ":", ":-", "=>", ".", ";", "!", "@", "~", "-", "{", "}", "<", ">", "->", "#include", "decl", "edit",
             "functor", "type", "lattice", "pragma", "violation", "policy", "code", "tag", "in", "fix", "suppress", "over",
-            "options", "count",
+            "options", "count", "test", "fixtures", "uses", "end",
         ];
         let mut at = 0;
         while at < src.len() {
