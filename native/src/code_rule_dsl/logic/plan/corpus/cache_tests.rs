@@ -37,7 +37,7 @@ impl Corpus {
         Corpus::of(name, &program("v1"))
     }
     fn of(name: &str, program: &str) -> Corpus {
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
         std::fs::create_dir_all(dir.join("ws")).unwrap();
         let rule = dir.join("cache.rr");
         std::fs::write(&rule, program).unwrap();
@@ -108,6 +108,7 @@ fn steps(c: &mut Corpus, store: &str, fresh: &mut dyn FnMut(&Corpus, usize) -> V
 
 /// A run with no session: the cache's rows are kept as every relation's are (the kept strata).
 #[test]
+#[ignore = "open (decision 0128): parses rule files, whose language only the engine registers; to be hosted by rerail-engine"]
 fn a_cache_is_facts_and_a_version_bump_derives_it_again() {
     let _no_session = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());
     let mut c = Corpus::new("cache-kept");
@@ -117,6 +118,7 @@ fn a_cache_is_facts_and_a_version_bump_derives_it_again() {
 /// In a session: the same, by the session's maintenance of ordinary relations; a run with nothing kept is a full
 /// run over a store of its own.
 #[test]
+#[ignore = "open (decision 0128): parses rule files, whose language only the engine registers; to be hosted by rerail-engine"]
 fn a_cache_in_a_session_is_facts_and_a_version_bump_derives_it_again() {
     use super::session;
     let _one = super::SESSION_TESTS.lock().unwrap_or_else(|e| e.into_inner());

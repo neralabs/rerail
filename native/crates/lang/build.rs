@@ -2,6 +2,11 @@
 // engine's build script generates it (`native/src/build_languages.rs`, the same code).
 #[path = "../../src/build_languages.rs"]
 mod languages;
+#[path = "../../src/build_identity.rs"]
+#[allow(dead_code)]
+mod identity;
+#[path = "../../src/build_grammars.rs"]
+mod grammars;
 
 use std::path::PathBuf;
 
@@ -11,4 +16,6 @@ fn main() {
     let omitted = languages::omitted_languages(&native.parent().expect("repository root").join("languages"));
     let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("out dir"));
     languages::generate_registry(&native, &omitted, &out);
+    // The vendored grammars' C, linked into every crate that reaches `GrammarDialect::ts_language` (this crate's).
+    grammars::build_all(&native);
 }

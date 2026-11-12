@@ -1,10 +1,21 @@
 use super::*;
-use crate::code_rule_dsl::facts::vtab::syntax::{sources};
+use crate::content_store::ContentStore;
+use std::sync::Arc;
+use crate::code_rule_dsl::facts::vtab::syntax::{self, sources};
 use std::path::PathBuf;
 
 fn temp(what: &str) -> PathBuf {
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     std::env::temp_dir().join(format!("rerail-owner-{what}-{}-{nonce}.sqlite", std::process::id()))
+}
+/// One parsed Python document, keyed 0.
+fn document() -> syntax::Document {
+    use crate::code_rule_dsl::facts::core::{self, Built, Source};
+    let file = Source { language: "python".into(), source: Arc::new("import os\nos.getcwd()\n".into()) };
+    let Built::Facts(facts) = core::build(&file).unwrap() else { panic!("did not parse") };
+    let facts = Arc::new(facts);
+    let path = "a.py".to_owned();
+    syntax::Document { key: 0, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None }
 }
 fn count(db: &Database, sql: &str) -> i64 {
     db.query_row(sql, [], |r| r.get(0)).unwrap()
@@ -22,7 +33,7 @@ fn a_lease_returns_empty_backing_and_empty_vtabs() {
         db.storage.borrow_mut().declare(&db, "input", "CREATE TEMP TABLE input(value)".into(), true).unwrap();
         db.execute("INSERT INTO input VALUES(7)", []).unwrap();
         db.storage.borrow_mut().written("input", true);
-        for (name, source) in sources(&store, documents().into_iter().take(1).collect()).unwrap() {
+        for (name, source) in sources(&store, vec![document()]).unwrap() {
             db.bind(name, source).unwrap();
         }
         assert!(count(&db, "SELECT count(*) FROM node") > 0);

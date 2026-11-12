@@ -32,7 +32,7 @@ fn the_profile_accounts_for_every_threads_cpu() {
     }
     std::thread::sleep(std::time::Duration::from_millis(200));
     let account = profile::threads();
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("threads");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("threads");
     report::write(&dir, "header\n").unwrap();
     let text = std::fs::read_to_string(dir.join("profile.txt")).unwrap();
     let tsv = std::fs::read_to_string(dir.join("threads.tsv")).unwrap();
@@ -63,7 +63,7 @@ fn cpu_between_spans_is_named_by_the_spans_around_it() {
         .unwrap();
     t.join().unwrap();
     let gaps = profile::gaps();
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("gaps");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("gaps");
     report::write(&dir, "header\n").unwrap();
     let text = std::fs::read_to_string(dir.join("profile.txt")).unwrap();
     profile::set(false);
@@ -121,7 +121,7 @@ fn explain_shows_engines_plans_devices_and_decisions() {
         .unwrap();
     }
     profile::sql_in_wave("run", "SELECT 1 FROM xafter", 1_000);
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("explain");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("explain");
     report::write(&dir, "header\n").unwrap();
     let report = std::fs::read_to_string(dir.join("profile.txt")).unwrap();
     profile::set(false);

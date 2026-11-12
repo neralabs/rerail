@@ -121,7 +121,7 @@ impl Interner {
 /// store's atoms again. They hold no file open: the store's last handle closes them (`ContentStore`'s drop).
 static SYMS: LazyLock<Mutex<HashMap<String, Arc<RwLock<Interner>>>>> = LazyLock::new(Default::default);
 /// The symbols of `conn`'s database: the process's arena of it.
-fn symbols(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
+pub fn symbols(conn: impl Scoped) -> Result<Arc<RwLock<Interner>>> {
     let conn = conn.db();
     // A connection's symbols are found once (by its path) and kept for it until it closes (`forget_scope`).
     let at = conn.at();
@@ -321,7 +321,45 @@ pub struct Rel { table: String, types: Vec<u8>, pub k: usize, pub n: usize, data
              level: Vec<u32>, lbase: u32,
              /// Whether its rows get levels: only a relation of a recursive stratum reads them (`open`), and at 4
              /// bytes a row they are not held for the others.
-             leveled: bool }
+             leveled: bool,
+             /// A lattice relation's key and join (`lattice` lines): one live row a key, its value the join of all the
+             /// key's values derived (`Lat::fold`). `None`: a set.
+             lat: Option<Box<Lat>> }
+
+/// A lattice relation's state (decision 0124): its last column is the value, the columns before it the key. A key's
+/// row is replaced when a wave's values for it join to a new value: the old row dead, the new one the next wave's
+/// delta, so readers and later probes see the folded value only. As the SQL kernel folds (`schedule::lattice::fold`):
+/// absence is bottom, the top absorbs, and after `widen` changes of a key its next value is the lattice's widening.
+pub struct Lat {
+    /// The lattice's name (`front::LatticeDecl::lattice`).
+    name: String,
+    keys: usize,
+    lattice: Arc<dyn super::Lattice>,
+    widen: Option<u32>,
+    /// Each key's live row.
+    at: HashMap<Box<[i64]>, u32>,
+    /// Each key's changes so far (its first value counts one), while `widen` is set.
+    changes: HashMap<Box<[i64]>, u32>,
+}
+
+impl Lat {
+    /// The rows `rows` (row-major, `k` columns) folded by key, in first-seen key order: (key, the join of its values).
+    fn group(&self, rows: &[i64], k: usize) -> Vec<(Box<[i64]>, i64)> {
+        let mut order: Vec<(Box<[i64]>, i64)> = Vec::new();
+        let mut slot: HashMap<&[i64], usize> = HashMap::default();
+        for row in rows.chunks_exact(k) {
+            let (key, v) = (&row[..self.keys], row[self.keys]);
+            match slot.get(key) {
+                Some(&i) => order[i].1 = self.lattice.join(order[i].1, v),
+                None => {
+                    slot.insert(key, order.len());
+                    order.push((key.into(), v));
+                }
+            }
+        }
+        order
+    }
+}
 
 /// The id of a live row equal to `row` in the relation of `orders` (its first holds every column), not `skip`.
 fn find_row(orders: &[Index], data: &[i64], k: usize, row: &[i64], skip: impl Fn(u32) -> bool) -> Option<u32> {
@@ -372,7 +410,81 @@ impl Rel {
         Rel { table: table.to_string(), types: types.to_vec(), k, n: 0, data: Vec::new(), stored: 0, lo: 0, hi: 0, wave: 0,
               idx: vec![Index::new((0..k).collect())], serves: vec![Vec::new()], indexed: 0, pending: HashTable::new(),
               sketches: vec![Sketch::default(); k], dead: Vec::new(), ndead: 0, summaries: Default::default(), from: None,
-              level: Vec::new(), lbase: 0, leveled: true }
+              level: Vec::new(), lbase: 0, leveled: true, lat: None }
+    }
+    /// Makes this relation a lattice's (its `lattice` line): the rows it holds so far fold by key, as a wave's do.
+    fn set_lattice(&mut self, name: &str, keys: usize, lattice: Arc<dyn super::Lattice>, widen: Option<u32>) -> Result<()> {
+        if keys + 1 != self.k {
+            return Err(err(format!("{}: a lattice of {keys} key columns over {} columns", self.table, self.k)));
+        }
+        let rows = std::mem::take(&mut self.data);
+        let mut fresh = Rel::new(&self.table, &self.types.clone());
+        fresh.stored = 0;
+        fresh.lat = Some(Box::new(Lat { name: name.to_owned(), keys, lattice, widen, at: HashMap::default(), changes: HashMap::default() }));
+        let n = self.n;
+        fresh.fold(&rows[..n * self.k]);
+        *self = fresh;
+        Ok(())
+    }
+    /// Whether this is a lattice relation, and how the device folds it (`metal_join::Batch::lattice_fold`): `(code,
+    /// top, widen)`, code 0 min, 1 max, 2 flat; or why it cannot (another lattice's join is the CPU's).
+    pub fn device_lattice(&self) -> Option<std::result::Result<(u32, i64, Option<u32>), String>> {
+        let lat = self.lat.as_ref()?;
+        Some(match lat.name.as_str() {
+            "min" => Ok((0, lat.lattice.top(), lat.widen)),
+            "max" => Ok((1, lat.lattice.top(), lat.widen)),
+            "flat" => Ok((2, lat.lattice.top(), lat.widen)),
+            other => Err(format!("the lattice {other} (the device folds min, max and flat)")),
+        })
+    }
+    /// A lattice relation's new rows `rows` (row-major): each key's values joined with its row's, and a key whose
+    /// value changed replaced (`Lat`). Whether any key changed.
+    fn fold(&mut self, rows: &[i64]) -> bool {
+        let k = self.k;
+        let mut lat = self.lat.take().expect("a lattice relation");
+        let top = lat.lattice.top();
+        let mut any = false;
+        let mut row = vec![0i64; k];
+        for (key, agg) in lat.group(rows, k) {
+            let held = lat.at.get(&key).copied();
+            let old = held.map(|id| self.data[id as usize * k + lat.keys]);
+            let mut v = match old {
+                None => agg,
+                Some(o) if o == top => top,
+                Some(o) => lat.lattice.lub(o, agg),
+            };
+            if old == Some(v) {
+                continue;
+            }
+            if let (Some(after), Some(o)) = (lat.widen, old) {
+                if lat.changes.get(&key).copied().unwrap_or(0) >= after {
+                    v = lat.lattice.widen(o, v);
+                }
+                if v == o {
+                    continue;
+                }
+            }
+            if lat.widen.is_some() {
+                *lat.changes.entry(key.clone()).or_default() += 1;
+            }
+            if let Some(id) = held
+                && kill(&mut self.dead, id)
+            {
+                self.ndead += 1;
+            }
+            row[..lat.keys].copy_from_slice(&key);
+            row[lat.keys] = v;
+            let id = self.n as u32;
+            self.data.extend_from_slice(&row);
+            if self.leveled && self.level.len() == self.n {
+                self.level.push(self.lbase + self.wave + 1);
+            }
+            self.n += 1;
+            lat.at.insert(key, id);
+            any = true;
+        }
+        self.lat = Some(lat);
+        any
     }
     /// A relation that starts as `old` (a kept one: its rows copied as memory; its orders' runs and its sketches
     /// shared, not built again) less the rows of `gone`, marked dead in place (decision 0090 step 4). Its rows are the
@@ -419,7 +531,7 @@ impl Rel {
         let from = Some(Origin::Based { at: old as *const InRel as usize, n: old.n });
         Some(Rel { table: table.to_string(), types: types.to_vec(), k, n: old.n, data: data.clone(), stored: 0, lo: 0, hi: 0, wave: 0, idx, serves,
                    indexed: old.n, pending: HashTable::new(), sketches: old.sketches.clone(), dead, ndead, summaries: Default::default(), from, level,
-                   lbase: 0, leveled: true })
+                   lbase: 0, leveled: true , lat: None })
     }
     /// `based`'s relation, made from `old`'s rows less those of `gone` rather than in place (compacted).
     fn compacted(table: &str, types: &[u8], old: &InRel, gone: Option<&InRel>) -> Rel {
@@ -530,6 +642,10 @@ impl Rel {
     /// later), so they are also put in `pending` for the dedup tests until then. Whether any was new.
     fn push_fresh(&mut self, mut f: Fresh, pend: bool) -> bool {
         f.settle(self);
+        if self.lat.is_some() {
+            debug_assert!(!pend, "a lattice relation in a gate's place");
+            return self.fold(&f.data[..f.n * self.k]);
+        }
         let (k, m) = (self.k, f.n);
         if m == 0 {
             return false;
@@ -1046,6 +1162,10 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
             Line::Probe { head, delta, sql } => probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Sql(sql.clone()), whole: None, wkey: None }),
             Line::Device => device_wanted = solver().is_some(),
             Line::Leveled => leveled = true,
+            Line::Lattice { rel, keys, name, widen } => {
+                let lattice = super::lattice(name).map_err(|e| err(format!("lattice {name}: {e}")))?;
+                rels.get_mut(*rel).ok_or_else(|| err(format!("lattice: no relation {rel}")))?.set_lattice(name, *keys, lattice, *widen)?;
+            }
             Line::Seed { head, join } => {
                 let j = { let _j = crate::code_rule_dsl::logic::profile::span(|| "open: joins".into()); join_rule_with(conn, join, &mut syms, !device_wanted)? };
                 if device_wanted { seed_specs.push((probes.len(), join.clone())); }
@@ -1097,6 +1217,10 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
         let recursive = probes.iter().any(|p| p.delta != SEED);
         let refused = if !edges.is_empty() || !gates.is_empty() || !requests.is_empty() || !produced.is_empty() {
             Some("a component with gates, requests or edge rules".to_owned())
+        } else if let Some(why) = rels.iter().filter_map(Rel::device_lattice).find_map(std::result::Result::err).filter(|_| recursive) {
+            // A recursive one folds each round on the device (`device::fixpoint`); a lattice it has no fold for
+            // stays on the CPU. Seeds alone fold as the store takes the rows.
+            Some(format!("a recursive component over {why}"))
         } else if recursive && (leveled || !levels.lines.is_empty()) {
             Some("a recursive component that keeps levels (its maintenance runs on the CPU)".to_owned())
         } else if recursive && probes.iter().any(|p| p.delta != SEED && matches!(p.body, Body::Sql(_))) {
@@ -1717,20 +1841,20 @@ pub fn stats(conn: &Connection, name: &str) -> Result<String> {
 
 /// A fused filter over an input relation that a device can run alone (`scans`): its row program, its inputs, its
 /// atom's gathered rows, its parameters, and the rows the CPU passes with the CPU it took.
-pub(in crate::code_rule_dsl) struct ScanCase {
-    pub(in crate::code_rule_dsl) rule: String,
-    pub(in crate::code_rule_dsl) program: rerail_compiler::block::BlockProgram,
-    pub(in crate::code_rule_dsl) inputs: Vec<rowcode::Word>,
-    pub(in crate::code_rule_dsl) gathered: Vec<(usize, Vec<i64>)>,
-    pub(in crate::code_rule_dsl) params: Vec<i64>,
-    pub(in crate::code_rule_dsl) passed: Vec<u32>,
-    pub(in crate::code_rule_dsl) cpu_seconds: f64,
+pub struct ScanCase {
+    pub rule: String,
+    pub program: rerail_compiler::block::BlockProgram,
+    pub inputs: Vec<rowcode::Word>,
+    pub gathered: Vec<(usize, Vec<i64>)>,
+    pub params: Vec<i64>,
+    pub passed: Vec<u32>,
+    pub cpu_seconds: f64,
 }
 
 /// Each fused filter of an open component's rules whose atom reads an input relation with constant keys and whose
 /// parameters are constants: the whole of what it filters is known before the run, so a device scan of it can be
 /// checked against the CPU's (the relational lab).
-pub(in crate::code_rule_dsl) fn scans(conn: &Connection, name: &str) -> Result<Vec<ScanCase>> {
+pub fn scans(conn: &Connection, name: &str) -> Result<Vec<ScanCase>> {
     let comp = component(conn, name)?;
     let comp = comp.lock().unwrap();
     let mut out = Vec::new();
@@ -1779,22 +1903,22 @@ pub(in crate::code_rule_dsl) fn scans(conn: &Connection, name: &str) -> Result<V
 /// Two atoms of a rule over input relations, the second's keys all bound by the first (`tiles`): the first's rows (its
 /// constant keys checked) by the columns the second's keys read, the second's rows by its key columns, and the pairs
 /// a CPU hash join gives (left row, right row id) with the CPU it took.
-pub(in crate::code_rule_dsl) struct TileCase {
-    pub(in crate::code_rule_dsl) rule: String,
-    pub(in crate::code_rule_dsl) left: Vec<Vec<i64>>,
-    pub(in crate::code_rule_dsl) right: Vec<Vec<i64>>,
-    pub(in crate::code_rule_dsl) right_ids: Vec<u32>,
+pub struct TileCase {
+    pub rule: String,
+    pub left: Vec<Vec<i64>>,
+    pub right: Vec<Vec<i64>>,
+    pub right_ids: Vec<u32>,
     /// The right side's identity: its relation, key columns and column tests (one sort serves every case of it).
-    pub(in crate::code_rule_dsl) right_key: String,
+    pub right_key: String,
     /// Whether each key holds symbols.
-    pub(in crate::code_rule_dsl) symbols: Vec<bool>,
-    pub(in crate::code_rule_dsl) pairs: Vec<(u32, u32)>,
-    pub(in crate::code_rule_dsl) cpu_seconds: f64,
+    pub symbols: Vec<bool>,
+    pub pairs: Vec<(u32, u32)>,
+    pub cpu_seconds: f64,
 }
 
 /// Each rule's first two steps when both are atoms over input relations and the second's keys are slots the first
 /// binds: a join whose whole input is known before the run (the relational lab's `tile`).
-pub(in crate::code_rule_dsl) fn tiles(conn: &Connection, name: &str) -> Result<Vec<TileCase>> {
+pub fn tiles(conn: &Connection, name: &str) -> Result<Vec<TileCase>> {
     let comp = component(conn, name)?;
     let comp = comp.lock().unwrap();
     let mut out = Vec::new();

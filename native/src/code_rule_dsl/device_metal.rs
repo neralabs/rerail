@@ -29,6 +29,18 @@ pub fn register() {
     crate::code_rule_dsl::prof::register_device_memory(|| (packed::metal_backend::reserved_mb(), packed::metal_backend::driver_mb()));
 }
 
+/// This crate's own test binary registers Metal as it loads, as the engine does (`install_devices`): its tests run
+/// the device's solver, which no engine set up there.
+#[cfg(all(test, target_os = "macos"))]
+#[used]
+#[unsafe(link_section = "__DATA,__mod_init_func")]
+static REGISTER_IN_TESTS: extern "C" fn() = {
+    extern "C" fn on_load() {
+        register();
+    }
+    on_load
+};
+
 fn refused(error: Error) -> Refused {
     match error {
         Error::UnsupportedBackend => Refused::NoDevice,

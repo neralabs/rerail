@@ -21,7 +21,7 @@ pub struct Database {
     pub(super) healthy: Cell<bool>,
     pub(super) active: Cell<usize>,
     pub(super) leases: Cell<usize>,
-    pub(super) plan_signature: Cell<u64>,
+    pub plan_signature: Cell<u64>,
     pub storage: RefCell<Storage>,
     pub(super) modules: Modules,
     /// The sources bound now, by table: the plan signature's input.
@@ -136,7 +136,7 @@ impl Database {
         Ok(())
     }
     /// SQLite-owned storage held by a suspended consumer, without scanning rows.
-    pub(in crate::code_rule_dsl) fn resident_bytes(&self) -> rusqlite::Result<usize> {
+    pub fn resident_bytes(&self) -> rusqlite::Result<usize> {
         let mut total = 0usize;
         for kind in [
             rusqlite::ffi::SQLITE_DBSTATUS_CACHE_USED,

@@ -771,6 +771,12 @@ mod literal {
 #[path = "logic"]
 pub(crate) mod logic {
     pub use rerail_logic::code_rule_dsl::logic::*;
+    #[path = "liveness"]
+    pub mod liveness {
+        pub use rerail_logic::code_rule_dsl::logic::liveness::*;
+        #[cfg(test)]
+        pub mod tests;
+    }
     #[cfg(test)]
     #[path = "costs_tests.rs"]
     mod costs_tests;
@@ -821,6 +827,12 @@ pub(crate) mod logic {
         #[path = "setfix"]
         pub mod setfix {
             pub use rerail_logic::code_rule_dsl::logic::native::setfix::*;
+            #[path = "lab"]
+            pub mod lab {
+                pub use rerail_logic::code_rule_dsl::logic::native::setfix::lab::*;
+                #[cfg(test)]
+                pub mod tests;
+            }
             #[cfg(target_os="macos")]
             pub use rerail_device_metal::code_rule_dsl::logic::native::setfix::device;
             #[allow(unused_imports)]
@@ -898,6 +910,22 @@ pub(crate) mod logic {
         #[path = "corpus"]
         pub mod corpus {
             pub use rerail_logic::code_rule_dsl::logic::plan::corpus::*;
+            #[cfg(test)]
+            pub mod base_tests;
+            #[cfg(test)]
+            pub mod tests;
+            #[path = "matchers"]
+            pub mod matchers {
+                pub use rerail_logic::code_rule_dsl::logic::plan::corpus::matchers::*;
+                #[cfg(test)]
+                pub mod tests;
+            }
+            #[path = "session"]
+            pub mod session {
+                pub use rerail_logic::code_rule_dsl::logic::plan::corpus::session::*;
+                #[cfg(test)]
+                pub mod tests;
+            }
             pub mod references;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::logic::plan::{Error, Outcome, Result, lower};
@@ -1050,6 +1078,8 @@ pub(crate) mod logic {
     #[path = "strings"]
     pub mod strings {
         pub use rerail_facts::code_rule_dsl::logic::strings::*;
+        #[cfg(test)]
+        pub mod registered_tests;
         #[allow(unused_imports)]
         use std::collections::{BTreeMap, HashMap, HashSet};
         #[allow(unused_imports)]
@@ -1066,7 +1096,7 @@ pub(crate) mod logic {
 /// The profile's SQL hazards, which the content store's connections and writer report (`content_store::hazards`, set as
 /// the library loads; decision 0104).
 pub(crate) mod sql_hazards {
-    pub(crate) use super::logic::profile::{behind_the_run, sql_in_wave, strict_statement, strict_on_every_connection, tracing as on, wait_in_wave};
+    pub(crate) use super::logic::profile::strict_on_every_connection;
 }
 #[path = "sql_executor"]
 mod sql_executor {
@@ -2190,6 +2220,8 @@ mod typing {
     }
     #[cfg(test)]
     pub mod oracle_tests;
+    #[cfg(test)]
+    pub mod phase_tests;
 }
 #[path = "value"]
 mod value {

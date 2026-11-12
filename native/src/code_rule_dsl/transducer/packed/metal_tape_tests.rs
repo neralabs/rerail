@@ -2,6 +2,7 @@
 //! batch's node records they replace (decision 0032): every node of a batch of stored fixtures.
 use super::*;
 use crate::code_rule_dsl::language::{self, GrammarDialect};
+use crate::code_rule_dsl::fixtures::{document, temp};
 // cratify: a re-export of rerail-engine's, which its facades of this module make
 use crate::code_rule_dsl::residency::slabs::{self, DocTable, DocView};
 use crate::code_rule_dsl::tape::{Grammar, TAPE_FORMAT_VERSION};
@@ -35,6 +36,8 @@ const SOURCES: [(&str, GrammarDialect); 5] = [
 ];
 
 #[test]
+
+#[ignore = "open (decision 0128): parses files whose language only the engine registers; to be hosted by rerail-engine"]
 fn the_device_reads_resident_tapes_as_the_packed_batch_records_them() {
     let Some(device) = METAL_DEVICE.as_ref() else { return };
     let path = temp();

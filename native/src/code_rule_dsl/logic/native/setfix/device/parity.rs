@@ -45,8 +45,8 @@ struct Fixture {
 const PARTS: [&str; 18] = ["foo", "Bar", "SRC", "src/lib", "a.b", "_", ".ts", "αβ", "x9", "TODO", "a_b", "/", "é", " ", "test", "Q", "0", "--"];
 
 fn fixture() -> Fixture {
-    let store = crate::code_rule_dsl::prefilter::tests::temp();
-    drop(crate::code_rule_dsl::prefilter::tests::open(&store));
+    let store = crate::code_rule_dsl::fixtures::temp();
+    drop(crate::content_store::ContentStore::open(&store).unwrap());
     let db = Connection::open(&store).unwrap();
     crate::code_rule_dsl::logic::native::register(&db).unwrap();
     crate::code_rule_dsl::logic::native::register_symbols(&db).unwrap();

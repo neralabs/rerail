@@ -256,10 +256,10 @@ fn run(lines: usize, partition_spans: u32) -> (Vec<Vec<Vec<Output>>>, Vec<Dispat
         "cooperative totals need a distinct owner; hierarchy counts become offsets in place"
     );
     assert!(trace.iter().all(|record| record.application_buffer_bytes
-        <= super::metal_backend::METAL_BUFFER_LIMIT
+        <= super::metal_backend::metal_buffer_limit()
         && record.private_buffer_bytes <= record.application_buffer_bytes
         && record.application_buffer_bytes <= record.peak_application_buffer_bytes
-        && record.peak_application_buffer_bytes <= super::metal_backend::METAL_BUFFER_LIMIT));
+        && record.peak_application_buffer_bytes <= super::metal_backend::metal_buffer_limit()));
     let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) } as usize;
     let expected_count_bytes = (count_capacity * 16).max(1).div_ceil(page_size) * page_size;
     assert!(

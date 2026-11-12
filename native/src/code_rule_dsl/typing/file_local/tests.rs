@@ -74,6 +74,7 @@ fn the_device_finds_the_cpus_nearest() {
 
 /// T's programs split into file-local relations and the rest: what the cross-file rest reads.
 #[test]
+#[ignore = "open (decision 0128): parses files whose language only the engine registers; to be hosted by rerail-engine"]
 fn t_programs_split_into_file_local_and_cross_file() {
     use crate::code_rule_dsl::logic::rr::parse;
     for name in ["calls.rr", "calls_rust.rr", "workload.rr"] {

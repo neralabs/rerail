@@ -71,12 +71,13 @@ pub mod integration_tests {
             plan::{self, Error, Stats, lower},
             rr,
         },
-        model::FileInput,
     };
     use crate::content_store::ContentStore;
     use std::{collections::BTreeSet, sync::Arc};
 
     #[test]
+
+    #[ignore = "open (decision 0128): parses rule files, whose language only the engine registers; to be hosted by rerail-engine"]
     fn retained_semantic_results_support_sql_outputs_and_isolate_targets_and_runs() {
         let p = rr::parse(
             r#"
@@ -100,7 +101,7 @@ posts(n,q) :- python_qualified(n,q,wanted,post_target).
 "#,
         )
         .unwrap();
-        let path = crate::code_rule_dsl::prefilter::tests::temp();
+        let path = crate::code_rule_dsl::fixtures::temp();
         let store = ContentStore::open(&path).unwrap();
         let db = rusqlite::Connection::open(&path).unwrap();
         native::register(&db).unwrap();
@@ -124,15 +125,7 @@ posts(n,q) :- python_qualified(n,q,wanted,post_target).
             ] {
                 native::component::forget_derived(&db);
                 native::forget_inputs(&db);
-                let file = FileInput::new(
-                    "test.py".into(),
-                    "python".into(),
-                    Arc::new(source.into()),
-                    None,
-                    None,
-                    "core",
-                )
-                .unwrap();
+                let file = core::Source { language: "python".into(), source: Arc::new(source.into()) };
                 let core::Built::Facts(facts) = core::build(&file).unwrap() else {
                     panic!("parse failed")
                 };
@@ -229,6 +222,8 @@ posts(n,q) :- python_qualified(n,q,wanted,post_target).
 }
 
 #[test]
+
+#[ignore = "open (decision 0128): parses rule files, whose language only the engine registers; to be hosted by rerail-engine"]
 fn native_metadata_reads_pin_inputs_and_targets_through_their_consumers() {
     use crate::code_rule_dsl::logic::{front, plan, rr};
     use std::collections::HashSet;

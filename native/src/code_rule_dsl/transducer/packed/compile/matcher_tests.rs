@@ -549,6 +549,46 @@ fn micro_walks_are_the_interpreters_label_outputs() {
     assert!(compared > 100_000 && overflowed * 100 < compared);
 }
 
+/// A long walk spills its frames to other threads (decision 0125): with a budget of one step, nearly every walk
+/// gives frames away (a descendant range halved, a move frame whole), and the wave's roots on Metal are still the
+/// CPU's. A frame lost, walked twice where a tally counts, or given its walk's wrong start shows here.
+#[cfg(target_os = "macos")]
+#[test]
+fn spilled_walks_find_the_cpus_roots() {
+    use super::compile_matcher::Backend;
+    use metal_program_backend::label_passes::SPILL_BUDGET_TEST;
+    let mut tapes = fixtures();
+    tapes.truncate(24);
+    let mut lowered = Vec::new();
+    for (_, compiled) in &clauses() {
+        for (_, grammar) in python_matchers(compiled) {
+            if let Ok(tree) = match_tree(grammar)
+                && let Ok(matcher) = LoweredMatcher::lower(&tree)
+            {
+                lowered.push(matcher);
+            }
+        }
+    }
+    // Waves of a dozen clauses, as the engine's are (the whole set is over the launch bound).
+    let (mut found, mut differ, mut waves) = (0, Vec::new(), 0);
+    for (at, clauses) in lowered.chunks(12).enumerate() {
+        let wave = LoweredWave::new(&clauses.iter().collect::<Vec<_>>()).unwrap();
+        let active = vec![vec![true; tapes.len()]; clauses.len()];
+        let (cpu, _) = wave.roots_batch(Backend::Cpu, &tapes, &active).unwrap();
+        SPILL_BUDGET_TEST.set(Some(1));
+        let metal = wave.roots_batch(Backend::MetalInterpreter, &tapes, &active);
+        SPILL_BUDGET_TEST.set(None);
+        let Ok((metal, run)) = metal else { continue };
+        assert!(run.metal, "the wave ran on Metal");
+        waves += 1;
+        found += cpu.iter().flatten().map(BTreeSet::len).sum::<usize>();
+        differ.extend(cpu.iter().zip(&metal).enumerate().filter(|(_, (c, m))| c != m).map(|(c, _)| (at, c)));
+    }
+    eprintln!("spilled: {waves} waves of {} clauses, {found} roots", lowered.len());
+    assert!(waves * 2 > lowered.len() / 12 && found > 1000, "most waves ran on Metal and found roots ({waves} waves, {found} roots)");
+    assert!(differ.is_empty(), "{} clauses differ on Metal with every walk spilling: {differ:?}", differ.len());
+}
+
 /// The combined graph (list step 15): a sub-rule shared by clauses is one label of the wave, and
 /// each clause's roots from the wave's labels are its roots alone. Clauses are active on half the
 /// tapes each, so a label an earlier clause owns is computed where a later clause reads it.

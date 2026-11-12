@@ -133,6 +133,9 @@ pub enum Line {
     /// Its recursive relations keep each row's level (decision 0090): a session maintains them by levels. Without it
     /// no row has one, and a closure may run on the device (bit rows give reach, not distance).
     Leveled,
+    /// Relation `rel` is a lattice's (decision 0124): its last column the value, joined by the lattice `name`'s join,
+    /// the `keys` columns before it the key; after `widen` changes of a key, widened.
+    Lattice { rel: usize, keys: usize, name: String, widen: Option<u32> },
     Request(usize),
     Produced(usize),
     Seed { head: usize, join: Arc<JoinSpec> },
@@ -416,6 +419,7 @@ impl std::fmt::Display for Line {
             Line::NoWrite => f.write_str("nowrite"),
             Line::Device => f.write_str("device"),
             Line::Leveled => f.write_str("leveled"),
+            Line::Lattice { rel, keys, name, widen } => write!(f, "lattice {rel} {keys} {} {}", hex(name), widen.map_or_else(|| "-".to_owned(), |w| w.to_string())),
             Line::Request(r) => write!(f, "request {r}"),
             Line::Produced(r) => write!(f, "produced {r}"),
             Line::Seed { head, join } => write!(f, "seed {head} {}", hex(&join.to_text())),
@@ -500,6 +504,12 @@ impl ComponentSpec {
                 "nowrite" => Line::NoWrite,
                 "device" => Line::Device,
                 "leveled" => Line::Leveled,
+                "lattice" => Line::Lattice {
+                    rel: num(at(1)?)?,
+                    keys: num(at(2)?)?,
+                    name: unhex(at(3)?)?,
+                    widen: if at(4)? == "-" { None } else { Some(num(at(4)?)?) },
+                },
                 "request" => Line::Request(num(at(1)?)?),
                 "produced" => Line::Produced(num(at(1)?)?),
                 "seed" => Line::Seed { head: num(at(1)?)?, join: join(at(2)?)? },

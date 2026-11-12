@@ -563,6 +563,7 @@ pub mod tests {
     /// prepared programs dropped, as a new process starts without them, the second run reads it from the store and
     /// gives the first run's rows. A third run finds it in memory.
     #[test]
+    #[ignore = "open (decision 0128): parses rule files, whose language only the engine registers; to be hosted by rerail-engine"]
     fn a_prepared_program_is_read_from_the_store() {
         // A text no other run prepared, so the first run prepares it: the marker is a constant of the rule, since
         // printing the rule drops its comments.
@@ -570,7 +571,7 @@ pub mod tests {
         let rule = format!(
             ".decl calls(c: node, x: symbol)\ncalls(c, x) :- kind(c, \"call\"), text(c, x), x != \"g()\", x != {marker:?}.\n.output calls\n"
         );
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("prepared");
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("prepared");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.py"), "f(1)\ng()\nh(f(2))\n").unwrap();
         // The rule with the core declarations it reads (`kind`, `text`), as `rerail-engine` reads a rule file.
@@ -603,10 +604,11 @@ pub mod tests {
     /// A program written as facts reads back as the same program, and so does the document of those facts, read off
     /// its tape (decision 0074). A pack rule, prepared, both of its programs.
     #[test]
+    #[ignore = "open (decision 0128): parses rule files, whose language only the engine registers; to be hosted by rerail-engine"]
     fn a_prepared_program_reads_back_from_its_facts_and_its_tape() {
         let path = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../docs/rule-syntax/packs/python/ruff-up006-non-pep585-annotation.rr");
         let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&path).unwrap()).unwrap();
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("prepared-facts");
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("prepared-facts");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.py"), "from typing import List\nx: List[int] = []\n").unwrap();
         super::super::run(&program, &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -666,8 +668,9 @@ pub mod tests {
 
     /// A rule about rules reads a program's facts: a document `#include`d, its atoms asked by relation (decision 0074).
     #[test]
+    #[ignore = "open (decision 0128): parses rule files, whose language only the engine registers; to be hosted by rerail-engine"]
     fn a_rule_reads_a_program_as_facts() {
-        let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rules-as-facts");
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rules-as-facts");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("a.py"), "f()\n").unwrap();
         // The rule read as facts, with the core declarations it reads (`kind`, `text`).

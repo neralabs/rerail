@@ -22,7 +22,7 @@ use std::collections::BTreeSet;
 
 /// A cache `out` by its key `key`.
 #[derive(Clone, Debug, PartialEq)]
-pub(in crate::code_rule_dsl) struct Cache {
+pub struct Cache {
     pub out: String,
     pub key: String,
 }

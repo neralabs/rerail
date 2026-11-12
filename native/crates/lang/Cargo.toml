@@ -115,3 +115,8 @@ rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "arr
 [build-dependencies]
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# The vendored grammars' parsers (`src/build_grammars.rs`): generated, and compiled.
+cc = "=1.10.0"
+sha2 = "0.11"
+tree-sitter-generate = { version = "=0.27.1", default-features = false }
+flate2 = "=1.1.10"

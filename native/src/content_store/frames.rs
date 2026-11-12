@@ -76,7 +76,8 @@ pub struct Put {
 }
 
 /// One admitted fact relation. Durable rows remain encoded until a consumer needs them.
-/// Queued rows share the writer's allocation. This value belongs to the run, not a separate cache.
+/// A queued frame is encoded as it is queued: the snapshot and the writer share it. This value belongs to the run, not a
+/// separate cache.
 pub struct Admitted {
     pub stored: Stored,
     data: Data,
@@ -84,14 +85,12 @@ pub struct Admitted {
 
 enum Data {
     Encoded { types: Vec<u8>, n: usize, bytes: Vec<u8> },
-    Queued(Arc<Put>),
     Metadata,
 }
 
 impl Admitted {
     pub fn rows(&self) -> StoreResult<Rows> {
         match &self.data {
-            Data::Queued(p) => Ok(p.rows.clone()),
             Data::Encoded { types, n, bytes } => {
                 let width = types.len();
                 let mut cols = vec![Vec::new(); width];
@@ -109,7 +108,7 @@ impl Admitted {
     pub fn encoded_bytes(&self) -> usize {
         match &self.data {
             Data::Encoded { bytes, .. } => bytes.len(),
-            Data::Queued(_) | Data::Metadata => 0,
+            Data::Metadata => 0,
         }
     }
 }
@@ -317,21 +316,30 @@ impl ContentStore {
         })
     }
 
-    /// `keep_frames`, queued behind the run (decision 0102): encoded and written by the store's writer.
+    /// `keep_frames`, queued behind the run (decision 0102): encoded here, as each is queued, and written by the store's
+    /// writer. The snapshot and the queued write share the encoded frame. Queued as rows, a frame's rows were held by
+    /// the queue while the writer encoded a copy of them: on internal_dead_code the run's last writes held 309 MB of
+    /// rows beside 138 MB of their encoding (and the kept part's own rows they were copied from).
     pub fn queue_frames(&self, space: [u8; 32], puts: Vec<Put>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
-        let bytes = puts.iter().map(|p| p.rows.rows.len() * 8).sum();
-        let puts: Vec<_> = puts.into_iter().map(Arc::new).collect();
-        let mut keys: Vec<(super::write_back::Key, Option<Arc<dyn std::any::Any + Send + Sync>>)> = puts.iter().map(|p| {
-            let frame = Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Queued(Arc::clone(p)) });
-            (frame_key(&space, &p.rel, p.part), Some(Arc::new(Some(frame)) as Arc<dyn std::any::Any + Send + Sync>))
-        }).collect();
+        self.queue_encoded(space, puts.into_iter().map(Put::encoded).collect(), gone, used);
+    }
+
+    /// `queue_frames` of frames encoded as they were made (`Put::encoded`): a caller that makes many holds each one's
+    /// rows only until it is encoded.
+    pub fn queue_encoded(&self, space: [u8; 32], frames: Vec<Encoded>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
+        let frames: Vec<(Rel, i64, Arc<Admitted>)> = frames.into_iter().map(|e| (e.rel, e.part, e.frame)).collect();
+        let bytes = frames.iter().map(|(_, _, f)| f.encoded_bytes()).sum();
+        let mut keys: Vec<(super::write_back::Key, Option<Arc<dyn std::any::Any + Send + Sync>>)> = frames
+            .iter()
+            .map(|(rel, part, frame)| (frame_key(&space, rel, *part), Some(Arc::new(Some(Arc::clone(frame))) as Arc<dyn std::any::Any + Send + Sync>)))
+            .collect();
         keys.extend(gone.iter().map(|(rel, part)| (frame_key(&space, rel, *part), Some(Arc::new(None::<Arc<Admitted>>) as Arc<dyn std::any::Any + Send + Sync>))));
         // Memory is ahead of the store: the snapshot holds what is queued (`preload_frames`).
         if let Some(snapshot) = self.snapshot() {
             let mut snapshot = snapshot.lock().expect("the frames' snapshot");
             let held = snapshot.entry(space).or_default();
-            for p in &puts {
-                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Queued(Arc::clone(p)) }));
+            for (rel, part, frame) in &frames {
+                held.insert((rel.clone(), *part), Arc::clone(frame));
             }
             for key in &gone {
                 held.remove(key);
@@ -339,8 +347,11 @@ impl ContentStore {
         }
         self.write_back("frames", bytes, keys, Box::new(move |store| {
             // Attempted once: a busy store leaves these frames unwritten, and the next run derives them again.
-            let refs: Vec<_> = puts.iter().map(Arc::as_ref).collect();
-            let _ = store.keep_frame_refs(&space, &refs, &gone, used.as_ref().map(|(rels, run)| (rels.as_slice(), *run)));
+            let rows: Vec<Framed> = frames.iter().filter_map(|(rel, part, f)| match &f.data {
+                Data::Encoded { types, n, bytes } => Some(Framed { rel, part: *part, stored: &f.stored, types, n: *n, bytes }),
+                Data::Metadata => None,
+            }).collect();
+            let _ = store.write_frames(&space, &rows, &gone, used.as_ref().map(|(rels, run)| (rels.as_slice(), *run)));
             Ok(())
         }));
     }
@@ -354,17 +365,29 @@ impl ContentStore {
 
     fn keep_frame_refs(&self, space: &[u8; 32], puts: &[&Put], gone: &[(Rel, i64)], used: Option<(&[Rel], u64)>) -> StoreResult<()> {
         let blocks: Vec<Vec<u8>> = puts.iter().map(|p| super::cross_rows::encode(p.rows.types.len(), &p.rows.rows)).collect();
-        // The snapshot holds what is written (a write the writer runs was put there as it was queued: the same).
+        let stored: Vec<Stored> = puts.iter().map(|p| Stored { digest: p.digest, reads: p.reads.clone() }).collect();
+        let rows: Vec<Framed> = puts.iter().zip(&blocks).zip(&stored).map(|((p, bytes), stored)| Framed { rel: &p.rel, part: p.part, stored, types: &p.rows.types, n: p.rows.n, bytes }).collect();
+        let written = self.write_frames(space, &rows, gone, used);
+        drop(rows);
+        // The snapshot holds what is written, the blocks moved into it once written (a write the writer runs was put
+        // there as it was queued: the same rows). Cloned into it before the write, the blocks were held twice while
+        // the transaction ran.
         if let Some(snapshot) = self.snapshot() {
             let mut snapshot = snapshot.lock().expect("the frames' snapshot");
             let held = snapshot.entry(*space).or_default();
-            for (p, block) in puts.iter().zip(&blocks) {
-                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored: Stored { digest: p.digest, reads: p.reads.clone() }, data: Data::Encoded { types: p.rows.types.clone(), n: p.rows.n, bytes: block.clone() } }));
+            for ((p, block), stored) in puts.iter().zip(blocks).zip(stored) {
+                held.insert((p.rel.clone(), p.part), Arc::new(Admitted { stored, data: Data::Encoded { types: p.rows.types.clone(), n: p.rows.n, bytes: block } }));
             }
             for key in gone {
                 held.remove(key);
             }
         }
+        written
+    }
+
+    /// Writes encoded `rows` into `space` (each replacing its frame) and forgets `gone`, in one transaction; with
+    /// `used`, as `keep_frames`.
+    fn write_frames(&self, space: &[u8; 32], rows: &[Framed], gone: &[(Rel, i64)], used: Option<(&[Rel], u64)>) -> StoreResult<()> {
         self.immediate_transaction_once(|t| {
             t.execute_batch(SCHEMA)?;
             // A run's first program counts it: what it writes and marks is of the new run.
@@ -377,7 +400,7 @@ impl ContentStore {
             };
             // Nine bound values per frame, plus shared space and run, stay below 999 parameters.
             // Each statement publishes a bounded batch. No frame launches its own SQL execution.
-            for batch in puts.iter().zip(&blocks).collect::<Vec<_>>().chunks(96) {
+            for batch in rows.chunks(96) {
                 let values = (0..batch.len()).map(|i| {
                     let p=3+9*i;
                     format!("(?1,?{p},?{},?{},?{},?{},?{},?{},?{},?{},?2)",p+1,p+2,p+3,p+4,p+5,p+6,p+7,p+8)
@@ -386,9 +409,9 @@ impl ContentStore {
                     ON CONFLICT(space,rel,ident,part) DO UPDATE SET digest=excluded.digest, reads=excluded.reads, \
                     width=excluded.width, rows=excluded.rows, types=excluded.types, data=excluded.data, used=excluded.used");
                 let mut args: Vec<rusqlite::types::Value>=vec![space.to_vec().into(),run.into()];
-                for (p,data) in batch {
-                    args.extend([p.rel.name.clone().into(),p.rel.ident.to_vec().into(),p.part.into(),(p.digest as i64).into(),
-                        encode_reads(&p.reads).into(),(p.rows.types.len() as i64).into(),(p.rows.n as i64).into(),p.rows.types.clone().into(),(*data).clone().into()]);
+                for f in batch {
+                    args.extend([f.rel.name.clone().into(),f.rel.ident.to_vec().into(),f.part.into(),(f.stored.digest as i64).into(),
+                        encode_reads(&f.stored.reads).into(),(f.types.len() as i64).into(),(f.n as i64).into(),f.types.to_vec().into(),f.bytes.to_vec().into()]);
                 }
                 t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
             }
@@ -415,6 +438,34 @@ impl ContentStore {
             Ok(())
         })
     }
+}
+
+/// A frame encoded to be queued (`Put::encoded`, `queue_encoded`).
+pub struct Encoded {
+    rel: Rel,
+    part: i64,
+    frame: Arc<Admitted>,
+}
+
+impl Put {
+    /// This frame encoded, its rows dropped.
+    pub fn encoded(self) -> Encoded {
+        let Put { rel, part, digest, reads, rows } = self;
+        let bytes = super::cross_rows::encode(rows.types.len(), &rows.rows);
+        let Rows { types, n, rows } = rows;
+        drop(rows);
+        Encoded { rel, part, frame: Arc::new(Admitted { stored: Stored { digest, reads }, data: Data::Encoded { types, n, bytes } }) }
+    }
+}
+
+/// An encoded frame to write (`write_frames`).
+struct Framed<'a> {
+    rel: &'a Rel,
+    part: i64,
+    stored: &'a Stored,
+    types: &'a [u8],
+    n: usize,
+    bytes: &'a [u8],
 }
 
 fn encode_reads(reads: &[(String, u64)]) -> Vec<u8> {

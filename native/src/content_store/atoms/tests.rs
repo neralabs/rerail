@@ -391,3 +391,33 @@ fn reserved_atoms_wait_for_their_component_then_commit_with_rows() {
     assert!(other.atoms.pending(), "made in another arena: pending as usual");
     assert_eq!(r.end().len(), 0);
 }
+
+/// A commit's pending atoms are written in segments of a bounded size, so neither a copy of them nor SQLite's
+/// record of one holds a whole run's atoms at once; once stored, the arena holds their bytes once.
+#[test]
+fn a_commit_writes_its_atoms_in_bounded_segments() {
+    let path = path("bounded");
+    let store = ContentStore::open(&path).unwrap();
+    super::SEGMENT_BYTES_TEST.with(|b| b.set(Some(8)));
+    let names: Vec<String> = (0..5).map(|i| format!("{i}{i}{i}{i}")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let ids = store.intern_atoms(&refs).unwrap();
+    assert_eq!(ids, [1, 2, 3, 4, 5]);
+    store
+        .immediate_transaction(|transaction| {
+            transaction.execute("INSERT INTO name_bindings(name_atom, digest, revision) VALUES (?1, zeroblob(32), 0)", [ids[0]])?;
+            Ok(())
+        })
+        .unwrap();
+    super::SEGMENT_BYTES_TEST.with(|b| b.set(None));
+    assert!(!store.atoms.pending());
+    assert_eq!(segments(&path), [(0, 1), (1, 2), (3, 2), (5, 1)], "two 4-byte atoms a segment");
+    // Held once: the stored bytes moved into the arena's held segments, none left behind in its buffer.
+    assert_eq!(store.atoms.state.read().atoms.buf.capacity(), 0, "the buffer gave its stored bytes up");
+    drop(store);
+    let store = ContentStore::open(&path).unwrap();
+    for (name, id) in names.iter().zip(&ids) {
+        assert_eq!(store.atom(name).unwrap(), Some(*id), "{name} found by its key after reopening");
+        assert_eq!(store.atom_value(*id).unwrap().as_deref(), Some(name.as_str()));
+    }
+}

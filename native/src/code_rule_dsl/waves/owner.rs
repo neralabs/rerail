@@ -79,14 +79,14 @@ impl<'s> Pool<'s> {
     pub(in crate::code_rule_dsl) fn store(&self) -> &'s ContentStore {
         self.0.store
     }
-    pub(in crate::code_rule_dsl) fn invalidate(&self) {
+    pub fn invalidate(&self) {
         if let Some(db) = self.0.db.get() {
             db.healthy.set(false);
         }
     }
     /// Writes the counts of the relations changed since the last boundary to `temp.wave_stats`
     /// and returns every relation's `rows.<name>`.
-    pub(in crate::code_rule_dsl) fn statistics_boundary(&self) -> rusqlite::Result<BTreeMap<String, u64>> {
+    pub fn statistics_boundary(&self) -> rusqlite::Result<BTreeMap<String, u64>> {
         match self.0.db.get() {
             Some(db) => db.storage.borrow_mut().statistics_boundary(db),
             None => Ok(BTreeMap::new()),
@@ -115,7 +115,7 @@ impl<'s> Pool<'s> {
     }
 }
 impl Lease<'_> {
-    pub(in crate::code_rule_dsl) fn private(&self, name: &str) -> String {
+    pub fn private(&self, name: &str) -> String {
         format!("__private_{}_{}", self.id, name)
     }
     /// Binds `source` to the vtab `name` for this lease.
@@ -137,7 +137,7 @@ impl Lease<'_> {
         self.storage.borrow_mut().owner = Some(self.id);
         Ok(())
     }
-    pub(in crate::code_rule_dsl) fn resident_bytes(&self) -> rusqlite::Result<usize> {
+    pub fn resident_bytes(&self) -> rusqlite::Result<usize> {
         Ok(self.deref().resident_bytes()?.saturating_add(self.storage.borrow().bytes()))
     }
 }
@@ -163,5 +163,4 @@ impl Drop for Lease<'_> {
     }
 }
 
-#[cfg(test)]
-pub mod tests;
+// cratify: its tests (`owner/tests.rs`) are rerail-engine's (it mounts them: they parse Python, whose language the engine registers)

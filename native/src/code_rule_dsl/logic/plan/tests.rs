@@ -9,7 +9,7 @@ fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters()
     let p=parse(".decl event(k:number,id:number,g:number,v:number)\nevent(9,0,1,7).\nevent(9,1,1,7).\nevent(9,2,1,3).\nevent(8,3,1,90).\nevent(9,4,2,-2).\nevent(9,5,4,9223372036854775807).\nevent(9,6,4,1).\nevent(9,7,4,-1).\n.decl owner(g:number,v:number)\nowner(1,99).\nowner(2,99).\nowner(3,99).\nowner(4,99).\n.decl result(g:number,v:number,n:number,s:number,lo:number,hi:number)\nresult(g,v,n,s,lo,hi) :- owner(g,v), n=count : {event(9,_,g,_)}, s=sum v : {event(9,_,g,v)}, lo=min x : {event(9,_,g,x)}, hi=max y : {event(9,_,g,y)}, dead=sum z : {event(_,_,_,z)}, unused=dead.\n.decl repeated(g:number,s:number)\nrepeated(g,s) :- owner(g,_), s=sum x : {event(x,_,g,x)}.\n.output result,repeated\n").unwrap();
     let mut outputs=Vec::new();
     for modes in ["","program"] {
-        let path=crate::code_rule_dsl::prefilter::tests::temp();
+        let path=crate::code_rule_dsl::fixtures::temp();
         let store=ContentStore::open(&path).unwrap();
         let python=crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
         let lowered=lower::lower(&p,python,&mut |s|store.intern_atoms(s).map_err(|e|Error::Plan(e.to_string()))).unwrap();
@@ -44,7 +44,7 @@ fn a_head_that_qualifies_by_a_constant_scope_runs_natively() {
     let p = parse(".decl p(e: number, x: symbol)\np(1, \"a\").\np(2, \"b\").\n.decl q(e: number, s: symbol)\nq(e, @dot(\"m\", x)) :- p(e, x).\n.output q\n").unwrap();
     let mut outputs = Vec::new();
     for modes in ["", "program"] {
-        let path = crate::code_rule_dsl::prefilter::tests::temp();
+        let path = crate::code_rule_dsl::fixtures::temp();
         let store = ContentStore::open(&path).unwrap();
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
         let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
@@ -79,7 +79,7 @@ fn closures_of_one_level_launch_in_one_wave() {
     let p = parse(&src).unwrap();
     let mut outputs = Vec::new();
     for modes in ["", "program"] {
-        let path = crate::code_rule_dsl::prefilter::tests::temp();
+        let path = crate::code_rule_dsl::fixtures::temp();
         let store = ContentStore::open(&path).unwrap();
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
         let lowered = lower::lower(&p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();
@@ -111,7 +111,7 @@ fn root() -> std::path::PathBuf {
 /// `fnmatch`, `glob`), loaded from their compressed dump into a new file.
 fn facts() -> std::path::PathBuf {
     let dump = zstd::decode_all(std::fs::File::open(root().join("plan/golden/facts.sql.zst")).unwrap()).unwrap();
-    let path = crate::code_rule_dsl::prefilter::tests::temp();
+    let path = crate::code_rule_dsl::fixtures::temp();
     Connection::open(&path).unwrap().execute_batch(std::str::from_utf8(&dump).unwrap()).unwrap();
     path
 }
@@ -283,7 +283,7 @@ fn t_programs_over_atoms_plan_and_run_like_t() {
         return;
     }
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
-    let path = crate::code_rule_dsl::prefilter::tests::temp();
+    let path = crate::code_rule_dsl::fixtures::temp();
     let store = ContentStore::open(&path).unwrap();
     let db = Connection::open(&path).unwrap();
     let modules = Modules::default();
@@ -338,7 +338,7 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
     use crate::code_rule_dsl::facts::vtab::{Modules, syntax};
     use crate::code_rule_dsl::waves::{owner::Backing, schedule};
     use crate::content_store::Binding;
-    let path = crate::code_rule_dsl::prefilter::tests::temp();
+    let path = crate::code_rule_dsl::fixtures::temp();
     let store = ContentStore::open(&path).unwrap();
     let docs = syntax::tests::documents();
     store.bind_names(&docs.iter().map(|d| Binding { name: d.core.clone(), digest: d.digest }).collect::<Vec<_>>()).unwrap();
@@ -424,7 +424,7 @@ fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
     let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
     let mut failures = Vec::new();
     for binding in [Binding::Cpu, Binding::Metal] {
-        let path = crate::code_rule_dsl::prefilter::tests::temp();
+        let path = crate::code_rule_dsl::fixtures::temp();
         let store = ContentStore::open(&path).unwrap();
         let db = Connection::open(&path).unwrap();
         let modules = Modules::default();
@@ -470,7 +470,7 @@ fn t_programs_run_natively_over_atoms_like_t() {
     let first: HashMap<i64, i64> =
         t.prepare("SELECT d, min(n) FROM node GROUP BY d").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(|r| r.unwrap()).collect();
     let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
-    let path = crate::code_rule_dsl::prefilter::tests::temp();
+    let path = crate::code_rule_dsl::fixtures::temp();
     let store = ContentStore::open(&path).unwrap();
     let db = Connection::open(&path).unwrap();
     let modules = Modules::default();
@@ -579,7 +579,7 @@ fn own_ingestion_derives_what_t_facts_do() {
     use crate::code_rule_dsl::typing::file_local::Binding;
     let raw = zstd::decode_all(std::fs::File::open(root().join("../facts/vtab/golden/corpus.json.zst")).unwrap()).unwrap();
     let corpus: Vec<(String, String)> = serde_json::from_slice(&raw).unwrap();
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("corpus");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("corpus");
     for (path, source) in &corpus {
         let file = dir.join(path);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -632,7 +632,7 @@ fn own_ingestion_derives_what_t_facts_do() {
 fn typed_corpus_reads_declarations_and_dependency_summaries() {
     use super::corpus::{Typing, run_typed};
     use crate::code_rule_dsl::typing::file_local::Binding;
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("typed");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("typed");
     let write = |p: &str, text: &str| {
         let p = dir.join(p);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -716,7 +716,7 @@ name(s) :- node(_, n, "identifier", _, _), text(n, s).
 /// A process runs the corpus twice over its own store (`corpus_store_child`).
 #[test]
 fn a_second_corpus_run_deletes_and_creates_its_store_again() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("restore");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("restore");
     std::fs::create_dir_all(&dir).unwrap();
     let status = std::process::Command::new(std::env::current_exe().unwrap())
         .args(["--ignored", "--exact", "code_rule_dsl::logic::plan::tests::corpus_store_child", "--nocapture", "--test-threads=1"])
@@ -732,7 +732,7 @@ fn a_second_corpus_run_deletes_and_creates_its_store_again() {
 /// `prefix`, `suffix`) in place of regexes.
 #[test]
 fn rules_test_names_paths_and_lines_without_regexes() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("strings");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("strings");
     for (p, text) in [
         ("impl/sqlite/fts/manager.py", "x = 1\n_hidden = 2\nfetch_async = 3\n"),
         ("impl/base.py", "_also = 1\n"),
@@ -769,7 +769,7 @@ async_in_fts(s) :- doc(d, p, _), glob("impl/*/fts/**", p), node(d, n, "identifie
 /// descendant); both negate.
 #[test]
 fn rules_read_inside_and_has_as_tape_relations() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("axes");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("axes");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "def outer():\n    def inner():\n        g()\n    f()\nh()\n").unwrap();
     let program = r#"
@@ -840,7 +840,7 @@ fn("function_definition").
         other => panic!("no way {other}"),
     };
     let binding = if std::env::var("RERAIL_MEASURE_METAL").is_ok() { crate::code_rule_dsl::typing::file_local::Binding::Metal } else { crate::code_rule_dsl::typing::file_local::Binding::Cpu };
-    let out = crate::code_rule_dsl::prefilter::tests::temp().with_extension(format!("measure-{way}"));
+    let out = crate::code_rule_dsl::fixtures::temp().with_extension(format!("measure-{way}"));
     let r = super::corpus::run(&format!("{head}{body}"), &corpus, None, &out, "program", binding, 1 << 18).unwrap();
     let cpu: f64 = r.phases.iter().map(|p| p.1 + p.2).sum();
     println!("MEASURE {way}: {} files, {} nodes, {} chunks, hit rows {}, CPU {cpu:.2} s, peak RSS {:.0} MB", r.files, r.nodes, r.chunks, r.rows["hit"], r.phases.iter().map(|p| p.3).fold(0.0, f64::max));
@@ -857,7 +857,7 @@ fn("function_definition").
 /// of its body (two arguments of one length both count) and gives 0 of nothing.
 #[test]
 fn join_sum_and_aggregates_in_terms_run() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("aggregates");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("aggregates");
     std::fs::create_dir_all(&dir).unwrap();
     // Identifiers, whose `text` is their name: `é` sorts after `z` by code point, and `B` before both.
     let m = (0..=10).map(|i| format!("a{i}")).collect::<Vec<_>>().join(", ");
@@ -922,7 +922,7 @@ more(f) :- callee(c, f), 1 + count : { arg(c, _, _) } > 3.
 /// Runs `program` over one Python file, pure SQL (`""`) and on the native set engine (`"program"`): the outputs
 /// `rels`, which both must give alike, and how many components the native run solved natively.
 fn run_both(name: &str, program: &str, rels: &[&str]) -> (BTreeMap<String, String>, usize) {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "x = 1\n").unwrap();
     let mut got = Vec::new();
@@ -1016,7 +1016,7 @@ pre(m) :- pre(q), q = @dot(m, x), x != "".
 /// another relation keeps its path and line.
 #[test]
 fn violations_at_places_are_found_at_their_path_and_line() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("places");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("places");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "f()\n\ng()\n").unwrap();
     let program = r#"
@@ -1053,7 +1053,7 @@ PIN(s) :- spot(_, s).
 /// ancestor named, `!within_stop`, `!earlier` and `!split_dot`; `precedes_stop` and `next_sibling` over `child`.
 #[test]
 fn axes_read_node_sets_and_negate() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("node-sets");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("node-sets");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "def a():\n    pass\ndef b():\n    def inner():\n        g()\n    f()\ndef skip():\n    def deep():\n        k()\nh()\nx = 1\n").unwrap();
     std::fs::write(dir.join("b.py"), "z()\n").unwrap();
@@ -1182,7 +1182,7 @@ not_split2(s) :- q(s), !split_dot(s, "os", "path.join").
 /// built-in is no relation the aggregate could read in place.
 #[test]
 fn aggregates_over_one_built_in_count_its_rows() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("agg-builtin");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("agg-builtin");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "def f():\n    g(1)\n    h()\ndef e():\n    pass\n").unwrap();
     let program = r#"
@@ -1220,7 +1220,7 @@ after(s, k) :- fname(f, s), k = count : { earlier(f, n) }.
 /// alternative each, and none.
 #[test]
 fn bounded_value_recursion_and_negated_conjunctions_run() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("recursion");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("recursion");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "f(x, y, z)\nw = os.path.join\n").unwrap();
     let program = r#"
@@ -1277,7 +1277,7 @@ gone(s) :- arg_pos(s, 0), !(arg_pos(_, 2)).
 /// no row, on both the SQL and the native paths.
 #[test]
 fn negations_over_aggregates_built_ins_and_missing_groups() {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("negations");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("negations");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "f(1, 2, 3)\ng(1)\nos.path.join\nos.sep\n").unwrap();
     let program = r#"
@@ -1322,7 +1322,7 @@ tailless(s) :- callee(_, s), !keyword(@rx_group(s, "^(?:[a-z]+\\.(?<u>[a-z]+))$"
 
 /// `program` over `files` (path, source) by the corpus runner; each of `outputs` as written.
 fn corpus_outputs(name: &str, files: &[(&str, &str)], program: &str, outputs: &[&str]) -> Vec<String> {
-    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
     let _ = std::fs::remove_dir_all(&dir);
     for (path, source) in files {
         let p = dir.join(path);
@@ -1900,7 +1900,7 @@ fn join_keys_from_functions_derive_the_rules_rows() {
     assert!(report.inverses >= 3, "the concatenations' parts: {report:?}");
     assert_eq!(report.keyed_by, ["want__key_head0"], "{report:?}");
     let rows = |p: &Program, modes: Option<&str>| -> Vec<Vec<String>> {
-        let path = crate::code_rule_dsl::prefilter::tests::temp();
+        let path = crate::code_rule_dsl::fixtures::temp();
         let store = ContentStore::open(&path).unwrap();
         let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
         let lowered = lower::lower(p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();

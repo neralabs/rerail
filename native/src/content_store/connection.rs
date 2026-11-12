@@ -428,14 +428,29 @@ pub(super) fn configure_connection(connection: &mut Connection) -> StoreResult<(
 pub fn sqlite_on_jemalloc() {
     use std::ffi::{c_int, c_void};
     static ONCE: std::sync::Once = std::sync::Once::new();
+    // The heap sampler sees SQLite's allocations too (`rerail_prof::heap`).
     unsafe extern "C" fn allocate(bytes: c_int) -> *mut c_void {
-        unsafe { tikv_jemalloc_sys::malloc(bytes.max(1) as usize) }
+        let p = unsafe { tikv_jemalloc_sys::malloc(bytes.max(1) as usize) };
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::alloc_by(p as usize, bytes.max(1) as usize, rerail_prof::heap::SQLITE);
+        }
+        p
     }
     unsafe extern "C" fn release(pointer: *mut c_void) {
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::free(pointer as usize);
+        }
         unsafe { tikv_jemalloc_sys::free(pointer) }
     }
     unsafe extern "C" fn resize(pointer: *mut c_void, bytes: c_int) -> *mut c_void {
-        unsafe { tikv_jemalloc_sys::realloc(pointer, bytes.max(1) as usize) }
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::free(pointer as usize);
+        }
+        let p = unsafe { tikv_jemalloc_sys::realloc(pointer, bytes.max(1) as usize) };
+        if rerail_prof::heap::on() {
+            rerail_prof::heap::alloc_by(p as usize, bytes.max(1) as usize, rerail_prof::heap::SQLITE);
+        }
+        p
     }
     unsafe extern "C" fn size(pointer: *mut c_void) -> c_int {
         unsafe { tikv_jemalloc_sys::malloc_usable_size(pointer) as c_int }
@@ -620,12 +635,16 @@ impl ContentStore {
                 std::panic::resume_unwind(panic);
             }
         };
+        let atoms = super::hazards::span("the batch's new atoms");
         let committed = self.atoms.write_pending(&connection).and_then(|upto| {
+            drop(atoms);
+            let _commit = super::hazards::span("the batch's commit");
             connection.execute_batch("COMMIT")?;
             Ok(upto)
         });
         match committed {
             Ok(upto) => {
+                let _held = super::hazards::span("the batch's atoms, held as stored");
                 self.atoms.committed(upto);
                 Ok(value)
             }

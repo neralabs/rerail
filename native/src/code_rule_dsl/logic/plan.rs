@@ -770,7 +770,7 @@ fn plan_cache(outcome: usize) {
 
 /// Quiet strata passed on unchanged in this process (decision 0101 §1), for tests.
 static QUIET_STRATA: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-pub(in crate::code_rule_dsl) fn quiet_strata() -> usize {
+pub fn quiet_strata() -> usize {
     QUIET_STRATA.load(std::sync::atomic::Ordering::Relaxed)
 }
 
@@ -4919,8 +4919,24 @@ impl<'a> Run<'a, '_> {
         let prog = self.prog;
         self.why_not = None;
         self.why_class = None;
-        if scc.iter().any(|r| prog.lattice.contains_key(r)) {
-            self.why_not = Some("a lattice relation: the native set engine holds sets only".into());
+        // A lattice relation runs here as one row a key, folded by its lattice's join (decision 0124), except where
+        // the component's other machinery keeps sets: a gate, or a request answered (its SQL seeds and probes insert
+        // by key, not by join). A session's `levels` are kept as any relation's: a lattice stratum is not maintained
+        // (`maintain::unmaintainable`), it is derived again each run.
+        if let Some(why) = scc.iter().filter_map(|r| prog.lattice.get(r).map(|l| (r, l))).find_map(|(r, l)| {
+            let lattice = match super::native::lattice(l.lattice()) {
+                Ok(lattice) => lattice,
+                Err(e) => return Some(format!("a lattice relation ({r}): {e}")),
+            };
+            if !lattice.finite() && l.widen.is_none() {
+                return Some(format!("a lattice relation ({r}) of unbounded height without `widen`"));
+            }
+            if prog.gates.iter().any(|(g, _)| scc.contains(g)) || prog.answers.keys().any(|a| scc.contains(a)) {
+                return Some(format!("a lattice relation ({r}) in a component with gates or requests"));
+            }
+            None
+        }) {
+            self.why_not = Some(why);
             self.why_class = Some("a lattice relation".into());
             return Ok(Native::Declined);
         }
@@ -5158,6 +5174,17 @@ impl<'a> Run<'a, '_> {
                 let empty = prog.facts.get(*r).is_none_or(|f| f.is_empty()) && !sql_seeded.contains(*r);
                 rel_lines.push(SpecLine::Rel { name: (*r).clone(), types: types(r), start: if empty { Start::Empty } else { Start::Rows } });
             }
+        }
+        // A lattice relation's key and join, after the relations (decision 0124). One that starts from a kept
+        // relation (a maintained session's survivors) is a set there: it is not folded in place yet.
+        for r in &rels {
+            let Some(l) = prog.lattice.get(*r) else { continue };
+            if based.contains_key(*r) {
+                self.why_not = Some(format!("a lattice relation ({r}) maintained from its kept rows"));
+                self.why_class = Some("a lattice relation".into());
+                return Ok(Native::Declined);
+            }
+            rel_lines.push(SpecLine::Lattice { rel: ri[*r], keys: l.keys, name: l.lattice().to_owned(), widen: l.widen });
         }
         lines.splice(rel_at..rel_at, rel_lines);
         let nseeds = orders.len();

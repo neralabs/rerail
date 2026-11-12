@@ -249,8 +249,6 @@ pub mod code_rule_dsl {
             #[path = "corpus"]
             pub mod corpus {
                 pub use rerail_logic::code_rule_dsl::logic::plan::corpus::*;
-                #[cfg(test)]
-                pub mod base_tests;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::logic::plan::{Error, Outcome, Result, lower};
                 #[allow(unused_imports)]
