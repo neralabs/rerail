@@ -29,13 +29,16 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
-/** A Git checkout in a folder of its own, with the database beside it; `folder` is spelt as Git and Rerail spell it. */
-async function checkoutFolder(): Promise<{ folder: string; databasePath: string }> {
+/**
+ * A checkout in a folder of its own, a Git one unless `git` is false, with the database beside it; `folder` is spelt
+ * as Git and Rerail spell it.
+ */
+async function checkoutFolder({ git = true } = {}): Promise<{ folder: string; databasePath: string }> {
   const root = realpathSync.native(await mkdtemp(join(tmpdir(), "rerail-key-spelling-")));
   temporaryDirectories.push(root);
   const folder = join(root, "app");
   mkdirSync(folder);
-  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: folder, stdio: "ignore" });
+  if (git) execFileSync("git", ["init", "-q", "-b", "main"], { cwd: folder, stdio: "ignore" });
   return { folder, databasePath: join(root, "rerail.sqlite") };
 }
 
@@ -176,18 +179,25 @@ describe("path keys an earlier build stored under another spelling", () => {
     expect(recordsAt(folder, databasePath)).toEqual(kept(folder, "interrupted"));
   });
 
-  it("stay where the key cannot be resolved, and the database still opens", async () => {
+  it("stay where the key cannot be resolved or is no whole path, and the database still opens", async () => {
     const { folder, databasePath } = await checkoutFolder();
     const stored = otherSpelling(folder);
+    const relative = join("relative", "checkout");
     earlierBuildRecorded(folder, databasePath, stored);
-    vi.mocked(currentPathKey).mockImplementation(() => {
-      throw Object.assign(new Error("EPERM: operation not permitted"), { code: "EPERM" });
+    write(databasePath, [[`INSERT INTO rule_settings (owner_kind, owner_id, folder, target_kind, target_id, "on", updated_at)
+      VALUES ('checkout', ?, '', 'rule', 'no-console', 0, 1)`, relative]]);
+    vi.mocked(currentPathKey).mockImplementation(path => {
+      if (path === stored) throw Object.assign(new Error("EPERM: operation not permitted"), { code: "EPERM" });
+      return `${path}-moved`;
     });
 
     const database = openRerailDatabase(databasePath);
     try {
       expect(rows(database, "SELECT checkout_path FROM checkouts")).toEqual([{ checkout_path: stored }]);
+      expect(rows(database, "SELECT owner_id FROM rule_settings WHERE owner_kind = 'checkout' ORDER BY owner_id"))
+        .toEqual([stored, relative].sort().map(owner => ({ owner_id: owner })));
       expect(rows(database, "SELECT id FROM schema_migrations WHERE id = 'path-keys-as-stored'")).toEqual([{ id: STEP }]);
+      expect(vi.mocked(currentPathKey).mock.calls.map(([path]) => path)).toEqual([stored]);
     } finally {
       database.$client.close();
     }
@@ -196,13 +206,34 @@ describe("path keys an earlier build stored under another spelling", () => {
   it.runIf(process.platform === "win32")("move, on Windows, from a lower-case drive letter and another case to the stored spelling", async () => {
     const actual = await vi.importActual<CheckoutControl>("../../../src/engine/catalog/checkout-control.js");
     vi.mocked(currentPathKey).mockImplementation(actual.currentPathKey);
-    const { folder, databasePath } = await checkoutFolder();
+    // A folder outside Git, whose row an earlier version keyed by the folder as the caller spelt it.
+    const { folder, databasePath } = await checkoutFolder({ git: false });
     // As VS Code passes a folder: `c:\...`, here with the folder's own name in capitals too.
     const stored = otherSpelling(folder).replace(/^[A-Z]:/u, drive => drive.toLowerCase());
     expect(actual.currentPathKey(stored)).toBe(folder);
     earlierBuildRecorded(folder, databasePath, stored);
 
     expect(recordsAt(folder, databasePath)).toEqual(kept(folder, "completed"));
+  });
+
+  it.runIf(process.platform === "win32")("stay, on Windows, on a network share, which the step never looks up", async () => {
+    const actual = await vi.importActual<CheckoutControl>("../../../src/engine/catalog/checkout-control.js");
+    vi.mocked(currentPathKey).mockImplementation(actual.currentPathKey);
+    const { folder, databasePath } = await checkoutFolder();
+    earlierBuildRecorded(folder, databasePath, otherSpelling(folder));
+    // A documentation address no host answers on (RFC 5737): a lookup there waits about 21 s for the connection.
+    const share = "\\\\192.0.2.1\\share\\app";
+    write(databasePath, [["INSERT INTO audit_settings (workspace_root, settings_json, updated_at) VALUES (?, '{\"scope\":\"repository\",\"mode\":\"log\"}', 1)", share]]);
+
+    const started = Date.now();
+    const database = openRerailDatabase(databasePath);
+    try {
+      expect(Date.now() - started).toBeLessThan(2_000);
+      expect(rows(database, "SELECT workspace_root FROM audit_settings ORDER BY workspace_root"))
+        .toEqual([folder, share].sort().map(root => ({ workspace_root: root })));
+    } finally {
+      database.$client.close();
+    }
   });
 
   it("keep their spelling outside Windows, where the realpath did not change", async () => {

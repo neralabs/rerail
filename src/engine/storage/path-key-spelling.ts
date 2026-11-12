@@ -6,7 +6,7 @@
  * preferences read as unset after the update. The `path-keys-as-stored` step (`migrations.ts`) runs it once per file,
  * inside the open's write transaction.
  */
-import { isAbsolute } from "node:path";
+import { resolve } from "node:path";
 import { sql } from "drizzle-orm";
 import type { RerailDatabase } from "./database.js";
 import { holdsTable } from "./table-probe.js";
@@ -44,8 +44,8 @@ const PATH_KEYED_TABLES: readonly PathKeyedTable[] = [
 /**
  * Moves every path key the file holds to `keyOf(key)`, merging the rows that come to one key: the newer row stays
  * (`PathKeyedTable.newer`), and a checkout keeps a start state either of its rows had. A key `keyOf` cannot resolve
- * (it throws: a folder Rerail may not read) or that is not an absolute path stays as it is, so the open never fails on
- * one folder. `keyOf` runs once per distinct key.
+ * (it throws: a folder Rerail may not read) stays as it is, so the open never fails on one folder, and so does a key
+ * the step does not look up ({@link looksUp}). `keyOf` runs once per distinct key.
  */
 export function respellPathKeys(database: RerailDatabase, keyOf: (stored: string) => string): void {
   const respelled = onceEach(keyOf);
@@ -63,11 +63,20 @@ function onceEach(keyOf: (stored: string) => string): (stored: string) => string
   return stored => {
     let key = keys.get(stored);
     if (key === undefined) {
-      key = isAbsolute(stored) ? keyOrStored(keyOf, stored) : stored;
+      key = looksUp(stored) ? keyOrStored(keyOf, stored) : stored;
       keys.set(stored, key);
     }
     return key;
   };
+}
+
+/**
+ * Whether the step looks `stored` up. Only a whole path, as Rerail writes every key: `resolve` changes a relative path,
+ * or `/work/app` on Windows, which names no drive. Never a path on a network share (`\\host\share\...`): a lookup there
+ * waits on the network, about 21 s for a host that does not answer, while the open holds the database's write lock.
+ */
+function looksUp(stored: string): boolean {
+  return resolve(stored) === stored && !stored.startsWith("\\\\");
 }
 
 function keyOrStored(keyOf: (stored: string) => string, stored: string): string {
