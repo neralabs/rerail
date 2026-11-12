@@ -3610,3 +3610,42 @@ test's wave.
 
 **Closure:** a wave belongs to its run (or the test counts only its own launches), and the test passes 20 of 20
 beside the others.
+
+## O-cone-libraries. Since phase 1 loads the libraries, the import closure is near all pairs of 4,249 documents
+
+c90b3e39b makes the libraries an import resolves to into documents of every later phase. components.rr seeds
+`rr_cx_reach(d, d)` from every document (`rr_cx_own`), and typeshed's stubs import each other in cycles. So
+on the 54-file Python corpus, `rr_cx_reach` holds 6,347,637 rows over 4,249 documents (2026-11-11, hub 03125d2d1).
+Before the merge it was about 4 k. Through it:
+- `rr_cx_sees__sup0`'s seed and the statistics of `rr_cx_reach` cost about 7 s and 4.3 s a run.
+- The kept cross-file part holds one relation of 6.7 M rows (147 MB of values, 34 MB of levels, 41 MB of sets and
+  indexes).
+- Read back from the frames, the part is 268 MB, past the 256 MB budget (`RERAIL_CROSS_RETAIN_MB`). A warm run with
+  no input changed then keeps 70 relations and derives 215 of 481 strata again, run after run. A cold run had kept
+  364 relations in 145.7 MB.
+
+The closure is the same as its condensation: `d` reaches `e` iff `d`'s component reaches `e`'s
+(`rr_cx_component`). A reach over components, with `rr_cx_reach` and `rr_cx_sees` asked as memberships through
+it, holds the component DAG's closure instead of the documents' pairs.
+
+**Closure:** a warm run of the 54-file P3 corpus derives no stratum again with no input changed; cold CPU is back
+near 66.6 s (t32); findings unchanged.
+
+## O-logic-tests-link. rerail-logic's test binary checks but does not link: the grammars are the engine's
+
+`cargo test -p rerail-logic --lib --no-run` compiles (01db3167f) but fails to link: `_tree_sitter_python`,
+`_tree_sitter_javascript`, `_tree_sitter_typescript`, `_tree_sitter_tsx`, `_tree_sitter_sql` and
+`_tree_sitter_vue` are undefined. The language registry (rerail-lang's build.rs) declares them, but only the
+engine's build.rs compiles the vendored grammars. So the corpus tests that stay in logic (memo, retain's frame
+tests, kept_strata, phases, reuse, cache_tests, prepared) run nowhere.
+
+**Closure:** rerail-lang's build script compiles the vendored grammars it declares (the engine's then does not),
+and logic's test binary links and runs.
+
+## O-constants-strict. Under `RERAIL_SQL_STRICT=1` a corpus run stops at `constant_rows`'s set-up
+
+`corpus/constants.rs:214` creates `constant_rows` on the run's connection, a write outside the waves that
+decision 0104 refuses. So the P3 benchmark aborts in strict mode before its first wave (hub 03125d2d1).
+
+**Closure:** the table is made by the store's schema or written through the store writer; the 54-file P3 run
+passes in strict mode.
