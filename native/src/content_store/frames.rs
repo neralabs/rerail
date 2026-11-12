@@ -54,10 +54,14 @@ const USED_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS frame_used(space BLOB NOT 
 
 /// Whether a store (by path) has table `name` (made by `schema`), as this process found or made it: made when a write
 /// first needs it, so a store's other writes run no more statements than they did.
-fn lazy_table(t: &rusqlite::Connection, path: &std::path::Path, name: &str, schema: &str, make: bool) -> rusqlite::Result<bool> {
+fn known_tables() -> &'static std::sync::Mutex<HashMap<(std::path::PathBuf, String), bool>> {
     static KNOWN: std::sync::OnceLock<std::sync::Mutex<HashMap<(std::path::PathBuf, String), bool>>> = std::sync::OnceLock::new();
+    KNOWN.get_or_init(Default::default)
+}
+
+fn lazy_table(t: &rusqlite::Connection, path: &std::path::Path, name: &str, schema: &str, make: bool) -> rusqlite::Result<bool> {
     let key = (super::atoms::key(path), name.to_owned());
-    let known = KNOWN.get_or_init(Default::default);
+    let known = known_tables();
     if let Some(true) = known.lock().expect("the lazy tables").get(&key) {
         return Ok(true);
     }
@@ -467,10 +471,11 @@ impl ContentStore {
         Ok((frames, bytes))
     }
 
+    /// Whether the store has its frames' table: looked up until found, then known for the process (a table is never
+    /// dropped while it runs).
     fn frames_table(&self) -> StoreResult<bool> {
         let connection = self.connection.lock().expect("content store mutex poisoned");
-        let n: i64 = connection.query_row("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='frames'", [], |r| r.get(0))?;
-        Ok(n > 0)
+        Ok(lazy_table(&connection, &self.database_path, "frames", SCHEMA, false)?)
     }
 
     /// The stored frames of `rels` in `space`, partition `part`, without their rows.
@@ -1598,4 +1603,6 @@ mod tests {
 pub fn forget_snapshot(path: &str) {
     snapshots().lock().expect("the frames' snapshots").remove(&super::atoms::key(std::path::Path::new(path)));
     confirms().lock().expect("the frames' confirmations").remove(&super::atoms::key(std::path::Path::new(path)));
+    let key = super::atoms::key(std::path::Path::new(path));
+    known_tables().lock().expect("the lazy tables").retain(|(p, _), _| *p != key);
 }
