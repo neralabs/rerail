@@ -28,7 +28,15 @@ import { readAddedSettingsEntries, writeAddedSettingsEntries, type AddedSettings
 import { commandFileText, MANAGED_SKILL_MARKER, type CommandFileContext } from "../harness/rerail-command-files.js";
 import { RERAIL_COMMANDS, type RerailCommandName } from "../harness/rerail-commands.js";
 import { andList } from "../harness/setup-screens.js";
-import { commandLine, powershellLiteral, shellWord } from "../engine/command-line.js";
+import {
+  commandLine,
+  POSIX_QUOTED_BODY,
+  posixQuotedValue,
+  POWERSHELL_LITERAL_BODY,
+  powershellLiteral,
+  powershellLiteralValue,
+  shellWord,
+} from "../engine/command-line.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { CURRENT_LINK, DAEMON_ACCESS_TOKEN_FILE, defaultRerailHome, VERSIONS_DIR } from "../engine/storage/rerail-home.js";
@@ -357,8 +365,8 @@ function windowsFallbackWords(command: string): string | undefined {
 /** The POSIX `sh` fallback `hookCommand` writes before the two words. */
 const SH_FALLBACK_PREFIX = `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' `;
 
-/** A PowerShell single-quoted literal, as `powershellLiteral` writes it. */
-const POWERSHELL_LITERAL = String.raw`('(?:[^'\u2018-\u201B]|['\u2018-\u201B]{2})*')`;
+/** A PowerShell single-quoted literal, as `powershellLiteral` writes it, quotes included. */
+const POWERSHELL_LITERAL = `('${POWERSHELL_LITERAL_BODY}')`;
 
 /** Codex's and Cursor's PowerShell fallbacks (`powershellHookCommand`, `cursorPowershellHookCommand`): node (1), hook (2). */
 const POWERSHELL_FALLBACKS = [
@@ -370,7 +378,7 @@ const POWERSHELL_FALLBACKS = [
 function powershellFallbackWords(command: string): string | undefined {
   const fallback = POWERSHELL_FALLBACKS.map(pattern => pattern.exec(command)).find(match => match !== null);
   return fallback?.slice(1, 3)
-    .map(word => hookWord(word.slice(1, -1).replace(/(['\u2018-\u201B])\1/gu, "$1"), "cmd"))
+    .map(word => hookWord(powershellLiteralValue(word.slice(1, -1)), "cmd"))
     .join(" ");
 }
 
@@ -1617,8 +1625,8 @@ function scriptTail(executable: string, platform: NodeJS.Platform): string {
  * in the instructions' prose never pairs with the quote around a path.
  */
 function posixQuotedScripts(text: string, executable: string, platform: NodeJS.Platform): string[] {
-  return [...text.matchAll(new RegExp(String.raw`'((?:[^']|'\\'')*${scriptTail(executable, platform)})'`, "gu"))]
-    .map(match => match[1]!.replaceAll(String.raw`'\''`, "'"));
+  return [...text.matchAll(new RegExp(`'(${POSIX_QUOTED_BODY}${scriptTail(executable, platform)})'`, "gu"))]
+    .map(match => posixQuotedValue(match[1]!));
 }
 
 /**
@@ -1627,8 +1635,8 @@ function posixQuotedScripts(text: string, executable: string, platform: NodeJS.P
  * the quotes of a POSIX-quoted `'` never open one, and it ends at `executable` as in `posixQuotedScripts`.
  */
 function powershellQuotedScripts(text: string, executable: string, platform: NodeJS.Platform): string[] {
-  const literal = String.raw`(?<![^\s(])'((?:[^'\u2018-\u201B]|(['\u2018-\u201B])\2)*${scriptTail(executable, platform)})'`;
-  return [...text.matchAll(new RegExp(literal, "gu"))].map(match => match[1]!.replace(/(['\u2018-\u201B])\1/gu, "$1"));
+  const literal = String.raw`(?<![^\s(])'(` + POWERSHELL_LITERAL_BODY + scriptTail(executable, platform) + ")'";
+  return [...text.matchAll(new RegExp(literal, "gu"))].map(match => powershellLiteralValue(match[1]!));
 }
 
 /** Whether `text` names `script` as it is, in POSIX single quotes or as a PowerShell literal: each form a file takes. */

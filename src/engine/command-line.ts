@@ -1,8 +1,9 @@
 /**
- * Command lines Rerail writes for a shell to run, and the rules for quoting a word in each shell. A caller names the
- * shell the line runs in, never a platform: Claude Code runs commands in Git Bash on Windows, a POSIX shell, and Codex
- * and Cursor in PowerShell (`windowsCommandShell`). A hook command is a stored format that registration recognises by
- * its exact text, so `harness-registration.ts` writes and reads those itself.
+ * Command lines Rerail writes for a shell to run, the rules for quoting a word in each shell, and the readers of a
+ * quoted word, so a rule and its reader change together. A caller names the shell the line runs in, never a platform:
+ * Claude Code runs commands in Git Bash on Windows, a POSIX shell, and Codex and Cursor in PowerShell
+ * (`windowsCommandShell`). A hook command is a stored format that registration recognises by its exact text, so
+ * `harness-registration.ts` writes and reads those itself, with the quoted words read here.
  */
 
 /** A shell Rerail writes a command line for: a POSIX shell (sh, bash, zsh, or Git Bash on Windows), or PowerShell. */
@@ -11,7 +12,36 @@ export type Shell = "posix" | "powershell";
 /** The five characters PowerShell reads as a single quote: ' ‘ ’ ‚ ‛ (U+0027 and U+2018 to U+201B). */
 export const POWERSHELL_QUOTES = "'‘’‚‛";
 
-const POWERSHELL_QUOTE = /['‘-‛]/gu;
+const POWERSHELL_QUOTE = new RegExp(`[${POWERSHELL_QUOTES}]`, "gu");
+
+/** A quote of {@link POWERSHELL_QUOTES} written twice, as {@link powershellLiteral} writes each. */
+const DOUBLED_POWERSHELL_QUOTE = new RegExp(`([${POWERSHELL_QUOTES}])\\1`, "gu");
+
+/**
+ * What {@link powershellLiteral} writes between its two `'`, as RegExp source for the `u` flag: any character but a
+ * quote, or one quote written twice. It holds no capture group, so a reader puts it inside a pattern of its own,
+ * captures and back-references included, with the ends it expects around it.
+ */
+export const POWERSHELL_LITERAL_BODY = `(?:[^${POWERSHELL_QUOTES}]|${[...POWERSHELL_QUOTES].map(quote => quote.repeat(2)).join("|")})*`;
+
+/** The value a {@link POWERSHELL_LITERAL_BODY} holds: each quote written twice, read once. */
+export function powershellLiteralValue(body: string): string {
+  return body.replace(DOUBLED_POWERSHELL_QUOTE, "$1");
+}
+
+/** How a POSIX single-quoted word writes a `'`: it ends the quotes, writes the `'` escaped, and opens them again. */
+const POSIX_QUOTE_ESCAPE = String.raw`'\''`;
+
+/**
+ * What {@link shellWord} writes between the single quotes of a POSIX word, as RegExp source for the `u` flag: any
+ * character but `'`, or a `'` written `'\''`. Like {@link POWERSHELL_LITERAL_BODY} it holds no capture group.
+ */
+export const POSIX_QUOTED_BODY = String.raw`(?:[^']|'\\'')*`;
+
+/** The value a {@link POSIX_QUOTED_BODY} holds: each `'\''` read as the `'` it stands for. */
+export function posixQuotedValue(body: string): string {
+  return body.replaceAll(POSIX_QUOTE_ESCAPE, "'");
+}
 
 /**
  * What a POSIX shell reads as one plain word: no space, quote, `$`, backtick, glob or other character it gives a
@@ -38,7 +68,7 @@ export function powershellLiteral(value: string): string {
  */
 export function shellWord(shell: Shell, value: string): string {
   if (shell === "powershell") return POWERSHELL_SAFE.test(value) ? value : powershellLiteral(value);
-  return POSIX_SAFE.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`;
+  return POSIX_SAFE.test(value) ? value : `'${value.replaceAll("'", POSIX_QUOTE_ESCAPE)}'`;
 }
 
 /**

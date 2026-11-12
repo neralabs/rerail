@@ -207,9 +207,10 @@ test("on Windows the matcher reads the home in either slash, any case, and the d
 });
 
 test("on Windows the matcher reads a home whose path holds a quote in each quoted form registration writes", () => {
-  // Registration's own writer: Codex's and Cursor's PowerShell lines write each quote twice, Claude Code's Git Bash
+  // Registration's own writer, for each of the five quotes PowerShell reads (POWERSHELL_QUOTES in
+  // src/engine/command-line.ts): Codex's and Cursor's PowerShell lines write each one twice, Claude Code's Git Bash
   // lines write `'` as `'\''`.
-  for (const user of ["o'neil", "o\u2019neil"]) {
+  for (const user of ["'", "‘", "’", "‚", "‛"].map(quote => `o${quote}neil`)) {
     const home = win32.join("C:", "Users", user);
     const rerailHome = win32.join(home, ".rerail");
     const matches = rerailHomeMatcher(rerailHome, home, "win32");
