@@ -2202,6 +2202,8 @@ impl Batch {
         // `syntax_error(d)`: the documents whose parse has an error (`Facts::syntax_errors`); `core.rr`'s
         // `syntax_error(d, l, msg)` (`core_rr`): the first error's line and message.
         let mut errors = Vec::new();
+        // The nodes visited for their scalar rows (`NodeRows::document`'s, `core_rr::CoreRows::node`'s).
+        let mut visited = 0usize;
         let span_text = [crate::code_rule_dsl::logic::front::ast::SpanIn::Source, crate::code_rule_dsl::logic::front::ast::SpanIn::Line].map(|within| !core || projection.wants_span_text(within));
         let mut extra = Extra::new(reads, matches, shape, span_text);
         let mut tree = tree::Tree::new(reads);
@@ -2398,11 +2400,18 @@ impl Batch {
             }
             let nodes_span = crate::code_rule_dsl::logic::profile::span(|| "node rows".into());
             if let Some(dialect) = dialect {
-                if scalar_nodes {
+                // In core.rr's shape `NodeRows` makes only `intval` and T's `op` (`op_t`).
+                if scalar_nodes && (!core || projection.wants("intval") || projection.wants("op_t")) {
+                    visited += p.len() as usize;
                     rows.document(&p, dialect, core, &mut string);
                 }
                 if core {
+                    let visits = c.visits(wants_text, wants_parts, wants_part_starts, wants_words);
                     for local in 0..p.len() {
+                        if !c.visited(visits, &p, dialect, local) {
+                            continue;
+                        }
+                        visited += 1;
                         c.node(&p, dialect, local, &mut string, wants_text, wants_parts, wants_part_starts, wants_words);
                     }
                 }
@@ -2465,7 +2474,7 @@ impl Batch {
             let extras: usize = docs.iter().filter_map(|p| p.extra.as_ref()).map(|x| x.token_spans.get().map_or(0, |v| v.capacity()) * 8).sum();
             serde_json::json!({"documents": docs.len(), "coreColumnBytes": docs.iter().map(|p| p.facts.bytes()).sum::<usize>(), "identityCapacityBytes": identities, "extraSpanCapacityBytes": extras}).to_string()
         });
-        crate::code_rule_dsl::logic::profile::decision("projection demand",||serde_json::json!({"scalarNodes":if scalar_nodes {docs.iter().map(|p|p.core.len()).sum::<usize>()}else{0},"nodes":docs.iter().map(|p|p.core.len()).sum::<usize>(),"strings":strings.len(),"reads":projection.reads}).to_string());
+        crate::code_rule_dsl::logic::profile::decision("projection demand",||serde_json::json!({"scalarNodes":visited,"nodes":docs.iter().map(|p|p.core.len()).sum::<usize>(),"strings":strings.len(),"reads":projection.reads}).to_string());
         let intern = crate::code_rule_dsl::logic::profile::span(|| "intern atoms".into());
         crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Value, strings.len() as u64);
         let atoms = store.intern_atoms(&strings.iter().map(String::as_str).collect::<Vec<_>>())?;
