@@ -190,11 +190,13 @@ functor @concat of three texts	native	no computed term	p(v) :- t(a), t(b), v = @
 functor @printf of %012d	native	no computed term	p(v) :- n(x), v = @printf("%03d.", x).
 functor @printf of %d and %s	native	no computed term	p(v) :- p(a, x), v = @printf("%d:%s|%%", x, a).
 membership of a constant set	native	device	p(a) :- s(a), (a = "alpha" ; a = "x_1").
-lattice relation (shortest)	native	refused: a lattice relation (the device's joins make sets; its rows fold on the CPU)	p(x, 0) :- n(x), x = 1. p(y, d + 1) :- p(x, d), e(x, y).
-lattice relation (flat: a key's values differ)	native	refused: a lattice relation (the device's joins make sets; its rows fold on the CPU)	p(a, x) :- p(a, x).
-lattice relation (max over a key)	native	refused: a lattice relation (the device's joins make sets; its rows fold on the CPU)	p(a, x) :- p(a, x).
+lattice relation (shortest)	native	device	p(x, 0) :- n(x), x = 1. p(y, d + 1) :- p(x, d), e(x, y).
+lattice relation (flat: a key's values differ)	native	device	p(a, x) :- p(a, x).
+lattice relation (max over a key)	native	device	p(a, x) :- p(a, x).
 lattice relation (shortlex_min over symbols)	native	no computed term	p(x, "") :- n(x), x = 1. p(y, r) :- p(x, r0), e(x, y), r = cat(r0, "z").
-lattice relation read by a later stratum	native	refused: a lattice relation (the device's joins make sets; its rows fold on the CPU)	.decl p_l(a: number, d: min<>) widen 8 p_l(x, 0) :- n(x), x = 1. p_l(y, d + 1) :- p_l(x, d), e(x, y). p(a, d) :- p_l(a, d).
+lattice relation (a key improved after its first value)	native	device	p(x, 0) :- n(x), x = 1. p(x, 10) :- n(x), x = 5. p(y, d + 1) :- p(x, d), e(x, y).
+lattice relation (max over a cycle, widened to its top)	native	device	p(x, 0) :- n(x), x = 1. p(y, d + 1) :- p(x, d), e(x, y).
+lattice relation read by a later stratum	native	device	.decl p_l(a: number, d: min<>) widen 8 p_l(x, 0) :- n(x), x = 1. p_l(y, d + 1) :- p_l(x, d), e(x, y). p(a, d) :- p_l(a, d).
 aggregate count = 0 (a negation)	native	device	p(a) :- s(a), count : { p(a, _) } = 0.
 aggregate over two atoms' bag	native	device	p(a, c) :- t(a), c = count : { q(a, _) }.
 join	native	device	p(x, y) :- e(x, y), n(y).

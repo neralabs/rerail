@@ -1978,6 +1978,14 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         }
     }
     let mut own = Own::default();
+    // A lattice head folds each round by key on the device (decision 0115): its fold, and its key table.
+    let mut lattices: HashMap<usize, (mj::LatCode, mj::LatKeys)> = HashMap::new();
+    for &h in heads {
+        if let Some(lat) = store.rels[h].device_lattice() {
+            let (code, top, after) = lat?;
+            lattices.insert(h, (mj::LatCode { code, top, after }, mj::LatKeys::default()));
+        }
+    }
     let mut made = vec![0u64; seeds.len() + deltas.len()];
     let mut rounds = 0;
     let mut first = true;
@@ -1993,6 +2001,8 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         // relation's rows: its new rows.
         let mut batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
         let mut news: Vec<(usize, mj::Table, mj::Words, bool)> = Vec::new();
+        // A lattice head's round: its new keys' rows (with their change counts), its changed rows, their counts.
+        let mut folded: Vec<(usize, mj::Table, mj::Table, mj::Words)> = Vec::new();
         // What the encoded work reads, held until it completes (a pooled buffer dropped early is written again).
         let mut hold: Vec<mj::Table> = Vec::new();
         for &h in heads {
@@ -2018,6 +2028,16 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
                 }).collect();
                 batch.copy_rows(mj::Rows::Table(r.uniq.as_ref().expect("the head's rows")), *n, &cols, mj::Rows::Table(&union), at).map_err(|e| format!("{e:?}"))?;
                 at += n;
+            }
+            if let Some((lat, keys)) = lattices.get_mut(&h) {
+                let new_keys = mj::Table::new(k + 1, cap).map_err(|e| format!("{e:?}"))?;
+                let changed = mj::Table::new(k, cap).map_err(|e| format!("{e:?}"))?;
+                let counters = mj::Words::zeroed(2).map_err(|e| format!("{e:?}"))?;
+                let total = own.total.get(&h).cloned();
+                batch.lattice_fold(&union, cap, total.as_deref(), k - 1, *lat, keys, &counters, &new_keys, &changed).map_err(|e| format!("{e:?}"))?;
+                folded.push((h, new_keys, changed, counters));
+                hold.push(union);
+                continue;
             }
             let words = mj::Words::zeroed(3).map_err(|e| format!("{e:?}"))?;
             words.set(0, cap as u32);
@@ -2078,6 +2098,33 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
             own.delta.insert(h, Rc::new(delta));
             own.sorts.retain(|(r, _, _), _| *r != h);
             rows_held.push(rows);
+        }
+        // A lattice head: its held rows were updated in place; its new keys' rows onto it, its changed rows its delta.
+        for (h, new_keys, changed, counters) in folded {
+            let (n, added) = (counters.get(0) as usize, counters.get(1) as usize);
+            own.sorts.retain(|(r, _, _), _| *r != h);
+            if n == 0 {
+                own.delta.remove(&h);
+                continue;
+            }
+            any = true;
+            let k = store.rels[h].k;
+            if added > 0 {
+                let ident: Vec<mj::Col> = (0..=k).map(mj::Col::From).collect();
+                let had = own.total.get(&h).map_or(0, |t| t.rows);
+                let total = mj::DevRel::empty(k + 1, had + added).map_err(|e| format!("{e:?}: a relation of {} rows", had + added))?;
+                if let Some(old) = own.total.get(&h) {
+                    batch.copy_rows(mj::Rows::Rel(old), had, &ident, mj::Rows::Rel(&total), 0).map_err(|e| format!("{e:?}"))?;
+                }
+                batch.copy_rows(mj::Rows::Table(&new_keys), added, &ident, mj::Rows::Rel(&total), had).map_err(|e| format!("{e:?}"))?;
+                old.extend(own.total.insert(h, Rc::new(total)));
+            }
+            let ident: Vec<mj::Col> = (0..k).map(mj::Col::From).collect();
+            let delta = mj::DevRel::empty(k, n).map_err(|e| format!("{e:?}"))?;
+            batch.copy_rows(mj::Rows::Table(&changed), n, &ident, mj::Rows::Rel(&delta), 0).map_err(|e| format!("{e:?}"))?;
+            own.delta.insert(h, Rc::new(delta));
+            rows_held.push(new_keys);
+            rows_held.push(changed);
         }
         let done = batch.finish().map_err(|e| format!("{e:?}"))?;
         drop((old, rows_held));

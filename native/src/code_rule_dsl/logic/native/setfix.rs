@@ -331,6 +331,8 @@ pub struct Rel { table: String, types: Vec<u8>, pub k: usize, pub n: usize, data
 /// delta, so readers and later probes see the folded value only. As the SQL kernel folds (`schedule::lattice::fold`):
 /// absence is bottom, the top absorbs, and after `widen` changes of a key its next value is the lattice's widening.
 pub struct Lat {
+    /// The lattice's name (`front::LatticeDecl::lattice`).
+    name: String,
     keys: usize,
     lattice: Arc<dyn super::Lattice>,
     widen: Option<u32>,
@@ -411,18 +413,29 @@ impl Rel {
               level: Vec::new(), lbase: 0, leveled: true, lat: None }
     }
     /// Makes this relation a lattice's (its `lattice` line): the rows it holds so far fold by key, as a wave's do.
-    fn set_lattice(&mut self, keys: usize, lattice: Arc<dyn super::Lattice>, widen: Option<u32>) -> Result<()> {
+    fn set_lattice(&mut self, name: &str, keys: usize, lattice: Arc<dyn super::Lattice>, widen: Option<u32>) -> Result<()> {
         if keys + 1 != self.k {
             return Err(err(format!("{}: a lattice of {keys} key columns over {} columns", self.table, self.k)));
         }
         let rows = std::mem::take(&mut self.data);
         let mut fresh = Rel::new(&self.table, &self.types.clone());
         fresh.stored = 0;
-        fresh.lat = Some(Box::new(Lat { keys, lattice, widen, at: HashMap::default(), changes: HashMap::default() }));
+        fresh.lat = Some(Box::new(Lat { name: name.to_owned(), keys, lattice, widen, at: HashMap::default(), changes: HashMap::default() }));
         let n = self.n;
         fresh.fold(&rows[..n * self.k]);
         *self = fresh;
         Ok(())
+    }
+    /// Whether this is a lattice relation, and how the device folds it (`metal_join::Batch::lattice_fold`): `(code,
+    /// top, widen)`, code 0 min, 1 max, 2 flat; or why it cannot (another lattice's join is the CPU's).
+    pub fn device_lattice(&self) -> Option<std::result::Result<(u32, i64, Option<u32>), String>> {
+        let lat = self.lat.as_ref()?;
+        Some(match lat.name.as_str() {
+            "min" => Ok((0, lat.lattice.top(), lat.widen)),
+            "max" => Ok((1, lat.lattice.top(), lat.widen)),
+            "flat" => Ok((2, lat.lattice.top(), lat.widen)),
+            other => Err(format!("the lattice {other} (the device folds min, max and flat)")),
+        })
     }
     /// A lattice relation's new rows `rows` (row-major): each key's values joined with its row's, and a key whose
     /// value changed replaced (`Lat`). Whether any key changed.
@@ -1151,7 +1164,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
             Line::Leveled => leveled = true,
             Line::Lattice { rel, keys, name, widen } => {
                 let lattice = super::lattice(name).map_err(|e| err(format!("lattice {name}: {e}")))?;
-                rels.get_mut(*rel).ok_or_else(|| err(format!("lattice: no relation {rel}")))?.set_lattice(*keys, lattice, *widen)?;
+                rels.get_mut(*rel).ok_or_else(|| err(format!("lattice: no relation {rel}")))?.set_lattice(name, *keys, lattice, *widen)?;
             }
             Line::Seed { head, join } => {
                 let j = { let _j = crate::code_rule_dsl::logic::profile::span(|| "open: joins".into()); join_rule_with(conn, join, &mut syms, !device_wanted)? };
@@ -1204,8 +1217,10 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
         let recursive = probes.iter().any(|p| p.delta != SEED);
         let refused = if !edges.is_empty() || !gates.is_empty() || !requests.is_empty() || !produced.is_empty() {
             Some("a component with gates, requests or edge rules".to_owned())
-        } else if rels.iter().any(|r| r.lat.is_some()) {
-            Some("a lattice relation (the device's joins make sets; its rows fold on the CPU)".to_owned())
+        } else if let Some(why) = rels.iter().filter_map(Rel::device_lattice).find_map(std::result::Result::err).filter(|_| recursive) {
+            // A recursive one folds each round on the device (`device::fixpoint`); a lattice it has no fold for
+            // stays on the CPU. Seeds alone fold as the store takes the rows.
+            Some(format!("a recursive component over {why}"))
         } else if recursive && (leveled || !levels.lines.is_empty()) {
             Some("a recursive component that keeps levels (its maintenance runs on the CPU)".to_owned())
         } else if recursive && probes.iter().any(|p| p.delta != SEED && matches!(p.body, Body::Sql(_))) {

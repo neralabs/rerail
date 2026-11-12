@@ -229,6 +229,10 @@ fn probes() -> Vec<Probe> {
     out.push(probe("lattice relation (max over a key)", &["lattice"], "a: symbol, v: max<>| widen 8", "{HEAD}(a, x) :- p(a, x)."));
     out.push(probe("lattice relation (shortlex_min over symbols)", &["lattice"], "a: number, r: shortlex_min<>| widen 8",
         "{HEAD}(x, \"\") :- n(x), x = 1.\n{HEAD}(y, r) :- {HEAD}(x, r0), e(x, y), r = cat(r0, \"z\")."));
+    out.push(probe("lattice relation (a key improved after its first value)", &["lattice"], "a: number, d: min<>| widen 8",
+        "{HEAD}(x, 0) :- n(x), x = 1.\n{HEAD}(x, 10) :- n(x), x = 5.\n{HEAD}(y, d + 1) :- {HEAD}(x, d), e(x, y)."));
+    out.push(probe("lattice relation (max over a cycle, widened to its top)", &["lattice"], "a: number, d: max<>| widen 2",
+        "{HEAD}(x, 0) :- n(x), x = 1.\n{HEAD}(y, d + 1) :- {HEAD}(x, d), e(x, y)."));
     out.push(probe("lattice relation read by a later stratum", &["lattice"], "a: number, d: number",
         ".decl {HEAD}_l(a: number, d: min<>) widen 8\n{HEAD}_l(x, 0) :- n(x), x = 1.\n{HEAD}_l(y, d + 1) :- {HEAD}_l(x, d), e(x, y).\n{HEAD}(a, d) :- {HEAD}_l(a, d)."));
     out.push(probe("aggregate count = 0 (a negation)", &["agg count"], "a: symbol", "{HEAD}(a) :- s(a), count : { p(a, _) } = 0."));
