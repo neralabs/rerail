@@ -1658,7 +1658,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       state.secretCalls.add(event.toolCallId);
     }
     const withheld = event.kind === "result" && state.secretCalls.has(event.toolCallId);
-    this.#sessionStore.append({
+    // On disk before the ledger marks the event processed, since nothing stores its row again after that; the disk sync
+    // runs off this thread (`appendSynced`).
+    await this.#sessionStore.appendSynced({
       sessionId,
       eventId: event.eventId,
       kind: event.kind,

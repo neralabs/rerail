@@ -14,6 +14,7 @@ import type { RuleCatalog } from "../engine/catalog/repository-model.js";
 import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
 import { auditViolations, events, sessions, sessionsOfRepository, workLinks, type WorkLinkRow } from "../engine/storage/schema.js";
 import { stableJsonText } from "../engine/stable-json.js";
+import { SharedSync, syncFile } from "./shared-sync.js";
 import type { DroppedEvents } from "./session-state.js";
 
 /** The events that wait for the session's code-rule evaluator: a tool call, its result and a turn's end. */
@@ -196,6 +197,18 @@ export function decodeEventPayload(payload: Uint8Array): unknown {
 }
 
 /**
+ * Syncs the write-ahead log of the database file at `path`. A log that is gone holds nothing to sync: SQLite deletes it
+ * only as the file's last connection closes, after copying it into the file and syncing that.
+ */
+async function syncLog(path: string): Promise<void> {
+  try {
+    await syncFile(`${path}-wal`);
+  } catch (error) {
+    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+  }
+}
+
+/**
  * Append-only, process-safe session and event persistence. Raw event payloads remain local to the
  * configured database. Sessions are attributed to the repository key given when they open, else to the
  * store's own `repositoryId`.
@@ -206,6 +219,8 @@ export class SqliteSessionStore {
   readonly #repositoryId: string | null;
   /** Each session's repository as it opened here, to restore its row after a reset. */
   readonly #sessionRepositories = new Map<string, string | null>();
+  /** Set by the first `appendSynced` (`#logSync`). */
+  #log: SharedSync | null | undefined;
 
   constructor(path: string, { repositoryId }: { repositoryId?: string | undefined } = {}) {
     this.path = path;
@@ -340,6 +355,40 @@ export class SqliteSessionStore {
       this.#database.insert(events).values(row).onConflictDoNothing().run();
     }
     return eventId;
+  }
+
+  /**
+   * `append` for the event a hook brings, whose promise settles once the row is on disk, as `append` returns: the
+   * session ledger marks the event processed next, and nothing stores the row again after that. At FULL a commit syncs
+   * the write-ahead log on the calling thread, which held the daemon's only thread for every event: 1.7 to 3.2 ms on a
+   * Windows desktop, up to hundreds on a busy Linux disk. This commit runs at NORMAL, which does not sync, and the log's
+   * sync follows on Node's thread pool: the thread serves other sessions while the disk works, and the events that
+   * commit meanwhile share one sync. Every other write keeps FULL. A file without a log (in memory, or where WAL is
+   * unavailable) commits at FULL.
+   */
+  async appendSynced(event: SessionEvent, session?: AdapterSession): Promise<string> {
+    const log = this.#logSync();
+    if (log === null) return this.append(event, session);
+    // SQLite refuses a level change inside a transaction; this connection opens none around an append.
+    this.#database.run(sql`PRAGMA synchronous = NORMAL`);
+    let eventId: string;
+    try {
+      eventId = this.append(event, session);
+    } finally {
+      this.#database.run(sql`PRAGMA synchronous = FULL`);
+    }
+    await log.sync();
+    return eventId;
+  }
+
+  /** The sync of this file's write-ahead log, named from the path SQLite opened; null when the file keeps no log. */
+  #logSync(): SharedSync | null {
+    if (this.#log === undefined) {
+      const wal = this.#database.all<{ journal_mode: string }>(sql`PRAGMA journal_mode`)[0]?.journal_mode === "wal";
+      const file = wal ? this.#database.all<{ file: string }>(sql`SELECT file FROM pragma_database_list WHERE name = 'main'`)[0]?.file : undefined;
+      this.#log = file === undefined || file === "" ? null : new SharedSync(() => syncLog(file));
+    }
+    return this.#log;
   }
 
   closeSession(sessionId: string, endedAt = Date.now()): void {

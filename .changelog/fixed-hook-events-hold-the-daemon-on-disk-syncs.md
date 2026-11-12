@@ -1,0 +1,1 @@
+Recording a hook event no longer holds the Rerail daemon while the disk syncs it, so other sessions' hooks go on meanwhile: a few milliseconds an event on a Windows desktop, up to hundreds on a busy Linux disk. Each event is still on disk before its hook gets an answer.

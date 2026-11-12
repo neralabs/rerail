@@ -7,7 +7,7 @@ import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
 import Database from "better-sqlite3";
 import { is } from "drizzle-orm";
 import { getTableConfig, SQLiteTable } from "drizzle-orm/sqlite-core";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createConversationRulesExtension } from "../../src/hosts/omp/index.js";
 import { RerailRuntime } from "../../src/runtime/runtime.js";
 import {
@@ -26,6 +26,7 @@ import {
 import { SqlitePresentationPreferenceStore } from "../../src/runtime/presentation-preference-store.js";
 import { MOCK_CONVERSATION_RULES, MOCK_CODE_RULES } from "../../src/cli/index.js";
 import { decodeEventPayload, SqliteSessionReader, SqliteSessionStore } from "../../src/runtime/session-store.js";
+import { SharedSync } from "../../src/runtime/shared-sync.js";
 import { NativeSessionClient } from "../../src/harness/index.js";
 import { databaseInstalledAt, resetRepositoryHistoryIn, schema } from "../../src/engine/index.js";
 import { testEmbedder } from "../support/hook-events.js";
@@ -512,6 +513,113 @@ describe("SQLite session persistence", () => {
       payload: { text: "second" },
     }]);
     reader.close();
+  });
+
+  /**
+   * Runs `write` on a store with a repository, each insert or update it makes listed with the synchronous level of its
+   * connection as it is prepared: FULL (2) syncs the write-ahead log at the commit, NORMAL (1) does not. Also returns
+   * the levels of the connections that wrote, read once `write` has run.
+   */
+  async function commitLevels(write: (store: SqliteSessionStore, path: string) => Promise<void> | void) {
+    const root = await temporaryDirectory();
+    const path = join(root, "rerail.sqlite");
+    const store = closeAfterTest(new SqliteSessionStore(path, { repositoryId: "repository" }));
+    const commits: string[] = [];
+    const writers = new Set<Database.Database>();
+    const prepare = Database.prototype.prepare;
+    const spy = vi.spyOn(Database.prototype, "prepare").mockImplementation(function (this: Database.Database, source: string) {
+      const table = /^(?:insert into|update) "(\w+)"/u.exec(source)?.[1];
+      if (table !== undefined) {
+        writers.add(this);
+        commits.push(`${table} ${String(prepare.call(this, "PRAGMA synchronous").pluck().get())}`);
+      }
+      return prepare.call(this, source);
+    });
+    try {
+      await write(store, path);
+    } finally {
+      spy.mockRestore();
+    }
+    return { path, commits, levelsAfter: [...writers].map(writer => writer.pragma("synchronous", { simple: true })) };
+  }
+
+  const levelSession = { host: "claude-code" as const, sessionId: "session-1", cwd: "/workspace" };
+  const levelEvent = (eventId: string) => ({ sessionId: levelSession.sessionId, eventId, kind: "result", observedAt: 110, payload: { output: "ok" } });
+
+  it("commits every write but a hook's event with a disk sync of its own, as a power cut must not take them", async () => {
+    const { commits } = await commitLevels((store, path) => {
+      store.openSession(levelSession, 100);
+      store.startHudTracking(levelSession, true);
+      store.append(levelEvent("event-1"), levelSession);
+      store.recordSteer(levelSession, "receipt-1", ["rule:one"]);
+      store.recordDroppedEvents(levelSession, { id: "gap", count: 1, kinds: { call: 1 }, firstEventId: null, lastEventId: null, firstDroppedAt: 1, lastDroppedAt: 2 });
+      store.recordDiscoveryPending(levelSession, "turn");
+      store.recordCodeRulesPending(levelSession, "call");
+      store.recordIgnoredEdit(levelSession, { path: "scratch/a.ts", source: ".git/info/exclude", line: 1, pattern: "scratch/" });
+      store.recordIgnoreRulesChanged(levelSession, { path: ".gitignore", via: "tool", ignoresMore: ["out/"] });
+      store.recordRuleCoverage(levelSession, { repositoryId: "repository", ownerCheckoutPaths: ["/workspace"], activeRuleCount: 1, ruleSignature: "signature" });
+      store.linkWork({ sessionId: levelSession.sessionId, kind: "git-branch", reference: "main" });
+      store.closeSession(levelSession.sessionId, 120);
+      resetRepositoryHistory(path, "repository");
+      store.append(levelEvent("event-2"), levelSession);
+    });
+    expect(commits).toEqual([
+      "sessions 2",
+      ...Array.from({ length: 9 }, () => "events 2"),
+      "work_links 2",
+      "sessions 2",
+      // The reset took the row: the event's first insert fails on its foreign key, the row goes back, the event follows.
+      "events 2",
+      "sessions 2",
+      "events 2",
+    ]);
+  });
+
+  it("commits a hook's event without a disk sync on the calling thread, and settles once a sync of the log covers it", async () => {
+    const { path, commits, levelsAfter } = await commitLevels(async (store, path) => {
+      store.openSession(levelSession, 100);
+      await store.appendSynced(levelEvent("event-1"), levelSession);
+      store.closeSession(levelSession.sessionId, 120);
+      resetRepositoryHistory(path, "repository");
+      // The session row an append puts back after the reset commits at the event's level, and the sync covers both.
+      await store.appendSynced(levelEvent("event-2"), levelSession);
+    });
+    expect(commits).toEqual(["sessions 2", "events 1", "sessions 2", "events 1", "sessions 1", "events 1"]);
+    expect(levelsAfter).toEqual([2]);
+    const connection = closeAfterTest(new Database(path, { readonly: true }));
+    expect(connection.prepare("SELECT event_id FROM events ORDER BY sequence").pluck().all()).toEqual(["event-2"]);
+  });
+
+  it("marks a hook's event processed in the session ledger only once a disk sync covers its row", async () => {
+    const root = await temporaryDirectory();
+    const storageRoot = join(root, "sessions");
+    const runtime = new RerailRuntime({ storageRoot, databasePath: defaultRerailDatabasePath(), workspaceRoot: root, embedder: testEmbedder });
+    const session = { host: "claude-code" as const, sessionId: "synced-session", cwd: root };
+    const ledgerPath = join(storageRoot, createHash("sha256").update(session.sessionId).digest("hex"), "events.jsonl");
+    const processed = async () => (await readFile(ledgerPath, "utf8")).split("\n").filter(Boolean)
+      .map(line => JSON.parse(line) as { type: string; eventId?: string })
+      .flatMap(entry => (entry.type === "event" ? [entry.eventId] : []));
+    let release = (): void => undefined;
+    const held = new Promise<void>(resolve => { release = () => resolve(); });
+    try {
+      await runtime.ingest({ kind: "session-start", eventId: "start", session });
+      const sync = vi.spyOn(SharedSync.prototype, "sync").mockImplementationOnce(() => held);
+      let answered = false;
+      const ingest = runtime.ingest({ kind: "user-prompt", eventId: "prompt", sessionId: session.sessionId, text: "inspect this" })
+        .then(() => { answered = true; });
+      await vi.waitFor(() => expect(sync).toHaveBeenCalledOnce(), { timeout: 10_000 });
+      // The row is committed while its sync runs, but neither the ledger nor the hook's answer goes ahead of the sync.
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(await processed()).toEqual(["start"]);
+      expect(answered).toBe(false);
+      release();
+      await ingest;
+      expect(await processed()).toEqual(["start", "prompt"]);
+    } finally {
+      release();
+      vi.restoreAllMocks();
+      await runtime.dispose();
+    }
   });
 
   it("counts successful steers across the full session history, deduplicating only receipt retries", async () => {
