@@ -1,7 +1,7 @@
 //! Process high-water marks and allocator residency at selected diagnostic boundaries.
 #[derive(Clone, Copy, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(crate) struct Sample {
+pub struct Sample {
     peak_rss_bytes: u64,
     rss_bytes: Option<u64>,
     allocated_bytes: Option<usize>,
