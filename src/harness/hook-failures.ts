@@ -44,22 +44,40 @@ function rerailVersion(): string {
 
 export interface HookFailureContext {
   home?: string;
+  /** The failure's time, epoch ms; when not given, the clock read once the log has made room for it. */
   now?: number;
   env?: NodeJS.ProcessEnv;
+}
+
+/**
+ * The line a hook that moved the full log aside writes into the log after it, with its own failure: every failure
+ * stamped from `startedAt` (epoch ms) on is in that part of the log or a later one, so `rerail status` can say from when
+ * it counts once the part before is gone. Readers that know only failures skip it, as it has no event.
+ */
+interface PartStart {
+  startedAt: number;
 }
 
 /** Appends one failure. Never throws: a hook must not break the session over its own bookkeeping. */
 export function recordHookFailure(
   failure: Pick<HookFailure, "host" | "event" | "reason">,
-  { home = defaultRerailHome(), now = Date.now(), env = process.env }: HookFailureContext = {},
+  { home = defaultRerailHome(), now, env = process.env }: HookFailureContext = {},
 ): void {
   try {
     makeRerailHome(home);
     const path = join(home, HOOK_FAILURES_FILE);
     const moved = sizeOf(path) > MAX_FAILURE_BYTES && moveAside(path, join(home, MOVED_ASIDE_FILE));
-    const line: HookFailure = { at: now, ...failure, agent: env.AI_AGENT ?? null, rerail: rerailVersion() };
-    appendFileSync(path, `${JSON.stringify(line)}\n`, { mode: 0o600 });
-    if (moved) removeStrandedLogs(home, now);
+    const rerail = rerailVersion();
+    // Read after the move. Every failure in the part this hook moved was stamped before the hook took it, so a
+    // millisecond past the clock is later than all of them, even one stamped in the millisecond of the move.
+    const at = now ?? Date.now() + (moved ? 1 : 0);
+    const line = `${JSON.stringify({ at, ...failure, agent: env.AI_AGENT ?? null, rerail } satisfies HookFailure)}\n`;
+    if (!moved) {
+      appendFileSync(path, line, { mode: 0o600 });
+      return;
+    }
+    appendFileSync(path, `${JSON.stringify({ startedAt: at } satisfies PartStart)}\n${line}`, { mode: 0o600 });
+    removeStrandedLogs(home, at);
   } catch {
     // Nowhere left to say it.
   }
@@ -159,9 +177,9 @@ export interface HookFailureLog {
   /** Those failures, oldest first. */
   failures: HookFailure[];
   /**
-   * When the log was moved aside and keeps nothing as old as the given time, failures from before about its oldest may
-   * be gone (hooks failing as the log moves can land on either side of it): that oldest failure's time, epoch ms, from
-   * which the failures are counted. Null when the log reaches back to the given time.
+   * When the log was moved aside and keeps nothing as old as the given time, failures from before the part in `.1`
+   * began may be gone: the time it began, epoch ms, from which the failures are counted. Null when the log reaches back
+   * to the given time.
    */
   keptSince: number | null;
 }
@@ -192,20 +210,18 @@ export function readHookFailures(home: string, since: number): HookFailureLog {
   // A hook moves the log from the live name to its own and on to `.1` by renames, which keep the file. Read in that
   // order, a log moved during this read is met again under a later name: the read under that name stands, so its
   // failures count once, as the part it became. A give-back copies a taken log's lines to the live one, against that
-  // order: a read it overlaps can miss them, never count them twice.
+  // order: a read it overlaps can miss them, or, when the live log they went back to also moves to `.1` before the read
+  // gets there, count them twice.
   const parts = new Map<string, LogPart>();
   const read = (name: string): void => {
     const part = readLogFile(join(home, name));
-    if (part !== null) parts.set(part.id, { name, failures: part.failures });
+    if (part !== null) parts.set(part.id, { name, ...part.log });
   };
   read(HOOK_FAILURES_FILE);
   for (const { name } of takenLogs(home)) read(name);
   read(MOVED_ASIDE_FILE);
   const all = [...parts.values()];
-  // How far back the log goes is the oldest failure of `.1` and the live part. A log a hook was stopped holding can be
-  // older than `.1`, with dropped logs between them, so it counts from that time on but never sets it.
-  const oldest = oldestOf(all.filter(part => part.name === MOVED_ASIDE_FILE || part.name === HOOK_FAILURES_FILE));
-  const keptSince = all.some(part => part.name === MOVED_ASIDE_FILE) && oldest !== undefined && oldest >= since ? oldest : null;
+  const keptSince = keptSinceOf(all, since);
   const from = keptSince ?? since;
   // Hooks take the time before they append, and a hook gives back the lines of a log it took after other hooks wrote
   // theirs, so lines from hooks running at once can be a little out of order.
@@ -214,9 +230,24 @@ export function readHookFailures(home: string, since: number): HookFailureLog {
 }
 
 /** A file of the log, by the last name a read met it under. */
-interface LogPart {
+interface LogPart extends LogText {
   name: string;
-  failures: HookFailure[];
+}
+
+/**
+ * How far back the log goes ({@link HookFailureLog.keptSince}), given its files and the start of the period, `since`.
+ * The part in `.1` began when the hook that moved the part before it aside wrote its start there: every failure from
+ * then on is in `.1` or a later part. A `.1` with no start, moved by an earlier build or by a hook stopped before it
+ * wrote one, goes back to the oldest failure it or the live part keeps, which hooks failing as that part began can
+ * straddle; so does a `.1` whose own start a hook held up between its move and its write, for as long as a part takes
+ * to fill, wrote into a later part. A log a hook was stopped holding can be older than `.1`, with dropped logs between
+ * them, so it counts from that time on but never sets it.
+ */
+function keptSinceOf(parts: readonly LogPart[], since: number): number | null {
+  const movedAside = parts.find(part => part.name === MOVED_ASIDE_FILE);
+  if (movedAside === undefined) return null;
+  const start = movedAside.startedAt ?? oldestOf(parts.filter(part => part === movedAside || part.name === HOOK_FAILURES_FILE));
+  return start !== undefined && start >= since ? start : null;
 }
 
 /** The time of the oldest failure the parts hold, epoch ms; undefined when they hold none. */
@@ -249,11 +280,11 @@ function takenLogs(home: string): TakenLog[] {
 }
 
 /**
- * The failures the file at `path` holds, with an id that stays the same under every name the file moves to (its device
- * and file number); null when it is missing or unreadable. A file system with no file numbers gives 0, and each name
- * then counts as a file of its own.
+ * What the file at `path` holds, with an id that stays the same under every name the file moves to (its device and file
+ * number); null when it is missing or unreadable. A file system with no file numbers gives 0, and each name then counts
+ * as a file of its own.
  */
-function readLogFile(path: string): { id: string; failures: HookFailure[] } | null {
+function readLogFile(path: string): { id: string; log: LogText } | null {
   let descriptor: number;
   try {
     descriptor = openSync(path, "r");
@@ -262,7 +293,7 @@ function readLogFile(path: string): { id: string; failures: HookFailure[] } | nu
   }
   try {
     const { dev, ino } = fstatSync(descriptor, { bigint: true });
-    return { id: ino === 0n ? path : `${dev}:${ino}`, failures: parseFailures(readFileSync(descriptor, "utf8")) };
+    return { id: ino === 0n ? path : `${dev}:${ino}`, log: parseLog(readFileSync(descriptor, "utf8")) };
   } catch {
     return null;
   } finally {
@@ -270,19 +301,31 @@ function readLogFile(path: string): { id: string; failures: HookFailure[] } | nu
   }
 }
 
-/** The failures in a log file's text, skipping lines that are not one. */
-function parseFailures(text: string): HookFailure[] {
-  const failures: HookFailure[] = [];
+/** What a file of the log holds: its failures, and the latest start of a part written in it ({@link PartStart}). */
+interface LogText {
+  failures: HookFailure[];
+  startedAt: number | undefined;
+}
+
+/**
+ * A log file's failures and part start, from its text, skipping lines that are neither. A file holds more than one
+ * start only when a hook that moved the log aside wrote its start after the next part had filled and moved on; the
+ * latest is the part's own.
+ */
+function parseLog(text: string): LogText {
+  const log: LogText = { failures: [], startedAt: undefined };
   for (const line of text.split("\n")) {
     if (line.trim() === "") continue;
     try {
-      const value = JSON.parse(line) as Partial<HookFailure>;
-      if (typeof value.at === "number" && typeof value.event === "string" && typeof value.reason === "string") {
-        failures.push({ at: value.at, host: value.host ?? "unknown", event: value.event, agent: value.agent ?? null, rerail: value.rerail ?? "unknown", reason: value.reason });
+      // Parsed from the log's own text; each field is checked before it is used.
+      const value = JSON.parse(line) as Partial<HookFailure & PartStart>;
+      if (typeof value.startedAt === "number") log.startedAt = Math.max(value.startedAt, log.startedAt ?? value.startedAt);
+      else if (typeof value.at === "number" && typeof value.event === "string" && typeof value.reason === "string") {
+        log.failures.push({ at: value.at, host: value.host ?? "unknown", event: value.event, agent: value.agent ?? null, rerail: value.rerail ?? "unknown", reason: value.reason });
       }
     } catch {
       // A line cut short by a concurrent write.
     }
   }
-  return failures;
+  return log;
 }
