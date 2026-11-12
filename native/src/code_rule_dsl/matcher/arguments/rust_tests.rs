@@ -3,7 +3,7 @@
 use super::{Arguments, Passed, SlotKind};
 use super::rust::RustArguments as _;
 use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::oracle;
+use crate::code_rule_dsl::fixtures::oracle;
 use ast_grep_language::LanguageExt;
 use serde_json::Value as Json;
 

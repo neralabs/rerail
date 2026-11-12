@@ -475,7 +475,7 @@ mod tests {
     use crate::code_rule_dsl::language::GrammarDialect;
     use crate::code_rule_dsl::language::adapter::ast_grep;
     use crate::code_rule_dsl::lines::{LineTable, Terminators};
-    use crate::code_rule_dsl::oracle;
+    use crate::code_rule_dsl::fixtures::oracle;
     use serde_json::Value;
 
     const ORACLE: &str = oracle!("php/suppress/phpstan.expected.json");

@@ -53,6 +53,9 @@ for arg in sys.argv[2:]:
     text = open(root + rel).read()
     heads = [m for m in re.finditer(r'(?m)^([ \t]*)((?:pub(?:\([^)]*\))?\s+)?mod ' + name + r')\s*\{', text)
              if 'test' in text[max(0, text.rfind('\n', 0, max(0, m.start() - 1)) - 200):m.start()]]
+    if not heads and 'test' in os.path.basename(rel):
+        # a module of a test-only file needs no cfg of its own
+        heads = list(re.finditer(r'(?m)^([ \t]*)((?:pub(?:\([^)]*\))?\s+)?mod ' + name + r')\s*\{', text))
     if len(heads) != 1:
         print('left', arg, len(heads), 'candidates'); continue
     head = heads[0]

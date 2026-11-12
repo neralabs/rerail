@@ -2,7 +2,7 @@
 //! and one lookalike test per capability that reads Python names.
 
 use super::*;
-use crate::code_rule_dsl::oracle;
+use crate::code_rule_dsl::fixtures::oracle;
 use crate::code_rule_dsl::test_support::*;
 use serde_json::{Value, json};
 

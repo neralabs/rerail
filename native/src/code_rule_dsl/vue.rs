@@ -226,7 +226,7 @@ mod tests {
 
     #[test]
     fn parses_two_scripts_fixture() {
-        let path = std::path::Path::new(crate::code_rule_dsl::fixtures_dir!())
+        let path = std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!())
             .join("vue/language/view/fixtures/two-scripts.vue");
         let source = std::fs::read_to_string(path).expect("Vue fixture");
         let mut parser = tree_sitter::Parser::new();

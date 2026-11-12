@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn matches_postgres_oracle() {
-        let dir = std::path::Path::new(crate::code_rule_dsl::fixtures_dir!())
+        let dir = std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!())
             .join("sql/matcher/arguments");
         let source = std::fs::read_to_string(dir.join("postgres.sql")).unwrap();
         let oracle: Json = serde_json::from_str(

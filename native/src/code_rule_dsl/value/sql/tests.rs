@@ -2,7 +2,7 @@
     use serde_json::Value as Json;
 
     fn oracle_root(name: &str) -> Json {
-        let path = std::path::Path::new(crate::code_rule_dsl::fixtures_dir!()).join(name);
+        let path = std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!()).join(name);
         serde_json::from_str(&std::fs::read_to_string(path).expect("oracle")).expect("json")
     }
 
@@ -138,7 +138,7 @@
         use crate::code_rule_dsl::language::GrammarDialect;
         use ast_grep_language::LanguageExt;
         let source = std::fs::read_to_string(
-            std::path::Path::new(crate::code_rule_dsl::fixtures_dir!())
+            std::path::Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!())
                 .join("sql/scope/postgres.sql"),
         )
         .expect("postgres.sql");
