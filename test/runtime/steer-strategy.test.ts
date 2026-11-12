@@ -75,8 +75,8 @@ async function strategySession(options: {
     kind: "call", eventId: `call-${++event}`, sessionId, toolCallId, toolName: "write",
     input: typeof path === "string" ? { path, content: "" } : { paths: path },
   });
-  const result = (toolCallId: string) => runtime.ingest({
-    kind: "result", eventId: `result-${++event}`, sessionId, toolCallId, toolName: "write", output: "written",
+  const result = (toolCallId: string, output: unknown = "written") => runtime.ingest({
+    kind: "result", eventId: `result-${++event}`, sessionId, toolCallId, toolName: "write", output,
   });
   return {
     root,
@@ -213,6 +213,26 @@ describe("The rewind steer strategy", () => {
       const ledger = await readFile(join(session.root, "sessions", directory, "events.jsonl"), "utf8");
       expect(ledger).not.toContain(key);
       expect(ledger).toContain(createHash("sha256").update(before).digest("hex"));
+    } finally {
+      await session.runtime.dispose();
+    }
+  });
+
+  // A daemon too busy to answer the hook in time takes the call up after the tool wrote the file, so the edit is read
+  // against what Claude Code's result says the file held. Rewind writes a preimage back as the whole file, and that
+  // text was never read from the file, so the edit stays as the tool left it.
+  it.each([
+    { file: "existing.py", files: { "existing.py": "X = 0\n" }, written: "X = 0\nNEEDLE = 1\n", output: (path: string) => ({ type: "update", filePath: path, content: "", structuredPatch: [], originalFile: "X = 0\n" }) },
+    { file: "created.py", files: {}, written: "NEEDLE = 1\n", output: (path: string) => ({ type: "create", filePath: path, content: "", structuredPatch: [], originalFile: null }) },
+  ])("leaves $file as the tool wrote it, and steers as a message, when the call came only after the tool ran", async ({ file, files, written, output }) => {
+    const session = await strategySession({ strategy: "rewind", host: "claude-code", files });
+    try {
+      await writeFile(join(session.root, file), written);
+      await session.call("w1", file);
+      const deliveries = await session.result("w1", output(join(session.root, file)));
+      expect(deliveries).toEqual([expect.objectContaining({ strategy: "message", toolCallId: "w1", ruleIds: ["test:needle"] })]);
+      expect(deliveries[0]).not.toHaveProperty("rewound");
+      expect(await readFile(join(session.root, file), "utf8")).toBe(written);
     } finally {
       await session.runtime.dispose();
     }

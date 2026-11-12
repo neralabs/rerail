@@ -884,9 +884,11 @@ export class CodeRuleBridge {
 
   /**
    * A failed command may still have written files, so command results reconcile regardless of `failed`. With
-   * `rewindable` the edit's preimages are kept for `rewind` until `release`. `output`, the tool's result, may say what
-   * the file it wrote held before (`claudeCodeReportedPreimage`): that is the edit's preimage where the call's own capture already
-   * holds the write, as it does when the call reached Rerail only after the tool ran.
+   * `rewindable` the call's own captures are kept for `rewind` until `release`. `output`, the tool's result, may say
+   * what the file it wrote held before (`claudeCodeReportedPreimage`): the edit is read against that where the call's
+   * own capture already holds the write, as it does when the call reached Rerail only after the tool ran. That text is
+   * never rewindable: `rewind` writes a preimage back as the whole file, and this one was not read from the file, so a
+   * rewind of such an edit leaves the file as the tool left it.
    */
   async finish(toolCallId: string, failed = false, options: { rewindable?: boolean; output?: unknown } = {}): Promise<readonly CodeRuleResponse[]> {
     const discovery = this.#requireDiscovery();
@@ -904,12 +906,12 @@ export class CodeRuleBridge {
       this.refreshCodeRules();
       this.#reportIgnoredEdits(discovery.root, pending.paths);
       await this.#noteIgnoreRules(pending.paths);
-      const { edits, uncaptured, preimages } = await this.#readEdits(discovery, pending, claudeCodeReportedPreimage(options.output));
+      const { edits, uncaptured } = await this.#readEdits(discovery, pending, claudeCodeReportedPreimage(options.output));
       if (edits.length === 0) return [];
       // Kept before the audit starts, so a steer its evaluation publishes finds it.
       if (options.rewindable === true) {
-        const after = new Map([...preimages.keys()].map(path => [path, this.#observed.get(path)?.digest]));
-        this.#rewindable.set(toolCallId, { revision: this.#revision + 1, preimages, after });
+        const after = new Map([...pending.preimages.keys()].map(path => [path, this.#observed.get(path)?.digest]));
+        this.#rewindable.set(toolCallId, { revision: this.#revision + 1, preimages: pending.preimages, after });
       }
       return [await this.#auditEdits(discovery, edits, ["edit", "function"], uncaptured)];
     });
@@ -1203,29 +1205,25 @@ export class CodeRuleBridge {
   }
 
   /**
-   * The tool call's edits, the digest each source had before it where the call's start captured no preimage, and the
-   * preimages the edits were read against (`editPreimage`): the call's own, or the one its result reports.
+   * The tool call's edits, each read against its preimage (`editPreimage`): the call's own, or the one its result
+   * reports. And the digest each source had before it where the call's start captured no preimage.
    */
   async #readEdits(
     discovery: SourceDiscovery,
     pending: PendingEdit,
     reported: ReportedPreimage | undefined,
-  ): Promise<{ edits: CodeRuleEdit[]; uncaptured: Map<string, string>; preimages: ReadonlyMap<string, Preimage> }> {
+  ): Promise<{ edits: CodeRuleEdit[]; uncaptured: Map<string, string> }> {
     const root = await realpath(this.#cwd);
     const edits: CodeRuleEdit[] = [];
     const uncaptured = new Map<string, string>();
-    const preimages = new Map(pending.preimages);
     const reportedPath = reported === undefined ? undefined : this.#sourceLocation(root, reported.path)?.path;
-    const preimageOfEdit = (source: Source): Preimage | undefined => {
-      const preimage = editPreimage(source, preimages.get(source.path), source.path === reportedPath ? reported : undefined);
-      if (preimage !== undefined) preimages.set(source.path, preimage);
-      return preimage;
-    };
+    const preimageOfEdit = (source: Source): Preimage | undefined =>
+      editPreimage(source, pending.preimages.get(source.path), source.path === reportedPath ? reported : undefined);
     for (const configuredPath of [...pending.paths].sort(compareDeterministicStrings)) {
       const edit = await this.#readToolEdit(discovery, root, configuredPath, preimageOfEdit, uncaptured);
       if (edit !== undefined) edits.push(edit);
     }
-    return { edits, uncaptured, preimages };
+    return { edits, uncaptured };
   }
 
   async #readToolEdit(
