@@ -6,6 +6,7 @@
  * preferences read as unset after the update. The `path-keys-as-stored` step (`migrations.ts`) runs it once per file,
  * inside the open's write transaction.
  */
+import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { sql } from "drizzle-orm";
 import { physicalPath } from "../catalog/checkout-control.js";
@@ -43,22 +44,23 @@ const PATH_KEYED_TABLES: readonly PathKeyedTable[] = [
 ];
 
 /**
- * The key this build looks a folder up by, for a key an earlier build stored as `stored`. On Windows it is the folder's
- * {@link physicalPath}, which spells each name as the file system stores it: earlier builds kept the spelling a caller
- * passed (`c:\work\app` from VS Code). The stores of every table above look a folder that exists up by that spelling
- * (`physicalPath`, or `checkoutRealpath` in the audit controls, which agree there). Elsewhere it is `stored` itself,
- * since the realpath there did not change.
+ * The key this build looks a folder up by, for a key an earlier build stored as `stored`. On Windows, for a folder that
+ * exists, it is the folder's {@link physicalPath}, which spells each name as the file system stores it: earlier builds
+ * kept the spelling a caller passed (`c:\work\app` from VS Code), and the stores of every table above look a folder
+ * that exists up by that spelling (`physicalPath`, or `checkoutRealpath` in the audit controls). A folder that is gone
+ * keeps `stored`: the file system holds no spelling for it, and the audit controls look it up by the spelling a session
+ * there gave, which is the old key. Elsewhere it is `stored` itself, since the realpath there did not change.
  */
 export function currentPathKey(stored: string, platform: NodeJS.Platform = process.platform): string {
-  return platform === "win32" ? physicalPath(stored, platform) : stored;
+  return platform === "win32" && existsSync(stored) ? physicalPath(stored, platform) : stored;
 }
 
 /**
  * Moves every path key the file holds to `keyOf(key)`, merging the rows that come to one key: the newer row stays
  * (`PathKeyedTable.newer`), and a checkout keeps a start state either of its rows had. A key `keyOf` cannot resolve
  * (it throws: a folder Rerail may not read) stays as it is, so the open never fails on one folder, and so does a key
- * the step does not look up ({@link looksUp}). `keyOf` runs once per distinct key, and must give back unchanged a key it
- * returned, as a realpath does: each table's keys are read once and moved in turn, so rows moved to a key that would
+ * the step does not look up ({@link looksUp}). `keyOf` runs once per distinct key, and must give back unchanged a key
+ * it returned, as a realpath does: each table's keys are read once and moved in turn, so rows moved to a key that would
  * itself move could stay short of the last one.
  */
 export function respellPathKeys(database: RerailDatabase, keyOf: (stored: string) => string): void {

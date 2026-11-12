@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, realpathSync } from "node:fs";
+import { mkdirSync, realpathSync, symlinkSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
@@ -231,6 +231,44 @@ describe("path keys an earlier build stored under another spelling", () => {
       expect(Date.now() - started).toBeLessThan(2_000);
       expect(rows(database, "SELECT workspace_root FROM audit_settings ORDER BY workspace_root"))
         .toEqual([folder, share].sort().map(root => ({ workspace_root: root })));
+    } finally {
+      database.$client.close();
+    }
+  });
+
+  it("keep their key where the folder is gone, since the file system stores no spelling for it", async () => {
+    const actual = await vi.importActual<PathKeySpelling>("../../../src/engine/storage/path-key-spelling.js");
+    const root = realpathSync.native(await mkdtemp(join(tmpdir(), "rerail-key-spelling-")));
+    temporaryDirectories.push(root);
+    // A parent reached through a link (a junction on Windows) is spelt another way once looked up, as `c:\` is there.
+    mkdirSync(join(root, "real", "here"), { recursive: true });
+    symlinkSync(join(root, "real"), join(root, "link"), "junction");
+
+    expect(actual.currentPathKey(join(root, "link", "here"), "win32")).toBe(join(root, "real", "here"));
+    expect(actual.currentPathKey(join(root, "link", "gone"), "win32")).toBe(join(root, "link", "gone"));
+  });
+
+  it.runIf(process.platform === "win32")("stay, on Windows, where the folder is gone, so a session opened there as `c:\\` still reads its audit settings", async () => {
+    const actual = await vi.importActual<PathKeySpelling>("../../../src/engine/storage/path-key-spelling.js");
+    vi.mocked(currentPathKey).mockImplementation(actual.currentPathKey);
+    const { folder, databasePath } = await checkoutFolder({ git: false });
+    const stored = otherSpelling(folder).replace(/^[A-Z]:/u, drive => drive.toLowerCase());
+    earlierBuildRecorded(folder, databasePath, stored);
+    await removeFolder(folder);
+
+    // The audit controls look a gone folder up by the spelling a session gives, which the old key still has.
+    const controls = new SqliteAuditControlStore(databasePath);
+    try {
+      expect(controls.getWorkspaceSettings(stored)).toEqual({ scope: "ai-output", mode: "log", steerStrategy: "message" });
+    } finally {
+      controls.close();
+    }
+    const database = openRerailDatabase(databasePath);
+    try {
+      expect(rows(database, `SELECT checkout_path AS key FROM checkouts
+        UNION ALL SELECT owner_id FROM rule_settings WHERE owner_kind = 'checkout'
+        UNION ALL SELECT workspace_root FROM audit_settings UNION ALL SELECT workspace_root FROM repository_audits
+        UNION ALL SELECT repository FROM presentation_preferences WHERE repository <> ''`)).toEqual(Array(5).fill({ key: stored }));
     } finally {
       database.$client.close();
     }
