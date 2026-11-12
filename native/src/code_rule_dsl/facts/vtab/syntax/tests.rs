@@ -1166,6 +1166,7 @@ fn definition_ids_are_pinned() {
         let (_, p) = leaf_ids(label, path, source);
         for l in 0..p.locs() {
             h.update(p.global(l).to_le_bytes());
+            assert_eq!(p.local_of((p.global(l) & 0xffff_ffff) as u32), Some(l), "{path}: id of {l} does not map back");
         }
     }
     let got: String = h.finalize()[..16].iter().map(|b| format!("{b:02x}")).collect();

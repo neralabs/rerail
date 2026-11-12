@@ -1027,7 +1027,7 @@ pub fn numbering(doc: &Document, shape: Shape) -> StoreResult<Numbering> {
     let nodes = p.core.iter().map(|&id| (id, dialect.name(&doc.facts, id))).collect();
     // The ids the projection gives (`Projected::id`): per definition where it numbered the document so. A unit's own
     // nodes are numbered before its tokens, so the nodes' ids need no tokens.
-    Ok(Numbering { nodes, back: p.defs.map(|d| d.back) })
+    Ok(Numbering { nodes, back: p.defs.as_ref().map(|d| d.back().to_vec()) })
 }
 
 /// A path's module: `a/b.py` is `a.b`, `a/__init__.py` is `a`; a Rust file's is its path from
@@ -1240,8 +1240,8 @@ pub struct Projected {
 struct DefIds {
     /// The low 32 bits of each node's and token's id, by local id.
     low: Vec<u32>,
-    /// `(low, local)`, ascending: the way back.
-    back: Vec<(u32, u32)>,
+    /// `(low, local)`, ascending: the way back, made on first use (`back`): most runs never look a node up by id.
+    back: OnceLock<Vec<(u32, u32)>>,
 }
 
 use granules::INDEX_BITS;
@@ -1271,9 +1271,27 @@ impl DefIds {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "granules".into());
             granules::number(p, dialect, tokens)
         };
-        let mut back: Vec<(u32, u32)> = low.iter().enumerate().map(|(l, &g)| (g, l as u32)).collect();
-        back.sort_unstable();
-        DefIds { low, back }
+        DefIds { low, back: OnceLock::new() }
+    }
+
+    /// `(low, local)`, ascending.
+    fn back(&self) -> &[(u32, u32)] {
+        self.back.get_or_init(|| {
+            let _span = crate::code_rule_dsl::logic::profile::span(|| "definition ids' way back".into());
+            // A slot is one granule's, and `granules::place` gives its indexes in order: each run of one slot is
+            // ascending, and a slot's runs come in order, so the runs stably sorted by slot are the ids ascending.
+            let mut runs: Vec<(u32, usize, usize)> = Vec::new();
+            for (l, &g) in self.low.iter().enumerate() {
+                match runs.last_mut() {
+                    Some(run) if run.0 == g >> INDEX_BITS => run.2 = l + 1,
+                    _ => runs.push((g >> INDEX_BITS, l, l + 1)),
+                }
+            }
+            runs.sort_by_key(|run| run.0);
+            let back: Vec<(u32, u32)> = runs.iter().flat_map(|&(_, a, b)| (a..b).map(|l| (self.low[l], l as u32))).collect();
+            debug_assert!(back.windows(2).all(|w| w[0].0 < w[1].0));
+            back
+        })
     }
 }
 
@@ -1524,7 +1542,7 @@ impl Projected {
     pub fn local_of(&self, low: u32) -> Option<u32> {
         match &self.defs {
             Some(d) if granules::span_of(low).is_some() => granules::span_of(low).map(|i| d.low.len() as u32 + i),
-            Some(d) => d.back.binary_search_by_key(&low, |&(g, _)| g).ok().map(|i| d.back[i].1),
+            Some(d) => d.back().binary_search_by_key(&low, |&(g, _)| g).ok().map(|i| d.back()[i].1),
             None => Some(low),
         }
     }
