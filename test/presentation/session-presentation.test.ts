@@ -301,6 +301,57 @@ describe("installed session presentation", () => {
   });
 });
 
+describe("a live daemon that does not answer in time", () => {
+  let held: Server | undefined;
+
+  afterEach(async () => {
+    const server = held;
+    held = undefined;
+    server?.closeAllConnections();
+    if (server !== undefined) await new Promise<void>(resolve => server.close(() => resolve()));
+  });
+
+  /** A listener that takes every request and never answers it, as a daemon whose main thread is busy does. */
+  const holdRequests = async (): Promise<void> => {
+    vi.unstubAllGlobals();
+    held = createServer(() => { /* The answer never comes. */ });
+    await new Promise<void>(resolve => held!.listen(0, "127.0.0.1", () => resolve()));
+    const { port } = held.address() as AddressInfo;
+    await writeFile(join(home, "daemon.json"), JSON.stringify({ ...state, pid: process.pid, port, url: `http://127.0.0.1:${port}/` }));
+  };
+
+  const readWith = (startState: () => RepositoryStartState, onDemand = true) =>
+    readPresentation({ sessionId, host: "claude-code", cwd, startState, onDemand });
+
+  it("says not answering, never not running, where the checkout is started", async () => {
+    await holdRequests();
+    // Each read waits out its time, so they wait together.
+    const [started, stopped, summary, stoppedSummary, hookState] = await Promise.all([
+      readWith(() => "started"),
+      readWith(() => "stopped", false),
+      readSummaryState(cwd, "cursor", () => "started"),
+      readSummaryState(cwd, "cursor", () => "stopped"),
+      readRepositoryState(cwd, "omp"),
+    ]);
+    expect(started).toMatchObject({ status: "not-answering", text: "R E R A I L ● not answering", repositoryState: null, counts: null });
+    // Where Rerail is off here, the ambient footer still draws nothing.
+    expect(stopped).toMatchObject({ status: "not-on-here", text: "", repositoryState: "stopped" });
+    expect(summary).toBe("not-answering");
+    expect(stoppedSummary).toBe("stopped");
+    // The hook start check reads the database when no answer comes, as it did.
+    expect(hookState).toBeNull();
+  });
+
+  it("still says not running where the recorded pid is alive but nothing listens", async () => {
+    await holdRequests();
+    const server = held!;
+    held = undefined;
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    expect(await readWith(() => "started")).toMatchObject({ status: "not-running", text: "R E R A I L ✕ not running" });
+    expect(await readSummaryState(cwd, "cursor", () => "started")).toBeNull();
+  });
+});
+
 describe("dashboard links", () => {
   const steer = {
     sessionId: "s", requested: "steer" as const, mechanism: "additional-context" as const, content: "Rerail found 1 problem in your last edit:",

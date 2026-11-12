@@ -1,0 +1,1 @@
+When the daemon is running but takes more than 2 seconds to answer, the Claude Code status line, the OMP and Pi footer and `/rerail` now say it is not answering. Before, they said Rerail was not running and to start the daemon, which cannot help while it runs.
