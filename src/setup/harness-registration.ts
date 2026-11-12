@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { constants, existsSync, realpathSync } from "node:fs";
+import { constants, existsSync } from "node:fs";
 import {
   chmod,
   copyFile,
@@ -31,6 +31,7 @@ import { readAddedSettingsEntries, writeAddedSettingsEntries, type AddedSettings
 import { commandFileText, MANAGED_SKILL_MARKER, type CommandFileContext } from "../harness/rerail-command-files.js";
 import { RERAIL_COMMANDS, type RerailCommandName } from "../harness/rerail-commands.js";
 import { andList, shellQuote } from "../harness/setup-screens.js";
+import { sameFile } from "../harness/same-file.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { RERAIL_HOSTS, type RerailHost } from "../engine/adapter-contract.js";
@@ -390,15 +391,10 @@ function hookExecEntry(context: Context, executable: string): JsonObject {
   };
 }
 
-/** Whether `node` on this process's PATH is the file at `nodePath`, compared as the hook launcher compares them. */
+/** Whether `node` on this process's PATH is the file at `nodePath`, by the hook launcher's own test (`sameFile`). */
 function pathFindsNode(nodePath: string, platform: NodeJS.Platform): boolean {
   const found = resolveExecutable("node", process.env, platform);
-  if (found === undefined) return false;
-  try {
-    return realpathSync.native(found) === realpathSync.native(nodePath);
-  } catch {
-    return false;
-  }
+  return found !== undefined && sameFile(found, nodePath);
 }
 
 
