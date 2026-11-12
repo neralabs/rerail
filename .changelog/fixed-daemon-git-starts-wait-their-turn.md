@@ -1,0 +1,1 @@
+A daemon reading Git for many files at once, as a walk or an audit does, now starts its Git processes one at a time between answering hooks, so a hook no longer waits behind a whole batch of them and gives up on a busy daemon.

@@ -1,0 +1,78 @@
+import { execFileSync } from "node:child_process";
+import type * as ChildProcess from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { gitHead, readGitBlobIds, readGitBlobs } from "../../src/engine/git.js";
+
+/**
+ * The turn of the event loop each Git process started in. `turn` counts the loop's check phases, which come after its
+ * poll for I/O, so two processes with the same turn started with no poll between them.
+ */
+const starts = vi.hoisted(() => ({ turn: 0, turns: [] as number[] }));
+vi.mock("node:child_process", async importOriginal => {
+  const actual = await importOriginal<typeof ChildProcess>();
+  const execFile = (...call: Parameters<typeof actual.execFile>) => {
+    starts.turns.push(starts.turn);
+    return (actual.execFile as (...forwarded: unknown[]) => ReturnType<typeof actual.execFile>)(...call);
+  };
+  const spawn = (...call: Parameters<typeof actual.spawn>) => {
+    starts.turns.push(starts.turn);
+    return (actual.spawn as (...forwarded: unknown[]) => ReturnType<typeof actual.spawn>)(...call);
+  };
+  return { ...actual, execFile, spawn };
+});
+
+const roots: string[] = [];
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+
+function git(cwd: string, ...args: string[]): string {
+  return execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", ...args], { cwd, encoding: "utf8" });
+}
+
+async function repository(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "rerail-git-turns-"));
+  roots.push(root);
+  git(root, "init", "--quiet");
+  await writeFile(join(root, "a.py"), "print(1)\n");
+  git(root, "add", ".");
+  git(root, "commit", "--quiet", "-m", "seed");
+  return root;
+}
+
+/** Counts the loop's turns while `work` runs. */
+async function countingTurns<T>(work: () => Promise<T>): Promise<T> {
+  let counting = true;
+  const tick = (): void => {
+    starts.turn += 1;
+    if (counting) setImmediate(tick);
+  };
+  setImmediate(tick);
+  try {
+    return await work();
+  } finally {
+    counting = false;
+  }
+}
+
+describe("Git process starts", () => {
+  it("start one at a time, each in a turn of the event loop of its own, however many reads are asked for at once", async () => {
+    const root = await repository();
+    const head = git(root, "rev-parse", "HEAD").trim();
+    const blob = git(root, "rev-parse", "HEAD:a.py").trim();
+    starts.turns.length = 0;
+    const answers = await countingTurns(async () => await Promise.all([
+      ...Array.from({ length: 8 }, async () => await gitHead(root)),
+      ...Array.from({ length: 6 }, async () => (await readGitBlobIds(root, ["HEAD:./a.py"])).get("HEAD:./a.py")),
+      ...Array.from({ length: 6 }, async () => (await readGitBlobs(root, ["HEAD:./a.py"], { maxBlobBytes: 1_000 })).get("HEAD:./a.py")?.toString("utf8")),
+    ]));
+    expect(answers).toEqual([...Array<string>(8).fill(head), ...Array<string>(6).fill(blob), ...Array<string>(6).fill("print(1)\n")]);
+    expect(starts.turns).toHaveLength(20);
+    // Each process holds the thread while it starts, so turns that start more than one keep the process's sockets
+    // waiting for all of them.
+    const perTurn = new Map<number, number>();
+    for (const turn of starts.turns) perTurn.set(turn, (perTurn.get(turn) ?? 0) + 1);
+    expect([...perTurn.values()].filter(count => count > 1)).toEqual([]);
+  });
+});

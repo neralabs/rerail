@@ -4,6 +4,7 @@ import { stat } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
 import { dirname, join, posix, resolve, win32 } from "node:path";
 import { fileStamp } from "./file-stamp.js";
+import { gitStartTurn } from "./git-start-turns.js";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
 export interface GitSearch {
@@ -249,6 +250,7 @@ async function gitStdout(cwd: string, args: readonly string[], maxBuffer = 1024 
   } catch {
     return undefined;
   }
+  await gitStartTurn();
   const { promise, resolve: settle } = Promise.withResolvers<string | undefined>();
   execFile(
     executable,
@@ -357,6 +359,7 @@ export async function readGitBlobIds(cwd: string, revisions: readonly string[]):
   } catch {
     return ids;
   }
+  await gitStartTurn();
   const { promise, resolve: settle } = Promise.withResolvers<void>();
   const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, "cat-file", "--batch-check=%(objectname) %(objecttype)"], {
     env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
@@ -469,6 +472,7 @@ export async function readGitBlobs(
   } catch {
     return blobs;
   }
+  await gitStartTurn();
   const { promise, resolve: settle } = Promise.withResolvers<void>();
   const child = spawn(executable, [...SAFE_CONFIG, "-C", cwd, "cat-file", "--batch"], {
     env: { ...gitEnvironment(), GIT_TERMINAL_PROMPT: "0" },
