@@ -141,15 +141,17 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   }
 
   /**
-   * `acceptsPath` and `ignoresPath` for one walk. A path's full lookup (`#owner`) resolves its real path and looks for
-   * `.git` on disk, about 0.4 ms on Windows, and the walk asks two questions of every file. A file the walk found is
-   * no link, so its checkout is its folder's: each folder gets the full lookup once, for itself and its files. A
-   * checkout recorded while the walk runs owns its files from the next walk.
+   * `acceptsPath`, `ignoresPath` and `sourceRoot` for one walk. A path's full lookup (`#owner`) resolves its real path,
+   * looks for `.git` on disk and reads the recorded checkouts' version, about 0.4 ms on Windows, and the walk asks two
+   * questions of every file. A file the walk found is no link, so its checkout is its folder's: each folder is looked
+   * up once, for itself and its files, through the walk's lookups (`CheckoutOwners.walk`), which keep what they learn
+   * of a folder for the next walk. A checkout recorded while the walk runs owns its files from the next walk.
    */
   walkView(): Required<WalkView> {
+    const lookUp = this.#options.owners.walk();
     const folders = new Map<string, CheckoutOwner | undefined>();
     const folderOwner = (folder: string): CheckoutOwner | undefined => {
-      if (!folders.has(folder)) folders.set(folder, this.#owner(resolve(this.#sessionRoot, folder)));
+      if (!folders.has(folder)) folders.set(folder, this.#owner(resolve(this.#sessionRoot, folder), lookUp));
       return folders.get(folder);
     };
     const fileOwner = (path: string): CheckoutOwner | undefined => {
@@ -161,6 +163,7 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return {
       acceptsPath: path => this.#accepts(fileOwner(path)),
       ignoresPath: (path, directory) => this.#ignores(directory ? folderOwner(path) : fileOwner(path), directory),
+      sourceRoot: path => fileOwner(path)?.checkoutRoot,
     };
   }
 
@@ -368,12 +371,17 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return lane === undefined ? undefined : { lane, path: owner.path };
   }
 
-  /** The checkout whose rules judge `absolute`: its Git checkout, or the nearest one around it that owns its files. */
-  #owner(absolute: string): CheckoutOwner | undefined {
-    const owners = this.#options.owners;
-    let owner = owners.ownerOf(absolute);
+  /**
+   * The checkout whose rules judge `absolute`: its Git checkout, or the nearest one around it that owns its files. A walk
+   * passes its own lookups (`CheckoutOwners.walk`); a checkout root's parent folder is a real path, as they need.
+   */
+  #owner(
+    absolute: string,
+    lookUp: (path: string) => CheckoutOwner | undefined = path => this.#options.owners.ownerOf(path),
+  ): CheckoutOwner | undefined {
+    let owner = lookUp(absolute);
     while (owner !== undefined && !this.#ownsItsFiles(owner.checkoutRoot)) {
-      const enclosing = owners.ownerOf(dirname(owner.checkoutRoot));
+      const enclosing = lookUp(dirname(owner.checkoutRoot));
       if (enclosing === undefined) break;
       const real = join(owner.checkoutRoot, owner.path);
       owner = { checkoutRoot: enclosing.checkoutRoot, path: relative(enclosing.checkoutRoot, real).split(sep).join("/") };

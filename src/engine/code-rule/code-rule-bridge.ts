@@ -1535,16 +1535,17 @@ export class CodeRuleBridge {
   async #scanSources(discovery: SourceDiscovery, walk: WalkStart, worktrees: readonly string[]): Promise<SourceScan> {
     // An earlier session's baseline of this workspace lets unchanged sources skip the read.
     const seed = walk.baseline || (!walk.inSession && discovery.worktrees.fresh.size > 0) ? this.#observations?.get(this.#cwd) : undefined;
+    const view = this.#auditor.walkView?.() ?? this.#auditor;
     const scan = await this.#observeSources({
       discovery, observedAt: walk.observedAt,
       previousSources: seed === undefined ? walk.previous : new Map([...seed, ...walk.previous]),
       captureChanges: !walk.baseline,
       scan: { sources: new Map(), failedRoots: new Set(), errors: [], unread: new Map(), firstSeen: new Map(), checkouts: new Set(), unmerged: new Map() },
       stack: walk.inSession ? [discovery.root] : [...worktrees], roots: new Set([discovery.root, ...worktrees]),
-      view: this.#auditor.walkView?.() ?? this.#auditor,
+      view,
     });
     // Read off the lane, as the scan is, so tool calls are not held up behind it.
-    await this.#readFirstSeenTexts(discovery, walk, scan);
+    await this.#readFirstSeenTexts(discovery, walk, scan, view);
     await this.#readPassedCheckouts(discovery, walk, scan);
     return scan;
   }
@@ -1952,7 +1953,7 @@ export class CodeRuleBridge {
 
   /** Asks for the owner of the `.git` entry, not of its folder: it is owned as the files beside it are. */
   #noteCheckout(walk: SourceWalk, gitEntry: string): void {
-    const checkout = this.#owningCheckout(walk.discovery.root, sessionPath(walk.discovery.root, gitEntry));
+    const checkout = this.#owningCheckout(walk.discovery.root, sessionPath(walk.discovery.root, gitEntry), walk.view);
     if (checkout !== undefined) walk.scan.checkouts.add(checkout);
   }
 
@@ -2153,21 +2154,36 @@ export class CodeRuleBridge {
 
   /**
    * `items` by the checkout that owns each one's path, whose Git holds its blobs (a worktree in the session's folder is
-   * not the session's checkout); `unowned` has those no checkout owns, which no lane audits.
+   * not the session's checkout); `unowned` has those no checkout owns, which no lane audits. `asked` is the auditor, or a
+   * walk's view for the files the walk found (`#owningCheckout`).
    */
-  #byOwningCheckout<T>(root: string, items: readonly T[], pathOf: (item: T) => string): { owned: Map<string, T[]>; unowned: T[] } {
+  #byOwningCheckout<T>(
+    root: string,
+    items: readonly T[],
+    pathOf: (item: T) => string,
+    asked: Pick<CodeRuleAuditor, "sourceRoot"> = this.#auditor,
+  ): { owned: Map<string, T[]>; unowned: T[] } {
     const owned = new Map<string, T[]>();
     const unowned: T[] = [];
     for (const item of items) {
-      const checkout = this.#owningCheckout(root, pathOf(item));
-      if (checkout === undefined) unowned.push(item);
-      else owned.set(checkout, [...(owned.get(checkout) ?? []), item]);
+      const checkout = this.#owningCheckout(root, pathOf(item), asked);
+      if (checkout === undefined) {
+        unowned.push(item);
+        continue;
+      }
+      const known = owned.get(checkout);
+      if (known === undefined) owned.set(checkout, [item]);
+      else known.push(item);
     }
     return { owned, unowned };
   }
 
-  /** The checkout that owns `path`: the session folder for an auditor that judges one folder. */
-  #owningCheckout(root: string, path: string): string | undefined {
+  /**
+   * The checkout that owns `path`: the session folder for an auditor that judges one folder. A walk's view (`walkView`)
+   * answers for the files and `.git` entries the walk found from what it knows of their folder.
+   */
+  #owningCheckout(root: string, path: string, asked: Pick<CodeRuleAuditor, "sourceRoot"> = this.#auditor): string | undefined {
+    if (asked.sourceRoot !== undefined) return asked.sourceRoot(path);
     return this.#auditor.sourceRoot === undefined ? root : this.#auditor.sourceRoot(path);
   }
 
@@ -2177,8 +2193,8 @@ export class CodeRuleBridge {
    * index nor its `HEAD` blob is the preimage of the session's next shell write to it. Each is read again, while the
    * session's first-sight budget lasts, and taken only while it still has the digest the scan observed.
    */
-  async #readFirstSeenTexts(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): Promise<void> {
-    const listed = await this.#firstSeenModifiedOrUntracked(discovery, walk, scan);
+  async #readFirstSeenTexts(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan, view: WalkView): Promise<void> {
+    const listed = await this.#firstSeenModifiedOrUntracked(discovery, walk, scan, view);
     let bytes = this.#firstSightBytes;
     while (listed.length > 0 && bytes < this.#firstSightTextBytes && !this.#abandoned(discovery)) {
       const wave = listed.splice(0, OBSERVATION_CONCURRENCY);
@@ -2186,11 +2202,15 @@ export class CodeRuleBridge {
     }
   }
 
-  /** The sources `walk` saw first that their checkout's Git lists as modified or untracked. */
-  async #firstSeenModifiedOrUntracked(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): Promise<string[]> {
+  /**
+   * The sources `walk` saw first that their checkout's Git lists as modified or untracked. The scan's `view` gives each
+   * source its folder's checkout, which it looked up as it walked, so the sources cost no lookup of their own: the
+   * first walk of a worktree sees every one of its files first.
+   */
+  async #firstSeenModifiedOrUntracked(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan, view: WalkView): Promise<string[]> {
     const firstSeen = [...scan.sources.keys()].filter(path => this.#firstSeen(discovery, walk, path));
     const listed: string[] = [];
-    for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, firstSeen, path => path).owned) {
+    for (const [checkout, paths] of this.#byOwningCheckout(discovery.root, firstSeen, path => path, view).owned) {
       const seen = new Set(paths);
       for (const path of await discovery.git.run(signal => gitModifiedOrUntrackedPaths(checkout, { signal }))) {
         const inSession = sessionPath(discovery.root, resolve(checkout, path));

@@ -1503,7 +1503,7 @@ export interface IgnoredEditMatch {
 }
 
 /** What a walk of the session's folder asks of each file and folder it finds (`CodeRuleAuditor.walkView`). */
-export type WalkView = Pick<CodeRuleAuditor, "acceptsPath" | "ignoresPath">;
+export type WalkView = Pick<CodeRuleAuditor, "acceptsPath" | "ignoresPath" | "sourceRoot">;
 
 export interface CodeRuleAuditor {
   openWorkspace(sessionId: string): Promise<void>;
@@ -1519,8 +1519,9 @@ export interface CodeRuleAuditor {
    */
   ignoresPath?(path: string, directory: boolean): boolean;
   /**
-   * `acceptsPath` and `ignoresPath` for one walk, which asks them only of the files and folders it found, never of a
-   * link. It may keep what it learns of a folder for the rest of the walk, so a walk costs a lookup per folder where
+   * `acceptsPath`, `ignoresPath` and `sourceRoot` for one walk, which asks them only of the files and folders it found,
+   * never of a link, and `sourceRoot` only of its files and `.git` entries, each owned as the files of its folder are. It
+   * may keep what it learns of a folder for the rest of the walk, or longer, so a walk costs a lookup per folder where
    * the auditor would make one per file. Absent: the walk asks the auditor itself.
    */
   walkView?(): WalkView;

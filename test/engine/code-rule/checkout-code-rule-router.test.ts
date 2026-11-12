@@ -248,15 +248,19 @@ describe("CheckoutCodeRuleRouter", () => {
 
     const folders = ["api", "scratch", "sub", "sub/api"];
     const files = ["README.md", "run.log", "api/a.py", "scratch/x.py", "sub/README.md", "sub/api/b.py"];
-    const answers = (judge: Pick<CheckoutCodeRuleRouter, "acceptsPath" | "ignoresPath">) => ({
+    const answers = (judge: Pick<CheckoutCodeRuleRouter, "acceptsPath" | "ignoresPath" | "sourceRoot">) => ({
       folders: folders.map(folder => judge.ignoresPath(folder, true)),
       files: files.map(path => [judge.ignoresPath(path, false), judge.acceptsPath(path)]),
+      sourceRoots: [...files, ".git", "sub/.git"].map(path => judge.sourceRoot(path)),
     });
     expect(answers(view)).toEqual({
       folders: [false, true, false, false],
       files: [[false, false], [true, false], [false, true], [true, false], [false, false], [false, true]],
+      sourceRoots: [parent, parent, parent, parent, sub, sub, parent, sub],
     });
     expect(answers(view)).toEqual(answers(auditor));
+    // A later walk's view answers from what this one learned of each folder.
+    expect(answers(auditor.walkView())).toEqual(answers(auditor));
   });
 
   it("names the checkout that owns a `.git` entry as it does for the files beside it: a submodule's file, the session checkout's folder", async () => {

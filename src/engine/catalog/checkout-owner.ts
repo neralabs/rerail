@@ -34,11 +34,18 @@ function within(root: string, candidate: string): boolean {
   return path === "" || (!isAbsolute(path) && path !== ".." && !path.startsWith(`..${sep}`));
 }
 
+/** What a walk's lookup learned of a folder (`CheckoutOwners.walk`): its checkout, and whether it held a `.git` entry. */
+interface WalkedFolder {
+  readonly owner: CheckoutOwner | undefined;
+  readonly gitEntry: boolean;
+}
+
 /**
  * Resolves owning checkouts for one runtime. Each folder's `.git` entry is looked at once, and each candidate root
  * is confirmed once with Git, so a lookup costs a map access per file once its folders are known. When
  * `recordedVersion` is given, every answer is forgotten once it changes: a checkout Rerail records later (a folder that
- * became a checkout) then owns its files from the next lookup, without a restart.
+ * became a checkout) then owns its files from the next lookup, without a restart. A walk's lookups (`walk`) keep each
+ * folder's answer from one walk to the next.
  */
 export class CheckoutOwners {
   readonly #recordedVersion: (() => string) | undefined;
@@ -51,6 +58,9 @@ export class CheckoutOwners {
   readonly #submodules = new Map<string, boolean>();
   /** Recorded checkouts outside Git (identity under `.rerail`), physical. */
   readonly #plainRoots = new Set<string>();
+  /** Lexical folder a walk asked of → what its lookup learned (`walk`), while the recorded checkouts are `#walkedVersion`. */
+  readonly #walked = new Map<string, WalkedFolder>();
+  #walkedVersion: string | undefined;
 
   /** `recordedVersion` changes whenever the set of recorded checkouts does (see `CheckoutCatalogs.recordedCheckoutsVersion`). */
   constructor(recordedVersion?: () => string) {
@@ -68,7 +78,50 @@ export class CheckoutOwners {
    */
   ownerOf(absolute: string): CheckoutOwner | undefined {
     this.#revalidate();
-    const lexical = resolve(absolute);
+    return this.#lookUp(resolve(absolute));
+  }
+
+  /**
+   * `ownerOf` for one walk, which asks it only of real paths and of folders it reached by listing the folder above, never
+   * through a link, so each keeps the real path it had. The recorded checkouts' version is read once, here, not at each
+   * lookup. What a lookup learns of a folder is kept for the walks after it, each of which checks it with one lstat of
+   * the folder's `.git` entry, the first time it asks: a folder that gained or lost that entry may have become a
+   * checkout or stopped being one, and so may the folders below it, so every folder is looked up again, as when the
+   * recorded checkouts change. A walk of folders an earlier walk looked up costs no realpath and no statement.
+   */
+  walk(): (folder: string) => CheckoutOwner | undefined {
+    this.#revalidate();
+    if (this.#walkedVersion !== this.#version) {
+      this.#walked.clear();
+      this.#walkedVersion = this.#version;
+    }
+    const checked = new Map<string, CheckoutOwner | undefined>();
+    return folder => {
+      const lexical = resolve(folder);
+      if (!checked.has(lexical)) checked.set(lexical, this.#walkedFolder(lexical));
+      return checked.get(lexical);
+    };
+  }
+
+  /** What a walk learns of the folder `lexical`: what an earlier walk learned, while its `.git` entry is as it was. */
+  #walkedFolder(lexical: string): CheckoutOwner | undefined {
+    const gitEntry = holdsGitEntry(lexical);
+    const known = this.#walked.get(lexical);
+    if (known?.gitEntry === gitEntry) return known.owner;
+    if (known !== undefined) {
+      // Whether this folder is a checkout, and so which checkout holds each folder below it, may differ now. Of the
+      // folders Git confirmed or turned down, only this one's answer rests on this entry.
+      this.#walked.clear();
+      this.#roots.clear();
+      this.#confirmed.delete(lexical);
+    }
+    const owner = this.#lookUp(lexical);
+    this.#walked.set(lexical, { owner, gitEntry });
+    return owner;
+  }
+
+  /** `ownerOf` of the resolved path `lexical`, from the answers as they are. */
+  #lookUp(lexical: string): CheckoutOwner | undefined {
     const real = physicalPath(lexical);
     const root = this.#rootOf(lexical, real);
     if (root === undefined || !within(root, real)) return undefined;

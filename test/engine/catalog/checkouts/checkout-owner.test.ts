@@ -4,7 +4,7 @@ import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js";
+import { CheckoutOwners, type CheckoutOwner } from "../../../../src/engine/catalog/checkout-owner.js";
 import { physicalPath } from "../../../../src/engine/catalog/checkout-control.js";
 import { CheckoutCatalogs } from "../../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { recordCheckout } from "../../../../src/engine/catalog/repository-registry.js";
@@ -48,6 +48,28 @@ describe("CheckoutOwners", () => {
     recordCheckout(catalogs.database, nested);
 
     expect(owners.ownerOf(join(outer, "src", "a.py"))).toEqual({ checkoutRoot: nested, path: "a.py" });
+  });
+
+  it("keeps what a walk learned of a folder for the next walk until the folder's `.git` entry comes or goes", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-checkout-owner-")));
+    cleanups.push(() => removeFolder(root));
+    const outer = await repository(join(root, "outer"));
+    await mkdir(join(outer, "src", "lib"), { recursive: true });
+    const owners = new CheckoutOwners();
+    const walk = (): Array<CheckoutOwner | undefined> => {
+      const lookUp = owners.walk();
+      return [lookUp(join(outer, "src")), lookUp(join(outer, "src", "lib"))];
+    };
+    const inOuter = [{ checkoutRoot: outer, path: "src" }, { checkoutRoot: outer, path: "src/lib" }];
+
+    expect(walk()).toEqual(inOuter);
+    expect(walk()).toEqual(inOuter);
+
+    // `src/` becomes a checkout of its own, which no record announces, then stops being one.
+    const nested = await repository(join(outer, "src"));
+    expect(walk()).toEqual([{ checkoutRoot: nested, path: "" }, { checkoutRoot: nested, path: "lib" }]);
+    await removeFolder(join(nested, ".git"));
+    expect(walk()).toEqual(inOuter);
   });
 
   it("tells whether the recorded checkouts changed without preparing a statement on every lookup", async () => {
