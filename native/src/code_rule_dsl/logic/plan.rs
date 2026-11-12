@@ -7162,7 +7162,12 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let mut unloaded: BTreeSet<String> = BTreeSet::new();
     // A gate that orders a maintained stratum's pieces (decision 0101 §3) holds nothing past its component.
     let gated: BTreeSet<String> = prog.gates.iter().filter(|(g, _)| !prog.together.iter().any(|t| t.contains(g))).flat_map(|(g, d)| [g, &d.rel].into_iter().chain(&d.src).chain(&d.quiet).chain(&d.deps)).cloned().collect();
-    let stays: BTreeSet<String> = prog.outputs.iter().chain(&run.model.inputs.kept).chain(&gated).cloned().collect();
+    let mut stays: BTreeSet<String> = prog.outputs.iter().chain(&run.model.inputs.kept).chain(&gated).cloned().collect();
+    // A debugging aid with `RERAIL_REL_DIR`: `RERAIL_REL_KEEP` keeps every derived relation to the run's end, so the
+    // dump holds the pieces a run releases as it goes (`h__ins`, `h__del`, …).
+    if std::env::var_os("RERAIL_REL_KEEP").is_some() {
+        stays.extend(sccs.iter().flatten().cloned());
+    }
     // What stays, and what the views among it read (through views): SQL reads a view's inputs once the run ends.
     let mut pinned: BTreeSet<String> = stays.clone();
     loop {

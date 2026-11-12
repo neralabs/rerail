@@ -553,6 +553,53 @@ not go away.
 
 The O125 run above did not compare its steps with a full run (`O125_NO_FULL`).
 
+## Measured: the `ifn__ins` order, icall first (2026-11-12)
+
+**What was recorded.** Above, at step 07: the four `ifn__ins` rules took `fv__ins` (526 rows), probed `pv` by
+`k` (201,000 rows), then filtered by `icall` to nothing. Starting from `icall` was not measured.
+
+**How it was measured now.** O125 step 07, with the pieces together (§3). `RERAIL_REL_KEEP` with `RERAIL_REL_DIR`
+dumped every relation the step read or derived. `O125_RULES=ifn__ins` printed the maintained rules. Each order's
+work was counted from the dumped rows and compared with the engine's own (`native.tsv`, rows into each step,
+summed over the waves).
+
+```text
+ifn(c, f) :- icall(c, o, a), pv(o, "inst", k), fv(k, a, "fn", f).
+```
+
+**The `fv__ins` position is no longer misordered.** Its rules run `fv__ins → icall → !ifn__old → pv`: 292 rows
+in, nothing out, work 303 and 606 for the two `icall` forms. From the same rows, `pv` first would read 131,873
+instances per form: `pv`'s fanout by class is 452 rows per delta row, and the most instantiated class has 1,676
+instances. Starting from `icall` reads none: the 292 new methods have 68 names, and none is one of `icall`'s 4.
+
+**The cost moved to a recursive position.** At step 07 `ifn__ins` is in a recursive component of 183 relations
+(`pv` and `ifn` read each other), so `fv`'s own delta drives one rule:
+
+| `ifn__ins`, delta `fv` (both orders ran) | delta rows | work |
+|---|---:|---:|
+| `fv` → `pv__ins` by class → `icall` (the first plan) | 434 | 83,862 |
+| `fv` → `icall` by name → `pv__ins` checked (after the replan) | 263 + 150 | 273 + 160 |
+
+From the dumped rows, the first order reads 85,448 rows of `pv__ins` (the engine read 83,416); icall first reads
+none.
+
+**Why the first plan was wrong.** It is not skew. `pv`'s skew-aware fanout by class (`sq/rows`, 0096) is 637,
+close to the 452 it is. The first plan was made while `pv__ins`, a relation of the same component, held few rows,
+so probing it by class looked cheap. Once it grew, the drift check replanned (`replans=1`, 2) to icall first. In
+between, the first plan ran 12 delta batches.
+
+**Its size.** That first plan is 83,600 wasted units, 1.6% of the step's 5.39 M; `ifn__ins` is 134,400 in all
+(2.5%). The rest of it is driven by `pv`'s and `pv__ins`'s own deltas (5,700–13,500 rows each) and ends at the
+first `icall` probe. That is work in the delta's size, not a misorder.
+
+**What would remove it** (not built):
+
+- Price a relation of the component by what it will hold, not what it holds when planned: here `pv__ins` as the
+  last run's, or bounded by `pv`'s delta.
+- Or check the drift between a wave's batches, not only between waves.
+
+The first is the planner's estimate; the second limits any wrong first plan to one batch.
+
 ## Open
 
 - Whether §2's base-program form keeps demand's choices identical on the rewritten program. If it does not, the
@@ -562,7 +609,9 @@ The O125 run above did not compare its steps with a full run (`O125_NO_FULL`).
 - Recursive components are maintained by delete-and-rederive under counting (0090, "Built: counting the
   default"). §1 applies to them unchanged.
 - §3 is built (above): strata a step go from ≈ 4,000 to ≈ 870, and their fixed cost from ≈ 1.2 s to ≈ 0.26 s. The
-  larger lever is still work: the skew-misordered maintained joins, and the strata θ derives again.
+  larger lever is still work: the strata θ derives again. The misordered `ifn__ins` join is now 1.6% of step 07:
+  a first plan made while a relation of its component was nearly empty, until the replan ("Measured: the
+  `ifn__ins` order", above).
 - Under a device binding the pieces stay apart (2026-11-12): the device refuses a component with gates ("a
   component with gates or requests"), so a set would run on the host. Apart, each piece is a stratum of seed
   joins, which the device runs. Sessions run with the CPU binding today. The device's own form of §3 is one
