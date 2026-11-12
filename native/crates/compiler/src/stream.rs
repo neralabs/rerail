@@ -769,7 +769,10 @@ pub fn validate_rules(program: &Words) -> Result<(), Error> {
             MARK | ROW => vec![pc + 1, pc + 2],
             _ => vec![pc + 1],
         };
-        if next.into_iter().any(|t| t < n && rule_of(t) != rule_of(pc)) {
+        if next.iter().any(|&t| t < n && rule_of(t) != rule_of(pc)) {
+            if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
+                eprintln!("rules: {pc} (op {op} m={mode} {operand}, rule {}) goes to {next:?} (rules {:?}); the word before: {:?}", rule_of(pc), next.iter().map(|&t| rule_of(t)).collect::<Vec<_>>(), pc.checked_sub(1).map(|p| split(words[p])));
+            }
             return Err(Error::InvalidTarget(pc));
         }
     }

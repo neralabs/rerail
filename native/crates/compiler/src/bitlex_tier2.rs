@@ -944,6 +944,9 @@ pub fn lower(states: &[StateRow], arms: &[ArmRow], rows: &[Row], marks: &[Mark],
         };
         text.push('\n');
     }
+    if let Some(at) = std::env::var_os("RR_LOWERED_TEXT") {
+        let _ = std::fs::write(at, &text);
+    }
     Ok(Lowered { text, switches: e.switches, strings: e.strings, tested: e.tested.into_iter().collect(), rules: firsts, mark_words })
 }
 
@@ -1202,52 +1205,72 @@ fn ways(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], pc: usize) -
 /// becomes a `GOTO` to it, and words nothing reaches go. The places of a state a call returns to
 /// stay whole (`TOKEN`, its `MARK`s and their ways, `SWITCH`: `stream::validate`'s shape).
 ///
-/// `rules`: each word's rule (a function a rule): words of two rules are never alike. The
-/// kept words' rules come back with them.
+/// `rules`: each word's rule (a function a rule): words of two rules are never alike, but a
+/// call goes to any rule's words alike with its callee's (the same partition with no rules):
+/// rules that are copies, whole or from the place a call enters, are one function, as the
+/// lean parser's rules call one helper. No word goes to another rule but by a call. The kept
+/// words' rules come back with them.
 fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules: Option<&[u16]>) -> (Vec<(&'static str, u8, Arg)>, Vec<ByteSwitch>, Vec<u16>) {
     let n = words.len();
     const NONE: u32 = u32::MAX;
     let class_of = |class: &[u32], t: u16| if t == REFUSE || usize::from(t) >= n { NONE } else { class[usize::from(t)] };
     // The first partition: operation, mode, operand (a switch's offset too), and the rule.
-    let mut class: Vec<u32> = {
-        let mut ids: HashMap<(&str, u8, (u8, u16), u8, u16, Vec<u16>), u32> = HashMap::new();
-        words
-            .iter()
-            .enumerate()
-            .map(|(pc, &(op, mode, arg))| {
-                // A switch's offset and the words it names (their targets are its ways).
-                let (offset, named) = if let Arg::Table(t) = arg { (switches[usize::from(t)].offset, switches[usize::from(t)].words.iter().map(|&(w, _)| w).collect()) } else { (0, Vec::new()) };
-                let next = ids.len() as u32;
-                let rule = rules.map_or(0, |r| r[pc]);
-                *ids.entry((op, mode, operand_key(arg), offset, rule, named)).or_insert(next)
-            })
-            .collect()
-    };
-    let mut count = class.iter().copied().max().map_or(0, |m| m as usize + 1);
-    loop {
-        let mut ids: HashMap<Vec<u32>, u32> = HashMap::new();
-        let next: Vec<u32> = (0..n)
-            .map(|pc| {
-                let (targets, by_place) = ways(words, switches, pc);
-                let mut key = Vec::with_capacity(1 + targets.len() + by_place);
-                key.push(class[pc]);
-                key.extend(targets.iter().map(|&t| class_of(&class, t)));
-                key.extend((1..=by_place).map(|d| if pc + d < n { class[pc + d] } else { NONE }));
-                let id = ids.len() as u32;
-                *ids.entry(key).or_insert(id)
-            })
-            .collect();
-        let refined = ids.len();
-        class = next;
-        if refined == count {
-            break;
+    let is_call = |pc: usize| pc > 0 && words[pc].0 == "GOTO" && words[pc - 1].0 == "PUSH";
+    let partition = |rules: Option<&[u16]>| -> (Vec<u32>, usize) {
+        let mut class: Vec<u32> = {
+            let mut ids: HashMap<(&str, u8, (u8, u16), u8, u16, Vec<u16>), u32> = HashMap::new();
+            words
+                .iter()
+                .enumerate()
+                .map(|(pc, &(op, mode, arg))| {
+                    // A switch's offset and the words it names (their targets are its ways).
+                    let (offset, named) = if let Arg::Table(t) = arg { (switches[usize::from(t)].offset, switches[usize::from(t)].words.iter().map(|&(w, _)| w).collect()) } else { (0, Vec::new()) };
+                    let next = ids.len() as u32;
+                    let rule = rules.map_or(0, |r| r[pc]);
+                    // A call's `GOTO` is never another `GOTO`'s kind: it goes to its callee.
+                    let op = if is_call(pc) { "GOTO (a call's)" } else { op };
+                    *ids.entry((op, mode, operand_key(arg), offset, rule, named)).or_insert(next)
+                })
+                .collect()
+        };
+        let mut count = class.iter().copied().max().map_or(0, |m| m as usize + 1);
+        loop {
+            let mut ids: HashMap<Vec<u32>, u32> = HashMap::new();
+            let next: Vec<u32> = (0..n)
+                .map(|pc| {
+                    let (targets, by_place) = ways(words, switches, pc);
+                    let mut key = Vec::with_capacity(1 + targets.len() + by_place);
+                    key.push(class[pc]);
+                    key.extend(targets.iter().map(|&t| class_of(&class, t)));
+                    key.extend((1..=by_place).map(|d| if pc + d < n { class[pc + d] } else { NONE }));
+                    let id = ids.len() as u32;
+                    *ids.entry(key).or_insert(id)
+                })
+                .collect();
+            let refined = ids.len();
+            class = next;
+            if refined == count {
+                break;
+            }
+            count = refined;
         }
-        count = refined;
-    }
+        (class, count)
+    };
+    let (class, count) = partition(rules);
     let mut rep = vec![usize::MAX; count];
     for pc in (0..n).rev() {
         rep[class[pc] as usize] = pc;
     }
+    // A call's callee: the first place alike with it in any rule (its own partition's first is
+    // that place, the first of its kind there too).
+    let callee_of: Vec<u16> = {
+        let (across, count) = if rules.is_some() { partition(None) } else { (class.clone(), count) };
+        let mut first = vec![usize::MAX; count];
+        for pc in (0..n).rev() {
+            first[across[pc] as usize] = pc;
+        }
+        (0..n).map(|t| first[across[t] as usize] as u16).collect()
+    };
     // What each place holds: nothing, its own word, or a `GOTO` to its kind's kept word.
     #[derive(Clone, Copy, PartialEq)]
     enum Hold {
@@ -1284,15 +1307,17 @@ fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules
         } else {
             for t in targets {
                 if t != REFUSE && usize::from(t) < n {
+                    let t = if is_call(pc) { callee_of[usize::from(t)] } else { t };
                     todo.push((rep[class[usize::from(t)] as usize], true));
                 }
             }
         }
         // A state's places by position stay its own: after `TOKEN` its `MARK` or `SWITCH`, after
-        // a `MARK` its way, then the next `MARK` or the `SWITCH`.
+        // a `MARK` its way, then the next `MARK` or the `SWITCH`; after a `PUSH` its call's
+        // `GOTO` (only a `PUSH` reaches it, so it goes to its callee as a call).
         for d in 1..=by_place {
             if pc + d < n {
-                let whole = matches!((op, d), ("TOKEN", 1) | ("MARK", 2));
+                let whole = matches!((op, d), ("TOKEN", 1) | ("MARK", 2) | ("PUSH", 1));
                 todo.push((pc + d, whole));
             }
         }
@@ -1330,6 +1355,7 @@ fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules
                         });
                         Arg::Table(at)
                     }
+                    (_, Arg::Pc(t)) if is_call(pc) && usize::from(t) < n => Arg::Pc(to(callee_of[usize::from(t)])),
                     (_, Arg::Pc(t)) => Arg::Pc(to(t)),
                     (_, a) => a,
                 };
