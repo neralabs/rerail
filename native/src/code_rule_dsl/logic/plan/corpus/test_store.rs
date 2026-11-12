@@ -209,13 +209,15 @@ fn sweep_copies() {
 /// Removes other builds' templates unused for `STALE`, and staging left by a process that died building one.
 fn sweep_templates(dir: &Path, key: &str) {
     let now = std::time::SystemTime::now();
+    let age = |path: &Path| std::fs::metadata(path).and_then(|m| m.modified()).ok().and_then(|t| now.duration_since(t).ok());
     for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
-        let Some(other) = name.strip_suffix(".ready") else { continue };
+        // By the template itself: one whose ready mark is gone is swept too, aged by its own time.
+        let Some(other) = name.strip_suffix(".sqlite") else { continue };
         if other == key {
             continue;
         }
-        let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| now.duration_since(t).ok()).is_some_and(|age| age > STALE);
+        let old = age(&dir.join(format!("{other}.ready"))).or_else(|| age(&entry.path())).is_some_and(|age| age > STALE);
         if old {
             for suffix in [".sqlite", ".ready", ".lock"] {
                 let _ = std::fs::remove_file(dir.join(format!("{other}{suffix}")));
@@ -267,5 +269,28 @@ impl Lock {
             assert_eq!(std::io::Error::last_os_error().raw_os_error(), Some(libc::EINTR), "the template's lock");
         }
         Lock(file)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// Another build's template unused for an hour goes, by its mark's time or, without one, its own; a fresh one and
+    /// this build's stay.
+    #[test]
+    fn another_builds_template_unused_for_an_hour_is_swept() {
+        let dir = tempfile::tempdir().unwrap();
+        let at = |name: &str, ago: u64| {
+            let file = std::fs::File::create(dir.path().join(name)).unwrap();
+            file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(ago)).unwrap();
+        };
+        at("old.sqlite", 7200);
+        at("old.lock", 7200);
+        at("unmarked.sqlite", 7200);
+        at("fresh.sqlite", 7200);
+        at("fresh.ready", 60);
+        at("mine.sqlite", 7200);
+        super::sweep_templates(dir.path(), "mine");
+        let left: std::collections::BTreeSet<String> = std::fs::read_dir(dir.path()).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(left, ["fresh.ready", "fresh.sqlite", "mine.sqlite"].map(String::from).into_iter().collect());
     }
 }
