@@ -5,9 +5,15 @@
  * `eprintln!` are, passes untimed; the timed lines around it bound when it came.
  */
 
-/** A newline with more of the same write after it: where the next line's time goes. */
-const LINE_INSIDE_TEXT = /\n(?=[^])/gu;
 const NEWLINE = 0x0a;
+
+/** The bytes of a write that is text: bytes as they are, a UTF-8 string encoded; none for a string in another encoding. */
+function textBytes(chunk: unknown, encoding: unknown): Uint8Array | undefined {
+  if (chunk instanceof Uint8Array) return chunk;
+  if (typeof chunk !== "string") return undefined;
+  const name = typeof encoding === "string" ? encoding.toLowerCase() : "utf8";
+  return name === "utf8" || name === "utf-8" ? Buffer.from(chunk, "utf8") : undefined;
+}
 
 /** `bytes` with `stamp` after every newline that more bytes follow, and first when `atLineStart`. */
 function stampedBytes(bytes: Uint8Array, stamp: Buffer, atLineStart: boolean): Buffer {
@@ -24,25 +30,17 @@ function stampedBytes(bytes: Uint8Array, stamp: Buffer, atLineStart: boolean): B
 /**
  * Makes every line written to `stream` start with the time it was written (`now`), in UTC as ISO 8601, then a space.
  * Lines are counted across writes: a write that ends mid-line leaves the rest of that line to the next one, unstamped.
- * Bytes are stamped as bytes, so a character split across two writes stays whole; a string in another encoding
- * (`base64`, `hex`) is not text and passes as it is.
+ * A string goes as its UTF-8 bytes and bytes as they are, so a character split across two writes stays whole; a string
+ * in another encoding (`base64`, `hex`) is not text and passes as it is.
  */
 export function stampLines(stream: Pick<NodeJS.WriteStream, "write">, now: () => Date = () => new Date()): void {
   const write = stream.write.bind(stream) as (chunk: unknown, ...rest: unknown[]) => boolean;
   let atLineStart = true;
   stream.write = ((chunk: unknown, ...rest: unknown[]) => {
-    const encoding = typeof rest[0] === "string" ? rest[0].toLowerCase() : "utf8";
-    if (typeof chunk === "string" && chunk !== "" && (encoding === "utf8" || encoding === "utf-8")) {
-      const stamp = `${now().toISOString()} `;
-      const stamped = `${atLineStart ? stamp : ""}${chunk.replace(LINE_INSIDE_TEXT, `\n${stamp}`)}`;
-      atLineStart = chunk.endsWith("\n");
-      return write(stamped, ...rest);
-    }
-    if (chunk instanceof Uint8Array && chunk.length > 0) {
-      const stamped = stampedBytes(chunk, Buffer.from(`${now().toISOString()} `, "utf8"), atLineStart);
-      atLineStart = chunk[chunk.length - 1] === NEWLINE;
-      return write(stamped, ...rest);
-    }
-    return write(chunk, ...rest);
+    const bytes = textBytes(chunk, rest[0]);
+    if (bytes === undefined || bytes.length === 0) return write(chunk, ...rest);
+    const stamped = stampedBytes(bytes, Buffer.from(`${now().toISOString()} `, "utf8"), atLineStart);
+    atLineStart = bytes[bytes.length - 1] === NEWLINE;
+    return write(stamped, ...rest);
   }) as typeof stream.write;
 }
