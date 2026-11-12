@@ -201,14 +201,15 @@ interface PendingCodeRuleCall {
  * yields: its own calls, and a subagent's already pending at its previous yield. Claude Code runs a subagent in the
  * background and sends its hooks under the parent's session, so a subagent's call in flight at the parent's stop gets
  * its result later and is checked then; one still waiting at the next stop was refused, or its result lost. At the
- * session's end (`subagentsOnly`), the subagents' calls: no result comes after it, and the agent's own were finished at
- * its stops. Each call kept is marked as having outlived this yield.
+ * session's end (`sessionEnds`), every call: no result comes after it, for any agent, and a session can end with no
+ * stop (Claude Code interrupted at a permission prompt), which left the agent's own call to be begun again at a reopen.
+ * Each call kept is marked as having outlived this yield.
  */
-function takeUnanswered(pending: PendingCodeRuleCall[], subagentsOnly: boolean): PendingCodeRuleCall[] {
-  const due = pending.filter(call => (subagentsOnly ? call.agentId !== undefined : call.agentId === undefined || call.outlivedYield === true));
+function takeUnanswered(pending: PendingCodeRuleCall[], sessionEnds: boolean): PendingCodeRuleCall[] {
+  const due = sessionEnds ? [...pending] : pending.filter(call => call.agentId === undefined || call.outlivedYield === true);
   const kept = pending.filter(call => !due.includes(call));
   pending.splice(0, pending.length, ...kept);
-  if (!subagentsOnly) for (const call of kept) call.outlivedYield = true;
+  for (const call of kept) call.outlivedYield = true;
   return due;
 }
 
@@ -302,6 +303,8 @@ const LedgerEntrySchema = z.union([
       readError: z.string().optional(),
       withheld: z.object({ sha256: z.string(), bytes: z.number().int().nonnegative() }).optional(),
     })).optional(),
+    // Absent for the session's own agent, and in a ledger written before calls recorded their subagent.
+    agentId: z.string().optional(),
   }),
   z.object({ type: z.literal("policy-result"), toolCallId: z.string() }),
   z.object({ type: z.literal("secret-call"), toolCallId: z.string() }),
@@ -316,7 +319,7 @@ type LedgerEntry =
   | { type: "delivery"; delivery: AdapterDelivery }
   | { type: "rule-mutation"; mutation: RuleMutation }
   | { type: "rule-match"; ruleId: string; turn: number }
-  | { type: "policy-call"; toolCallId: string; toolName: string; paths: string[]; preimages?: Readonly<Record<string, Preimage>> }
+  | { type: "policy-call"; toolCallId: string; toolName: string; paths: string[]; preimages?: Readonly<Record<string, Preimage>>; agentId?: string }
   | { type: "policy-result"; toolCallId: string }
   | { type: "secret-call"; toolCallId: string }
   | { type: "secret-result"; toolCallId: string; eventId: string };
@@ -929,16 +932,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     const bridge = CODE_RULE_BOUNDARIES[event.kind] === true ? await this.#codeRuleWorkspaceNow(state, event) : state.codeRuleBridge;
     bridge?.refreshCodeRules();
     await this.#noteTurnWindow(state, event);
-    if (event.kind === "call") {
-      const id = event.toolCallId;
-      const preimages = await this.#beginCall(state, bridge, event);
-      await this.#append(state, {
-        type: "policy-call", toolCallId: id, toolName: event.toolName, paths: generatedEditPaths(event.toolName, event.input),
-        ...(preimages === undefined ? {} : { preimages }),
-      });
-      state.pendingCodeRuleCalls.push({ id, toolName: event.toolName, ...(event.agentId === undefined ? {} : { agentId: event.agentId }) });
-    }
-    // Before the session closes with its end: a subagent's call still waiting gets no result after it.
+    if (event.kind === "call") await this.#recordCall(state, bridge, event);
+    // Before the session closes with its end: no call still waiting gets a result after it.
     if (event.kind === "session-end") await this.#settleUnresolvedCalls(state, true);
     await this.#router(descriptor.host).ingest(event);
     noteCallsAwaitingResult(state.callsAwaitingResult, event);
@@ -1004,11 +999,11 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
    * unchecked for the session's life, and a reopen began the call again from the ledger. Each is checked against what
    * it captured and closed in the ledger; a result that comes after all checks nothing. An evaluator still opening
    * begins the calls it restores from the ledger once open, so they wait for the next yield. Which calls are due, a
-   * subagent's among them, and the session end's (`subagentsOnly`): `takeUnanswered`.
+   * subagent's among them, and the session end's (`sessionEnds`): `takeUnanswered`.
    */
-  async #settleUnresolvedCalls(state: RuntimeSessionState, subagentsOnly = false): Promise<void> {
+  async #settleUnresolvedCalls(state: RuntimeSessionState, sessionEnds = false): Promise<void> {
     if (state.codeRuleOpening) return;
-    const calls = takeUnanswered(state.pendingCodeRuleCalls, subagentsOnly);
+    const calls = takeUnanswered(state.pendingCodeRuleCalls, sessionEnds);
     if (calls.length === 0) return;
     await state.codeRuleBridge?.finishUnanswered(calls.map(call => call.id));
     for (const call of calls) await this.#append(state, { type: "policy-result", toolCallId: call.id });
@@ -1060,6 +1055,21 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     if (bridge !== undefined) return await bridge.begin(event.toolCallId, event.toolName, event.input);
     await state.codeRuleBridge?.unwatchedCall(event.toolCallId);
     return undefined;
+  }
+
+  /**
+   * Begins a tool call and records it in the ledger and among the session's pending calls, with the subagent that made
+   * it: a subagent's call outlives the main agent's stop, after a daemon restart too, which settled it at the first stop.
+   */
+  async #recordCall(state: RuntimeSessionState, bridge: CodeRuleBridge | undefined, event: Extract<AdapterEvent, { kind: "call" }>): Promise<void> {
+    const id = event.toolCallId;
+    const agent = event.agentId === undefined ? {} : { agentId: event.agentId };
+    const preimages = await this.#beginCall(state, bridge, event);
+    await this.#append(state, {
+      type: "policy-call", toolCallId: id, toolName: event.toolName, paths: generatedEditPaths(event.toolName, event.input),
+      ...(preimages === undefined ? {} : { preimages }), ...agent,
+    });
+    state.pendingCodeRuleCalls.push({ id, toolName: event.toolName, ...agent });
   }
 
   /**
@@ -1583,7 +1593,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       auditRequestWork: undefined,
       repositoryAudit: undefined,
       // Restored whether or not the evaluator opens, so their results still close them in the ledger.
-      pendingCodeRuleCalls: unresolvedCodeRuleCalls(ledger.entries).map(call => ({ id: call.toolCallId, toolName: call.toolName })),
+      pendingCodeRuleCalls: unresolvedCodeRuleCalls(ledger.entries).map(call => ({
+        id: call.toolCallId, toolName: call.toolName, ...(call.agentId === undefined ? {} : { agentId: call.agentId }),
+      })),
       callsAwaitingResult: new Set(),
       overdueEditChecks: undefined,
       editCheckWaits: 0,
@@ -1713,12 +1725,16 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
 
   async closeSession(sessionId: string): Promise<void> {
     const state = this.#sessions.get(sessionId);
+    // Read or taken before any await: the cap may evict the closed entry while the close below awaits, which gave the
+    // session's row the time its close finished rather than its recorded end.
+    let endedAt = this.#closedSessions.get(sessionId)?.endedAt;
     if (state !== undefined) {
       state.closed = true;
       state.pendingSteers = [];
       state.missedFindings = [];
+      endedAt = Date.now();
       this.#closedSessions.set(sessionId, {
-        descriptor: state.descriptor, startedAt: state.startedAt, endedAt: Date.now(), repositoryKey: this.#repositoryKey(state.checkout),
+        descriptor: state.descriptor, startedAt: state.startedAt, endedAt, repositoryKey: this.#repositoryKey(state.checkout),
       });
       // A map keeps insertion order, and a session that opens again leaves it: the first key closed longest ago.
       if (this.#closedSessions.size > CLOSED_SESSIONS_KEPT) this.#closedSessions.delete(this.#closedSessions.keys().next().value!);
@@ -1747,7 +1763,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
         }
       } finally {
         this.#sessions.delete(sessionId);
-        this.#sessionStore.closeSession(sessionId, this.#closedSessions.get(sessionId)?.endedAt);
+        this.#sessionStore.closeSession(sessionId, endedAt);
       }
     }
   }

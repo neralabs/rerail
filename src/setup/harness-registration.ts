@@ -28,7 +28,7 @@ import { readAddedSettingsEntries, writeAddedSettingsEntries, type AddedSettings
 import { commandFileText, MANAGED_SKILL_MARKER, type CommandFileContext } from "../harness/rerail-command-files.js";
 import { RERAIL_COMMANDS, type RerailCommandName } from "../harness/rerail-commands.js";
 import { andList } from "../harness/setup-screens.js";
-import { commandLine, powershellLiteral, shellWord } from "../engine/command-line.js";
+import { commandLine, POWERSHELL_SAFE, powershellLiteral, shellWord } from "../engine/command-line.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
 import { CURRENT_LINK, DAEMON_ACCESS_TOKEN_FILE, defaultRerailHome, VERSIONS_DIR } from "../engine/storage/rerail-home.js";
@@ -1645,8 +1645,10 @@ function registeredScripts(words: readonly string[], platform: NodeJS.Platform):
  * Whether a command file or skill runs this installation's CLI or, on registration, that of another install of this
  * package or of one that is gone, recognized as hooks are (`isReplaceableScript`): an earlier version wrote its files
  * under its own install root. A generated file names exactly one `<root>/dist/cli/cli.js` (`ENTRY_POINTS.cli`), as a
- * hook word (`hookWord`) or, in the command files on Windows, in POSIX single quotes (Claude Code's) or as a PowerShell
- * literal (Codex's and Cursor's).
+ * hook word (`hookWord`) or, in the command files on Windows, in POSIX single quotes (Claude Code's) or for PowerShell
+ * (Codex's and Cursor's): as a literal, or bare where PowerShell reads the path as one word (`shellWord`), as it does
+ * `C:\Users\me\.rerail\versions\0.2.0\dist\cli\cli.js`. Without the bare form every update backed up each of those files
+ * as someone else's and left the retired ones in place.
  */
 async function runsPackageCli(context: Context, text: string): Promise<boolean> {
   if (namesScript(text, hookScript(context, ENTRY_POINTS.cli))) return true;
@@ -1654,7 +1656,12 @@ async function runsPackageCli(context: Context, text: string): Promise<boolean> 
   const windows = context.platform === "win32";
   const words = shellWords(text, windows).map(word => unquoteShellWord(word, windows));
   const quoted = windows
-    ? [...posixQuotedScripts(text, ENTRY_POINTS.cli, context.platform), ...powershellQuotedScripts(text, ENTRY_POINTS.cli, context.platform)]
+    ? [
+      ...posixQuotedScripts(text, ENTRY_POINTS.cli, context.platform),
+      ...powershellQuotedScripts(text, ENTRY_POINTS.cli, context.platform),
+      // A word ends at a space, or at the backtick around inline code.
+      ...text.split(/[\s`]+/u).filter(word => POWERSHELL_SAFE.test(word)),
+    ]
     : [];
   const scripts = registeredScripts([...words, ...quoted], context.platform);
   const [script] = scripts;

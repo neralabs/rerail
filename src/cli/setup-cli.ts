@@ -448,9 +448,10 @@ function pathExists(path: string): boolean {
 
 /**
  * Another Rerail daemon (another `RERAIL_HOME`'s) that still holds the machine-wide cache, by the pid its record names.
- * The record outlives a daemon ended without its cleanup (on Windows, at every logoff), so the pid counts only while a
- * process holds the cache's main-instance lock, or by the pid rule where the lock cannot be tried
- * (`mainInstanceHolderRuns`). `machine` is this one unless a test names another.
+ * The record outlives a daemon ended without its cleanup (on Windows, at every logoff), so the pid counts only while
+ * it may still be a daemon, refined by the cache's main-instance lock everywhere but Windows, where asking the lock
+ * would load the engine from the `versions/` this uninstall removes (`mainInstanceHolderRuns`). `machine` is this one
+ * unless a test names another.
  */
 export function cacheHolder(cache: string, machine?: DaemonMachine): number | undefined {
   try {

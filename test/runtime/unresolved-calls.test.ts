@@ -133,6 +133,27 @@ describe("a tool call whose result never comes", () => {
       await reopened.dispose();
     }
   }, 30_000);
+
+  it("is finished when the session ends without a stop, so it is not begun again when the session opens again", async () => {
+    const { root, open } = await checkout();
+    const first = await open("interrupted");
+    try {
+      // Interrupted at its permission prompt, Claude Code ends the session with no Stop.
+      await first.ingest(writeCall(root, "interrupted"));
+      await first.ingest({ kind: "session-end", eventId: "end", sessionId: "interrupted" });
+    } finally {
+      await first.dispose();
+    }
+
+    const begun = vi.spyOn(CodeRuleBridge.prototype, "begin");
+    try {
+      const reopened = await open("interrupted");
+      await reopened.dispose();
+      expect(begun).not.toHaveBeenCalled();
+    } finally {
+      begun.mockRestore();
+    }
+  }, 30_000);
 });
 
 // Claude Code sends a subagent's hooks under its parent's session id, with the subagent's agent_id, and runs a
@@ -194,6 +215,27 @@ describe("a subagent's tool call still waiting when the main agent stops", () =>
       expect(begun).not.toHaveBeenCalled();
     } finally {
       begun.mockRestore();
+    }
+  }, 30_000);
+
+  it("stays the subagent's across a daemon restart, so the next stop leaves it for its own result", async () => {
+    const { root, open } = await checkout();
+    const first = await open("parent");
+    try {
+      await first.ingest(subagentWrite(root, "parent"));
+    } finally {
+      await first.dispose();
+    }
+
+    // Opening ends with a turn end: the main agent's first stop after the restart.
+    const reopened = await open("parent");
+    try {
+      await writeFile(join(root, "a.py"), "NEEDLE\n");
+      const atResult = await reopened.ingest({ kind: "result", eventId: "write-result", sessionId: "parent", toolCallId: "write", toolName: "Write", output: "" });
+
+      expect(atResult).toEqual([expect.objectContaining({ content: expect.stringContaining("No needle") })]);
+    } finally {
+      await reopened.dispose();
     }
   }, 30_000);
 });

@@ -1,5 +1,6 @@
+import type { ChildProcessByStdio } from "node:child_process";
 import { existsSync, realpathSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, resolve, win32 } from "node:path";
 import type { Readable, Writable } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
@@ -88,10 +89,14 @@ export function previousStatusSpawn(command: string, platform: NodeJS.Platform =
   return bash === undefined ? { file: command, args: [], shell: true } : { file: bash, args: ["-c", command], shell: false };
 }
 
-/** Git Bash's bash.exe: `CLAUDE_CODE_GIT_BASH_PATH`, which Claude Code itself honours, else the one beside Rerail's Git. */
+/**
+ * Git Bash's bash.exe: `CLAUDE_CODE_GIT_BASH_PATH`, which Claude Code itself honours, else the one beside Rerail's Git.
+ * A name that is not an absolute path, such as `bash.exe`, is passed over for the one beside Git: Rerail starts a program
+ * on Windows only by its absolute path (`assertProgramPath`), and starting that name threw before anything was drawn.
+ */
 function claudeGitBash(env: NodeJS.ProcessEnv): string | undefined {
   const named = env.CLAUDE_CODE_GIT_BASH_PATH;
-  return named !== undefined && named !== "" ? named : gitBash();
+  return named !== undefined && win32.isAbsolute(named) ? named : gitBash();
 }
 
 /** Preserve the user's status as a byte stream, including output before errors or timeouts. */
@@ -119,12 +124,20 @@ export async function runClaudeStatus(
       return;
     }
     const plan = previousStatusSpawn(previous.command);
-    const child = spawn(plan.file, plan.args, {
-      shell: plan.shell,
-      detached: process.platform !== "win32",
-      env: { ...process.env, [PARENT_PROCESS_KEY]: String(process.pid) },
-      stdio: ["pipe", "pipe", "ignore"],
-    });
+    let child: ChildProcessByStdio<Writable, Readable, null>;
+    try {
+      child = spawn(plan.file, plan.args, {
+        shell: plan.shell,
+        detached: process.platform !== "win32",
+        env: { ...process.env, [PARENT_PROCESS_KEY]: String(process.pid) },
+        stdio: ["pipe", "pipe", "ignore"],
+      });
+    } catch {
+      // A command spawn refuses outright (a NUL byte in it, say) is one that failed to start, as `error` reports: the
+      // person's status is lost, never Rerail's line with it.
+      resolvePrevious();
+      return;
+    }
     const timer = setTimeout(() => {
       // The command and what it started: on macOS and Linux its process group (`detached`); on Windows the tree from
       // Git Bash's launcher, which runs the real bash as its child.

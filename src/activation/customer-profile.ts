@@ -11,6 +11,7 @@ import {
 import { readFile, rm, writeFile, mkdir } from "node:fs/promises";
 import { removeWithRetry, replaceFile } from "../engine/file-replace.js";
 import { withHomeLock } from "../engine/native/file-lock.js";
+import { makeRerailHome } from "../engine/storage/private-files.js";
 import { join } from "node:path";
 import { z } from "zod";
 import type { DeviceSecretStore } from "./device-keystore.js";
@@ -336,7 +337,7 @@ export class CustomerProfileStore {
 
   async select(profileName: string): Promise<void> {
     this.profileDirectory(profileName);
-    await mkdir(this.home, { recursive: true, mode: 0o700 });
+    makeRerailHome(this.home);
     await replaceFile(this.activeProfilePath, `${profileName}\n`, { mode: 0o600 });
   }
 

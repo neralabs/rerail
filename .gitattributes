@@ -1,9 +1,14 @@
 # Every text file checks out with the LF line ends it is stored with, on every platform. Git for Windows sets
 # core.autocrlf=true by default, which checked text out as CRLF: every pack README then failed the README and structure
-# checks, as did the tests that read a checkout's bytes. A file stored with CRLF (a few test fixtures) keeps it: Git
-# converts nothing in a file whose stored form already holds a CR. Later lines win, so the -text lines below still
-# apply, and keep the model's files byte for byte.
+# checks, as did the tests that read a checkout's bytes. Later lines win, so the -text lines below still apply, and
+# keep their files byte for byte.
 * text=auto eol=lf
+# Fixtures stored with CRLF or mixed line ends, which their tests read as stored: text=auto leaves a stored CR alone
+# only until `git add --renormalize` rewrites the file with LF, so each is pinned as stored.
+fixtures/blade/licenses/livewire/LICENSE.md -text
+fixtures/ecma/lines/eslint/sort-keys@groups.ts -text
+fixtures/php/suppress/phpcs/terminators.php -text
+fixtures/php/suppress/phpstan/terminators.php -text
 
 # Binaries are stored in Git LFS: install git-lfs before cloning (CONTRIBUTING.md). CI pulls them through
 # .github/actions/lfs.

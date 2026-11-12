@@ -152,7 +152,7 @@ Set-up denies coding agents access to Rerail's data wherever the agent's user se
 
 - **Rerail home** (`~/.rerail`, or `RERAIL_HOME`): access token, every repository's history database, installed
   package.
-- **Content cache** (`~/.cache/rerail`, on Windows `%LOCALAPPDATA%\rerail`): parsed files and results.
+- **Content cache** (`~/.cache/rerail`, on Windows `%USERPROFILE%\AppData\Local\rerail`): parsed files and results.
 
 Agents run commands as you, so only their own sandbox can keep them out.
 
@@ -382,8 +382,8 @@ Xcode installed.
 
 Set-up records the Node that ran it for the launcher, the hooks and the Claude Code status line. Homebrew's is
 recorded by the link `brew upgrade` keeps (`/opt/homebrew/bin/node`), not its versioned `Cellar` folder. Once the
-recorded Node is gone (after `nvm uninstall`, say), each falls back to `node` on `PATH`, except the status line on
-Windows.
+recorded Node is gone (after `nvm uninstall`, say), each falls back to `node` on `PATH`. The status line does so on
+Windows too: Claude Code runs it through Git Bash there, so its `sh -c` fallback works as on macOS and Linux.
 
 On a Node older than 24, the CLI and the daemon stop with set-up's message, the hooks do nothing, and the status line
 says `needs Node 24 or newer`.
@@ -484,7 +484,7 @@ database before the now-active version, to put back by hand (see [Database compa
 
 Policy evaluation caches parsed files and results in a content store; where the package lives, not a flag, picks which one.
 
-The managed installation uses `~/.cache/rerail/content-v1.sqlite`, and on Windows `%LOCALAPPDATA%\rerail\content-v1.sqlite`, out of
+The managed installation uses `~/.cache/rerail/content-v1.sqlite`, and on Windows `%USERPROFILE%\AppData\Local\rerail\content-v1.sqlite`, out of
 a roaming profile's reach (earlier releases kept it in `~/.cache/rerail` there too; the uninstall removes that copy); a
 build from a Git checkout uses `<checkout>/.rerail/content-v1.sqlite`. `RERAIL_CONTENT_STORE_PATH` overrides either location.
 
@@ -513,7 +513,7 @@ process (`rerail daemon stop`, or end it by pid) and start again.
 <summary>The lock</summary>
 
 The daemon holds an exclusive OS lock (`flock` / `LockFileEx`) on `~/.cache/rerail/main-instance.lock` (on Windows
-`%LOCALAPPDATA%\rerail\main-instance.lock`) for its whole life, and records its pid, version, package root and start time
+`%USERPROFILE%\AppData\Local\rerail\main-instance.lock`) for its whole life, and records its pid, version, package root and start time
 beside it in `main-instance.json`. The OS drops the
 lock however the daemon ends, `kill -9` included, so there is never a stale lock to clear.
 
@@ -605,7 +605,7 @@ hooks point at files that are about to go.
 - **Removes the `PATH` entry** set-up added from every shell startup file (or the Windows user `Path`).
 - **Deletes the installation**, last: `~/.rerail/current`, the launcher's `~/.rerail/bin`, every version under
   `~/.rerail/versions` with `update-state.json`, the rule packs in `~/.rerail/packs`, and the cache `~/.cache/rerail`
-  (on Windows `%LOCALAPPDATA%\rerail`, and the `~/.cache/rerail` an earlier release used there; left alone, and said so, while
+  (on Windows `%USERPROFILE%\AppData\Local\rerail`, and the `~/.cache/rerail` an earlier release used there; left alone, and said so, while
   another Rerail home's daemon holds it).
 
 </details>
@@ -651,7 +651,7 @@ Nothing it deletes can be restored, so export your rules first if you may want t
   database goes), and the checkout's `.rerail` when the ledgers were all it held. A checkout that no longer exists is
   skipped. Links are never followed: a `.rerail` that is a link is left alone, and a `sessions` link is removed as a
   link, never its target. Ledgers written elsewhere with `RERAIL_STORAGE_ROOT` are not found.
-- **Content cache:** `~/.cache/rerail`, on Windows `%LOCALAPPDATA%\rerail` (kept while another Rerail home's daemon holds it, as above), and the file
+- **Content cache:** `~/.cache/rerail`, on Windows `%USERPROFILE%\AppData\Local\rerail` (kept while another Rerail home's daemon holds it, as above), and the file
   `RERAIL_CONTENT_STORE_PATH` names, with its sidecars, when it is set.
 
 `--delete-data` only goes with the whole uninstall: with `--agents`, or with `--root` naming a checkout other than the

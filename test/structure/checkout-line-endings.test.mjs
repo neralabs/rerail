@@ -21,6 +21,16 @@ describe("a checkout's line ends", () => {
     expect(loose.length, `unpinned, for example: ${loose.slice(0, 5).join(", ")}`).toBe(0);
   });
 
+  // text=auto keeps a CR the index holds only until `git add --renormalize`, which rewrites the file with LF and
+  // changes the bytes its test reads; -text keeps it as stored.
+  it("keep a file stored with CRLF or mixed line ends as stored, by -text", () => {
+    const renormalizable = git(["ls-files", "--eol", "-z"]).toString("utf8").split("\0").filter(Boolean).flatMap((line) => {
+      const [, stored, attributes, path] = ENTRY.exec(line) ?? [];
+      return ["crlf", "mixed"].includes(stored) && !/(?:^|\s)-text(?:\s|$)/u.test(attributes) ? [path] : [];
+    });
+    expect(renormalizable).toEqual([]);
+  });
+
   it("stay LF in each README checked out with Git for Windows' default", () => {
     const readmes = git(["ls-files", "-z", "--", "README.md", "packs/*/README.md"]).toString("utf8").split("\0").filter(Boolean);
     expect(readmes.length).toBeGreaterThan(1);

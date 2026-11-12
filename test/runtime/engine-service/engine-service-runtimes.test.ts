@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -117,11 +117,13 @@ describe("the engine service's runtimes", () => {
     const { service, databasePath, first, start, end } = await twoCheckouts(0, { library: [{ kind: "code", rule }] });
 
     await start("a", first);
+    // The checkout as the registry recorded it: a temporary folder's physical path differs on macOS (/private/var).
+    const recorded = await realpath(first);
     // The rule as this checkout's catalogs compile it: the open runtime's catalog shares the executable.
     const compiled = ((): WeakRef<object> => {
       const catalogs = new CheckoutCatalogs(databasePath);
       try {
-        const [entry] = catalogs.catalog(first).snapshot().codeRules;
+        const [entry] = catalogs.catalog(recorded).snapshot().codeRules;
         if (entry === undefined) throw new Error("the library rule did not compile");
         return new WeakRef(entry.executable);
       } finally {

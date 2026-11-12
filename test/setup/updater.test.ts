@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { lstat, mkdir, mkdtemp, readFile, readlink, readdir, realpath, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,6 +24,13 @@ const temporaryDirectories: string[] = [];
 afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map((path) => removeFolder(path)));
 });
+
+/** The pid of a process that has already exited. */
+function exitedPid(): number {
+  const pid = spawnSync(process.execPath, ["-e", ""]).pid;
+  if (pid === undefined) throw new Error("no pid for the exited process");
+  return pid;
+}
 
 class FakeRegistry implements PackageRegistry {
   readonly resolvedChannels: string[] = [];
@@ -267,11 +275,29 @@ describe("ManagedUpdater", () => {
     const { home, packageRoot } = await fixture();
     const target = join(home, "versions", "1.0.0");
     await mkdir(target, { recursive: true });
-    await symlink(target, join(home, "current.123.0b9d.old"), "junction");
+    // The swapping process is gone: it was killed between its two renames.
+    const left = `current.${exitedPid()}.0b9d.old`;
+    await symlink(target, join(home, left), "junction");
     const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry: new FakeRegistry("1.0.0") });
     await updater.status();
     expect(await realpath(updater.currentLink)).toBe(await realpath(target));
-    expect(existsSync(join(home, "current.123.0b9d.old"))).toBe(false);
+    expect(existsSync(join(home, left))).toBe(false);
+  });
+
+  // Every CLI call looks for a missing `current`, unlocked. One that put the `.old` back while its swapper still ran
+  // would leave a folder where the swapper renames its new link next, and fail the update.
+  it("leaves current.*.old alone while the process that moved it aside still runs, even beside a dead one's", async () => {
+    const { home, packageRoot } = await fixture();
+    const target = join(home, "versions", "1.0.0");
+    await mkdir(target, { recursive: true });
+    const swapping = `current.${process.pid}.0b9d.old`;
+    const abandoned = `current.${exitedPid()}.1c2e.old`;
+    await symlink(target, join(home, abandoned), "junction");
+    await symlink(target, join(home, swapping), "junction");
+    const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "1.0.0", registry: new FakeRegistry("1.0.0") });
+    await updater.readState();
+    expect(existsSync(updater.currentLink)).toBe(false);
+    expect((await readdir(home)).filter(name => name.endsWith(".old")).sort()).toEqual([abandoned, swapping].sort());
   });
 
   it("surfaces an unrepairable current installation instead of reporting no update", async () => {

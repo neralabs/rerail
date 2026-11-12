@@ -79,6 +79,8 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   readonly #eligibility = new Map<string, CheckoutEligibility>();
   /** Git's exclude stack of each checkout with no lane that a path was asked of; null where it cannot be opened. */
   readonly #gitIgnore = new Map<string, NativeGitIgnoreMatcher | null>();
+  /** The checkouts with no lane whose Git ignore rules failed a read, reported once each. */
+  readonly #gitIgnoreReported = new Set<string>();
   #settings: Required<AuditSettings>;
   #sessionId: string | undefined;
   #closing = false;
@@ -177,22 +179,41 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return lane === undefined ? this.#gitIgnores(owner, directory) : lane.enforcer.ignoresPath(owner.path, directory);
   }
 
-  /** Whether Git ignores `owner`'s path in its checkout, while the session follows `.gitignore`; its rules open once. */
+  /**
+   * Whether Git ignores `owner`'s path in its checkout, while the session follows `.gitignore`; its rules open once.
+   * Only a failed open leaves the checkout without a matcher: one path's failed read (an unreadable nested
+   * `.gitignore`, the index caught mid-rewrite) used to drop it too, and every later walk then entered the checkout's
+   * ignored folders. As a lane does, rules that cannot be read leave the path in, so a broken `.gitignore` never hides
+   * sources.
+   */
   #gitIgnores(owner: CheckoutOwner, directory: boolean): boolean {
     if (this.#options.followGitignore !== true) return false;
     try {
-      let matcher = this.#gitIgnore.get(owner.checkoutRoot);
-      if (matcher === undefined) {
-        matcher = loadNativeBinding().openGitIgnoreMatcher(owner.checkoutRoot);
-        this.#gitIgnore.set(owner.checkoutRoot, matcher);
-      }
-      return matcher?.ignored(owner.path, directory) ?? false;
+      return this.#gitIgnoreMatcher(owner)?.ignored(owner.path, directory) ?? false;
     } catch (error) {
-      // As a lane does: rules that cannot be read leave the path in, so a broken `.gitignore` never hides sources.
-      this.#gitIgnore.set(owner.checkoutRoot, null);
-      process.stderr.write(`rerail: cannot read Git ignore rules for ${owner.path || "."}: ${error instanceof Error ? error.message : String(error)}\n`);
+      this.#reportGitIgnoreError(owner, error);
       return false;
     }
+  }
+
+  /** The exclude stack of `owner`'s checkout, opened on first use; null where it is outside Git or cannot be opened. */
+  #gitIgnoreMatcher(owner: CheckoutOwner): NativeGitIgnoreMatcher | null {
+    let matcher = this.#gitIgnore.get(owner.checkoutRoot);
+    if (matcher !== undefined) return matcher;
+    try {
+      matcher = loadNativeBinding().openGitIgnoreMatcher(owner.checkoutRoot);
+    } catch (error) {
+      matcher = null;
+      this.#reportGitIgnoreError(owner, error);
+    }
+    this.#gitIgnore.set(owner.checkoutRoot, matcher);
+    return matcher;
+  }
+
+  #reportGitIgnoreError(owner: CheckoutOwner, error: unknown): void {
+    if (this.#gitIgnoreReported.has(owner.checkoutRoot)) return;
+    this.#gitIgnoreReported.add(owner.checkoutRoot);
+    process.stderr.write(`rerail: cannot read Git ignore rules for ${owner.path || "."}: ${error instanceof Error ? error.message : String(error)}\n`);
   }
 
   /** Why the checkout that owns the file `path` leaves an edit of it unchecked for Git's rules (`ignoredEdit` of its enforcer). */

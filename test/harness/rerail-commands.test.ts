@@ -35,6 +35,16 @@ describe("the shell a command file is written for", () => {
     expect(start.includes("& 'node' 'cli.js' start --relay --powershell\n")).toBe(powershell);
     expect(start.includes("\n'node' 'cli.js' start --relay\n")).toBe(!powershell);
   });
+
+  it.each(["claude-code", "cursor", "codex"] as const)("fences %s's launcher lines in the language of the shell they run in", agent => {
+    const language = ADAPTER_CAPABILITIES[agent].windowsCommandShell === "powershell" ? "powershell" : "sh";
+    for (const name of RERAIL_COMMANDS.map(entry => entry.name)) {
+      // A ```text block shows the person words, not a command.
+      const fences = [...commandFileText(agent, name, context).matchAll(/^```(\w+)$/gmu)].map(match => match[1]).filter(fence => fence !== "text");
+      expect(fences.length).toBeGreaterThan(0);
+      expect(new Set(fences)).toEqual(new Set([language]));
+    }
+  });
 });
 
 describe("/rerail-show-me's write", () => {

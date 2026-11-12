@@ -1,9 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
+import { makeRerailHome } from "../engine/storage/private-files.js";
 import { CURRENT_LINK } from "../engine/storage/rerail-home.js";
 import {
   CODEX_TRUST_NOTE,
@@ -321,7 +322,7 @@ export function seenCodingAgents(rerailHome: string): Harness[] | undefined {
 }
 
 async function writeSeenCodingAgents(rerailHome: string, seen: ReadonlySet<Harness>): Promise<void> {
-  await mkdir(rerailHome, { recursive: true, mode: 0o700 });
+  makeRerailHome(rerailHome);
   await writeFile(join(rerailHome, SEEN_AGENTS_FILE), `${JSON.stringify({ seen: HARNESSES.filter(id => seen.has(id)) }, null, 2)}\n`, { mode: 0o600 });
 }
 

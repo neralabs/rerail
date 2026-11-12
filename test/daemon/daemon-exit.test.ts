@@ -1,10 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { daemonExit } from "../../src/daemon/daemon-exit.js";
 
-/** A daemon process whose close waits for `finish`, recording what its way out does. */
-function process_() {
+/** A daemon process whose close waits for `finish`, recording what its way out does; `fails` names a step that throws. */
+function process_(fails?: "release" | "relaunch") {
   const events: string[] = [];
   let finish: (failure?: Error) => void = () => undefined;
+  const step = (name: "release" | "relaunch") => () => {
+    events.push(name);
+    if (fails === name) throw new Error(`${name} refused`);
+  };
   const exit = daemonExit({
     close: async () => {
       events.push("close");
@@ -12,8 +16,8 @@ function process_() {
         finish = failure => (failure === undefined ? resolve() : reject(failure));
       });
     },
-    release: () => events.push("release"),
-    relaunch: () => events.push("relaunch"),
+    release: step("release"),
+    relaunch: step("relaunch"),
     exit: code => events.push(`exit ${code}`),
     log: line => events.push(line),
   });
@@ -60,5 +64,20 @@ describe("the daemon's way out", () => {
     failed.finish(new Error("socket busy"));
     await settled();
     expect(failed.events).toEqual(["close", "rerail daemon: restart failed: socket busy\n", "exit 1"]);
+  });
+
+  // The main-instance lock's release and the next daemon's launch are native calls that can throw after a clean close.
+  it("says why and exits 1 when the release or the relaunch throws after the close", async () => {
+    const unreleased = process_("release");
+    unreleased.exit.stop();
+    unreleased.finish();
+    await settled();
+    expect(unreleased.events).toEqual(["close", "release", "rerail daemon: shutdown failed: release refused\n", "exit 1"]);
+
+    const unlaunched = process_("relaunch");
+    unlaunched.exit.restart();
+    unlaunched.finish();
+    await settled();
+    expect(unlaunched.events).toEqual(["close", "release", "relaunch", "rerail daemon: restart failed: relaunch refused\n", "exit 1"]);
   });
 });

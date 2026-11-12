@@ -629,6 +629,8 @@ jobs:
   # (about 9 minutes, side by side) and saved straight away, so a failing test run still keeps it; the shard that saves
   # second finds the key taken and saves nothing. No cargo cache: release-cache.yml's for this target is keyed by files
   # checked out with CRLF line ends, which this checkout's are not. The package is built here too, which takes seconds.
+  # On the same miss the second shard also runs the engine's Windows-only Rust tests, which the Linux rust job compiles
+  # out, so they run whenever the engine's inputs change.
   unit-windows:
     name: Unit tests (Windows, ${{ matrix.shard }}/2)
     needs: test-data
@@ -638,8 +640,9 @@ jobs:
         (github.event.pull_request.head.repo.full_name == github.repository && github.actor != 'dependabot[bot]')
       }}
     runs-on: windows-2025
-    # A shard takes about 9 minutes when the cache holds the engine and 18 when it builds it; its tests take 5 to 6.
-    timeout-minutes: 30
+    # A shard takes about 9 minutes when the cache holds the engine and 18 when it builds it; its tests take 5 to 6. On
+    # a miss the second shard also makes a debug build of the engine for its Rust tests, which the limit leaves room for.
+    timeout-minutes: 45
     permissions:
       contents: read
     strategy:
@@ -708,6 +711,16 @@ jobs:
             native/index.js
             native/index.d.ts
           key: ${{ steps.native-cache.outputs.cache-primary-key }}
+
+      # The engine's #[cfg(windows)] tests (process starts, Windows import roots) are compiled out on Linux, where the
+      # rust job runs every other test; these filters select them and the Windows-neutral tests beside them. A debug
+      # build, as in the rust job, so none of the release build above is reused.
+      - name: Engine Windows tests
+        if: steps.native-cache.outputs.cache-hit != 'true' && matrix.shard == 2
+        env:
+          CARGO_PROFILE_DEV_DEBUG: line-tables-only
+          CARGO_INCREMENTAL: "0"
+        run: "cargo test --manifest-path native/Cargo.toml --lib -- process:: code_rule_dsl::import_target::"
 
       - name: Build the package
         run: npm run build:js

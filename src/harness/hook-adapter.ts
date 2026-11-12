@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { realpathSync } from "node:fs";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { readFileSync, realpathSync, rmSync } from "node:fs";
+import { readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { setTimeout as delay } from "node:timers/promises";
@@ -9,7 +9,7 @@ import { isSteerRule, type AdapterDelivery, type RerailHost, type SteerRule } fr
 import { RULE_MODES, steers } from "../engine/catalog/rule-mode.js";
 import { processState } from "../engine/process-liveness.js";
 import { asLateSteer } from "../engine/code-rule/rerail-steer.js";
-import { heldOnWindows, nameTaken } from "../engine/file-replace.js";
+import { heldOnWindows, nameTaken, removeWithRetry } from "../engine/file-replace.js";
 import { REQUIRED_NODE_MAJOR } from "../engine/package-root.js";
 import { scrubSecrets } from "../engine/secret-scrub.js";
 import { makeLedgerFolder, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
@@ -210,24 +210,70 @@ interface LockOwner {
   token: string;
 }
 
-/**
- * Removes the lock file at `path` when its owner is dead; true when the next try may take the lock. On Windows a lock
- * file another hook is already removing refuses this removal (EPERM, EACCES, EBUSY): false then, so the hook waits.
- */
-async function reclaimDeadOwner(path: string, platform: NodeJS.Platform): Promise<boolean> {
-  let serializedOwner: string;
-  let owner: LockOwner;
+/** A lock file as a waiter found it: its text, the holder it names if it names one, and when it last beat. */
+interface FoundLock {
+  text: string;
+  owner: LockOwner | undefined;
+  beat: number;
+}
+
+async function foundLock(path: string): Promise<FoundLock | undefined> {
   try {
-    serializedOwner = await readFile(path, "utf8");
-    const parsed = JSON.parse(serializedOwner) as Partial<LockOwner>;
-    if (!Number.isInteger(parsed.pid) || typeof parsed.token !== "string" || parsed.token === "") return false;
-    owner = parsed as LockOwner;
+    const text = await readFile(path, "utf8");
+    const { mtimeMs } = await stat(path);
+    let owner: LockOwner | undefined;
+    try {
+      const parsed = JSON.parse(text) as Partial<LockOwner>;
+      if (Number.isInteger(parsed.pid) && typeof parsed.token === "string" && parsed.token !== "") owner = parsed as LockOwner;
+    } catch {
+      // A holder made the file and has not written itself into it yet, or ended before it did.
+    }
+    return { text, owner, beat: mtimeMs };
   } catch {
-    return false;
+    return undefined;
   }
-  if (processState(owner.pid) !== "gone") return false;
+}
+
+/** How often a hook holding its session's lock touches the lock file, the beat that says it still runs. */
+const HEARTBEAT_MS = 1_000;
+
+/** How many beats in a row a lock's holder may miss before a waiter takes the lock from it. */
+const SILENT_BEATS = 10;
+
+/**
+ * Judges, over one waiter's tries, whether the hook a lock file names has abandoned it: its process is gone, or the
+ * file has not beaten (`hold`) for `silentMs` while this waiter watched. Its pid alone never says the holder still runs:
+ * Windows hands a freed pid to the next process at once, and a hook that ended holding its lock, whose pid a shell or
+ * node the agent started next then took, held the session's lock for as long as that process ran, while each of the
+ * session's hooks waited 30 s for it and lost its event. The silence is timed on this waiter's clock from the beat it
+ * last saw change, so no other process's clock, nor a file server's, enters into it.
+ */
+function abandonmentJudge(silentMs: number): (found: FoundLock) => boolean {
+  let watched: { text: string; beat: number; since: number } | undefined;
+  return found => {
+    if (found.owner !== undefined && processState(found.owner.pid) === "gone") return true;
+    if (watched?.text !== found.text || watched.beat !== found.beat) {
+      watched = { text: found.text, beat: found.beat, since: Date.now() };
+      return false;
+    }
+    return Date.now() - watched.since >= silentMs;
+  };
+}
+
+/** Removes the lock file at `path` when its holder has abandoned it (`abandoned`); true when the next try may take it. */
+async function reclaimAbandoned(path: string, platform: NodeJS.Platform, abandoned: (found: FoundLock) => boolean): Promise<boolean> {
+  const found = await foundLock(path);
+  return found !== undefined && abandoned(found) && await removeAbandoned(path, found.text, platform);
+}
+
+/**
+ * Removes the abandoned lock file at `path` while it still reads `text`; true when the next try may take the lock. On
+ * Windows a lock file another hook is already removing refuses this removal (EPERM, EACCES, EBUSY): false then, so the
+ * hook waits.
+ */
+async function removeAbandoned(path: string, text: string, platform: NodeJS.Platform): Promise<boolean> {
   try {
-    if (await readFile(path, "utf8") !== serializedOwner) return false;
+    if (await readFile(path, "utf8") !== text) return false;
     await rm(path);
     return true;
   } catch (error) {
@@ -240,28 +286,72 @@ async function reclaimDeadOwner(path: string, platform: NodeJS.Platform): Promis
 /** How long a hook waits for its session's lock before it gives up on its event. */
 const LOCK_WAIT_MS = 30_000;
 
-async function acquireLock(path: string, serializedOwner: string, label: string, platform: NodeJS.Platform): Promise<void> {
-  const deadline = Date.now() + LOCK_WAIT_MS;
-  for (;;) {
+interface LockTiming {
+  platform: NodeJS.Platform;
+  heartbeatMs: number;
+}
+
+/**
+ * Keeps the lock file this hook made at `path`, whose text is `owner`, showing that its holder runs: touches it every
+ * `heartbeatMs` (`abandonmentJudge`), and removes it if the process exits holding it, as `exitWhenParentGone` ends a
+ * hook mid-event. Returns the function that stops both.
+ */
+function hold(path: string, owner: string, heartbeatMs: number): () => void {
+  const timer = setInterval(() => {
+    const now = new Date();
+    utimes(path, now, now).catch(() => undefined);
+  }, heartbeatMs);
+  timer.unref();
+  const removeOnExit = (): void => {
     try {
-      await writeFile(path, serializedOwner, { flag: "wx", mode: 0o600 });
-      return;
-    } catch (error) {
-      // Another hook holds the lock, or on Windows is still deleting its lock file: either way, wait.
-      if (!nameTaken(error, platform)) throw error;
-      if (errno(error, "EEXIST") && await reclaimDeadOwner(path, platform)) continue;
-      if (Date.now() >= deadline) throw new Error(`Timed out waiting for session lock: ${label}`);
-      await delay(10);
+      if (readFileSync(path, "utf8") === owner) rmSync(path, { force: true });
+    } catch {
+      // Its process gone and its beat stopped, the next hook takes the lock all the same.
     }
+  };
+  process.on("exit", removeOnExit);
+  return () => {
+    clearInterval(timer);
+    process.off("exit", removeOnExit);
+  };
+}
+
+/** Takes the lock at `path` for `owner` and holds it (`hold`); returns the function that stops holding it. */
+async function acquireLock(path: string, owner: string, label: string, timing: LockTiming): Promise<() => void> {
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  const abandoned = abandonmentJudge(timing.heartbeatMs * SILENT_BEATS);
+  while (!await created(path, owner, timing.platform)) {
+    if (await reclaimAbandoned(path, timing.platform, abandoned)) continue;
+    if (Date.now() >= deadline) throw new Error(`Timed out waiting for session lock: ${label}`);
+    await delay(10);
+  }
+  return hold(path, owner, timing.heartbeatMs);
+}
+
+/** Makes the lock file at `path`; false while another hook holds the lock, or on Windows is still deleting its file. */
+async function created(path: string, owner: string, platform: NodeJS.Platform): Promise<boolean> {
+  try {
+    await writeFile(path, owner, { flag: "wx", mode: 0o600 });
+    return true;
+  } catch (error) {
+    if (nameTaken(error, platform)) return false;
+    throw error;
   }
 }
 
-async function releaseLock(path: string, serializedOwner: string): Promise<void> {
+/**
+ * Removes the lock file at `path` while it is still `owner`'s. On Windows the file this hook made a moment ago may be
+ * held by a scanner, which refuses its removal (EPERM, EBUSY): the removal waits that out (`removeWithRetry`), where it
+ * threw at once and cost the hook its event or its answer.
+ */
+async function releaseLock(path: string, owner: string, platform: NodeJS.Platform): Promise<void> {
   try {
-    if (await readFile(path, "utf8") === serializedOwner) await rm(path, { force: true });
+    if (await readFile(path, "utf8") !== owner) return;
   } catch (error) {
-    if (!errno(error, "ENOENT")) throw error;
+    if (errno(error, "ENOENT")) return;
+    throw error;
   }
+  await removeWithRetry(path, { platform });
 }
 
 /**
@@ -278,6 +368,8 @@ export interface SessionLock {
 export interface SessionLockOptions {
   /** The platform whose errors for a lock file being deleted count as the lock being taken; this process's by default. */
   platform?: NodeJS.Platform;
+  /** How often the holder touches its lock file (`HEARTBEAT_MS` by default); every hook of a session must use the same. */
+  heartbeatMs?: number;
 }
 
 export async function withSessionLock<T>(
@@ -287,7 +379,8 @@ export async function withSessionLock<T>(
   operation: (lock: SessionLock) => Promise<T>,
   options: SessionLockOptions = {},
 ): Promise<T> {
-  return withLockFile(sessionFile(storageRoot, host, "locks", sessionId, "lock"), sessionId, operation, options.platform ?? process.platform);
+  const timing = { platform: options.platform ?? process.platform, heartbeatMs: options.heartbeatMs ?? HEARTBEAT_MS };
+  return withLockFile(sessionFile(storageRoot, host, "locks", sessionId, "lock"), sessionId, operation, timing);
 }
 
 /**
@@ -300,19 +393,21 @@ export async function withPendingFileLock<T>(pendingFile: string, operation: () 
   const host = /^(.+)-pending$/.exec(folder)?.[1];
   const digest = /^([0-9a-f]{64})\.json$/.exec(basename(pendingFile))?.[1];
   if (host === undefined || digest === undefined) throw new Error(`Not a pending steer file: ${pendingFile}`);
-  return withLockFile(join(dirname(dirname(pendingFile)), `${host}-locks`, `${digest}.lock`), digest, operation, process.platform);
+  return withLockFile(join(dirname(dirname(pendingFile)), `${host}-locks`, `${digest}.lock`), digest, operation, {
+    platform: process.platform,
+    heartbeatMs: HEARTBEAT_MS,
+  });
 }
 
 async function withLockFile<T>(
   path: string,
   label: string,
   operation: (lock: SessionLock) => Promise<T>,
-  platform: NodeJS.Platform,
+  timing: LockTiming,
 ): Promise<T> {
   await makeLedgerFolder(dirname(path));
-  const owner: LockOwner = { pid: process.pid, token: randomUUID() };
-  const serializedOwner = JSON.stringify(owner);
-  await acquireLock(path, serializedOwner, label, platform);
+  const owner = JSON.stringify({ pid: process.pid, token: randomUUID() } satisfies LockOwner);
+  let stopHolding = await acquireLock(path, owner, label, timing);
   let held = true;
   let keeping = 0;
   const lock: SessionLock = {
@@ -326,27 +421,32 @@ async function withLockFile<T>(
     },
     async released(work) {
       if (!held || keeping > 0) return await work();
-      await releaseLock(path, serializedOwner);
+      stopHolding();
+      try {
+        await releaseLock(path, owner, timing.platform);
+      } catch {
+        // The lock file would not go: the work runs holding the lock, where its event was lost.
+        stopHolding = hold(path, owner, timing.heartbeatMs);
+        return await work();
+      }
       held = false;
       try {
         return await work();
       } finally {
-        await acquireLock(path, serializedOwner, label, platform);
+        stopHolding = await acquireLock(path, owner, label, timing);
         held = true;
       }
     },
   };
   try {
-    const result = await operation(lock);
-    if (held) await releaseLock(path, serializedOwner);
-    return result;
-  } catch (error) {
-    try {
-      if (held) await releaseLock(path, serializedOwner);
-    } catch {
-      // Preserve the operation failure; a stale lock is reclaimable by the next process.
+    return await operation(lock);
+  } finally {
+    if (held) {
+      stopHolding();
+      // The hook's answer, or its failure, stands: the steers it carries are already gone from the pending file. A lock
+      // file left behind names a holder that is about to end and beats no more, which the next hook takes.
+      await releaseLock(path, owner, timing.platform).catch(() => undefined);
     }
-    throw error;
   }
 }
 

@@ -92,7 +92,7 @@ Set-up writes to three places outside the repository, and to nothing before you 
 
 - **`~/.rerail`** (or `RERAIL_HOME`): the package, the `rerail` launcher in `~/.rerail/bin`, the database of your rules
   and session history (`rerail.sqlite`), and the daemon's files. The cache is `~/.cache/rerail`, on Windows
-  `%LOCALAPPDATA%\rerail`. On Windows, a `RERAIL_HOME` set-up creates outside your profile folder gets an access list
+  `%USERPROFILE%\AppData\Local\rerail`. On Windows, a `RERAIL_HOME` set-up creates outside your profile folder gets an access list
   that lets only you, SYSTEM and Administrators in, since a new folder under `C:\` lets every local user read it.
 - **Shell startup file**: a block between `# >>> rerail >>>` and `# <<< rerail <<<` on macOS and Linux, or the user
   `Path` on Windows. `RERAIL_MODIFY_PATH=0` leaves `PATH` to you.
@@ -188,7 +188,7 @@ Restart open coding agent sessions afterwards. `--delete-data` also deletes your
 leaving other tools' entries alone. It stops the daemon and moves your database into `~/.rerail-clean-YYYYMMDD/`.
 
 It then deletes, naming each path, `~/.rerail/current`, the launcher, every version, the rule packs and the cache
-`~/.cache/rerail` (on Windows `%LOCALAPPDATA%\rerail`, and the `~/.cache/rerail` an earlier release used there).
+`~/.cache/rerail` (on Windows `%USERPROFILE%\AppData\Local\rerail`, and the `~/.cache/rerail` an earlier release used there).
 
 `rerail install --remove --delete-data` deletes the database, its backups, the cache and the checkouts' session ledgers
 instead of keeping them. Nothing it deletes can be restored.
@@ -263,7 +263,7 @@ agent's tools can read Rerail's data.
 <summary>Per-agent coverage</summary>
 
 Rerail's data is `~/.rerail` (the dashboard's access token, your rules and history) and `~/.cache/rerail`, on Windows
-`%LOCALAPPDATA%\rerail`. Set-up adds denies for both where the agent's settings have a place for them.
+`%USERPROFILE%\AppData\Local\rerail`. Set-up adds denies for both where the agent's settings have a place for them.
 
 - **Claude Code**: file tools always kept out; commands only with its sandbox on (`/sandbox`).
 - **Cursor CLI**: file tools kept out.

@@ -28,17 +28,47 @@ describe("the uninstall's cache holder", () => {
     expect(cacheHolder(cache, { ...windows([]), platform: "linux" })).toBe(recorded);
   });
 
-  // The holder keeps `main-instance.lock` for its whole life and the OS drops it however the holder ends, so the lock
-  // decides; the pid rule above is for a machine where the native binding does not load.
-  it("counts the recorded pid only while a process holds the cache's main-instance lock, whatever engine pipes exist", async () => {
+  // Asking the lock loads the engine from the running version's folder, and Windows keeps a loaded DLL from being
+  // deleted: an uninstall that asked could then never remove `versions/`. So the pid rule answers first, and on Windows
+  // it alone answers.
+  it("on Windows never asks the main-instance lock, so the uninstall never loads the engine it is about to delete", async () => {
     const cache = await mkdtemp(join(tmpdir(), "rerail-cache-holder-"));
     roots.push(cache);
     const recorded = process.pid + 1;
     await writeFile(join(cache, "main-instance.json"), JSON.stringify({ pid: recorded }));
+    const asked: string[] = [];
+    const lockHeld = (directory: string) => {
+      asked.push(directory);
+      return false;
+    };
+    // A stale record: the daemon Windows ended at logoff is gone and no other Rerail daemon runs.
+    expect(cacheHolder(cache, fakeMachine("win32", { mainInstanceLockHeld: lockHeld }))).toBeUndefined();
     // Another Rerail home's daemon runs, so a Rerail engine pipe exists, and the recorded pid is a live process.
-    const machine = (held: boolean) => ({ ...windows(["rerail-0123456789abcdef01234567"]), mainInstanceLockHeld: () => held });
-    expect(cacheHolder(cache, machine(false))).toBeUndefined();
-    expect(cacheHolder(cache, machine(true))).toBe(recorded);
-    expect(cacheHolder(cache, { ...machine(false), platform: "linux" })).toBeUndefined();
+    expect(cacheHolder(cache, { ...windows(["rerail-0123456789abcdef01234567"]), mainInstanceLockHeld: lockHeld })).toBe(recorded);
+    expect(asked).toEqual([]);
+  });
+
+  // Elsewhere a loaded engine does not keep its file, so the lock, which the OS drops however the holder ends, refines
+  // a live pid that may be another process by now.
+  it("elsewhere asks the main-instance lock only for a live recorded pid, and lets the lock decide", async () => {
+    const cache = await mkdtemp(join(tmpdir(), "rerail-cache-holder-"));
+    roots.push(cache);
+    const recorded = process.pid + 1;
+    await writeFile(join(cache, "main-instance.json"), JSON.stringify({ pid: recorded }));
+    const asked: string[] = [];
+    const linux = (alive: boolean, held: boolean | undefined) => fakeMachine("linux", {
+      ...(alive ? { kill: () => true } : {}),
+      mainInstanceLockHeld: directory => {
+        asked.push(directory);
+        return held;
+      },
+    });
+    expect(cacheHolder(cache, linux(false, true))).toBeUndefined();
+    expect(asked).toEqual([]);
+    expect(cacheHolder(cache, linux(true, false))).toBeUndefined();
+    expect(cacheHolder(cache, linux(true, true))).toBe(recorded);
+    // Where the native binding does not load, the live pid counts.
+    expect(cacheHolder(cache, linux(true, undefined))).toBe(recorded);
+    expect(asked).toEqual([cache, cache, cache]);
   });
 });

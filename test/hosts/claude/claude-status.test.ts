@@ -154,6 +154,17 @@ describe("composed Claude status", () => {
     expect(previousStatusSpawn(command, "linux", {})).toEqual({ file: command, args: [], shell: true });
   });
 
+  it("finds Git Bash beside Git where CLAUDE_CODE_GIT_BASH_PATH is not an absolute path, which Rerail would not start", () => {
+    const command = "bash ~/.claude/statusline.sh";
+    expect(previousStatusSpawn(command, "win32", { CLAUDE_CODE_GIT_BASH_PATH: "bash.exe" })).toEqual(previousStatusSpawn(command, "win32", {}));
+  });
+
+  it("draws Rerail's line when the prior command cannot be started at all", async () => {
+    // Node refuses a command line holding a NUL byte before it starts anything, by throwing from spawn.
+    mocks.command.mockReturnValue({ type: "command", command: "printf 'old\u0000status'" });
+    expect((await render()).toString()).toBe("Rerail | 2 rules | steered 1×\n");
+  });
+
   it.runIf(process.platform === "win32")("keeps a bash status line working on Windows once Rerail wraps it", async () => {
     mocks.command.mockReturnValue({ type: "command", command: "printf 'bash %s' \"$((1 + 1))\"" });
     expect((await render()).toString()).toBe("bash 2\nRerail | 2 rules | steered 1×\n");

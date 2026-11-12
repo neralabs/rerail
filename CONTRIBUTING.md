@@ -375,12 +375,14 @@ Windows puts on `PATH` there.
 
 **Tests and your profile.** The vitest setup file (`test/support/setup-rerail-home.ts`) gives every test file its own
 user home, Rerail home and content store. It sets both `HOME` and `USERPROFILE`, since `os.homedir()` reads
-`USERPROFILE` on Windows, and copies your global `.gitconfig` there, so Git keeps your `safe.directory` and line-ending
-settings. A test that moves the home calls `stubUserHome` (`test/support/user-home.ts`), never `vi.stubEnv("HOME")`
-alone: on Windows that leaves `os.homedir()` on your real profile, and a registration test once pointed every hook in a
-developer's `~/.claude/settings.json` at a temp folder the run then deleted, so their machine recorded nothing. The
-setup file fails a test file that writes a temp path into your real coding agent settings, naming each file;
-`rerail install --refresh` restores them.
+`USERPROFILE` on Windows. Git in a test reads none of your settings or the machine's: the setup file writes a fresh
+`.gitconfig` in that home holding only a test identity, points `GIT_CONFIG_GLOBAL` at it and sets
+`GIT_CONFIG_NOSYSTEM=1`, since Git for Windows' installer sets `core.autocrlf=true` for the whole machine, which once
+wrote a test repository's LF files with CRLF. A test that moves the home calls `stubUserHome`
+(`test/support/user-home.ts`), never `vi.stubEnv("HOME")` alone: on Windows that leaves `os.homedir()` on your real
+profile, and a registration test once pointed every hook in a developer's `~/.claude/settings.json` at a temp folder
+the run then deleted, so their machine recorded nothing. The setup file fails a test file that writes a temp path into
+your real coding agent settings, naming each file; `rerail install --refresh` restores them.
 
 Never run a probe script or a built CLI against your real profile either. Outside vitest, move the home in the shell
 first, as vitest does (Git Bash), and remove `$T` afterwards:

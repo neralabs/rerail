@@ -63,22 +63,37 @@ function grantsRead(rights: string): boolean {
   return (rights.match(/[A-Z]{2}/gu) ?? []).some(code => READ_CODES.has(code));
 }
 
+/** The account an access control entry lets read the object itself: an allow entry, not inherit-only (`IO`), that grants a read right. */
+function readerOf(ace: string): string | undefined {
+  const [type = "", flags = "", rights = "", , , sid = ""] = ace.split(";");
+  const allowsObject = (type === "A" || type === "OA") && !/IO/u.test(flags);
+  return allowsObject && grantsRead(rights) ? sid : undefined;
+}
+
+/**
+ * The entries of an SDDL security descriptor's DACL, or null for a NULL DACL (`D:NO_ACCESS_CONTROL`), which gives
+ * everyone full control. Throws for a descriptor with no DACL to read, an empty one included.
+ */
+function daclEntries(sddl: string): string[] | null {
+  const parsed = /D:([A-Z_]*)((?:\([^)]*\))*)/u.exec(sddl);
+  if (parsed === null) throw new Error("the security descriptor has no DACL to read");
+  if (parsed[1]?.includes("NO_ACCESS_CONTROL") === true) return null;
+  return [...(parsed[2] ?? "").matchAll(/\(([^)]*)\)/gu)].map(([, ace]) => ace ?? "");
+}
+
 /**
  * The accounts an SDDL security descriptor's DACL lets read the object, besides its owner (`O:`), `user`, SYSTEM,
  * Administrators and OWNER RIGHTS. Only allow entries that apply to the object itself count: an inherit-only entry
- * (`IO`) is for what a folder will hold.
+ * (`IO`) is for what a folder will hold. A NULL DACL reads as Everyone (`WD`): read as a DACL with no entries it would
+ * pass as owner-only. A descriptor with no DACL to read throws, as the caller cannot tell who may read the object.
  */
 export function sddlOtherReaders(sddl: string, user: string): string[] {
+  const entries = daclEntries(sddl);
+  if (entries === null) return ["WD"];
   const owner = /^O:([^:]+?)(?=[GDS]:|$)/u.exec(sddl)?.[1];
-  const dacl = /D:[A-Z]*((?:\([^)]*\))*)/u.exec(sddl)?.[1] ?? "";
-  const readers = new Set<string>();
-  for (const [, ace] of dacl.matchAll(/\(([^)]*)\)/gu)) {
-    const [type = "", flags = "", rights = "", , , sid = ""] = (ace ?? "").split(";");
-    if ((type !== "A" && type !== "OA") || /IO/u.test(flags) || !grantsRead(rights)) continue;
-    if (sid === owner || sid === user || sid === SYSTEM_SID || sid === ADMINISTRATORS_SID || TRUSTED_ALIASES.has(sid)) continue;
-    readers.add(sid);
-  }
-  return [...readers];
+  const trusted = new Set([owner, user, SYSTEM_SID, ADMINISTRATORS_SID, ...TRUSTED_ALIASES]);
+  const readers = entries.map(readerOf).filter((sid): sid is string => sid !== undefined && !trusted.has(sid));
+  return [...new Set(readers)];
 }
 
 /** Windows' own access control, through `icacls` and `Get-Acl`. */

@@ -877,27 +877,29 @@ describe("Rerail session restore", () => {
 });
 
 describe("A runtime's closed sessions", () => {
+  const runtimeIn = (root: string) => new RerailRuntime({
+    autostart: false,
+    workspaceRoot: root,
+    storageRoot: join(root, "sessions"),
+    databasePath: join(root, "rerail.sqlite"),
+    embedder: {
+      fingerprint: () => ({ modelId: "test", revision: "1", dimensions: 2, weightsSha256: "test", tokenizerSha256: "test", kernelFormatVersion: 1 }),
+      embed: async texts => texts.map(() => new Float32Array([1, 0])),
+    },
+    createAuditor: () => ({
+      openWorkspace: async () => undefined,
+      acceptsPath: () => false,
+      auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
+      close: async () => undefined,
+    }),
+  });
+
   // A checkout's runtime lives while any session in it does, and the idle close ends each killed session there too: after
   // 30 quiet minutes, or after a day when the session still owed its agent a result, a steer or a held finding.
   it("are kept for late receipts only while they are among the last sixteen to close", { timeout: 20_000 }, async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-closed-sessions-")));
     directories.push(root);
-    const runtime = new RerailRuntime({
-      autostart: false,
-      workspaceRoot: root,
-      storageRoot: join(root, "sessions"),
-      databasePath: join(root, "rerail.sqlite"),
-      embedder: {
-        fingerprint: () => ({ modelId: "test", revision: "1", dimensions: 2, weightsSha256: "test", tokenizerSha256: "test", kernelFormatVersion: 1 }),
-        embed: async texts => texts.map(() => new Float32Array([1, 0])),
-      },
-      createAuditor: () => ({
-        openWorkspace: async () => undefined,
-        acceptsPath: () => false,
-        auditGeneratedEdits: async (_sessionId, batch) => ({ revision: batch.revision, disposition: "continue", violations: [], failures: [] }),
-        close: async () => undefined,
-      }),
-    });
+    const runtime = runtimeIn(root);
     try {
       for (let index = 0; index <= 16; index += 1) {
         const session = { host: "claude-code" as const, sessionId: `s${index}`, cwd: root };
@@ -909,6 +911,34 @@ describe("A runtime's closed sessions", () => {
       expect(() => runtime.recordSteer("s0", "late")).toThrow("Unknown session: s0");
     } finally {
       await runtime.dispose();
+    }
+  });
+
+  it("each end at the time their close began, though sixteen later closes push one out while it is still closing", { timeout: 20_000 }, async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "rerail-closed-sessions-")));
+    directories.push(root);
+    const runtime = runtimeIn(root);
+    const sessionIds = Array.from({ length: 17 }, (_, index) => `s${index}`);
+    for (const sessionId of sessionIds) {
+      await runtime.ingest({ kind: "session-start", eventId: `${sessionId}:start`, session: { host: "claude-code", sessionId, cwd: root } });
+      await runtime.codeRulesOpened(sessionId);
+    }
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(1_000_000);
+      // Disposal begins every session's close at once; `s16`'s pushes `s0` out before `s0` finishes closing.
+      const disposed = runtime.dispose();
+      vi.setSystemTime(2_000_000);
+      await disposed;
+    } finally {
+      vi.useRealTimers();
+    }
+
+    const sessionStore = new SqliteSessionStore(join(root, "rerail.sqlite"));
+    try {
+      expect(sessionIds.map(sessionId => sessionStore.session(sessionId)?.endedAt)).toEqual(sessionIds.map(() => 1_000_000));
+    } finally {
+      sessionStore.close();
     }
   });
 });

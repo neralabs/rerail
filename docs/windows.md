@@ -19,10 +19,12 @@ is reverted.
   `endProcessTree(child, { platform, killTree })`, `exitWhenParentGone({ platform })`, `DaemonMachine` in
   `src/runtime/daemon-control.ts`, `RerailDaemonOptions.enginePlatform`. `openNoFollow` takes the no-follow flag, and
   its test passes `0` to run the Windows path against a real symlink on Linux.
-- **On Windows itself.** `release.yml` builds the native engine for Windows x64 and arm64, refuses one that imports
-  the Visual C++ runtime (`scripts/check/check-windows-runtime.mjs`), and installs the package on a Windows x64 runner
-  with `scripts/host/windows-install-smoke.ps1`. The [environment matrix](environment-matrix.md) installs it on
-  Windows 11 VMs. Neither runs on a pull request.
+- **On Windows itself.** `unit-windows` builds the native engine on Windows when its cache misses, and then runs the
+  engine's `#[cfg(windows)]` Rust tests too. `package.yml`, which `release.yml` and the environment matrix call, builds
+  the engine for Windows x64 and arm64 and refuses one that imports the Visual C++ runtime
+  (`scripts/check/check-windows-runtime.mjs`); `release.yml` then installs the package on a Windows x64 runner with
+  `scripts/host/windows-install-smoke.ps1`. The [environment matrix](environment-matrix.md) installs it on Windows 11
+  VMs. None of these but `unit-windows` runs on a pull request.
 
 <details>
 <summary>Windows-safe paths</summary>
@@ -101,8 +103,8 @@ by a library Rerail does not control for example, then shares the hidden console
   `rerail daemon start` a hook's autostart runs (`autostartDaemon`) starts in the Rerail home too, and hands it the
   session's folder as `--workspace-root`. This holds on every platform.
 - The Rust test `starts_the_daemon_with_a_hidden_console_not_without_one` checks the flags on every OS, and the Windows
-  build checks them against `windows-sys` when it compiles. PR CI builds the native engine on Linux only, so its
-  `cfg(windows)` code first compiles in `release.yml`.
+  build checks them against `windows-sys` when it compiles. PR CI compiles that `cfg(windows)` code in `unit-windows`
+  whenever the engine's inputs change, and runs `reports_a_detached_childs_exit_code_from_the_handle_it_kept` there.
 
 </details>
 
@@ -382,7 +384,9 @@ the one node started.
 A coding agent that times out a hook kills the process it started. On macOS and Linux that is node, since the sh
 launcher `exec`s it. On Windows it is the parent node runs under: PowerShell for Codex and Cursor, the hook launcher
 for Claude Code. Windows never kills a child with its parent, so the hook ran on holding its session's lock, and the
-session's next hook waited up to 30 s for it. The watch checks the parent once a second. Since the watch does nothing
+session's next hook waited up to 30 s for it. A hook that exits holding its session's lock now removes it as it exits,
+and a lock whose holder has stopped touching it for 10 s is taken by the next hook, even when Windows has given the
+holder's pid to another process. The watch checks the parent once a second. Since the watch does nothing
 off Windows, `test/harness/hook-entries.test.ts` checks that `serveHookEntry` ends a hook whose parent is gone while
 the hook still runs, and that each entry module serves its hook through `serveHookEntry`.
 
@@ -429,9 +433,11 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   pid whose recorded pipe is gone as a stale state file: it removes the file, probes nothing and kills nothing. A
   machine whose pipes cannot be listed counts as holding the pipe.
 - `kill(pid, 0)` answers `EPERM` alike for another user's process, a SYSTEM service and this user's own elevated one.
-  A pid this user may not signal counts as the recorded daemon only when its engine pipe exists and the engine there
-  proves it holds the capability `daemon.json` records, the challenge the engine start uses. Nothing goes to the
-  recorded URL before that. macOS and Linux treat `EPERM` as another user's.
+  A recorded pid, whether this user may signal it or not, counts as the recorded daemon only when its engine pipe
+  exists and the engine there proves it holds the capability `daemon.json` records, the challenge the engine start
+  uses: Windows soon reuses a pid, often for another of this user's processes, and anyone can create the pipe's name.
+  Nothing goes to the recorded URL before that. An engine that does not answer the proof in time is taken for a busy
+  daemon: its state file is kept and the lookup reports it unresponsive. macOS and Linux treat `EPERM` as another user's.
 - `recordedDaemonAlive` (`src/runtime/daemon-control.ts`) makes both checks above, and every reader of `daemon.json`
   asks it before it sends the capability the file records to the URL it records: `lookupDaemon`, the MCP bridge
   (`src/api/mcp-bridge.ts`), and the status line, the rules link and the start check
@@ -456,7 +462,7 @@ ends its whole process tree when it overruns its 2 s budget.
 
 Node's `shell: true` is cmd.exe on Windows, which reads `~`, single quotes and `$(...)` as plain text, so a bash
 status line broke once Rerail wrapped it. `previousStatusSpawn` (`src/hosts/claude/claude-status.ts`) runs it with
-Git Bash's `bash.exe`: `CLAUDE_CODE_GIT_BASH_PATH`, as Claude Code reads it, else the one beside the Git Rerail runs
+Git Bash's `bash.exe`: `CLAUDE_CODE_GIT_BASH_PATH` when it is an absolute path, as Claude Code reads it, else the one beside the Git Rerail runs
 (`gitBash` in `src/engine/git.ts`), else cmd.exe when there is no Git Bash. Finding that Git stops at the first Git
 that runs (`findGit`), which the status line pays for on every refresh.
 
@@ -508,8 +514,9 @@ files Windows will not replace while they are in use.
 <details>
 <summary>Where Windows changes what an update or a removal does</summary>
 
-- **Content cache.** The managed installation keeps the machine-wide content store in `%LOCALAPPDATA%\rerail`
-  (`mainContentStoreDirectory` in `src/engine/native/rerail-build.ts`), not `~/.cache/rerail`. A roaming profile
+- **Content cache.** The managed installation keeps the machine-wide content store in `AppData\Local\rerail` under the
+  profile folder (`mainContentStoreDirectory` in `src/engine/native/rerail-build.ts`), not `~/.cache/rerail`. The path
+  is built from the profile folder, never from `LOCALAPPDATA`, which a repository's environment can set. A roaming profile
   copies everything in the profile folder but `AppData\Local` at each sign-in and sign-out, so the store slowed every
   sign-in, and of two machines signed in at once the last to sign out overwrote the other's SQLite files.
 - **Loaded native files.** Windows refuses to overwrite or delete a DLL a process has loaded, and Node never unloads an

@@ -382,11 +382,12 @@ function retireUnusedRuntime(state: EngineRoutingState, runtimeKey: string): voi
 }
 
 /**
- * A full collection once a runtime closed, so the engine frees the programs of the rules it compiled. They are native
- * memory V8 does not count (512 MB for the Node pack's builtins rule alone), and a daemon with no session open
- * allocates too little to start a collection: the closed runtime's rules stayed in memory until the next session came.
+ * A full collection, exposing `gc` for the call. Once a runtime closed it lets the engine free the programs of the rules
+ * it compiled. They are native memory V8 does not count (512 MB for the Node pack's builtins rule alone), and a daemon
+ * with no session open allocates too little to start a collection: the closed runtime's rules stayed in memory until the
+ * next session came. The heap watch uses it to tell garbage from a live heap.
  */
-function collectGarbage(): void {
+export function collectGarbage(): void {
   setFlagsFromString("--expose-gc");
   const gc: unknown = runInNewContext("gc");
   if (typeof gc === "function") gc();

@@ -1104,6 +1104,24 @@ describe("Claude Code commands", () => {
     await expect(lstat(skills)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("knows Codex's and Cursor's Windows commands of another install whose path PowerShell reads bare", async () => {
+    const install = await fixture();
+    const [earlier, later] = await Promise.all([packageInstall(install, "v1"), packageInstall(install, "v2")]);
+    const windows = { home: install.home, nodePath: String.raw`C:\Program Files\nodejs\node.exe`, platform: "win32" as const, harnesses: ["codex", "cursor"] as const };
+    const commands = join(install.home, ".cursor", "commands");
+    await registerHarnesses({ ...windows, root: earlier });
+    // No space, `@` or `'` in the root: PowerShell reads the CLI's path as one word without quotes, and set-up writes it so.
+    const cli = win32.join(earlier, "dist", "cli", "cli.js");
+    expect(shellWord("powershell", cli)).toBe(cli);
+    expect(await readFile(join(commands, "rerail.md"), "utf8")).toContain(` ${cli} session cursor`);
+    // Another install's files are Rerail's: replaced, not backed up, and removed with it.
+    await registerHarnesses({ ...windows, root: later });
+    expect((await readdir(commands)).filter(entry => entry.endsWith(".bak"))).toEqual([]);
+    await unregisterHarnesses({ ...windows, root: later });
+    expect(await readdir(commands).catch(() => [])).toEqual([]);
+    await expect(lstat(join(install.home, ".codex", "skills"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("writes Claude Code's Windows status line for Git Bash, with its node fallback and `%` as it is", async () => {
     const { home, root } = await fixture();
     const nodePath = String.raw`C:\Users\a%b\node.exe`;
@@ -1114,6 +1132,21 @@ describe("Claude Code commands", () => {
     expect(command).not.toContain("%%");
     expect(change((await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["claude-code"] })).changes, "claude-code", "settings.json").action)
       .toBe("unchanged");
+  });
+
+  it("has Claude Code's Windows status line start the status script when Git Bash gets it as an argument, from a profile with a space, a `'` and a `$`", async () => {
+    const install = await fixture();
+    const root = await packageInstall(install, "Jane O'Brien $work");
+    // Stands in for node: prints the words the status line hands it, one a line.
+    const nodePath = join(dirname(root), "node bin", "node");
+    await mkdir(dirname(nodePath));
+    await writeFile(nodePath, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n", { mode: 0o755 });
+    await registerHarnesses({ root, home: install.home, nodePath, platform: "win32", harnesses: ["claude-code"] });
+    const command = readClaudeStatusRegistration(install.home, join(install.home, ".claude", "settings.json"))!.installedCommand;
+    // Claude Code hands the status line to Git Bash as `bash -c <command>`, never on stdin.
+    const run = spawnSync("sh", ["-c", command], { encoding: "utf8" });
+    if (run.error !== undefined) return;
+    expect({ stdout: run.stdout, stderr: run.stderr }).toEqual({ stdout: `${win32.join(root, ENTRY_POINTS.claudeStatus)}\n`, stderr: "" });
   });
 
   it("has every coding agent's /rerail-start select the agent lane, even from a terminal", async ({ skip }) => {

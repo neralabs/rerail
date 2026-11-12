@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { mkdir, mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,12 +8,14 @@ import { holdRemovals } from "../../support/platform/held-removal.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 import { raceForLock, raceSize, sourceModule } from "../../support/processes/lock-race.js";
 
+vi.mock("node:fs", { spy: true });
 vi.mock("node:fs/promises", { spy: true });
 const { rm: realRm, unlink: realUnlink } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
 
 const homes: string[] = [];
 afterEach(async () => {
   vi.mocked(rm).mockReset();
+  vi.mocked(rmSync).mockReset();
   vi.mocked(unlink).mockReset();
   await Promise.all(homes.splice(0).map(home => removeFolder(home)));
 });
@@ -118,6 +120,16 @@ describe("the OS lock", () => {
 
     expect(recorded).toEqual({ pid: process.pid, since: expect.any(String) });
     expect(readdirSync(locks)).toEqual(["work.lock"]);
+  });
+
+  it("returns the work's result, and lets go, when Windows holds its record past the removal", async () => {
+    const home = await temporaryHome();
+    vi.mocked(rmSync).mockImplementationOnce(() => {
+      throw Object.assign(new Error("EBUSY: resource busy or locked"), { code: "EBUSY" });
+    });
+
+    await expect(withHomeLock(home, request, async () => "ran")).resolves.toBe("ran");
+    await expect(withHomeLock(home, request, async () => "ran again")).resolves.toBe("ran again");
   });
 
   it("fails without the engine unless the request takes the folder lock", async () => {

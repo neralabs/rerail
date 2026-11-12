@@ -61,7 +61,7 @@ What Rerail holds that is worth attacking, and where it lives.
 | --- | --- | --- |
 | Session history: prompts, replies, tool inputs, **raw tool outputs** | `rerail.sqlite` (`RerailRuntime.persistEvent`) | Whatever the agent saw, secrets included, unredacted. |
 | Pre-edit source text and session ledgers | `<repo>/.rerail/sessions/<sha256(session)>/events.jsonl` | Source and prompt text in the working tree; `rewind` restores from it. |
-| Source copies, syntax trees, check results | `~/.cache/rerail/content-v1.sqlite` (Windows: `%LOCALAPPDATA%\rerail\content-v1.sqlite`) | A second copy of every file the engine read. |
+| Source copies, syntax trees, check results | `~/.cache/rerail/content-v1.sqlite` (Windows: `%USERPROFILE%\AppData\Local\rerail\content-v1.sqlite`) | A second copy of every file the engine read. |
 | Rule catalog: rules, packs, settings, start state | `rerail.sqlite` | Decides what reaches every future session, and whether Rerail is armed. |
 | Daemon access capability | `~/.rerail/access-token`, `daemon.json` (0600) | Full `person` API: all repositories, unredacted transcripts, every write. |
 | Executable code Rerail launches | `~/.rerail/versions/<v>/`, `current`, `bin/rerail`, `update-state.json`, `RERAIL_ENGINE_PATH` | Runs on every hook, daemon start and CLI call. |
@@ -294,7 +294,8 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
 - Windows ignores modes. A Rerail home or `.rerail\sessions` folder made outside the profile folder, whose ACL would
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
   everything written in it inherits; a home an earlier release made gets it at the next daemon launch
-  (`src/engine/storage/windows-acl.ts`). A daemon TLS key whose ACL lets anyone else read it is refused.
+  (`src/engine/storage/windows-acl.ts`). A daemon TLS key whose ACL lets anyone else read it, or that has no DACL
+  (everyone has full control), is refused.
 - The repository identity file is read without following a symlink (`openNoFollowSync`) plus size and format checks,
   and created with `wx` (`src/engine/catalog/repository-identity.ts`).
 - A ledger root in `.rerail/` gets a `.gitignore` of `*`, rewritten whenever it differs, and nothing in it is written
@@ -341,7 +342,7 @@ run the `rerail` CLI, which acts for the person. Two controls narrow this.
 
 | Host | What Rerail's data is protected by |
 | --- | --- |
-| Claude Code | `sandbox.filesystem.denyRead`/`denyWrite` on the Rerail home and the content cache (`~/.cache/rerail`, on Windows `%LOCALAPPDATA%\rerail`); `allowRead` reopens only package code (`current/`, `versions/`). `permissions.deny` covers `Edit` on both and `Read` on the home's data files (`RERAIL_HOME_DATA_ENTRIES`). |
+| Claude Code | `sandbox.filesystem.denyRead`/`denyWrite` on the Rerail home and the content cache (`~/.cache/rerail`, on Windows `%USERPROFILE%\AppData\Local\rerail`); `allowRead` reopens only package code (`current/`, `versions/`). `permissions.deny` covers `Edit` on both and `Read` on the home's data files (`RERAIL_HOME_DATA_ENTRIES`). |
 | Cursor CLI | `Read` and `Write` denies in `~/.cursor/cli-config.json`; they bind its file tools only. |
 | Codex | Nothing added. No network by default, so commands cannot reach the daemon; writes stay in the workspace. But commands **read every file**, including the database (other repositories' history too) and the capability. |
 | Cursor editor | Sandbox on by default on macOS (Cursor 2.0 and later) and blocks loopback, but has no per-path read deny, so commands can read the Rerail home. |
@@ -405,17 +406,23 @@ the same capability across restarts.
 **Mitigated.** Before any probe, `lookupDaemon`, the MCP bridge's `DaemonLocator` and the session presentation check the
 recorded daemon with `recordedDaemonAlive`. A pid owned by another OS user (`EPERM`) cannot be this user's daemon: the
 state is stale and no capability is sent. On Windows the state's engine pipe must also exist, since a live daemon always
-holds it; a pid this user may not signal counts only when its engine proves it holds the capability, as this user's
-elevated daemon does.
+holds it, and the engine on that pipe must answer a random challenge with an HMAC keyed by the capability
+(`engineCapabilityProof` in `src/runtime/engine-proof.ts`), which never shows it the capability. That holds for a pid
+this user may signal as for one it may not (this user's elevated daemon), so on Windows a reused pid of the person's
+own, with the pipe name and the port held by another user, gets nothing: the state is dropped unprobed. An engine that
+says nothing within the wait is taken for a busy daemon: its state is kept, and it is sent no capability, the shutdown
+request of `rerail daemon stop` included.
 
 **What remains:**
 
 - On macOS and Linux, if one of the person's own processes reuses the pid while another user holds `127.0.0.1:4737`,
   the probe still hands that user the capability.
+- On Windows the proof travels over the pipe and the capability over the port: if the daemon ends between the two,
+  another user who takes its port in that moment gets the probe.
 - A port squatter also serves the origin `http://127.0.0.1:4737`, whose `localStorage` holds the dashboard's token.
 
-**What would close it:** the daemon proves it holds the token before a client sends it (an HMAC challenge), and the
-capability rotates at each start.
+**What would close it:** on macOS and Linux, the same challenge on the engine socket before the probe; a challenge the
+HTTP listener itself answers before any request carries the capability; and a capability that rotates at each start.
 
 </details>
 

@@ -22,6 +22,8 @@ import { promisify } from "node:util";
 import { endProcessTree, execFile, spawn } from "../engine/child-process.js";
 import { removeScratch, removeWithRetry, renameWithRetry, replaceFile } from "../engine/file-replace.js";
 import { withHomeLock, type LockEngine } from "../engine/native/file-lock.js";
+import { processState } from "../engine/process-liveness.js";
+import { makeRerailHome } from "../engine/storage/private-files.js";
 import { daemonUsesPackageRoot, lookupDaemon, stopFoundDaemon } from "../runtime/daemon-control.js";
 import { RERAIL_EVENT_PROTOCOL_PREFACE } from "../runtime/event-protocol.js";
 import { auditSignatures, checkRegistry, outsideAnyProject, prefixInstallNpm, runNpm, type NpmRunner } from "../runtime/npm.js";
@@ -501,6 +503,26 @@ async function pathEntryExists(path: string): Promise<boolean> {
   }
 }
 
+/**
+ * Whether the process that moved `name` (`current.<pid>.<uuid>.old`) aside still runs, and so is mid-swap. A pid that
+ * runs as another account's process (`EPERM`) counts too: the swap may be its.
+ */
+function swapRuns(name: string): boolean {
+  const pid = /^current\.(\d+)\./u.exec(name)?.[1];
+  return pid !== undefined && processState(Number(pid)) !== "gone";
+}
+
+/** The most recently modified of `names` in `folder`, by `lstat`; undefined when none is there. */
+async function newestEntry(folder: string, names: readonly string[]): Promise<string | undefined> {
+  let newest: { path: string; time: number } | undefined;
+  for (const name of names) {
+    const path = join(folder, name);
+    const time = await lstat(path).then(info => info.mtimeMs, () => undefined);
+    if (time !== undefined && (newest === undefined || time > newest.time)) newest = { path, time };
+  }
+  return newest?.path;
+}
+
 async function unlinkIfPresent(path: string): Promise<void> {
   try {
     await unlink(path);
@@ -569,7 +591,7 @@ export class ManagedUpdater {
   }
 
   private async writeState(state: UpdateState): Promise<void> {
-    await mkdir(this.home, { recursive: true, mode: 0o700 });
+    makeRerailHome(this.home, { platform: this.platform });
     await replaceFile(this.statePath, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600, platform: this.platform });
     await this.syncLauncher(state.current);
   }
@@ -578,17 +600,16 @@ export class ManagedUpdater {
    * Puts back a `current` an interrupted swap left out. Windows cannot rename a junction over another, so
    * `syncCurrentLink` moves the old one aside first; a kill or power loss between its two renames leaves only
    * `current.<pid>.<uuid>.old`, and every hook and the launcher fail until `current` is back. The newest one wins.
+   * Every CLI call runs this without the update lock, so while the process a `.old` names still runs, its swap is in
+   * progress and nothing is put back: that process renames its new link into place next, which fails on a folder put
+   * back meanwhile, and it puts the old one back itself if its swap fails.
    */
   private async restoreCurrentLink(): Promise<void> {
     if (await pathEntryExists(this.currentLink)) return;
     const left = (await readdir(this.home).catch(() => [] as string[])).filter(name => name.startsWith(`${CURRENT_LINK}.`) && name.endsWith(".old"));
-    let newest: { path: string; time: number } | undefined;
-    for (const name of left) {
-      const path = join(this.home, name);
-      const time = await lstat(path).then(info => info.mtimeMs, () => undefined);
-      if (time !== undefined && (newest === undefined || time > newest.time)) newest = { path, time };
-    }
-    if (newest !== undefined) await renameWithRetry(newest.path, this.currentLink, { platform: this.platform }).catch(() => undefined);
+    if (left.some(name => swapRuns(name))) return;
+    const newest = await newestEntry(this.home, left);
+    if (newest !== undefined) await renameWithRetry(newest, this.currentLink, { platform: this.platform }).catch(() => undefined);
   }
 
   private async syncCurrentLink(target: string): Promise<void> {

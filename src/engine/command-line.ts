@@ -20,7 +20,7 @@ const POWERSHELL_QUOTE = /['‘-‛]/gu;
 const POSIX_SAFE = /^[\w@%+=:,./-][\w@%+=:,./~-]*$/u;
 
 /** What PowerShell reads as one plain word: no `@`, `,`, `$`, quote or other character it gives a meaning to. */
-const POWERSHELL_SAFE = /^[\w./:\\-]+$/u;
+export const POWERSHELL_SAFE = /^[\w./:\\-]+$/u;
 
 /**
  * `value` as one PowerShell single-quoted literal, which expands nothing: `$`, backticks, `%` and spaces stay as they

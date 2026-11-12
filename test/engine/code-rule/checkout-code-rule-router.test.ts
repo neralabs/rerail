@@ -24,6 +24,7 @@ import { setUpTestRepository } from "../../support/repository-rules.js";
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { symlinkOrSkip } from "../../support/platform/links.js";
 import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
+import { loadNativeBinding } from "../../../src/engine/native/native.js";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -197,6 +198,39 @@ describe("CheckoutCodeRuleRouter", () => {
     await stopped.openWorkspace("stopped");
     expect(stopped.acceptsPath("api/x.py")).toBe(false);
     expect([stopped.ignoresPath("scratch", true), stopped.ignoresPath("api", true)]).toEqual([true, false]);
+  });
+
+  it("keeps following a checkout's Git ignore rules after one path's rules cannot be read", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const session = await repository(join(root, "session"));
+    await writeFile(join(session, ".gitignore"), "scratch/\n*.log\n");
+    startTestRepository(session, databasePath);
+    // A nested `.gitignore` the matcher cannot read (or the index caught mid-rewrite) fails that one path's question.
+    const binding = loadNativeBinding();
+    const open = binding.openGitIgnoreMatcher.bind(binding);
+    const opens = vi.spyOn(binding, "openGitIgnoreMatcher").mockImplementation(checkoutRoot => {
+      const matcher = open(checkoutRoot);
+      return matcher === null ? null : {
+        ignored: (path, directory) => {
+          if (path.startsWith("locked/")) throw new Error(`cannot read Git excludes for ${path}: Permission denied`);
+          return matcher.ignored(path, directory);
+        },
+        ignoredBy: (path, directory) => matcher.ignoredBy(path, directory),
+      };
+    });
+    cleanups.push(async () => { opens.mockRestore(); });
+    const errors = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    cleanups.push(async () => { errors.mockRestore(); });
+    const { recorder } = recordingAudits();
+    const following = router(session, databasePath, recorder, undefined, true);
+    await following.openWorkspace("unreadable-path");
+
+    expect([following.ignoresPath("locked/a.log", false), following.ignoresPath("locked/b.log", false)]).toEqual([false, false]);
+    expect([following.ignoresPath("scratch", true), following.ignoresPath("run.log", false)]).toEqual([true, true]);
+    expect(following.ignoresPath("api/x.py", false)).toBe(false);
+    expect(opens).toHaveBeenCalledTimes(1);
+    expect(errors.mock.calls.filter(([text]) => String(text).includes("cannot read Git ignore rules"))).toHaveLength(1);
   });
 
   it("looks up the checkout of a walk's files once per folder, not once per file", async () => {

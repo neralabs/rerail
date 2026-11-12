@@ -2,6 +2,7 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { withHomeLock } from "../../../src/engine/native/file-lock.js";
 import { makeLedgerFolder } from "../../../src/engine/storage/ledger-paths.js";
 import { keepFolderPrivate, makeRerailHome, openToOthers } from "../../../src/engine/storage/private-files.js";
 import { insideProfile, sddlOtherReaders, whoamiUserSid, WINDOWS_ACL, type WindowsAcl } from "../../../src/engine/storage/windows-acl.js";
@@ -43,6 +44,15 @@ describe("who an ACL lets read a file", () => {
     expect(sddlOtherReaders(`O:BAD:(A;;FR;;;S-1-5-21-9-9-9-1002)`, USER)).toEqual(["S-1-5-21-9-9-9-1002"]);
     const entraOnly = `O:${ENTRA_USER}D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;${ENTRA_USER})`;
     expect(sddlOtherReaders(entraOnly, ENTRA_USER)).toEqual([]);
+  });
+
+  it("reads a NULL DACL, which gives everyone full control, as Everyone", () => {
+    expect(sddlOtherReaders(`O:${USER}G:${USER}D:NO_ACCESS_CONTROL`, USER)).toEqual(["WD"]);
+  });
+
+  it("cannot tell who reads a descriptor with no DACL to read", () => {
+    expect(() => sddlOtherReaders("", USER)).toThrow("no DACL");
+    expect(() => sddlOtherReaders(`O:${USER}G:${USER}`, USER)).toThrow("no DACL");
   });
 });
 
@@ -88,6 +98,21 @@ describe("an owner-only ACL on Windows", () => {
     makeRerailHome(home, { acl, platform: "win32", profile: ELSEWHERE });
     expect(acl.restricted).toEqual([[home, true]]);
     makeRerailHome(home, { acl, platform: "win32", profile: ELSEWHERE });
+    expect(acl.restricted).toHaveLength(1);
+  });
+
+  it("goes on a Rerail home a lock makes first, as a first `rerail install` or `rerail activate` does", async () => {
+    const home = join(await temporaryRoot(), "rerail-home");
+    const acl = recordingAcl();
+    const lock = {
+      name: "work",
+      busy: () => new Error("busy"),
+      engine: () => ({ tryLockExclusive: () => ({ release: () => undefined }) }),
+      machine: { acl, platform: "win32" as const, profile: ELSEWHERE },
+    };
+    await withHomeLock(home, lock, async () => undefined);
+    expect(acl.restricted).toEqual([[home, true]]);
+    await withHomeLock(home, lock, async () => undefined);
     expect(acl.restricted).toHaveLength(1);
   });
 

@@ -45,18 +45,26 @@ function provesChallenge(answer: Buffer, expected: string): boolean {
 }
 
 /**
- * Whether the process listening on `socketPath` (a Unix socket or a Windows named pipe) holds `accessToken`: it answers
- * a fresh challenge with {@link engineProof}. Only the challenge is sent; the capability never leaves this process. A
- * listener that refuses, answers anything else, hangs up or stays silent for `timeoutMs` does not hold it.
+ * What the listener on a socket or pipe made of a challenge ({@link engineCapabilityProof}): it answered with the proof
+ * (`proved`); it refused, answered anything else or hung up, or nothing listens (`refused`); or it said nothing for the
+ * whole timeout (`silent`). An engine whose one event loop is inside an audit or a long garbage collection is silent as
+ * well as a holder that never answers, so silence proves neither that the engine is this home's nor that it is not.
  */
-export async function engineHoldsCapability(
+export type EngineProofAnswer = "proved" | "refused" | "silent";
+
+/**
+ * Asks the process listening on `socketPath` (a Unix socket or a Windows named pipe) to prove it holds `accessToken`: it
+ * answers a fresh challenge with {@link engineProof}. Only the challenge is sent; the capability never leaves this
+ * process.
+ */
+export async function engineCapabilityProof(
   socketPath: string,
   accessToken: string,
   timeoutMs = 2_000,
   challenge: string = randomBytes(32).toString("hex"),
-): Promise<boolean> {
+): Promise<EngineProofAnswer> {
   const expected = engineProof(accessToken, challenge);
-  const { promise, resolve } = Promise.withResolvers<boolean>();
+  const { promise, resolve } = Promise.withResolvers<EngineProofAnswer>();
   let answered = false;
   const outgoing = request({
     socketPath,
@@ -73,16 +81,33 @@ export async function engineHoldsCapability(
       if (size > MAX_ANSWER_BYTES) outgoing.destroy(new Error("Engine proof too long"));
       else chunks.push(chunk);
     });
-    response.on("end", () => resolve(response.statusCode === 200 && provesChallenge(Buffer.concat(chunks), expected)));
+    response.on("end", () => resolve(response.statusCode === 200 && provesChallenge(Buffer.concat(chunks), expected) ? "proved" : "refused"));
     // The first verdict wins: a response cut short ends here without `end`.
-    response.on("close", () => resolve(false));
+    response.on("close", () => resolve("refused"));
   });
-  outgoing.setTimeout(timeoutMs, () => outgoing.destroy(new Error("Engine proof timed out")));
-  outgoing.on("error", () => resolve(false));
+  // The silence is the verdict, before the destroy below reports it as an error.
+  outgoing.setTimeout(timeoutMs, () => {
+    resolve("silent");
+    outgoing.destroy(new Error("Engine proof timed out"));
+  });
+  outgoing.on("error", () => resolve("refused"));
   // Node can close the request before the response's `end`; only a request that never got a response is a refusal here.
   outgoing.on("close", () => {
-    if (!answered) resolve(false);
+    if (!answered) resolve("refused");
   });
   outgoing.end();
   return await promise;
+}
+
+/**
+ * Whether the process listening on `socketPath` holds `accessToken` ({@link engineCapabilityProof}). A listener that
+ * refuses, answers anything else, hangs up or stays silent for `timeoutMs` does not hold it.
+ */
+export async function engineHoldsCapability(
+  socketPath: string,
+  accessToken: string,
+  timeoutMs = 2_000,
+  challenge: string = randomBytes(32).toString("hex"),
+): Promise<boolean> {
+  return await engineCapabilityProof(socketPath, accessToken, timeoutMs, challenge) === "proved";
 }

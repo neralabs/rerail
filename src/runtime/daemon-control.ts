@@ -15,7 +15,7 @@ import { forgetMainInstanceHolder, mainInstanceLockHeld } from "../engine/native
 import { withHomeLock } from "../engine/native/file-lock.js";
 import { ENTRY_POINTS, PACKAGE_ROOT } from "../engine/package-root.js";
 import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
-import { engineHoldsCapability } from "./engine-proof.js";
+import { engineCapabilityProof, type EngineProofAnswer } from "./engine-proof.js";
 import { enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./engine-pipe.js";
 import { processState, type ProcessSignal } from "../engine/process-liveness.js";
 import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, defaultRerailHome } from "../engine/storage/rerail-home.js";
@@ -477,8 +477,11 @@ export interface DaemonMachine {
   env: NodeJS.ProcessEnv;
   /** The named pipes that exist on Windows, read from `\\.\pipe\` without connecting to any. */
   pipes(): readonly string[];
-  /** Whether the engine on `socketPath` proves it holds `accessToken`, which it never sees (`engineHoldsCapability`). */
-  holdsCapability(socketPath: string, accessToken: string): Promise<boolean>;
+  /**
+   * What the engine on `socketPath` answers when asked, within `timeoutMs`, to prove it holds `accessToken`, which it
+   * never sees (`engineCapabilityProof`).
+   */
+  capabilityProof(socketPath: string, accessToken: string, timeoutMs: number): Promise<EngineProofAnswer>;
   /** Removes the main-instance record when it names `pid` (`forgetMainInstanceHolder`). */
   forgetMainInstanceHolder(pid: number): void;
   /**
@@ -509,7 +512,7 @@ const THIS_MACHINE: DaemonMachine = {
   kill: (pid, signal) => process.kill(pid, signal),
   env: process.env,
   pipes: listPipes,
-  holdsCapability: async (socketPath, accessToken) => await engineHoldsCapability(socketPath, accessToken),
+  capabilityProof: async (socketPath, accessToken, timeoutMs) => await engineCapabilityProof(socketPath, accessToken, timeoutMs),
   forgetMainInstanceHolder: pid => forgetMainInstanceHolder(pid),
   mainInstanceLockHeld: directory => mainInstanceLockHeld(directory),
   nodeExecutable: () => nodeExecutable(),
@@ -531,7 +534,7 @@ function enginePipeExists(state: DaemonState, machine: DaemonMachine): boolean {
  * Whether `pid`, recorded by a daemon that may be gone, can still be a Rerail daemon: a live process, and on Windows only
  * while some Rerail engine pipe exists, since every live daemon holds one. Windows ends a daemon without its cleanup at
  * logoff or reboot, so a record it wrote can name a pid Windows has given to another process since. Any Rerail home's
- * pipe counts, so this over-counts while another home's daemon runs: {@link mainInstanceHolderRuns} asks the lock first.
+ * pipe counts, so this over-counts while another home's daemon runs: {@link mainInstanceHolderRuns} asks the lock where it can.
  */
 export function daemonMayHold(pid: number, machine: DaemonMachine = THIS_MACHINE): boolean {
   if (!processAlive(pid, machine.kill)) return false;
@@ -539,36 +542,68 @@ export function daemonMayHold(pid: number, machine: DaemonMachine = THIS_MACHINE
 }
 
 /**
- * Whether the main instance the record in `directory` names (`pid`) still runs: while a process holds that directory's
- * main-instance lock, which the OS drops however the holder ends. Where the native binding does not load to try the
- * lock, the pid rule answers ({@link daemonMayHold}).
+ * Whether the main instance the record in `directory` names (`pid`) still runs. The pid rule ({@link daemonMayHold})
+ * answers first and loads nothing; only where it says the holder may run is the main-instance lock asked, which the OS
+ * drops however the holder ends. Never on Windows: asking loads the engine from the running version's folder, Windows
+ * keeps a loaded DLL from being deleted, and the uninstall that asks is about to delete that folder. There a live pid
+ * with a Rerail engine pipe counts, which at worst keeps a cache another daemon no longer uses. Where the native
+ * binding does not load to try the lock, the pid rule's answer stands.
  */
 export function mainInstanceHolderRuns(directory: string, pid: number, machine: DaemonMachine = THIS_MACHINE): boolean {
-  return machine.mainInstanceLockHeld(directory) ?? daemonMayHold(pid, machine);
+  if (!daemonMayHold(pid, machine)) return false;
+  return machine.platform === "win32" || (machine.mainInstanceLockHeld(directory) ?? true);
 }
+
+/**
+ * What a reader of a state file may make of the daemon it records ({@link recordedDaemon}): it may be this user's and
+ * be sent the capability (`alive`), it cannot be (`gone`), or its engine said nothing to the proof in time (`silent`).
+ */
+type RecordedDaemon = "alive" | "gone" | "silent";
+
+/** What an engine's answer to the proof makes of the daemon a Windows state records ({@link windowsRecordedDaemon}). */
+const PROOF_VERDICT: Readonly<Record<EngineProofAnswer, RecordedDaemon>> = { proved: "alive", refused: "gone", silent: "silent" };
 
 /**
  * Whether the daemon `state` records may still run, as this user's: the one check every reader of a state file makes
  * before it sends the capability the file records to the URL it records. A state file outlives a daemon killed without
- * its cleanup, and the pid it names can since belong to another process, which would get the capability.
- *
- * The pid must be live and this user's to signal; another user's process cannot be this user's daemon. On Windows the
- * state's own engine pipe must exist too, since a live daemon always holds it and Windows soon reuses a pid. There a
- * pid this user may not signal (`EPERM`) can still be this user's daemon, started from an elevated terminal or agent
- * session: it counts when its engine proves it holds the capability (`engineHoldsCapability`), which a process on a
- * reused pid cannot. Nothing is sent to its URL before that.
+ * its cleanup, and the pid it names can since belong to another process, which would get the capability. The pid must
+ * be live, and on macOS and Linux this user's to signal: another user's process cannot be this user's daemon. Windows
+ * asks more ({@link windowsRecordedDaemon}).
  */
-export async function recordedDaemonAlive(state: DaemonState, machine: DaemonMachine = THIS_MACHINE): Promise<boolean> {
+async function recordedDaemon(state: DaemonState, machine: DaemonMachine, timeoutMs: number): Promise<RecordedDaemon> {
   const daemon = processState(state.pid, machine.kill);
-  if (daemon === "gone") return false;
-  if (machine.platform !== "win32") return daemon === "running";
-  if (!enginePipeExists(state, machine)) return false;
-  return daemon === "running" || (state.accessToken !== undefined && await machine.holdsCapability(state.kernelSocketPath, state.accessToken));
+  if (daemon === "gone") return "gone";
+  if (machine.platform === "win32") return await windowsRecordedDaemon(state, daemon === "running", machine, timeoutMs);
+  return daemon === "running" ? "alive" : "gone";
 }
 
 /**
- * What the state file in `home` says, checked against the machine. `probeTimeoutMs` bounds the health probe; a hook
- * waiting out a busy daemon passes more (`patientLookup`).
+ * {@link recordedDaemon} on Windows, for a live pid this user may signal or not (`signalable`). The state's own engine
+ * pipe must exist, since a live daemon always holds it, and the engine on it must prove it holds the capability
+ * (`engineCapabilityProof`), which never leaves this process. Windows soon reuses a pid, often for another of this
+ * user's processes, and any local user can create the pipe's name, so a signalable pid and a listed pipe alone would
+ * hand the capability to whoever holds the pipe and the port; and a pid this user may not signal (`EPERM`) can still be
+ * this user's daemon, started from an elevated terminal or agent session. An engine silent for `timeoutMs` is `silent`:
+ * a daemon busy in an audit is, and dropping its state for that would lose a daemon that still runs. A state without a
+ * capability is sent none, and the pid and pipe decide.
+ */
+async function windowsRecordedDaemon(state: DaemonState, signalable: boolean, machine: DaemonMachine, timeoutMs: number): Promise<RecordedDaemon> {
+  if (!enginePipeExists(state, machine)) return "gone";
+  if (state.accessToken === undefined) return signalable ? "alive" : "gone";
+  return PROOF_VERDICT[await machine.capabilityProof(state.kernelSocketPath, state.accessToken, timeoutMs)];
+}
+
+/**
+ * Whether the daemon `state` records may be sent the capability now ({@link recordedDaemon}); one whose engine is
+ * silent may not.
+ */
+export async function recordedDaemonAlive(state: DaemonState, machine: DaemonMachine = THIS_MACHINE): Promise<boolean> {
+  return await recordedDaemon(state, machine, PROBE_TIMEOUT_MS) === "alive";
+}
+
+/**
+ * What the state file in `home` says, checked against the machine. `probeTimeoutMs` bounds the engine's proof and the
+ * health probe together; a hook waiting out a busy daemon passes more (`patientLookup`).
  */
 export async function lookupDaemon(
   home: string,
@@ -578,13 +613,22 @@ export async function lookupDaemon(
   const stateFile = join(home, DAEMON_STATE_FILE);
   const state = await readDaemonState(stateFile, machine.platform);
   if (state === undefined) return { status: "absent" };
-  // Another user's process cannot be this user's daemon, and on Windows no daemon lives without its engine pipe: the
-  // state is stale, and its URL is never probed.
-  if (!(await recordedDaemonAlive(state, machine))) {
+  const deadline = Date.now() + probeTimeoutMs;
+  const recorded = await recordedDaemon(state, machine, probeTimeoutMs);
+  // Another user's process cannot be this user's daemon, and on Windows no daemon lives without its engine pipe or
+  // fails its engine's proof: the state is stale, and its URL is never probed.
+  if (recorded === "gone") {
     await rm(stateFile, { force: true });
     return { status: "absent" };
   }
-  const probe = await probeDaemon(state, undefined, probeTimeoutMs);
+  // A busy daemon is waited for, not forgotten; its URL is not probed with a capability its engine has not proved.
+  if (recorded === "silent") return { status: "unresponsive", state };
+  return await probedLookup(stateFile, state, Math.max(0, deadline - Date.now()));
+}
+
+/** What the health probe of the daemon `state` records, which may be sent the capability, makes of it within `timeoutMs`. */
+async function probedLookup(stateFile: string, state: DaemonState, timeoutMs: number): Promise<DaemonLookup> {
+  const probe = await probeDaemon(state, undefined, timeoutMs);
   if (probe.status === "refused") return { status: "refused", state };
   if (probe.status === "unreachable") return { status: "unresponsive", state };
   if (probe.health.pid !== state.pid) {
@@ -1042,9 +1086,11 @@ function signalDaemon(pid: number, signal: string, machine: DaemonMachine): void
  * Asks the daemon `state` records to close itself over its HTTP API, with its capability and native token; whether it
  * took the request. On Windows `process.kill` ends a process at once, so this request is the only way the daemon's own
  * shutdown runs there: requests from other sessions finish, and it removes its state file and main-instance record.
+ * Only a daemon that may be sent the capability ({@link recordedDaemonAlive}) is asked: a lookup finds a daemon whose
+ * engine stayed silent to the proof unresponsive, without proving it is this user's.
  */
-async function requestDaemonShutdown(state: DaemonState): Promise<boolean> {
-  if (state.nativeToken === undefined) return false;
+async function requestDaemonShutdown(state: DaemonState, machine: DaemonMachine): Promise<boolean> {
+  if (state.nativeToken === undefined || !(await recordedDaemonAlive(state, machine))) return false;
   try {
     const endpoint = daemonEndpoint(state, "/native/shutdown");
     const response = await endpoint.fetch(endpoint.url, {
@@ -1061,7 +1107,7 @@ async function requestDaemonShutdown(state: DaemonState): Promise<boolean> {
 
 /** Asks the daemon `state` records to shut down: SIGTERM, or on Windows a shutdown request, SIGTERM only if it is refused. */
 async function askDaemonToStop(state: DaemonState, machine: DaemonMachine): Promise<void> {
-  if (machine.platform !== "win32" || !(await requestDaemonShutdown(state))) signalDaemon(state.pid, "SIGTERM", machine);
+  if (machine.platform !== "win32" || !(await requestDaemonShutdown(state, machine))) signalDaemon(state.pid, "SIGTERM", machine);
 }
 
 /** Whether the process `alive` watches is gone within `ms`, polling while it runs. */

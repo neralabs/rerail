@@ -293,8 +293,8 @@ the launcher, every connected agent's hooks and the status line.
 The launcher, hooks and Claude Code's status line run the Node that ran set-up, by full path. For Homebrew that is
 `/opt/homebrew/bin/node`, a link `brew upgrade` keeps, so upgrading changes nothing.
 
-If that Node is gone (`nvm uninstall`, say), they fall back to the first `node` on `PATH`. Claude Code's status line
-on Windows does not.
+If that Node is gone (`nvm uninstall`, say), they fall back to the first `node` on `PATH`, Claude Code's status line on
+Windows included.
 
 With that `node` older than 24, the daemon does not start and hooks do nothing. Claude Code's status line reads
 `R E R A I L ✕ needs Node 24 or newer (this is 22.12.0)`.
@@ -717,7 +717,7 @@ is kept too; only Rerail's files go.
 3. Stops the daemon.
 4. Moves your database into a backup, `~/.rerail-clean-YYYYMMDD/`.
 5. Deletes `~/.rerail/current`, `~/.rerail/bin`, `~/.rerail/versions`, the rule packs and `~/.cache/rerail` (on Windows
-   `%LOCALAPPDATA%\rerail`, and the `~/.cache/rerail` an earlier release used there).
+   `%USERPROFILE%\AppData\Local\rerail`, and the `~/.cache/rerail` an earlier release used there).
 
 It prints each removed path (`Removed <path> (<what>).`) and each kept one:
 

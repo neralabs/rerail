@@ -1,1 +1,1 @@
-On Windows, the content cache moves from `~/.cache/rerail` to `%LOCALAPPDATA%\rerail`, out of a roaming profile's reach. The copy an earlier release left in `~/.cache/rerail` stays until `rerail install --remove` deletes it.
+On Windows, the content cache moves from `~/.cache/rerail` to `%USERPROFILE%\AppData\Local\rerail`, out of a roaming profile's reach. The copy an earlier release left in `~/.cache/rerail` stays until `rerail install --remove` deletes it.

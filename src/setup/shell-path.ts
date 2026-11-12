@@ -12,10 +12,11 @@
  * where no set-up ever did, so a block the person took out by hand stays out; `rerail setup` run again adds it back.
  */
 import { existsSync } from "node:fs";
-import { chmod, copyFile, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, copyFile, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { userInfo } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { spawnSync } from "../engine/child-process.js";
+import { makeRerailHome } from "../engine/storage/private-files.js";
 import { windowsPowerShell } from "../engine/system-programs.js";
 import { shellWord } from "../engine/command-line.js";
 import { writeTextFile } from "./harness-registration.js";
@@ -41,7 +42,7 @@ export function launcherPathMarker(rerailHome: string): string {
 /** Record `change` as PATH handled, unless it failed (the next run tries again) or the run was dry. */
 export async function recordLauncherPath(rerailHome: string, change: LauncherPathChange, dryRun = false): Promise<void> {
   if (dryRun || change.status === "failed") return;
-  await mkdir(rerailHome, { recursive: true });
+  makeRerailHome(rerailHome);
   await writeFile(launcherPathMarker(rerailHome), `${JSON.stringify({ handledAt: new Date().toISOString() })}\n`);
 }
 

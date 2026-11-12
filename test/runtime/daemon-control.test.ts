@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { EventEmitter, once } from "node:events";
-import { createServer, type AddressInfo } from "node:net";
+import { createServer, type AddressInfo, type Socket } from "node:net";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -33,6 +33,7 @@ import {
   processAlive,
   readDaemonState,
   recordedDaemonAlive,
+  runningDaemonEngineEndpoint,
   startDaemon,
   startDaemonForPackage,
   stillRunningMessage,
@@ -41,6 +42,7 @@ import {
   withStartLock,
 } from "../../src/runtime/daemon-control.js";
 import { enginePipeName, fallbackPipe, isEnginePipe, pipeNameOf } from "../../src/runtime/engine-pipe.js";
+import { engineCapabilityProof } from "../../src/runtime/engine-proof.js";
 import { fakeMachine } from "../support/platform/daemon-machine.js";
 import { otherUserPid } from "../support/other-user-pid.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -473,7 +475,7 @@ describe("a state file Windows left behind", () => {
 
   /**
    * A Windows machine where every pid, even one no process can hold, is a live process of this user, with `pipes`, where
-   * no engine proves it holds a capability, and whose main-instance records forgotten go to `forgotten`.
+   * every engine refuses the capability proof, and whose main-instance records forgotten go to `forgotten`.
    */
   function windows(pipes: readonly string[], signals: Array<string | number | undefined> = [], forgotten: number[] = []): DaemonMachine {
     return fakeMachine("win32", {
@@ -492,18 +494,25 @@ describe("a state file Windows left behind", () => {
     throw Object.assign(new Error("kill EPERM"), { code: "EPERM" });
   };
 
+  /** An engine that proves it holds the capability it is asked about. */
+  const proving: Pick<DaemonMachine, "capabilityProof"> = { capabilityProof: async () => "proved" };
+
   it("has one rule for whether the daemon a state file records may be alive, which every reader of it asks", async () => {
     const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability" });
     expect(processAlive(4, denied)).toBe(true);
-    expect(await recordedDaemonAlive(state, windows([PIPE_NAME]))).toBe(true);
+    expect(await recordedDaemonAlive(state, { ...windows([PIPE_NAME]), ...proving })).toBe(true);
     // A live pid without the daemon's pipe is one Windows gave to another process once the daemon was gone.
-    expect(await recordedDaemonAlive(state, windows(["other"]))).toBe(false);
+    expect(await recordedDaemonAlive(state, { ...windows(["other"]), ...proving })).toBe(false);
+    // A live pid of this user and the pipe's name are not enough: Windows reuses pids, and anyone can create the name.
+    expect(await recordedDaemonAlive(state, windows([PIPE_NAME]))).toBe(false);
     // EPERM is another user's process, or this user's elevated daemon, which alone holds the capability.
     expect(await recordedDaemonAlive(state, { ...windows([PIPE_NAME]), kill: denied })).toBe(false);
-    expect(await recordedDaemonAlive(state, { ...windows([PIPE_NAME]), kill: denied, holdsCapability: async () => true })).toBe(true);
+    expect(await recordedDaemonAlive(state, { ...windows([PIPE_NAME]), kill: denied, ...proving })).toBe(true);
+    // An engine silent to the proof has proved nothing, so it is sent nothing.
+    expect(await recordedDaemonAlive(state, { ...windows([PIPE_NAME]), capabilityProof: async () => "silent" })).toBe(false);
     // Elsewhere the pid decides, and an EPERM is another user's process.
     expect(await recordedDaemonAlive(state, { ...windows([]), platform: "linux" })).toBe(true);
-    expect(await recordedDaemonAlive(state, { ...windows([]), platform: "linux", kill: denied, holdsCapability: async () => true })).toBe(false);
+    expect(await recordedDaemonAlive(state, { ...windows([]), platform: "linux", kill: denied, ...proving })).toBe(false);
   });
 
   it("keeps the state of a daemon this user started elevated, found by its engine's proof, and drops one nothing proves", async () => {
@@ -513,12 +522,12 @@ describe("a state file Windows left behind", () => {
     vi.stubGlobal("fetch", probe);
     const asked: Array<[string, string]> = [];
     // An elevated process answers a medium-integrity `kill(pid, 0)` with EPERM, as another user's does.
-    const elevated = {
+    const elevated: DaemonMachine = {
       ...windows([PIPE_NAME]),
       kill: denied,
-      holdsCapability: async (socketPath: string, accessToken: string) => {
+      capabilityProof: async (socketPath, accessToken) => {
         asked.push([socketPath, accessToken]);
-        return true;
+        return "proved";
       },
     };
     await writeFile(stateFile, JSON.stringify(state));
@@ -528,7 +537,7 @@ describe("a state file Windows left behind", () => {
 
     // Another user's process on a reused pid holds no such engine: the state is stale, and its URL is never probed.
     probe.mockClear();
-    expect(await lookupDaemon(home, { ...elevated, holdsCapability: async () => false })).toEqual({ status: "absent" });
+    expect(await lookupDaemon(home, { ...elevated, capabilityProof: async () => "refused" })).toEqual({ status: "absent" });
     expect(probe).not.toHaveBeenCalled();
     expect(existsSync(stateFile)).toBe(false);
 
@@ -537,6 +546,75 @@ describe("a state file Windows left behind", () => {
     asked.length = 0;
     expect(await lookupDaemon(home, { ...elevated, platform: "linux" })).toEqual({ status: "absent" });
     expect(asked).toEqual([]);
+  });
+
+  it("sends the capability to a daemon this user may signal only once its engine proves it holds it", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability" });
+    const sent: Array<string | null> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: URL, init: RequestInit) => {
+      sent.push(new Headers(init.headers).get("x-rerail-access"));
+      return Response.json({ status: "ok", pid: DEAD_PID });
+    }));
+    // A pid Windows gave to another of this user's processes, and the pipe's name made by someone else: no proof.
+    await writeFile(stateFile, JSON.stringify(state));
+    expect(await lookupDaemon(home, windows([PIPE_NAME]))).toEqual({ status: "absent" });
+    expect(sent).toEqual([]);
+    expect(existsSync(stateFile)).toBe(false);
+
+    await writeFile(stateFile, JSON.stringify(state));
+    expect(await lookupDaemon(home, { ...windows([PIPE_NAME]), ...proving })).toMatchObject({ status: "running", state: { pid: DEAD_PID } });
+    expect(sent).toEqual(["capability"]);
+  });
+
+  it("waits for a daemon whose engine is silent to the proof, as for a busy one, and sends it nothing", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", nativeToken: "native" });
+    const requests: string[] = [];
+    vi.stubGlobal("fetch", vi.fn(async (url: URL) => {
+      requests.push(String(url));
+      return Response.json({ status: "ok", pid: DEAD_PID });
+    }));
+    const waits: number[] = [];
+    const signals: Array<string | number | undefined> = [];
+    let running = true;
+    // Elevated or not, a daemon whose one event loop is in an audit answers no proof within the wait.
+    for (const kill of [denied, () => true]) {
+      await writeFile(stateFile, JSON.stringify(state));
+      waits.length = 0;
+      const busy: DaemonMachine = {
+        ...windows([PIPE_NAME]),
+        env: { RERAIL_HOME: home },
+        kill,
+        capabilityProof: async (_socketPath, _accessToken, timeoutMs) => {
+          waits.push(timeoutMs);
+          return "silent";
+        },
+      };
+      expect(await lookupDaemon(home, busy)).toEqual({ status: "unresponsive", state });
+      expect(existsSync(stateFile)).toBe(true);
+      // A hook asks once more, giving the proof the busy wait.
+      expect(await runningDaemonEngineEndpoint(undefined, busy)).toEqual({ status: "unresponsive", state });
+      expect(waits).toEqual([2_000, 2_000, 10_000]);
+      expect(existsSync(stateFile)).toBe(true);
+    }
+    expect(requests).toEqual([]);
+
+    // Stopping it sends no shutdown request with the capability: the process is ended instead.
+    const silent: DaemonMachine = {
+      ...windows([PIPE_NAME]),
+      kill: (_pid, signal) => {
+        signals.push(signal);
+        if (signal === "SIGTERM") running = false;
+        if (signal === 0 && !running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+        return true;
+      },
+      capabilityProof: async () => "silent",
+    };
+    expect(await stopDaemon(home, silent)).toBe("stopped");
+    expect(requests).toEqual([]);
+    expect(signals.filter(signal => signal !== 0)).toEqual(["SIGTERM"]);
+    expect(existsSync(stateFile)).toBe(false);
   });
 
   it("takes a live pid without the daemon's engine pipe for a reused one: it removes the state and kills nothing", async () => {
@@ -592,6 +670,7 @@ describe("a state file Windows left behind", () => {
     const forgotten: number[] = [];
     const machine = {
       ...windows([PIPE_NAME], [], forgotten),
+      ...proving,
       kill: (_pid: number, signal?: string | number) => {
         signals.push(signal);
         if (signal === 0 && !running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
@@ -625,6 +704,7 @@ describe("a state file Windows left behind", () => {
     }));
     const machine = {
       ...windows([PIPE_NAME]),
+      ...proving,
       kill: (_pid: number, signal?: string | number) => {
         if (signal === 0 && !running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
         return true;
@@ -642,6 +722,36 @@ describe("a state file Windows left behind", () => {
     expect(daemonMayHold(DEAD_PID, windows(["other-pipe"]))).toBe(false);
     expect(daemonMayHold(DEAD_PID, windows([PIPE_NAME]))).toBe(true);
     expect(daemonMayHold(DEAD_PID, { ...windows([]), platform: "linux" })).toBe(true);
+  });
+});
+
+describe("the engine proof a lookup asks for", () => {
+  // A busy daemon's engine is silent, not refusing: a lookup that read silence as a refusal dropped a daemon that runs.
+  it("tells a listener that says nothing in time from one that hangs up or is not there", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-proof-"));
+    const socketPath = process.platform === "win32"
+      ? String.raw`\\.\pipe\rerail-proof-silent-${process.pid}-${Date.now().toString(16)}`
+      : join(root, "engine.sock");
+    let hangUp = false;
+    const held: Socket[] = [];
+    const listener = createServer((socket) => {
+      if (hangUp) socket.destroy();
+      else held.push(socket);
+    });
+    listener.listen(socketPath);
+    await once(listener, "listening");
+    try {
+      expect(await engineCapabilityProof(socketPath, "capability", 100)).toBe("silent");
+      hangUp = true;
+      expect(await engineCapabilityProof(socketPath, "capability", 1_000)).toBe("refused");
+    } finally {
+      for (const socket of held) socket.destroy();
+      const closed = Promise.withResolvers<void>();
+      listener.close(() => closed.resolve());
+      await closed.promise;
+      await removeFolder(root);
+    }
+    expect(await engineCapabilityProof(socketPath, "capability", 1_000)).toBe("refused");
   });
 });
 

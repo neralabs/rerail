@@ -23,6 +23,7 @@ import { mkdir, readdir, readFile, rm, rmdir, unlink, writeFile } from "node:fs/
 import { join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { heldOnWindows, removeWithRetry, renameWithRetry } from "../file-replace.js";
+import { keepFolderPrivate, type PrivateMachine } from "../storage/private-files.js";
 import { loadNativeBinding, type NativeBinding } from "./native.js";
 
 /** In the Rerail home: the lock files. */
@@ -60,6 +61,8 @@ export interface LockRequest {
    * also found no `locks/` and lost the lock removes nothing: it holds nothing it made.
    */
   readonly removeMadeFolderOnFailure?: boolean | undefined;
+  /** The system the home is kept private on (`keepFolderPrivate`); tests pass their own. */
+  readonly machine?: PrivateMachine | undefined;
 }
 
 type Wait = Pick<LockRequest, "waitMs" | "sleep">;
@@ -73,11 +76,17 @@ interface Held {
 
 type Taken = Held | { readonly kind: "busy"; readonly holder: LockHolder | undefined };
 
-/** Runs `action` holding `home`'s lock `request.name`, waiting up to `request.waitMs`; throws `request.busy` past that. */
+/**
+ * Runs `action` holding `home`'s lock `request.name`, waiting up to `request.waitMs`; throws `request.busy` past that.
+ * A lock is often the first thing to make a fresh home (`rerail install`, `rerail activate`, a packs change), so the
+ * process that makes `locks/` keeps the home private as `makeRerailHome` does: on Windows a home made elsewhere than
+ * the profile would otherwise keep its parent's ACL, readable by every local user, and so would all written in it.
+ */
 export async function withHomeLock<T>(home: string, request: LockRequest, action: () => Promise<T>): Promise<T> {
   const locks = join(home, LOCKS_DIR);
   // The first folder it made, which is `locks/` or above it, only for the one process that made it.
   const made = await mkdir(locks, { recursive: true, mode: 0o700 }) !== undefined;
+  keepFolderPrivate(home, { ...request.machine, made });
   const taken = await take(locks, request);
   if (taken.kind === "busy") throw request.busy(taken.holder);
   if (made && request.removeMadeFolderOnFailure === true) return await holdingMadeFolder(locks, taken, action);
@@ -152,8 +161,11 @@ async function takeOsLock(engine: LockEngine, locks: string, request: LockReques
         kind: "held",
         release() {
           try {
-            // Still the holder here, so the record is this process's own.
+            // Still the holder here, so the record is this process's own. On Windows a waiter reading it may hold it
+            // past the removal; left behind, it names a process that is gone, and must never replace the work's result.
             rmSync(record, { force: true });
+          } catch {
+            // As `forget`: the OS lock below is released all the same.
           } finally {
             lock.release();
           }
