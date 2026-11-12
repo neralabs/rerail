@@ -418,14 +418,25 @@ mod tests {
         }
     }
 
-    /// The registry lists no suppression for Java: no linter's comments are read.
+    /// The registry lists no suppression for Java: no linter's comments are read. A kind added
+    /// to the table needs its spec here.
     #[test]
     fn every_suppression_kind_is_refused() {
-        for (kind, spec) in [
-            ("eslint", json!({ "rules": ["x"] })),
-            ("noqa", json!({ "codes": ["X1"] })),
-            ("clippy", json!({ "lints": ["x"] })),
-        ] {
+        use crate::code_rule_dsl::suppress::Suppression;
+        for kind in Suppression::ALL.iter().map(|kind| kind.key()) {
+            let spec = match kind {
+                "eslint" => json!({ "rules": ["strict"] }),
+                "noqa" => json!({ "codes": ["F401"] }),
+                "nosec" => json!({ "codes": ["B101"] }),
+                "oxlint" => json!({ "rules": ["no-console"] }),
+                "biome" => json!({ "rules": ["lint/suspicious/noConsole"] }),
+                "phpstan" => json!({ "identifiers": ["variable.undefined"] }),
+                "psalm" => json!({ "issues": ["UndefinedVariable"] }),
+                "phpcs" => json!({ "sniffs": ["Squiz.PHP.DiscouragedFunctions"] }),
+                "clippy" => json!({ "lints": ["clippy::all"] }),
+                "sqlfluff" => json!({ "rules": ["CV08"] }),
+                other => panic!("no spec for the suppression kind {other}"),
+            };
             let mut suppressed = violation();
             suppressed["suppress"] = json!({ kind: spec });
             let reason = rejection(compile_document_with(

@@ -726,7 +726,7 @@ ol.limits > li, ul.limits > li { margin: 5px 0; }
 <tr><td><span class="b">rust</span></td><td><code>kind: "line_comment"</code> (<code>^//</code>), not doc</td><td><code>kind: "block_comment"</code> (<code>^/\*</code>), not doc</td><td><code>has: { kind: "outer_doc_comment_marker" }</code> (<code>///</code>, <code>/**</code>) or <code>has: { kind: "inner_doc_comment_marker" }</code> (<code>//!</code>, <code>/*!</code>); <code>////</code> and <code>/***</code> are no doc comments</td></tr>
 <tr><td><span class="b">vue</span></td><td>TypeScript's, under <code>ast.embedded</code></td><td><code>^&lt;!--</code> (the template's HTML); TypeScript's under <code>ast.embedded</code></td><td>TypeScript's, under <code>ast.embedded</code></td></tr>
 <tr><td><span class="b">sql</span></td><td><code>^--</code></td><td><code>^/\*</code> (nested, as PostgreSQL reads them)</td><td>none</td></tr>
-<tr><td><span class="b">java</span></td><td><code>kind: "line_comment"</code> (<code>^//</code>)</td><td><code>kind: "block_comment"</code> (<code>^/\*</code>), not doc</td><td><code>kind: "block_comment"</code> with <code>regex: "^/\\*\\*"</code> (Javadoc)</td></tr>
+<tr><td><span class="b">java</span></td><td><code>kind: "line_comment"</code> (<code>^//</code>)</td><td><code>kind: "block_comment"</code> (<code>^/\*</code>), not doc</td><td><code>kind: "block_comment"</code> with <code>regex: "^/\\*\\*[^/]"</code> (Javadoc; <code>/**/</code> is an empty block comment, no doc)</td></tr>
 </tbody></table></div>
 <p><b>Position.</b> A comment is a tree-sitter <i>extra</i>: a child of the node whose span holds it, in source order. A comment before a declaration is its preceding <b>sibling</b>, so use sibling relations, not <code>inside</code> or <code>has</code>:</p>
 <ul>
