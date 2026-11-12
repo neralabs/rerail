@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, realpath } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -329,6 +329,50 @@ describe("the engine service's idle close", () => {
     expect(ended("a")).not.toBeNull();
     expect(ended("b")).not.toBeNull();
   });
+
+  // At base the quiet session's next walk found another writer's change to a file the session had edited and recorded
+  // it in Log; after the idle close the reopened session's first walk took it as its baseline and recorded nothing.
+  it("records another writer's change to a file the session edited, made while the session was quiet, as its open walk did", async () => {
+    const { create, batches, looked } = recordingAuditor();
+    const { first, clock, service, session, send, start, prompt } = await idleService({ createAuditor: create });
+    const [changed, removed, untouched] = [join(first, "app.py"), join(first, "gone.py"), join(first, "other.py")];
+    await writeFile(changed, "x = 1\n");
+    await writeFile(removed, "y = 1\n");
+    await writeFile(untouched, "z = 1\n");
+    await start("a");
+    // The evaluator is open once the session's first walk has asked about the files, so the edits below are checked.
+    await vi.waitFor(() => expect(looked.has("app.py")).toBe(true));
+    // The agent edits two files with its own tools, and its turn ends.
+    const edit = async (id: string, path: string, text: string) => {
+      const tool = { sessionId: "a", session: session("a"), toolCallId: id, toolName: "Write" } as const;
+      await send({ kind: "call", eventId: `a:${id}:call`, ...tool, input: { file_path: path, content: text } });
+      await writeFile(path, text);
+      await send({ kind: "result", eventId: `a:${id}:result`, ...tool, output: "ok" });
+    };
+    await edit("t1", changed, "x = 2\n");
+    await edit("t2", removed, "y = 2\n");
+    await send({ kind: "turn-end", eventId: "a:turn", sessionId: "a", session: session("a"), text: "done" });
+    expect(batches.flatMap(batch => batch.edits.map(item => item.path)).sort()).toEqual(["app.py", "gone.py"]);
+    clock.now += 60_000;
+    await service.closeIdleSessions();
+    expect(service.openRuntimes()).toBe(0);
+    // Another writer (a person's editor, a background process) changes one of them and removes the other meanwhile,
+    // and changes a file the session never edited, which the open session's walk did not record either.
+    await writeFile(changed, "x = 3\n");
+    await rm(removed);
+    await writeFile(untouched, "z = 3\n");
+    await prompt("a", "back");
+    await vi.waitFor(() => {
+      const logged = batches.filter(batch => batch.mode === "log").flatMap(batch => batch.edits);
+      expect(logged).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: "app.py", generatedText: "x = 3\n", previousText: "x = 3\n" }),
+        expect.objectContaining({ path: "gone.py", deleted: true }),
+      ]));
+    }, { timeout: 10_000, interval: 50 });
+    // The turn's end waits for the session's walks and their checks.
+    await send({ kind: "turn-end", eventId: "a:turn2", sessionId: "a", session: session("a"), text: "done" });
+    expect(batches.flatMap(batch => batch.edits.map(item => item.path))).not.toContain("other.py");
+  }, 20_000);
 
   it("keeps a quiet session in memory while it waits on a tool call, and suspends it once the call is done", async () => {
     const { clock, service, session, send, start, ended } = await idleService();

@@ -232,6 +232,8 @@ tool calls and turn end wait up to 20 seconds for its rules, so its first edit i
 as every later one is. A daemon restart or a resumed session reopens the same way. Rules still not open after 20 seconds
 are not waited for further: that edit is checked by the first pass once they open.
 
+- A change another program made while the session was quiet, to a file the session had edited, is recorded in Log
+  when the session opens again, as it is while a session is active.
 - Stopping the daemon ends the session, as it ends every open one.
 
 </details>

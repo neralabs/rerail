@@ -18,7 +18,7 @@ import { RerailHostRuntime, type HostRuntimePort, type HostRuntimeSessionState }
 import { autostartDaemon } from "./daemon-control.js";
 import { InactiveSessionError, SteerRuleSchema } from "./event-protocol.js";
 import {
-  CodeRuleBridge, generatedEditPaths, ledgerPreimage, type Preimage, type RewoundEdit, type SourceObservationCache,
+  CodeRuleBridge, generatedEditPaths, ledgerPreimage, type Preimage, type RewoundEdit, type SessionWalkResume, type SourceObservationCache,
 } from "../engine/code-rule/code-rule-bridge.js";
 import type { IgnoreRulesChange } from "../engine/code-rule/ignore-rule-files.js";
 import {
@@ -620,15 +620,18 @@ interface RuntimeSessionState {
 /**
  * What a session the engine service let go of while it was quiet (`closeIdleSession`) keeps until it opens again: the
  * owner claim it still holds in the database, so it stays live, takes scan requests and reopens without interrupting
- * them.
+ * them, and where its source walks stood, so its next walk records another writer's change made meanwhile.
  */
 export interface SessionSuspension {
   readonly descriptor: AdapterSession;
   readonly ownerClaim: PolicyOwnerClaim | undefined;
+  /** Undefined when the session's evaluator had not opened, or could not. */
+  readonly walk: SessionWalkResume | undefined;
 }
 
 /** The suspended sessions a runtime opens again, by session id: an engine service keeps them across its runtimes. */
 export interface SuspendedSessions {
+  get(sessionId: string): SessionSuspension | undefined;
   /** Ends the session's suspension as a runtime claims it again, and returns it; undefined once another has taken it. */
   take(sessionId: string): SessionSuspension | undefined;
 }
@@ -641,6 +644,11 @@ export type IdleClose =
   | { readonly kind: "not-held" }
   /** Its memory is freed; it stays open in the database until it opens again or its daemon stops. */
   | { readonly kind: "suspended"; readonly suspension: SessionSuspension };
+
+/** The bridge option that resumes the session's walks where `suspension` left them; none for a fresh open. */
+function walkResumeOption(suspension: SessionSuspension | undefined): { resume?: SessionWalkResume } {
+  return suspension?.walk === undefined ? {} : { resume: suspension.walk };
+}
 
 /**
  * Ends suspended sessions no runtime opened again, as `closeSession` ends an open one when its daemon stops: their queued
@@ -1471,6 +1479,8 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   async openSession(session: AdapterSession): Promise<HostRuntimeSessionState> {
     const existing = this.#sessions.get(session.sessionId);
     if (existing !== undefined) return { processedEventIds: [...existing.processed] };
+    // A session the engine service suspended goes on from where its walks stood (`SessionSuspension`).
+    const suspension = this.#suspendedSessions?.get(session.sessionId);
     const recordedSession = this.#sessionStore.session(session.sessionId);
     const startedAt = recordedSession?.startedAt ?? Date.now();
     const ledger = await this.#openLedger(session, recordedSession === undefined);
@@ -1550,6 +1560,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       });
       bridge = new CodeRuleBridge(checkout.cwd, auditor, {
         observations: this.#sourceObservations,
+        ...walkResumeOption(suspension),
         ...(this.#discoveryWaitMs === undefined ? {} : { discoveryWaitMs: this.#discoveryWaitMs }),
         // A boundary that answered before its shell-write check finished leaves its session's history marked partial.
         onDiscoveryPending: boundary => this.#recordSessionFact(
@@ -1816,16 +1827,17 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       const state = this.#sessions.get(sessionId);
       if (state === undefined) return { kind: "not-held" };
       if (options.evenIfOwing !== true && this.#owesAgent(state)) return { kind: "owing" };
-      const suspension = this.#suspension(state);
+      const suspension = await this.#suspension(state);
       state.suspending = true;
       await this.#router(state.descriptor.host).stop(sessionId);
       return { kind: "suspended", suspension };
     });
   }
 
-  /** What `state`'s session keeps while suspended: its owner claim. */
-  #suspension(state: RuntimeSessionState): SessionSuspension {
-    return { descriptor: state.descriptor, ownerClaim: state.ownerClaim };
+  /** What `state`'s session keeps while suspended: its owner claim, and where its walks stand once its evaluator is open. */
+  async #suspension(state: RuntimeSessionState): Promise<SessionSuspension> {
+    const walk = state.codeRuleReady ? await state.codeRuleBridge?.walkResume() : undefined;
+    return { descriptor: state.descriptor, ownerClaim: state.ownerClaim, walk };
   }
 
   /**
