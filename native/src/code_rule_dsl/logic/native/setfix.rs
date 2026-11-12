@@ -1053,6 +1053,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
     // The delta joins' specs, by probe, for the device's plans of a recursive component (their rules' keys).
     let mut delta_specs: Vec<(usize, String)> = Vec::new();
     let mut leveled = false;
+    let mut cyclic: Vec<usize> = Vec::new();
     let mut seed_specs: Vec<(usize, Arc<JoinSpec>)> = Vec::new();
     for line in &spec.lines {
         match line {
@@ -1103,7 +1104,7 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
             }
             Line::Probe { head, delta, sql } => probes.push(ProbeRule { head: *head, delta: *delta, body: Body::Sql(sql.clone()), whole: None, wkey: None }),
             Line::Device => device_wanted = solver().is_some(),
-            Line::Leveled => leveled = true,
+            Line::Leveled(rels) => { leveled = true; cyclic.extend(rels.iter().copied()); }
             Line::Seed { head, join } => {
                 let j = { let _j = crate::code_rule_dsl::logic::profile::span(|| "open: joins".into()); join_rule_with(conn, join, &mut syms, !device_wanted)? };
                 if device_wanted { seed_specs.push((probes.len(), join.clone())); }
@@ -1196,6 +1197,10 @@ pub fn open_spec(conn: impl Scoped, spec: &ComponentSpec) -> Result<String> {
         for e in edges.iter().filter(|e| e.src < n) { next[e.src].push(e.head); }
         let mut keep = vec![false; n];
         for ln in &levels.lines { for r in [ln.cand, ln.chk, ln.held, ln.gone, ln.live] { keep[r] = true; } }
+        // A relation that reaches itself through the stratum's rules as written keeps levels though this run left out
+        // the rules that close its cycle (they joined an empty relation): the next run may run them, and a session
+        // maintains a stratum by levels only when every relation of it has them.
+        for &r in cyclic.iter().filter(|&&r| r < n && leveled) { keep[r] = true; }
         for r in 0..n {
             if keep[r] || (rels[r].n > 0 && rels[r].level.len() == rels[r].n) { keep[r] = true; continue; }
             if !leveled { continue; }
@@ -1559,18 +1564,18 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             if device_fixed { break; }
             if p.delta == SEED { if seeded || on_device { continue } }
             else if store.rels[p.delta].lo == store.rels[p.delta].hi { skips += 1; continue; }
-            let j = match (&p.whole, &p.wkey) {
+            let (j, whole) = match (&p.whole, &p.wkey) {
                 (Some(w), Some(k)) if p.delta != SEED && store.rels[p.delta].lo == 0 => {
                     if wholes_run.iter().any(|&(h, w)| h == p.head && (Arc::ptr_eq(w, k) || **w == **k)) { skips += 1; continue; }
                     wholes_run.push((p.head, k));
-                    w
+                    (w, true)
                 }
-                _ => j,
+                _ => (j, false),
             };
             runs += 1;
             if wave_trace {
                 let d = if p.delta == SEED { 0 } else { store.rels[p.delta].hi - store.rels[p.delta].lo };
-                eprintln!("      wave {waves} probe {pi} of {name} starts, head {}, delta {d}", store.rels[p.head].table);
+                eprintln!("      wave {waves} probe {pi} of {name} starts, head {}, delta {} {d} (lo {}){}", store.rels[p.head].table, store.rels[p.delta.min(store.rels.len() - 1)].table, if p.delta == SEED { 0 } else { store.rels[p.delta].lo }, if whole { ", its whole plan" } else if p.whole.is_some() { ", has a whole plan" } else { "" });
             }
             let c0 = cpu_now();
             let n = if p.delta == SEED { run_seed(j, p.head, store, &mut syms, &mut fresh)? } else { run_join(j, p.head, store, &mut syms, &mut fresh)? };
@@ -2569,6 +2574,23 @@ impl InRel {
     pub fn from_flat(rows: Vec<i64>, n: usize, types: Vec<u8>) -> Arc<InRel> {
         let k = types.len();
         Arc::new(InRel { k, n, rows, view: None, base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sketches: Vec::new(), serves: Vec::new(), dead: Vec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: Vec::new() })
+    }
+    /// `from_flat`'s relation with each row's level (decision 0090), as a frame of its levels gives them: `None` when
+    /// they are not one per row.
+    pub fn from_flat_levels(rows: Vec<i64>, n: usize, types: Vec<u8>, level: Vec<u32>) -> Option<Arc<InRel>> {
+        if level.len() != n {
+            return None;
+        }
+        let mut rel = Arc::into_inner(Self::from_flat(rows, n, types)).expect("a new relation");
+        rel.level = level;
+        Some(Arc::new(rel))
+    }
+    /// Its live rows' levels, in `live_rows`' order: `None` unless every row has one (`has_levels`).
+    pub fn live_levels(&self) -> Option<Vec<u32>> {
+        if !self.has_levels() {
+            return None;
+        }
+        Some((0..self.n).filter(|&id| self.ndead == 0 || !is_dead(&self.dead, id as u32)).map(|id| self.level[id]).collect())
     }
     /// Its rows, as a source of columns `names`.
     pub fn source(self: &Arc<Self>, names: Vec<String>) -> Arc<dyn crate::code_rule_dsl::facts::vtab::Source> {

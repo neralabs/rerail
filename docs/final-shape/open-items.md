@@ -3911,3 +3911,36 @@ text for its `#include`s. **Closed (2026-11-12, 04f66708c):** `combine_keyed` re
 `rr_unit(0)` atoms, renamed natively made relations, and split set memberships into one rule per value.
 **Closed (2026-11-12, 5db161b00):** each of the 1,140 programs under `docs/rule-syntax` prints, lowers and prints as
 the same text (`lowering_is_idempotent_*`, 11 shards within the run cap).
+
+## O-plan-component-start. A join planned while a relation of its component is nearly empty runs until the replan
+
+Found at O125 step 07 (decision 0101, "Measured: the `ifn__ins` order"). `ifn__ins` is in a recursive maintained
+component of 183 relations. Its rule driven by `fv`'s delta was first planned while `pv__ins`, a relation of the
+same component, held few rows, so probing it by class looked cheap: `fv → pv__ins by class → icall`. Once
+`pv__ins` grew, the drift check replanned to `fv → icall by name → pv__ins checked`, which does no work past the
+delta (273 + 160 units). The first plan ran 12 delta batches before that: 83,862 units, 1.6% of the step's
+5.39 M. It is not skew: `pv`'s skew-aware fanout by class (`sq/rows`, 0096) is 637 against an actual 452.
+
+Two ways to remove it, either or both:
+
+- Price a relation of the component by what it will hold, not what it holds when planned: the last run's size
+  of the same piece (`pv__ins`), or a bound from the deltas that feed it (`pv`'s).
+- Check the drift between a wave's batches, not only between waves, so any wrong first plan runs one batch.
+
+**Closure:** at O125 step 07 the first plan of `ifn__ins` (delta `fv`) is icall first, or the plan that probes
+`pv__ins` by class runs at most one batch; the step's work drops by about 83 k units and its outputs equal a
+full run's.
+
+**Part built (2026-11-12): whole plans priced from the members' rows at open.** A wider form of the same cause:
+a rule's whole plan, which runs in the first wave, was priced before the component opened. Every member scan was
+floored at the corpus's nodes (180,831), so `decval__ins`'s whole plan scanned `pv` (65 k rows) before `decfn`
+(1 k), the two tied. Now, right after the component opens, the members that already have rows (survivors, rows
+SQL wrote) are measured. A first scan of one is priced by its rows (`Stats::sized`), and the whole plans are
+planned again before the first wave (`RERAIL_SIZED_AT_OPEN=off` turns it off).
+
+At O125 step 07, work went from 4.05 M to 3.38 M and `__ins` work from 2.31 M to 1.67 M; `decval__ins`,
+`fbind__ins`, `fv__ins` and `pfn__ins` left the top. Instructions over the whole replay (cold run included) went
+from 918.1 to 913.6 G, and the step's CPU didn't change measurably (19.7 vs 20.7 s, load 25–30): the plans made at
+open (7,696, 1.13 s) take back most of what the joins save. The `ifn__ins` case above, a delta plan whose member
+is empty at open, is not covered. At step 07, planning (search, plan, replan, re-price, 4.8 s) costs about as much
+as the joins it plans (4.7 s), against decision 0122.

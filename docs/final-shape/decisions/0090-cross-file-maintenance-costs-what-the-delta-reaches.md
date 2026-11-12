@@ -946,6 +946,29 @@ At the first step, 06, it costs about 3.5 s more: it counts its kept relations o
 pieces. Its extra calls are its supports. Each one is cheap now: counting's 2,601 calls took 3.4 s of joins at
 07 and DRed's 958 took 4.1 s, for the same work.
 
+## Fixed: two ways recursive strata lost their levels (2026-11-12)
+
+At O125 step 07, 82 strata were derived again past θ. Their work was 0.34 M of the step's 5.39 M, and for each of
+them the planner priced deriving again below maintaining. The larger cost was one recursive component of 183
+relations (`pv`, `fv`, `alook`, …), at 3.30 M. It ran on delete-and-rederive, not levels, and its deletes were
+almost all false: `pv` overdeleted 3,816 rows and derived back 3,761 (98.6%).
+
+`RERAIL_LEVELS_WHY` named the cause: `garg` and `gcall` had no levels. Their cycle closes only through a rule
+over `tmap`, which has no rows. The run left that rule out, so the engine saw no cycle through them and kept no
+levels, and a stratum is maintained by levels only when all its relations have them. The fix: the spec's
+`leveled` line lists the relations that reach themselves through the stratum's rules as written, and those keep
+levels.
+
+A second cause, found while testing the first: a new process reads its kept relations from the store's frames,
+which held rows only. So every recursive stratum a new process maintained ran on delete-and-rederive. The frames
+now hold each relation's levels in a part of their own (`LEVELS_PART`), read where its digest and row count match.
+
+After both fixes, at step 07, all 18 recursive strata are maintained by levels. The step's work fell from 5.39 M
+to 4.05 M, and the component's from 3.30 M to 1.98 M (load 21–29). The test
+`a_cycle_closed_by_an_empty_relation_still_keeps_levels` guards the frames' levels. The left-out cycle didn't
+reproduce at test size, so it is checked at O125 only. O125's outputs after the change were not compared with a
+full run (`O125_NO_FULL`).
+
 ## What the prior work says
 
 - **Target architecture (03):**

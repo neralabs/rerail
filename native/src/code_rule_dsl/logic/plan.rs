@@ -309,6 +309,9 @@ pub struct Stats {
     pub obs: HashMap<u64, HashMap<Sig, [i64; 2]>>,
     /// The recursive component being planned (`atom_rows`).
     pub solving: BTreeSet<String>,
+    /// Members of `solving` that had rows when its component opened (a maintained stratum's survivors, rows SQL
+    /// wrote): a first scan of one reads its live rows, which its card holds, not the corpus (`atom_rows`; `sized`).
+    pub sized: BTreeSet<String>,
     /// `solving`'s digest, for plan keys (`plan_key`): set with it (`solve`), not made again at every lookup.
     solving_digest: u128,
     /// Input rel → index column lists.
@@ -335,6 +338,19 @@ impl Stats {
             scc.iter().for_each(|r| d.str(r));
         });
         self.solving = scc;
+        self.sized.clear();
+    }
+
+    /// `rels` of `solving` had rows when its component opened, measured (`live_stats`): the plans made from here
+    /// price a first scan of one by its rows. A part of the plans' keys, with `solving`.
+    pub fn sized(&mut self, rels: impl IntoIterator<Item = String>) {
+        self.sized.extend(rels);
+        self.solving_digest = super::derived::digest(|d| {
+            d.u64(self.solving.len() as u64);
+            self.solving.iter().for_each(|r| d.str(r));
+            d.u64(self.sized.len() as u64);
+            self.sized.iter().for_each(|r| d.str(r));
+        });
     }
 
     /// What the planner knows of `rel` (`RERAIL_DUMP_STATS`, a debugging aid): each column's (rows, distinct, sum of
@@ -380,6 +396,7 @@ impl Stats {
             dfreq: HashMap::new(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
+            sized: BTreeSet::new(),
             solving_digest: 0,
             indexes: Default::default(),
             docs: None,
@@ -432,8 +449,26 @@ impl Stats {
     /// `rel`'s statistics by column (`width` of them), and its exact postings of integer values (`measured`'s
     /// `vals`, by column), when every column is known: what a session's next run gives `rel__old`, whose rows are
     /// these (decision 0094 §4: statistics kept like data, not measured again).
-    pub fn of_relation(&self, rel: &str, width: usize) -> Option<(Vec<[i64; 4]>, Vec<(usize, i64, i64)>)> {
-        let names: Vec<String> = (0..width).map(|c| sql_col(rel, c)).collect();
+    /// `of_relation` of the columns `cols` of `rel`, in that order (a copy of them: `corpus::projection_of`).
+    pub fn of_columns(&self, rel: &str, columns: &[String], cols: &[usize]) -> Option<(Vec<[i64; 4]>, Vec<(usize, i64, i64)>)> {
+        let names: Vec<String> = cols.iter().map(|&c| columns.get(c).cloned()).collect::<Option<_>>()?;
+        let stats = names.iter().map(|n| self.col.get(&(rel.to_owned(), n.clone())).copied()).collect::<Option<Vec<_>>>()?;
+        let vals = self
+            .memo
+            .get(rel)
+            .into_iter()
+            .flatten()
+            .filter_map(|((c, v), n)| match v {
+                Constant::Int(v) => Some((names.iter().position(|x| x == c)?, *v, *n)),
+                _ => None,
+            })
+            .collect();
+        Some((stats, vals))
+    }
+    /// `columns`: its columns' names, as its source names them (a base relation's are its declaration's: `node`'s
+    /// `d, n, kind, start, end_`).
+    pub fn of_relation(&self, rel: &str, columns: &[String]) -> Option<(Vec<[i64; 4]>, Vec<(usize, i64, i64)>)> {
+        let names: Vec<String> = columns.to_vec();
         let cols = names.iter().map(|n| self.col.get(&(rel.to_owned(), n.clone())).copied()).collect::<Option<Vec<_>>>()?;
         let vals = self
             .memo
@@ -529,6 +564,7 @@ impl Stats {
             dfreq: HashMap::new(),
             obs: HashMap::new(),
             solving: BTreeSet::new(),
+            sized: BTreeSet::new(),
             solving_digest: 0,
             indexes: Default::default(),
             docs: meta.get("docs").copied(),
@@ -668,6 +704,7 @@ impl Model {
             dfreq: HashMap::default(),
             obs: rules.iter().filter_map(|r| Some((*r, st.obs.get(r)?.clone()))).collect(),
             solving: BTreeSet::new(),
+            sized: BTreeSet::new(),
             solving_digest: 0,
             indexes: st.indexes.clone(),
             docs: st.docs,
@@ -1803,7 +1840,11 @@ impl Model {
             // The delta atom of a probe is not such a scan: it reads the last wave's rows, priced by the relation's
             // live size (an upper bound), not the corpus.
             let delta = first.is_some_and(|f| matches!(&body[f], Literal::Atom(d) if std::ptr::eq(d, a)));
-            if !delta && stats.solving.contains(a.rel.as_str()) && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v))) {
+            // A first scan (nothing bound yet) of a member that had rows when the component opened reads those rows
+            // once: its card, measured then (`Stats::sized`). A whole plan priced by the floor took `pv` (65 k rows)
+            // first, tied with `decfn` (1 k) at the corpus's 180 k, and read it in full (O125 step 07).
+            let sized = bound.is_empty() && stats.sized.contains(a.rel.as_str());
+            if !delta && !sized && stats.solving.contains(a.rel.as_str()) && !a.args.iter().any(|t| matches!(t, Term::Var(v) if bound.contains(v))) {
                 let mut floor = stats.nodes;
                 for (c, t) in a.args.iter().enumerate() {
                     if constant(t).is_some() {
@@ -4209,6 +4250,28 @@ fn same_order(a: &[Step], b: &[Step]) -> bool {
     a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.at == y.at && x.mode == y.mode && x.lit == y.lit)
 }
 
+/// The relations of `scc` that reach themselves through `rules` (any read: positive, negated or aggregated).
+fn cyclic_relations(scc: &BTreeSet<String>, rules: &[&Rule]) -> BTreeSet<String> {
+    let mut next: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for r in rules {
+        for a in r.body.iter().filter_map(Literal::atom).filter(|a| scc.contains(a.rel.as_str())) {
+            next.entry(a.rel.as_str()).or_default().insert(r.head.rel.as_str());
+        }
+    }
+    scc.iter().filter(|start| {
+        let (mut seen, mut todo): (BTreeSet<&str>, Vec<&str>) = (BTreeSet::new(), next.get(start.as_str()).into_iter().flatten().copied().collect());
+        while let Some(x) = todo.pop() {
+            if x == start.as_str() {
+                return true;
+            }
+            if seen.insert(x) {
+                todo.extend(next.get(x).into_iter().flatten().copied());
+            }
+        }
+        false
+    }).cloned().collect()
+}
+
 /// Positive body atoms of `scc`, by body position.
 fn recursive<'r>(body: &'r [Literal], scc: &BTreeSet<String>) -> Vec<(usize, &'r Atom)> {
     body.iter()
@@ -5158,6 +5221,9 @@ impl<'a> Run<'a, '_> {
     /// relations join `native_rels`. False (and nothing run) where a rule has a literal with no native step.
     fn native_stratum_(&mut self, scc: &BTreeSet<String>, rules: &[&'a Rule], native_rels: &BTreeSet<String>, numbers: &rustc_hash::FxHashMap<*const Rule, usize>) -> Result<Native<'a>> {
         let prog = self.prog;
+        // The relations that reach themselves through the stratum's rules as written, before any is left out
+        // (`SpecLine::Leveled`).
+        let cyclic = cyclic_relations(scc, rules);
         self.why_not = None;
         self.why_class = None;
         if scc.iter().any(|r| prog.lattice.contains_key(r)) {
@@ -5245,6 +5311,8 @@ impl<'a> Run<'a, '_> {
             }
             kept
         };
+        // A gate ordering pieces (decision 0101 §3) that no rule left reads has nothing to order.
+        gates.retain(|(g, _)| !prog.together.iter().any(|t| t.contains(g)) || rules.iter().any(|r| r.body.iter().any(|l| l.atom().is_some_and(|a| a.rel.as_str() == g.as_str()))));
         let typed: HashMap<String, String> = rels.iter().map(|r| ((*r).clone(), prog_types(prog, r).iter().map(|t| sym_char(&self.model.inputs, t)).collect::<String>())).collect();
         let types = |r: &str| typed[r].clone();
         // Nothing left to run (every rule joined an empty relation, and no relation of the stratum has facts): the
@@ -5305,7 +5373,7 @@ impl<'a> Run<'a, '_> {
         lines.push(SpecLine::NoWrite);
         // Its rows keep levels where a session maintains it by them (decision 0090, the `levels` qualifier).
         if scc.iter().any(|r| prog.qualified(r, "levels")) {
-            lines.push(SpecLine::Leveled);
+            lines.push(SpecLine::Leveled(rels.iter().enumerate().filter(|(_, r)| cyclic.contains(r.as_str())).map(|(i, _)| i).collect()));
         }
         // A component that answers requests (decision 0065 §2a) cannot fall back to SQL whole: a rule with no native
         // step is a SQL seed, run before the component opens, or a SQL probe over its relations' `set_rel` views.
@@ -5530,6 +5598,39 @@ impl<'a> Run<'a, '_> {
         // Per probe (spec order), its CPU seconds, while profiling: the run's per-probe `ms:rows:cpu_ms` field.
         let timed: Vec<f64> = Vec::new();
         self.fx().open(&spec)?;
+        // Members that start with rows (a maintained stratum's survivors, rows SQL wrote): the whole plans run in the
+        // first wave, before the first chunk's live counts replan them, so they are planned again here from the
+        // members' rows as the component opened (`Stats::sized`). `RERAIL_SIZED_AT_OPEN=off` plans them as before.
+        if !(placed.gpu && not_taken.is_none()) && std::env::var("RERAIL_SIZED_AT_OPEN").map_or(true, |v| v != "off") {
+            let text_symbols = |i: usize, c: usize| self.model.inputs.atoms.is_none() && prog_types(prog, rels[i]).get(c) == Some(&"sym");
+            let live = self.fx().stats(&name, &text_symbols)?;
+            let started: Vec<(String, LiveRel)> = rels.iter().zip(live).filter(|(r, l)| l.n > 0 && !small_batches(r)).map(|(r, l)| ((*r).clone(), l)).collect();
+            if !started.is_empty() {
+                let names: Vec<String> = started.iter().map(|(r, _)| r.clone()).collect();
+                for (r, l) in started {
+                    live_stats(&mut self.model, &r, l);
+                }
+                self.model.stats.sized(names);
+                let mut whole: Vec<(*const Rule, Arc<JoinSpec>)> = Vec::new();
+                for k in 0..probes.len() {
+                    let r = probes[k].0;
+                    if sql_probe[k] || r.body[probes[k].1].atom().is_some_and(|a| small_batches(&a.rel)) {
+                        continue;
+                    }
+                    let spec = match whole.iter().find(|(p, _)| std::ptr::eq(*p, r)) {
+                        Some((_, w)) => w.clone(),
+                        None => {
+                            let _span = planning(r, "plan whole at open");
+                            let ((new, _, _), _) = self.model.plan_rule_live(prog, &r.head, &r.body, None)?;
+                            let Some(w) = self.whole_join_spec(&r.head, &new, None, &ri, scc, &native_rels) else { continue };
+                            whole.push((r, w.clone()));
+                            w
+                        }
+                    };
+                    self.fx().reprobe(&name, nseeds + k, &Reprobe::Whole(spec))?;
+                }
+            }
+        }
         let sql_views = sql_probe.iter().any(|p| *p);
         if sql_views {
             for r in &rels {
@@ -7155,8 +7256,14 @@ pub fn run(prog: &Program, db: &Connection, inputs: Inputs, lowered: Option<&low
     let mut again_delta: Vec<usize> = vec![0; prog.again.len()];
     let mut deferred: HashMap<String, (usize, usize, usize)> = HashMap::new();
     let mut unloaded: BTreeSet<String> = BTreeSet::new();
-    let gated: BTreeSet<String> = prog.gates.iter().flat_map(|(g, d)| [g, &d.rel].into_iter().chain(&d.src).chain(&d.quiet).chain(&d.deps)).cloned().collect();
-    let stays: BTreeSet<String> = prog.outputs.iter().chain(&run.model.inputs.kept).chain(&gated).cloned().collect();
+    // A gate that orders a maintained stratum's pieces (decision 0101 §3) holds nothing past its component.
+    let gated: BTreeSet<String> = prog.gates.iter().filter(|(g, _)| !prog.together.iter().any(|t| t.contains(g))).flat_map(|(g, d)| [g, &d.rel].into_iter().chain(&d.src).chain(&d.quiet).chain(&d.deps)).cloned().collect();
+    let mut stays: BTreeSet<String> = prog.outputs.iter().chain(&run.model.inputs.kept).chain(&gated).cloned().collect();
+    // A debugging aid with `RERAIL_REL_DIR`: `RERAIL_REL_KEEP` keeps every derived relation to the run's end, so the
+    // dump holds the pieces a run releases as it goes (`h__ins`, `h__del`, …).
+    if std::env::var_os("RERAIL_REL_KEEP").is_some() {
+        stays.extend(sccs.iter().flatten().cloned());
+    }
     // What stays, and what the views among it read (through views): SQL reads a view's inputs once the run ends.
     let mut pinned: BTreeSet<String> = stays.clone();
     loop {

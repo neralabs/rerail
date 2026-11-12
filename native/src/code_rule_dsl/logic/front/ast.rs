@@ -270,6 +270,9 @@ pub struct Program {
     /// A session's maintained strata, each with the rules that derive it again instead (decision 0090 §4,
     /// `maintain::rewrite`): the run chooses per stratum, once its input deltas are known (`plan::run`).
     pub again: Vec<Again>,
+    /// Relations run as one component though no rule makes them one (decision 0101 §3, `maintain::together`): a
+    /// maintained stratum's pieces at one level, ordered inside it by unit gates (`gates`), each in one set.
+    pub together: Vec<BTreeSet<String>>,
 }
 
 /// A maintained stratum's other form (decision 0090 §4). Both make its relations and their deltas (`r__minus`,

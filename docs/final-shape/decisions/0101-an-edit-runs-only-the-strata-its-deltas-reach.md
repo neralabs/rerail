@@ -1,6 +1,7 @@
 # 0101: An edit runs only the strata its deltas reach
 
-Status: draft (2026-11-09), a spec. §1 and §2 are built (2026-11-10, "Built: §1 and §2" below); §3 is not.
+Status: draft (2026-11-09), a spec. §1 and §2 are built (2026-11-10, "Built: §1 and §2" below); §3 is built
+(2026-11-12, "Built: §3" below).
 
 ## Intro
 
@@ -459,6 +460,146 @@ part of the 0.4 s of `native` and the 0.3 s of strata's own, not seconds. Work i
   `k` (201,000 rows), then filter by `icall` to nothing. That is 0.53 M work, 8% of the step. What `icall`
   first would read is not measured yet.
 
+## Built: a projection's statistics from its input's (2026-11-12)
+
+**The problem.** After a one-file edit, demand is not what costs. Maintenance is: the 165-relation component
+takes 1.2 s, and patching statistics after the run takes 0.38 s. Of that 0.38 s, 0.32 s counted `kind` and
+`docof` again in full. That is a read of unchanged data. Both are projections of `node`:
+
+```text
+kind__sup0($n, $k, $w1, $w2, $w3) :- node($w1, $n, $k, $w2, $w3).
+kind($n, $k) :- kind__sup0($n, $k, _, _, _).
+```
+
+So their columns' statistics are `node`'s columns' statistics.
+
+**The change.**
+
+- **Finding the projections.** `projection_of` (plan/corpus.rs) follows rules of one positive atom over
+  distinct variables, up to 8 hops, back to an input. It returns the map from the projection's columns to the
+  input's.
+- **Recording.** A run records each projection's statistics with its inputs' (`input_stats`), taken from the
+  input's columns (`Stats::of_columns`).
+- **Binding.** The next run binds the projection's statistics from the input's: last run's, or else this
+  run's. It does so only when the projection keeps every row of the input (rows within 1%). A tested constant
+  missing from them is counted alone.
+- **Patching.** The patch after the run skips a relation bound that way.
+- **The column names.** A base relation's statistics are keyed by its declared columns (`node`: d, n, kind,
+  start, end_), not `c0…c4`. Before this, `node`'s were never carried at all.
+
+**Measured** (the one-file query `calls_qd.rr`, first edit after a cold run; loads ≈30 before, ≈85 after):
+
+| span | before | after |
+|---|---:|---:|
+| bind and measure kept | 0.24 s | 0.002 s |
+| patch statistics | 1.02 s | 0.09 s |
+| cross-file part | 3.78 s | 2.62 s |
+| run CPU (user+sys) | 5.52 s | 4.67 s |
+
+The outputs are the same. The full `calls.rr` maintained across the edit gives a cold run's 12 outputs on the
+edited corpus.
+
+## Built: §3, a stratum's pieces as one component per level (2026-11-12)
+
+**The record decided against it** (above): it saves only fixed cost, at most ≈ 0.7 s a step. The user overrode
+that: build it.
+
+**The shape.** No new kind of component was needed. Magic sets already order a fixpoint's sub-steps, with gated
+negations (`done_` gates). Ordering a stratum's pieces is the same thing.
+
+- **Which pieces go together.** `maintain::together` takes each maintained stratum's pieces (`Again::owned`) and
+  puts them in levels. A survivor (`h :- h__old, !h__del`) starts a new level: it is made in place from the kept
+  rows less the deleted ones (`plan::survivors`), so those rows must be whole before its component opens. Each
+  level of two or more pieces is one set in `Program.together`.
+- **How the set becomes one component.** `front::components` joins each set in a ring, for the component search
+  only, so the edges stay the rules' own.
+- **How its pieces are ordered.** A negation of a piece in the same set waits for a unit gate:
+  ```text
+  h__minus(..) :- h__del(..), h__ins__ready(0), !h__ins(..).    // gated: reads h__ins whole
+  h__ins__ready(0) :- h__ins(_, …).                             // the gate's rule only places it
+  ```
+  The gate passes once `h__ins`, and what it reads in the component, are quiet (`gate … quiet … after`).
+- **What stays apart.** Pieces of a recursive stratum (their levels or DRed run in their own components), and a
+  set that would take in a relation outside it. `front::apart` checks that before any rule is gated.
+- **What a set's gates hold.** They hold rows no longer than their component: a set's relations are released as
+  any stratum's are, not kept to the run's end as magic's are. A gate whose readers were all dropped (every rule
+  joined an empty delta) is dropped with them, so a quiet set still opens nothing.
+- **The switch.** `RERAIL_PIECES_APART` runs each piece as its own component, as before.
+
+**Measured.** O125 steps 01–03, spans on, debug build. The apart run was at load 56–120, the together run at
+load 30–53, so compare the counts and the fixed cost, not the totals:
+
+| per step | apart | together |
+|---|---:|---:|
+| strata opened | 3,555 / 4,126 / 3,697 | 871 / 869 / 875 |
+| strata's fixed cost (own + `native` own) | 1.17 / 1.21 / 1.29 s | 0.23 / 0.29 / 0.26 s |
+| plan and evaluate (load differs) | 24.2 / 16.6 / 20.8 s | 17.5 / 16.1 / 16.6 s |
+
+So about 0.95 s a step of fixed cost goes, and the strata count meets the target (≈ 800 base strata).
+
+On the one-file query (`calls_qd.rr`), strata opened go from 275 to 74. CPU is unchanged there:
+- instructions retired, first edit: 49.5–52.7 G either way;
+- instructions retired, the revert: 41–43 G either way;
+- own time in the cross part: 1.41 s together, 1.42 s apart.
+
+The fixed cost there was only 0.08 s. Opening `kind`'s and `docof`'s pieces moved into their components; it did
+not go away.
+
+**Checked.** These were checked:
+- the one-file query's outputs, together against apart, on a cold run, an edit and its revert;
+- the full `calls.rr` maintained across an edit, against a cold run on the edited corpus (12 outputs);
+- `a_maintained_strata_pieces_run_as_one_component` (four edits, each against a run with an empty store);
+- the session, gate and maintenance tests near it.
+
+The O125 run above did not compare its steps with a full run (`O125_NO_FULL`).
+
+## Measured: the `ifn__ins` order, icall first (2026-11-12)
+
+**What was recorded.** Above, at step 07: the four `ifn__ins` rules took `fv__ins` (526 rows), probed `pv` by
+`k` (201,000 rows), then filtered by `icall` to nothing. Starting from `icall` was not measured.
+
+**How it was measured now.** O125 step 07, with the pieces together (§3). `RERAIL_REL_KEEP` with `RERAIL_REL_DIR`
+dumped every relation the step read or derived. `O125_RULES=ifn__ins` printed the maintained rules. Each order's
+work was counted from the dumped rows and compared with the engine's own (`native.tsv`, rows into each step,
+summed over the waves).
+
+```text
+ifn(c, f) :- icall(c, o, a), pv(o, "inst", k), fv(k, a, "fn", f).
+```
+
+**The `fv__ins` position is no longer misordered.** Its rules run `fv__ins → icall → !ifn__old → pv`: 292 rows
+in, nothing out, work 303 and 606 for the two `icall` forms. From the same rows, `pv` first would read 131,873
+instances per form: `pv`'s fanout by class is 452 rows per delta row, and the most instantiated class has 1,676
+instances. Starting from `icall` reads none: the 292 new methods have 68 names, and none is one of `icall`'s 4.
+
+**The cost moved to a recursive position.** At step 07 `ifn__ins` is in a recursive component of 183 relations
+(`pv` and `ifn` read each other), so `fv`'s own delta drives one rule:
+
+| `ifn__ins`, delta `fv` (both orders ran) | delta rows | work |
+|---|---:|---:|
+| `fv` → `pv__ins` by class → `icall` (the first plan) | 434 | 83,862 |
+| `fv` → `icall` by name → `pv__ins` checked (after the replan) | 263 + 150 | 273 + 160 |
+
+From the dumped rows, the first order reads 85,448 rows of `pv__ins` (the engine read 83,416); icall first reads
+none.
+
+**Why the first plan was wrong.** It is not skew. `pv`'s skew-aware fanout by class (`sq/rows`, 0096) is 637,
+close to the 452 it is. The first plan was made while `pv__ins`, a relation of the same component, held few rows,
+so probing it by class looked cheap. Once it grew, the drift check replanned (`replans=1`, 2) to icall first. In
+between, the first plan ran 12 delta batches.
+
+**Its size.** That first plan is 83,600 wasted units, 1.6% of the step's 5.39 M; `ifn__ins` is 134,400 in all
+(2.5%). The rest of it is driven by `pv`'s and `pv__ins`'s own deltas (5,700–13,500 rows each) and ends at the
+first `icall` probe. That is work in the delta's size, not a misorder.
+
+**What would remove it** (not built):
+
+- Price a relation of the component by what it will hold, not what it holds when planned: here `pv__ins` as the
+  last run's, or bounded by `pv`'s delta.
+- Or check the drift between a wave's batches, not only between waves.
+
+The first is the planner's estimate; the second limits any wrong first plan to one batch.
+
 ## Open
 
 - Whether §2's base-program form keeps demand's choices identical on the rewritten program. If it does not, the
@@ -467,5 +608,13 @@ part of the 0.4 s of `native` and the 0.3 s of strata's own, not seconds. Work i
   (0100's batches).
 - Recursive components are maintained by delete-and-rederive under counting (0090, "Built: counting the
   default"). §1 applies to them unchanged.
-- §3 (one component per base stratum) is worth at most ≈ 0.7 s a step at O125 after the sort fix (above). The
-  larger lever is work: the skew-misordered maintained joins, and the strata θ derives again.
+- §3 is built (above): strata a step go from ≈ 4,000 to ≈ 870, and their fixed cost from ≈ 1.2 s to ≈ 0.26 s. The
+  larger lever is still work: the strata θ derives again. The misordered `ifn__ins` join is now 1.6% of step 07:
+  a first plan made while a relation of its component was nearly empty, until the replan ("Measured: the
+  `ifn__ins` order", above).
+- Under a device binding the pieces stay apart (2026-11-12): the device refuses a component with gates ("a
+  component with gates or requests"), so a set would run on the host. Apart, each piece is a stratum of seed
+  joins, which the device runs. Sessions run with the CPU binding today. The device's own form of §3 is one
+  submission with a dispatch per level, separated by barriers: a non-recursive stratum's order is known before
+  it runs, so it needs no gates. Not built.
+- The O125 steps with the pieces together have not yet been compared with a full run (`O125_FULL_EACH`).
