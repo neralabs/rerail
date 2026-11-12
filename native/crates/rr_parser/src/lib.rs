@@ -256,9 +256,10 @@ pub mod tests {
         let arms = c.machine.lines().filter(|l| l.starts_with("arm ")).count();
         // A call of a nested choice with a field is a call where it can be (the field set where it
         // returns): the choice's level switches on its first token itself, as the lean parser's
-        // function does, so more states and arms (371 and 3,068 before), and fewer words. A short
-        // tail alike in two rules is each rule's own (4,841 words when shared).
-        assert!(states <= 404 && arms <= 3412 && c.program.words.len() <= 4865, "{states} states, {arms} arms, {} words", c.program.words.len());
+        // function does, so more states and arms (371 and 3,068 before). Each rule keeps its own
+        // code, as the lean parser's methods do (4,841 words when rules shared alike code), and
+        // a term's rest (`more`) is a call: fewer states and arms.
+        assert!(states <= 375 && arms <= 3064 && c.program.words.len() <= 5385, "{states} states, {arms} arms, {} words", c.program.words.len());
         let native = native_ir::lower(&c.program, 0, 0).expect("lowers");
         let cut = native_cpu_clusters::by_rules(&native);
         assert_eq!((cut.count as usize, cut.calls), (rules.len(), true), "a function a rule");
@@ -266,13 +267,16 @@ pub mod tests {
         // The calls open counted by the machine's stack, as the lean parser's: no `RETURN` runs
         // with no call open, and no `ACCEPT` within one, so neither is checked.
         assert!(rerail_compiler::native_cpu_stream::calls_on_stack(&native), "the calls open on the stack");
-        // A jump from one rule into a later one, not a call's: refused (into an earlier rule's
-        // code, which rules share, it is a call of that rule's function).
-        let mut bad = c.program.clone();
-        let (from, into) = (usize::from(rules[1]), rules[2]);
-        let goto = (0..bad.words.len()).find(|&pc| pc >= from && rerail_compiler::program::split(bad.words[pc]).0 == rerail_compiler::program::GOTO && rerail_compiler::program::split(bad.words[pc - 1]).0 != rerail_compiler::program::PUSH).expect("a rule's own jump");
-        bad.words[goto] = rerail_compiler::program::word(rerail_compiler::program::GOTO, 0, into);
-        assert!(stream::validate_rules(&bad).is_err(), "a jump across rules");
+        // A jump from one rule into another, not a call's: refused, into a later rule or an
+        // earlier one. A function is entered by calls alone, as the lean parser's methods are.
+        use rerail_compiler::program::{GOTO, PUSH, split, word};
+        let own_jump = |p: &rerail_compiler::program::Words, from: usize| (from..p.words.len()).find(|&pc| split(p.words[pc]).0 == GOTO && split(p.words[pc - 1]).0 != PUSH).expect("a rule's own jump");
+        for (from, into) in [(rules[1], rules[2]), (rules[2], rules[1] + 2)] {
+            let mut bad = c.program.clone();
+            let goto = own_jump(&bad, usize::from(from));
+            bad.words[goto] = word(GOTO, 0, into);
+            assert!(stream::validate_rules(&bad).is_err(), "a jump across rules, into {into}");
+        }
         // The machine: no rules. Each shape writes the engine's tape on the samples.
         let m = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
         assert!(m.program.rules.is_empty());

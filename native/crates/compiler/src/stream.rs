@@ -779,11 +779,9 @@ pub fn validate_word_kinds(program: &Words) -> Result<(), Error> {
 
 /// Tier 2's rules (`Words::rules`), when it has them: from place 0, rising, within the words;
 /// every word goes on by position within its own rule (its next word, a test's two ways), and
-/// a `PUSH` returns into it. A jump (a `GOTO`, a switch's targets) may go to another rule: a
-/// call's to its callee, any rule; another to an earlier rule's code, which rules share (the
-/// compiled code calls it, passing its result on). So a rule is a function, which reaches
-/// another's code by jumps alone, and those of jumps that are not calls nest no deeper than the
-/// rules are many: no cycle.
+/// a `PUSH` returns into it. A call's jump goes to its callee, any rule; any other jump (a
+/// `GOTO`, a switch's targets) stays within its rule. So a rule is a function, entered by calls
+/// alone, as the lean parser's methods are.
 pub fn validate_rules(program: &Words) -> Result<(), Error> {
     let (rules, words) = (&program.rules, &program.words);
     if rules.is_empty() {
@@ -798,7 +796,7 @@ pub fn validate_rules(program: &Words) -> Result<(), Error> {
     for pc in 0..n {
         let (op, mode, operand) = split(words[pc]);
         let after_push = pc > 0 && split(words[pc - 1]).0 == PUSH;
-        // A jump that is not a call's: within its rule, or into an earlier one.
+        // A jump that is not a call's: within its rule.
         let jumps: Vec<usize> = match op {
             GOTO if !after_push => vec![target(operand)],
             SWITCH => {
@@ -807,7 +805,7 @@ pub fn validate_rules(program: &Words) -> Result<(), Error> {
             }
             _ => vec![],
         };
-        if jumps.iter().any(|&t| t < n && rule_of(t) > rule_of(pc)) {
+        if jumps.iter().any(|&t| t < n && rule_of(t) != rule_of(pc)) {
             return Err(Error::InvalidTarget(pc));
         }
         let next: Vec<usize> = match op {

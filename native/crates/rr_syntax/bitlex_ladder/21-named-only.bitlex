@@ -444,7 +444,8 @@ tree rr {
   choice comparison_tail = wrap comparison left operator: comparison_operator right: term
   choice pattern_tail   = wrap pattern_match subject '~' pattern: code_literal
   # After a primary: the rest of its product, then of its term.
-  choice more           = (wrap binary_expression left operator: multiplicative right: primary)* (wrap binary_expression left operator: additive right: product)*
+  # (`more1` if any: a call, as the lean parser's `self.term()`.)
+  choice more           = [more1]
   choice comparison_operator = '=' | '!=' | '<' | '<=' | '>' | '>='
   # Terms by precedence, each operator around the left side so far.
   choice term nested    = product (wrap binary_expression left operator: additive right: product)*

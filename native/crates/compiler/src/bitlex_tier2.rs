@@ -1262,15 +1262,10 @@ fn ways(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], pc: usize) -
 /// becomes a `GOTO` to it, and words nothing reaches go. The places of a state a call returns to
 /// stay whole (`TOKEN`, its `MARK`s and their ways, `SWITCH`: `stream::validate`'s shape).
 ///
-/// `rules`: each word's rule (a function a rule). Words of two rules are alike as any are, and
-/// a word goes to the first place of its kind, in any rule: a call to its callee's, and a jump
-/// to code rules share (which compiled code calls, passing its result on: the lean parser's
-/// `return self.helper()`). A kind's first place is in the earliest rule that has it, so a
-/// rule goes into earlier rules' code alone. A call's landing stays its caller's (the call
-/// returns into its own function). The kept words' rules come back with them.
-/// The fewest words a rule's code must reach to be shared with another rule's (`merge_words`).
-const SHARED_LEAST: usize = 8;
-
+/// `rules`: each word's rule (a function a rule). Words are alike within a rule alone, so each
+/// rule keeps its own code, as each of the lean parser's methods does, and a function is
+/// entered by calls alone (`stream::validate_rules`). A call's landing stays its caller's (the
+/// call returns into its own function). The kept words' rules come back with them.
 fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules: Option<&[u16]>) -> (Vec<(&'static str, u8, Arg)>, Vec<ByteSwitch>, Vec<u16>) {
     let n = words.len();
     const NONE: u32 = u32::MAX;
@@ -1317,56 +1312,9 @@ fn merge_words(words: &[(&'static str, u8, Arg)], switches: &[ByteSwitch], rules
         }
         (class, count)
     };
-    // Across rules, words alike are shared where the code from the kept one is large: a helper
-    // the lean parser would call (`return self.helper()`). A short tail (a leaf and a return)
-    // each rule keeps its own, as each of the lean parser's methods writes its own.
-    let (all, all_count) = partition(false);
-    let class: Vec<u32> = match rules {
-        None => all,
-        Some(r) => {
-            let (own, _) = partition(true);
-            let mut first = vec![usize::MAX; all_count];
-            let mut spans = vec![false; all_count];
-            for pc in (0..n).rev() {
-                let k = all[pc] as usize;
-                if first[k] != usize::MAX && r[first[k]] != r[pc] {
-                    spans[k] = true;
-                }
-                first[k] = pc;
-            }
-            // The words the kept one reaches in its rule, up to `SHARED_LEAST` (a call's
-            // callee not followed: it is called).
-            let large = |at: usize| {
-                let mut seen = std::collections::HashSet::new();
-                let mut todo = vec![at];
-                while let Some(pc) = todo.pop() {
-                    if pc >= n || r[pc] != r[at] || !seen.insert(pc) {
-                        continue;
-                    }
-                    if seen.len() > SHARED_LEAST {
-                        return true;
-                    }
-                    if is_call(pc) {
-                        continue;
-                    }
-                    let (targets, by_place) = ways(words, switches, pc);
-                    todo.extend(targets.iter().filter(|&&t| t != REFUSE).map(|&t| usize::from(t)));
-                    todo.extend((1..=by_place).map(|d| pc + d));
-                }
-                false
-            };
-            let shared: Vec<bool> = (0..all_count).map(|k| !spans[k] || large(first[k])).collect();
-            let mut ids: HashMap<(bool, u32), u32> = HashMap::new();
-            (0..n)
-                .map(|pc| {
-                    let key = if shared[all[pc] as usize] { (true, all[pc]) } else { (false, own[pc]) };
-                    let id = ids.len() as u32;
-                    *ids.entry(key).or_insert(id)
-                })
-                .collect()
-        }
-    };
-    let count = class.iter().max().map_or(0, |&m| m as usize + 1);
+    // A rule's words are its own, as each of the lean parser's methods is: no rule goes into
+    // another's code, so each function has one entry.
+    let (class, count) = partition(rules.is_some());
     let mut rep = vec![usize::MAX; count];
     for pc in (0..n).rev() {
         rep[class[pc] as usize] = pc;
