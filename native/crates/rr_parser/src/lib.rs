@@ -20,7 +20,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 /// The grammar: the ladder's last step.
-const GRAMMAR: &str = include_str!("../../rr_syntax/bitlex_ladder/21-named-only.bitlex");
+const GRAMMAR: &str = include_str!("../../rr_syntax/bitlex_ladder/22-test-blocks.bitlex");
 
 /// Sample documents, for the profile tier 2 is cut by when the grammar compiles
 /// (docs/parser-generators/28-tier-2-in-clusters.md): 12 of the repository's `.rr`
@@ -250,7 +250,7 @@ pub mod tests {
         // A ratchet, as the machine's (`the_state_machine_shares_its_rules`): lower it as the
         // compiler improves. Keywords are the switches' targets (`ByteSwitch::words`): 13,119
         // words before, when each state tested each keyword with a `SPAN`, a `WORD` and jumps.
-        // A third are still jumps (`GOTO`).
+        // A third are still jumps (`GOTO`). A rule file's tests (step 22) raised it from 371 states and 8,860 words.
         assert!(c.program.switches.iter().any(|s| !s.words.is_empty()), "the switches name keywords");
         // Its words in order, by the verifier: out of order, refused.
         let mut bad = c.program.clone();
@@ -259,7 +259,7 @@ pub mod tests {
         assert!(stream::validate(&bad).is_err(), "a switch's words out of order");
         let states = c.machine.lines().filter(|l| l.starts_with("state ")).count();
         let arms = c.machine.lines().filter(|l| l.starts_with("arm ")).count();
-        assert!(states <= 371 && arms <= 3068 && c.program.words.len() <= 8860, "{states} states, {arms} arms, {} words", c.program.words.len());
+        assert!(states <= 380 && arms <= 3068 && c.program.words.len() <= 9348, "{states} states, {arms} arms, {} words", c.program.words.len());
         let native = native_ir::lower(&c.program, 0, 0).expect("lowers");
         let cut = native_cpu_clusters::by_rules(&native);
         assert_eq!((cut.count as usize, cut.calls), (rules.len(), true), "a function a rule");
@@ -287,15 +287,46 @@ pub mod tests {
             "r(x) :- s(x), !t(x). // c\n.decl r(a: number)\n",
             "r(n) :- n = sum min x : { s(x) } : { t(n) }, m = count : { u(_) }.",
             ".policy {\"a\": [1, {\"b\": null}]}\n/* d */ r(x) :- x ~ `a`, y = \"s\".",
+            // A rule file's tests (decision 0119): a fixture set, and a test that uses it.
+            ".fixtures app\n    .fixture \"a.py\" ```\n        x = 1\n        ```\n.end\n.test t exactly uses app, b\n    #include \"c.rr\"\n    seen(1).\n    r(x) :- seen(x).\n    .given seen\n    .expect B101 at \"a.py\":1\n    .expect no r(_)\n.end\nr(x) :- s(x).\n",
+            // `exactly` and `uses` as names; a block's statements end at `. end`.
+            ".test exactly\n.end\n.test uses uses a\n. // c\n end\n.fixtures f exactly(1).\n.end",
         ];
         for src in parsed {
             assert!(super::compiled_tape(src).is_some(), "the grammar refuses {src:?}");
             assert_eq!(super::tape(src), super::engine_columns(&super::rr::tape(src)), "{src:?}");
         }
         let deep = format!(".policy {{\"a\": {}{}}}", "[".repeat(127), "]".repeat(127));
-        for src in ["r(x) :- x ~ ````a````.", deep.as_str(), "r(x) :- ."] {
+        let refused = [
+            "r(x) :- x ~ ````a````.",
+            deep.as_str(),
+            "r(x) :- .",
+            // Blocks do not nest; a `.end` outside one; a block with no `.end`.
+            ".test a\n.test b\n.end\n.end",
+            ".fixtures a\n.test b\n.end\n.end",
+            ".end",
+            "r(x).\n.end",
+            ".test a\nr(x).",
+        ];
+        for src in refused {
             assert!(super::compiled_tape(src).is_none(), "the grammar takes {src:?}");
             assert_eq!(super::tape(src), super::engine_columns(&super::rr::tape(src)), "{src:?}");
+        }
+    }
+
+    /// The rule files that carry tests (decision 0119): the grammar takes each, and its tape is the engine's.
+    #[test]
+    fn rule_files_with_tests_are_the_engines() {
+        let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
+        for src in [
+            include_str!("../../../../docs/rule-syntax/packs/python/bandit-b101-assert-used.rr"),
+            include_str!("../../../../docs/rule-syntax/spikes/rr-tests/print-calls.rr"),
+        ] {
+            assert!(src.contains(".test "));
+            let engine = super::engine_columns(&super::rr::tape(src));
+            assert!(super::compiled_tape(src).is_some(), "the grammar refuses a rule file with tests");
+            assert_eq!(super::tape(src), engine);
+            assert_eq!(machine.parser.columns(src.as_bytes()).ok(), Some(engine), "as one machine");
         }
     }
 
@@ -304,6 +335,8 @@ pub mod tests {
     /// place, `.rr` had 858 states and 8,370 arms; shared, 438 and 4,014. A ratchet: lower it as
     /// the compiler improves. Named-only tapes (step 21) raised it from 234 and 2,225 (to 266 and 2,590): a group's
     /// body and an aggregate word's arguments are rules of their own, which drop their `,`.
+    /// A rule file's tests (step 22, decision 0119) raised it to 271 and 2,621: a block's statements are a level of
+    /// their own, which shares the setting with the root.
     /// Of the state machine (`Shape::Machine`); the product's shape, a function a rule, has its
     /// own (`tier2_is_a_function_a_grammar_rule`).
     #[test]
@@ -311,8 +344,8 @@ pub mod tests {
         let c = super::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles");
         let states = c.machine.lines().filter(|l| l.starts_with("state ")).count();
         let arms = c.machine.lines().filter(|l| l.starts_with("arm ")).count();
-        assert!(states <= 266, "{states} states");
-        assert!(arms <= 2590, "{arms} arms");
+        assert!(states <= 271, "{states} states");
+        assert!(arms <= 2621, "{arms} arms");
     }
 
     /// The parse path is the compiled code's: the host functions around the two compiled calls

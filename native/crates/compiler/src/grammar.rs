@@ -1276,7 +1276,9 @@ pub fn with_extras(
     if let Some(a) = arms.iter().find(|a| extras.contains(&a.token)) {
         return Err(format!("extra kind {} is a token of the grammar too", a.token));
     }
-    if arms.iter().any(|a| a.to == 0 || a.push.contains(&0)) {
+    // A root that is not whole is opened by state 0's arms: entered again, they would open it again. A whole root's
+    // state 0 is like any other (below), and a call from it may return there.
+    if !whole && arms.iter().any(|a| a.to == 0 || a.push.contains(&0)) {
         return Err("extras with the root's start state entered again: not compiled yet".into());
     }
     let root = states[0].level;
