@@ -408,7 +408,7 @@ export function repositoryHistoryIds(repository: RepositoryListing): string[] {
  * - `{ commonDirectory }`: a checkout of the clone whose common Git folder that is ({@link gitEntry}), which stays;
  * - `unlisted`: no checkout's top level now, as its folder, its `.git` entry or the Git folder that entry names is gone,
  *   which stays only while the registry of its clone names it ({@link unlistedByTheirClones});
- * - `unknown`: the folder gives no answer, or its `.git` entry can't be read, which stays.
+ * - `unknown`: neither the folder nor its drive answers, or its `.git` entry can't be read, which stays.
  */
 type OnDisk = { readonly commonDirectory: string } | "unlisted" | "unknown";
 
@@ -454,7 +454,7 @@ function gitFolderClone(gitFolder: string): OnDisk {
   } catch (error) {
     if (!missing(error)) return "unknown";
   }
-  return { commonDirectory: storedPath(commonDirectory) };
+  return { commonDirectory: storedPathOrAsGiven(commonDirectory) };
 }
 
 /**
@@ -491,14 +491,23 @@ function listedInClone(
   const [commonDirectory, checkout] = only;
   if (!listings.has(commonDirectory)) listings.set(commonDirectory, worktreesListedIn(checkout, commonDirectory));
   const listed = listings.get(commonDirectory);
-  return listed === undefined || listed.has(path);
+  return listed === undefined || listed.has(listingKey(path));
+}
+
+/** Windows and macOS find one folder under names that differ in letter case, as Git may have registered it. */
+const NAMES_FOLD_CASE = process.platform === "win32" || process.platform === "darwin";
+
+/** `path` as a pass matches it against a listing: without letter case where the filesystem ignores it. */
+function listingKey(path: string): string {
+  return NAMES_FOLD_CASE ? path.toLowerCase() : path;
 }
 
 /**
  * The checkouts `git worktree list` names when run in `checkout`, a checkout of the clone whose common Git folder is
- * `commonDirectory`, as Rerail stores paths. Undefined when Git can't answer, or can't name the clone's own checkout:
- * Git names it as the folder holding a common `.git` folder, so for a submodule or a `--separate-git-dir` clone, whose
- * Git folder lives elsewhere, it names the Git folder, and that checkout may be any folder the listing leaves out.
+ * `commonDirectory`, as {@link listingKey}s of Rerail's stored paths. Undefined when Git can't answer, or can't name
+ * the clone's own checkout: Git names it as the folder holding a common `.git` folder, so for a submodule or a
+ * `--separate-git-dir` clone, whose Git folder lives elsewhere, it names the Git folder, and that checkout may be any
+ * folder the listing leaves out.
  */
 function worktreesListedIn(checkout: string, commonDirectory: string): ReadonlySet<string> | undefined {
   let result;
@@ -510,19 +519,44 @@ function worktreesListedIn(checkout: string, commonDirectory: string): ReadonlyS
   }
   if (result.status !== 0) return undefined;
   const lines = result.stdout.split("\n");
-  const listed = lines.filter(line => line.startsWith("worktree ")).map(line => storedPath(line.slice("worktree ".length)));
+  const listed = lines.filter(line => line.startsWith("worktree ")).map(line => storedPathOrAsGiven(line.slice("worktree ".length)));
   // The first entry is the clone's own checkout, or its Git folder with a `bare` line when it has none.
   const end = lines.indexOf("");
   const bare = (end === -1 ? lines : lines.slice(0, end)).includes("bare");
-  return !bare && listed[0] === commonDirectory ? undefined : new Set(listed);
+  return !bare && listed[0] === commonDirectory ? undefined : new Set(listed.map(listingKey));
+}
+
+/**
+ * {@link storedPath}, or `path` as given where the filesystem can't resolve it: Git still lists a worktree on a drive
+ * that is not mounted, or on a share that is down, and its root has no stored spelling to read.
+ */
+function storedPathOrAsGiven(path: string): string {
+  try {
+    return storedPath(path);
+  } catch {
+    return resolve(path);
+  }
 }
 
 /**
  * Whether a folder is at `path`: false where the filesystem says nothing is, undefined where it gives no answer (a
- * network share that is down, a folder Rerail may not read). Asked without blocking, so a share that does not answer
- * holds a pool thread and not the caller's.
+ * network share that is down, a folder Rerail may not read, a drive that is not mounted). Asked without blocking, so a
+ * share that does not answer holds a pool thread and not the caller's. `drives` keeps each root's answer for the pass.
  */
-async function folderPresent(path: string): Promise<boolean | undefined> {
+async function folderPresent(path: string, drives: Map<string, Promise<boolean | undefined>>): Promise<boolean | undefined> {
+  const present = await pathPresent(path);
+  if (present !== false) return present;
+  // Windows answers for a path on a drive letter nothing is mounted at as for a deleted folder; the root tells them apart.
+  const root = parse(path).root;
+  let drive = drives.get(root);
+  if (drive === undefined) {
+    drive = pathPresent(root);
+    drives.set(root, drive);
+  }
+  return (await drive) === true ? false : undefined;
+}
+
+async function pathPresent(path: string): Promise<boolean | undefined> {
   try {
     await stat(path);
     return true;
@@ -555,8 +589,9 @@ export interface PruneCheckoutsOptions {
  */
 export async function pruneCheckouts(db: RerailDatabase, { now = Date.now(), signal }: PruneCheckoutsOptions = {}): Promise<string[]> {
   const looked: LookedAt[] = [];
+  const drives = new Map<string, Promise<boolean | undefined>>();
   for (const row of db.select({ path: checkouts.checkoutPath, cloneId: checkouts.cloneId }).from(checkouts).all()) {
-    const present = await folderPresent(row.path);
+    const present = await folderPresent(row.path, drives);
     // A folder on a share that does not answer can take the system's whole timeout; a stopping daemon waits for one.
     if (signal?.aborted === true) return [];
     looked.push({ ...row, onDisk: onDiskOf(row.path, present) });
