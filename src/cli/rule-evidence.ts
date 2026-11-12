@@ -177,7 +177,8 @@ export interface RuleEvidence {
   repository: { name: string; known: boolean; checkouts: number };
   /**
    * The last `days` days: `sessions` (and `hosts`, by coding agent) counts those active in them, which started in them
-   * or whose last event came in them; `prompts` and everything below count only what was written in them.
+   * or whose last event came in them; `prompts` and everything below count only what was written in them. A
+   * correction's `before` still names the calls just before it, even ones from before them.
    */
   window: { days: number; sessions: number; hosts: Record<string, number>; prompts: number };
   corrections: EvidenceCorrection[];
