@@ -370,27 +370,43 @@ function readOf(migration: Migration, read: Migration["read"], database: RerailD
   return read === undefined ? [] : [[migration.id, read.call(migration, database)]];
 }
 
+/**
+ * `migrations`, each step's `up` and `later` given what the step read before the lock (`reads`): the steps `migrate` and
+ * `migrateLater` run.
+ */
+export function withReads(migrations: readonly Migration[], reads: MigrationReads): readonly Migration[] {
+  return migrations.map(migration => ({
+    ...migration,
+    up: (database: RerailDatabase) => migration.up(database, reads.up.get(migration.id)),
+    ...laterWith(migration, reads.later.get(migration.id)),
+  }));
+}
+
+/** `migration`'s `later` given `read`, or none for a step with no `later`. */
+function laterWith(migration: Migration, read: unknown): Pick<Migration, "later"> {
+  const later = migration.later;
+  return later === undefined ? {} : { later: database => later.call(migration, database, read) };
+}
+
 /** Runs the `later` work of `migrations` (`Migration.later`) on a file a writer holds, unless it is new: then none is left. */
-export function migrateLater(database: RerailDatabase, migrations: readonly Migration[], fresh: boolean, reads = NO_MIGRATION_READS): void {
+export function migrateLater(database: RerailDatabase, migrations: readonly Migration[], fresh: boolean): void {
   if (fresh) return;
-  for (const migration of migrations) migration.later?.(database, reads.later.get(migration.id));
+  for (const migration of migrations) migration.later?.(database);
 }
 
 /**
  * Brings a file a writer holds under `BEGIN IMMEDIATE` to the current shape and returns the floor to stamp.
  * A new file (`fresh`) gets the DDL and every step recorded as run without running it. An existing file
- * runs the steps it has not recorded, in order, each with what it read before the lock (`reads`), then the DDL, which
- * only creates what is missing.
+ * runs the steps it has not recorded, in order, then the DDL, which only creates what is missing.
  */
 export function migrate(
   database: RerailDatabase,
   { fresh, floor }: { fresh: boolean; floor: number },
   statements: readonly string[],
   migrations: readonly Migration[],
-  reads = NO_MIGRATION_READS,
 ): number {
   const pending = fresh ? [] : pendingMigrations(database, migrations);
-  for (const migration of pending) migration.up(database, reads.up.get(migration.id));
+  for (const migration of pending) migration.up(database);
   for (const statement of statements) database.run(sql.raw(statement));
   const recorded = fresh ? migrations : pending;
   const appliedAt = Date.now();

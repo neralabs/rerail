@@ -6,7 +6,7 @@ import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3"
 import * as schema from "./schema.js";
 import {
   NO_MIGRATION_READS, RERAIL_BASELINE_SCHEMA_VERSION, RERAIL_MIGRATIONS, migrate, migrateLater, pendingMigrations, readBeforeMigrating, schemaVersionOf,
-  type Migration, type MigrationReads,
+  withReads, type Migration, type MigrationReads,
 } from "./migrations.js";
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "./baseline-schema.js";
 import { RERAIL_SCHEMA_STATEMENTS } from "./schema-sql.generated.js";
@@ -308,8 +308,9 @@ function applySchema(database: RerailDatabase, path: string, migrations: readonl
   const refusal = schemaRefusal(path, stamp, supported);
   if (refusal !== undefined) throw new Error(refusal);
   if (migrations === undefined) return;
-  const floor = migrate(database, { fresh: stamp.version === 0, floor: stamp.version }, RERAIL_SCHEMA_STATEMENTS, migrations, reads);
-  migrateLater(database, migrations, stamp.version === 0, reads);
+  const steps = withReads(migrations, reads);
+  const floor = migrate(database, { fresh: stamp.version === 0, floor: stamp.version }, RERAIL_SCHEMA_STATEMENTS, steps);
+  migrateLater(database, steps, stamp.version === 0);
   if (floor !== stamp.version) database.run(sql.raw(`PRAGMA user_version = ${floor}`));
   database.run(sql.raw("COMMIT"));
 }
