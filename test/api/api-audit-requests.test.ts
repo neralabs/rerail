@@ -1,5 +1,6 @@
 import { realpathSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -12,16 +13,20 @@ describe("a scan asked through the API", () => {
   let root: string;
   let stores: DatabaseApiStores;
   let resumed: string[];
+  /** What opening a session again waits on: nothing, unless a test holds it. */
+  let reopening: Promise<void>;
 
   beforeEach(async () => {
     root = realpathSync(await mkdtemp(join(tmpdir(), "rerail-audit-requests-")));
     const databasePath = join(root, "rerail.sqlite");
     resumed = [];
+    reopening = Promise.resolve();
     stores = new DatabaseApiStores(databasePath, {
       health: () => ({ pid: process.pid, database: { path: databasePath, exists: true }, native: { ok: true } }),
       origin: () => "http://127.0.0.1:4737",
       resumeSession: async (sessionId) => {
         resumed.push(sessionId);
+        await reopening;
       },
     });
     for (const sessionId of ["owned", "ended"]) stores.sessionStore().openSession({ host: "claude-code", sessionId, cwd: root });
@@ -49,6 +54,20 @@ describe("a scan asked through the API", () => {
   it("opens again the session a queued scan is for", async () => {
     expect(await requestScan("owned")).toMatchObject({ status: "queued", error: null });
     expect(resumed).toEqual(["owned"]);
+  });
+
+  // Opening a session again reads its ledger back and can make its checkout's runtime again; on main the request was
+  // answered as soon as it was queued.
+  it("answers once the scan is queued, while the session is still opening again", async () => {
+    const opening = Promise.withResolvers<void>();
+    reopening = opening.promise;
+    try {
+      const answer = await Promise.race([requestScan("owned"), delay(2_000, "no answer within 2 s")]);
+      expect(answer).toMatchObject({ status: "queued", error: null });
+      expect(resumed).toEqual(["owned"]);
+    } finally {
+      opening.resolve();
+    }
   });
 
   it("opens no session for a scan it could not queue", async () => {

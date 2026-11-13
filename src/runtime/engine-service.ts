@@ -38,7 +38,8 @@ export interface EngineService {
   closeIdleSessions(): Promise<void>;
   /**
    * Opens again the session the idle close suspended, so a scan just queued for it runs now, as it would have while the
-   * session was open; nothing for a session that is not suspended. Reports its own failure.
+   * session was open; nothing for a session that is not suspended. Never rejects: it reports its own failure, and the
+   * service's close waits for it.
    */
   resumeSession(sessionId: string): Promise<void>;
 }

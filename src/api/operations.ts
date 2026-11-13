@@ -491,13 +491,13 @@ export const operations: readonly Operation[] = [
     params: sessionId,
     body: auditRequestInputSchema,
     output: auditRequestSchema,
-    handler: async (stores, input, caller) => {
+    handler: (stores, input, caller) => {
       requireSession(stores, caller, input.sessionId);
       const { sessionId, ...request } = input;
       const created = stores.auditControls().requestAudit(sessionId, request);
       // A session the daemon suspended while it was quiet keeps its owner, so its scan queues; it opens again to run it
-      // now, as an open session would.
-      if (created.status === "queued") await stores.resumeSession?.(sessionId);
+      // now, as an open session would. The answer does not wait for that: it reads the session's ledger back.
+      if (created.status === "queued") stores.resumeSession?.(sessionId);
       return created;
     },
   }),

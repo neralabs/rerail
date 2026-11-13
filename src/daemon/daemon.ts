@@ -491,8 +491,9 @@ export class RerailDaemon {
       health: () => daemon!.health(),
       origin: () => new URL(daemon!.url).origin,
       ...(options.codingAgents === undefined ? {} : { codingAgents: options.codingAgents }),
-      // The server listens only once the engine service runs, so a scan request always finds it.
-      resumeSession: async sessionId => await started.engineService?.resumeSession(sessionId),
+      // The server listens only once the engine service runs, so a scan request always finds it. The engine service
+      // reports a failure itself, and its close waits for the open.
+      resumeSession: sessionId => void started.engineService?.resumeSession(sessionId),
     });
     try {
       const engineService = await startEngineService({

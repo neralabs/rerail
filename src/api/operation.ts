@@ -46,10 +46,11 @@ export interface RerailApiStores {
   /** Every coding agent and whether Rerail is connected to it; undefined when this process cannot check. */
   codingAgents(): Promise<CodingAgentState[]> | undefined;
   /**
-   * Opens again a session this daemon suspended while it was quiet, so a scan just queued for it runs now; nothing for
-   * any other session. A process that runs no sessions has none.
+   * Starts opening again a session this daemon suspended while it was quiet, so a scan just queued for it runs now;
+   * nothing for any other session. Returns at once and never throws: a failure goes to the daemon's log, and the scan
+   * then runs at the session's next event. A process that runs no sessions has none.
    */
-  resumeSession?(sessionId: string): Promise<void>;
+  resumeSession?(sessionId: string): void;
 }
 
 export type OperationMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
