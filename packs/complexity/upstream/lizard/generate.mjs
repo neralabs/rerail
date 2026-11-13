@@ -3,14 +3,15 @@
 // - lizard-<VERSION>.tsv, every function's score, which test/engine/code-rule/complexity-rules.test.ts reads;
 // - fixtures.expected.json, lizard's findings as the conformance check reads a tool's (conformance/README.md): one
 //   CYCLOMATIC_COMPLEXITY finding, at the function's first line, per function scored above the pack's limit of 6, on
-//   the corpus files some rule's scope covers. The test files the scopes leave out are complexity-rules.test.ts's.
+//   the corpus files some rule's scope covers, a candidate's included. The test files the scopes leave out are
+//   complexity-rules.test.ts's.
 // Then it writes provenance.json and LICENSES.md (every file is Rerail's: UPSTREAM.md lists the corpus, and the rest is
 // recorded). `npm run fixtures:derive -- --pack complexity` runs it after the corpus changes, with the lizard of
 // scripts/pack-data/runtimes/lizard-<VERSION> (scripts/pack-data/recipes/complexity.ts). lizard is never a runtime
 // dependency. The corpus is authored pack test data, in S3; what this writes is derived, never committed
 // (CONTRIBUTING.md, "Pack test data").
 import { spawnSync } from "node:child_process";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { matchesGlob, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -88,10 +89,14 @@ if (rows.length === 0) throw new Error("lizard scored no functions in the corpus
 const header = `# Recorded by packs/complexity/upstream/lizard/generate.mjs with lizard ${VERSION}, ccn = min(standard, -m); paths are relative to fixtures/ beside this file.\npath\tfunction\tline\tccn\n`;
 await writeFile(scoresTarget, header + rows.map(row => `${row.path}\t${row.name}\t${row.line}\t${row.ccn}\n`).join(""));
 
-// The units: every corpus file a rule's scope covers, as the engine reads a rule document's scope globs.
-const scopes = readdirSync(fileURLToPath(new URL("../../rules/", import.meta.url)))
-  .filter(name => name.endsWith(".json"))
-  .map(name => JSON.parse(readFileSync(fileURLToPath(new URL(`../../rules/${name}`, import.meta.url)), "utf8")).scope);
+// The units: every corpus file a rule's scope covers, as the engine reads a rule document's scope globs. A candidate
+// (candidates/rules/) is scored on its files like a shipped rule (rules/).
+const scopes = ["../../rules/", "../../candidates/rules/"]
+  .map(directory => new URL(directory, import.meta.url))
+  .filter(directory => existsSync(directory))
+  .flatMap(directory => readdirSync(directory)
+    .filter(name => name.endsWith(".json"))
+    .map(name => JSON.parse(readFileSync(new URL(name, directory), "utf8")).scope));
 const inScope = path => scopes.some(scope => scope.include.some(glob => matchesGlob(path, glob)) && !scope.exclude.some(glob => matchesGlob(path, glob)));
 const files = readdirSync(corpus, { recursive: true, withFileTypes: true })
   .filter(entry => entry.isFile())

@@ -1,0 +1,139 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "complexity-cyclomatic-java",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Keep Java methods and constructors at cyclomatic complexity 6 or below, counting each if, for, while, catch, switch, ternary and && or ||; branch-heavy methods are hard to follow and test.",
+  "scope": {
+    "include": [
+      "**/*.java"
+    ],
+    "exclude": [
+      "**/generated/**",
+      "**/generated-sources/**",
+      "**/generated-test-sources/**",
+      "**/generated-src/**",
+      "**/src/test/**",
+      "**/src/*Test/**",
+      "**/src/testFixtures/**",
+      "**/*Test.java",
+      "**/*Tests.java",
+      "**/*TestCase.java",
+      "**/*IT.java",
+      "**/*ITCase.java"
+    ]
+  },
+  "clauses": [
+    {
+      "id": "too-complex",
+      "forbid": {
+        "ast": {
+          "language": "java",
+          "rule": {
+            "all": [
+              {
+                "matches": "boundary",
+                "count": {
+                  "has": {
+                    "matches": "decision",
+                    "stopBy": {
+                      "matches": "boundary"
+                    }
+                  },
+                  "min": 6,
+                  "as": "CCN",
+                  "offset": 1
+                }
+              },
+              {
+                "has": {
+                  "field": "name",
+                  "pattern": "$NAME"
+                }
+              }
+            ]
+          },
+          "utils": {
+            "boundary": {
+              "any": [
+                {
+                  "kind": "method_declaration",
+                  "has": {
+                    "field": "body",
+                    "kind": "block"
+                  }
+                },
+                {
+                  "kind": "constructor_declaration"
+                },
+                {
+                  "kind": "compact_constructor_declaration"
+                }
+              ]
+            },
+            "cased": {
+              "kind": "switch_label",
+              "regex": "^case\\b"
+            },
+            "decision": {
+              "any": [
+                {
+                  "kind": "if_statement"
+                },
+                {
+                  "kind": "for_statement"
+                },
+                {
+                  "kind": "enhanced_for_statement"
+                },
+                {
+                  "kind": "while_statement"
+                },
+                {
+                  "kind": "do_statement"
+                },
+                {
+                  "kind": "catch_clause"
+                },
+                {
+                  "kind": "switch_expression",
+                  "has": {
+                    "kind": "switch_block",
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "switch_block_statement_group"
+                        },
+                        {
+                          "kind": "switch_rule"
+                        }
+                      ],
+                      "has": {
+                        "matches": "cased"
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "ternary_expression"
+                },
+                {
+                  "kind": "binary_expression",
+                  "has": {
+                    "field": "operator",
+                    "regex": "^(?:&&|\\|\\|)$"
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "CYCLOMATIC_COMPLEXITY",
+        "message": "`$NAME` has cyclomatic complexity $CCN, over the ceiling of 6. Decompose it into smaller functions."
+      }
+    }
+  ]
+}

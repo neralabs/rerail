@@ -6,7 +6,8 @@
  * deviations listed here; a measuring variant of each rule (same counting, no threshold) must give every function
  * lizard's number, so functions at the limit and below are checked too. Test files are out of scope even where lizard
  * scores them over the limit. The conformance check judges the same rules on the findings alone
- * (fixtures.expected.json, with packs/complexity/divergences.json); this test checks every number.
+ * (fixtures.expected.json, with packs/complexity/divergences.json); this test checks every number. The Java rule is a
+ * candidate (packs/complexity/candidates/rules/): held to the same parity here, not shipped.
  */
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -36,6 +37,7 @@ const RULES = {
   blade: "complexity-cyclomatic-blade",
   rust: "complexity-cyclomatic-rust",
   vue: "complexity-cyclomatic-vue",
+  java: "complexity-cyclomatic-java",
 } as const;
 type CorpusLanguage = keyof typeof RULES;
 const LANGUAGES = Object.keys(RULES) as CorpusLanguage[];
@@ -75,6 +77,11 @@ function ccnOf(language: CorpusLanguage, text: string): number {
  *   and loses the `&&` after it. A trait's required method is no function: lizard runs it on into the next one, which
  *   it scores under the required method's line.
  * - Vue: a `<` directly before a letter is a comparison: lizard reads a tag up to the next `>` and loses what is between.
+ * - Java: a record's compact constructor is scored, and lizard lists none. An initializer block is no method: lizard
+ *   reads a call before a `{` inside one (`isEmpty()) {`) as a method. A wildcard bounded by a wildcard type
+ *   (`<? extends Comparable<?>>`) in a body counts 0: lizard reads its first `?` as a conditional. A method with an
+ *   annotation on a line of its own starts on that line: lizard lists it on its name's line, so each side has a row the
+ *   other lacks.
  */
 const DEVIATIONS: ReadonlyArray<{ path: string; line: number; lizard: number | null; rerail: number | null }> = [
   { path: "javascript/nullish.js", line: 4, lizard: 8, rerail: 4 },
@@ -109,6 +116,14 @@ const DEVIATIONS: ReadonlyArray<{ path: string; line: number; lizard: number | n
   { path: "rust/tokens.rs", line: 30, lizard: 2, rerail: 3 },
   { path: "vue/tokens.vue", line: 5, lizard: 5, rerail: 1 },
   { path: "vue/tokens.vue", line: 11, lizard: 1, rerail: 3 },
+  { path: "java/Branches.java", line: 109, lizard: 3, rerail: 2 },
+  { path: "java/Modern.java", line: 14, lizard: null, rerail: 3 },
+  { path: "java/Nesting.java", line: 10, lizard: 3, rerail: null },
+  { path: "java/Nesting.java", line: 46, lizard: null, rerail: 7 },
+  { path: "java/Nesting.java", line: 47, lizard: 7, rerail: null },
+  { path: "java/Tokens.java", line: 18, lizard: 2, rerail: 1 },
+  { path: "java/Tokens.java", line: 45, lizard: null, rerail: 1 },
+  { path: "java/Tokens.java", line: 47, lizard: 1, rerail: null },
 ];
 
 const lizardRowSchema = z.object({ path: z.string().min(1), name: z.string().min(1), line: z.number().int().positive(), ccn: z.number().int().positive() });
@@ -181,7 +196,8 @@ function findings(language: CorpusLanguage, compiled: NativeCompiledCodeRuleDsl,
   return Object.fromEntries(Object.entries(messages(compiled, files)).map(([at, text]) => [at, ccnOf(language, text)]));
 }
 
-const documents = loadPackRuleDocuments([repositoryPath("packs", "complexity")]).filter(document => document.rule.id.startsWith("complexity-"));
+// `rules/` of the pack and of its candidates.
+const documents = loadPackRuleDocuments([repositoryPath("packs", "complexity"), repositoryPath("packs", "complexity", "candidates")]).filter(document => document.rule.id.startsWith("complexity-"));
 function ruleJson(language: CorpusLanguage): string {
   const document = documents.find(candidate => candidate.rule.id === RULES[language]);
   if (document === undefined) throw new Error(`${RULES[language]} is not bundled`);
@@ -238,6 +254,7 @@ describe("complexity rule pack", () => {
     ["blade", "blade/tests/excluded.blade.php", ["tests/views/excluded.blade.php", "Tests/excluded.blade.php"], "resources/views/excluded.blade.php"],
     ["rust", "rust/tests/excluded.rs", ["tests/excluded.rs", "crates/core/tests/excluded.rs", "src/tests.rs", "src/excluded_test.rs", "src/excluded_tests.rs"], "src/excluded.rs"],
     ["vue", "vue/__tests__/excluded.vue", ["src/__tests__/Widget.vue", "src/Widget.spec.vue", "src/Widget.test.vue"], "src/Widget.vue"],
+    ["java", "java/src/test/java/ExcludedTest.java", ["src/test/java/com/example/Grade.java", "app/src/integrationTest/java/com/example/Grade.java", "lib/src/testFixtures/java/com/example/Grade.java", "src/main/java/com/example/GradeTest.java", "src/main/java/com/example/GradeTests.java", "src/main/java/com/example/GradeTestCase.java", "src/main/java/com/example/GradeIT.java", "src/main/java/com/example/GradeITCase.java"], "src/main/java/com/example/Grade.java"],
   ] as const)("%s: excludes test files, and scores the same source elsewhere", (language, fixture, testPaths, sourcePath) => {
     const compiled = compile(ruleJson(language));
     const source = readFileSync(join(CORPUS, fixture), "utf8");
@@ -259,6 +276,8 @@ describe("complexity rule pack", () => {
     blade: { file: "blade/functions.blade.php", scores: { tone: 2 } },
     rust: { file: "rust/branches.rs", scores: { match_counts_once: 2, nested_matches: 3, match_over_limit: 8 } },
     vue: { file: "vue/options.vue", scores: { level: 2 } },
+    // lizard names a Java method with its class.
+    java: { file: "java/Branches.java", scores: { "Branches::switchCountsOnce": 2, "Branches::nestedSwitches": 3, "Branches::switchDefaultOnly": 1, "Branches::switchOverLimit": 8 } },
   };
 
   it.each(LANGUAGES)("%s: a switch or match counts once however many cases it has, and only the functions over the limit are flagged", language => {
@@ -285,6 +304,8 @@ describe("complexity rule pack", () => {
     blade: "if ($a) {} if ($a) {} if ($a) {} if ($a) {} if ($a) {} if ($a) {} return 1;",
     rust: "if a {} if a {} if a {} if a {} if a {} if a {} 1",
     vue: "if (a) {} if (a) {} if (a) {} if (a) {} if (a) {} if (a) {} return 1;",
+    // No `return`: a constructor takes the same decisions.
+    java: "if (a) {} if (a) {} if (a) {} if (a) {} if (a) {} if (a) {}",
   };
 
   // Functions at ccn 7, one per line of `%D%` (the decisions): each named as the steer should name it, and a callback
@@ -356,6 +377,21 @@ describe("complexity rule pack", () => {
     "}",
   ];
 
+  // A constructor and a record's compact constructor take their class's name. A lambda is no function of its own.
+  const NAMED_JAVA = [
+    "class Box {",
+    "    Box(boolean a) { %D% }",
+    "    int method(boolean a) { %D% return 1; }",
+    "    static int make(boolean a) { %D% return 1; }",
+    "}",
+    "record Range(boolean a) {",
+    "    Range { %D% }",
+    "}",
+    "interface Shape {",
+    "    default int area(boolean a) { %D% return 1; }",
+    "}",
+  ];
+
   it.each([
     ["typescript", "src/names.ts", NAMED_TS, ["declared", "method", "level", "field", "assigned", "onKey", undefined]],
     ["javascript", "src/names.js", NAMED_JS, ["declared", "method", "level", "field", "assigned", "onKey", undefined]],
@@ -364,6 +400,7 @@ describe("complexity rule pack", () => {
     ["blade", "resources/views/names.blade.php", NAMED_BLADE, ["declared", "$assigned", undefined]],
     ["rust", "src/names.rs", NAMED_RUST, ["declared", "method", "area"]],
     ["vue", "src/Names.vue", NAMED_VUE, ["declared", "method", "assigned", undefined]],
+    ["java", "src/main/java/Names.java", NAMED_JAVA, ["Box", "method", "make", "Range", "area"]],
   ] as const)("%s: names the function in the steer, or says 'This function' when it has no name", (language, path, lines, names) => {
     // A function starts on its `def` line in Python, and on the line holding its decisions in the one-line sources.
     const opens = (line: string) => (language === "python" ? /^\s*def /u.test(line) : line.includes("%D%"));
@@ -389,6 +426,11 @@ describe("complexity rule pack", () => {
       blade: { inside: ["resources/views/home.blade.php", "home.blade.php"], outside: ["app/Models/User.php", "vendor/acme/views/home.blade.php", "resources/views/home.vue"] },
       rust: { inside: ["src/main.rs", "crates/core/src/lib.rs"], outside: ["target/debug/build/out/bindings.rs", "src/generated/api.rs", "src/main.py"] },
       vue: { inside: ["src/App.vue", "components/Card.vue"], outside: ["node_modules/p/Card.vue", "dist/App.vue", ".nuxt/components/Card.vue", "src/App.ts"] },
+      // A Java directory is a package name: one named `out`, `build` or `test` holds sources like any other.
+      java: {
+        inside: ["src/main/java/com/example/Grade.java", "Grade.java", "core/src/main/java/com/example/port/out/Store.java", "tools/src/main/java/com/example/build/Plan.java", "lib/src/main/java/com/example/test/Clock.java"],
+        outside: ["src/test/java/com/example/Grade.java", "target/generated-sources/annotations/Grade_.java", "build/generated/sources/Grade.java", "src/main/generated/Api.java", "src/main/kotlin/Grade.kt"],
+      },
     };
     for (const language of LANGUAGES) {
       const compiled = compile(ruleJson(language));
