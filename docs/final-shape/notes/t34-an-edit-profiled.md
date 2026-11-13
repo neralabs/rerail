@@ -135,6 +135,20 @@ Open, largest first (the edit after items 1–5: 12.85 s of span CPU):
    - the stratum's relation is the kept `InRel`, shared through an `Arc`, with its dead rows marked;
    - its new rows go in a vector of its own (ids from `old.n` on);
    - the kept chains and indexes serve the old rows, and only the added rows are indexed.
+
+   *The fix, located (2026-11-13, after the hub merge):* `Rel::based` (`native/setfix.rs`) clones `old.rows`,
+   `old.dead`, `old.chains`, `old.serves`, `old.sketches` and `old.level`; `Rel::compacted` pushes every survivor
+   through `Rel::push` (a dedup probe and an index insert each). Sharing needs the rows segmented in both forms:
+   - `Rel.data` becomes a kept segment (`Arc<InRel>`, read in place, its dead rows marked in a bitmap of its own)
+     and a tail of the rows this run pushed (ids from `old.n`); `close` makes an `InRel` of the same two segments,
+     so the next run shares them again, never concatenating (a copy at close is the same cost moved).
+   - `Index::find` and the probes take a row reader, not one `&[i64]`; the kept chains serve ids `..old.n`, and
+     the run's runs only its tail, so `restamp` and `set_delta` touch the tail's runs alone.
+   - `want(cols)` on a kept segment builds its index once per kept relation (kept with it, as the chains are),
+     not per run; a relation read back from the frames gets its chains when admitted.
+   - Compaction, when dead rows pass the eighth, is a background rewrite of the kept segment, not a start's cost.
+   About 36 row reads in `setfix.rs` and 28 elsewhere in `native/`, and the device uploads of a relation's rows,
+   which take each segment as a buffer.
 9. **Statistics of `__old` relations are counted from their rows** ("count run_scope__old from its rows", 0.05–0.07 s
    each, dozens per edit), although decision 0120 keeps statistics in the frames under the rows' digest.
    *Fixed:* `Retained::admit`, which reads a reached relation's rows from the frames mid-run, read its rows and
@@ -148,8 +162,26 @@ Open, largest first (the edit after items 1–5: 12.85 s of span CPU):
     grew by less than a search's work, by their rows alone. A literal with a constant reads that constant's rows:
     their counts (already in `live_sizes`) are now part of the growth, unknown counts left out. One row for 7 when
     planned and 2,455 now is 2,455 times growth: the line is searched again.
+    *Still open in a cold run* (2026-11-13, after the hub merge, `cold-merge`): with no kept plan, the line is planned
+    before the guest round makes `doc_role`'s rows, and runs `doc_role(d, 17505)` (2,455) → `kind($s, 1255)`
+    unbound (7.1 M) → `$d = @doc($s)` (0): 0.80 s of the cold run. `$s` reaches `doc_role` only through `@doc`,
+    so the plan's first step binds nothing the second reads. The fix: a step that binds none of the next one's
+    columns is priced at the next one's whole size times its own rows (a cross product), not at its estimate,
+    or the stratum is planned when its relation's rows are known (decision 0123's round, not the seed's).
 11. **Smaller:** `p149_LOG001` scans `import_alias` with nothing bound (3.9 M rows → 0). `rr_agg48` goes from 135 k
     to 3.1 M rows. There are 1.5 M scalar node visits.
+    *Located* (2026-11-13, a profiled cold run after the hub merge, 33.2 s wall, 77.6 s CPU, 615 findings):
+    - `p149_LOG001`'s scan is gone: its largest `import_alias` scan now reads 16 k rows.
+    - `rr_agg48` (1.15 s) is `body_stmt`'s index in `lib/python/ast.rr`,
+      `i = count : { child(b, s2, _), !kind(s2, "comment"), s2 < s }`: for each of 125,910 statements, every
+      earlier sibling (2.8 M pairs, two `node_order` lookups each). The count of a group's members before one
+      is its rank: sorting the group once gives every statement's in one pass. Wanted: the lowering of a count
+      whose only test against the outer row is `s2 < s` over the same group as a rank (a decision), not a rule
+      rewrite.
+    - The scalar visits are `BROAD_SCALAR_PROJECTION` (2.5 s CPU): 1,588,373 nodes visited and 984,956 strings
+      interned to project `text`, `str`, `op`, `value` and `comment` for every node, where their consumers
+      (`q5_noqa`, `case_value_name`, `py_import`, …) read a few kinds. The consumers' kind restrictions are to
+      reach the projection (`Projection::of`) as demands, as `text_kind_demand` does for texts.
 
 Tests, one a gun (each fixed gun's test was checked red with its fix undone; the open ones are red, `#[ignore]`d
 with the gun's reason until fixed):
@@ -166,7 +198,13 @@ with the gun's reason until fixed):
 | 8 | `setfix::survivor_tests::a_maintained_relation_starts_from_its_kept_rows_without_copying_them` | red, ignored |
 | 9 | `retain::frame_tests::rows_read_where_reached_come_with_their_kept_statistics` | green (fixed at the hub merge) |
 | 10 | `plan::tests::a_constant_counted_none_when_planned_is_growth_when_it_has_rows` | green (fixed at the hub merge) |
-| 11 | none yet: its three items are a cold run's, and each is to be found first | — |
+| 11 | none yet: located above (one gone; a rank lowering and the projection's demands wanted) | — |
+
+After the hub merge (2026-11-13, profiling build, corpus0, B-now rules, load about 6): cold 615 findings, an
+append 616, the rule edit 616, a second append 618. The second append, the steady state: **6.00 s of span CPU**
+(12.85 s before guns 1–7, 9 and 10), 6.1 s wall, 9.7 s process CPU; six `__old` relations still counted from
+their rows (those maintained for the first time in that run, by design). Gun 8 is now the largest: `open:
+indexes` 0.92 s, `open: survivors` 0.83 s, `open: index of a derived input` 0.54 s, 38% of the edit.
 
 ## To do, in order
 
