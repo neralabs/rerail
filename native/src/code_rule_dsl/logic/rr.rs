@@ -30,6 +30,12 @@ pub use rerail_rr::code_rule_dsl::logic::rr::print;
 // The parser and the tape's tree, the `.rr` parser crate's (`rerail_rr_syntax`).
 use rerail_rr_syntax::syntax;
 pub use rerail_rr_syntax::tape;
+
+/// `src`'s tape as nodes: the lean parser's image (decision 0140) read back (`tape::nodes`), what
+/// the statements are read off as a stored tape's are (decision 0062).
+pub fn nodes(src: &str) -> Vec<tape::Node> {
+    tape::nodes(&tape(src)).expect("the lean parser's image decodes")
+}
 #[path = "rr"]
 pub mod tape_type {
     pub use rerail_rr::code_rule_dsl::logic::rr::tape_type::*;
@@ -113,7 +119,7 @@ enum Read {
 
 /// `src` read once, its includes resolved (`Text`).
 pub fn read_text(src: &str) -> Result<Text, Error> {
-    let statements = from_tape::statements(src, &tape(src))?;
+    let statements = from_tape::statements(src, &nodes(src))?;
     if !statements.iter().any(|(item, _)| matches!(item, syntax::Item::Include(_))) {
         refuse_ungrounded(&statements, &BTreeSet::new())?;
         return Ok(Text(Read::Plain(statements)));
@@ -275,7 +281,7 @@ pub struct TextNames {
 /// `src` parsed, and its seed (`TextRead`).
 pub fn read_seed(src: &str) -> Result<TextRead, Error> {
     use super::plan::corpus::phase0;
-    let statements = from_tape::statements(src, &tape(src))?;
+    let statements = from_tape::statements(src, &nodes(src))?;
     let includes: Vec<(i64, String)> = statements
         .iter()
         .filter_map(|(item, _)| match item {
@@ -400,7 +406,7 @@ fn read_text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>
     if lexed.error.is_none() && !lexed.toks.iter().any(|(t,_,_)| matches!(t, syntax::Tok::Hash(_))) {
         return Ok(None);
     }
-    let statements = from_tape::statements(src, &tape(src))?;
+    let statements = from_tape::statements(src, &nodes(src))?;
     let names: Vec<(i64, String)> = statements
         .iter()
         .filter_map(|(item, _)| match item {
@@ -877,9 +883,9 @@ fn stored_statements(_path: &Path, src: String) -> Result<Vec<syntax::Statement>
             crate::code_rule_dsl::prof::count("rr.statements_from_stored_tape", 1);
             return from_tape::statements(&src, &from_tape::nodes_of_facts(&facts));
         }
-        return from_tape::statements(&src, &tape(&src));
+        return from_tape::statements(&src, &nodes(&src));
     }
-    from_tape::statements(&src, &tape(&src))
+    from_tape::statements(&src, &nodes(&src))
 }
 
 pub type Files = Vec<(PathBuf, Vec<syntax::Statement>)>;

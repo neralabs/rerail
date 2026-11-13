@@ -156,3 +156,4 @@ Numbers are tier 2's for `.rr`. Each step's commit is listed.
 | A local check word-parallel in the JIT: no loop over bits | `72629b5ea` | | 330.4M (58.4M) |
 | The tape written directly: parents and extras with each row, wraps in place, no pass at `ACCEPT` (decision 0136) | `8a1762be0` | | 248.3M (41.0M; load 11); AOT 224.8M (36.4M) |
 | The lean parser writes the tape's rows too (sizes at its closes): its whole parse 356.5M to 362.4M (69.3M), the baseline from here | | | 248.3M (41.1M) |
+| **Correction (2026-11-13, decision 0140).** The two rows above did not write the tape: the engine's tape is the v9np image's bytes, and these wrote a node table (`NodeRow`, `tape::Row`). The lean parser now writes the image's bytes (`rerail_tape_format::Writer`), the engine's own encoder's byte for byte; tier 2 still writes the node table | | | |

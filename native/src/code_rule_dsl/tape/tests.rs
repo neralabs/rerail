@@ -1881,8 +1881,8 @@ fn packed_rr_tape(grammar: &Grammar, source: &str) -> Vec<u8> {
     TapeImage::finish(nodes, Vec::new(), grammar, source, &|| false).unwrap().to_bytes().unwrap()
 }
 
-/// A `.rr` file's tape from the lean parser's rows (the engine's path, `encode_rr`) equals the statement
-/// parser's tree packed, byte for byte: every `.rr` file of the repository.
+/// A `.rr` file's tape from the lean parser's bytes (the engine's path, `encode_rr`, decision 0140) equals the
+/// statement parser's tree packed by the engine's own passes, byte for byte: every `.rr` file of the repository.
 #[test]
 fn rr_tapes_from_the_lean_parser_are_the_statement_parsers() {
     let grammar = Grammar::new(GrammarDialect::Rr).unwrap();
@@ -2202,4 +2202,48 @@ fn json_parse_costs() {
         eprintln!("{name:36} {:8.1} M instructions {:6.0} a node {:7.1} ms {:7.1} MB/s", i as f64 / 1e6, i as f64 / nodes as f64, t * 1e3, mb / t);
     }
     eprintln!("{} of {all} files (both parsers accept them), {mb:.1} MB, {nodes} nodes; simdjson's kernel {}", files.len(), rerail_simdjson::implementation());
+}
+
+/// The lean `.rr` parser writes the engine's tape (decision 0140): its bytes are the engine's
+/// image of every `.rr` file in the repository, and of a prefix of each (an unfinished file).
+/// The language tag it writes is the registry's.
+#[test]
+fn lean_rr_tape_is_the_engines_image() {
+    assert_eq!(crate::code_rule_dsl::language::tape_tag(GrammarDialect::Rr), Some(rerail_tape_format::RR_TAG));
+    assert_eq!(super::wire::CHECKPOINT_STRIDE, rerail_tape_format::CHECKPOINT_STRIDE);
+    let grammar = Grammar::new(GrammarDialect::Rr).expect("grammar");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let (mut files, mut work) = (Vec::new(), vec![root]);
+    while let Some(dir) = work.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
+            if p.is_dir() && !skip {
+                work.push(p);
+            } else if p.extension().is_some_and(|x| x == "rr") {
+                files.extend(std::fs::read_to_string(&p).ok().map(|t| (p.display().to_string(), t)));
+            }
+        }
+    }
+    assert!(files.len() > 1000, "{} files", files.len());
+    // And tapes whose columns need 4 bytes, which the lean parser parses again at them.
+    let long = "x".repeat(70_000);
+    files.push(("a 70,000-byte string".into(), format!("r(\"{long}\").\n")));
+    files.push(("a 70,000-byte comment".into(), format!("r(1).\n/* {long} */\nr(2).\nr(3).\n")));
+    files.push(("20,000 facts".into(), "r(1).\n".repeat(20_000)));
+    for (path, text) in &files {
+        let mut half = text.len() / 2;
+        while !text.is_char_boundary(half) {
+            half -= 1;
+        }
+        for src in [text.as_str(), &text[..half]] {
+            let engine = packed_rr_tape(&grammar, src);
+            let lean = rerail_rr_syntax::lean::tape(src);
+            if lean != engine {
+                let k = lean.iter().zip(&engine).position(|(a, b)| a != b).unwrap_or(lean.len().min(engine.len()));
+                panic!("{path} ({} bytes): tapes of {} / {} bytes differ from byte {k}: {}", src.len(), lean.len(), engine.len(), rerail_tape_format::place(&engine, k));
+            }
+        }
+    }
 }
