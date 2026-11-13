@@ -1,6 +1,6 @@
 # Tier 1 on the CPU in the block lexer's form: the design
 
-Status: proposed (2026-11-12), for review before building.
+Status: decided (2026-11-13, decision 0139); building.
 
 ## Intro
 
@@ -117,7 +117,7 @@ These are good for Metal too.
 - Metal's tier 1 stays bit-parallel: rounds for regions, extracts for the records.
   It gains from steps 2 and 4, which take operations out of the program.
 
-## A conflict to settle
+## Loops: settled
 
 Page 12 decided the mask passes are loop-free and branch-free: no byte-by-byte work,
 and no event-by-event work. On the CPU, this design adds two loops:
@@ -125,6 +125,8 @@ one over the block's regions (step 1) and one over its tokens (step 3).
 
 Neither is over bytes. The records are already a loop over tokens. The region walk is
 the lean lexer's form, which the request named. Metal keeps page 12's form throughout.
+
+Settled (2026-11-13): acceptable where needed. CPU and GPU diverge as little as they can.
 
 ## The order, each step measured and tested
 
