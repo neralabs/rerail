@@ -32,7 +32,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 /// The pointer's schema: bumped when its meaning changes (105: the programs as their text, decision 0155).
-const POINTER: u32 = 105;
+const POINTER: u32 = crate::content_store::live_fact_schema(105);
 
 /// The path a lookup names. The entries read no path (`path_dependent: false`); the store keeps them under none.
 const PATH: &str = "rerail/prepared";
@@ -427,7 +427,7 @@ pub(super) fn remember(store: &ContentStore, source: SourceId, key: &[u8; 32], p
 }
 
 /// The compiled groups' schema (decision 0075).
-const DFAS: u32 = 103;
+const DFAS: u32 = crate::content_store::live_fact_schema(103);
 
 /// The path a compiled group is kept under (read by no path, as the other entries).
 const DFA_PATH: &str = "rerail/dfa";

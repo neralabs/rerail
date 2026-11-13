@@ -34,9 +34,9 @@ use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
-/// The entry's schema: bumped when its encoding or meaning changes (3: the program as its text, decision 0155; 2 is
-/// the kept plans', `PLANS_SCHEMA`).
-const SCHEMA: u32 = 3;
+/// The entry's schema: bumped when its encoding or meaning changes (the program as its text, decision 0155). Never a
+/// retired corpus memo schema (`live_fact_schema`): it was 3, and a new store's first collection swept the entries.
+const SCHEMA: u32 = crate::content_store::live_fact_schema(106);
 
 /// A run takes choices made at a scale at least its own over this.
 pub(super) const GROWTH: f64 = 2.0;
@@ -254,7 +254,7 @@ fn read_all(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<HashMap<St
 }
 
 /// The kept plans' schema, apart from the choices' (`SCHEMA`) so neither reads the other's entries.
-const PLANS_SCHEMA: u32 = 2;
+const PLANS_SCHEMA: u32 = crate::content_store::live_fact_schema(107);
 /// The kept plans' entry under the prepared program's source, and its relation: one row per plan
 /// (`StoredPlan::row`).
 const PLANS_PATH: &str = "rerail/plans";

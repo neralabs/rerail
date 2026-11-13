@@ -18,6 +18,9 @@
         // Another process: nothing kept in memory, the store's entry read back.
         kept().lock().unwrap().clear();
         let store = ContentStore::open(&db).unwrap();
+        // A new store's first collection sweeps the retired corpus memo schemas: never these entries (the choices
+        // were schema 3, one of them, O-kept-strata-flake).
+        store.collect_corpus_pass(&crate::content_store::CorpusPolicy::default(), 1_000).unwrap();
         let entry = read_all(&store, &prepared).unwrap().remove(&path(&key)).expect("kept in the store");
         let texts = super::super::super::program_text::texts(&store, &[super::rewritten(&entry).expect("a rewritten program")]).unwrap().into_iter().map(|(d, (text, _))| (d, text)).collect();
         let back = decode_chosen(&texts, &entry).expect("decodes");

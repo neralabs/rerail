@@ -25,7 +25,7 @@ use sha2::{Digest as _, Sha256};
 use std::path::PathBuf;
 
 /// The entry's schema: bumped when its encoding or meaning changes (105: the program as its text, decision 0155).
-const SCHEMA: u32 = 105;
+const SCHEMA: u32 = crate::content_store::live_fact_schema(105);
 
 /// The path a lookup names. The entry reads no path (`path_dependent: false`).
 const PATH: &str = "rerail/combined";
