@@ -1914,12 +1914,14 @@ fn run_observed(
     // profiling on may have turned it off meanwhile.
     // A run nested in another on this thread (phase 0's, a phase's, the constants', a bridged program's) and phase
     // 0's own run hold it only when no run does: nested, the profile is the outer run's, and such a run neither
-    // resets nor writes it. Waiting for it would wait for the outer run, which waits for this one.
+    // resets nor writes it. Waiting for it would wait for the outer run, which waits for this one. So does a run on a
+    // thread behind the run (the test stores' template, made on a thread of its own for whatever first asks for it,
+    // which may be a run or a test that holds the profile and joins that thread).
     let nested = RUNS_UNDER_WAY.with(std::cell::Cell::get) > 0;
     let _under_way = UnderWay::enter();
     let _profile = if !crate::code_rule_dsl::logic::profile::on() {
         None
-    } else if phase0::active() || nested {
+    } else if phase0::active() || nested || crate::code_rule_dsl::logic::profile::is_behind() {
         crate::code_rule_dsl::logic::profile::one_run_if_free()
     } else {
         Some(crate::code_rule_dsl::logic::profile::one_run())

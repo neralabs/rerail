@@ -932,6 +932,11 @@ pub fn behind<T>(f: impl FnOnce() -> T) -> T {
     out
 }
 
+/// Whether this thread works behind the run (`behind_the_run`, `behind`).
+pub fn is_behind() -> bool {
+    BEHIND.with(std::cell::Cell::get)
+}
+
 fn in_waves() -> bool {
     on() && PROFILED_WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0 && !BEHIND.with(std::cell::Cell::get)
 }
