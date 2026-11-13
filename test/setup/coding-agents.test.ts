@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -207,8 +207,11 @@ describe("connectCodingAgents", () => {
 });
 
 describe("whether a coding agent can read Rerail's data", () => {
-  /** A package root and a coding-agent home with `agents` connected to it; `before` runs ahead of connecting. */
-  async function connected(agents: Harness[], before: (home: string) => Promise<void> = async () => {}) {
+  /**
+   * A package root and a coding-agent home with `agents` connected to it as set-up connects them on `platform`, the
+   * platform a check of it then names; `before` runs ahead of connecting.
+   */
+  async function connected(agents: Harness[], before: (home: string) => Promise<void> = async () => {}, platform: NodeJS.Platform = "linux") {
     const base = await mkdtemp(join(tmpdir(), "rerail-data-access-"));
     temporaryDirectories.push(base);
     const root = join(base, "rerail-home", "current");
@@ -217,8 +220,20 @@ describe("whether a coding agent can read Rerail's data", () => {
     const home = join(base, "home");
     await mkdir(home);
     await before(home);
-    await registerHarnesses({ root, home, harnesses: agents });
+    await registerHarnesses({ root, home, harnesses: agents, platform });
     return { root, home, managed: join(base, "managed-settings.json") };
+  }
+
+  /**
+   * A folder of `base` whose `node.exe` is the node running this test, the recorded node of a registration that names
+   * none: that node itself on Windows, a link to it elsewhere.
+   */
+  async function folderOfThisNode(base: string): Promise<string> {
+    if (process.platform === "win32") return dirname(process.execPath);
+    const folder = join(base, "this-node");
+    await mkdir(folder);
+    await symlink(process.execPath, join(folder, "node.exe"));
+    return folder;
   }
 
   async function stateOf(root: string, home: string, id: Harness, options: DataAccessOptions) {
@@ -231,14 +246,18 @@ describe("whether a coding agent can read Rerail's data", () => {
     const settings = join(home, ".claude", "settings.json");
     const registered = JSON.parse(await readFile(settings, "utf8")) as { sandbox?: Record<string, unknown> };
     const withSandbox = (enabled: boolean) => JSON.stringify({ ...registered, sandbox: { ...registered.sandbox, enabled } });
-    const claude = (platform: NodeJS.Platform = "linux") => stateOf(root, home, "claude-code", { platform, claudeManagedSettings: managed });
+    const claude = () => stateOf(root, home, "claude-code", { platform: "linux", claudeManagedSettings: managed });
 
     expect(await claude()).toEqual({ connected: true, access: "file-tools" });
 
     await writeFile(settings, withSandbox(true));
     expect(await claude()).toEqual({ connected: true, access: "kept-out" });
     // Native Windows has no Claude Code sandbox, whatever the setting says.
-    expect(await claude("win32")).toEqual({ connected: true, access: "file-tools" });
+    const windows = await connected(["claude-code"], async () => {}, "win32");
+    const windowsSettings = join(windows.home, ".claude", "settings.json");
+    await writeFile(windowsSettings, JSON.stringify({ ...JSON.parse(await readFile(windowsSettings, "utf8")), sandbox: { enabled: true } }));
+    expect(await stateOf(windows.root, windows.home, "claude-code", { platform: "win32", claudeManagedSettings: windows.managed }))
+      .toEqual({ connected: true, access: "file-tools" });
     // Managed settings win over the user's.
     await writeFile(managed, JSON.stringify({ sandbox: { enabled: false } }));
     expect(await claude()).toEqual({ connected: true, access: "file-tools" });
@@ -257,15 +276,40 @@ describe("whether a coding agent can read Rerail's data", () => {
   });
 
   it("counts the Cursor CLI's file tools as kept out only where its cli-config.json held Rerail's denies", async () => {
-    const withConfig = await connected(["cursor"], async home => {
+    const cliConfig = async (home: string) => {
       await mkdir(join(home, ".cursor"));
       await writeFile(join(home, ".cursor", "cli-config.json"), "{}\n");
-    });
+    };
+    const withConfig = await connected(["cursor"], cliConfig);
     expect(await stateOf(withConfig.root, withConfig.home, "cursor", { platform: "linux" })).toEqual({ connected: true, access: "file-tools" });
-    expect(await stateOf(withConfig.root, withConfig.home, "cursor", { platform: "win32" })).toEqual({ connected: true, access: "file-tools" });
+    const onWindows = await connected(["cursor"], cliConfig, "win32");
+    expect(await stateOf(onWindows.root, onWindows.home, "cursor", { platform: "win32" })).toEqual({ connected: true, access: "file-tools" });
 
     const without = await connected(["cursor"]);
     expect(await stateOf(without.root, without.home, "cursor", { platform: "linux" })).toEqual({ connected: true, access: "open" });
+  });
+
+  it("counts Claude Code on Windows as connected whatever node PATH finds first for whoever asks", async () => {
+    // Set-up writes Claude Code's Windows hooks with `node` where PATH finds the recorded node, here the one running
+    // this test, and with cmd.exe where PATH finds another. The dashboard and `rerail status` ask from the daemon and
+    // the shell, each with a PATH of its own.
+    let recorded = "";
+    const { root, home } = await connected(["claude-code"], async home => {
+      recorded = await folderOfThisNode(dirname(home));
+      vi.stubEnv("PATHEXT", ".exe");
+      vi.stubEnv("PATH", recorded);
+    }, "win32");
+    const other = join(dirname(home), "other-node");
+    await mkdir(other);
+    await writeFile(join(other, "node.exe"), "");
+    const askedWith = async (path: string) => {
+      vi.stubEnv("PATH", path);
+      return stateOf(root, home, "claude-code", { platform: "win32", claudeManagedSettings: null });
+    };
+
+    expect(await askedWith(other)).toEqual({ connected: true, access: "file-tools" });
+    await registerHarnesses({ root, home, harnesses: ["claude-code"], platform: "win32" });
+    expect(await askedWith(recorded)).toEqual({ connected: true, access: "file-tools" });
   });
 });
 
