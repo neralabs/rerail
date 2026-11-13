@@ -60,6 +60,15 @@ interface PartStart {
   startedAt: number;
 }
 
+/**
+ * How far past its own clock a hook that moved the log aside says the next part began ({@link PartStart}): one tick of
+ * the system clock and a millisecond. On Windows Node's clock is the system time a process read when it started, which
+ * Windows moves on once per timer tick (15.625 ms apart at most), plus a fine counter since then, so two hook processes'
+ * clocks can differ by up to one tick; elsewhere they read one clock. One margin on every system keeps one rule that
+ * every system's tests run: it moves the time the line names 16 ms later, and the count still holds every failure since.
+ */
+const PART_START_PAST_CLOCK_MS = 16 + 1;
+
 /** Appends one failure. Never throws: a hook must not break the session over its own bookkeeping. */
 export function recordHookFailure(
   failure: Pick<HookFailure, "host" | "event" | "reason">,
@@ -70,9 +79,10 @@ export function recordHookFailure(
     const path = join(home, HOOK_FAILURES_FILE);
     const moved = sizeOf(path) > MAX_FAILURE_BYTES && moveAside(path, join(home, MOVED_ASIDE_FILE));
     const rerail = rerailVersion();
-    // Read after the move. Every failure in the part this hook moved was stamped before the hook took it, so a
-    // millisecond past the clock is later than all of them, even one stamped in the millisecond of the move.
-    const at = now ?? Date.now() + (moved ? 1 : 0);
+    // Read after the move. Every failure in the part this hook moved was stamped before the hook took it, by the clock
+    // of the hook that wrote it, which can run up to one clock step ahead of this one: past this clock by that and a
+    // millisecond is later than all of them. The hook's own failure carries the same time, so it counts in its part.
+    const at = now ?? Date.now() + (moved ? PART_START_PAST_CLOCK_MS : 0);
     const line = `${JSON.stringify({ at, ...failure, agent: env.AI_AGENT ?? null, rerail } satisfies HookFailure)}\n`;
     if (!moved) {
       appendFileSync(path, line, { mode: 0o600 });

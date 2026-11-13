@@ -250,6 +250,27 @@ describe("the hook failure log", () => {
     expect(readHookFailures(rerailHome, 0).keptSince).toBeGreaterThan(writtenAsTaken);
   });
 
+  // On Windows each process's clock is the system time it read at its start, which moves on once per timer tick, at
+  // most 15.625 ms apart: two hooks' clocks can differ by that much. Here the clocks are fixed: the hook that takes the
+  // log reads 1_800_000_000_000, and a hook whose clock runs 16 ms ahead writes into the log as it is taken.
+  it("names a time later than every failure in the part it no longer has when another hook's clock runs a tick ahead", async () => {
+    const rerailHome = await home();
+    writeFullLog(rerailHome);
+    const clock = 1_800_000_000_000;
+    await recordWithWrapped(rerailHome, undefined, {
+      renameSync: `rename => (from, to) => {
+        if (to.endsWith(".old")) fs.appendFileSync(from, ${lineSource(clock + 16, "a tick ahead")});
+        rename(from, to);
+      }`,
+    }, clock);
+    // The next move drops the part that holds the failure a tick ahead.
+    appendFileSync(join(rerailHome, HOOK_FAILURES_FILE), `${fullLine}\n`.repeat(full));
+    recordHookFailure({ host: "claude-code", event: "Stop", reason: "after" }, { home: rerailHome, now: clock + 60_000, env: {} });
+    const log = readHookFailures(rerailHome, 0);
+    expect(log.keptSince).toBeGreaterThan(clock + 16);
+    expect(log.failures.map(entry => entry.reason)).toEqual(["the daemon did not answer", "after"]);
+  });
+
   it("removes a log a stopped hook left at the next move, once it holds nothing from the period status counts", async () => {
     const rerailHome = await home();
     const day = 24 * 60 * 60 * 1_000;
@@ -562,10 +583,13 @@ async function recordWithRename(rerailHome: string, at: number | undefined, wrap
 /** The `node:fs` functions a test can wrap in a process of its own, each by the source of a function of the real one. */
 type Wraps = Partial<Record<"renameSync" | "appendFileSync" | "unlinkSync" | "readdirSync", string>>;
 
-/** {@link recordWithRename} with each `node:fs` function `wraps` names made by the function source given for it. */
-async function recordWithWrapped(rerailHome: string, at: number | undefined, wraps: Wraps): Promise<string> {
+/**
+ * {@link recordWithRename} with each `node:fs` function `wraps` names made by the function source given for it, and
+ * `Date.now` fixed at `clock` when given.
+ */
+async function recordWithWrapped(rerailHome: string, at: number | undefined, wraps: Wraps, clock?: number): Promise<string> {
   const record = `hookFailures.recordHookFailure({ host: "claude-code", event: "PostToolUse", reason: "the daemon did not answer" }, { home: HOME, now: ${at}, env: {} });`;
-  return await outputOf(rerailHome, record, wraps);
+  return await outputOf(rerailHome, record, wraps, clock);
 }
 
 /**
@@ -579,13 +603,14 @@ async function statusWhileListing(rerailHome: string, wrapListing: string): Prom
 }
 
 /**
- * What `code` wrote to its standard output, run in a process of its own once `wraps` are in place, with
+ * What `code` wrote to its standard output, run in a process of its own once `wraps` and `clock` are in place, with
  * `hookFailures` the hook failure module and `HOME` the Rerail home `rerailHome`.
  */
-async function outputOf(rerailHome: string, code: string, wraps: Wraps): Promise<string> {
+async function outputOf(rerailHome: string, code: string, wraps: Wraps, clock?: number): Promise<string> {
   const program = `import fs from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 const HOME = ${JSON.stringify(rerailHome)};
+${clock === undefined ? "" : `Date.now = () => ${clock};`}
 ${Object.entries(wraps).map(([name, wrap]) => `fs.${name} = (${wrap})(fs.${name});`).join("\n")}
 syncBuiltinESMExports();
 const hookFailures = await import(${JSON.stringify(sourceModule("src/harness/hook-failures.ts"))});
