@@ -440,6 +440,20 @@ function cutStalledRequests(server: Server, connections: ReadonlyMap<Socket, Inc
   return () => clearInterval(looks);
 }
 
+/**
+ * Each open connection of `server`, with the request it carries once that request's headers have arrived, the latest
+ * one on a connection that carries several (`cutStalledRequests` reads it).
+ */
+function trackConnections(server: Server): ReadonlyMap<Socket, IncomingMessage | undefined> {
+  const connections = new Map<Socket, IncomingMessage | undefined>();
+  server.on("connection", (socket: Socket) => {
+    connections.set(socket, undefined);
+    socket.once("close", () => connections.delete(socket));
+  });
+  server.on("request", (incoming: IncomingMessage) => connections.set(incoming.socket, incoming));
+  return connections;
+}
+
 function listen(server: Server, socketPath: string): Promise<void> {
   const listening = Promise.withResolvers<void>();
   server.once("error", listening.reject);
@@ -559,10 +573,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     idleRuntimeMs: options.idleRuntimeMs ?? IDLE_RUNTIME_MS,
   };
   const sweepIdleSessions = (): Promise<void> => closeIdleSessions(routing, options.idleSessionMs ?? IDLE_SESSION_MS, options.now ?? Date.now);
-  /** Each open connection, with the request it carries once that request's headers have arrived. */
-  const connections = new Map<Socket, IncomingMessage | undefined>();
   const server = createServer(async (incoming, response) => {
-    connections.set(incoming.socket, incoming);
     response.setHeader("Content-Type", "application/json");
     if (incoming.method === "POST" && incoming.url === ENGINE_PROOF_PATH && options.accessToken !== undefined) {
       answerEngineChallenge(incoming.headers[ENGINE_CHALLENGE_HEADER], options.accessToken, response);
@@ -596,6 +607,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     }
   });
   let socketPath = options.socketPath;
+  const connections = trackConnections(server);
   const engineService: EngineService = {
     get socketPath() {
       return socketPath;
@@ -622,10 +634,6 @@ export async function startEngineService(options: EngineServiceOptions): Promise
       await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
     },
   };
-  server.on("connection", (socket: Socket) => {
-    connections.set(socket, undefined);
-    socket.once("close", () => connections.delete(socket));
-  });
   server.requestTimeout = 30_000;
   // Never keeps the process alive; `closeIdleSessions` reports its own failures.
   const idleSweep = setInterval(() => void sweepIdleSessions(), IDLE_SWEEP_MS);
