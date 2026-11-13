@@ -551,47 +551,16 @@ A newer Rerail that first opens the file (the daemon, `rerail start`, set-up, or
 only reads) runs the pending migration steps in one transaction. A failing step leaves the file as it was. A process
 that cannot write the file gets an error naming those steps, and the file is left as it was.
 
-Moving each audit's rule provenance to one shared copy is not part of a step: the step adds a table and a column, and
-the daemon moves the provenance once it starts, on a thread of its own, so it keeps answering hooks during the move.
-Each transaction moves as many audits as fit in about 100 ms, at most 100, with a pause between two, so the open that
-upgrades the file returns at once and other processes keep writing during the move. While another process holds the
-database, the move tries again for up to 5 s. A daemon stopped partway goes on at its next start, and a later start
-finds nothing left to move with one read and takes no write lock. Once the move ends, the daemon runs one `VACUUM`,
-which gives the space it freed back to the disk.
-
-`VACUUM` holds the database's write lock until it commits, which takes seconds on a large file, and the daemon's own
-writes wait for that lock on the thread that answers hooks. So the daemon runs `VACUUM` in a process of its own, once
-no process has written to the database for 2 s, and that process gives way to the daemon: when the daemon's thread
-has not answered for half a second before the `VACUUM` has committed, the daemon ends the process, SQLite drops the
-unfinished `VACUUM`, and the write that was waiting goes through. A `VACUUM` that has committed holds the lock no more,
-and runs to its end. The next try waits for a quiet spell twice as long, up to 30 s, and `daemon.log` says so. If no
-try has committed an hour after the first wait began, `daemon.log` says so once, with what the tries did (none could
-start, how many gave way, or one is running now), the free space and `rerail scrub`, and the daemon keeps trying.
-Stopping the daemon ends a running `VACUUM` at once. Another process that writes while a `VACUUM` runs (a `rerail`
-command, or a daemon of another Rerail version sharing the database) waits for it as for any write, up to 5 s, then
-fails with `database is locked`.
-
-The daemon skips the `VACUUM`, and says why in `daemon.log` with `rerail scrub` as the way to give the space back, when
-another process is still using the database after the move's tries, when emptying the WAL into the file fails, when a
-disk has less free space than `VACUUM` writes to it (checked again before each try), or when it stops before a `VACUUM`
-has finished. `VACUUM` writes a copy of the database's pages in use, not its free ones, to the folder SQLite uses for
-temporary files (on Linux and macOS the first of `SQLITE_TMPDIR`, `TMPDIR`, `/var/tmp`, `/usr/tmp` and `/tmp` it may
-write in; on Windows the system's temporary folder), and another through the WAL beside the database, so the disk of
-each folder needs room for one copy, and a disk that holds both folders room for two. The file then keeps its size,
-and new history reuses the free space. A later daemon start, finding audits the move moved and more than 64 MB of free
-pages, runs the `VACUUM` again; `rerail scrub` gives the space back at once. The audits stay moved whatever happens to
-the `VACUUM`.
-
 Most steps add a column or a table, which older versions read correctly: the floor stays, an older Rerail still opens
 the file, and a hook or the status line runs such steps itself. A step an older version would misread raises the
 floor. It waits for the new version's daemon or a command that writes; until then a hook or the status line says to
 run `rerail daemon start`.
 
-Moving each audit's rule provenance to one shared copy sets no floor, so coding agents on different Rerail versions
-keep sharing the file. An older Rerail reads an empty rule provenance for each audit a newer one wrote or moved, in
-its `audits_list`, its support bundle and what its remote sink sends. Its dashboard and steering never read the
-provenance, and work as before. The audits it writes keep their provenance in their own row, where both versions read
-it, and the move leaves them there.
+Storing each new audit's rule provenance once sets no floor, so coding agents on different Rerail versions keep
+sharing the file. An older Rerail reads an empty rule provenance for each audit a newer one wrote, in its
+`audits_list`, its support bundle and what its remote sink sends. Its dashboard and steering never read the
+provenance, and work as before. The audits it writes, and those recorded before the update, keep their provenance in
+their own row, where both versions read it.
 
 An update that finds nothing newer, or fails, keeps the copy from the last version change. One that changes the
 version but cannot take a copy removes the old one, which no longer holds the database before the now-active version.
