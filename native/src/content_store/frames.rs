@@ -800,6 +800,18 @@ impl ContentStore {
     /// `deltas` (a relation's rows gone and added, written after its frame: decision 0117 step 4). A frame put whole
     /// (part 0) ends the deltas after it.
     pub fn queue_frames_retagged(&self, space: [u8; 32], puts: Vec<Put>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
+        self.queue_frames_as(space, puts, retags, deltas, gone, used, super::write_back::Syms::Mapped)
+    }
+
+    /// `queue_frames_retagged` for frames keyed by this process's numbering of symbols: rows whose untyped columns,
+    /// parts or digests are of atoms (the retained part's documents and granules). The store can map a typed value,
+    /// not a key: after a fork (decision 0170) they are not written, and the next run derives them again.
+    pub fn queue_frames_keyed_by_symbols(&self, space: [u8; 32], puts: Vec<Put>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, used: Option<Used>) {
+        self.queue_frames_as(space, puts, retags, deltas, gone, used, super::write_back::Syms::Unmapped)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn queue_frames_as(&self, space: [u8; 32], puts: Vec<Put>, retags: Vec<Retag>, deltas: Vec<Delta>, gone: Vec<(Rel, i64)>, used: Option<Used>, syms: super::write_back::Syms) {
         // Each delta after its relation's frame as it is now (in memory, queued or stored).
         let mut delta_puts: Vec<Arc<Put>> = Vec::new();
         let mut heads: Vec<(Rel, u64, Vec<(String, u64)>)> = Vec::new();
@@ -907,7 +919,7 @@ impl ContentStore {
                 }
             }
         }
-        self.write_back_syms(super::write_back::Syms::Mapped, "frames", bytes, keys, Box::new(move |store| {
+        self.write_back_syms(syms, "frames", bytes, keys, Box::new(move |store| {
             // Attempted once: a busy store leaves these frames unwritten, and the next run derives them again.
             let refs: Vec<_> = puts.iter().map(Arc::as_ref).collect();
             let delta_refs: Vec<_> = delta_puts.iter().map(Arc::as_ref).collect();

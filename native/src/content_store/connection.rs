@@ -324,9 +324,10 @@ impl ThreadConnection {
         });
         let mut guard = connection.lock_arc();
         if guard.is_none() {
-            *guard = Some(
-                open_runtime_connection(&self.database_path).map_err(|error| error.to_string())?,
-            );
+            // Its configuring reads (`page_count`, `journal_mode`) wait for another process's writer as a write
+            // does: busy past one wait, they are tried again, not failed (every caller expects its connection).
+            let opened = retry_busy(&mut BusyRetries::default(), || open_runtime_connection(&self.database_path));
+            *guard = Some(opened.map_err(|error| error.to_string())?);
         }
         Ok(ConnectionGuard(guard))
     }
@@ -568,6 +569,11 @@ thread_local! {
     static BATCH: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
+/// Whether this thread runs the store writer's batch now.
+pub(super) fn in_batch() -> bool {
+    BATCH.with(std::cell::Cell::get)
+}
+
 /// A store write's transaction: its own, or a savepoint inside the writer's batch, which commits every job it
 /// drained at once.
 pub(super) enum Tx<'c> {
@@ -625,6 +631,9 @@ impl ContentStore {
                 BATCH.with(|b| b.set(false));
             }
         }
+        // Forked before the jobs make their rows, or not at all: a fork first met by a job (one that writes atoms in
+        // its own savepoint) comes after rows the jobs before it made with this process's ids (decision 0170).
+        let forked_before = self.atoms.forked();
         BATCH.with(|b| b.set(true));
         let batch = Batch;
         let value = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body));
@@ -637,6 +646,10 @@ impl ContentStore {
                 std::panic::resume_unwind(panic);
             }
         };
+        if !forked_before && self.atoms.forked() {
+            let _ = connection.execute_batch("ROLLBACK");
+            return Err(StoreError::Invalid(super::atoms::DIVERGED_TEXT.to_owned()));
+        }
         // The batch's jobs declared their rows' symbols mapped, or ran not at all, after a fork (`write_back::Syms`).
         let committed = super::atoms::mapped(|| self.atoms.write_pending(&connection)).and_then(|upto| {
             connection.execute_batch("COMMIT")?;

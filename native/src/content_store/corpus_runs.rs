@@ -655,6 +655,11 @@ impl ContentStore {
     /// the store's collection (`collect`).
     /// Active readers defer the pass without clearing the pending collection flag.
     pub fn collect_corpus_pass(&self, policy: &CorpusPolicy, now: i64) -> StoreResult<CorpusPass> {
+        // Its writes delete rows and set flags, naming no atom: a forked process collects too (decision 0170).
+        super::atoms::mapped(|| self.collect_corpus_pass_unmapped(policy, now))
+    }
+
+    fn collect_corpus_pass_unmapped(&self, policy: &CorpusPolicy, now: i64) -> StoreResult<CorpusPass> {
         let Some(_lease) = self.try_collect()? else { return Ok(CorpusPass::default()) };
         let mut pass = CorpusPass::default();
         // Rows of the corpus memo's retired schemas (before decision 0053 named plans): no plan collects them.

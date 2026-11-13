@@ -126,27 +126,74 @@ What the trials found on the way, each fixed:
 - Before a process giving ids out without the lease held what its read rows name, a row another process stored
   past its end was read as this process's ids.
 
+## The third step: the failures reproduced
+
+The open failures of the second step were each seen once or a few times in about 150 trials. A hook makes a fork
+happen where a test chooses: `RERAIL_TEST_FORK_AFTER=k1,k2,…` has the `sqlite3` shell (another process) append 20
+strings at the store's end once this process has given out `k` new ids. A cold run with the hook, then warm runs over
+its store (copied, so it replays), failed the same way every time for some `k`:
+
+| fork after | what the warm runs did | cause |
+|---|---|---|
+| 100 ids | `phase 0: no statistics for p0_lib.c0` | the kept strata wrote symbols in `i` columns |
+| 1000 ids | `// ensure_import(…)…: cannot read the file` (a path read as a comment's text) | a batch that forked part way |
+
+Each was found by emptying one table, then one fact space, of the copied store and replaying, then decoding the
+frames of the one space that mattered with their symbols as text: a frame of the retained part held the hook's own
+strings (`rerail-test-fork-…`) where paths belonged.
+
+1. **Symbols in integer columns.** Over atoms the engine holds a symbol column as an integer (`sym_char`, O13), and
+   the kept strata, the cross-file part's relations and the retained part's derived relations were kept under the
+   engine's column types. The store maps only `s` columns, so a forked process wrote its own ids. Each frame is now
+   typed by its declaration (`stored_types`, `retain::frame_types`), and read back under the engine's
+   (`retain::engine_types`).
+2. **Rows keyed by symbols.** The retained part's documents and granules are keyed by an input's owner, which is an
+   atom where the owner is a text (`p0_resolved`'s path). The store can map a value, not a part number or a document
+   key, so after a fork that part's frames are not written (`queue_frames_keyed_by_symbols`, `Syms::Unmapped`); the
+   next run derives them again.
+3. **A batch that forked part way.** The writer's batch checks for a fork as it begins (`begin_write`), but only when
+   ids are pending. Found with none pending, the store had moved past this process's end: the ids given out during the
+   batch were the other process's, a later job in the batch forked, and the batch's commit (which runs mapped)
+   committed the earlier jobs' rows of those ids. Now `begin_write` moves this process's end past the other's atoms
+   when none is pending, under the write lock, so no id given out during the batch is theirs; and a batch that forks
+   after it began rolls back and runs again, forked from its start (its jobs' rows mapped or the jobs dropped).
+
+Then, under four concurrent real runs over one store (no hook), two more:
+
+4. A forked process's memo read refused an entry whose relation had no symbol columns registered, and the run
+   failed (`this process's atoms forked …`). That entry is a miss now.
+5. The corpus collection pass (deletes and flags, no atom) was refused after a fork; it runs mapped now.
+
+And at open: opening a thread's connection configures it with reads (`page_count`, `journal_mode`) that wait for
+another process's writer for 250 ms only. Past that `lock()` failed, and every caller `expect`s its connection
+(`content store mutex poisoned: "content store writer is busy"`). The open is tried again now, as a write is
+(`retry_busy`).
+
+Measured after, profiling build: the hook at 1, 30, 100, 300, 1000, 3000 and 30000 ids (models), and at 100 and
+5000 (hogql, api), each a cold run and two warm runs: every run gives its solo findings. Four concurrent real runs
+over one store, cold then warm: on the last build, 2 trials, 15 of 16 runs give their solo findings and one warm run
+hung (below); every run that finished, on any build of this step, gave its solo findings.
+
 ## Departures and open points
 
-- Two failures seen once or a few times each in about 150 cold runs, both in a process that forked early, neither
-  reproduced since:
-  - Phase 0 (`bootstrap.rr`, whose files are all loads) ended with no statistics for an export
-    (`no statistics for p0_file_t_shape.c0`): the keeper gave up after its hits, so nothing measured it. Such an
-    export is measured from its rows held now; why the keeper gave up in a forked process is not known.
-  - A warm run's output named an id past the store's atoms (`rr_diagnostic: no symbol 1465749`), once in 8 warm
-    runs of the final build, after the kept cross-file part's inputs were typed (which fixed the deterministic case
-    above). Alone over the same store afterwards it passes: the other runs had stored that result again. Some stored
-    result still holds a process's own ids; which one is not found.
-  - A memo entry held an id past this process's atoms (`symbol 2767 is no atom of this process's (it holds 2760)`):
-    the writer refused it, so the run failed and nothing wrong was stored. Its source is not found.
+- One warm run of four concurrent ones hangs, in 3 of 5 warm trials across this step's builds (no output, 170 MB,
+  killed at 120 s), the last on the final build. Not yet sampled: the trial after it, whose watchdog samples a run
+  still going at 45 s, did not hang.
+- The phase 0 test (`bootstrap_resolves_as_the_builtin_reader_does`) fails in the process that makes its build's
+  test-store template, every time (remove `rerail-store-templates/<build>.*` and run it alone), and passes in every
+  other. Not a fork: in that process the template's thread ran phase 0 over all the library's modules first, and
+  the test's later `derive` of one text then misses `env.rr`'s include of `core.rr` and every absent file. Some state
+  kept in the process across stores is reused; which is not found.
+- A missing granule of the retained part is an error (`granule 9 of its stored rows is missing`), not a part
+  derived again. Seen only with frames deleted by hand.
+- A forked process's memo misses every entry whose relation has no registered symbol columns: a cost of the fork,
+  not of correctness.
 - The kept statistics' sketches (estimated distinct counts) and the retained part's statistics by constant
   (`kept_stats`, `Patched { counts, tested }`) are not mapped: a forked process's estimates for a symbol constant
-  may be another string's. Estimates only; the rows are mapped.
+  may be another string's. Estimates only; the rows are mapped. Digests taken over a forked process's rows are of
+  its numbering: a later process sees them differ and derives again.
 - `fact_value_stats` (the facts database's value statistics, `val ANY`) holds slice scope text and clause numbers,
   no atoms, and is written on its own connection.
-- Once, on a store made by an earlier build of this step, three of four warm runs panicked at open:
-  `content store mutex poisoned: "content store writer is busy"` (`objects.rs:155`, opening a thread's connection
-  found the store busy and the lock's error was `expect`ed). Not seen again in the trials above.
 - Still behind `RERAIL_ATOMS_PROVISIONAL=1` (0160).
 
 ## Prior work consulted

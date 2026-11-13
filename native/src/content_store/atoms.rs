@@ -872,6 +872,11 @@ impl Atoms {
         if state.since.is_none() && state.atoms.pending().0 > 0 {
             state.since = Some(Instant::now());
         }
+        let new = state.atoms.len() as Sym - before;
+        drop(state);
+        if new > 0 {
+            self.test_fork(new as usize);
+        }
         // Made while this thread reserves (`reserving`): the ids are its component's until it retires.
         RESERVING.with_borrow_mut(|r| {
             if let Some((arena, r)) = r.as_mut()
@@ -885,6 +890,52 @@ impl Atoms {
             }
         });
         ids
+    }
+
+    /// A test of decision 0170 (`RERAIL_TEST_FORK_AFTER=k1,k2,…`): once this process has given out `k` new ids, the
+    /// `sqlite3` shell (another process) appends a segment of 20 strings no rule uses at the store's end, as a
+    /// concurrent process giving out provisional ids does (0160). This process forks at its next write if ids are
+    /// pending then, at a point the thresholds choose. Each threshold fires once. Off unless the variable is set.
+    fn test_fork(&self, new: usize) {
+        static THRESHOLDS: LazyLock<Vec<usize>> = LazyLock::new(|| {
+            std::env::var("RERAIL_TEST_FORK_AFTER").map(|v| v.split(',').filter_map(|k| k.trim().parse().ok()).collect()).unwrap_or_default()
+        });
+        static GIVEN: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        if THRESHOLDS.is_empty() {
+            return;
+        }
+        let Some(path) = self.path.clone() else { return };
+        let was = GIVEN.fetch_add(new, Ordering::AcqRel);
+        for (i, &k) in THRESHOLDS.iter().enumerate() {
+            if was < k && was + new >= k {
+                let path = path.clone();
+                let append = move || {
+                    // Another process: the `sqlite3` shell, so no connection of this one writes outside its writer.
+                    let (mut ends, mut bytes) = (String::new(), String::new());
+                    for j in 0..20 {
+                        bytes.push_str(&format!("rerail-test-fork-{}-{i}-{j}", std::process::id()));
+                        ends.push_str(&(bytes.len() as u32).to_le_bytes().iter().map(|b| format!("{b:02x}")).collect::<String>());
+                    }
+                    let sql = format!(".timeout 60000\nBEGIN IMMEDIATE;\nINSERT INTO atom_segment(first, ends, bytes) SELECT coalesce(max(first + length(ends) / 4), 0), x'{ends}', CAST('{bytes}' AS BLOB) FROM atom_segment;\nSELECT max(first) FROM atom_segment;\nCOMMIT;\n");
+                    let out = std::process::Command::new("sqlite3").arg(&path).stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().and_then(|mut child| {
+                        use std::io::Write as _;
+                        child.stdin.take().expect("piped").write_all(sql.as_bytes())?;
+                        child.wait_with_output()
+                    });
+                    match out {
+                        Ok(o) => eprintln!("rerail: test fork after {k} ids: 20 atoms appended at {} {}", String::from_utf8_lossy(&o.stdout).trim(), String::from_utf8_lossy(&o.stderr).trim()),
+                        Err(e) => eprintln!("rerail: test fork after {k} ids: {e}"),
+                    }
+                };
+                // Waited for, so the ids just given are still pending when the store moves; but not on the writer's
+                // batch thread, whose transaction the append waits for.
+                if super::connection::in_batch() {
+                    std::thread::spawn(append);
+                } else {
+                    append();
+                }
+            }
+        }
     }
 
     /// The atom of `value`, given out (pending) under the lease if it is new.
@@ -1169,6 +1220,11 @@ impl Atoms {
     /// still read nothing (decision 0160).
     fn advance_holding(&self, connection: &Connection, base: usize, end: usize) -> StoreResult<()> {
         let mut state = self.state.write();
+        self.advance_holding_in(connection, &mut state, base, end)
+    }
+
+    /// `advance_holding`, under `state`'s lock held.
+    pub(super) fn advance_holding_in(&self, connection: &Connection, state: &mut State, base: usize, end: usize) -> StoreResult<()> {
         if state.map.is_some() || state.atoms.pending().0 > 0 || state.atoms.base() != base {
             return Ok(());
         }
@@ -1180,7 +1236,7 @@ impl Atoms {
         let mut statement = connection.prepare_cached("SELECT first, ends, bytes FROM atom_segment WHERE first >= ?1 AND first < ?2 ORDER BY first")?;
         let mut rows = statement.query([base as i64, end as i64])?;
         while let Some(row) = rows.next()? {
-            map::add_stored(&mut state, row.get::<_, i64>(0)? as Sym, &row.get::<_, Vec<u8>>(1)?, &row.get::<_, Vec<u8>>(2)?)?;
+            map::add_stored(state, row.get::<_, i64>(0)? as Sym, &row.get::<_, Vec<u8>>(1)?, &row.get::<_, Vec<u8>>(2)?)?;
         }
         state.all_held = state.atoms.base();
         Ok(())

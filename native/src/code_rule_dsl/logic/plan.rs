@@ -5147,6 +5147,17 @@ fn sym_char(inputs: &Inputs, t: &str) -> char {
     if t == "sym" && inputs.atoms.is_none() { 's' } else { 'i' }
 }
 
+/// A relation's column types as the store keeps its rows: `s` where it declares a symbol, whatever the engine holds
+/// the column as (over atoms, an integer). The store maps a forked process's symbols by them (decision 0170); rows of
+/// another width than declared keep the engine's types.
+fn stored_types(prog: &Program, rel: &str, engine: Vec<u8>) -> Vec<u8> {
+    let declared = prog_types(prog, rel);
+    if declared.len() != engine.len() {
+        return engine;
+    }
+    declared.iter().map(|t| if *t == "sym" { b's' } else { b'i' }).collect()
+}
+
 fn prog_types<'p>(prog: &'p Program, r: &str) -> Vec<&'p str> {
     prog.decls.get(r).unwrap_or_else(|| panic!("no declaration of {r}")).iter().map(|(_, t)| t.as_str()).collect()
 }
@@ -7843,7 +7854,7 @@ fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &BT
         let digest = got.as_ref().map(|(types, rows, n)| rows_digest(types.len(), rows, *n));
         fresh.insert(r.clone(), digest);
         members.push((r.clone(), digest));
-        ks.ran(r, got.zip(reads).map(|((types, rows, n), reads)| (digest.expect("rows give a digest"), types, rows, n, reads.clone())));
+        ks.ran(r, got.zip(reads).map(|((types, rows, n), reads)| (digest.expect("rows give a digest"), stored_types(run.prog, r, types), rows, n, reads.clone())));
     }
     for v in scc.iter().filter(|r| run.views.contains(*r)) {
         fresh.insert(v.clone(), view_digest(reads.map(Vec::as_slice), &members));
@@ -7950,7 +7961,12 @@ fn postings(values: impl Iterator<Item = i64>) -> (f64, f64) {
 }
 
 fn kept_strata_hold(ks: &mut dyn KeptStrata, db: &Connection, run: &mut Run, rel: &str) -> Result<usize> {
-    let (types, rows, n) = ks.rows(rel).ok_or_else(|| Error::Plan(format!("{rel}: kept as clean, but its rows are not kept")))?;
+    let (stored, rows, n) = ks.rows(rel).ok_or_else(|| Error::Plan(format!("{rel}: kept as clean, but its rows are not kept")))?;
+    // Held as this run's engine holds the relation's columns (over atoms a symbol is an integer column).
+    let types: Vec<u8> = prog_types(run.prog, rel).iter().map(|t| sym_char(&run.model.inputs, t) as u8).collect();
+    if types.len() != stored.len() {
+        return Err(Error::Plan(format!("{rel}: kept {} columns wide, declared {}", stored.len(), types.len())));
+    }
     let k = types.len();
     let cols: Vec<(f64, f64)> = (0..k).map(|c| postings(rows.iter().skip(c).step_by(k).copied())).collect();
     super::native::component::hold_rows(db, rel, types, rows, n);

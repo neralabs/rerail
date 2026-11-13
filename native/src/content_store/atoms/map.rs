@@ -392,8 +392,13 @@ impl Atoms {
         if state.map.is_none() {
             let (base, len) = (state.atoms.base(), state.atoms.len());
             let end = database_end(connection)?;
-            if !(end > base && len > base && end != self.wrote.load(Ordering::Acquire)) {
+            if !(end > base && end != self.wrote.load(Ordering::Acquire)) {
                 return Ok(());
+            }
+            // Another process's atoms and none pending here: this process's end moves past them now, while this
+            // transaction holds the write lock, so an id given out while it runs is not one of theirs.
+            if len == base {
+                return self.advance_holding_in(connection, &mut state, base, end);
             }
             self.fork_now(connection, &mut state)?;
         }

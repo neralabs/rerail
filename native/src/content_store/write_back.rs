@@ -448,6 +448,7 @@ impl ContentStore {
                     // (`run_job`), its jobs being a cache's writes. Failing them dropped every write of the batch.
                     let started = Instant::now();
                     let mut backoff = JOB_BACKOFF_FIRST;
+                    let mut forked_in = false;
                     let outcomes = loop {
                         match store.in_one_transaction(|| {
                             w.shared.state.lock().expect("the writer's state").open = true;
@@ -460,6 +461,9 @@ impl ContentStore {
                                 std::thread::sleep(super::connection::jittered(backoff));
                                 backoff = (backoff * 2).min(JOB_BACKOFF_MAX);
                             }
+                            // Forked by one of its jobs (decision 0170), so rolled back: run again, forked from its
+                            // start, its jobs' rows mapped or the jobs dropped (`guarded`).
+                            Err(StoreError::Invalid(e)) if !forked_in && e.contains(super::atoms::DIVERGED_TEXT) => forked_in = true,
                             Err(e) => break batch.iter().map(|_| Err(StoreError::Invalid(format!("the batch's commit: {e}")))).collect(),
                         }
                     };

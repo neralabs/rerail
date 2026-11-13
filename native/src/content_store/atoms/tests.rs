@@ -438,6 +438,28 @@ fn atoms_another_process_stored_past_this_ones_end_are_mapped_after_a_fork() {
     assert!(refused.as_ref().is_err_and(|e| e.to_string().contains(super::DIVERGED_TEXT)), "{refused:?}");
 }
 
+/// Decision 0170: a write transaction that finds another process's atoms past this one's end, with none pending here,
+/// moves this process's end past them before its rows are made. An id given out while it runs is not one of theirs,
+/// and the process does not fork. (The writer's batch gave ids under the other's, and its later job forked: the
+/// jobs before had written rows of them, unmapped.)
+#[test]
+fn a_write_that_finds_the_store_moved_gives_ids_past_its_end() {
+    let path = path("moved");
+    let store = ContentStore::open(&path).unwrap();
+    store.intern_atoms(&["a"]).unwrap();
+    store.flush_atoms().unwrap();
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute("INSERT INTO atom_segment(first, ends, bytes) VALUES (2, x'01000000', CAST('z' AS BLOB))", [])
+        .unwrap();
+    let given = store.in_one_transaction(|| store.intern_atoms(&["b"]).unwrap()).unwrap();
+    assert_eq!(given, [3], "past the other process's `z`");
+    let handle = store.atoms_handle();
+    assert!(!handle.forked());
+    assert!(!handle.pending());
+    assert_eq!(segments(&path), [(0, 1), (1, 1), (2, 1), (3, 1)]);
+}
+
 /// After a fork (decision 0170), the derivation tables name the store's ids: a forked process binds and records under
 /// them, reads its own bindings back, and another process reading the store finds them under the right strings. The
 /// `atoms` table answers in the store's ids.

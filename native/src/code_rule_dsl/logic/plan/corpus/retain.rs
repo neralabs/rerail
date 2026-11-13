@@ -1163,8 +1163,8 @@ fn with_levels(frames: &InFrames, levels: &HashMap<(FrameRel, i64), Arc<crate::c
         .and_then(|l| l.rows().ok()).filter(|l| l.n == got.n && l.rows.len() == got.n)
         .map(|l| l.rows.iter().map(|&v| v as u32).collect::<Vec<u32>>());
     Some(match level {
-        Some(level) => InRel::from_flat_levels(got.rows, got.n, got.types, level)?,
-        None => InRel::from_flat(got.rows, got.n, got.types),
+        Some(level) => InRel::from_flat_levels(got.rows, got.n, engine_types(got.types), level)?,
+        None => InRel::from_flat(got.rows, got.n, engine_types(got.types)),
     })
 }
 
@@ -1242,6 +1242,20 @@ fn input_ident(rel: &str, prog: &front::Program, key: &[u8; 32]) -> [u8; 32] {
 /// A relation's column types, as frames store them.
 pub(super) fn types_of(prog: &front::Program, rel: &str) -> Vec<u8> {
     prog.decls.get(rel).map(|cols| cols.iter().map(|(_, t)| if t == "sym" { b's' } else { b'i' }).collect()).unwrap_or_default()
+}
+
+/// The column types a frame keeps relation `rel`'s rows under, held by the engine as `engine`: its declaration's
+/// (`types_of`), whose `s` columns the store maps for a forked process (decision 0170); the engine's when the rows are
+/// not of its declared width.
+pub(super) fn frame_types(prog: &front::Program, rel: &str, engine: &[u8]) -> Vec<u8> {
+    let declared = types_of(prog, rel);
+    if declared.len() == engine.len() { declared } else { engine.to_vec() }
+}
+
+/// A kept relation's column types as the engine holds them: a corpus program's symbols are atoms, in integer columns
+/// (O13), which its frame types `s` (`frame_types`).
+pub(super) fn engine_types(stored: Vec<u8>) -> Vec<u8> {
+    stored.into_iter().map(|t| if t == b's' { b'i' } else { t }).collect()
 }
 
 /// Each relation's location columns, as the split found them (`Split::locations`).
@@ -1883,7 +1897,7 @@ impl Retained {
                         now.insert(rel.clone(), d);
                         written += ng + na;
                         delta_rows += ng + na;
-                        delta_out.push(crate::content_store::FrameDelta { rel: name.clone(), digest: d, reads: rd.clone(), types: k.rel.types().to_vec(), gone: gone.clone(), added: added.clone() });
+                        delta_out.push(crate::content_store::FrameDelta { rel: name.clone(), digest: d, reads: rd.clone(), types: frame_types(prog, rel, k.rel.types()), gone: gone.clone(), added: added.clone() });
                         continue;
                     }
                 }
@@ -1912,7 +1926,7 @@ impl Retained {
                 if let Some(level) = k.rel.live_levels() {
                     puts.push(FramePut { rel: name.clone(), part: LEVELS_PART, digest: d, reads: Vec::new(), rows: FrameRows { types: vec![b'i'], rows: level.into_iter().map(i64::from).collect(), n } });
                 }
-                puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest: d, reads: read_digests, rows: FrameRows { types: k.rel.types().to_vec(), rows, n } });
+                puts.push(FramePut { rel: name.clone(), part: DOCS_PART, digest: d, reads: read_digests, rows: FrameRows { types: frame_types(prog, rel, k.rel.types()), rows, n } });
             }
         }
         if trace {
@@ -1921,7 +1935,8 @@ impl Retained {
         if kept_stats::on() {
             self.stats_puts(was, &now, &mut puts);
         }
-        store.queue_frames_retagged(was.space, puts, retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token(), self.key)));
+        // Keyed by owner: a document a text owns is that symbol's atom, and its granule a part by it (decision 0170).
+        store.queue_frames_keyed_by_symbols(was.space, puts, retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token(), self.key)));
         Ok(written)
     }
 }

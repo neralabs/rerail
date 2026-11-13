@@ -502,7 +502,12 @@ impl Found {
             Found::Held(e) => Entry { key: e.key, nodes: e.nodes,
                 rows: e.rows.iter().filter(|(r, _)| keep(r)).map(|(r, v)| (r.clone(), v.clone())).collect(),
                 lines: e.lines.clone() },
-            Found::Frame(f) => f.projected(keep)?,
+            // Forked (decision 0170), an entry whose symbols cannot be mapped (its relation's columns not
+            // registered) is a miss: its rows may name the other numbering's ids.
+            Found::Frame(f) => match f.projected(keep) {
+                Err(e) if e.to_string().contains(crate::content_store::atoms::DIVERGED_TEXT) => return Ok(None),
+                entry => entry?,
+            },
         };
         Ok(Some(entry).filter(|e| e.key == key))
     }
