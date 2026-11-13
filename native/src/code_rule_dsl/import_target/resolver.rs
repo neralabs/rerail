@@ -124,13 +124,16 @@ fn stopping(outcome: Outcome) -> Step {
     outcome.map(|found| found.map_or(Tap::Stop, Tap::Found))
 }
 
-/// enhanced-resolve's `getType`.
+/// enhanced-resolve's `getType`. `Absolute` is its `AbsolutePosix`; `AbsoluteWin`, a drive path
+/// (`C:`, `C:\a`, `C:/a`) or one under two backslashes (`\\server\share`, `\\?\C:\a`), is read as
+/// a path on any platform, as upstream reads it.
 #[derive(PartialEq, Eq)]
 enum PathType {
     Empty,
     Normal,
     Relative,
     Absolute,
+    AbsoluteWin,
     Internal,
 }
 
@@ -143,16 +146,29 @@ fn path_type(path: &str) -> PathType {
         }
         [b'/', ..] => PathType::Absolute,
         [b'#', ..] => PathType::Internal,
+        [drive, b':'] | [drive, b':', b'\\' | b'/', ..] if drive.is_ascii_alphabetic() => {
+            PathType::AbsoluteWin
+        }
+        [b'\\', b'\\', ..] => PathType::AbsoluteWin,
         _ => PathType::Normal,
     }
 }
+
+/// A Windows absolute path (`PathType::AbsoluteWin`) as the paths here take it (`path::windows`),
+/// where upstream normalizes it with `path.win32.normalize`.
+fn windows_normalize(path_: &str) -> String {
+    path::windows(path_).unwrap_or_else(|| path::normalize(path_))
+}
+
 /// `util/path.js`'s `join`: a relative result keeps its `./`.
 fn join(base: &str, request: &str) -> String {
     if request.is_empty() {
         return normalize(base);
     }
-    if request.starts_with('/') {
-        return path::normalize(request);
+    match path_type(request) {
+        PathType::Absolute => return path::normalize(request),
+        PathType::AbsoluteWin => return windows_normalize(request),
+        _ => {}
     }
     path::normalize(&format!("{base}/{request}"))
 }
@@ -160,6 +176,7 @@ fn join(base: &str, request: &str) -> String {
 fn normalize(path_: &str) -> String {
     match path_type(path_) {
         PathType::Empty => path_.to_owned(),
+        PathType::AbsoluteWin => windows_normalize(path_),
         PathType::Relative => {
             let normalized = path::normalize(path_);
             if path_type(&normalized) == PathType::Relative {

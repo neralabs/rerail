@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
 import { basename, isAbsolute, relative, resolve, sep } from "node:path";
-import { gitConfigFiles, gitExcludeFiles } from "../git.js";
+import { gitConfigFiles, gitExcludeFiles, GitReads } from "../git.js";
 
 /**
  * A change to Git's ignore rules in a session that can make them ignore more. `ignoresMore` holds each pattern the file
@@ -46,14 +46,20 @@ export class IgnoreRuleFiles {
   readonly #patterns = new Map<string, Patterns>();
   /** The look in progress, or the last one: looks run one at a time, so two never report one change twice. */
   #looking: Promise<unknown> = Promise.resolve();
+  /** What Git is asked through, so the session's close can stop it and wait for it. */
+  readonly #git: GitReads;
 
-  private constructor(root: string) {
+  private constructor(root: string, git: GitReads) {
     this.#root = root;
+    this.#git = git;
   }
 
-  /** The ignore rule files of the session folder `root` (physical) and of `checkouts`, as they are now. */
-  static async open(root: string, checkouts: readonly string[]): Promise<IgnoreRuleFiles> {
-    const files = new IgnoreRuleFiles(root);
+  /**
+   * The ignore rule files of the session folder `root` (physical) and of `checkouts`, as they are now. Git is asked about
+   * them through `git`: once it is stopped, no Git starts, and an exclude file not yet found is not watched.
+   */
+  static async open(root: string, checkouts: readonly string[], git: GitReads = new GitReads()): Promise<IgnoreRuleFiles> {
+    const files = new IgnoreRuleFiles(root, git);
     await files.#watch([root, ...checkouts]);
     return files;
   }
@@ -118,7 +124,7 @@ export class IgnoreRuleFiles {
   async #followConfiguration(): Promise<void> {
     if (!(await this.#configurationChanged())) return;
     for (const checkout of this.#checkouts) {
-      for (const file of await gitExcludeFiles(checkout)) this.#excludeFiles.add(file);
+      for (const file of await this.#git.run(signal => gitExcludeFiles(checkout, { signal }))) this.#excludeFiles.add(file);
     }
   }
 
@@ -139,8 +145,10 @@ export class IgnoreRuleFiles {
     for (const checkout of checkouts) {
       if (this.#checkouts.has(checkout)) continue;
       this.#checkouts.add(checkout);
-      for (const file of await gitExcludeFiles(checkout)) await this.#watchExcludeFile(file);
-      for (const file of await gitConfigFiles(checkout)) if (!this.#configStamps.has(file)) this.#configStamps.set(file, await stampOf(file));
+      for (const file of await this.#git.run(signal => gitExcludeFiles(checkout, { signal }))) await this.#watchExcludeFile(file);
+      for (const file of await this.#git.run(signal => gitConfigFiles(checkout, { signal }))) {
+        if (!this.#configStamps.has(file)) this.#configStamps.set(file, await stampOf(file));
+      }
     }
   }
 

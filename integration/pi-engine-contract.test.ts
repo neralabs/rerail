@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { InMemoryCredentialStore } from "@earendil-works/pi-ai";
@@ -6,6 +6,7 @@ import { CONTRACT_CURSOR_EXECUTE_MESSAGE, CONTRACT_CURSOR_EXECUTE_RULE_ID, seedC
 import { awaitCodeRulesOpenThrough } from "./support/code-rules-open.js";
 import { steerText } from "./support/steer-text.js";
 import { startTestRepository } from "../test/support/started-repository.js";
+import { removeFolder } from "../test/support/platform/remove-folder.js";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   createAgentSession,
@@ -21,7 +22,7 @@ const originalRerailHome = process.env.RERAIL_HOME;
 afterEach(async () => {
   if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
   else process.env.RERAIL_HOME = originalRerailHome;
-  await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map((path) => removeFolder(path)));
 });
 
 describe("Pi native code rule engine", () => {
@@ -120,7 +121,10 @@ describe("Pi native code rule engine", () => {
         expect.objectContaining({ type: "custom_message", content: expect.stringContaining(steer) }),
       );
     } finally {
-      await session.dispose();
+      // Pi ends a session by telling its extensions first, as its runtime's teardown does; dispose alone tells them
+      // nothing. Rerail's extension then closes its runtime and the Rerail home's database, which Windows keeps from
+      // being removed while it is open.
+      try { await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" }); } finally { session.dispose(); }
     }
   }, 30_000);
 });

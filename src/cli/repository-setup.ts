@@ -1,8 +1,9 @@
 import { existsSync, statSync } from "node:fs";
 import { readRemoteConfig } from "../runtime/remote-config.js";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { posix, win32 } from "node:path";
 import { and, eq } from "drizzle-orm";
+import { physicalPath } from "../engine/catalog/checkout-control.js";
 import type { RulesDashboardScope } from "../api/session-contracts.js";
 import { CODING_AGENT_NAMES, type ConnectResult } from "../setup/coding-agents.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../engine/storage/database.js";
@@ -75,6 +76,7 @@ import {
   type QuestionForm,
   type QuestionStep,
   type RecommendedPacksInput,
+  type SetupCommand,
 } from "../harness/setup-screens.js";
 import type { SetupQuestion, SetupQuestionId, SetupStep } from "../harness/setup-step.js";
 
@@ -151,7 +153,8 @@ export interface SetupEnvironment {
   setSessionsApproved(approved: boolean): Promise<void>;
   /**
    * A dashboard page scoped to `scope`'s repository and checkout; the link is always returned. `open`: try a
-   * browser (E6 says why none opened). False when an earlier run already opened it, so a re-run shows the link alone.
+   * browser (E6 says why none opened). False when an earlier run already opened it, so a re-run shows the link alone,
+   * and whenever a coding agent runs set-up (the agent lane and `--json`).
    */
   dashboard(scope: RulesDashboardScope, page: DashboardPage, open: boolean): Promise<DashboardLink>;
   /** Where rule packs are fetched from and installed to: npm, into the Rerail home. */
@@ -176,7 +179,7 @@ export interface RepositorySetupOptions {
   /** `--answer`: the person's answer, relayed by the coding agent. */
   answer?: string;
   /** What the agent lane's answer commands run; `rerail setup` when absent. */
-  setupCommand?: string;
+  setupCommand?: SetupCommand;
   /** `--json`: what each answer's `next.args` start with; `setup --json` when absent. */
   nextArgs?: readonly string[];
   /** `--json`: the question a run stopped at. */
@@ -338,10 +341,22 @@ async function choose<K extends string>(run: Run, form: QuestionForm, keys: read
   }
 }
 
+/**
+ * The folder a typed answer names, absolute. `~` stands for the home folder, and on Windows so does `~\`, and one pair
+ * of double quotes around the answer goes: Explorer's "Copy as path" adds them, and no Windows file name holds one.
+ */
+export function folderFromAnswer(answer: string, home: string, platform: NodeJS.Platform = process.platform): string {
+  const windows = platform === "win32";
+  const paths = windows ? win32 : posix;
+  let trimmed = answer.trim();
+  if (windows && trimmed.length >= 2 && trimmed.startsWith('"') && trimmed.endsWith('"')) trimmed = trimmed.slice(1, -1);
+  const fromHome = trimmed === "~" || trimmed.startsWith("~/") || (windows && trimmed.startsWith("~\\"));
+  return paths.resolve(fromHome ? paths.join(home, trimmed.slice(1)) : trimmed);
+}
+
 /** The repository at a folder the person named: its Git root, or the folder itself outside Git. */
 function repositoryAt(folder: string): Repository | undefined {
-  const trimmed = folder.trim();
-  const path = resolve(trimmed === "~" || trimmed.startsWith("~/") ? `${homedir()}${trimmed.slice(1)}` : trimmed);
+  const path = folderFromAnswer(folder, homedir());
   try {
     if (!statSync(path).isDirectory()) return undefined;
   } catch {
@@ -353,7 +368,13 @@ function repositoryAt(folder: string): Repository | undefined {
 
 const HOME_FOLDER_REFUSED = "Start Rerail inside a repository, not your home folder.";
 
-const isHomeFolder = (root: string): boolean => resolve(root) === resolve(homedir());
+/**
+ * Whether `root` is the home folder, by any path that leads to it: compared as stored, since Windows paths ignore case
+ * and a home spelled `c:\users\me` is still the home folder, and through links.
+ */
+export function isHomeFolder(root: string, home: string = homedir()): boolean {
+  return physicalPath(root) === physicalPath(home);
+}
 
 /** The Git repository set-up ran in, if any. A plain folder, or the home folder, is no repository to offer. */
 function repositoryHere(cwd: string): Repository | undefined {
@@ -495,8 +516,13 @@ function dashboardScope(run: Run, repository: Repository): RulesDashboardScope {
   return { repositoryKey: checkout.repositoryKey, checkoutPath: checkout.checkoutPath };
 }
 
-/** Step 6: what is on, how to try it, the link to manage rules, and the other started repos. */
-async function summary(run: Run, repository: Repository, open: boolean, agents: AgentsConnection): Promise<SetupOutcome> {
+/**
+ * Step 6: what is on, how to try it, the link to manage rules, and the other started repos. `firstStart`: this run
+ * started the repository, so a person at a terminal gets the dashboard in their browser. A coding agent's run (the
+ * agent lane and `--json`) gets the link alone, since it may run where no one watches the screen, or in a sandbox.
+ */
+async function summary(run: Run, repository: Repository, firstStart: boolean, agents: AgentsConnection): Promise<SetupOutcome> {
+  const open = firstStart && run.io.lane === "terminal";
   const scope = dashboardScope(run, repository);
   const { packNames, ruleCount, others } = readDatabase(run, database => {
     const checkout = lookupCheckout(database, repository.root);

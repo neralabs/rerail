@@ -1,9 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
 import type { CodingAgentState } from "../engine/adapter-contract.js";
+import { makeRerailHome } from "../engine/storage/private-files.js";
 import { CURRENT_LINK } from "../engine/storage/rerail-home.js";
 import {
   CODEX_TRUST_NOTE,
@@ -75,8 +76,12 @@ async function connection(root: string, home: string, id: Harness): Promise<Pick
     const plan = await registerHarnesses({ root, home, harnesses: [id], dryRun: true });
     return { connected: plan.changes.every(change => change.harness !== id || change.action === "unchanged"), problem: null };
   } catch (error) {
-    return { connected: false, problem: error instanceof Error ? error.message : String(error) };
+    return { connected: false, problem: errorMessage(error) };
   }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** Claude Code's managed settings file, which no other setting overrides; none on native Windows, where Claude Code has no sandbox. */
@@ -90,17 +95,17 @@ export function claudeManagedSettingsPath(platform: NodeJS.Platform = process.pl
  * What keeps coding agent `id` out of the Rerail home and the content cache, read from its files only. Set-up writes
  * deny entries for Claude Code (`claudeIsolationEntries`) and the Cursor CLI (`planCursorCli`); they hold only where
  * the host enforces them: Claude Code's sandbox rules only while its sandbox is on, and the Cursor CLI's file tools
- * only in an existing `cli-config.json`, never on native Windows.
+ * only in an existing `cli-config.json`.
  */
 function rerailDataAccess(id: Harness, connected: boolean, home: string, platform: NodeJS.Platform, claudeManagedSettings: string | undefined): CodingAgentState["rerailData"] {
   switch (id) {
     case "claude-code":
       if (!connected) return { access: "open", why: "Rerail is not connected to Claude Code, so nothing keeps it out of Rerail's data." };
-      return platform !== "win32" && claudeSandboxOn(join(home, ".claude", "settings.json"), claudeManagedSettings)
+      return claudeSandboxOn(platform, join(home, ".claude", "settings.json"), claudeManagedSettings)
         ? { access: "kept-out", why: "Claude Code's sandbox is on, so its commands and file tools cannot read Rerail's data." }
         : { access: "file-tools", why: "Claude Code's sandbox is off (sandbox.enabled), so its file tools cannot read Rerail's data but its shell commands can." };
     case "cursor":
-      return connected && platform !== "win32" && existsSync(join(home, ".cursor", "cli-config.json"))
+      return connected && existsSync(join(home, ".cursor", "cli-config.json"))
         ? { access: "file-tools", why: "The Cursor CLI's file tools cannot read Rerail's data; Cursor's editor agent and shell commands can." }
         : { access: "open", why: "Nothing keeps Cursor's agent out of Rerail's data." };
     case "codex":
@@ -111,10 +116,13 @@ function rerailDataAccess(id: Harness, connected: boolean, home: string, platfor
   }
 }
 
-/** Claude Code's `sandbox.enabled`: managed settings, where they set it, win over the user's. */
-function claudeSandboxOn(userSettings: string, managedSettings: string | undefined): boolean {
+/**
+ * Whether Claude Code's sandbox is on: `sandbox.enabled`, where managed settings that set it win over the user's. Native
+ * Windows has no sandbox, whatever the settings say.
+ */
+function claudeSandboxOn(platform: NodeJS.Platform, userSettings: string, managedSettings: string | undefined): boolean {
   const managed = managedSettings === undefined ? undefined : sandboxEnabled(managedSettings);
-  return (managed ?? sandboxEnabled(userSettings)) === true;
+  return platform !== "win32" && (managed ?? sandboxEnabled(userSettings)) === true;
 }
 
 /** The part of a Claude Code settings file that says whether its sandbox is on. */
@@ -167,21 +175,20 @@ export interface RefreshResult {
  */
 export async function refreshCodingAgents(root: string, home: string): Promise<RefreshResult> {
   const result: RefreshResult = { agents: [], changes: [], notes: [], failures: [], unchecked: [] };
-  const message = (error: unknown): string => error instanceof Error ? error.message : String(error);
   for (const id of detectHarnesses(home)) {
     try {
       if (!(await isRegistered(root, home, id))) continue;
     } catch (error) {
-      result.unchecked.push({ agent: id, message: message(error) });
+      result.unchecked.push({ agent: id, message: errorMessage(error) });
       continue;
     }
     try {
       const report = await registerHarnesses({ root, home, harnesses: [id] });
       result.agents.push(id);
       result.changes.push(...report.changes.filter(change => change.harness === id));
-      for (const note of report.notes) if (!result.notes.includes(note)) result.notes.push(note);
+      result.notes = [...new Set([...result.notes, ...report.notes])];
     } catch (error) {
-      result.failures.push({ agent: id, message: message(error) });
+      result.failures.push({ agent: id, message: errorMessage(error) });
     }
   }
   return result;
@@ -224,28 +231,58 @@ export interface ConnectResult {
  * one left out of `agents` keeps it; naming Pi or `rerail update` swaps it.
  */
 export async function connectCodingAgents(root: string, home: string, agents: readonly Harness[], workspaceDir?: string): Promise<ConnectResult> {
-  const result: ConnectResult = { changed: [], all: [], failures: [], codexTrust: false, ompPlugin: false };
+  const connections: AgentConnection[] = [];
   for (const id of [...agents, ...await piToSwap(root, home, agents)]) {
-    try {
-      const report = await registerHarnesses({ root, home, harnesses: [id], ...(workspaceDir === undefined ? {} : { workspaceDir }) });
-      if (agents.includes(id) && report.changes.some(change => change.harness === id && (change.action === "created" || change.action === "updated"))) result.changed.push(id);
-      if (report.notes.includes(CODEX_TRUST_NOTE)) result.codexTrust = true;
-      if (report.notes.includes(OMP_PLUGIN_NOTE)) result.ompPlugin = true;
-    } catch (error) {
-      result.failures.push(error instanceof UnreadableConfigError
-        ? { agent: id, message: error.reason, file: error.path }
-        : { agent: id, message: error instanceof Error ? error.message : String(error) });
-    }
+    connections.push(await connectAgent(root, home, id, { named: agents.includes(id), workspaceDir }));
   }
+  const notes = connections.flatMap(connection => connection.notes);
+  const all = await connectedAgents(root, home);
+  // OMP's plugin install is looked for whenever OMP is connected, named or not.
+  const ompPlugin = notes.includes(OMP_PLUGIN_NOTE) || (!agents.includes("omp") && all.includes("omp") && await loadsOmpPluginCopy(root, home));
+  return {
+    changed: connections.filter(connection => connection.changed).map(connection => connection.id),
+    all,
+    failures: connections.flatMap(connection => connection.problem ?? []),
+    codexTrust: notes.includes(CODEX_TRUST_NOTE),
+    ompPlugin,
+  };
+}
+
+/** What set-up's connection did with one coding agent: changed its config or not, the notes, or the problem that left it as it was. */
+interface AgentConnection {
+  id: Harness;
+  changed: boolean;
+  notes: readonly string[];
+  problem?: ConnectProblem;
+}
+
+/** Registers `root` with coding agent `id` alone; a change counts only for an agent the person `named`. */
+async function connectAgent(
+  root: string, home: string, id: Harness, { named, workspaceDir }: { named: boolean; workspaceDir: string | undefined },
+): Promise<AgentConnection> {
+  try {
+    const report = await registerHarnesses({ root, home, harnesses: [id], workspaceDir });
+    const wrote = report.changes.some(change => change.harness === id && (change.action === "created" || change.action === "updated"));
+    return { id, changed: named && wrote, notes: report.notes };
+  } catch (error) {
+    const problem = error instanceof UnreadableConfigError
+      ? { agent: id, message: error.reason, file: error.path }
+      : { agent: id, message: errorMessage(error) };
+    return { id, changed: false, notes: [], problem };
+  }
+}
+
+/** Every coding agent on this computer that holds a registration of `root` (`isRegistered`). */
+async function connectedAgents(root: string, home: string): Promise<Harness[]> {
+  const connected: Harness[] = [];
   for (const id of detectHarnesses(home)) {
     try {
-      if (await isRegistered(root, home, id)) result.all.push(id);
+      if (await isRegistered(root, home, id)) connected.push(id);
     } catch {
       // A config that cannot be read connects nothing; set-up names it when it was asked to connect it.
     }
   }
-  if (!result.ompPlugin && !agents.includes("omp") && result.all.includes("omp")) result.ompPlugin = await loadsOmpPluginCopy(root, home);
-  return result;
+  return connected;
 }
 
 /**
@@ -285,7 +322,7 @@ export function seenCodingAgents(rerailHome: string): Harness[] | undefined {
 }
 
 async function writeSeenCodingAgents(rerailHome: string, seen: ReadonlySet<Harness>): Promise<void> {
-  await mkdir(rerailHome, { recursive: true, mode: 0o700 });
+  makeRerailHome(rerailHome);
   await writeFile(join(rerailHome, SEEN_AGENTS_FILE), `${JSON.stringify({ seen: HARNESSES.filter(id => seen.has(id)) }, null, 2)}\n`, { mode: 0o600 });
 }
 

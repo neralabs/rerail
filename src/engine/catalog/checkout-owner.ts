@@ -16,11 +16,14 @@ export interface CheckoutOwner {
   readonly path: string;
 }
 
-/** Whether `directory` holds a `.git` file or folder: a candidate checkout top level, until Git confirms it. */
+/**
+ * Whether `directory` holds a `.git` file or folder: a candidate checkout top level, until Git confirms it. Asked of
+ * the path itself on every lookup, where the answer is mostly no: a missing entry returns, since a thrown error cost
+ * twice the stat.
+ */
 function holdsGitEntry(directory: string): boolean {
   try {
-    lstatSync(join(directory, ".git"));
-    return true;
+    return lstatSync(join(directory, ".git"), { throwIfNoEntry: false }) !== undefined;
   } catch {
     return false;
   }

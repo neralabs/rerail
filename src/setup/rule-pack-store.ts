@@ -11,6 +11,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import semver from "semver";
 import { RULE_PACK_LIST } from "../engine/catalog/pack-list.generated.js";
+import { removeScratch } from "../engine/file-replace.js";
 import {
   activeCoreVersion,
   installedPackageName,
@@ -34,7 +35,7 @@ import {
   type RulePack,
 } from "../engine/catalog/rule-packs.js";
 import { defaultRerailHome, UPDATE_STATE_FILE } from "../engine/storage/rerail-home.js";
-import { runNpm, unreachableRegistryReason, type NpmRunner } from "../runtime/npm.js";
+import { prefixInstallNpm, runNpm, unreachableRegistryReason, type NpmRunner } from "../runtime/npm.js";
 import { withPacksLock } from "./packs-lock.js";
 
 /** The dist-tag a pack is fetched under when core's update channel has no version of it: where a held pack publishes. */
@@ -136,7 +137,8 @@ async function removeStaleStaging(staging: string, now: number): Promise<void> {
     try {
       if (now - statSync(path).mtimeMs > STALE_STAGING_MS) await rm(path, { recursive: true, force: true });
     } catch {
-      // Another run removed it first.
+      // Another run removed it first, or Windows still holds a file in it. One try is enough: the next fetch sweeps it
+      // again, and waiting out a held folder here would hold up this fetch.
     }
   }));
 }
@@ -145,7 +147,8 @@ async function removeStaleStaging(staging: string, now: number): Promise<void> {
  * npm, in the Rerail home's packs prefix and a staging folder per fetch, so two discoveries at once never share one.
  * Install scripts never run, and `--` ends npm's options, so no spec is read as one.
  */
-export function npmPackStore(home: string = defaultRerailHome(), npm: NpmRunner = runNpm): PackStore {
+export function npmPackStore(home: string = defaultRerailHome(), runner: NpmRunner = runNpm): PackStore {
+  const npm = prefixInstallNpm(runner);
   const prefix = installedPacksPrefix(home);
   const quiet = ["--ignore-scripts", "--omit=dev", "--no-audit", "--no-fund"];
   return {
@@ -174,7 +177,9 @@ export function npmPackStore(home: string = defaultRerailHome(), npm: NpmRunner 
         if (result.status === "fulfilled") fetched.push(result.value);
         else problems.push({ packageName, reason: fetchProblemReason(packageName, result.reason) });
       });
-      return { fetched, problems, release: () => rm(run, { recursive: true, force: true }) };
+      // Discovery releases in a `finally`, so a removal that failed would replace its result or its error: the run's
+      // folder is retried while Windows holds a file in it, then left for a later fetch's sweep.
+      return { fetched, problems, release: () => removeScratch(run) };
     },
     async install(specs) {
       if (specs.length === 0) return;

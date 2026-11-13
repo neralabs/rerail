@@ -27,6 +27,8 @@ In your repository, run this to install Rerail under `~/.rerail`, connect your c
 npx @neralabs/rerail setup
 ```
 
+In Windows PowerShell, if that says `npx.ps1 cannot be loaded`, run `npx.cmd @neralabs/rerail setup` ([why](docs/troubleshooting.md#windows-powershell-npxps1-cannot-be-loaded)).
+
 Then, in a new terminal, which has `rerail` on its `PATH`, open the dashboard with `rerail manage`.
 
 Set-up asks before it reads the repository, shows the rule packs that fit it with the reason for each, or why none fits, and installs only the ones you confirm. It connects the coding agents it finds (or only the ones you name with `--agents`), puts `~/.rerail/bin` on your `PATH`, and starts Rerail in this repository only. Everywhere else Rerail stays off until you run `/rerail-start` (or `rerail start`) there. To have a coding agent install it for you, ask it to; it runs `setup --relay` and asks you each question in the session. [Installing Rerail](docs/installation.md) says what set-up changes on your machine and how to update and remove Rerail.
@@ -115,7 +117,7 @@ A ported rule ships only once it passes the conformance check: it is scored agai
 
 A worktree can also carry rules of its own: each rule document in its `.rerail/rules/` folder runs in that worktree only, with nothing to install or add, and `rerail packs list` there shows what loaded ([a rule for one worktree only](docs/writing-rules.md#a-rule-for-one-worktree-only)). `/rerail-create` writes a rule there when you ask for this worktree only.
 
-Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL and Vue; regex rules and `file` rules read every text file in their scope, `Justfile`, `LICENSE` and lock files included ([Writing path and text rules](docs/path-and-text-rules.md)). Move your own rules between machines with `rerail rules export` and `rerail rules import`.
+Rules can target Python, TypeScript, JavaScript, PHP, Blade, Rust, SQL, Vue and Java; regex rules and `file` rules read every text file in their scope, `Justfile`, `LICENSE` and lock files included ([Writing path and text rules](docs/path-and-text-rules.md)). Move your own rules between machines with `rerail rules export` and `rerail rules import`.
 
 ## Supported coding agents
 

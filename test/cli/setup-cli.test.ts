@@ -17,6 +17,7 @@ import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, rm, stat, symlink, 
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { CONSENT_FILE, cleanupCommand, runInstallCommand, type SetupContext } from "../../src/cli/setup-cli.js";
+import { fakeMachine } from "../support/platform/daemon-machine.js";
 import {
   CLAUDE_STATUS_DATABASE_FILE,
   CURRENT_LINK,
@@ -31,24 +32,28 @@ import {
 } from "../../src/setup/index.js";
 import { ACTIVE_PROFILE_FILE, DEVICE_SECRETS_DIR, PROFILES_DIR } from "../../src/activation/index.js";
 import { DAEMON_PORT_FILE } from "../../src/daemon/index.js";
-import { INSTALLED_PACKS_DIR, openRerailDatabase, RERAIL_DATABASE_FILE, RULES_DUMP_FILE } from "../../src/engine/index.js";
+import { INSTALLED_PACKS_DIR, LOCKS_DIR, openRerailDatabase, RERAIL_DATABASE_FILE, RULES_DUMP_FILE } from "../../src/engine/index.js";
 import { DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE, DAEMON_STATE_FILE, START_LOCK_DIR } from "../../src/runtime/index.js";
+import { POSIX_MODES } from "../support/platform/file-mode.js";
+import { stubUserHome } from "../support/user-home.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
-const previousHome = process.env.HOME;
+
+/** The content cache in the user home `home`: `AppData\Local\rerail` on Windows, out of a roaming profile; `.cache/rerail` elsewhere. */
+const contentCache = (home: string): string =>
+  process.platform === "win32" ? join(home, "AppData", "Local", "rerail") : join(home, ".cache", "rerail");
 
 afterEach(async () => {
   daemonStop.beforeStopped = undefined;
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  if (previousHome === undefined) delete process.env.HOME;
-  else process.env.HOME = previousHome;
-  await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map((path) => removeFolder(path)));
 });
 
 interface Fixture {
   context: SetupContext;
-  /** The host config home `install` writes into; `process.env.HOME` points here for the test. */
+  /** The host config home `install` writes into; the user home (HOME and USERPROFILE) points here for the test. */
   hostConfigHome: string;
   packageRoot: string;
 }
@@ -62,7 +67,7 @@ async function fixture(): Promise<Fixture> {
   await writeFile(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
   const hostConfigHome = join(base, "home");
   await mkdir(join(hostConfigHome, ".claude"), { recursive: true });
-  process.env.HOME = hostConfigHome;
+  stubUserHome(hostConfigHome);
   vi.spyOn(process, "cwd").mockReturnValue(base);
   const home = join(base, "rerail-home");
   return {
@@ -70,6 +75,14 @@ async function fixture(): Promise<Fixture> {
     hostConfigHome,
     packageRoot,
   };
+}
+
+/**
+ * A Windows machine where every pid is a live process and `pipes` are the named pipes that exist: whether the cache's
+ * holder counts is the machine's answer, never whether this one runs a Rerail daemon.
+ */
+function windows(pipes: readonly string[]) {
+  return fakeMachine("win32", { kill: () => true, pipes: () => pipes });
 }
 
 /** The database a stopped daemon leaves, recording one repository's `checkouts`. */
@@ -92,7 +105,7 @@ describe("rerail install --root", () => {
     expect(await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context)).toBe(0);
 
     expect(await readlink(updater.currentLink)).toBe(packageRoot);
-    expect((await stat(updater.launcherPath)).mode & 0o111).toBe(0o111);
+    if (POSIX_MODES) expect((await stat(updater.launcherPath)).mode & 0o111).toBe(0o111);
 
     // The checkout is recorded as current, but stays unmanaged: no rollback target is invented for it.
     const status = await updater.status();
@@ -108,11 +121,12 @@ describe("rerail install --root", () => {
     await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
 
     const settings = JSON.parse(await readFile(settingsPath, "utf8")) as {
-      hooks: Record<string, Array<{ hooks: Array<{ command: string }> }>>;
+      hooks: Record<string, Array<{ hooks: Array<{ command: string; args?: string[] }> }>>;
     };
-    // One stable path, not the checkout's: retiring the workspace cannot orphan the hooks.
+    // One stable path, not the checkout's: retiring the workspace cannot orphan the hooks. On Windows the hook is in exec
+    // form, its path among its arguments.
     for (const groups of Object.values(settings.hooks)) {
-      for (const group of groups) for (const hook of group.hooks) expect(hook.command).toContain(hookPath);
+      for (const group of groups) for (const hook of group.hooks) expect([hook.command, ...hook.args ?? []].join(" ")).toContain(hookPath);
     }
     expect(await readFile(join(hostConfigHome, ".claude", "commands", "rerail.md"), "utf8")).toContain(
       join(context.updater.currentLink, "dist", "cli", "cli.js"),
@@ -271,7 +285,8 @@ describe("rerail install --root", () => {
     const { context, hostConfigHome, packageRoot } = await fixture();
     await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
     const { updater } = context;
-    const installed = [join(updater.versionsRoot, "1.0.0", "node_modules", "@neralabs", "rerail"), join(context.home, "packs", "node_modules"), join(hostConfigHome, ".cache", "rerail")];
+    const cache = contentCache(hostConfigHome);
+    const installed = [join(updater.versionsRoot, "1.0.0", "node_modules", "@neralabs", "rerail"), join(context.home, "packs", "node_modules"), cache];
     for (const path of installed) await mkdir(path, { recursive: true });
     await writeFile(join(context.home, "consent.json"), "{}");
     // What `rerail activate`, the device secret store, `rules export` and a daemon write cut short leave in the home.
@@ -285,15 +300,15 @@ describe("rerail install --root", () => {
 
     expect(await runInstallCommand(["--root", packageRoot, "--remove"], context)).toBe(0);
 
-    for (const path of [updater.currentLink, updater.launcherPath, updater.versionsRoot, updater.statePath, join(context.home, "packs"), join(hostConfigHome, ".cache", "rerail")]) {
+    for (const path of [updater.currentLink, updater.launcherPath, updater.versionsRoot, updater.statePath, join(context.home, "packs"), cache]) {
       expect(existsSync(path), path).toBe(false);
     }
     expect(existsSync(join(packageRoot, "package.json"))).toBe(true);
     const text = output.mock.calls.join("");
     expect(text).toContain(`Removed ${dirname(updater.launcherPath)} (the rerail command).`);
-    expect(text).toContain(`Removed ${join(hostConfigHome, ".cache", "rerail")} (the cache).`);
+    expect(text).toContain(`Removed ${cache} (the cache).`);
     // A home only Rerail uses, activated or not, may go as a whole.
-    expect(text).toContain(`Kept ${context.home}: active-profile, coding-agents.json, consent.json, daemon.json.4242.tmp, device-secrets, profiles, rules.json (Rerail's settings, logs and records; delete it if you will not install Rerail again).`);
+    expect(text).toContain(`Kept ${context.home}: active-profile, coding-agents.json, consent.json, daemon.json.4242.tmp, device-secrets, locks, profiles, rules.json (Rerail's settings, logs and records; delete it if you will not install Rerail again).`);
   });
 
   it("deletes only Rerail's own files from a Rerail home shared with other files, and says what it kept", async () => {
@@ -313,17 +328,19 @@ describe("rerail install --root", () => {
     await writeFile(join(context.home, "packs", "list.txt"), "mine");
     await writeFile(join(context.home, ".bashrc"), "");
     // Another Rerail home's daemon (alive: this test's parent process) holds the cache.
-    const cache = join(hostConfigHome, ".cache", "rerail");
+    const cache = contentCache(hostConfigHome);
     await mkdir(cache, { recursive: true });
     await writeFile(join(cache, "main-instance.json"), JSON.stringify({ pid: process.ppid }));
+    // On Windows that daemon's engine pipe exists too.
+    const removal = { ...context, machine: windows(["rerail-0123456789abcdef01234567"]) };
     const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
 
-    expect(await runInstallCommand(["--root", packageRoot, "--remove", "--dry-run"], context)).toBe(0);
+    expect(await runInstallCommand(["--root", packageRoot, "--remove", "--dry-run"], removal)).toBe(0);
     expect(output.mock.calls.join("")).toContain(`Would keep ${cache} (the cache): another Rerail daemon, pid ${process.ppid}, still uses it.`);
     expect(output.mock.calls.join("")).not.toContain(`Would remove ${cache}`);
     output.mockClear();
 
-    expect(await runInstallCommand(["--root", packageRoot, "--remove"], context)).toBe(0);
+    expect(await runInstallCommand(["--root", packageRoot, "--remove"], removal)).toBe(0);
 
     for (const path of [join(bin, "deploy"), join(updater.versionsRoot, "notes"), join(context.home, "packs", "list.txt"), cache]) {
       expect(existsSync(path), path).toBe(true);
@@ -336,8 +353,23 @@ describe("rerail install --root", () => {
     expect(text).toContain(`Kept ${bin} (the rerail command): it holds files that are not Rerail's: deploy.`);
     expect(text).toContain(`Kept ${updater.versionsRoot} (the installed versions): it holds files that are not Rerail's: notes.`);
     // Never "delete it" for a home that holds the person's own files.
-    expect(text).toContain(`Kept ${context.home}, which also holds files that are not Rerail's. Rerail's settings, logs and records in it: coding-agents.json; delete those if you will not install Rerail again.`);
+    expect(text).toContain(`Kept ${context.home}, which also holds files that are not Rerail's. Rerail's settings, logs and records in it: coding-agents.json, locks; delete those if you will not install Rerail again.`);
     expect(text).not.toContain("delete it if you will not install Rerail again");
+  });
+
+  it("removes the cache a daemon Windows ended still names, once no Rerail engine pipe is left on the machine", async () => {
+    const { context, hostConfigHome, packageRoot } = await fixture();
+    await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
+    // Windows ended the daemon without its cleanup (logoff, reboot) and gave its pid to a process that is alive.
+    const cache = join(hostConfigHome, ".cache", "rerail");
+    await mkdir(cache, { recursive: true });
+    await writeFile(join(cache, "main-instance.json"), JSON.stringify({ pid: process.ppid }));
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+
+    expect(await runInstallCommand(["--root", packageRoot, "--remove", "--dry-run"], { ...context, machine: windows(["other-pipe"]) })).toBe(0);
+    // On Windows this folder is where an earlier release kept the cache, which the uninstall removes all the same.
+    expect(output.mock.calls.join("")).toContain(`Would remove ${cache} (the cache`);
+    expect(output.mock.calls.join("")).not.toContain(`Would keep ${cache}`);
   });
 
   it("counts the access token a loopback daemon keeps as Rerail's, so a home only Rerail uses may still go as a whole", async () => {
@@ -349,14 +381,14 @@ describe("rerail install --root", () => {
     expect(await runInstallCommand(["--root", packageRoot, "--remove"], context)).toBe(0);
 
     const text = output.mock.calls.join("");
-    expect(text).toContain(`Kept ${context.home}: access-token, coding-agents.json, daemon.log (Rerail's settings, logs and records; delete it if you will not install Rerail again).`);
+    expect(text).toContain(`Kept ${context.home}: access-token, coding-agents.json, daemon.log, locks (Rerail's settings, logs and records; delete it if you will not install Rerail again).`);
     expect(text).not.toContain("not Rerail's");
   });
 
   it("counts every name a Rerail writer gives an entry in its home as Rerail's, and what a write cut short leaves beside it", async () => {
     const { context, packageRoot } = await fixture();
     await runInstallCommand(["--root", packageRoot, "--agents", "claude-code"], context);
-    const folders = [PROFILES_DIR, DEVICE_SECRETS_DIR, START_LOCK_DIR, UPDATE_LOCK_DIR, VERSIONS_DIR, INSTALLED_PACKS_DIR, LAUNCHER_DIR];
+    const folders = [PROFILES_DIR, DEVICE_SECRETS_DIR, LOCKS_DIR, START_LOCK_DIR, UPDATE_LOCK_DIR, VERSIONS_DIR, INSTALLED_PACKS_DIR, LAUNCHER_DIR];
     const files = [
       CONSENT_FILE, SEEN_AGENTS_FILE, LAUNCHER_PATH_FILE, DAEMON_STATE_FILE, DAEMON_PORT_FILE, DAEMON_ACCESS_TOKEN_FILE, DAEMON_LOG_FILE,
       RULES_DUMP_FILE, ACTIVE_PROFILE_FILE, UPDATE_STATE_FILE, RERAIL_DATABASE_FILE, `${RERAIL_DATABASE_FILE}-wal`, `${RERAIL_DATABASE_FILE}.pre-update`,
@@ -379,6 +411,13 @@ describe("rerail install --root", () => {
     expect(cleanupCommand(path, false, "win32")).toBe(String.raw`Remove-Item -LiteralPath 'C:\Users\O''Neil [work] $x & y\.rerail\versions' -Recurse -Force`);
     expect(cleanupCommand(String.raw`C:\Users\100%PATH%x\.rerail\current`, true, "win32")).toBe(String.raw`[System.IO.Directory]::Delete('C:\Users\100%PATH%x\.rerail\current')`);
     expect(cleanupCommand("/home/o'neil/.rerail/versions", false, "linux")).toBe(String.raw`rm -rf '/home/o'\''neil/.rerail/versions'`);
+  });
+
+  // PowerShell ends a single-quoted string at any of the five; written twice, each stands for itself.
+  it.each(["'", "\u2018", "\u2019", "\u201A", "\u201B"])("writes %s in a Windows cleanup path twice, so the path stays one PowerShell string", quote => {
+    const path = String.raw`C:\Users\O${quote}Neil\.rerail\versions`;
+    expect(cleanupCommand(path, false, "win32")).toBe(String.raw`Remove-Item -LiteralPath 'C:\Users\O${quote}${quote}Neil\.rerail\versions' -Recurse -Force`);
+    expect(cleanupCommand(path, true, "win32")).toBe(String.raw`[System.IO.Directory]::Delete('C:\Users\O${quote}${quote}Neil\.rerail\versions')`);
   });
 
   it("keeps rules and history when another checkout registered with --root is removed", async () => {

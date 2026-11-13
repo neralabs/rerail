@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { compareSides, coverage, parseOptions } from "../../../benchmark/query-parity.js";
 import { resolveNativeBindingPath } from "../../../src/engine/native/native.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 const execute = promisify(execFile);
 const rerailRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
@@ -14,7 +15,7 @@ const script = join(rerailRoot, "benchmark", "query-parity.ts");
 
 const temporaryRoots: string[] = [];
 afterEach(async () => {
-  for (const root of temporaryRoots.splice(0)) await rm(root, { recursive: true, force: true });
+  for (const root of temporaryRoots.splice(0)) await removeFolder(root);
 });
 
 /** A corpus directory holding `files`, with a manifest listing them. */
@@ -106,9 +107,9 @@ describe("query parity options", () => {
     expect(() => parseOptions([...sides, "--corpus", "/corpus"], {})).toThrow(/--manifest <paths.json>.* go together/);
     expect(parseOptions([...sides, "--workload", "select-when"], {}).corpus).toBeUndefined();
     expect(parseOptions(sides, { RERAIL_QUERY_PARITY_CORPUS: "/corpus", RERAIL_QUERY_PARITY_MANIFEST: "/manifest.json" }).corpus)
-      .toEqual({ root: "/corpus", manifest: "/manifest.json" });
+      .toEqual({ root: resolve("/corpus"), manifest: resolve("/manifest.json") });
     expect(parseOptions([...sides, "--corpus", "/flag", "--manifest", "/flag.json"], { RERAIL_QUERY_PARITY_CORPUS: "/env", RERAIL_QUERY_PARITY_MANIFEST: "/env.json" }).corpus)
-      .toEqual({ root: "/flag", manifest: "/flag.json" });
+      .toEqual({ root: resolve("/flag"), manifest: resolve("/flag.json") });
   });
 
   it("requires a reference addon unless sides are explicit", () => {

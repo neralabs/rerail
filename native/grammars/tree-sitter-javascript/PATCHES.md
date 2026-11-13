@@ -1318,6 +1318,50 @@ valid there). espree 11.2.0 and TypeScript 5.9 read `static get⏎a(){}`, `stati
 get = 1`, `static get⏎= 2` and `static async⏎d(){}` (a field `async` and a method `d`: `async` keeps its restriction)
 as the patched grammar does. The generated parser has 115 more states (2,348); the symbol count is unchanged (267).
 
+## Patch 17: a template takes a `\x` or `\u` that no hex digits follow
+
+Upstream issues: tree-sitter/tree-sitter-javascript#337 (open: ``foo`\x` ``, escape sequences too restricted for
+tagged templates) and tree-sitter/tree-sitter-javascript#362 (open: ``String.raw`C:\Users` ``). Present at tag
+`v0.25.0` and at HEAD `58404d8`; no release or pull request changes the rule.
+
+Why: since ES2018 a tagged template may hold an escape that is not well formed (the template literal revision): it
+has no cooked value, and the tag reads the raw text. ``String.raw`C:\x\users` `` is how a Windows path is written.
+Upstream's `escape_sequence` takes `\x` only before two hex digits and `\u` only before four or a braced code point,
+and a template holds nothing else after a `\`, so such a template is a parse error: the engine reports "file has
+syntax errors" and runs no rule that reads names on the file. Three of Rerail's own test files hold one
+(`test/engine/storage/windows-acl.test.ts`, `test/cli/repository-setup.test.ts`, `test/cli/support-bundle.test.ts`).
+A template now takes a `\x` or a `\u` that no hex digits follow as an `escape_sequence`. Every template takes it,
+tagged or not: telling the two apart needs the template's parent, and an untagged template with such an escape is a
+syntax error that never runs, which a parser for linting need not report.
+
+```diff
+--- a/grammar.js
++++ b/grammar.js
+@@ -1102,11 +1102,17 @@ module.exports = grammar({
+       repeat(choice(
+         alias($._template_chars, $.string_fragment),
+         $.escape_sequence,
++        alias($._template_escape_without_digits, $.escape_sequence),
+         $.template_substitution,
+       )),
+       '`',
+     ),
+ 
++    // A `\x` or `\u` that no hex digits follow. A tagged template allows it since ES2018, with no cooked value
++    // (``String.raw`C:\x\users` `` is a Windows path); in any other template it is a syntax error, which a
++    // parser for linting need not report. A longer escape, such as `\x41`, stays one escape_sequence.
++    _template_escape_without_digits: _ => token.immediate(seq('\\', /[xu]/)),
++
+     template_substitution: $ => seq(
+       '${',
+       $._expressions,
+```
+
+Node kinds and field names are unchanged: the escape is an `escape_sequence`, as `\x41` is. The lexer takes the
+longest match, so `\x41`, `\u0041` and `\u{41}` stay one escape each, and `\x4g` is `\x` followed by the text `4g`. A
+string literal still refuses `'\x'`, which ECMAScript never allows. The generated parser has one more token and
+symbol (268) and the same 2,348 states.
+
 ## Corpus and tree comparison
 
 With all fifteen patches, upstream's corpus parses as before but for Patch 4's `Objects` case (115 of 116). With that
@@ -1341,3 +1385,8 @@ and `.cjs` files of every pack's fixtures and samples, compared with Patches 1 t
 no file gains or loses an error: the patch changes only the anonymous tokens of a method whose `static get` meets a
 line break (such as `grouped-accessor-pairs/125`), and the trees of code that puts a member's name on the line after
 `get`, `set` or `static`, which none of them does.
+
+With Patch 17, upstream's corpus parses as before (115 of 116, the `Objects` case aside). Compared with Patches 1 to
+16 alone, no tree changes and no file gains or loses an error over 21,633 `.js`, `.jsx`, `.mjs` and `.cjs` files: the
+20,310 of Rerail's npm dependencies (as `package-lock.json` pins them), the 1,134 of npm 11's own sources and the 189 in
+Rerail's repository. The 14 that fail to parse fail as before.

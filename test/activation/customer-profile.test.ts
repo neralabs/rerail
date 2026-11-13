@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   createPublicKey,
   generateKeyPairSync,
@@ -7,7 +7,8 @@ import {
   type webcrypto,
   type KeyObject,
 } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -17,7 +18,9 @@ import {
   signedUpdatePolicy,
 } from "../../src/cli/index.js";
 import {
+  ACTIVE_PROFILE_FILE,
   CustomerActivationManager,
+  PROFILES_DIR,
   type ActivationFetch,
   CustomerProfileStore,
   type ActivationTrustRoots,
@@ -26,11 +29,19 @@ import {
 } from "../../src/activation/customer-profile.js";
 import type { DeviceSecretStore } from "../../src/activation/device-keystore.js";
 import { stableJsonText } from "../../src/engine/index.js";
+import { holdRemovals } from "../support/platform/held-removal.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
+import { raceForLock, raceSize, sourceModule } from "../support/processes/lock-race.js";
+
+// Spied on so a test can make Windows hold a profile's folder for a moment.
+vi.mock("node:fs/promises", { spy: true });
+const { rm: actualRm } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
 
 const NOW = new Date("2026-09-01T12:00:00.000Z");
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  vi.mocked(rm).mockReset();
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 class MemorySecretStore implements DeviceSecretStore {
@@ -55,6 +66,7 @@ class MemorySecretStore implements DeviceSecretStore {
 }
 
 interface ProfileFixture {
+  home: string;
   activation: CustomerActivationManager;
   profileStore: CustomerProfileStore;
   secrets: MemorySecretStore;
@@ -75,6 +87,7 @@ async function fixture(): Promise<ProfileFixture> {
     keys: [{ ...publicKey.export({ format: "jwk" }), kid: "activation-test-1" } as ActivationTrustRoots["keys"][number]],
   };
   return {
+    home,
     activation: new CustomerActivationManager(profileStore, secrets),
     profileStore,
     secrets,
@@ -252,9 +265,73 @@ describe("signed customer profiles", () => {
     expect((await setup.activation.load("acme", NOW)).profile.sequence).toBe(3);
   });
 
+  it("leaves no file beside the selection when it cannot be written", async () => {
+    const setup = await fixture();
+    // A folder where the selection goes: no platform renames a file over one.
+    await mkdir(join(setup.home, ACTIVE_PROFILE_FILE, "kept"), { recursive: true });
+    await expect(setup.profileStore.select("acme")).rejects.toThrow();
+    expect(await readdir(setup.home)).toEqual([ACTIVE_PROFILE_FILE]);
+  });
+
+  it("removes a profile whose folder Windows holds for a moment", async () => {
+    const setup = await fixture();
+    const folder = join(setup.home, PROFILES_DIR, "acme");
+    await mkdir(folder, { recursive: true });
+    await writeFile(join(folder, "activation.json"), "{}");
+    const refused = holdRemovals(vi.mocked(rm), actualRm, 2);
+
+    await setup.profileStore.remove("acme");
+
+    expect(refused).toEqual([folder, folder]);
+    expect(existsSync(folder)).toBe(false);
+  });
+
   it("rejects trailing profile command arguments", async () => {
     const setup = await fixture();
     await expect(runProfileCommand(["status", "unexpected"], setup.activation, setup.profileStore)).rejects
       .toThrow("Unknown profile argument: unexpected");
   });
+});
+
+describe("an activation finding its profile's lock taken", () => {
+  it("waits for the activation that holds it, then takes the lock", async () => {
+    const setup = await fixture();
+    const thumbprint = (await setup.activation.deviceIdentity("acme")).thumbprint;
+    const envelope = signProfile(profile(thumbprint), setup.signingKey);
+    const events: string[] = [];
+    const otherHolds = Promise.withResolvers<void>();
+    const otherMayEnd = Promise.withResolvers<void>();
+    const other = setup.profileStore.activate("acme", envelope, setup.trustRoots, thumbprint, NOW, async () => {
+      events.push("the other holds the lock");
+      otherHolds.resolve();
+      await otherMayEnd.promise;
+      events.push("the other lets go");
+    });
+    await otherHolds.promise;
+    // This activation finds the lock held; its first wait lets the other end. No real time passes.
+    const store = new CustomerProfileStore(setup.home, { sleep: async () => { otherMayEnd.resolve(); await other; } });
+
+    await store.activate("acme", envelope, setup.trustRoots, thumbprint, NOW, async () => { events.push("this one holds the lock"); });
+    expect(events).toEqual(["the other holds the lock", "the other lets go", "this one holds the lock"]);
+  });
+});
+
+describe("activations racing for the lock of one killed while it held it", () => {
+  it("take it one at a time", async () => {
+    const setup = await fixture();
+    const thumbprint = (await setup.activation.deviceIdentity("acme")).thumbprint;
+    const signed = { envelope: signProfile(profile(thumbprint), setup.signingKey), trustRoots: setup.trustRoots, thumbprint, now: NOW };
+    const size = raceSize({ processes: 8, rounds: 4 });
+
+    const race = await raceForLock({
+      take: `import { CustomerProfileStore } from ${JSON.stringify(sourceModule("src/activation/customer-profile.ts"))};
+const { envelope, trustRoots, thumbprint, now } = JSON.parse(process.env.RERAIL_RACE_PROFILE);
+const store = new CustomerProfileStore(${JSON.stringify(setup.home)});
+const take = inside => store.activate("acme", envelope, trustRoots, thumbprint, new Date(now), inside);`,
+      env: { RERAIL_RACE_PROFILE: JSON.stringify(signed) },
+      ...size,
+    });
+
+    expect(race).toEqual({ overlaps: 0, ran: size.processes * size.rounds, busy: 0, errors: [] });
+  }, 600_000);
 });

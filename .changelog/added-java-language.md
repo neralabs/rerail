@@ -1,0 +1,1 @@
+Code rules can read Java. A rule with `language: "java"` matches `.java` files by syntax: `kind`, `pattern`, `regex`, the relations, `field`, `nthChild`, `count`, `layout` and `matches`. Name resolution, values, arguments, calls and format arguments are not read for Java yet; a rule or `transform` that uses one is kept and stays inactive until they are.

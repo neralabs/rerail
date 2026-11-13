@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -9,10 +9,11 @@ import { unitLanguage, withOrigins, writeRenameVariants } from "../../scripts/pa
 import { inUnitLanguage, queryLanguageOptions } from "../../conformance/languages/runner.js";
 import { loadNativeBinding } from "../../src/engine/index.js";
 import { capabilitiesJson } from "../../conformance/engine.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
 
 const directories: string[] = [];
 afterEach(() => {
-  for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true });
+  for (const directory of directories.splice(0)) removeFolderSync(directory);
 });
 
 function fixtures(files: Record<string, string>): string {

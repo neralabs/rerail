@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -10,6 +10,7 @@ import { packRuleIds, type PackConformance } from "../../../scripts/samples/conf
 import { LABELS_SUFFIX, sampleLabelsSchema } from "../../../scripts/samples/format.js";
 import { copyleftReason, licenceTexts, licensesMarkdown, samplesMarkdown } from "../../../scripts/samples/licences.js";
 import { archiveEntries, dedupe, labelsText, sampleId, sha256, type Sample } from "../../../scripts/samples/samples.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const COMMIT = "0".repeat(40);
 
@@ -34,7 +35,7 @@ const conformance = (rules: PackConformance["rules"]): PackConformance => ({ pac
 
 const temporary: string[] = [];
 afterEach(() => {
-  for (const directory of temporary.splice(0)) rmSync(directory, { recursive: true, force: true });
+  for (const directory of temporary.splice(0)) removeFolderSync(directory);
 });
 const scratch = (): string => {
   const directory = mkdtempSync(join(tmpdir(), "samples-test-"));
