@@ -263,11 +263,12 @@ fn a_process_waiting_for_the_lease_gets_it_after_a_flush() {
 }
 
 /// The database at `path`, copied to a path of its own: opened there, it is a new process's (its atoms are read
-/// from disk, not the ones this process holds for `path`).
+/// from disk, not the ones this process holds for `path`). Copied by SQLite (`VACUUM INTO`), not as a file: the
+/// store's checkpoint thread may still be writing the file's pages, and a file copied then is torn ("database disk
+/// image is malformed").
 fn elsewhere(path: &std::path::Path, label: &str) -> std::path::PathBuf {
-    rusqlite::Connection::open(path).unwrap().execute_batch("PRAGMA wal_checkpoint(TRUNCATE)").unwrap();
     let copy = self::path(label);
-    std::fs::copy(path, &copy).unwrap();
+    rusqlite::Connection::open(path).unwrap().execute("VACUUM INTO ?1", [copy.to_str().unwrap()]).unwrap();
     copy
 }
 

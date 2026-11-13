@@ -681,7 +681,7 @@ mod tests {
         assert!(store.written().is_ok());
         assert_eq!(store.written_so_far().jobs, 2);
         drop((store, other));
-        std::fs::remove_dir_all(dir).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// A cache's write that would wait for a full queue is dropped instead (`write_back_unless_full`): it returns at
@@ -715,7 +715,8 @@ mod tests {
         store.written().unwrap();
         assert_eq!(*ran.lock().unwrap(), 1);
         drop(store);
-        std::fs::remove_dir_all(dir).unwrap();
+        // The store's checkpoint may still be closing its files: a cleanup, not a check.
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// The last handle's drop writes the queue; a `Hold` keeps the writer past a handle's drop.
@@ -738,6 +739,6 @@ mod tests {
         let again = ContentStore::open(&path).unwrap();
         assert_eq!(again.stat_blob([1; 32]).unwrap().as_deref(), Some(&b"kept"[..]));
         drop(again);
-        std::fs::remove_dir_all(dir).unwrap();
+        let _ = std::fs::remove_dir_all(dir);
     }
 }
