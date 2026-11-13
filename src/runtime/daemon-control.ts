@@ -793,12 +793,14 @@ export async function daemonEngineEndpoint(
   const daemon = autostartOff(machine.env)
     ? await runningDaemon(control.home, deadline, machine)
     : await startedDaemon(control, replaceOtherPackage, deadline, machine);
-  // Only the lookup an off autostart makes finds none, so the setting is spelled as the person set it, `0` or `false`.
+  // Only the lookup an off autostart makes finds no daemon, or one of another package (a start replaces that one), so
+  // both errors spell the setting as the person set it, `0` or `false`.
+  const setting = `RERAIL_AUTOSTART=${machine.env.RERAIL_AUTOSTART}`;
   if (daemon === undefined) {
-    throw new AutostartOffError(`RERAIL_AUTOSTART=${machine.env.RERAIL_AUTOSTART} requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET`);
+    throw new AutostartOffError(`${setting} requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET`);
   }
   if (replaceOtherPackage && !(await daemonUsesPackageRoot(daemon.state, control.packageRoot))) {
-    throw new Error("RERAIL_AUTOSTART=0 requires a daemon from the active Rerail package; run rerail daemon start or set RERAIL_ENGINE_SOCKET");
+    throw new Error(`${setting} requires a daemon from the active Rerail package; run rerail daemon start or set RERAIL_ENGINE_SOCKET`);
   }
   return engineEndpointOf(daemon.state);
 }

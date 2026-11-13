@@ -318,6 +318,26 @@ describe("Rerail daemon control", () => {
       await stopDaemon(home);
     }
   }, 15_000);
+
+  it("names RERAIL_AUTOSTART as the person set it when the daemon it finds runs another package", async () => {
+    const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
+    const first = await startDaemon({ home, packageRoot }, { dev: true, port: 0 });
+    const autostart = process.env.RERAIL_AUTOSTART;
+    try {
+      await writeFile(
+        join(home, DAEMON_STATE_FILE),
+        JSON.stringify({ ...first.daemon.state, packageRoot: join(home, "versions", "0.0.0-old") }),
+      );
+      process.env.RERAIL_HOME = home;
+      process.env.RERAIL_AUTOSTART = "false";
+
+      await expect(daemonEngineEndpoint(true)).rejects.toThrow("RERAIL_AUTOSTART=false requires a daemon from the active Rerail package");
+    } finally {
+      if (autostart === undefined) delete process.env.RERAIL_AUTOSTART;
+      else process.env.RERAIL_AUTOSTART = autostart;
+      await stopDaemon(home);
+    }
+  }, 15_000);
 });
 
 describe("openDashboard", () => {
