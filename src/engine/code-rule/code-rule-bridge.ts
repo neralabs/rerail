@@ -1559,19 +1559,23 @@ export class CodeRuleBridge {
   /** One walk of `scope`: the session folder, or the repository's other worktrees; neither changes what the other owns. */
   async #walkSources(discovery: SourceDiscovery, scope: "session" | "worktrees", checkpoint: DiscoveryCheckpoint): Promise<void> {
     const worktrees = this.#syncWorktrees(discovery);
-    const inSession = scope === "session";
-    const walk: WalkStart = {
+    const walk = await this.#walkStart(discovery, scope === "session", checkpoint, worktrees);
+    const scan = await this.#scanSources(discovery, walk, worktrees);
+    if (this.#abandoned(discovery)) return;
+    await this.#enqueue(() => this.#applyWalk(discovery, walk, scan));
+    // Reconcile changes to already-observed files made during the initial traversal.
+    if (walk.baseline && discovery.requested === undefined) discovery.requested = checkpoint;
+  }
+
+  /** What a walk of the session folder (`inSession`), or of the other worktrees, starts from. */
+  async #walkStart(discovery: SourceDiscovery, inSession: boolean, checkpoint: DiscoveryCheckpoint, worktrees: readonly string[]): Promise<WalkStart> {
+    return {
       inSession, baseline: inSession && !discovery.baselineComplete, checkpoint, worktrees: new Set(discovery.worktrees.roots),
       listAgain: inSession ? discovery.listAgain : discovery.worktrees.listAgain, previous: new Map(this.#observed), versions: new Map(discovery.versions),
       // Read before the walk, so a move or conflict the walk only partly saw is still one to the next.
       ...await this.#readCheckouts(discovery, inSession ? undefined : worktrees),
       observedAt: await filesystemClock(),
     };
-    const scan = await this.#scanSources(discovery, walk, worktrees);
-    if (this.#abandoned(discovery)) return;
-    await this.#enqueue(() => this.#applyWalk(discovery, walk, scan));
-    // Reconcile changes to already-observed files made during the initial traversal.
-    if (walk.baseline && discovery.requested === undefined) discovery.requested = checkpoint;
   }
 
   #abandoned(discovery: SourceDiscovery): boolean {
@@ -2288,16 +2292,21 @@ export class CodeRuleBridge {
     return this.#baselinePath(discovery, path, walk.previous.get(path), walk.baseline);
   }
 
-  /**
-   * `path` is in a checkout the walk lists again (`WalkStart.listAgain`), which it answers for, the session holds no text
-   * for it, and the walk found it as the last walk left it: its text is still the one the last walk would have kept, had
-   * Git listed in time.
-   */
+  /** `path` is in a checkout the walk lists again (`WalkStart.listAgain`), and the walk found it as the last walk left it (`#asLastSeen`). */
   #seenAgain(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan, path: string): boolean {
-    if (walk.listAgain.size === 0 || this.#texts.has(path) || !walkAnswersFor(discovery, walk, path)) return false;
+    if (walk.listAgain.size === 0) return false;
     const checkout = this.#owningCheckout(discovery.root, path);
-    const digest = scan.sources.get(path)?.digest;
-    return checkout !== undefined && walk.listAgain.has(checkout) && digest !== undefined && walk.previous.get(path)?.digest === digest;
+    if (checkout === undefined || !walk.listAgain.has(checkout)) return false;
+    return this.#asLastSeen(discovery, walk, path, { now: scan.sources.get(path), before: walk.previous.get(path) });
+  }
+
+  /**
+   * The walk answers for `path`, the session holds no text for it, and the walk found it as the session last saw it
+   * (`before`): its text now is the one the last walk would have kept, had Git listed in time.
+   */
+  #asLastSeen(discovery: SourceDiscovery, walk: WalkStart, path: string, { now, before }: { now: Source | undefined; before: ObservedSource | undefined }): boolean {
+    if (this.#texts.has(path) || !walkAnswersFor(discovery, walk, path)) return false;
+    return now?.digest !== undefined && before?.digest === now.digest;
   }
 
   /**
