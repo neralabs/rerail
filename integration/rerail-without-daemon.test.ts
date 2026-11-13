@@ -65,7 +65,8 @@ async function listenAsDaemon(home: string, answers: Readonly<Record<string, num
     asked.push(path);
     if (Object.hasOwn(answers, path)) response.writeHead(answers[path]!).end();
   });
-  await new Promise<void>(resolve => daemon.listen(0, "127.0.0.1", () => resolve()));
+  await new Promise<void>((resolve, reject) => daemon.once("error", reject).listen(0, "127.0.0.1", () => resolve()))
+    .catch(async (error: unknown) => { await releaseEndpoint(); throw error; });
   const close = async (): Promise<void> => {
     daemon.closeAllConnections();
     await new Promise<void>(resolve => daemon.close(() => resolve()));

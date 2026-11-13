@@ -318,7 +318,7 @@ describe("a live daemon that does not answer in time", () => {
   const holdRequests = async (recorded: Record<string, unknown> = {}): Promise<void> => {
     vi.unstubAllGlobals();
     held = createServer(() => { /* The answer never comes. */ });
-    await new Promise<void>(resolve => held!.listen(0, "127.0.0.1", () => resolve()));
+    await new Promise<void>((resolve, reject) => held!.once("error", reject).listen(0, "127.0.0.1", () => resolve()));
     const { port } = held.address() as AddressInfo;
     await writeFile(join(home, "daemon.json"), JSON.stringify({ ...state, pid: process.pid, port, url: `http://127.0.0.1:${port}/`, ...recorded }));
   };
