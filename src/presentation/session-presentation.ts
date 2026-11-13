@@ -11,7 +11,9 @@ import {
   type RulesDashboardScope,
 } from "../api/presentation-contracts.js";
 import { withinCheckout } from "../engine/catalog/checkout-control.js";
-import { DAEMON_STATE_FILE, daemonAccessHeaders, daemonFetch, readDaemonState, recordedDaemonAlive, type DaemonState } from "../runtime/daemon-control.js";
+import {
+  DAEMON_STATE_FILE, daemonAccessHeaders, daemonFetch, readDaemonState, recordedDaemonAlive, recordedDaemonStatus, type DaemonState,
+} from "../runtime/daemon-control.js";
 import type { RepositoryStartState } from "../engine/catalog/repository-model.js";
 import type { PresentationPresence } from "../engine/storage/presentation-presence.js";
 import { ruleUrl, sessionPageUrl, type SessionNoteRules } from "../engine/code-rule/rerail-steer.js";
@@ -139,10 +141,21 @@ function unavailable(
 }
 
 /**
- * The daemon took the read but gave no answer within `READ_TIMEOUT_MS`: it is busy, not gone, so telling the person
- * to start it is wrong.
+ * The daemon took the read but gave no answer within `READ_TIMEOUT_MS`, or its engine said nothing in time to the proof
+ * that comes before any read on Windows (`readableDaemon`): it is busy, not gone, so telling the person to start it is
+ * wrong.
  */
 class NotAnswering extends Error {}
+
+/**
+ * Whether the daemon `state` records may be read now (`recordedDaemonStatus`): false when it is gone. One whose engine
+ * stayed silent to the proof runs but is busy: it is sent nothing, and this throws `NotAnswering`.
+ */
+async function readableDaemon(state: DaemonState): Promise<boolean> {
+  const recorded = await recordedDaemonStatus(state);
+  if (recorded === "silent") throw new NotAnswering("The Rerail daemon's engine did not answer in time");
+  return recorded === "alive";
+}
 
 /**
  * Validate responses with the same contracts used by the daemon, without opening a database. Throws `NotAnswering`
@@ -400,11 +413,11 @@ export async function readRepositoryState(cwd: string, host: RerailHost): Promis
  */
 export type SummaryState = RepositoryStartState | "not-answering" | null;
 
-/** Like `readRepositoryState`, but says `not-answering` when the live daemon took the read and gave no answer in time. */
+/** Like `readRepositoryState`, but says `not-answering` when the live daemon gave no answer in time (`NotAnswering`). */
 async function daemonRepositoryState(cwd: string, host: RerailHost): Promise<SummaryState> {
   try {
     const daemon = await verifyDaemon(cwd);
-    if (typeof daemon === "string" || !(await recordedDaemonAlive(daemon.state))) return null;
+    if (typeof daemon === "string" || !(await readableDaemon(daemon.state))) return null;
     const response = await get(daemon, `/api/presentation?${new URLSearchParams({ repository: daemon.workspace, host })}`, presentationReadSchema);
     return response.repositoryState;
   } catch (error) {
@@ -469,7 +482,7 @@ type LiveResponse = { daemon: VerifiedDaemon; response: PresentationResponse };
 async function readLiveResponse({ sessionId, host, cwd, onDemand = false }: PresentationRequest): Promise<LiveResponse | undefined> {
   // The `/api/presentation` response proves liveness; it must not pay for a second probe.
   const daemon = await verifyDaemon(cwd);
-  if (typeof daemon === "string" || !(await recordedDaemonAlive(daemon.state))) return undefined;
+  if (typeof daemon === "string" || !(await readableDaemon(daemon.state))) return undefined;
   const response = await get(daemon, `/api/presentation?${new URLSearchParams({
     repository: daemon.workspace, host, sessionId, onDemand: String(onDemand),
   })}`, presentationReadSchema);

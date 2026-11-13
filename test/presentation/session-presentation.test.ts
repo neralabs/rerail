@@ -1,6 +1,6 @@
 import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer as createNetServer, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -311,13 +311,30 @@ describe("a live daemon that does not answer in time", () => {
     if (server !== undefined) await new Promise<void>(resolve => server.close(() => resolve()));
   });
 
-  /** A listener that takes every request and never answers it, as a daemon whose main thread is busy does. */
-  const holdRequests = async (): Promise<void> => {
+  /**
+   * A listener that takes every request and never answers it, as a daemon whose main thread is busy does, recorded
+   * with `recorded` over the state the daemon writes.
+   */
+  const holdRequests = async (recorded: Record<string, unknown> = {}): Promise<void> => {
     vi.unstubAllGlobals();
     held = createServer(() => { /* The answer never comes. */ });
     await new Promise<void>(resolve => held!.listen(0, "127.0.0.1", () => resolve()));
     const { port } = held.address() as AddressInfo;
-    await writeFile(join(home, "daemon.json"), JSON.stringify({ ...state, pid: process.pid, port, url: `http://127.0.0.1:${port}/` }));
+    await writeFile(join(home, "daemon.json"), JSON.stringify({ ...state, pid: process.pid, port, url: `http://127.0.0.1:${port}/`, ...recorded }));
+  };
+
+  /** An engine endpoint that takes each connection and never answers, as a busy daemon's engine does; closes it. */
+  const silentEngine = async (endpoint: string): Promise<() => Promise<void>> => {
+    const sockets = new Set<Socket>();
+    const engine = createNetServer((socket) => {
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+    });
+    await new Promise<void>((resolve, reject) => engine.once("error", reject).listen(endpoint, () => resolve()));
+    return async () => {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>(resolve => engine.close(() => resolve()));
+    };
   };
 
   const readWith = (startState: () => RepositoryStartState, onDemand = true) =>
@@ -340,6 +357,26 @@ describe("a live daemon that does not answer in time", () => {
     expect(stoppedSummary).toBe("stopped");
     // The hook start check reads the database when no answer comes, as it did.
     expect(hookState).toBeNull();
+  });
+
+  it("says not answering where the daemon's engine says nothing to the proof of its capability either", async () => {
+    // On Windows the daemon is sent the capability daemon.json records only once its engine proves it holds it, and a
+    // busy daemon's engine stays silent through that proof. Elsewhere the read itself goes unanswered.
+    const engine = testEngineEndpoint(home);
+    const closeEngine = await silentEngine(engine);
+    try {
+      await holdRequests({ kernelSocketPath: engine, accessToken: "capability" });
+      const [started, summary, hookState] = await Promise.all([
+        readWith(() => "started"),
+        readSummaryState(cwd, "cursor", () => "started"),
+        readRepositoryState(cwd, "omp"),
+      ]);
+      expect(started).toMatchObject({ status: "not-answering", text: "R E R A I L ● not answering" });
+      expect(summary).toBe("not-answering");
+      expect(hookState).toBeNull();
+    } finally {
+      await closeEngine();
+    }
   });
 
   it("still says not running where the recorded pid is alive but nothing listens", async () => {
