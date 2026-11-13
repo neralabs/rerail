@@ -49,7 +49,7 @@ fn k4_admission_batches_input_digests_derived_rows_and_mixed_granules() {
         rows:FrameRows{types:vec![b'i'],n:1,rows:vec![999]}}], &[], None).unwrap();
     let changed: HashMap<_,_> = now.iter().map(|(r,d)|(r.clone(),d.wrapping_add(1))).collect();
     profile::reset(); profile::set(true);
-    let wave = profile::waves();
+    let wave = profile::waves(true);
     let span = profile::span(|| "bulk K4 admission".into());
     let mut kept = Retained::from_frames(&store, SPACE, KEY, &prog, &HashMap::new()).unwrap();
     let cut = cut(Some(&kept), KEY, &prog, &changed).unwrap();
@@ -78,7 +78,7 @@ fn k4_clean_outputs_are_admitted_together_without_rerunning_their_producers() {
     let (mut prog,_,_)=fixture(&store,130);
     prog.outputs=(0..130).map(|i|format!("result{i}")).collect();
     profile::reset(); profile::set(true);
-    let wave=profile::waves();
+    let wave=profile::waves(true);
     let span=profile::span(||"bulk output admission".into());
     let mut kept=Retained::from_frames(&store,SPACE,KEY,&prog,&HashMap::new()).unwrap();
     assert!(prog.outputs.iter().all(|r|kept.holds(r,&prog)),"raw output facts are sufficient to keep a derivation");

@@ -797,8 +797,12 @@ pub fn sql(text: String, ns: u64, vm: u64, scan: u64, sort: u64, autoindex: u64)
     t.autoindex += autoindex;
 }
 
-/// Waves under way in this process (`waves`): SQL from a wave's thread meanwhile is a hazard.
+/// Waves under way in this process (`waves`): what a run did not read before its first wave it does not read from
+/// SQLite, and under the strict mode SQL meanwhile ends the process.
 static WAVES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// The profiled runs' waves under way (`waves`): SQL from a wave's thread meanwhile is a hazard of the profile's.
+static PROFILED_WAVES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 thread_local! {
     /// This thread works behind the run (the store's writer): what it sends to SQLite no wave waits for.
@@ -807,11 +811,16 @@ thread_local! {
 
 /// Waves are under way until dropped: from a run's first wave (its first chunk) to its last (the cross-file part's
 /// last stratum). SQL before and after is the run's beginning and end, where it may be; inside, it is a hazard.
+/// `profiled`: the run started with profiling on, so its waves are the profile's (`one_run`). Another run's (one
+/// that started before a test turned profiling on) are not: SQL meanwhile is no hazard of the profiled run's.
 pub struct Waves(bool);
 
-pub fn waves() -> Waves {
+pub fn waves(profiled: bool) -> Waves {
     WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    Waves(true)
+    if profiled {
+        PROFILED_WAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+    Waves(profiled)
 }
 
 /// Whether a run's waves are under way (`waves`): what is not read before the first wave is not read from SQLite.
@@ -902,8 +911,9 @@ pub fn strict_on_every_connection() {
 
 impl Drop for Waves {
     fn drop(&mut self) {
+        WAVES.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         if self.0 {
-            WAVES.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
+            PROFILED_WAVES.fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 }
@@ -923,7 +933,7 @@ pub fn behind<T>(f: impl FnOnce() -> T) -> T {
 }
 
 fn in_waves() -> bool {
-    on() && WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0 && !BEHIND.with(std::cell::Cell::get)
+    on() && PROFILED_WAVES.load(std::sync::atomic::Ordering::Relaxed) > 0 && !BEHIND.with(std::cell::Cell::get)
 }
 
 /// In the strict mode a wave's wait for the writer ends the process, as its SQL would (`strict_statement`); the run's last

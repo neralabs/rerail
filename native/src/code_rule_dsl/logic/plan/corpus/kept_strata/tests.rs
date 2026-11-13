@@ -32,7 +32,7 @@
             rows: FrameRows { types: vec![b'i'], rows: vec![999], n: 1 } }], &[], None).unwrap();
         profile::reset();
         profile::set(true);
-        let wave = profile::waves();
+        let wave = profile::waves(true);
         let span = profile::span(|| "bulk retained admission".into());
         let (kept, _) = load(&store, dir.path(), [7;32], &prog, &inputs, &now).unwrap();
         let kept = kept.unwrap();

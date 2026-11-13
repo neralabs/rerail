@@ -3377,7 +3377,8 @@ fn run_observed(
             crate::code_rule_dsl::logic::profile::decision("frames read before the first wave (decision 0104)", || format!("{frames} frames, {:.1} MB encoded", bytes as f64 / 1048576.0));
         }
     }
-    let mut waves = Some(crate::code_rule_dsl::logic::profile::waves());
+    // The profile's waves when this run holds the profile, or is nested in the run that does (`profile::waves`).
+    let mut waves = Some(crate::code_rule_dsl::logic::profile::waves(profiling || (nested && crate::code_rule_dsl::logic::profile::on())));
     // A file's memo entry when the run is memoised and the memo has it, else its document, built. An entry
     // without the base rows this run's cross-file part reads is a miss.
     let memo_rows: BTreeSet<String> = split.exports.iter().cloned()
