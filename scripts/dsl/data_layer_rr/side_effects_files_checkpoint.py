@@ -8,7 +8,7 @@ from side_effects_event_checkpoint import calls, retained_bytes
 from validate_supplied_facts_checkpoint import equal, require
 
 MODES=('snapshot','workspace')
-COUNTS={'files':39,'scanner':35}
+COUNTS={'files':47,'scanner':35}
 
 
 def reports(value):
@@ -59,6 +59,9 @@ def validate(value):
     before=[r for i in range(3)for r in value['tdd'][f'preDrain{i}']['cases']]
     require(len(before)==39 and len({r['input']['id']for r in before})==39,'Incomplete pre-repair corpus')
     require({r['input']['id']for r in before if not r['passed']}=={'explicit-error-order','explicit-external','repo-external-link'},'Missing exact three-failure checkpoint')
+    roots=value['tdd']['relativeRoots']
+    require(not roots['passed']and len(roots['cases'])==8,'Missing relative-root failures')
+    require({r['input']['id']for r in roots['cases']if not r['passed']}=={'relative-repo','relative-repo-mapped','relative-repo-directory-candidate'},'Missing discovery composition defects')
     logs={r['name']:r['text']for r in value['logs']}
     require('left: 0' in logs['complete-answer-red-test.log']and 'right: 1000' in logs['complete-answer-red-test.log'],'Missing deferred-positive failure')
     require('1 passed; 0 failed'in logs['complete-answer-exact-test.log'],'Missing exact deferred-batch regression')
@@ -72,7 +75,7 @@ def validate(value):
         for name,digest in report['harnessFiles'].items():require((name,digest)in retained,'Consumed bytes omitted')
         for call in calls(report):
             for item in call['programInputs']:require((item['path'],item['sha256'])in retained,'Consumed bytes omitted')
-    return dict(filesystemCasesPerAPI=39,scannerCasesPerAPI=35,originalAssertionsPerAPI=7,positiveFileBatch=64,fullMigrationAcceptance=False)
+    return dict(filesystemCasesPerAPI=47,scannerCasesPerAPI=35,originalAssertionsPerAPI=7,positiveFileBatch=64,fullMigrationAcceptance=False)
 
 
 def pack(work):
@@ -83,7 +86,7 @@ def pack(work):
         tdd=dict(source=read_json(work/'source-red.json'),native=read_json(work/'red.json'),
             **{f'preDrain{i}':read_json(work/f'pre-drain-{i}.json')for i in range(3)},
             shapeCycle=read_json(work/'first-repo.json'),shapeOptions=read_json(work/'first-repo-finite.json'),
-            scopeAnchor=read_json(work/'explicit-parent.json')),
+            scopeAnchor=read_json(work/'explicit-parent.json'),relativeRootsSource=read_json(work/'source-roots-red.json'),relativeRoots=read_json(work/'roots-red.json')),
         build=read_json(work/'root-build.json'),engineSource=read_json(ROOT/MANIFEST)['engineSource'],
         preRepairBuild=read_json(work/'pre-drain-root-build.json'),
         logs=[dict(name=p.name,sha256=sha(p.read_bytes()),text=p.read_text())for p in sorted(work.glob('*.log'))],

@@ -3475,7 +3475,7 @@
     },
     {
       "destination": "docs/rule-syntax/lib/data-layer/side-effects-files.rr",
-      "sha256": "4dc2fbe011252e490f9a490816c3ea6d34d4b8650aa77d0d5ebda6d5069d45ca",
+      "sha256": "12c597930c340bb1d255b60cab0b39a784ebe0794ac0230c07513527058c8f4d",
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_plan_scope_side_effects.py",
@@ -3489,6 +3489,11 @@
           "before": "bc2bc39dfae8be61f6399625f4e326c41006d906ddc833932b019a879b4e535f",
           "after": "4dc2fbe011252e490f9a490816c3ea6d34d4b8650aa77d0d5ebda6d5069d45ca",
           "reason": "Preserve source-recorded filesystem request anchors and Path component error order"
+        },
+        {
+          "before": "4dc2fbe011252e490f9a490816c3ea6d34d4b8650aa77d0d5ebda6d5069d45ca",
+          "after": "12c597930c340bb1d255b60cab0b39a784ebe0794ac0230c07513527058c8f4d",
+          "reason": "Preserve source-recorded relative-root discovery and explicit-scope composition"
         }
       ]
     },

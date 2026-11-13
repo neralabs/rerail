@@ -19,7 +19,7 @@ class SideEffectsFilesCheckpointTests(unittest.TestCase):
         return next(r for report in value['contracts']['files'][mode]for r in report['cases']if r['input']['id']==name)
 
     def test_all_source_observations_pass_both_apis(self):
-        self.assertEqual(validate(self.receipt),dict(filesystemCasesPerAPI=39,scannerCasesPerAPI=35,originalAssertionsPerAPI=7,positiveFileBatch=64,fullMigrationAcceptance=False))
+        self.assertEqual(validate(self.receipt),dict(filesystemCasesPerAPI=47,scannerCasesPerAPI=35,originalAssertionsPerAPI=7,positiveFileBatch=64,fullMigrationAcceptance=False))
 
     def test_an_omitted_case_is_rejected(self):
         value=copy.deepcopy(self.receipt);value['contracts']['files']['workspace'][0]['cases'].pop()
