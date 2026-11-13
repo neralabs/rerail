@@ -18,7 +18,8 @@ def install(backend,module):
         return module.Violation(code=finding.code,file_path=p['file_path'],line_number=finding.line,message=finding.message,severity=p['severity'])
     def extract(root,path,source,tree=None):raise getattr(builtins,meta['extract_error_type'])(meta['extract_error'])
     def from_fact(raw):
-        rows=backend.native(CHECK,'_pse_from_fact',[],dict(columns(raw),pseIntMaxDigits=str(sys.get_int_max_str_digits())))
+        projected={key:raw[key]for key in fields if key in raw}
+        rows=backend.native(CHECK,'_pse_from_fact',[],dict(columns(projected),pseIntMaxDigits=str(sys.get_int_max_str_digits())))
         if len(rows)!=1:raise ValueError('One native fact conversion required')
         row=rows[0];p=row['parameters']
         if row['code']=='PSE_CONVERSION_ERROR':raise getattr(builtins,p['error_type'])(p['detail'])
