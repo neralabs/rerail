@@ -4,7 +4,10 @@ import { basename, dirname, join } from "node:path";
 import { sql } from "drizzle-orm";
 import { drizzle, type BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as schema from "./schema.js";
-import { RERAIL_BASELINE_SCHEMA_VERSION, RERAIL_MIGRATIONS, migrate, migrateLater, pendingMigrations, schemaVersionOf, type Migration } from "./migrations.js";
+import {
+  NO_MIGRATION_READS, RERAIL_BASELINE_SCHEMA_VERSION, RERAIL_MIGRATIONS, migrate, migrateLater, pendingMigrations, readBeforeMigrating, schemaVersionOf,
+  type Migration, type MigrationReads,
+} from "./migrations.js";
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "./baseline-schema.js";
 import { RERAIL_SCHEMA_STATEMENTS } from "./schema-sql.generated.js";
 import { enableWal } from "./sqlite-wal.js";
@@ -295,18 +298,28 @@ function checkBeforeWriting(database: RerailDatabase, path: string, supported: n
 
 /**
  * Migration steps, DDL and stamp run under one write lock, so concurrent openers agree on the file's shape and a
- * step that fails leaves the file as it was. `migrations` is undefined for a read-only open, which only checks.
+ * step that fails leaves the file as it was. What a step reads before it (`Migration.read`) runs first, holding no
+ * lock. `migrations` is undefined for a read-only open, which only checks.
  */
 function applySchema(database: RerailDatabase, path: string, migrations: readonly Migration[] | undefined, supported: number): void {
+  const reads = readBeforeLock(database, migrations);
   if (migrations !== undefined) database.run(sql.raw("BEGIN IMMEDIATE"));
   const stamp = schemaStamp(database);
   const refusal = schemaRefusal(path, stamp, supported);
   if (refusal !== undefined) throw new Error(refusal);
   if (migrations === undefined) return;
-  const floor = migrate(database, { fresh: stamp.version === 0, floor: stamp.version }, RERAIL_SCHEMA_STATEMENTS, migrations);
-  migrateLater(database, migrations, stamp.version === 0);
+  const floor = migrate(database, { fresh: stamp.version === 0, floor: stamp.version }, RERAIL_SCHEMA_STATEMENTS, migrations, reads);
+  migrateLater(database, migrations, stamp.version === 0, reads);
   if (floor !== stamp.version) database.run(sql.raw(`PRAGMA user_version = ${floor}`));
   database.run(sql.raw("COMMIT"));
+}
+
+/**
+ * What a writable open's steps read before its write lock (`readBeforeMigrating`): nothing for a read-only open, or
+ * for a new file, which runs no step.
+ */
+function readBeforeLock(database: RerailDatabase, migrations: readonly Migration[] | undefined): MigrationReads {
+  return migrations === undefined || schemaStamp(database).version === 0 ? NO_MIGRATION_READS : readBeforeMigrating(database, migrations);
 }
 
 function rollbackQuietly(database: RerailDatabase): void {

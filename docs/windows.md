@@ -239,15 +239,20 @@ its copies too. The audit history itself is never rewritten. Two rows that come 
 (last seen, last saved, last started; of two presentation preferences, which keep no time, the one created later), and
 a start state either row held is kept.
 
-A folder on a drive that is absent when the step runs (a disk not attached, a locked drive, a virtual disk not mounted)
-keeps its key, and the table holds it with no new spelling: each later time this version opens the database for
-writing (as the daemon does when it starts), it looks such a key up again and copies its rows once the drive is back. A
-folder that is gone from a drive that is there keeps its key: the file system holds no spelling for it, and a session
-opened there as `c:\…` still finds its audit settings under that spelling. A folder Rerail cannot read keeps its key,
-and the database still opens. So does a folder on a network share (`\\host\share\…`) or on a drive mapped to one, which
-the step does not look up: a host that does not answer would hold the database for about 21 seconds. The step reads
-each drive's root once to tell a mapped drive from a local one; a root that takes a second or more to answer counts as
-mapped. On macOS and Linux the step copies nothing.
+The step reads the keys, and where the audit history says each audit ran, and looks every folder up before it takes the
+database's write lock; under the lock it only copies rows. So no other writer waits for a lookup, nor for the read of a
+large audit history with the file out of the disk cache. It reads each drive's root once, in a thread of its own,
+waiting a second at most, then looks that drive's keys up within a second. A key on a drive mapped to a network share is
+looked up through the mapping, which gives the share's spelling, the one this version keys the folder by; a key on a
+share itself (`\\host\share\…`) is looked up the same way. A key on a drive that is absent (a disk not attached, a
+locked drive, a virtual disk not mounted), whose root does not answer within the second (a share whose host is gone,
+which Windows waits about 21 seconds for, or a sleeping disk), or left once its drive's second is spent keeps its key,
+and the table holds it with no new spelling: each later time this version opens the database for writing (as the
+daemon does when it starts), it looks such a key up again, before the lock, and copies its rows once its drive answers.
+A process waits for a root that did not answer at most once in ten minutes. A folder that is gone from a drive that is
+there keeps its key: the file system holds no spelling for it, and a session opened there as `c:\…` still finds its
+audit settings under that spelling. A folder Rerail cannot read keeps its key, and the database still opens. On macOS
+and Linux the step reads and copies nothing.
 
 Rows an earlier version writes after the step, under a spelling the step never saw, stay under that spelling: the step
 runs once per database. Rows it writes under a spelling the step recorded update its own copies, which this version
