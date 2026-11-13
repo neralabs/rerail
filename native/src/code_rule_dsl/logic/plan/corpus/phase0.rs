@@ -212,13 +212,20 @@ impl Graph {
             }
             let name = if from == start && matches!(seed, Seed::Text { .. }) { TEXT.to_owned() } else { from.clone() };
             if let Some(to) = self.includes.get(&from) {
-                for (_, _, path) in to {
+                // The implicit `core.rr` (at -1) is a program file's own (`p0_file`): a module this seed includes,
+                // which the run was given as a seed of its own too, does not name it here, as a run of this seed
+                // alone would not.
+                let to: Vec<(i64, String, PathBuf)> =
+                    if from == start || from == "engine" { to.clone() } else { to.iter().filter(|(at, _, _)| *at >= 0).cloned().collect() };
+                for (_, _, path) in &to {
                     pending.push(path.to_string_lossy().into_owned());
                     if let Some(d) = self.digests.get(path) {
                         g.digests.insert(path.clone(), *d);
                     }
                 }
-                g.includes.insert(name.clone(), to.clone());
+                if !to.is_empty() {
+                    g.includes.insert(name.clone(), to);
+                }
             }
             g.missing.extend(self.missing.iter().filter(|(f, _, _)| *f == from).map(|(_, at, n)| (name.clone(), *at, n.clone())));
         }
