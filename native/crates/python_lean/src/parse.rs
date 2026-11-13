@@ -12,7 +12,7 @@
 //! - **A token is stored** only where tree-sitter's tape stores it (the ones the grammar does not
 //!   imply: operators, `def`, a trailing comma and its closing bracket, …).
 
-use crate::lex::{Extra, Lexed, Refusal, T, Tok};
+use crate::lex::{Extra, Lexed, Refusal, T, Tok, soft};
 use crate::{K, Tape, f, key, unkey};
 use rerail_tape_format::{Redo, Widths, Writer};
 
@@ -237,6 +237,11 @@ impl<'a> P<'a> {
         &self.src[t.start as usize..t.end as usize]
     }
 
+    /// Whether the token `k` ahead is a name that is the soft keyword `soft` (`lex::soft`).
+    fn is_soft(&self, k: usize, soft: u8) -> bool {
+        self.toks.get(self.i + k).is_some_and(|t| t.soft == soft)
+    }
+
     /// Whether the token `k` ahead is the name `name`.
     fn is_name(&self, k: usize, name: &[u8]) -> bool {
         self.toks.get(self.i + k).is_some_and(|t| t.kind == T::Name && self.text(*t) == name)
@@ -380,12 +385,12 @@ impl<'a> P<'a> {
             T::Def => self.function_definition(f::NONE)?,
             T::Class => self.class_definition(f::NONE)?,
             T::At => self.decorated()?,
-            T::Name if self.is_name(0, b"async") && matches!(self.peek_at(1), T::Def | T::For | T::With) => match self.peek_at(1) {
+            T::Name if self.is_soft(0, soft::ASYNC) && matches!(self.peek_at(1), T::Def | T::For | T::With) => match self.peek_at(1) {
                 T::Def => self.function_definition(f::NONE)?,
                 T::For => self.for_statement()?,
                 _ => self.with_statement()?,
             },
-            T::Name if self.is_name(0, b"match") && self.is_match() => self.match_statement()?,
+            T::Name if self.is_soft(0, soft::MATCH) && self.is_match() => self.match_statement()?,
             _ => self.simple_statements()?,
         }
         self.depth -= 1;
@@ -455,14 +460,14 @@ impl<'a> P<'a> {
                 self.close(n);
                 Ok(())
             }
-            T::Name if self.is_name(0, b"print") && self.is_print() => self.print_statement(),
+            T::Name if self.is_soft(0, soft::PRINT) && self.is_print() => self.print_statement(),
             // `print(a, *b)`: tree-sitter's parse as a print statement of a tuple lives past the
             // splat and changes its shape; left to it.
-            T::Name if self.is_name(0, b"print") && self.peek_at(1) == T::LParen && self.late_splat() => self.refuse(),
-            T::Name if self.is_name(0, b"exec") && matches!(self.peek_at(1), T::StrStart | T::Name) && !matches!(self.peek_at(2), T::Dot | T::LParen | T::LBracket) => {
+            T::Name if self.is_soft(0, soft::PRINT) && self.peek_at(1) == T::LParen && self.late_splat() => self.refuse(),
+            T::Name if self.is_soft(0, soft::EXEC) && matches!(self.peek_at(1), T::StrStart | T::Name) && !matches!(self.peek_at(2), T::Dot | T::LParen | T::LBracket) => {
                 self.exec_statement()
             }
-            T::Name if self.is_name(0, b"type") && self.is_type_alias() => self.type_alias(),
+            T::Name if self.is_soft(0, soft::TYPE) && self.is_type_alias() => self.type_alias(),
             _ => self.expression_statement(),
         }
     }
@@ -1234,7 +1239,7 @@ impl<'a> P<'a> {
         match self.peek() {
             T::Def => self.function_definition(f::DEFINITION)?,
             T::Class => self.class_definition(f::DEFINITION)?,
-            T::Name if self.is_name(0, b"async") && self.peek_at(1) == T::Def => self.function_definition(f::DEFINITION)?,
+            T::Name if self.is_soft(0, soft::ASYNC) && self.peek_at(1) == T::Def => self.function_definition(f::DEFINITION)?,
             _ => return self.refuse(),
         }
         self.close(d);
@@ -1278,7 +1283,7 @@ impl<'a> P<'a> {
         }
         let b = self.open(K::Block, f::BODY, C_NONE);
         self.bump();
-        while self.is_name(0, b"case") {
+        while self.is_soft(0, soft::CASE) {
             self.case_clause()?;
         }
         self.expect(T::Dedent)?;
@@ -1317,7 +1322,7 @@ impl<'a> P<'a> {
     fn case_pattern(&mut self, field: u8) -> R<N> {
         self.deeper()?;
         let cp = self.open(K::CasePattern, field, C_NONE);
-        if self.is_name(0, b"_") && !matches!(self.peek_at(1), T::Dot | T::LParen) {
+        if self.is_soft(0, soft::WILD) && !matches!(self.peek_at(1), T::Dot | T::LParen) {
             self.bump();
         } else if self.peek() == T::Name && self.peek_at(1) == T::Eq {
             let k = self.open(K::KeywordPattern, f::NONE, C_NONE);
@@ -1483,7 +1488,7 @@ impl<'a> P<'a> {
         let n = self.open(K::SplatPattern, f::NONE, C_NONE);
         let op = if self.peek() == T::Star { K::TStar } else { K::TPow };
         self.leaf(op, f::NONE, C_NONE);
-        if self.is_name(0, b"_") {
+        if self.is_soft(0, soft::WILD) {
             self.bump();
         } else {
             self.name(f::NONE)?;
@@ -1759,7 +1764,7 @@ impl<'a> P<'a> {
                 self.close(n);
                 Ok(n)
             }
-            T::Name if self.is_name(0, b"await") && matches!(self.peek_at(1), T::Name | T::Int | T::Float | T::StrStart | T::LParen | T::LBracket | T::LBrace | T::True | T::False | T::None | T::Ellipsis) => {
+            T::Name if self.is_soft(0, soft::AWAIT) && matches!(self.peek_at(1), T::Name | T::Int | T::Float | T::StrStart | T::LParen | T::LBracket | T::LBrace | T::True | T::False | T::None | T::Ellipsis) => {
                 let n = self.open_in(K::Await, s);
                 self.bump();
                 self.binary(slot(f::NONE, Ctx::Primary), 21)?;
@@ -1864,7 +1869,7 @@ impl<'a> P<'a> {
     }
 
     fn starts_for(&self) -> bool {
-        self.peek() == T::For || (self.is_name(0, b"async") && self.peek_at(1) == T::For)
+        self.peek() == T::For || (self.is_soft(0, soft::ASYNC) && self.peek_at(1) == T::For)
     }
 
     /// `_comprehension_clauses`: `for … in …`, then more of those and `if`s.

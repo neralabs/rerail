@@ -143,8 +143,23 @@ pub enum T {
 #[derive(Clone, Copy, Debug)]
 pub struct Tok {
     pub kind: T,
+    /// A name's soft keyword (`soft::…`; 0: none): in the struct's padding.
+    pub soft: u8,
     pub start: u32,
     pub end: u32,
+}
+
+/// The soft keywords: names the parser reads as keywords where the grammar takes them.
+pub mod soft {
+    pub const ASYNC: u8 = 1;
+    pub const AWAIT: u8 = 2;
+    pub const MATCH: u8 = 3;
+    pub const CASE: u8 = 4;
+    pub const TYPE: u8 = 5;
+    pub const PRINT: u8 = 6;
+    pub const EXEC: u8 = 7;
+    /// `_`, the wildcard pattern.
+    pub const WILD: u8 = 8;
 }
 
 /// An extra: a comment or a line continuation.
@@ -206,44 +221,102 @@ pub fn lex(src: &[u8]) -> Result<Lexed, Refusal> {
     Ok(Lexed { toks: l.toks, extras: l.extras })
 }
 
+/// The keywords and soft keywords: each word, its token kind (a soft keyword is a name) and its
+/// soft keyword's code.
+const WORD_LIST: [(&[u8], T, u8); 41] = [
+    (b"False", T::False, 0),
+    (b"None", T::None, 0),
+    (b"True", T::True, 0),
+    (b"and", T::And, 0),
+    (b"as", T::As, 0),
+    (b"assert", T::Assert, 0),
+    (b"break", T::Break, 0),
+    (b"class", T::Class, 0),
+    (b"continue", T::Continue, 0),
+    (b"def", T::Def, 0),
+    (b"del", T::Del, 0),
+    (b"elif", T::Elif, 0),
+    (b"else", T::Else, 0),
+    (b"except", T::Except, 0),
+    (b"finally", T::Finally, 0),
+    (b"for", T::For, 0),
+    (b"from", T::From, 0),
+    (b"global", T::Global, 0),
+    (b"if", T::If, 0),
+    (b"import", T::Import, 0),
+    (b"in", T::In, 0),
+    (b"is", T::Is, 0),
+    (b"lambda", T::Lambda, 0),
+    (b"nonlocal", T::Nonlocal, 0),
+    (b"not", T::Not, 0),
+    (b"or", T::Or, 0),
+    (b"pass", T::Pass, 0),
+    (b"raise", T::Raise, 0),
+    (b"return", T::Return, 0),
+    (b"try", T::Try, 0),
+    (b"while", T::While, 0),
+    (b"with", T::With, 0),
+    (b"yield", T::Yield, 0),
+    (b"async", T::Name, soft::ASYNC),
+    (b"await", T::Name, soft::AWAIT),
+    (b"match", T::Name, soft::MATCH),
+    (b"case", T::Name, soft::CASE),
+    (b"type", T::Name, soft::TYPE),
+    (b"print", T::Name, soft::PRINT),
+    (b"exec", T::Name, soft::EXEC),
+    (b"_", T::Name, soft::WILD),
+];
+
+/// A word of at most 8 bytes as one integer, little-endian, zeros past its end.
+const fn word_key(w: &[u8]) -> u64 {
+    let mut k = 0u64;
+    let mut i = 0;
+    while i < w.len() {
+        k |= (w[i] as u64) << (8 * i);
+        i += 1;
+    }
+    k
+}
+
+/// A word's slot in `WORDS`, by its key and length: a multiplier under which the 41 words take 41
+/// slots of 128 (a perfect hash; `WORDS` is refused at compile time where two share one).
 #[inline(always)]
-fn keyword(w: &[u8]) -> Option<T> {
-    Some(match w {
-        b"False" => T::False,
-        b"None" => T::None,
-        b"True" => T::True,
-        b"and" => T::And,
-        b"as" => T::As,
-        b"assert" => T::Assert,
-        b"break" => T::Break,
-        b"class" => T::Class,
-        b"continue" => T::Continue,
-        b"def" => T::Def,
-        b"del" => T::Del,
-        b"elif" => T::Elif,
-        b"else" => T::Else,
-        b"except" => T::Except,
-        b"finally" => T::Finally,
-        b"for" => T::For,
-        b"from" => T::From,
-        b"global" => T::Global,
-        b"if" => T::If,
-        b"import" => T::Import,
-        b"in" => T::In,
-        b"is" => T::Is,
-        b"lambda" => T::Lambda,
-        b"nonlocal" => T::Nonlocal,
-        b"not" => T::Not,
-        b"or" => T::Or,
-        b"pass" => T::Pass,
-        b"raise" => T::Raise,
-        b"return" => T::Return,
-        b"try" => T::Try,
-        b"while" => T::While,
-        b"with" => T::With,
-        b"yield" => T::Yield,
-        _ => return None,
-    })
+const fn word_slot(key: u64, len: usize) -> usize {
+    ((key ^ len as u64).wrapping_mul(0x8f58_640b_360e_7c81) >> 57) as usize
+}
+
+/// Each slot's word: its key, its length (0: none), its kind and soft keyword.
+static WORDS: [(u64, u8, T, u8); 128] = {
+    let mut t = [(0u64, 0u8, T::Name, 0u8); 128];
+    let mut i = 0;
+    while i < WORD_LIST.len() {
+        let (w, kind, soft) = WORD_LIST[i];
+        assert!(w.len() <= 8);
+        let k = word_key(w);
+        let slot = word_slot(k, w.len());
+        assert!(t[slot].1 == 0, "two words in a slot");
+        t[slot] = (k, w.len() as u8, kind, soft);
+        i += 1;
+    }
+    t
+};
+
+/// The word `src[i..end]`'s kind and soft keyword: its first 8 bytes loaded as one integer, masked
+/// to its length, hashed to its one slot and compared once (simdjson's check of `true`, `false`
+/// and `null`, as one masked compare).
+#[inline(always)]
+fn keyword(src: &[u8], i: usize, end: usize) -> (T, u8) {
+    let len = end - i;
+    if len.wrapping_sub(1) >= 8 {
+        return (T::Name, 0);
+    }
+    let raw = match src.get(i..i + 8) {
+        Some(b) => u64::from_le_bytes(b.try_into().expect("8 bytes")),
+        None => word_key(&src[i..]),
+    };
+    let w = raw & (u64::MAX >> (64 - 8 * len));
+    let (k, l, kind, soft) = WORDS[word_slot(w, len)];
+    if k == w && usize::from(l) == len { (kind, soft) } else { (T::Name, 0) }
 }
 
 impl<'s> Lexer<'s> {
@@ -254,7 +327,7 @@ impl<'s> Lexer<'s> {
 
     #[inline(always)]
     fn push(&mut self, kind: T, start: usize, end: usize) {
-        self.toks.push(Tok { kind, start: start as u32, end: end as u32 });
+        self.toks.push(Tok { kind, soft: 0, start: start as u32, end: end as u32 });
         self.p = end;
     }
 
@@ -469,8 +542,9 @@ impl<'s> Lexer<'s> {
                 return Ok(T::StrEnd);
             }
             let end = self.name_end(i)?;
-            let kind = keyword(&src[i..end]).unwrap_or(T::Name);
-            self.push(kind, i, end);
+            let (kind, soft) = keyword(src, i, end);
+            self.toks.push(Tok { kind, soft, start: i as u32, end: end as u32 });
+            self.p = end;
             return Ok(kind);
         }
         if c.is_ascii_digit() || (c == b'.' && self.at(i + 1).is_ascii_digit()) {
@@ -866,6 +940,26 @@ impl<'s> Lexer<'s> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn keywords_are_found_by_their_one_slot() {
+        for &(w, kind, soft) in &WORD_LIST {
+            // At the text's end (padded) and inside it (8 bytes loaded past the word).
+            for text in [w.to_vec(), [w, b" + xyzzy_long"].concat()] {
+                assert_eq!(keyword(&text, 0, w.len()), (kind, soft), "{}", String::from_utf8_lossy(w));
+            }
+            // Not a word with a byte more or less, or another case.
+            let longer = [w, b"x"].concat();
+            assert_eq!(keyword(&longer, 0, longer.len()), (T::Name, 0));
+            assert_eq!(keyword(w, 0, w.len() - 1).1, WORD_LIST.iter().find(|e| e.0 == &w[..w.len() - 1]).map_or(0, |e| e.2));
+            let upper = w.to_ascii_uppercase();
+            if upper != w {
+                assert_eq!(keyword(&upper, 0, upper.len()), (T::Name, 0));
+            }
+        }
+        assert_eq!(keyword(b"continued", 0, 9), (T::Name, 0));
+        assert_eq!(keyword(b"x_continue", 2, 10), (T::Continue, 0));
+    }
 
     fn kinds(src: &str) -> Vec<T> {
         lex(src.as_bytes()).unwrap().toks.iter().map(|t| t.kind).collect()
