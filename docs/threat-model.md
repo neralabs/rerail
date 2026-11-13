@@ -689,8 +689,9 @@ should not widen it.
   nested worktree or submodule are not skipped, nor is any repository's when the process started outside it. The
   daemon finds Git once, from the folder and `PATH` it started with, and keeps it.
 - If the recorded `node` is gone, the hook falls back to `node` on `PATH`, which a version manager or direnv can shim.
-  Claude Code's hooks on Windows start the recorded `node` directly, with no fallback, when set-up found another
-  `node` first on `PATH` (`src/setup/harness-registration.ts`).
+  Where set-up found another `node` first on `PATH`, Claude Code's hooks on Windows run `cmd.exe /d /c` by its
+  System32 path, which looks for that fallback `node.exe` on `PATH` alone, never in the hook's working folder
+  (`src/setup/harness-registration.ts`).
 - The Claude status-line wrapper runs an inherited `statusLine` command, re-read from the working directory's
   `.claude/settings*.json`, with `shell: true` (`src/hosts/claude/claude-status.ts`, `src/setup/claude-status-store.ts`).
 - `hooks/cursor.json` uses the relative path `./dist/hosts/cursor/cursor-hook.js`. [INFERENCE: exposed only if Cursor

@@ -1,1 +1,1 @@
-On Windows, when the first `node` on PATH is not the Node that ran set-up, Claude Code's hooks now start the recorded Node directly, so each hook event runs one Node process instead of two.
+On Windows, where the first `node` on PATH is not the Node that ran set-up, Claude Code's hooks start that Node through cmd.exe: one Node per hook event instead of two, still falling back to PATH's `node` once it is removed. To go back to an older Rerail, run `rerail install --remove` first, or each hook runs twice.
