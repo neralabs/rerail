@@ -408,7 +408,7 @@ mod tests {
     #[test]
     fn a_parent_kind_derived_through_rules_is_named() {
         let refused = |src: &str| {
-            let statements = super::super::from_tape::statements(src, &super::super::tape(src)).unwrap();
+            let statements = super::super::from_tape::statements(src, &super::super::nodes(src)).unwrap();
             super::refuse(&[(std::path::PathBuf::from("t.rr"), statements)]).unwrap_err().to_string()
         };
         let direct = refused(".language python\nr(n) :- kind(n, \"if_statement\"), op(n, \":\").\n");

@@ -8,13 +8,13 @@
 
 use super::Error;
 use super::syntax::{Code, Fix, Head, Item, Lines, Lit, Statement, Suppress, Term};
-use super::tape::{ERROR, Field, Kind, NO_PARENT, Row};
+use super::tape::{ERROR, Field, Kind, Node};
 
 /// The tape of `src` as a tree: each node's children in order, extras (comments) left out.
 struct Tree<'a> {
     src: &'a str,
     lines: Lines,
-    nodes: &'a [Row],
+    nodes: &'a [Node],
     children: Vec<Vec<u32>>,
 }
 
@@ -29,11 +29,13 @@ fn bad<T>(what: &str) -> Result<T, Error> {
 }
 
 impl<'a> Tree<'a> {
-    fn new(src: &'a str, nodes: &'a [Row]) -> Self {
+    fn new(src: &'a str, nodes: &'a [Node]) -> Self {
         let mut children = vec![Vec::new(); nodes.len()];
         for (i, node) in nodes.iter().enumerate() {
-            if node.parent != NO_PARENT && node.extra == 0 {
-                children[node.parent as usize].push(i as u32);
+            if let Some(p) = node.parent
+                && !node.extra
+            {
+                children[p as usize].push(i as u32);
             }
         }
         Self { src, lines: Lines::of(src), nodes, children }
@@ -330,7 +332,7 @@ impl<'a> Tree<'a> {
 
 /// The statements of `src` from its tape `nodes` (`super::tape`, or a stored tape's facts: `nodes_of_facts`). A tape
 /// with an ERROR gives the error running the file gives (`super::syntax_error`).
-pub fn statements(src: &str, nodes: &[Row]) -> Result<Vec<Statement>, Error> {
+pub fn statements(src: &str, nodes: &[Node]) -> Result<Vec<Statement>, Error> {
     if nodes.iter().any(|n| n.kind == ERROR) {
         let (_, message) = super::syntax_error(src).unwrap_or((0, "a statement that does not parse".to_owned()));
         return Err(Error::Syntax(message));
@@ -342,29 +344,19 @@ pub fn statements(src: &str, nodes: &[Row]) -> Result<Vec<Statement>, Error> {
 }
 
 /// A stored tape's nodes, from the facts the store's tape gives (`facts::core::build_cached`).
-pub(super) fn nodes_of_facts(facts: &crate::code_rule_dsl::facts::core::Facts) -> Vec<Row> {
-    let mut rows: Vec<Row> = (0..facts.len())
+pub(super) fn nodes_of_facts(facts: &crate::code_rule_dsl::facts::core::Facts) -> Vec<Node> {
+    (0..facts.len())
         .map(|i| {
             let flags = facts.flags[i];
             let parent = facts.parent[i];
-            Row {
+            Node {
                 kind: if flags & 8 != 0 { ERROR } else { crate::code_rule_dsl::facts::core::kind_code(facts.kind[i]) },
                 field: facts.field[i],
                 start: facts.start[i],
                 end: facts.end[i],
-                size: 1,
-                parent: if i != 0 && parent != u32::MAX { parent } else { NO_PARENT },
-                extra: u8::from(flags & 2 != 0),
-                pad: [0; 3],
+                parent: (i != 0 && parent != u32::MAX).then_some(parent),
+                extra: flags & 2 != 0,
             }
         })
-        .collect();
-    // Each subtree's size, from the last row back.
-    for i in (1..rows.len()).rev() {
-        if rows[i].parent != NO_PARENT {
-            let (size, parent) = (rows[i].size, rows[i].parent as usize);
-            rows[parent].size += size;
-        }
-    }
-    rows
+        .collect()
 }

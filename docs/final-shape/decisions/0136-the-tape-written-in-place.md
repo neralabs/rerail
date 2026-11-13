@@ -1,5 +1,11 @@
 # 0136: Tier 2 writes the tape directly
 
+**Corrected by 0140 (2026-11-13).** What this decision built is not the tape. Tier 2 writes a
+table of node rows (`NodeRow`), a format of its own; the engine's tape is the v9np image's
+bytes. The rows are written in place, as below, but a tape from them still needs the engine's
+passes. The "lean parser too" part below made the lean parser write the same rows, which was
+wrong: it now writes the image's bytes (0140).
+
 Status: built (2026-11-12). Tier 2, JIT: 330.4M instructions to 248.3M, 58.4M cycles to 41.0M.
 Ahead of time: 307.0M to 224.8M, 54.3M to 36.4M.
 
