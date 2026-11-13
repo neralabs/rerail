@@ -555,10 +555,13 @@ fn span_text_demand(program: &crate::code_rule_dsl::logic::front::ast::Program) 
 /// `guest_policy("library", "on" | "off")`, `guest_policy("errors" | "errors:GRAMMAR", "skip" | "partial")`.
 pub const GUEST_POLICY: &str = "guest_policy";
 
-/// The first guest document's key: files take `1..GUEST_KEYS` (`corpus::memo::doc_keys`), guests in the run's
-/// language `GUEST_KEYS..HIDDEN_KEYS`, and every other document (a guest in another grammar, a value) `HIDDEN_KEYS..2^31`
-/// (decision 0058 §1: what a rule sees is a bound on these keys).
+/// The first guest document's key: files take `1..GUEST_KEYS` (`corpus::memo::doc_keys`), code guests in the run's
+/// language `GUEST_KEYS..ANNOTATION_KEYS`, annotations (type expressions, Python's in a Python run)
+/// `ANNOTATION_KEYS..HIDDEN_KEYS`, and every other document (a guest in another grammar, a value) `HIDDEN_KEYS..2^31`
+/// (decision 0058 §1: what a rule sees is a bound on these keys). A rule that does not name a guest sees files and code
+/// guests; a relation an annotation's rows reach (`corpus::hiding::fold_own`) sees annotations too.
 pub const GUEST_KEYS: u32 = 1 << 30;
+pub const ANNOTATION_KEYS: u32 = (1 << 30) + (1 << 28);
 pub const HIDDEN_KEYS: u32 = (1 << 30) + (1 << 29);
 
 /// A guest document's place (decision 0055): the host document and the node or span it stands at, its grammar and

@@ -552,7 +552,7 @@ fn directives_and_functions_lower() {
     .unwrap();
     assert!(p.outputs.contains(&"BAD".to_owned()) && p.outputs.contains(&"violation".to_owned()));
     let rule = |rel: &str| p.rules.iter().find(|r| r.head.rel == rel).map(ToString::to_string).unwrap_or_default();
-    assert_eq!(rule("violation"), "violation(\"data-layer:p\", \"BAD\", $rr_v1, $rr_p, $rr_l) :- BAD($rr_v0, $rr_v1), node($rr_d, $rr_v0, _, _, _), doc($rr_d, $rr_p, _), line($rr_v0, $rr_l)");
+    assert_eq!(rule("violation"), "violation(\"data-layer:p\", \"BAD\", $rr_v1, $rr_p, $rr_l, $rr_c) :- BAD($rr_v0, $rr_v1), node($rr_d, $rr_v0, _, _, _), doc($rr_d, $rr_p, _), line($rr_v0, $rr_l), col($rr_v0, $rr_c)");
     let bad = rule("BAD");
     for part in ["$j = @add($i, 1)", "@concat($t, @to_string(@strlen($t)))", "!rr_inside_fdef($c, _)"] {
         assert!(bad.contains(part), "{part} in {bad}");
@@ -1078,17 +1078,17 @@ fn violations_at_places_and_their_lines_lower() {
     assert_eq!(
         rules("V"),
         [
-            "violation(\"p\", \"V\", \"@scope/a-b\", $rr_p, $rr_l) :- V($rr_v0, _), docof($rr_v0, $rr_d), doc($rr_d, $rr_p, _), line($rr_v0, $rr_l)",
-            "violation(\"p\", \"V\", \"@scope/a-b\", @place_path($rr_v0), @place_line($rr_v0)) :- V($rr_v0, _), $rr_v0 < -1",
-            "violation(\"p\", \"V\", \"@scope/a-b\", $rr_p, $rr_l) :- rr_place_V($rr_p, $rr_l, _)",
+            "violation(\"p\", \"V\", \"@scope/a-b\", $rr_p, $rr_l, $rr_c) :- V($rr_v0, _), docof($rr_v0, $rr_d), doc($rr_d, $rr_p, _), line($rr_v0, $rr_l), col($rr_v0, $rr_c)",
+            "violation(\"p\", \"V\", \"@scope/a-b\", @place_path($rr_v0), @place_line($rr_v0), 0) :- V($rr_v0, _), $rr_v0 < -1",
+            "violation(\"p\", \"V\", \"@scope/a-b\", $rr_p, $rr_l, 0) :- rr_place_V($rr_p, $rr_l, _)",
         ]
     );
     // A span column: its rows' documents, and the `@place` values a rule made.
     assert_eq!(
         rules("W"),
         [
-            "violation(\"p\", \"W\", \"W\", $rr_p, $rr_l) :- W($rr_v0), docof($rr_v0, $rr_d), doc($rr_d, $rr_p, _), line($rr_v0, $rr_l)",
-            "violation(\"p\", \"W\", \"W\", @place_path($rr_v0), @place_line($rr_v0)) :- W($rr_v0), $rr_v0 < -1",
+            "violation(\"p\", \"W\", \"W\", $rr_p, $rr_l, $rr_c) :- W($rr_v0), docof($rr_v0, $rr_d), doc($rr_d, $rr_p, _), line($rr_v0, $rr_l), col($rr_v0, $rr_c)",
+            "violation(\"p\", \"W\", \"W\", @place_path($rr_v0), @place_line($rr_v0), 0) :- W($rr_v0), $rr_v0 < -1",
         ]
     );
     let printed = print(&p).unwrap();
@@ -1902,7 +1902,7 @@ err(d) :- syntax_error(d, _, _).
     let read = |rel: &str| std::fs::read_to_string(out.join(format!("{rel}.csv"))).unwrap();
     let mut v: Vec<String> = read("violation").lines().map(str::to_owned).collect();
     v.sort();
-    assert_eq!(v, ["t:withheld\tASSIGN\tASSIGN\tgood.py\t1", "t:withheld\tsyntax_error\tBAD000\tbad.py\t1"]);
+    assert_eq!(v, ["t:withheld\tASSIGN\tASSIGN\tgood.py\t1\t0", "t:withheld\tsyntax_error\tBAD000\tbad.py\t1\t0"]);
     assert_eq!(read("lines").lines().count(), 2, "raw-text policies retain both documents");
     assert_eq!(read("err").lines().count(), 1);
     let _ = std::fs::remove_dir_all(&dir);
@@ -2166,20 +2166,26 @@ fn guests_run(name: &str, files: &[(&str, &str)], rule: &str, outputs: &[&str]) 
 
 /// A string annotation is parsed where it stands: its names have the file's lines and columns, through the escapes
 /// and the parts of a concatenation (the normalized text's map); a string inside a parsed one is parsed in the next
-/// round. Bytes give no guest.
+/// round, for a rule that reaches it through the annotation (`ann`): an annotation is not shown to rules that do not
+/// name it, so `ident`'s `kind(s, "string")` does not see it. Bytes give no guest.
 #[test]
 fn string_annotations_are_guests_at_their_host_lines() {
     let py = "x: \"List[int]\" = []\n\ndef f(y: 'Dict[str, Foo]') -> \"Bar\": ...\nz: \"A\\x42\" = 1\nw: (\"Li\" \"st\") = 2\nq: \"Opt['Baz']\" = 3\nb: b\"Nope\" = 4\n";
     let rule = r#"
 .decl ident(x: symbol, l: number, c: number)
 ident(x, l, c) :- kind(s, "string"), parsed(s, "annotation", _), guest(g, _, s, _), node(g, i, "identifier", _, _), text(i, x), line(i, l), col(i, c).
+.decl ann(n: node)
+ann(r) :- kind(s, "string"), parsed(s, "annotation", r).
+ann(c) :- ann(p), child(p, c, _).
+.decl nested(x: symbol, l: number, c: number)
+nested(x, l, c) :- ann(s), kind(s, "string"), parsed(s, "annotation", _), guest(g, _, s, _), node(g, i, "identifier", _, _), text(i, x), line(i, l), col(i, c).
 .decl whole(x: symbol, l: number, c: number)
 whole(x, l, c) :- kind(s, "concatenated_string"), parsed(s, "annotation", _), guest(g, _, s, _), node(g, i, "identifier", _, _), text(i, x), line(i, l), col(i, c).
 .decl roots(k: symbol)
 roots(k) :- kind(s, "string"), parsed(s, "annotation", r), kind(r, k).
-.output ident, whole, roots
+.output ident, nested, whole, roots
 "#;
-    let [names, whole, roots] = <[Vec<String>; 3]>::try_from(guests_run("annotations", &[("a.py", py)], rule, &["ident", "whole", "roots"])).unwrap();
+    let [names, nested, whole, roots] = <[Vec<String>; 4]>::try_from(guests_run("annotations", &[("a.py", py)], rule, &["ident", "nested", "whole", "roots"])).unwrap();
     assert!(names.contains(&"List\t1\t4".to_owned()), "{names:?}");
     assert!(names.contains(&"int\t1\t9".to_owned()), "{names:?}");
     assert!(names.contains(&"Foo\t3\t20".to_owned()), "{names:?}");
@@ -2190,8 +2196,9 @@ roots(k) :- kind(s, "string"), parsed(s, "annotation", r), kind(r, k).
     assert!(names.contains(&"Li\t5\t5".to_owned()), "{names:?}");
     assert_eq!(whole, ["List\t5\t5"]);
     assert_eq!(roots, ["identifier", "subscript"]);
-    // 'Baz' inside "Opt['Baz']": round 2.
-    assert!(names.contains(&"Baz\t6\t9".to_owned()), "{names:?}");
+    // 'Baz' inside "Opt['Baz']": round 2, through the annotation; `ident` does not see inside it.
+    assert_eq!(nested, ["Baz\t6\t9"]);
+    assert!(!names.iter().any(|n| n.starts_with("Baz")), "{names:?}");
     assert!(!names.iter().any(|n| n.starts_with("Nope")), "{names:?}");
 }
 
@@ -2215,7 +2222,7 @@ kept(l) :- kind(s, "string"), guest(_, _, s, "annotation"), line(s, l).
         )
     };
     let [v, roots, kept] = <[Vec<String>; 3]>::try_from(guests_run("gskip", &[("a.py", py)], &rule(".on guest_error annotation report GBAD"), &["violation", "roots", "kept"])).unwrap();
-    assert_eq!(v, ["t:guest\tguest_error\tGBAD\ta.py\t2"]);
+    assert_eq!(v, ["t:guest\tguest_error\tGBAD\ta.py\t2\t0"]);
     assert_eq!(roots, ["1"], "the broken guest has no tree");
     assert_eq!(kept, ["1", "2"], "both are guests");
     let [v, roots] = <[Vec<String>; 2]>::try_from(guests_run("gpartial", &[("a.py", py)], &rule(".on guest_error partial"), &["violation", "roots"])).unwrap();
@@ -2616,6 +2623,38 @@ Todo(@place(p, l)) :- doc(d, p, _), src_line(d, l, sp), contains("TODO", sp).
     assert_eq!(lowered.text_globs, ["**/*.md"]);
     let off = lowered.facts.get(crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY).into_iter().flatten().any(|r| r == &vec![crate::code_rule_dsl::logic::front::Value::Str("library".into()), crate::code_rule_dsl::logic::front::Value::Str("off".into())]);
     assert!(off, "embedded false is guests off");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A finding is keyed by its column too: two on one line are two rows (main reports each). And an annotation's
+/// guest is not shown to rules that do not name it: `tctx`'s demand asks for every string its inputs hold, `"--host"`
+/// (an argument) too, and shown, that guest was code to `Neg`: `--host`, a doubled minus (B002 on 157 argparse
+/// lines). A type expression is not code; the rules that read one reach it through `parsed`.
+#[test]
+fn findings_keep_their_columns_and_an_annotation_is_not_code() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("finding-columns");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "p.add(\"--host\")\nq = --a + --b\nv: \"--k\" = 1\n").unwrap();
+    let program = r#"
+.policy "t:finding-columns" revision 1
+.language python
+#include "python/ast.rr"
+.violation Neg(at: node) "a doubled minus"
+Neg(u) :- kind(u, "unary_operator"), op(u, "-"), field(u, "argument", a), kind(a, "unary_operator").
+.decl tctx(n: node)
+tctx(t) :- kind(t, "type").
+tctx(r) :- tctx(s), str_node(s), parsed(s, "annotation", r).
+tctx(c) :- tctx(p), child(p, c, _).
+"#;
+    let rule = dir.with_extension("finding-columns.rr");
+    std::fs::write(&rule, program).unwrap();
+    let flat = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    std::fs::remove_file(&rule).unwrap();
+    let out = dir.join("out");
+    crate::code_rule_dsl::logic::plan::corpus::run(&flat, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let mut got: Vec<String> = std::fs::read_to_string(out.join("violation.csv")).unwrap().lines().map(|l| l.split('\t').skip(3).collect::<Vec<_>>().join(":")).collect();
+    got.sort();
+    assert_eq!(got, ["a.py:2:10", "a.py:2:4"], "both of line 2's, and none in the argument's string");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
