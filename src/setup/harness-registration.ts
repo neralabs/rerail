@@ -570,13 +570,15 @@ function hookExecEntry(context: Context, executable: string): JsonObject {
 
 /**
  * The two exec-form entries that can run the hook launcher with `launched`: `node` from PATH, and cmd.exe
- * (`cmdHookArgs`). Where cmd.exe would not read each path back as one word (`cmdReadsAsOneWord`), the second is the
- * first: that hook starts with `node`, in two processes when PATH finds another node.
+ * (`cmdHookArgs`). Where cmd.exe would not read each path back as one word (`cmdReadsAsOneWord`), or where SystemRoot
+ * does not give cmd.exe an absolute path, the second is the first: that hook starts with `node`, in two processes when
+ * PATH finds another node. Claude Code would start a relative cmd.exe from the hook's working folder, a repository.
  */
 function execHookEntries(launched: LauncherArgs): [viaPath: JsonObject, viaCmd: JsonObject] {
   const viaPath = { type: "command", command: "node", args: [...launched] };
-  if (!launched.every(path => cmdReadsAsOneWord(path))) return [viaPath, viaPath];
-  return [viaPath, { type: "command", command: windowsSystemProgram("cmd.exe"), args: cmdHookArgs(launched) }];
+  const cmd = windowsSystemProgram("cmd.exe");
+  if (!isWindowsCmd(cmd) || !launched.every(path => cmdReadsAsOneWord(path))) return [viaPath, viaPath];
+  return [viaPath, { type: "command", command: cmd, args: cmdHookArgs(launched) }];
 }
 
 /**

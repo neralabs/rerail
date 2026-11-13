@@ -402,6 +402,25 @@ describe("Claude Code settings.json", () => {
     expect(JSON.stringify(await readJson(path))).not.toContain("hook-launcher");
   });
 
+  it("writes node for the Windows hooks where SystemRoot is a relative path, which would name a cmd.exe in each repository", async () => {
+    const { home, root } = await fixture();
+    const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
+    const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
+    const path = join(home, ".claude", "settings.json");
+    await windowsPathNode(home, "older-node");
+    const nodePath = await windowsNode(home, "newer-node");
+    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["claude-code"] as const };
+    // Claude Code starts a relative command from the hook's working folder: a `Windows\System32\cmd.exe` committed to a
+    // repository would run on every hook event there.
+    vi.stubEnv("SystemRoot", "Windows");
+
+    await registerHarnesses(windows);
+    const viaPath = { type: "command", command: "node", args: [launcherPath, nodePath, hookPath] };
+    expect(((await readJson(path)).hooks as Record<string, unknown[]>).SessionStart).toEqual([{ hooks: [viaPath] }]);
+    await unregisterHarnesses(windows);
+    expect(JSON.stringify(await readJson(path))).not.toContain("hook-launcher");
+  });
+
   it("finds node on PATH for the Windows hooks as a spawn without a shell does", async () => {
     const { home, root } = await fixture();
     const path = join(home, ".claude", "settings.json");
