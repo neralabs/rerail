@@ -16,6 +16,7 @@ import {
   unregisterHarnesses,
   type Harness,
   type RegistrationChange,
+  type RegistrationOptions,
 } from "../../src/setup/harness-registration.js";
 import {
   claudeStatusDatabasePath,
@@ -518,6 +519,88 @@ describe("Claude Code settings.json", () => {
 
     await unregisterHarnesses(windows);
     expect((await readJson(path)).hooks).toEqual(foreign.hooks);
+  });
+
+  /** `foreign`'s hooks, then one group per Claude Code event that runs `entry`, laid out as 0.1.3 and later write them. */
+  function hooksWith(entry: unknown): Record<string, unknown[]> {
+    const tools = ["PreToolUse", "PostToolUse", "PostToolUseFailure"];
+    const events = ["SessionStart", "SessionEnd", "UserPromptSubmit", "MessageDisplay", ...tools, "Stop", "StopFailure"];
+    const theirs: Record<string, unknown[]> = foreign.hooks;
+    const ours = (event: string) => (tools.includes(event) ? { matcher: "", hooks: [entry] } : { hooks: [entry] });
+    return Object.fromEntries(events.map(event => [event, [...(theirs[event] ?? []), ours(event)]]));
+  }
+
+  /** Writes every hook entry `from` in the settings at `path` as `to`. */
+  async function rewriteEntries(path: string, from: unknown, to: unknown): Promise<void> {
+    await writeFile(path, JSON.stringify(await readJson(path)).replaceAll(JSON.stringify(from), JSON.stringify(to)));
+  }
+
+  interface ReleasedEntries {
+    options: RegistrationOptions & { home: string; nodePath: string };
+    /** The entry 0.1.3 and 0.1.4 wrote for a recorded node. */
+    released: (node: string) => unknown;
+    /** The entry this version writes for it. */
+    current: (node: string) => unknown;
+    /** Records a newer node, as a Node upgrade does before `rerail install --refresh`. */
+    upgrade: () => Promise<string>;
+  }
+
+  /** Set-up's three paths over the hooks an earlier version wrote: registration, removal, and a refresh. */
+  async function checkReleasedEntries({ options, released, current, upgrade }: ReleasedEntries): Promise<void> {
+    const path = join(options.home, ".claude", "settings.json");
+    const fromRelease = async () => {
+      await seed(path, foreign);
+      await registerHarnesses(options);
+      await rewriteEntries(path, current(options.nodePath), released(options.nodePath));
+    };
+    // Connected, as `rerail status` and the dashboard ask; set-up then writes one current entry per event.
+    await fromRelease();
+    const plan = await registerHarnesses({ ...options, dryRun: true, keepHookCommand: true });
+    expect(change(plan.changes, "claude-code", "settings.json").action).toBe("unchanged");
+    await registerHarnesses(options);
+    expect((await readJson(path)).hooks).toEqual(hooksWith(current(options.nodePath)));
+
+    // Removal leaves only the person's own hooks.
+    await fromRelease();
+    await unregisterHarnesses(options);
+    expect((await readJson(path)).hooks).toEqual(foreign.hooks);
+
+    await fromRelease();
+    const upgraded = await upgrade();
+    await registerHarnesses({ ...options, nodePath: upgraded });
+    expect((await readJson(path)).hooks).toEqual(hooksWith(current(upgraded)));
+  }
+
+  it.each([
+    ["another node", true],
+    ["the recorded node", false],
+  ])("replaces, refreshes and removes the Windows hook entries 0.1.3 and 0.1.4 wrote, where PATH finds %s", async (_case, otherFirst) => {
+    const { home, root } = await fixture();
+    const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
+    const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
+    if (otherFirst) await windowsPathNode(home, "other-node");
+    const recordedNode = (folder: string) => (otherFirst ? windowsNode(home, folder) : windowsPathNode(home, folder));
+    // 0.1.3 and 0.1.4 start the launcher with `node` from PATH, whichever node PATH finds first.
+    const released = (node: string) => ({ type: "command", command: "node", args: [launcherPath, node, hookPath] });
+    await checkReleasedEntries({
+      options: { root, home, nodePath: await recordedNode("recorded-node"), platform: "win32", harnesses: ["claude-code"] },
+      released,
+      current: node => (otherFirst ? cmdEntry(launcherPath, node, hookPath) : released(node)),
+      upgrade: () => recordedNode("v24.9.0"),
+    });
+  });
+
+  it("replaces, refreshes and removes the hook entries 0.1.3 and 0.1.4 wrote off Windows", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
+    const { home, root, nodePath } = await fixture();
+    const hookPath = join(root, "dist", "hosts", "claude", "claude-hook.js");
+    await checkReleasedEntries({
+      options: { root, home, nodePath, harnesses: ["claude-code"] },
+      // The sh launcher 0.1.3 and 0.1.4 wrote, for paths that hold no character the shell reads.
+      released: node => ({ type: "command", command: `sh -c 'if [ -x "$0" ]; then exec "$0" "$1"; fi; exec node "$1"' ${node} ${hookPath}` }),
+      current: node => ({ type: "command", command: hookLine(node, root, "hosts/claude/claude-hook.js") }),
+      upgrade: async () => "/opt/node-24.9.0/bin/node",
+    });
   });
 
   it("aborts on invalid JSON without writing or backing up", async () => {
