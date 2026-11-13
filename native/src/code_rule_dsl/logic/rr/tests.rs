@@ -781,7 +781,7 @@ fn normalized(mut p: front::Program) -> front::Program {
         }
         rule.body = lower::merge_negated_tests(std::mem::take(&mut rule.body));
     }
-    // The lowering's projections (`lower::projections`, decision 0047): `kind` and `docof` over nodes, read as
+    // The lowering's projections (`lower::projections`, decision 0141): `kind` and `docof` over nodes, read as
     // inputs, are rules over `node`, first.
     let v = |s: &str| front::Term::Var(s.to_owned());
     let mut at = 0;

@@ -194,7 +194,7 @@ pub struct Step {
 }
 
 /// Tells each kind-set axis a planned order reads by its `n` how many keys come into that step (the rows the planner
-/// expects after the step before): the axis chooses between its batch's solve and lookups per node (decision 0105).
+/// expects after the step before): the axis chooses between its batch's solve and lookups per node (decision 0143).
 fn expect_axis_lookups(db: impl crate::code_rule_dsl::facts::vtab::Scoped, plan: &super::profile::RulePlan) {
     let mut into = 1.0;
     for step in &plan.steps {
@@ -3102,7 +3102,7 @@ impl Model {
         // The orders priced, charged to the planning span they were priced in (the roofline's candidate work).
         super::profile::work(super::profile::Unit::Candidate, candidates);
         // Also when the run may use the device: placement prices each join step from these (decision 0095); and when
-        // the body reads a kind-set axis, which takes its expected lookups from them (decision 0105).
+        // the body reads a kind-set axis, which takes its expected lookups from them (decision 0143).
         let axis = || body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && super::front::is_transduced(&a.rel)));
         let explained = (explain && (super::profile::on() || placement::device_on() || EXPLAIN_ALWAYS.with(std::cell::Cell::get) || axis())).then(|| {
             let _explain = super::profile::span(|| "explain record".into());

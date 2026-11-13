@@ -130,7 +130,7 @@ pub trait Source: Send + Sync {
     fn made_on_lookup(&self) -> bool {
         false
     }
-    /// The planner expects `keys` lookups on `column` (decision 0105): a source that can make every row at once for
+    /// The planner expects `keys` lookups on `column` (decision 0143): a source that can make every row at once for
     /// less than that many lookups cost chooses to.
     fn expect_lookups(&self, _column: usize, _keys: f64) {}
     /// The planner's statistics (`syntax::statistics`'s rows) where the source knows them without

@@ -26,7 +26,7 @@ fn native_scalar_consumers_match_sql_with_shadowed_values_and_constant_filters()
 }
 
 /// Two rules of one recursive stratum with one body and different heads (a magic relation and its reader's, as
-/// decision 0108's demand writes them) each run their whole plan in the first wave: the plans are kept apart by
+/// decision 0145's demand writes them) each run their whole plan in the first wave: the plans are kept apart by
 /// head, so neither head loses the rows the first wave derives.
 #[test]
 fn rules_of_one_body_and_two_heads_both_run_their_whole_plan() {

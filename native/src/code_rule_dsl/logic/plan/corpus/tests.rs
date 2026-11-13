@@ -550,7 +550,7 @@ fn the_cone_of_requests_is_kept_while_its_reads_and_answers_are() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Decision 0108: the cone run as rounds from the last run's final round finds what the gated fixpoint over
+/// Decision 0145: the cone run as rounds from the last run's final round finds what the gated fixpoint over
 /// nothing kept finds, edit after edit: a new import, a library's own import, an import taken away (its load is
 /// not asked again), and a library file that goes.
 #[test]
@@ -601,7 +601,7 @@ fn the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads() {
     std::fs::remove_file(lib.join("d.pyi")).unwrap();
     both("a library file gone", &["a.pyi", "builtins.pyi", "c.pyi"]);
     // The workspace's own module now: the library it shadowed was loaded from the last run's gates, and is taken
-    // back (decision 0108).
+    // back (decision 0145).
     std::fs::write(ws.join("c.py"), "x = 2\n").unwrap();
     both("a library shadowed by the workspace's module", &["a.pyi", "builtins.pyi"]);
     let _ = std::fs::remove_dir_all(&dir);

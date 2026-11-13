@@ -1514,18 +1514,18 @@ tokens have no field.
 **Closure:** each made as `core.rr` says, or `core.rr`'s description changed.
 
 
-## O81. A program that derives a relation `core.rr` makes an input: closed (decision 0047)
+## O81. A program that derives a relation `core.rr` makes an input: closed (decision 0141)
 
 - Decision 0046 made `docof` a `core.rr` input, and `sql::select::input_columns` names its columns `n, d`.
   T's programs (`typing/programs/workload*.rr`, `calls`) still derive their own `docof(n, d) :- node(d, n, …)`.
   `plan::sql_col` names columns by `input_columns` for any relation of that name, so the SQL reads `t4.d` from
   a derived table whose columns are `c0, c1`: "names no column in scope".
 - Nine `logic::plan::tests` are ignored with this item (they fail the same way on final-rerail-shape-rr-align).
-**Closed by 0047:** both. The planner names a column by `input_columns` only for an input
+**Closed by 0141:** both. The planner names a column by `input_columns` only for an input
 (`plan::Model::col`); the reader refuses a file that declares or derives a `core.rr` relation; T's programs
 read `kind` and `docof` as inputs. The nine tests run again.
 Typing-support first closed it by renaming (`plan::private_derived_inputs`: a derived relation under a base
-relation's name planned as `<rel>_rr_derived`); the merge into final-rerail-shape keeps 0047's mechanism, not both.
+relation's name planned as `<rel>_rr_derived`); the merge into final-rerail-shape keeps 0141's mechanism, not both.
 
 ## O82. Metal runs abort in a debug test build
 
@@ -3248,30 +3248,30 @@ already. A process keeps each seed's graph while its modules' stats hold.
 
 ## O-artifact-entries. An artifact is one digest, so one edit makes all of it stale
 
-Decision 0095 §2. `test_collection`'s inputs are `**/*.py`: after any edit the artifact is stale everywhere, and
+Decision 0142 §2. `test_collection`'s inputs are `**/*.py`: after any edit the artifact is stale everywhere, and
 locally it is never fresh again. **Closure:** the v2 envelope with entries, each with its own digest and status;
 `facts-stamp` writing entries; a stale entry withholding and making Unknown only its rows' places; a test where one
 edited key file stales one entry.
 
 ## O-artifact-digest-p0. Artifact digests walk and hash the tree beside phase 0
 
-Decision 0095 §3. `inputs_digest` walks the root and hashes every matching file on every run and in every cutoff
+Decision 0142 §3. `inputs_digest` walks the root and hashes every matching file on every run and in every cutoff
 check, and it hashes git blob ids where phase 0 keys content by sha256. **Closure:** digests over phase 0's
 content sources, no read of an unchanged file on a warm run (counted by the observer), and stamp and run agreeing.
 
 ## O-artifact-store. One stamp per artifact, lost on a branch switch
 
-Decision 0095 §4. **Closure:** stamped entries in the store by `(artifact, key, digest)`, absorbed from the facts
+Decision 0142 §4. **Closure:** stamped entries in the store by `(artifact, key, digest)`, absorbed from the facts
 directory; a revert finds its old stamp; least recently used entries removed within the disk budget.
 
 ## O-artifact-imports. An entry's inputs are globs, not its imports
 
-Decision 0095 §2. **Closure:** an entry's digest as a join over its import closure, once phase 0's module graph is
+Decision 0142 §2. **Closure:** an entry's digest as a join over its import closure, once phase 0's module graph is
 a phase output (t24, "not built").
 
 ## O-test-collect-rules. `test-budget` counts tests with rules, not pytest's artifact
 
-Decision 0095 §1, t13 §6–§7. The spike's model and draft rules are in `notes/t13/`.
+Decision 0142 §1, t13 §6–§7. The spike's model and draft rules are in `notes/t13/`.
 
 **Built (2026-11-08).** The `product` aggregate (`de8b50a9f`); `python/pytest-collect.rr` (`8c68e8d82`), the
 model's levels 0–6 as rules, with lengths evaluated on demand (`pc_want`) and bounded by a number domain, not by the
@@ -3432,14 +3432,14 @@ names no import binds; a run of `sym_of` over the data layer within the run and 
 
 **Status:** closed (2026-11-08, `3cb7d0d0a`). `@git_tracked(path)` is a functor over the index phase 0's Git
 provider reads (`strings/git.rs`), read again when the index file's digest moves; the test stages an add and reads
-it again. Decision 0095 §6.
+it again. Decision 0142 §6.
 
 ## O-git-merge-base. `git_rev` is declared and never made; `--base` is the caller's
 
 **Status:** closed (2026-11-08, `3cb7d0d0a`). `git_rev("head", …)` and `git_rev("base", …)`, the merge base of
 `HEAD` and `--base` by gix's `merge_base`, are made when a rule reads `git_rev`; `at="base"` reads at the merge base;
 the whole-run cutoff records both as a read (`git_rev`, with the index as `git_index`) and checks them again. A bad
-`--base` gives `input_error("git_rev", "unreadable", …)`. Decision 0095 §6.
+`--base` gives `input_error("git_rev", "unreadable", …)`. Decision 0142 §6.
 
 
 ## O-stored-patterns. A stored prepared program lost its AST patterns, and its memo kept the result (fixed)
@@ -4513,7 +4513,7 @@ route. The whole-run cutoff is not involved: the full runs don't ask for it. `RE
 "0 relations differ" in the inputs, so the stale rows come in after them, from rows kept by owner
 or from the kept part's derived frames. The statistics keeper does count c.py as changed, under both
 memo keys. The test passed once right after the merge, under heavy load, so the route may depend on timing
-(write-behind, 0114). So does `the_reach_index_is_derived_again_when_cycles_and_connections_change_in_a_new_process`, on the same edit, against
+(write-behind, 0147). So does `the_reach_index_is_derived_again_when_cycles_and_connections_change_in_a_new_process`, on the same edit, against
 a run with an empty store; it too passes with `RERAIL_KEPT_INPUTS=off`. Both tests are ignored with this item's name. Next step: dump the full run's
 `impmod` (or the reach index's edge relation) rows for c.py with and without kept inputs, and find
 the owner range that was not marked dead.

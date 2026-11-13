@@ -3,6 +3,8 @@
 Status: draft (2026-11-10), for review. It replaces 0083 §4's "a search is a program kind" with ordinary rules,
 as 0103 did for caches.
 
+Numbered 0107 where it was written; renumbered 0144 in the hub (2026-11-13) because another record had 0107.
+
 ## Intro
 
 **The problem.** Some questions have a huge key space and few keys asked. The question "where is attribute `a`
