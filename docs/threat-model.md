@@ -463,7 +463,9 @@ Rerail must not be presented as a control the agent cannot switch off.
 <summary>Fail-open paths</summary>
 
 - `serveHook` answers `{}` to any error (`src/harness/hook-adapter.ts`).
-- The launcher turns a non-zero exit into exit 0 and `{}` (`src/harness/hook-launcher.ts`).
+- The launcher turns a non-zero exit into exit 0 and `{}` (`src/harness/hook-launcher.ts`). A hook it runs in its own
+  process that crashes or runs out of memory keeps its exit code, which Claude Code shows as a hook error and does not
+  block on.
 - With no daemon running, every hook except `SessionStart` returns at once.
 - A repository that is not started gets `{}`.
 - A Node major below the requirement does nothing.
