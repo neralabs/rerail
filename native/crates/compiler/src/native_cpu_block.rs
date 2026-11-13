@@ -429,8 +429,8 @@ impl State {
 /// The constants every body uses, made once in the function's entry: the nibble mask, the
 /// bitmask's weights, and simdjson's even bits.
 pub struct Consts {
-    nibble: Value,
-    weights: Value,
+    pub(crate) nibble: Value,
+    pub(crate) weights: Value,
     even: Value,
 }
 

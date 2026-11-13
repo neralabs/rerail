@@ -29,6 +29,14 @@ fn rr_checks_its_unicode_escapes_at_the_string() {
     assert!(super::compiled_tape(&long).is_none());
     let long = format!("r(x) :- x = \"{}\\u0041\".", "a".repeat(70));
     assert!(super::compiled_tape(&long).is_some());
+    // The check word-parallel: an escape at every place across two words' edges, its digits
+    // in the next word, good and bad, as the engine's tape says.
+    for pad in 40..140 {
+        for esc in ["\\u0041", "\\uD800", "\\u12", "\\u{41}", "\\u{110000}", "\\\\u12"] {
+            let src = format!("r(x) :- x = \"{}{esc}\".", "a".repeat(pad));
+            assert_eq!(super::tape(&src), super::engine_columns(&super::rr::tape(&src)), "{src}");
+        }
+    }
 }
 
 #[test]

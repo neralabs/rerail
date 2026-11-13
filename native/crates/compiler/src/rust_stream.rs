@@ -838,43 +838,38 @@ fn pattern(out: &mut String, i: usize, m: &TokenMark, extra_bit: u8) {
     writeln!(out, "    /// Token mark {i}'s tokens follow.\n    #[inline(never)]\n    fn pattern_{i}(&self) -> bool {{\n        let here = self.next as usize - 1;\n        let mut at = here;\n{body}        true\n    }}\n").unwrap();
 }
 
-/// A local check (`CHECK`): at the token, the check's mask's word at its start, one load; where
-/// it has bits in the token's bytes, the check over each word of them, word-parallel.
-fn check(out: &mut String, on_p: &mut String, i: usize, c: &LocalCheck, o: usize) -> Result<(), String> {
-    // Each op's value over a 64-byte word as a bitmask: `v{k}_{t}` the word `t` before `q`.
-    // A `Prev` reads the word before its operand's too.
-    let n = c.ops.len();
-    let mut back = vec![0usize; n];
-    for k in 0..n {
-        back[k] = match c.ops[k] {
-            LocalOp::Bytes(_) | LocalOp::Const(_) | LocalOp::Within(_) => 0,
-            LocalOp::Not(a) => back[usize::from(a)],
-            LocalOp::And(a, b) | LocalOp::Or(a, b) | LocalOp::Xor(a, b) | LocalOp::AndNot(a, b) => back[usize::from(a)].max(back[usize::from(b)]),
-            LocalOp::Prev(a, _) => back[usize::from(a)] + 1,
-        };
-    }
-    // Which (op, word back) values the last op's word needs.
+/// A local check's word form (`program::local_value` over the 64 places of a word, a bit
+/// each): the values each op's needs, `(op, words back)`, a `Prev` reading the word before its
+/// operand's too; and the byte sets' classes, tier 1's form (a class a bit of a byte, by two
+/// nibble tables, `lo[b & 15] & hi[b >> 4]`, eight classes a pair of tables), each set's table
+/// and class bits.
+pub(crate) struct WordForm {
+    pub need: BTreeSet<(usize, usize)>,
+    pub tables: Vec<([u8; 16], [u8; 16])>,
+    pub class_of: HashMap<usize, (usize, u8)>,
+}
+
+pub(crate) fn word_form(ops: &[LocalOp]) -> Result<WordForm, String> {
+    let n = ops.len();
     let mut need: BTreeSet<(usize, usize)> = BTreeSet::new();
     let mut todo = vec![(n - 1, 0usize)];
     while let Some((k, t)) = todo.pop() {
         if !need.insert((k, t)) {
             continue;
         }
-        match c.ops[k] {
+        match ops[k] {
             LocalOp::Not(a) => todo.push((usize::from(a), t)),
             LocalOp::And(a, b) | LocalOp::Or(a, b) | LocalOp::Xor(a, b) | LocalOp::AndNot(a, b) => todo.extend([(usize::from(a), t), (usize::from(b), t)]),
             LocalOp::Prev(a, _) => todo.extend([(usize::from(a), t), (usize::from(a), t + 1)]),
             _ => {}
         }
     }
-    // The byte sets' classes: tier 1's form, a class a bit of a byte, by two nibble tables
-    // (`lo[b & 15] & hi[b >> 4]`), eight classes a table pair.
-    let sets: Vec<(usize, [u64; 4])> = (0..n).filter_map(|k| if let LocalOp::Bytes(s) = c.ops[k] { Some((k, s)) } else { None }).collect();
     let mut tables: Vec<([u8; 16], [u8; 16])> = Vec::new();
     let mut class_of: HashMap<usize, (usize, u8)> = HashMap::new();
     let mut classes = 0usize;
-    for &(k, s) in &sets {
-        let member = |b: usize| s[b / 64] >> (b % 64) & 1 == 1;
+    for (k, op) in ops.iter().enumerate() {
+        let LocalOp::Bytes(set) = *op else { continue };
+        let member = |b: usize| set[b / 64] >> (b % 64) & 1 == 1;
         // Each high nibble's low nibbles; each distinct nonempty set of them a class.
         let mut pats: Vec<u16> = Vec::new();
         let mut of_hi = [0u16; 16];
@@ -884,14 +879,14 @@ fn check(out: &mut String, on_p: &mut String, i: usize, c: &LocalCheck, o: usize
                 pats.push(*slot);
             }
         }
+        if pats.len() > 8 {
+            return Err(format!("a byte set of {} classes", pats.len()));
+        }
         if classes % 8 + pats.len() > 8 {
             classes = classes.div_ceil(8) * 8;
         }
-        if pats.len() > 8 {
-            return Err(format!("check {i}: a byte set of {} classes", pats.len()));
-        }
         let mut bits = 0u8;
-        for (pi, &p) in pats.iter().enumerate() {
+        for (pi, &pat) in pats.iter().enumerate() {
             let at = classes + pi;
             while tables.len() <= at / 8 {
                 tables.push(([0; 16], [0; 16]));
@@ -899,12 +894,12 @@ fn check(out: &mut String, on_p: &mut String, i: usize, c: &LocalCheck, o: usize
             let (lo, hi) = &mut tables[at / 8];
             let bit = 1u8 << (at % 8);
             for l in 0..16 {
-                if p >> l & 1 == 1 {
+                if pat >> l & 1 == 1 {
                     lo[l] |= bit;
                 }
             }
             for h in 0..16 {
-                if of_hi[h] == p {
+                if of_hi[h] == pat {
                     hi[h] |= bit;
                 }
             }
@@ -913,6 +908,14 @@ fn check(out: &mut String, on_p: &mut String, i: usize, c: &LocalCheck, o: usize
         class_of.insert(k, (classes / 8, bits));
         classes += pats.len();
     }
+    Ok(WordForm { need, tables, class_of })
+}
+
+/// A local check (`CHECK`): at the token, the check's mask's word at its start, one load; where
+/// it has bits in the token's bytes, the check over each word of them, word-parallel.
+fn check(out: &mut String, on_p: &mut String, i: usize, c: &LocalCheck, o: usize) -> Result<(), String> {
+    let w = word_form(&c.ops).map_err(|e| format!("check {i}: {e}"))?;
+    let (n, need, tables, class_of) = (c.ops.len(), w.need, w.tables, w.class_of);
     let backs: BTreeSet<usize> = need.iter().filter(|&&(k, _)| matches!(c.ops[k], LocalOp::Bytes(_))).map(|&(_, t)| t).collect();
     let mut body = String::new();
     for (ti, (lo, hi)) in tables.iter().enumerate() {
