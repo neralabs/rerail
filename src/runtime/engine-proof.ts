@@ -80,11 +80,12 @@ async function openPipe(path: string, deadline: number): Promise<Socket> {
 
 /**
  * How a proof's request reaches the listener on `socketPath`: a Windows pipe opened by {@link openPipe} before the
- * request, a Unix socket by its path. A pipe that is not opened by `deadline` is the verdict: every instance still taken
- * is no answer (`silent`); a pipe that is gone, or that this user may not open, is `refused`.
+ * request, a Unix socket by its path. Only Windows has named pipes: on macOS and Linux a path spelled like one is a Unix
+ * socket's. A pipe that is not opened by `deadline` is the verdict: every instance still taken is no answer (`silent`);
+ * a pipe that is gone, or that this user may not open, is `refused`.
  */
 async function proofRoute(socketPath: string, deadline: number): Promise<RequestOptions | EngineProofAnswer> {
-  if (!isNamedPipe(socketPath)) return { socketPath, agent: false };
+  if (process.platform !== "win32" || !isNamedPipe(socketPath)) return { socketPath, agent: false };
   try {
     const socket = await openPipe(socketPath, deadline);
     return { createConnection: () => socket };
