@@ -1,8 +1,9 @@
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { expect, it } from "vitest";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const required = process.env.RERAIL_REQUIRE_PRODUCER_SHAPE === "1";
 const engine = new URL("../../../src/engine/index.ts", import.meta.url).href;
@@ -46,5 +47,5 @@ it.skipIf(!required)("publishes language catalogs and value postings in batches 
       }
     }
     expect(Object.fromEntries(executions)).toEqual({ kind: 1, field: 1, kfreq: 4, file_kind_counts: 4, vidx: 4, vcov: 4 });
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally { removeFolderSync(directory); }
 }, 55_000);

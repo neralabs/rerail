@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { removeFolderSync } from "../../../support/platform/remove-folder.js";
 const required=process.env.RERAIL_REQUIRE_PRODUCER_SHAPE==="1";
 const engine=new URL("../../../../src/engine/index.ts",import.meta.url).href;
 const caps=new URL("../../../../native/src/code_rule_dsl/capabilities.json",import.meta.url).href;
@@ -33,7 +34,7 @@ it.skipIf(!required)("reuses empty relational backing across clauses without ind
   }
   expect(configuration,'one reusable clause connection in each evaluation').toBe(3);
   expect([indexes,statistics],'empty relations need no physical indexes or statistics').toEqual([0,0]);
- }finally{rmSync(directory,{recursive:true,force:true});}
+ }finally{removeFolderSync(directory);}
 },35_000);
 
 it.skipIf(!required)("preserves deferred CAST affinity through a later stored stage",()=>{

@@ -1,8 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
+import { removeFolderSync } from "../../../support/platform/remove-folder.js";
 
 const required = process.env.RERAIL_REQUIRE_PRODUCER_SHAPE === "1";
 const engine = new URL("../../../../src/engine/index.ts", import.meta.url).href;
@@ -49,7 +50,7 @@ it.skipIf(!required)("batches distinct child-field bindings across two rules and
       fills += events.filter(e => e.kind === "sql" && queries.get(e.query)?.includes("INSERT INTO decoded_children")).length;
     }
     expect(fills, "ready fields share one SQL submission without merging their completion keys").toBe(1);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
+  } finally { removeFolderSync(directory); }
 }, 45_000);
 
 it.skipIf(!required)("invalidates completed child answers when a file changes and changes back", () => {

@@ -23,6 +23,9 @@ export const HELPER = "test/support/platform/remove-folder.ts";
 /** Files left to remove folders themselves, each with the reason. */
 export const EXEMPT = new Map([
   ["test/scripts/ensure-sqlite.test.mjs", "runs under `node --test`, which cannot load the TypeScript helper"],
+  ["test/scripts/sql-execution-budget.test.mjs", "runs under `node --test`, which cannot load the TypeScript helper"],
+  ["test/scripts/sql-profile.test.mjs", "runs under `node --test`, which cannot load the TypeScript helper"],
+  ["test/scripts/sql-profile/session-parity.test.mjs", "runs under `node --test`, which cannot load the TypeScript helper"],
   ["test/support/platform/remove-folder.test.ts", "shows the one try the helper replaces failing while a process runs in the folder"],
 ]);
 const MODULES = new Set(FS_MODULES);
