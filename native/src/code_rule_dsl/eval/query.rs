@@ -906,7 +906,7 @@ thread_local! {
 pub struct TapeCacheSlot(bool);
 
 impl TapeCacheSlot {
-    pub(crate) fn install() -> Self {
+    pub fn install() -> Self {
         let outer = EVALUATION_TAPE.with(|cache| {
             let mut cache = cache.borrow_mut();
             let outer = !cache.active;
@@ -1280,5 +1280,4 @@ pub fn document_matcher<'a>(
     })
 }
 
-#[cfg(test)]
-pub mod tape_cache_tests;
+// tape_cache_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

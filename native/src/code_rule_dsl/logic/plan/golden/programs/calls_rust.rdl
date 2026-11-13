@@ -95,7 +95,6 @@ wants($v) :- wants($n), kind($n, "parenthesized_expression"), child($n, $v, 0).
 wants($p) :- kind($u, "use_declaration"), field($u, "argument", $a), child($a, $p, _).
 wants($p) :- kind($u, "use_declaration"), field($u, "argument", $a), field($a, "path", $q), field($q, "path", $p).
 wants($b) :- troot($t), tbase($t, $b).
-wants($p) :- wants($n), kind($n, "scoped_type_identifier"), field($n, "path", $p).
 .decl troot(t: node)
 troot($t) :- kind($i, "impl_item"), field($i, "type", $t).
 troot($t) :- kind($i, "impl_item"), field($i, "trait", $t).

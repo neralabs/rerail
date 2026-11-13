@@ -24,7 +24,7 @@ pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
 pub use name::Name;
 pub mod cycles;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
-pub use ast::{AXIS, Again, AggOp, Atom, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
+pub use ast::{AXIS, Again, AggOp, Atom, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, Shape, ShapeWait, shape_base, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
 
 /// A token and the byte offset where it starts.
 #[derive(Clone, Debug, PartialEq)]
@@ -713,18 +713,21 @@ pub(in crate::code_rule_dsl) fn finish(mut prog: Program) -> Result<Program, Err
 /// plan's panic. (Parsing alone does not ask it: a parse's tests read relations they never declare.) `match_all` and
 /// `match_group` over a span are built-ins: the text columns make each regex's relation (`strings`).
 pub fn declared(prog: &Program) -> Result<(), Error> {
-    for rule in &prog.rules {
-        let mut read = rule.body.iter().filter_map(|l| match l {
-            Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a),
-            _ => None,
-        });
-        // The import components' relations (`rr_cx_reach`, decision 0076) are added by the run to a program that reads
-        // them: declared there.
-        if let Some(a) = read.find(|a| {
-            !prog.decls.contains_key(a.rel.as_str()) && !is_transduced(&a.rel) && !a.rel.starts_with("rr_cx_") && !matches!(a.rel.as_str(), "match_all" | "match_group")
-        }) {
-            return Err(Error::Syntax(format!("relation {} is read by the rule for {} and not declared: declare it with `.decl`", a.rel, rule.head.rel)));
-        }
+    prog.rules.iter().try_for_each(|rule| rule_declared(prog, rule))
+}
+
+/// `declared` for one rule: every relation it reads is declared in `prog`.
+pub fn rule_declared(prog: &Program, rule: &Rule) -> Result<(), Error> {
+    let mut read = rule.body.iter().filter_map(|l| match l {
+        Literal::Atom(a) | Literal::Agg { atom: a, .. } => Some(a),
+        _ => None,
+    });
+    // The import components' relations (`rr_cx_reach`, decision 0076) are added by the run to a program that reads
+    // them: declared there.
+    if let Some(a) = read.find(|a| {
+        !prog.decls.contains_key(a.rel.as_str()) && !is_transduced(&a.rel) && !a.rel.starts_with("rr_cx_") && !matches!(a.rel.as_str(), "match_all" | "match_group")
+    }) {
+        return Err(Error::Syntax(format!("relation {} is read by the rule for {} and not declared: declare it with `.decl`", a.rel, rule.head.rel)));
     }
     Ok(())
 }

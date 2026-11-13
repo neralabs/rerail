@@ -34,13 +34,18 @@ fn counted() -> &'static std::sync::Mutex<HashMap<[u8; 32], u64>> {
     COUNTED.get_or_init(Default::default)
 }
 
-/// What a run used of a space: the relations, and the run's token (`0`: a run of its own, counted each time).
-pub type Used = (Vec<Rel>, u64);
+/// What a run used of a space: the relations, the run's token (`0`: a run of its own, counted each time), and the
+/// program that used them (its key): a relation is kept while one of its programs' last [`RUNS`] runs used it.
+pub type Used = (Vec<Rel>, u64, [u8; 32]);
 
-// The frames' tables (`frames`, `frame_spaces`, `frame_confirmed`, `frame_used`) are the store's schema
-// (`schema::SCHEMA`): every store has them, so nothing here checks for them or makes them.
+/// How many runs of a space a program's runs count for (`Used`'s program): one not run again in as many runs of its
+/// space (a policy removed, or edited into another key) keeps its relations no longer.
+pub const ABANDON: i64 = 256;
 
-/// A relation's key in a run's use of its space (`frame_used`).
+// The frames' tables (`frames`, `frame_part_used`, `frame_spaces`, `frame_confirmed`, `frame_program_used`) are
+// the store's schema (`schema::SCHEMA`): every store has them, so nothing here checks for them or makes them.
+
+/// A relation's key in a run's use of its space by program (`frame_program_used`).
 fn used_key(rel: &Rel) -> u64 {
     confirm_key(rel, i64::MIN)
 }
@@ -841,7 +846,7 @@ impl ContentStore {
             // Attempted once: a busy store leaves these frames unwritten, and the next run derives them again.
             let refs: Vec<_> = puts.iter().map(Arc::as_ref).collect();
             let delta_refs: Vec<_> = delta_puts.iter().map(Arc::as_ref).collect();
-            let _ = store.keep_frame_refs(&space, &refs, &retags, &delta_refs, &heads, &gone, used.as_ref().map(|(rels, run)| (rels.as_slice(), *run)));
+            let _ = store.keep_frame_refs(&space, &refs, &retags, &delta_refs, &heads, &gone, used.as_ref().map(|(rels, run, program)| (rels.as_slice(), *run, *program)));
             Ok(())
         }));
     }
@@ -849,7 +854,7 @@ impl ContentStore {
     /// Writes `puts` into `space` (each replacing its frame) and forgets `gone`. With `used`, a program of run `token`
     /// is over: the space counts the run if it has not yet, marks the relations the program used, and forgets those
     /// the last [`RUNS`] runs did not use.
-    pub fn keep_frames(&self, space: &[u8; 32], puts: &[Put], gone: &[(Rel, i64)], used: Option<(&[Rel], u64)>) -> StoreResult<()> {
+    pub fn keep_frames(&self, space: &[u8; 32], puts: &[Put], gone: &[(Rel, i64)], used: Option<(&[Rel], u64, [u8; 32])>) -> StoreResult<()> {
         let mut gone = gone.to_vec();
         gone.extend(self.ended_deltas(space, puts.iter()));
         // Written now, not queued: the confirmations this process holds lose these frames now too.
@@ -883,7 +888,7 @@ impl ContentStore {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn keep_frame_refs(&self, space: &[u8; 32], puts: &[&Put], retags: &[Retag], delta_puts: &[&Put], heads: &[(Rel, u64, Vec<(String, u64)>)], gone: &[(Rel, i64)], used: Option<(&[Rel], u64)>) -> StoreResult<()> {
+    fn keep_frame_refs(&self, space: &[u8; 32], puts: &[&Put], retags: &[Retag], delta_puts: &[&Put], heads: &[(Rel, u64, Vec<(String, u64)>)], gone: &[(Rel, i64)], used: Option<(&[Rel], u64, [u8; 32])>) -> StoreResult<()> {
         let blocks: Vec<Vec<u8>> = puts.iter().map(|p| super::cross_rows::encode(p.rows.types.len(), &p.rows.rows)).collect();
         let delta_blocks: Vec<Vec<u8>> = delta_puts.iter().map(|p| super::cross_rows::encode(p.rows.types.len(), &p.rows.rows)).collect();
         // The snapshot holds what is written (a write the writer runs was put there as it was queued: the same).
@@ -903,7 +908,7 @@ impl ContentStore {
             let mut lap = |what: &str| if timed { eprintln!("RERAIL_WRITES frames {what}: {:.3} s", at.elapsed().as_secs_f64()); at = std::time::Instant::now(); };
             // A run's first program counts it: what it writes and marks is of the new run.
             let run = match used {
-                Some((_, token)) => count_run(t, space, token)?,
+                Some((_, token, _)) => count_run(t, space, token)?,
                 None => {
                     t.execute("INSERT INTO frame_spaces(space, runs) VALUES (?1, 0) ON CONFLICT(space) DO NOTHING", [&space[..]])?;
                     t.query_row("SELECT runs FROM frame_spaces WHERE space = ?1", [&space[..]], |r| r.get(0))?
@@ -985,26 +990,48 @@ impl ContentStore {
                 t.prepare_cached(&sql)?.execute(rusqlite::params_from_iter(args))?;
             }
             lap(&format!("{} gone", gone.len()));
-            if let Some((used, _)) = used {
-                // The run's use of the space: what its programs used, one row (decision 0117 step 5).
-                let runs: Vec<(i64, Vec<u64>)> = {
-                    let mut st = t.prepare_cached("SELECT run, rels FROM frame_used WHERE space = ?1")?;
-                    st.query_map([&space[..]], |r| Ok((r.get::<_, i64>(0)?, decode_keys(&r.get::<_, Vec<u8>>(1)?))))?.collect::<Result<_, _>>()?
+            if let Some((used, _, program)) = used {
+                // The run's use of the space, by program (decision 0117 step 5): one row a program a run. Programs over
+                // one root share its space and the relations they derive alike (decision 0103); counted by the space's
+                // runs alone, a policy's frames, its kept inputs above all, went unused for as many runs as the other
+                // policies made, and were collected after [`RUNS`] of them.
+                let runs: Vec<(Vec<u8>, i64, Vec<u64>)> = {
+                    let mut st = t.prepare_cached("SELECT program, run, rels FROM frame_program_used WHERE space = ?1")?;
+                    st.query_map([&space[..]], |r| Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?, decode_keys(&r.get::<_, Vec<u8>>(2)?))))?.collect::<Result<_, _>>()?
                 };
-                let was = runs.iter().find(|(r, _)| *r == run).map(|(_, k)| k);
+                let was = runs.iter().find(|(p, r, _)| p.as_slice() == program.as_slice() && *r == run).map(|(_, _, k)| k);
                 let mut keys: Vec<u64> = used.iter().map(used_key).collect();
                 keys.extend(was.into_iter().flatten().copied());
                 keys.sort_unstable();
                 keys.dedup();
                 if was != Some(&keys) {
-                    t.prepare_cached("INSERT OR REPLACE INTO frame_used(space, run, rels) VALUES (?1, ?2, ?3)")?.execute(params![&space[..], run, encode_keys(&keys)])?;
+                    t.prepare_cached("INSERT OR REPLACE INTO frame_program_used(space, program, run, rels) VALUES (?1, ?2, ?3, ?4)")?.execute(params![&space[..], &program[..], run, encode_keys(&keys)])?;
                 }
-                if runs.iter().any(|(r, _)| *r <= run - RUNS) {
-                    t.prepare_cached("DELETE FROM frame_used WHERE space = ?1 AND run <= ?2")?.execute(params![&space[..], run - RUNS])?;
+                // Each program's last [`RUNS`] runs, this one among them, none [`ABANDON`] runs of the space old.
+                let mut by_program: HashMap<&[u8], Vec<(i64, &Vec<u64>)>> = HashMap::new();
+                for (p, r, k) in &runs {
+                    if !(p.as_slice() == program.as_slice() && *r == run) {
+                        by_program.entry(p.as_slice()).or_default().push((*r, k));
+                    }
+                }
+                by_program.entry(program.as_slice()).or_default().push((run, &keys));
+                let mut live: HashSet<u64> = HashSet::new();
+                let mut stale: Vec<(Vec<u8>, i64)> = Vec::new();
+                for (p, mut rs) in by_program {
+                    rs.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+                    for (i, (r, k)) in rs.into_iter().enumerate() {
+                        if i < RUNS as usize && r > run - ABANDON {
+                            live.extend(k.iter().copied());
+                        } else {
+                            stale.push((p.to_vec(), r));
+                        }
+                    }
+                }
+                for (p, r) in &stale {
+                    t.prepare_cached("DELETE FROM frame_program_used WHERE space = ?1 AND program = ?2 AND run = ?3")?.execute(params![&space[..], p, r])?;
                 }
                 lap(&format!("{} used", used.len()));
-                // Collected: a frame put [`RUNS`] runs ago or before, whose relation no run since used.
-                let live: HashSet<u64> = runs.iter().filter(|(r, _)| *r > run - RUNS).flat_map(|(_, k)| k.iter().copied()).chain(keys.iter().copied()).collect();
+                // Collected: a frame put [`RUNS`] runs ago or before, whose relation none of those runs used.
                 let old: Vec<(String, Vec<u8>)> = {
                     let mut st = t.prepare_cached("SELECT DISTINCT rel, ident FROM frame_part_used WHERE space = ?1 AND used <= ?2")?;
                     st.query_map(params![&space[..], run - RUNS], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<Result<_, _>>()?
@@ -1267,7 +1294,7 @@ mod tests {
         unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),
             rusqlite::ffi::SQLITE_TRACE_STMT | rusqlite::ffi::SQLITE_TRACE_PROFILE, Some(trace), (&counters as *const [AtomicUsize;2]).cast_mut().cast()); }
         let refs: Vec<_> = changed.iter().collect();
-        let result = store.keep_frame_refs(&[1;32], &refs, &[], &[], &[], &gone, Some((&used, 1)));
+        let result = store.keep_frame_refs(&[1;32], &refs, &[], &[], &[], &gone, Some((&used, 1, [0; 32])));
         unsafe { rusqlite::ffi::sqlite3_trace_v2(store.connection.lock().unwrap().handle(),0,None,std::ptr::null_mut()); }
         result.unwrap();
         eprintln!("frame publication total: {} statements, {} VM",counters[0].load(Ordering::Relaxed),counters[1].load(Ordering::Relaxed));
@@ -1542,9 +1569,9 @@ mod tests {
             let space = local_space(&plan);
             // Six contents of a.py, one run each, and one of b.py.
             for part in 0..6 {
-                store.keep_frames(&space, &[put(part, "a.py")], &[], Some((&[out.clone()][..], part as u64 + 1))).unwrap();
+                store.keep_frames(&space, &[put(part, "a.py")], &[], Some((&[out.clone()][..], part as u64 + 1, [0; 32]))).unwrap();
             }
-            store.keep_frames(&space, &[put(100, "b.py")], &[], Some((&[out.clone()][..], 7))).unwrap();
+            store.keep_frames(&space, &[put(100, "b.py")], &[], Some((&[out.clone()][..], 7, [0; 32]))).unwrap();
         }
         let space = local_space(&live);
         assert_eq!(store.keep_newest_by_path(&space, MEMO_RELS[1], 4).unwrap(), 2, "a.py's two oldest contents go");
@@ -1563,10 +1590,10 @@ mod tests {
         let space = [2u8; 32];
         let (kept, old) = (rel("kept", 1), rel("old", 1));
         let put = |r: &Rel| Put { rel: r.clone(), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
-        store.keep_frames(&space, &[put(&kept), put(&old)], &[], Some((&[kept.clone(), old.clone()][..], 0))).unwrap();
+        store.keep_frames(&space, &[put(&kept), put(&old)], &[], Some((&[kept.clone(), old.clone()][..], 0, [0; 32]))).unwrap();
         for _ in 0..RUNS {
             assert!(store.frames(&space, &[old.clone()], 0).unwrap().contains_key(&old));
-            store.keep_frames(&space, &[], &[], Some((&[kept.clone()][..], 0))).unwrap();
+            store.keep_frames(&space, &[], &[], Some((&[kept.clone()][..], 0, [0; 32]))).unwrap();
         }
         let got = store.frames(&space, &[kept.clone(), old.clone()], 0).unwrap();
         assert!(got.contains_key(&kept) && !got.contains_key(&old));
@@ -1584,16 +1611,47 @@ mod tests {
         let (first, other) = (rel("first", 1), rel("other", 1));
         let put = |r: &Rel| Put { rel: r.clone(), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
         // Run 7's first program keeps `first`; eight more programs of run 7 keep `other`.
-        store.keep_frames(&space, &[put(&first)], &[], Some((&[first.clone()][..], 7))).unwrap();
+        store.keep_frames(&space, &[put(&first)], &[], Some((&[first.clone()][..], 7, [0; 32]))).unwrap();
         for _ in 0..2 * RUNS {
-            store.keep_frames(&space, &[put(&other)], &[], Some((&[other.clone()][..], 7))).unwrap();
+            store.keep_frames(&space, &[put(&other)], &[], Some((&[other.clone()][..], 7, [0; 32]))).unwrap();
         }
         assert!(store.frames(&space, &[first.clone()], 0).unwrap().contains_key(&first), "one run, not nine");
         // RUNS later runs that do not use it collect it.
         for run in 8..8 + RUNS as u64 {
-            store.keep_frames(&space, &[], &[], Some((&[other.clone()][..], run))).unwrap();
+            store.keep_frames(&space, &[], &[], Some((&[other.clone()][..], run, [0; 32]))).unwrap();
         }
         assert!(!store.frames(&space, &[first.clone()], 0).unwrap().contains_key(&first));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Programs over one space each run in turn, one process each (a policy set's over one root): more of them than
+    /// [`RUNS`], each keeps what it used for its own next runs, and loses what its own last [`RUNS`] runs did not use.
+    #[test]
+    fn each_program_keeps_what_it_used_however_many_run_between() {
+        let dir = std::env::temp_dir().join(format!("rerail-frames-programs-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = ContentStore::open(&dir.join("store.sqlite")).unwrap();
+        let space = [4u8; 32];
+        let n = 2 * RUNS as u8 + 1;
+        let own: Vec<Rel> = (0..n).map(|i| rel(&format!("own{i}"), 1)).collect();
+        let put = |r: &Rel| Put { rel: r.clone(), part: 0, digest: 1, reads: Vec::new(), rows: Rows { types: vec![0], rows: vec![1], n: 1 } };
+        for round in 0..3 {
+            for i in 0..n {
+                let puts = if round == 0 { vec![put(&own[i as usize])] } else { Vec::new() };
+                store.keep_frames(&space, &puts, &[], Some((&[own[i as usize].clone()][..], 0, [i; 32]))).unwrap();
+            }
+            let got = store.frames(&space, &own, 0).unwrap();
+            assert!(own.iter().all(|r| got.contains_key(r)), "round {round}: a program's frames were collected by the others' runs");
+        }
+        // Program 0 runs on without its relation: its own last RUNS runs collect it; the others keep theirs.
+        let other = rel("other", 1);
+        store.keep_frames(&space, &[put(&other)], &[], Some((&[other.clone()][..], 0, [0; 32]))).unwrap();
+        for _ in 1..RUNS {
+            store.keep_frames(&space, &[], &[], Some((&[other.clone()][..], 0, [0; 32]))).unwrap();
+        }
+        let got = store.frames(&space, &own, 0).unwrap();
+        assert!(!got.contains_key(&own[0]), "unused by its program's last runs");
+        assert!(own[1..].iter().all(|r| got.contains_key(r)));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

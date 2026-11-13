@@ -10,6 +10,8 @@ description = "The transducer's parser compiler: Bitlex to tier 1 and tier 2, an
 test-hooks = []
 
 [dependencies]
+# The engine's tape, which tier 2 writes (decision 0140).
+rerail-tape-format = { path = "../tape_format" }
 # Bitlex's parser, for the masks' lowering (`bitlex_masks`). No dependencies of its own.
 bitlex = { path = "../../../tools/bitlex", default-features = false }
 cranelift-codegen = "=0.125.4"
@@ -25,3 +27,7 @@ cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
 # The browser build: a page has no executable memory (the engine's `wasm/README.md`).
 [target.'cfg(target_family = "wasm")'.dependencies]
 cranelift-jit-wasm = { path = "../../wasm/cranelift-jit" }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-compiler = { path = ".", features = ["test-hooks"] }

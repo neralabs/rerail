@@ -19,36 +19,36 @@ pub mod packed;
 pub use rerail_w::code_rule_dsl::transducer::semantic_facts;
 
 #[cfg(any(test, feature = "test-hooks"))]
-const STOP: u8 = 0x00;
+pub const STOP: u8 = 0x00;
 #[cfg(any(test, feature = "test-hooks"))]
-const KIND: u8 = 0x01;
+pub const KIND: u8 = 0x01;
 #[cfg(any(test, feature = "test-hooks"))]
-const FIELD: u8 = 0x02;
+pub const FIELD: u8 = 0x02;
 #[cfg(any(test, feature = "test-hooks"))]
-const FLAGS: u8 = 0x03;
+pub const FLAGS: u8 = 0x03;
 #[cfg(any(test, feature = "test-hooks"))]
-const TEXT: u8 = 0x04;
+pub const TEXT: u8 = 0x04;
 #[cfg(any(test, feature = "test-hooks"))]
-const SIZE: u8 = 0x05;
+pub const SIZE: u8 = 0x05;
 #[cfg(any(test, feature = "test-hooks"))]
-const CHILD: u8 = 0x10;
+pub const CHILD: u8 = 0x10;
 #[cfg(any(test, feature = "test-hooks"))]
-const NEXT: u8 = 0x11;
+pub const NEXT: u8 = 0x11;
 #[cfg(any(test, feature = "test-hooks"))]
-const PARENT: u8 = 0x12;
+pub const PARENT: u8 = 0x12;
 #[cfg(any(test, feature = "test-hooks"))]
-const DESCEND: u8 = 0x13;
+pub const DESCEND: u8 = 0x13;
 #[cfg(any(test, feature = "test-hooks"))]
-const CAPTURE: u8 = 0x20;
+pub const CAPTURE: u8 = 0x20;
 #[cfg(any(test, feature = "test-hooks"))]
-const FORK: u8 = 0x30;
+pub const FORK: u8 = 0x30;
 #[cfg(any(test, feature = "test-hooks"))]
-const GOTO: u8 = 0x31;
+pub const GOTO: u8 = 0x31;
 #[cfg(any(test, feature = "test-hooks"))]
-const EMIT: u8 = 0x40;
+pub const EMIT: u8 = 0x40;
 
 #[cfg(any(test, feature = "test-hooks"))]
-const NAMED: u8 = 1;
+pub const NAMED: u8 = 1;
 #[cfg(any(test, feature = "test-hooks"))]
 const SIZE_LONG: u8 = 0x80;
 #[cfg(any(test, feature = "test-hooks"))]
@@ -57,7 +57,7 @@ const MAX_STEPS_PER_PATH: usize = 1 << 20;
 /// A `TEXT` test.
 #[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone)]
-pub(super) enum TextPredicate {
+pub enum TextPredicate {
     Equal(u16),
     Prefix(u16),
     Regex { source: u16, compiled: Regex },
@@ -75,8 +75,8 @@ impl TextPredicate {
 
 #[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone)]
-pub(super) struct Program {
-    words: Vec<u32>,
+pub struct Program {
+    pub words: Vec<u32>,
     strings: Vec<Vec<u8>>,
     predicates: Vec<TextPredicate>,
     labels: Vec<u16>,
@@ -85,23 +85,23 @@ pub(super) struct Program {
 
 #[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Capture {
+pub struct Capture {
     pub(super) label: u16,
     pub(super) node: u32,
-    pub(super) span: Range<usize>,
+    pub span: Range<usize>,
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Output {
+pub struct Output {
     pub(super) start: u32,
     pub(super) label: u16,
-    pub(super) captures: Vec<Capture>,
+    pub captures: Vec<Capture>,
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
 #[derive(Debug, Eq, PartialEq)]
-pub(super) enum Error {
+pub enum Error {
     InvalidOpcode(usize),
     InvalidMode(usize),
     InvalidOperand(usize),
@@ -123,12 +123,12 @@ struct Path {
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
-fn split(word: u32) -> (u8, u8, u16) {
+pub fn split(word: u32) -> (u8, u8, u16) {
     (word as u8, (word >> 8) as u8, (word >> 16) as u16)
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
-pub(super) const fn word(opcode: u8, mode: u8, operand: u16) -> u32 {
+pub const fn word(opcode: u8, mode: u8, operand: u16) -> u32 {
     opcode as u32 | ((mode as u32) << 8) | ((operand as u32) << 16)
 }
 
@@ -136,7 +136,7 @@ pub(super) const fn word(opcode: u8, mode: u8, operand: u16) -> u32 {
 impl Program {
     /// Compiles the exact root-terminal subset of ast-grep patterns. Structural patterns and
     /// metavariables are rejected rather than delegated to ast-grep inside the transducer.
-    pub(super) fn compile_ast_grep_literal(pattern: &Pattern) -> Result<Self, Error> {
+    pub fn compile_ast_grep_literal(pattern: &Pattern) -> Result<Self, Error> {
         if !matches!(pattern.strictness, MatchStrictness::Smart) {
             return Err(Error::UnsupportedPattern);
         }
@@ -169,7 +169,7 @@ impl Program {
         )
     }
 
-    pub(super) fn new(
+    pub fn new(
         words: Vec<u32>,
         strings: Vec<Vec<u8>>,
         predicates: Vec<TextPredicate>,
@@ -313,11 +313,11 @@ impl Program {
         }
     }
 
-    pub(super) fn execute(&self, tape: &TapeDoc) -> Result<Vec<Output>, Error> {
+    pub fn execute(&self, tape: &TapeDoc) -> Result<Vec<Output>, Error> {
         self.execute_roots(tape, 0..tape.transducer_len() as u32)
     }
 
-    pub(super) fn execute_roots(
+    pub fn execute_roots(
         &self,
         tape: &TapeDoc,
         roots: impl IntoIterator<Item = u32>,
@@ -458,7 +458,7 @@ impl Program {
 /// Executes several programs after one tape scan. A leading kind test becomes dispatch data;
 /// every other instruction retains the ordinary transducer semantics.
 #[cfg(any(test, feature = "test-hooks"))]
-pub(super) fn execute_batch(
+pub fn execute_batch(
     programs: &[Program],
     files: &[TapeDoc],
     anchors: Option<&[Vec<Vec<u32>>]>,
@@ -499,7 +499,7 @@ pub(super) fn execute_batch(
 use super::search_index::persist_search_index_batch;
 
 #[cfg(any(test, feature = "test-hooks"))]
-pub(super) fn execute_many(
+pub fn execute_many(
     programs: &[Program],
     tape: &TapeDoc,
 ) -> Result<Vec<Vec<Output>>, Error> {
@@ -538,5 +538,4 @@ pub(super) fn execute_many(
         .collect()
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

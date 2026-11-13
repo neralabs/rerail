@@ -26,7 +26,7 @@ pub(in crate::code_rule_dsl) struct Owner {
 }
 #[derive(Clone, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(in crate::code_rule_dsl) struct Spec {
+pub struct Spec {
     pub name: String,
     pub gate: String,
     #[serde(default)]
@@ -126,7 +126,7 @@ pub struct Facts {
     selections: Selections,
 }
 impl Facts {
-    pub(in crate::code_rule_dsl) fn build(file: &FileInput) -> Result<Arc<Self>> {
+    pub fn build(file: &FileInput) -> Result<Arc<Self>> {
         #[cfg(feature = "code-rule-profile")]
         let _span = crate::code_rule_dsl::profile::trace::Span::start("syntax-prepare", "document");
         let language =
@@ -305,7 +305,7 @@ impl Facts {
         let span = self.packed.span(id);
         Ok((span.start, span.end, self.packed.kind(id).into()))
     }
-    pub(in crate::code_rule_dsl) fn subtree_ends(&self) -> &[u32] {
+    pub fn subtree_ends(&self) -> &[u32] {
         &self.packed.subtree_end
     }
     fn visible(&self, excludes: &[String]) -> Result<Arc<Vec<u32>>> {
@@ -424,9 +424,9 @@ struct Selection {
     ordinal: Vec<usize>,
     visible: Arc<Vec<u32>>,
 }
-struct Meter {
-    work: Arc<AtomicUsize>,
-    steps: AtomicUsize,
+pub struct Meter {
+    pub work: Arc<AtomicUsize>,
+    pub steps: AtomicUsize,
 }
 impl Meter {
     fn charge(&self, count: usize) -> rusqlite::Result<()> {
@@ -437,7 +437,7 @@ impl Meter {
             .map_err(|e| rusqlite::Error::UserFunctionError(e.reason.into()))
     }
 }
-struct Nodes {
+pub struct Nodes {
     path: String,
     facts: Arc<Facts>,
     selected: Arc<Selection>,
@@ -807,7 +807,7 @@ fn schema(db: &Connection, spec: &Spec) -> Result<Vec<String>> {
         })
         .collect()
 }
-fn load_one(spec: &Spec, path: &str, facts: Arc<Facts>, meter: Arc<Meter>) -> Result<Vec<Nodes>> {
+pub fn load_one(spec: &Spec, path: &str, facts: Arc<Facts>, meter: Arc<Meter>) -> Result<Vec<Nodes>> {
     let selected = facts.select(&spec.exclude_kinds, false)?;
     let mut result = Vec::new();
     let nodes = Nodes {
@@ -853,7 +853,7 @@ fn load_one(spec: &Spec, path: &str, facts: Arc<Facts>, meter: Arc<Meter>) -> Re
     Ok(result)
 }
 
-struct Union {
+pub struct Union {
     sources: Vec<Nodes>,
     offsets: Vec<usize>,
     by_path: HashMap<String, usize>,
@@ -861,7 +861,7 @@ struct Union {
     estimates: Vec<(usize, usize)>,
 }
 impl Union {
-    fn new(sources: Vec<Nodes>) -> Self {
+    pub fn new(sources: Vec<Nodes>) -> Self {
         let mut offsets = vec![0];
         for source in &sources {
             offsets.push(offsets.last().unwrap() + source.len());
@@ -1156,5 +1156,4 @@ pub(in crate::code_rule_dsl) fn demand(
     })
 }
 
-#[cfg(test)]
-pub mod scoped_index_tests;
+// scoped_index_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

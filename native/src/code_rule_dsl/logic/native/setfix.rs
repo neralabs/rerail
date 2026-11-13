@@ -1578,18 +1578,18 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             if device_fixed { break; }
             if p.delta == SEED { if seeded || on_device { continue } }
             else if store.rels[p.delta].lo == store.rels[p.delta].hi { skips += 1; continue; }
-            let j = match (&p.whole, &p.wkey) {
+            let (j, whole) = match (&p.whole, &p.wkey) {
                 (Some(w), Some(k)) if p.delta != SEED && store.rels[p.delta].lo == 0 => {
                     if wholes_run.iter().any(|&(h, w)| h == p.head && (Arc::ptr_eq(w, k) || **w == **k)) { skips += 1; continue; }
                     wholes_run.push((p.head, k));
-                    w
+                    (w, true)
                 }
-                _ => j,
+                _ => (j, false),
             };
             runs += 1;
             if wave_trace {
                 let d = if p.delta == SEED { 0 } else { store.rels[p.delta].hi - store.rels[p.delta].lo };
-                eprintln!("      wave {waves} probe {pi} of {name} starts, head {}, delta {d}", store.rels[p.head].table);
+                eprintln!("      wave {waves} probe {pi} of {name} starts, head {}, delta {} {d} (lo {}){}", store.rels[p.head].table, store.rels[p.delta.min(store.rels.len() - 1)].table, if p.delta == SEED { 0 } else { store.rels[p.delta].lo }, if whole { ", its whole plan" } else if p.whole.is_some() { ", has a whole plan" } else { "" });
             }
             let c0 = cpu_now();
             let n = if p.delta == SEED { run_seed(j, p.head, store, &mut syms, &mut fresh)? } else { run_join(j, p.head, store, &mut syms, &mut fresh)? };
@@ -1986,6 +1986,16 @@ pub fn live(conn: impl Scoped, name: &str) -> Result<Vec<Live>> {
             sq: cols.iter().map(|sk| sk.sq() as i64).collect(),
             freq,
         }
+    }).collect())
+}
+
+/// Per probe, the rows its factored steps passed over since it was last asked (`JoinRule::passed_over`).
+pub fn passed_over(conn: &Connection, name: &str) -> Result<Vec<u64>> {
+    let comp = component(conn, name)?;
+    let comp = comp.lock().unwrap();
+    Ok(comp.probes.iter().map(|p| match &p.body {
+        Body::Join(j) => j.passed_over.replace(0),
+        Body::Sql(_) => 0,
     }).collect())
 }
 
@@ -4265,7 +4275,9 @@ pub enum Step {
 /// `forms`: per step, its count-table form's state (`table`).
 /// `spec`: the digest of the spec it was read from, which a level's batch keeps its pairs by (`level`).
 pub struct JoinRule { pub steps: Vec<Step>, pub out: Vec<Term>, pub nslots: usize, multi: Vec<(usize, Vec<usize>)>, pub counts: Vec<[std::cell::Cell<u64>; 2]>,
-                      pub fused: Vec<Option<Box<rowcode::Fused>>>, forms: Vec<table::StepForm>, spec: u64 }
+                      pub fused: Vec<Option<Box<rowcode::Fused>>>, forms: Vec<table::StepForm>, spec: u64,
+                      /// Rows passed over by a factored step (`factored`): counted in `counts` as joined, not walked.
+                      pub passed_over: std::cell::Cell<u64> }
 
 fn parse_join(conn: &Connection, spec: &str, syms: &mut Interner) -> Result<JoinRule> {
     join_rule(conn, &JoinSpec::parse(spec).map_err(err)?, syms)
@@ -4478,7 +4490,7 @@ fn join_rule_with(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, index
     let counts = steps.iter().map(|_| Default::default()).collect();
     let fused = if env_set!("RERAIL_NO_ROW_PROGRAMS") { steps.iter().map(|_| None).collect() } else { rowcode::fuse(&steps) };
     let forms = (0..steps.len()).map(|_| table::StepForm::default()).collect();
-    Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts, fused, forms, spec: level::digest(spec) })
+    Ok(JoinRule { steps, out, nslots: bound.len(), multi, counts, fused, forms, spec: level::digest(spec), passed_over: Default::default() })
 }
 
 /// Runs a join probe over the store; its new head tuples go to `fresh`. Returns the tuples it derived.
@@ -4530,19 +4542,25 @@ fn run_join_in(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fr
     run_join_in_each(j, head, store, syms, fresh, preset, collect, paired, None)
 }
 
+/// Whether a positive atom of `j` reads an input relation known to be empty, so the whole conjunction is: the CPU's
+/// walk then returns at once (`run_join_in_each`), and the device encodes nothing for it (`device::run`, `submit`).
+/// A lazy view's length is not known without enumerating it, so a view is not known empty.
+pub fn reads_empty_input(j: &JoinRule) -> bool {
+    j.steps.iter().any(|s| matches!(s, Step::Atom { src: Src::In(r, _), neg: false, .. } if r.n == 0 && r.view.as_ref().is_none_or(|v| v.ids.is_some())))
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interner, fresh: &mut [Fresh], preset: &[(usize, i64)], collect: Option<&mut Vec<i64>>,
                     paired: Option<&level::Paired>, each: Option<(usize, &mut dyn FnMut(&mut Vec<i64>) -> Option<i64>)>) -> Result<u64> {
     // An empty required relation makes the entire conjunction empty. Check once per
     // invocation, before expanding another input; the next wave can grow this relation.
     // Negative atoms and scalar aggregates do not obey this rule.
-    if j.steps.iter().any(|step| match step {
+    // An empty input is the device's test too (`reads_empty_input`); the component's own relations are the store's.
+    if reads_empty_input(j) || j.steps.iter().any(|step| match step {
         Step::Atom { src, neg: false, .. } => match src {
             Src::Delta(r) => store.rels[*r].lo == store.rels[*r].hi,
             Src::Full(r) | Src::FullMulti(r, _) => store.rels[*r].n == 0,
-            // A lazy whole view has no materialized row count. Asking its length
-            // would itself enumerate the producer; absence is not known here.
-            Src::In(r, _) => r.n == 0 && r.view.as_ref().is_none_or(|v| v.ids.is_some()),
+            Src::In(..) => false,
         },
         _ => false,
     }) {
@@ -4568,8 +4586,13 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                      factor: Vec<Option<Factor>>,
                      /// The deepest step entered (`go`), so a factored step knows where its row's descent stopped.
                      deep: usize,
-                     /// Per such step, in its current probe, the values of those slots the rest of the body failed for.
-                     failed: Vec<rustc_hash::FxHashSet<[i64; FACTOR_MAX]>>,
+                     /// Per such step, in its current probe, the values of those slots the rest of the body failed for,
+                     /// each with what that failure added to the steps' counts from this step on (`counts[i..]`, in
+                     /// and out per step): a row passed over adds them again, so the counts are the join's rows, as
+                     /// the walk with no factoring (and the device) counts them; only the work is saved.
+                     failed: Vec<rustc_hash::FxHashMap<[i64; FACTOR_MAX], Box<[u64]>>>,
+                     /// The counts from a factored step on, before its row's descent (a stack: descents nest).
+                     snap: Vec<u64>,
                      /// Rows passed over by `failed`: read and tested, not joined on.
                      skipped: u64 }
     fn val(slots: &[i64], k: Key) -> i64 { match k { Key::Slot(s) => slots[s], Key::Const(c) => c } }
@@ -4778,12 +4801,22 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     if let Some(Factor { read, n, upto }) = factor {
                         let mut key = [0i64; FACTOR_MAX];
                         for (x, &s) in read[..n].iter().enumerate() { key[x] = slots[s]; }
-                        if cx.failed[i].contains(&key) { cx.skipped += 1; return false; }
+                        if let Some(added) = cx.failed[i].get(&key) {
+                            for (c, d) in j.counts[i..].iter().flatten().zip(added.iter()) { c.set(c.get() + d); }
+                            cx.skipped += 1;
+                            return false;
+                        }
                         let (made, deep) = (cx.n, cx.deep);
                         cx.deep = i;
+                        let at = cx.snap.len();
+                        cx.snap.extend(j.counts[i..].iter().flatten().map(std::cell::Cell::get));
                         go(cx, i + 1, slots);
                         // Stopped before `upto`: only `read` of this row's bindings was looked at.
-                        if cx.n == made && cx.deep < upto && cx.error.is_none() { cx.failed[i].insert(key); }
+                        if cx.n == made && cx.deep < upto && cx.error.is_none() {
+                            let added: Box<[u64]> = j.counts[i..].iter().flatten().zip(&cx.snap[at..]).map(|(c, b)| c.get() - b).collect();
+                            cx.failed[i].insert(key, added);
+                        }
+                        cx.snap.truncate(at);
                         cx.deep = cx.deep.max(deep);
                         return false;
                     }
@@ -4941,7 +4974,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     let factor = factored(j);
     let failed = factor.iter().map(|_| Default::default()).collect();
     let mut cx = Ctx { j, head, store, syms, fresh, n: 0, key: Vec::new(), row: Vec::new(), error: None, pending: Vec::new(), scratch, collect, at0: 0, hints: vec![[0; runs::HINTS]; j.steps.len()],
-                       factor, failed, skipped: 0, deep: 0 };
+                       factor, failed, snap: Vec::new(), skipped: 0, deep: 0 };
     let mut slots = vec![0i64; j.nslots];
     for &(s, v) in preset { slots[s] = v; }
     match (each, paired, j.steps.first(), j.steps.get(1)) {
@@ -4983,7 +5016,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
     }
     scalars::explain(&j.steps,store);
     // Each passed-over row was read and tested against a hash set, as a probe is.
-    if cx.skipped > 0 { charge(Unit::JoinRow, cx.skipped); }
+    if cx.skipped > 0 { charge(Unit::JoinRow, cx.skipped); j.passed_over.set(j.passed_over.get() + cx.skipped); }
     match cx.error {Some(e)=>Err(e),None=>Ok(cx.n)}
 }
 

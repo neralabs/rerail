@@ -402,7 +402,7 @@ fn determinize(nfa: &Nfa, start: u32, accept: u32) -> Option<(Vec<FxHashMap<Labe
 impl TokenGrammar {
     /// Every visible kind's automaton from `json` (a `grammar.json`), its names resolved in
     /// `language`.
-    pub(in crate::code_rule_dsl) fn from_json(json: &str, language: &Language) -> Result<Self, String> {
+    pub fn from_json(json: &str, language: &Language) -> Result<Self, String> {
         let grammar: Value = serde_json::from_str(json).map_err(|error| error.to_string())?;
         let rules = grammar["rules"].as_object().ok_or("grammar.json has no rules")?;
         let listed = |key: &str| -> BTreeSet<String> {
@@ -489,7 +489,7 @@ impl TokenGrammar {
         Ok(Self { names, texts, kinds, field_sym, kind_sym, filters, unsupported, extras, implied_texts, interned })
     }
 
-    pub(in crate::code_rule_dsl) fn kind_count(&self) -> usize {
+    pub fn kind_count(&self) -> usize {
         self.kinds.len()
     }
 
@@ -795,7 +795,7 @@ impl TokenGrammar {
 /// The `grammar.json` a dialect's parser was generated from, built into the engine (the vendored
 /// grammars, and byte-identical copies of the Rust and PHP crates' under `grammars/token-grammars`);
 /// `None` for a dialect whose tapes keep all their tokens.
-pub(in crate::code_rule_dsl) fn grammar_json(lang: GrammarDialect) -> Option<&'static str> {
+pub fn grammar_json(lang: GrammarDialect) -> Option<&'static str> {
     macro_rules! grammar {
         ($path:literal) => {
             include_str!(concat!(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."), "/grammars/", $path, "/grammar.json"))
@@ -810,6 +810,7 @@ pub(in crate::code_rule_dsl) fn grammar_json(lang: GrammarDialect) -> Option<&'s
         GrammarDialect::Vue => grammar!("tree-sitter-vue/src"),
         GrammarDialect::Rust => grammar!("token-grammars/rust"),
         GrammarDialect::Php => grammar!("token-grammars/php"),
+        GrammarDialect::Json => grammar!("token-grammars/json"),
         _ => return None,
     })
 }

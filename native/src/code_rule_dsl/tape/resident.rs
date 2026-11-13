@@ -49,8 +49,8 @@ pub struct Layout {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct DeviceCode {
     pub kind: u16,
-    pub(in crate::code_rule_dsl) field: u16,
-    pub(in crate::code_rule_dsl) flags: u8,
+    pub field: u16,
+    pub flags: u8,
     pub class_count: u8,
     pub(in crate::code_rule_dsl) reserved: u16,
     pub classes: [u16; MAX_NODE_SUPERTYPES],
@@ -165,13 +165,13 @@ pub fn device_codes(bytes: &[u8], layout: &Layout, grammar: &Grammar) -> Result<
 }
 
 /// A column cell (2 or 4 bytes, little-endian) of row `i`.
-fn cell_at(bytes: &[u8], column: usize, width: u8, i: usize) -> u32 {
+pub fn cell_at(bytes: &[u8], column: usize, width: u8, i: usize) -> u32 {
     let at = column + i * usize::from(width);
     if width == 2 { u32::from(u16::from_le_bytes([bytes[at], bytes[at + 1]])) } else { u32::from_le_bytes(bytes[at..at + 4].try_into().expect("u32 width")) }
 }
 
 /// Node `i`'s subtree size.
-pub(in crate::code_rule_dsl) fn size_at(bytes: &[u8], layout: &Layout, i: usize) -> u32 {
+pub fn size_at(bytes: &[u8], layout: &Layout, i: usize) -> u32 {
     cell_at(bytes, layout.size, layout.widths[0], i)
 }
 
@@ -197,5 +197,4 @@ pub fn parents(bytes: &[u8], layout: &Layout, out: &mut [u32]) -> Result<(), Str
     Ok(())
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

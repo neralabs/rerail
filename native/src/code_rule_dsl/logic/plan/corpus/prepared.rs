@@ -12,8 +12,10 @@
 //!
 //! The plan names what preparing reads besides the texts: the engine build, the grammar version, the dialect and what
 //! the run added to the program (`prepared_key`). The split (`file_local::programs`) is a function of the lowered
-//! program, kept too (`split_local`, `split_cross` and `prepared_export` …): making it again cost about 0.6 s of the
-//! Python pack's warm run. The text tests' matchers are made again on reading (from their specs).
+//! program, and what it found is kept too (`prepared_file_local`, `prepared_constant`, `prepared_location` …): finding
+//! it again cost about 0.6 s of the Python pack's warm run. Its two parts are not kept: each is a part of the lowered
+//! program's rules, made from it again on reading (`file_local::assemble`). The text tests' matchers are made again
+//! on reading (from their specs).
 //!
 //! A prepared program holds atoms of the store, which lowering interned. They are never given out again (decision
 //! 0049); `prepared_interned` lists every intern call, and the run asks them again before it uses the program, as it
@@ -30,11 +32,13 @@ use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// The pointer's schema (program text and plan to document): bumped when its meaning changes.
-const POINTER: u32 = 103;
+/// The pointer's schema (program text and plan to document): bumped when its meaning changes (104: documents of facts
+/// schema 105).
+const POINTER: u32 = 104;
 /// The document facts' schema: bumped when the encoding or the facts' meaning changes (103: `fact_rel`; 104: `match_all`'s
-/// regexes and the f-string markers, `prepared_match` and `prepared_marker`).
-const FACTS: u32 = 104;
+/// regexes and the f-string markers, `prepared_match` and `prepared_marker`; 105: the split as what it found,
+/// `prepared_file_local` and `prepared_constant`, not its two programs).
+const FACTS: u32 = 105;
 
 /// The path a lookup names. The entries read no path (`path_dependent: false`); the store keeps them under none.
 const PATH: &str = "rerail/prepared";
@@ -85,10 +89,11 @@ pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
         // The vocabulary's `match_all` regexes (their sources) and `fstring_template` markers, in order.
         ("prepared_match", &["k:int", "regex:sym"]),
         ("prepared_marker", &["k:int", "marker:sym"]),
-        // The split (`file_local::programs`): its programs are `split_local` and `split_cross`.
+        // The split (`file_local::programs`): what it found, the file-local relations and those of constants. Its two
+        // parts are the lowered program's rules, a part each, made from it again on reading (`file_local::assemble`).
         ("prepared_split", &["ok:int"]),
-        ("prepared_export", &["k:int", "rel:sym"]),
-        ("prepared_base", &["k:int", "rel:sym"]),
+        ("prepared_file_local", &["k:int", "rel:sym"]),
+        ("prepared_constant", &["k:int", "rel:sym"]),
         ("prepared_location", &["rel:sym", "i:int", "col:int"]),
         ("prepared_same_doc", &["rel:sym", "i:int", "col:int"]),
     ];
@@ -136,7 +141,10 @@ pub fn facts_of(prepared: &Prepared) -> Facts {
 /// peak at once, a row a `Vec` of `Value`s).
 fn groups(prepared: &Prepared) -> impl Iterator<Item = Facts> + '_ {
     // The split too: a function of the lowered program, but about 0.6 s of the Python pack's to make again.
-    let programs = [("front", &prepared.prog), ("lowered", &prepared.lowered.program), ("split_local", &prepared.split.local), ("split_cross", &prepared.split.cross)];
+    // Not the split's two programs: each is a part of the lowered program's rules (`file_local::assemble`), so the
+    // rest keeps what the split found (about 0.6 s of the Python pack's to find again), and the parts are made from
+    // the lowered program on reading. Written whole, they were 36% of a dl1 batch's stored rows, all read again.
+    let programs = [("front", &prepared.prog), ("lowered", &prepared.lowered.program)];
     programs
         .into_iter()
         .map(|(p, prog)| {
@@ -195,11 +203,11 @@ fn rest_of(prepared: &Prepared) -> Facts {
         }
     }
     row("prepared_split", vec![n(1)]);
-    for (k, rel) in prepared.split.exports.iter().enumerate() {
-        row("prepared_export", vec![n(k), s(rel)]);
+    for (k, rel) in prepared.split.file_local.iter().enumerate() {
+        row("prepared_file_local", vec![n(k), s(rel)]);
     }
-    for (k, rel) in prepared.split.base.iter().enumerate() {
-        row("prepared_base", vec![n(k), s(rel)]);
+    for (k, rel) in prepared.split.constants.iter().enumerate() {
+        row("prepared_constant", vec![n(k), s(rel)]);
     }
     for (which, map) in [("prepared_location", &prepared.split.locations), ("prepared_same_doc", &prepared.split.same_doc)] {
         for (rel, cols) in map {
@@ -360,7 +368,7 @@ fn prepared_from<C: program_facts::Cell>(facts: &Facts, grouped: &program_facts:
     };
     let split = match facts.get("prepared_split").is_some_and(|r| !r.is_empty()) {
         true => {
-            let _s = crate::code_rule_dsl::logic::profile::span(|| "read the split off the facts".into());
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "the split's parts, of the lowered program and what the split found".into());
             let columns = |rel: &str| -> Result<BTreeMap<String, Vec<usize>>, String> {
                 let mut by: BTreeMap<String, Vec<(i64, usize)>> = BTreeMap::new();
                 for r in facts.get(rel).into_iter().flatten() {
@@ -374,14 +382,8 @@ fn prepared_from<C: program_facts::Cell>(facts: &Facts, grouped: &program_facts:
                     (rel, cs.into_iter().map(|(_, c)| c).collect())
                 }).collect())
             };
-            crate::code_rule_dsl::typing::file_local::Programs {
-                local: grouped.program("split_local")?,
-                cross: grouped.program("split_cross")?,
-                exports: list("prepared_export")?,
-                base: list("prepared_base")?,
-                locations: columns("prepared_location")?,
-                same_doc: columns("prepared_same_doc")?,
-            }
+            let set = |rel: &str| -> Result<std::collections::BTreeSet<String>, String> { Ok(list(rel)?.into_iter().collect()) };
+            crate::code_rule_dsl::typing::file_local::assemble(&program, set("prepared_file_local")?, set("prepared_constant")?, columns("prepared_location")?, columns("prepared_same_doc")?)
         }
         false => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "split the lowered program".into());

@@ -165,6 +165,12 @@ mod calls {
     use crate::code_rule_dsl::language::adapter::pack as language_pack;
     #[cfg(test)]
         pub mod tests;
+    #[cfg(test)]
+    #[path = "php_tests.rs"]
+    pub mod php_tests;
+    #[cfg(test)]
+    #[path = "python_tests.rs"]
+    pub mod python_tests;
 }
 #[path = "compile"]
 mod compile {
@@ -700,6 +706,50 @@ pub use rerail_w::code_rule_dsl::crypto;
 pub use rerail_lang_python::code_rule_dsl::cpython;
 #[path = "demand"]
 mod demand {
+    pub mod vtab {
+        pub use rerail_transducer::code_rule_dsl::demand::vtab::*;
+        #[cfg(test)]
+        #[path = "tests.rs"]
+        pub mod tests;
+        #[allow(unused_imports)]
+        use super::super::language::Family;
+        #[allow(unused_imports)]
+        use super::super::transducer::packed::{ Error as PackedError, ExecutionBackend, PlanId, Program, execute_planned, packed_program_counts, packed_workspace_fits, packed_workspace_size, };
+        #[allow(unused_imports)]
+        use super::super::tape::TapeDoc;
+        #[allow(unused_imports)]
+        use super::super::value::structure::Equality;
+        #[allow(unused_imports)]
+        use super::super::value::Context as ValueContext;
+        #[allow(unused_imports)]
+        use ast_grep_core::{AstGrep, Doc};
+        #[allow(unused_imports)]
+        use fallible_iterator::FallibleIterator as _;
+        #[allow(unused_imports)]
+        use rusqlite::ffi;
+        #[allow(unused_imports)]
+        use rusqlite::vtab::{ Context, Filters, IndexConstraintOp, IndexInfo, Module, VTab, VTabConfig, VTabConnection, VTabCursor, };
+        #[allow(unused_imports)]
+        use rusqlite::{Connection, Result as SqlResult};
+        #[allow(unused_imports)]
+        use std::borrow::Cow;
+        #[allow(unused_imports)]
+        use std::collections::{BTreeSet, HashMap};
+        #[allow(unused_imports)]
+        use std::ffi::{CStr, c_int};
+        #[allow(unused_imports)]
+        use std::marker::PhantomData;
+        #[allow(unused_imports)]
+        use std::ops::Range;
+        #[allow(unused_imports)]
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+        #[allow(unused_imports)]
+        use std::sync::atomic::{AtomicI64, AtomicUsize, Ordering};
+        #[allow(unused_imports)]
+        use std::sync::{Arc, Mutex, OnceLock};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::language::adapter::pack as language_pack;
+    }
     pub use rerail_transducer::code_rule_dsl::demand::*;
     #[path = "driver"]
     pub mod driver {
@@ -743,9 +793,56 @@ mod embed {
     use std::ops::Range;
     #[allow(unused_imports)]
     use tree_sitter::Node as TsNode;
+    #[cfg(test)]
+    #[path = "tests.rs"]
+    pub mod tests;
 }
 #[path = "eval"]
 mod eval {
+    pub mod query {
+        pub use rerail_w::code_rule_dsl::eval::query::*;
+        #[cfg(test)]
+        #[path = "tape_cache_tests.rs"]
+        pub mod tape_cache_tests;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::json::invalid;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::json::meta_name;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::lines::{LineTable, Terminators};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::matcher::{ FileGates, FileScopeSlot, GrammarMatcher, UtilLimit, WITNESS_NODE, export_text, exported_span, is_span_variable, };
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::model::{ CodeRuleScope, FileInput, Limits, Metrics, Query, RegexSource, Snapshot, ViolationSpec, };
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::origin::InFile;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::query::select_when::{self, LeafRow, Leaves, Plan};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::soundness::{SyntaxErrors, SyntaxReading};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::violations::{self, Captures, Witness};
+        #[allow(unused_imports)]
+        use ast_grep_core::matcher::NodeMatch;
+        #[allow(unused_imports)]
+        use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
+        #[allow(unused_imports)]
+        use ast_grep_core::{Doc, Node};
+        #[allow(unused_imports)]
+        use napi::Result;
+        #[allow(unused_imports)]
+        use serde_json::{Map, Value};
+        #[allow(unused_imports)]
+        use std::cell::RefCell;
+        #[allow(unused_imports)]
+        use std::collections::{BTreeMap, HashSet};
+        #[allow(unused_imports)]
+        use std::ops::Range;
+        #[allow(unused_imports)]
+        use std::sync::Arc;
+    }
     pub mod output {
         pub use rerail_w::code_rule_dsl::eval::output::*;
         #[cfg(test)]
@@ -830,12 +927,124 @@ mod eval {
 }
 #[path = "facts"]
 mod facts {
+    pub mod families {
+        pub use rerail_facts::code_rule_dsl::facts::families::*;
+        #[cfg(test)]
+        #[path = "tests.rs"]
+        pub mod tests;
+        #[allow(unused_imports)]
+        use super::Graph;
+        #[allow(unused_imports)]
+        use super::core::{self, Facts};
+        #[allow(unused_imports)]
+        use super::observe::{Push, observe_root, path_name};
+        #[allow(unused_imports)]
+        use super::propagate::propagate;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::language::{GrammarDialect, dialect_by_label, label_of_path, tape_tag};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::lines::{LineTable, Terminators};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::facts::vtab::syntax::{Families as LazyFamilies, families};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::tape::{self, FileImage, TAPE_FORMAT_VERSION, TapeDoc, TapeImage};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::build_ids::grammar_version;
+        #[allow(unused_imports)]
+        use crate::content_store::prefilter::{PREFILTER_VERSION, TapePrefilter};
+        #[allow(unused_imports)]
+        use crate::content_store::{ ABSENT, Derivation, DerivationInput, DerivationRecord, HashKey, SourceId, StoreError, StoreResult, TapeId, };
+        #[allow(unused_imports)]
+        use sha2::{Digest as _, Sha256};
+        #[allow(unused_imports)]
+        use std::collections::{HashMap, HashSet};
+        #[allow(unused_imports)]
+        use std::sync::Arc;
+    }
+    pub mod core {
+        pub use rerail_facts::code_rule_dsl::facts::core::*;
+        #[cfg(test)]
+        #[path = "tests.rs"]
+        pub mod tests;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::language::tape_tag;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::lines::LineTable;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::tape::TapeDoc;
+        #[allow(unused_imports)]
+        use std::sync::Arc;
+    }
     pub use rerail_facts::code_rule_dsl::facts::*;
     pub use rerail_w::code_rule_dsl::facts::facts_a;
     #[path = "producers"]
     pub mod producers {
         pub use rerail_facts::code_rule_dsl::facts::producers::*;
-        pub use rerail_lang_python::code_rule_dsl::facts::producers::python;
+        pub mod python {
+            pub mod python_facts {
+                pub use rerail_lang_python::code_rule_dsl::facts::producers::python::python_facts::*;
+                #[cfg(test)]
+                #[path = "tests.rs"]
+                pub mod tests;
+                #[allow(unused_imports)]
+                use crate::code_rule_dsl::{ identifier::python_identifier, language::{ Family, GrammarDialect, adapter::{python::Python, ScopeRules}, }, module_path::ModulePath, scope::{ Binding, Form, Import, Lookup, Origin, ScopeTable, options::{PythonOptions, python_builtins}, }, value::NodeRef, };
+                #[allow(unused_imports)]
+                use crate::code_rule_dsl::tree::Tree;
+                #[allow(unused_imports)]
+                use ast_grep_core::{Doc, Node};
+                #[allow(unused_imports)]
+                use std::collections::{BTreeMap, HashSet};
+            }
+            pub mod import_screen {
+                pub use rerail_lang_python::code_rule_dsl::facts::producers::python::import_screen::*;
+                #[cfg(test)]
+                #[path = "tests.rs"]
+                pub mod tests;
+                #[allow(unused_imports)]
+                use crate::code_rule_dsl::{ identifier::{nfkc, python_identifier}, facts::producers::python::python_facts::{Fact, qualification_chain}, module_path::ModulePath, tape::TapeDoc, };
+                #[allow(unused_imports)]
+                use ast_grep_core::{Doc, Node};
+                #[allow(unused_imports)]
+                use std::collections::{BTreeMap, BTreeSet};
+            }
+            pub mod families {
+                pub mod candidates {
+                    pub use rerail_lang_python::code_rule_dsl::facts::producers::python::families::candidates::*;
+                    #[cfg(test)]
+                    #[path = "tests.rs"]
+                    pub mod tests;
+                    #[allow(unused_imports)]
+                    use super::*;
+                    #[allow(unused_imports)]
+                    use std::collections::BTreeSet;
+                }
+                pub use rerail_lang_python::code_rule_dsl::facts::producers::python::families::*;
+                #[cfg(test)]
+                #[path = "tests.rs"]
+                pub mod tests;
+                #[allow(unused_imports)]
+                use crate::code_rule_dsl::facts::core::{Facts, NONE, kind_atom};
+                #[allow(unused_imports)]
+                use crate::code_rule_dsl::language::KindCatalog;
+            }
+            pub mod call_batch {
+                pub use rerail_lang_python::code_rule_dsl::facts::producers::python::call_batch::*;
+                #[cfg(test)]
+                #[path = "tests.rs"]
+                pub mod tests;
+                #[allow(unused_imports)]
+                use super::python_structure::{ Argument, Attribute, CallSite, ContextKind, ExecutionContext, NodeRef, PythonStructure, Spread, };
+                #[allow(unused_imports)]
+                use crate::code_rule_dsl::tape::TapeDoc;
+                #[allow(unused_imports)]
+                use ast_grep_core::{Doc, Node, language::Language};
+                #[allow(unused_imports)]
+                use rustc_hash::FxHashSet;
+                #[allow(unused_imports)]
+                use std::{cmp::Reverse, collections::BinaryHeap};
+            }
+            pub use rerail_lang_python::code_rule_dsl::facts::producers::python::*;
+        }
     }
     #[path = "vtab"]
     pub mod vtab {
@@ -845,6 +1054,18 @@ mod facts {
         pub use rerail_lang_python::code_rule_dsl::facts::vtab::python;
         #[path = "syntax"]
         pub mod syntax {
+            pub mod core_rr {
+                pub use rerail_facts::code_rule_dsl::facts::vtab::syntax::core_rr::*;
+                #[cfg(test)]
+                #[path = "tests.rs"]
+                pub mod tests;
+                #[allow(unused_imports)]
+                use super::{Dialect, Projected, Relation};
+                #[allow(unused_imports)]
+                use crate::code_rule_dsl::facts::core::Facts;
+                #[allow(unused_imports)]
+                use std::collections::{BTreeSet, HashSet};
+            }
             pub use rerail_facts::code_rule_dsl::facts::vtab::syntax::*;
             pub use rerail_lang_python::code_rule_dsl::facts::vtab::syntax::annotation;
             pub mod ast_wave;
@@ -856,8 +1077,34 @@ mod facts {
             pub use rerail_lang_python::code_rule_dsl::facts::vtab::syntax::fstring;
             pub use rerail_lang_python::code_rule_dsl::facts::vtab::syntax::py_families;
             pub use rerail_lang_python::code_rule_dsl::facts::vtab::syntax::python_core;
-            pub use rerail_lang_python::code_rule_dsl::facts::vtab::syntax::python_demand;
-            pub use rerail_lang_python::code_rule_dsl::facts::vtab::syntax::python_parts;
+            pub mod python_demand {
+                pub use rerail_lang_python::code_rule_dsl::facts::vtab::syntax::python_demand::*;
+                #[cfg(test)]
+                #[path = "tests.rs"]
+                pub mod tests;
+                #[allow(unused_imports)]
+                use super::{Batch, NONE, Projected};
+                #[allow(unused_imports)]
+                use crate::code_rule_dsl::facts::producers::python::families as py;
+                #[allow(unused_imports)]
+                use crate::code_rule_dsl::{ facts::producers::python::{ python_facts::{self, Fact, NodeFacts, Qualification}, }, language::GrammarDialect, scope::{ Reading, ScopeTable, options::{DEFAULT_PYTHON_MINOR, PythonOptions}, }, tape::{Grammar, TapeDoc, TapeImage}, };
+                #[allow(unused_imports)]
+                use ast_grep_core::{AstGrep, Node, tree_sitter::StrDoc};
+                #[allow(unused_imports)]
+                use rusqlite::types::Value;
+                #[allow(unused_imports)]
+                use std::{ collections::{BTreeMap, BTreeSet}, sync::Arc, };
+            }
+            pub mod python_parts {
+                pub use rerail_lang_python::code_rule_dsl::facts::vtab::syntax::python_parts::*;
+                #[cfg(test)]
+                #[path = "tests.rs"]
+                pub mod tests;
+                #[allow(unused_imports)]
+                use super::core_rr::py_unescape;
+                #[allow(unused_imports)]
+                use super::{Dialect, Projected};
+            }
             pub use rerail_lang_python::code_rule_dsl::facts::vtab::syntax::python_syntax;
             pub use rerail_logic::code_rule_dsl::facts::vtab::syntax::rr_core;
             #[cfg(test)]
@@ -1139,7 +1386,44 @@ mod language {
             #[allow(unused_imports)]
             use std::cmp::Ordering;
         }
-        pub use rerail_lang_ecma::code_rule_dsl::language::adapter::vue;
+        pub mod vue {
+            pub use rerail_lang_ecma::code_rule_dsl::language::adapter::vue::*;
+            #[cfg(test)]
+            #[path = "tests.rs"]
+            pub mod tests;
+            #[allow(unused_imports)]
+            use super::QueryWhen;
+            #[allow(unused_imports)]
+            use super::syntax::QueryOptions;
+            #[allow(unused_imports)]
+            use super::ecma::Ecma;
+            #[allow(unused_imports)]
+            use super::{Adapter, Refusal, Refused, SyntaxFeature, SyntaxRules};
+            #[allow(unused_imports)]
+            use crate::code_rule_dsl::compile::config::Options;
+            #[allow(unused_imports)]
+            use crate::code_rule_dsl::language::{Family, SourceType};
+            #[allow(unused_imports)]
+            use crate::code_rule_dsl::lines::{LineTable, Terminators};
+            #[allow(unused_imports)]
+            use crate::code_rule_dsl::matcher::{file_index};
+            #[allow(unused_imports)]
+            use crate::code_rule_dsl::model::ViolationSpec;
+            #[allow(unused_imports)]
+            use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
+            #[allow(unused_imports)]
+            use crate::code_rule_dsl::suppress::Suppress;
+            #[allow(unused_imports)]
+            use crate::code_rule_dsl::suppress::vue::{VueDirectives, script_directives as vue_script_directives};
+            #[allow(unused_imports)]
+            use ast_grep_core::{Doc, Node};
+            #[allow(unused_imports)]
+            use std::borrow::Cow;
+            #[allow(unused_imports)]
+            use std::ops::Range;
+            #[allow(unused_imports)]
+            use std::path::Path;
+        }
         #[allow(unused_imports)]
         pub(crate) use crate::code_rule_dsl::language::adapter::arguments::{ArgumentFeature, ArgumentRules};
         #[allow(unused_imports)]
@@ -1226,7 +1510,26 @@ mod literal {
         use std::ops::Range;
     }
     pub use rerail_w::code_rule_dsl::literal::*;
-    pub use rerail_lang_python::code_rule_dsl::literal::annotation;
+    pub mod annotation {
+        pub use rerail_lang_python::code_rule_dsl::literal::annotation::*;
+        #[cfg(test)]
+        #[path = "tests.rs"]
+        pub mod tests;
+        #[allow(unused_imports)]
+        use super::offsets::Decode;
+        #[allow(unused_imports)]
+        use super::{HostMap, PNode, SubTree, semantic};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::language::GrammarDialect;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::value::Value;
+        #[allow(unused_imports)]
+        use ast_grep_language::LanguageExt;
+        #[allow(unused_imports)]
+        use std::ops::Range;
+        #[allow(unused_imports)]
+        use std::sync::OnceLock;
+    }
     pub use rerail_lang_python::code_rule_dsl::literal::brace;
     pub mod eslint_directive {
         pub use rerail_lang_ecma::code_rule_dsl::literal::eslint_directive::*;
@@ -1603,6 +1906,7 @@ pub(crate) mod logic {
         }
         #[cfg(test)]
         pub mod tests;
+        pub mod testing;
         #[allow(unused_imports)]
         use rerail_rr_syntax::syntax;
         #[allow(unused_imports)]
@@ -1659,6 +1963,16 @@ pub(crate) mod sql_hazards {
 }
 #[path = "sql_executor"]
 mod sql_executor {
+    // Only in builds that have them in rerail-sessions (its own `cfg`): its tests, `test-hooks`, `headless`.
+    #[cfg(any(test, feature = "test-hooks", feature = "headless"))]
+    pub mod verification {
+        pub use rerail_sessions::code_rule_dsl::sql_executor::verification::*;
+        #[cfg(test)]
+        #[path = "tests.rs"]
+        pub mod tests;
+        #[allow(unused_imports)]
+        use super::*;
+    }
     pub mod versions {
         pub use rerail_sessions::code_rule_dsl::sql_executor::versions::*;
         #[cfg(test)]
@@ -1726,7 +2040,8 @@ mod sql_executor {
         #[allow(unused_imports)]
         use frame::Frame;
     }
-    #[cfg(any(any(test, feature = "test-hooks"), feature = "headless"))]
+    // Only in builds that have them in rerail-sessions (its own `cfg`): its tests, `test-hooks`, `headless`.
+    #[cfg(any(test, feature = "test-hooks", feature = "headless"))]
     pub mod component_loop {
         pub use rerail_sessions::code_rule_dsl::sql_executor::component_loop::*;
         #[cfg(test)]
@@ -1780,6 +2095,46 @@ mod sql_executor {
 }
 #[path = "matcher"]
 mod matcher {
+    pub mod value {
+        pub use rerail_w::code_rule_dsl::matcher::value::*;
+        #[cfg(test)]
+        #[path = "tests.rs"]
+        pub mod tests;
+        #[allow(unused_imports)]
+        use super::resolve::{ ValueKey, binding_value, constant_value, followed_table, memoize_structure, memoize_value, memoized_structure, memoized_value, unshadowed_global, };
+        #[allow(unused_imports)]
+        use super::util::{UTIL_EXCEEDED, UTIL_STEPS_LEFT, UtilLimit};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::budget;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::language::{Family, GrammarDialect, kind_ids};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::literal;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::value::structure::{Equality, Tok};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::value::text_regex::TextRegex;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::value::{BigInt, Context, Value};
+        #[allow(unused_imports)]
+        use ast_grep_core::{Doc, Node};
+        #[allow(unused_imports)]
+        use num_traits::Zero;
+        #[allow(unused_imports)]
+        use std::cmp::Ordering;
+        #[allow(unused_imports)]
+        use std::collections::BTreeSet;
+        #[allow(unused_imports)]
+        use std::rc::Rc;
+        #[allow(unused_imports)]
+        use std::sync::Arc;
+        #[allow(unused_imports)]
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::language::adapter::pack as language_pack;
+    }
     pub mod embedded {
         pub use rerail_w::code_rule_dsl::matcher::embedded::*;
         #[cfg(test)]
@@ -2140,6 +2495,12 @@ mod matcher {
         use crate::code_rule_dsl::language::adapter::pack as language_pack;
         #[cfg(test)]
                 pub mod tests;
+        #[cfg(test)]
+        #[path = "php_syntactic_tests.rs"]
+        pub mod php_syntactic_tests;
+        #[cfg(test)]
+        #[path = "rust_tests.rs"]
+        pub mod rust_tests;
     }
     pub use rerail_lang_sql::code_rule_dsl::matcher::arguments_sql;
     #[cfg(test)]
@@ -2419,7 +2780,18 @@ mod matcher {
         use crate::code_rule_dsl::language::adapter::pack as language_pack;
     }
     #[cfg(test)]
-    pub use rerail_lang_python::code_rule_dsl::matcher::python_facts;
+    pub mod python_facts {
+        pub use rerail_lang_python::code_rule_dsl::matcher::python_facts::*;
+        #[cfg(test)]
+        #[path = "tests.rs"]
+        pub mod tests;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::{ identifier::python_identifier, language::{ Family, GrammarDialect, adapter::{python::Python, ScopeRules}, }, module_path::ModulePath, scope::{ Binding, Form, Import, Lookup, Origin, ScopeTable, options::{PythonOptions, python_builtins}, }, value::NodeRef, };
+        #[allow(unused_imports)]
+        use ast_grep_core::{Doc, Node};
+        #[allow(unused_imports)]
+        use std::collections::{BTreeMap, HashSet};
+    }
     #[path = "resolve"]
     pub mod resolve {
         pub use rerail_w::code_rule_dsl::matcher::resolve::*;
@@ -2773,6 +3145,47 @@ mod residency {
         pub use rerail_w::code_rule_dsl::residency::admission::*;
         #[path = "relational"]
         pub mod relational {
+            pub mod syntax {
+                pub use rerail_w::code_rule_dsl::residency::admission::relational::syntax::*;
+                #[cfg(test)]
+                #[path = "scoped_index_tests.rs"]
+                pub mod scoped_index_tests;
+                #[allow(unused_imports)]
+                use super::{Result, invalid, source, sql_error};
+                #[allow(unused_imports)]
+                use crate::code_rule_dsl::{ eval, language::GrammarDialect, lines::LineTable, model::FileInput, tape::TapeDoc, violations::Span, };
+                #[allow(unused_imports)]
+                use ast_grep_core::source::SgNode;
+                #[allow(unused_imports)]
+                use packed::{Columns, Fields, Postings};
+                #[allow(unused_imports)]
+                use rusqlite::{Connection, types::Value, vtab::Context};
+                #[allow(unused_imports)]
+                use std::{ cell::RefCell, collections::{BTreeMap, HashMap}, sync::{ Arc, atomic::{AtomicU64, AtomicUsize}, }, };
+            }
+            pub mod producer {
+                pub mod layout {
+                    pub use rerail_w::code_rule_dsl::residency::admission::relational::producer::layout::*;
+                    #[cfg(test)]
+                    #[path = "tests.rs"]
+                    pub mod tests;
+                    #[allow(unused_imports)]
+                    use super::{Demand, Resident};
+                    #[allow(unused_imports)]
+                    use std::{collections::HashSet, sync::Arc};
+                }
+                pub use rerail_w::code_rule_dsl::residency::admission::relational::producer::*;
+            }
+            pub mod pool {
+                pub use rerail_w::code_rule_dsl::residency::admission::relational::pool::*;
+                #[cfg(test)]
+                #[path = "tests.rs"]
+                pub mod tests;
+                #[allow(unused_imports)]
+                use super::{Database, Result, configure, connection, sql_error};
+                #[allow(unused_imports)]
+                use std::{ cell::{Cell, RefCell}, ops::Deref, rc::Rc, sync::{Arc, atomic::AtomicUsize}, };
+            }
             pub mod admission {
                 pub use rerail_w::code_rule_dsl::residency::admission::relational::admission::*;
                 #[cfg(test)]
@@ -2957,7 +3370,27 @@ mod scope {
         pub use rerail_lang_rust::code_rule_dsl::scope::usage::lang_rust;
         pub use rerail_lang_sql::code_rule_dsl::scope::usage::lang_sql;
         pub use rerail_lang_php::code_rule_dsl::scope::usage::php;
-        pub use rerail_lang_rust::code_rule_dsl::scope::usage::rust;
+        pub mod rust {
+            pub use rerail_lang_rust::code_rule_dsl::scope::usage::rust::*;
+            #[cfg(test)]
+            #[path = "tests.rs"]
+            pub mod tests;
+            #[allow(unused_imports)]
+            use super::super::rust::{MACRO, resolve_index};
+            #[allow(unused_imports)]
+            use super::super::{Access, Import, NodeRef, Reference, ScopeKind, ScopeTable, TYPE, VALUE};
+            #[allow(unused_imports)]
+            use super::{Facts, Steps};
+            #[allow(unused_imports)]
+            use crate::code_rule_dsl::scope::BuildError;
+            #[allow(unused_imports)]
+            #[cfg(any(test, feature = "test-hooks"))]
+            use crate::code_rule_dsl::walks::{Walk, record_walk};
+            #[allow(unused_imports)]
+            use ast_grep_core::{Doc, Node};
+            #[allow(unused_imports)]
+            use foldhash::HashMap;
+        }
         #[allow(unused_imports)]
         use crate::code_rule_dsl::scope::{
             Binding, BuildError, DEADLINE_INTERVAL, Form, ImportKind, NodeRef, ScopeKind, ScopeTable,
@@ -3005,6 +3438,11 @@ mod scope {
     use std::sync::{Arc, OnceLock};
     #[allow(unused_imports)]
     use crate::code_rule_dsl::language::adapter::pack as language_pack;
+    #[cfg(test)]
+    #[path = "tests.rs"]
+    pub mod tests;
+    #[allow(unused_imports)]
+    use crate::code_rule_dsl::identifier::{name_in};
 }
 pub use rerail_lang::code_rule_dsl::semver;
 // The first slice's entry points (06 S6), called by hosts through `slice::napi::CodeRuleSlice`.
@@ -3110,7 +3548,30 @@ mod suppress {
         use std::ops::Range;
     }
     pub use rerail_lang_php::code_rule_dsl::suppress::phpcs;
-    pub use rerail_lang_php::code_rule_dsl::suppress::phpstan;
+    pub mod phpstan {
+        pub use rerail_lang_php::code_rule_dsl::suppress::phpstan::*;
+        #[cfg(test)]
+        #[path = "tests.rs"]
+        pub mod tests;
+        #[allow(unused_imports)]
+        use super::psalm::{doc_comment, pcre_space};
+        #[allow(unused_imports)]
+        use super::{names, php_comment_end};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::json::{object, reject_unknown};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::lines::LineTable;
+        #[allow(unused_imports)]
+        use ast_grep_core::{Doc, Node};
+        #[allow(unused_imports)]
+        use serde_json::Value;
+        #[allow(unused_imports)]
+        use std::cell::RefCell;
+        #[allow(unused_imports)]
+        use std::collections::HashMap;
+        #[allow(unused_imports)]
+        use std::ops::Range;
+    }
     pub use rerail_lang_php::code_rule_dsl::suppress::psalm;
     pub use rerail_lang_sql::code_rule_dsl::suppress::sqlfluff;
     pub use rerail_lang_ecma::code_rule_dsl::suppress::vue;
@@ -3129,6 +3590,14 @@ mod suppress {
 }
 #[path = "tape"]
 mod tape {
+    pub mod resident {
+        pub use rerail_lang::code_rule_dsl::tape::resident::*;
+        #[cfg(test)]
+        #[path = "tests.rs"]
+        pub mod tests;
+        #[allow(unused_imports)]
+        use super::*;
+    }
     pub use rerail_lang::code_rule_dsl::tape::*;
     #[cfg(test)]
     pub mod tests;
@@ -3167,8 +3636,22 @@ mod tape {
     use crate::code_rule_dsl::tape::wire::{CHECKPOINT_STRIDE, WIDTH};
     #[cfg(test)]
         pub mod corpus_parity;
+    #[cfg(test)]
+    #[path = "tokens_tests.rs"]
+    pub mod tokens_tests;
 }
-pub use rerail_lang::code_rule_dsl::tree;
+pub mod tree {
+    pub use rerail_lang::code_rule_dsl::tree::*;
+    #[cfg(test)]
+    #[path = "tests.rs"]
+    pub mod tests;
+    #[allow(unused_imports)]
+    use ast_grep_core::{Doc, Node};
+    #[allow(unused_imports)]
+    use std::borrow::Cow;
+    #[allow(unused_imports)]
+    use std::ops::Range;
+}
 
 /// The language tag a stored tape image names (`tape::stored_tape_tag`): the store picks a
 /// frame's dictionary by it.
@@ -3189,6 +3672,71 @@ mod transducer {
     pub use rerail_transducer::code_rule_dsl::transducer::*;
     #[path = "packed"]
     pub mod packed {
+        pub mod set_mode {
+            pub use rerail_transducer::code_rule_dsl::transducer::packed::set_mode::*;
+            #[cfg(test)]
+            #[path = "tests.rs"]
+            pub mod tests;
+            #[allow(unused_imports)]
+            #[cfg(any(test, feature = "test-hooks"))]
+            use super::*;
+        }
+        // `.`: no directory `rir/` exists to resolve `..` through.
+        #[path = "."]
+        pub mod rir {
+            pub use rerail_transducer::code_rule_dsl::transducer::packed::rir::*;
+            #[cfg(test)]
+            #[path = "rir_tests.rs"]
+            pub mod tests;
+            #[allow(unused_imports)]
+            use rerail_compiler::rir_asm::{Line, NameTable, Token, block_programs_rows, head_rows, index, tokens, word_row, word_rows};
+            #[allow(unused_imports)]
+            use super::*;
+            #[allow(unused_imports)]
+            use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog};
+            #[allow(unused_imports)]
+            use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE;
+            #[allow(unused_imports)]
+            use std::collections::HashMap as Map;
+        }
+        pub mod metal_grid {
+            pub use rerail_transducer::code_rule_dsl::transducer::packed::metal_grid::*;
+            #[cfg(test)]
+            #[path = "tests.rs"]
+            pub mod tests;
+            #[allow(unused_imports)]
+            use super::execution_shape::{compile_entry_shapes, execution_class};
+            #[allow(unused_imports)]
+            use super::packed_batch::PackedBatch;
+            #[allow(unused_imports)]
+            use super::{Error, Program};
+            #[allow(unused_imports)]
+            use crate::code_rule_dsl::tape::TapeDoc;
+            #[allow(unused_imports)]
+            use std::cmp::Reverse;
+            #[allow(unused_imports)]
+            use std::collections::{BTreeMap, BinaryHeap, HashMap};
+            #[allow(unused_imports)]
+            use std::hash::{DefaultHasher, Hash, Hasher};
+            #[allow(unused_imports)]
+            use std::sync::Arc;
+        }
+        // `.`: no directory `compilation/` exists to resolve `..` through.
+        #[path = "."]
+        pub mod compilation {
+            pub use rerail_transducer::code_rule_dsl::transducer::packed::compilation::*;
+            #[cfg(test)]
+            #[path = "compilation_tests.rs"]
+            pub mod tests;
+            #[allow(unused_imports)]
+            use super::{Error, ExecutionBackend, Program, native_cpu};
+            #[allow(unused_imports)]
+            use sha2::{Digest as _, Sha256};
+            #[allow(unused_imports)]
+            use std::collections::BTreeSet;
+            #[allow(unused_imports)]
+            use std::sync::{LazyLock, Mutex};
+        }
         // `.`: no directory `capture_run/` exists to resolve `..` through.
         #[path = "."]
         pub mod capture_run {
@@ -3458,6 +4006,20 @@ mod transducer {
         #[allow(unused_imports)]
         #[cfg(any(test, feature = "test-hooks"))]
         use literal_anchors::*;
+        #[cfg(test)]
+        #[path = "capture_run_tests.rs"]
+        pub mod capture_run_tests;
+        #[cfg(test)]
+        #[path = "verify/cycle_progress_tests.rs"]
+        pub mod cycle_progress_tests;
+        #[cfg(test)]
+        #[path = "verify/greedy_contract_tests.rs"]
+        pub mod greedy_contract_tests;
+        // The admission spike's tests parse Python, which the engine registers: they run here, and the transducer
+        // keeps the spike only for its test hooks (`metal_frontier_conformance` reads a program of it).
+        #[cfg(test)]
+        #[path = "admission_spike.rs"]
+        pub mod admission_spike;
     }
     #[allow(unused_imports)]
     #[cfg(test)]
@@ -3480,6 +4042,9 @@ mod transducer {
     #[allow(unused_imports)]
     #[cfg(test)]
     use crate::code_rule_dsl::search_index::persist_search_index_batch;
+    #[cfg(test)]
+    #[path = "tests.rs"]
+    pub mod tests;
 }
 // Typing's rounds run over T's facts in tests only until Phase 10 wires them.
 #[path = "typing"]
@@ -3524,7 +4089,24 @@ mod value {
         #[allow(unused_imports)]
         use ast_grep_core::{Doc, Node};
     }
-    pub use rerail_lang_ecma::code_rule_dsl::value::key;
+    pub mod key {
+        pub use rerail_lang_ecma::code_rule_dsl::value::key::*;
+        #[cfg(test)]
+        #[path = "tests.rs"]
+        pub mod tests;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::tree::Tree;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::language::Family;
+        #[allow(unused_imports)]
+        use super::ecma::{cooked, number, operand, ops, string_node};
+        #[allow(unused_imports)]
+        use super::{BigInt, Value};
+        #[allow(unused_imports)]
+        use ast_grep_core::{Doc, Node};
+        #[allow(unused_imports)]
+        use num_traits::Zero;
+    }
     pub mod php {
         pub use rerail_lang_php::code_rule_dsl::value::php::*;
         #[cfg(test)]
@@ -3542,7 +4124,20 @@ mod value {
         #[allow(unused_imports)]
         use std::cmp::Ordering;
     }
-    pub use rerail_lang_php::code_rule_dsl::value::php_compare;
+    pub mod php_compare {
+        pub use rerail_lang_php::code_rule_dsl::value::php_compare::*;
+        #[cfg(test)]
+        #[path = "tests.rs"]
+        pub mod tests;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::tree::Tree;
+        #[allow(unused_imports)]
+        use super::php::{self, Key};
+        #[allow(unused_imports)]
+        use super::{Context, Value};
+        #[allow(unused_imports)]
+        use ast_grep_core::{Doc, Node};
+    }
     pub use rerail_lang_php::code_rule_dsl::value::php_structure;
     pub mod python {
         pub use rerail_lang_python::code_rule_dsl::value::python::*;
@@ -3561,7 +4156,28 @@ mod value {
     }
     pub use rerail_lang_python::code_rule_dsl::value::python_ast;
     pub use rerail_lang_python::code_rule_dsl::value::python_structure;
-    pub use rerail_lang_rust::code_rule_dsl::value::rust;
+    pub mod rust {
+        pub use rerail_lang_rust::code_rule_dsl::value::rust::*;
+        #[cfg(test)]
+        #[path = "tests.rs"]
+        pub mod tests;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::tree::Tree;
+        #[allow(unused_imports)]
+        use super::Context;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::scope::rust::resolve_index;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::scope::{Form, ScopeTable};
+        #[allow(unused_imports)]
+        use ast_grep_core::{Doc, Node};
+        #[allow(unused_imports)]
+        use num_bigint::BigInt;
+        #[allow(unused_imports)]
+        use num_traits::{FromPrimitive, Num, ToPrimitive, Zero};
+        #[allow(unused_imports)]
+        use std::cell::Cell;
+    }
     pub mod sql {
         pub use rerail_lang_sql::code_rule_dsl::value::sql::*;
         #[cfg(test)]
@@ -3678,6 +4294,12 @@ pub mod vue {
         use tree_sitter::{Node, Parser, Tree};
     }
     pub use rerail_lang_ecma::code_rule_dsl::vue::*;
+    #[cfg(test)]
+    #[path = "oracle_tests.rs"]
+    pub mod oracle_tests;
+    #[cfg(test)]
+    #[path = "tests.rs"]
+    pub mod tests;
 }
 // Wired to the logic planner and the push path in a later slice; until then only tests call it.
 #[allow(dead_code)]
@@ -3837,6 +4459,16 @@ impl CodeRuleDslRuntime {
         let response =
             value::python_ast::batch_with_metrics(&documents).map_err(|error| invalid(error.0))?;
         serde_json::to_string(&response).map_err(json_error)
+    }
+
+    /// The tests the `.rr` files under `paths_json` (a JSON array of files and directories) carry, each run (decision
+    /// 0130, `rerail-engine test-rr`): `[{file, test, line, status, failures, findings}]` as JSON. `rerail rules test`
+    /// calls it for a `.rr` file.
+    #[napi(catch_unwind)]
+    pub fn test_rr(paths_json: String, filter: Option<String>) -> Result<String> {
+        let paths: Vec<std::path::PathBuf> = serde_json::from_str(&paths_json).map_err(json::json_error)?;
+        let report = logic::rr::testing::report(&paths, filter.as_deref()).map_err(json::invalid)?;
+        serde_json::to_string(&report).map_err(json::json_error)
     }
 
     #[napi(catch_unwind)]
@@ -4246,7 +4878,9 @@ pub(crate) fn install_languages() {
             parsers.push((language::GrammarDialect::Blade, &blade::tape::Forte));
         }
         if cfg!(feature = "lang-json") {
-            parsers.push((language::GrammarDialect::Json, &transducer::packed::json_parser::tape::Bitlex));
+            // simdjson where it builds; the Bitlex parser (`json_parser::tape::Bitlex`) is not yet the product's.
+            #[cfg(not(target_family = "wasm"))]
+            parsers.push((language::GrammarDialect::Json, &transducer::packed::json_parser::simdjson::Simdjson));
         }
         tape::install_parsers(parsers);
     }

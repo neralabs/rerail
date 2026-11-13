@@ -169,9 +169,13 @@ pub(crate) fn packages(label: &str) -> bool {
 
 /// Every family's `kinds`, each once: the walks ask per node they visit, so the union is gathered
 /// once rather than per call.
+/// Asked before any family is registered, it panics as `base` does: an empty union kept for the
+/// process would answer every later walk wrongly.
 fn every_family_kind(kinds: impl Fn(Family) -> &'static [&'static str]) -> Vec<&'static str> {
+    let registered = Family::ALL.into_iter().filter(|&family| super::registered_base(family).is_some()).collect::<Vec<_>>();
+    assert!(!registered.is_empty(), "no language registered for any family");
     let mut union = Vec::new();
-    for kind in Family::ALL.into_iter().filter(|&family| super::registered_base(family).is_some()).flat_map(kinds) {
+    for kind in registered.into_iter().flat_map(kinds) {
         if !union.contains(kind) {
             union.push(*kind);
         }

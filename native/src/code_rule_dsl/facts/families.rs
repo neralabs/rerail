@@ -45,19 +45,19 @@ const TAPE_READERS: u8 = 2;
 /// New paths per chunk of a push: a chunk's tapes and facts are resident at once.
 const CHUNK: usize = 256;
 
-pub(crate) fn tape_name(scope: &str, path: &str) -> String {
+pub fn tape_name(scope: &str, path: &str) -> String {
     format!("{scope}{TAPE}{path}")
 }
 
-pub(crate) fn prefilter_name(scope: &str, path: &str) -> String {
+pub fn prefilter_name(scope: &str, path: &str) -> String {
     format!("{scope}{PREFILTER}{path}")
 }
 
-pub(crate) fn core_name(scope: &str, path: &str) -> String {
+pub fn core_name(scope: &str, path: &str) -> String {
     format!("{scope}{CORE}{path}")
 }
 
-pub(crate) fn kinds_name(scope: &str, path: &str) -> String {
+pub fn kinds_name(scope: &str, path: &str) -> String {
     format!("{scope}{KINDS}{path}")
 }
 
@@ -191,7 +191,7 @@ pub struct Tape {
 /// What one push's recomputation of the families did: tapes encoded from source, stored tapes
 /// decoded, and tapes or facts a later wave took from an earlier one.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct Parses {
+pub struct Parses {
     pub parsed: u64,
     pub decoded: u64,
     pub reused: u64,
@@ -208,8 +208,8 @@ pub struct Ingested {
 /// Recomputes the ingest families for one push. Drop the value after the push.
 #[derive(Default)]
 pub struct Families {
-    tapes: HashMap<[u8; 32], (Arc<Tape>, u8)>,
-    facts: HashMap<[u8; 32], Arc<Facts>>,
+    pub tapes: HashMap<[u8; 32], (Arc<Tape>, u8)>,
+    pub facts: HashMap<[u8; 32], Arc<Facts>>,
     /// Prefilter rows built in this recomputation, published together.
     rows: Vec<TapePrefilter>,
     /// Sources parsed ahead, in parallel, by `parse_ahead`: each its text and its parse.
@@ -306,7 +306,7 @@ impl Families {
     /// The tape derivation of `path` as its name is bound now. The output is `ABSENT` where the
     /// path is unbound, its blob is not stored as UTF-8, its language has no tape, or the parser
     /// stopped.
-    pub(crate) fn tape(&mut self, graph: &(impl Graph + ?Sized), scope: &str, path: &str) -> StoreResult<DerivationRecord> {
+    pub fn tape(&mut self, graph: &(impl Graph + ?Sized), scope: &str, path: &str) -> StoreResult<DerivationRecord> {
         let name = path_name(scope, path);
         let read = graph.binding(&name)?.unwrap_or(ABSENT);
         let tape = match (read != ABSENT, dialect(path)) {
@@ -482,7 +482,7 @@ impl Families {
 
     /// The core derivation of `path`, from the tape its tape name binds now, and its facts
     /// (`None` where there is no tape: the output is then `ABSENT`).
-    pub(crate) fn core(
+    pub fn core(
         &mut self,
         graph: &(impl Graph + ?Sized),
         scope: &str,
@@ -511,7 +511,7 @@ impl Families {
 
     /// The prefilter derivation of `path`: the rows of the tape its tape name binds now, built
     /// here and published by `publish` before the record is.
-    pub(crate) fn prefilter(&mut self, graph: &(impl Graph + ?Sized), scope: &str, path: &str) -> StoreResult<DerivationRecord> {
+    pub fn prefilter(&mut self, graph: &(impl Graph + ?Sized), scope: &str, path: &str) -> StoreResult<DerivationRecord> {
         let name = tape_name(scope, path);
         let read = graph.binding(&name)?.unwrap_or(ABSENT);
         let digest = match self.take(graph, scope, path, read)? {
@@ -537,7 +537,7 @@ impl Families {
     }
 
     /// Publishes the prefilter rows built since the last call, 64 tapes per transaction.
-    fn publish(&mut self, graph: &(impl Graph + ?Sized)) -> StoreResult<()> {
+    pub fn publish(&mut self, graph: &(impl Graph + ?Sized)) -> StoreResult<()> {
         graph.publish_prefilters(std::mem::take(&mut self.rows))
     }
 
@@ -590,8 +590,7 @@ fn split<'a>(output: &'a str, family: &str) -> StoreResult<(&'a str, &'a str)> {
         .ok_or_else(|| StoreError::Corrupt(format!("{output} is not a {family} derivation")))
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 /// What derives a tape's prefilter rows from the tape alone (`prefilter::image`), registered at load; `interrupted`
 /// is polled as it goes.

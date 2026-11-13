@@ -1,4 +1,6 @@
-# 0124: The planner searches only where a search can pay, and could plan in bulk
+# 0132: The planner searches only where a search can pay, and could plan in bulk
+
+Numbered 0124 where it was written (Typing-support, phased facts); 0132 in the hub, as the trunk's 0124 is lattice relations.
 
 Status: draft (2026-11-12). §1 and §2 are built. §3 is a spike behind a switch, off by default. §4 and §5 size
 work that is not built. Numbered 0121 on its branch, renumbered at the merge with phased-facts, whose 0121 (node

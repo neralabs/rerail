@@ -193,11 +193,11 @@ impl Lines {
         [self.index().starts[l - 1], self.index().ends[l - 1]]
     }
     /// The 1-based line holding byte `at`.
-    pub(super) fn line(&self, at: u32) -> u32 {
+    pub fn line(&self, at: u32) -> u32 {
         self.index().starts.partition_point(|&s| s <= at).max(1) as u32
     }
     /// A span's first line, last line (of its last character) and 0-based start column (bytes).
-    pub(super) fn place(&self, [start, end]: [u32; 2]) -> (u32, u32, u32) {
+    pub fn place(&self, [start, end]: [u32; 2]) -> (u32, u32, u32) {
         let line = self.line(start);
         let last = if end > start { self.line(end - 1) } else { line };
         (line, last, start - self.index().starts[line as usize - 1])
@@ -228,7 +228,7 @@ pub(super) fn is_comment(kind: &str) -> bool {
 }
 
 /// A comment's text without its marker (`#`, `//`, `/* */`, `<!-- -->`, `--`), trimmed.
-pub(super) fn comment_body(t: &str) -> &str {
+pub fn comment_body(t: &str) -> &str {
     let t = t.trim_end();
     let body = if let Some(r) = t.strip_prefix("/*") {
         r.strip_suffix("*/").unwrap_or(r)
@@ -245,7 +245,7 @@ pub(super) fn is_spread(kind: &str) -> bool {
 }
 
 /// `name`: an identifier's text, or a dotted chain's without spaces, when it holds only name characters.
-pub(super) fn name(kind: &str, text: &str) -> Option<String> {
+pub fn name(kind: &str, text: &str) -> Option<String> {
     let chain = kind.contains("identifier")
         || matches!(kind, "member_expression" | "attribute" | "dotted_name" | "scoped_identifier" | "field_expression" | "qualified_name" | "nested_identifier" | "name");
     if !chain {
@@ -267,14 +267,14 @@ pub(super) fn name(kind: &str, text: &str) -> Option<String> {
 /// What a literal node gives: `strprefix`, `str`, and `value` with its `value_type`.
 #[derive(Default, Debug, PartialEq)]
 pub struct Literal {
-    pub(crate) prefix: Option<String>,
+    pub prefix: Option<String>,
     pub str: Option<String>,
     pub value: Option<(String, &'static str)>,
 }
 
 /// The literal facts of a node of `kind` with source `text`; `interpolated` when it has a part other than
 /// constant text (a Python `interpolation`, a PHP `encapsed_string`'s variable).
-pub(super) fn literal(family: Family, kind: &str, text: &str, interpolated: bool) -> Literal {
+pub fn literal(family: Family, kind: &str, text: &str, interpolated: bool) -> Literal {
     if let Some(own) = dialect_facts(family).and_then(|facts| facts.literal(kind, text)) {
         return own;
     }
@@ -1034,8 +1034,7 @@ impl CoreRows {
     }
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 /// A pattern's single-node metavariables (`$X`, not `$$$X` nor `$_X`), each once, in order.
 pub fn single_metavars(pattern: &str) -> Vec<String> {

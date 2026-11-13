@@ -33,8 +33,7 @@ pub mod code_rule_dsl {
             use crate::code_rule_dsl::language::adapter::pack as language_pack;
         }
         pub mod python;
-        #[cfg(test)]
-        pub mod python_tests;
+        // python_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
         #[path = "summary"]
         pub mod summary {
             pub use rerail_w::code_rule_dsl::calls::summary::*;

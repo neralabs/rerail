@@ -61,14 +61,14 @@ pub enum Part<'r, D: Doc> {
 
 impl<'r, D: Doc> Part<'r, D> {
     /// The part's kind.
-    pub(crate) fn kind(&self) -> Cow<'_, str> {
+    pub fn kind(&self) -> Cow<'_, str> {
         match self {
             Self::Named(node) => node.kind(),
             Self::Token(token) => token.kind(),
         }
     }
     /// The part's byte span.
-    pub(crate) fn range(&self) -> Range<usize> {
+    pub fn range(&self) -> Range<usize> {
         match self {
             Self::Named(node) => node.range(),
             Self::Token(token) => token.range(),
@@ -82,7 +82,7 @@ impl<'r, D: Doc> Part<'r, D> {
         }
     }
     /// The token, if the part is one.
-    pub(crate) fn token(&self) -> Option<&Token<'r, D>> {
+    pub fn token(&self) -> Option<&Token<'r, D>> {
         match self {
             Self::Named(_) => None,
             Self::Token(token) => Some(token),
@@ -166,5 +166,4 @@ fn part<'r, D: Doc>(child: Node<'r, D>) -> Part<'r, D> {
     if child.is_named() { Part::Named(child) } else { Part::Token(Token { node: child }) }
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

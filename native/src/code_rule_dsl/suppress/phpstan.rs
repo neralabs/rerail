@@ -49,7 +49,7 @@ const IGNORE_LINE: &str = "@phpstan-ignore-line";
 const IGNORE_NEXT_LINE: &str = "@phpstan-ignore-next-line";
 
 #[derive(Debug, Default)]
-pub(crate) struct PhpstanIndex {
+pub struct PhpstanIndex {
     /// `$linesToIgnore`, by zero-based line: `None` ignores every error on the line; `Some` holds
     /// the identifiers ordinary ignores list for it, in order.
     lines: HashMap<usize, Option<Vec<String>>>,
@@ -67,7 +67,7 @@ struct Pending<'s> {
 }
 
 impl PhpstanIndex {
-    pub(crate) fn read<D: Doc>(root: &Node<'_, D>, source: &str, lines: &LineTable) -> Self {
+    pub fn read<D: Doc>(root: &Node<'_, D>, source: &str, lines: &LineTable) -> Self {
         let mut index = Self::default();
         // The first line of the last token that is neither white space nor a comment.
         let mut previous = None;
@@ -239,7 +239,7 @@ impl PhpstanIndex {
     /// Whether an error of `kind` with one of `identifiers` at byte `at` is ignored. Asked in
     /// source order, a kind's errors on one line spend the identifiers listed for it; another
     /// kind's errors spend their own copy.
-    pub(crate) fn suppresses(
+    pub fn suppresses(
         &self,
         kind: &str,
         identifiers: &[String],
@@ -469,5 +469,4 @@ pub(crate) fn phpstan_identifier(identifier: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || *byte == b'.')
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

@@ -197,7 +197,7 @@ fn pack_patterns_keep_no_token_under_an_error() {
             _ => {}
         }
     }
-    let root = std::path::Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../packs");
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs");
     let mut found = Vec::new();
     for pack in std::fs::read_dir(&root).unwrap() {
         let Ok(rules) = std::fs::read_dir(pack.unwrap().path().join("rules")) else { continue };

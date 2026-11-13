@@ -303,7 +303,7 @@ impl ValueProgram {
         output
     }
 
-    pub(super) fn is_match(
+    pub fn is_match(
         &self,
         bytes: &[u8],
         strings: &[Vec<u8>],

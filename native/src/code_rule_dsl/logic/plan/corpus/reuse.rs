@@ -179,7 +179,7 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
         miss("the rule files differ");
         return Ok(None);
     }
-    if !unchanged(programs, root, typing, options, &rest)? {
+    if !unchanged(programs, &given.graphs, root, typing, options, &rest)? {
         miss("a consulted file or read changed");
         return Ok(None);
     }

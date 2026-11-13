@@ -168,7 +168,7 @@ fn context(g: &Grammar, f: &Facts, call: u32) -> (u32, u32) {
 
 /// The rows of one document's facts, from its calls' postings.
 pub fn rows(g: &Grammar, f: &Facts) -> Rows { collect_rows(g,f,true) }
-pub(crate) fn structure(g: &Grammar, f: &Facts) -> Rows { collect_rows(g,f,false) }
+pub fn structure(g: &Grammar, f: &Facts) -> Rows { collect_rows(g,f,false) }
 fn collect_rows(g: &Grammar, f: &Facts, with_arguments: bool) -> Rows {
     let mut calls: Vec<u32> = g.calls.iter().flat_map(|&atom| f.of_kind(atom).iter().copied()).collect();
     calls.sort_unstable();
@@ -209,11 +209,10 @@ pub(crate) fn digest(rows: &Rows) -> [u8; 32] {
     hash.finalize().into()
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 /// Extract only calls requested by the consumer; no all-call scan or context calculation.
-pub(crate) fn arguments(g:&Grammar,f:&Facts,calls:&[u32])->Vec<[u32;6]> {
+pub fn arguments(g:&Grammar,f:&Facts,calls:&[u32])->Vec<[u32;6]> {
     let mut out=Rows::default();
     for &call in calls { if g.role(f,call)==Role::Call { append_arguments(g,f,call,&mut out); } }
     out.arg

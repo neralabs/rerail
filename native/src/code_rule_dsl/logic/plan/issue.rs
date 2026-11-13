@@ -329,7 +329,9 @@ impl<'a> Board<'a> {
                 let mut strand = strand;
                 let mut times = Vec::new();
                 let mut reserved = Default::default();
+                let before = super::super::lanes::wave::flushed_now();
                 let (n, stop) = strand.run_members(&data, &mut times, &mut reserved);
+                strand.2 = super::super::lanes::wave::since(before);
                 (strand, n, stop, times, reserved)
             }));
         }

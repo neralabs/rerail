@@ -39,7 +39,7 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 /// The node kinds a PHP `calls` term holds at.
-pub(crate) const CALL_KINDS: [&str; 5] = [
+pub const CALL_KINDS: [&str; 5] = [
     "function_call_expression",
     "member_call_expression",
     "nullsafe_member_call_expression",
@@ -164,10 +164,10 @@ impl Enclosing {
 }
 
 /// What callee resolution reads of one file.
-pub(crate) struct Reader<'a, 'r, D: Doc> {
-    pub(crate) names: &'a PhpNames,
-    pub(crate) table: &'a ScopeTable,
-    pub(crate) root: Node<'r, D>,
+pub struct Reader<'a, 'r, D: Doc> {
+    pub names: &'a PhpNames,
+    pub table: &'a ScopeTable,
+    pub root: Node<'r, D>,
 }
 
 impl<'r, D: Doc> Reader<'_, 'r, D> {
@@ -1187,7 +1187,7 @@ fn supers<D: Doc>(extractor: &mut Extractor, node: &Node<'_, D>, class: &str, na
 
 /// What the call `call` in `summary`'s file names: the same answer extraction recorded for it.
 /// `None` where it names nothing.
-pub(crate) fn callee_at<'r, D: Doc>(
+pub fn callee_at<'r, D: Doc>(
     reader: &Reader<'_, 'r, D>,
     summary: &Summary,
     call: &Node<'r, D>,

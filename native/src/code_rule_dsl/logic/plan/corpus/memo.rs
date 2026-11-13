@@ -353,9 +353,12 @@ impl Found {
     pub(super) fn whole(&self, store: &ContentStore, program: &[u8; 32]) -> StoreResult<Option<Found>> {
         match self {
             Found::Held(e) => Ok(Some(Found::Held(std::sync::Arc::clone(e)))),
+            // From the store, inside the waves too: a hit read for its outputs alone was looked up before the first
+            // wave, and the snapshot holds no entry of a path looked up then (`admit_memo_entries`). Read from the
+            // snapshot, its entry was always missing when the kept inputs were not taken (O-store-single-program).
             Found::Frame(f) => {
                 let plan = plan_digest(program);
-                Ok(by_digest_read(store, &plan, &[f.path.as_str()], vec![(0, f.digest)], entry_rel(&plan), true)?.pop().map(|(_, found)| found))
+                Ok(by_digest_from(store, &plan, &[f.path.as_str()], vec![(0, f.digest)], entry_rel(&plan), true)?.pop().map(|(_, found)| found))
             }
         }
     }
@@ -398,18 +401,18 @@ fn by_digest(store: &ContentStore, plan: &[u8; 32], paths: &[&str], wanted: Vec<
 
 /// `by_digest`, of the frames of `rel`: the entries' (`entry_rel`) or their outputs' (`outputs_rel`).
 fn by_digest_in(store: &ContentStore, plan: &[u8; 32], paths: &[&str], wanted: Vec<(usize, [u8; 32])>, rel: crate::content_store::FrameRel) -> StoreResult<Vec<(usize, Found)>> {
+    // An entry (not its outputs) looked up before the waves is read from the store by its key: the snapshot holds a
+    // run's entries only for what its waves look up (`admit_memo_entries`, decision 0117).
     let stored = rel.name == entry_rel(plan).name && !crate::code_rule_dsl::logic::profile::inside_waves();
-    by_digest_read(store, plan, paths, wanted, rel, stored)
+    by_digest_from(store, plan, paths, wanted, rel, stored)
 }
 
-/// `by_digest_in`, from the store (`stored`) or the waves' snapshot.
-fn by_digest_read(store: &ContentStore, plan: &[u8; 32], paths: &[&str], wanted: Vec<(usize, [u8; 32])>, rel: crate::content_store::FrameRel, stored: bool) -> StoreResult<Vec<(usize, Found)>> {
+/// `by_digest_in`, from the store (`stored`) or from the run's snapshot.
+fn by_digest_from(store: &ContentStore, plan: &[u8; 32], paths: &[&str], wanted: Vec<(usize, [u8; 32])>, rel: crate::content_store::FrameRel, stored: bool) -> StoreResult<Vec<(usize, Found)>> {
     let wanted: Vec<(usize, [u8; 32], i64)> = wanted.into_iter().map(|(i, d)| (i, d, part_of(&d, paths[i]))).collect();
     let docs: Vec<((), &str)> = paths.iter().map(|p| ((), *p)).collect();
     let space = crate::content_store::local_space(plan);
     let parts: Vec<i64> = wanted.iter().map(|(_, _, p)| *p).collect();
-    // An entry (not its outputs) looked up before the waves is read from the store by its key: the snapshot holds a
-    // run's entries only for what its waves look up (`admit_memo_entries`, decision 0117).
     let mut frames = if stored {
         store.admit_parts_stored(&space, &rel, &parts)?
     } else {
@@ -426,6 +429,12 @@ fn by_digest_read(store: &ContentStore, plan: &[u8; 32], paths: &[&str], wanted:
         }
     }
     if !used.is_empty() {
+        // An outputs frame is used with its entry's (O-store-single-program): a hit read for its outputs alone falls
+        // back to its whole entry when the kept inputs are not taken. Marked alone, the entry aged out after
+        // `MEMO_RUNS` runs that read only outputs (one 44-policy batch), and the next batch's fallback found it gone.
+        if rel.name == outputs_rel(plan).name {
+            store.queue_frame_parts_used(space.clone(), entry_rel(plan), used.clone(), super::run_token(), MEMO_RUNS);
+        }
         store.queue_frame_parts_used(space, rel, used, super::run_token(), MEMO_RUNS);
     }
     Ok(out)

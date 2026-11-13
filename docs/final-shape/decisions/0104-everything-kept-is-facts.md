@@ -344,6 +344,24 @@ Each cache is listed with its step in `facts_only.rs`.
 Step 2 comes first here, because every other step reads programs. A program as facts is the key
 that steps 3, 4, 6 and 7 join.
 
+**Two caches that were no cache's work (2026-11-12).** Two in-process maps by a program's text came
+in from the hub, and the guard listed neither. Both kept a value the run already held a step
+earlier, so they were removed, not moved to facts:
+
+- **`rr.rs` `LOWERED`** kept a lowered program by the text it prints as. `run-rr` read and lowered
+  the file, printed it, and handed the run only the print. The run then parsed and lowered it again.
+  Now `run_program` hands the program it read to `run_dialects` and to the run of that text
+  (`corpus::run_read`). The run's combine holds that program instead of its print lowered a second
+  time. A dialect run whose text names another language is lowered for that grammar, as before. The
+  map's other reason (lowering a printed program was no identity) went with the hub's idempotent
+  lowering (5db161b00).
+- **`rr.rs` `SEEDS`** kept a text's include seed by the text. A run asked for it up to five times:
+  for phase 0's graphs, for each combine's digest (with and without the typing facts), and for the
+  cutoff's combine. Now the run reads each seed once, when it fetches the graphs. It hands the graphs'
+  digests to every combine it makes (`run_handed` → `combine_keyed`, `reuse::reused`).
+
+Neither was keyed by anything the run did not already have, so no rule pair replaces them.
+
 ## Compatibility
 
 - **rr-align** keeps step 1, which includes the observer, `World::still`, `inputs::still` and

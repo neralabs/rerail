@@ -3,7 +3,7 @@
 use super::*;
 
 /// Rust's usage index (`Usage`), its crate's.
-pub(crate) trait RustUsage: Sized {
+pub trait RustUsage: Sized {
     /// Rust's index: the reads rustc's unused lints count, with what macros may read unknown
     /// (`rust`).
     #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]

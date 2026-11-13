@@ -13,7 +13,7 @@ pub use super::types::{FloatTy, IntTy};
 
 /// A Rust literal value.
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) enum RustValue {
+pub enum RustValue {
     Unknown,
     Bool(bool),
     Int { value: BigInt, ty: Option<IntTy> },
@@ -25,7 +25,7 @@ pub(crate) enum RustValue {
 }
 
 /// Decodes a tree-sitter-rust literal node.
-pub(crate) fn literal<D: Doc>(node: &Node<'_, D>) -> RustValue {
+pub fn literal<D: Doc>(node: &Node<'_, D>) -> RustValue {
     let text = node.text();
     match node.kind().as_ref() {
         "boolean_literal" => match text.as_ref() {
@@ -337,7 +337,7 @@ struct Reading<'t> {
 /// anything else (names, paths, calls, macros) and for every expression rustc rejects. Each node
 /// read spends a step of `context`'s budget and a level of its nesting (`Context::enter`): an
 /// expression nested deeper than `MAX_DEPTH`, or one the budget runs out on, is `Unknown`.
-pub(crate) fn evaluate<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> RustValue {
+pub fn evaluate<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> RustValue {
     run(node, None, context)
 }
 
@@ -346,7 +346,7 @@ pub(crate) fn evaluate<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) ->
 /// unsuffixed integer takes the declared integer type, and a value of another type is `Unknown`.
 /// A chain of more than 16 names, a cycle, a `static`, a `let` binding (a run-time value), a path
 /// (`Self::C`, `m::C`) and a name no item of the file binds are `Unknown`.
-pub(crate) fn evaluate_following<D: Doc>(
+pub fn evaluate_following<D: Doc>(
     node: &Node<'_, D>,
     table: &ScopeTable,
     context: &mut Context<'_>,
@@ -1200,5 +1200,4 @@ fn wrap_int(value: BigInt, ty: IntTy) -> BigInt {
     }
     value
 }
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

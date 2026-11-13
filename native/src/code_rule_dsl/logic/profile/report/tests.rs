@@ -21,6 +21,7 @@
                 StepPlan { literal: "a($x)".into(), access: "scan".into(), source: "input".into(), rows: 5.0, passed: Vec::new(), basis: "relation size".into() },
                 StepPlan { literal: "b($x)".into(), access: "lookup on (c0)".into(), source: "derived".into(), rows: 2.0, passed: vec![("c($x)".into(), 7.0, "postings".into())], basis: "postings, containment 0.500".into() },
             ],
+            shaped: Vec::new(),
         };
         planned("xstratum", "seed xrule", Some(3), &plan, 0.01, 0, Some(&[(1, 5), (5, 2)]), None);
         planned("xstratum", "seed xrule", Some(3), &plan, 0.01, 1, Some(&[(1, 4), (4, 1)]), None);
@@ -53,11 +54,16 @@
         let dir = crate::code_rule_dsl::fixtures::temp().with_extension("explain");
         write(&dir, "header\n").unwrap();
         let report = std::fs::read_to_string(dir.join("profile.txt")).unwrap();
+        // The SQL waits under this test's span; other tests' runs may record theirs beside them (the profile is the
+        // process's, and on while this test runs).
+        let ours: Vec<_> = super::super::sql_waits().into_iter().filter(|(path, _, _, _)| path == "xwave").collect();
         set(false);
         assert!(report.contains("Stratum xstratum  [engine: native set engine]  (loops=2"), "{report}");
         assert!(report.contains("why: every rule has a native step"));
-        assert!(report.contains("== Fell back to SQLite: 1 strata"), "{report}");
-        assert!(report.contains("== Forces SQL waits (hazards): 1 statements, 1 runs, 2.0 ms inside the waves"), "{report}");
+        // Counted over every run the profile saw: xsql's own line is below.
+        assert!(report.contains("== Fell back to SQLite: "), "{report}");
+        assert!(report.contains("== Forces SQL waits (hazards): "), "{report}");
+        assert_eq!(ours, [("xwave".to_owned(), "store: BEGIN IMMEDIATE".to_owned(), 1, 2_000_000)], "{report}");
         assert!(report.contains("a write to the store on a wave's thread") && report.contains("xwave"), "{report}");
         assert!(!report.contains("xbefore") && !report.contains("xafter") && !report.contains("xbehind"), "{report}");
         assert!(report.contains("xsql: aggregate join (string concatenation)"), "{report}");

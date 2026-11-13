@@ -13,21 +13,21 @@ use ast_grep_core::{Doc, Node};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-enum Prefix {
+pub enum Prefix {
     Qualified(String),
     Relative { level: usize, rest: String },
 }
 
 #[derive(Default, Debug)]
 pub struct Imports {
-    bindings: BTreeMap<String, BTreeSet<Prefix>>,
+    pub bindings: BTreeMap<String, BTreeSet<Prefix>>,
     /// An import could not be understood, so qualification requests are admitted.
     pub opaque: bool,
 }
 impl Imports {
     /// Observe only the import node's subtree, never the enclosing document.
     /// Passing any other node is harmless and does not make the file opaque.
-    pub(crate) fn observe(&mut self, node: &Node<'_, TapeDoc>, module: Option<&ModulePath>) {
+    pub fn observe(&mut self, node: &Node<'_, TapeDoc>, module: Option<&ModulePath>) {
         match node.kind().as_ref() {
             "import_statement" | "import_from_statement" | "future_import_statement" => {}
             _ => return,
@@ -47,7 +47,7 @@ impl Imports {
     /// True only requests normal semantic confirmation. Targets are unioned by the
     /// caller across predicates; no rule identity is involved. Prefix targets and
     /// custom typing-module aliases are conservatively overadmitted.
-    pub(crate) fn may_qualify(
+    pub fn may_qualify(
         &self,
         node: &Node<'_, TapeDoc>,
         wanted_imports: &BTreeSet<String>,
@@ -272,12 +272,11 @@ fn wanted(name: &str, imports: &BTreeSet<String>) -> bool {
     })
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 /// The same conservative import screen over existing core facts. No tape restoration or scope table.
 impl Imports {
-    pub(crate) fn from_core(f: &crate::code_rule_dsl::facts::core::Facts, catalog: &crate::code_rule_dsl::language::KindCatalog, module: Option<&ModulePath>) -> Self {
+    pub fn from_core(f: &crate::code_rule_dsl::facts::core::Facts, catalog: &crate::code_rule_dsl::language::KindCatalog, module: Option<&ModulePath>) -> Self {
         use crate::code_rule_dsl::facts::core::{kind_atom, kind_code, facts_tag};
         let kind = |n: u32| catalog.kind_name(kind_code(f.kind[n as usize])).unwrap_or("");
         let named = |n: u32| f.flags[n as usize] & 1 != 0 && !matches!(kind(n), "comment" | "line_continuation");

@@ -217,3 +217,36 @@ fn a_flag_set_on_the_way_settles_a_first_tokens_guard() {
     let without = m.lines().filter(|l| l.contains(" without 0 call 0")).count();
     assert_eq!((with, without), (1, 2), "{m}");
 }
+
+/// `machine`, a function a rule (`build_shaped`).
+fn rule_machine(src: &str) -> String {
+    let ids = std::cell::RefCell::new(std::collections::HashMap::<String, u16>::new());
+    let id = |n: &str| -> Result<u16, String> {
+        let mut m = ids.borrow_mut();
+        let k = m.len() as u16 + 1;
+        Ok(*m.entry(n.to_owned()).or_insert(k))
+    };
+    let tokens: Vec<String> = TOKENS.iter().map(|t| t.to_string()).collect();
+    let is_token = |n: &str| TOKENS.contains(&n);
+    let reading = |n: &str| Err(format!("no reading {n}"));
+    let g = grammar::Ids { kind: &id, field: &id, is_token: &is_token, tokens: &tokens, reading: &reading, marks: &[] };
+    let (states, arms, _) = grammar::build_shaped(&tree(src), &g, true).expect("builds");
+    grammar::text(&states, &arms)
+}
+
+#[test]
+fn a_field_on_a_nested_choice_of_one_node_is_set_where_it_returns() {
+    // `v: item`, `item` a nested choice (no node of its own) that makes one node: a call, as the
+    // lean parser's `self.item()?; self.field(V)`, the field set on the node made last where
+    // it returns. No arm enters `item` at its first token.
+    let one = format!("tree t {{\n  node root = (x v: item | y v: item)*\n  choice item nested = one | two\n  node one nested = p {TEN}\n  node two nested = q {TEN}\n}}");
+    let m = rule_machine(&one);
+    assert!(m.lines().any(|l| l.starts_with("state ") && l.contains(" returned f ")), "{m}");
+    let into_first: Vec<&str> = m.lines().filter(|l| l.starts_with("arm ") && l.matches(" push ").count() > 1).collect();
+    assert!(into_first.is_empty(), "{m}");
+    // Two leaves: the field goes to the first, which the node made last is not. The call goes
+    // in at its first token, the field on that token's leaf.
+    let two = format!("tree t {{\n  node root = (x v: item | y v: item)*\n  choice item nested = a {TEN} | b {TEN}\n}}");
+    let m = rule_machine(&two);
+    assert!(!m.contains(" returned f "), "{m}");
+}

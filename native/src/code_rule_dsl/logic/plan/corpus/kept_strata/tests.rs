@@ -102,7 +102,7 @@
             let db = rusqlite::Connection::open(&path).unwrap();
             native::register(&db).unwrap();
             native::register_symbols(&db).unwrap();
-            let mut kept = Kept::new(&store, [42; 32], &[]);
+            let mut kept = Kept::new(&store, [42; 32], [0; 32], &[]);
             let outcome = plan::run_atoms_native_hooked(&lowered, &db, "main", plan::Stats::empty(&lowered.program),
                 Default::default(), "program", plan::Hooks { strata: Some(&mut kept), ..Default::default() }).unwrap();
             let counts = kept.strata.unwrap();
@@ -127,7 +127,7 @@
         let put = |v| FramePut { rel: rel.clone(), part: 0, digest: v as u64, reads: vec![],
             rows: FrameRows { types: vec![0], rows: vec![v], n: 1 } };
         store.keep_frames(&[42; 32], &[put(1)], &[], None).unwrap();
-        let mut kept = Kept::new(&store, [42; 32], &[]);
+        let mut kept = Kept::new(&store, [42; 32], [0; 32], &[]);
         kept.program(&HashMap::from([("r".into(), [1; 32])]));
         assert!(kept.has_rows("r"));
         store.keep_frames(&[42; 32], &[put(2)], &[], None).unwrap();

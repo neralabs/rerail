@@ -14,6 +14,13 @@ enum Tok {
     Nl,
 }
 
+/// A token mark's choice (`Stmt::TokenMark`): a token of a kind, or a token whose text is a word.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TokenElem {
+    Kind(String),
+    Word(Vec<u8>),
+}
+
 #[derive(Clone, Debug)]
 pub enum Arg {
     E(Expr),
@@ -206,6 +213,11 @@ pub enum Stmt {
     /// kinds before one token come in the order they are declared. `, end`: the end of the file
     /// has it too, after the last token.
     Mark { kind: String, at: Expr, end: bool },
+    /// `mark KIND = tokens [after E] E …` (decision 0129): a mark before a token that begins a
+    /// run of tokens, each one of an element's choices (`|`): a token kind (a name) or a word
+    /// (a string), the extras between them skipped. `after`: the token before is one of
+    /// `before`'s. The mark is at the first element's token.
+    TokenMark { kind: String, before: Vec<TokenElem>, seq: Vec<Vec<TokenElem>> },
     /// `hidden KIND …` (in a tree): marks taken where the grammar can take them and skipped
     /// elsewhere. A mark not hidden, where the grammar can not take it, refuses the file.
     Hidden(Vec<String>),
@@ -493,6 +505,26 @@ impl P {
             }
             Some(Tok::P("}")) => Ok(()),
             _ => self.err("end of line"),
+        }
+    }
+    /// A token mark's element: choices joined by `|`, each a kind (a name) or a word (a string).
+    fn token_choices(&mut self) -> R<Vec<TokenElem>> {
+        let mut out = vec![];
+        loop {
+            match self.peek().cloned() {
+                Some(Tok::Str(s)) => {
+                    self.i += 1;
+                    out.push(TokenElem::Word(s));
+                }
+                Some(Tok::Ident(n)) => {
+                    self.i += 1;
+                    out.push(TokenElem::Kind(n));
+                }
+                _ => return self.err("a token kind or a word"),
+            }
+            if !self.eat_p("|") {
+                return Ok(out);
+            }
         }
     }
     fn kind(&mut self) -> R<String> {
@@ -1093,6 +1125,19 @@ impl P {
             "mark" => {
                 let kind = self.kind()?;
                 self.want_p("=")?;
+                if self.eat_kw("tokens") {
+                    let before = if self.eat_kw("after") { self.token_choices()? } else { vec![] };
+                    let mut seq = vec![];
+                    while matches!(self.peek(), Some(Tok::Ident(_) | Tok::Str(_))) {
+                        seq.push(self.token_choices()?);
+                    }
+                    if seq.is_empty() {
+                        return self.err("a token after `tokens`");
+                    }
+                    let s = Stmt::TokenMark { kind, before, seq };
+                    self.end_stmt()?;
+                    return Ok(s);
+                }
                 let at = self.expr()?;
                 let end = self.eat_p(",");
                 if end {

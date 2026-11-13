@@ -101,7 +101,7 @@ impl Names {
     }
 
     /// The header's `grammar=` value.
-    fn header(&self) -> String {
+    pub fn header(&self) -> String {
         format!("{}@{}", dialect_name(self.dialect), self.digest)
     }
 
@@ -156,7 +156,7 @@ fn strings(items: &[u16]) -> String {
 }
 
 /// The program's capabilities (the module's `caps`).
-pub(in crate::code_rule_dsl) fn caps(program: &Program) -> String {
+pub fn caps(program: &Program) -> String {
     let mut caps = vec!["interp"];
     if Micro::of(program).is_some() {
         caps.push("micro");
@@ -414,7 +414,7 @@ pub fn assemble(text: &str) -> Result<Program, String> {
 }
 
 /// One program from `rir`, through the verifier, with the grammar its header names.
-pub(in crate::code_rule_dsl) fn assemble_named(text: &str) -> Result<(Program, Option<Names>), String> {
+pub fn assemble_named(text: &str) -> Result<(Program, Option<Names>), String> {
     let mut parts = Parts::default();
     let mut names = None;
     let mut header = false;
@@ -573,9 +573,7 @@ pub(in crate::code_rule_dsl) fn fused(pack: &super::fusion::Fused, members: &[&P
     out
 }
 
-#[cfg(test)]
-#[path = "rir_tests.rs"]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 
 

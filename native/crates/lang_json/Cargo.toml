@@ -87,6 +87,8 @@ rerail-compiler = { path = "../compiler" }
 rerail-rr-parser = { path = "../rr_parser" }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
+# JSON's parser (`json_parser::simdjson`).
+rerail-simdjson = { path = "../simdjson" }
 cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
 
 [target.'cfg(target_family = "wasm")'.dependencies]
@@ -112,6 +114,7 @@ metal = "0.33.0"
 [target.'cfg(target_os = "macos")'.dev-dependencies]
 
 [dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-lang-json = { path = ".", features = ["test-hooks"] }
 ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
 rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "array"] }

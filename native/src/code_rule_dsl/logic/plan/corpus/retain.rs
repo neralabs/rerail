@@ -576,14 +576,15 @@ impl Retained {
         }
         let _span = crate::code_rule_dsl::logic::profile::span(|| format!("{} relations' kept rows, from the frames", wanted.len()));
         let keys: Vec<_> = wanted.iter().map(|r| (frames.names[*r].clone(), DOCS_PART)).collect();
-        let admitted = store.admit_frame_parts(&frames.space, &keys).map_err(|e| Error::Plan(e.to_string()))?;
+        // Their levels, where stored (decision 0090), in the same batch: a recursive stratum reached is maintained by
+        // levels only if its kept relations have them. Not a key of the admission's check: a relation may have none.
+        let mut with_level_keys = keys.clone();
+        with_level_keys.extend(wanted.iter().map(|r| (frames.names[*r].clone(), LEVELS_PART)));
+        let admitted = store.admit_frame_parts(&frames.space, &with_level_keys).map_err(|e| Error::Plan(e.to_string()))?;
         if !super::kept_strata::admission_matches(&keys, &admitted, |(r, _)| frames.derived.get(&r.name)) {
             return Ok(false);
         }
-        // Their levels, where stored (decision 0090): a recursive stratum reached is maintained by levels only if its
-        // kept relations have them.
-        let level_keys: Vec<_> = wanted.iter().map(|r| (frames.names[*r].clone(), LEVELS_PART)).collect();
-        let levels = store.admit_frame_parts(&frames.space, &level_keys).map_err(|e| Error::Plan(e.to_string()))?;
+        let levels = &admitted;
         let mut late = self.late.borrow_mut();
         let (mut rows, mut n) = self.admitted.get();
         for (rel, key) in wanted.into_iter().zip(&keys) {
@@ -594,7 +595,7 @@ impl Retained {
             }
             rows += got.n;
             n += 1;
-            let Some(kept) = with_levels(frames, &levels, rel, key, got) else { return Ok(false) };
+            let Some(kept) = with_levels(frames, levels, rel, key, got) else { return Ok(false) };
             late.insert(rel.clone(), Kept { rel: kept, width, output: None });
         }
         self.admitted.set((rows, n));
@@ -778,6 +779,31 @@ impl Retained {
         top.sort_by_key(|(_, n)| std::cmp::Reverse(**n));
         out.push(format!("  top probes: {}", top.iter().take(20).map(|((r, c), n)| format!("{r}{c:?}x{n}")).collect::<Vec<_>>().join(" ")));
         out.join("\n")
+    }
+    /// Each kept guest copy (`rr_in_<grammar>_<n>_<rel>`, decision 0058) against the relation it copies, as
+    /// `(copy, rows, rows with a guest document's value, rows also in the original, the original's rows)`: a value is
+    /// a guest's when its document key (`>> 32`) is in the guests' range (`hiding`). `RERAIL_COPIES` prints it.
+    pub(in crate::code_rule_dsl) fn copies(&self) -> Vec<(String, usize, usize, usize, usize)> {
+        let guest = |v: i64| (v >> 32) >= (1 << 30) && (v >> 32) < (1i64 << 31);
+        let mut out = Vec::new();
+        for (rel, k) in &self.rels {
+            let Some(rest) = rel.strip_prefix("rr_in_") else { continue };
+            // `<grammar>_<n>_` once or more (`sql_0_sql_1_`), then the relation.
+            let mut parts: Vec<&str> = rest.split('_').collect();
+            let mut i = 0;
+            while i + 1 < parts.len() && parts[i + 1].chars().all(|c| c.is_ascii_digit()) && !parts[i + 1].is_empty() { i += 2; }
+            let orig = parts.split_off(i).join("_");
+            let Some(rows) = k.rel.live_rows() else { continue };
+            let w = k.width.max(1);
+            let held = self.rels.get(&orig).filter(|o| o.width == k.width).and_then(|o| o.rel.live_rows()).unwrap_or_default();
+            let original: std::collections::HashSet<&[i64]> = held.chunks_exact(w).collect();
+            let n = rows.len() / w;
+            let guests = rows.chunks_exact(w).filter(|r| r.iter().any(|&v| guest(v))).count();
+            let shared = rows.chunks_exact(w).filter(|r| original.contains(r)).count();
+            out.push((rel.clone(), n, guests, shared, original.len()));
+        }
+        out.sort();
+        out
     }
     /// What the kept relations hold, by kind of relation (a counting support, `h__sup…`, or any other): rows,
     /// values, levels, and indexes and sets, in bytes (`InRel::held_bytes`). `RERAIL_KEPT_BYTES` prints it.
@@ -1491,10 +1517,11 @@ impl Retained {
         if kept_stats::on() {
             keys.extend(wanted.iter().map(|r| (frames.names[r].clone(), kept_stats::PART)));
         }
+        // Their levels, where stored, in the same batch: not a key of the admission's check, as a relation may have
+        // none.
+        keys.extend(wanted.iter().map(|r| (frames.names[r].clone(), LEVELS_PART)));
         let admitted = store.admit_frame_parts(&frames.space, &keys).map_err(|e| Error::Plan(e.to_string()))?;
-        // Their levels, where stored: not a key of the admission's check, as a relation may have none.
-        let level_keys: Vec<_> = wanted.iter().map(|r| (frames.names[r].clone(), LEVELS_PART)).collect();
-        let levels = store.admit_frame_parts(&frames.space, &level_keys).map_err(|e| Error::Plan(e.to_string()))?;
+        let levels = &admitted;
         // Prepare all rows before publishing any of them into the retained part. Failed admission is a cache
         // miss, and the caller must recompute its cut before maintenance can run.
         let decoded = (|| -> Option<_> {
@@ -1507,7 +1534,7 @@ impl Retained {
                 let width = prog.decls.get(rel)?.len();
                 if got.types.len() != width { return None; }
                 rows += got.n;
-                let rel_ = with_levels(frames, &levels, rel, key, got)?;
+                let rel_ = with_levels(frames, levels, rel, key, got)?;
                 rels.push((rel.clone(), Kept { rel: rel_, width, output: None }));
             }
             for (rel, keys) in &input_parts {
@@ -1859,7 +1886,7 @@ impl Retained {
         if kept_stats::on() {
             self.stats_puts(was, &now, &mut puts);
         }
-        store.queue_frames_retagged(was.space, puts, retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token())));
+        store.queue_frames_retagged(was.space, puts, retags, delta_out, Vec::new(), Some((was.names.values().cloned().collect(), super::run_token(), self.key)));
         Ok(written)
     }
 }

@@ -20,7 +20,7 @@ use crate::Error;
 
 use crate::native_cpu_shape::Step;
 use crate::native_ir::{FlagOp, On, Structure, StructuralOperation as Op};
-use crate::stream::{ByteSwitch, DEAD, GONE, KEEP, Node, REFUSE, REMEMBERED, Refused};
+use crate::stream::{ByteSwitch, DEAD, GONE, KEEP, Node, REFUSE, REMEMBERED, Refused, WORD_KIND};
 use cranelift_codegen::Context;
 use cranelift_codegen::ir::{AbiParam, Block, BlockArg, InstBuilder, MemFlags, Value, condcodes::IntCC, types};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
@@ -79,6 +79,13 @@ pub struct Ctx {
     room_nodes: u64,
     room_supers: u64,
     room_pushes: u64,
+    /// With the calls open counted by the machine's stack (`calls_on_stack`): the stack
+    /// pointer where the run's first rule is called, the lowest it may go (`STACK_BYTES` below
+    /// it), and the log of the smallest rule function's frame, in bytes (so the calls open are
+    /// at most the stack's depth shifted down by it).
+    stack_base: u64,
+    stack_limit: u64,
+    frame_shift: u64,
     /// In clusters (`compile_cut`), the run's state (`Mem`): every cluster reaches it through
     /// `ctx`, its first argument.
     state: [u64; Mem::COUNT as usize],
@@ -119,12 +126,15 @@ const TOTALS_MASK: i32 = 192;
 const ROOM_NODES: i32 = 200;
 const ROOM_SUPERS: i32 = 208;
 const ROOM_PUSHES: i32 = 216;
-const STATE: i32 = 224;
-const _: () = assert!(std::mem::offset_of!(Ctx, out_rows) == OUT_ROWS as usize && std::mem::offset_of!(Ctx, state) == STATE as usize);
+const STACK_BASE: i32 = 224;
+const STACK_LIMIT: i32 = 232;
+const FRAME_SHIFT: i32 = 240;
+const STATE: i32 = 248;
+const _: () = assert!(std::mem::offset_of!(Ctx, out_rows) == OUT_ROWS as usize && std::mem::offset_of!(Ctx, stack_base) == STACK_BASE as usize && std::mem::offset_of!(Ctx, state) == STATE as usize);
 
-/// A node of the table, as the lean parser's tape has one (`rr_syntax::lean::Node`, 24 bytes):
-/// its kind and field, its bytes, and (where the lean parser has its parent) the records in its
-/// subtree, its own counted; its parent and whether it is an extra, made at `ACCEPT` (`table`).
+/// A node of the table, as the lean parser's tape has one (`rr_syntax::tape::Row`, 24 bytes, the
+/// same layout): its kind and field, its bytes, the records in its subtree (its own counted),
+/// its parent and whether it is an extra, each written with the row as it stands at the end.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct NodeRow {
@@ -217,11 +227,14 @@ impl NodeCol {
 
 /// The root's parent in the table's `parent` column.
 pub const NO_PARENT: u32 = u32::MAX;
-/// `head`'s mark of a wrap's own record.
-const IS_WRAP: i64 = u32::MAX as i64;
 
 /// Returns 0 when the words accept, else one more than the refusing word's place.
-type Entry = unsafe extern "C" fn(*const Ctx) -> u64;
+/// Tier 2's entry: `ctx`, the run's end.
+pub type Entry = unsafe extern "C" fn(*const Ctx) -> u64;
+
+/// Keep each tier 2 function's IR (`CompiledStream::ir`), for an ahead-of-time build of the same
+/// code (`clif_rust`).
+pub static KEEP_IR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// The most a program writes between two `TOKEN`s: nodes, supertypes and returns pushed.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -242,6 +255,8 @@ pub struct Bounds {
 pub struct CompiledStream {
     _module: JITModule,
     entry: Entry,
+    /// The log of the smallest rule function's frame (`Ctx::frame_shift`).
+    frame_shift: u64,
     bounds: Bounds,
     /// The extract `TOKEN` reads, and the output of the mask `SPAN m=1` reads.
     pub starts: Option<usize>,
@@ -270,6 +285,15 @@ pub struct CompiledStream {
     /// Each word's Cranelift instructions as lowered (a shared run's body counted at its first
     /// place), for the profile: times how often each word runs, where tier 2's work goes.
     pub word_insts: Vec<u32>,
+    /// Each word's machine code's bytes, in its rule's function (not the functions it calls),
+    /// for the shape: where the code goes.
+    pub word_bytes: Vec<u32>,
+    /// Each word's machine code's ranges in `code_bytes` (its place, start, end), for the shape.
+    pub word_ranges: Vec<(u32, u32, u32)>,
+    /// With `KEEP_IR`: each function's IR as Cranelift was given it (its `FuncId`), and the
+    /// entry's id.
+    pub ir: Vec<(u32, cranelift_codegen::ir::Function)>,
+    pub entry_id: u32,
 }
 
 /// Each word's phases (`stream::phases`), over the lowered words: `TAKEN` after a `SPAN`,
@@ -325,7 +349,7 @@ pub(crate) fn successors(native: &Structure, pushes: &[u16], pc: usize) -> Vec<u
 /// rule; `TOKEN` goes on to the next word.
 pub fn rule_successors(native: &Structure, pc: usize) -> Vec<usize> {
     match native.structural[pc].operation {
-        Op::Push { target } => vec![usize::from(target), usize::from(target) + 1],
+        Op::Push { target, .. } => vec![usize::from(target), usize::from(target) + 1],
         Op::Return { .. } => vec![],
         Op::Token { .. } => vec![pc + 1],
         _ => successors(native, &[], pc),
@@ -363,6 +387,51 @@ pub const ENDED: u64 = 1 << 63;
 /// fallback), as the machine's stack is the calls'. A rule's frame is at most about 350 bytes
 /// on `.rr`: some 360 KB at the most.
 pub const DEPTH: i64 = 1024;
+
+/// With the calls open counted by the machine's stack (`calls_on_stack`): the most of it a run
+/// takes, about `DEPTH` calls of `.rr`'s largest frames. Past it, a rule function refuses the
+/// file where it is entered (to the fallback), as a stack check in a prologue does.
+pub const STACK_BYTES: i64 = 384 << 10;
+
+/// Whether the machine's stack can count the calls open (`Cut::calls`), as the lean parser's
+/// has no count: no `RETURN` runs with no call open, and no `ACCEPT` within a call. Each by the
+/// words reached at the same depth (`rule_successors`): from the start, no `RETURN`; from
+/// every callee's entry, no `ACCEPT`. So neither needs a check, and the count serves only the
+/// depth (a check where each rule function is entered) and the room for the nodes returns
+/// write (`TOKEN`'s, bounded by the stack's depth).
+pub fn calls_on_stack(native: &Structure) -> bool {
+    let n = native.structural.len();
+    let reach = |from: Vec<usize>| -> Vec<bool> {
+        let mut seen = vec![false; n];
+        let mut todo = from;
+        while let Some(pc) = todo.pop() {
+            if pc >= n || std::mem::replace(&mut seen[pc], true) {
+                continue;
+            }
+            todo.extend(rule_successors(native, pc));
+        }
+        seen
+    };
+    let top = reach(vec![0]);
+    if (0..n).any(|pc| top[pc] && matches!(native.structural[pc].operation, Op::Return { .. })) {
+        return false;
+    }
+    let callees: Vec<usize> = (0..n).filter(|&pc| matches!(native.structural[pc].operation, Op::Push { .. })).map(|pc| callee(native, pc)).collect();
+    let inner = reach(callees);
+    !(0..n).any(|pc| inner[pc] && matches!(native.structural[pc].operation, Op::Accept))
+}
+
+/// The calls open, at most (`calls_on_stack`): the stack's depth below the run's first call,
+/// shifted down by the log of the smallest rule frame (each call open has one such frame, or
+/// more).
+fn calls_open_by_stack(f: &mut FunctionBuilder<'_>, ctx: Value) -> Value {
+    let flags = MemFlags::trusted();
+    let sp = f.ins().get_stack_pointer(types::I64);
+    let base = f.ins().load(types::I64, flags, ctx, STACK_BASE);
+    let shift = f.ins().load(types::I64, flags, ctx, FRAME_SHIFT);
+    let depth = f.ins().isub(base, sp);
+    f.ins().ushr(depth, shift)
+}
 
 /// The program's `Bounds`: the most written between two `TOKEN`s, weighting `OPEN`, `LEAF` and
 /// `WRAP` (a node), `NODE_SUPER` and `PUSH`.
@@ -478,7 +547,7 @@ pub fn push_targets(native: &Structure) -> Vec<u16> {
         .structural
         .iter()
         .filter_map(|b| match b.operation {
-            Op::Push { target } => Some(target),
+            Op::Push { target, .. } => Some(target),
             _ => None,
         })
         .collect();
@@ -500,20 +569,16 @@ enum Mem {
     Pending,
     /// While leaves are pending, the end of the token before them: a node closed then ends there.
     Keep,
-    /// The wraps made, and the node the last one moved.
-    Wraps,
+    /// The node the last wrap moved.
     Moved,
-    /// The records a reading dropped (`DEAD`).
-    Dead,
     /// A shared arm's target, as an index into its body's (`shared_runs`).
     Sel,
     /// A shared arm's words' distance from its body's first place's, for a refusal there.
     Shift,
     /// With wraps: the last node made at the innermost open node's level, one more than its
-    /// record (0: none), and that node's base. Only the innermost level's is ever read, and
-    /// each change of level writes the new one's: two fields, not a column by depth.
+    /// row (0: none). Only the innermost level's is ever read, and each change of level writes
+    /// the new one's: a field, not a column by depth.
     LastMade,
-    LastBase,
     /// The level's word (`REMEMBER`) and flags (`FLAG`), kept beside each call's return.
     Word,
     Flags,
@@ -538,10 +603,12 @@ enum Mem {
     Need,
     /// The marks not yet taken or passed at this token, a bit each.
     Live,
+    /// The count of tokens (`COUNT`).
+    Depth,
 }
 
 impl Mem {
-    const COUNT: u32 = 25;
+    const COUNT: u32 = 23;
 }
 
 /// The fields a rule's function holds in registers (`Cut::held`) and passes to its calls, given
@@ -552,20 +619,163 @@ impl Mem {
 /// stack loads over `.rr`'s tier 2, against 161 in the lean parser).
 pub const HELD_IN_RULES: [u32; 0] = [];
 
-/// A compare tree over a byte (or a place): runs of one target, split at the middle run.
-fn dispatch(f: &mut FunctionBuilder<'_>, x: Value, runs: &[(u32, Block)]) {
-    if runs.len() == 1 {
-        f.ins().jump(runs[0].1, &[]);
-        return;
+/// A compare tree over a byte (or a place), as rustc lowers a `match` (LLVM's switch lowering):
+/// `runs` are runs of one target (the first from 0, the last on to `end`, past every value the
+/// switch reads: 256 for a byte). The target with the most runs is the default; the tree is over
+/// the other runs alone (the cases), split at the middle, each side knowing the range its value
+/// is in; a case is one test at its leaf (an equality, a bound, or a range), and a value in no
+/// case goes to the default. A switch that expects one kind is one compare, as `expect(kind)`.
+/// Cases of at most three targets within 64 values are bit tests, as LLVM's: one shift, then a
+/// mask a target.
+fn dispatch(f: &mut FunctionBuilder<'_>, x: Value, runs: &[(u32, Block)], end: u64) {
+    let ends: Vec<u64> = runs.iter().skip(1).map(|r| u64::from(r.0)).chain([end]).collect();
+    let spans: Vec<(u64, u64, Block)> = runs.iter().zip(&ends).enumerate().map(|(i, (r, &e))| (if i == 0 { 0 } else { u64::from(r.0) }, e, r.1)).filter(|&(a, b, _)| a < b).collect();
+    // The default: the target with the most runs (the first such).
+    let mut count: Vec<(Block, usize)> = Vec::new();
+    for &(_, _, b) in &spans {
+        match count.iter_mut().find(|(x, _)| *x == b) {
+            Some(c) => c.1 += 1,
+            None => count.push((b, 1)),
+        }
     }
-    let mid = runs.len() / 2;
-    let (low, high) = (f.create_block(), f.create_block());
-    let below = f.ins().icmp_imm(IntCC::UnsignedLessThan, x, i64::from(runs[mid].0));
-    f.ins().brif(below, low, &[], high, &[]);
-    f.switch_to_block(low);
-    dispatch(f, x, &runs[..mid]);
-    f.switch_to_block(high);
-    dispatch(f, x, &runs[mid..]);
+    let default = count.iter().max_by_key(|&&(_, n)| n).map(|&(b, _)| b).expect("a run");
+    let cases: Vec<(u64, u64, Block)> = spans.into_iter().filter(|&(_, _, b)| b != default).collect();
+    let clusters = clusters(&cases);
+    cases_tree(f, x, 0, end, &clusters, default);
+}
+
+/// A leaf of `dispatch`'s tree: the values `a..b`, to one target (`Range`), or tested by bits
+/// (`Bits`: each target with its mask over `x - a`; a value in none goes to the default).
+enum Cluster {
+    Range(u64, u64, Block),
+    Bits(u64, u64, Vec<(Block, u64)>),
+}
+
+impl Cluster {
+    fn start(&self) -> u64 {
+        match *self {
+            Cluster::Range(a, ..) | Cluster::Bits(a, ..) => a,
+        }
+    }
+}
+
+/// `cases` (rising, apart) as clusters: from each case on, the longest run of cases within 64
+/// values and of at most three targets, as bit tests where LLVM finds them worth it (one
+/// target and 3 compares saved, two and 5, three and 6: a range counting two), else the case.
+fn clusters(cases: &[(u64, u64, Block)]) -> Vec<Cluster> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < cases.len() {
+        let mut best = None;
+        let (mut dests, mut cmps): (Vec<Block>, usize) = (Vec::new(), 0);
+        for j in i..cases.len() {
+            let (a, b, t) = cases[j];
+            if b - cases[i].0 > 64 || b == u64::MAX {
+                break;
+            }
+            if !dests.contains(&t) {
+                if dests.len() == 3 {
+                    break;
+                }
+                dests.push(t);
+            }
+            cmps += if b == a + 1 { 1 } else { 2 };
+            let worth = match dests.len() {
+                1 => cmps >= 3,
+                2 => cmps >= 5,
+                _ => cmps >= 6,
+            };
+            if worth {
+                best = Some(j);
+            }
+        }
+        match best {
+            Some(j) => {
+                let base = cases[i].0;
+                let mut masks: Vec<(Block, u64)> = Vec::new();
+                for &(a, b, t) in &cases[i..=j] {
+                    let m = (a..b).fold(0u64, |m, v| m | 1 << (v - base));
+                    match masks.iter_mut().find(|(x, _)| *x == t) {
+                        Some(x) => x.1 |= m,
+                        None => masks.push((t, m)),
+                    }
+                }
+                // The target with the most values first, as LLVM orders them.
+                masks.sort_by_key(|&(_, m)| std::cmp::Reverse(m.count_ones()));
+                out.push(Cluster::Bits(base, cases[j].1, masks));
+                i = j + 1;
+            }
+            None => {
+                let (a, b, t) = cases[i];
+                out.push(Cluster::Range(a, b, t));
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// `dispatch`'s tree over `cases` for a value known to be in `lo..hi`.
+fn cases_tree(f: &mut FunctionBuilder<'_>, x: Value, lo: u64, hi: u64, cases: &[Cluster], default: Block) {
+    match cases {
+        [] => {
+            f.ins().jump(default, &[]);
+        }
+        [Cluster::Range(a, b, to)] => {
+            let (a, b, to) = (*a, *b, *to);
+            let inside = if a <= lo && b >= hi {
+                f.ins().jump(to, &[]);
+                return;
+            } else if a <= lo {
+                f.ins().icmp_imm(IntCC::UnsignedLessThan, x, b as i64)
+            } else if b >= hi {
+                f.ins().icmp_imm(IntCC::UnsignedGreaterThanOrEqual, x, a as i64)
+            } else if b == a + 1 {
+                f.ins().icmp_imm(IntCC::Equal, x, a as i64)
+            } else {
+                let d = f.ins().iadd_imm(x, -(a as i64));
+                f.ins().icmp_imm(IntCC::UnsignedLessThan, d, (b - a) as i64)
+            };
+            f.ins().brif(inside, to, &[], default, &[]);
+        }
+        [Cluster::Bits(a, b, masks)] => {
+            let (a, b) = (*a, *b);
+            let d = if a == 0 { x } else { f.ins().iadd_imm(x, -(a as i64)) };
+            if a > lo || b < hi {
+                let tests = f.create_block();
+                let inside = f.ins().icmp_imm(IntCC::UnsignedLessThan, d, (b - a) as i64);
+                f.ins().brif(inside, tests, &[], default, &[]);
+                f.switch_to_block(tests);
+            }
+            let one = f.ins().iconst(types::I64, 1);
+            let bit = f.ins().ishl(one, d);
+            // Every value of the cluster some target's: the last target needs no test.
+            let full = (a.max(lo)..b.min(hi)).all(|v| masks.iter().any(|&(_, m)| m >> (v - a) & 1 != 0));
+            for (k, &(to, m)) in masks.iter().enumerate() {
+                if full && k + 1 == masks.len() {
+                    f.ins().jump(to, &[]);
+                    return;
+                }
+                let next = if k + 1 == masks.len() { default } else { f.create_block() };
+                let t = f.ins().band_imm(bit, m as i64);
+                f.ins().brif(t, to, &[], next, &[]);
+                if next != default {
+                    f.switch_to_block(next);
+                }
+            }
+        }
+        _ => {
+            let mid = cases.len() / 2;
+            let pivot = cases[mid].start();
+            let (low, high) = (f.create_block(), f.create_block());
+            let below = f.ins().icmp_imm(IntCC::UnsignedLessThan, x, pivot as i64);
+            f.ins().brif(below, low, &[], high, &[]);
+            f.switch_to_block(low);
+            cases_tree(f, x, lo, pivot, &cases[..mid], default);
+            f.switch_to_block(high);
+            cases_tree(f, x, pivot, hi, &cases[mid..], default);
+        }
+    }
 }
 
 /// `dispatch` weighted by a profile: a run with half the weight or more is tested first (one
@@ -638,45 +848,17 @@ fn runs(s: &ByteSwitch, word: &dyn Fn(u16) -> Block) -> Vec<(u32, Block)> {
     out.into_iter().map(|(b, t)| (b, word(t))).collect()
 }
 
-/// Compile a program's tier-2 words.
-/// The columns `reorder` reads and writes.
-struct Reorder {
-    nodes: Value,
-    supers: Value,
-    wraps: Value,
-    /// The node rows: as made, and in preorder.
-    rows: Value,
-    out: Value,
-    head: Value,
-    link: Value,
-    place: Value,
-    snode: Value,
-    /// A program that rereads: a column of `nodes + 1` slots (the frames', free at `ACCEPT`)
-    /// for the dropped records before each, a dropped record (`DEAD`) left out.
-    before: Option<Value>,
-    /// Where the count of records placed goes.
-    counts: Value,
-}
-
-impl Reorder {
-    /// Its values, as an outlined function's parameters (`outline`).
-    fn values(&self) -> Vec<Value> {
-        [self.nodes, self.supers, self.wraps, self.rows, self.out, self.head, self.link, self.place, self.snode, self.counts].into_iter().chain(self.before).collect()
-    }
-
-    /// The same, from the parameters `p` of its function.
-    fn of(p: &[Value], before: bool) -> Self {
-        Reorder { nodes: p[0], supers: p[1], wraps: p[2], rows: p[3], out: p[4], head: p[5], link: p[6], place: p[7], snode: p[8], counts: p[9], before: before.then(|| p[10]) }
-    }
-}
 
 /// A function of tier 2's own, made from the same program and called once per file: `build`
 /// makes its body from its `params` words and gives its heads. Only the token loop is inlined;
 /// the node table's passes run once, at `ACCEPT`, and would only crowd it. Checked: it calls
 /// nothing, and each loop is a stated one.
-fn outline(module: &mut JITModule, name: &str, params: usize, returns: usize, build: impl FnOnce(&mut FunctionBuilder<'_>, &[Value], &mut Vec<(Block, Step)>)) -> Result<(cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function), Error> {
+///
+/// `pinned`: its first parameter is `ctx`, in the pinned register (`pinned_ctx`): not an
+/// argument, read where it is entered; its callers pass the rest (`call_word`).
+fn outline(module: &mut JITModule, name: &str, params: usize, returns: usize, pinned: bool, own: &[cranelift_codegen::ir::UserExternalName], build: impl FnOnce(&mut FunctionBuilder<'_>, &[Value], &mut Vec<(Block, Step)>)) -> Result<(cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function), Error> {
     let mut signature = module.make_signature();
-    for _ in 0..params {
+    for _ in 0..params - usize::from(pinned) {
         signature.params.push(AbiParam::new(types::I64));
     }
     for _ in 0..returns {
@@ -696,12 +878,16 @@ fn outline(module: &mut JITModule, name: &str, params: usize, returns: usize, bu
         let entry = f.create_block();
         f.append_block_params_for_function_params(entry);
         f.switch_to_block(entry);
-        let p = f.block_params(entry).to_vec();
+        let mut p = f.block_params(entry).to_vec();
+        if pinned {
+            let ctx = f.ins().get_pinned_reg(types::I64);
+            p.insert(0, ctx);
+        }
         build(&mut f, &p, &mut heads);
         f.seal_all_blocks();
         f.finalize();
     }
-    crate::native_cpu_shape::check(&func, &heads, &[]).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
+    crate::native_cpu_shape::check(&func, &heads, own).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;
     Ok((id, signature, func))
 }
 
@@ -721,21 +907,29 @@ enum EndAt {
 /// `ctx` (`Ctx::state`), as the lean parser's in `self`. Its kind or field is an argument.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum WordFn {
-    Leaf { deferred: bool, extra: bool, end: EndAt },
+    /// `by_word`: a keyword's leaf, its kind its token's word's (`WORD_KIND`).
+    Leaf { deferred: bool, extra: bool, end: EndAt, by_word: bool },
     Open,
     Close { this: bool, end: EndAt },
     Wrap,
     /// `RETAG m=1`: the node the last wrap moved.
     RetagMoved { remembered: bool },
     /// `RETAG m=2`, `NODE_FIELD m=2`: the node made last at the level.
-    Made { retag: bool, remembered: bool, dead: bool },
+    Made { retag: bool, remembered: bool, dead: bool, unset: bool },
     /// `RETAG`: the innermost open node.
     Here,
     /// `MERGE m=1`.
     Fold,
+    /// `REMEMBER #WORD_KIND`: the level's word, its token's word's kind.
+    RememberWord,
     Merge { end: EndAt },
     /// `TOKEN`, taking a token: 0, or 1 past the stream's end, or `OVERFLOW` out of room.
-    Token { any_mark: Option<usize> },
+    /// `extras`: the extras taken too (`TOKEN_EXTRAS`).
+    Token { any_mark: Option<usize>, extras: bool },
+    /// A token mark's tokens (`Words::token_marks`, its index): 1 where they follow, else 0.
+    TokenMark { index: u16 },
+    /// A local check over the token's bytes (`Words::local_checks`, its index): 1 where it holds.
+    Check { index: u16 },
 }
 
 /// What a word's body reads and writes, wherever it is made (`WordFn`): in its rule's function,
@@ -784,6 +978,334 @@ fn own_word(f: &mut FunctionBuilder<'_>, p: &[Value], refuses: bool, body: &dyn 
     }
 }
 
+/// Whether token mark `m`'s tokens follow at the token (`Words::token_marks`): each element's
+/// record, the records' codes from the one before `Next`, the extras (`extra_bit`) skipped; 1 or
+/// 0. Each turn of a skip is a record's: a stated `Token` loop.
+/// A local check over the token's bytes (`CHECK`), word-parallel: the mask's words from the
+/// token's start to its end (a stated loop, `Step::Block`); at a word with bits, the check's
+/// value at each of its 64 places at once (`local_word`), and the test one AND. 1 where it holds
+/// at a bit, else 0. No loop over bits or bytes. The token's start and end are passed: the
+/// state may be the caller's variables.
+fn check_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, c: &crate::program::LocalCheck, form: &crate::rust_stream::WordForm, output: usize, start: Value, limit: Value, heads: &mut Vec<(Block, Step)>) -> Value {
+    let (outputs_p, stride, lasts_stride) = ((e.ctx)(f, OUTPUTS), (e.ctx)(f, OUTPUT_STRIDE), (e.ctx)(f, LASTS_STRIDE));
+    let (bytes, len) = ((e.ctx)(f, BYTES), (e.ctx)(f, LEN));
+    let consts = crate::native_cpu_block::Consts::make(f);
+    let off = f.ins().imul_imm(stride, output as i64);
+    let base = f.ins().iadd(outputs_p, off);
+    let w0 = f.ins().ushr_imm(start, 6);
+    let l1 = f.ins().iadd_imm(limit, -1);
+    let wl = f.ins().ushr_imm(l1, 6);
+    let (words, done) = (f.create_block(), f.create_block());
+    f.append_block_param(words, types::I64);
+    f.append_block_param(done, types::I64);
+    f.ins().jump(words, &[BlockArg::from(w0)]);
+    // A word of the mask, cut to the token's bytes.
+    f.switch_to_block(words);
+    heads.push((words, Step::Block));
+    let w = f.block_params(words)[0];
+    let past = f.ins().icmp(IntCC::UnsignedGreaterThan, w, wl);
+    let (body, zero) = (f.create_block(), f.ins().iconst(types::I64, 0));
+    f.ins().brif(past, done, &[BlockArg::from(zero)], body, &[]);
+    f.switch_to_block(body);
+    let word = mask_word(f, base, lasts_stride, w);
+    let ones = f.ins().iconst(types::I64, -1);
+    let s = f.ins().band_imm(start, 63);
+    let lo = f.ins().ishl(ones, s);
+    let first = f.ins().icmp(IntCC::Equal, w, w0);
+    let lo = f.ins().select(first, lo, ones);
+    let t = f.ins().band_imm(l1, 63);
+    let t = f.ins().irsub_imm(t, 63);
+    let hi = f.ins().ushr(ones, t);
+    let last = f.ins().icmp(IntCC::Equal, w, wl);
+    let hi = f.ins().select(last, hi, ones);
+    let word = f.ins().band(word, lo);
+    let a = f.ins().band(word, hi);
+    let (look, next) = (f.create_block(), f.create_block());
+    f.ins().brif(a, look, &[], next, &[]);
+    // The check at the word's places: its value at place `64 w + b + delay`, bit `b`.
+    f.switch_to_block(look);
+    let mut env = LocalWords { form, bytes, len, w, consts: &consts, values: Default::default(), classes: Default::default(), tables: Default::default() };
+    let top = c.ops.len() - 1;
+    let (dq, dr) = (i64::from(c.delay) / 64, i64::from(c.delay) % 64);
+    let l = local_word(f, &c.ops, &mut env, top, dq);
+    let l = if dr == 0 {
+        l
+    } else {
+        let after = local_word(f, &c.ops, &mut env, top, dq + 1);
+        let x = f.ins().ushr_imm(l, dr);
+        let y = f.ins().ishl_imm(after, 64 - dr);
+        f.ins().bor(x, y)
+    };
+    let hit = f.ins().band(a, l);
+    let one = f.ins().iconst(types::I64, 1);
+    f.ins().brif(hit, done, &[BlockArg::from(one)], next, &[]);
+    f.switch_to_block(next);
+    let w1 = f.ins().iadd_imm(w, 1);
+    f.ins().jump(words, &[BlockArg::from(w1)]);
+    f.switch_to_block(done);
+    f.block_params(done)[0]
+}
+
+/// What `local_word` reads: the check's classes, the file, the mask's word `w`; each op's value
+/// at a word (by its distance from `w`), each word's classes and the tables, made once.
+struct LocalWords<'a> {
+    form: &'a crate::rust_stream::WordForm,
+    bytes: Value,
+    len: Value,
+    w: Value,
+    consts: &'a crate::native_cpu_block::Consts,
+    values: std::collections::HashMap<(usize, i64), Value>,
+    classes: std::collections::HashMap<(usize, i64), [Value; 4]>,
+    tables: std::collections::HashMap<usize, (Value, Value)>,
+}
+
+/// The bits of word `q` whose places are in `lo..hi`.
+fn within_word(f: &mut FunctionBuilder<'_>, q: Value, lo: Value, hi: Value) -> Value {
+    let q64 = f.ins().ishl_imm(q, 6);
+    let (zero, sixty_four) = (f.ins().iconst(types::I64, 0), f.ins().iconst(types::I64, 64));
+    let clamp = |f: &mut FunctionBuilder<'_>, x: Value| {
+        let x = f.ins().isub(x, q64);
+        let x = f.ins().smax(x, zero);
+        f.ins().smin(x, sixty_four)
+    };
+    let (a, b) = (clamp(f, lo), clamp(f, hi));
+    let ones = f.ins().iconst(types::I64, -1);
+    let one = f.ins().iconst(types::I64, 1);
+    let below = f.ins().ishl(one, b);
+    let below = f.ins().iadd_imm(below, -1);
+    let full = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, b, 64);
+    let below = f.ins().select(full, ones, below);
+    let from = f.ins().ishl(ones, a);
+    let none = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, a, 64);
+    let from = f.ins().select(none, zero, from);
+    f.ins().band(below, from)
+}
+
+/// Op `k` of a local check at word `w + o`, a bit a place (`program::local_value`): the byte
+/// sets by tier 1's classes over the word's four vectors (`native_cpu_lanes`' lookup, then
+/// `bitmask`), the rest word operations; a `Prev` reads the word before its operand's too.
+/// Straight-line, each (op, word) once.
+fn local_word(f: &mut FunctionBuilder<'_>, ops: &[crate::program::LocalOp], e: &mut LocalWords<'_>, k: usize, o: i64) -> Value {
+    use crate::program::LocalOp as L;
+    if let Some(&v) = e.values.get(&(k, o)) {
+        return v;
+    }
+    let q = f.ins().iadd_imm(e.w, o);
+    let v = match ops[k] {
+        L::Bytes(_) => match e.form.class_of[&k] {
+            (_, 0) => f.ins().iconst(types::I64, 0),
+            (ti, bits) => {
+                let c = local_classes(f, e, ti, o);
+                let mask = {
+                    let b = f.ins().iconst(types::I8, i64::from(bits));
+                    f.ins().splat(types::I8X16, b)
+                };
+                let zero16 = {
+                    let z = f.ins().iconst(types::I8, 0);
+                    f.ins().splat(types::I8X16, z)
+                };
+                let parts: Vec<Value> = c
+                    .iter()
+                    .map(|&v| {
+                        let x = f.ins().band(v, mask);
+                        f.ins().icmp(IntCC::NotEqual, x, zero16)
+                    })
+                    .collect();
+                let m = crate::native_cpu_block::bitmask(f, &parts, e.consts.weights);
+                let zero = f.ins().iconst(types::I64, 0);
+                let w = within_word(f, q, zero, e.len);
+                f.ins().band(m, w)
+            }
+        },
+        L::Const(p) => {
+            let x = f.ins().iconst(types::I64, p as i64);
+            let zero = f.ins().iconst(types::I64, 0);
+            let neg = f.ins().icmp_imm(IntCC::SignedLessThan, q, 0);
+            f.ins().select(neg, zero, x)
+        }
+        L::Within(d) => {
+            let lo = f.ins().iconst(types::I64, i64::from(d));
+            let hi = f.ins().iadd_imm(e.len, i64::from(d));
+            within_word(f, q, lo, hi)
+        }
+        L::Not(a) => {
+            let x = local_word(f, ops, e, usize::from(a), o);
+            f.ins().bnot(x)
+        }
+        L::And(a, b) | L::Or(a, b) | L::Xor(a, b) | L::AndNot(a, b) => {
+            let x = local_word(f, ops, e, usize::from(a), o);
+            let y = local_word(f, ops, e, usize::from(b), o);
+            match ops[k] {
+                L::And(..) => f.ins().band(x, y),
+                L::Or(..) => f.ins().bor(x, y),
+                L::Xor(..) => f.ins().bxor(x, y),
+                _ => f.ins().band_not(x, y),
+            }
+        }
+        L::Prev(a, s) => {
+            // Its operand `s` places before: this word's bits up, the word before's top bits in;
+            // none before the file's start.
+            let x = local_word(f, ops, e, usize::from(a), o);
+            let y = local_word(f, ops, e, usize::from(a), o - 1);
+            let x = f.ins().ishl_imm(x, i64::from(s));
+            let y = f.ins().ushr_imm(y, 64 - i64::from(s));
+            let zero = f.ins().iconst(types::I64, 0);
+            let first = f.ins().icmp_imm(IntCC::SignedLessThan, q, 1);
+            let y = f.ins().select(first, zero, y);
+            f.ins().bor(x, y)
+        }
+    };
+    e.values.insert((k, o), v);
+    v
+}
+
+/// Table `ti`'s classes of the 64 bytes of word `w + o` (zeros outside the file): four vectors.
+fn local_classes(f: &mut FunctionBuilder<'_>, e: &mut LocalWords<'_>, ti: usize, o: i64) -> [Value; 4] {
+    if let Some(&c) = e.classes.get(&(ti, o)) {
+        return c;
+    }
+    let (tlo, thi) = match e.tables.get(&ti) {
+        Some(&t) => t,
+        None => {
+            let (lo, hi) = &e.form.tables[ti];
+            let hl = f.func.dfg.constants.insert(cranelift_codegen::ir::ConstantData::from(&lo[..]));
+            let hh = f.func.dfg.constants.insert(cranelift_codegen::ir::ConstantData::from(&hi[..]));
+            let t = (f.ins().vconst(types::I8X16, hl), f.ins().vconst(types::I8X16, hh));
+            e.tables.insert(ti, t);
+            t
+        }
+    };
+    // The word's address, where it is inside the file; else the file's first (readable: 64
+    // bytes after its end), its classes then zeros.
+    let q = f.ins().iadd_imm(e.w, o);
+    let q64 = f.ins().ishl_imm(q, 6);
+    let after = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, q, 0);
+    let before_end = f.ins().icmp(IntCC::SignedLessThan, q64, e.len);
+    let inside = f.ins().band(after, before_end);
+    let at = f.ins().iadd(e.bytes, q64);
+    let at = f.ins().select(inside, at, e.bytes);
+    let zero16 = {
+        let z = f.ins().iconst(types::I8, 0);
+        f.ins().splat(types::I8X16, z)
+    };
+    let c = [0, 16, 32, 48].map(|off| {
+        let v = f.ins().load(types::I8X16, MemFlags::trusted(), at, off);
+        let lo = f.ins().band(v, e.consts.nibble);
+        let hi = f.ins().ushr_imm(v, 4);
+        let l = f.ins().swizzle(tlo, lo);
+        let h = f.ins().swizzle(thi, hi);
+        let x = f.ins().band(l, h);
+        f.ins().select(inside, x, zero16)
+    });
+    e.classes.insert((ti, o), c);
+    c
+}
+
+fn token_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::program::TokenMark, extra_bit: u8, heads: &mut Vec<(Block, Step)>) -> Value {
+    let flags = MemFlags::trusted();
+    let codes = (e.ctx)(f, CODES);
+    let n = (e.ctx)(f, NSTARTS);
+    let next = (e.get)(f, Mem::Next);
+    let here = f.ins().iadd_imm(next, -1);
+    let (no, yes) = (f.create_block(), f.create_block());
+    let code_at = |f: &mut FunctionBuilder<'_>, j: Value| {
+        let off = f.ins().ishl_imm(j, 2);
+        let a = f.ins().iadd(codes, off);
+        f.ins().uload32(flags, a, 0)
+    };
+    let shift = i64::from(crate::records::MARK_SHIFT) + i64::from(extra_bit);
+    // The element's test on a code: a kind of its set, or a word of its.
+    let test = |f: &mut FunctionBuilder<'_>, c: Value, el: &crate::program::TokenElem| {
+        let ok = f.create_block();
+        if el.kinds != 0 {
+            let kind = f.ins().band_imm(c, 0xff);
+            let small = f.ins().icmp_imm(IntCC::UnsignedLessThan, kind, 64);
+            let set = f.ins().iconst(types::I64, el.kinds as i64);
+            let bit = f.ins().ushr(set, kind);
+            let bit = f.ins().band_imm(bit, 1);
+            let zero = f.ins().iconst(types::I64, 0);
+            let bit = f.ins().select(small, bit, zero);
+            let other = f.create_block();
+            f.ins().brif(bit, ok, &[], other, &[]);
+            f.switch_to_block(other);
+        }
+        if !el.words.is_empty() {
+            let w = f.ins().ushr_imm(c, i64::from(crate::records::KIND_BITS));
+            let w = f.ins().band_imm(w, 0xff);
+            for &s in &el.words {
+                let same = f.ins().icmp_imm(IntCC::Equal, w, i64::from(s) + 1);
+                let other = f.create_block();
+                f.ins().brif(same, ok, &[], other, &[]);
+                f.switch_to_block(other);
+            }
+        }
+        f.ins().jump(no, &[]);
+        f.switch_to_block(ok);
+    };
+    // The records after the token, in turn; the one before, for an element at -1.
+    let mut at = here;
+    for el in &m.elems {
+        match el.offset {
+            0 => {
+                let c = code_at(f, here);
+                test(f, c, el);
+            }
+            -1 => {
+                let head = f.create_block();
+                f.append_block_param(head, types::I64);
+                f.ins().jump(head, &[BlockArg::from(here)]);
+                f.switch_to_block(head);
+                heads.push((head, Step::Token));
+                let j = f.block_params(head)[0];
+                let first = f.ins().icmp_imm(IntCC::Equal, j, 0);
+                let on = f.create_block();
+                f.ins().brif(first, no, &[], on, &[]);
+                f.switch_to_block(on);
+                let j = f.ins().iadd_imm(j, -1);
+                let c = code_at(f, j);
+                let x = f.ins().ushr_imm(c, shift);
+                let x = f.ins().band_imm(x, 1);
+                let found = f.create_block();
+                f.ins().brif(x, head, &[BlockArg::from(j)], found, &[]);
+                f.switch_to_block(found);
+                test(f, c, el);
+            }
+            _ => {
+                let head = f.create_block();
+                f.append_block_param(head, types::I64);
+                f.ins().jump(head, &[BlockArg::from(at)]);
+                f.switch_to_block(head);
+                heads.push((head, Step::Token));
+                let j = f.block_params(head)[0];
+                let j = f.ins().iadd_imm(j, 1);
+                let past = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, j, n);
+                let on = f.create_block();
+                f.ins().brif(past, no, &[], on, &[]);
+                f.switch_to_block(on);
+                let c = code_at(f, j);
+                let x = f.ins().ushr_imm(c, shift);
+                let x = f.ins().band_imm(x, 1);
+                let found = f.create_block();
+                f.ins().brif(x, head, &[BlockArg::from(j)], found, &[]);
+                f.switch_to_block(found);
+                test(f, c, el);
+                at = j;
+            }
+        }
+    }
+    f.ins().jump(yes, &[]);
+    let done = f.create_block();
+    f.append_block_param(done, types::I64);
+    f.switch_to_block(no);
+    let zero = f.ins().iconst(types::I64, 0);
+    f.ins().jump(done, &[BlockArg::from(zero)]);
+    f.switch_to_block(yes);
+    let one = f.ins().iconst(types::I64, 1);
+    f.ins().jump(done, &[BlockArg::from(one)]);
+    f.switch_to_block(done);
+    f.block_params(done)[0]
+}
+
 /// The token's end, as a word reads it (`EndAt`).
 fn token_end_at(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, end_at: EndAt) -> Value {
     match end_at {
@@ -817,9 +1339,112 @@ fn remembered_kind(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>) -> Value {
     w
 }
 
-/// `LEAF`: its row (its kind, with its field above it or none; its bytes; one record), the
-/// pending extras, the level's last node.
-fn leaf_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value, deferred: bool, extra: bool, end_at: EndAt, wrapping: bool) {
+/// A keyword's leaf kind (`WORD_KIND`): its token's word's (`Words::word_kinds`), refused where
+/// the word has none. As LLVM lowers a `match` that maps a value to a value: runs of strings
+/// whose kinds rise with them are one add each (`Kind::DotDecl + (d - W_DECL)`), a compare
+/// tree picks the run.
+fn word_kind(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, word_kinds: &[(u16, u16)]) -> Value {
+    let code = (e.get)(f, Mem::Taken);
+    let w = f.ins().ushr_imm(code, i64::from(crate::records::KIND_BITS));
+    let w = f.ins().band_imm(w, 0xff);
+    // The word's string: the word less one (0, no word, wraps past every string).
+    let s = f.ins().iadd_imm(w, -1);
+    // Runs: (first string, past the last, kind less string).
+    let mut runs: Vec<(u32, u32, i64)> = Vec::new();
+    for &(at, k) in word_kinds {
+        let delta = i64::from(k) - i64::from(at);
+        match runs.last_mut() {
+            Some(r) if r.1 == u32::from(at) && r.2 == delta => r.1 += 1,
+            _ => runs.push((u32::from(at), u32::from(at) + 1, delta)),
+        }
+    }
+    let join = f.create_block();
+    f.append_block_param(join, types::I64);
+    let none = f.create_block();
+    let mut cases: Vec<(u32, Block)> = Vec::new();
+    let mut made = Vec::new();
+    let mut at = 0;
+    for &(a, b, delta) in &runs {
+        if a > at {
+            cases.push((at, none));
+        }
+        let blk = f.create_block();
+        cases.push((a, blk));
+        made.push((blk, delta));
+        at = b;
+    }
+    cases.push((at, none));
+    dispatch(f, s, &cases, u64::MAX);
+    for (blk, delta) in made {
+        f.switch_to_block(blk);
+        let k = f.ins().iadd_imm(s, delta);
+        f.ins().jump(join, &[k.into()]);
+    }
+    f.switch_to_block(none);
+    let bad = f.ins().iconst(types::I8, 1);
+    (e.guard)(f, bad);
+    let zero = f.ins().iconst(types::I64, 0);
+    f.ins().jump(join, &[zero.into()]);
+    f.switch_to_block(join);
+    f.block_params(join)[0]
+}
+
+/// What the node words need to write the table as it stands at the end (`TableFns`): the
+/// extras' kinds (a row's flag), whether rows carry marks (`head`, `rust_stream::marks`: a
+/// wrap, `WRAPPED`; a dropped row taken out from among its children, `DROPPED_IN`), the
+/// functions.
+#[derive(Clone, Copy)]
+struct Table<'a> {
+    extras: &'a [u16],
+    inner: bool,
+    fns: &'a TableFns,
+}
+
+const WRAPPED: i64 = 1;
+const DROPPED_IN: i64 = 2;
+
+impl Table<'_> {
+    /// A kind's extra flag, as a row's last word (its three pad bytes zero).
+    fn extra(&self, f: &mut FunctionBuilder<'_>, kind: Value) -> Value {
+        let k = f.ins().band_imm(kind, 0xffff);
+        let mut x = f.ins().iconst(types::I8, 0);
+        for &e in self.extras {
+            let is = f.ins().icmp_imm(IntCC::Equal, k, i64::from(e));
+            x = f.ins().bor(x, is);
+        }
+        f.ins().uextend(types::I32, x)
+    }
+
+    /// The innermost open node (`open` nodes open), or none: a node's parent written now.
+    fn top(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, open: Value) -> Value {
+        let open_c = (e.ctx)(f, OPEN);
+        let any = f.ins().icmp_imm(IntCC::NotEqual, open, 0);
+        let o1 = f.ins().iadd_imm(open, -1);
+        let at = f.ins().select(any, o1, open);
+        let top = slot_get(f, open_c, at);
+        let none = f.ins().iconst(types::I64, i64::from(NO_PARENT));
+        f.ins().select(any, top, none)
+    }
+
+    /// Row `row`'s parent and extra flag.
+    fn place(&self, f: &mut FunctionBuilder<'_>, row: Value, parent: Value, kind: Value) {
+        f.ins().istore32(MemFlags::trusted(), parent, row, AT_PARENT);
+        let x = self.extra(f, kind);
+        f.ins().store(MemFlags::trusted(), x, row, AT_EXTRA);
+    }
+
+    /// A row's kind changed: its kind and its extra flag.
+    fn retag(&self, f: &mut FunctionBuilder<'_>, rows: Value, at: Value, kind: Value) {
+        let row = NodeCol::row(f, rows, at);
+        f.ins().istore16(MemFlags::trusted(), kind, row, AT_KIND);
+        let x = self.extra(f, kind);
+        f.ins().store(MemFlags::trusted(), x, row, AT_EXTRA);
+    }
+}
+
+/// `LEAF`: its row (its kind, with its field above it or none; its bytes; one record; its
+/// parent and extra flag), the pending extras, the level's last node.
+fn leaf_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: Value, deferred: bool, extra: bool, end_at: EndAt, wrapping: bool) {
     let flags = MemFlags::trusted();
     let zero = f.ins().iconst(types::I64, 0);
     let pending = if deferred {
@@ -832,7 +1457,8 @@ fn leaf_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value, deferred
         zero
     };
     (e.set)(f, Mem::Pending, pending);
-    let (nodes, start, end) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Start), token_end_at(f, e, end_at));
+    let (nodes, start, end, open) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Start), token_end_at(f, e, end_at), (e.get)(f, Mem::Open));
+    let parent = Table::top(f, e, open);
     let one = f.ins().iconst(types::I64, 1);
     let rows = (e.ctx)(f, ROWS);
     let row = NodeCol::row(f, rows, nodes);
@@ -840,41 +1466,41 @@ fn leaf_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value, deferred
     NodeCol::of(rows, AT_START).put_row(f, row, start);
     NodeCol::of(rows, AT_END).put_row(f, row, end);
     NodeCol::of(rows, AT_SIZE).put_row(f, row, one);
-    if wrapping {
+    t.place(f, row, parent, kind);
+    if t.inner {
         let head = (e.ctx)(f, HEAD);
         slot_put(f, head, nodes, zero);
-        if !deferred && !extra {
-            // The last node made at the innermost open node's level.
-            let n1 = f.ins().iadd_imm(nodes, 1);
-            (e.set)(f, Mem::LastMade, n1);
-            (e.set)(f, Mem::LastBase, nodes);
-        }
+    }
+    if wrapping && !deferred && !extra {
+        // The last node made at the innermost open node's level.
+        let n1 = f.ins().iadd_imm(nodes, 1);
+        (e.set)(f, Mem::LastMade, n1);
     }
     let nodes = f.ins().iadd_imm(nodes, 1);
     (e.set)(f, Mem::Nodes, nodes);
 }
 
-/// `OPEN`: its row (its kind, with its field above it or none, and its start), open; with wraps,
-/// its frame.
-fn open_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value, wrapping: bool) {
+/// `OPEN`: its row (its kind, with its field above it or none; its start; its parent and extra
+/// flag), open.
+fn open_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: Value, wrapping: bool) {
     let zero = f.ins().iconst(types::I64, 0);
     (e.set)(f, Mem::Pending, zero);
     let (nodes, start, open) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Start), (e.get)(f, Mem::Open));
+    let parent = Table::top(f, e, open);
     let rows = (e.ctx)(f, ROWS);
     let row = NodeCol::row(f, rows, nodes);
     f.ins().istore32(MemFlags::trusted(), kind, row, AT_KIND);
     NodeCol::of(rows, AT_START).put_row(f, row, start);
+    t.place(f, row, parent, kind);
     let open_c = (e.ctx)(f, OPEN);
     slot_put(f, open_c, open, nodes);
-    if wrapping {
-        // Its frame, at depth + 1 (slot 0 is the root's parent's): its own base, no node made
-        // yet; and its record is no base of a wrap yet.
-        let slot1 = f.ins().iadd_imm(open, 1);
-        let fbase = (e.ctx)(f, FRAME_BASE);
-        slot_put(f, fbase, slot1, nodes);
-        (e.set)(f, Mem::LastMade, zero);
+    if t.inner {
         let head = (e.ctx)(f, HEAD);
         slot_put(f, head, nodes, zero);
+    }
+    if wrapping {
+        // No node made at its level yet.
+        (e.set)(f, Mem::LastMade, zero);
     }
     let open = f.ins().iadd_imm(open, 1);
     let nodes = f.ins().iadd_imm(nodes, 1);
@@ -883,9 +1509,9 @@ fn open_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value, wrapping
 }
 
 /// `CLOSE`: the innermost open node's end (`this`: the token's; else the last taken's, or
-/// the one before the pending extras) and size; with wraps, the last node made at its parent's
-/// level.
-fn close_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, this: bool, end_at: EndAt, wrapping: bool) {
+/// the one before the pending extras) and size; the pending extras its parent's now (`unpend`,
+/// rare); with wraps, it is the last node made at its parent's level.
+fn close_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, this: bool, end_at: EndAt, wrapping: bool) {
     let open = (e.get)(f, Mem::Open);
     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
     (e.guard)(f, none);
@@ -903,73 +1529,116 @@ fn close_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, this: bool, end_at: 
     let rows = (e.ctx)(f, ROWS);
     let at_row = NodeCol::row(f, rows, at);
     NodeCol::of(rows, AT_END).put_row(f, at_row, end);
-    let base = if wrapping {
-        // Its subtree starts at its base (a wrap's is the moved node's); it is the last node
-        // made at its parent's level.
-        let slot1 = f.ins().iadd_imm(open, 1);
-        let fbase = (e.ctx)(f, FRAME_BASE);
-        let base = slot_get(f, fbase, slot1);
+    if wrapping {
         let at1 = f.ins().iadd_imm(at, 1);
         (e.set)(f, Mem::LastMade, at1);
-        (e.set)(f, Mem::LastBase, base);
-        base
-    } else {
-        at
-    };
-    let size = f.ins().isub(nodes, base);
+    }
+    let size = f.ins().isub(nodes, at);
     let size = f.ins().isub(size, pending);
     NodeCol::of(rows, AT_SIZE).put_row(f, at_row, size);
+    let Some((id, sig, _)) = &t.fns.unpend else { return };
+    let (some, after) = (f.create_block(), f.create_block());
+    f.ins().brif(pending, some, &[], after, &[]);
+    f.switch_to_block(some);
+    f.set_cold_block(some);
+    let parent = Table::top(f, e, open);
+    let from = f.ins().isub(nodes, pending);
+    call_own(f, *id, sig, &[rows, from, nodes, parent]);
+    f.ins().jump(after, &[]);
+    f.switch_to_block(after);
 }
 
-/// `WRAP`: around the last node made at the innermost open node's level, its record at the
-/// table's end, linked into the moved node's base's chain; open, its frame's base that base, the
-/// moved node the last made at its level.
-fn wrap_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value) {
+/// `WRAP`: a node before the last node made at the innermost open node's level, its field that
+/// one's; open around it. That node and the rest of the table (the pending extras) move up a
+/// row: one row and nothing else where it is a leaf no supertype names, else `shift`.
+fn wrap_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: Value) {
+    let flags = MemFlags::trusted();
     let zero = f.ins().iconst(types::I64, 0);
     let open = (e.get)(f, Mem::Open);
-    let (last, base) = ((e.get)(f, Mem::LastMade), (e.get)(f, Mem::LastBase));
+    let last = (e.get)(f, Mem::LastMade);
     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
     let no_last = f.ins().icmp_imm(IntCC::Equal, last, 0);
     // A branch each, not the tests joined.
     (e.guard)(f, none);
     (e.guard)(f, no_last);
     let r = f.ins().iadd_imm(last, -1);
-    let (nodes, wraps) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Wraps));
+    let (nodes, supers) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Supers));
+    let x = Table::top(f, e, open);
     let rows = (e.ctx)(f, ROWS);
-    let (kind_c, field_c, start_c) = (NodeCol::of(rows, AT_KIND), NodeCol::of(rows, AT_FIELD), NodeCol::of(rows, AT_START));
-    let rr = NodeCol::row(f, rows, r);
-    let (fld, st) = (field_c.get_row(f, rr), start_c.get_row(f, rr));
-    let row = NodeCol::row(f, rows, nodes);
-    kind_c.put_row(f, row, kind);
-    field_c.put_row(f, row, fld);
-    start_c.put_row(f, row, st);
-    let rr = NodeCol::row(f, rows, r);
-    field_c.put_row(f, rr, zero);
-    let (head, link) = ((e.ctx)(f, HEAD), (e.ctx)(f, LINK));
-    let h = slot_get(f, head, base);
-    slot_put(f, link, nodes, h);
-    let n1 = f.ins().iadd_imm(nodes, 1);
-    slot_put(f, head, base, n1);
-    let mark = f.ins().iconst(types::I64, IS_WRAP);
-    slot_put(f, head, nodes, mark);
+    let head = if t.inner { (e.ctx)(f, HEAD) } else { zero };
+    let snode = (e.ctx)(f, SUPER_NODE);
+    // One row: the leaf at the end, no supertype on it.
+    let tail = f.ins().isub(nodes, r);
+    let one = f.ins().icmp_imm(IntCC::Equal, tail, 1);
+    let any = f.ins().icmp_imm(IntCC::NotEqual, supers, 0);
+    let s1 = f.ins().iadd_imm(supers, -1);
+    let s1 = f.ins().select(any, s1, zero);
+    let ls = slot_get(f, snode, s1);
+    let named = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, ls, r);
+    let named = f.ins().band(any, named);
+    let (swap, long, placed) = (f.create_block(), f.create_block(), f.create_block());
+    let plain = f.ins().band_not(one, named);
+    f.ins().brif(plain, swap, &[], long, &[]);
+    f.switch_to_block(swap);
+    let (src, dst) = (NodeCol::row(f, rows, r), NodeCol::row(f, rows, nodes));
+    let w = row_words(f, src);
+    put_row_words(f, dst, w);
+    if t.inner {
+        let h = slot_get(f, head, r);
+        slot_put(f, head, nodes, h);
+    }
+    f.ins().jump(placed, &[]);
+    f.switch_to_block(long);
+    f.set_cold_block(long);
+    let (id, sig, _) = t.fns.shift.as_ref().expect("a program that wraps has its shift");
+    call_own(f, *id, sig, &[rows, head, snode, r, nodes, x, supers]);
+    f.ins().jump(placed, &[]);
+    f.switch_to_block(placed);
+    // The wrap at r, the wrapped node after it.
+    let (to, from) = (NodeCol::row(f, rows, r), NodeCol::row(f, rows, last));
+    let fld = f.ins().uload16(types::I64, flags, from, AT_FIELD);
+    let st = f.ins().uload32(flags, from, AT_START);
+    let kf = f.ins().ishl_imm(fld, 16);
+    let kf = f.ins().bor(kf, kind);
+    f.ins().istore32(flags, kf, to, AT_KIND);
+    f.ins().istore32(flags, st, to, AT_START);
+    t.place(f, to, x, kind);
+    f.ins().istore16(flags, zero, from, AT_FIELD);
+    f.ins().istore32(flags, r, from, AT_PARENT);
+    if t.inner {
+        let mark = f.ins().iconst(types::I64, WRAPPED);
+        slot_put(f, head, r, mark);
+    }
     let open_c = (e.ctx)(f, OPEN);
-    slot_put(f, open_c, open, nodes);
-    let slot1 = f.ins().iadd_imm(open, 1);
-    let fbase = (e.ctx)(f, FRAME_BASE);
-    slot_put(f, fbase, slot1, base);
-    (e.set)(f, Mem::LastMade, last);
-    (e.set)(f, Mem::LastBase, base);
-    (e.set)(f, Mem::Moved, r);
+    slot_put(f, open_c, open, r);
+    let made = f.ins().iadd_imm(r, 2);
+    (e.set)(f, Mem::LastMade, made);
+    (e.set)(f, Mem::Moved, last);
     (e.set)(f, Mem::Pending, zero);
-    (e.set)(f, Mem::Open, slot1);
+    let open1 = f.ins().iadd_imm(open, 1);
+    (e.set)(f, Mem::Open, open1);
+    let n1 = f.ins().iadd_imm(nodes, 1);
     (e.set)(f, Mem::Nodes, n1);
-    let wraps = f.ins().iadd_imm(wraps, 1);
-    (e.set)(f, Mem::Wraps, wraps);
+}
+
+/// A dropped node's rows taken out from row `from` on (`drop`).
+fn drop_from(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, from: Value) {
+    let zero = f.ins().iconst(types::I64, 0);
+    let rows = (e.ctx)(f, ROWS);
+    let (before, to) = ((e.ctx)(f, FRAME_BASE), (e.ctx)(f, LINK));
+    let head = if t.inner { (e.ctx)(f, HEAD) } else { zero };
+    let (snode, skind) = ((e.ctx)(f, SUPER_NODE), (e.ctx)(f, SUPER_KIND));
+    let (nodes, supers, moved) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Supers), (e.get)(f, Mem::Moved));
+    let (id, sig, _) = t.fns.drop.as_ref().expect("a program that drops has its drop");
+    let r = call_own(f, *id, sig, &[rows, before, to, head, snode, skind, from, nodes, supers, moved]);
+    (e.set)(f, Mem::Nodes, r[0]);
+    (e.set)(f, Mem::Supers, r[1]);
+    (e.set)(f, Mem::Moved, r[2]);
 }
 
 /// `RETAG m=2`, `NODE_FIELD m=2`: the node made last at the innermost open node's level
 /// (`relabel`), its frame's last one more than its record (0: none), its kind or field `x`.
-fn made_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, x: Value, retag: bool, dead: bool) {
+fn made_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, x: Value, retag: bool, dead: bool, unset: bool) {
     let open = (e.get)(f, Mem::Open);
     let last = (e.get)(f, Mem::LastMade);
     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
@@ -979,20 +1648,30 @@ fn made_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, x: Value, retag: bool
     (e.guard)(f, no_last);
     let r = f.ins().iadd_imm(last, -1);
     let rows = (e.ctx)(f, ROWS);
-    NodeCol::of(rows, if retag { AT_KIND } else { AT_FIELD }).put(f, r, x);
+    if retag {
+        t.retag(f, rows, r, x);
+    } else {
+        let col = NodeCol::of(rows, AT_FIELD);
+        // A call's field (`On::MadeUnset`): the node's own, where it has one.
+        let x = if unset {
+            let had = col.get(f, r);
+            f.ins().select(had, had, x)
+        } else {
+            x
+        };
+        col.put(f, r, x);
+    }
     if dead {
-        // `drop`: the node goes (a token the grammar implies), left out at `ACCEPT`; none is
-        // made last at this level until the next.
-        let d = (e.get)(f, Mem::Dead);
-        let d = f.ins().iadd_imm(d, 1);
-        (e.set)(f, Mem::Dead, d);
+        // `drop`: the node goes (a token the grammar implies), taken out now; none is made last
+        // at this level until the next.
         let zero = f.ins().iconst(types::I64, 0);
         (e.set)(f, Mem::LastMade, zero);
+        drop_from(f, e, t, r);
     }
 }
 
 /// `RETAG`: the innermost open node's kind.
-fn here_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value) {
+fn here_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: Value) {
     let open = (e.get)(f, Mem::Open);
     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
     (e.guard)(f, none);
@@ -1000,12 +1679,12 @@ fn here_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value) {
     let open_c = (e.ctx)(f, OPEN);
     let at = slot_get(f, open_c, top);
     let rows = (e.ctx)(f, ROWS);
-    NodeCol::of(rows, AT_KIND).put(f, at, kind);
+    t.retag(f, rows, at, kind);
 }
 
 /// `MERGE m=1`: the innermost open node holds two leaves and nothing else, no extra pending:
 /// the first becomes one leaf through the second's end.
-fn fold_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value, wrapping: bool) {
+fn fold_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: Value, wrapping: bool) {
     let (nodes, pending, open) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Pending), (e.get)(f, Mem::Open));
     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
     (e.guard)(f, none);
@@ -1020,7 +1699,7 @@ fn fold_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value, wrapping
     (e.guard)(f, waiting);
     let (a, b) = (f.ins().iadd_imm(o, 1), f.ins().iadd_imm(o, 2));
     let rows = (e.ctx)(f, ROWS);
-    let (kind_c, end_c, size_c) = (NodeCol::of(rows, AT_KIND), NodeCol::of(rows, AT_END), NodeCol::of(rows, AT_SIZE));
+    let (end_c, size_c) = (NodeCol::of(rows, AT_END), NodeCol::of(rows, AT_SIZE));
     let (ra, rb) = (NodeCol::row(f, rows, a), NodeCol::row(f, rows, b));
     let (sa, sb) = (size_c.get_row(f, ra), size_c.get_row(f, rb));
     let na = f.ins().icmp_imm(IntCC::NotEqual, sa, 1);
@@ -1028,19 +1707,18 @@ fn fold_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value, wrapping
     (e.guard)(f, na);
     (e.guard)(f, nb);
     let end = end_c.get_row(f, rb);
-    kind_c.put_row(f, ra, kind);
+    t.retag(f, rows, a, kind);
     end_c.put_row(f, ra, end);
     (e.set)(f, Mem::Nodes, b);
     if wrapping {
         // The first is the last node made at this level now.
         (e.set)(f, Mem::LastMade, b);
-        (e.set)(f, Mem::LastBase, a);
     }
 }
 
 /// `MERGE`: the grammar's leaf before the pending extras, a leaf inside the innermost open
 /// node; the extras are its text: dropped.
-fn merge_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value, end_at: EndAt) {
+fn merge_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: Value, end_at: EndAt) {
     let zero = f.ins().iconst(types::I64, 0);
     let (nodes, pending, open) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Pending), (e.get)(f, Mem::Open));
     let kept = f.ins().isub(nodes, pending);
@@ -1048,7 +1726,7 @@ fn merge_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value, end_at:
     (e.guard)(f, none);
     let leaf = f.ins().iadd_imm(kept, -1);
     let rows = (e.ctx)(f, ROWS);
-    let (kind_c, end_c, size_c) = (NodeCol::of(rows, AT_KIND), NodeCol::of(rows, AT_END), NodeCol::of(rows, AT_SIZE));
+    let (end_c, size_c) = (NodeCol::of(rows, AT_END), NodeCol::of(rows, AT_SIZE));
     let leaf_row = NodeCol::row(f, rows, leaf);
     let size = size_c.get_row(f, leaf_row);
     let not_leaf = f.ins().icmp_imm(IntCC::NotEqual, size, 1);
@@ -1062,7 +1740,7 @@ fn merge_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, kind: Value, end_at:
     let bad = f.ins().band(any, inside);
     (e.guard)(f, bad);
     let end = token_end_at(f, e, end_at);
-    kind_c.put_row(f, leaf_row, kind);
+    t.retag(f, rows, leaf, kind);
     end_c.put_row(f, leaf_row, end);
     (e.set)(f, Mem::Nodes, kept);
     (e.set)(f, Mem::Pending, zero);
@@ -1075,20 +1753,41 @@ struct TokenShape {
     in_code: usize,
     rest_bits: i64,
     end_bits: i64,
+    /// The stream's end as a token's code (`end_kind`), where it has one.
+    end_code: Option<i64>,
+    /// The calls open counted by the machine's stack (`calls_on_stack`): no argument for them,
+    /// and no room for returns (none is written).
+    on_stack: bool,
+    /// The extra this `TOKEN` takes (`TOKEN_EXTRAS`): its code's mark bit and its leaf's kind.
+    extra: Option<(u8, u16)>,
+    /// The program has wraps (`framed`): a leaf's frame slot too.
+    wrapping: bool,
 }
 
-/// `TOKEN`'s body (`WordFn::Token`), taking a token: param `ctx`. The room for the path to the
-/// next token, then the next record, or the stream's end. 0, or 1 where the stream had ended
+/// `TOKEN`'s body (`WordFn::Token`), taking a token: params `ctx`, the calls open. The room for
+/// the path to the next token, then the next record, or the stream's end (its own kind's code). 0, or 1 where the stream had ended
 /// already, or `OVERFLOW` out of room.
-fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>, t: TokenShape) {
+fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>, t: TokenShape, table: Table<'_>, heads: &mut Vec<(Block, Step)>) {
     let ctx = p[0];
     let flags = MemFlags::trusted();
     let load = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, flags, ctx, at);
-    let open_calls = field_get(f, ctx, Mem::Ret);
+    let pops = t.bound.pop_nodes > 0 || t.bound.pop_supers > 0;
+    let open_calls = if !t.on_stack { p[1] } else if pops { calls_open_by_stack(f, ctx) } else { f.ins().iconst(types::I64, 0) };
+    // Each token from here: an extra taken (`TOKEN_EXTRAS`) comes back for the next.
+    let top = f.create_block();
+    f.ins().jump(top, &[]);
+    f.switch_to_block(top);
+    heads.push((top, Step::Token));
     let over = f.create_block();
-    let counts = [field_get(f, ctx, Mem::Nodes), field_get(f, ctx, Mem::Supers), open_calls];
-    let rooms = [load(f, ROOM_NODES), load(f, ROOM_SUPERS), load(f, ROOM_PUSHES)];
-    for (at, (room, (most, per_call))) in counts.into_iter().zip(rooms.into_iter().zip([(t.bound.nodes, t.bound.pop_nodes), (t.bound.supers, t.bound.pop_supers), (t.bound.pushes, 0)])) {
+    let mut counts = vec![field_get(f, ctx, Mem::Nodes), field_get(f, ctx, Mem::Supers)];
+    let mut rooms = vec![load(f, ROOM_NODES), load(f, ROOM_SUPERS)];
+    let mut most = vec![(t.bound.nodes, t.bound.pop_nodes), (t.bound.supers, t.bound.pop_supers)];
+    if !t.on_stack {
+        counts.push(open_calls);
+        rooms.push(load(f, ROOM_PUSHES));
+        most.push((t.bound.pushes, 0));
+    }
+    for (at, (room, (most, per_call))) in counts.into_iter().zip(rooms.into_iter().zip(most)) {
         let at = if per_call > 0 {
             let popped = f.ins().imul_imm(open_calls, per_call as i64);
             f.ins().iadd(at, popped)
@@ -1128,6 +1827,10 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
     field_set(f, ctx, Mem::AtEnd, one);
     let at_end_live = f.ins().iconst(types::I64, t.end_bits);
     field_set(f, ctx, Mem::Live, at_end_live);
+    if let Some(code) = t.end_code {
+        let code = f.ins().iconst(types::I64, code);
+        field_set(f, ctx, Mem::Taken, code);
+    }
     f.ins().return_(&[zero]);
     // The token's record: its first byte, last byte and code, from three columns.
     f.switch_to_block(token);
@@ -1144,6 +1847,24 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
     field_set(f, ctx, Mem::Next, after);
     field_set(f, ctx, Mem::Limit, l1);
     field_set(f, ctx, Mem::Taken, c);
+    // An extra: its bytes taken and its leaf deferred (`SPAN m=1; LEAF m=1 #K`), then the next
+    // token, as the lean parser places a comment where it passes it.
+    if let Some((bit, kind)) = t.extra {
+        let b = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT) + i64::from(bit));
+        let b = f.ins().band_imm(b, 1);
+        let (extra, on) = (f.create_block(), f.create_block());
+        f.ins().brif(b, extra, &[], on, &[]);
+        f.switch_to_block(extra);
+        let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
+        let set = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| field_set(f, ctx, k, x);
+        let at = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, MemFlags::trusted(), ctx, at);
+        let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a leaf does not refuse");
+        let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
+        let k = f.ins().iconst(types::I64, i64::from(kind));
+        leaf_word(f, &env, table, k, true, true, EndAt::Taken, t.wrapping);
+        f.ins().jump(top, &[]);
+        f.switch_to_block(on);
+    }
     let live = match any_mark {
         _ if t.in_code > 0 => {
             let marks = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT));
@@ -1167,14 +1888,21 @@ fn take_token(f: &mut FunctionBuilder<'_>, p: &[Value], any_mark: Option<usize>,
 }
 
 /// `TOKEN`'s function (`WordFn::Token`), made where first called.
-fn token_fn<'a>(module: &mut JITModule, fns: &'a mut std::collections::HashMap<WordFn, (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)>, any_mark: Option<usize>, shape: TokenShape) -> Result<&'a (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function), Error> {
-    let key = WordFn::Token { any_mark };
+fn token_fn<'a>(module: &mut JITModule, fns: &'a mut std::collections::HashMap<WordFn, (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)>, any_mark: Option<usize>, shape: TokenShape, table: Table<'_>, pinned: bool) -> Result<&'a (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function), Error> {
+    let key = WordFn::Token { any_mark, extras: shape.extra.is_some() };
     if !fns.contains_key(&key) {
         let name = format!("tempo_word_{}", fns.len());
-        let made = outline(module, &name, 1, 1, |g, q, _| take_token(g, q, any_mark, shape))?;
+        let made = outline(module, &name, if shape.on_stack { 1 } else { 2 }, 1, pinned, &table.fns.names(), |g, q, heads| take_token(g, q, any_mark, shape, table, heads))?;
         fns.insert(key, made);
     }
     Ok(&fns[&key])
+}
+
+/// A call of a word's function (`outline`): `ctx`, then its arguments; with `ctx` pinned, the
+/// arguments alone.
+fn call_word(f: &mut FunctionBuilder<'_>, id: cranelift_module::FuncId, signature: &cranelift_codegen::ir::Signature, pinned: bool, ctx: Value, args: &[Value]) -> Vec<Value> {
+    let all: Vec<Value> = (!pinned).then_some(ctx).into_iter().chain(args.iter().copied()).collect();
+    call_own(f, id, signature, &all)
 }
 
 /// A call of an outlined function (`outline`), from `f`.
@@ -1186,241 +1914,252 @@ fn call_own(f: &mut FunctionBuilder<'_>, id: cranelift_module::FuncId, signature
     f.inst_results(call).to_vec()
 }
 
-/// At `ACCEPT` with wraps: the node table in preorder. Each record in the order made, a wrap's
-/// own skipped, and before each its base's chain of wraps, latest (outermost) first; then each
-/// supertype's node at its place. A program that rereads leaves the dropped records out, each
-/// node's size less those in its range (from its base, `size` records), counted first. Loops
-/// over the table and one over the supertypes, each step a record (`Step::Node`). Writes the
-/// count placed. An outlined function of its own (`outline`).
-fn reorder(f: &mut FunctionBuilder<'_>, r: Reorder, heads: &mut Vec<(Block, Step)>) {
+/// A function of tier 2's own (`outline`): its id, signature and body.
+type OwnFn = (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function);
+
+/// The functions the node words call to keep the table as it stands at the end, as the lean
+/// parser keeps its tape (`rust_stream::node_words` has the same in Rust): each rare, each a
+/// loop over the table's tail. `shift`: a wrap's (where it wraps more than a leaf, or a node a
+/// supertype names); `unpend`: a close the pending extras outlive; `drop`: a dropped node's.
+struct TableFns {
+    shift: Option<OwnFn>,
+    unpend: Option<OwnFn>,
+    drop: Option<OwnFn>,
+}
+
+impl TableFns {
+    fn make(module: &mut JITModule, words: &[crate::native_ir::StructuralBlock]) -> Result<Self, Error> {
+        let inner = words.iter().any(|b| matches!(b.operation, Op::NodeField { on: On::Inner, .. } | Op::Reread { .. }));
+        let wraps = words.iter().any(|b| matches!(b.operation, Op::Wrap { .. }));
+        let drops = words.iter().any(|b| matches!(b.operation, Op::Reread { .. } | Op::Retag { kind: DEAD, on: On::Made }));
+        let shift = if wraps { Some(outline(module, "tempo_stream_shift", 7, 0, false, &[], |f, p, heads| shift_rows(f, p, inner, heads))?) } else { None };
+        // Leaves pending only where a leaf is deferred (an extra's).
+        let defers = words.iter().any(|b| matches!(b.operation, Op::Leaf { deferred: true, .. } | Op::Token { extras: true, .. }));
+        let unpend = if defers { Some(outline(module, "tempo_stream_unpend", 4, 0, false, &[], unpend_rows)?) } else { None };
+        let drop = if drops { Some(outline(module, "tempo_stream_drop", 10, 3, false, &[], |f, p, heads| drop_rows(f, p, inner, heads))?) } else { None };
+        Ok(TableFns { shift, unpend, drop })
+    }
+
+    /// The functions' names: the node words' functions call them.
+    fn names(&self) -> Vec<cranelift_codegen::ir::UserExternalName> {
+        self.shift.iter().chain(&self.unpend).chain(&self.drop).map(|f| cranelift_codegen::ir::UserExternalName::new(0, f.0.as_u32())).collect()
+    }
+
+    fn all(self) -> impl Iterator<Item = OwnFn> {
+        self.shift.into_iter().chain(self.unpend).chain(self.drop)
+    }
+}
+
+/// A row's three words, loaded or stored.
+fn row_words(f: &mut FunctionBuilder<'_>, row: Value) -> [Value; 3] {
+    [0, 8, 16].map(|o| f.ins().load(types::I64, MemFlags::trusted(), row, o))
+}
+
+fn put_row_words(f: &mut FunctionBuilder<'_>, row: Value, w: [Value; 3]) {
+    for (k, o) in [0, 8, 16].into_iter().enumerate() {
+        f.ins().store(MemFlags::trusted(), w[k], row, o);
+    }
+}
+
+/// `(rows, head, snode, r, n, x, supers)`: a wrap at row `r`, inside `x`, of a table of `n`:
+/// rows `r..n` up a row, latest first; in each moved past the first, its parent `x` the wrap's,
+/// a parent from `r` on one more. `head` (which rows are wraps) moves with them. The
+/// supertypes' nodes from `r` on, the last ones, one more. A step a row (`Step::Node`).
+fn shift_rows(f: &mut FunctionBuilder<'_>, p: &[Value], inner: bool, heads: &mut Vec<(Block, Step)>) {
     let flags = MemFlags::trusted();
-    let at = |f: &mut FunctionBuilder<'_>, c: Value, i: Value| {
-        let off = f.ins().ishl_imm(i, 2);
-        f.ins().iadd(c, off)
-    };
-    let get = |f: &mut FunctionBuilder<'_>, c: Value, i: Value| {
-        let a = at(f, c, i);
-        f.ins().uload32(flags, a, 0)
-    };
-    let put = |f: &mut FunctionBuilder<'_>, c: Value, i: Value, x: Value| {
-        let a = at(f, c, i);
-        f.ins().istore32(flags, x, a, 0);
-    };
-    // Record `from` to place `to`, its row's first 16 bytes (kind to size) as two words; its
-    // range starts at `first`.
-    let copy = |f: &mut FunctionBuilder<'_>, from: Value, to: Value, first: Value| {
-        let (a, b) = (NodeCol::row(f, r.rows, from), NodeCol::row(f, r.out, to));
-        let (x, y) = (f.ins().load(types::I64, flags, a, 0), f.ins().load(types::I64, flags, a, 8));
-        f.ins().store(flags, x, b, 0);
-        f.ins().store(flags, y, b, 8);
-        if let Some(before) = r.before {
-            let size = NodeCol::of(r.rows, AT_SIZE).get(f, from);
-            let e = f.ins().iadd(first, size);
-            let (de, df) = (get(f, before, e), get(f, before, first));
-            let gone = f.ins().isub(de, df);
-            let x = f.ins().isub(size, gone);
-            NodeCol::of(r.out, AT_SIZE).put(f, to, x);
-        }
-        put(f, r.place, from, to);
-    };
-    // Whether record `n` was dropped (only a program that rereads drops one).
-    let dropped = |f: &mut FunctionBuilder<'_>, n: Value| -> Option<Value> {
-        r.before.map(|_| {
-            let k = NodeCol::of(r.rows, AT_KIND).get(f, n);
-            f.ins().icmp_imm(IntCC::Equal, k, i64::from(DEAD))
-        })
-    };
-    let (scan, chain, supers, done, plain) = (f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block());
-    for (b, n) in [(scan, 2), (chain, 3), (supers, 1)] {
-        for _ in 0..n {
-            f.append_block_param(b, types::I64);
-        }
-    }
-    heads.extend([(scan, Step::Node), (chain, Step::Node), (supers, Step::Node)]);
-    let zero = f.ins().iconst(types::I64, 0);
-    let start = f.create_block();
-    f.ins().brif(r.wraps, start, &[], done, &[]);
-    f.switch_to_block(start);
-    if let Some(b) = r.before {
-        // count(i, d): the dropped records before record i.
-        let count = f.create_block();
-        f.append_block_param(count, types::I64);
-        f.append_block_param(count, types::I64);
-        heads.push((count, Step::Node));
-        f.ins().jump(count, &[BlockArg::from(zero), BlockArg::from(zero)]);
-        f.switch_to_block(count);
-        let (i, d) = (f.block_params(count)[0], f.block_params(count)[1]);
-        put(f, b, i, d);
-        let step = f.create_block();
-        let end = f.ins().icmp(IntCC::Equal, i, r.nodes);
-        f.ins().brif(end, scan, &[BlockArg::from(zero), BlockArg::from(zero)], step, &[]);
-        f.switch_to_block(step);
-        let k = NodeCol::of(r.rows, AT_KIND).get(f, i);
-        let is = f.ins().icmp_imm(IntCC::Equal, k, i64::from(DEAD));
-        let is = f.ins().uextend(types::I64, is);
-        let (i1, d1) = (f.ins().iadd_imm(i, 1), f.ins().iadd(d, is));
-        f.ins().jump(count, &[BlockArg::from(i1), BlockArg::from(d1)]);
-    } else {
-        f.ins().jump(scan, &[BlockArg::from(zero), BlockArg::from(zero)]);
-    }
-
-    // scan(i, j): record i, the next place j.
-    f.switch_to_block(scan);
-    let (i, j) = (f.block_params(scan)[0], f.block_params(scan)[1]);
-    let body = f.create_block();
-    let end = f.ins().icmp(IntCC::Equal, i, r.nodes);
-    let ended = f.create_block();
-    f.ins().brif(end, ended, &[], body, &[]);
-    f.switch_to_block(ended);
-    f.ins().store(flags, j, r.counts, 0);
-    f.ins().jump(supers, &[BlockArg::from(zero)]);
-    f.switch_to_block(body);
-    let h = get(f, r.head, i);
-    let is_wrap = f.ins().icmp_imm(IntCC::Equal, h, IS_WRAP);
-    f.ins().brif(is_wrap, plain, &[], chain, &[BlockArg::from(h), BlockArg::from(i), BlockArg::from(j)]);
-    f.switch_to_block(plain);
-    let i1 = f.ins().iadd_imm(i, 1);
-    f.ins().jump(scan, &[BlockArg::from(i1), BlockArg::from(j)]);
-
-    // chain(c, i, j): the wraps before record i, from c (one more than a wrap's record; 0: i).
-    f.switch_to_block(chain);
-    let (c, i, j) = (f.block_params(chain)[0], f.block_params(chain)[1], f.block_params(chain)[2]);
-    let (wrap, own) = (f.create_block(), f.create_block());
-    f.ins().brif(c, wrap, &[], own, &[]);
-    f.switch_to_block(wrap);
-    let w = f.ins().iadd_imm(c, -1);
-    let c2 = get(f, r.link, w);
-    let j1 = match dropped(f, w) {
-        Some(gone) => {
-            let (put_it, after) = (f.create_block(), f.create_block());
-            f.append_block_param(after, types::I64);
-            f.ins().brif(gone, after, &[BlockArg::from(j)], put_it, &[]);
-            f.switch_to_block(put_it);
-            copy(f, w, j, i);
-            let j1 = f.ins().iadd_imm(j, 1);
-            f.ins().jump(after, &[BlockArg::from(j1)]);
-            f.switch_to_block(after);
-            f.block_params(after)[0]
-        }
-        None => {
-            copy(f, w, j, i);
-            f.ins().iadd_imm(j, 1)
-        }
-    };
-    f.ins().jump(chain, &[BlockArg::from(c2), BlockArg::from(i), BlockArg::from(j1)]);
-    f.switch_to_block(own);
-    let i1 = f.ins().iadd_imm(i, 1);
-    let j1 = match dropped(f, i) {
-        Some(gone) => {
-            let (put_it, after) = (f.create_block(), f.create_block());
-            f.append_block_param(after, types::I64);
-            f.ins().brif(gone, after, &[BlockArg::from(j)], put_it, &[]);
-            f.switch_to_block(put_it);
-            copy(f, i, j, i);
-            let j1 = f.ins().iadd_imm(j, 1);
-            f.ins().jump(after, &[BlockArg::from(j1)]);
-            f.switch_to_block(after);
-            f.block_params(after)[0]
-        }
-        None => {
-            copy(f, i, j, i);
-            f.ins().iadd_imm(j, 1)
-        }
-    };
-    f.ins().jump(scan, &[BlockArg::from(i1), BlockArg::from(j1)]);
-
-    // supers(s): supertype s's node, at its place.
-    f.switch_to_block(supers);
-    let s = f.block_params(supers)[0];
-    let step = f.create_block();
-    let end = f.ins().icmp(IntCC::Equal, s, r.supers);
-    f.ins().brif(end, done, &[], step, &[]);
+    let (rows, head, snode, r, n, x, supers) = (p[0], p[1], p[2], p[3], p[4], p[5], p[6]);
+    let (step, body, sups, done) = (f.create_block(), f.create_block(), f.create_block(), f.create_block());
+    f.append_block_param(step, types::I64);
+    f.append_block_param(sups, types::I64);
+    heads.extend([(step, Step::Node), (sups, Step::Node)]);
+    f.ins().jump(step, &[BlockArg::from(n)]);
+    // step(i): row i - 1 to row i.
     f.switch_to_block(step);
-    let n = get(f, r.snode, s);
-    let p = get(f, r.place, n);
-    put(f, r.snode, s, p);
+    let i = f.block_params(step)[0];
+    let at_r = f.ins().icmp(IntCC::Equal, i, r);
+    f.ins().brif(at_r, sups, &[BlockArg::from(supers)], body, &[]);
+    f.switch_to_block(body);
+    let from = f.ins().iadd_imm(i, -1);
+    let (src, dst) = (NodeCol::row(f, rows, from), NodeCol::row(f, rows, i));
+    let w = row_words(f, src);
+    put_row_words(f, dst, w);
+    // Past the first (the wrapped node, which the wrap sets): its parent.
+    let past = f.ins().icmp(IntCC::UnsignedGreaterThan, from, r);
+    let pr = f.ins().uload32(flags, dst, AT_PARENT);
+    let is_x = f.ins().icmp(IntCC::Equal, pr, x);
+    let after = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, pr, r);
+    let up = f.ins().iadd_imm(pr, 1);
+    let to = f.ins().select(after, up, pr);
+    let to = f.ins().select(is_x, r, to);
+    let to = f.ins().select(past, to, pr);
+    f.ins().istore32(flags, to, dst, AT_PARENT);
+    if inner {
+        let h = slot_get(f, head, from);
+        slot_put(f, head, i, h);
+    }
+    f.ins().jump(step, &[BlockArg::from(from)]);
+    // sups(k): the supertype k - 1, while its node is from r on.
+    f.switch_to_block(sups);
+    let k = f.block_params(sups)[0];
+    let (look, bump) = (f.create_block(), f.create_block());
+    f.ins().brif(k, look, &[], done, &[]);
+    f.switch_to_block(look);
+    let k1 = f.ins().iadd_imm(k, -1);
+    let s = slot_get(f, snode, k1);
+    let moved = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, s, r);
+    f.ins().brif(moved, bump, &[], done, &[]);
+    f.switch_to_block(bump);
     let s1 = f.ins().iadd_imm(s, 1);
-    f.ins().jump(supers, &[BlockArg::from(s1)]);
-
+    slot_put(f, snode, k1, s1);
+    f.ins().jump(sups, &[BlockArg::from(k1)]);
     f.switch_to_block(done);
     f.ins().return_(&[]);
 }
 
-/// The table's final pass, once it is in preorder: each node's parent and its extra flag, in
-/// its row, from its kind and size, over `count` rows.
-/// The open nodes are a stack of records in `stack` (the open stack's room, free at `ACCEPT`):
-/// before record `i`, each open node whose range ends at or before `i` is popped, and the top is
-/// `i`'s parent. One loop over the records and one over the pops, each step a record
-/// (`Step::Node`): a record is pushed once and popped at most once. Returns 0.
-fn table(f: &mut FunctionBuilder<'_>, rows: Value, count: Value, stack: Value, extras: &[u16], heads: &mut Vec<(Block, Step)>) {
-    let flags = MemFlags::trusted();
-    let at = |f: &mut FunctionBuilder<'_>, c: Value, i: Value, shift: i64| {
-        let off = f.ins().ishl_imm(i, shift);
-        f.ins().iadd(c, off)
-    };
-    let (next, pop, popped, place, done) = (f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block());
-    // next(i, d): record i, d open records on the stack.
-    for b in [next, pop] {
-        f.append_block_param(b, types::I64);
-        f.append_block_param(b, types::I64);
-    }
-    heads.extend([(next, Step::Node), (pop, Step::Node)]);
-    let zero = f.ins().iconst(types::I64, 0);
-    f.ins().jump(next, &[BlockArg::from(zero), BlockArg::from(zero)]);
-
-    f.switch_to_block(next);
-    let (i, d) = (f.block_params(next)[0], f.block_params(next)[1]);
-    let end = f.ins().icmp(IntCC::Equal, i, count);
-    let body = f.create_block();
+/// `(rows, from, to, parent)`: rows `from..to` (the pending extras) are `parent`'s.
+fn unpend_rows(f: &mut FunctionBuilder<'_>, p: &[Value], heads: &mut Vec<(Block, Step)>) {
+    let (rows, from, to, parent) = (p[0], p[1], p[2], p[3]);
+    let (step, body, done) = (f.create_block(), f.create_block(), f.create_block());
+    f.append_block_param(step, types::I64);
+    heads.push((step, Step::Node));
+    f.ins().jump(step, &[BlockArg::from(from)]);
+    f.switch_to_block(step);
+    let i = f.block_params(step)[0];
+    let end = f.ins().icmp(IntCC::Equal, i, to);
     f.ins().brif(end, done, &[], body, &[]);
     f.switch_to_block(body);
-    f.ins().jump(pop, &[BlockArg::from(i), BlockArg::from(d)]);
-
-    // pop(i, d): the top's range ends at or before i: popped.
-    f.switch_to_block(pop);
-    let (i, d) = (f.block_params(pop)[0], f.block_params(pop)[1]);
-    let has = f.create_block();
-    f.ins().brif(d, has, &[], place, &[]);
-    f.switch_to_block(has);
-    let d1 = f.ins().iadd_imm(d, -1);
-    let a = at(f, stack, d1, 2);
-    let top = f.ins().uload32(flags, a, 0);
-    let size = NodeCol::of(rows, AT_SIZE).get(f, top);
-    let ends = f.ins().iadd(top, size);
-    let closed = f.ins().icmp(IntCC::UnsignedLessThanOrEqual, ends, i);
-    f.ins().brif(closed, popped, &[], place, &[]);
-    f.switch_to_block(popped);
-    f.ins().jump(pop, &[BlockArg::from(i), BlockArg::from(d1)]);
-
-    // place: the parent is the top (none on an empty stack); i is pushed.
-    f.switch_to_block(place);
-    let none = f.ins().iconst(types::I64, i64::from(NO_PARENT));
-    let d1 = f.ins().iadd_imm(d, -1);
-    let a = at(f, stack, d1, 2);
-    let has = f.ins().icmp_imm(IntCC::NotEqual, d, 0);
-    // An empty stack reads no slot: the address is the stack's own.
-    let a = f.ins().select(has, a, stack);
-    let top = f.ins().uload32(flags, a, 0);
-    let parent = f.ins().select(has, top, none);
     let row = NodeCol::row(f, rows, i);
-    f.ins().istore32(flags, parent, row, AT_PARENT);
-    let k = f.ins().uload16(types::I64, flags, row, AT_KIND);
-    let mut extra = f.ins().iconst(types::I8, 0);
-    for &e in extras {
-        let is = f.ins().icmp_imm(IntCC::Equal, k, i64::from(e));
-        extra = f.ins().bor(extra, is);
-    }
-    // With the row's last three bytes: every byte of a row is written.
-    let extra = f.ins().uextend(types::I32, extra);
-    f.ins().store(flags, extra, row, AT_EXTRA);
-    let a = at(f, stack, d, 2);
-    f.ins().istore32(flags, i, a, 0);
-    let (i1, d2) = (f.ins().iadd_imm(i, 1), f.ins().iadd_imm(d, 1));
-    f.ins().jump(next, &[BlockArg::from(i1), BlockArg::from(d2)]);
-
+    f.ins().istore32(MemFlags::trusted(), parent, row, AT_PARENT);
+    let i1 = f.ins().iadd_imm(i, 1);
+    f.ins().jump(step, &[BlockArg::from(i1)]);
     f.switch_to_block(done);
-    f.ins().return_(&[zero]);
+    f.ins().return_(&[]);
 }
+
+/// `(rows, before, to, head, snode, skind, from, n, supers, moved)`: the dropped rows (`DEAD`)
+/// of rows `from..n` taken out, the rest moved down. First each row's count of dropped before
+/// it (`before`); then each kept row to its place, its size less the dropped in its range, its
+/// parent the nearest kept (`to`: a kept row's place, a dropped one's parent's); then the
+/// supertypes of the tail's nodes on to their rows, a dropped node's gone. Gives back the
+/// rows, the supertypes, and the node the last wrap moved, at its place. A step a row.
+fn drop_rows(f: &mut FunctionBuilder<'_>, p: &[Value], inner: bool, heads: &mut Vec<(Block, Step)>) {
+    let flags = MemFlags::trusted();
+    let (rows, before, to, head, snode, skind, from, n, supers, moved) = (p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9]);
+    let zero = f.ins().iconst(types::I64, 0);
+    // count(i, d).
+    let (count, cbody, place, pbody, kept_row, back, sback, sstep, sbody, sput, done) = (
+        f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(),
+        f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(),
+    );
+    f.append_block_param(count, types::I64);
+    f.append_block_param(count, types::I64);
+    f.append_block_param(place, types::I64);
+    f.append_block_param(back, types::I64);
+    f.append_block_param(sstep, types::I64);
+    f.append_block_param(sstep, types::I64);
+    f.append_block_param(done, types::I64);
+    heads.extend([(count, Step::Node), (place, Step::Node), (back, Step::Node), (sstep, Step::Node)]);
+    f.ins().jump(count, &[BlockArg::from(from), BlockArg::from(zero)]);
+    f.switch_to_block(count);
+    let (i, d) = (f.block_params(count)[0], f.block_params(count)[1]);
+    slot_put(f, before, i, d);
+    let end = f.ins().icmp(IntCC::Equal, i, n);
+    f.ins().brif(end, place, &[BlockArg::from(from)], cbody, &[]);
+    f.switch_to_block(cbody);
+    let k = NodeCol::of(rows, AT_KIND).get(f, i);
+    let dead = f.ins().icmp_imm(IntCC::Equal, k, i64::from(DEAD));
+    let dead = f.ins().uextend(types::I64, dead);
+    let d1 = f.ins().iadd(d, dead);
+    let i1 = f.ins().iadd_imm(i, 1);
+    f.ins().jump(count, &[BlockArg::from(i1), BlockArg::from(d1)]);
+    // place(i).
+    f.switch_to_block(place);
+    let i = f.block_params(place)[0];
+    let end = f.ins().icmp(IntCC::Equal, i, n);
+    f.ins().brif(end, back, &[BlockArg::from(supers)], pbody, &[]);
+    f.switch_to_block(pbody);
+    let row = NodeCol::row(f, rows, i);
+    let w = row_words(f, row);
+    let pr = f.ins().uload32(flags, row, AT_PARENT);
+    let outside = f.ins().icmp(IntCC::UnsignedLessThan, pr, from);
+    let safe = f.ins().select(outside, from, pr);
+    let mapped = slot_get(f, to, safe);
+    let pr = f.ins().select(outside, pr, mapped);
+    let k = f.ins().uload16(types::I64, flags, row, AT_KIND);
+    let dead = f.ins().icmp_imm(IntCC::Equal, k, i64::from(DEAD));
+    let (gone, i1) = (f.create_block(), f.ins().iadd_imm(i, 1));
+    f.ins().brif(dead, gone, &[], kept_row, &[]);
+    f.switch_to_block(gone);
+    slot_put(f, to, i, pr);
+    if inner {
+        let m = slot_get(f, head, pr);
+        let m = f.ins().bor_imm(m, DROPPED_IN);
+        slot_put(f, head, pr, m);
+    }
+    f.ins().jump(place, &[BlockArg::from(i1)]);
+    f.switch_to_block(kept_row);
+    let bi = slot_get(f, before, i);
+    let j = f.ins().isub(i, bi);
+    slot_put(f, to, i, j);
+    let size = f.ins().uload32(flags, row, AT_SIZE);
+    let e = f.ins().iadd(i, size);
+    let e = f.ins().umin(e, n);
+    let be = slot_get(f, before, e);
+    let lost = f.ins().isub(be, bi);
+    let size = f.ins().isub(size, lost);
+    let dst = NodeCol::row(f, rows, j);
+    put_row_words(f, dst, w);
+    f.ins().istore32(flags, size, dst, AT_SIZE);
+    f.ins().istore32(flags, pr, dst, AT_PARENT);
+    if inner {
+        let h = slot_get(f, head, i);
+        slot_put(f, head, j, h);
+    }
+    f.ins().jump(place, &[BlockArg::from(i1)]);
+    // back(k): the first supertype of a node from `from` on.
+    f.switch_to_block(back);
+    let k = f.block_params(back)[0];
+    let look = f.create_block();
+    f.ins().brif(k, look, &[], sback, &[]);
+    f.switch_to_block(look);
+    let k1 = f.ins().iadd_imm(k, -1);
+    let s = slot_get(f, snode, k1);
+    let tail = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, s, from);
+    f.ins().brif(tail, back, &[BlockArg::from(k1)], sback, &[]);
+    f.switch_to_block(sback);
+    f.ins().jump(sstep, &[BlockArg::from(k), BlockArg::from(k)]);
+    // sstep(s, kept).
+    f.switch_to_block(sstep);
+    let (s, kept) = (f.block_params(sstep)[0], f.block_params(sstep)[1]);
+    let end = f.ins().icmp(IntCC::Equal, s, supers);
+    f.ins().brif(end, done, &[BlockArg::from(kept)], sbody, &[]);
+    f.switch_to_block(sbody);
+    let at = slot_get(f, snode, s);
+    let a1 = f.ins().iadd_imm(at, 1);
+    let (b0, b1) = (slot_get(f, before, at), slot_get(f, before, a1));
+    let s1 = f.ins().iadd_imm(s, 1);
+    let lost = f.ins().icmp(IntCC::NotEqual, b0, b1);
+    f.ins().brif(lost, sstep, &[BlockArg::from(s1), BlockArg::from(kept)], sput, &[]);
+    f.switch_to_block(sput);
+    let place_at = slot_get(f, to, at);
+    slot_put(f, snode, kept, place_at);
+    let sk = slot_get(f, skind, s);
+    slot_put(f, skind, kept, sk);
+    let kept1 = f.ins().iadd_imm(kept, 1);
+    f.ins().jump(sstep, &[BlockArg::from(s1), BlockArg::from(kept1)]);
+    f.switch_to_block(done);
+    let kept = f.block_params(done)[0];
+    let dn = slot_get(f, before, n);
+    let nodes = f.ins().isub(n, dn);
+    let lo = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, moved, from);
+    let hi = f.ins().icmp(IntCC::UnsignedLessThan, moved, n);
+    let inside = f.ins().band(lo, hi);
+    let safe = f.ins().select(inside, moved, from);
+    let m = slot_get(f, to, safe);
+    let moved = f.ins().select(inside, m, moved);
+    f.ins().return_(&[nodes, kept, moved]);
+}
+
 
 /// A body of shared arms (`shared_runs`): its words, from `start` (its first place) to the
 /// `GOTO` that ends it, and the places its places go on to.
@@ -1445,7 +2184,7 @@ pub struct SharedRuns {
 fn plain(op: &Op) -> bool {
     matches!(
         op,
-        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::Settle { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. } | Op::Remember { .. } | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. }
+        Op::Span { .. } | Op::Word { test: false, .. } | Op::Open { .. } | Op::Close { .. } | Op::Leaf { .. } | Op::Settle { .. } | Op::NodeField { .. } | Op::NodeSuper { .. } | Op::Retag { .. } | Op::Wrap { .. } | Op::Merge { .. } | Op::Push { .. } | Op::Remember { .. } | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. } | Op::Count { .. } | Op::Check { .. }
     )
 }
 
@@ -1637,6 +2376,10 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         (0..n).map(|k| r.kinds.iter().position(|&x| usize::from(x) == k).unwrap_or(0) as u8).collect()
     });
     // Each word's kind: its first byte's.
+    // The stream's end as a kind of its own, past the records' (no word, no mark): a switch on
+    // kinds takes it to its end's target, as the lean parser's end token, with no test of its
+    // own. None where the kinds fill a byte.
+    let end_kind: Option<u8> = kind_reps.as_ref().and_then(|r| u8::try_from(r.len()).ok());
     let word_kinds: Vec<u8> = starts.and(native.block_programs.first().and_then(|b| b.records.as_ref())).map_or_else(Vec::new, |r| r.words.iter().map(|w| r.kinds[usize::from(w[0])]).collect());
 
     let clustered = cut.count > 1 || cut.calls;
@@ -1645,6 +2388,15 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     let mut flags: Vec<(&str, &str)> = Vec::new();
     if cut.speed {
         flags.push(("opt_level", "speed"));
+    }
+    // With a function a grammar rule, `ctx` is in a register of its own through the run
+    // (Cranelift's pinned register, x21): `tempo_stream` sets it (and gives the host's back),
+    // each function reads it once where it is entered, into one value with no use fixed to an
+    // argument's register (a call passes no `ctx`), which the allocator keeps in one
+    // callee-saved register through the function, as rustc keeps the lean parser's `self`.
+    let pinned_ctx = clustered && cut.calls && !native.rules.is_empty();
+    if pinned_ctx {
+        flags.push(("enable_pinned_reg", "true"));
     }
     // The passed fields come back with a function's result: more results than registers go
     // through a return area.
@@ -1678,11 +2430,21 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     signature.params.push(AbiParam::new(pointer));
     signature.returns.push(AbiParam::new(types::I64));
     let id = module.declare_function("tempo_stream", Linkage::Local, &signature).map_err(|_| Error::BackendFailure)?;
+    // The calls open (`Mem::Ret`) are a field of the state in `ctx`, read and written where a
+    // call is made and returns, and read by `TOKEN`'s room check, as the lean parser's
+    // `self` fields are: no value of them lives across a call. Passed as an argument, one value
+    // through a whole function, given to each call and to the code of other rules it goes
+    // into, was a value regalloc2 split twice at most and then cut into a piece a use, each
+    // reloaded from the stack (1,148 loads over `.rr`'s tier 2, against 17 so).
     // A cluster's function: (ctx, the entry's index), the `tail` convention.
     let csig = if clustered {
         let mut c = module.make_signature();
         c.call_conv = cranelift_codegen::isa::CallConv::Tail;
-        c.params.extend([AbiParam::new(pointer), AbiParam::new(types::I64)]);
+        // `ctx` in the pinned register (`pinned_ctx`), else the first argument.
+        if !pinned_ctx {
+            c.params.push(AbiParam::new(pointer));
+        }
+        c.params.push(AbiParam::new(types::I64));
         // `Cut::pass`: those fields as arguments, in registers, and given back with the result,
         // as a call's arguments and results: a call stores none of them.
         c.params.extend(cut.pass.iter().map(|_| AbiParam::new(types::I64)));
@@ -1698,12 +2460,99 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         vec![id]
     };
     let mut fctx = FunctionBuilderContext::new();
-    // The node table's passes, outlined (`outline`): made where first called, by any cluster.
-    let mut reorder_fn = None;
+    // The node words' rare loops, outlined (`TableFns`).
+    let table_fns = TableFns::make(&mut module, &native.structural)?;
+    let table = Table { extras: &native.readings.extras, inner: crate::rust_stream::marks(native), fns: &table_fns };
     // The words made as functions of their own (`WordFn`), with a function a grammar rule.
     let outlined = !native.rules.is_empty() && cut.calls;
+    // The calls open counted by the machine's stack (`calls_on_stack`), with `ctx` pinned.
+    let on_stack = pinned_ctx && outlined && !flagged && calls_on_stack(native);
+    // The callee takes its caller's token (`RETURN m=0`), as the lean parser's callee consumes
+    // it and its caller peeks: where every call's place to return to is one `TOKEN`, alike
+    // (the same mask, and taking a token there), a `RETURN m=0` takes it and returns as `m=1`
+    // does, to the caller's switch. So every call returns one way and is tested once (`cbnz`).
+    let landing_token: Option<(Option<u8>, bool)> = {
+        let pushes = push_targets(native);
+        let mut anys = pushes.iter().map(|&p| match words.get(usize::from(p)).map(|b| b.operation) {
+            Some(Op::Token { any, extras, .. }) if phase_of[usize::from(p)] == crate::stream::TAKEN => Some((any, extras)),
+            _ => None,
+        });
+        let first = anys.next().flatten();
+        first.filter(|&a| on_stack && anys.all(|x| x == Some(a)))
+    };
+    let callee_takes = landing_token.is_some();
+    // With a function a grammar rule, the ways a call returns (bit 0: `RETURN m=0`, bit 1:
+    // `m=1`), by the place it enters: the `RETURN`s reached from there at the same depth
+    // (`rule_successors`), in its function and in the code of earlier rules it goes into (which
+    // it calls, passing their result on). A call of a place with one way tests once (`cbnz`), as
+    // a `Result`'s: a `RETURN m=1` gives back 0 where every place reaching it has that way alone.
+    // By place, not function: a rule's function holds code other rules go into, with ways of
+    // its own.
+    let rule_of = |pc: usize| native.rules.partition_point(|&s| usize::from(s) <= pc).saturating_sub(1);
+    let by_rule = outlined && (0..words.len()).all(|pc| cut.of[pc] as usize == rule_of(pc));
+    let n_structural = words.len();
+    let entered: Vec<usize> = {
+        let mut e: Vec<usize> = (0..n_structural).filter(|&pc| matches!(words[pc].operation, Op::Push { .. })).map(|pc| callee(native, pc)).collect();
+        e.sort_unstable();
+        e.dedup();
+        e
+    };
+    // The `RETURN`s each entered place reaches.
+    let returns_from: Vec<Vec<usize>> = entered
+        .iter()
+        .map(|&e| {
+            let mut seen = vec![false; n_structural];
+            let (mut todo, mut out) = (vec![e], Vec::new());
+            while let Some(pc) = todo.pop() {
+                if pc >= n_structural || std::mem::replace(&mut seen[pc], true) {
+                    continue;
+                }
+                if matches!(words[pc].operation, Op::Return { .. }) {
+                    out.push(pc);
+                }
+                todo.extend(rule_successors(native, pc));
+            }
+            out
+        })
+        .collect();
+    let again_of = |r: usize| matches!(words[r].operation, Op::Return { again: true });
+    let mut one: Vec<Option<u16>> = returns_from
+        .iter()
+        .map(|rs| {
+            let ways = rs.iter().fold(0u8, |w, &r| w | 1 << u8::from(again_of(r)));
+            if !by_rule { None } else { match ways { 1 => Some(0), 2 => Some(1), _ => None } }
+        })
+        .collect();
+    // Each `RETURN m=1`'s places (the entered places reaching it).
+    let mut users: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+    for (i, rs) in returns_from.iter().enumerate() {
+        for &r in rs.iter().filter(|&&r| again_of(r)) {
+            users.entry(r).or_default().push(i);
+        }
+    }
+    // A `RETURN m=1` a place with both ways reaches gives back 1: then every place reaching it
+    // tests for 1. To a fixed point.
+    loop {
+        let mut changed = false;
+        for us in users.values() {
+            if us.iter().any(|&u| one[u].is_none()) {
+                for &u in us {
+                    if one[u] == Some(1) {
+                        one[u] = None;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    // A `RETURN m=1` gives back 0 where every place reaching it reads 0 so.
+    let again_as_one: Vec<bool> = (0..n_structural).map(|r| users.get(&r).is_some_and(|us| us.iter().all(|&u| one[u] == Some(1)))).collect();
+    // The one way a call of place `e` returns, where it has one.
+    let one_way = |e: usize| -> Option<u16> { if callee_takes { Some(1) } else { entered.binary_search(&e).ok().and_then(|i| one[i]) } };
     let mut word_fns: std::collections::HashMap<WordFn, (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)> = std::collections::HashMap::new();
-    let mut table_fn: Option<(cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranelift_codegen::ir::Function)> = None;
     let mut lowered: Vec<Lowered> = Vec::new();
     let mut word_insts: Vec<u32> = vec![0; words.len()];
     let phase = std::time::Instant::now();
@@ -1763,6 +2612,13 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     for pc in (0..n_words).filter(|&pc| matches!(words[pc].operation, Op::Remember { .. } | Op::Flag { op: FlagOp::Set | FlagOp::Clear, .. })) {
         changes_context[cut.of[pc] as usize] = true;
     }
+    // With a function a grammar rule and `ctx` pinned (every exit through the function's one
+    // `exit`), the word and flags are callee-saved, as registers are: a function whose own
+    // words change them keeps the values it was entered with and gives them back where it
+    // leaves, as the lean parser's are its callees' locals. A call keeps nothing; code of
+    // another rule a function goes into keeps its own.
+    let own_changes = changes_context.clone();
+    let callee_keeps = pinned_ctx && has_context(words);
     loop {
         let mut more = false;
         for pc in (0..n_words).filter(|&pc| !shared_all.skipped[pc]) {
@@ -1843,7 +2699,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         let wrapping = framed(words);
 
         f.switch_to_block(entry);
-        let ctx = f.block_params(entry)[0];
+        // `ctx`: read from its register where the function is entered, else its first argument.
+        let ctx = if pinned_ctx { f.ins().get_pinned_reg(types::I64) } else { f.block_params(entry)[0] };
+        let first_param = usize::from(!pinned_ctx);
         // `can_move`: a pure value to the optimizer, removed where unused (`Cut::speed`).
         let ro = MemFlags::trusted().with_readonly().with_can_move();
         let load = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, ro, ctx, at);
@@ -1872,7 +2730,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             Vec::new()
         };
         let _ = &wcols;
-        let (fbase_c, head_c, link_c, place_c) = (0, 3, 4, 5);
+        let (fbase_c, head_c, link_c) = (0, 3, 4);
         let zero = f.ins().iconst(types::I64, 0);
         // The state few words touch, in memory (`Mem`): not carried through every block where
         // paths meet, as an SSA variable is.
@@ -1959,6 +2817,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         // with its results. A return each would be an epilogue each (its callee-saved
         // registers restored).
         let exit = f.create_block();
+        // The word and flags this function gives back where it leaves (`callee_keeps`).
+        let mut entry_kept: Option<(Value, Value)> = None;
         for _ in 0..1 + if clustered { cut.pass.len() } else { 0 } {
             f.append_block_param(exit, types::I64);
         }
@@ -1970,7 +2830,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             for (k, v) in vars.iter().enumerate() {
                 if let Some(v) = *v {
                     let x = match cut.pass.iter().position(|&q| q as usize == k) {
-                        Some(j) => f.block_params(entry)[2 + j],
+                        Some(j) => f.block_params(entry)[first_param + 1 + j],
                         None => {
                             let p = pinned(&mut f);
                             f.ins().load(types::I64, MemFlags::trusted(), p, STATE + 8 * k as i32)
@@ -1978,6 +2838,25 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     };
                     f.def_var(v, x);
                 }
+            }
+            // The word and flags the function was entered with, where its own words change them
+            // (`callee_keeps`).
+            if callee_keeps && own_changes[c as usize] {
+                entry_kept = Some((mget(&mut f, Mem::Word), mget(&mut f, Mem::Flags)));
+            }
+            // The calls open on the machine's stack (`on_stack`): its depth checked once, where
+            // the function is entered, as a stack check in a prologue (one load, one compare).
+            if on_stack {
+                let sp = f.ins().get_stack_pointer(types::I64);
+                let limit = f.ins().load(types::I64, MemFlags::trusted(), ctx, STACK_LIMIT);
+                let deep = f.ins().icmp(IntCC::UnsignedLessThan, sp, limit);
+                let (ok, no) = (f.create_block(), f.create_block());
+                f.ins().brif(deep, no, &[], ok, &[]);
+                f.switch_to_block(no);
+                f.set_cold_block(no);
+                let at = f.ins().iconst(types::I64, 1);
+                f.ins().jump(refuse, &[BlockArg::from(at)]);
+                f.switch_to_block(ok);
             }
             f.ins().jump(pick, &[]);
         } else {
@@ -2054,6 +2933,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             }
             // Each word's instructions, for the profile (`CompiledStream::word_insts`).
             marks_at.push((pc, f.func.dfg.num_insts()));
+            // The word's place as its instructions' source location: its machine code's bytes
+            // (`CompiledStream::word_bytes`).
+            f.set_srcloc(cranelift_codegen::ir::SourceLoc::new(pc as u32 + 1));
             if let Some(&(body, ti)) = shared.at.get(&pc) {
                 let first = shared.bodies[body].start;
                 f.switch_to_block(wb[pc].expect("its own place"));
@@ -2156,13 +3038,12 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         let args: &[Value] = $args;
                         if !word_fns.contains_key(&key) {
                             let name = format!("tempo_word_{}", word_fns.len());
-                            let made = outline(&mut module, &name, 1 + args.len(), usize::from($refuses), |g, q, _| own_word(g, q, $refuses, &body))?;
+                            let made = outline(&mut module, &name, 1 + args.len(), usize::from($refuses), pinned_ctx, &table.fns.names(), |g, q, _| own_word(g, q, $refuses, &body))?;
                             word_fns.insert(key, made);
                         }
                         let (id, sig, _) = &word_fns[&key];
                         let c = pinned(&mut f);
-                        let all: Vec<Value> = std::iter::once(c).chain(args.iter().copied()).collect();
-                        let r = call_own(&mut f, *id, sig, &all);
+                        let r = call_word(&mut f, *id, sig, pinned_ctx, c, args);
                         if $refuses {
                             guard(&mut f, r[0], pc);
                         }
@@ -2182,7 +3063,13 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 }
             };
             match w.operation {
-                Op::Token { any, .. } => {
+                Op::Token { any, extras, .. } => {
+                    // One kind of extra (`.rr`'s comments) for now.
+                    let extra: Option<(u8, u16)> = match (extras, native.extras.as_slice()) {
+                        (false, _) => None,
+                        (true, &[one]) => Some(one),
+                        (true, _) => return Err(Error::UnsupportedBackend),
+                    };
                     // Any mark's mask (`TOKEN m=1+k`): its output.
                     let any_mark: Option<usize> = match any {
                         Some(k) => Some(native.block_programs.first().and_then(|b| b.masks.get(usize::from(k)).copied()).ok_or(Error::UnsupportedBackend)?),
@@ -2195,10 +3082,11 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                             f.ins().jump(fall, &[]);
                             continue;
                         }
-                        let shape = TokenShape { bound, in_code, rest_bits, end_bits };
-                        let (id, sig, _) = token_fn(&mut module, &mut word_fns, any_mark, shape)?;
+                        let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack, extra, wrapping };
+                        let (id, sig, _) = token_fn(&mut module, &mut word_fns, any_mark, shape, table, pinned_ctx)?;
                         let c = pinned(&mut f);
-                        let r = call_own(&mut f, *id, sig, &[c])[0];
+                        let open_calls: Vec<Value> = if on_stack { vec![] } else { vec![mget(&mut f, Mem::Ret)] };
+                        let r = call_word(&mut f, *id, sig, pinned_ctx, c, &open_calls)[0];
                         // A refusal: past the stream's end at this word, or out of room.
                         let no = f.create_block();
                         f.ins().brif(r, no, &[], fall, &[]);
@@ -2268,6 +3156,10 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     mset(&mut f, Mem::AtEnd, one);
                     let at_end_live = f.ins().iconst(types::I64, end_bits);
                     mset(&mut f, Mem::Live, at_end_live);
+                    if let Some(k) = end_kind {
+                        let code = f.ins().iconst(types::I64, i64::from(k));
+                        mset(&mut f, Mem::Taken, code);
+                    }
                     f.ins().jump(fall, &[]);
                     // The token's record (`records`): its first byte, last byte and code, from
                     // three columns; no select, no compare but the end's. The record pass checked
@@ -2287,6 +3179,24 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     mset(&mut f, Mem::Next, after);
                     mset(&mut f, Mem::Limit, l1);
                     mset(&mut f, Mem::Taken, c);
+                    // An extra (`TOKEN_EXTRAS`): its bytes taken and its leaf deferred, then this
+                    // word again for the next token.
+                    if let Some((bit, kind)) = extra {
+                        let b = f.ins().ushr_imm(c, i64::from(crate::records::MARK_SHIFT) + i64::from(bit));
+                        let b = f.ins().band_imm(b, 1);
+                        let (xb, on) = (f.create_block(), f.create_block());
+                        f.ins().brif(b, xb, &[], on, &[]);
+                        f.switch_to_block(xb);
+                        if flagged {
+                            mset(&mut f, Mem::End, l1);
+                            let one = f.ins().iconst(types::I64, 1);
+                            mset(&mut f, Mem::Need, one);
+                        }
+                        let k = f.ins().iconst(types::I64, i64::from(kind));
+                        let again = wb[pc].expect("its own place");
+                        word!(WordFn::Leaf { deferred: true, extra: true, end: EndAt::Taken, by_word: false }, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| leaf_word(g, e, table, q[0], true, true, EndAt::Taken, wrapping), again);
+                        f.switch_to_block(on);
+                    }
                     // The marks live at this token: every one; with any mark's mask
                     // (`TOKEN m=1+k`), none where no mark holds, so a state's marks fail at their
                     // first test, with no load.
@@ -2312,17 +3222,21 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 }
                 Op::Switch { table } => {
                     let s = &native.switches[usize::from(table)];
-                    let at_end = mget(&mut f, Mem::AtEnd);
-                    let (ended, taking) = (f.create_block(), f.create_block());
-                    f.ins().brif(at_end, ended, &[], taking, &[]);
-                    f.switch_to_block(ended);
-                    if s.end == REFUSE {
-                        let at = f.ins().iconst(types::I64, pc as i64 + 1);
-                        f.ins().jump(refuse, &[BlockArg::from(at)]);
-                    } else {
-                        f.ins().jump(word(s.end), &[]);
+                    // On kinds, the end is a kind (`end_kind`): its target in the tree.
+                    let end_in_tree = end_kind.filter(|_| kind_reps.is_some() && s.offset == 0);
+                    if end_in_tree.is_none() {
+                        let at_end = mget(&mut f, Mem::AtEnd);
+                        let (ended, taking) = (f.create_block(), f.create_block());
+                        f.ins().brif(at_end, ended, &[], taking, &[]);
+                        f.switch_to_block(ended);
+                        if s.end == REFUSE {
+                            let at = f.ins().iconst(types::I64, pc as i64 + 1);
+                            f.ins().jump(refuse, &[BlockArg::from(at)]);
+                        } else {
+                            f.ins().jump(word(s.end), &[]);
+                        }
+                        f.switch_to_block(taking);
                     }
-                    f.switch_to_block(taking);
                     // On the first byte, with records: the record's kind (`records`), the
                     // switch's targets by kind (its least byte's), a compare tree as on bytes.
                     // A switch that names words: a kind whose words it names goes to a block of
@@ -2336,6 +3250,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         let mut t = vec![REFUSE; 256];
                         for (k, &b) in reps.iter().enumerate() {
                             t[k] = s.targets[usize::from(b)];
+                        }
+                        if let Some(e) = end_in_tree {
+                            t[usize::from(e)] = s.end;
                         }
                         for k in 0..reps.len() {
                             if s.words.iter().any(|&(w, _)| word_kinds.get(usize::from(w)).is_some_and(|&x| usize::from(x) == k)) {
@@ -2369,7 +3286,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     match cut.pick {
                         crate::native_cpu_clusters::Pick::Tree => {
                             let t = runs(s, &|t| if t == REFUSE { no } else { word(t) });
-                            dispatch(&mut f, b, &t);
+                            dispatch(&mut f, b, &t, 256);
                         }
                         crate::native_cpu_clusters::Pick::Weighted => {
                             // Each run's weight: its target's share of this word's profile, split
@@ -2419,7 +3336,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         }
                         let sw = ByteSwitch { targets: t, ..ByteSwitch::refusing(0) };
                         let r = runs(&sw, &|t| if t == REFUSE { no } else { word(t) });
-                        dispatch(&mut f, w, &r);
+                        dispatch(&mut f, w, &r, 256);
                     }
                     f.switch_to_block(no);
                     let at = f.ins().iconst(types::I64, pc as i64 + 1);
@@ -2465,7 +3382,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         f.ins().jump(fall, &[]);
                     }
                 }
-                Op::Mark { mask, order, end, word: mark_word } => {
+                Op::Mark { mask, order, end, keep, word: mark_word, pattern } => {
                     // The mark's bit at the token's start, if the mark is live: one load. At the
                     // stream's end, the mark is there when the end has it.
                     let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(mask)).copied()).ok_or(Error::UnsupportedBackend)?;
@@ -2478,10 +3395,47 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         let taken = f.create_block();
                         f.ins().brif(lit, taken, &[], skip, &[]);
                         f.switch_to_block(taken);
-                        let rest = f.ins().band_imm(live, !((2i64 << order) - 1));
-                        mset(&mut f, Mem::Live, rest);
+                        // A token mark (decision 0129): its tokens follow, from the records.
+                        if let Some(i) = pattern {
+                            let m = native.token_marks[usize::from(i)].clone();
+                            let bit = native.extras.first().ok_or(Error::UnsupportedBackend)?.0;
+                            let r = if outlined {
+                                let key = WordFn::TokenMark { index: i };
+                                if !word_fns.contains_key(&key) {
+                                    let name = format!("tempo_word_{}", word_fns.len());
+                                    let made = outline(&mut module, &name, 1, 1, pinned_ctx, &[], |g, q, hs| {
+                                        let ctx = q[0];
+                                        let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
+                                        let set = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| field_set(f, ctx, k, x);
+                                        let at = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, MemFlags::trusted(), ctx, at);
+                                        let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a token mark does not refuse");
+                                        let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
+                                        let v = token_pattern(g, &env, &m, bit, hs);
+                                        g.ins().return_(&[v]);
+                                    })?;
+                                    word_fns.insert(key, made);
+                                }
+                                let (id, sig, _) = &word_fns[&key];
+                                let c = pinned(&mut f);
+                                call_word(&mut f, *id, sig, pinned_ctx, c, &[])[0]
+                            } else {
+                                token_pattern(&mut f, &env, &m, bit, &mut heads)
+                            };
+                            let follows = f.create_block();
+                            f.ins().brif(r, follows, &[], skip, &[]);
+                            f.switch_to_block(follows);
+                        }
+                        // Kept: the callee its arm calls takes it.
+                        if !keep {
+                            let rest = f.ins().band_imm(live, !((2i64 << order) - 1));
+                            mset(&mut f, Mem::Live, rest);
+                        }
                         f.ins().jump(fall, &[]);
                         continue;
+                    }
+                    // A token mark is in the record (`validate_token_marks`).
+                    if pattern.is_some() {
+                        return Err(Error::UnsupportedBackend);
                     }
                     let (at_end, live) = (mget(&mut f, Mem::AtEnd), mget(&mut f, Mem::Live));
                     let lit = f.ins().ushr_imm(live, i64::from(order));
@@ -2517,10 +3471,13 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     let bit = f.ins().band_imm(bit, 1);
                     f.ins().brif(bit, taken, &[], skip, &[]);
                     f.switch_to_block(taken);
-                    // It and the marks before it are done at this token.
-                    let live = mget(&mut f, Mem::Live);
-                    let rest = f.ins().band_imm(live, !((2i64 << order) - 1));
-                    mset(&mut f, Mem::Live, rest);
+                    // It and the marks before it are done at this token; kept, the callee its arm
+                    // calls takes it.
+                    if !keep {
+                        let live = mget(&mut f, Mem::Live);
+                        let rest = f.ins().band_imm(live, !((2i64 << order) - 1));
+                        mset(&mut f, Mem::Live, rest);
+                    }
                     f.ins().jump(fall, &[]);
                 }
                 Op::Row { mask } => {
@@ -2540,26 +3497,110 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 Op::Open { kind } => {
                     let (code, next) = with_field(kind);
                     let k = f.ins().iconst(types::I64, code);
-                    word!(WordFn::Open, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| open_word(g, e, q[0], wrapping), next);
+                    word!(WordFn::Open, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| open_word(g, e, table, q[0], wrapping), next);
                 }
                 Op::Close { this } => {
                     let end = end_at(pc);
-                    word!(WordFn::Close { this, end }, &[], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, _: &[Value]| close_word(g, e, this, end, wrapping));
+                    word!(WordFn::Close { this, end }, &[], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, _: &[Value]| close_word(g, e, table, this, end, wrapping));
                 }
                 Op::Leaf { kind, deferred, extra } => {
                     let end = end_at(pc);
+                    let by_word = kind == WORD_KIND;
                     let (code, next) = with_field(kind);
+                    // A keyword's leaf: the field above, the kind from the token's word.
+                    let code = if by_word { code & !0xffff } else { code };
                     let k = f.ins().iconst(types::I64, code);
-                    word!(WordFn::Leaf { deferred, extra, end }, &[k], false, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| leaf_word(g, e, q[0], deferred, extra, end, wrapping), next);
+                    let word_kinds = &native.word_kinds;
+                    word!(WordFn::Leaf { deferred, extra, end, by_word }, &[k], by_word, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| {
+                        let k = if by_word {
+                            let kind = word_kind(g, e, word_kinds);
+                            g.ins().bor(q[0], kind)
+                        } else {
+                            q[0]
+                        };
+                        leaf_word(g, e, table, k, deferred, extra, end, wrapping)
+                    }, next);
                 }
                 Op::Settle { .. } => {
                     // A token the grammar implies: no node; the extras pending stay where they are.
                     mset(&mut f, Mem::Pending, zero);
                     f.ins().jump(fall, &[]);
                 }
+                // A keyword's: its token's word's kind (`WORD_KIND`), in a word of its own.
+                Op::Remember { kind: WORD_KIND } => {
+                    let word_kinds = &native.word_kinds;
+                    word!(WordFn::RememberWord, &[], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, _: &[Value]| {
+                        let k = word_kind(g, e, word_kinds);
+                        (e.set)(g, Mem::Word, k);
+                    });
+                }
                 Op::Remember { kind } => {
                     let k = f.ins().iconst(types::I64, i64::from(kind));
                     mset(&mut f, Mem::Word, k);
+                    f.ins().jump(fall, &[]);
+                }
+                Op::Check { check } => {
+                    let c = native.local_checks.get(usize::from(check)).cloned().ok_or(Error::UnsupportedBackend)?;
+                    let form = crate::rust_stream::word_form(&c.ops).map_err(|_| Error::UnsupportedBackend)?;
+                    let output = native.block_programs.first().and_then(|b| b.masks.get(usize::from(c.mask)).copied()).ok_or(Error::UnsupportedBackend)?;
+                    // Most tokens: no bit of the mask from the start on, in the start's word, and
+                    // the token ends in it. One load.
+                    let (start, limit) = (mget(&mut f, Mem::Start), mget(&mut f, Mem::Limit));
+                    let w = f.ins().ushr_imm(start, 6);
+                    let off = f.ins().imul_imm(output_stride, output as i64);
+                    let base = f.ins().iadd(outputs_p, off);
+                    let word = mask_word(&mut f, base, lasts_stride, w);
+                    let s = f.ins().band_imm(start, 63);
+                    let word = f.ins().ushr(word, s);
+                    let l1 = f.ins().iadd_imm(limit, -1);
+                    let wl = f.ins().ushr_imm(l1, 6);
+                    let other = f.ins().icmp(IntCC::NotEqual, wl, w);
+                    let any = f.ins().icmp_imm(IntCC::NotEqual, word, 0);
+                    let go = f.ins().bor(any, other);
+                    let slow = f.create_block();
+                    f.ins().brif(go, slow, &[], fall, &[]);
+                    f.switch_to_block(slow);
+                    // Always a function of its own, one a check: rare code, out of the arm's.
+                    let r = {
+                        let key = WordFn::Check { index: check };
+                        if !word_fns.contains_key(&key) {
+                            let name = format!("tempo_word_{}", word_fns.len());
+                            let made = outline(&mut module, &name, 3, 1, pinned_ctx, &[], |g, q, hs| {
+                                let ctx = q[0];
+                                let get = |f: &mut FunctionBuilder<'_>, k: Mem| field_get(f, ctx, k);
+                                let set = |f: &mut FunctionBuilder<'_>, k: Mem, x: Value| field_set(f, ctx, k, x);
+                                let at = |f: &mut FunctionBuilder<'_>, at: i32| f.ins().load(types::I64, MemFlags::trusted(), ctx, at);
+                                let guard = |_: &mut FunctionBuilder<'_>, _: Value| unreachable!("a check returns whether it holds");
+                                let env = WordEnv { get: &get, set: &set, ctx: &at, guard: &guard };
+                                let v = check_word(g, &env, &c, &form, output, q[1], q[2], hs);
+                                g.ins().return_(&[v]);
+                            })?;
+                            word_fns.insert(key, made);
+                        }
+                        let (id, sig, _) = &word_fns[&key];
+                        let cv = pinned(&mut f);
+                        call_word(&mut f, *id, sig, pinned_ctx, cv, &[start, limit])[0]
+                    };
+                    guard(&mut f, r, pc);
+                    f.ins().jump(fall, &[]);
+                }
+                Op::Count { count, up, max } => {
+                    // One count (a file's depth) for now.
+                    if count != 0 {
+                        return Err(Error::UnsupportedBackend);
+                    }
+                    let d = mget(&mut f, Mem::Depth);
+                    if up {
+                        let d = f.ins().iadd_imm(d, 1);
+                        mset(&mut f, Mem::Depth, d);
+                        let past = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, d, i64::from(max));
+                        guard(&mut f, past, pc);
+                    } else {
+                        let above = f.ins().icmp_imm(IntCC::NotEqual, d, 0);
+                        let one = f.ins().uextend(types::I64, above);
+                        let d = f.ins().isub(d, one);
+                        mset(&mut f, Mem::Depth, d);
+                    }
                     f.ins().jump(fall, &[]);
                 }
                 Op::Flag { flag, op } => {
@@ -2591,60 +3632,57 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         let k = if remembered { remembered_kind(g, e) } else { q[0] };
                         let m = (e.get)(g, Mem::Moved);
                         let rows = (e.ctx)(g, ROWS);
-                        NodeCol::of(rows, AT_KIND).put(g, m, k);
+                        table.retag(g, rows, m, k);
                     });
                 }
                 Op::Wrap { kind } if wrapping => {
                     let k = f.ins().iconst(types::I64, i64::from(kind));
-                    word!(WordFn::Wrap, &[k], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| wrap_word(g, e, q[0]));
+                    word!(WordFn::Wrap, &[k], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| wrap_word(g, e, table, q[0]));
                 }
                 Op::NodeField { field, on: On::Inner } => {
-                    // The node the node made last, a wrap, holds first: that frame's last base.
+                    // The node the node made last, a wrap, holds first: the row after it, unless
+                    // that is a wrap too (`head`).
                     let open = mget(&mut f, Mem::Open);
-                    let (last, base) = (mget(&mut f, Mem::LastMade), mget(&mut f, Mem::LastBase));
+                    let last = mget(&mut f, Mem::LastMade);
                     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
                     let no_last = f.ins().icmp_imm(IntCC::Equal, last, 0);
                     // A branch each, not the tests joined.
                     guard(&mut f, none, pc);
                     guard(&mut f, no_last, pc);
                     let r = f.ins().iadd_imm(last, -1);
-                    let mark = {
+                    let (mark, inner_mark) = {
                         let a = slot(&mut f, wc(head_c), r);
-                        f.ins().uload32(flags, a, 0)
+                        (f.ins().uload32(flags, a, 0), f.ins().uload32(flags, a, 4))
                     };
-                    let not_wrap = f.ins().icmp_imm(IntCC::NotEqual, mark, IS_WRAP);
+                    let mark = f.ins().band_imm(mark, WRAPPED);
+                    let not_wrap = f.ins().icmp_imm(IntCC::Equal, mark, 0);
                     guard(&mut f, not_wrap, pc);
-                    // The node it moved is the record at its base unless it is a wrap too, which
-                    // an older wrap linked before this one shows.
-                    let older = {
-                        let a = slot(&mut f, wc(link_c), r);
-                        f.ins().uload32(flags, a, 0)
-                    };
-                    let nested = f.ins().icmp_imm(IntCC::NotEqual, older, 0);
+                    let inner_mark = f.ins().band_imm(inner_mark, WRAPPED);
+                    let nested = f.ins().icmp_imm(IntCC::NotEqual, inner_mark, 0);
                     guard(&mut f, nested, pc);
                     let x = f.ins().iconst(types::I64, i64::from(field));
-                    field_c.put(&mut f, base, x);
+                    field_c.put(&mut f, last, x);
                     f.ins().jump(fall, &[]);
                 }
-                Op::Retag { kind, on: On::Made } | Op::NodeField { field: kind, on: On::Made } => {
+                Op::Retag { kind, on: On::Made } | Op::NodeField { field: kind, on: On::Made | On::MadeUnset } => {
                     let retag = matches!(w.operation, Op::Retag { .. });
+                    let unset = matches!(w.operation, Op::NodeField { on: On::MadeUnset, .. });
                     let remembered = retag && kind == REMEMBERED;
                     let dead = retag && kind == DEAD;
                     let k = f.ins().iconst(types::I64, i64::from(kind));
-                    word!(WordFn::Made { retag, remembered, dead }, &[k], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| {
+                    word!(WordFn::Made { retag, remembered, dead, unset }, &[k], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| {
                         let k = if remembered { remembered_kind(g, e) } else { q[0] };
-                        made_word(g, e, k, retag, dead)
+                        made_word(g, e, table, k, retag, dead, unset)
                     });
                 }
                 Op::Reread { reading } if wrapping => {
                     // The node made last at the innermost open node's level and the nodes inside
-                    // it: the records from its base to the pending extras, each base's chain of
-                    // wraps first (outermost first, as the reorder places them). A loop over the
-                    // records and one over a chain, each step a record (`Step::Node`); a kind
-                    // each, by a run of compares.
+                    // it: its rows, in preorder, to the pending extras. A loop over the rows, a
+                    // step a row (`Step::Node`); a kind each, by a run of compares. A dropped row
+                    // is taken out after (`drop`), where any was.
                     let r = native.readings.maps.get(usize::from(reading)).ok_or(Error::UnsupportedBackend)?;
                     let open = mget(&mut f, Mem::Open);
-                    let (last, base) = (mget(&mut f, Mem::LastMade), mget(&mut f, Mem::LastBase));
+                    let last = mget(&mut f, Mem::LastMade);
                     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
                     let no_last = f.ins().icmp_imm(IntCC::Equal, last, 0);
                     // A branch each, not the tests joined.
@@ -2653,39 +3691,19 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     let root = f.ins().iadd_imm(last, -1);
                     let (nodes, pending) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Pending));
                     let end = f.ins().isub(nodes, pending);
-                    let (scan, chain) = (f.create_block(), f.create_block());
+                    let (scan, body, after) = (f.create_block(), f.create_block(), f.create_block());
                     f.append_block_param(scan, types::I64);
-                    f.append_block_param(chain, types::I64);
-                    f.append_block_param(chain, types::I64);
+                    f.append_block_param(scan, types::I64);
+                    f.append_block_param(after, types::I64);
                     heads.push((scan, Step::Node));
-                    heads.push((chain, Step::Node));
-                    // The root's base first, its chain from the root (`chain(root + 1, base)`; a
-                    // plain root is its base): the wraps around the root are not read.
-                    let wrapped = f.ins().icmp(IntCC::NotEqual, root, base);
-                    let c0 = f.ins().select(wrapped, last, zero);
-                    f.ins().jump(chain, &[BlockArg::from(c0), BlockArg::from(base)]);
-                    // scan(i): record i, a wrap's skipped (its chain's base reads it).
+                    f.ins().jump(scan, &[BlockArg::from(root), BlockArg::from(zero)]);
+                    // scan(i, gone): row i; whether a row was dropped.
                     f.switch_to_block(scan);
-                    let i = f.block_params(scan)[0];
-                    let (body, plain) = (f.create_block(), f.create_block());
+                    let (i, gone) = (f.block_params(scan)[0], f.block_params(scan)[1]);
                     let done = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, i, end);
-                    f.ins().brif(done, fall, &[], body, &[]);
+                    f.ins().brif(done, after, &[BlockArg::from(gone)], body, &[]);
                     f.switch_to_block(body);
-                    let h = {
-                        let a = slot(&mut f, wc(head_c), i);
-                        f.ins().uload32(flags, a, 0)
-                    };
-                    let is_wrap = f.ins().icmp_imm(IntCC::Equal, h, IS_WRAP);
-                    f.ins().brif(is_wrap, plain, &[], chain, &[BlockArg::from(h), BlockArg::from(i)]);
-                    f.switch_to_block(plain);
-                    let i1 = f.ins().iadd_imm(i, 1);
-                    f.ins().jump(scan, &[BlockArg::from(i1)]);
-                    // chain(c, i): the wrap `c - 1` on base i, else (c = 0) record i itself.
-                    f.switch_to_block(chain);
-                    let (c, i) = (f.block_params(chain)[0], f.block_params(chain)[1]);
-                    let cm1 = f.ins().iadd_imm(c, -1);
-                    let n = f.ins().select(c, cm1, i);
-                    let nrow = NodeCol::row(&mut f, rows_here, n);
+                    let nrow = NodeCol::row(&mut f, rows_here, i);
                     let k = kind_c.get_row(&mut f, nrow);
                     // Its field, unless it is the node read: the reading's, by a run of selects.
                     let fld = field_c.get_row(&mut f, nrow);
@@ -2695,17 +3713,10 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         let g = f.ins().iconst(types::I64, i64::from(b));
                         to = f.ins().select(is, g, to);
                     }
-                    let is_root = f.ins().icmp(IntCC::Equal, n, root);
+                    let is_root = f.ins().icmp(IntCC::Equal, i, root);
                     let to = f.ins().select(is_root, fld, to);
                     field_c.put_row(&mut f, nrow, to);
-                    // The chain's next: an older wrap, or record i; after record i, the next.
-                    let next = f.create_block();
                     let i1 = f.ins().iadd_imm(i, 1);
-                    let older = {
-                        let at = f.ins().select(c, cm1, zero);
-                        let a = slot(&mut f, wc(link_c), at);
-                        f.ins().uload32(flags, a, 0)
-                    };
                     // Its way: the root's, for the node read, when the reading gives one; else
                     // its kind's, a compare each, the last refusing.
                     let ways: Vec<(Option<u16>, u16)> = r.root.map(|w| (None, w)).into_iter().chain(r.kinds.iter().map(|&(kk, w)| (Some(kk), w))).collect();
@@ -2717,13 +3728,21 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         };
                         f.ins().brif(is, hit, &[], miss, &[]);
                         f.switch_to_block(hit);
+                        if way != KEEP {
+                            // Reading on into its children, where a dropped row was: the
+                            // interpreter meets that row and refuses.
+                            let m = {
+                                let a = slot(&mut f, wc(head_c), i);
+                                f.ins().uload32(flags, a, 0)
+                            };
+                            let m = f.ins().band_imm(m, DROPPED_IN);
+                            guard(&mut f, m, pc);
+                        }
                         match way {
                             KEEP => {
-                                let size = {
-                                    size_c.get_row(&mut f, nrow)
-                                };
+                                let size = size_c.get_row(&mut f, nrow);
                                 let past = f.ins().iadd(i, size);
-                                f.ins().jump(scan, &[BlockArg::from(past)]);
+                                f.ins().jump(scan, &[BlockArg::from(past), BlockArg::from(gone)]);
                             }
                             GONE => {
                                 // The node read going: none made last at this level until the next.
@@ -2731,41 +3750,42 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                                 mset(&mut f, Mem::LastMade, kept);
                                 let d = f.ins().iconst(types::I64, i64::from(DEAD));
                                 kind_c.put_row(&mut f, nrow, d);
-                                let dead = mget(&mut f, Mem::Dead);
-                                let dead = f.ins().iadd_imm(dead, 1);
-                                mset(&mut f, Mem::Dead, dead);
-                                f.ins().jump(next, &[]);
+                                let one = f.ins().iconst(types::I64, 1);
+                                f.ins().jump(scan, &[BlockArg::from(i1), BlockArg::from(one)]);
                             }
                             m => {
                                 let m = kind_of(&mut f, m, pc);
-                                kind_c.put_row(&mut f, nrow, m);
-                                f.ins().jump(next, &[]);
+                                table.retag(&mut f, rows_here, i, m);
+                                f.ins().jump(scan, &[BlockArg::from(i1), BlockArg::from(gone)]);
                             }
                         }
                         f.switch_to_block(miss);
                     }
                     let at = f.ins().iconst(types::I64, pc as i64 + 1);
                     f.ins().jump(refuse, &[BlockArg::from(at)]);
-                    f.switch_to_block(next);
-                    let (more, own) = (f.create_block(), f.create_block());
-                    f.ins().brif(c, more, &[], own, &[]);
-                    f.switch_to_block(more);
-                    f.ins().jump(chain, &[BlockArg::from(older), BlockArg::from(i)]);
-                    f.switch_to_block(own);
-                    f.ins().jump(scan, &[BlockArg::from(i1)]);
+                    f.switch_to_block(after);
+                    let gone = f.block_params(after)[0];
+                    let (dropping, kept) = (f.create_block(), f.create_block());
+                    f.ins().brif(gone, dropping, &[], kept, &[]);
+                    f.switch_to_block(dropping);
+                    f.set_cold_block(dropping);
+                    drop_from(&mut f, &env, table, root);
+                    f.ins().jump(fall, &[]);
+                    f.switch_to_block(kept);
+                    f.ins().jump(fall, &[]);
                 }
                 Op::Retag { kind, on: On::Here } => {
                     let k = f.ins().iconst(types::I64, i64::from(kind));
-                    word!(WordFn::Here, &[k], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| here_word(g, e, q[0]));
+                    word!(WordFn::Here, &[k], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| here_word(g, e, table, q[0]));
                 }
                 Op::Merge { kind, fold: true } => {
                     let k = f.ins().iconst(types::I64, i64::from(kind));
-                    word!(WordFn::Fold, &[k], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| fold_word(g, e, q[0], wrapping));
+                    word!(WordFn::Fold, &[k], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| fold_word(g, e, table, q[0], wrapping));
                 }
                 Op::Merge { kind, fold: false } => {
                     let end = end_at(pc);
                     let k = f.ins().iconst(types::I64, i64::from(kind));
-                    word!(WordFn::Merge { end }, &[k], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| merge_word(g, e, q[0], end));
+                    word!(WordFn::Merge { end }, &[k], true, |g: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, q: &[Value]| merge_word(g, e, table, q[0], end));
                 }
                 Op::NodeField { field, on } => {
                     let last = if on == On::Moved {
@@ -2788,7 +3808,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     mset(&mut f, Mem::Supers, supers);
                     f.ins().jump(fall, &[]);
                 }
-                Op::Push { target } if cut.calls => {
+                Op::Push { target, flag } if cut.calls => {
                     // A native call of the callee's function (`Cut::calls`): the calls open are
                     // counted (`ACCEPT` and `RETURN` check them), the held state stored for the
                     // callee and loaded again after, the level's word and flags kept in this
@@ -2797,12 +3817,24 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     // the return's (`RETURN m=1`), a rule switches on the same token again, and
                     // each turn calls a rule, which takes a token before it returns.
                     heads.push((wb[pc].expect("its own place"), Step::Return));
-                    let ret = mget(&mut f, Mem::Ret);
-                    let deep = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, ret, DEPTH);
-                    guard(&mut f, deep, pc);
-                    let ret = f.ins().iadd_imm(ret, 1);
-                    mset(&mut f, Mem::Ret, ret);
-                    let kept = (two_slots && changes_context[cut.of[callee(native, pc)] as usize]).then(|| (mget(&mut f, Mem::Word), mget(&mut f, Mem::Flags)));
+                    // Counted by the machine's stack (`on_stack`), as the lean parser's: nothing
+                    // here, the depth checked where the callee is entered.
+                    if !on_stack {
+                        let ret = mget(&mut f, Mem::Ret);
+                        let deep = f.ins().icmp_imm(IntCC::SignedGreaterThanOrEqual, ret, DEPTH);
+                        guard(&mut f, deep, pc);
+                        let ret = f.ins().iadd_imm(ret, 1);
+                        mset(&mut f, Mem::Ret, ret);
+                    }
+                    let kept = (two_slots && !callee_keeps && changes_context[cut.of[callee(native, pc)] as usize]).then(|| (mget(&mut f, Mem::Word), mget(&mut f, Mem::Flags)));
+                    // The flag the call runs with, as a parameter: the caller's flags given back
+                    // after it (`let f = self.flags; ..; self.call(); self.flags = f`).
+                    let flag_back = flag.map(|(k, set)| {
+                        let fl = mget(&mut f, Mem::Flags);
+                        let changed = if set { f.ins().bor_imm(fl, 1i64 << k) } else { f.ins().band_imm(fl, !(1i64 << k)) };
+                        mset(&mut f, Mem::Flags, changed);
+                        fl
+                    });
                     for (k, v) in vars.iter().enumerate() {
                         if let Some(v) = v.filter(|_| !cut.pass.contains(&(k as u32))) {
                             let x = f.use_var(v);
@@ -2821,7 +3853,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     });
                     let iv = f.ins().iconst(types::I64, i as i64);
                     let passed: Vec<Value> = cut.pass.iter().map(|&k| f.use_var(vars[k as usize].expect("a passed field is held"))).collect();
-                    let args: Vec<Value> = [ctx, iv].into_iter().chain(passed).collect();
+                    let args: Vec<Value> = (!pinned_ctx).then_some(ctx).into_iter().chain([iv]).chain(passed).collect();
                     let call = f.ins().call(fref, &args);
                     let back = f.inst_results(call).to_vec();
                     let v = back[0];
@@ -2839,7 +3871,22 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         mset(&mut f, Mem::Word, w);
                         mset(&mut f, Mem::Flags, fl);
                     }
+                    if let Some(fl) = flag_back {
+                        mset(&mut f, Mem::Flags, fl);
+                    }
                     let (other, not_next) = (f.create_block(), f.create_block());
+                    if let Some(way) = one_way(e) {
+                        // Zero: back at the call's place, or the one after, as the callee always
+                        // returns; else the run's end, passed on.
+                        f.ins().brif(v, other, &[], word(target + way), &[]);
+                        f.switch_to_block(not_next);
+                        f.ins().jump(other, &[]);
+                        f.switch_to_block(other);
+                        f.set_cold_block(other);
+                        let r = results(&mut f, v, false);
+                        leave(&mut f, &r);
+                        continue;
+                    }
                     // Zero: back at the call's place; else one, the place after.
                     f.ins().brif(v, not_next, &[], word(target), &[]);
                     f.switch_to_block(not_next);
@@ -2851,11 +3898,15 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     leave(&mut f, &r);
                 }
                 Op::Return { again } if cut.calls => {
-                    let ret = mget(&mut f, Mem::Ret);
-                    let none = f.ins().icmp_imm(IntCC::Equal, ret, 0);
-                    guard(&mut f, none, pc);
-                    let ret = f.ins().iadd_imm(ret, -1);
-                    mset(&mut f, Mem::Ret, ret);
+                    // With the calls open on the stack, a call is always open here
+                    // (`calls_on_stack`).
+                    if !on_stack {
+                        let ret = mget(&mut f, Mem::Ret);
+                        let none = f.ins().icmp_imm(IntCC::Equal, ret, 0);
+                        guard(&mut f, none, pc);
+                        let ret = f.ins().iadd_imm(ret, -1);
+                        mset(&mut f, Mem::Ret, ret);
+                    }
                     for (k, v) in vars.iter().enumerate() {
                         if let Some(v) = v.filter(|_| !cut.pass.contains(&(k as u32))) {
                             let x = f.use_var(v);
@@ -2863,11 +3914,35 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                             f.ins().store(MemFlags::trusted(), x, p, STATE + 8 * k as i32);
                         }
                     }
-                    let v = f.ins().iconst(types::I64, RETURNED as i64 + i64::from(again));
+                    // The caller's token, taken here (`callee_takes`): a refusal is this word's.
+                    if let (Some((any, extras)), false) = (landing_token, again) {
+                        let extra: Option<(u8, u16)> = if extras { Some(*native.extras.first().ok_or(Error::UnsupportedBackend)?) } else { None };
+                        let any_mark: Option<usize> = match any {
+                            Some(k) => Some(native.block_programs.first().and_then(|b| b.masks.get(usize::from(k)).copied()).ok_or(Error::UnsupportedBackend)?),
+                            None => None,
+                        };
+                        let shape = TokenShape { bound, in_code, rest_bits, end_bits, end_code: end_kind.map(i64::from), on_stack, extra, wrapping };
+                        let (id, sig, _) = token_fn(&mut module, &mut word_fns, any_mark, shape, table, pinned_ctx)?;
+                        let c = pinned(&mut f);
+                        let r = call_word(&mut f, *id, sig, pinned_ctx, c, &[])[0];
+                        let (no, taken) = (f.create_block(), f.create_block());
+                        f.ins().brif(r, no, &[], taken, &[]);
+                        f.switch_to_block(no);
+                        f.set_cold_block(no);
+                        let past = f.ins().icmp_imm(IntCC::Equal, r, 1);
+                        let here = f.ins().iconst(types::I64, pc as i64 + 1);
+                        let at = f.ins().select(past, here, r);
+                        f.ins().jump(refuse, &[BlockArg::from(at)]);
+                        f.switch_to_block(taken);
+                    }
+                    // A function that returns one way gives back 0 for it (`one_way`); with the
+                    // caller's token taken here, every return (`callee_takes`).
+                    let way = if callee_takes || (again && by_rule && again_as_one[pc]) { 0 } else { i64::from(again) };
+                    let v = f.ins().iconst(types::I64, RETURNED as i64 + way);
                     let r = results(&mut f, v, false);
                     leave(&mut f, &r);
                 }
-                Op::Push { target } => {
+                Op::Push { target, flag } => {
                     let ret = mget(&mut f, Mem::Ret);
                     let t = f.ins().iconst(types::I64, i64::from(target));
                     // With context (`REMEMBER`, `FLAG`), two slots a call: its return, then the
@@ -2885,6 +3960,12 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     }
                     let ret = f.ins().iadd_imm(ret, 1);
                     mset(&mut f, Mem::Ret, ret);
+                    // The flag the call runs with: the caller's saved beside its return above.
+                    if let Some((k, set)) = flag {
+                        let fl = mget(&mut f, Mem::Flags);
+                        let changed = if set { f.ins().bor_imm(fl, 1i64 << k) } else { f.ins().band_imm(fl, !(1i64 << k)) };
+                        mset(&mut f, Mem::Flags, changed);
+                    }
                     f.ins().jump(fall, &[]);
                 }
                 Op::Return { again } => {
@@ -2915,18 +3996,22 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     if t.is_empty() {
                         f.ins().jump(off_end, &[]);
                     } else {
-                        dispatch(&mut f, p, &t);
+                        dispatch(&mut f, p, &t, u64::MAX);
                     }
                 }
                 Op::Accept => {
-                    let (at_end, open, ret) = (mget(&mut f, Mem::AtEnd), mget(&mut f, Mem::Open), mget(&mut f, Mem::Ret));
+                    let (at_end, open) = (mget(&mut f, Mem::AtEnd), mget(&mut f, Mem::Open));
                     let not_end = f.ins().icmp_imm(IntCC::Equal, at_end, 0);
                     let not_one = f.ins().icmp_imm(IntCC::NotEqual, open, 1);
-                    let returns = f.ins().icmp_imm(IntCC::NotEqual, ret, 0);
                     // A branch each, not the tests joined.
                     guard(&mut f, not_end, pc);
                     guard(&mut f, not_one, pc);
-                    guard(&mut f, returns, pc);
+                    // Within no call (`calls_on_stack`), or checked.
+                    if !on_stack {
+                        let ret = mget(&mut f, Mem::Ret);
+                        let returns = f.ins().icmp_imm(IntCC::NotEqual, ret, 0);
+                        guard(&mut f, returns, pc);
+                    }
                     let root = f.ins().uload32(flags, open_c, 0);
                     let root_row = NodeCol::row(&mut f, rows_here, root);
                     end_c.put_row(&mut f, root_row, len);
@@ -2954,9 +4039,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                             let is = f.ins().icmp_imm(IntCC::Equal, fld, i64::from(p));
                             hit = f.ins().bor(hit, is);
                         }
-                        let live = f.ins().icmp_imm(IntCC::NotEqual, k, i64::from(DEAD));
-                        let bad = f.ins().band(hit, live);
-                        guard(&mut f, bad, pc);
+                        let _ = k;
+                        guard(&mut f, hit, pc);
                         let i1 = f.ins().iadd_imm(i, 1);
                         f.ins().jump(check, &[BlockArg::from(i1)]);
                         f.switch_to_block(after);
@@ -2964,28 +4048,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     f.ins().store(flags, nodes, counts_c, 0);
                     let supers = mget(&mut f, Mem::Supers);
                     f.ins().store(flags, supers, counts_c, 8);
-                    if wrapping {
-                        // A dropped record needs the table in preorder too: without it.
-                        let (wraps, dead) = (mget(&mut f, Mem::Wraps), mget(&mut f, Mem::Dead));
-                        let wraps = f.ins().iadd(wraps, dead);
-                        f.ins().store(flags, wraps, counts_c, 16);
-                        // A program that drops records: it rereads, or it drops a node (`drop`).
-                        let rereads = words.iter().any(|b| matches!(b.operation, Op::Reread { .. } | Op::Retag { kind: DEAD, on: On::Made }));
-                        let r = Reorder { nodes, supers, wraps, rows: rows_here, out: wc(6), head: wc(head_c), link: wc(link_c), place: wc(place_c), snode: snode_c, before: rereads.then(|| wc(fbase_c)), counts: counts_c };
-                        let args = r.values();
-                        if reorder_fn.is_none() {
-                            let before = r.before.is_some();
-                            reorder_fn = Some(outline(&mut module, "tempo_stream_reorder", args.len(), 0, |f, p, heads| reorder(f, Reorder::of(p, before), heads))?);
-                        }
-                        let (id, sig, _) = reorder_fn.as_ref().expect("made");
-                        call_own(&mut f, *id, sig, &args);
-                        // Without a wrap made, the table is in preorder as made.
-                        let placed = f.ins().load(types::I64, flags, counts_c, 0);
-                        let table_rows = f.ins().select(wraps, r.out, r.rows);
-                        f.ins().jump(fin, &[BlockArg::from(table_rows), BlockArg::from(placed)]);
-                    } else {
-                        f.ins().jump(fin, &[BlockArg::from(rows_here), BlockArg::from(nodes)]);
-                    }
+                    // The table is written as it stands: no pass over it.
+                    f.ins().store(flags, zero, counts_c, 16);
+                    f.ins().jump(fin, &[BlockArg::from(rows_here), BlockArg::from(nodes)]);
                     fin_used = true;
                 }
                 Op::Empty { total } => {
@@ -3014,16 +4079,30 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         }
         if clustered {
             // Each place of another cluster a word here goes to: the held fields stored, then
-            // the tail call of its cluster with the place's index there.
+            // the tail call of its cluster with the place's index there. With a function a
+            // grammar rule (`pinned_ctx`), the code of an earlier rule a word goes into
+            // (`merge_words`): a call of that rule's function, whose result is this one's (the
+            // lean parser's `return self.helper()`), to its one exit. A rule goes into earlier
+            // rules alone, so these calls nest no deeper than the rules are many. One call for
+            // each place gone to, its index made there, however many words go there: an index
+            // passed in from many places would be one constant, folded, live through the whole
+            // function. A tail call each was an epilogue each (785 restores, against 170).
             use cranelift_codegen::ir::{ExtFuncData, ExternalName, UserExternalName};
             let refs = &mut call_refs;
             let named_foreign: Vec<usize> = foreign.borrow().iter().copied().collect();
+            let mut into: std::collections::BTreeMap<(usize, usize), Block> = std::collections::BTreeMap::new();
             for g in named_foreign {
                 let d = cluster_of(g);
                 // Named only by a word's fall it never takes (no word goes on to it).
                 let Some(&i) = index[d].get(&g) else { continue };
                 let b = if g < n_words { wb[g].expect("a place named") } else { entries[g - n_words] };
                 f.switch_to_block(b);
+                if pinned_ctx {
+                    let to = *into.entry((d, i)).or_insert_with(|| f.create_block());
+                    f.ins().jump(to, &[]);
+                    exits.insert(b, g);
+                    continue;
+                }
                 for (k, v) in vars.iter().enumerate() {
                     if let Some(v) = v.filter(|_| !cut.pass.contains(&(k as u32))) {
                         let x = f.use_var(v);
@@ -3038,17 +4117,39 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     f.import_function(ExtFuncData { name: ExternalName::user(name), signature, colocated: true })
                 });
                 let iv = f.ins().iconst(types::I64, i as i64);
-                let args: Vec<Value> = [ctx, iv].into_iter().chain(passed).collect();
+                let args: Vec<Value> = (!pinned_ctx).then_some(ctx).into_iter().chain([iv]).chain(passed).collect();
                 f.ins().return_call(fref, &args);
                 exits.insert(b, g);
                 tails += 1;
+            }
+            for ((d, i), to) in into {
+                f.switch_to_block(to);
+                let iv = f.ins().iconst(types::I64, i as i64);
+                for (k, v) in vars.iter().enumerate() {
+                    if let Some(v) = v.filter(|_| !cut.pass.contains(&(k as u32))) {
+                        let x = f.use_var(v);
+                        let p = pinned(&mut f);
+                        f.ins().store(MemFlags::trusted(), x, p, STATE + 8 * k as i32);
+                    }
+                }
+                let passed: Vec<Value> = cut.pass.iter().map(|&k| f.use_var(vars[k as usize].expect("a passed field is held"))).collect();
+                let fref = *refs.entry(d).or_insert_with(|| {
+                    let name = f.func.declare_imported_user_function(UserExternalName::new(0, cids[d].as_u32()));
+                    let signature = f.import_signature(csig.clone());
+                    f.import_function(ExtFuncData { name: ExternalName::user(name), signature, colocated: true })
+                });
+                let args: Vec<Value> = std::iter::once(iv).chain(passed).collect();
+                let call = f.ins().call(fref, &args);
+                let v = f.inst_results(call)[0];
+                let r = results(&mut f, v, false);
+                leave(&mut f, &r);
             }
             // The entry's place, by its index among this cluster's entries.
             f.switch_to_block(pick);
             for &g in &incoming[c as usize] {
                 targets.push((g, if g < n_words { wb[g].expect("an own place") } else { entries[g - n_words] }));
             }
-            let at = f.block_params(entry)[1];
+            let at = f.block_params(entry)[first_param];
             if targets.len() == 1 {
                 // One entry: no choice to make.
                 f.ins().jump(targets[0].1, &[]);
@@ -3075,18 +4176,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         if fin_used {
             f.switch_to_block(fin);
             let p = f.block_params(fin).to_vec();
-            let extras = &native.readings.extras;
-            if table_fn.is_none() {
-                table_fn = Some(outline(&mut module, "tempo_stream_table", 3, 1, |f, q, heads| table(f, q[0], q[1], q[2], extras, heads))?);
-            }
-            let made = table_fn.as_ref().expect("made");
-            let open_c = if cut.reload {
-                let b = if clustered { pinned(&mut f) } else { ctx };
-                f.ins().load(types::I64, MemFlags::trusted(), b, OPEN)
-            } else {
-                open_c
-            };
-            let r = call_own(&mut f, made.0, &made.1, &[p[0], p[1], open_c]);
+            let _ = p;
+            let r = [zero];
             let r = results(&mut f, r[0], true);
             leave(&mut f, &r);
         }
@@ -3105,11 +4196,17 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         leave(&mut f, &r);
         f.switch_to_block(exit);
         let r = f.block_params(exit).to_vec();
+        if let Some((w, fl)) = entry_kept {
+            mset(&mut f, Mem::Word, w);
+            mset(&mut f, Mem::Flags, fl);
+        }
         f.ins().return_(&r);
         f.seal_all_blocks();
         f.finalize();
         }
-        state_in_registers(&mut func);
+        if !pinned_ctx {
+            state_in_registers(&mut func);
+        }
         drop_unused_loads(&mut func);
         lowered.push(Lowered { func, heads, targets, exits, tails });
     }
@@ -3118,7 +4215,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     }
     let mut word_fns: Vec<_> = word_fns.into_values().collect();
     word_fns.sort_by_key(|w| w.0.as_u32());
-    let own: Vec<_> = reorder_fn.into_iter().chain(table_fn).chain(word_fns).collect();
+    let own: Vec<_> = table_fns.all().chain(word_fns).collect();
     let names: Vec<_> = own.iter().map(|(id, _, _)| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())).collect();
     let crossings: usize = lowered.iter().map(|l| l.tails).sum();
     if clustered {
@@ -3155,8 +4252,25 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
             let first = f.ins().iconst(types::I64, 0);
             // The passed fields' first values, as the state's in `ctx`.
             let passed: Vec<Value> = cut.pass.iter().map(|&k| if k == Mem::Need as u32 { one } else if k == Mem::Lw as u32 { before_first } else { zero }).collect();
-            let args: Vec<Value> = [ctx, first].into_iter().chain(passed).collect();
+            // With `ctx` pinned: the host's x21 kept, `ctx` there for the run, the host's back
+            // after (Cranelift saves no pinned register).
+            let host = pinned_ctx.then(|| {
+                let host = f.ins().get_pinned_reg(types::I64);
+                f.ins().set_pinned_reg(ctx);
+                host
+            });
+            // The calls open on the machine's stack (`on_stack`): its base and limit, here.
+            if on_stack {
+                let sp = f.ins().get_stack_pointer(types::I64);
+                f.ins().store(MemFlags::trusted(), sp, ctx, STACK_BASE);
+                let limit = f.ins().iadd_imm(sp, -STACK_BYTES);
+                f.ins().store(MemFlags::trusted(), limit, ctx, STACK_LIMIT);
+            }
+            let args: Vec<Value> = (!pinned_ctx).then_some(ctx).into_iter().chain([first]).chain(passed).collect();
             let r = call_own(&mut f, cids[cut.of[0] as usize], &csig, &args);
+            if let Some(host) = host {
+                f.ins().set_pinned_reg(host);
+            }
             // The passed fields' last values, in the state, as the host reads it.
             for (j, &k) in cut.pass.iter().enumerate() {
                 f.ins().store(MemFlags::trusted(), r[1 + j], ctx, STATE + 8 * k as i32);
@@ -3182,6 +4296,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
         c.set_disasm(true);
         c
     };
+    let has_driver = driver.is_some();
     if let Some(func) = driver {
         items.push((id, context_of(&module, func)));
     }
@@ -3196,6 +4311,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     for (_, c) in &items {
         clif.push_str(&c.func.display().to_string());
     }
+    let ir: Vec<(u32, cranelift_codegen::ir::Function)> = if KEEP_IR.load(std::sync::atomic::Ordering::Relaxed) { items.iter().map(|(fid, c)| (fid.as_u32(), c.func.clone())).collect() } else { Vec::new() };
     let defined = crate::native_cpu_codegen::define_functions(&mut module, items, cut.near).map_err(|e| {
         if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
             eprintln!("tier 2: {e:?}");
@@ -3205,13 +4321,34 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     if times {
         eprintln!("tier 2: compiled {:.2?}", phase.elapsed());
     }
+    // The smallest rule function's frame (its saved registers, slots, and the frame pointer and
+    // return address): each call open has one, or more (`calls_open_by_stack`).
+    let frame_shift = defined
+        .iter()
+        .skip(usize::from(has_driver))
+        .take(cut.count as usize)
+        .filter_map(|c| c.compiled_code().map(|code| code.frame_size + 16))
+        .min()
+        .map_or(4, |least| u64::from(least.max(16).ilog2()));
     let mut disassembly = String::new();
     let mut code_bytes = Vec::new();
+    let mut word_bytes = vec![0u32; words.len()];
+    let mut word_ranges = Vec::new();
     for c in &defined {
+        if let Some(code) = c.compiled_code() {
+            for l in code.buffer.get_srclocs_sorted() {
+                if let Some(pc) = (l.loc.bits() as usize).checked_sub(1).filter(|&pc| pc < words.len()) {
+                    word_bytes[pc] += l.end - l.start;
+                    let at = code_bytes.len() as u32;
+                    word_ranges.push((pc as u32, at + l.start, at + l.end));
+                }
+            }
+        }
         disassembly.push_str(&c.compiled_code().and_then(|code| code.vcode.clone()).unwrap_or_default());
         code_bytes.extend_from_slice(c.compiled_code().map_or(&[][..], |code| code.code_buffer()));
     }
-    let calls = clif.lines().filter(|l| l.trim().starts_with("call ") || l.contains(" = call ")).count();
+    // A call's line, its source location (`@` and the word's place) before it or not.
+    let calls = clif.lines().filter(|l| l.trim().starts_with("call ") || l.contains(" call ")).count();
     module.finalize_definitions().map_err(|e| {
         if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
             eprintln!("tier 2's module: {e:?}");
@@ -3225,7 +4362,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     let marks = words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, entry, bounds: bounds(native), starts, lasts, marks, wraps, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, clusters: cut.count as usize, crossings, word_insts })
+    Ok(CompiledStream { _module: module, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, wraps, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
 }
 
 /// What an instruction does to `ctx`'s fields (`state_in_registers`).
@@ -3605,19 +4742,19 @@ fn ctx_reads(op: &Op, wrapping: bool) -> Vec<i32> {
 
 /// The words that read many `ctx` fields and run rarely: each loads them all (`Cut::reload`).
 fn cold_op(op: &Op) -> bool {
-    matches!(op, Op::Accept | Op::Wrap { .. } | Op::Reread { .. } | Op::Retag { on: On::Made | On::Inner, .. } | Op::NodeField { on: On::Made | On::Inner, .. })
+    matches!(op, Op::Accept | Op::Wrap { .. } | Op::Reread { .. } | Op::Retag { on: On::Made | On::Inner, .. } | Op::NodeField { on: On::Made | On::MadeUnset | On::Inner, .. })
 }
 
 /// Whether the program has context beside each call's return (a level's word, its flags): two
 /// return slots a call.
 fn has_context(words: &[crate::native_ir::StructuralBlock]) -> bool {
-    words.iter().any(|b| matches!(b.operation, Op::Remember { .. } | Op::Flag { .. }))
+    words.iter().any(|b| matches!(b.operation, Op::Remember { .. } | Op::Flag { .. } | Op::Push { flag: Some(_), .. }))
 }
 
 /// Whether the program keeps a frame per open node: it wraps, or it relabels the node made last
 /// at a level (`On::Made`).
 fn framed(words: &[crate::native_ir::StructuralBlock]) -> bool {
-    words.iter().any(|b| matches!(b.operation, Op::Wrap { .. } | Op::Reread { .. } | Op::Retag { on: On::Made, .. } | Op::NodeField { on: On::Made | On::Inner, .. }))
+    words.iter().any(|b| matches!(b.operation, Op::Wrap { .. } | Op::Reread { .. } | Op::Retag { on: On::Made, .. } | Op::NodeField { on: On::Made | On::MadeUnset | On::Inner, .. }))
 }
 
 /// Tier 1's buffers as tier 2 reads them, where tier 1 wrote them (the CPU's batch, or the
@@ -3707,6 +4844,18 @@ impl CompiledStream {
         t
     }
 
+    /// Runs another build of the same code from now on: `entry` for the JIT's, and the log of
+    /// its smallest rule function's frame (`Ctx::frame_shift`; 4, a frame pointer and a return
+    /// address, holds for any).
+    ///
+    /// # Safety
+    /// `entry` must be this program's code (`clif_rust` of `ir`), reading and writing `Ctx` as the
+    /// JIT's does.
+    pub unsafe fn set_entry(&mut self, entry: Entry, frame_shift: u64) {
+        self.entry = entry;
+        self.frame_shift = frame_shift;
+    }
+
     /// One call over a file. `bytes` is the file (`len` its length), with 64 readable bytes
     /// after it; `tier1` is tier 1's buffers for it.
     ///
@@ -3768,6 +4917,9 @@ impl CompiledStream {
             room_nodes: tape.rows.capacity() as u64,
             room_supers: tape.super_node.capacity() as u64,
             room_pushes: (tape.returns.capacity() / if self.context { 2 } else { 1 }) as u64,
+            stack_base: 0,
+            stack_limit: 0,
+            frame_shift: self.frame_shift,
             state: [0; Mem::COUNT as usize],
         };
         // SAFETY: the caller's contract; the function writes only the tape's buffers and the

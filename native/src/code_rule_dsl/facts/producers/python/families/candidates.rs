@@ -180,7 +180,7 @@ fn collect_shaped(
 }
 
 /// Preserve the reference's Known / NotApplicable / Unknown distinction on core facts.
-pub(crate) fn eligibility(
+pub fn eligibility(
     g: &Grammar,
     f: &Facts,
     requested: u32,
@@ -270,5 +270,4 @@ pub(crate) fn eligibility(
     }
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

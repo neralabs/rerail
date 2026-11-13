@@ -453,10 +453,8 @@ fn field<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>, out: &mut Vec<To
                 out.push(Tok::Open("spec".into()));
                 let text = child.text();
                 let base = child.range().start;
-                let mut at = child
-                    .children()
-                    .next()
-                    .map_or(0, |colon| colon.range().end - base);
+                // After the `:` the spec opens with: its first byte (an implied token, not on the tape).
+                let mut at = usize::from(text.starts_with(':'));
                 for nested in child
                     .children()
                     .filter(|nested| nested.kind() == "format_expression")
