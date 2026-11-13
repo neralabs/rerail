@@ -1,0 +1,1 @@
+On Windows, a daemon started with `--tls-key` refuses a key that any account besides you, SYSTEM and Administrators can read, as every local user can a key under `C:\certs`. The error names those accounts and the `icacls` command that makes the key yours alone; run it and start the daemon again.

@@ -70,6 +70,10 @@ rerail-query-parity *args:
 rerail-dashboard-history *args:
     @node --import tsx benchmark/dashboard-history.ts {{ args }}
 
+# Status line cost: run the built Claude Code status line against a stand-in daemon and report wall, CPU, peak memory and modules per run (--runs 20 --shell). Needs a fresh dist/ (npm run build:js).
+rerail-status-line *args:
+    @node --import tsx benchmark/status-line.ts {{ args }}
+
 # Steer strategies on real harnesses: run the fixture task per host × strategy and report completion, steers, cost and compaction attribution (--hosts pi --strategies message,rewind --trials 3). Needs a fresh dist/ (npm run build:ts) and provider credentials.
 rerail-steer-strategy *args:
     @node --import tsx benchmark/steer-strategy.ts {{ args }}

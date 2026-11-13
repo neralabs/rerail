@@ -1,8 +1,10 @@
-import { spawn, type ChildProcess } from "node:child_process";
-import { accessSync, constants, existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { delimiter, dirname, isAbsolute, join } from "node:path";
+import type { ChildProcess } from "node:child_process";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { delimiter, dirname, join } from "node:path";
+import { spawn } from "../engine/child-process.js";
+import { removeScratch } from "../engine/file-replace.js";
+import { pathKey, programOnPath } from "../engine/system-programs.js";
 import { formatDuration } from "./progress.js";
 
 export interface CommandResult {
@@ -107,58 +109,21 @@ export async function runCommand(command: string, args: readonly string[], optio
   return await promise;
 }
 
-function pathKey(env: NodeJS.ProcessEnv): string {
-  return Object.keys(env).find(name => name.toUpperCase() === "PATH") ?? "PATH";
-}
-
-/**
- * The absolute path PATH would resolve `command` to, or undefined when nothing on PATH is runnable by that
- * name. An absolute command is returned as is. A compiled-Bun host only knows Node as the bare name `node`;
- * the probe, the rebuild and the daemon spawn must still agree on one binary, so the name is resolved once.
- */
-export function resolveExecutable(
-  command: string,
-  env: NodeJS.ProcessEnv = process.env,
-  platform: NodeJS.Platform = process.platform,
-): string | undefined {
-  if (isAbsolute(command)) return command;
-  const windows = platform === "win32";
-  const separator = windows ? ";" : delimiter;
-  const directories = (env[pathKey(env)] ?? "").split(separator).filter(directory => directory.length > 0);
-  const extensions = windows
-    ? (env.PATHEXT ?? env.Pathext ?? ".EXE;.CMD;.BAT;.COM").split(";").filter(extension => extension.length > 0)
-    : [""];
-  for (const directory of directories) {
-    for (const extension of extensions) {
-      const candidate = join(directory, `${command}${extension}`);
-      if (windows ? existsSync(candidate) : runnable(candidate)) return candidate;
-    }
-  }
-  return undefined;
-}
-
-function runnable(path: string): boolean {
-  try {
-    accessSync(path, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /** Windows has no `npm` executable a spawned Node can rely on; run the CLI script shipped next to `node`. */
 export function windowsNpmCliPath(node: string = process.execPath): string {
   const inherited = process.env.npm_execpath;
   if (inherited !== undefined && /(?:^|[\\/])npm-cli\.js$/iu.test(inherited)) return inherited;
-  return join(dirname(resolveExecutable(node) ?? process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+  return join(dirname(programOnPath(node) ?? process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
 }
 
 /**
  * The environment in which `npm`, a `#!/usr/bin/env node` script, runs under `node` rather than whichever Node
  * PATH reaches first (nvm and Homebrew disagree routinely). A name PATH cannot resolve leaves the environment alone.
+ * A compiled-Bun host only knows Node as the bare name `node`; the probe, the rebuild and the daemon spawn must still
+ * agree on one binary, so the name is resolved once, to the program a spawn starts ({@link programOnPath}).
  */
 export function environmentForNode(node: string, env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const executable = resolveExecutable(node, env);
+  const executable = programOnPath(node, { env });
   if (executable === undefined) return env;
   const key = pathKey(env);
   const current = env[key];
@@ -218,11 +183,13 @@ function unreachableError(error: unknown): Error | undefined {
 
 async function spawnNpm(args: readonly string[], options: NpmOptions): Promise<CommandResult> {
   const { node: requested, ...command } = options;
-  const node = requested === undefined ? undefined : resolveExecutable(requested, command.env);
+  const node = requested === undefined ? undefined : programOnPath(requested, { env: command.env ?? process.env });
   // Options first: a caller's `--` ends them.
   const npmArgs = [...FETCH_RETRY_OPTIONS, ...args];
   if (process.platform === "win32") {
-    return await runCommand(node ?? process.execPath, [windowsNpmCliPath(node ?? process.execPath), ...npmArgs], command);
+    // npm runs install scripts (prebuild-install, node-gyp) through shims that start `node` from PATH, so that node
+    // must be the one the rebuild targets, as on POSIX.
+    return await runCommand(node ?? process.execPath, [windowsNpmCliPath(node ?? process.execPath), ...npmArgs], node === undefined ? command : { ...command, env: environmentForNode(node, command.env) });
   }
   return await runCommand("npm", npmArgs, node === undefined ? command : { ...command, env: environmentForNode(node, command.env) });
 }
@@ -253,7 +220,8 @@ export async function outsideAnyProject<T>(operation: (directory: string) => Pro
   try {
     return await operation(directory);
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    // A scan can still hold npm's private cache in it on Windows; a leftover folder never fails the command.
+    await removeScratch(directory);
   }
 }
 
@@ -291,4 +259,38 @@ export async function auditSignatures(prefix: string, npm: NpmRunner = runNpm): 
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`npm could not verify the registry signatures of the packages in ${prefix}: ${detail}`, { cause: error });
   }
+}
+
+/** An npm setting line that makes npm 11 refuse an install into `--prefix`, as `allow-scripts=…` or `allow-scripts[]=…`. */
+const PREFIX_INSTALL_REFUSED_LINE = /^\s*allow-scripts\s*(?:\[\])?\s*=/iu;
+/** The same setting given in the environment. */
+const PREFIX_INSTALL_REFUSED_VARIABLE = /^npm_config_allow[-_]scripts$/iu;
+const USERCONFIG_VARIABLE = /^npm_config_userconfig$/iu;
+
+/**
+ * The environment for one of Rerail's own `--prefix` installs, run from `directory`: the person's npm user config
+ * (registry, proxy, credentials) copied into `directory` without its allow-scripts lines, and no allow-scripts variable.
+ */
+export async function prefixInstallEnvironment(directory: string, env: NodeJS.ProcessEnv = process.env): Promise<NodeJS.ProcessEnv> {
+  const configured = Object.entries(env).find(([name]) => USERCONFIG_VARIABLE.test(name))?.[1];
+  const userconfig = configured === undefined || configured === "" ? join(homedir(), ".npmrc") : configured;
+  const text = await readFile(userconfig, "utf8").catch(() => "");
+  const copy = join(directory, "npmrc");
+  await writeFile(copy, text.split(/\r?\n/u).filter(line => !PREFIX_INSTALL_REFUSED_LINE.test(line)).join("\n"), { mode: 0o600 });
+  const kept = Object.entries(env).filter(([name]) => !PREFIX_INSTALL_REFUSED_VARIABLE.test(name) && !USERCONFIG_VARIABLE.test(name));
+  return { ...Object.fromEntries(kept), npm_config_userconfig: copy };
+}
+
+/**
+ * `npm` for Rerail's own installs into a `--prefix`: run from an empty folder of its own, with the person's npm config
+ * minus allow-scripts (`prefixInstallEnvironment`). npm 11 refuses any `--prefix` install while allow-scripts is set
+ * ("--allow-scripts is not allowed in project-scoped installs"), whether ~/.npmrc, the environment or a project .npmrc
+ * in the folder Rerail runs from sets it. These installs pass --ignore-scripts, so the setting changes nothing they need.
+ */
+export function prefixInstallNpm(npm: NpmRunner): NpmRunner {
+  return async (args, options = {}) => {
+    if (!args.includes("--prefix")) return await npm(args, options);
+    return await outsideAnyProject(async directory =>
+      await npm(args, { ...options, cwd: directory, env: await prefixInstallEnvironment(directory, options.env ?? process.env) }));
+  };
 }

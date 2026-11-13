@@ -213,7 +213,7 @@ Rerail sends notes nowhere. To share them with Nera, attach `rerail feedback lis
 <details>
 <summary>What is recorded and printed</summary>
 
-A steer asks the coding agent to fix the problem, or tell the user in one line why not and record it: `rerail feedback <rule-id> '<that line>'`. A line containing `'` goes on stdin: `rerail feedback <rule-id> - <<'LINE'`. The id appears in the command only if a shell reads it as one word.
+A steer asks the coding agent to fix the problem, or tell the user in one line why not and record it: `rerail feedback <rule-id> '<that line>'`. A line containing `'` goes on stdin: `rerail feedback <rule-id> - <<'LINE'`. The id appears in the command only if a shell reads it as one word. On Windows the line always goes on stdin. Git Bash gets `echo '<that line>' | rerail feedback <rule-id> -`: it runs the `rerail` sh launcher, never `rerail.cmd`, and as the launcher starts node it rewrites an argument that starts with `/` into a Windows path. Codex and Cursor, which run PowerShell there, where `rerail` is `rerail.cmd` and cmd.exe would split its arguments at a `&` or `|`, get three lines: `$OutputEncoding = [Text.UTF8Encoding]::new(); @'`, a space and the line, then `'@ | rerail feedback <rule-id> -`. PowerShell reads nothing inside the here-string (`@'` … `'@`), so no quote in the line ends it early, though PowerShell reads `'`, `‘`, `’`, `‚` and `‛` all as single quotes; the space keeps a line that starts with a quote and `@` from closing it, and the first line has Windows PowerShell 5.1 pipe UTF-8, where it pipes ASCII unless told otherwise.
 
 Notes go to `steer_feedback` with the rule's pack and version, repository, coding agent, last-steered session and Rerail version, for tuning rules that get pushback. Ids or reasons with control or invisible characters (bidi override, zero-width space) are refused.
 
@@ -274,7 +274,7 @@ Prerequisites (set-up checks them before changing anything, and says what to do)
 
 `setup` installs under `~/.rerail/versions/<version>`, points `~/.rerail/current` and the launcher `~/.rerail/bin/rerail` at it, and adds `~/.rerail/bin` to `PATH`.
 
-- `rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--port <n>] [--json] [--relay]` takes the answers as arguments.
+- `rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--port <n>] [--json] [--relay] [--powershell]` takes the answers as arguments. With `--powershell` each answer command is written for PowerShell (`& '<node>' '<rerail home>\current\dist\cli\cli.js' setup ...`), every value PowerShell would read in single quotes (`--packs 'typescript@0.1.1,complexity@0.1.1'`, which it would otherwise split at the comma), and carries `--powershell` on; Codex's and Cursor's `/rerail-start` pass it on Windows, where they run PowerShell. Without it the answers are written for a POSIX shell, Git Bash on Windows, where Claude Code runs them, starting with the sh launcher `rerail`. No answer runs `rerail.cmd`, since cmd.exe would read its arguments again: a `&` in a folder name would end the command there.
 - `rerail install --agents <list> [--dry-run]` only connects coding agents.
 - `rerail install --remove` removes Rerail, keeping `rerail.sqlite` in a dated backup.
 
@@ -283,7 +283,7 @@ Prerequisites (set-up checks them before changing anything, and says what to do)
 
 On Windows the launcher is `rerail.cmd`, plus `rerail` for Git Bash. The `PATH` entry is a marked block in your shell startup file, or the Windows user `Path`; `RERAIL_MODIFY_PATH=0` leaves `PATH` to you. `rerail update` adds it where an older set-up didn't. `rerail update` shells out to `npm` with your `~/.npmrc`.
 
-`rerail install --remove` disconnects every coding agent, takes Rerail off `PATH` and stops the daemon. It moves `rerail.sqlite` to a dated backup, so rules and history are kept. Then it deletes `current`, the launcher, every version, the rule packs and `~/.cache/rerail`, naming each.
+`rerail install --remove` disconnects every coding agent, takes Rerail off `PATH` and stops the daemon. It moves `rerail.sqlite` to a dated backup, so rules and history are kept. Then it deletes `current`, the launcher, every version, the rule packs and the content cache (`~/.cache/rerail`; on Windows `%USERPROFILE%\AppData\Local\rerail`, and the `~/.cache/rerail` an earlier release used there), naming each.
 
 </details>
 
@@ -395,13 +395,14 @@ An agent that can't be re-registered is named with the reason, the rest are refr
 rerail daemon start            # background daemon on the port it last ran on, else http://127.0.0.1:4737/ (a free port when those are held), opens nothing
 rerail daemon start --open     # same, then opens the browser view
 rerail daemon start --host 0.0.0.0 --allow-remote --public-host rerail.example --tls-cert cert.pem --tls-key key.pem   # bind off loopback over https (see below)
+rerail daemon start --workspace-root <dir>   # serve, and look for Git, as if started in <dir> rather than the current folder; a coding agent's session that starts the daemon passes its own folder this way
 rerail start                   # start Rerail in this checkout and the checkouts inside it (--repository: every checkout); in a repository that is not set up, first runs set-up's questions there
 rerail stop [<host> [<session-id>]]   # stop Rerail in this checkout and the checkouts inside it (--repository: every checkout); the shared daemon keeps running for other checkouts and coding agents, and the reply names rerail daemon stop. A coding agent's host sets the reply's command sigil, and its session (rerail stop codex: CODEX_THREAD_ID) makes the reply name the rules that steered it
 rerail state                   # prints started, stopped, or not-set-up for this checkout
 rerail status                  # whether Rerail is on here, then the daemon, its engine and its model (Model: ok, or the problem and file, e.g. checksum mismatch (model.safetensors)); exit 3 when the daemon is not running, 4 when it does not answer, 5 when its engine or model is not ok
-rerail manage [--print]        # prints the dashboard's Overview URL and opens it; --print only prints
-rerail session [<host> <session-id>] [--open]   # this session's status line and page URL; --open opens it
-rerail daemon stop             # shut the daemon down for every checkout and coding agent; graceful stop where supported; forced termination after 10 s, and an error if the process outlives that by 5 s. A coding agent's session in a checkout where Rerail is started starts it again with its next event, unless RERAIL_AUTOSTART=0
+rerail manage [--print]        # prints the dashboard's Overview URL and opens it; --print only prints, and so does BROWSER=none
+rerail session [<host> <session-id>] [--open]   # this session's status line and page URL; --open opens it, unless BROWSER=none
+rerail daemon stop             # shut the daemon down for every checkout and coding agent; a graceful stop (SIGTERM, or on Windows a request over its API); forced termination after 10 s, and an error if the process outlives that by 5 s. A coding agent's session in a checkout where Rerail is started starts it again with its next event, unless RERAIL_AUTOSTART=0
 ```
 
 <details>
@@ -602,14 +603,14 @@ Anything else, including `/native/*`, `/mcp`, `/healthz` and the page, gets `421
 
 ### Daemon state
 
-`~/.rerail/daemon.json` (or `$RERAIL_HOME/daemon.json`) holds pid, port and database path; output goes to `daemon.log` beside it. `RERAIL_AUTOSTART=0` stops automatic daemon creation, so command hooks need an existing daemon or explicit endpoint.
+`~/.rerail/daemon.json` (or `$RERAIL_HOME/daemon.json`) holds pid, port and database path; output goes to `daemon.log` beside it. `RERAIL_AUTOSTART=0` or `RERAIL_AUTOSTART=false` stops automatic daemon creation (any other value leaves it on): no hook, session or set-up starts the daemon, so command hooks need an existing daemon or explicit endpoint. A hook that finds none records nothing and logs no failure; `rerail status` says the daemon is not running and that `RERAIL_AUTOSTART=0` keeps hooks from starting it.
 
 <details>
 <summary>Ports, reuse and the kernel socket</summary>
 
 `daemon-port.json` remembers the last port (or `--port`), reused by a start without `--port` so dashboard links survive restarts. `rerail daemon start` reuses a running daemon and says where; stale state from a crash or reboot is cleared. `stop`, `status` and `manage` run from the launcher you invoked, not the managed version, so they work mid-update.
 
-`daemon.json` also records `kernelSocketPath` (Unix socket or Windows named pipe), which hooks reuse; `RERAIL_ENGINE_SOCKET` selects an explicitly managed endpoint. Events there need `x-rerail-access`. For a `RERAIL_ENGINE_SOCKET` socket, hooks send the capability from the Rerail home's `daemon.json` if it names the same socket.
+`daemon.json` also records `kernelSocketPath` (Unix socket or Windows named pipe), which hooks reuse; when another process already holds the default pipe name, the daemon listens on that name with a random suffix and records that one; `RERAIL_ENGINE_SOCKET` selects an explicitly managed endpoint. Events there need `x-rerail-access`. For a `RERAIL_ENGINE_SOCKET` socket, hooks send the capability from the Rerail home's `daemon.json` if it names the same socket.
 
 </details>
 
@@ -711,7 +712,7 @@ A file written and committed in one command stays an edit, measured from the tre
 <details>
 <summary>What counts as the session's own write</summary>
 
-A session's walk finds that a file changed, not who changed it, so it goes by the file's timestamp, and by its folder's for a file removed. An agent writes only through its tool calls, so each session notes when each of its calls ran, whatever the tool, including those answered while its code rules were still opening. A Codex `apply_patch` runs no hook, so a Codex session counts its whole turn, from your prompt (or, after a daemon restart, its next tool call) to the turn's end, as one call. A change stamped while one of them ran is the session's own. Any other is another writer's (another session, your editor, a process a command left running in the background): it steers nobody, and the session's next shell edit of the file is measured from what that writer left; where the session had changed the file, the change is recorded in Log with no generated lines. When two sessions' calls ran at once, both take a change made then, so a Codex session in the middle of a turn takes another session's change too. A call whose result never comes (one you interrupted) counts as running until the turn ends.
+A session's walk finds that a file changed, not who changed it, so it goes by the file's timestamp, and by its folder's for a file removed. An agent writes only through its tool calls, so each session notes when each of its calls ran, whatever the tool, including those answered while its code rules were still opening. A Codex `apply_patch` runs no hook, so a Codex session counts its whole turn, from your prompt (or, after a daemon restart, its next tool call) to the turn's end, as one call. A change stamped while one of them ran is the session's own. Any other is another writer's (another session, your editor, a process a command left running in the background): it steers nobody, and the session's next shell edit of the file is measured from what that writer left; where the session had changed the file, the change is recorded in Log with no generated lines. When two sessions' calls ran at once, both take a change made then, so a Codex session in the middle of a turn takes another session's change too. A call whose result never comes (one you interrupted) counts as running until the turn or the session ends; a subagent's, until the main agent's next stop after its own.
 
 </details>
 

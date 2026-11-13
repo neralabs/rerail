@@ -1,4 +1,5 @@
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs";
+import { renameWithRetrySync, replaceFileSync } from "../engine/file-replace.js";
 import { dirname, resolve } from "node:path";
 import Database from "better-sqlite3";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
@@ -109,7 +110,7 @@ function keepSnapshot(staged: string | undefined, databasePath: string): void {
   }
   const target = preUpdateSnapshotPath(databasePath);
   try {
-    renameSync(staged, target);
+    renameWithRetrySync(staged, target);
   } catch (error) {
     removeQuietly(staged);
     process.stderr.write(`rerail: could not keep the copy of ${databasePath} taken before the update: ${(error as Error).message}\n`);
@@ -142,14 +143,8 @@ export function runRulesCommand(args: readonly string[], usage: () => string, io
     } finally {
       db.$client.close();
     }
-    const staging = `${output}.${process.pid}.tmp`;
     mkdirSync(dirname(output), { recursive: true, mode: 0o700 });
-    try {
-      writeFileSync(staging, `${JSON.stringify(dump, null, 2)}\n`, { mode: 0o600 });
-      renameSync(staging, output);
-    } finally {
-      rmSync(staging, { force: true });
-    }
+    replaceFileSync(output, `${JSON.stringify(dump, null, 2)}\n`, { mode: 0o600 });
     stdout.write(`Exported ${dump.library.length} rules created by you and ${dump.repositories.length} repositories from ${database} to ${output}\n`);
     return 0;
   }

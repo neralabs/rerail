@@ -1,15 +1,23 @@
 import { expect } from "vitest";
-import { headlineText, steerBlock, steerHeadlines, type SteerTrigger } from "../../src/engine/index.js";
+import { headlineText, steerBlock, steerHeadlines, type RerailHost, type SteerTrigger } from "../../src/engine/index.js";
 import { steerDashboard } from "../../src/presentation/index.js";
+import { hostShell } from "../../test/support/steers.js";
 
 /**
  * The steer block a rule delivers for one finding, as the coding agent reads it: a code rule's after an edit (pass its
  * `location`), or a conversation rule's guidance, led for the tool call it matched (`{ kind: "tool", tool }`) or for
- * the step (`{ kind: "tool" }`, the default without a location).
+ * the step (`{ kind: "tool" }`, the default without a location). Its last line names the feedback command in the shell
+ * `host`'s agent runs on this machine (`hostShell`): on Windows Codex and Cursor run PowerShell, and an agent that is
+ * not named runs Git Bash.
  */
-export function steerText(ruleId: string, message: string, location?: string, trigger?: SteerTrigger): string {
+export function steerText(
+  ruleId: string,
+  message: string,
+  location?: string,
+  { trigger, host }: { trigger?: SteerTrigger; host?: RerailHost } = {},
+): string {
   const led = trigger ?? (location === undefined ? { kind: "tool" } as const : { kind: "edit" } as const);
-  return steerBlock(led, [{ ruleId, mode: "steer", message, location }]);
+  return steerBlock(led, [{ ruleId, mode: "steer", message, location }], host === undefined ? undefined : hostShell(host));
 }
 
 /** The person's line for `ruleId` as the adapter for checkout `cwd` draws it, its `why?` link in `style`. */

@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, realpathSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -11,6 +11,7 @@ import { operations } from "../../src/api/operations.js";
 import { DatabaseApiStores } from "../../src/api/stores.js";
 import { type RuleCatalog, PACKAGE_ROOT, readRuleCatalog, recordCheckout, setUpRepository } from "../../src/engine/index.js";
 import { thirdPartyPack } from "../support/installed-packs.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 type Json = Record<string, unknown>;
 type RuleEntry = { rule: { id: string }; mode: string; modeSource: Json; approval?: { subject: Json; approved: boolean } };
@@ -45,7 +46,7 @@ describe("rule approvals", () => {
 
   afterEach(async () => {
     stores.close();
-    await rm(root, { recursive: true, force: true });
+    await removeFolder(root);
   });
 
   const send = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: Json }> => {

@@ -1,12 +1,12 @@
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, win32 } from "node:path";
 import { promisify } from "node:util";
 import ignore from "ignore";
 import { sql } from "drizzle-orm";
-import { openSqliteDatabase } from "../../src/engine/index.js";
+import { commandLine, ENTRY_POINTS, openSqliteDatabase, shellWord } from "../../src/engine/index.js";
 import {
   CURSOR_HOOK_EVENTS,
   HARNESSES,
@@ -22,16 +22,20 @@ import {
   readClaudeStatusRegistration,
   writeClaudeStatusRegistration,
 } from "../../src/setup/claude-status-store.js";
-import { MANAGED_SKILL_MARKER, RERAIL_COMMANDS, readRepoQuestion, renderQuestion, shellQuote } from "../../src/harness/index.js";
+import { MANAGED_SKILL_MARKER, RERAIL_COMMANDS, readRepoQuestion, renderQuestion } from "../../src/harness/index.js";
 import { runInstallCommand, setupAnswerCommand } from "../../src/cli/index.js";
 import { ManagedUpdater } from "../../src/setup/updater.js";
+import { pinnedNodePath } from "../../src/setup/node-path.js";
+import { stubUserHome } from "../support/user-home.js";
+import { linkFolder, symlinkOrSkip } from "../support/platform/links.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
   vi.useRealTimers();
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
-  await Promise.all(temporaryDirectories.splice(0).map((path) => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map((path) => removeFolder(path)));
 });
 
 interface Fixture {
@@ -70,6 +74,15 @@ async function seed(path: string, value: unknown): Promise<string> {
 async function readJson(path: string): Promise<Record<string, unknown>> {
   return JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
 }
+
+/**
+ * Why a test of what set-up writes off Windows skips there: it checks the sh command forms, Claude Code's sandbox, the
+ * Cursor CLI's denies or the main checkout's local settings. On Windows set-up writes PowerShell and cmd forms, no
+ * sandbox and no Cursor CLI denies, and keeps local settings in the session folder; the tests that pass
+ * `platform: "win32"` check what it writes there.
+ */
+const POSIX_SETUP = "checks what set-up writes off Windows; the tests passing platform win32 check the Windows forms";
+const WINDOWS = process.platform === "win32";
 
 /** The registered hook line: the recorded node, with node from PATH as the fallback once it is gone. */
 function hookLine(nodePath: string, root: string, executable: string): string {
@@ -132,7 +145,8 @@ describe("detectHarnesses", () => {
     expect(detectHarnesses(home)).toEqual(["pi", "claude-code", "cursor"]);
   });
 
-  it("registers only detected harnesses and reports the rest as skipped", async () => {
+  it("registers only detected harnesses and reports the rest as skipped", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { home, root, nodePath } = await fixture();
     await mkdir(join(home, ".codex"));
     const report = await registerHarnesses({ root, home, nodePath });
@@ -155,7 +169,8 @@ describe("detectHarnesses", () => {
     ]);
   });
 
-  it("runs the recorded node first and falls back to node on PATH when it is gone", async () => {
+  it("runs the recorded node first and falls back to node on PATH when it is gone", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { home, root, nodePath } = await fixture();
     await mkdir(join(home, ".codex"));
     await registerHarnesses({ root, home, nodePath, harnesses: ["codex"] });
@@ -180,7 +195,7 @@ describe("detectHarnesses", () => {
     await writeFile(join(root, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
     const nodePath = String.raw`C:\Users\José O'Brien\AppData\Local\nvm\v24.9.0\node.exe`;
     const path = join(home, ".codex", "hooks.json");
-    const hookPath = join(root, "dist", "hosts", "codex", "codex-hook.js");
+    const hookPath = win32.join(root, "dist", "hosts", "codex", "codex-hook.js");
     // The `cmd` form earlier set-ups wrote, `%` doubled for cmd; registering replaces it.
     const [cmdNode, cmdHook] = [nodePath, hookPath].map(value => `"${value.replaceAll("%", "%%")}"`);
     const cmdForm = `cmd /d /c "if exist ${cmdNode} (${cmdNode} ${cmdHook}) else (node ${cmdHook})"`;
@@ -220,7 +235,8 @@ describe("Claude Code settings.json", () => {
     },
   };
 
-  it("merges rerail groups, is idempotent, and unregister restores the original bytes", async () => {
+  it("merges rerail groups, is idempotent, and unregister restores the original bytes", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { home, root, nodePath } = await fixture();
     const path = join(home, ".claude", "settings.json");
     const original = await seed(path, foreign);
@@ -277,7 +293,8 @@ describe("Claude Code settings.json", () => {
     expect(await readJson(path)).toEqual({});
   });
 
-  it("replaces a stale registration that points at an older root", async () => {
+  it("replaces a stale registration that points at an older root", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { home, root, nodePath } = await fixture();
     const path = join(home, ".claude", "settings.json");
     // The pre-fallback command shape an older rerail wrote; the marker still identifies it as ours.
@@ -300,8 +317,8 @@ describe("Claude Code settings.json", () => {
   it("registers Windows hooks through the exec-form launcher and replaces the cmd wrapper Git Bash mangles", async () => {
     const { home, root } = await fixture();
     const nodePath = String.raw`C:\Program Files\nodejs\node.exe`;
-    const hookPath = join(root, "dist", "hosts", "claude", "claude-hook.js");
-    const launcherPath = join(root, "dist", "harness", "hook-launcher.js");
+    const hookPath = win32.join(root, "dist", "hosts", "claude", "claude-hook.js");
+    const launcherPath = win32.join(root, "dist", "harness", "hook-launcher.js");
     const path = join(home, ".claude", "settings.json");
     // Claude Code passes shell-form hooks to Git Bash, which turns `/d /c` into drive paths so cmd reads the event JSON as commands.
     const cmdWrapper = `cmd /d /c "if exist "${nodePath}" ("${nodePath}" "${hookPath}") else (node "${hookPath}")"`;
@@ -380,7 +397,8 @@ describe("Claude Code data isolation", () => {
     sandbox: { enabled: true, filesystem: { denyRead: ["~/.aws"] }, excludedCommands: ["docker *"] },
   };
 
-  it("denies the agent the Rerail home and the cache, lets Rerail's CLI out of the sandbox, and removal restores the file", async () => {
+  it("denies the agent the Rerail home and the cache, lets Rerail's CLI out of the sandbox, and removal restores the file", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { options, path, original, rerailHome, cache } = await isolationFixture(userSettings);
     await registerHarnesses(options);
     const settings = await readIsolation(path);
@@ -424,7 +442,8 @@ describe("Claude Code data isolation", () => {
     expect(await readFile(path, "utf8")).toBe(original);
   });
 
-  it("moves the denies to a new RERAIL_HOME when set-up runs again", async () => {
+  it("moves the denies to a new RERAIL_HOME when set-up runs again", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { options, path, original, rerailHome } = await isolationFixture(userSettings);
     await registerHarnesses(options);
     const moved = join(dirname(options.home), "moved-home");
@@ -439,7 +458,8 @@ describe("Claude Code data isolation", () => {
     expect(await readFile(path, "utf8")).toBe(original);
   });
 
-  it("leaves a Rerail home that holds the home directory open, and still denies the cache", async () => {
+  it("leaves a Rerail home that holds the home directory open, and still denies the cache", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { options, path } = await claudeFixture();
     vi.stubEnv("RERAIL_HOME", options.home);
     await registerHarnesses(options);
@@ -456,7 +476,9 @@ describe("Claude Code data isolation", () => {
     await registerHarnesses({ ...options, platform: "win32" });
     const settings = await readIsolation(path);
     expect(settings.sandbox).toBeUndefined();
-    expect(settings.permissions?.deny).toContain(`Edit(/${rerailHome}/**)`);
+    // Claude Code matches a Windows path in POSIX form, its drive as a folder: `C:\Users\me` is `/c/Users/me`.
+    const claudePath = rerailHome.replaceAll("\\", "/").replace(/^([A-Za-z]):/u, (_drive, letter: string) => `/${letter.toLowerCase()}`);
+    expect(settings.permissions?.deny).toContain(`Edit(/${claudePath}/**)`);
   });
 
   it("keeps entries another root registered when removing this one", async () => {
@@ -468,7 +490,8 @@ describe("Claude Code data isolation", () => {
     expect(await readIsolation(path)).toMatchObject(JSON.parse(registered) as object);
   });
 
-  it("refuses a sandbox setting that is not an object without writing", async () => {
+  it("refuses a sandbox setting that is not an object without writing", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { options, path, original } = await isolationFixture({ sandbox: true });
     await expect(registerHarnesses(options)).rejects.toThrow(`"sandbox" in ${path}`);
     expect(await readFile(path, "utf8")).toBe(original);
@@ -476,7 +499,8 @@ describe("Claude Code data isolation", () => {
 });
 
 describe("Claude Code status-line ownership", () => {
-  it("composes a command without copying it into settings, and restores all metadata", async () => {
+  it("composes a command without copying it into settings, and restores all metadata", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const statusLine = { type: "command", command: "sh ~/my-status.sh --compact", padding: 2, refreshInterval: 1000 };
     const { options, path, original } = await claudeFixture({ permissions: { allow: ["Read"] }, statusLine });
     const installedCommand = statusCommand(options.nodePath, options.root);
@@ -493,7 +517,8 @@ describe("Claude Code status-line ownership", () => {
     expect(readClaudeStatusRegistration(options.home)).toBeUndefined();
   });
 
-  it("moves from a development root to a stable managed root without nesting or duplicate hooks", async () => {
+  it("moves from a development root to a stable managed root without nesting or duplicate hooks", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const statusLine = { type: "command", command: "printf user-status", padding: 0 };
     const { options, path } = await claudeFixture({ statusLine });
     await registerHarnesses(options);
@@ -572,7 +597,8 @@ describe("Claude Code status-line ownership", () => {
     expect(await readFile(path, "utf8")).toBe(installed);
   });
 
-  it("uses the main checkout local command above worktree-local and shared commands", async () => {
+  it("uses the main checkout local command above worktree-local and shared commands", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { options, globalPath, rootPath, cwdPath, sharedPath } = await worktreeFixture();
     const globalStatus = { type: "command", command: "printf global", padding: 1 };
     const rootStatus = { type: "command", command: "printf root", padding: 4, refreshInterval: 700 };
@@ -657,7 +683,8 @@ describe("Claude Code status-line ownership", () => {
     expect(await readFile(rootPath, "utf8")).toBe(rootOriginal);
   });
 
-  it("preflights project status before global writes and refuses another package's wrapper", async () => {
+  it("preflights project status before global writes and refuses another package's wrapper", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { options, rootPath: path } = await worktreeFixture();
     const foreign = await packageInstall(options, "foreign", "another-package");
     const original = await seed(path, { statusLine: { type: "command", command: `/old/node ${join(foreign, "dist", "hosts", "claude", "claude-status.js")} ${path}` } });
@@ -668,7 +695,8 @@ describe("Claude Code status-line ownership", () => {
   });
 
   // Deleting an install's home leaves its generated entries behind with nothing to run; setup replaces them.
-  it("replaces the status line, hooks and MCP bridge of an install that is gone, and keeps a foreign package's", async () => {
+  it("replaces the status line, hooks and MCP bridge of an install that is gone, and keeps a foreign package's", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const options = { ...await fixture(), harnesses: ["claude-code", "codex", "cursor", "omp"] as const };
     const gone = join(dirname(options.home), "deleted-home", "current");
     const foreign = await packageInstall(options, "foreign", "another-package");
@@ -706,7 +734,8 @@ describe("Claude Code status-line ownership", () => {
     });
   });
 
-  it("replaces the status line and hooks of another install of this package that this home has no record of", async () => {
+  it("replaces the status line and hooks of another install of this package that this home has no record of", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { options, path } = await claudeFixture();
     const other = await packageInstall(options, "elsewhere");
     const replaced = { type: "command", command: `/old/node ${join(other, "dist", "hosts", "claude", "claude-status.js")}`, padding: 2, refreshInterval: 3 };
@@ -731,7 +760,8 @@ describe("Claude Code status-line ownership", () => {
     expect(readClaudeStatusRegistration(options.home)).toBeUndefined();
   });
 
-  it("replaces its own status line when this home has no record of it", async () => {
+  it("replaces its own status line when this home has no record of it", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { options, path } = await claudeFixture();
     const installedCommand = statusCommand(options.nodePath, options.root);
     await seed(path, { statusLine: { type: "command", command: installedCommand } });
@@ -742,7 +772,8 @@ describe("Claude Code status-line ownership", () => {
     expect((await readJson(path)).statusLine).toBeUndefined();
   });
 
-  it("replaces another install's status line inherited from shared project settings without inheriting it again", async () => {
+  it("replaces another install's status line inherited from shared project settings without inheriting it again", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { options, sharedPath, rootPath: localPath } = await worktreeFixture();
     const other = await packageInstall(options, "elsewhere");
     const sharedOriginal = await seed(sharedPath, {
@@ -761,7 +792,8 @@ describe("Claude Code status-line ownership", () => {
     expect(await readFile(sharedPath, "utf8")).toBe(sharedOriginal);
   });
 
-  it("replaces another install's project status line and refuses one whose script belongs to a different package", async () => {
+  it("replaces another install's project status line and refuses one whose script belongs to a different package", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { options, rootPath: path } = await worktreeFixture();
     const other = await packageInstall(options, "elsewhere");
     await seed(path, { statusLine: { type: "command", command: `/old/node ${join(other, "dist", "hosts", "claude", "claude-status.js")} ${path}` } });
@@ -781,7 +813,8 @@ describe("Claude Code status-line ownership", () => {
     expect(readClaudeStatusRegistration(options.home, path)).toBeUndefined();
   });
 
-  it("keeps scoped recovery isolated on settings write and restore failures", async () => {
+  it("keeps scoped recovery isolated on settings write and restore failures", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { options, rootPath: path } = await worktreeFixture();
     const statusLine = { type: "command", command: "printf project" };
     await seed(path, { statusLine });
@@ -814,11 +847,12 @@ describe("Claude Code status-line ownership", () => {
     await expect(lstat(join(options.workspaceDir, ".claude"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("automatically installs project status from the standard install command cwd", async () => {
+  it("automatically installs project status from the standard install command cwd", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { options, rootPath: path } = await worktreeFixture();
     const statusLine = { type: "command", command: "printf local" };
     await seed(path, { statusLine });
-    vi.stubEnv("HOME", options.home);
+    stubUserHome(options.home);
     vi.spyOn(process, "cwd").mockReturnValue(options.workspaceDir);
     vi.spyOn(process.stdout, "write").mockReturnValue(true);
     const home = join(options.home, ".rerail");
@@ -827,7 +861,8 @@ describe("Claude Code status-line ownership", () => {
     expect(readClaudeStatusCommand(options.home, path)).toEqual(statusLine);
   });
 
-  it("composes an old cwd-local override when root-local has no status key", async () => {
+  it("composes an old cwd-local override when root-local has no status key", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { options, cwdPath: path, rootPath } = await worktreeFixture();
     const rootOriginal = await seed(rootPath, { permissions: { allow: ["Read"] } });
     const statusLine = { type: "command", command: "printf cwd", padding: 0 };
@@ -858,7 +893,8 @@ describe("Claude Code commands", () => {
   const options = ["claude-code"] as const;
   const commandFiles = RERAIL_COMMANDS.map(({ name }) => `${name}.md`).sort();
 
-  it("writes every Rerail command with exact grants, is idempotent, and unregister deletes them", async () => {
+  it("writes every Rerail command with exact grants, is idempotent, and unregister deletes them", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { home, root, nodePath } = await fixture();
     const directory = join(home, ".claude", "commands");
     const command = `${nodePath} ${join(root, "dist", "cli", "cli.js")}`;
@@ -926,7 +962,8 @@ describe("Claude Code commands", () => {
     expect(change(again.changes, "claude-code", "rerail.md").action).toBe("unchanged");
   });
 
-  it("lets /rerail-start relay each set-up question and run the printed answer command without a prompt", async () => {
+  it("lets /rerail-start relay each set-up question and run the printed answer command without a prompt", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { home, root, nodePath } = await fixture();
     const rerailHome = join(home, "rerail home");
     vi.stubEnv("RERAIL_HOME", rerailHome);
@@ -952,29 +989,168 @@ describe("Claude Code commands", () => {
     expect(bareAnswers).toHaveLength(3);
     for (const line of [...launcherAnswers, ...bareAnswers]) expect(granted(line), line).toBe(true);
     expect(granted(`${nodePath} ${join(root, "dist", "cli", "cli.js")} start --relay`)).toBe(true);
-    expect(granted(`${shellQuote(join(rerailHome, "bin", "rerail"))} daemon stop`)).toBe(false);
+    expect(granted(`${shellWord("posix", join(rerailHome, "bin", "rerail"))} daemon stop`)).toBe(false);
 
     expect(start).toContain("relay it to the person as written and wait for their reply");
     expect(start).toContain("run only the one command the output gives for that answer");
   });
 
-  it("grants the answer commands set-up prints on Windows, the launcher double-quoted as cmd.exe runs it", async () => {
+  it("starts no Windows answer with rerail.cmd, whose arguments cmd.exe reads again, and grants the Git Bash one", async () => {
     const { home, root, nodePath } = await fixture();
     const rerailHome = join(home, "rerail home");
     vi.stubEnv("RERAIL_HOME", rerailHome);
     await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: options });
     const start = await readFile(join(home, ".claude", "commands", "rerail-start.md"), "utf8");
     const allowed = [...(start.match(/^allowed-tools: (.*)$/mu)?.[1] ?? "").matchAll(/Bash\((.*?)\)(?:, |$)/gu)].map(match => match[1]!);
+    // What set-up writes on Windows: rerail.cmd, the sh launcher Git Bash runs beside it, and the CLI both run.
     const updater = new ManagedUpdater({ home: rerailHome, packageRoot: root, packageVersion: "1.0.0", platform: "win32" });
-    await mkdir(dirname(updater.launcherPath), { recursive: true });
-    await writeFile(updater.launcherPath, "");
+    const shLauncher = join(rerailHome, "bin", "rerail");
+    const cli = join(updater.currentLink, ENTRY_POINTS.cli);
+    for (const path of [updater.launcherPath, shLauncher, cli]) {
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, "");
+    }
+    const context = { home: rerailHome, packageRoot: root, updater };
 
-    const command = setupAnswerCommand({ home: rerailHome, packageRoot: root, updater }, { relay: true }, "win32")!;
-    expect(command).toBe(`"${join(rerailHome, "bin", "rerail.cmd")}" setup --relay`);
+    // cmd.exe would end the command at the `&` of a folder named `C:\code\R&D` and run the rest, and expand `%NAME%`.
+    const answer = setupAnswerCommand(context, { relay: true })!;
+    const command = commandLine(answer.shell, answer.words);
+    expect(command).toBe(`${shellWord("posix", shLauncher)} setup --relay`);
     expect(allowed).toContain(`${command} *`);
+    // Codex and Cursor run the answers in PowerShell, which refuses a line that starts with a quoted path.
+    const powershell = setupAnswerCommand(context, { relay: true, powershell: true })!;
+    expect(commandLine(powershell.shell, powershell.words))
+      .toBe(`& ${shellWord("powershell", pinnedNodePath())} ${shellWord("powershell", cli)} setup --relay --powershell`);
+    for (const { words } of [answer, powershell]) expect(words[0]).not.toMatch(/\.(?:cmd|bat)$/iu);
   });
 
-  it("has every coding agent's /rerail-start select the agent lane, even from a terminal", async () => {
+  it("starts a PowerShell answer with this run's node and CLI until set-up has installed one, never with a bare rerail", async () => {
+    const { home, root } = await fixture();
+    const rerailHome = join(home, "rerail home");
+    // Nothing installed yet: in PowerShell a bare `rerail` is rerail.cmd, whose arguments cmd.exe reads again.
+    const updater = new ManagedUpdater({ home: rerailHome, packageRoot: root, packageVersion: "1.0.0", platform: "win32" });
+    const powershell = setupAnswerCommand({ home: rerailHome, packageRoot: root, updater }, { relay: true, powershell: true })!;
+    expect(commandLine(powershell.shell, powershell.words))
+      .toBe(`& ${shellWord("powershell", pinnedNodePath())} ${shellWord("powershell", join(root, ENTRY_POINTS.cli))} setup --relay --powershell`);
+  });
+
+  it("writes Codex's and Cursor's commands on Windows for PowerShell, and Claude Code's for Git Bash", async () => {
+    const { home, root } = await fixture();
+    const nodePath = String.raw`C:\Program Files\nodejs\node.exe`;
+    await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["claude-code", "cursor", "codex"] });
+    const cli = win32.join(root, "dist", "cli", "cli.js");
+    // PowerShell's call operator, then each path quoted where PowerShell would read it: a space, and `@neralabs`.
+    const powershell = `& '${nodePath}' '${cli}'`;
+    const codexManage = await readFile(join(home, ".codex", "skills", "rerail-manage", "SKILL.md"), "utf8");
+    const cursorStart = await readFile(join(home, ".cursor", "commands", "rerail-start.md"), "utf8");
+    const claudeStart = await readFile(join(home, ".claude", "commands", "rerail-start.md"), "utf8");
+    expect(codexManage).toContain(`${powershell} manage`);
+    expect(cursorStart).toContain(`${powershell} start --relay --powershell`);
+    expect(claudeStart).toContain(`'${nodePath}' '${cli}' start --relay\n`);
+    expect(claudeStart).not.toContain("--powershell");
+    const codexShowMe = await readFile(join(home, ".codex", "skills", "rerail-show-me", "SKILL.md"), "utf8");
+    expect(codexShowMe).not.toContain("<<'EOF'");
+    expect(codexShowMe).toContain("Set-Content -NoNewline -LiteralPath '<file>' -Value @'");
+  });
+
+  it("writes Claude Code's Windows commands with words Git Bash reads as they are: a `$`, a backtick, a UNC path", async () => {
+    const { home, root } = await fixture();
+    const nodePath = "\\\\server\\share\\$work\\`x`\\node.exe";
+    await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["claude-code"] });
+    const cli = win32.join(root, "dist", "cli", "cli.js");
+    const start = await readFile(join(home, ".claude", "commands", "rerail-start.md"), "utf8");
+    const line = `${commandLine("posix", [nodePath, cli])} start --relay`;
+    expect(start).toContain(`\n${line}\n`);
+    expect(start).toContain(`Bash(${line})`);
+    // Git Bash is a POSIX shell: sh hands the program the same words. The line goes on stdin, since Git for Windows'
+    // runtime reads `\\` in a double-quoted argument as one `\` before sh sees it.
+    const read = spawnSync("sh", ["-s"], { input: `printf '%s\\n' ${line}\n`, encoding: "utf8" });
+    if (read.error === undefined) expect(read.stdout).toBe(`${[nodePath, cli, "start", "--relay"].join("\n")}\n`);
+  });
+
+  it("knows Claude Code's Windows commands as Rerail's, another install's and one whose path holds a `'`", async () => {
+    const install = await fixture();
+    const { home, root } = install;
+    const quoted = await packageInstall(install, "o'neil");
+    const windows = { home, nodePath: String.raw`C:\Program Files\nodejs\node.exe`, platform: "win32" as const, harnesses: ["claude-code"] as const };
+    const path = join(home, ".claude", "commands", "rerail.md");
+    await registerHarnesses({ ...windows, root });
+    await registerHarnesses({ ...windows, root: quoted });
+    expect(await readFile(path, "utf8")).toContain(shellWord("posix", win32.join(quoted, "dist", "cli", "cli.js")));
+    expect(await backups(path)).toEqual([]);
+    await unregisterHarnesses({ ...windows, root: quoted });
+    expect(await readdir(dirname(path)).catch(() => [])).toEqual([]);
+  });
+
+  it("knows Codex's and Cursor's Windows commands as Rerail's, another install's and one whose path holds a `'`", async () => {
+    const install = await fixture();
+    const { home, root } = install;
+    const quoted = await packageInstall(install, "o'neil");
+    const windows = { home, nodePath: String.raw`C:\Program Files\nodejs\node.exe`, platform: "win32" as const, harnesses: ["codex", "cursor"] as const };
+    const command = join(home, ".cursor", "commands", "rerail.md");
+    const skills = join(home, ".codex", "skills");
+    await registerHarnesses({ ...windows, root: quoted });
+    // PowerShell's literal writes the `'` twice.
+    const cli = shellWord("powershell", win32.join(quoted, "dist", "cli", "cli.js"));
+    expect(cli).toContain("o''neil");
+    expect(await readFile(command, "utf8")).toContain(cli);
+    expect(await readFile(join(skills, "rerail", "SKILL.md"), "utf8")).toContain(cli);
+    // Another install's files are Rerail's: replaced, not backed up.
+    await registerHarnesses({ ...windows, root });
+    expect(await backups(command)).toEqual([]);
+    await registerHarnesses({ ...windows, root: quoted });
+    await unregisterHarnesses({ ...windows, root: quoted });
+    expect(await readdir(dirname(command)).catch(() => [])).toEqual([]);
+    await expect(lstat(skills)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("knows Codex's and Cursor's Windows commands of another install whose path PowerShell reads bare", async () => {
+    const install = await fixture();
+    const [earlier, later] = await Promise.all([packageInstall(install, "v1"), packageInstall(install, "v2")]);
+    const windows = { home: install.home, nodePath: String.raw`C:\Program Files\nodejs\node.exe`, platform: "win32" as const, harnesses: ["codex", "cursor"] as const };
+    const commands = join(install.home, ".cursor", "commands");
+    await registerHarnesses({ ...windows, root: earlier });
+    // No space, `@` or `'` in the root: PowerShell reads the CLI's path as one word without quotes, and set-up writes it so.
+    const cli = win32.join(earlier, "dist", "cli", "cli.js");
+    expect(shellWord("powershell", cli)).toBe(cli);
+    expect(await readFile(join(commands, "rerail.md"), "utf8")).toContain(` ${cli} session cursor`);
+    // Another install's files are Rerail's: replaced, not backed up, and removed with it.
+    await registerHarnesses({ ...windows, root: later });
+    expect((await readdir(commands)).filter(entry => entry.endsWith(".bak"))).toEqual([]);
+    await unregisterHarnesses({ ...windows, root: later });
+    expect(await readdir(commands).catch(() => [])).toEqual([]);
+    await expect(lstat(join(install.home, ".codex", "skills"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("writes Claude Code's Windows status line for Git Bash, with its node fallback and `%` as it is", async () => {
+    const { home, root } = await fixture();
+    const nodePath = String.raw`C:\Users\a%b\node.exe`;
+    await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["claude-code"] });
+    const command = readClaudeStatusRegistration(home, join(home, ".claude", "settings.json"))?.installedCommand;
+    expect(command?.startsWith(`sh -c 'if [ -x "$0" ]; then exec "$0" "$@"; fi; exec node "$@"' `)).toBe(true);
+    expect(command).toContain(String.raw`"C:\\Users\\a%b\\node.exe"`);
+    expect(command).not.toContain("%%");
+    expect(change((await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["claude-code"] })).changes, "claude-code", "settings.json").action)
+      .toBe("unchanged");
+  });
+
+  it("has Claude Code's Windows status line start the status script when Git Bash gets it as an argument, from a profile with a space, a `'` and a `$`", async () => {
+    const install = await fixture();
+    const root = await packageInstall(install, "Jane O'Brien $work");
+    // Stands in for node: prints the words the status line hands it, one a line.
+    const nodePath = join(dirname(root), "node bin", "node");
+    await mkdir(dirname(nodePath));
+    await writeFile(nodePath, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n", { mode: 0o755 });
+    await registerHarnesses({ root, home: install.home, nodePath, platform: "win32", harnesses: ["claude-code"] });
+    const command = readClaudeStatusRegistration(install.home, join(install.home, ".claude", "settings.json"))!.installedCommand;
+    // Claude Code hands the status line to Git Bash as `bash -c <command>`, never on stdin.
+    const run = spawnSync("sh", ["-c", command], { encoding: "utf8" });
+    if (run.error !== undefined) return;
+    expect({ stdout: run.stdout, stderr: run.stderr }).toEqual({ stdout: `${win32.join(root, ENTRY_POINTS.claudeStatus)}\n`, stderr: "" });
+  });
+
+  it("has every coding agent's /rerail-start select the agent lane, even from a terminal", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { home, root, nodePath } = await fixture();
     await registerHarnesses({ root, home, nodePath, harnesses: ["claude-code", "cursor", "codex"] });
     const files = [
@@ -1006,7 +1182,8 @@ describe("Claude Code commands", () => {
     expect((await readdir(directory)).sort()).toEqual([...commandFiles, "rerail-enable.md"].sort());
   });
 
-  it("on registration also removes the retired commands another install of this package wrote, or one that is gone", async () => {
+  it("on registration also removes the retired commands another install of this package wrote, or one that is gone", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const install = await fixture();
     const { home, root, nodePath } = install;
     const directory = join(home, ".claude", "commands");
@@ -1034,7 +1211,8 @@ describe("Claude Code commands", () => {
     }
   });
 
-  it("rewrites a stale command that names another node without backing up the one it generated", async () => {
+  it("rewrites a stale command that names another node without backing up the one it generated", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { home, root, nodePath } = await fixture();
     const path = join(home, ".claude", "commands", "rerail.md");
     await registerHarnesses({ root, home, nodePath, harnesses: options });
@@ -1069,7 +1247,8 @@ describe("Claude Code commands", () => {
 });
 
 describe("Codex hooks.json", () => {
-  it("removes stale and current Rerail groups without disturbing foreign hook groups", async () => {
+  it("removes stale and current Rerail groups without disturbing foreign hook groups", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-09-08T14:52:09.000Z"));
     const { home, root, nodePath } = await fixture();
@@ -1111,7 +1290,7 @@ describe("Codex hooks.json", () => {
     const { home, root, nodePath } = await fixture();
     const trust = expect.stringContaining("run /hooks to trust the rerail hook");
     expect((await registerHarnesses({ root, home, nodePath, harnesses: ["codex"] })).notes).toContainEqual(trust);
-    await rm(join(home, ".codex", "skills", "rerail-show-me"), { recursive: true });
+    await removeFolder(join(home, ".codex", "skills", "rerail-show-me"));
     const again = await registerHarnesses({ root, home, nodePath, harnesses: ["codex"] });
     expect(change(again.changes, "codex", join("rerail-show-me", "SKILL.md")).action).toBe("created");
     expect(again.notes).not.toContainEqual(trust);
@@ -1130,7 +1309,8 @@ describe("Codex hooks.json", () => {
 });
 
 describe("legacy package-root cutover", () => {
-  it("replaces verified pre-HUD hooks across hosts without deleting lookalike or compound user commands", async () => {
+  it("replaces verified pre-HUD hooks across hosts without deleting lookalike or compound user commands", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const options = await fixture();
     const legacyRoot = join(options.home, "old development", "rerail");
     const foreignRoot = join(options.home, "another-package");
@@ -1173,7 +1353,8 @@ describe("legacy package-root cutover", () => {
     expect((await readJson(join(options.home, ".pi", "agent", "settings.json"))).packages).toEqual([options.root, foreignRoot]);
   });
 
-  it("replaces what another install of this package registered: hooks, status line, extension link, MCP entry and Pi package", async () => {
+  it("replaces what another install of this package registered: hooks, status line, extension link, MCP entry and Pi package", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const options = { ...await fixture(), harnesses: ["claude-code", "codex", "omp", "pi"] as const };
     const bridge = await packageInstall(options, join("versions", "0.0.9"));
     const settingsPath = join(options.home, ".claude", "settings.json");
@@ -1189,18 +1370,18 @@ describe("legacy package-root cutover", () => {
     await seed(mcpPath, { mcpServers: { previous: { command: "/old/node", args: [join(bridge, "dist", "cli", "cli.js"), "mcp-bridge"] } } });
     const extensions = join(options.home, ".omp", "agent", "extensions");
     await mkdir(extensions, { recursive: true });
-    await symlink(bridge, join(extensions, "previous"));
+    linkFolder(bridge, join(extensions, "previous"));
     // Installs that are gone: a deleted default home, a deleted custom RERAIL_HOME (the review's /old/home/current), a
     // custom home whose `current` outlived its versions, and a cleaned npx cache.
     const deleted = join(dirname(options.home), "deleted-home", ".rerail", "current");
     const custom = join(dirname(options.home), "old", "home", "current");
     const stale = join(dirname(options.home), "stale-home", "current");
     await mkdir(dirname(stale), { recursive: true });
-    await symlink(join(dirname(stale), "versions", "0.0.8"), stale);
+    linkFolder(join(dirname(stale), "versions", "0.0.8"), stale);
     const npxCache = join(dirname(options.home), "npx-cache", "node_modules", "@neralabs", "rerail");
-    await symlink(deleted, join(extensions, "deleted"));
-    await symlink(custom, join(extensions, "custom"));
-    await symlink(stale, join(extensions, "stale"));
+    linkFolder(deleted, join(extensions, "deleted"));
+    linkFolder(custom, join(extensions, "custom"));
+    linkFolder(stale, join(extensions, "stale"));
     await seed(join(options.home, ".pi", "agent", "settings.json"), { packages: [bridge, deleted, custom, stale, npxCache] });
 
     await registerHarnesses(options);
@@ -1225,8 +1406,8 @@ describe("legacy package-root cutover", () => {
     const scoped = join(volume, "node_modules", "@acme", "rerail");
     const extensions = join(options.home, ".omp", "agent", "extensions");
     await mkdir(extensions, { recursive: true });
-    await symlink(tool, join(extensions, "tool"));
-    await symlink(scoped, join(extensions, "scoped"));
+    linkFolder(tool, join(extensions, "tool"));
+    linkFolder(scoped, join(extensions, "scoped"));
     const piPath = join(options.home, ".pi", "agent", "settings.json");
     const packages = ["npm:@acme/current", "git:github.com/acme/dotfiles/.rerail/current", tool, scoped];
     await seed(piPath, { packages });
@@ -1250,7 +1431,7 @@ describe("legacy package-root cutover", () => {
     await writeFile(file, "export default function single() {}\n");
     const extensions = join(options.home, ".omp", "agent", "extensions");
     await mkdir(extensions, { recursive: true });
-    await symlink(folder, join(extensions, "mytool"));
+    linkFolder(folder, join(extensions, "mytool"));
     const piPath = join(options.home, ".pi", "agent", "settings.json");
     await seed(piPath, { packages: [folder, file] });
 
@@ -1263,7 +1444,8 @@ describe("legacy package-root cutover", () => {
 describe("Codex Rerail skills", () => {
   const skillPath = (home: string, name: string): string => join(home, ".codex", "skills", name, "SKILL.md");
 
-  it("installs one skill per command, upgrades its launcher, and removes only the current installation", async () => {
+  it("installs one skill per command, upgrades its launcher, and removes only the current installation", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const options = await fixture();
     const path = skillPath(options.home, "rerail");
     await registerHarnesses({ ...options, harnesses: ["codex"] });
@@ -1298,7 +1480,8 @@ describe("Codex Rerail skills", () => {
     expect(await readFile(path, "utf8")).toBe(original);
   });
 
-  it("replaces the earlier $rerail skill it installed and keeps anyone else's", async () => {
+  it("replaces the earlier $rerail skill it installed and keeps anyone else's", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const ours = await fixture();
     const path = skillPath(ours.home, "rerail");
     const earlier = `---\nname: rerail\n---\n${ours.nodePath} ${join(ours.root, "dist", "cli", "cli.js")} session\n\n${MANAGED_SKILL_MARKER}\n`;
@@ -1318,7 +1501,8 @@ describe("Codex Rerail skills", () => {
     expect(await readFile(userSkill, "utf8")).toContain("Play music.");
   });
 
-  it("removes the $rerail-ui and $rerail-rage-quit skills it installed and keeps anyone else's", async () => {
+  it("removes the $rerail-ui and $rerail-rage-quit skills it installed and keeps anyone else's", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const options = await fixture();
     const cli = join(options.root, "dist", "cli", "cli.js");
     const skills = {
@@ -1352,7 +1536,8 @@ describe("Cursor hooks.json", () => {
   };
 
 
-  it("appends rerail entries, is idempotent, and unregister restores the original bytes", async () => {
+  it("appends rerail entries, is idempotent, and unregister restores the original bytes", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { home, root, nodePath } = await fixture();
     const path = join(home, ".cursor", "hooks.json");
     const original = await seed(path, foreign);
@@ -1376,7 +1561,66 @@ describe("Cursor hooks.json", () => {
     expect(await readFile(path, "utf8")).toBe(original);
   });
 
-  it("installs every Rerail command as a plain prompt file", async () => {
+  it("registers Cursor's hooks on Windows for PowerShell, which Cursor pipes the event into", async () => {
+    const { home, root } = await fixture();
+    const nodePath = String.raw`C:\Users\José O'Brien\AppData\Local\nvm\v24.9.0\node.exe`;
+    const path = join(home, ".cursor", "hooks.json");
+    // A Windows set-up writes the hook's path by Windows' path rules, whatever the host the test runs on.
+    const hookPath = win32.join(root, "dist", "hosts", "cursor", "cursor-hook.js");
+    // The `cmd` form earlier set-ups wrote, which PowerShell breaks at its nested quotes and `$PATH`; registering replaces it.
+    const cmdForm = `cmd /d /c "if exist "${nodePath}" ("${nodePath}" "${hookPath}") else (for %I in (node.exe) do @"%~$PATH:I" "${hookPath}")"`;
+    await seed(path, { version: 1, hooks: { sessionStart: [{ command: cmdForm }] } });
+    const windows = { root, home, nodePath, platform: "win32" as const, harnesses: ["cursor"] as const };
+    const commands = async () => Object.values((await readJson(path)).hooks as Record<string, Array<{ command: string }>> | undefined ?? {})
+      .flatMap(entries => entries.map(entry => entry.command));
+
+    await registerHarnesses(windows);
+    // Cursor runs `<event> | & { $input | <command> }`, so the command must hand its input on: Invoke-Command gives it the
+    // script block as `$input`. In single quotes only a quote is special: doubled, it stands for itself.
+    const node = String.raw`'C:\Users\José O''Brien\AppData\Local\nvm\v24.9.0\node.exe'`;
+    const hook = `'${hookPath.replaceAll("'", "''")}'`;
+    const command = `Invoke-Command -ScriptBlock { if (Test-Path -LiteralPath ${node}) { $input | & ${node} ${hook} } else { $input | node ${hook} } }`;
+    expect(await commands()).toEqual(Array(CURSOR_HOOK_EVENTS.length).fill(command));
+    expect(change((await registerHarnesses(windows)).changes, "cursor", "hooks.json").action).toBe("unchanged");
+
+    await registerHarnesses({ ...windows, nodePath: String.raw`C:\Program Files\nodejs\node.exe` });
+    expect(await commands()).toEqual(Array(CURSOR_HOOK_EVENTS.length).fill(command.replaceAll(node, String.raw`'C:\Program Files\nodejs\node.exe'`)));
+
+    await unregisterHarnesses(windows);
+    expect(await commands()).toEqual([]);
+  });
+
+  it.runIf(process.platform === "win32")("runs a registered Cursor hook as Cursor does on Windows: in PowerShell, the event piped in", async () => {
+    const base = await mkdtemp(join(tmpdir(), "rerail cursor powershell "));
+    temporaryDirectories.push(base);
+    const root = join(base, "rerail home", "current");
+    const hook = join(root, "dist", "hosts", "cursor", "cursor-hook.js");
+    await mkdir(dirname(hook), { recursive: true });
+    await writeFile(join(root, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "1.0.0" }));
+    // Stands in for the hook: answers with the event it read on stdin and the node that ran it.
+    await writeFile(hook, `let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.stringify({event:JSON.parse(s).hook_event_name,node:process.execPath})));\n`);
+    const event = join(base, "event.json");
+    await writeFile(event, JSON.stringify({ hook_event_name: "sessionStart" }));
+    const home = join(base, "home");
+    await mkdir(home);
+    const runInCursor = async (nodePath: string): Promise<{ event: string; node: string }> => {
+      await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["cursor"] });
+      const hooks = (await readJson(join(home, ".cursor", "hooks.json"))).hooks as Record<string, Array<{ command: string }>>;
+      // What Cursor runs for a command hook on Windows: the event file piped into the command.
+      const script = `$OutputEncoding = [System.Text.UTF8Encoding]::new($false); `
+        + `Get-Content -LiteralPath '${event.replaceAll("'", "''")}' -Raw -Encoding UTF8 | & { $input | ${hooks.sessionStart!.at(-1)!.command} }`;
+      const encoded = Buffer.from(script, "utf16le").toString("base64");
+      const { stdout } = await promisify(execFile)("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded], { windowsHide: true });
+      return JSON.parse(stdout) as { event: string; node: string };
+    };
+
+    expect(await runInCursor(process.execPath)).toEqual({ event: "sessionStart", node: process.execPath });
+    // Once the recorded node is gone, node from PATH runs the hook.
+    expect((await runInCursor(join(base, "gone", "node.exe"))).event).toBe("sessionStart");
+  }, 60_000);
+
+  it("installs every Rerail command as a plain prompt file", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { home, root, nodePath } = await fixture();
     const directory = join(home, ".cursor", "commands");
     const command = `${nodePath} ${join(root, "dist", "cli", "cli.js")}`;
@@ -1416,13 +1660,14 @@ describe("Cursor hooks.json", () => {
     expect(await readdir(join(home, ".cursor"))).toEqual([]);
   });
 
-  it("denies the Cursor CLI's file tools Rerail's data in an existing cli-config.json, and removal restores it", async () => {
+  it("denies the Cursor CLI's file tools Rerail's data in an existing cli-config.json, and removal restores it", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { home, root, nodePath } = await fixture();
     const rerailHome = join(dirname(home), "rerail-home");
     vi.stubEnv("RERAIL_HOME", rerailHome);
     const path = join(home, ".cursor", "cli-config.json");
     const original = await seed(path, { version: 1, permissions: { allow: ["Shell(ls)"], deny: ["Read(.env*)"] } });
-    const options = { root, home, nodePath, harnesses: ["cursor"] as const };
+    const options = { root, home, nodePath, platform: "linux" as const, harnesses: ["cursor"] as const };
 
     await registerHarnesses(options);
     const cache = join(home, ".cache", "rerail");
@@ -1436,6 +1681,25 @@ describe("Cursor hooks.json", () => {
 
     await unregisterHarnesses(options);
     expect(await readFile(path, "utf8")).toBe(original);
+  });
+
+  it("writes the Cursor CLI's denies on Windows in the form its file tools match: the native path, backslashes and all", async () => {
+    const { home, root, nodePath } = await fixture();
+    const rerailHome = join(dirname(home), "rerail-home");
+    vi.stubEnv("RERAIL_HOME", rerailHome);
+    const path = join(home, ".cursor", "cli-config.json");
+    await seed(path, { version: 1, permissions: { allow: [], deny: [] } });
+
+    await registerHarnesses({ root, home, nodePath, platform: "win32", harnesses: ["cursor"] });
+    // The CLI matches a rule literally but for `*`, against the path as Windows writes it (C:\Users\me\.rerail\...).
+    const native = (value: string) => value.replaceAll("/", "\\");
+    const cache = native(win32.join(home, "AppData", "Local", "rerail"));
+    const deny = (await readIsolation(path)).permissions?.deny ?? [];
+    expect(deny).toEqual(expect.arrayContaining([
+      `Write(${native(rerailHome)}\\**)`, `Write(${cache}\\**)`, `Read(${cache}\\**)`,
+      `Read(${native(rerailHome)}\\access-token*)`, `Read(${native(rerailHome)}\\device-secrets\\**)`,
+    ]));
+    expect(deny.filter(rule => rule.includes("/"))).toEqual([]);
   });
 
   it("does not create cli-config.json for a Cursor without the CLI", async () => {
@@ -1602,8 +1866,8 @@ describe("OMP plugin install of Rerail", () => {
     expect((await registerHarnesses({ root, home, nodePath, harnesses: ["omp"] })).notes).not.toContain(ompPluginNote);
 
     const copy = join(home, ".omp", "plugins", "node_modules", "@neralabs", "rerail");
-    await rm(copy, { recursive: true });
-    await symlink(root, copy);
+    await removeFolder(copy);
+    linkFolder(root, copy);
     await rm(join(home, ".omp", "plugins", "omp-plugins.lock.json"));
     expect((await registerHarnesses({ root, home, nodePath, harnesses: ["omp"] })).notes).not.toContain(ompPluginNote);
   });
@@ -1713,8 +1977,8 @@ describe("OMP extensions symlink", () => {
     await seed(path, { mcpServers: { previous: otherBridge, foreign: foreignBridge } });
     const extensions = join(home, ".omp", "agent", "extensions");
     await mkdir(extensions, { recursive: true });
-    await symlink(otherInstall, join(extensions, "previous"));
-    await symlink(foreign, join(extensions, "foreign"));
+    linkFolder(otherInstall, join(extensions, "previous"));
+    linkFolder(foreign, join(extensions, "foreign"));
 
     await registerHarnesses({ root, home, nodePath, harnesses: ["omp"] });
     expect(await readJson(path)).toEqual({
@@ -1762,13 +2026,13 @@ describe("OMP extensions symlink", () => {
 });
 
 describe("symlinked configs", () => {
-  it("writes through a symlink to its target and keeps the link intact", async () => {
+  it("writes through a symlink to its target and keeps the link intact", async context => {
     const { home, root, nodePath } = await fixture();
     const link = join(home, ".claude", "settings.json");
     const target = join(home, "dotfiles", "claude.json");
     await seed(target, { theme: "dark" });
     await mkdir(dirname(link), { recursive: true });
-    await symlink(target, link);
+    symlinkOrSkip(context, target, link);
 
     const report = await registerHarnesses({ root, home, nodePath, harnesses: ["claude-code"] });
     expect(change(report.changes, "claude-code", "settings.json").action).toBe("updated");
@@ -1781,12 +2045,12 @@ describe("symlinked configs", () => {
     expect(await readdir(dirname(link))).toEqual(["commands", "settings.json"]);
   });
 
-  it("creates the target of a dangling symlink instead of replacing the link", async () => {
+  it("creates the target of a dangling symlink instead of replacing the link", async context => {
     const { home, root, nodePath } = await fixture();
     const link = join(home, ".cursor", "hooks.json");
     const target = join(home, "dotfiles", "cursor-hooks.json");
     await mkdir(dirname(link), { recursive: true });
-    await symlink(target, link);
+    symlinkOrSkip(context, target, link);
 
     const report = await registerHarnesses({ root, home, nodePath, harnesses: ["cursor"] });
     expect(change(report.changes, "cursor", "hooks.json").action).toBe("created");
@@ -1819,12 +2083,13 @@ describe("preflight", () => {
 });
 
 describe("dry run", () => {
-  it("reports every change without touching the filesystem", async () => {
+  it("reports every change without touching the filesystem", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { home, root, nodePath } = await fixture();
     const claude = join(home, ".claude", "settings.json");
     const original = await seed(claude, { theme: "dark" });
     await mkdir(join(home, ".omp", "agent", "extensions"), { recursive: true });
-    await symlink(join(home, "elsewhere"), join(home, ".omp", "agent", "extensions", "rerail"));
+    linkFolder(join(home, "elsewhere"), join(home, ".omp", "agent", "extensions", "rerail"));
     const project = join(home, "project");
 
     const report = await registerHarnesses({

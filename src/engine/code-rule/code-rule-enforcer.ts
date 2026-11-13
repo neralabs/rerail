@@ -32,7 +32,7 @@ import {
   type AuditorCloseOptions,
   type SteerSourceOf,
 } from "./code-rule.js";
-import type { SteerTrigger } from "./rerail-steer.js";
+import type { SteerShell, SteerTrigger } from "./rerail-steer.js";
 import {
   AUDIT_BLIND_REASONS,
   AUDIT_FAILURE_CODES,
@@ -55,6 +55,7 @@ import { SqliteAuditStore } from "../audit/audit-store.js";
 import { DEFAULT_AUDIT_SETTINGS } from "../audit/audit-control-schema.js";
 import { RULE_MODES, steers } from "../catalog/rule-mode.js";
 import { compareDeterministicStrings } from "../stable-json.js";
+import { removeScratch } from "../file-replace.js";
 import { assertContentStoreOwner } from "../native/main-instance.js";
 import { contentStorePath } from "../native/rerail-build.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
@@ -583,6 +584,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
   readonly #nestedCheckouts: () => readonly string[];
   readonly #timingLog: ((line: string) => void) | undefined;
   readonly #followGitignore: boolean;
+  readonly #steerShell: SteerShell | undefined;
   /** Git's exclude stack for this checkout, opened on first use; null outside Git or where it cannot be opened. */
   #gitIgnore: NativeGitIgnoreMatcher | null | undefined;
   #scope: AuditScope;
@@ -663,6 +665,8 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
        * repository's setting when it opens, and it holds for the session's life.
        */
       followGitignore?: boolean;
+      /** The shell the session's coding agent runs commands in, which a steer's command is written for (`steerShell`). */
+      steerShell?: SteerShell | undefined;
     },
   ) {
     this.#catalog = catalog;
@@ -675,6 +679,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#nestedCheckouts = options.nestedCheckouts ?? (() => []);
     this.#timingLog = options.timingLog;
     this.#followGitignore = options.followGitignore ?? false;
+    this.#steerShell = options.steerShell;
     this.#ownedAudits =
       options.audits === undefined
         ? new SqliteAuditStore(defaultRerailDatabasePath())
@@ -989,7 +994,9 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     this.#pending.clear();
     this.#applied.clear();
     await Promise.all(this.#spoolRemovals);
-    if (this.#spoolDirectory !== undefined) await rm(this.#spoolDirectory, { recursive: true, force: true });
+    // Retried while Windows holds a spooled file, then left in the temp directory: a failure here would stop the close
+    // before it closes the audits below.
+    if (this.#spoolDirectory !== undefined) await removeScratch(this.#spoolDirectory);
     this.#workspaceRevisions.clear();
     this.#workspaceStorage.clear();
     this.#workspaceEvaluations.clear();
@@ -2032,7 +2039,7 @@ export class NativeCodeRuleEnforcer implements CodeRuleAuditor {
     const boundary = checkoutPathBoundary(this.#workspaceRoot);
     const secret = new Set(violations.flatMap(({ path, mode }) =>
       path !== undefined && steers(mode) && boundary.sensitive(path) ? [this.#presentPath(path)] : []));
-    const steer = buildSteer(steerable, trigger, sourceOf, path => secret.has(path) || sensitiveByName(path));
+    const steer = buildSteer(steerable, trigger, sourceOf, path => secret.has(path) || sensitiveByName(path), this.#steerShell);
     await this.#steerDelivery.requestSteer(this.#sessionId, "steer", steer.content, {
       revision,
       scope,

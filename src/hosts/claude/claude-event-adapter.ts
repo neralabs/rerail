@@ -4,7 +4,7 @@ import { hookText, stopContinuation, type AdapterDelivery, type AdapterEvent, ty
 
 export type ClaudeHookInput = Readonly<Record<string, unknown>>;
 
-const { required: requiredText, optional: optionalText } = hookText("Claude");
+const { required: requiredText, requiredKey, optional: optionalText } = hookText("Claude");
 
 /** Hook `cwd` follows `/cd`; CLAUDE_PROJECT_DIR stays the launch root that identifies the session. */
 export function claudeWorkspace(cwd: unknown): string {
@@ -54,7 +54,7 @@ export function claudeHookEvents(input: ClaudeHookInput): readonly AdapterEvent[
   if (hook === "MessageDisplay") {
     return [{
       kind: "assistant-delta",
-      eventId: `${sessionId}:message:${requiredText(input, "message_id")}:${requiredText(input, "index")}`,
+      eventId: `${sessionId}:message:${requiredText(input, "message_id")}:${requiredKey(input, "index")}`,
       sessionId,
       session: descriptor,
       messageId: requiredText(input, "message_id"),
@@ -64,6 +64,8 @@ export function claudeHookEvents(input: ClaudeHookInput): readonly AdapterEvent[
   }
   if (hook === "PreToolUse") {
     const toolUseId = requiredText(input, "tool_use_id");
+    // A subagent's hooks come under its parent's session id, with its own agent_id.
+    const agentId = optionalText(input, "agent_id");
     return [{
       kind: "call",
       eventId: `${sessionId}:tool-call:${toolUseId}`,
@@ -72,6 +74,7 @@ export function claudeHookEvents(input: ClaudeHookInput): readonly AdapterEvent[
       session: descriptor,
       toolName: requiredText(input, "tool_name"),
       input: input.tool_input,
+      ...(agentId === undefined ? {} : { agentId }),
     }];
   }
   if (hook === "PostToolUse" || hook === "PostToolUseFailure") {

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -12,6 +12,7 @@ vi.mock("../../src/runtime/daemon-control.js", async () => ({
   ...await vi.importActual<Record<string, unknown>>("../../src/runtime/daemon-control.js"),
   openDashboard: mocks.openDashboard,
 }));
+import { shellWord } from "../../src/engine/index.js";
 import { RERAIL_COMMANDS } from "../../src/harness/rerail-commands.js";
 import {
   registerHostCommands,
@@ -20,6 +21,8 @@ import {
   type HostCommandOptions,
 } from "../../src/harness/host-commands.js";
 import { SETUP_CANCELLED } from "../../src/harness/setup-picker.js";
+import { posixShell } from "../support/platform/posix-shell.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -30,7 +33,7 @@ beforeEach(() => {
 afterEach(async () => {
   vi.unstubAllEnvs();
   vi.clearAllMocks();
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 function commandHarness(options: Partial<HostCommandOptions> = {}, choice?: string) {
@@ -65,7 +68,7 @@ async function launcherPackage(script: string): Promise<string> {
   await mkdir(join(root, "dist", "cli"), { recursive: true });
   await writeFile(join(root, "dist", "cli", "cli.js"), [
     "const { spawnSync } = require(\"node:child_process\");",
-    `const result = spawnSync("/bin/sh", ["-c", ${JSON.stringify(`set -eu\n${script}\n`)}, "sh", ...process.argv.slice(2)], { stdio: "inherit" });`,
+    `const result = spawnSync(${JSON.stringify(posixShell())}, ["-c", ${JSON.stringify(`set -eu\n${script}\n`)}, "sh", ...process.argv.slice(2)], { stdio: "inherit" });`,
     "process.exit(result.status ?? 1);",
     "",
   ].join("\n"));
@@ -202,6 +205,14 @@ describe("/rerail-manage", () => {
     expect(notices).toEqual([{ message: `Opening ${scoped} in the Orca window`, level: "info" }]);
   });
 
+  it("gives the link to open by hand when BROWSER=none kept the browser shut", async () => {
+    mocks.rulesDashboard.mockResolvedValue({ url: scoped, reason: null });
+    mocks.openDashboard.mockResolvedValue("not-opened");
+    const { run, notices } = commandHarness();
+    await run("rerail-manage");
+    expect(notices).toEqual([{ message: `BROWSER is set to none, so no browser opened. Open ${scoped}`, level: "info" }]);
+  });
+
   it("reports why there is no dashboard instead of opening nothing", async () => {
     mocks.rulesDashboard.mockResolvedValue({ url: null, reason: "daemon unavailable" });
     const { run, notices } = commandHarness();
@@ -218,10 +229,12 @@ describe("/rerail-create", () => {
     expect(notices).toEqual([]);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toContain("\"use design tokens, not hex colours\"");
-    expect(sent[0]).toContain(`${join(resolve("."), "dist", "cli", "cli.js")}' rules test <draft.json> --json`);
+    // The session's own launcher, as one POSIX shell word: OMP and Pi run Git Bash on Windows.
+    const cli = shellWord("posix", join(resolve("."), "dist", "cli", "cli.js"));
+    expect(sent[0]).toContain(`${cli} rules test <draft.json> --json`);
     expect(sent[0]).toContain("Add this rule?");
-    expect(sent[0]).toContain(`${join(resolve("."), "dist", "cli", "cli.js")}' rules add <draft.json>`);
-    expect(sent[0]).toContain(`${join(resolve("."), "dist", "cli", "cli.js")}' rules evidence --json`);
+    expect(sent[0]).toContain(`${cli} rules add <draft.json>`);
+    expect(sent[0]).toContain(`${cli} rules evidence --json`);
     expect(sent[0]).toContain(`Read ${resolve(".")}/skills/rerail-create/SKILL.md and follow it.`);
   });
 
@@ -241,9 +254,9 @@ describe("/rerail-show-me", () => {
     await run("rerail-show-me");
     expect(notices).toEqual([]);
     expect(sent).toHaveLength(1);
-    const cli = join(resolve("."), "dist", "cli", "cli.js");
-    expect(sent[0]).toContain(`${cli}' show-me --json`);
-    expect(sent[0]).toContain(`${cli}' show-me --cleanup`);
+    const cli = shellWord("posix", join(resolve("."), "dist", "cli", "cli.js"));
+    expect(sent[0]).toContain(`${cli} show-me --json`);
+    expect(sent[0]).toContain(`${cli} show-me --cleanup`);
     expect(sent[0]).toContain("with your file edit or write tool");
   });
 });
@@ -255,7 +268,7 @@ describe("/rerail-bug-report", () => {
     expect(notices).toEqual([]);
     expect(sent).toHaveLength(1);
     expect(sent[0]).toContain("\"the daemon hung\"");
-    expect(sent[0]).toContain(`${join(resolve("."), "dist", "cli", "cli.js")}' support-bundle --json`);
+    expect(sent[0]).toContain(`${shellWord("posix", join(resolve("."), "dist", "cli", "cli.js"))} support-bundle --json`);
   });
 
   it("points the coding agent at a skill the package ships", async () => {
