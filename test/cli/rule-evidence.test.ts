@@ -62,8 +62,11 @@ function recordSteerAt(store: SqliteSessionStore, observedAt: number, ...steer: 
   }
 }
 
-/** Runs `read`, counting the rows SQLite hands back meanwhile through every statement's `all` and `get`. */
-async function rowsReturned<T>(read: () => Promise<T>): Promise<{ result: T; rows: number }> {
+/**
+ * Runs `read`, counting the statements SQLite runs meanwhile through every statement's `all` and `get`, and the rows
+ * they hand back.
+ */
+async function rowsReturned<T>(read: () => Promise<T>): Promise<{ result: T; rows: number; statements: number }> {
   const probe = new Database(":memory:");
   const statement: Database.Statement = Object.getPrototypeOf(probe.prepare("select 1"));
   probe.close();
@@ -75,7 +78,7 @@ async function rowsReturned<T>(read: () => Promise<T>): Promise<{ result: T; row
       if (type !== "return" || value === undefined) return 0;
       return Array.isArray(value) ? value.length : 1;
     });
-    return { result, rows: returned.reduce((sum, count) => sum + count, 0) };
+    return { result, rows: returned.reduce((sum, count) => sum + count, 0), statements: returned.length };
   } finally {
     all.mockRestore();
     get.mockRestore();
@@ -291,6 +294,33 @@ describe("rerail rules evidence", () => {
     expect(longer.result.riskyCommands).toEqual([{ label: "force push", count: 1, example: "git push --force origin main" }]);
     // A hundred more calls before the window, and not one more row read.
     expect(longer.rows).toBe(shorter.rows);
+  });
+
+  it("looks up what a session did before the window only for a session that started before it", async () => {
+    /** A 1-day window over `count` sessions that started in it, and the statements SQLite ran for it. */
+    const evidenceOver = async (count: number) => {
+      const repo = await repository();
+      const { databasePath, store } = await sessionDatabase(repo);
+      try {
+        for (let index = 0; index < count; index += 1) {
+          const sessionId = `recent-${index}`;
+          store.openSession({ host: "claude-code", sessionId, cwd: repo }, NOW - HOUR);
+          store.append({ sessionId, kind: "user-prompt", payload: { text: "Add the logging" }, observedAt: NOW - HOUR + MINUTE });
+          store.append({ sessionId, kind: "call", payload: { toolName: "Edit", input: { file_path: "src/a.ts" } }, observedAt: NOW - HOUR + 2 * MINUTE });
+          store.append({ sessionId, kind: "user-prompt", payload: { text: "Don't use console.log" }, observedAt: NOW - HOUR + 3 * MINUTE });
+        }
+      } finally {
+        store.close();
+      }
+      return rowsReturned(() => collectRuleEvidence(repo, { databasePath, now: NOW, days: 1 }));
+    };
+    const fewer = await evidenceOver(2);
+    const more = await evidenceOver(12);
+    expect(more.result.window).toEqual({ days: 1, sessions: 12, hosts: { "claude-code": 12 }, prompts: 24 });
+    expect(more.result.correctionCount).toBe(12);
+    expect(more.result.corrections.map(correction => correction.before)).toEqual(Array.from({ length: 12 }, () => ["Edit src/a.ts"]));
+    // Ten more sessions, each started in the window, and not one more statement.
+    expect(more.statements).toBe(fewer.statements);
   });
 
   it("reports a repository Rerail has never seen, and still lists its standards files", async () => {

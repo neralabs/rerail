@@ -332,10 +332,13 @@ function windowEvents(database: RerailDatabase, sessionIds: readonly string[], s
 }
 
 /**
- * Each session's context from before its first event in `stored`: whether its task came before, and its last calls.
- * Two index reads per session, so a long session's history before the window is never loaded.
+ * The context from before its first event in `stored` of each session in `earlier`: whether its task came before, and
+ * its last calls. Two index reads per session, so a long session's history before the window is never loaded. Only a
+ * session that started before the window can have done anything before it, since its events are stamped as they are
+ * written, after it starts: a session that started in the window needs no lookup, so a window of thousands of short
+ * sessions makes none.
  */
-function contextsBefore(database: RerailDatabase, stored: readonly StoredEvent[]): Map<string, SessionContext> {
+function contextsBefore(database: RerailDatabase, stored: readonly StoredEvent[], earlier: ReadonlySet<string>): Map<string, SessionContext> {
   const before = (kind: string) => and(
     eq(events.sessionId, sql.placeholder("sessionId")), eq(events.kind, kind), lt(events.sequence, sql.placeholder("before")),
   );
@@ -346,7 +349,7 @@ function contextsBefore(database: RerailDatabase, stored: readonly StoredEvent[]
     .orderBy(desc(events.sequence)).limit(CALLS_BEFORE).prepare();
   const contexts = new Map<string, SessionContext>();
   for (const { sessionId, sequence } of stored) {
-    if (contexts.has(sessionId)) continue;
+    if (contexts.has(sessionId) || !earlier.has(sessionId)) continue;
     const at = { sessionId, before: sequence };
     contexts.set(sessionId, { tasked: task.get(at) !== undefined, calls: calls.all(at).reverse() });
   }
@@ -375,13 +378,14 @@ export async function collectRuleEvidence(repo: string, options: RuleEvidenceOpt
     // clone id from before the repository had a remote. Its history is all of them, as `rerail reset` reads it.
     const repository = listRepositories(database).find(candidate => candidate.repositoryKey === checkout.repositoryKey);
     const historyIds = [...new Set([checkout.repositoryKey, ...(repository?.aliases ?? []), ...(repository?.checkouts ?? []).map(row => row.cloneId)])];
-    const repositorySessions = database.select({ sessionId: sessions.sessionId, host: sessions.host }).from(sessions)
-      .where(activeSince(database, historyIds, since)).all();
+    const repositorySessions = database.select({ sessionId: sessions.sessionId, host: sessions.host, startedAt: sessions.startedAt })
+      .from(sessions).where(activeSince(database, historyIds, since)).all();
     const hostOf = new Map(repositorySessions.map(session => [session.sessionId, session.host]));
     const hosts: Record<string, number> = {};
     for (const { host } of repositorySessions) hosts[host] = (hosts[host] ?? 0) + 1;
+    const earlier = new Set(repositorySessions.filter(session => session.startedAt < since).map(session => session.sessionId));
     const stored = windowEvents(database, [...hostOf.keys()], since);
-    const evidence = readEvents(stored, { hostOf, contexts: contextsBefore(database, stored) }, limit);
+    const evidence = readEvents(stored, { hostOf, contexts: contextsBefore(database, stored, earlier) }, limit);
     return {
       repository: { name, known: true, checkouts: repository?.checkouts.length ?? 1 },
       window: { days, sessions: hostOf.size, hosts, prompts: evidence.prompts },
