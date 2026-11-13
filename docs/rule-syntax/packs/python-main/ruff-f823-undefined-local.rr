@@ -1,0 +1,16 @@
+.policy "ruff-f823-undefined-local" revision 1
+.guests off
+.description "Don't read a variable before the function assigns it, even when an outer scope has the same name; Python raises UnboundLocalError."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+// F823(n): a finding at node n, from clause `undefined-local`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation F823(at: node, n: loc) "Assign `{n}` before reading it here, or declare it `global` or `nonlocal` if you meant the outer variable."
+    suppress noqa "F823"
+F823(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n,
+    ast(n, {"resolves": {"beforeLocal": true}}).

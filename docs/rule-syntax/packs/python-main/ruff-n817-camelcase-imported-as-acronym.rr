@@ -1,0 +1,40 @@
+.policy "ruff-n817-camelcase-imported-as-acronym" revision 1
+.guests off
+.description "Avoid aliasing a CamelCase import to an acronym of its capital letters; the alias reads like a constant and hides what the name is."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// N817(n): a finding at node n, from clause `camelcase-imported-as-acronym`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes ACRONYM from other metavariables' text; its literals end each rule.
+.violation N817(at: node, name: loc, asname: loc) "Import `{name}` under its own name, or a descriptive CamelCase alias, instead of the acronym `{asname}`, and update its uses; keep the alias if your project's convention requires it."
+    suppress noqa "N817"
+N817(n, NAME, ASNAME) :- kind(n, "aliased_import"), field(n, "name", c2),
+    kind(c2, "dotted_name"), child(c2, c3, _), kind(c3, "identifier"),
+    child(p4, c3, _), n817_counted_1(c3),
+    k6 = count : { child(p4, s5, _), precedes(c3, s5), n817_counted_1(s5) }, k6 = 0,
+    node(_, c3, _, _, _), NAME = c3, match(".*\\p{Lowercase}.*", c3), match(".*\\p{Uppercase}.*", c3),
+    !contains("_", c3),
+    !glob("{setUp,tearDown,setUpClass,tearDownClass,setUpModule,tearDownModule,asyncSetUp,asyncTearDown,setUpTestData,failureException,longMessage,maxDiff}", c3),
+    field(n, "alias", c7), kind(c7, "identifier"), node(_, c7, _, _, _), ASNAME = c7,
+    text(ASNAME, ACRONYM), !n817_alt_2(n), text(NAME, t1),
+    ACRONYM = @replace_all(t1, "\\P{Uppercase}", "").
+
+// counted_1(n): the siblings the JSON `nthChild.ofRule` counts
+.decl n817_counted_1(n: node)
+n817_counted_1(n) :- kind(n, "identifier").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl n817_alt_2(n: node)
+n817_alt_2(n) :- child(p1, n, _), kind(p1, "import_statement"), field(n, "name", c2),
+    kind(c2, "dotted_name"),
+    match("xml[\\s\\\\]*\\.[\\s\\\\]*etree[\\s\\\\]*\\.[\\s\\\\]*ElementTree", c2),
+    field(n, "alias", c3), glob("ET", c3).
+n817_alt_2(n) :- child(p4, n, _), kind(p4, "import_from_statement"),
+    field(p4, "module_name", c5), kind(c5, "dotted_name"),
+    match("xml[\\s\\\\]*\\.[\\s\\\\]*etree", c5), field(n, "name", c6),
+    kind(c6, "dotted_name"), glob("ElementTree", c6), field(n, "alias", c7),
+    glob("ET", c7).

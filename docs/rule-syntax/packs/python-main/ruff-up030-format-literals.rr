@@ -1,0 +1,121 @@
+.policy "ruff-up030-format-literals" revision 1
+.guests off
+.description "Use automatic field numbering in str.format() strings instead of explicit positional indices."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl up030_plain_string(n: node)
+up030_plain_string(n) :- kind(n, "string"), !match("[A-Za-z]*[fFbBtT][A-Za-z]*['\"].*", n).
+up030_plain_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), match("[A-Za-z]*[fFbBtT][A-Za-z]*['\"].*", c1) } = 0.
+
+// permuted(n): the JSON util `permuted`, used where the JSON says `matches: "permuted"`
+.decl up030_permuted(n: node)
+up030_permuted(n) :- up030_demand_permuted(n), up030_plain_string(n), parsed(n, "braceFormat", r1),
+    child(r1, c2, _), kind(c2, "field"),
+    count : { child(r1, c3, _), kind(c3, "error") } = 0,
+    count : { within(c4, r1), (kind(c4, "auto") ; kind(c4, "name")) } = 0,
+    count : { has(r1, c5, "format_spec"), child(c5, c6, _), kind(c6, "field") } = 0,
+    count : { has(r1, c7, "index"), value(c7, v8), (value_type(v8, "int") ; value_type(v8, "float")), to_number(v8) > 15 } = 0,
+    count : { has(r1, c9, "index"), !up030_alt_1(c9) } = 0,
+    count : { child(r1, c40, _), kind(c40, "field"), I1 = c40, precedes(c40, s41), kind(s41, "field"), I2 = s41, value(I1, t42), value(I2, t42) } = 0.
+up030_permuted(n) :- up030_demand_permuted(n), kind(n, "parenthesized_expression"),
+    child(n, c44, _), up030_permuted(c44).
+
+// in_order(n): the JSON util `in-order`, used where the JSON says `matches: "in-order"`
+.decl up030_in_order(n: node)
+up030_in_order(n) :- up030_plain_string(n), parsed(n, "braceFormat", r1),
+    count : { child(r1, c2, _), kind(c2, "field"), J1 = c2, precedes(c2, s3), kind(s3, "field"), J2 = s3, value(J1, t4), value(J2, t5), t4 > t5 } = 0.
+up030_in_order(n) :- kind(n, "parenthesized_expression"), child(n, c6, _), up030_in_order(c6).
+
+// UP030(n): a finding at node n, from clause `format-literals`.
+// Each rule below is one way the JSON `rule` can match.
+.violation UP030(at: node) "Replace the explicit indices (`{{0}}`, `{{1}}`) with automatic `{{}}` fields; if they are out of order, also reorder the arguments to match, unless that would change the order of side effects."
+    suppress noqa "UP030"
+UP030(n) :- field(n, "function", c1), field(c1, "object", c2), up030_permuted(c2), up030_alt_3(n).
+
+// UP030_format_literals_annotation(n): a finding at node n, from clause `format-literals-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation UP030_format_literals_annotation(at: node, call: node) code "UP030" "Replace the explicit indices (`{{0}}`, `{{1}}`) with automatic `{{}}` fields; if they are out of order, also reorder the arguments to match, unless that would change the order of side effects."
+    suppress noqa "UP030"
+UP030_format_literals_annotation(CALL, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), has(r1, c2, "call"), CALL = c2, child(c2, c3, _),
+    kind(c3, "attribute"), child(c3, c4, _), up030_permuted(c4), up030_alt_5(c2).
+
+// demand_permuted: the nodes permuted is asked at (its recursion looks at every descendant)
+.decl up030_demand_permuted(n: node)
+up030_demand_permuted(c44) :- up030_demand_permuted(n), kind(n, "parenthesized_expression"),
+    child(n, c44, _).
+up030_demand_permuted(c2) :- field(n, "function", c1), field(c1, "object", c2), up030_alt_3(n).
+up030_demand_permuted(c4) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), has(r1, c2, "call"), CALL = c2, child(c2, c3, _),
+    kind(c3, "attribute"), child(c3, c4, _), up030_alt_5(c2).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl up030_alt_1(n: node)
+up030_alt_1(n) :- value(n, "0").
+up030_alt_1(n) :- value(n, "1"), inside(n, p1, "format"), has(p1, c2, "index"),
+    value(c2, "0").
+up030_alt_1(n) :- value(n, "2"), inside(n, p3, "format"), has(p3, c4, "index"),
+    value(c4, "1").
+up030_alt_1(n) :- value(n, "3"), inside(n, p5, "format"), has(p5, c6, "index"),
+    value(c6, "2").
+up030_alt_1(n) :- value(n, "4"), inside(n, p7, "format"), has(p7, c8, "index"),
+    value(c8, "3").
+up030_alt_1(n) :- value(n, "5"), inside(n, p9, "format"), has(p9, c10, "index"),
+    value(c10, "4").
+up030_alt_1(n) :- value(n, "6"), inside(n, p11, "format"), has(p11, c12, "index"),
+    value(c12, "5").
+up030_alt_1(n) :- value(n, "7"), inside(n, p13, "format"), has(p13, c14, "index"),
+    value(c14, "6").
+up030_alt_1(n) :- value(n, "8"), inside(n, p15, "format"), has(p15, c16, "index"),
+    value(c16, "7").
+up030_alt_1(n) :- value(n, "9"), inside(n, p17, "format"), has(p17, c18, "index"),
+    value(c18, "8").
+up030_alt_1(n) :- value(n, "10"), inside(n, p19, "format"), has(p19, c20, "index"),
+    value(c20, "9").
+up030_alt_1(n) :- value(n, "11"), inside(n, p21, "format"), has(p21, c22, "index"),
+    value(c22, "10").
+up030_alt_1(n) :- value(n, "12"), inside(n, p23, "format"), has(p23, c24, "index"),
+    value(c24, "11").
+up030_alt_1(n) :- value(n, "13"), inside(n, p25, "format"), has(p25, c26, "index"),
+    value(c26, "12").
+up030_alt_1(n) :- value(n, "14"), inside(n, p27, "format"), has(p27, c28, "index"),
+    value(c28, "13").
+up030_alt_1(n) :- value(n, "15"), inside(n, p29, "format"), has(p29, c30, "index"),
+    value(c30, "14").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl up030_alt_2(n: node)
+up030_alt_2(n) :- n ~ `$S.format($$$A)`,
+    count : { field(n, "arguments", c1), child(c1, c2, _), kind(c2, "list_splat") } = 0.
+up030_alt_2(n) :- n ~ `$S.format($$$A, *$R)`.
+up030_alt_2(n) :- n ~ `$S.format($$$A, *$R, $$$B)`.
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl up030_alt_3(n: node)
+up030_alt_3(n) :- n ~ `$S.format($$$A)`, field(n, "function", c1), field(c1, "object", c2),
+    up030_in_order(c2).
+up030_alt_3(n) :- up030_alt_2(n),
+    count : { field(n, "arguments", c5), child(c5, c6, _), (kind(c6, "keyword_argument") ; kind(c6, "dictionary_splat")) } = 0,
+    !ast(n, {"formatArgs": {"style": "brace", "string": "S", "args": "A", "missing": {"kind": "field"}}}).
+up030_alt_3(n) :- kind(n, "call"), field(n, "arguments", c7),
+    kind(c7, "generator_expression"), field(n, "function", c8), kind(c8, "attribute"),
+    field(c8, "attribute", c9), glob("format", c9), field(c8, "object", c10),
+    up030_in_order(c10).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl up030_alt_5(n: node)
+up030_alt_5(n) :- n ~ `$S.format($$$A)`, child(n, c1, _), kind(c1, "attribute"),
+    child(c1, c2, _), up030_in_order(c2).
+up030_alt_5(n) :- n ~ `$S.format($$$A)`,
+    count : { child(n, c3, _), kind(c3, "argument_list"), child(c3, c4, _), (kind(c4, "list_splat") ; kind(c4, "keyword_argument") ; kind(c4, "dictionary_splat")) } = 0.
+up030_alt_5(n) :- child(n, c5, _), kind(c5, "generator_expression"), child(n, c6, _),
+    kind(c6, "attribute"), child(c6, c7, _), up030_in_order(c7), child(n, c8, _),
+    kind(c8, "attribute"), child(c8, c9, _), kind(c9, "identifier"),
+    glob("format", c9).

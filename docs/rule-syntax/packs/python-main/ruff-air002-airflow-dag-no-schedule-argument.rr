@@ -1,0 +1,31 @@
+.policy "ruff-air002-airflow-dag-no-schedule-argument" revision 1
+.guests off
+.description "Give every Airflow Dag an explicit schedule; the implicit default changed from daily to none in Airflow 3, silently stopping Dags that relied on it."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// AIR002(n): a finding at node n, from clause `dag-without-schedule`.
+// Each rule below is one way the JSON `rule` can match.
+.violation AIR002(at: node) "Pass an explicit `schedule=` to this Dag (`schedule=None` if it should only run when triggered); relying on the default changes behaviour between Airflow 2 and 3."
+    suppress noqa "AIR002"
+AIR002(n) :- kind(n, "call"), field(n, "function", c1), air002_dag_callee(c1),
+    count : { field(n, "arguments", c2), kind(c2, "argument_list"), child(c2, c3, _), kind(c3, "keyword_argument"), field(c3, "name", c4), glob("{schedule,schedule_interval,timetable}", c4) } = 0.
+
+// dag_site(n): the JSON util `dag-site`, used where the JSON says `matches: "dag-site"`
+.decl air002_dag_site(n: node)
+air002_dag_site(n) :- kind(n, "dotted_name"), glob("{DAG,dag}", n), child(p1, n, _),
+    kind(p1, "import_from_statement").
+air002_dag_site(n) :- kind(n, "aliased_import"), field(n, "name", c2),
+    match(".*(^|\\.)\\s*(DAG|dag)", c2).
+
+// dag_callee(n): the JSON util `dag-callee`, used where the JSON says `matches: "dag-callee"`
+.decl air002_dag_callee(n: node)
+air002_dag_callee(n) :- kind(n, "attribute"), sym_of(n, q1), match("(airflow)(\\.|$).*", q1),
+    field(n, "attribute", c2), glob("{DAG,dag}", c2).
+air002_dag_callee(n) :- kind(n, "identifier"), sym_of(n, q3), match("(airflow)(\\.|$).*", q3),
+    ref_site(n, b4), air002_dag_site(b4).
+air002_dag_callee(n) :- kind(n, "parenthesized_expression"), child(n, c5, _), air002_dag_callee(c5).

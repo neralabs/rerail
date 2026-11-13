@@ -1,0 +1,55 @@
+.policy "ruff-pt023-pytest-incorrect-mark-parentheses-style" revision 1
+.guests off
+.description "Write pytest markers that take no arguments without empty parentheses, so every marker decorator follows one consistent style."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PT023(n): a finding at node n, from clause `mark-with-empty-parentheses`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PT023(at: node, span: node) "Remove the empty `()` after this `pytest.mark` decorator; a marker without arguments is written bare. Keep any comments that sat inside the parentheses."
+    suppress noqa "PT023"
+PT023(SPAN, n) :- kind(n, "decorator"), child(n, c1, _), pt023_empty_mark_call(c1),
+    match("(?P<SPAN>(?:\"(?:[^\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)(?:[ \\t]*#[^\\n]*)?", n).
+
+// mark_ns(n): the JSON util `mark-ns`, used where the JSON says `matches: "mark-ns"`
+.decl pt023_mark_ns(n: node)
+pt023_mark_ns(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "pytest.mark").
+pt023_mark_ns(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pt023_mark_ns(c1).
+
+// mark_ref(n): the JSON util `mark-ref`, used where the JSON says `matches: "mark-ref"`
+.decl pt023_mark_ref(n: node)
+pt023_mark_ref(n) :- kind(n, "attribute"), field(n, "object", c1), pt023_mark_ns(c1).
+pt023_mark_ref(n) :- kind(n, "identifier"),
+    sym_of(n, q2), match("(pytest\\.mark)(\\.|$).*", q2), !pt023_alt_1(n).
+pt023_mark_ref(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), pt023_mark_ref(c4).
+
+// empty_mark_call(n): the JSON util `empty-mark-call`, used where the JSON says `matches: "empty-mark-call"`
+.decl pt023_empty_mark_call(n: node)
+pt023_empty_mark_call(n) :- kind(n, "call"), field(n, "function", c1), pt023_mark_ref(c1),
+    field(n, "arguments", c2), kind(c2, "argument_list"),
+    count : { child(c2, c3, _), !pt023_alt_2(c3) } = 0.
+pt023_empty_mark_call(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    pt023_empty_mark_call(c4).
+
+// deeper_import_site(n): the JSON util `deeper-import-site`, used where the JSON says `matches: "deeper-import-site"`
+.decl pt023_deeper_import_site(n: node)
+pt023_deeper_import_site(n) :- kind(n, "aliased_import"),
+    count : { child(p1, n, _), kind(p1, "import_from_statement") } = 0,
+    field(n, "name", c2), match("(?:[^.]*\\.){3}.*", c2).
+pt023_deeper_import_site(n) :- child(p3, n, _), kind(p3, "import_from_statement"),
+    field(p3, "module_name", c4), match("(?:[^.]*\\.){2}.*", c4).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pt023_alt_1(n: node)
+pt023_alt_1(n) :- sym_of(n, "pytest.mark").
+pt023_alt_1(n) :- ref_site(n, b1), site_form(b1, "import"), pt023_deeper_import_site(b1).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pt023_alt_2(n: node)
+pt023_alt_2(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pt023_alt_2(n) :- node(_, n, _, _, _), glob("[()]", n).

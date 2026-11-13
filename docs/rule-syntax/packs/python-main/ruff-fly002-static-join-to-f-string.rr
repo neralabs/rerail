@@ -1,0 +1,283 @@
+.policy "ruff-fly002-static-join-to-f-string" revision 1
+.guests off
+.description "Use an f-string or a single string literal instead of joining a fixed list of values with a literal separator; it reads more clearly."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// str(n): the JSON util `str`, used where the JSON says `matches: "str"`
+.decl fly002_str(n: node)
+fly002_str(n) :- (kind(n, "string") ; kind(n, "concatenated_string")).
+
+// plain(n): the JSON util `plain`, used where the JSON says `matches: "plain"`
+.decl fly002_plain(n: node)
+fly002_plain(n) :- kind(n, "string"), match("[rRuU]{0,2}['\"].*", n).
+fly002_plain(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !match("[rRuU]{0,2}['\"].*", c1) } = 0.
+fly002_plain(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), fly002_plain(c2).
+
+// raw(n): the JSON util `raw`, used where the JSON says `matches: "raw"`
+.decl fly002_raw(n: node)
+fly002_raw(n) :- kind(n, "string"), match("[uU]?[rR].*", n).
+fly002_raw(n) :- kind(n, "concatenated_string"), child(n, c1, _), kind(c1, "string"),
+    match("[uU]?[rR].*", c1), count : { precedes(s2, c1), kind(s2, "string") } = 0.
+fly002_raw(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), fly002_raw(c3).
+
+// punct(n): the JSON util `punct`, used where the JSON says `matches: "punct"`
+.decl fly002_punct(n: node)
+fly002_punct(n) :- kind(n, "comment").
+fly002_punct(n) :- node(_, n, _, _, _), glob("[\\[\\](),]", n).
+
+// join_fn(n): the JSON util `join-fn`, used where the JSON says `matches: "join-fn"`
+.decl fly002_join_fn(n: node)
+fly002_join_fn(n) :- kind(n, "attribute"), child(n, c1, _), kind(c1, "identifier"),
+    glob("join", c1), child(n, c2, _), fly002_plain(c2).
+fly002_join_fn(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), fly002_join_fn(c3).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl fly002_callee(n: node)
+fly002_callee(n) :- fly002_callee_u7(n).
+
+// element(n): the JSON util `element`, used where the JSON says `matches: "element"`
+.decl fly002_element(n: node)
+fly002_element(n) :- kind(n, k1), fly002_set_2(k1).
+fly002_element(n) :- fly002_plain(n).
+fly002_element(n) :- kind(n, "call"), child(n, c2, _), kind(c2, "argument_list"),
+    count : { child(c2, c3, _), !fly002_punct(c3) } = 0,
+    count : { child(n, c4, _), !fly002_alt_3(c4) } = 0.
+fly002_element(n) :- kind(n, "parenthesized_expression"), child(n, c5, _), fly002_element(c5).
+
+// lit_seq(n): the JSON util `lit-seq`, used where the JSON says `matches: "lit-seq"`
+.decl fly002_lit_seq(n: node)
+fly002_lit_seq(n) :- (kind(n, "list") ; kind(n, "tuple")), child(n, c1, _), !fly002_punct(c1),
+    count : { child(n, c2, _), !fly002_alt_4(c2) } = 0.
+fly002_lit_seq(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), fly002_lit_seq(c3).
+
+// seq(n): the JSON util `seq`, used where the JSON says `matches: "seq"`
+.decl fly002_seq(n: node)
+fly002_seq(n) :- (kind(n, "list") ; kind(n, "tuple")), child(n, c1, _), !fly002_alt_4(c1),
+    count : { child(n, c2, _), !fly002_alt_6(c2) } = 0.
+fly002_seq(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), fly002_seq(c3).
+
+// multi(n): the JSON util `multi`, used where the JSON says `matches: "multi"`
+.decl fly002_multi(n: node)
+fly002_multi(n) :- (kind(n, "list") ; kind(n, "tuple")),
+    k2 = count : { child(n, c1, _), !fly002_punct(c1) }, k2 >= 2.
+fly002_multi(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), fly002_multi(c3).
+
+// raw_first(n): the JSON util `raw-first`, used where the JSON says `matches: "raw-first"`
+.decl fly002_raw_first(n: node)
+fly002_raw_first(n) :- (kind(n, "list") ; kind(n, "tuple")), child(n, c1, _), fly002_raw(c1),
+    count : { precedes(s2, c1), !fly002_punct(s2) } = 0.
+fly002_raw_first(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), fly002_raw_first(c3).
+
+// all3(n): the JSON util `all3`, used where the JSON says `matches: "all3"`
+.decl fly002_all3(n: node)
+fly002_all3(n) :- within(c1, n), fly002_str(c1), value(c1, v2), match("(?s:.*)[\\n\\r](?s:.*)", v2),
+    within(c3, n), fly002_str(c3), value(c3, v4), contains("'''", v4), within(c5, n), fly002_str(c5),
+    value(c5, v6), contains("\"\"\"", v6).
+
+// join_call(n): the JSON util `join-call`, used where the JSON says `matches: "join-call"`
+.decl fly002_join_call(n: node)
+fly002_join_call(n) :- kind(n, "call"), child(n, c1, _), fly002_join_fn(c1), child(n, c2, _),
+    kind(c2, "argument_list"), k4 = count : { child(c2, c3, _), !fly002_punct(c3) }, k4 >= 1,
+    k4 <= 1.
+
+// lit_join(n): the JSON util `lit-join`, used where the JSON says `matches: "lit-join"`
+.decl fly002_lit_join(n: node)
+fly002_lit_join(n) :- fly002_join_call(n), child(n, c1, _), kind(c1, "argument_list"),
+    child(c1, c2, _), fly002_lit_seq(c2),
+    count : { child(n, c3, _), kind(c3, "argument_list"), child(c3, c4, _), fly002_raw_first(c4), fly002_alt_7(n) } = 0.
+
+// q_fn(n): the JSON util `q-fn`, used where the JSON says `matches: "q-fn"`
+.decl fly002_q_fn(n: node)
+fly002_q_fn(n) :- kind(n, "attribute"), child(n, c1, _), fly002_plain(c1),
+    value(c1, v2), contains("'", v2).
+fly002_q_fn(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), fly002_q_fn(c3).
+
+// qq_fn(n): the JSON util `qq-fn`, used where the JSON says `matches: "qq-fn"`
+.decl fly002_qq_fn(n: node)
+fly002_qq_fn(n) :- kind(n, "attribute"), child(n, c1, _), fly002_plain(c1),
+    value(c1, v2), contains("\"", v2).
+fly002_qq_fn(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), fly002_qq_fn(c3).
+
+// q_seq(n): the JSON util `q-seq`, used where the JSON says `matches: "q-seq"`
+.decl fly002_q_seq(n: node)
+fly002_q_seq(n) :- (kind(n, "list") ; kind(n, "tuple")), child(n, c1, _), fly002_plain(c1),
+    value(c1, v2), contains("'", v2).
+fly002_q_seq(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), fly002_q_seq(c3).
+
+// qq_seq(n): the JSON util `qq-seq`, used where the JSON says `matches: "qq-seq"`
+.decl fly002_qq_seq(n: node)
+fly002_qq_seq(n) :- (kind(n, "list") ; kind(n, "tuple")), child(n, c1, _), fly002_plain(c1),
+    value(c1, v2), contains("\"", v2).
+fly002_qq_seq(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), fly002_qq_seq(c3).
+
+// fs_join(n): the JSON util `fs-join`, used where the JSON says `matches: "fs-join"`
+.decl fly002_fs_join(n: node)
+fly002_fs_join(n) :- fly002_join_call(n), child(n, c1, _), kind(c1, "argument_list"),
+    child(c1, c2, _), fly002_seq(c2), count : { fly002_alt_8(n), fly002_alt_9(n) } = 0.
+
+// lit_in_type(n): the JSON util `lit-in-type`, used where the JSON says `matches: "lit-in-type"`
+//   C: metavariable this relation binds for the calling rule
+.decl fly002_lit_in_type(n: node, c: loc)
+fly002_lit_in_type(n, C) :- fly002_str(n), parsed(n, "annotation", r1), within(c2, r1),
+    fly002_alt_10(c2, C).
+
+// fs_in_type(n): the JSON util `fs-in-type`, used where the JSON says `matches: "fs-in-type"`
+//   C: metavariable this relation binds for the calling rule
+.decl fly002_fs_in_type(n: node, c: loc)
+fly002_fs_in_type(n, C) :- fly002_str(n), parsed(n, "annotation", r1), within(c2, r1), fly002_alt_11(c2, C).
+
+// FLY002(n): a finding at node n, from clause `static-join-of-literals`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation FLY002(at: node, c: node) "Replace this `join` of string literals with the single string literal it produces."
+    suppress noqa "FLY002"
+FLY002(C, n) :- fly002_lit_join(n), node(_, n, _, _, _), C = n.
+FLY002(C, n) :- fly002_lit_in_type(n, C).
+
+// FLY002_static_join_to_f_string(n): a finding at node n, from clause `static-join-to-f-string`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation FLY002_static_join_to_f_string(at: node, c: node) code "FLY002" "Replace this `join` over a fixed list with an f-string such as `f\"{{a}}-{{b}}\"`; keep `join` if an element may be a non-`str` or a `str` subclass, which the f-string would format differently."
+    suppress noqa "FLY002"
+FLY002_static_join_to_f_string(C, n) :- fly002_fs_join(n), node(_, n, _, _, _), C = n.
+FLY002_static_join_to_f_string(C, n) :- fly002_fs_in_type(n, C).
+
+.decl fly002_alt_1_u0(n: node)
+fly002_alt_1_u0(n) :- kind(n, "comment").
+fly002_alt_1_u0(n) :- node(_, n, _, _, _), glob(".", n).
+
+.decl fly002_alt_1_u1(n: node)
+fly002_alt_1_u1(n) :- fly002_callee_u0(n).
+fly002_alt_1_u1(n) :- kind(n, "comment").
+fly002_alt_1_u1(n) :- node(_, n, _, _, _), glob(".", n).
+
+.decl fly002_alt_1_u2(n: node)
+fly002_alt_1_u2(n) :- fly002_callee_u1(n).
+fly002_alt_1_u2(n) :- kind(n, "comment").
+fly002_alt_1_u2(n) :- node(_, n, _, _, _), glob(".", n).
+
+.decl fly002_alt_1_u3(n: node)
+fly002_alt_1_u3(n) :- fly002_callee_u2(n).
+fly002_alt_1_u3(n) :- kind(n, "comment").
+fly002_alt_1_u3(n) :- node(_, n, _, _, _), glob(".", n).
+
+.decl fly002_alt_1_u4(n: node)
+fly002_alt_1_u4(n) :- fly002_callee_u3(n).
+fly002_alt_1_u4(n) :- kind(n, "comment").
+fly002_alt_1_u4(n) :- node(_, n, _, _, _), glob(".", n).
+
+.decl fly002_alt_1_u5(n: node)
+fly002_alt_1_u5(n) :- fly002_callee_u4(n).
+fly002_alt_1_u5(n) :- kind(n, "comment").
+fly002_alt_1_u5(n) :- node(_, n, _, _, _), glob(".", n).
+
+.decl fly002_alt_1_u6(n: node)
+fly002_alt_1_u6(n) :- fly002_callee_u5(n).
+fly002_alt_1_u6(n) :- kind(n, "comment").
+fly002_alt_1_u6(n) :- node(_, n, _, _, _), glob(".", n).
+
+.decl fly002_alt_1_u7(n: node)
+fly002_alt_1_u7(n) :- fly002_callee_u6(n).
+fly002_alt_1_u7(n) :- kind(n, "comment").
+fly002_alt_1_u7(n) :- node(_, n, _, _, _), glob(".", n).
+
+.decl fly002_callee_u0(n: node)
+fly002_callee_u0(n) :- kind(n, "identifier").
+fly002_callee_u0(n) :- kind(n, "attribute"), count : { child(n, c1, _) } = 0.
+
+.decl fly002_callee_u1(n: node)
+fly002_callee_u1(n) :- kind(n, "identifier").
+fly002_callee_u1(n) :- kind(n, "attribute"), count : { child(n, c1, _), !fly002_alt_1_u0(c1) } = 0.
+fly002_callee_u1(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), fly002_callee_u0(c2).
+
+.decl fly002_callee_u2(n: node)
+fly002_callee_u2(n) :- kind(n, "identifier").
+fly002_callee_u2(n) :- kind(n, "attribute"), count : { child(n, c1, _), !fly002_alt_1_u1(c1) } = 0.
+fly002_callee_u2(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), fly002_callee_u1(c2).
+
+.decl fly002_callee_u3(n: node)
+fly002_callee_u3(n) :- kind(n, "identifier").
+fly002_callee_u3(n) :- kind(n, "attribute"), count : { child(n, c1, _), !fly002_alt_1_u2(c1) } = 0.
+fly002_callee_u3(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), fly002_callee_u2(c2).
+
+.decl fly002_callee_u4(n: node)
+fly002_callee_u4(n) :- kind(n, "identifier").
+fly002_callee_u4(n) :- kind(n, "attribute"), count : { child(n, c1, _), !fly002_alt_1_u3(c1) } = 0.
+fly002_callee_u4(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), fly002_callee_u3(c2).
+
+.decl fly002_callee_u5(n: node)
+fly002_callee_u5(n) :- kind(n, "identifier").
+fly002_callee_u5(n) :- kind(n, "attribute"), count : { child(n, c1, _), !fly002_alt_1_u4(c1) } = 0.
+fly002_callee_u5(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), fly002_callee_u4(c2).
+
+.decl fly002_callee_u6(n: node)
+fly002_callee_u6(n) :- kind(n, "identifier").
+fly002_callee_u6(n) :- kind(n, "attribute"), count : { child(n, c1, _), !fly002_alt_1_u5(c1) } = 0.
+fly002_callee_u6(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), fly002_callee_u5(c2).
+
+.decl fly002_callee_u7(n: node)
+fly002_callee_u7(n) :- kind(n, "identifier").
+fly002_callee_u7(n) :- kind(n, "attribute"), count : { child(n, c1, _), !fly002_alt_1_u6(c1) } = 0.
+fly002_callee_u7(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), fly002_callee_u6(c2).
+
+// alt_1_u0_empty: level -1 of an unrolled recursion, empty
+.decl fly002_alt_1_u0_empty(n: node)
+
+// callee_u0_empty: level -1 of an unrolled recursion, empty
+.decl fly002_callee_u0_empty(n: node)
+
+// set_2: node kinds from a JSON `any`
+.decl fly002_set_2(v: symbol)
+fly002_set_2("integer"). fly002_set_2("float"). fly002_set_2("true"). fly002_set_2("false"). fly002_set_2("identifier").
+fly002_set_2("attribute").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl fly002_alt_1(n: node)
+fly002_alt_1(n) :- fly002_alt_1_u7(n).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl fly002_alt_3(n: node)
+fly002_alt_3(n) :- (kind(n, "argument_list") ; kind(n, "comment")).
+fly002_alt_3(n) :- fly002_callee(n).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl fly002_alt_4(n: node)
+fly002_alt_4(n) :- fly002_punct(n).
+fly002_alt_4(n) :- fly002_plain(n).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl fly002_alt_6(n: node)
+fly002_alt_6(n) :- fly002_punct(n).
+fly002_alt_6(n) :- fly002_element(n).
+
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+.decl fly002_alt_7(n: node)
+fly002_alt_7(n) :- child(n, c1, _), kind(c1, "argument_list"), fly002_all3(c1).
+fly002_alt_7(n) :- fly002_all3(n), child(n, c2, _), kind(c2, "argument_list"), child(c2, c3, _),
+    fly002_multi(c3).
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+.decl fly002_alt_8(n: node)
+fly002_alt_8(n) :- child(n, c1, _), fly002_q_fn(c1).
+fly002_alt_8(n) :- child(n, c2, _), kind(c2, "argument_list"), child(c2, c3, _), fly002_q_seq(c3).
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+.decl fly002_alt_9(n: node)
+fly002_alt_9(n) :- child(n, c1, _), fly002_qq_fn(c1).
+fly002_alt_9(n) :- child(n, c2, _), kind(c2, "argument_list"), child(c2, c3, _), fly002_qq_seq(c3).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl fly002_alt_10(n: node, c: loc)
+fly002_alt_10(n, C) :- fly002_lit_join(n), C = n.
+fly002_alt_10(n, C) :- fly002_lit_in_type(n, C).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl fly002_alt_11(n: node, c: loc)
+fly002_alt_11(n, C) :- fly002_fs_join(n), C = n.
+fly002_alt_11(n, C) :- fly002_fs_in_type(n, C).

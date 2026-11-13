@@ -1,0 +1,79 @@
+.policy "ruff-ytt204-sys-version-info-minor-cmp-int" revision 1
+.guests off
+.description "Compare sys.version_info to a version tuple instead of testing its minor attribute alone; a minor-only check misjudges a new major version."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// YTT204(n): a finding at node n, from clause `sys-version-info-minor-cmp-int`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation YTT204(at: node, c: node) "Compare `sys.version_info` to a tuple with the major and minor version, like `sys.version_info >= (3, 9)`, rather than testing `sys.version_info.minor` alone, which misjudges a new major version."
+    suppress noqa "YTT204"
+YTT204(C, n) :- ytt204_target(n), node(_, n, _, _, _), C = n.
+YTT204(C, n) :- ytt204_in_string(n, C).
+
+// int_literal(n): the JSON util `int-literal`, used where the JSON says `matches: "int-literal"`
+.decl ytt204_int_literal(n: node)
+ytt204_int_literal(n) :- kind(n, "integer"), value(n, v1), value_type(v1, "int").
+ytt204_int_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ytt204_int_literal(c2).
+
+// sys_version_info(n): the JSON util `sys-version-info`, used where the JSON says `matches: "sys-version-info"`
+.decl ytt204_sys_version_info(n: node)
+ytt204_sys_version_info(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "sys.version_info").
+ytt204_sys_version_info(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ytt204_sys_version_info(c1).
+
+// ordered_int_compare(n): the JSON util `ordered-int-compare`, used where the JSON says `matches: "ordered-int-compare"`
+.decl ytt204_ordered_int_compare(n: node)
+ytt204_ordered_int_compare(n) :- kind(n, "comparison_operator"), ytt204_tok_has_1(n),
+    child(n, c9, _), child(p10, c9, _), ytt204_counted(c9),
+    k12 = count : { child(p10, s11, _), precedes(s11, c9), ytt204_counted(s11) }, k12 = 1,
+    ytt204_int_literal(c9),
+    count : { child(n, c13, _), child(p14, c13, _), ytt204_counted(c13), k16 = count : { child(p14, s15, _), precedes(s15, c13), ytt204_counted(s15) }, k16 = 2 } = 0.
+
+// left_operand(n): the JSON util `left-operand`, used where the JSON says `matches: "left-operand"`
+.decl ytt204_left_operand(n: node)
+ytt204_left_operand(n) :- child(p1, n, _), ytt204_counted(n),
+    k3 = count : { child(p1, s2, _), precedes(s2, n), ytt204_counted(s2) }, k3 = 0,
+    child(p4, n, _), ytt204_ordered_int_compare(p4).
+ytt204_left_operand(n) :- child(p5, n, _), kind(p5, "parenthesized_expression"),
+    ytt204_left_operand(p5).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl ytt204_target(n: node)
+ytt204_target(n) :- kind(n, "attribute"), ytt204_left_operand(n), field(n, "object", c1),
+    ytt204_sys_version_info(c1), field(n, "attribute", c2), glob("minor", c2).
+
+// in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   C: metavariable this relation binds for the calling rule
+.decl ytt204_in_string(n: node, c: loc)
+ytt204_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), ytt204_alt_4(c2, C).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(?:<|<=|>|>=)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ytt204_tok_has_1(n: node)
+.stored ytt204_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ytt204_tok_has_1(n) :- child(n, c1, _), glob("{<,<=,>,>=}", c1).
+ytt204_tok_has_1(n) :- op(n, t2), match("(?:<|<=|>|>=)", t2).
+ytt204_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+ytt204_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+ytt204_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// counted(n): 3 identical copies of one rule set (`counted_1`, `counted_2`, `counted_3`), folded into one.
+.decl ytt204_counted(n: node)
+ytt204_counted(n) :- node(_, n, _, _, _), !kind(n, "comment"), !kind(n, "line_continuation").
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl ytt204_alt_4(n: node, c: loc)
+ytt204_alt_4(n, C) :- ytt204_target(n), C = n.
+ytt204_alt_4(n, C) :- ytt204_in_string(n, C).

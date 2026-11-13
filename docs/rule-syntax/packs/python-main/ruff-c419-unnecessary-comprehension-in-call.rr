@@ -1,0 +1,61 @@
+.policy "ruff-c419-unnecessary-comprehension-in-call" revision 1
+.guests off
+.description "Pass a generator expression to any() and all() instead of a list or set comprehension; it saves memory and lets them stop early."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// C419(n): a finding at node n, from clause `unnecessary-comprehension-in-call`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation C419(at: node, comp: node) "Drop the comprehension's brackets or braces to pass a generator expression so the call can stop early; keep the comprehension only if every element must be evaluated for its side effects."
+    suppress noqa "C419"
+C419(COMP, n) :- c419_target(n), node(_, n, _, _, _), COMP = n.
+C419(COMP, n) :- c419_in_annotation(n, COMP).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl c419_callee(n: node)
+c419_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (global_ref(n, "any") ; global_ref(n, "all")),
+    (sym_of(n, "builtins.any") ; sym_of(n, "builtins.all")).
+c419_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), c419_callee(c1).
+
+// not_argument(n): the JSON util `not-argument`, used where the JSON says `matches: "not-argument"`
+.decl c419_not_argument(n: node)
+c419_not_argument(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+c419_not_argument(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// first_argument(n): the JSON util `first-argument`, used where the JSON says `matches: "first-argument"`
+.decl c419_first_argument(n: node)
+c419_first_argument(n) :- count : { precedes(s1, n), !c419_not_argument(s1) } = 0,
+    child(p2, n, _), kind(p2, "argument_list"),
+    count : { child(p2, c3, _), (kind(c3, "keyword_argument") ; kind(c3, "dictionary_splat")) } = 0,
+    child(p4, p2, _), kind(p4, "call"), field(p4, "function", c5), c419_callee(c5).
+c419_first_argument(n) :- child(p6, n, _), kind(p6, "parenthesized_expression"),
+    c419_first_argument(p6).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl c419_target(n: node)
+c419_target(n) :- (kind(n, "list_comprehension") ; kind(n, "set_comprehension")), !c419_alt_2(n),
+    c419_first_argument(n).
+
+// in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+//   COMP: metavariable this relation binds for the calling rule
+.decl c419_in_annotation(n: node, comp: loc)
+c419_in_annotation(n, COMP) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), c419_alt_4(c2, COMP).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl c419_alt_2(n: node)
+c419_alt_2(n) :- field(n, "body", c1),
+    (kind(c1, "await") ; has(c1, c2, "await"), node(_, c2, _, _, _)).
+c419_alt_2(n) :- child(n, c3, _), kind(c3, "for_in_clause"), match("async\\b.*", c3).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+//   COMP: metavariable this relation binds for the calling rule
+.decl c419_alt_4(n: node, comp: loc)
+c419_alt_4(n, COMP) :- c419_target(n), COMP = n.
+c419_alt_4(n, COMP) :- c419_in_annotation(n, COMP).

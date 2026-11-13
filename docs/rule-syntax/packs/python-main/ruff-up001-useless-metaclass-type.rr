@@ -1,0 +1,37 @@
+.policy "ruff-up001-useless-metaclass-type" revision 1
+.guests off
+.description "Remove redundant assignments of type to __metaclass__; Python 3 classes already use type as their metaclass."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// UP001(n): a finding at node n, from clause `useless-metaclass-type`.
+// Each rule below is one way the JSON `rule` can match.
+.violation UP001(at: node) "Remove this `__metaclass__ = type` line; Python 3 classes already use `type` as their metaclass. Keep it only if the code must still run on Python 2."
+    suppress noqa "UP001"
+UP001(n) :- kind(n, "assignment"), child(p1, n, _), kind(p1, "expression_statement"),
+    count : { child(n, c2, _), kind(c2, "type") } = 0, field(n, "left", c3),
+    up001_metaclass_target(c3), field(n, "right", c4), up001_type_name(c4).
+
+// metaclass_target(n): the JSON util `metaclass-target`, used where the JSON says `matches: "metaclass-target"`
+.decl up001_metaclass_target(n: node)
+up001_metaclass_target(n) :- kind(n, "identifier"), glob("__metaclass__", n).
+up001_metaclass_target(n) :- kind(n, "tuple_pattern"), !up001_tok_has_1(n), child(n, c9, _),
+    up001_metaclass_target(c9).
+
+// type_name(n): the JSON util `type-name`, used where the JSON says `matches: "type-name"`
+.decl up001_type_name(n: node)
+up001_type_name(n) :- kind(n, "identifier"), glob("type", n).
+up001_type_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), up001_type_name(c1).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl up001_tok_has_1(n: node)
+.stored up001_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+up001_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+up001_tok_has_1(n) :- op(n, t2), match(",", t2).
+up001_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+up001_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+up001_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).

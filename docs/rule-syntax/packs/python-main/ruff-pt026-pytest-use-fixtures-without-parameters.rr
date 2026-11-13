@@ -1,0 +1,53 @@
+.policy "ruff-pt026-pytest-use-fixtures-without-parameters" revision 1
+.guests off
+.description "Remove usefixtures markers that name no fixtures, or pass them the fixtures to apply; a marker without arguments does nothing."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PT026(n): a finding at node n, from clause `usefixtures-without-fixtures`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PT026(at: node, span: node) "Remove this `usefixtures` decorator, or pass it the names of the fixtures to apply; without arguments it does nothing."
+    suppress noqa "PT026"
+// SPAN: not bound by every branch, so empty (unset) where not bound, as in ast-grep.
+PT026(rr_at, SPAN) :- kind(n, "decorator"), child(n, c1, _),
+    (pt026_bare_ref(c1) ; pt026_empty_call(c1)), child(p2, n, _), kind(p2, "decorated_definition"),
+    field(p2, "definition", c3),
+    (kind(c3, "function_definition") ; kind(c3, "class_definition")),
+    ( child(n, c1_1, _), (kind(c1_1, "comment") ; kind(c1_1, "line_continuation")), match("(?P<SPAN>(?:\"\"\"(?:[^\\\\]|\\\\[\\s\\S])*?\"\"\"|'''(?:[^\\\\]|\\\\[\\s\\S])*?'''|\"(?:[^\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)(?:\\s|\\\\\\r?\\n|#[^\\n]*)*", n)
+    ; count : { child(n, c2_2, _), (kind(c2_2, "comment") ; kind(c2_2, "line_continuation")) } = 0, unset(SPAN)
+    ; !match("(?P<SPAN>(?:\"\"\"(?:[^\\\\]|\\\\[\\s\\S])*?\"\"\"|'''(?:[^\\\\]|\\\\[\\s\\S])*?'''|\"(?:[^\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)(?:\\s|\\\\\\r?\\n|#[^\\n]*)*", n), unset(SPAN)
+    ),
+    (unset(SPAN), rr_at = n ; !unset(SPAN), rr_at = SPAN).
+
+
+// uf_ref(n): the JSON util `uf-ref`, used where the JSON says `matches: "uf-ref"`
+.decl pt026_uf_ref(n: node)
+pt026_uf_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "pytest.mark.usefixtures").
+
+// uf_callee(n): the JSON util `uf-callee`, used where the JSON says `matches: "uf-callee"`
+.decl pt026_uf_callee(n: node)
+pt026_uf_callee(n) :- pt026_uf_ref(n).
+pt026_uf_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pt026_uf_callee(c1).
+
+// bare_ref(n): the JSON util `bare-ref`, used where the JSON says `matches: "bare-ref"`
+.decl pt026_bare_ref(n: node)
+pt026_bare_ref(n) :- kind(n, "attribute"), sym_of(n, "pytest.mark.usefixtures").
+pt026_bare_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pt026_bare_ref(c1).
+
+// empty_call(n): the JSON util `empty-call`, used where the JSON says `matches: "empty-call"`
+.decl pt026_empty_call(n: node)
+pt026_empty_call(n) :- kind(n, "call"), field(n, "function", c1), pt026_uf_callee(c1),
+    field(n, "arguments", c2), kind(c2, "argument_list"),
+    count : { child(c2, c3, _), !pt026_alt_1(c3) } = 0.
+pt026_empty_call(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), pt026_empty_call(c4).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pt026_alt_1(n: node)
+pt026_alt_1(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pt026_alt_1(n) :- node(_, n, _, _, _), glob("[()]", n).

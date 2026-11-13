@@ -1,0 +1,151 @@
+.policy "ruff-d105-undocumented-magic-method" revision 1
+.guests off
+.description "Add a docstring to each magic method of a public class, describing what the operation does and returns."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// doc_expr(n): the JSON util `doc-expr`, used where the JSON says `matches: "doc-expr"`
+.decl d105_doc_expr(n: node)
+d105_doc_expr(n) :- kind(n, "string"), match("[rRuU]{0,2}['\"].*", n).
+d105_doc_expr(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !match("[rRuU]{0,2}['\"].*", c1) } = 0.
+d105_doc_expr(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), d105_doc_expr(c2).
+
+// documented(n): the JSON util `documented`, used where the JSON says `matches: "documented"`
+.decl d105_documented(n: node)
+d105_documented(n) :- kind(n, "block"), child(n, c1, _), kind(c1, "expression_statement"),
+    child(p2, c1, _), d105_counted_1(c1),
+    k4 = count : { child(p2, s3, _), precedes(s3, c1), d105_counted_1(s3) }, k4 = 0,
+    child(c1, c5, _), d105_doc_expr(c5), !d105_tok_has_1(c1).
+
+// dunder_all(n): the JSON util `dunder-all`, used where the JSON says `matches: "dunder-all"`
+.decl d105_dunder_all(n: node)
+d105_dunder_all(n) :- (kind(n, "assignment") ; kind(n, "augmented_assignment")),
+    field(n, "left", c1), kind(c1, "identifier"), glob("__all__", c1), child(p2, n, _),
+    kind(p2, "expression_statement").
+
+// public_class(n): the JSON util `public-class`, used where the JSON says `matches: "public-class"`
+.decl d105_public_class(n: node)
+d105_public_class(n) :- d105_demand_public_class(n), kind(n, "class_definition"),
+    count : { field(n, "name", c1), prefix("_", c1) } = 0, d105_alt_6(n).
+
+// exempt_decorator(n): the JSON util `exempt-decorator`, used where the JSON says `matches: "exempt-decorator"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl d105_exempt_decorator(n: node, name: loc)
+// NAME: not bound by this rule, so empty (unset) here, as in ast-grep.
+d105_exempt_decorator(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), d105_set_11(q1), unset(NAME).
+d105_exempt_decorator(n, NAME) :- kind(n, "attribute"), field(n, "attribute", c2),
+    glob("{setter,deleter}", c2), field(n, "object", c3), d105_alt_13(c3, NAME).
+d105_exempt_decorator(n, NAME) :- kind(n, "parenthesized_expression"), child(n, c6, _),
+    d105_exempt_decorator(c6, NAME).
+
+// D105(n): a finding at node n, from clause `undocumented-magic-method`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation D105(at: node, name: loc) "Add a docstring to magic method `{name}` describing its behavior, arguments and return value."
+    suppress noqa "D105"
+D105_raw(n, NAME) :- kind(n, "identifier"), glob("__{_,**__,}", n), node(_, n, _, _, _), NAME = n,
+    !glob("__{init,new,call}__", n), field(p1, "name", n),
+    kind(p1, "function_definition"), count : { field(p1, "body", c1_1), d105_documented(c1_1) } = 0, within_stop(p1, p2_1, d105_stop_10), kind(p2_1, "class_definition"), d105_public_class(p2_1), count : { child(p3_1, p1, _), kind(p3_1, "decorated_definition"), child(p3_1, c4_1, _), kind(c4_1, "decorator"), child(c4_1, c5_1, _), d105_exempt_decorator(c5_1, NAME) } = 0.
+
+// D105_undocumented_magic_method_in_package(n): a finding at node n, from clause `undocumented-magic-method-in-package`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation D105_undocumented_magic_method_in_package(at: node, name: loc) code "D105" "Add a docstring to magic method `{name}` describing its behavior, arguments and return value."
+    suppress noqa "D105"
+D105_undocumented_magic_method_in_package_raw(n, NAME) :- kind(n, "identifier"),
+    glob("__{_,**__,}", n), node(_, n, _, _, _), NAME = n, !glob("__{init,new,call}__", n),
+    field(p1, "name", n),
+    kind(p1, "function_definition"), count : { field(p1, "body", c1_2), d105_documented(c1_2) } = 0, within_stop(p1, p2_2, d105_stop_10), kind(p2_2, "class_definition"), d105_public_class(p2_2), count : { child(p3_2, p1, _), kind(p3_2, "decorated_definition"), child(p3_2, c4_2, _), kind(c4_2, "decorator"), child(c4_2, c5_2, _), d105_exempt_decorator(c5_2, NAME) } = 0.
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl d105_tok_has_1(n: node)
+.stored d105_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+d105_tok_has_1(n) :- child(n, c6, _), glob("\\,", c6).
+d105_tok_has_1(n) :- op(n, t7), match(",", t7).
+d105_tok_has_1(n) :- child(n, c13, _), structural_before(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+d105_tok_has_1(n) :- child(n, c13, _), structural_after(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+d105_tok_has_1(n) :- node_text(n, g8), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g8).
+
+// demand_alt_6: the nodes alt_6 is asked at (its recursion looks at every descendant)
+.decl d105_demand_alt_6(n: node)
+d105_demand_alt_6(n) :- d105_demand_public_class(n), kind(n, "class_definition").
+
+// demand_public_class: the nodes public_class is asked at (its recursion looks at every descendant)
+.decl d105_demand_public_class(n: node)
+d105_demand_public_class(p2_1) :- kind(n, "identifier"), glob("__{_,**__,}", n),
+    node(_, n, _, _, _), NAME = n, field(p1, "name", n), kind(p1, "function_definition"),
+    within_stop(p1, p2_1, d105_stop_10), kind(p2_1, "class_definition").
+d105_demand_public_class(p2_2) :- kind(n, "identifier"), glob("__{_,**__,}", n),
+    node(_, n, _, _, _), NAME = n, field(p1, "name", n), kind(p1, "function_definition"),
+    within_stop(p1, p2_2, d105_stop_10), kind(p2_2, "class_definition").
+d105_demand_public_class(p1) :- d105_demand_alt_6(n), d105_up_2(n, p1).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl d105_up_1(n: node, p: node)
+d105_up_1(n, p) :- d105_demand_alt_6(n), within_stop(n, p, d105_stop_10), kind(p, "class_definition"),
+    d105_public_class(p).
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl d105_up_2(n: node, p: node)
+d105_up_2(n, p) :- d105_demand_alt_6(n), within_stop(n, p, d105_stop_10), kind(p, "class_definition").
+
+// stop_10: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl d105_stop_10(kind: symbol)
+d105_stop_10("function_definition"). d105_stop_10("class_definition").
+
+// set_11: symbols from the JSON `resolves.import`
+.decl d105_set_11(v: symbol)
+d105_set_11("typing.overload"). d105_set_11("typing_extensions.overload").
+d105_set_11("_typeshed.overload"). d105_set_11("typing.override").
+d105_set_11("typing_extensions.override"). d105_set_11("_typeshed.override").
+
+// counted_1(n): the siblings the JSON `nthChild.ofRule` counts
+.decl d105_counted_1(n: node)
+d105_counted_1(n) :- node(_, n, _, _, _), !kind(n, "comment").
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl d105_alt_6(n: node)
+d105_alt_6(n) :- d105_demand_alt_6(n), d105_up_1(n, p1).
+d105_alt_6(n) :- d105_demand_alt_6(n),
+    count : { within(n, p2), (kind(p2, "function_definition") ; kind(p2, "class_definition")) } = 0,
+    field(n, "name", c3),
+    ( count : { inside(c3, p1, "module"), d105_stop_10_within(c1, p1), d105_dunder_all(c1) } = 0
+    ; site_exported(c3)
+    ).
+
+
+// alt_12(n): the JSON `any`: n matches if any one of these rules does
+//   NAME: metavariable this relation binds for the calling rule
+.decl d105_alt_12(n: node, name: loc)
+d105_alt_12(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n.
+d105_alt_12(n, NAME) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    kind(c1, "identifier"), node(_, c1, _, _, _), NAME = c1.
+
+// alt_13(n): the JSON `any`: n matches if any one of these rules does
+//   NAME: metavariable this relation binds for the calling rule
+.decl d105_alt_13(n: node, name: loc)
+d105_alt_13(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n.
+d105_alt_13(n, NAME) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    d105_alt_12(c1, NAME).
+
+// stop_10_within: within_stop over the stop set stop_10, read inside an aggregate
+.decl d105_stop_10_within(n: node, a: node)
+d105_stop_10_within(x, y) :- within_stop(x, y, d105_stop_10).
+
+// main's file condition {"notRegex": "\\.pyi$|(?:^|[\\\\/])(?:_|_[^_\\\\/][^\\\\/]*|__[^\\\\/]*[^_\\\\/]_?)\\.[^.\\\\/]+$"}
+.decl D105_raw(at: node, name: loc)
+D105(v0, v1) :- D105_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$|(?:^|[\\\\/])(?:_|_[^_\\\\/][^\\\\/]*|__[^\\\\/]*[^_\\\\/]_?)\\.[^.\\\\/]+$", rr_p).
+
+// main's file condition {"notRegex": "\\.pyi$"}
+.decl D105_undocumented_magic_method_in_package_raw(at: node, name: loc)
+D105_undocumented_magic_method_in_package(v0, v1) :- D105_undocumented_magic_method_in_package_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

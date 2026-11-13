@@ -1,0 +1,27 @@
+.policy "ruff-b022-useless-contextlib-suppress" revision 1
+.guests off
+.description "Pass at least one exception type to contextlib.b022_suppress(); with none it suppresses nothing."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B022(n): a finding at node n, from clause `useless-contextlib-suppress`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B022(at: node) "No arguments passed to `contextlib.suppress`. No exceptions will be suppressed and therefore this context manager is redundant"
+    suppress noqa "B022"
+B022(n) :- kind(n, "call"), child(n, c1, _), kind(c1, "argument_list"),
+    count : { child(c1, c2, _), !b022_alt_1(c2) } = 0, next_sibling(s3, c1), b022_suppress(s3).
+
+// b022_suppress(n): the JSON util `suppress`, used where the JSON says `matches: "suppress"`
+.decl b022_suppress(n: node)
+b022_suppress(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "contextlib.suppress").
+b022_suppress(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), b022_suppress(c1).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl b022_alt_1(n: node)
+b022_alt_1(n) :- (kind(n, "keyword_argument") ; kind(n, "dictionary_splat") ; kind(n, "comment")).
+b022_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).

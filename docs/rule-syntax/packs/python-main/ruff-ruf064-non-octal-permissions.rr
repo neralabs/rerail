@@ -1,0 +1,176 @@
+.policy "ruff-ruf064-non-octal-permissions" revision 1
+.guests off
+.description "Write file permission modes passed to os, dbm and pathlib functions as octal literals with a 0o prefix; a plain integer such as 644 is decimal and sets different permissions."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// bad_mode(n): the JSON util `bad-mode`, used where the JSON says `matches: "bad-mode"`
+//   LIT: metavariable this relation binds for the calling rule
+.decl ruf064_bad_mode(n: node, lit: loc)
+ruf064_bad_mode(n, LIT) :- kind(n, "integer"), node(_, n, _, _, _), LIT = n,
+    match("(?:0[xXbB][0-9a-fA-F_]+|[0-9][0-9_]*)", n), !glob("0", n).
+ruf064_bad_mode(n, LIT) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf064_bad_mode(c1, LIT).
+
+// path_class(n): the JSON util `path-class`, used where the JSON says `matches: "path-class"`
+.decl ruf064_path_class(n: node)
+ruf064_path_class(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "pathlib.Path")
+    ; sym_of(n, "pathlib.PosixPath")
+    ; sym_of(n, "pathlib.WindowsPath")
+    ).
+
+
+// path_call(n): the JSON util `path-call`, used where the JSON says `matches: "path-call"`
+.decl ruf064_path_call(n: node)
+ruf064_path_call(n) :- kind(n, "call"), within_stop(c1, n, ruf064_stop_1), ruf064_path_class(c1).
+
+// path_value(n): the JSON util `path-value`, used where the JSON says `matches: "path-value"`
+.decl ruf064_path_value(n: node)
+ruf064_path_value(n) :- ruf064_path_call(n).
+ruf064_path_value(n) :- kind(n, "parenthesized_expression"), within_stop(c1, n, ruf064_stop_1),
+    ruf064_path_call(c1).
+
+// plain_target(n): the JSON util `plain-target`, used where the JSON says `matches: "plain-target"`
+.decl ruf064_plain_target(n: node)
+ruf064_plain_target(n) :- kind(n, "identifier").
+ruf064_plain_target(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf064_plain_target(c1).
+
+// path_object(n): the JSON util `path-object`, used where the JSON says `matches: "path-object"`
+.decl ruf064_path_object(n: node)
+ruf064_path_object(n) :- ruf064_path_call(n).
+ruf064_path_object(n) :- kind(n, "identifier"), ref_site(n, b1), binding_value(b1, x2),
+    ruf064_path_value(x2).
+ruf064_path_object(n) :- kind(n, "identifier"), ref_site(n, b3), kind(b3, "as_pattern"),
+    child(p4, b3, _), kind(p4, "with_item"), child(b3, c5, _), ruf064_path_value(c5),
+    ruf064_tok_precedes_1(c5), child(b3, c13, _), kind(c13, "as_pattern_target"),
+    child(c13, c14, _), ruf064_plain_target(c14).
+ruf064_path_object(n) :- kind(n, "parenthesized_expression"), child(n, c15, _),
+    ruf064_path_object(c15).
+
+// path_method(n): the JSON util `path-method`, used where the JSON says `matches: "path-method"`
+.decl ruf064_path_method(n: node)
+ruf064_path_method(n) :- kind(n, "attribute"), field(n, "object", c1), ruf064_path_object(c1).
+
+// umask_fn(n): the JSON util `umask-fn`, used where the JSON says `matches: "umask-fn"`
+.decl ruf064_umask_fn(n: node)
+ruf064_umask_fn(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "os.umask").
+
+// second_slot_fn(n): the JSON util `second-slot-fn`, used where the JSON says `matches: "second-slot-fn"`
+.decl ruf064_second_slot_fn(n: node)
+ruf064_second_slot_fn(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), ruf064_set_3(q1).
+
+// third_slot_fn(n): the JSON util `third-slot-fn`, used where the JSON says `matches: "third-slot-fn"`
+.decl ruf064_third_slot_fn(n: node)
+ruf064_third_slot_fn(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "os.open")
+    ; sym_of(n, "dbm.open")
+    ; sym_of(n, "dbm.gnu.open")
+    ; sym_of(n, "dbm.ndbm.open")
+    ).
+
+
+// makedirs_fn(n): the JSON util `makedirs-fn`, used where the JSON says `matches: "makedirs-fn"`
+.decl ruf064_makedirs_fn(n: node)
+ruf064_makedirs_fn(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "os.makedirs").
+
+// kw_mode(n): the JSON util `kw-mode`, used where the JSON says `matches: "kw-mode"`
+.decl ruf064_kw_mode(n: node)
+ruf064_kw_mode(n) :- kind(n, "keyword_argument"), field(n, "name", c1), glob("mode", c1).
+
+// kw_parent_mode(n): the JSON util `kw-parent-mode`, used where the JSON says `matches: "kw-parent-mode"`
+//   LIT: metavariable this relation binds for the calling rule
+.decl ruf064_kw_parent_mode(n: node, lit: loc)
+ruf064_kw_parent_mode(n, LIT) :- kind(n, "argument_list"), child(n, c1, _),
+    kind(c1, "keyword_argument"), field(c1, "name", c2), glob("parent_mode", c2),
+    field(c1, "value", c3), ruf064_bad_mode(c3, LIT).
+
+// arg(n): the JSON util `arg`, used where the JSON says `matches: "arg"`
+.decl ruf064_arg(n: node)
+ruf064_arg(n) :- node(_, n, _, _, _), !kind(n, "comment"), !kind(n, "line_continuation").
+
+// kw_bad(n): the JSON util `kw-bad`, used where the JSON says `matches: "kw-bad"`
+//   LIT: metavariable this relation binds for the calling rule
+.decl ruf064_kw_bad(n: node, lit: loc)
+ruf064_kw_bad(n, LIT) :- child(n, c1, _), ruf064_kw_mode(c1), field(c1, "value", c2),
+    ruf064_bad_mode(c2, LIT).
+
+// no_kw(n): the JSON util `no-kw`, used where the JSON says `matches: "no-kw"`
+.decl ruf064_no_kw(n: node)
+ruf064_no_kw(n) :- node(_, n, _, _, _), count : { child(n, c1, _), ruf064_kw_mode(c1) } = 0.
+
+// mode_at_0(n): the JSON util `mode-at-0`, used where the JSON says `matches: "mode-at-0"`
+//   LIT: metavariable this relation binds for the calling rule
+.decl ruf064_mode_at_0(n: node, lit: loc)
+ruf064_mode_at_0(n, LIT) :- kind(n, "argument_list"),
+    ( ruf064_kw_bad(n, LIT)
+    ; ruf064_no_kw(n), child(n, c1, _), ruf064_bad_mode(c1, LIT), child(p1, c1, _), ruf064_counted(c1), k1 = count : { child(p1, s1, _), precedes(s1, c1), ruf064_counted(s1) }, k1 = 0, count : { precedes(s2, c1), kind(s2, "list_splat") } = 0
+    ).
+
+
+// mode_at_1(n): the JSON util `mode-at-1`, used where the JSON says `matches: "mode-at-1"`
+//   LIT: metavariable this relation binds for the calling rule
+.decl ruf064_mode_at_1(n: node, lit: loc)
+ruf064_mode_at_1(n, LIT) :- kind(n, "argument_list"),
+    ( ruf064_kw_bad(n, LIT)
+    ; ruf064_no_kw(n), child(n, c1, _), ruf064_bad_mode(c1, LIT), child(p1, c1, _), ruf064_counted(c1), k1 = count : { child(p1, s1, _), precedes(s1, c1), ruf064_counted(s1) }, k1 = 1, count : { precedes(s2, c1), kind(s2, "list_splat") } = 0
+    ).
+
+
+// mode_at_2(n): the JSON util `mode-at-2`, used where the JSON says `matches: "mode-at-2"`
+//   LIT: metavariable this relation binds for the calling rule
+.decl ruf064_mode_at_2(n: node, lit: loc)
+ruf064_mode_at_2(n, LIT) :- kind(n, "argument_list"),
+    ( ruf064_kw_bad(n, LIT)
+    ; ruf064_no_kw(n), child(n, c1, _), ruf064_bad_mode(c1, LIT), child(p1, c1, _), ruf064_counted(c1), k1 = count : { child(p1, s1, _), precedes(s1, c1), ruf064_counted(s1) }, k1 = 2, count : { precedes(s2, c1), kind(s2, "list_splat") } = 0
+    ).
+
+
+// RUF064(n): findings from clauses `non-octal-mode`, `non-octal-parent-mode`, which say the same.
+// Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF064(at: node, lit: node) "Write `{lit}` as an octal literal: if its digits read as a mode (644, 755), add the `0o` prefix; otherwise write the same value in octal (decimal 420 is `0o644`, `0x1ff` is `0o777`)."
+    suppress noqa "RUF064"
+RUF064(LIT, n) :- kind(n, "call"),
+    ( within_stop(c1, n, ruf064_stop_1), ruf064_umask_fn(c1), child(n, c2, _), ruf064_mode_at_0(c2, LIT)
+    ; within_stop(c3, n, ruf064_stop_1), ruf064_path_method(c3), field(c3, "attribute", c4), glob("{chmod,lchmod,mkdir,touch}", c4), child(n, c5, _), ruf064_mode_at_0(c5, LIT)
+    ; within_stop(c6, n, ruf064_stop_1), ruf064_second_slot_fn(c6), child(n, c7, _), ruf064_mode_at_1(c7, LIT)
+    ; within_stop(c8, n, ruf064_stop_1), ruf064_third_slot_fn(c8), child(n, c9, _), ruf064_mode_at_2(c9, LIT)
+    ).
+
+RUF064(LIT, n) :- kind(n, "call"),
+    ( within_stop(c1, n, ruf064_stop_1), ruf064_makedirs_fn(c1)
+    ; within_stop(c2, n, ruf064_stop_1), ruf064_path_method(c2), field(c2, "attribute", c3), glob("mkdir", c3)
+    ),
+    child(n, c4, _), ruf064_kw_parent_mode(c4, LIT).
+
+// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf064_tok_precedes_1(n: node)
+.stored ruf064_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf064_tok_precedes_1(n) :- precedes(n, s6), glob("as", s6).
+ruf064_tok_precedes_1(n) :- child(p9, n, _), node(_, n, _, _, en12),
+    token(p9, _, t7, st11, _), st11 >= en12, match("as", t7).
+ruf064_tok_precedes_1(n) :- structural_after(n, g8),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g8).
+ruf064_tok_precedes_1(n) :- precedes(n, o10), structural_after(o10, g8),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g8).
+
+// set_3: symbols from the JSON `resolves.import`
+.decl ruf064_set_3(v: symbol)
+ruf064_set_3("os.chmod"). ruf064_set_3("os.fchmod"). ruf064_set_3("os.lchmod"). ruf064_set_3("os.mkdir").
+ruf064_set_3("os.makedirs"). ruf064_set_3("os.mkfifo"). ruf064_set_3("os.mknod").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf064_stop_1(n: node)
+ruf064_stop_1(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// counted(n): 6 identical copies of one rule set (`counted_10`, `counted_12`, `counted_4` and 3 more), folded into one.
+.decl ruf064_counted(n: node)
+ruf064_counted(n) :- ruf064_arg(n).

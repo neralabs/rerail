@@ -1,0 +1,360 @@
+.policy "ruff-f632-is-literal" revision 2
+.guests off
+.description "Use == or != instead of is or is not to compare literal values; the identity of such values is unreliable."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// F632(n, detail): findings from clauses `is-literal-is`, `is-literal-is-not`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation F632(at: node, o: loc, c: node, detail: symbol) "Use {detail} to compare this literal value."
+    suppress noqa "F632"
+// O: not bound by this rule, so empty (unset) here, as in ast-grep.
+F632(C, O, n, "`==` instead of `is`") :- f632_is_literal_op(n), child(p1, n, _),
+    kind(p1, "comparison_operator"), node(_, p1, _, _, _), C = p1, unset(O).
+F632(C, O, n, "`==` instead of `is`") :- f632_is_literal_in_string(n, C, O).
+// O: not bound by this rule, so empty (unset) here, as in ast-grep.
+F632(C, O, n, "`!=` instead of `is not`") :- f632_is_literal_op_is_literal_is_not(n),
+    child(p1, n, _), kind(p1, "comparison_operator"), node(_, p1, _, _, _), C = p1, unset(O).
+F632(C, O, n, "`!=` instead of `is not`") :- f632_is_literal_in_string_is_literal_is_not(n, C, O).
+
+// constant(n): the JSON util `constant`, used where the JSON says `matches: "constant"`
+.decl f632_constant(n: node)
+f632_constant(n) :- f632_constant_u7(n).
+
+// singleton(n): the JSON util `singleton`, used where the JSON says `matches: "singleton"`
+.decl f632_singleton(n: node)
+f632_singleton(n) :- (kind(n, "none") ; kind(n, "true") ; kind(n, "false") ; kind(n, "ellipsis")).
+f632_singleton(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), f632_singleton(c1).
+
+// constant_non_singleton(n): the JSON util `constant-non-singleton`, used where the JSON says `matches: "constant-non-singleton"`
+.decl f632_constant_non_singleton(n: node)
+f632_constant_non_singleton(n) :- f632_constant(n), !f632_singleton(n).
+
+// literal_operand(n): the JSON util `literal-operand`, used where the JSON says `matches: "literal-operand"`
+.decl f632_literal_operand(n: node)
+f632_literal_operand(n) :- kind(n, k1), f632_set_3(k1).
+f632_literal_operand(n) :- f632_constant_non_singleton(n).
+f632_literal_operand(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    f632_literal_operand(c2).
+
+// is_literal_op(n): the JSON util `is-literal-op`, used where the JSON says `matches: "is-literal-op"`
+.decl f632_is_literal_op(n: node)
+f632_is_literal_op(n) :- glob("is", n),
+    ( next_sibling(s1, n), f632_literal_operand(s1)
+    ; next_sibling(n, s2), f632_literal_operand(s2)
+    ).
+
+
+// is_literal_in_string(n): the JSON util `is-literal-in-string`, used where the JSON says `matches: "is-literal-in-string"`
+//   C, O: metavariables this relation binds for the calling rule
+.decl f632_is_literal_in_string(n: node, c: loc, o: loc)
+f632_is_literal_in_string(n, C, O) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), f632_alt_5(c2, C, O).
+
+// constant_is_literal_is_not(n): the JSON util `constant`, used where the JSON says `matches: "constant"`
+.decl f632_constant_is_literal_is_not(n: node)
+f632_constant_is_literal_is_not(n) :- f632_constant_is_literal_is_not_u7(n).
+
+// singleton_is_literal_is_not(n): the JSON util `singleton`, used where the JSON says `matches: "singleton"`
+.decl f632_singleton_is_literal_is_not(n: node)
+f632_singleton_is_literal_is_not(n) :- (kind(n, "none") ; kind(n, "true") ; kind(n, "false") ; kind(n, "ellipsis")).
+f632_singleton_is_literal_is_not(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    f632_singleton_is_literal_is_not(c1).
+
+// constant_non_singleton_is_literal_is_not(n): the JSON util `constant-non-singleton`, used where the JSON says `matches: "constant-non-singleton"`
+.decl f632_constant_non_singleton_is_literal_is_not(n: node)
+f632_constant_non_singleton_is_literal_is_not(n) :- f632_constant_is_literal_is_not(n),
+    !f632_singleton_is_literal_is_not(n).
+
+// literal_operand_is_literal_is_not(n): the JSON util `literal-operand`, used where the JSON says `matches: "literal-operand"`
+.decl f632_literal_operand_is_literal_is_not(n: node)
+f632_literal_operand_is_literal_is_not(n) :- kind(n, k1), f632_set_3(k1).
+f632_literal_operand_is_literal_is_not(n) :- f632_constant_non_singleton_is_literal_is_not(n).
+f632_literal_operand_is_literal_is_not(n) :- kind(n, "parenthesized_expression"),
+    child(n, c2, _), f632_literal_operand_is_literal_is_not(c2).
+
+// is_literal_op_is_literal_is_not(n): the JSON util `is-literal-op`, used where the JSON says `matches: "is-literal-op"`
+.decl f632_is_literal_op_is_literal_is_not(n: node)
+f632_is_literal_op_is_literal_is_not(n) :- match("is[\\s\\\\]+not", n),
+    ( next_sibling(s1, n), f632_literal_operand_is_literal_is_not(s1)
+    ; next_sibling(n, s2), f632_literal_operand_is_literal_is_not(s2)
+    ).
+
+
+// is_literal_in_string_is_literal_is_not(n): the JSON util `is-literal-in-string`, used where the JSON says `matches: "is-literal-in-string"`
+//   C, O: metavariables this relation binds for the calling rule
+.decl f632_is_literal_in_string_is_literal_is_not(n: node, c: loc, o: loc)
+f632_is_literal_in_string_is_literal_is_not(n, C, O) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), f632_alt_10(c2, C, O).
+
+.decl f632_alt_7_u0(n: node)
+f632_alt_7_u0(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl f632_alt_7_u1(n: node)
+f632_alt_7_u1(n) :- f632_constant_is_literal_is_not_u0(n).
+f632_alt_7_u1(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl f632_alt_7_u2(n: node)
+f632_alt_7_u2(n) :- f632_constant_is_literal_is_not_u1(n).
+f632_alt_7_u2(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl f632_alt_7_u3(n: node)
+f632_alt_7_u3(n) :- f632_constant_is_literal_is_not_u2(n).
+f632_alt_7_u3(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl f632_alt_7_u4(n: node)
+f632_alt_7_u4(n) :- f632_constant_is_literal_is_not_u3(n).
+f632_alt_7_u4(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl f632_alt_7_u5(n: node)
+f632_alt_7_u5(n) :- f632_constant_is_literal_is_not_u4(n).
+f632_alt_7_u5(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl f632_alt_7_u6(n: node)
+f632_alt_7_u6(n) :- f632_constant_is_literal_is_not_u5(n).
+f632_alt_7_u6(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl f632_alt_7_u7(n: node)
+f632_alt_7_u7(n) :- f632_constant_is_literal_is_not_u6(n).
+f632_alt_7_u7(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl f632_constant_is_literal_is_not_u0(n: node)
+f632_constant_is_literal_is_not_u0(n) :- kind(n, k1), f632_set_1(k1).
+f632_constant_is_literal_is_not_u0(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+f632_constant_is_literal_is_not_u0(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+f632_constant_is_literal_is_not_u0(n) :- kind(n, "tuple"), count : { child(n, c5, _) } = 0.
+
+.decl f632_constant_is_literal_is_not_u1(n: node)
+f632_constant_is_literal_is_not_u1(n) :- kind(n, k1), f632_set_1(k1).
+f632_constant_is_literal_is_not_u1(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+f632_constant_is_literal_is_not_u1(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+f632_constant_is_literal_is_not_u1(n) :- kind(n, "parenthesized_expression"),
+    child(n, c4, _), f632_constant_is_literal_is_not_u0(c4).
+f632_constant_is_literal_is_not_u1(n) :- kind(n, "tuple"),
+    count : { child(n, c5, _), !f632_alt_7_u0(c5) } = 0.
+
+.decl f632_constant_is_literal_is_not_u2(n: node)
+f632_constant_is_literal_is_not_u2(n) :- kind(n, k1), f632_set_1(k1).
+f632_constant_is_literal_is_not_u2(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+f632_constant_is_literal_is_not_u2(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+f632_constant_is_literal_is_not_u2(n) :- kind(n, "parenthesized_expression"),
+    child(n, c4, _), f632_constant_is_literal_is_not_u1(c4).
+f632_constant_is_literal_is_not_u2(n) :- kind(n, "tuple"),
+    count : { child(n, c5, _), !f632_alt_7_u1(c5) } = 0.
+
+.decl f632_constant_is_literal_is_not_u3(n: node)
+f632_constant_is_literal_is_not_u3(n) :- kind(n, k1), f632_set_1(k1).
+f632_constant_is_literal_is_not_u3(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+f632_constant_is_literal_is_not_u3(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+f632_constant_is_literal_is_not_u3(n) :- kind(n, "parenthesized_expression"),
+    child(n, c4, _), f632_constant_is_literal_is_not_u2(c4).
+f632_constant_is_literal_is_not_u3(n) :- kind(n, "tuple"),
+    count : { child(n, c5, _), !f632_alt_7_u2(c5) } = 0.
+
+.decl f632_constant_is_literal_is_not_u4(n: node)
+f632_constant_is_literal_is_not_u4(n) :- kind(n, k1), f632_set_1(k1).
+f632_constant_is_literal_is_not_u4(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+f632_constant_is_literal_is_not_u4(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+f632_constant_is_literal_is_not_u4(n) :- kind(n, "parenthesized_expression"),
+    child(n, c4, _), f632_constant_is_literal_is_not_u3(c4).
+f632_constant_is_literal_is_not_u4(n) :- kind(n, "tuple"),
+    count : { child(n, c5, _), !f632_alt_7_u3(c5) } = 0.
+
+.decl f632_constant_is_literal_is_not_u5(n: node)
+f632_constant_is_literal_is_not_u5(n) :- kind(n, k1), f632_set_1(k1).
+f632_constant_is_literal_is_not_u5(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+f632_constant_is_literal_is_not_u5(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+f632_constant_is_literal_is_not_u5(n) :- kind(n, "parenthesized_expression"),
+    child(n, c4, _), f632_constant_is_literal_is_not_u4(c4).
+f632_constant_is_literal_is_not_u5(n) :- kind(n, "tuple"),
+    count : { child(n, c5, _), !f632_alt_7_u4(c5) } = 0.
+
+.decl f632_constant_is_literal_is_not_u6(n: node)
+f632_constant_is_literal_is_not_u6(n) :- kind(n, k1), f632_set_1(k1).
+f632_constant_is_literal_is_not_u6(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+f632_constant_is_literal_is_not_u6(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+f632_constant_is_literal_is_not_u6(n) :- kind(n, "parenthesized_expression"),
+    child(n, c4, _), f632_constant_is_literal_is_not_u5(c4).
+f632_constant_is_literal_is_not_u6(n) :- kind(n, "tuple"),
+    count : { child(n, c5, _), !f632_alt_7_u5(c5) } = 0.
+
+.decl f632_constant_is_literal_is_not_u7(n: node)
+f632_constant_is_literal_is_not_u7(n) :- kind(n, k1), f632_set_1(k1).
+f632_constant_is_literal_is_not_u7(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+f632_constant_is_literal_is_not_u7(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+f632_constant_is_literal_is_not_u7(n) :- kind(n, "parenthesized_expression"),
+    child(n, c4, _), f632_constant_is_literal_is_not_u6(c4).
+f632_constant_is_literal_is_not_u7(n) :- kind(n, "tuple"),
+    count : { child(n, c5, _), !f632_alt_7_u6(c5) } = 0.
+
+.decl f632_alt_2_u0(n: node)
+f632_alt_2_u0(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl f632_alt_2_u1(n: node)
+f632_alt_2_u1(n) :- f632_constant_u0(n).
+f632_alt_2_u1(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl f632_alt_2_u2(n: node)
+f632_alt_2_u2(n) :- f632_constant_u1(n).
+f632_alt_2_u2(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl f632_alt_2_u3(n: node)
+f632_alt_2_u3(n) :- f632_constant_u2(n).
+f632_alt_2_u3(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl f632_alt_2_u4(n: node)
+f632_alt_2_u4(n) :- f632_constant_u3(n).
+f632_alt_2_u4(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl f632_alt_2_u5(n: node)
+f632_alt_2_u5(n) :- f632_constant_u4(n).
+f632_alt_2_u5(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl f632_alt_2_u6(n: node)
+f632_alt_2_u6(n) :- f632_constant_u5(n).
+f632_alt_2_u6(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl f632_alt_2_u7(n: node)
+f632_alt_2_u7(n) :- f632_constant_u6(n).
+f632_alt_2_u7(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+.decl f632_constant_u0(n: node)
+f632_constant_u0(n) :- kind(n, k1), f632_set_1(k1).
+f632_constant_u0(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+f632_constant_u0(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+f632_constant_u0(n) :- kind(n, "tuple"), count : { child(n, c5, _) } = 0.
+
+.decl f632_constant_u1(n: node)
+f632_constant_u1(n) :- kind(n, k1), f632_set_1(k1).
+f632_constant_u1(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+f632_constant_u1(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+f632_constant_u1(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    f632_constant_u0(c4).
+f632_constant_u1(n) :- kind(n, "tuple"), count : { child(n, c5, _), !f632_alt_2_u0(c5) } = 0.
+
+.decl f632_constant_u2(n: node)
+f632_constant_u2(n) :- kind(n, k1), f632_set_1(k1).
+f632_constant_u2(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+f632_constant_u2(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+f632_constant_u2(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    f632_constant_u1(c4).
+f632_constant_u2(n) :- kind(n, "tuple"), count : { child(n, c5, _), !f632_alt_2_u1(c5) } = 0.
+
+.decl f632_constant_u3(n: node)
+f632_constant_u3(n) :- kind(n, k1), f632_set_1(k1).
+f632_constant_u3(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+f632_constant_u3(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+f632_constant_u3(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    f632_constant_u2(c4).
+f632_constant_u3(n) :- kind(n, "tuple"), count : { child(n, c5, _), !f632_alt_2_u2(c5) } = 0.
+
+.decl f632_constant_u4(n: node)
+f632_constant_u4(n) :- kind(n, k1), f632_set_1(k1).
+f632_constant_u4(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+f632_constant_u4(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+f632_constant_u4(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    f632_constant_u3(c4).
+f632_constant_u4(n) :- kind(n, "tuple"), count : { child(n, c5, _), !f632_alt_2_u3(c5) } = 0.
+
+.decl f632_constant_u5(n: node)
+f632_constant_u5(n) :- kind(n, k1), f632_set_1(k1).
+f632_constant_u5(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+f632_constant_u5(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+f632_constant_u5(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    f632_constant_u4(c4).
+f632_constant_u5(n) :- kind(n, "tuple"), count : { child(n, c5, _), !f632_alt_2_u4(c5) } = 0.
+
+.decl f632_constant_u6(n: node)
+f632_constant_u6(n) :- kind(n, k1), f632_set_1(k1).
+f632_constant_u6(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+f632_constant_u6(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+f632_constant_u6(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    f632_constant_u5(c4).
+f632_constant_u6(n) :- kind(n, "tuple"), count : { child(n, c5, _), !f632_alt_2_u5(c5) } = 0.
+
+.decl f632_constant_u7(n: node)
+f632_constant_u7(n) :- kind(n, k1), f632_set_1(k1).
+f632_constant_u7(n) :- kind(n, "string"),
+    count : { has(n, c2, "interpolation"), node(_, c2, _, _, _) } = 0.
+f632_constant_u7(n) :- kind(n, "concatenated_string"),
+    count : { has(n, c3, "interpolation"), node(_, c3, _, _, _) } = 0.
+f632_constant_u7(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    f632_constant_u6(c4).
+f632_constant_u7(n) :- kind(n, "tuple"), count : { child(n, c5, _), !f632_alt_2_u6(c5) } = 0.
+
+// alt_7_u0_empty: level -1 of an unrolled recursion, empty
+.decl f632_alt_7_u0_empty(n: node)
+
+// constant_is_literal_is_not_u0_empty: level -1 of an unrolled recursion, empty
+.decl f632_constant_is_literal_is_not_u0_empty(n: node)
+
+// alt_2_u0_empty: level -1 of an unrolled recursion, empty
+.decl f632_alt_2_u0_empty(n: node)
+
+// constant_u0_empty: level -1 of an unrolled recursion, empty
+.decl f632_constant_u0_empty(n: node)
+
+// set_1: node kinds from a JSON `any`
+.decl f632_set_1(v: symbol)
+f632_set_1("integer"). f632_set_1("float"). f632_set_1("none"). f632_set_1("true"). f632_set_1("false").
+f632_set_1("ellipsis").
+
+// set_3: node kinds from a JSON `any`
+.decl f632_set_3(v: symbol)
+f632_set_3("set"). f632_set_3("set_comprehension"). f632_set_3("list"). f632_set_3("list_comprehension").
+f632_set_3("dictionary"). f632_set_3("dictionary_comprehension").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl f632_alt_2(n: node)
+f632_alt_2(n) :- f632_alt_2_u7(n).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+//   C, O: metavariables this relation binds for the calling rule
+.decl f632_alt_5(n: node, c: loc, o: loc)
+f632_alt_5(n, C, O) :- kind(n, "comparison_operator"), child(n, c1, _), f632_is_literal_op(c1),
+    O = c1, C = n.
+f632_alt_5(n, C, O) :- f632_is_literal_in_string(n, C, O).
+
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+.decl f632_alt_7(n: node)
+f632_alt_7(n) :- f632_alt_7_u7(n).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+//   C, O: metavariables this relation binds for the calling rule
+.decl f632_alt_10(n: node, c: loc, o: loc)
+f632_alt_10(n, C, O) :- kind(n, "comparison_operator"), child(n, c1, _),
+    f632_is_literal_op_is_literal_is_not(c1), O = c1, C = n.
+f632_alt_10(n, C, O) :- f632_is_literal_in_string_is_literal_is_not(n, C, O).

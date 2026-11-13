@@ -1,0 +1,163 @@
+.policy "ruff-rse102-unnecessary-paren-on-raise-exception" revision 1
+.guests off
+.description "Remove the empty parentheses when raising an exception class; raise instantiates the class itself."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// RSE102(n): a finding at node n, from clause `unnecessary-paren-on-raise`.
+// Each rule below is one way the JSON `rule` can match.
+.violation RSE102(at: node) "Remove the empty parentheses so the class is raised directly; keep them if the callee is a function that returns the exception."
+    suppress noqa "RSE102"
+RSE102(n) :- kind(n, "argument_list"), count : { child(n, c1, _), !rse102_alt_15(c1) } = 0,
+    child(p2, n, _), kind(p2, "call"), rse102_raised(p2), field(p2, "function", c3),
+    rse102_callee(c3).
+
+// raised(n): the JSON util `raised`, used where the JSON says `matches: "raised"`
+.decl rse102_raised(n: node)
+rse102_raised(n) :- precedes_stop(s1, n, rse102_stop_1), glob("raise", s1), child(p2, n, _),
+    kind(p2, "raise_statement").
+rse102_raised(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"), rse102_raised(p3).
+
+// lowercase_name(n): the JSON util `lowercase-name`, used where the JSON says `matches: "lowercase-name"`
+.decl rse102_lowercase_name(n: node)
+rse102_lowercase_name(n) :- node(_, n, _, _, _), match("_?\\p{Lowercase}.*", n).
+
+// win_error(n): the JSON util `win-error`, used where the JSON says `matches: "win-error"`
+.decl rse102_win_error(n: node)
+rse102_win_error(n) :- sym_of(n, "ctypes.WinError").
+
+// class_of(n, …): the JSON util `class-of`, called with `matches` and arguments E, K
+//   P: metavariable of the calling rule, passed in (bound by the caller)
+//   I, N, ND, O, Q: metavariables this relation binds for the calling rule
+.decl rse102_class_of(n: node, e: node, k: node, i: loc, n_mv: loc, nd: loc, o: loc, p: loc, q: loc)
+// K: not bound by this rule, so empty (unset) here, as in ast-grep.
+rse102_class_of(n, E, K, I, N, ND, O, P, Q) :- rse102_demand_class_of(n), node(_, n, _, _, _), E = n,
+    rse102_alt_2(n, E, I, N, ND, O, P, Q), unset(K).
+
+// member_class(n, …): the JSON util `member-class`, called with `matches` and arguments E, S
+//   P: metavariable of the calling rule, passed in (bound by the caller)
+//   I, N, ND, O, Q: metavariables this relation binds for the calling rule
+.decl rse102_member_class(n: node, e: node, s: node, i: loc, n_mv: loc, nd: loc, o: loc, p: loc, q: loc)
+rse102_member_class(n, E, S, I, N, ND, O, P, Q) :- rse102_demand_member_class(n),
+    kind(n, "attribute"), node(_, n, _, _, _), E = n, field(n, "object", c1), node(_, c1, _, _, _), O = c1,
+    rse102_class_of(c1, O, P, I, N, ND, O, P, Q), field(n, "attribute", c2), node(_, c2, _, _, _), N = c2,
+    inside(n, p3, "module"), has(p3, c4, "class_definition"), node(_, c4, _, _, _), Q = c4,
+    text(Q, t5), text(P, t5), within_stop(c7, c4, rse102_stop_14),
+    kind(c7, "class_definition"), field(c7, "name", c8), node(_, c8, _, _, _), ND = c8,
+    value(ND, t9), value(N, t9), site_latest(c8), node(_, c7, _, _, _), S = c7, @doc(Q) = @doc(P).
+
+// member_def(n, …): the JSON util `member-def`, called with `matches` and arguments E
+.decl rse102_member_def(n: node, e: node)
+rse102_member_def(n, E) :- rse102_demand_member_def(n), kind(n, "attribute"), node(_, n, _, _, _), E = n,
+    field(n, "object", c1), node(_, c1, _, _, _), O = c1, rse102_class_of(c1, O, P, _, N, ND, O, P, Q),
+    field(n, "attribute", c2), node(_, c2, _, _, _), N = c2, inside(n, p3, "module"),
+    has(p3, c4, "class_definition"), node(_, c4, _, _, _), Q = c4, text(Q, t5), text(P, t5),
+    within_stop(c7, c4, rse102_stop_14), kind(c7, "function_definition"),
+    field(c7, "name", c8), node(_, c8, _, _, _), ND = c8, value(ND, t9), value(N, t9), site_latest(c8), @doc(Q) = @doc(P).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl rse102_callee(n: node)
+rse102_callee(n) :- rse102_demand_callee(n), kind(n, "parenthesized_expression"), child(n, c1, _),
+    rse102_callee(c1).
+rse102_callee(n) :- rse102_demand_callee(n), kind(n, "identifier"),
+    ( global_ref(n, _)
+    ; !rse102_nonlocal_name(n, NM), ref_site(n, b1), site_stop_at_global(b1), kind(b1, "class_definition")
+    ; count : { !rse102_nonlocal_name(n, NM), ref_site(n, b1_4), site_stop_at_global(b1_4), kind(b1_4, "function_definition") } = 0, count : { rse102_lowercase_name(n) } = 0, count : { rse102_win_error(n) } = 0
+    ),
+    node(_, n, _, _, _), NM = n.
+rse102_callee(n) :- rse102_demand_callee(n), kind(n, "attribute"), node(_, n, _, _, _), CAL = n,
+    ( rse102_member_class(n, CAL, MS, _, _, _, _, _, _)
+    ; count : { rse102_member_def(n, CAL) } = 0, count : { field(n, "attribute", c1_2_8), rse102_lowercase_name(c1_2_8) } = 0, count : { rse102_win_error(n) } = 0
+    ).
+
+rse102_callee(n) :- rse102_demand_callee(n), !rse102_alt_12(n).
+
+// nonlocal_name(n): the JSON util `nonlocal-name`, used where the JSON says `matches: "nonlocal-name"`
+//   NM: metavariable of the calling rule, passed in (bound by the caller)
+.decl rse102_nonlocal_name(n: node, nm: loc)
+rse102_nonlocal_name(n, NM) :- rse102_demand_nonlocal_name(n, NM),
+    inside(n, p1, "function_definition"), within_stop(c2, p1, rse102_stop_14),
+    kind(c2, "nonlocal_statement"), child(c2, c3, _), kind(c3, "identifier"),
+    node(_, c3, _, _, _), NL = c3, value(NL, t4), value(NM, t4), node(_, p1, _, _, _), F = p1, ref_site(n, b6),
+    site_stop_at_global(b6),
+    count : { inside(b6, p7, "function_definition"), node(_, p7, _, _, _), G = p7, text(G, t8), text(F, t8), @doc(G) = @doc(F) } = 0.
+
+// demand_callee: the rows of callee its callers ask for (the metavariable columns they pass in)
+.decl rse102_demand_callee(n: node)
+rse102_demand_callee(c3) :- kind(n, "argument_list"), child(p2, n, _), kind(p2, "call"),
+    rse102_raised(p2), field(p2, "function", c3).
+rse102_demand_callee(c1) :- rse102_demand_callee(n), kind(n, "parenthesized_expression"),
+    child(n, c1, _).
+
+// demand_member_def: the rows of member_def its callers ask for (the metavariable columns they pass in)
+.decl rse102_demand_member_def(n: node)
+rse102_demand_member_def(n) :- rse102_demand_callee(n), kind(n, "attribute"), node(_, n, _, _, _), CAL = n.
+
+// demand_nonlocal_name: the rows of nonlocal_name its callers ask for (the metavariable columns they pass in)
+.decl rse102_demand_nonlocal_name(n: node, nm: loc)
+rse102_demand_nonlocal_name(n, NM) :- rse102_demand_callee(n), kind(n, "identifier"), node(_, n, _, _, _), NM = n,
+    ref_site(n, b1), site_stop_at_global(b1), kind(b1, "class_definition").
+rse102_demand_nonlocal_name(n, NM) :- rse102_demand_callee(n), kind(n, "identifier"), node(_, n, _, _, _), NM = n,
+    ref_site(n, b1_4), site_stop_at_global(b1_4), kind(b1_4, "function_definition").
+
+// demand_alt_2: the nodes alt_2 is asked at (its recursion looks at every descendant)
+.decl rse102_demand_alt_2(n: node)
+rse102_demand_alt_2(n) :- rse102_demand_class_of(n), node(_, n, _, _, _), E = n.
+
+// demand_class_of: the nodes class_of is asked at (its recursion looks at every descendant)
+.decl rse102_demand_class_of(n: node)
+rse102_demand_class_of(c1) :- node(_, P, _, _, _), rse102_demand_member_class(n),
+    kind(n, "attribute"), node(_, n, _, _, _), E = n, field(n, "object", c1), node(_, c1, _, _, _), O = c1,
+    field(n, "attribute", c2), node(_, c2, _, _, _), N = c2, inside(n, p3, "module"),
+    has(p3, c4, "class_definition"), node(_, c4, _, _, _), Q = c4, text(Q, t5), text(P, t5),
+    within_stop(c7, c4, rse102_stop_14), kind(c7, "class_definition"), field(c7, "name", c8),
+    node(_, c8, _, _, _), ND = c8, value(ND, t9), value(N, t9), site_latest(c8), node(_, c7, _, _, _), S = c7, @doc(Q) = @doc(P).
+rse102_demand_class_of(c1) :- node(_, P, _, _, _), rse102_demand_member_def(n), kind(n, "attribute"),
+    node(_, n, _, _, _), E = n, field(n, "object", c1), node(_, c1, _, _, _), O = c1, field(n, "attribute", c2), node(_, c2, _, _, _), N = c2,
+    inside(n, p3, "module"), has(p3, c4, "class_definition"), node(_, c4, _, _, _), Q = c4, text(Q, t5),
+    text(P, t5), within_stop(c7, c4, rse102_stop_14), kind(c7, "function_definition"),
+    field(c7, "name", c8), node(_, c8, _, _, _), ND = c8, value(ND, t9), value(N, t9), site_latest(c8), @doc(Q) = @doc(P).
+rse102_demand_class_of(c2) :- rse102_demand_alt_2(n), kind(n, "parenthesized_expression"),
+    child(n, c2, _), node(_, c2, _, _, _), I = c2.
+
+// demand_member_class: the nodes member_class is asked at (its recursion looks at every descendant)
+.decl rse102_demand_member_class(n: node)
+rse102_demand_member_class(n) :- rse102_demand_callee(n), kind(n, "attribute"), node(_, n, _, _, _), CAL = n.
+rse102_demand_member_class(n) :- rse102_demand_alt_2(n), kind(n, "attribute").
+
+// set_11: node kinds from a JSON `any`
+.decl rse102_set_11(v: symbol)
+rse102_set_11("identifier"). rse102_set_11("attribute"). rse102_set_11("parenthesized_expression").
+rse102_set_11("comment"). rse102_set_11("line_continuation").
+
+// stop_14: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl rse102_stop_14(kind: symbol)
+rse102_stop_14("function_definition"). rse102_stop_14("class_definition").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl rse102_stop_1(n: node)
+rse102_stop_1(n) :- node(_, n, _, _, _), !kind(n, "line_continuation").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   E, P: metavariables of the calling rule, passed in (bound by the caller)
+//   I, N, ND, O, Q: metavariables this relation binds for the calling rule
+.decl rse102_alt_2(n: node, e: loc, i: loc, n_mv: loc, nd: loc, o: loc, p: loc, q: loc)
+// I, N, ND, O, Q: not bound by this rule, so empty (unset) here, as in ast-grep.
+rse102_alt_2(n, E, I, N, ND, O, P, Q) :- node(_, K, _, _, _),rse102_demand_alt_2(n),kind(n, "identifier"),ref_site(n, b1),site_stop_at_global(b1),kind(b1, "class_definition"),text(b1, t_k1),text(K, t_k1),unset(I),unset(N),unset(ND),unset(O),unset(Q),@doc(b1) = @doc(K), unset(E), unset(P).
+rse102_alt_2(n, E, I, N, ND, O, P, Q) :- rse102_demand_alt_2(n),kind(n, "parenthesized_expression"),child(n, c2, _),node(_, c2, _, _, _),I = c2,rse102_class_of(c2, I, K, I, N, ND, O, P, Q), unset(E).
+rse102_alt_2(n, E, I, N, ND, O, P, Q) :- rse102_demand_alt_2(n), kind(n, "attribute"),
+    rse102_member_class(n, E, K, I, N, ND, O, P, Q).
+
+// alt_12(n): the JSON `any`: n matches if any one of these rules does
+.decl rse102_alt_12(n: node)
+rse102_alt_12(n) :- kind(n, k1), rse102_set_11(k1).
+rse102_alt_12(n) :- node(_, n, _, _, _), glob("[()]", n).
+
+// alt_15(n): the JSON `any`: n matches if any one of these rules does
+.decl rse102_alt_15(n: node)
+rse102_alt_15(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+rse102_alt_15(n) :- node(_, n, _, _, _), glob("[()]", n).

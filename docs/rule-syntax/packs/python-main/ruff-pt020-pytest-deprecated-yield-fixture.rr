@@ -1,0 +1,106 @@
+.policy "ruff-pt020-pytest-deprecated-yield-fixture" revision 1
+.guests off
+.description "Use the pytest fixture decorator instead of the deprecated yield_fixture alias; fixtures can already yield, so the rename changes nothing else."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PT020(n): a finding at node n, from clause `deprecated-yield-fixture`.
+// Each rule below is one way the JSON `rule` can match.
+.violation PT020(at: node) "Replace `yield_fixture` with `fixture` (`pytest.fixture`, or `fixture` imported from pytest); it is a deprecated alias of the same function, so nothing else changes."
+    suppress noqa "PT020"
+PT020(n) :- kind(n, "decorator"), child(n, c1, _), pt020_yield_expr(c1),
+    count : { precedes(s2, n), kind(s2, "decorator"), child(s2, c3, _), pt020_fixture_expr(c3) } = 0,
+    child(p4, n, _), kind(p4, "decorated_definition"), field(p4, "definition", c5),
+    kind(c5, "function_definition"),
+    count : { child(n, c6, _), kind(c6, "comment") } = 0.
+
+// yield_ref(n): the JSON util `yield-ref`, used where the JSON says `matches: "yield-ref"`
+.decl pt020_yield_ref(n: node)
+pt020_yield_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "pytest.yield_fixture").
+
+// yield_callee(n): the JSON util `yield-callee`, used where the JSON says `matches: "yield-callee"`
+.decl pt020_yield_callee(n: node)
+pt020_yield_callee(n) :- pt020_yield_ref(n).
+pt020_yield_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt020_yield_callee(c1).
+
+// yield_expr(n): the JSON util `yield-expr`, used where the JSON says `matches: "yield-expr"`
+.decl pt020_yield_expr(n: node)
+pt020_yield_expr(n) :- pt020_yield_callee(n).
+pt020_yield_expr(n) :- kind(n, "call"), field(n, "function", c1), pt020_yield_callee(c1).
+pt020_yield_expr(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), pt020_yield_expr(c2).
+
+// fixture_ref(n): the JSON util `fixture-ref`, used where the JSON says `matches: "fixture-ref"`
+.decl pt020_fixture_ref(n: node)
+pt020_fixture_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "pytest.fixture") ; sym_of(n, "pytest.yield_fixture")).
+
+// fixture_callee(n): the JSON util `fixture-callee`, used where the JSON says `matches: "fixture-callee"`
+.decl pt020_fixture_callee(n: node)
+pt020_fixture_callee(n) :- pt020_fixture_ref(n).
+pt020_fixture_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt020_fixture_callee(c1).
+
+// fixture_expr(n): the JSON util `fixture-expr`, used where the JSON says `matches: "fixture-expr"`
+.decl pt020_fixture_expr(n: node)
+pt020_fixture_expr(n) :- pt020_fixture_callee(n).
+pt020_fixture_expr(n) :- kind(n, "call"), field(n, "function", c1), pt020_fixture_callee(c1).
+pt020_fixture_expr(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt020_fixture_expr(c2).
+
+// PT020_deprecated_yield_fixture_trailing_comment(n): a finding at node n, from clause `deprecated-yield-fixture-trailing-comment`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PT020_deprecated_yield_fixture_trailing_comment(at: node, span: node) code "PT020" "Replace `yield_fixture` with `fixture` (`pytest.fixture`, or `fixture` imported from pytest); it is a deprecated alias of the same function, so nothing else changes."
+    suppress noqa "PT020"
+PT020_deprecated_yield_fixture_trailing_comment(SPAN, n) :- kind(n, "decorator"),
+    child(n, c1, _), pt020_yield_expr_deprecated_yield_fixture_trailing_comment(c1),
+    count : { precedes(s2, n), kind(s2, "decorator"), child(s2, c3, _), pt020_fixture_expr_deprecated_yield_fixture_trailing_comment(c3) } = 0,
+    child(p4, n, _), kind(p4, "decorated_definition"), field(p4, "definition", c5),
+    kind(c5, "function_definition"), child(n, c6, _), kind(c6, "comment"),
+    match("(?P<SPAN>(?:\"\"\"(?:[^\"\\\\]|\\\\[\\s\\S]|\"(?:[^\"\\\\]|\\\\[\\s\\S])|\"\"(?:[^\"\\\\]|\\\\[\\s\\S]))*\"\"\"|'''(?:[^'\\\\]|\\\\[\\s\\S]|'(?:[^'\\\\]|\\\\[\\s\\S])|''(?:[^'\\\\]|\\\\[\\s\\S]))*'''|\"(?:[^\"\\\\\\n]|\\\\[\\s\\S])*\"|'(?:[^'\\\\\\n]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)[ \\t]*#[^\\n]*", n).
+
+// yield_ref_deprecated_yield_fixture_trailing_comment(n): the JSON util `yield-ref`, used where the JSON says `matches: "yield-ref"`
+.decl pt020_yield_ref_deprecated_yield_fixture_trailing_comment(n: node)
+pt020_yield_ref_deprecated_yield_fixture_trailing_comment(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "pytest.yield_fixture").
+
+// yield_callee_deprecated_yield_fixture_trailing_comment(n): the JSON util `yield-callee`, used where the JSON says `matches: "yield-callee"`
+.decl pt020_yield_callee_deprecated_yield_fixture_trailing_comment(n: node)
+pt020_yield_callee_deprecated_yield_fixture_trailing_comment(n) :- pt020_yield_ref_deprecated_yield_fixture_trailing_comment(n).
+pt020_yield_callee_deprecated_yield_fixture_trailing_comment(n) :- kind(n, "parenthesized_expression"),
+    child(n, c1, _), pt020_yield_callee_deprecated_yield_fixture_trailing_comment(c1).
+
+// yield_expr_deprecated_yield_fixture_trailing_comment(n): the JSON util `yield-expr`, used where the JSON says `matches: "yield-expr"`
+.decl pt020_yield_expr_deprecated_yield_fixture_trailing_comment(n: node)
+pt020_yield_expr_deprecated_yield_fixture_trailing_comment(n) :- pt020_yield_callee_deprecated_yield_fixture_trailing_comment(n).
+pt020_yield_expr_deprecated_yield_fixture_trailing_comment(n) :- kind(n, "call"),
+    field(n, "function", c1),
+    pt020_yield_callee_deprecated_yield_fixture_trailing_comment(c1).
+pt020_yield_expr_deprecated_yield_fixture_trailing_comment(n) :- kind(n, "parenthesized_expression"),
+    child(n, c2, _), pt020_yield_expr_deprecated_yield_fixture_trailing_comment(c2).
+
+// fixture_ref_deprecated_yield_fixture_trailing_comment(n): the JSON util `fixture-ref`, used where the JSON says `matches: "fixture-ref"`
+.decl pt020_fixture_ref_deprecated_yield_fixture_trailing_comment(n: node)
+pt020_fixture_ref_deprecated_yield_fixture_trailing_comment(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "pytest.fixture") ; sym_of(n, "pytest.yield_fixture")).
+
+// fixture_callee_deprecated_yield_fixture_trailing_comment(n): the JSON util `fixture-callee`, used where the JSON says `matches: "fixture-callee"`
+.decl pt020_fixture_callee_deprecated_yield_fixture_trailing_comment(n: node)
+pt020_fixture_callee_deprecated_yield_fixture_trailing_comment(n) :- pt020_fixture_ref_deprecated_yield_fixture_trailing_comment(n).
+pt020_fixture_callee_deprecated_yield_fixture_trailing_comment(n) :- kind(n, "parenthesized_expression"),
+    child(n, c1, _), pt020_fixture_callee_deprecated_yield_fixture_trailing_comment(c1).
+
+// fixture_expr_deprecated_yield_fixture_trailing_comment(n): the JSON util `fixture-expr`, used where the JSON says `matches: "fixture-expr"`
+.decl pt020_fixture_expr_deprecated_yield_fixture_trailing_comment(n: node)
+pt020_fixture_expr_deprecated_yield_fixture_trailing_comment(n) :- pt020_fixture_callee_deprecated_yield_fixture_trailing_comment(n).
+pt020_fixture_expr_deprecated_yield_fixture_trailing_comment(n) :- kind(n, "call"),
+    field(n, "function", c1),
+    pt020_fixture_callee_deprecated_yield_fixture_trailing_comment(c1).
+pt020_fixture_expr_deprecated_yield_fixture_trailing_comment(n) :- kind(n, "parenthesized_expression"),
+    child(n, c2, _), pt020_fixture_expr_deprecated_yield_fixture_trailing_comment(c2).

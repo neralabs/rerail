@@ -1,0 +1,159 @@
+.policy "ruff-try004-type-check-without-type-error" revision 1
+.guests off
+.description "Raise TypeError instead of a general-purpose built-in exception when a type check fails; callers can then tell a wrong type from a bad value."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// TRY004(n): a finding at node n, from clause `type-check-without-type-error`.
+// Each rule below is one way the JSON `rule` can match.
+.violation TRY004(at: node) "Raise `TypeError` here: the failed type check is a wrong-type error, not a bad value. Leave it if callers already catch this exception or it is part of the public API."
+    suppress noqa "TRY004"
+TRY004(n) :- kind(n, "raise_statement"), child(n, c1, _), try004_raised(c1),
+    count : { field(p2, "cause", c1), kind(p2, "raise_statement") } = 0,
+    child(p3, n, _), kind(p3, "block"), child(p4, p3, _), try004_typed_branch(p4),
+    count : { precedes(s5, n), try004_leaves_block(s5) } = 0.
+
+// check_fn(n): the JSON util `check-fn`, used where the JSON says `matches: "check-fn"`
+.decl try004_check_fn(n: node)
+try004_check_fn(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( global_ref(n, "isinstance")
+    ; global_ref(n, "issubclass")
+    ; global_ref(n, "callable")
+    ),
+
+    ( sym_of(n, "builtins.isinstance")
+    ; sym_of(n, "builtins.issubclass")
+    ; sym_of(n, "builtins.callable")
+    ),
+    count : { node(_, n, _, _, _), FN = n, try004_rebound_in_if(n, FN) } = 0.
+try004_check_fn(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), try004_check_fn(c1).
+
+// rebound_in_if(n): the JSON util `rebound-in-if`, used where the JSON says `matches: "rebound-in-if"`
+//   FN: metavariable of the calling rule, passed in (bound by the caller)
+.decl try004_rebound_in_if(n: node, fn: loc)
+try004_rebound_in_if(n, FN) :- try004_demand_rebound_in_if(n, FN), kind(n, "identifier"),
+    count : { node(d1, n, _, st2, _), try004_seen_import(s3, h5, ks6), (h5 = "builtins"), node(d1, s3, _, so4, _), kn7 = count : { within(n, b8), field(f8, "body", b8), kind(f8, "function_definition") }, (ks6 < kn7 ; ks6 = kn7, so4 < st2 ; count : { within(n, l8), field(m8, "body", l8), kind(m8, "lambda") } > 0) } = 0,
+    within_stop(n, p9, "if_statement"), kind(p9, "if_statement"),
+    within_stop(c10, p9, try004_stop_1), (kind(c10, "identifier") ; kind(c10, "dotted_name")),
+    (bind_only(c10) ; aug_target(c10)), node(_, c10, _, _, _), BOUND = c10,
+    text(FN, t11), text(BOUND, t11), @doc(FN) = @doc(BOUND).
+
+// type_test(n): the JSON util `type-test`, used where the JSON says `matches: "type-test"`
+.decl try004_type_test(n: node)
+try004_type_test(n) :- kind(n, "call"), field(n, "function", c1), try004_check_fn(c1).
+try004_type_test(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), try004_type_test(c2).
+try004_type_test(n) :- (kind(n, "not_operator") ; kind(n, "unary_operator")),
+    field(n, "argument", c3), try004_type_test(c3).
+try004_type_test(n) :- kind(n, "boolean_operator"), field(n, "left", c4), try004_type_test(c4),
+    field(n, "right", c5), try004_type_test(c5).
+
+// exception_ref(n): the JSON util `exception-ref`, used where the JSON says `matches: "exception-ref"`
+.decl try004_exception_ref(n: node)
+try004_exception_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, g1), try004_set_3(g1).
+try004_exception_ref(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    try004_exception_ref(c2).
+
+// raised(n): the JSON util `raised`, used where the JSON says `matches: "raised"`
+.decl try004_raised(n: node)
+try004_raised(n) :- try004_exception_ref(n).
+try004_raised(n) :- kind(n, "call"), field(n, "function", c1), try004_exception_ref(c1).
+try004_raised(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), try004_raised(c2).
+
+// control_flow(n): the JSON util `control-flow`, used where the JSON says `matches: "control-flow"`
+.decl try004_control_flow(n: node)
+try004_control_flow(n) :-
+    ( kind(n, "return_statement")
+    ; kind(n, "break_statement")
+    ; kind(n, "continue_statement")
+    ).
+
+
+// leaves_block(n): the JSON util `leaves-block`, used where the JSON says `matches: "leaves-block"`
+.decl try004_leaves_block(n: node)
+try004_leaves_block(n) :- try004_control_flow(n).
+try004_leaves_block(n) :- !kind(n, "function_definition"), !kind(n, "class_definition"),
+    within_stop(c1, n, try004_stop_4), try004_control_flow(c1).
+
+// not_type_test(n): the JSON util `not-type-test`, used where the JSON says `matches: "not-type-test"`
+.decl try004_not_type_test(n: node)
+try004_not_type_test(n) :- node(_, n, _, _, _),
+    count : { field(n, "condition", c1), try004_type_test(c1) } = 0.
+
+// untyped_if(n): the JSON util `untyped-if`, used where the JSON says `matches: "untyped-if"`
+.decl try004_untyped_if(n: node)
+try004_untyped_if(n) :- kind(n, "if_statement"), try004_not_type_test(n).
+try004_untyped_if(n) :- (kind(n, "elif_clause") ; kind(n, "else_clause")), child(p1, n, _),
+    kind(p1, "if_statement"), try004_not_type_test(p1).
+
+// nested_ok(n): the JSON util `nested-ok`, used where the JSON says `matches: "nested-ok"`
+.decl try004_nested_ok(n: node)
+try004_nested_ok(n) :- node(_, n, _, _, _),
+    count : { child(p1, n, _), kind(p1, "block"), child(p2, p1, _), try004_untyped_if(p2) } = 0.
+
+// chain(n): the JSON util `chain`, used where the JSON says `matches: "chain"`
+.decl try004_chain(n: node)
+try004_chain(n) :- kind(n, "if_statement"), try004_nested_ok(n), field(n, "condition", c1),
+    try004_type_test(c1).
+try004_chain(n) :- (kind(n, "elif_clause") ; kind(n, "else_clause")), child(p2, n, _),
+    kind(p2, "if_statement"), try004_nested_ok(p2), field(p2, "condition", c3), try004_type_test(c3),
+    count : { precedes(s4, n), kind(s4, "elif_clause"), try004_not_type_test(s4) } = 0.
+
+// typed_branch(n): the JSON util `typed-branch`, used where the JSON says `matches: "typed-branch"`
+.decl try004_typed_branch(n: node)
+try004_typed_branch(n) :-
+    ( (kind(n, "if_statement") ; kind(n, "else_clause"))
+    ; kind(n, "elif_clause"), field(n, "condition", c1), try004_type_test(c1)
+    ),
+    try004_chain(n).
+
+// seen_import: import statement s imports absolute module h (its first segment), inside k function bodies
+.decl try004_seen_import(s: node, h: symbol, k: number)
+try004_seen_import(s, h, k) :- kind(s, "import_statement"), child(s, c, _),
+    (kind(c, "dotted_name"), x = c ; kind(c, "aliased_import"), field(c, "name", x)),
+    child(x, i, 0), kind(i, "identifier"), text(i, h),
+    k = count : { within(s, b), field(f, "body", b), kind(f, "function_definition") }.
+try004_seen_import(s, h, k) :- kind(s, "import_from_statement"), field(s, "module_name", x),
+    kind(x, "dotted_name"), child(x, i, 0), kind(i, "identifier"), text(i, h),
+    k = count : { within(s, b), field(f, "body", b), kind(f, "function_definition") }.
+
+// demand_rebound_in_if: the rows of rebound_in_if its callers ask for (the metavariable columns they pass in)
+.decl try004_demand_rebound_in_if(n: node, fn: loc)
+try004_demand_rebound_in_if(n, FN) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( global_ref(n, "isinstance")
+    ; global_ref(n, "issubclass")
+    ; global_ref(n, "callable")
+    ),
+
+    ( sym_of(n, "builtins.isinstance")
+    ; sym_of(n, "builtins.issubclass")
+    ; sym_of(n, "builtins.callable")
+    ),
+    node(_, n, _, _, _), FN = n.
+
+// set_2: node kinds from a JSON `any`
+.decl try004_set_2(v: symbol)
+try004_set_2("parameters"). try004_set_2("type_parameter"). try004_set_2("lambda").
+try004_set_2("list_comprehension"). try004_set_2("set_comprehension").
+try004_set_2("dictionary_comprehension"). try004_set_2("generator_expression").
+
+// set_3: names from the JSON `resolves.global`
+.decl try004_set_3(v: symbol)
+try004_set_3("ArithmeticError"). try004_set_3("AssertionError"). try004_set_3("AttributeError").
+try004_set_3("BufferError"). try004_set_3("EOFError"). try004_set_3("Exception"). try004_set_3("ImportError").
+try004_set_3("LookupError"). try004_set_3("MemoryError"). try004_set_3("NameError"). try004_set_3("ReferenceError").
+try004_set_3("RuntimeError"). try004_set_3("SyntaxError"). try004_set_3("SystemError"). try004_set_3("ValueError").
+
+// stop_4: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl try004_stop_4(kind: symbol)
+try004_stop_4("function_definition"). try004_stop_4("class_definition").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl try004_stop_1(n: node)
+try004_stop_1(n) :- kind(n, k1), try004_set_2(k1).
+try004_stop_1(n) :- kind(n, "block"), child(p2, n, _),
+    (kind(p2, "function_definition") ; kind(p2, "class_definition")).

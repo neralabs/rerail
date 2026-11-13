@@ -1,0 +1,68 @@
+.policy "ruff-try300-try-consider-else" revision 1
+.guests off
+.description "Move the final return of a try body into an else block; code that runs only on success should not sit under the handlers' protection."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// TRY300(n): a finding at node n, from clause `try-consider-else`.
+// Each rule below is one way the JSON `rule` can match.
+.violation TRY300(at: node) "Move this `return` into an `else` clause after the handlers so the `try` body holds only the code the handlers guard."
+    suppress noqa "TRY300"
+TRY300(n) :- kind(n, "return_statement"),
+    count : { within(c1, n), try300_effect_node(c1) } = 0, precedes(s2, n),
+    !kind(s2, "comment"), count : { precedes(n, s3), !try300_alt_5(s3) } = 0, child(p4, n, _),
+    kind(p4, "block"), child(p5, p4, _), kind(p5, "try_statement"), child(p5, c6, _),
+    kind(c6, "except_clause"),
+    count : { child(p5, c7, _), kind(c7, "else_clause") } = 0.
+
+// empty_initializer(n): the JSON util `empty-initializer`, used where the JSON says `matches: "empty-initializer"`
+.decl try300_empty_initializer(n: node)
+try300_empty_initializer(n) :- kind(n, "call"), child(n, c1, _), kind(c1, "identifier"),
+    global_ref(c1, g2), try300_set_1(g2), next_sibling(c1, s3), kind(s3, "argument_list"),
+    match("\\(\\s*(?:#[^\\n]*\\s*)*\\)", s3).
+
+// literalish(n): the JSON util `literalish`, used where the JSON says `matches: "literalish"`
+.decl try300_literalish(n: node)
+try300_literalish(n) :- kind(n, k1), try300_set_2(k1).
+try300_literalish(n) :- kind(n, "string"), !match("[rR]?[tT].*", n).
+try300_literalish(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), match("[rR]?[tT].*", c2) } = 0.
+try300_literalish(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), try300_literalish(c3).
+
+// effect_node(n): the JSON util `effect-node`, used where the JSON says `matches: "effect-node"`
+.decl try300_effect_node(n: node)
+try300_effect_node(n) :- kind(n, k1), try300_set_3(k1).
+try300_effect_node(n) :- kind(n, "call"), !try300_empty_initializer(n).
+try300_effect_node(n) :- kind(n, "binary_operator"), child(n, c2, _), !try300_alt_4(c2).
+
+// set_1: names from the JSON `resolves.global`
+.decl try300_set_1(v: symbol)
+try300_set_1("set"). try300_set_1("list"). try300_set_1("tuple"). try300_set_1("dict"). try300_set_1("frozenset").
+
+// set_2: node kinds from a JSON `any`
+.decl try300_set_2(v: symbol)
+try300_set_2("integer"). try300_set_2("float"). try300_set_2("true"). try300_set_2("false"). try300_set_2("none").
+try300_set_2("ellipsis"). try300_set_2("list"). try300_set_2("tuple"). try300_set_2("set"). try300_set_2("dictionary").
+try300_set_2("list_comprehension"). try300_set_2("set_comprehension").
+try300_set_2("dictionary_comprehension").
+
+// set_3: node kinds from a JSON `any`
+.decl try300_set_3(v: symbol)
+try300_set_3("await"). try300_set_3("list_comprehension"). try300_set_3("set_comprehension").
+try300_set_3("dictionary_comprehension"). try300_set_3("generator_expression"). try300_set_3("subscript").
+try300_set_3("yield"). try300_set_3("named_expression").
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl try300_alt_4(n: node)
+try300_alt_4(n) :- try300_literalish(n).
+try300_alt_4(n) :- node(_, n, _, _, _), glob("{+,-,\\*,/,//,%,\\*\\*,@,<<,>>,&,|,^}", n).
+try300_alt_4(n) :- kind(n, "comment").
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl try300_alt_5(n: node)
+try300_alt_5(n) :- kind(n, "comment").
+try300_alt_5(n) :- node(_, n, _, _, _), glob(";", n).

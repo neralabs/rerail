@@ -1,0 +1,128 @@
+.policy "ruff-pt021-pytest-fixture-finalizer-callback" revision 1
+.guests off
+.description "Prefer a yield with the cleanup after it over a finalizer callback in a pytest fixture; reserve the callback for fixtures that build resources on demand."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+#include "python/names.rr"
+
+// PT021(n): a finding at node n, from clause `fixture-finalizer-callback`.
+// Each rule below is one way the JSON `rule` can match.
+.violation PT021(at: node) "Return the fixture value with `yield` and move this cleanup, and any other registered finalizer, after it. Keep the callback if cleanup must run even when later setup code raises."
+    suppress noqa "PT021"
+PT021(n) :- pt021_walked_call(n), !pt021_not_last(n).
+
+// fixture_ref(n): the JSON util `fixture-ref`, used where the JSON says `matches: "fixture-ref"`
+.decl pt021_fixture_ref(n: node)
+pt021_fixture_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "pytest.fixture") ; sym_of(n, "pytest.yield_fixture")).
+
+// fixture_callee(n): the JSON util `fixture-callee`, used where the JSON says `matches: "fixture-callee"`
+.decl pt021_fixture_callee(n: node)
+pt021_fixture_callee(n) :- pt021_fixture_ref(n).
+pt021_fixture_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt021_fixture_callee(c1).
+
+// fixture_expr(n): the JSON util `fixture-expr`, used where the JSON says `matches: "fixture-expr"`
+.decl pt021_fixture_expr(n: node)
+pt021_fixture_expr(n) :- pt021_fixture_callee(n).
+pt021_fixture_expr(n) :- kind(n, "call"), field(n, "function", c1), pt021_fixture_callee(c1).
+pt021_fixture_expr(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt021_fixture_expr(c2).
+
+// request_name(n): the JSON util `request-name`, used where the JSON says `matches: "request-name"`
+.decl pt021_request_name(n: node)
+pt021_request_name(n) :- kind(n, "identifier"), glob("request", n).
+pt021_request_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt021_request_name(c1).
+
+// finalizer_attr(n): the JSON util `finalizer-attr`, used where the JSON says `matches: "finalizer-attr"`
+.decl pt021_finalizer_attr(n: node)
+pt021_finalizer_attr(n) :- kind(n, "attribute"), field(n, "object", c1), pt021_request_name(c1),
+    field(n, "attribute", c2), glob("addfinalizer", c2).
+pt021_finalizer_attr(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    pt021_finalizer_attr(c3).
+
+// request_param(n): the JSON util `request-param`, used where the JSON says `matches: "request-param"`
+.decl pt021_request_param(n: node)
+pt021_request_param(n) :- kind(n, "identifier"), glob("request", n).
+pt021_request_param(n) :- (kind(n, "default_parameter") ; kind(n, "typed_default_parameter")),
+    field(n, "name", c1), glob("request", c1).
+pt021_request_param(n) :- (kind(n, "list_splat_pattern") ; kind(n, "dictionary_splat_pattern")),
+    child(n, c2, _), kind(c2, "identifier"), glob("request", c2).
+pt021_request_param(n) :- kind(n, "typed_parameter"), child(n, c3, _),
+    ( kind(c3, "identifier"), glob("request", c3)
+    ; (kind(c3, "list_splat_pattern") ; kind(c3, "dictionary_splat_pattern")), child(c3, c1, _), kind(c1, "identifier"), glob("request", c1)
+    ).
+
+
+// fixture_with_request(n): the JSON util `fixture-with-request`, used where the JSON says `matches: "fixture-with-request"`
+.decl pt021_fixture_with_request(n: node)
+pt021_fixture_with_request(n) :- kind(n, "function_definition"), child(p1, n, _),
+    kind(p1, "decorated_definition"), child(p1, c2, _), kind(c2, "decorator"),
+    child(c2, c3, _), pt021_fixture_expr(c3), field(n, "parameters", c4),
+    kind(c4, "parameters"), child(c4, c5, _), pt021_request_param(c5).
+
+// opaque(n): the JSON util `opaque`, used where the JSON says `matches: "opaque"`
+.decl pt021_opaque(n: node)
+pt021_opaque(n) :- kind(n, k1), pt021_set_2(k1).
+pt021_opaque(n) :- kind(n, "decorator"), child(p2, n, _), kind(p2, "decorated_definition"),
+    field(p2, "definition", c3), kind(c3, "function_definition").
+pt021_opaque(n) :-
+    ( kind(n, "generic_type")
+    ; kind(n, "union_type")
+    ; kind(n, "member_type")
+    ; kind(n, "splat_type")
+    ),
+
+    count : { child(p4, n, _), kind(p4, "type"), field(p5, "left", p4), kind(p5, "type_alias_statement") } = 0.
+
+// walked_call(n): the JSON util `walked-call`, used where the JSON says `matches: "walked-call"`
+.decl pt021_walked_call(n: node)
+pt021_walked_call(n) :- kind(n, "call"), field(n, "function", c1), pt021_finalizer_attr(c1),
+    count : { within_stop(n, p2, "block"), pt021_opaque(p2) } = 0,
+    within_stop(n, p3, "function_definition"), kind(p3, "block"),
+    within_stop(n, p4, "function_definition"), kind(p4, "function_definition"),
+    pt021_fixture_with_request(p4).
+
+// later_call(n): the JSON util `later-call`, used where the JSON says `matches: "later-call"`
+.decl pt021_later_call(n: node)
+pt021_later_call(n) :- (pt021_walked_call(n) ; within_stop(c1, n, "function_definition"), pt021_walked_call(c1)),
+    !kind(n, "function_definition").
+
+// late_annotation(n): the JSON util `late-annotation`, used where the JSON says `matches: "late-annotation"`
+.decl pt021_late_annotation(n: node)
+pt021_late_annotation(n) :- kind(n, "type"),
+    ( field(p1, "type", n), kind(p1, "assignment")
+    ; field(p2, "left", n), kind(p2, "type_alias_statement")
+    ).
+
+
+// not_last(n): the JSON util `not-last`, used where the JSON says `matches: "not-last"`
+.decl pt021_not_last(n: node)
+pt021_not_last(n) :- within(c1, n), pt021_walked_call(c1).
+pt021_not_last(n) :- precedes(n, s2), pt021_later_call(s2).
+pt021_not_last(n) :- within_stop(n, p3, "function_definition"), !pt021_alt_5(p3), precedes(p3, s4),
+    pt021_later_call(s4).
+pt021_not_last(n) :- precedes(s5, n), pt021_late_annotation(s5), within(c6, s5), pt021_walked_call(c6).
+pt021_not_last(n) :- within_stop(n, p7, "function_definition"), precedes(s8, p7),
+    pt021_late_annotation(s8), within(c9, s8), pt021_walked_call(c9).
+
+// set_2: node kinds from a JSON `any`
+.decl pt021_set_2(v: symbol)
+pt021_set_2("lambda"). pt021_set_2("await"). pt021_set_2("binary_operator"). pt021_set_2("boolean_operator").
+pt021_set_2("not_operator"). pt021_set_2("unary_operator"). pt021_set_2("comparison_operator").
+pt021_set_2("conditional_expression"). pt021_set_2("attribute"). pt021_set_2("subscript"). pt021_set_2("list").
+pt021_set_2("tuple"). pt021_set_2("set"). pt021_set_2("dictionary"). pt021_set_2("pair").
+pt021_set_2("list_comprehension"). pt021_set_2("set_comprehension").
+pt021_set_2("dictionary_comprehension"). pt021_set_2("generator_expression").
+pt021_set_2("named_expression"). pt021_set_2("yield"). pt021_set_2("interpolation"). pt021_set_2("list_splat").
+pt021_set_2("slice"). pt021_set_2("expression_list"). pt021_set_2("return_statement").
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl pt021_alt_5(n: node)
+pt021_alt_5(n) :- kind(n, "function_definition").
+pt021_alt_5(n) :- pt021_late_annotation(n).

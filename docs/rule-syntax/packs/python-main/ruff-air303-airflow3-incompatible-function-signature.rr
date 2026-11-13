@@ -1,0 +1,494 @@
+.policy "ruff-air303-airflow3-incompatible-function-signature" revision 1
+.guests off
+.description "Update calls and methods whose Airflow 3 signature changed: pass lineage asset arguments and dataset extras by keyword, and give get_link a ti_key parameter."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// AIR303(n): a finding at node n, from clause `create-asset`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation AIR303(at: node, m: node) "Pass the arguments to `{m}` by keyword, e.g. `{m}(uri=...)`; Airflow 3 no longer accepts positional arguments here."
+    suppress noqa "AIR303"
+AIR303(M, n) :- kind(n, "call"), field(n, "function", c1), air303_collector_method(c1, M),
+    field(n, "arguments", c2),
+    ( kind(c2, "generator_expression")
+    ; kind(c2, "argument_list"), child(c2, c3, _), !air303_alt_2(c3)
+    ).
+
+
+// collector_class(n): the JSON util `collector-class`, used where the JSON says `matches: "collector-class"`
+.decl air303_collector_class(n: node)
+air303_collector_class(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "airflow.lineage.hook.HookLineageCollector").
+air303_collector_class(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    air303_collector_class(c1).
+
+// collector_call(n): the JSON util `collector-call`, used where the JSON says `matches: "collector-call"`
+.decl air303_collector_call(n: node)
+air303_collector_call(n) :- kind(n, "call"), field(n, "function", c1), air303_collector_class(c1).
+air303_collector_call(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    air303_collector_call(c2).
+
+// assigned_collector(n): the JSON util `assigned-collector`, used where the JSON says `matches: "assigned-collector"`
+.decl air303_assigned_collector(n: node)
+air303_assigned_collector(n) :- air303_collector_call(n).
+air303_assigned_collector(n) :- kind(n, "assignment"), field(n, "right", c1),
+    air303_assigned_collector(c1).
+
+// collector(n): the JSON util `collector`, used where the JSON says `matches: "collector"`
+.decl air303_collector(n: node)
+air303_collector(n) :- air303_collector_call(n).
+air303_collector(n) :- kind(n, "identifier"), ref_site(n, b1), kind(b1, "assignment"),
+    field(b1, "right", c2), air303_assigned_collector(c2).
+air303_collector(n) :- air303_assigned_chain(n).
+air303_collector(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), air303_collector(c3).
+
+// collector_method(n): the JSON util `collector-method`, used where the JSON says `matches: "collector-method"`
+//   M: metavariable this relation binds for the calling rule
+.decl air303_collector_method(n: node, m: loc)
+air303_collector_method(n, M) :- kind(n, "attribute"), field(n, "attribute", c1),
+    glob("create_asset", c1), node(_, c1, _, _, _), M = c1, field(n, "object", c2), air303_collector(c2).
+air303_collector_method(n, M) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    air303_collector_method(c3, M).
+
+// assigned_callee(n, key): 3 copies of one rule set (`assigned-airflow-callee`, `assigned-hook-callee`, `assigned-lineage-callee`), folded into one: row `key` of
+// assigned_callee_case gives the strings each copy had.
+.decl air303_assigned_callee(n: node, key: symbol)
+air303_assigned_callee(n, q1) :- air303_assigned_callee_case(q1, s1), sym_of(n, s1).
+air303_assigned_callee(n, q1) :- air303_assigned_callee_case(q1, s1),
+    kind(n, "parenthesized_expression"), child(n, c1, _), air303_assigned_callee(c1, q1).
+
+// assigned_call(n, key): 3 copies of one rule set (`assigned-airflow-call`, `assigned-hook-call`, `assigned-lineage-call`), folded into one: row `key` of
+// assigned_call_case gives the strings each copy had.
+.decl air303_assigned_call(n: node, key: symbol)
+air303_assigned_call(n, q1) :- air303_assigned_call_case(q1), kind(n, "call"),
+    field(n, "function", c1), air303_assigned_callee(c1, q1).
+air303_assigned_call(n, q1) :- air303_assigned_call_case(q1), kind(n, "parenthesized_expression"),
+    child(n, c2, _), air303_assigned_call(c2, q1).
+air303_assigned_call(n, q1) :- air303_assigned_call_case(q1), kind(n, "assignment"),
+    field(n, "right", c3), air303_assigned_call(c3, q1).
+
+// assigned_chain(n): the JSON util `assigned-chain`, used where the JSON says `matches: "assigned-chain"`
+.decl air303_assigned_chain(n: node)
+air303_assigned_chain(n) :- kind(n, "attribute"), air303_alt_1(n).
+
+// AIR303_dataset_extra(n): a finding at node n, from clause `dataset-extra`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation AIR303_dataset_extra(at: node, f: node) code "AIR303" "Pass the dict to `{f}` as the `extra=` keyword argument instead of as the second positional argument; that signature changed in Airflow 3."
+    suppress noqa "AIR303"
+AIR303_dataset_extra(F, n) :- kind(n, "call"), field(n, "function", c1),
+    air303_dataset_callee(c1, F), field(n, "arguments", c2), kind(c2, "argument_list"),
+    child(c2, c3, _), air303_dict_arg(c3), precedes_stop(s4, c3, air303_stop_10), glob("\\,", s4),
+    precedes_stop(s5, s4, air303_stop_10), !kind(s5, "list_splat"),
+    !kind(s5, "dictionary_splat"), !kind(s5, "keyword_argument"),
+    precedes_stop(s6, s5, air303_stop_10), glob("(", s6).
+
+// dict_expr(n): the JSON util `dict-expr`, used where the JSON says `matches: "dict-expr"`
+.decl air303_dict_expr(n: node)
+air303_dict_expr(n) :- air303_dict_expr_u7(n).
+
+// dict_callee(n): the JSON util `dict-callee`, used where the JSON says `matches: "dict-callee"`
+.decl air303_dict_callee(n: node)
+air303_dict_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "dict"), sym_of(n, "builtins.dict").
+air303_dict_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    air303_dict_callee(c1).
+
+// dict_init(n): the JSON util `dict-init`, used where the JSON says `matches: "dict-init"`
+.decl air303_dict_init(n: node)
+air303_dict_init(n) :- air303_dict_expr(n).
+air303_dict_init(n) :- kind(n, "call"), child(n, c1, _), air303_dict_callee(c1),
+    next_sibling(c1, s2),
+    (kind(s2, "argument_list") ; kind(s2, "generator_expression")).
+
+// dict_ann(n): the JSON util `dict-ann`, used where the JSON says `matches: "dict-ann"`
+.decl air303_dict_ann(n: node)
+air303_dict_ann(n) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "dict"),
+    sym_of(n, "builtins.dict").
+air303_dict_ann(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Dict")
+    ; sym_of(n, "_typeshed.Dict")
+    ; sym_of(n, "typing_extensions.Dict")
+    ).
+
+air303_dict_ann(n) :- (kind(n, "subscript") ; kind(n, "generic_type")), child(n, c1, _),
+    !air303_tok_follows_4(c1), air303_dict_ann(c1).
+air303_dict_ann(n) :- kind(n, "parenthesized_expression"), child(n, c9, _), air303_dict_ann(c9).
+
+// plain_target(n): the JSON util `plain-target`, used where the JSON says `matches: "plain-target"`
+.decl air303_plain_target(n: node)
+air303_plain_target(n) :- kind(n, "identifier").
+air303_plain_target(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    air303_plain_target(c1).
+
+// dict_bound(n): the JSON util `dict-bound`, used where the JSON says `matches: "dict-bound"`
+.decl air303_dict_bound(n: node)
+air303_dict_bound(n) :- kind(n, "identifier"), air303_alt_7(n).
+
+// dataset_callee(n): the JSON util `dataset-callee`, used where the JSON says `matches: "dataset-callee"`
+//   F: metavariable this relation binds for the calling rule
+.decl air303_dataset_callee(n: node, f: loc)
+air303_dataset_callee(n, F) :- kind(n, "identifier"), node(_, n, _, _, _), F = n,
+    ( sym_of(n, "airflow.Dataset")
+    ; sym_of(n, "airflow.datasets.Dataset")
+    ; sym_of(n, "airflow.sdk.Asset")
+    ).
+
+air303_dataset_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    air303_dataset_callee(c1, F).
+
+// dict_arg(n): the JSON util `dict-arg`, used where the JSON says `matches: "dict-arg"`
+.decl air303_dict_arg(n: node)
+air303_dict_arg(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+air303_dict_arg(n) :- kind(n, "call"), child(n, c1, _), air303_dict_callee(c1), next_sibling(c1, s2),
+    (kind(s2, "argument_list") ; kind(s2, "generator_expression")).
+air303_dict_arg(n) :- kind(n, "identifier"), air303_dict_bound(n).
+air303_dict_arg(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), air303_dict_arg(c3).
+
+// AIR303_get_link(n): a finding at node n, from clause `get-link`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation AIR303_get_link(at: node, name: node) code "AIR303" "Use `def get_link(self, operator, *, ti_key)` or `def get_link(self, operator, ti_key)` as the method signature that Airflow 3 expects."
+    suppress noqa "AIR303"
+AIR303_get_link(NAME, n) :- kind(n, "function_definition"), field(n, "name", c1),
+    glob("get_link", c1), node(_, c1, _, _, _), NAME = c1, within_stop(n, p2, air303_stop_17),
+    kind(p2, "class_definition"), field(p2, "superclasses", c3),
+    kind(c3, "argument_list"), child(c3, c4, _), air303_link_base(c4),
+    field(n, "parameters", c5), kind(c5, "parameters"), !air303_valid_signature(c5).
+
+// link_name(n): the JSON util `link-name`, used where the JSON says `matches: "link-name"`
+.decl air303_link_name(n: node)
+air303_link_name(n) :- kind(n, "attribute"), field(n, "attribute", c1),
+    glob("BaseOperatorLink", c1).
+air303_link_name(n) :- kind(n, "identifier"),
+    ( ref_site(n, b1), kind(b1, "aliased_import"), field(b1, "name", c1), child(c1, c2, _), kind(c2, "identifier"), glob("BaseOperatorLink", c2), count : { precedes(c2, s1), kind(s1, "identifier") } = 0
+    ; glob("BaseOperatorLink", n), count : { ref_site(n, b2), kind(b2, "aliased_import") } = 0
+    ).
+
+
+// link_base(n): the JSON util `link-base`, used where the JSON says `matches: "link-base"`
+.decl air303_link_base(n: node)
+air303_link_base(n) :- air303_demand_link_base(n), air303_link_ref(n).
+air303_link_base(n) :- air303_demand_link_base(n), kind(n, "subscript"), field(n, "value", c1),
+    air303_link_ref(c1).
+air303_link_base(n) :- air303_demand_link_base(n), kind(n, "parenthesized_expression"),
+    child(n, c2, _), air303_link_base(c2).
+
+// pos_param(n): the JSON util `pos-param`, used where the JSON says `matches: "pos-param"`
+.decl air303_pos_param(n: node)
+air303_pos_param(n) :-
+    ( (kind(n, "identifier") ; kind(n, "default_parameter") ; kind(n, "typed_default_parameter"))
+    ; kind(n, "typed_parameter"), count : { child(n, c1, _), (kind(c1, "list_splat_pattern") ; kind(c1, "dictionary_splat_pattern")) } = 0
+    ),
+    count : { precedes(s2, n), air303_alt_14(s2) } = 0.
+
+// ti_key(n): the JSON util `ti-key`, used where the JSON says `matches: "ti-key"`
+.decl air303_ti_key(n: node)
+air303_ti_key(n) :- kind(n, "identifier"), glob("ti_key", n).
+air303_ti_key(n) :- (kind(n, "default_parameter") ; kind(n, "typed_default_parameter")),
+    field(n, "name", c1), glob("ti_key", c1).
+air303_ti_key(n) :- kind(n, "typed_parameter"), child(n, c2, _), kind(c2, "identifier"),
+    glob("ti_key", c2).
+
+// valid_signature(n): the JSON util `valid-signature`, used where the JSON says `matches: "valid-signature"`
+.decl air303_valid_signature(n: node)
+air303_valid_signature(n) :- k2 = count : { child(n, c1, _), air303_pos_param(c1) }, k2 >= 2,
+    k2 <= 2, child(n, c3, _), air303_ti_key(c3), precedes(s4, c3), air303_alt_14(s4).
+air303_valid_signature(n) :- k7 = count : { child(n, c6, _), air303_pos_param(c6) }, k7 >= 3,
+    k7 <= 3, child(n, c8, _), air303_ti_key(c8), air303_pos_param(c8),
+    k10 = count : { precedes(s9, c8), air303_pos_param(s9) }, k10 >= 2, k10 <= 2.
+
+// link_ref(n): the JSON util `link-ref`, used where the JSON says `matches: "link-ref"`
+.decl air303_link_ref(n: node)
+air303_link_ref(n) :- air303_demand_link_ref(n), (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), match("(airflow\\.models|airflow\\.sdk)(\\.|$).*", q1),
+    air303_link_name(n).
+air303_link_ref(n) :- air303_demand_link_ref(n), (kind(n, "identifier") ; kind(n, "attribute")),
+    ref_site(n, b2), kind(b2, "class_definition"),
+    count : { air303_stop_16_within(b2, p3), kind(p3, "class_definition") } = 0,
+    field(b2, "superclasses", c4), kind(c4, "argument_list"), child(c4, c5, _),
+    air303_link_base(c5).
+air303_link_ref(n) :- air303_demand_link_ref(n), kind(n, "parenthesized_expression"),
+    child(n, c6, _), air303_link_ref(c6).
+
+.decl air303_alt_5_u0(n: node)
+air303_alt_5_u0(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+air303_alt_5_u0(n) :- kind(n, "comment").
+
+.decl air303_alt_5_u1(n: node)
+air303_alt_5_u1(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+air303_alt_5_u1(n) :- kind(n, "comment").
+air303_alt_5_u1(n) :- air303_dict_expr_u0(n).
+
+.decl air303_alt_5_u2(n: node)
+air303_alt_5_u2(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+air303_alt_5_u2(n) :- kind(n, "comment").
+air303_alt_5_u2(n) :- air303_dict_expr_u1(n).
+
+.decl air303_alt_5_u3(n: node)
+air303_alt_5_u3(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+air303_alt_5_u3(n) :- kind(n, "comment").
+air303_alt_5_u3(n) :- air303_dict_expr_u2(n).
+
+.decl air303_alt_5_u4(n: node)
+air303_alt_5_u4(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+air303_alt_5_u4(n) :- kind(n, "comment").
+air303_alt_5_u4(n) :- air303_dict_expr_u3(n).
+
+.decl air303_alt_5_u5(n: node)
+air303_alt_5_u5(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+air303_alt_5_u5(n) :- kind(n, "comment").
+air303_alt_5_u5(n) :- air303_dict_expr_u4(n).
+
+.decl air303_alt_5_u6(n: node)
+air303_alt_5_u6(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+air303_alt_5_u6(n) :- kind(n, "comment").
+air303_alt_5_u6(n) :- air303_dict_expr_u5(n).
+
+.decl air303_alt_5_u7(n: node)
+air303_alt_5_u7(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+air303_alt_5_u7(n) :- kind(n, "comment").
+air303_alt_5_u7(n) :- air303_dict_expr_u6(n).
+
+.decl air303_dict_expr_u0(n: node)
+air303_dict_expr_u0(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+air303_dict_expr_u0(n) :- kind(n, "boolean_operator"), count : { child(n, c26, _) } = 0.
+
+.decl air303_dict_expr_u1(n: node)
+air303_dict_expr_u1(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+air303_dict_expr_u1(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    air303_dict_expr_u0(c1).
+air303_dict_expr_u1(n) :- kind(n, "named_expression"), child(n, c2, _), air303_tok_follows_1(c2),
+    air303_dict_expr_u0(c2).
+air303_dict_expr_u1(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    air303_tok_precedes_2(c10), air303_dict_expr_u0(c10), child(n, c18, _), air303_tok_follows_3(c18),
+    air303_dict_expr_u0(c18).
+air303_dict_expr_u1(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !air303_alt_5_u0(c26) } = 0.
+
+.decl air303_dict_expr_u2(n: node)
+air303_dict_expr_u2(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+air303_dict_expr_u2(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    air303_dict_expr_u1(c1).
+air303_dict_expr_u2(n) :- kind(n, "named_expression"), child(n, c2, _), air303_tok_follows_1(c2),
+    air303_dict_expr_u1(c2).
+air303_dict_expr_u2(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    air303_tok_precedes_2(c10), air303_dict_expr_u1(c10), child(n, c18, _), air303_tok_follows_3(c18),
+    air303_dict_expr_u1(c18).
+air303_dict_expr_u2(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !air303_alt_5_u1(c26) } = 0.
+
+.decl air303_dict_expr_u3(n: node)
+air303_dict_expr_u3(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+air303_dict_expr_u3(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    air303_dict_expr_u2(c1).
+air303_dict_expr_u3(n) :- kind(n, "named_expression"), child(n, c2, _), air303_tok_follows_1(c2),
+    air303_dict_expr_u2(c2).
+air303_dict_expr_u3(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    air303_tok_precedes_2(c10), air303_dict_expr_u2(c10), child(n, c18, _), air303_tok_follows_3(c18),
+    air303_dict_expr_u2(c18).
+air303_dict_expr_u3(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !air303_alt_5_u2(c26) } = 0.
+
+.decl air303_dict_expr_u4(n: node)
+air303_dict_expr_u4(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+air303_dict_expr_u4(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    air303_dict_expr_u3(c1).
+air303_dict_expr_u4(n) :- kind(n, "named_expression"), child(n, c2, _), air303_tok_follows_1(c2),
+    air303_dict_expr_u3(c2).
+air303_dict_expr_u4(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    air303_tok_precedes_2(c10), air303_dict_expr_u3(c10), child(n, c18, _), air303_tok_follows_3(c18),
+    air303_dict_expr_u3(c18).
+air303_dict_expr_u4(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !air303_alt_5_u3(c26) } = 0.
+
+.decl air303_dict_expr_u5(n: node)
+air303_dict_expr_u5(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+air303_dict_expr_u5(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    air303_dict_expr_u4(c1).
+air303_dict_expr_u5(n) :- kind(n, "named_expression"), child(n, c2, _), air303_tok_follows_1(c2),
+    air303_dict_expr_u4(c2).
+air303_dict_expr_u5(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    air303_tok_precedes_2(c10), air303_dict_expr_u4(c10), child(n, c18, _), air303_tok_follows_3(c18),
+    air303_dict_expr_u4(c18).
+air303_dict_expr_u5(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !air303_alt_5_u4(c26) } = 0.
+
+.decl air303_dict_expr_u6(n: node)
+air303_dict_expr_u6(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+air303_dict_expr_u6(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    air303_dict_expr_u5(c1).
+air303_dict_expr_u6(n) :- kind(n, "named_expression"), child(n, c2, _), air303_tok_follows_1(c2),
+    air303_dict_expr_u5(c2).
+air303_dict_expr_u6(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    air303_tok_precedes_2(c10), air303_dict_expr_u5(c10), child(n, c18, _), air303_tok_follows_3(c18),
+    air303_dict_expr_u5(c18).
+air303_dict_expr_u6(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !air303_alt_5_u5(c26) } = 0.
+
+.decl air303_dict_expr_u7(n: node)
+air303_dict_expr_u7(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+air303_dict_expr_u7(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    air303_dict_expr_u6(c1).
+air303_dict_expr_u7(n) :- kind(n, "named_expression"), child(n, c2, _), air303_tok_follows_1(c2),
+    air303_dict_expr_u6(c2).
+air303_dict_expr_u7(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    air303_tok_precedes_2(c10), air303_dict_expr_u6(c10), child(n, c18, _), air303_tok_follows_3(c18),
+    air303_dict_expr_u6(c18).
+air303_dict_expr_u7(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !air303_alt_5_u6(c26) } = 0.
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^:=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air303_tok_follows_1(n: node)
+.stored air303_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air303_tok_follows_1(n) :- next_sibling(s3, n), glob(":=", s3).
+air303_tok_follows_1(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match(":=", t4).
+air303_tok_follows_1(n) :- structural_before(n, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::=)\\s*)$", g5).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air303_tok_precedes_2(n: node)
+.stored air303_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air303_tok_precedes_2(n) :- next_sibling(n, s11), glob("if", s11).
+air303_tok_precedes_2(n) :- structural_after(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, _, en17), o15 = en17 + strlen(g13), token(p14, _, t12, o15, _),
+    match("if", t12).
+air303_tok_precedes_2(n) :- structural_after(n, g13),
+    match("(?s)^(?:\\s*(?:if)(?:\\W.*)?)$", g13).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air303_tok_follows_3(n: node)
+.stored air303_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air303_tok_follows_3(n) :- next_sibling(s19, n), glob("else", s19).
+air303_tok_follows_3(n) :- structural_before(n, g21), match("\\s*", g21), child(p22, n, _),
+    node(_, n, _, st24, _), o23 = st24 - strlen(g21), token(p22, _, t20, _, o23),
+    match("else", t20).
+air303_tok_follows_3(n) :- structural_before(n, g21),
+    match("(?s)^(?:(?:.*\\W)?(?:else)\\s*)$", g21).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air303_tok_follows_4(n: node)
+.stored air303_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air303_tok_follows_4(n) :- next_sibling(s2, n), match("(?s).*..*", s2).
+air303_tok_follows_4(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?s).*..*", t3).
+air303_tok_follows_4(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
+
+// tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl air303_tok_precedes_5(n: node)
+.stored air303_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+air303_tok_precedes_5(n) :- precedes(n, s11), glob("as", s11).
+air303_tok_precedes_5(n) :- child(p14, n, _), node(_, n, _, _, en17),
+    token(p14, _, t12, st16, _), st16 >= en17, match("as", t12).
+air303_tok_precedes_5(n) :- structural_after(n, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g13).
+air303_tok_precedes_5(n) :- precedes(n, o15), structural_after(o15, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g13).
+
+// demand_link_base: the nodes link_base is asked at (its recursion looks at every descendant)
+.decl air303_demand_link_base(n: node)
+air303_demand_link_base(c4) :- kind(n, "function_definition"), field(n, "name", c1),
+    glob("get_link", c1), node(_, c1, _, _, _), NAME = c1, within_stop(n, p2, air303_stop_17),
+    kind(p2, "class_definition"), field(p2, "superclasses", c3),
+    kind(c3, "argument_list"), child(c3, c4, _), field(n, "parameters", c5),
+    kind(c5, "parameters").
+air303_demand_link_base(c2) :- air303_demand_link_base(n), kind(n, "parenthesized_expression"),
+    child(n, c2, _).
+air303_demand_link_base(c5) :- air303_demand_link_ref(n),
+    (kind(n, "identifier") ; kind(n, "attribute")), ref_site(n, b2),
+    kind(b2, "class_definition"), field(b2, "superclasses", c4),
+    kind(c4, "argument_list"), child(c4, c5, _).
+
+// demand_link_ref: the nodes link_ref is asked at (its recursion looks at every descendant)
+.decl air303_demand_link_ref(n: node)
+air303_demand_link_ref(n) :- air303_demand_link_base(n).
+air303_demand_link_ref(c1) :- air303_demand_link_base(n), kind(n, "subscript"),
+    field(n, "value", c1).
+air303_demand_link_ref(c6) :- air303_demand_link_ref(n), kind(n, "parenthesized_expression"),
+    child(n, c6, _).
+
+// alt_5_u0_empty: level -1 of an unrolled recursion, empty
+.decl air303_alt_5_u0_empty(n: node)
+
+// dict_expr_u0_empty: level -1 of an unrolled recursion, empty
+.decl air303_dict_expr_u0_empty(n: node)
+
+// stop_16: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl air303_stop_16(kind: symbol)
+air303_stop_16("class_definition"). air303_stop_16("function_definition").
+
+// stop_17: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl air303_stop_17(kind: symbol)
+air303_stop_17("class_definition"). air303_stop_17("function_definition"). air303_stop_17("lambda").
+
+// assigned_call_case: one row per relation folded into assigned_call: its key, then the strings that differed.
+.decl air303_assigned_call_case(key: symbol)
+air303_assigned_call_case("airflow"). air303_assigned_call_case("hook").
+air303_assigned_call_case("lineage").
+
+// assigned_callee_case: one row per relation folded into assigned_callee: its key, then the strings that differed.
+.decl air303_assigned_callee_case(key: symbol, s1: symbol)
+air303_assigned_callee_case("airflow", "airflow").
+air303_assigned_callee_case("hook", "airflow.lineage.hook").
+air303_assigned_callee_case("lineage", "airflow.lineage").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl air303_alt_1(n: node)
+air303_alt_1(n) :- match("\\w+\\s*\\.\\s*HookLineageCollector", n), has(n, c1, "identifier"),
+    ref_site(c1, b2), kind(b2, "assignment"), field(b2, "right", c3),
+    air303_assigned_call(c3, "hook").
+air303_alt_1(n) :- match("\\w+\\s*\\.\\s*hook\\s*\\.\\s*HookLineageCollector", n),
+    has(n, c4, "identifier"), ref_site(c4, b5), kind(b5, "assignment"),
+    field(b5, "right", c6), air303_assigned_call(c6, "lineage").
+air303_alt_1(n) :- match("\\w+\\s*\\.\\s*lineage\\s*\\.\\s*hook\\s*\\.\\s*HookLineageCollector", n),
+    has(n, c7, "identifier"), ref_site(c7, b8), kind(b8, "assignment"),
+    field(b8, "right", c9), air303_assigned_call(c9, "airflow").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl air303_alt_2(n: node)
+air303_alt_2(n) :- (kind(n, "comment") ; kind(n, "keyword_argument") ; kind(n, "dictionary_splat")).
+air303_alt_2(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl air303_alt_5(n: node)
+air303_alt_5(n) :- air303_alt_5_u7(n).
+
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+.decl air303_alt_7(n: node)
+air303_alt_7(n) :- ref_site(n, b1),
+    ( kind(b1, "dictionary_splat_pattern"), child(p1, b1, _), kind(p1, "parameters")
+    ; kind(b1, "typed_parameter"), child(p2, b1, _), kind(p2, "parameters"), child(b1, c1, _), kind(c1, "dictionary_splat_pattern")
+    ).
+
+air303_alt_7(n) :- ref_site(n, b5), binding_value(b5, x6), air303_dict_init(x6),
+    count : { child(b5, c7, _), kind(c7, "type") } = 0.
+air303_alt_7(n) :- ref_site(n, b8), kind(b8, "as_pattern"), child(p9, b8, _),
+    kind(p9, "with_item"), child(b8, c10, _), air303_dict_init(c10), air303_tok_precedes_5(c10),
+    child(b8, c18, _), kind(c18, "as_pattern_target"), child(c18, c19, _),
+    air303_plain_target(c19).
+air303_alt_7(n) :- ref_site(n, b20), site_annotation(b20, o21), air303_dict_ann(o21),
+    count : { child(b20, c22, _), (kind(c22, "list_splat_pattern") ; kind(c22, "dictionary_splat_pattern")) } = 0.
+air303_alt_7(n) :- ref_site(n, b23), kind(b23, "function_definition"), child(b23, c24, _),
+    kind(c24, "type"), child(c24, c25, _), air303_dict_ann(c25).
+
+// stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl air303_stop_10(n: node)
+air303_stop_10(n) :- node(_, n, _, _, _), !kind(n, "comment").
+
+// alt_14(n): the JSON `any`: n matches if any one of these rules does
+.decl air303_alt_14(n: node)
+air303_alt_14(n) :- (kind(n, "keyword_separator") ; kind(n, "list_splat_pattern")).
+air303_alt_14(n) :- kind(n, "typed_parameter"), child(n, c1, _),
+    kind(c1, "list_splat_pattern").
+
+// stop_16_within: within_stop over the stop set stop_16, read inside an aggregate
+.decl air303_stop_16_within(n: node, a: node)
+air303_stop_16_within(x, y) :- within_stop(x, y, air303_stop_16).

@@ -1,0 +1,222 @@
+.policy "ruff-n815-mixed-case-variable-in-class-scope" revision 1
+.guests off
+.description "Name class-level variables in snake_case instead of mixedCase, as PEP 8 recommends for variable names."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// N815(n): a finding at node n, from clause `mixed-case-variable-in-class-scope`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation N815(at: node, name: loc) "Rename the class variable `{name}` to snake_case and update its uses; keep the name if outside code depends on it or it mirrors an external schema."
+    suppress noqa "N815"
+N815(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, n815_mixed_case(n), n815_store_target(n),
+    n815_up_1(n, p1), count : { within(n, p2), n815_named_tuple_statement(p2) } = 0.
+
+// mixed_case(n): the JSON util `mixed-case`, used where the JSON says `matches: "mixed-case"`
+.decl n815_mixed_case(n: node)
+n815_mixed_case(n) :- node(_, n, _, _, _), match("_?\\p{Lowercase}.*", n),
+    !match("_?[\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}].*", n),
+    match(".*[\\p{Uppercase}\\x{1C5}\\x{1C8}\\x{1CB}\\x{1F2}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}].*", n),
+    !glob("{setUp,tearDown,setUpClass,tearDownClass,setUpModule,tearDownModule,asyncSetUp,asyncTearDown,setUpTestData,failureException,longMessage,maxDiff}", n).
+
+// container(n): the JSON util `container`, used where the JSON says `matches: "container"`
+.decl n815_container(n: node)
+n815_container(n) :-
+    ( kind(n, "pattern_list")
+    ; kind(n, "tuple_pattern")
+    ; kind(n, "list_pattern")
+    ; kind(n, "list_splat_pattern")
+    ).
+
+
+// store_target(n): the JSON util `store-target`, used where the JSON says `matches: "store-target"`
+.decl n815_store_target(n: node)
+n815_store_target(n) :- field(p1, "left", n),
+    ( kind(p1, "assignment")
+    ; kind(p1, "augmented_assignment")
+    ; kind(p1, "for_statement")
+    ).
+
+n815_store_target(n) :- child(p2, n, _), n815_container(p2), within_stop(p2, p3, n815_stop_1),
+    ( kind(p3, "assignment")
+    ; kind(p3, "augmented_assignment")
+    ; kind(p3, "for_statement")
+    ).
+
+n815_store_target(n) :- field(p4, "name", n), kind(p4, "named_expression").
+n815_store_target(n) :- within_stop(n, p5, n815_stop_2), kind(p5, "as_pattern_target"),
+    child(p6, p5, _), kind(p6, "as_pattern"), child(p7, p6, _), kind(p7, "with_item").
+n815_store_target(n) :- child(p8, n, _), kind(p8, "dotted_name"), !n815_tok_has_1(p8),
+    child(p17, p8, _),
+    ( kind(p17, "case_pattern")
+    ; kind(p17, "keyword_pattern")
+    ; kind(p17, "union_pattern")
+    ).
+
+n815_store_target(n) :- child(p18, n, _), kind(p18, "as_pattern"), child(p19, p18, _),
+    kind(p19, "case_pattern").
+n815_store_target(n) :- child(p20, n, _), kind(p20, "type"), field(p21, "left", p20),
+    kind(p21, "type_alias_statement").
+n815_store_target(n) :- child(p22, n, _), kind(p22, "generic_type"), child(p23, p22, _),
+    kind(p23, "type"), field(p24, "left", p23), kind(p24, "type_alias_statement").
+n815_store_target(n) :- child(p25, n, _), kind(p25, "splat_pattern"), child(p26, p25, _),
+    (kind(p26, "case_pattern") ; kind(p26, "dict_pattern")).
+
+// scope_edge(n): the JSON util `scope-edge`, used where the JSON says `matches: "scope-edge"`
+.decl n815_scope_edge(n: node)
+n815_scope_edge(n) :- kind(n, "block"), field(p1, "body", n),
+    (kind(p1, "class_definition") ; kind(p1, "function_definition")).
+n815_scope_edge(n) :- field(p2, "body", n), kind(p2, "lambda").
+n815_scope_edge(n) :- kind(n, "argument_list"), field(p3, "superclasses", n),
+    kind(p3, "class_definition").
+n815_scope_edge(n) :- field(p4, "body", n), n815_comprehension(p4).
+n815_scope_edge(n) :- kind(n, "if_clause"), child(p5, n, _), n815_comprehension(p5).
+n815_scope_edge(n) :- kind(n, "for_in_clause"), precedes(s6, n), kind(s6, "for_in_clause").
+n815_scope_edge(n) :- field(p7, "left", n), kind(p7, "for_in_clause").
+n815_scope_edge(n) :- kind(n, "type"),
+    ( child(p1, n, _), (kind(p1, "typed_parameter") ; kind(p1, "typed_default_parameter"))
+    ; field(p2, "return_type", n), kind(p2, "function_definition")
+    ; field(p3, "right", n), kind(p3, "type_alias_statement")
+    ).
+
+
+// plain_class_body(n): the JSON util `plain-class-body`, used where the JSON says `matches: "plain-class-body"`
+.decl n815_plain_class_body(n: node)
+n815_plain_class_body(n) :- kind(n, "block"), field(p1, "body", n),
+    kind(p1, "class_definition"), !n815_typed_dict_class(p1).
+
+// class_body(n): the JSON util `class-body`, used where the JSON says `matches: "class-body"`
+.decl n815_class_body(n: node)
+n815_class_body(n) :- kind(n, "block"), field(p1, "body", n), kind(p1, "class_definition").
+
+// typed_dict_class(n): the JSON util `typed-dict-class`, used where the JSON says `matches: "typed-dict-class"`
+.decl n815_typed_dict_class(n: node)
+n815_typed_dict_class(n) :- n815_demand_typed_dict_class(n), kind(n, "class_definition"),
+    field(n, "superclasses", c1), kind(c1, "argument_list"), child(c1, c2, _),
+    n815_typed_dict_base(c2).
+
+// typed_dict_base(n): the JSON util `typed-dict-base`, used where the JSON says `matches: "typed-dict-base"`
+.decl n815_typed_dict_base(n: node)
+n815_typed_dict_base(n) :- n815_demand_typed_dict_base(n), n815_typed_dict_name(n).
+n815_typed_dict_base(n) :- n815_demand_typed_dict_base(n), kind(n, "subscript"),
+    field(n, "value", c1), n815_typed_dict_name(c1).
+n815_typed_dict_base(n) :- n815_demand_typed_dict_base(n), kind(n, "parenthesized_expression"),
+    child(n, c2, _), n815_typed_dict_base(c2).
+
+// named_tuple_call(n): the JSON util `named-tuple-call`, used where the JSON says `matches: "named-tuple-call"`
+.decl n815_named_tuple_call(n: node)
+n815_named_tuple_call(n) :- kind(n, "call"), field(n, "function", c1),
+    ( sym_of(c1, "collections.namedtuple")
+    ; sym_of(c1, "typing.NamedTuple")
+    ; sym_of(c1, "typing_extensions.NamedTuple")
+    ; sym_of(c1, "_typeshed.NamedTuple")
+    ).
+
+n815_named_tuple_call(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    n815_named_tuple_call(c2).
+
+// named_tuple_statement(n): the JSON util `named-tuple-statement`, used where the JSON says `matches: "named-tuple-statement"`
+.decl n815_named_tuple_statement(n: node)
+n815_named_tuple_statement(n) :- kind(n, "expression_statement"), has(n, c1, "assignment"),
+    count : { field(c1, "type", c2), kind(c2, "type") } = 0, field(c1, "right", c3),
+    n815_named_tuple_call(c3).
+
+// comprehension(n): the JSON util `comprehension`, used where the JSON says `matches: "comprehension"`
+.decl n815_comprehension(n: node)
+n815_comprehension(n) :-
+    ( kind(n, "list_comprehension")
+    ; kind(n, "set_comprehension")
+    ; kind(n, "dictionary_comprehension")
+    ; kind(n, "generator_expression")
+    ).
+
+
+// typed_dict_name(n): the JSON util `typed-dict-name`, used where the JSON says `matches: "typed-dict-name"`
+.decl n815_typed_dict_name(n: node)
+n815_typed_dict_name(n) :- n815_demand_typed_dict_name(n),
+    (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.TypedDict")
+    ; sym_of(n, "typing_extensions.TypedDict")
+    ; sym_of(n, "_typeshed.TypedDict")
+    ).
+
+n815_typed_dict_name(n) :- n815_demand_typed_dict_name(n), kind(n, "identifier"),
+    ref_site(n, b1), n815_typed_dict_class(b1),
+    count : { n815_stop_4_within(b1, p2), n815_class_body(p2) } = 0.
+n815_typed_dict_name(n) :- n815_demand_typed_dict_name(n), kind(n, "attribute"),
+    field(n, "attribute", c3), node(_, c3, _, _, _), TDATTR = c3, field(n, "object", c4),
+    kind(c4, "identifier"), ref_site(c4, b5), kind(b5, "class_definition"),
+    field(b5, "body", c6), within_stop(c7, c6, n815_stop_5), kind(c7, "class_definition"),
+    field(c7, "name", c8), node(_, c8, _, _, _), TDATTR = c8, n815_typed_dict_class(c7),
+    count : { n815_stop_4_within(b5, p9), n815_class_body(p9) } = 0.
+n815_typed_dict_name(n) :- n815_demand_typed_dict_name(n), kind(n, "parenthesized_expression"),
+    child(n, c10, _), n815_typed_dict_name(c10).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl n815_tok_has_1(n: node)
+.stored n815_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+n815_tok_has_1(n) :- child(n, c9, _), glob(".", c9).
+n815_tok_has_1(n) :- op(n, t10), match("\\.", t10).
+n815_tok_has_1(n) :- child(n, c16, _), structural_before(c16, g11),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g11).
+n815_tok_has_1(n) :- child(n, c16, _), structural_after(c16, g11),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g11).
+n815_tok_has_1(n) :- node_text(n, g11), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g11).
+
+// demand_typed_dict_base: the nodes typed_dict_base is asked at (its recursion looks at every descendant)
+.decl n815_demand_typed_dict_base(n: node)
+n815_demand_typed_dict_base(c2) :- n815_demand_typed_dict_class(n), kind(n, "class_definition"),
+    field(n, "superclasses", c1), kind(c1, "argument_list"), child(c1, c2, _).
+n815_demand_typed_dict_base(c2) :- n815_demand_typed_dict_base(n),
+    kind(n, "parenthesized_expression"), child(n, c2, _).
+
+// demand_typed_dict_class: the nodes typed_dict_class is asked at (its recursion looks at every descendant)
+.decl n815_demand_typed_dict_class(n: node)
+n815_demand_typed_dict_class(p1) :- kind(n, "block"), field(p1, "body", n),
+    kind(p1, "class_definition").
+n815_demand_typed_dict_class(b1) :- n815_demand_typed_dict_name(n), kind(n, "identifier"),
+    ref_site(n, b1).
+n815_demand_typed_dict_class(c7) :- n815_demand_typed_dict_name(n), kind(n, "attribute"),
+    field(n, "attribute", c3), node(_, c3, _, _, _), TDATTR = c3, field(n, "object", c4),
+    kind(c4, "identifier"), ref_site(c4, b5), kind(b5, "class_definition"),
+    field(b5, "body", c6), within_stop(c7, c6, n815_stop_5), kind(c7, "class_definition"),
+    field(c7, "name", c8), node(_, c8, _, _, _), TDATTR = c8.
+
+// demand_typed_dict_name: the nodes typed_dict_name is asked at (its recursion looks at every descendant)
+.decl n815_demand_typed_dict_name(n: node)
+n815_demand_typed_dict_name(n) :- n815_demand_typed_dict_base(n).
+n815_demand_typed_dict_name(c1) :- n815_demand_typed_dict_base(n), kind(n, "subscript"),
+    field(n, "value", c1).
+n815_demand_typed_dict_name(c10) :- n815_demand_typed_dict_name(n),
+    kind(n, "parenthesized_expression"), child(n, c10, _).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl n815_up_1(n: node, p: node)
+n815_up_1(n, p) :- n815_mixed_case(n), n815_store_target(n), within_stop(n, p, n815_stop_4),
+    n815_plain_class_body(p).
+
+// stop_5: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl n815_stop_5(kind: symbol)
+n815_stop_5("class_definition"). n815_stop_5("function_definition").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl n815_stop_1(n: node)
+n815_stop_1(n) :- node(_, n, _, _, _), !n815_container(n).
+
+// stop_2(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl n815_stop_2(n: node)
+n815_stop_2(n) :- node(_, n, _, _, _), !kind(n, "tuple"), !kind(n, "list"),
+    !kind(n, "parenthesized_expression"), !kind(n, "list_splat").
+
+// stop_4(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl n815_stop_4(n: node)
+n815_stop_4(n) :- n815_scope_edge(n).
+
+// stop_4_within: within_stop over the stop set stop_4, read inside an aggregate
+.decl n815_stop_4_within(n: node, a: node)
+n815_stop_4_within(x, y) :- within_stop(x, y, n815_stop_4).

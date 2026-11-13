@@ -1,0 +1,329 @@
+.policy "ruff-slf001-private-member-access" revision 1
+.guests off
+.description "Avoid accessing underscore-prefixed members of other objects; use the class's public interface, since private members can change without notice."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+.options {"flake8-self.ignore-names": {"type": "array", "items": "string", "default": ["_make", "_asdict", "_replace", "_fields", "_field_defaults", "_name_", "_value_"], "description": "Attribute names that may be accessed even though they start with an underscore."}}
+
+// SLF001(n): a finding at node n, from clause `private-member-access`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation SLF001(at: node, p: node) "Use the class's public interface instead of this private member; keep it only where the class is yours to change or the access is deliberate."
+    suppress noqa "SLF001"
+SLF001(P, n) :- match("(?P<P>[\\w\\s]*(?:\\.[\\w\\s]*)*?\\.\\s*_\\w*|[\\s\\S]*)(?:\\s*\\.(?:[\\w\\s]*\\.)*\\s*[^\\W_]\\w*\\s*)?", n),
+    !slf001_in_annotation(n), !slf001_in_dunder_operator(n), !sym_of(n, "os._exit"),
+    ( kind(n, "attribute"), field(n, "attribute", c1), slf001_private_name(c1), count : { field(n, "object", c2), slf001_exempt_object(c2) } = 0
+    ; kind(n, "dotted_name"), inside(n, p1, "case_pattern"), node(_, p1, _, _, _), slf001_alt_28(n)
+    ).
+
+
+// private_name(n): the JSON util `private-name`, used where the JSON says `matches: "private-name"`
+.decl slf001_private_name(n: node)
+slf001_private_name(n) :- kind(n, "identifier"), prefix("_", n), !glob("__{_,**__,}", n),
+    !match("(?:_|_[^_](?:.*[^_])?_)", n),
+    ( option("flake8-self.ignore-names", "[]"), kind(n, "identifier")
+    ; !option("flake8-self.ignore-names", "[]"), count : { option("flake8-self.ignore-names", o1), match(o1, n) } = 0
+    ).
+
+
+// in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+.decl slf001_in_annotation(n: node)
+slf001_in_annotation(n) :- inside(n, p1, "type"), child(p2, p1, _),
+    ( kind(p2, "typed_parameter")
+    ; kind(p2, "typed_default_parameter")
+    ; kind(p2, "function_definition")
+    ; kind(p2, "assignment")
+    ).
+
+
+// dunder_operator_function(n): the JSON util `dunder-operator-function`, used where the JSON says `matches: "dunder-operator-function"`
+.decl slf001_dunder_operator_function(n: node)
+slf001_dunder_operator_function(n) :- kind(n, "function_definition"), field(n, "name", c1),
+    glob("{__lt__,__le__,__eq__,__ne__,__gt__,__ge__,__add__,__sub__,__mul__,__matmul__,__truediv__,__floordiv__,__mod__,__divmod__,__pow__,__lshift__,__rshift__,__and__,__xor__,__or__,__radd__,__rsub__,__rmul__,__rmatmul__,__rtruediv__,__rfloordiv__,__rmod__,__rdivmod__,__rpow__,__rlshift__,__rrshift__,__rand__,__rxor__,__ror__,__iadd__,__isub__,__imul__,__imatmul__,__itruediv__,__ifloordiv__,__imod__,__ipow__,__ilshift__,__irshift__,__iand__,__ixor__,__ior__}", c1).
+
+// scope_start(n): the JSON util `scope-start`, used where the JSON says `matches: "scope-start"`
+.decl slf001_scope_start(n: node)
+slf001_scope_start(n) :- kind(n, "block"), field(p1, "body", n),
+    (kind(p1, "function_definition") ; kind(p1, "class_definition")).
+slf001_scope_start(n) :- field(p2, "body", n), kind(p2, k3), slf001_set_2(k3).
+slf001_scope_start(n) :- kind(n, "argument_list"), field(p4, "superclasses", n),
+    kind(p4, "class_definition").
+slf001_scope_start(n) :- kind(n, "if_clause").
+slf001_scope_start(n) :- kind(n, "for_in_clause"),
+    count : { child(p5, n, _), slf001_counted_3(n), k7 = count : { child(p5, s6, _), precedes(s6, n), slf001_counted_3(s6) }, k7 = 0 } = 0.
+
+// in_dunder_operator(n): the JSON util `in-dunder-operator`, used where the JSON says `matches: "in-dunder-operator"`
+.decl slf001_in_dunder_operator(n: node)
+slf001_in_dunder_operator(n) :- !slf001_scope_start(n), within_stop(n, p1, slf001_stop_4),
+    kind(p1, "block"), field(p2, "body", p1), slf001_dunder_operator_function(p2).
+
+// receiver_name(n): the JSON util `receiver-name`, used where the JSON says `matches: "receiver-name"`
+.decl slf001_receiver_name(n: node)
+slf001_receiver_name(n) :- kind(n, "identifier"), glob("{self,cls,mcs}", n).
+slf001_receiver_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    slf001_receiver_name(c1).
+
+// super_name(n): the JSON util `super-name`, used where the JSON says `matches: "super-name"`
+.decl slf001_super_name(n: node)
+slf001_super_name(n) :- kind(n, "identifier"), glob("super", n).
+slf001_super_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), slf001_super_name(c1).
+
+// super_call(n): the JSON util `super-call`, used where the JSON says `matches: "super-call"`
+.decl slf001_super_call(n: node)
+slf001_super_call(n) :- kind(n, "call"), field(n, "function", c1), slf001_super_name(c1).
+slf001_super_call(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), slf001_super_call(c2).
+
+// static_decorator(n): the JSON util `static-decorator`, used where the JSON says `matches: "static-decorator"`
+.decl slf001_static_decorator(n: node)
+slf001_static_decorator(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "builtins.staticmethod") ; sym_of(n, "abc.abstractstaticmethod")),
+    global_ref(n, "staticmethod").
+slf001_static_decorator(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    slf001_static_decorator(c1).
+
+// decorated_static(n): the JSON util `decorated-static`, used where the JSON says `matches: "decorated-static"`
+.decl slf001_decorated_static(n: node)
+slf001_decorated_static(n) :- child(p1, n, _), kind(p1, "decorated_definition"),
+    child(p1, c2, _), kind(c2, "decorator"), within_stop(c3, c2, slf001_stop_5),
+    ( slf001_static_decorator(c3)
+    ; kind(c3, "call"), within_stop(c1, c3, slf001_stop_5), field(_, "function", c1), slf001_static_decorator(c1)
+    ).
+
+
+// instance_or_class_method(n): the JSON util `instance-or-class-method`, used where the JSON says `matches: "instance-or-class-method"`
+.decl slf001_instance_or_class_method(n: node)
+slf001_instance_or_class_method(n) :- kind(n, "function_definition"),
+    within_stop(n, p1, slf001_stop_9), kind(p1, "class_definition"), !slf001_decorated_static(n).
+
+// receiver_parameter(n): the JSON util `receiver-parameter`, used where the JSON says `matches: "receiver-parameter"`
+.decl slf001_receiver_parameter(n: node)
+slf001_receiver_parameter(n) :-
+    ( (kind(n, "identifier") ; kind(n, "default_parameter") ; kind(n, "typed_default_parameter"))
+    ; kind(n, "typed_parameter"), child(n, c1, _), kind(c1, "identifier")
+    ),
+    child(p2, n, _), slf001_counted_11(n),
+    k4 = count : { child(p2, s3, _), precedes(s3, n), slf001_counted_11(s3) }, k4 = 0,
+    child(p5, n, _), kind(p5, "parameters"), field(p6, "parameters", p5),
+    slf001_instance_or_class_method(p6).
+
+// self_type(n): the JSON util `self-type`, used where the JSON says `matches: "self-type"`
+.decl slf001_self_type(n: node)
+slf001_self_type(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Self")
+    ; sym_of(n, "typing_extensions.Self")
+    ; sym_of(n, "_typeshed.Self")
+    ).
+
+
+// annotated_head(n): the JSON util `annotated-head`, used where the JSON says `matches: "annotated-head"`
+.decl slf001_annotated_head(n: node)
+slf001_annotated_head(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Annotated")
+    ; sym_of(n, "typing_extensions.Annotated")
+    ; sym_of(n, "_typeshed.Annotated")
+    ).
+
+
+// free(n): the JSON util `free`, used where the JSON says `matches: "free"`
+//   CLS, SELFTAG: metavariables this relation binds for the calling rule
+.decl slf001_free(n: node, cls: loc, selftag: loc)
+slf001_free(n, CLS, SELFTAG) :- node(_, n, _, _, _), CLS = n, node(_, n, _, _, _), SELFTAG = n.
+
+// same_class_type(n): the JSON util `same-class-type`, used where the JSON says `matches: "same-class-type"`
+//   CLS, SELFTAG: metavariables this relation binds for the calling rule
+.decl slf001_same_class_type(n: node, cls: loc, selftag: loc)
+// SELFTAG: not bound by every branch, so empty (unset) where not bound, as in ast-grep.
+slf001_same_class_type(n, CLS, SELFTAG) :-
+    ( slf001_self_type(n), slf001_free(n, CLS, SELFTAG)
+    ; kind(n, "identifier"), node(_, n, _, _, _), CLS = n, unset(SELFTAG)
+    ).
+
+slf001_same_class_type(n, CLS, SELFTAG) :- kind(n, "parenthesized_expression"),
+    child(n, c1, _), slf001_same_class_type(c1, CLS, SELFTAG).
+slf001_same_class_type(n, CLS, SELFTAG) :- kind(n, "type"), child(n, c2, _),
+    slf001_same_class_type(c2, CLS, SELFTAG).
+slf001_same_class_type(n, CLS, SELFTAG) :- kind(n, "generic_type"), child(n, c3, _),
+    child(_, c3, 0), !slf001_annotated_head(c3), slf001_same_class_type(c3, CLS, SELFTAG).
+slf001_same_class_type(n, CLS, SELFTAG) :- kind(n, "generic_type"), child(n, c4, _),
+    child(_, c4, 0), slf001_annotated_head(c4), child(n, c5, _), kind(c5, "type_parameter"),
+    slf001_tok_has_1(c5), child(c5, c14, _), kind(c14, "type"),
+    child(p15, c14, _), slf001_counted_12(c14),
+    k17 = count : { child(p15, s16, _), precedes(s16, c14), slf001_counted_12(s16) }, k17 = 0,
+    slf001_same_class_type(c14, CLS, SELFTAG).
+slf001_same_class_type(n, CLS, SELFTAG) :- kind(n, "subscript"), field(n, "value", c18),
+    !slf001_annotated_head(c18), slf001_same_class_type(c18, CLS, SELFTAG).
+slf001_same_class_type(n, CLS, SELFTAG) :- kind(n, "subscript"), field(n, "value", c19),
+    slf001_annotated_head(c19), slf001_tok_has_2(n), field(n, "subscript", c28),
+    precedes_stop(s29, c28, slf001_counted_11), glob("\\[", s29),
+    slf001_same_class_type(c28, CLS, SELFTAG).
+
+// same_class_callee(n): the JSON util `same-class-callee`, used where the JSON says `matches: "same-class-callee"`
+//   CLS, SELFTAG: metavariables this relation binds for the calling rule
+.decl slf001_same_class_callee(n: node, cls: loc, selftag: loc)
+slf001_same_class_callee(n, CLS, SELFTAG) :- kind(n, "identifier"), glob("{cls,mcs}", n),
+    slf001_free(n, CLS, SELFTAG).
+// SELFTAG: not bound by this rule, so empty (unset) here, as in ast-grep.
+slf001_same_class_callee(n, CLS, SELFTAG) :- kind(n, "identifier"), node(_, n, _, _, _), CLS = n,
+    unset(SELFTAG).
+slf001_same_class_callee(n, CLS, SELFTAG) :- kind(n, "subscript"),
+    slf001_same_class_type(n, CLS, SELFTAG).
+slf001_same_class_callee(n, CLS, SELFTAG) :- kind(n, "attribute"), field(n, "object", c1),
+    kind(c1, "call"), field(c1, "function", c2), slf001_super_name(c2),
+    field(n, "attribute", c3), glob("__new__", c3), slf001_free(n, CLS, SELFTAG).
+slf001_same_class_callee(n, CLS, SELFTAG) :- kind(n, "parenthesized_expression"),
+    child(n, c4, _), slf001_same_class_callee(c4, CLS, SELFTAG).
+
+// same_class_value(n): the JSON util `same-class-value`, used where the JSON says `matches: "same-class-value"`
+//   CLS, SELFTAG: metavariables this relation binds for the calling rule
+.decl slf001_same_class_value(n: node, cls: loc, selftag: loc)
+slf001_same_class_value(n, CLS, SELFTAG) :- kind(n, "identifier"), glob("self", n),
+    ref_site(n, b1), site_form(b1, "parameter"), slf001_free(n, CLS, SELFTAG).
+slf001_same_class_value(n, CLS, SELFTAG) :- kind(n, "call"), field(n, "function", c2),
+    slf001_same_class_callee(c2, CLS, SELFTAG).
+slf001_same_class_value(n, CLS, SELFTAG) :- kind(n, "parenthesized_expression"),
+    child(n, c3, _), slf001_same_class_value(c3, CLS, SELFTAG).
+
+// with_same_class_value(n): the JSON util `with-same-class-value`, used where the JSON says `matches: "with-same-class-value"`
+//   CLS, SELFTAG: metavariables this relation binds for the calling rule
+.decl slf001_with_same_class_value(n: node, cls: loc, selftag: loc)
+slf001_with_same_class_value(n, CLS, SELFTAG) :- kind(n, "as_pattern"), field(n, "alias", c1),
+    kind(c1, "as_pattern_target"), child(c1, c2, _), slf001_plain_name(c2), child(n, c3, _),
+    child(_, c3, 0), slf001_same_class_value(c3, CLS, SELFTAG).
+
+// plain_name(n): the JSON util `plain-name`, used where the JSON says `matches: "plain-name"`
+.decl slf001_plain_name(n: node)
+slf001_plain_name(n) :- kind(n, "identifier").
+slf001_plain_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), slf001_plain_name(c1).
+
+// class_itself(n): the JSON util `class-itself`, used where the JSON says `matches: "class-itself"`
+.decl slf001_class_itself(n: node)
+slf001_class_itself(n) :- kind(n, "identifier"), ref_site(n, b1), site_form(b1, "definition"),
+    kind(b1, "class_definition"), node(_, b1, _, _, _), DEF = b1, inside(n, p2, "class_definition"),
+    field(_, "body", n), node(_, p2, _, _, _), DEF = p2,
+    count : { slf001_stop_14_within(n, p3), (kind(p3, "list_comprehension") ; kind(p3, "set_comprehension") ; kind(p3, "dictionary_comprehension") ; kind(p3, "generator_expression")), count : { slf001_stop_14_within(p3, p4), (kind(p4, "function_definition") ; kind(p4, "lambda")) } = 0 } = 0.
+
+// scope_node(n): the JSON util `scope-node`, used where the JSON says `matches: "scope-node"`
+.decl slf001_scope_node(n: node)
+slf001_scope_node(n) :- (kind(n, "function_definition") ; kind(n, "lambda") ; kind(n, "class_definition")).
+
+// same_class_instance(n): the JSON util `same-class-instance`, used where the JSON says `matches: "same-class-instance"`
+.decl slf001_same_class_instance(n: node)
+slf001_same_class_instance(n) :- kind(n, "identifier"),
+    ( ref_site(n, b1), site_form(b1, "parameter"), slf001_receiver_parameter(b1)
+    ; slf001_alt_18(n, CLS, SELFTAG), (text(SELFTAG, t1_1), text(CLS, t1_1), @doc(SELFTAG) = @doc(CLS) ; inside(n, p3_2, "class_definition"), field(_, "body", n), field(p3_2, "name", c4_2), text(c4_2, t_cls1_2), text(CLS, t_cls1_2), @doc(c4_2) = @doc(CLS) )
+    ).
+
+
+// exempt_object(n): the JSON util `exempt-object`, used where the JSON says `matches: "exempt-object"`
+.decl slf001_exempt_object(n: node)
+slf001_exempt_object(n) :- slf001_receiver_name(n).
+slf001_exempt_object(n) :- slf001_super_call(n).
+slf001_exempt_object(n) :- slf001_class_itself(n).
+slf001_exempt_object(n) :- slf001_same_class_instance(n).
+slf001_exempt_object(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    slf001_exempt_object(c1).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl slf001_tok_has_1(n: node)
+.stored slf001_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+slf001_tok_has_1(n) :- child(n, c6, _), glob("\\,", c6).
+slf001_tok_has_1(n) :- op(n, t7), match(",", t7).
+slf001_tok_has_1(n) :- child(n, c13, _), structural_before(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+slf001_tok_has_1(n) :- child(n, c13, _), structural_after(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+slf001_tok_has_1(n) :- node_text(n, g8), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g8).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl slf001_tok_has_2(n: node)
+.stored slf001_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+slf001_tok_has_2(n) :- child(n, c20, _), glob("\\,", c20).
+slf001_tok_has_2(n) :- op(n, t21), match(",", t21).
+slf001_tok_has_2(n) :- child(n, c27, _), structural_before(c27, g22),
+    match("(?s)^(?:.*(?:,).*)$", g22).
+slf001_tok_has_2(n) :- child(n, c27, _), structural_after(c27, g22),
+    match("(?s)^(?:.*(?:,).*)$", g22).
+slf001_tok_has_2(n) :- node_text(n, g22), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g22).
+
+// set_2: node kinds from a JSON `any`
+.decl slf001_set_2(v: symbol)
+slf001_set_2("lambda"). slf001_set_2("list_comprehension"). slf001_set_2("set_comprehension").
+slf001_set_2("dictionary_comprehension"). slf001_set_2("generator_expression").
+
+// stop_9: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl slf001_stop_9(kind: symbol)
+slf001_stop_9("class_definition"). slf001_stop_9("function_definition").
+
+// counted_3(n): the siblings the JSON `nthChild.ofRule` counts
+.decl slf001_counted_3(n: node)
+slf001_counted_3(n) :- kind(n, "for_in_clause").
+
+// stop_4(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl slf001_stop_4(n: node)
+slf001_stop_4(n) :- slf001_scope_start(n).
+
+// stop_5(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl slf001_stop_5(n: node)
+slf001_stop_5(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// counted_11(n): the siblings the JSON `nthChild.ofRule` counts
+.decl slf001_counted_11(n: node)
+slf001_counted_11(n) :- node(_, n, _, _, _), !kind(n, "comment").
+
+// counted_12(n): the siblings the JSON `nthChild.ofRule` counts
+.decl slf001_counted_12(n: node)
+slf001_counted_12(n) :- kind(n, "type").
+
+// stop_14(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl slf001_stop_14(n: node)
+slf001_stop_14(n) :- slf001_scope_node(n).
+
+// alt_18(n): the JSON `any`: n matches if any one of these rules does
+//   CLS, SELFTAG: metavariables this relation binds for the calling rule
+.decl slf001_alt_18(n: node, cls: loc, selftag: loc)
+slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b1),
+    (site_form(b1, "assignment") ; site_form(b1, "named")), binding_value(b1, x2),
+    slf001_same_class_value(x2, CLS, SELFTAG).
+slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b3), site_form(b3, "with"),
+    ( slf001_with_same_class_value(b3, CLS, SELFTAG)
+    ; within(b3, p1), slf001_with_same_class_value(p1, CLS, SELFTAG)
+    ).
+
+slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b5), site_form(b5, "annotated"),
+    site_annotation(b5, o6), slf001_same_class_type(o6, CLS, SELFTAG).
+slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b7), site_form(b7, "parameter"),
+    ( kind(b7, "typed_default_parameter")
+    ; kind(b7, "typed_parameter"), child(b7, c1, _), kind(c1, "identifier")
+    ),
+    field(b7, "type", c9), slf001_same_class_type(c9, CLS, SELFTAG).
+slf001_alt_18(n, CLS, SELFTAG) :- ref_site(n, b10), site_form(b10, "definition"),
+    kind(b10, "function_definition"), field(b10, "return_type", c11),
+    slf001_same_class_type(c11, CLS, SELFTAG).
+
+// alt_27(n): the JSON `any`: n matches if any one of these rules does
+.decl slf001_alt_27(n: node)
+slf001_alt_27(n) :- child(n, c1, _), child(_, c1, 1), slf001_private_name(c1), child(n, c2, _),
+    child(_, c2, 2),
+    count : { child(n, c3, _), child(_, c3, 0), slf001_exempt_object(c3) } = 0.
+slf001_alt_27(n) :- child(n, c4, _), child(_, c4, 1), match("[^_].*", c4), child(n, c5, _),
+    child(p6, c5, _), k8 = count : { child(p6, s7, _), precedes(s7, c5) }, k8 >= 2,
+    count : { child(p9, c5, _), k11 = count : { child(p9, s10, _), precedes(c5, s10) }, k11 = 0 } = 0,
+    slf001_private_name(c5).
+
+// alt_28(n): the JSON `any`: n matches if any one of these rules does
+.decl slf001_alt_28(n: node)
+slf001_alt_28(n) :- child(n, c1, _),
+    child(p2, c1, _), k4 = count : { child(p2, s3, _), precedes(c1, s3) }, k4 = 0,
+    slf001_private_name(c1), child(n, c5, _), child(_, c5, 1),
+    count : { count : { child(n, c6, _), child(_, c6, 2) } = 0, child(n, c7, _), child(_, c7, 0), slf001_exempt_object(c7) } = 0.
+slf001_alt_28(n) :- count : { child(n, c8, _), child(p9, c8, _), k11 = count : { child(p9, s10, _), precedes(c8, s10) }, k11 = 0, slf001_private_name(c8) } = 0,
+    slf001_alt_27(n).
+
+// stop_14_within: within_stop over the stop set stop_14, read inside an aggregate
+.decl slf001_stop_14_within(n: node, a: node)
+slf001_stop_14_within(x, y) :- within_stop(x, y, slf001_stop_14).

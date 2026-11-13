@@ -1,0 +1,22 @@
+.policy "ruff-up010-unnecessary-future-import" revision 1
+.guests off
+.description "Remove __future__ imports of features that Python 3 always enables; they have no effect on current Python versions."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// UP010(n): a finding at node n, from clause `unnecessary-future-import`.
+// Each rule below is one way the JSON `rule` can match.
+.violation UP010(at: node) "Remove the unused obsolete names from this `__future__` import, and the whole statement if none remain; Python 3.7 and later always enable them."
+    suppress noqa "UP010"
+UP010(n) :-
+    ( kind(n, "future_import_statement")
+    ; kind(n, "import_from_statement"), field(n, "module_name", c1), kind(c1, "relative_import"), match("[.\\s]+__future__", c1)
+    ),
+    child(n, c2, _), kind(c2, "dotted_name"),
+    glob("{nested_scopes,generators,with_statement,division,absolute_import,print_function,unicode_literals,generator_stop}", c2),
+    site_form(c2, "import"), (site_scope(c2, "module") ; site_scope(c2, "function")),
+    !site_used(c2).

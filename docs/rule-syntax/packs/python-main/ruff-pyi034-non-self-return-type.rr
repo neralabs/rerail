@@ -1,0 +1,364 @@
+.policy "ruff-pyi034-non-self-return-type" revision 1
+.guests off
+.description "Annotate methods that return their own instance, such as in-place operators, context-manager entry and an iterator's iter method, with Self instead of the class or a broad iterator type."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// overload_ref(n): the JSON util `overload-ref`, used where the JSON says `matches: "overload-ref"`
+.decl pyi034_overload_ref(n: node)
+pyi034_overload_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.overload")
+    ; sym_of(n, "typing_extensions.overload")
+    ; sym_of(n, "_typeshed.overload")
+    ).
+
+pyi034_overload_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi034_overload_ref(c1).
+
+// final_ref(n): the JSON util `final-ref`, used where the JSON says `matches: "final-ref"`
+.decl pyi034_final_ref(n: node)
+pyi034_final_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.final")
+    ; sym_of(n, "typing_extensions.final")
+    ; sym_of(n, "_typeshed.final")
+    ).
+
+pyi034_final_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi034_final_ref(c1).
+
+// ref_of(n, key): 3 copies of one rule set (`abstract-ref`, `async-iterable-ref`, `iterable-ref`), folded into one: row `key` of
+// ref_of_case gives the strings each copy had.
+.decl pyi034_ref_of(n: node, key: symbol)
+pyi034_ref_of(n, q1) :- pyi034_ref_of_case(q1, s1, s2, s3, s4),
+    (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, s1) ; sym_of(n, s2) ; sym_of(n, s3) ; sym_of(n, s4)).
+pyi034_ref_of(n, q1) :- pyi034_ref_of_case(q1, s1, s2, s3, s4), kind(n, "parenthesized_expression"),
+    child(n, c1, _), pyi034_ref_of(c1, q1).
+
+// iterator_ref(n): the JSON util `iterator-ref`, used where the JSON says `matches: "iterator-ref"`
+.decl pyi034_iterator_ref(n: node)
+pyi034_iterator_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "typing.Iterator") ; sym_of(n, "collections.abc.Iterator")).
+pyi034_iterator_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi034_iterator_ref(c1).
+
+// async_iterator_ref(n): the JSON util `async-iterator-ref`, used where the JSON says `matches: "async-iterator-ref"`
+.decl pyi034_async_iterator_ref(n: node)
+pyi034_async_iterator_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "typing.AsyncIterator") ; sym_of(n, "collections.abc.AsyncIterator")).
+pyi034_async_iterator_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi034_async_iterator_ref(c1).
+
+// abstract_fn(n): the JSON util `abstract-fn`, used where the JSON says `matches: "abstract-fn"`
+.decl pyi034_abstract_fn(n: node)
+pyi034_abstract_fn(n) :- child(p1, n, _), kind(p1, "decorated_definition"), child(p1, c2, _),
+    kind(c2, "decorator"), child(c2, c3, _), pyi034_ref_of(c3, "abstract").
+
+// overload_fn(n): the JSON util `overload-fn`, used where the JSON says `matches: "overload-fn"`
+.decl pyi034_overload_fn(n: node)
+pyi034_overload_fn(n) :- child(p1, n, _), kind(p1, "decorated_definition"), child(p1, c2, _),
+    kind(c2, "decorator"), child(c2, c3, _), pyi034_overload_ref(c3).
+
+// param(n): the JSON util `param`, used where the JSON says `matches: "param"`
+.decl pyi034_param(n: node)
+pyi034_param(n) :- kind(n, k1), pyi034_set_1(k1).
+
+// ann(n, key): 3 copies of one rule set (`ann-dict`, `ann-str`, `ann-tuple`), folded into one: row `key` of
+// ann_case gives the strings each copy had.
+.decl pyi034_ann(n: node, key: symbol)
+pyi034_ann(n, q1) :- pyi034_ann_case(q1, s1), (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, s1), global_ref(n, q1).
+pyi034_ann(n, q1) :- pyi034_ann_case(q1, s1), kind(n, "subscript"), field(n, "value", c1),
+    (kind(c1, "identifier") ; kind(c1, "attribute")), sym_of(c1, s1),
+    global_ref(c1, q1).
+pyi034_ann(n, q1) :- pyi034_ann_case(q1, s1), kind(n, "generic_type"), child(n, c2, _),
+    kind(c2, "identifier"), (kind(c2, "identifier") ; kind(c2, "attribute")),
+    sym_of(c2, s1), global_ref(c2, q1).
+pyi034_ann(n, q1) :- pyi034_ann_case(q1, s1), kind(n, "parenthesized_expression"), child(n, c3, _),
+    pyi034_ann(c3, q1).
+
+// metaclass_params(n): the JSON util `metaclass-params`, used where the JSON says `matches: "metaclass-params"`
+.decl pyi034_metaclass_params(n: node)
+pyi034_metaclass_params(n) :- kind(n, "parameters"), child(n, c1, _), pyi034_param(c1),
+    child(p2, c1, _), pyi034_counted(c1),
+    k4 = count : { child(p2, s3, _), precedes(s3, c1), pyi034_counted(s3) }, k4 = 4,
+    ( kind(c1, "dictionary_splat_pattern")
+    ; kind(c1, "typed_parameter"), child(c1, c2, _), kind(c2, "dictionary_splat_pattern")
+    ),
+
+    count : { child(n, c6, _), pyi034_param(c6), child(p7, c6, _), pyi034_counted(c6), k9 = count : { child(p7, s8, _), precedes(s8, c6), pyi034_counted(s8) }, k9 = 5 } = 0,
+    count : { child(n, c10, _), pyi034_alt_5(c10) } = 0, child(n, c12, _),
+    (kind(c12, "typed_parameter") ; kind(c12, "typed_default_parameter")),
+    child(p13, c12, _), pyi034_counted(c12),
+    k15 = count : { child(p13, s14, _), precedes(s14, c12), pyi034_counted(s14) }, k15 = 1,
+    field(c12, "type", c16), kind(c16, "type"), child(c16, c17, _), pyi034_ann(c17, "str"),
+    child(n, c18, _),
+    (kind(c18, "typed_parameter") ; kind(c18, "typed_default_parameter")),
+    child(p19, c18, _), pyi034_counted(c18),
+    k21 = count : { child(p19, s20, _), precedes(s20, c18), pyi034_counted(s20) }, k21 = 2,
+    field(c18, "type", c22), kind(c22, "type"), child(c22, c23, _), pyi034_ann(c23, "tuple"),
+    child(n, c24, _),
+    (kind(c24, "typed_parameter") ; kind(c24, "typed_default_parameter")),
+    child(p25, c24, _), pyi034_counted(c24),
+    k27 = count : { child(p25, s26, _), precedes(s26, c24), pyi034_counted(s26) }, k27 = 3,
+    field(c24, "type", c28), kind(c28, "type"), child(c28, c29, _), pyi034_ann(c29, "dict").
+
+// metaclass_base(n): the JSON util `metaclass-base`, used where the JSON says `matches: "metaclass-base"`
+.decl pyi034_metaclass_base(n: node)
+pyi034_metaclass_base(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "builtins.type")
+    ; sym_of(n, "abc.ABCMeta")
+    ; sym_of(n, "enum.EnumMeta")
+    ; sym_of(n, "enum.EnumType")
+    ),
+    global_ref(n, "type").
+pyi034_metaclass_base(n) :- kind(n, "subscript"), field(n, "value", c1),
+    (kind(c1, "identifier") ; kind(c1, "attribute")), sym_of(c1, "builtins.type"),
+    global_ref(c1, "type").
+pyi034_metaclass_base(n) :- kind(n, "call"), field(n, "function", c2),
+    (kind(c2, "identifier") ; kind(c2, "attribute")), sym_of(c2, "builtins.type"),
+    global_ref(c2, "type"), field(n, "arguments", c3), kind(c3, "argument_list"),
+    k5 = count : { child(c3, c4, _), !pyi034_alt_9(c4) }, k5 >= 1, k5 <= 1.
+pyi034_metaclass_base(n) :- kind(n, "identifier"), ref_site(n, b6),
+    kind(b6, "class_definition"), field(b6, "superclasses", c7), child(c7, c8, _),
+    pyi034_metaclass_base(c8).
+pyi034_metaclass_base(n) :- kind(n, "subscript"), field(n, "value", c9),
+    kind(c9, "identifier"), ref_site(c9, b10), kind(b10, "class_definition"),
+    field(b10, "superclasses", c11), child(c11, c12, _), pyi034_metaclass_base(c12).
+pyi034_metaclass_base(n) :- kind(n, "parenthesized_expression"), child(n, c13, _),
+    pyi034_metaclass_base(c13).
+
+// base(n): the JSON util `base`, used where the JSON says `matches: "base"`
+.decl pyi034_base(n: node)
+pyi034_base(n) :- node(_, n, _, _, _), !pyi034_alt_10(n).
+
+// metaclass(n): the JSON util `metaclass`, used where the JSON says `matches: "metaclass"`
+.decl pyi034_metaclass(n: node)
+pyi034_metaclass(n) :- kind(n, "class_definition"),
+    ( field(n, "superclasses", c1), child(c1, c2, _), pyi034_metaclass_base(c2)
+    ; field(n, "superclasses", c3), child(c3, c4, _), pyi034_base(c4), field(n, "body", c5), kind(c5, "block"), child(c5, c6, _), pyi034_alt_11(c6)
+    ).
+
+
+// class_name(n): the JSON util `class-name`, used where the JSON says `matches: "class-name"`
+//   C: metavariable of the calling rule, passed in (bound by the caller)
+//   S: metavariable this relation binds for the calling rule
+.decl pyi034_class_name(n: node, c: loc, s: loc)
+// S: not bound by this rule, so empty (unset) here, as in ast-grep.
+pyi034_class_name(n, C, S) :- pyi034_demand_class_name(n, C), kind(n, "identifier"),
+    text(n, t_c1), text(C, t_c1), unset(S), @doc(n) = @doc(C).
+pyi034_class_name(n, C, S) :- pyi034_demand_class_name(n, C),
+    (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
+    child(r1, c2, _), pyi034_alt_15(c2, S), text(S, t4), text(C, t4).
+pyi034_class_name(n, C, S) :- pyi034_demand_class_name(n, C), kind(n, "parenthesized_expression"),
+    child(n, c6, _), pyi034_class_name(c6, C, S).
+
+// positional(n): the JSON util `positional`, used where the JSON says `matches: "positional"`
+.decl pyi034_positional(n: node)
+pyi034_positional(n) :-
+    ( (kind(n, "identifier") ; kind(n, "default_parameter") ; kind(n, "typed_default_parameter"))
+    ; kind(n, "typed_parameter"), child(n, c1, _), kind(c1, "identifier")
+    ),
+    count : { precedes(s2, n), pyi034_alt_18(s2) } = 0.
+
+// method(n): the JSON util `method`, used where the JSON says `matches: "method"`
+//   C: metavariable this relation binds for the calling rule
+.decl pyi034_method(n: node, c: loc)
+pyi034_method(n, C) :- kind(n, "function_definition"), field(n, "parameters", c1),
+    kind(c1, "parameters"), child(c1, c2, _), pyi034_positional(c2), !pyi034_abstract_fn(n),
+    !pyi034_overload_fn(n), within_stop(n, p3, "function_definition"),
+    kind(p3, "class_definition"), field(p3, "name", c4), node(_, c4, _, _, _), C = c4, !pyi034_metaclass(p3).
+
+// iter_subclass(n): the JSON util `iter-subclass`, used where the JSON says `matches: "iter-subclass"`
+.decl pyi034_iter_subclass(n: node)
+pyi034_iter_subclass(n) :- pyi034_demand_iter_subclass(n), pyi034_up_1(n, p1),
+    field(p1, "superclasses", c2), child(c2, c3, _), pyi034_iter_base(c3).
+
+// iter_base(n): the JSON util `iter-base`, used where the JSON says `matches: "iter-base"`
+.decl pyi034_iter_base(n: node)
+pyi034_iter_base(n) :- pyi034_iterator_ref(n).
+pyi034_iter_base(n) :- kind(n, "subscript"), field(n, "value", c1), pyi034_iterator_ref(c1).
+pyi034_iter_base(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "identifier"),
+    pyi034_iterator_ref(c2).
+pyi034_iter_base(n) :- kind(n, "identifier"), ref_site(n, b3), kind(b3, "class_definition"),
+    field(b3, "superclasses", c4), child(c4, c5, _), pyi034_iter_base(c5).
+pyi034_iter_base(n) :- kind(n, "subscript"), field(n, "value", c6), kind(c6, "identifier"),
+    ref_site(c6, b7), kind(b7, "class_definition"), field(b7, "superclasses", c8),
+    child(c8, c9, _), pyi034_iter_base(c9).
+pyi034_iter_base(n) :- kind(n, "parenthesized_expression"), child(n, c10, _), pyi034_iter_base(c10).
+
+// aiter_base(n): the JSON util `aiter-base`, used where the JSON says `matches: "aiter-base"`
+.decl pyi034_aiter_base(n: node)
+pyi034_aiter_base(n) :- pyi034_async_iterator_ref(n).
+pyi034_aiter_base(n) :- kind(n, "subscript"), field(n, "value", c1), pyi034_async_iterator_ref(c1).
+pyi034_aiter_base(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "identifier"),
+    pyi034_async_iterator_ref(c2).
+pyi034_aiter_base(n) :- kind(n, "identifier"), ref_site(n, b3), kind(b3, "class_definition"),
+    field(b3, "superclasses", c4), child(c4, c5, _), pyi034_aiter_base(c5).
+pyi034_aiter_base(n) :- kind(n, "subscript"), field(n, "value", c6), kind(c6, "identifier"),
+    ref_site(c6, b7), kind(b7, "class_definition"), field(b7, "superclasses", c8),
+    child(c8, c9, _), pyi034_aiter_base(c9).
+pyi034_aiter_base(n) :- kind(n, "parenthesized_expression"), child(n, c10, _),
+    pyi034_aiter_base(c10).
+
+// ret_iterable(n): the JSON util `ret-iterable`, used where the JSON says `matches: "ret-iterable"`
+.decl pyi034_ret_iterable(n: node)
+pyi034_ret_iterable(n) :- pyi034_ref_of(n, "iterable").
+pyi034_ret_iterable(n) :- kind(n, "subscript"), field(n, "value", c1), pyi034_ref_of(c1, "iterable").
+pyi034_ret_iterable(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "identifier"),
+    pyi034_ref_of(c2, "iterable").
+pyi034_ret_iterable(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    pyi034_ret_iterable(c3).
+
+// ret_async_iterable(n): the JSON util `ret-async-iterable`, used where the JSON says `matches: "ret-async-iterable"`
+.decl pyi034_ret_async_iterable(n: node)
+pyi034_ret_async_iterable(n) :- pyi034_ref_of(n, "async_iterable").
+pyi034_ret_async_iterable(n) :- kind(n, "subscript"), field(n, "value", c1),
+    pyi034_ref_of(c1, "async_iterable").
+pyi034_ret_async_iterable(n) :- kind(n, "generic_type"), child(n, c2, _),
+    kind(c2, "identifier"), pyi034_ref_of(c2, "async_iterable").
+pyi034_ret_async_iterable(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    pyi034_ret_async_iterable(c3).
+
+// in_final(n): the JSON util `in-final`, used where the JSON says `matches: "in-final"`
+.decl pyi034_in_final(n: node)
+pyi034_in_final(n) :- pyi034_demand_in_final(n), pyi034_up_2(n, p1), child(p2, p1, _),
+    kind(p2, "decorated_definition"), child(p2, c3, _), kind(c3, "decorator"),
+    child(c3, c4, _), pyi034_final_ref(c4).
+
+// PYI034(n): a finding at node n, from clause `returns-class-name`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI034(at: node, m: node, c: loc) "Annotate the return type of `{m}` as `Self` (from typing, or typing_extensions before 3.11) instead of `{c}`. Leave it if the method does not return the receiver."
+    suppress noqa "PYI034"
+PYI034(M, n, C) :- kind(n, "function_definition"), pyi034_method(n, C),
+    field(n, "return_type", c1), kind(c1, "type"), child(c1, c2, _),
+    pyi034_class_name(c2, C, _),
+    ( match("async\\b.*", n), field(n, "name", c3), glob("__aenter__", c3), !pyi034_in_final(n)
+    ; !match("async\\b.*", n), pyi034_alt_19(n)
+    ),
+    field(n, "name", c6), node(_, c6, _, _, _), M = c6.
+
+// PYI034_iterator_returns_iterator(n): a finding at node n, from clause `iterator-returns-iterator`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI034_iterator_returns_iterator(at: node, m: node, c: loc) code "PYI034" "Annotate the return type of `{m}` as `Self` (from typing, or typing_extensions before 3.11) instead of an iterator type, since `{c}` is itself an iterator. Leave it if another object is returned."
+    suppress noqa "PYI034"
+PYI034_iterator_returns_iterator(M, n, C) :- kind(n, "function_definition"),
+    pyi034_method(n, C), !match("async\\b.*", n),
+    count : { field(n, "return_type", c1), kind(c1, "type"), child(c1, c2, _), pyi034_class_name(c2, C, _) } = 0,
+    pyi034_alt_22(n), field(n, "name", c12), node(_, c12, _, _, _), M = c12.
+
+// demand_class_name: the rows of class_name its callers ask for (the metavariable columns they pass in)
+.decl pyi034_demand_class_name(n: node, c: loc)
+pyi034_demand_class_name(c6, C) :- pyi034_demand_class_name(n, C),
+    kind(n, "parenthesized_expression"), child(n, c6, _).
+pyi034_demand_class_name(c2, C) :- kind(n, "function_definition"), pyi034_method(n, C),
+    field(n, "return_type", c1), kind(c1, "type"), child(c1, c2, _),
+    field(n, "name", c6), node(_, c6, _, _, _), M = c6.
+pyi034_demand_class_name(c2, C) :- kind(n, "function_definition"), pyi034_method(n, C), pyi034_alt_22(n),
+    field(n, "name", c12), node(_, c12, _, _, _), M = c12, field(n, "return_type", c1), kind(c1, "type"),
+    child(c1, c2, _).
+
+// demand_iter_subclass: the nodes iter_subclass is asked at (it looks at every ancestor of every node)
+.decl pyi034_demand_iter_subclass(n: node)
+pyi034_demand_iter_subclass(n) :- field(n, "name", c1), glob("__iter__", c1),
+    field(n, "return_type", c2), kind(c2, "type"), child(c2, c3, _), pyi034_ret_iterable(c3).
+
+// demand_in_final: the nodes in_final is asked at (it looks at every ancestor of every node)
+.decl pyi034_demand_in_final(n: node)
+pyi034_demand_in_final(n) :- kind(n, "function_definition"), pyi034_method(n, C),
+    field(n, "return_type", c1), kind(c1, "type"), child(c1, c2, _),
+    field(n, "name", c6), node(_, c6, _, _, _), M = c6, match("async\\b.*", n), field(n, "name", c3),
+    glob("__aenter__", c3).
+pyi034_demand_in_final(n) :- field(n, "name", c2), glob("{__enter__,__new__}", c2).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pyi034_up_1(n: node, p: node)
+pyi034_up_1(n, p) :- pyi034_demand_iter_subclass(n), within_stop(n, p, "function_definition"),
+    kind(p, "class_definition").
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pyi034_up_2(n: node, p: node)
+pyi034_up_2(n, p) :- pyi034_demand_in_final(n), within_stop(n, p, "function_definition"),
+    kind(p, "class_definition").
+
+// set_1: node kinds from a JSON `any`
+.decl pyi034_set_1(v: symbol)
+pyi034_set_1("identifier"). pyi034_set_1("default_parameter"). pyi034_set_1("typed_parameter").
+pyi034_set_1("typed_default_parameter"). pyi034_set_1("list_splat_pattern").
+pyi034_set_1("dictionary_splat_pattern").
+
+// ref_of_case: one row per relation folded into ref_of: its key, then the strings that differed.
+.decl pyi034_ref_of_case(key: symbol, s1: symbol, s2: symbol, s3: symbol, s4: symbol)
+pyi034_ref_of_case("abstract", "abc.abstractmethod", "abc.abstractclassmethod", "abc.abstractstaticmethod", "abc.abstractproperty").
+pyi034_ref_of_case("async_iterable", "typing.AsyncIterable", "typing.AsyncIterator", "collections.abc.AsyncIterable", "collections.abc.AsyncIterator").
+pyi034_ref_of_case("iterable", "typing.Iterable", "typing.Iterator", "collections.abc.Iterable", "collections.abc.Iterator").
+
+// ann_case: one row per relation folded into ann: its key, then the strings that differed.
+.decl pyi034_ann_case(key: symbol, s1: symbol)
+pyi034_ann_case("dict", "builtins.dict"). pyi034_ann_case("str", "builtins.str").
+pyi034_ann_case("tuple", "builtins.tuple").
+
+// counted(n): 5 identical copies of one rule set (`counted_2`, `counted_4`, `counted_6` and 2 more), folded into one.
+.decl pyi034_counted(n: node)
+pyi034_counted(n) :- pyi034_param(n).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi034_alt_5(n: node)
+pyi034_alt_5(n) :- kind(n, "list_splat_pattern").
+pyi034_alt_5(n) :- kind(n, "typed_parameter"), child(n, c1, _),
+    kind(c1, "list_splat_pattern").
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi034_alt_9(n: node)
+pyi034_alt_9(n) :- kind(n, "comment").
+pyi034_alt_9(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi034_alt_10(n: node)
+pyi034_alt_10(n) :- (kind(n, "comment") ; kind(n, "keyword_argument") ; kind(n, "dictionary_splat")).
+pyi034_alt_10(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi034_alt_11(n: node)
+pyi034_alt_11(n) :- kind(n, "function_definition"), field(n, "name", c1), glob("__new__", c1),
+    field(n, "parameters", c2), pyi034_metaclass_params(c2).
+pyi034_alt_11(n) :- kind(n, "decorated_definition"), child(n, c3, _),
+    kind(c3, "function_definition"), field(c3, "name", c4), glob("__new__", c4),
+    field(c3, "parameters", c5), pyi034_metaclass_params(c5).
+
+// stop_14(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi034_stop_14(n: node)
+pyi034_stop_14(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// alt_15(n): the JSON `any`: n matches if any one of these rules does
+//   S: metavariable this relation binds for the calling rule
+.decl pyi034_alt_15(n: node, s: loc)
+pyi034_alt_15(n, S) :- kind(n, "identifier"), S = n.
+pyi034_alt_15(n, S) :- kind(n, "parenthesized_expression"), within_stop(c1, n, pyi034_stop_14),
+    kind(c1, "identifier"), S = c1.
+
+// alt_18(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi034_alt_18(n: node)
+pyi034_alt_18(n) :- (kind(n, "keyword_separator") ; kind(n, "list_splat_pattern")).
+pyi034_alt_18(n) :- kind(n, "typed_parameter"), child(n, c1, _),
+    kind(c1, "list_splat_pattern").
+
+// alt_19(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi034_alt_19(n: node)
+pyi034_alt_19(n) :- field(n, "name", c1),
+    glob("{__iadd__,__isub__,__imul__,__imatmul__,__itruediv__,__ifloordiv__,__imod__,__ipow__,__ilshift__,__irshift__,__iand__,__ixor__,__ior__}", c1).
+pyi034_alt_19(n) :- field(n, "name", c2), glob("{__enter__,__new__}", c2), !pyi034_in_final(n).
+
+// alt_22(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi034_alt_22(n: node)
+pyi034_alt_22(n) :- field(n, "name", c1), glob("__iter__", c1), field(n, "return_type", c2),
+    kind(c2, "type"), child(c2, c3, _), pyi034_ret_iterable(c3), pyi034_iter_subclass(n).
+pyi034_alt_22(n) :- field(n, "name", c4), glob("__aiter__", c4), field(n, "return_type", c5),
+    kind(c5, "type"), child(c5, c6, _), pyi034_ret_async_iterable(c6),
+    within_stop(n, p7, "function_definition"), kind(p7, "class_definition"),
+    field(p7, "superclasses", c8), child(c8, c9, _), pyi034_aiter_base(c9).

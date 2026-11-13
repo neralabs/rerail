@@ -1,0 +1,251 @@
+.policy "ruff-n805-invalid-first-argument-name-for-method" revision 1
+.guests off
+.description "Use self as the name of the first parameter of instance methods, as PEP 8 recommends."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+.options {"pep8-naming.ignore-names": {"type": "array", "items": "string", "default": ["setUp", "tearDown", "setUpClass", "tearDownClass", "setUpModule", "tearDownModule", "asyncSetUp", "asyncTearDown", "setUpTestData", "failureException", "longMessage", "maxDiff"], "description": "Names exempt from the check, each a regex over the whole name (a Ruff glob: `*` is `.*`, `?` is `.`)."}}
+
+// static_or_class(n): the JSON util `static-or-class`, used where the JSON says `matches: "static-or-class"`
+.decl n805_static_or_class(n: node)
+n805_static_or_class(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "builtins.staticmethod")
+    ; sym_of(n, "abc.abstractstaticmethod")
+    ; sym_of(n, "builtins.classmethod")
+    ; sym_of(n, "abc.abstractclassmethod")
+    ),
+    (global_ref(n, "staticmethod") ; global_ref(n, "classmethod")).
+
+// decorated_static_or_class(n): the JSON util `decorated-static-or-class`, used where the JSON says `matches: "decorated-static-or-class"`
+.decl n805_decorated_static_or_class(n: node)
+n805_decorated_static_or_class(n) :- child(p1, n, _), kind(p1, "decorated_definition"),
+    child(p1, c2, _), kind(c2, "decorator"), within_stop(c3, c2, n805_stop_1),
+    ( n805_static_or_class(c3)
+    ; kind(c3, "call"), within_stop(c1, c3, n805_stop_1), n805_static_or_class(c1)
+    ).
+
+
+// positional(n): the JSON util `positional`, used where the JSON says `matches: "positional"`
+.decl n805_positional(n: node)
+n805_positional(n) :- node(_, n, _, _, _), !n805_alt_5(n).
+
+// meta_base(n): the JSON util `meta-base`, used where the JSON says `matches: "meta-base"`
+.decl n805_meta_base(n: node)
+n805_meta_base(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "builtins.type")
+    ; sym_of(n, "abc.ABCMeta")
+    ; sym_of(n, "enum.EnumMeta")
+    ; sym_of(n, "enum.EnumType")
+    ),
+    global_ref(n, "type").
+n805_meta_base(n) :- kind(n, "call"), field(n, "function", c1),
+    n805_builtin_type_family(c1, "builtin_type"),
+    ( field(n, "arguments", c2), kind(c2, "argument_list"), k1 = count : { child(c2, c3, _), !n805_alt_6(c3) }, k1 >= 1, k1 <= 1
+    ; field(n, "arguments", c4), kind(c4, "generator_expression")
+    ).
+
+n805_meta_base(n) :- kind(n, "subscript"), field(n, "value", c6),
+    n805_builtin_type_family(c6, "builtin_type").
+n805_meta_base(n) :- kind(n, "parenthesized_expression"), child(n, c7, _), n805_meta_base(c7).
+
+// builtin_type_family(n, key): 4 copies of one rule set (`builtin-type`, `dict-ref`, `str-ref` and 1 more), folded into one: row `key` of
+// builtin_type_family_case gives the strings each copy had.
+.decl n805_builtin_type_family(n: node, key: symbol)
+n805_builtin_type_family(n, q1) :- n805_builtin_type_family_case(q1, s1, s2),
+    (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, s1), sym_of(n, s2).
+n805_builtin_type_family(n, q1) :- n805_builtin_type_family_case(q1, s1, s2),
+    kind(n, "parenthesized_expression"), child(n, c1, _), n805_builtin_type_family(c1, q1).
+
+// local_meta(n): the JSON util `local-meta`, used where the JSON says `matches: "local-meta"`
+.decl n805_local_meta(n: node)
+n805_local_meta(n) :- kind(n, "identifier"), ref_site(n, b1), n805_meta_class(b1),
+    count : { within(b1, p2), (kind(p2, "function_definition") ; kind(p2, "class_definition")) } = 0.
+n805_local_meta(n) :- kind(n, "attribute"), field(n, "attribute", c3), node(_, c3, _, _, _), MATTR = c3,
+    field(n, "object", c4), kind(c4, "identifier"), ref_site(c4, b5),
+    kind(b5, "class_definition"),
+    count : { within(b5, p6), (kind(p6, "function_definition") ; kind(p6, "class_definition")) } = 0,
+    field(b5, "body", c7), within_stop(c8, c7, n805_stop_9), kind(c8, "class_definition"),
+    n805_meta_class(c8), field(c8, "name", c9), node(_, c9, _, _, _), MATTR = c9.
+n805_local_meta(n) :- kind(n, "subscript"), field(n, "value", c10), n805_local_meta(c10).
+n805_local_meta(n) :- kind(n, "parenthesized_expression"), child(n, c11, _),
+    n805_local_meta(c11).
+
+// meta_class(n): the JSON util `meta-class`, used where the JSON says `matches: "meta-class"`
+.decl n805_meta_class(n: node)
+n805_meta_class(n) :- kind(n, "class_definition"), child(n, c1, _),
+    kind(c1, "argument_list"), child(c1, c2, _), n805_alt_10(c2).
+
+// param(n): the JSON util `param`, used where the JSON says `matches: "param"`
+.decl n805_param(n: node)
+n805_param(n) :- kind(n, k1), n805_set_11(k1).
+
+// ann(n, key): 3 copies of one rule set (`ann-dict`, `ann-str`, `ann-tuple`), folded into one: row `key` of
+// ann_case gives the strings each copy had.
+.decl n805_ann(n: node, key: symbol)
+n805_ann(n, q1) :- n805_ann_case(q1),
+    (kind(n, "typed_parameter") ; kind(n, "typed_default_parameter")),
+    field(n, "type", c1), kind(c1, "type"), child(c1, c2, _), n805_ann_of(c2, q1).
+
+// metaclass_new(n): the JSON util `metaclass-new`, used where the JSON says `matches: "metaclass-new"`
+.decl n805_metaclass_new(n: node)
+n805_metaclass_new(n) :- kind(n, "function_definition"), field(n, "name", c1),
+    glob("__new__", c1), field(n, "parameters", c2), kind(c2, "parameters"),
+    k4 = count : { child(c2, c3, _), n805_param(c3) }, k4 >= 5, k4 <= 5,
+    count : { child(c2, c5, _), n805_alt_12(c5) } = 0, child(c2, c7, _),
+    ( kind(c7, "dictionary_splat_pattern")
+    ; kind(c7, "typed_parameter"), child(c7, c4, _), kind(c4, "dictionary_splat_pattern")
+    ),
+    child(c2, c9, _), n805_ann(c9, "str"), child(p10, c9, _), n805_counted(c9),
+    k12 = count : { child(p10, s11, _), precedes(s11, c9), n805_counted(s11) }, k12 = 1,
+    child(c2, c13, _), n805_ann(c13, "tuple"), child(p14, c13, _), n805_counted(c13),
+    k16 = count : { child(p14, s15, _), precedes(s15, c13), n805_counted(s15) }, k16 = 2,
+    child(c2, c17, _), n805_ann(c17, "dict"), child(p18, c17, _), n805_counted(c17),
+    k20 = count : { child(p18, s19, _), precedes(s19, c17), n805_counted(s19) }, k20 = 3.
+
+// metaclass_signature(n): the JSON util `metaclass-signature`, used where the JSON says `matches: "metaclass-signature"`
+.decl n805_metaclass_signature(n: node)
+n805_metaclass_signature(n) :- kind(n, "class_definition"), child(n, c1, _),
+    kind(c1, "argument_list"), child(c1, c2, _), n805_positional(c2), field(n, "body", c3),
+    kind(c3, "block"), child(c3, c4, _),
+    ( n805_metaclass_new(c4)
+    ; kind(c4, "decorated_definition"), child(c4, c5, _), n805_metaclass_new(c5)
+    ).
+
+
+// possibly_meta(n): the JSON util `possibly-meta`, used where the JSON says `matches: "possibly-meta"`
+.decl n805_possibly_meta(n: node)
+n805_possibly_meta(n) :- n805_meta_class(n).
+n805_possibly_meta(n) :- n805_metaclass_signature(n).
+
+// method(n): the JSON util `method`, used where the JSON says `matches: "method"`
+.decl n805_method(n: node)
+n805_method(n) :- kind(n, "function_definition"), within_stop(n, p1, n805_stop_18),
+    kind(p1, "class_definition"), !n805_possibly_meta(p1),
+    count : { field(n, "name", c2), glob("__{new,init_subclass,class_getitem}__", c2) } = 0,
+    !n805_decorated_static_or_class(n).
+
+// method_parameters(n): the JSON util `method-parameters`, used where the JSON says `matches: "method-parameters"`
+.decl n805_method_parameters(n: node)
+n805_method_parameters(n) :- kind(n, "parameters"), field(p1, "parameters", n),
+    kind(p1, "function_definition"), n805_method(p1).
+
+// named_ok(n): the JSON util `named-ok`, used where the JSON says `matches: "named-ok"`
+.decl n805_named_ok(n: node)
+n805_named_ok(n) :- node(_, n, _, _, _),
+    match("[s\\x{17F}\\x{2E2}\\x{209B}\\x{FF53}\\x{1D42C}\\x{1D460}\\x{1D494}\\x{1D4C8}\\x{1D4FC}\\x{1D530}\\x{1D564}\\x{1D598}\\x{1D5CC}\\x{1D600}\\x{1D634}\\x{1D668}\\x{1D69C}][e\\x{1D49}\\x{2091}\\x{212F}\\x{2147}\\x{FF45}\\x{1D41E}\\x{1D452}\\x{1D486}\\x{1D4EE}\\x{1D522}\\x{1D556}\\x{1D58A}\\x{1D5BE}\\x{1D5F2}\\x{1D626}\\x{1D65A}\\x{1D68E}][l\\x{2E1}\\x{2097}\\x{2113}\\x{217C}\\x{FF4C}\\x{1D425}\\x{1D459}\\x{1D48D}\\x{1D4C1}\\x{1D4F5}\\x{1D529}\\x{1D55D}\\x{1D591}\\x{1D5C5}\\x{1D5F9}\\x{1D62D}\\x{1D661}\\x{1D695}][f\\x{1DA0}\\x{FF46}\\x{1D41F}\\x{1D453}\\x{1D487}\\x{1D4BB}\\x{1D4EF}\\x{1D523}\\x{1D557}\\x{1D58B}\\x{1D5BF}\\x{1D5F3}\\x{1D627}\\x{1D65B}\\x{1D68F}]", n).
+n805_named_ok(n) :- node(_, n, _, _, _),
+    ( option("pep8-naming.ignore-names", "[]"), match(".*[^\\s\\S].*", n)
+    ; !option("pep8-naming.ignore-names", "[]"), option("pep8-naming.ignore-names", o_pep8_naming_ignore_names), match(o_pep8_naming_ignore_names, n)
+    ).
+
+
+// first_param_name(n): the JSON util `first-param-name`, used where the JSON says `matches: "first-param-name"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl n805_first_param_name(n: node, name: loc)
+n805_first_param_name(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, !n805_named_ok(n).
+
+// ann_of(n, key): 3 copies of one rule set (`dict-ann`, `str-ann`, `tuple-ann`), folded into one: row `key` of
+// ann_of_case gives the strings each copy had.
+.decl n805_ann_of(n: node, key: symbol)
+n805_ann_of(n, q1) :- n805_ann_of_case(q1, s1), n805_builtin_type_family(n, s1).
+n805_ann_of(n, q1) :- n805_ann_of_case(q1, s1), kind(n, "generic_type"), child(n, c1, _),
+    n805_builtin_type_family(c1, s1).
+n805_ann_of(n, q1) :- n805_ann_of_case(q1, s1), kind(n, "subscript"), field(n, "value", c2),
+    n805_builtin_type_family(c2, s1).
+n805_ann_of(n, q1) :- n805_ann_of_case(q1, s1), kind(n, "parenthesized_expression"),
+    child(n, c3, _), n805_ann_of(c3, q1).
+
+// N805(n): findings from clauses `plain-first-parameter`, `typed-first-parameter`, which say the same.
+// Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation N805(at: node, name: loc) "Name the first parameter `self` instead of `{name}` and update its uses; if it should receive the class, add `@classmethod` and name it `cls`."
+    suppress noqa "N805"
+N805(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, !n805_named_ok(n),
+    ( child(p1, n, _), n805_counted_of(n), k1 = count : { child(p1, s1, _), precedes(s1, n), n805_counted_of(s1) }, k1 = 0, child(p2, n, _), n805_method_parameters(p2)
+    ; field(p3, "name", n), kind(p3, "default_parameter"), child(p4, p3, _), n805_counted_of(p3), k2 = count : { child(p4, s2, _), precedes(s2, p3), n805_counted_of(s2) }, k2 = 0, child(p5, p3, _), n805_method_parameters(p5)
+    ).
+
+N805(n, NAME) :- kind(n, "typed_parameter"), child(p1, n, _), n805_counted_of(n),
+    k3 = count : { child(p1, s2, _), precedes(s2, n), n805_counted_of(s2) }, k3 = 0,
+    child(p4, n, _), n805_method_parameters(p4), child(n, c5, _),
+    n805_first_param_name(c5, NAME).
+
+// N805_typed_default_first_parameter(n): a finding at node n, from clause `typed-default-first-parameter`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation N805_typed_default_first_parameter(at: node, n805_param: node, name: loc) code "N805" "Name the first parameter `self` instead of `{name}` and update its uses; if it should receive the class, add `@classmethod` and name it `cls`."
+    suppress noqa "N805"
+N805_typed_default_first_parameter(PARAM, n, NAME) :- kind(n, "typed_default_parameter"),
+    child(p1, n, _), n805_counted_of(n),
+    k3 = count : { child(p1, s2, _), precedes(s2, n), n805_counted_of(s2) }, k3 = 0,
+    child(p4, n, _), n805_method_parameters(p4),
+    match("(?s)(?P<PARAM>(?:==|[<>!:]=?|[^=<>!:\\[\\]()\"']|\"(?:[^\"\\\\]|\\\\.)*\"|'(?:[^'\\\\]|\\\\.)*'|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\])*\\])*\\]|\\((?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*\\))+?)\\s*=(?:[^=]|\\z).*", n),
+    field(n, "name", c5), n805_first_param_name(c5, NAME).
+
+// stop_9: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl n805_stop_9(kind: symbol)
+n805_stop_9("function_definition"). n805_stop_9("class_definition").
+
+// set_11: node kinds from a JSON `any`
+.decl n805_set_11(v: symbol)
+n805_set_11("identifier"). n805_set_11("default_parameter"). n805_set_11("typed_parameter").
+n805_set_11("typed_default_parameter"). n805_set_11("list_splat_pattern").
+n805_set_11("dictionary_splat_pattern").
+
+// stop_18: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl n805_stop_18(kind: symbol)
+n805_stop_18("class_definition"). n805_stop_18("function_definition").
+
+// ann_case: one row per relation folded into ann: its key, then the strings that differed.
+.decl n805_ann_case(key: symbol)
+n805_ann_case("dict"). n805_ann_case("str"). n805_ann_case("tuple").
+
+// builtin_type_family_case: one row per relation folded into builtin_type_family: its key, then the strings that differed.
+.decl n805_builtin_type_family_case(key: symbol, s1: symbol, s2: symbol)
+n805_builtin_type_family_case("builtin_type", "type", "builtins.type").
+n805_builtin_type_family_case("dict_ref", "dict", "builtins.dict").
+n805_builtin_type_family_case("str_ref", "str", "builtins.str").
+n805_builtin_type_family_case("tuple_ref", "tuple", "builtins.tuple").
+
+// ann_of_case: one row per relation folded into ann_of: its key, then the strings that differed.
+.decl n805_ann_of_case(key: symbol, s1: symbol)
+n805_ann_of_case("dict", "dict_ref"). n805_ann_of_case("str", "str_ref").
+n805_ann_of_case("tuple", "tuple_ref").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl n805_stop_1(n: node)
+n805_stop_1(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl n805_alt_5(n: node)
+n805_alt_5(n) :- (kind(n, "comment") ; kind(n, "keyword_argument") ; kind(n, "dictionary_splat")).
+n805_alt_5(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl n805_alt_6(n: node)
+n805_alt_6(n) :- node(_, n, _, _, _), glob("[(),]", n).
+n805_alt_6(n) :- kind(n, "comment").
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl n805_alt_10(n: node)
+n805_alt_10(n) :- n805_meta_base(n).
+n805_alt_10(n) :- n805_local_meta(n).
+
+// alt_12(n): the JSON `any`: n matches if any one of these rules does
+.decl n805_alt_12(n: node)
+n805_alt_12(n) :- kind(n, "list_splat_pattern").
+n805_alt_12(n) :- kind(n, "typed_parameter"), child(n, c1, _),
+    kind(c1, "list_splat_pattern").
+
+// counted(n): 3 identical copies of one rule set (`counted_14`, `counted_15`, `counted_16`), folded into one.
+.decl n805_counted(n: node)
+n805_counted(n) :- n805_param(n).
+
+// counted_of(n): 6 identical copies of one rule set (`counted_19`, `counted_20`, `counted_22` and 3 more), folded into one.
+.decl n805_counted_of(n: node)
+n805_counted_of(n) :- node(_, n, _, _, _), !kind(n, "comment"),
+    !kind(n, "line_continuation").

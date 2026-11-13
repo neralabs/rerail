@@ -1,0 +1,19 @@
+.policy "bandit-b509-snmp-weak-cryptography" revision 1
+.guests off
+.description "Pass authentication and privacy keys to pysnmp UsmUserData; without them SNMPv3 runs with no authentication or encryption."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B509(n): a finding at node n, from clause `bandit:B509`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on F are added to every rule.
+.violation B509(at: node, f: node) "Pass authentication and privacy keys to this UsmUserData call; without them SNMPv3 runs with no authentication or encryption."
+    suppress nosec "B509"
+B509(F, n) :- n ~ `$F()`, sym_of(F, "pysnmp.hlapi.UsmUserData").
+B509(F, n) :- n ~ `$F($A)`, sym_of(F, "pysnmp.hlapi.UsmUserData").
+B509(F, n) :- n ~ `$F($A, $B)`, sym_of(F, "pysnmp.hlapi.UsmUserData").

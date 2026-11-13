@@ -1,0 +1,25 @@
+.policy "ruff-e743-ambiguous-function-name" revision 1
+.guests off
+.description "Avoid naming functions or methods l, I or O; in many fonts they are hard to tell apart from 1 and 0."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// E743(n): a finding at node n, from clause `ambiguous-function-name`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation E743(at: node, name: loc) "Rename function `{name}` to a descriptive name; in many fonts it is easy to confuse with 1 or 0."
+    suppress noqa "E743"
+E743(n, NAME) :- kind(n, "identifier"), match("(?<NAME>[lIO])", n), child(p1, n, _),
+    kind(p1, "function_definition"), e743_tok_follows_1(n).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^(?:class|def)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl e743_tok_follows_1(n: node)
+.stored e743_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+e743_tok_follows_1(n) :- next_sibling(s2, n), glob("{class,def}", s2).
+e743_tok_follows_1(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?:class|def)", t3).
+e743_tok_follows_1(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:class)\\s*|(?:.*\\W)?(?:def)\\s*)$", g4).

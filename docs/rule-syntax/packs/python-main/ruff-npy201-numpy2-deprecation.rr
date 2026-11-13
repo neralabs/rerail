@@ -1,0 +1,787 @@
+.policy "ruff-npy201-numpy2-deprecation" revision 1
+.guests off
+.description "Replace NumPy members that NumPy 2.0 removes from the main namespace with their supported replacements."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+#include "python/names.rr"
+
+// in_handler(n): the JSON util `in-handler`, used where the JSON says `matches: "in-handler"`
+.decl npy201_in_handler(n: node)
+npy201_in_handler(n) :- npy201_demand_in_handler(n), npy201_up_1(n, p1).
+
+// attribute_error(n): the JSON util `attribute-error`, used where the JSON says `matches: "attribute-error"`
+.decl npy201_attribute_error(n: node)
+npy201_attribute_error(n) :- npy201_handled_type(n),
+    ( kind(n, "identifier"), global_ref(n, "AttributeError")
+    ; kind(n, "attribute"), sym_of(n, "builtins.AttributeError")
+    ).
+
+
+// import_error(n): the JSON util `import-error`, used where the JSON says `matches: "import-error"`
+.decl npy201_import_error(n: node)
+npy201_import_error(n) :- npy201_handled_type(n),
+    ( kind(n, "identifier"), (global_ref(n, "ImportError") ; global_ref(n, "ModuleNotFoundError"))
+    ; kind(n, "attribute"), (sym_of(n, "builtins.ImportError") ; sym_of(n, "builtins.ModuleNotFoundError"))
+    ).
+
+
+// catches_attribute_error(n): the JSON util `catches-attribute-error`, used where the JSON says `matches: "catches-attribute-error"`
+.decl npy201_catches_attribute_error(n: node)
+npy201_catches_attribute_error(n) :- child(n, c1, _), kind(c1, "except_clause"),
+    within_stop(c2, c1, "block"), npy201_attribute_error(c2).
+
+// fallback(n): the JSON util `fallback`, used where the JSON says `matches: "fallback"`
+//   NEW: metavariable of the calling rule, passed in (bound by the caller)
+.decl npy201_fallback(n: node, new: symbol)
+npy201_fallback(n, NEW) :- node(_, NAME, _, _, _), kind(n, "attribute"), npy201_in_handler(n),
+    npy201_up_2(n, p1), field(p1, "body", c2), has(c2, c3, "attribute"),
+    sym_of(c3, q4), npy201_set_4(q4), field(c3, "attribute", c5), kind(c5, "identifier"),
+    node(_, c5, _, _, _), TID = c5, value(TID, NEW), text(NAME, t1_td),
+    NEW = @replace_all(t1_td, "[\\s\\S]+", "format_parser").
+npy201_fallback(n, NEW) :- node(_, NAME, _, _, _), kind(n, "identifier"), ref_site(n, b8),
+    npy201_in_handler(b8), within_stop(b8, p9, "try_statement"), kind(p9, "try_statement"),
+    npy201_catches_import_error(p9), field(p9, "body", c10),
+    has(c10, c11, "import_from_statement"), has(c11, c12, "dotted_name"),
+    npy201_statement_name(c12, q13),
+    ( q13 = "ast.literal_eval"
+    ; q13 = "inspect.getsource"
+    ; q13 = "numpy.all"
+    ; q13 = "numpy.any"
+    ; q13 = "numpy.asmatrix"
+    ; q13 = "numpy.bytes_"
+    ; q13 = "numpy.char.chararray"
+    ; q13 = "numpy.char.compare_chararrays"
+    ; q13 = "numpy.clongdouble"
+    ; q13 = "numpy.complex128"
+    ; q13 = "numpy.complex64"
+    ; q13 = "numpy.cumprod"
+    ; q13 = "numpy.exceptions.AxisError"
+    ; q13 = "numpy.exceptions.ComplexWarning"
+    ; q13 = "numpy.exceptions.DTypePromotionError"
+    ; q13 = "numpy.exceptions.ModuleDeprecationWarning"
+    ; q13 = "numpy.exceptions.RankWarning"
+    ; q13 = "numpy.exceptions.TooHardError"
+    ; q13 = "numpy.exceptions.VisibleDeprecationWarning"
+    ; q13 = "numpy.float64"
+    ; q13 = "numpy.inf"
+    ; q13 = "numpy.issubdtype"
+    ; q13 = "numpy.lib.add_docstring"
+    ; q13 = "numpy.lib.add_newdoc"
+    ; q13 = "numpy.lib.array_utils.byte_bounds"
+    ; q13 = "numpy.lib.npyio.DataSource"
+    ; q13 = "numpy.lib.tracemalloc_domain"
+    ; q13 = "numpy.longdouble"
+    ; q13 = "numpy.nan"
+    ; q13 = "numpy.prod"
+    ; q13 = "numpy.rec.format_parser"
+    ; q13 = "numpy.round"
+    ; q13 = "numpy.str_"
+    ; q13 = "numpy.trapezoid"
+    ; q13 = "numpy.vstack"
+    ),
+    node(_, c12, _, _, _), IID = c12, value(IID, NEW), text(NAME, t1_td),
+    NEW = @replace_all(t1_td, "[\\s\\S]+", "format_parser").
+
+// catches_import_error(n): the JSON util `catches-import-error`, used where the JSON says `matches: "catches-import-error"`
+.decl npy201_catches_import_error(n: node)
+npy201_catches_import_error(n) :- child(n, c1, _), kind(c1, "except_clause"),
+    within_stop(c2, c1, "block"), npy201_import_error(c2).
+
+// handled_root(n): the JSON util `handled-root`, used where the JSON says `matches: "handled-root"`
+.decl npy201_handled_root(n: node)
+npy201_handled_root(n) :- field(p1, "value", n), kind(p1, "except_clause").
+npy201_handled_root(n) :- child(p2, n, _), kind(p2, "as_pattern"), child(p3, p2, _),
+    kind(p3, "except_clause").
+npy201_handled_root(n) :- child(p4, n, _), kind(p4, "parenthesized_expression"),
+    npy201_handled_root(p4).
+
+// handled_type(n): the JSON util `handled-type`, used where the JSON says `matches: "handled-type"`
+.decl npy201_handled_type(n: node)
+npy201_handled_type(n) :- npy201_handled_root(n).
+npy201_handled_type(n) :- child(p1, n, _), kind(p1, "tuple"), npy201_handled_root(p1).
+npy201_handled_type(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"),
+    npy201_handled_type(p2).
+
+// NPY201(n): a finding at node n, from clause `add-docstring`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201(at: node, name: loc) "Use `numpy.lib.add_docstring` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.add_docstring"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "add_docstring").
+
+// NPY201_add_newdoc(n): a finding at node n, from clause `add-newdoc`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_add_newdoc(at: node, name: loc) code "NPY201" "Use `numpy.lib.add_newdoc` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_add_newdoc(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.add_newdoc"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "add_newdoc").
+
+// NPY201_add_newdoc_ufunc(n): a finding at node n, from clause `add-newdoc-ufunc`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_add_newdoc_ufunc(at: node, name: loc) code "NPY201" "NumPy 2.0 removes `{name}`, an internal function with no public replacement; drop the call or guard it behind a NumPy 1.x version check."
+    suppress noqa "NPY201"
+NPY201_add_newdoc_ufunc(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.add_newdoc_ufunc"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_alltrue(n): a finding at node n, from clause `alltrue`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_alltrue(at: node, name: loc) code "NPY201" "Use `numpy.all` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_alltrue(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.alltrue"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "all").
+
+// NPY201_asfarray(n): a finding at node n, from clause `asfarray`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_asfarray(at: node, name: loc) code "NPY201" "Use `np.asarray` with a float dtype instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_asfarray(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.asfarray"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_byte_bounds(n): a finding at node n, from clause `byte-bounds`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_byte_bounds(at: node, name: loc) code "NPY201" "Use `numpy.lib.array_utils.byte_bounds` instead of `{name}` on NumPy 2.0; keep `{name}` while NumPy 1.x must still be supported."
+    suppress noqa "NPY201"
+NPY201_byte_bounds(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.byte_bounds"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "byte_bounds").
+
+// NPY201_cast(n): a finding at node n, from clause `cast`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_cast(at: node, name: loc) code "NPY201" "Use `np.asarray(arr, dtype=dtype)` instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_cast(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.cast"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_complex128_aliases(n): a finding at node n, from clause `complex128-aliases`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_complex128_aliases(at: node, name: loc) code "NPY201" "Use `numpy.complex128` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_complex128_aliases(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "numpy.cfloat") ; sym_of(n, "numpy.complex_")), node(_, n, _, _, _), NAME = n,
+    !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "complex128").
+
+// NPY201_clongdouble_aliases(n): a finding at node n, from clause `clongdouble-aliases`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_clongdouble_aliases(at: node, name: loc) code "NPY201" "Use `numpy.clongdouble` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_clongdouble_aliases(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "numpy.clongfloat") ; sym_of(n, "numpy.longcomplex")), node(_, n, _, _, _), NAME = n,
+    !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "clongdouble").
+
+// NPY201_compat(n): a finding at node n, from clause `compat`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_compat(at: node, name: loc) code "NPY201" "Use the Python 3 builtin or standard library equivalent instead of `{name}`; NumPy 2.0 removes this Python 2 compatibility module."
+    suppress noqa "NPY201"
+NPY201_compat(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.compat"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_cumproduct(n): a finding at node n, from clause `cumproduct`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_cumproduct(at: node, name: loc) code "NPY201" "Use `numpy.cumprod` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_cumproduct(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.cumproduct"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "cumprod").
+
+// NPY201_datasource(n): a finding at node n, from clause `datasource`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_datasource(at: node, name: loc) code "NPY201" "Use `numpy.lib.npyio.DataSource` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_datasource(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.DataSource"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "DataSource").
+
+// NPY201_deprecate_and_deprecate_with_doc(n): a finding at node n, from clause `deprecate-and-deprecate-with-doc`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_deprecate_and_deprecate_with_doc(at: node, name: loc) code "NPY201" "Emit a `DeprecationWarning` with `warnings.warn`, or use `typing.deprecated`, instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_deprecate_and_deprecate_with_doc(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "numpy.deprecate") ; sym_of(n, "numpy.deprecate_with_doc")),
+    node(_, n, _, _, _), NAME = n.
+
+// NPY201_disp(n): a finding at node n, from clause `disp`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_disp(at: node, name: loc) code "NPY201" "Use a dedicated print function instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_disp(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.disp"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_fastcopyandtranspose(n): a finding at node n, from clause `fastcopyandtranspose`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_fastcopyandtranspose(at: node, name: loc) code "NPY201" "Use `arr.T.copy()` instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_fastcopyandtranspose(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.fastCopyAndTranspose"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_find_common_type(n): a finding at node n, from clause `find-common-type`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_find_common_type(at: node, name: loc) code "NPY201" "Use `numpy.promote_types` or `numpy.result_type` instead of `{name}`; for its scalar_types semantics pass `0`, `0.0` or `0j` to `result_type`."
+    suppress noqa "NPY201"
+NPY201_find_common_type(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.find_common_type"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_no_replacement(n): a finding at node n, from clause `no-replacement`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_no_replacement(at: node, name: loc) code "NPY201" "NumPy 2.0 removes `{name}` without a replacement; stop using it, or keep it behind a NumPy 1.x version check."
+    suppress noqa "NPY201"
+NPY201_no_replacement(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), npy201_set_5(q1), node(_, n, _, _, _), NAME = n.
+
+// NPY201_float_underscore(n): a finding at node n, from clause `float-underscore`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_float_underscore(at: node, name: loc) code "NPY201" "Use `numpy.float64` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_float_underscore(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.float_"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "float64").
+
+// NPY201_geterrobj_and_seterrobj(n): a finding at node n, from clause `geterrobj-and-seterrobj`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_geterrobj_and_seterrobj(at: node, name: loc) code "NPY201" "Use the `np.errstate` context manager instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_geterrobj_and_seterrobj(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "numpy.geterrobj") ; sym_of(n, "numpy.seterrobj")), node(_, n, _, _, _), NAME = n.
+
+// NPY201_in1d(n): a finding at node n, from clause `in1d`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_in1d(at: node, name: loc) code "NPY201" "Use `np.isin` instead of `{name}`; it keeps the input's shape, so `np.in1d(a, b)` is `np.isin(a, b).ravel()`."
+    suppress noqa "NPY201"
+NPY201_in1d(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.in1d"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_inf_aliases(n): a finding at node n, from clause `inf-aliases`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_inf_aliases(at: node, name: loc) code "NPY201" "Use `numpy.inf` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_inf_aliases(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q2), npy201_set_6(q2), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "inf").
+
+// NPY201_issubclass_underscore(n): a finding at node n, from clause `issubclass-underscore`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_issubclass_underscore(at: node, name: loc) code "NPY201" "Use `issubclass` instead of `{name}`; NumPy 2.0 removes the old name."
+    suppress noqa "NPY201"
+NPY201_issubclass_underscore(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.issubclass_"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_issubsctype(n): a finding at node n, from clause `issubsctype`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_issubsctype(at: node, name: loc) code "NPY201" "Use `numpy.issubdtype` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_issubsctype(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.issubsctype"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "issubdtype").
+
+// NPY201_mat(n): a finding at node n, from clause `mat`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_mat(at: node, name: loc) code "NPY201" "Use `numpy.asmatrix` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_mat(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.mat"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "asmatrix").
+
+// NPY201_nan_aliases(n): a finding at node n, from clause `nan-aliases`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_nan_aliases(at: node, name: loc) code "NPY201" "Use `numpy.nan` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_nan_aliases(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "numpy.NaN") ; sym_of(n, "numpy.NAN")), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW),
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "nan").
+
+// NPY201_nbytes(n): a finding at node n, from clause `nbytes`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_nbytes(at: node, name: loc) code "NPY201" "Use `np.dtype(<dtype>).itemsize` instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_nbytes(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.nbytes"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_ninf(n): a finding at node n, from clause `ninf`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_ninf(at: node, name: loc) code "NPY201" "Use `-np.inf` instead of `{name}`; NumPy 2.0 removes the old name."
+    suppress noqa "NPY201"
+NPY201_ninf(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.NINF"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_nzero(n): a finding at node n, from clause `nzero`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_nzero(at: node, name: loc) code "NPY201" "Use `-0.0` instead of `{name}`; NumPy 2.0 removes the old name."
+    suppress noqa "NPY201"
+NPY201_nzero(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.NZERO"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_longfloat(n): a finding at node n, from clause `longfloat`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_longfloat(at: node, name: loc) code "NPY201" "Use `numpy.longdouble` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_longfloat(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.longfloat"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "longdouble").
+
+// NPY201_lookfor(n): a finding at node n, from clause `lookfor`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_lookfor(at: node, name: loc) code "NPY201" "Search NumPy's documentation directly instead of calling `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_lookfor(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.lookfor"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_product(n): a finding at node n, from clause `product`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_product(at: node, name: loc) code "NPY201" "Use `numpy.prod` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_product(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.product"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "prod").
+
+// NPY201_pzero(n): a finding at node n, from clause `pzero`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_pzero(at: node, name: loc) code "NPY201" "Use `0.0` instead of `{name}`; NumPy 2.0 removes the old name."
+    suppress noqa "NPY201"
+NPY201_pzero(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.PZERO"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_recfromcsv(n): a finding at node n, from clause `recfromcsv`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_recfromcsv(at: node, name: loc) code "NPY201" "Use `np.genfromtxt` with a comma delimiter instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_recfromcsv(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.recfromcsv"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_recfromtxt(n): a finding at node n, from clause `recfromtxt`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_recfromtxt(at: node, name: loc) code "NPY201" "Use `np.genfromtxt` instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_recfromtxt(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.recfromtxt"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_round_underscore(n): a finding at node n, from clause `round-underscore`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_round_underscore(at: node, name: loc) code "NPY201" "Use `numpy.round` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_round_underscore(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.round_"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "round").
+
+// NPY201_safe_eval(n): a finding at node n, from clause `safe-eval`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_safe_eval(at: node, name: loc) code "NPY201" "Use `ast.literal_eval` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_safe_eval(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.safe_eval"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "literal_eval").
+
+// NPY201_set_string_function(n): a finding at node n, from clause `set-string-function`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_set_string_function(at: node, name: loc) code "NPY201" "Use `np.set_printoptions` to customize how NumPy objects print instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_set_string_function(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.set_string_function"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_singlecomplex(n): a finding at node n, from clause `singlecomplex`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_singlecomplex(at: node, name: loc) code "NPY201" "Use `numpy.complex64` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_singlecomplex(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.singlecomplex"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "complex64").
+
+// NPY201_string_underscore(n): a finding at node n, from clause `string-underscore`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_string_underscore(at: node, name: loc) code "NPY201" "Use `numpy.bytes_` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_string_underscore(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.string_"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "bytes_").
+
+// NPY201_sometrue(n): a finding at node n, from clause `sometrue`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_sometrue(at: node, name: loc) code "NPY201" "Use `numpy.any` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_sometrue(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.sometrue"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "any").
+
+// NPY201_source(n): a finding at node n, from clause `source`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_source(at: node, name: loc) code "NPY201" "Use `inspect.getsource` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_source(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.source"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "getsource").
+
+// NPY201_tracemalloc_domain(n): a finding at node n, from clause `tracemalloc-domain`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_tracemalloc_domain(at: node, name: loc) code "NPY201" "Use `numpy.lib.tracemalloc_domain` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_tracemalloc_domain(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.tracemalloc_domain"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW),
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "tracemalloc_domain").
+
+// NPY201_trapz(n): a finding at node n, from clause `trapz`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_trapz(at: node, name: loc) code "NPY201" "Use `numpy.trapezoid` instead of `{name}` on NumPy 2.0; keep `{name}` while NumPy 1.x must still be supported."
+    suppress noqa "NPY201"
+NPY201_trapz(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.trapz"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "trapezoid").
+
+// NPY201_unicode_underscore(n): a finding at node n, from clause `unicode-underscore`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_unicode_underscore(at: node, name: loc) code "NPY201" "Use `numpy.str_` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_unicode_underscore(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.unicode_"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "str_").
+
+// NPY201_who(n): a finding at node n, from clause `who`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_who(at: node, name: loc) code "NPY201" "Use an IDE variable explorer or `locals()` instead of `{name}`; NumPy 2.0 removes it."
+    suppress noqa "NPY201"
+NPY201_who(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.who"), node(_, n, _, _, _), NAME = n.
+
+// NPY201_row_stack(n): a finding at node n, from clause `row-stack`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_row_stack(at: node, name: loc) code "NPY201" "Use `numpy.vstack` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_row_stack(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.row_stack"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "vstack").
+
+// NPY201_axiserror(n): a finding at node n, from clause `axiserror`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_axiserror(at: node, name: loc) code "NPY201" "Use `numpy.exceptions.AxisError` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_axiserror(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.AxisError"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "AxisError").
+
+// NPY201_complexwarning(n): a finding at node n, from clause `complexwarning`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_complexwarning(at: node, name: loc) code "NPY201" "Use `numpy.exceptions.ComplexWarning` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_complexwarning(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.ComplexWarning"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "ComplexWarning").
+
+// NPY201_dtypepromotionerror(n): a finding at node n, from clause `dtypepromotionerror`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_dtypepromotionerror(at: node, name: loc) code "NPY201" "Use `numpy.exceptions.DTypePromotionError` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_dtypepromotionerror(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.DTypePromotionError"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW),
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "DTypePromotionError").
+
+// NPY201_moduledeprecationwarning(n): a finding at node n, from clause `moduledeprecationwarning`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_moduledeprecationwarning(at: node, name: loc) code "NPY201" "Use `numpy.exceptions.ModuleDeprecationWarning` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_moduledeprecationwarning(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.ModuleDeprecationWarning"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW),
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "ModuleDeprecationWarning").
+
+// NPY201_rankwarning(n): a finding at node n, from clause `rankwarning`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_rankwarning(at: node, name: loc) code "NPY201" "Use `numpy.exceptions.RankWarning` instead of `{name}` on NumPy 2.0; keep `{name}` while NumPy 1.x must still be supported."
+    suppress noqa "NPY201"
+NPY201_rankwarning(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.RankWarning"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "RankWarning").
+
+// NPY201_tooharderror(n): a finding at node n, from clause `tooharderror`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_tooharderror(at: node, name: loc) code "NPY201" "Use `numpy.exceptions.TooHardError` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_tooharderror(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.TooHardError"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "TooHardError").
+
+// NPY201_visibledeprecationwarning(n): a finding at node n, from clause `visibledeprecationwarning`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_visibledeprecationwarning(at: node, name: loc) code "NPY201" "Use `numpy.exceptions.VisibleDeprecationWarning` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_visibledeprecationwarning(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.VisibleDeprecationWarning"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW),
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "VisibleDeprecationWarning").
+
+// NPY201_compare_chararrays(n): a finding at node n, from clause `compare-chararrays`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_compare_chararrays(at: node, name: loc) code "NPY201" "Use `numpy.char.compare_chararrays` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_compare_chararrays(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.compare_chararrays"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW),
+    text(NAME, t1), NEW = @replace_all(t1, "[\\s\\S]+", "compare_chararrays").
+
+// NPY201_chararray(n): a finding at node n, from clause `chararray`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_chararray(at: node, name: loc) code "NPY201" "Use `numpy.char.chararray` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_chararray(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.chararray"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "chararray").
+
+// NPY201_format_parser(n): a finding at node n, from clause `format-parser`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `transform` computes NEW from other metavariables' text; its literals end each rule.
+.violation NPY201_format_parser(at: node, name: loc) code "NPY201" "Use `numpy.rec.format_parser` instead of `{name}`; NumPy 2.0 removes the old name and this one also works on NumPy 1.x."
+    suppress noqa "NPY201"
+NPY201_format_parser(n, NAME) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "numpy.format_parser"), node(_, n, _, _, _), NAME = n, !npy201_fallback(n, NEW), text(NAME, t1),
+    NEW = @replace_all(t1, "[\\s\\S]+", "format_parser").
+
+// NPY201_string_annotation_or_pattern(n): a finding at node n, from clause `string-annotation-or-pattern`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation NPY201_string_annotation_or_pattern(at: node, name: node) code "NPY201" "NumPy 2.0 removes `{name}`; switch to the replacement NumPy's 2.0 migration guide gives for it (e.g. `np.float64` for `float_`, `np.inf` for `Inf`), or drop it if there is none."
+    suppress noqa "NPY201"
+NPY201_string_annotation_or_pattern(NAME, n) :- npy201_alt_10(n, NAME), !npy201_any_fallback(n).
+
+// reference(n): the JSON util `reference`, used where the JSON says `matches: "reference"`
+.decl npy201_reference(n: node)
+npy201_reference(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), npy201_set_7(q1).
+
+// in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl npy201_in_string(n: node, name: loc)
+npy201_in_string(n, NAME) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), npy201_alt_8(c2, NAME).
+
+// pattern_name(n): the JSON util `pattern-name`, used where the JSON says `matches: "pattern-name"`
+.decl npy201_pattern_name(n: node)
+npy201_pattern_name(n) :- kind(n, "dotted_name"),
+    match("\\w+\\s*\\.\\s*(?:add_docstring|add_newdoc|add_newdoc_ufunc|alltrue|asfarray|byte_bounds|cast|cfloat|clongfloat|compat|complex_|cumproduct|DataSource|deprecate|deprecate_with_doc|disp|fastCopyAndTranspose|find_common_type|get_array_wrap|float_|geterrobj|in1d|INF|Inf|Infinity|infty|issctype|issubclass_|issubsctype|mat|maximum_sctype|NaN|NAN|nbytes|NINF|NZERO|longcomplex|longfloat|lookfor|obj2sctype|PINF|product|PZERO|recfromcsv|recfromtxt|round_|safe_eval|sctype2char|sctypes|seterrobj|set_string_function|singlecomplex|string_|sometrue|source|tracemalloc_domain|trapz|unicode_|who|row_stack|AxisError|ComplexWarning|DTypePromotionError|ModuleDeprecationWarning|RankWarning|TooHardError|VisibleDeprecationWarning|compare_chararrays|chararray|format_parser)", n),
+    inside(n, p1, "case_pattern"), child(n, c2, _), kind(c2, "identifier"),
+    sym_of(c2, "numpy").
+
+// any_fallback(n): the JSON util `any-fallback`, used where the JSON says `matches: "any-fallback"`
+.decl npy201_any_fallback(n: node)
+npy201_any_fallback(n) :- npy201_in_handler(n), npy201_up_2(n, p1), field(p1, "body", c2),
+    has(c2, c3, "attribute"), sym_of(c3, q4), npy201_set_4(q4).
+
+// from_module: the module text of from-import s, read as `relative: "text"` does (dots dropped)
+.decl npy201_from_module(s: node, m: symbol)
+npy201_from_module(s, m) :- kind(s, "future_import_statement"), m = "__future__".
+npy201_from_module(s, m) :- kind(s, "import_from_statement"), field(s, "module_name", x),
+    kind(x, "dotted_name"), name(x, m).
+npy201_from_module(s, m) :- kind(s, "import_from_statement"), field(s, "module_name", x),
+    kind(x, "relative_import"), child(x, y, _), kind(y, "dotted_name"), name(y, m).
+npy201_from_module(s, "") :- kind(s, "import_from_statement"), field(s, "module_name", x),
+    kind(x, "relative_import"), count : { child(x, y, _), kind(y, "dotted_name") } = 0.
+
+// statement_name: dotted name n in an import statement imports q (relative modules by their text)
+.decl npy201_statement_name(n: node, q: symbol)
+npy201_statement_name(n, q) :- kind(n, "dotted_name"), child(s, n, _),
+    kind(s, "import_statement"), name(n, q).
+npy201_statement_name(n, q) :- kind(n, "dotted_name"), child(s, n, _),
+    kind(s, "relative_import"), name(n, q).
+npy201_statement_name(n, q) :- kind(n, "dotted_name"), field(a, "name", n),
+    kind(a, "aliased_import"), child(s, a, _), kind(s, "import_statement"), name(n, q).
+npy201_statement_name(n, q) :- kind(n, "dotted_name"), field(a, "name", n),
+    kind(a, "aliased_import"), child(s, a, _),
+    (kind(s, "import_from_statement") ; kind(s, "future_import_statement")),
+    npy201_from_module(s, m), name(n, x), q = @dot(m, x).
+npy201_statement_name(n, m) :- kind(n, "dotted_name"), field(s, "module_name", n),
+    (kind(s, "import_from_statement") ; kind(s, "future_import_statement")),
+    npy201_from_module(s, m).
+npy201_statement_name(n, q) :- kind(n, "dotted_name"), child(s, n, _),
+    (kind(s, "import_from_statement") ; kind(s, "future_import_statement")),
+    !field(s, "module_name", n), npy201_from_module(s, m), name(n, x), q = @dot(m, x).
+
+// demand_in_handler: the nodes in_handler is asked at (it looks at every ancestor of every node)
+.decl npy201_demand_in_handler(n: node)
+npy201_demand_in_handler(n) :- node(_, NEW, _, _, _), kind(n, "attribute"),
+    within_stop(n, p1, "try_statement"), kind(p1, "try_statement"),
+    npy201_catches_attribute_error(p1), field(p1, "body", c2), has(c2, c3, "attribute"),
+    sym_of(c3, q4), npy201_set_4(q4), field(c3, "attribute", c5), kind(c5, "identifier"),
+    node(_, c5, _, _, _), TID = c5, value(TID, t6), value(NEW, t6).
+npy201_demand_in_handler(b8) :- node(_, NEW, _, _, _), kind(n, "identifier"), ref_site(n, b8),
+    within_stop(b8, p9, "try_statement"), kind(p9, "try_statement"),
+    npy201_catches_import_error(p9), field(p9, "body", c10),
+    has(c10, c11, "import_from_statement"), has(c11, c12, "dotted_name"),
+    npy201_statement_name(c12, q13), node(_, c12, _, _, _), IID = c12, value(IID, t14), value(NEW, t14).
+npy201_demand_in_handler(n) :- within_stop(n, p1, "try_statement"), kind(p1, "try_statement"),
+    npy201_catches_attribute_error(p1), field(p1, "body", c2), has(c2, c3, "attribute"),
+    sym_of(c3, q4), npy201_set_4(q4).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl npy201_up_1(n: node, p: node)
+npy201_up_1(n, p) :- npy201_demand_in_handler(n), within_stop(n, p, npy201_stop_1),
+    kind(p, "except_clause").
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl npy201_up_2(n: node, p: node)
+npy201_up_2(n, p) :- npy201_in_handler(n), within_stop(n, p, "try_statement"),
+    kind(p, "try_statement"), npy201_catches_attribute_error(p).
+
+// set_4: symbols from the JSON `resolves.import`
+.decl npy201_set_4(v: symbol)
+npy201_set_4("ast.literal_eval"). npy201_set_4("inspect.getsource"). npy201_set_4("numpy.all").
+npy201_set_4("numpy.any"). npy201_set_4("numpy.asmatrix"). npy201_set_4("numpy.bytes_").
+npy201_set_4("numpy.char.chararray"). npy201_set_4("numpy.char.compare_chararrays").
+npy201_set_4("numpy.clongdouble"). npy201_set_4("numpy.complex128"). npy201_set_4("numpy.complex64").
+npy201_set_4("numpy.cumprod"). npy201_set_4("numpy.exceptions.AxisError").
+npy201_set_4("numpy.exceptions.ComplexWarning"). npy201_set_4("numpy.exceptions.DTypePromotionError").
+npy201_set_4("numpy.exceptions.ModuleDeprecationWarning").
+npy201_set_4("numpy.exceptions.RankWarning"). npy201_set_4("numpy.exceptions.TooHardError").
+npy201_set_4("numpy.exceptions.VisibleDeprecationWarning"). npy201_set_4("numpy.float64").
+npy201_set_4("numpy.inf"). npy201_set_4("numpy.issubdtype"). npy201_set_4("numpy.lib.add_docstring").
+npy201_set_4("numpy.lib.add_newdoc"). npy201_set_4("numpy.lib.array_utils.byte_bounds").
+npy201_set_4("numpy.lib.npyio.DataSource"). npy201_set_4("numpy.lib.tracemalloc_domain").
+npy201_set_4("numpy.longdouble"). npy201_set_4("numpy.nan"). npy201_set_4("numpy.prod").
+npy201_set_4("numpy.rec.format_parser"). npy201_set_4("numpy.round"). npy201_set_4("numpy.str_").
+npy201_set_4("numpy.trapezoid"). npy201_set_4("numpy.vstack").
+
+// set_5: symbols from the JSON `resolves.import`
+.decl npy201_set_5(v: symbol)
+npy201_set_5("numpy.get_array_wrap"). npy201_set_5("numpy.issctype"). npy201_set_5("numpy.maximum_sctype").
+npy201_set_5("numpy.obj2sctype"). npy201_set_5("numpy.sctype2char"). npy201_set_5("numpy.sctypes").
+
+// set_6: symbols from the JSON `resolves.import`
+.decl npy201_set_6(v: symbol)
+npy201_set_6("numpy.INF"). npy201_set_6("numpy.Inf"). npy201_set_6("numpy.Infinity"). npy201_set_6("numpy.infty").
+npy201_set_6("numpy.PINF").
+
+// set_7: symbols from the JSON `resolves.import`
+.decl npy201_set_7(v: symbol)
+npy201_set_7("numpy.add_docstring"). npy201_set_7("numpy.add_newdoc").
+npy201_set_7("numpy.add_newdoc_ufunc"). npy201_set_7("numpy.alltrue"). npy201_set_7("numpy.asfarray").
+npy201_set_7("numpy.byte_bounds"). npy201_set_7("numpy.cast"). npy201_set_7("numpy.cfloat").
+npy201_set_7("numpy.clongfloat"). npy201_set_7("numpy.compat"). npy201_set_7("numpy.complex_").
+npy201_set_7("numpy.cumproduct"). npy201_set_7("numpy.DataSource"). npy201_set_7("numpy.deprecate").
+npy201_set_7("numpy.deprecate_with_doc"). npy201_set_7("numpy.disp").
+npy201_set_7("numpy.fastCopyAndTranspose"). npy201_set_7("numpy.find_common_type").
+npy201_set_7("numpy.get_array_wrap"). npy201_set_7("numpy.float_"). npy201_set_7("numpy.geterrobj").
+npy201_set_7("numpy.in1d"). npy201_set_7("numpy.INF"). npy201_set_7("numpy.Inf"). npy201_set_7("numpy.Infinity").
+npy201_set_7("numpy.infty"). npy201_set_7("numpy.issctype"). npy201_set_7("numpy.issubclass_").
+npy201_set_7("numpy.issubsctype"). npy201_set_7("numpy.mat"). npy201_set_7("numpy.maximum_sctype").
+npy201_set_7("numpy.NaN"). npy201_set_7("numpy.NAN"). npy201_set_7("numpy.nbytes"). npy201_set_7("numpy.NINF").
+npy201_set_7("numpy.NZERO"). npy201_set_7("numpy.longcomplex"). npy201_set_7("numpy.longfloat").
+npy201_set_7("numpy.lookfor"). npy201_set_7("numpy.obj2sctype"). npy201_set_7("numpy.PINF").
+npy201_set_7("numpy.product"). npy201_set_7("numpy.PZERO"). npy201_set_7("numpy.recfromcsv").
+npy201_set_7("numpy.recfromtxt"). npy201_set_7("numpy.round_"). npy201_set_7("numpy.safe_eval").
+npy201_set_7("numpy.sctype2char"). npy201_set_7("numpy.sctypes"). npy201_set_7("numpy.seterrobj").
+npy201_set_7("numpy.set_string_function"). npy201_set_7("numpy.singlecomplex").
+npy201_set_7("numpy.string_"). npy201_set_7("numpy.sometrue"). npy201_set_7("numpy.source").
+npy201_set_7("numpy.tracemalloc_domain"). npy201_set_7("numpy.trapz"). npy201_set_7("numpy.unicode_").
+npy201_set_7("numpy.who"). npy201_set_7("numpy.row_stack"). npy201_set_7("numpy.AxisError").
+npy201_set_7("numpy.ComplexWarning"). npy201_set_7("numpy.DTypePromotionError").
+npy201_set_7("numpy.ModuleDeprecationWarning"). npy201_set_7("numpy.RankWarning").
+npy201_set_7("numpy.TooHardError"). npy201_set_7("numpy.VisibleDeprecationWarning").
+npy201_set_7("numpy.compare_chararrays"). npy201_set_7("numpy.chararray").
+npy201_set_7("numpy.format_parser").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl npy201_stop_1(n: node)
+npy201_stop_1(n) :- kind(n, "block"), child(p1, n, _),
+    (kind(p1, "function_definition") ; kind(p1, "class_definition")).
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+//   NAME: metavariable this relation binds for the calling rule
+.decl npy201_alt_8(n: node, name: loc)
+npy201_alt_8(n, NAME) :- npy201_reference(n), NAME = n.
+npy201_alt_8(n, NAME) :- npy201_in_string(n, NAME).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+//   NAME: metavariable this relation binds for the calling rule
+.decl npy201_alt_10(n: node, name: loc)
+npy201_alt_10(n, NAME) :- npy201_pattern_name(n), node(_, n, _, _, _), NAME = n.
+npy201_alt_10(n, NAME) :- npy201_in_string(n, NAME).

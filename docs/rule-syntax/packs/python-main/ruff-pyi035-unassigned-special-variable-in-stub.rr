@@ -1,0 +1,65 @@
+.policy "ruff-pyi035-unassigned-special-variable-in-stub" revision 1
+.guests off
+.description "Assign a value to the module-level exports list and the class slot and match-argument lists in stub files; they mean the same there as at runtime."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PYI035(n): a finding at node n, from clause `unassigned-dunder-all`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI035(at: node) "Give `__all__` a value in this stub, such as `__all__: list[str] = [\"name\", ...]` listing the public names; it has the same meaning as at runtime."
+    suppress noqa "PYI035"
+PYI035_raw(n) :- kind(n, "expression_statement"), child(n, c1, _), kind(c1, "assignment"),
+    field(c1, "left", c2), pyi035_special_name(c2), field(c1, "type", c3), kind(c3, "type"),
+    count : { field(c1, "right", c4), node(_, c4, _, _, _) } = 0,
+    count : { within(n, p5), (kind(p5, "function_definition") ; kind(p5, "class_definition")) } = 0.
+
+// special_name(n): the JSON util `special-name`, used where the JSON says `matches: "special-name"`
+.decl pyi035_special_name(n: node)
+pyi035_special_name(n) :- kind(n, "identifier"), glob("__all__", n).
+pyi035_special_name(n) :- kind(n, "tuple_pattern"), !pyi035_tok_has_1(n), child(n, c9, _),
+    pyi035_special_name(c9).
+
+// PYI035_unassigned_class_special_variable(n): a finding at node n, from clause `unassigned-class-special-variable`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI035_unassigned_class_special_variable(at: node, name: loc) code "PYI035" "Give `{name}` a value in this stub, such as a tuple of strings; it has the same meaning as at runtime."
+    suppress noqa "PYI035"
+PYI035_unassigned_class_special_variable_raw(n, NAME) :- kind(n, "expression_statement"),
+    child(n, c1, _), kind(c1, "assignment"), c1 ~ `$NAME: $TYPE`,
+    field(c1, "left", c2), pyi035_special_name_unassigned_class_special_variable(c2),
+    count : { field(c1, "right", c3), node(_, c3, _, _, _) } = 0, within_stop(n, p4, pyi035_stop_1),
+    kind(p4, "class_definition").
+
+// special_name_unassigned_class_special_variable(n): the JSON util `special-name`, used where the JSON says `matches: "special-name"`
+.decl pyi035_special_name_unassigned_class_special_variable(n: node)
+pyi035_special_name_unassigned_class_special_variable(n) :- kind(n, "identifier"),
+    glob("__{slots,match_args}__", n).
+pyi035_special_name_unassigned_class_special_variable(n) :- kind(n, "tuple_pattern"),
+    !pyi035_tok_has_1(n), child(n, c9, _), pyi035_special_name_unassigned_class_special_variable(c9).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi035_tok_has_1(n: node)
+.stored pyi035_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi035_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+pyi035_tok_has_1(n) :- op(n, t2), match(",", t2).
+pyi035_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+pyi035_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+pyi035_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// stop_1: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi035_stop_1(kind: symbol)
+pyi035_stop_1("function_definition"). pyi035_stop_1("class_definition").
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI035_raw(at: node)
+PYI035(v0) :- PYI035_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI035_unassigned_class_special_variable_raw(at: node, name: loc)
+PYI035_unassigned_class_special_variable(v0, v1) :- PYI035_unassigned_class_special_variable_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

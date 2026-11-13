@@ -1,0 +1,152 @@
+.policy "ruff-ruf006-asyncio-dangling-task" revision 1
+.guests off
+.description "Keep a reference to every asyncio task until it finishes, such as in a set or by awaiting it; the event loop holds tasks only weakly, so they can be dropped mid-run."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// create_fn(n): the JSON util `create-fn`, used where the JSON says `matches: "create-fn"`
+.decl ruf006_create_fn(n: node)
+ruf006_create_fn(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "asyncio.create_task") ; sym_of(n, "asyncio.ensure_future")).
+ruf006_create_fn(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf006_create_fn(c1).
+
+// loop_getter(n): the JSON util `loop-getter`, used where the JSON says `matches: "loop-getter"`
+.decl ruf006_loop_getter(n: node)
+ruf006_loop_getter(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "asyncio.get_event_loop")
+    ; sym_of(n, "asyncio.get_running_loop")
+    ; sym_of(n, "asyncio.new_event_loop")
+    ).
+
+ruf006_loop_getter(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf006_loop_getter(c1).
+
+// loop_call(n): the JSON util `loop-call`, used where the JSON says `matches: "loop-call"`
+.decl ruf006_loop_call(n: node)
+ruf006_loop_call(n) :- kind(n, "call"), field(n, "function", c1), ruf006_loop_getter(c1).
+ruf006_loop_call(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), ruf006_loop_call(c2).
+
+// loop_assign(n): the JSON util `loop-assign`, used where the JSON says `matches: "loop-assign"`
+.decl ruf006_loop_assign(n: node)
+ruf006_loop_assign(n) :- kind(n, "assignment"), field(n, "right", c1), ruf006_alt_1(c1).
+
+// loop_ref(n): the JSON util `loop-ref`, used where the JSON says `matches: "loop-ref"`
+.decl ruf006_loop_ref(n: node)
+ruf006_loop_ref(n) :- kind(n, "identifier"), ref_site(n, b1), ruf006_loop_assign(b1).
+ruf006_loop_ref(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), ruf006_loop_ref(c2).
+
+// loop_create(n): the JSON util `loop-create`, used where the JSON says `matches: "loop-create"`
+.decl ruf006_loop_create(n: node)
+ruf006_loop_create(n) :- kind(n, "attribute"), field(n, "attribute", c1),
+    glob("create_task", c1), field(n, "object", c2), ruf006_loop_ref(c2).
+ruf006_loop_create(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    ruf006_loop_create(c3).
+
+// task_callee(n): the JSON util `task-callee`, used where the JSON says `matches: "task-callee"`
+.decl ruf006_task_callee(n: node)
+ruf006_task_callee(n) :- ruf006_create_fn(n).
+ruf006_task_callee(n) :- ruf006_loop_create(n).
+
+// task_call(n): the JSON util `task-call`, used where the JSON says `matches: "task-call"`
+.decl ruf006_task_call(n: node)
+ruf006_task_call(n) :- kind(n, "call"), field(n, "function", c1), ruf006_task_callee(c1).
+
+// scope(n): the JSON util `scope`, used where the JSON says `matches: "scope"`
+.decl ruf006_scope(n: node)
+ruf006_scope(n) :- (kind(n, "function_definition") ; kind(n, "class_definition") ; kind(n, "module")).
+
+// live_unused(n, …): the JSON util `live-unused`, called with `matches` and arguments N
+.decl ruf006_live_unused(n: node, n_mv: node)
+ruf006_live_unused(n, N) :- node(_, n, _, _, _), N = n, within_stop(n, p1, ruf006_stop_2), ruf006_scope(p1),
+    within_stop(c2, p1, ruf006_stop_3), kind(c2, "identifier"), node(_, c2, _, _, _), M = c2, site_latest(c2),
+    !site_used(c2), !site_outer(c2), site_form(c2, f3), ruf006_set_4(f3),
+    text(M, t4), text(N, t4), @doc(M) = @doc(N).
+
+// RUF006(n): a finding at node n, from clause `dangling-task`.
+// Each rule below is one way the JSON `rule` can match.
+.violation RUF006(at: node) "Keep a reference to this task: add it to a set and discard it in `add_done_callback`, or await it. Otherwise it can be garbage collected before it finishes."
+    suppress noqa "RUF006"
+RUF006(n) :- kind(n, "call"), ruf006_task_call(n), ruf006_up_1(n, p1), !ruf006_tok_has_1(p1).
+
+// RUF006_unread_task_variable(n): a finding at node n, from clause `unread-task-variable`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF006_unread_task_variable(at: node, n: loc) code "RUF006" "`{n}` is never read, so the task is only weakly referenced. Add it to a set and discard it in `add_done_callback`, or await it."
+    suppress noqa "RUF006"
+RUF006_unread_task_variable(n, N) :- kind(n, "call"), ruf006_task_call(n), ruf006_up_2(n, p1),
+    field(_, "right", n),
+    count : { field(p2, "right", p1), kind(p2, "assignment") } = 0,
+    field(p1, "left", c3), ruf006_alt_8(c3, N).
+
+// RUF006_unused_comprehension_variable(n): a finding at node n, from clause `unused-comprehension-variable`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF006_unused_comprehension_variable(at: node, c: loc) code "RUF006" "Keep a reference to this task until it finishes: await it, or add it to a set and discard it in `add_done_callback`. Leave it if the variable it is assigned to is already awaited."
+    suppress noqa "RUF006"
+RUF006_unused_comprehension_variable(n, C) :- kind(n, "call"), ruf006_task_call(n),
+    ruf006_up_2(n, p1), field(_, "right", n),
+    count : { field(p2, "right", p1), kind(p2, "assignment") } = 0,
+    has(n, c3, "identifier"), node(_, c3, _, _, _), C = c3, within_stop(c3, p4, ruf006_stop_11),
+    field(_, "left", c3), kind(p4, "for_in_clause"), !site_used(c3).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf006_tok_has_1(n: node)
+.stored ruf006_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf006_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
+ruf006_tok_has_1(n) :- op(n, t3), match(",", t3).
+ruf006_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+ruf006_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+ruf006_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl ruf006_up_1(n: node, p: node)
+ruf006_up_1(n, p) :- ruf006_task_call(n), within_stop(n, p, ruf006_stop_10),
+    kind(p, "expression_statement").
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl ruf006_up_2(n: node, p: node)
+ruf006_up_2(n, p) :- ruf006_task_call(n), within_stop(n, p, ruf006_stop_10), kind(p, "assignment").
+
+// stop_3: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf006_stop_3(kind: symbol)
+ruf006_stop_3("function_definition"). ruf006_stop_3("class_definition").
+
+// set_4: binding forms the JSON accepts
+.decl ruf006_set_4(v: symbol)
+ruf006_set_4("assignment"). ruf006_set_4("annotated"). ruf006_set_4("augmented"). ruf006_set_4("match").
+ruf006_set_4("typeAlias").
+
+// stop_7: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf006_stop_7(kind: symbol)
+ruf006_stop_7("attribute"). ruf006_stop_7("subscript").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf006_alt_1(n: node)
+ruf006_alt_1(n) :- ruf006_loop_call(n).
+ruf006_alt_1(n) :- ruf006_loop_assign(n).
+
+// stop_2(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf006_stop_2(n: node)
+ruf006_stop_2(n) :- ruf006_scope(n).
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+//   N: metavariable this relation binds for the calling rule
+.decl ruf006_alt_8(n: node, n_mv: loc)
+ruf006_alt_8(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, ruf006_live_unused(n, N).
+ruf006_alt_8(n, N) :- (kind(n, "tuple_pattern") ; kind(n, "list_pattern") ; kind(n, "pattern_list")),
+    within_stop(c1, n, ruf006_stop_7), kind(c1, "identifier"), node(_, c1, _, _, _), N = c1, ruf006_live_unused(c1, N).
+
+// stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf006_stop_10(n: node)
+ruf006_stop_10(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// stop_11(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf006_stop_11(n: node)
+ruf006_stop_11(n) :- node(_, n, _, _, _), !kind(n, "pattern_list"), !kind(n, "tuple_pattern"),
+    !kind(n, "list_pattern"), !kind(n, "parenthesized_expression").

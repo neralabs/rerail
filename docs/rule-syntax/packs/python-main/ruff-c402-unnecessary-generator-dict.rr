@@ -1,0 +1,64 @@
+.policy "ruff-c402-unnecessary-generator-dict" revision 1
+.guests off
+.description "Use a dict comprehension instead of passing a generator of key-value pairs to dict; it reads more directly and skips building a tuple per item."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// C402(n): a finding at node n, from clause `generator-dict`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation C402(at: node, c402_call: node) "Rewrite `dict((k, v) for ...)` as a dict comprehension `{{k: v for ...}}`; leave it if `dict` here is not the builtin."
+    suppress noqa "C402"
+C402(CALL, n) :- c402_call(n, CALL).
+C402(CALL, n) :- c402_in_annotation(n, CALL).
+
+// trivia(n): the JSON util `trivia`, used where the JSON says `matches: "trivia"`
+.decl c402_trivia(n: node)
+c402_trivia(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+c402_trivia(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl c402_callee(n: node)
+c402_callee(n) :- kind(n, "identifier"), glob("dict", n).
+c402_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), c402_callee(c1).
+
+// pair(n): the JSON util `pair`, used where the JSON says `matches: "pair"`
+.decl c402_pair(n: node)
+c402_pair(n) :- kind(n, "tuple"), k2 = count : { child(n, c1, _), !c402_trivia(c1) }, k2 >= 2,
+    k2 <= 2, count : { child(n, c3, _), kind(c3, "list_splat") } = 0.
+c402_pair(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), c402_pair(c4).
+
+// pairs(n): the JSON util `pairs`, used where the JSON says `matches: "pairs"`
+.decl c402_pairs(n: node)
+c402_pairs(n) :- kind(n, "generator_expression"), field(n, "body", c1), c402_pair(c1).
+c402_pairs(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), c402_pairs(c2).
+
+// call(n): the JSON util `call`, used where the JSON says `matches: "call"`
+//   CALL: metavariable this relation binds for the calling rule
+.decl c402_call(n: node, c402_call: loc)
+c402_call(n, CALL) :- kind(n, "call"), c402_alt_1(n, CALL), field(n, "arguments", c4),
+    ( c402_pairs(c4)
+    ; kind(c4, "argument_list"), k1 = count : { child(c4, c1, _), !c402_trivia(c1) }, k1 >= 1, k1 <= 1, child(c4, c2, _), c402_pairs(c2)
+    ).
+
+
+// in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+//   CALL: metavariable this relation binds for the calling rule
+.decl c402_in_annotation(n: node, c402_call: loc)
+c402_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), c402_alt_3(c2, CALL).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   CALL: metavariable this relation binds for the calling rule
+.decl c402_alt_1(n: node, c402_call: loc)
+c402_alt_1(n, CALL) :- field(n, "function", c1), c402_callee(c1), node(_, n, _, _, _), CALL = n.
+c402_alt_1(n, CALL) :- field(n, "function", c2), kind(c2, "list_splat"), child(c2, c3, _),
+    c402_callee(c3), match("\\*(?:\\s|\\\\\\r?\\n|#[^\\r\\n]*)*(?<CALL>[\\s\\S]+)", n).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+//   CALL: metavariable this relation binds for the calling rule
+.decl c402_alt_3(n: node, c402_call: loc)
+c402_alt_3(n, CALL) :- c402_call(n, CALL).
+c402_alt_3(n, CALL) :- c402_in_annotation(n, CALL).

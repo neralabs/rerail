@@ -1,0 +1,260 @@
+.policy "ruff-b020-loop-variable-overrides-iterator" revision 1
+.guests off
+.description "Don't name a for-loop variable after a name used in the loop's iterable; the loop overwrites the original value."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B020(n): a finding at node n, from clause `loop-variable-overrides-iterator`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation B020(at: node, name: loc) "Loop control variable `{name}` overrides iterable it iterates"
+    suppress noqa "B020"
+B020(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, !b020_tok_follows_1(n),
+    b020_in_target(n, NAME).
+
+// name_ref(n): the JSON util `name-ref`, used where the JSON says `matches: "name-ref"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl b020_name_ref(n: node, name: loc)
+b020_name_ref(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, !b020_alt_1(n).
+
+// mentions(n): the JSON util `mentions`, used where the JSON says `matches: "mentions"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl b020_mentions(n: node, name: loc)
+b020_mentions(n, NAME) :- b020_demand_mentions(n), b020_name_ref(n, NAME).
+b020_mentions(n, NAME) :- b020_demand_mentions(n),
+    ( kind(n, "list_comprehension")
+    ; kind(n, "set_comprehension")
+    ; kind(n, "dictionary_comprehension")
+    ; kind(n, "generator_expression")
+    ),
+    child(n, c1, _), kind(c1, "for_in_clause"), child(c1, c2, _), b020_tok_follows_3(c2),
+    b020_mentions(c2, NAME).
+b020_mentions(n, NAME) :- b020_demand_mentions(n), kind(n, "lambda"), child(n, c10, _),
+    b020_tok_follows_4(c10), b020_lambda_body(c10, NAME).
+b020_mentions(n, NAME) :- b020_demand_mentions(n), count : { kind(n, k18), b020_set_2(k18) } = 0,
+    b020_mentions_inside(n, NAME).
+
+// lambda_body(n): the JSON util `lambda-body`, used where the JSON says `matches: "lambda-body"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl b020_lambda_body(n: node, name: loc)
+b020_lambda_body(n, NAME) :- b020_demand_lambda_body(n), kind(n, "parenthesized_expression"),
+    child(n, c1, _), b020_lambda_body(c1, NAME).
+b020_lambda_body(n, NAME) :- b020_demand_lambda_body(n), !kind(n, "parenthesized_expression"),
+    child(n, c2, _), b020_alt_3(c2, NAME).
+
+// mentions_inside(n): the JSON util `mentions-inside`, used where the JSON says `matches: "mentions-inside"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl b020_mentions_inside(n: node, name: loc)
+b020_mentions_inside(n, NAME) :- b020_demand_mentions_inside(n), within_stop(c1, n, b020_stop_4),
+    b020_alt_6(c1, NAME).
+
+// lambda_parameter(n): the JSON util `lambda-parameter`, used where the JSON says `matches: "lambda-parameter"`
+//   NAME: metavariable of the calling rule, passed in (bound by the caller)
+.decl b020_lambda_parameter(n: node, name: loc)
+b020_lambda_parameter(n, NAME) :- b020_demand_lambda_parameter(n, NAME), kind(n, "lambda"),
+    child(n, c1, _), kind(c1, "lambda_parameters"), child(c1, c2, _), b020_alt_8(c2, NAME).
+
+// shadowing_lambda(n): the JSON util `shadowing-lambda`, used where the JSON says `matches: "shadowing-lambda"`
+//   NAME: metavariable of the calling rule, passed in (bound by the caller)
+.decl b020_shadowing_lambda(n: node, name: loc)
+b020_shadowing_lambda(n, NAME) :- b020_demand_shadowing_lambda(n, NAME),
+    b020_lambda_parameter(n, NAME), !b020_later_mention(n, NAME).
+
+// later_mention(n): the JSON util `later-mention`, used where the JSON says `matches: "later-mention"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl b020_later_mention(n: node, name: loc)
+b020_later_mention(n, NAME) :- b020_demand_later_mention(n), precedes(n, s1), b020_mentions(s1, NAME).
+b020_later_mention(n, NAME) :- b020_demand_later_mention(n), child(p2, n, _),
+    count : { b020_tok_follows_3(p2), child(p10, p2, _), kind(p10, "for_statement") } = 0,
+    b020_later_mention(p2, NAME).
+
+// in_target(n): the JSON util `in-target`, used where the JSON says `matches: "in-target"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl b020_in_target(n: node, name: loc)
+b020_in_target(n, NAME) :- b020_tok_precedes_7(n), child(p8, n, _), kind(p8, "for_statement"),
+    child(p8, c9, _), b020_tok_follows_8(c9), b020_mentions(c9, NAME), !b020_alt_9(c9, NAME).
+b020_in_target(n, NAME) :- child(p18, n, _), b020_in_target(p18, NAME).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b020_tok_follows_1(n: node)
+.stored b020_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b020_tok_follows_1(n) :- next_sibling(s1, n), glob(".", s1).
+b020_tok_follows_1(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match("\\.", t2).
+b020_tok_follows_1(n) :- structural_before(n, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g3).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b020_tok_precedes_2(n: node)
+.stored b020_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b020_tok_precedes_2(n) :- next_sibling(n, s8), glob("=", s8).
+b020_tok_precedes_2(n) :- structural_after(n, g10), match("\\s*", g10), child(p11, n, _),
+    node(_, n, _, _, en14), o12 = en14 + strlen(g10), token(p11, _, t9, o12, _),
+    match("=", t9).
+b020_tok_precedes_2(n) :- structural_after(n, g10),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g10).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^in$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b020_tok_follows_3(n: node)
+.stored b020_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b020_tok_follows_3(n) :- next_sibling(s3, n), glob("in", s3).
+b020_tok_follows_3(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match("in", t4).
+b020_tok_follows_3(n) :- structural_before(n, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:in)\\s*)$", g5).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b020_tok_follows_4(n: node)
+.stored b020_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b020_tok_follows_4(n) :- next_sibling(s11, n), glob(":", s11).
+b020_tok_follows_4(n) :- structural_before(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, st16, _), o15 = st16 - strlen(g13), token(p14, _, t12, _, o15),
+    match(":", t12).
+b020_tok_follows_4(n) :- structural_before(n, g13),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)\\s*)$", g13).
+
+// tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b020_tok_precedes_5(n: node)
+.stored b020_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b020_tok_precedes_5(n) :- next_sibling(n, s4), glob("=", s4).
+b020_tok_precedes_5(n) :- structural_after(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, _, en10), o8 = en10 + strlen(g6), token(p7, _, t5, o8, _),
+    match("=", t5).
+b020_tok_precedes_5(n) :- structural_after(n, g6),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g6).
+
+// tok_precedes_6(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b020_tok_precedes_6(n: node)
+.stored b020_tok_precedes_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b020_tok_precedes_6(n) :- next_sibling(n, s2), glob("=", s2).
+b020_tok_precedes_6(n) :- structural_after(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, _, en8), o6 = en8 + strlen(g4), token(p5, _, t3, o6, _),
+    match("=", t3).
+b020_tok_precedes_6(n) :- structural_after(n, g4),
+    match("(?s)^(?:\\s*(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// tok_precedes_7(n): a later sibling of n, a named node or an anonymous token, matches "^in$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b020_tok_precedes_7(n: node)
+.stored b020_tok_precedes_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b020_tok_precedes_7(n) :- next_sibling(n, s1), glob("in", s1).
+b020_tok_precedes_7(n) :- structural_after(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, _, en7), o5 = en7 + strlen(g3), token(p4, _, t2, o5, _),
+    match("in", t2).
+b020_tok_precedes_7(n) :- structural_after(n, g3),
+    match("(?s)^(?:\\s*(?:in)(?:\\W.*)?)$", g3).
+
+// tok_follows_8(n): an earlier sibling of n, a named node or an anonymous token, matches "^in$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b020_tok_follows_8(n: node)
+.stored b020_tok_follows_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b020_tok_follows_8(n) :- next_sibling(s10, n), glob("in", s10).
+b020_tok_follows_8(n) :- structural_before(n, g12), match("\\s*", g12), child(p13, n, _),
+    node(_, n, _, st15, _), o14 = st15 - strlen(g12), token(p13, _, t11, _, o14),
+    match("in", t11).
+b020_tok_follows_8(n) :- structural_before(n, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:in)\\s*)$", g12).
+
+// demand_alt_9: the rows of alt_9 its callers ask for (the metavariable columns they pass in)
+.decl b020_demand_alt_9(n: node, name: loc)
+b020_demand_alt_9(c9, NAME) :- b020_tok_precedes_7(n), child(p8, n, _),
+    kind(p8, "for_statement"), child(p8, c9, _), b020_tok_follows_8(c9), b020_mentions(c9, NAME).
+
+// demand_shadowing_lambda: the rows of shadowing_lambda its callers ask for (the metavariable columns they pass in)
+.decl b020_demand_shadowing_lambda(n: node, name: loc)
+b020_demand_shadowing_lambda(n, NAME) :- b020_demand_alt_9(n, NAME).
+b020_demand_shadowing_lambda(c1, NAME) :- b020_demand_alt_9(n, NAME), within(c1, n).
+
+// demand_lambda_parameter: the rows of lambda_parameter its callers ask for (the metavariable columns they pass in)
+.decl b020_demand_lambda_parameter(n: node, name: loc)
+b020_demand_lambda_parameter(n, NAME) :- b020_demand_shadowing_lambda(n, NAME).
+
+// demand_alt_8: the rows of alt_8 its callers ask for (the metavariable columns they pass in)
+.decl b020_demand_alt_8(n: node, name: loc)
+b020_demand_alt_8(c2, NAME) :- b020_demand_lambda_parameter(n, NAME), kind(n, "lambda"),
+    child(n, c1, _), kind(c1, "lambda_parameters"), child(c1, c2, _).
+
+// demand_later_mention: the nodes later_mention is asked at (its recursion looks at every descendant)
+.decl b020_demand_later_mention(n: node)
+b020_demand_later_mention(n) :- b020_demand_shadowing_lambda(n, NAME).
+b020_demand_later_mention(p2) :- b020_demand_later_mention(n), child(p2, n, _).
+
+// demand_alt_3: the nodes alt_3 is asked at (its recursion looks at every descendant)
+.decl b020_demand_alt_3(n: node)
+b020_demand_alt_3(c2) :- b020_demand_lambda_body(n), child(n, c2, _).
+
+// demand_alt_6: the nodes alt_6 is asked at (its recursion looks at every descendant)
+.decl b020_demand_alt_6(n: node)
+b020_demand_alt_6(c1) :- b020_demand_mentions_inside(n), within_stop(c1, n, b020_stop_4).
+
+// demand_lambda_body: the nodes lambda_body is asked at (its recursion looks at every descendant)
+.decl b020_demand_lambda_body(n: node)
+b020_demand_lambda_body(c10) :- b020_demand_mentions(n), kind(n, "lambda"), child(n, c10, _),
+    b020_tok_follows_4(c10).
+b020_demand_lambda_body(c1) :- b020_demand_lambda_body(n), kind(n, "parenthesized_expression"),
+    child(n, c1, _).
+
+// demand_mentions: the nodes mentions is asked at (its recursion looks at every descendant)
+.decl b020_demand_mentions(n: node)
+b020_demand_mentions(c2) :- b020_demand_mentions(n),
+    ( kind(n, "list_comprehension")
+    ; kind(n, "set_comprehension")
+    ; kind(n, "dictionary_comprehension")
+    ; kind(n, "generator_expression")
+    ),
+    child(n, c1, _), kind(c1, "for_in_clause"), child(c1, c2, _), b020_tok_follows_3(c2).
+b020_demand_mentions(s1) :- b020_demand_later_mention(n), precedes(n, s1).
+b020_demand_mentions(c9) :- b020_tok_precedes_7(n), child(p8, n, _), kind(p8, "for_statement"),
+    child(p8, c9, _), b020_tok_follows_8(c9).
+b020_demand_mentions(n) :- b020_demand_alt_3(n).
+b020_demand_mentions(c1) :- b020_demand_alt_3(n),
+    (kind(n, "for_in_clause") ; kind(n, "if_clause")), child(n, c1, _).
+b020_demand_mentions(n) :- b020_demand_alt_6(n), kind(n, k1), b020_set_2(k1).
+
+// demand_mentions_inside: the nodes mentions_inside is asked at (its recursion looks at every descendant)
+.decl b020_demand_mentions_inside(n: node)
+b020_demand_mentions_inside(n) :- b020_demand_mentions(n).
+
+// set_2: node kinds from a JSON `any`
+.decl b020_set_2(v: symbol)
+b020_set_2("list_comprehension"). b020_set_2("set_comprehension").
+b020_set_2("dictionary_comprehension"). b020_set_2("generator_expression"). b020_set_2("lambda").
+
+// stop_4: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl b020_stop_4(kind: symbol)
+b020_stop_4("list_comprehension"). b020_stop_4("set_comprehension").
+b020_stop_4("dictionary_comprehension"). b020_stop_4("generator_expression"). b020_stop_4("lambda").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl b020_alt_1(n: node)
+b020_alt_1(n) :- b020_tok_follows_1(n).
+b020_alt_1(n) :- b020_tok_precedes_2(n), child(p15, n, _), kind(p15, "keyword_argument").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+//   NAME: metavariable this relation binds for the calling rule
+.decl b020_alt_3(n: node, name: loc)
+b020_alt_3(n, NAME) :- b020_demand_alt_3(n), b020_mentions(n, NAME).
+b020_alt_3(n, NAME) :- b020_demand_alt_3(n), (kind(n, "for_in_clause") ; kind(n, "if_clause")),
+    child(n, c1, _), b020_mentions(c1, NAME).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+//   NAME: metavariable this relation binds for the calling rule
+.decl b020_alt_6(n: node, name: loc)
+b020_alt_6(n, NAME) :- b020_demand_alt_6(n), b020_name_ref(n, NAME).
+b020_alt_6(n, NAME) :- b020_demand_alt_6(n), kind(n, k1), b020_set_2(k1), b020_mentions(n, NAME).
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+//   NAME: metavariable of the calling rule, passed in (bound by the caller)
+.decl b020_alt_8(n: node, name: loc)
+b020_alt_8(n, NAME) :- b020_demand_alt_8(n, NAME), kind(n, "identifier"),
+    text(n, t_name1), text(NAME, t_name1), @doc(n) = @doc(NAME).
+b020_alt_8(n, NAME) :- b020_demand_alt_8(n, NAME), kind(n, "default_parameter"), child(n, c1, _),
+    kind(c1, "identifier"), text(c1, t_name2), text(NAME, t_name2), b020_tok_precedes_6(c1), @doc(c1) = @doc(NAME).
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+//   NAME: metavariable of the calling rule, passed in (bound by the caller)
+.decl b020_alt_9(n: node, name: loc)
+b020_alt_9(n, NAME) :- b020_demand_alt_9(n, NAME), b020_shadowing_lambda(n, NAME).
+b020_alt_9(n, NAME) :- b020_demand_alt_9(n, NAME), within(c1, n), b020_shadowing_lambda(c1, NAME).

@@ -1,0 +1,56 @@
+.policy "ruff-pyi021-docstring-in-stub" revision 1
+.guests off
+.description "Remove docstrings from stub files; stubs exist to carry type information, not documentation."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PYI021(n): a finding at node n, from clause `docstring-in-stub`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI021(at: node) "Remove this docstring from the stub; if it is the only statement in the body, replace it with `...`. Keep it if this stub package ships docstrings on purpose."
+    suppress noqa "PYI021"
+PYI021_raw(n) :-
+    ( kind(n, "string"), pyi021_plain_prefix(n)
+    ; kind(n, "concatenated_string"), count : { child(n, c1, _), kind(c1, "string"), !pyi021_plain_prefix(c1) } = 0
+    ),
+    pyi021_docstring_slot(n).
+
+// plain_prefix(n): the JSON util `plain-prefix`, used where the JSON says `matches: "plain-prefix"`
+.decl pyi021_plain_prefix(n: node)
+pyi021_plain_prefix(n) :- node(_, n, _, _, _), match("[ruRU]{0,2}[\"'].*", n).
+
+// first_statement(n): the JSON util `first-statement`, used where the JSON says `matches: "first-statement"`
+.decl pyi021_first_statement(n: node)
+pyi021_first_statement(n) :- kind(n, "expression_statement"), !pyi021_alt_1(n), child(p10, n, _),
+    ( kind(p10, "module")
+    ; kind(p10, "block"), child(p1, p10, _), (kind(p1, "function_definition") ; kind(p1, "class_definition"))
+    ).
+
+
+// docstring_slot(n): the JSON util `docstring-slot`, used where the JSON says `matches: "docstring-slot"`
+.decl pyi021_docstring_slot(n: node)
+pyi021_docstring_slot(n) :- child(p1, n, _), pyi021_first_statement(p1).
+pyi021_docstring_slot(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"),
+    pyi021_docstring_slot(p2).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi021_tok_has_1(n: node)
+.stored pyi021_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi021_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
+pyi021_tok_has_1(n) :- op(n, t3), match(",", t3).
+pyi021_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+pyi021_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+pyi021_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi021_alt_1(n: node)
+pyi021_alt_1(n) :- precedes(s1, n), !kind(s1, "comment").
+pyi021_alt_1(n) :- pyi021_tok_has_1(n).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI021_raw(at: node)
+PYI021(v0) :- PYI021_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

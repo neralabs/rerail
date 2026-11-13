@@ -1,0 +1,80 @@
+.policy "ruff-pgh005-invalid-mock-access" revision 1
+.guests off
+.description "Call mock assertion methods instead of only referencing them, and use their real assert-prefixed names; a bare attribute or an invented method name verifies nothing."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PGH005(n): a finding at node n, from clause `uncalled-mock-method`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on METHOD are added to every rule.
+.violation PGH005(at: node, method: loc) "Call `{method}(...)` with the expected arguments; written as a bare attribute it only reads the method and asserts nothing."
+    suppress noqa "PGH005"
+PGH005(n, METHOD) :- kind(n, "attribute"), n ~ `$OBJ.$METHOD`, pgh005_statement_expression(n),
+    glob("{assert_any_call,assert_called,assert_called_once,assert_called_once_with,assert_called_with,assert_has_calls,assert_not_called,assert_awaited,assert_awaited_once,assert_awaited_with,assert_awaited_once_with,assert_any_await,assert_has_awaits,assert_not_awaited}", METHOD).
+
+// statement_expression(n): the JSON util `statement-expression`, used where the JSON says `matches: "statement-expression"`
+.decl pgh005_statement_expression(n: node)
+pgh005_statement_expression(n) :- child(p1, n, _), pgh005_alt_1(p1).
+
+// PGH005_non_existent_mock_method(n): a finding at node n, from clause `non-existent-mock-method`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on METHOD are added to every rule.
+.violation PGH005_non_existent_mock_method(at: node, method: loc) code "PGH005" "`{method}` is not a mock method, so on a mock this assert always passes; call `assert_{method}(...)` as a plain statement. Leave it if the object is not a mock and defines `{method}`."
+    suppress noqa "PGH005"
+PGH005_non_existent_mock_method(n, METHOD) :- pgh005_assert_test(n), pgh005_alt_3(n, METHOD),
+    glob("{any_call,called_once,called_once_with,called_with,has_calls,not_called,awaited,awaited_once,awaited_with,awaited_once_with,any_await,has_awaits,not_awaited}", METHOD).
+
+// assert_test(n): the JSON util `assert-test`, used where the JSON says `matches: "assert-test"`
+.decl pgh005_assert_test(n: node)
+pgh005_assert_test(n) :- precedes_stop(s1, n, pgh005_stop_2), glob("assert", s1), child(p2, n, _),
+    kind(p2, "assert_statement").
+pgh005_assert_test(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"),
+    pgh005_assert_test(p3).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+//   METHOD: metavariable this relation binds for the calling rule
+.decl pgh005_callee(n: node, method: loc)
+pgh005_callee(n, METHOD) :- kind(n, "attribute"), n ~ `$OBJ.$METHOD`.
+pgh005_callee(n, METHOD) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pgh005_callee(c1, METHOD).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pgh005_tok_has_1(n: node)
+.stored pgh005_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pgh005_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
+pgh005_tok_has_1(n) :- op(n, t3), match(",", t3).
+pgh005_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+pgh005_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+pgh005_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pgh005_tok_has_2(n: node)
+.stored pgh005_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pgh005_tok_has_2(n) :- child(n, c1, _), glob("\\,", c1).
+pgh005_tok_has_2(n) :- op(n, t2), match(",", t2).
+pgh005_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+pgh005_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+pgh005_tok_has_2(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pgh005_alt_1(n: node)
+pgh005_alt_1(n) :- kind(n, "expression_statement"), !pgh005_tok_has_2(n).
+pgh005_alt_1(n) :- kind(n, "parenthesized_expression"), pgh005_statement_expression(n).
+
+// stop_2(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pgh005_stop_2(n: node)
+pgh005_stop_2(n) :- node(_, n, _, _, _), !kind(n, "line_continuation").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+//   METHOD: metavariable this relation binds for the calling rule
+.decl pgh005_alt_3(n: node, method: loc)
+pgh005_alt_3(n, METHOD) :- kind(n, "attribute"), n ~ `$OBJ.$METHOD`.
+pgh005_alt_3(n, METHOD) :- kind(n, "call"), field(n, "function", c1), pgh005_callee(c1, METHOD).

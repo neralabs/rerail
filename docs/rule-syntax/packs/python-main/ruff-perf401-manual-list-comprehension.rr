@@ -1,0 +1,540 @@
+.policy "ruff-perf401-manual-list-comprehension" revision 1
+.guests off
+.description "Use a list comprehension or extend instead of appending to a list inside a for loop; it is shorter and faster."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PERF401(n): a finding at node n, from clause `manual-list-comprehension`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on L, A are added to every rule.
+.violation PERF401(at: node, l: loc) "Replace this loop with a list comprehension; if `{l}` is not a fresh empty list assigned just before the loop, use `{l}.extend(...)` of a generator (of a list comprehension under `async for`)."
+    suppress noqa "PERF401"
+PERF401(n, L) :- perf401_call(n, A, L), within_stop(n, p1, perf401_stop_22),
+    kind(p1, "expression_statement"), perf401_only_stmt(p1), !perf401_tok_has_10(p1),
+    ( child(p2, p1, _), kind(p2, "block"), child(p3, p2, _), perf401_loop(p3, T), (perf401_tok_has_9(p3) ; count : { value(A, t9_2_5), value(T, t9_2_5) } = 0)
+    ; child(p4, p1, _), kind(p4, "block"), child(p5, p4, _), kind(p5, "if_statement"), perf401_only_stmt(p5), count : { field(p5, "alternative", c1_3), (kind(c1_3, "elif_clause") ; kind(c1_3, "else_clause")) } = 0, count : { field(p5, "condition", c2_4), perf401_has_ref(c2_4, L) } = 0, child(p6, p5, _), kind(p6, "block"), child(p7, p6, _), perf401_loop(p7, T)
+    ),
+    perf401_list_bound(L), !perf401_has_ref(A, L).
+
+// list_expr(n): the JSON util `list-expr`, used where the JSON says `matches: "list-expr"`
+.decl perf401_list_expr(n: node)
+perf401_list_expr(n) :- perf401_list_expr_u7(n).
+
+// list_callee(n): the JSON util `list-callee`, used where the JSON says `matches: "list-callee"`
+.decl perf401_list_callee(n: node)
+perf401_list_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "list"), sym_of(n, "builtins.list").
+perf401_list_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    perf401_list_callee(c1).
+
+// list_init(n): the JSON util `list-init`, used where the JSON says `matches: "list-init"`
+.decl perf401_list_init(n: node)
+perf401_list_init(n) :- perf401_list_expr(n).
+perf401_list_init(n) :- kind(n, "call"), child(n, c1, _), perf401_list_callee(c1),
+    next_sibling(c1, s2),
+    (kind(s2, "argument_list") ; kind(s2, "generator_expression")).
+
+// list_ann(n): the JSON util `list-ann`, used where the JSON says `matches: "list-ann"`
+.decl perf401_list_ann(n: node)
+perf401_list_ann(n) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "list"),
+    sym_of(n, "builtins.list").
+perf401_list_ann(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.List")
+    ; sym_of(n, "_typeshed.List")
+    ; sym_of(n, "typing_extensions.List")
+    ).
+
+perf401_list_ann(n) :- (kind(n, "subscript") ; kind(n, "generic_type")), child(n, c1, _),
+    !perf401_tok_follows_5(c1), perf401_list_ann(c1).
+perf401_list_ann(n) :- kind(n, "parenthesized_expression"), child(n, c9, _), perf401_list_ann(c9).
+
+// list_bound(n): the JSON util `list-bound`, used where the JSON says `matches: "list-bound"`
+.decl perf401_list_bound(n: node)
+perf401_list_bound(n) :- kind(n, "identifier"),
+    ( ref_site(n, b1), site_only(b1), binding_value(b1, x1), perf401_list_init(x1), count : { child(b1, c1, _), kind(c1, "type") } = 0
+    ; ref_site(n, b2), site_only(b2), site_annotation(b2, o1), perf401_list_ann(o1), count : { child(b2, c2, _), (kind(c2, "list_splat_pattern") ; kind(c2, "dictionary_splat_pattern")) } = 0
+    ; ref_site(n, b3), site_only(b3), perf401_alt_3(b3)
+    ).
+
+
+// plain_name(n): the JSON util `plain-name`, used where the JSON says `matches: "plain-name"`
+//   L: metavariable this relation binds for the calling rule
+.decl perf401_plain_name(n: node, l: loc)
+perf401_plain_name(n, L) :- kind(n, "identifier"), node(_, n, _, _, _), L = n.
+perf401_plain_name(n, L) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    perf401_plain_name(c1, L).
+
+// call(n): the JSON util `call`, used where the JSON says `matches: "call"`
+//   A, L: metavariables this relation binds for the calling rule
+.decl perf401_call(n: node, a: loc, l: loc)
+perf401_call(n, A, L) :- kind(n, "call"), field(n, "function", c1), kind(c1, "attribute"),
+    field(c1, "object", c2), perf401_plain_name(c2, L), field(c1, "attribute", c3),
+    kind(c3, "identifier"), glob("append", c3), field(n, "arguments", c4),
+    perf401_alt_8(c4, A).
+
+// only_stmt(n): the JSON util `only-stmt`, used where the JSON says `matches: "only-stmt"`
+.decl perf401_only_stmt(n: node)
+perf401_only_stmt(n) :- node(_, n, _, _, _), !perf401_alt_13(n).
+
+// loop_target(n): the JSON util `loop-target`, used where the JSON says `matches: "loop-target"`
+//   T: metavariable this relation binds for the calling rule
+.decl perf401_loop_target(n: node, t: loc)
+perf401_loop_target(n, T) :- kind(n, "identifier"), node(_, n, _, _, _), T = n, !site_outer(n).
+perf401_loop_target(n, T) :- kind(n, "tuple_pattern"), !perf401_tok_has_8(n), child(n, c9, _),
+    perf401_loop_target(c9, T).
+
+// ref(n): the JSON util `ref`, used where the JSON says `matches: "ref"`
+//   L: metavariable of the calling rule, passed in (bound by the caller)
+.decl perf401_ref(n: node, l: loc)
+perf401_ref(n, L) :- perf401_demand_ref(n, L), kind(n, "identifier"), text(n, t_l1), text(L, t_l1),
+    !perf401_alt_16(n), @doc(n) = @doc(L).
+
+// has_ref(n): the JSON util `has-ref`, used where the JSON says `matches: "has-ref"`
+//   L: metavariable of the calling rule, passed in (bound by the caller)
+.decl perf401_has_ref(n: node, l: loc)
+perf401_has_ref(n, L) :- perf401_demand_has_ref(n, L), perf401_ref(n, L).
+perf401_has_ref(n, L) :- perf401_demand_has_ref(n, L), within(c1, n), perf401_ref(c1, L).
+
+// post_ref(n): the JSON util `post-ref`, used where the JSON says `matches: "post-ref"`
+//   FOR: metavariable of the calling rule, passed in (bound by the caller)
+.decl perf401_post_ref(n: node, for: loc)
+perf401_post_ref(n, FOR) :- perf401_demand_post_ref(n, FOR), kind(n, "identifier"), ref_site(n, b1),
+    node(_, b1, _, _, _), SITE = b1, text(SITE, t2), text(FOR, t2), @doc(SITE) = @doc(FOR).
+
+// has_post_ref(n): the JSON util `has-post-ref`, used where the JSON says `matches: "has-post-ref"`
+//   FOR: metavariable of the calling rule, passed in (bound by the caller)
+.decl perf401_has_post_ref(n: node, for: loc)
+perf401_has_post_ref(n, FOR) :- perf401_demand_has_post_ref(n, FOR), perf401_post_ref(n, FOR).
+perf401_has_post_ref(n, FOR) :- perf401_demand_has_post_ref(n, FOR), within(c1, n), perf401_post_ref(c1, FOR).
+
+// loop(n): the JSON util `loop`, used where the JSON says `matches: "loop"`
+//   T: metavariable this relation binds for the calling rule
+.decl perf401_loop(n: node, t: loc)
+perf401_loop(n, T) :- kind(n, "for_statement"), node(_, n, _, _, _), FOR = n, field(n, "left", c1),
+    perf401_loop_target(c1, T), !perf401_alt_17(n, FOR),
+    count : { inside(n, p5, "function_definition"), node(_, p5, _, _, _), perf401_alt_19(n, T) } = 0.
+
+// has_nonlocal(n): the JSON util `has-nonlocal`, used where the JSON says `matches: "has-nonlocal"`
+//   T: metavariable of the calling rule, passed in (bound by the caller)
+.decl perf401_has_nonlocal(n: node, t: loc)
+perf401_has_nonlocal(n, T) :- perf401_demand_has_nonlocal(n, T), kind(n, "nonlocal_statement"),
+    child(n, c1, _), kind(c1, "identifier"), text(c1, t_t2), text(T, t_t2), @doc(c1) = @doc(T).
+perf401_has_nonlocal(n, T) :- perf401_demand_has_nonlocal(n, T), has(n, c2, "nonlocal_statement"),
+    child(c2, c3, _), kind(c3, "identifier"), text(c3, t_t3), text(T, t_t3), @doc(c3) = @doc(T).
+
+.decl perf401_alt_1_u0(n: node)
+perf401_alt_1_u0(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+perf401_alt_1_u0(n) :- kind(n, "comment").
+
+.decl perf401_alt_1_u1(n: node)
+perf401_alt_1_u1(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+perf401_alt_1_u1(n) :- kind(n, "comment").
+perf401_alt_1_u1(n) :- perf401_list_expr_u0(n).
+
+.decl perf401_alt_1_u2(n: node)
+perf401_alt_1_u2(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+perf401_alt_1_u2(n) :- kind(n, "comment").
+perf401_alt_1_u2(n) :- perf401_list_expr_u1(n).
+
+.decl perf401_alt_1_u3(n: node)
+perf401_alt_1_u3(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+perf401_alt_1_u3(n) :- kind(n, "comment").
+perf401_alt_1_u3(n) :- perf401_list_expr_u2(n).
+
+.decl perf401_alt_1_u4(n: node)
+perf401_alt_1_u4(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+perf401_alt_1_u4(n) :- kind(n, "comment").
+perf401_alt_1_u4(n) :- perf401_list_expr_u3(n).
+
+.decl perf401_alt_1_u5(n: node)
+perf401_alt_1_u5(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+perf401_alt_1_u5(n) :- kind(n, "comment").
+perf401_alt_1_u5(n) :- perf401_list_expr_u4(n).
+
+.decl perf401_alt_1_u6(n: node)
+perf401_alt_1_u6(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+perf401_alt_1_u6(n) :- kind(n, "comment").
+perf401_alt_1_u6(n) :- perf401_list_expr_u5(n).
+
+.decl perf401_alt_1_u7(n: node)
+perf401_alt_1_u7(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+perf401_alt_1_u7(n) :- kind(n, "comment").
+perf401_alt_1_u7(n) :- perf401_list_expr_u6(n).
+
+.decl perf401_alt_2_u0(n: node)
+perf401_alt_2_u0(n) :- node(_, n, _, _, _), glob("+", n).
+perf401_alt_2_u0(n) :- kind(n, "comment").
+
+.decl perf401_alt_2_u1(n: node)
+perf401_alt_2_u1(n) :- node(_, n, _, _, _), glob("+", n).
+perf401_alt_2_u1(n) :- kind(n, "comment").
+perf401_alt_2_u1(n) :- perf401_list_expr_u0(n).
+
+.decl perf401_alt_2_u2(n: node)
+perf401_alt_2_u2(n) :- node(_, n, _, _, _), glob("+", n).
+perf401_alt_2_u2(n) :- kind(n, "comment").
+perf401_alt_2_u2(n) :- perf401_list_expr_u1(n).
+
+.decl perf401_alt_2_u3(n: node)
+perf401_alt_2_u3(n) :- node(_, n, _, _, _), glob("+", n).
+perf401_alt_2_u3(n) :- kind(n, "comment").
+perf401_alt_2_u3(n) :- perf401_list_expr_u2(n).
+
+.decl perf401_alt_2_u4(n: node)
+perf401_alt_2_u4(n) :- node(_, n, _, _, _), glob("+", n).
+perf401_alt_2_u4(n) :- kind(n, "comment").
+perf401_alt_2_u4(n) :- perf401_list_expr_u3(n).
+
+.decl perf401_alt_2_u5(n: node)
+perf401_alt_2_u5(n) :- node(_, n, _, _, _), glob("+", n).
+perf401_alt_2_u5(n) :- kind(n, "comment").
+perf401_alt_2_u5(n) :- perf401_list_expr_u4(n).
+
+.decl perf401_alt_2_u6(n: node)
+perf401_alt_2_u6(n) :- node(_, n, _, _, _), glob("+", n).
+perf401_alt_2_u6(n) :- kind(n, "comment").
+perf401_alt_2_u6(n) :- perf401_list_expr_u5(n).
+
+.decl perf401_alt_2_u7(n: node)
+perf401_alt_2_u7(n) :- node(_, n, _, _, _), glob("+", n).
+perf401_alt_2_u7(n) :- kind(n, "comment").
+perf401_alt_2_u7(n) :- perf401_list_expr_u6(n).
+
+.decl perf401_list_expr_u0(n: node)
+perf401_list_expr_u0(n) :- (kind(n, "list") ; kind(n, "list_comprehension")).
+perf401_list_expr_u0(n) :- kind(n, "boolean_operator"), count : { child(n, c26, _) } = 0.
+perf401_list_expr_u0(n) :- kind(n, "binary_operator"), perf401_tok_has_4(n),
+    count : { child(n, c35, _) } = 0.
+
+.decl perf401_list_expr_u1(n: node)
+perf401_list_expr_u1(n) :- (kind(n, "list") ; kind(n, "list_comprehension")).
+perf401_list_expr_u1(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    perf401_list_expr_u0(c1).
+perf401_list_expr_u1(n) :- kind(n, "named_expression"), child(n, c2, _), perf401_tok_follows_1(c2),
+    perf401_list_expr_u0(c2).
+perf401_list_expr_u1(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    perf401_tok_precedes_2(c10), perf401_list_expr_u0(c10), child(n, c18, _), perf401_tok_follows_3(c18),
+    perf401_list_expr_u0(c18).
+perf401_list_expr_u1(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !perf401_alt_1_u0(c26) } = 0.
+perf401_list_expr_u1(n) :- kind(n, "binary_operator"), perf401_tok_has_4(n),
+    count : { child(n, c35, _), !perf401_alt_2_u0(c35) } = 0.
+
+.decl perf401_list_expr_u2(n: node)
+perf401_list_expr_u2(n) :- (kind(n, "list") ; kind(n, "list_comprehension")).
+perf401_list_expr_u2(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    perf401_list_expr_u1(c1).
+perf401_list_expr_u2(n) :- kind(n, "named_expression"), child(n, c2, _), perf401_tok_follows_1(c2),
+    perf401_list_expr_u1(c2).
+perf401_list_expr_u2(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    perf401_tok_precedes_2(c10), perf401_list_expr_u1(c10), child(n, c18, _), perf401_tok_follows_3(c18),
+    perf401_list_expr_u1(c18).
+perf401_list_expr_u2(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !perf401_alt_1_u1(c26) } = 0.
+perf401_list_expr_u2(n) :- kind(n, "binary_operator"), perf401_tok_has_4(n),
+    count : { child(n, c35, _), !perf401_alt_2_u1(c35) } = 0.
+
+.decl perf401_list_expr_u3(n: node)
+perf401_list_expr_u3(n) :- (kind(n, "list") ; kind(n, "list_comprehension")).
+perf401_list_expr_u3(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    perf401_list_expr_u2(c1).
+perf401_list_expr_u3(n) :- kind(n, "named_expression"), child(n, c2, _), perf401_tok_follows_1(c2),
+    perf401_list_expr_u2(c2).
+perf401_list_expr_u3(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    perf401_tok_precedes_2(c10), perf401_list_expr_u2(c10), child(n, c18, _), perf401_tok_follows_3(c18),
+    perf401_list_expr_u2(c18).
+perf401_list_expr_u3(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !perf401_alt_1_u2(c26) } = 0.
+perf401_list_expr_u3(n) :- kind(n, "binary_operator"), perf401_tok_has_4(n),
+    count : { child(n, c35, _), !perf401_alt_2_u2(c35) } = 0.
+
+.decl perf401_list_expr_u4(n: node)
+perf401_list_expr_u4(n) :- (kind(n, "list") ; kind(n, "list_comprehension")).
+perf401_list_expr_u4(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    perf401_list_expr_u3(c1).
+perf401_list_expr_u4(n) :- kind(n, "named_expression"), child(n, c2, _), perf401_tok_follows_1(c2),
+    perf401_list_expr_u3(c2).
+perf401_list_expr_u4(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    perf401_tok_precedes_2(c10), perf401_list_expr_u3(c10), child(n, c18, _), perf401_tok_follows_3(c18),
+    perf401_list_expr_u3(c18).
+perf401_list_expr_u4(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !perf401_alt_1_u3(c26) } = 0.
+perf401_list_expr_u4(n) :- kind(n, "binary_operator"), perf401_tok_has_4(n),
+    count : { child(n, c35, _), !perf401_alt_2_u3(c35) } = 0.
+
+.decl perf401_list_expr_u5(n: node)
+perf401_list_expr_u5(n) :- (kind(n, "list") ; kind(n, "list_comprehension")).
+perf401_list_expr_u5(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    perf401_list_expr_u4(c1).
+perf401_list_expr_u5(n) :- kind(n, "named_expression"), child(n, c2, _), perf401_tok_follows_1(c2),
+    perf401_list_expr_u4(c2).
+perf401_list_expr_u5(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    perf401_tok_precedes_2(c10), perf401_list_expr_u4(c10), child(n, c18, _), perf401_tok_follows_3(c18),
+    perf401_list_expr_u4(c18).
+perf401_list_expr_u5(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !perf401_alt_1_u4(c26) } = 0.
+perf401_list_expr_u5(n) :- kind(n, "binary_operator"), perf401_tok_has_4(n),
+    count : { child(n, c35, _), !perf401_alt_2_u4(c35) } = 0.
+
+.decl perf401_list_expr_u6(n: node)
+perf401_list_expr_u6(n) :- (kind(n, "list") ; kind(n, "list_comprehension")).
+perf401_list_expr_u6(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    perf401_list_expr_u5(c1).
+perf401_list_expr_u6(n) :- kind(n, "named_expression"), child(n, c2, _), perf401_tok_follows_1(c2),
+    perf401_list_expr_u5(c2).
+perf401_list_expr_u6(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    perf401_tok_precedes_2(c10), perf401_list_expr_u5(c10), child(n, c18, _), perf401_tok_follows_3(c18),
+    perf401_list_expr_u5(c18).
+perf401_list_expr_u6(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !perf401_alt_1_u5(c26) } = 0.
+perf401_list_expr_u6(n) :- kind(n, "binary_operator"), perf401_tok_has_4(n),
+    count : { child(n, c35, _), !perf401_alt_2_u5(c35) } = 0.
+
+.decl perf401_list_expr_u7(n: node)
+perf401_list_expr_u7(n) :- (kind(n, "list") ; kind(n, "list_comprehension")).
+perf401_list_expr_u7(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    perf401_list_expr_u6(c1).
+perf401_list_expr_u7(n) :- kind(n, "named_expression"), child(n, c2, _), perf401_tok_follows_1(c2),
+    perf401_list_expr_u6(c2).
+perf401_list_expr_u7(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    perf401_tok_precedes_2(c10), perf401_list_expr_u6(c10), child(n, c18, _), perf401_tok_follows_3(c18),
+    perf401_list_expr_u6(c18).
+perf401_list_expr_u7(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !perf401_alt_1_u6(c26) } = 0.
+perf401_list_expr_u7(n) :- kind(n, "binary_operator"), perf401_tok_has_4(n),
+    count : { child(n, c35, _), !perf401_alt_2_u6(c35) } = 0.
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^:=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf401_tok_follows_1(n: node)
+.stored perf401_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf401_tok_follows_1(n) :- next_sibling(s3, n), glob(":=", s3).
+perf401_tok_follows_1(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match(":=", t4).
+perf401_tok_follows_1(n) :- structural_before(n, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::=)\\s*)$", g5).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf401_tok_precedes_2(n: node)
+.stored perf401_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf401_tok_precedes_2(n) :- next_sibling(n, s11), glob("if", s11).
+perf401_tok_precedes_2(n) :- structural_after(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, _, en17), o15 = en17 + strlen(g13), token(p14, _, t12, o15, _),
+    match("if", t12).
+perf401_tok_precedes_2(n) :- structural_after(n, g13),
+    match("(?s)^(?:\\s*(?:if)(?:\\W.*)?)$", g13).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf401_tok_follows_3(n: node)
+.stored perf401_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf401_tok_follows_3(n) :- next_sibling(s19, n), glob("else", s19).
+perf401_tok_follows_3(n) :- structural_before(n, g21), match("\\s*", g21), child(p22, n, _),
+    node(_, n, _, st24, _), o23 = st24 - strlen(g21), token(p22, _, t20, _, o23),
+    match("else", t20).
+perf401_tok_follows_3(n) :- structural_before(n, g21),
+    match("(?s)^(?:(?:.*\\W)?(?:else)\\s*)$", g21).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^\\+$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf401_tok_has_4(n: node)
+.stored perf401_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf401_tok_has_4(n) :- child(n, c27, _), glob("+", c27).
+perf401_tok_has_4(n) :- op(n, t28), match("\\+", t28).
+perf401_tok_has_4(n) :- child(n, c34, _), structural_before(c34, g29),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g29).
+perf401_tok_has_4(n) :- child(n, c34, _), structural_after(c34, g29),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g29).
+perf401_tok_has_4(n) :- node_text(n, g29), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g29).
+
+// tok_follows_5(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf401_tok_follows_5(n: node)
+.stored perf401_tok_follows_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf401_tok_follows_5(n) :- next_sibling(s2, n), match("(?s).*..*", s2).
+perf401_tok_follows_5(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?s).*..*", t3).
+perf401_tok_follows_5(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
+
+// tok_precedes_6(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf401_tok_precedes_6(n: node)
+.stored perf401_tok_precedes_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf401_tok_precedes_6(n) :- next_sibling(n, s9), glob("as", s9).
+perf401_tok_precedes_6(n) :- structural_after(n, g11), match("\\s*", g11), child(p12, n, _),
+    node(_, n, _, _, en15), o13 = en15 + strlen(g11), token(p12, _, t10, o13, _),
+    match("as", t10).
+perf401_tok_precedes_6(n) :- structural_after(n, g11),
+    match("(?s)^(?:\\s*(?:as)(?:\\W.*)?)$", g11).
+
+// tok_precedes_7(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf401_tok_precedes_7(n: node)
+.stored perf401_tok_precedes_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf401_tok_precedes_7(n) :- next_sibling(n, s2), glob("as", s2).
+perf401_tok_precedes_7(n) :- structural_after(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, _, en8), o6 = en8 + strlen(g4), token(p5, _, t3, o6, _),
+    match("as", t3).
+perf401_tok_precedes_7(n) :- structural_after(n, g4),
+    match("(?s)^(?:\\s*(?:as)(?:\\W.*)?)$", g4).
+
+// tok_has_8(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf401_tok_has_8(n: node)
+.stored perf401_tok_has_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf401_tok_has_8(n) :- child(n, c1, _), glob("\\,", c1).
+perf401_tok_has_8(n) :- op(n, t2), match(",", t2).
+perf401_tok_has_8(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+perf401_tok_has_8(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+perf401_tok_has_8(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// tok_has_9(n): a child of n, a named node or an anonymous token, matches "^async$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf401_tok_has_9(n: node)
+.stored perf401_tok_has_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf401_tok_has_9(n) :- child(n, c1, _), glob("async", c1).
+perf401_tok_has_9(n) :- op(n, t2), match("async", t2).
+perf401_tok_has_9(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g3).
+perf401_tok_has_9(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g3).
+perf401_tok_has_9(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g3).
+
+// tok_has_10(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf401_tok_has_10(n: node)
+.stored perf401_tok_has_10 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf401_tok_has_10(n) :- child(n, c2, _), glob("\\,", c2).
+perf401_tok_has_10(n) :- op(n, t3), match(",", t3).
+perf401_tok_has_10(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+perf401_tok_has_10(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+perf401_tok_has_10(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// demand_alt_17: the rows of alt_17 its callers ask for (the metavariable columns they pass in)
+.decl perf401_demand_alt_17(n: node, for: loc)
+perf401_demand_alt_17(n, FOR) :- kind(n, "for_statement"), node(_, n, _, _, _), FOR = n, field(n, "left", c1),
+    perf401_loop_target(c1, T).
+
+// demand_alt_19: the rows of alt_19 its callers ask for (the metavariable columns they pass in)
+.decl perf401_demand_alt_19(n: node, t: loc)
+perf401_demand_alt_19(n, T) :- kind(n, "for_statement"), node(_, n, _, _, _), FOR = n, field(n, "left", c1),
+    perf401_loop_target(c1, T), inside(n, p5, "function_definition"), node(_, p5, _, _, _).
+
+// demand_has_ref: the rows of has_ref its callers ask for (the metavariable columns they pass in)
+.decl perf401_demand_has_ref(n: node, l: loc)
+perf401_demand_has_ref(c2_4, L) :- perf401_call(n, A, L), within_stop(n, p1, perf401_stop_22),
+    kind(p1, "expression_statement"), perf401_only_stmt(p1), perf401_list_bound(L), child(p4, p1, _),
+    kind(p4, "block"), child(p5, p4, _), kind(p5, "if_statement"), perf401_only_stmt(p5),
+    child(p6, p5, _), kind(p6, "block"), child(p7, p6, _),
+    field(p5, "condition", c2_4).
+perf401_demand_has_ref(A, L) :- perf401_call(n, A, L), within_stop(n, p1, perf401_stop_22),
+    kind(p1, "expression_statement"), perf401_only_stmt(p1), perf401_list_bound(L).
+
+// demand_has_nonlocal: the rows of has_nonlocal its callers ask for (the metavariable columns they pass in)
+.decl perf401_demand_has_nonlocal(n: node, t: loc)
+perf401_demand_has_nonlocal(s1, T) :- perf401_demand_alt_19(n, T), precedes(n, s1).
+perf401_demand_has_nonlocal(s3, T) :- perf401_demand_alt_19(n, T), within_stop(n, p2, perf401_stop_18),
+    precedes(p2, s3).
+
+// demand_has_post_ref: the rows of has_post_ref its callers ask for (the metavariable columns they pass in)
+.decl perf401_demand_has_post_ref(n: node, for: loc)
+perf401_demand_has_post_ref(s1, FOR) :- perf401_demand_alt_17(n, FOR), precedes(n, s1).
+perf401_demand_has_post_ref(s3, FOR) :- perf401_demand_alt_17(n, FOR), within(n, p2), precedes(p2, s3).
+
+// demand_ref: the rows of ref its callers ask for (the metavariable columns they pass in)
+.decl perf401_demand_ref(n: node, l: loc)
+perf401_demand_ref(n, L) :- perf401_demand_has_ref(n, L).
+perf401_demand_ref(c1, L) :- perf401_demand_has_ref(n, L), within(c1, n).
+
+// demand_post_ref: the rows of post_ref its callers ask for (the metavariable columns they pass in)
+.decl perf401_demand_post_ref(n: node, for: loc)
+perf401_demand_post_ref(n, FOR) :- perf401_demand_has_post_ref(n, FOR).
+perf401_demand_post_ref(c1, FOR) :- perf401_demand_has_post_ref(n, FOR), within(c1, n).
+
+// alt_1_u0_empty: level -1 of an unrolled recursion, empty
+.decl perf401_alt_1_u0_empty(n: node)
+
+// alt_2_u0_empty: level -1 of an unrolled recursion, empty
+.decl perf401_alt_2_u0_empty(n: node)
+
+// list_expr_u0_empty: level -1 of an unrolled recursion, empty
+.decl perf401_list_expr_u0_empty(n: node)
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl perf401_alt_1(n: node)
+perf401_alt_1(n) :- perf401_alt_1_u7(n).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl perf401_alt_2(n: node)
+perf401_alt_2(n) :- perf401_alt_2_u7(n).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl perf401_alt_3(n: node)
+perf401_alt_3(n) :- kind(n, "as_pattern"), child(n, c1, _), perf401_tok_precedes_7(c1), perf401_list_init(c1).
+perf401_alt_3(n) :- kind(n, "function_definition"), field(n, "return_type", c9),
+    kind(c9, "type"), child(c9, c10, _), perf401_list_ann(c10).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl perf401_alt_6(n: node)
+perf401_alt_6(n) :- kind(n, "comment").
+perf401_alt_6(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl perf401_alt_10(n: node)
+perf401_alt_10(n) :- (kind(n, "comment") ; kind(n, "keyword_argument") ; kind(n, "dictionary_splat")).
+perf401_alt_10(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+//   A: metavariable this relation binds for the calling rule
+.decl perf401_alt_8(n: node, a: loc)
+perf401_alt_8(n, A) :- kind(n, "generator_expression"), node(_, n, _, _, _), A = n.
+perf401_alt_8(n, A) :- kind(n, "argument_list"), k2 = count : { child(n, c1, _), !perf401_alt_6(c1) },
+    k2 >= 1, k2 <= 1, child(n, c3, _), node(_, c3, _, _, _), A = c3, !perf401_alt_10(c3).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+.decl perf401_alt_11(n: node)
+perf401_alt_11(n) :- kind(n, "comment").
+perf401_alt_11(n) :- node(_, n, _, _, _), glob(";", n).
+
+// alt_13(n): the JSON `any`: n matches if any one of these rules does
+.decl perf401_alt_13(n: node)
+perf401_alt_13(n) :- precedes(s1, n), !perf401_alt_11(s1).
+perf401_alt_13(n) :- precedes(n, s2), !perf401_alt_11(s2).
+
+// alt_16(n): the JSON `any`: n matches if any one of these rules does
+.decl perf401_alt_16(n: node)
+perf401_alt_16(n) :- field(p1, "attribute", n), kind(p1, "attribute").
+perf401_alt_16(n) :- field(p2, "name", n),
+    (kind(p2, "keyword_argument") ; kind(p2, "default_parameter")).
+perf401_alt_16(n) :- child(p3, n, _),
+    ( kind(p3, "lambda_parameters")
+    ; kind(p3, "list_splat_pattern")
+    ; kind(p3, "dictionary_splat_pattern")
+    ).
+
+
+// alt_17(n): the JSON `any`: n matches if any one of these rules does
+//   FOR: metavariable of the calling rule, passed in (bound by the caller)
+.decl perf401_alt_17(n: node, for: loc)
+perf401_alt_17(n, FOR) :- perf401_demand_alt_17(n, FOR), precedes(n, s1), perf401_has_post_ref(s1, FOR).
+perf401_alt_17(n, FOR) :- perf401_demand_alt_17(n, FOR), within(n, p2), !kind(p2, "module"),
+    precedes(p2, s3), perf401_has_post_ref(s3, FOR).
+
+// stop_18(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl perf401_stop_18(n: node)
+perf401_stop_18(n) :- kind(n, "block"), child(p1, n, _), kind(p1, "function_definition").
+
+// alt_19(n): the JSON `any`: n matches if any one of these rules does
+//   T: metavariable of the calling rule, passed in (bound by the caller)
+.decl perf401_alt_19(n: node, t: loc)
+perf401_alt_19(n, T) :- perf401_demand_alt_19(n, T), precedes(n, s1), perf401_has_nonlocal(s1, T).
+perf401_alt_19(n, T) :- perf401_demand_alt_19(n, T), within_stop(n, p2, perf401_stop_18), precedes(p2, s3),
+    perf401_has_nonlocal(s3, T).
+
+// stop_22(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl perf401_stop_22(n: node)
+perf401_stop_22(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").

@@ -1,0 +1,87 @@
+.policy "ruff-pyi066-bad-version-info-order" revision 1
+.guests off
+.description "Put the branch for newer Python versions first in stub files that branch on the interpreter version, testing with a greater-or-equal comparison."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// has_else(n): the JSON util `has-else`, used where the JSON says `matches: "has-else"`
+.decl pyi066_has_else(n: node)
+pyi066_has_else(n) :- kind(n, "if_statement"), child(n, c1, _), kind(c1, "else_clause").
+pyi066_has_else(n) :- kind(n, "elif_clause"), child(p2, n, _), kind(p2, "if_statement"),
+    child(p2, c3, _), kind(c3, "else_clause").
+
+// test_position(n): the JSON util `test-position`, used where the JSON says `matches: "test-position"`
+.decl pyi066_test_position(n: node)
+pyi066_test_position(n) :- field(p1, "condition", n), pyi066_has_else(p1).
+pyi066_test_position(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"),
+    pyi066_test_position(p2).
+
+// and_chain(n): the JSON util `and-chain`, used where the JSON says `matches: "and-chain"`
+.decl pyi066_and_chain(n: node)
+pyi066_and_chain(n) :- kind(n, "boolean_operator"), field(n, "operator", c1), glob("and", c1),
+    pyi066_alt_1(n).
+
+// or_chain(n): the JSON util `or-chain`, used where the JSON says `matches: "or-chain"`
+.decl pyi066_or_chain(n: node)
+pyi066_or_chain(n) :- kind(n, "boolean_operator"), field(n, "operator", c1), glob("or", c1),
+    pyi066_alt_2(n).
+
+// bool_value(n): the JSON util `bool-value`, used where the JSON says `matches: "bool-value"`
+.decl pyi066_bool_value(n: node)
+pyi066_bool_value(n) :- child(p1, n, _), pyi066_and_chain(p1).
+pyi066_bool_value(n) :- child(p2, n, _), pyi066_or_chain(p2).
+pyi066_bool_value(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"), pyi066_bool_value(p3).
+
+// PYI066(n): a finding at node n, from clause `bad-version-info-order`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on L are added to every rule.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI066(at: node, l: loc, r: loc) "Rewrite `{l} < {r}` as `{l} >= {r}` and swap this branch's body with the code that runs otherwise, so the newer-version code comes first."
+    suppress noqa "PYI066"
+PYI066_raw(n, L, R) :- n ~ `$L < $R`,
+    count : { child(n, c1, _), child(p2, c1, _), pyi066_counted_3(c1), k4 = count : { child(p2, s3, _), precedes(s3, c1), pyi066_counted_3(s3) }, k4 = 2 } = 0,
+    pyi066_test_position(n), sym_of(L, "sys.version_info").
+
+// PYI066_bad_version_info_order_in_condition(n): a finding at node n, from clause `bad-version-info-order-in-condition`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on L are added to every rule.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI066_bad_version_info_order_in_condition(at: node, l: loc, r: loc) code "PYI066" "Restructure so a `{l} >= {r}` test selects the newer-version branch first, e.g. by nesting the rest of this condition inside it; flipping only `<` and the branches would change behaviour."
+    suppress noqa "PYI066"
+PYI066_bad_version_info_order_in_condition_raw(n, L, R) :- n ~ `$L < $R`,
+    count : { child(n, c1, _), child(p2, c1, _), pyi066_counted_4(c1), k4 = count : { child(p2, s3, _), precedes(s3, c1), pyi066_counted_4(s3) }, k4 = 2 } = 0,
+    pyi066_bool_value(n), sym_of(L, "sys.version_info").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi066_alt_1(n: node)
+pyi066_alt_1(n) :- pyi066_test_position(n).
+pyi066_alt_1(n) :- child(p1, n, _), pyi066_and_chain(p1).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi066_alt_2(n: node)
+pyi066_alt_2(n) :- pyi066_test_position(n).
+pyi066_alt_2(n) :- child(p1, n, _), pyi066_or_chain(p1).
+
+// counted_3(n): the siblings the JSON `nthChild.ofRule` counts
+.decl pyi066_counted_3(n: node)
+pyi066_counted_3(n) :- node(_, n, _, _, _), !kind(n, "comment"),
+    !kind(n, "line_continuation").
+
+// counted_4(n): the siblings the JSON `nthChild.ofRule` counts
+.decl pyi066_counted_4(n: node)
+pyi066_counted_4(n) :- node(_, n, _, _, _), !kind(n, "comment"),
+    !kind(n, "line_continuation").
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI066_raw(at: node, l: loc, r: loc)
+PYI066(v0, v1, v2) :- PYI066_raw(v0, v1, v2), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI066_bad_version_info_order_in_condition_raw(at: node, l: loc, r: loc)
+PYI066_bad_version_info_order_in_condition(v0, v1, v2) :- PYI066_bad_version_info_order_in_condition_raw(v0, v1, v2), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

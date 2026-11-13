@@ -1,0 +1,133 @@
+.policy "ruff-f601-multi-value-repeated-key-literal" revision 1
+.guests off
+.description "Avoid repeating a literal key (or an equal one, like 1 and 1.0) in a Python dict literal; the later value silently overwrites the earlier one."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// F601(n): a finding at node n, from clause `multi-value-repeated-key-literal`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation F601(at: node, keya: node) "Dictionary key literal `{keya}` repeated"
+    suppress noqa "F601"
+F601(KEYA, n) :- node(_, n, _, _, _), KEYA = n, f601_repeated_key(n).
+F601(KEYA, n) :- f601_in_annotation(n, KEYA).
+F601(KEYA, n) :- node(_, n, _, _, _), KEYA = n, f601_escaped_or_concatenated(n), f601_any_annotation(n).
+
+// complex(n): the JSON util `complex`, used where the JSON says `matches: "complex"`
+.decl f601_complex(n: node)
+f601_complex(n) :- f601_alt_1(n), match(".*[jJ]\\)*", n).
+
+// literal_key(n): the JSON util `literal-key`, used where the JSON says `matches: "literal-key"`
+.decl f601_literal_key(n: node)
+f601_literal_key(n) :- kind(n, k1), f601_set_2(k1).
+f601_literal_key(n) :- kind(n, "string"), !match("[A-Za-z]*[tT].*", n).
+f601_literal_key(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), match("[A-Za-z]*[tT].*", c2) } = 0.
+f601_literal_key(n) :- kind(n, "unary_operator"), glob("[-+]**", n), child(n, c3, _),
+    f601_signed_literal(c3).
+f601_literal_key(n) :- kind(n, "binary_operator"), child(n, c4, _), glob("[-+]", c4),
+    next_sibling(s5, c4), f601_signed_literal(s5), !match(".*[jJ]\\)*", s5),
+    next_sibling(c4, s6), f601_complex(s6).
+
+// signed_literal(n): the JSON util `signed-literal`, used where the JSON says `matches: "signed-literal"`
+.decl f601_signed_literal(n: node)
+f601_signed_literal(n) :- (kind(n, "integer") ; kind(n, "float")).
+f601_signed_literal(n) :- kind(n, "unary_operator"), glob("[-+]**", n), child(n, c1, _),
+    f601_signed_literal(c1).
+f601_signed_literal(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    f601_signed_literal(c2).
+
+// key_slot(n): the JSON util `key-slot`, used where the JSON says `matches: "key-slot"`
+.decl f601_key_slot(n: node)
+f601_key_slot(n) :- !f601_tok_follows_1(n), child(p8, n, _), kind(p8, "pair").
+f601_key_slot(n) :- child(p9, n, _), kind(p9, "parenthesized_expression"), f601_key_slot(p9).
+
+// repeated_key(n): the JSON util `repeated-key`, used where the JSON says `matches: "repeated-key"`
+.decl f601_repeated_key(n: node)
+f601_repeated_key(n) :- node(_, n, _, _, _), KEY = n, !kind(n, "parenthesized_expression"), f601_literal_key(n),
+    f601_key_slot(n), f601_up_1(n, p1),
+    k13 = count : { precedes(s2, p1), kind(s2, "pair"), child(s2, c3, _), !f601_tok_follows_2(c3), node(_, c3, _, _, _), J = c3, value(J, t11), value(KEY, t11) },
+    k13 >= 1.
+
+// escaped_or_concatenated(n): the JSON util `escaped-or-concatenated`, used where the JSON says `matches: "escaped-or-concatenated"`
+.decl f601_escaped_or_concatenated(n: node)
+f601_escaped_or_concatenated(n) :- kind(n, "concatenated_string").
+f601_escaped_or_concatenated(n) :- kind(n, "string"),
+    match("[uU]?['\"]+[\\s\\S]*\\\\([\\\\'\"abfnrtv0-7xNuU]|\\r|\\n)(?s:.*)", n).
+
+// plain_annotation(n): the JSON util `plain-annotation`, used where the JSON says `matches: "plain-annotation"`
+.decl f601_plain_annotation(n: node)
+f601_plain_annotation(n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    !f601_escaped_or_concatenated(n).
+
+// in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+//   KEYA: metavariable this relation binds for the calling rule
+.decl f601_in_annotation(n: node, keya: loc)
+f601_in_annotation(n, KEYA) :- f601_plain_annotation(n), parsed(n, "annotation", r1),
+    within(c2, r1), f601_alt_4(c2, KEYA).
+
+// any_annotation(n): the JSON util `any-annotation`, used where the JSON says `matches: "any-annotation"`
+.decl f601_any_annotation(n: node)
+f601_any_annotation(n) :- f601_demand_any_annotation(n),
+    (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
+    within(c2, r1), f601_alt_5(c2).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f601_tok_follows_1(n: node)
+.stored f601_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f601_tok_follows_1(n) :- next_sibling(s1, n), match("(?s).*..*", s1).
+f601_tok_follows_1(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match("(?s).*..*", t2).
+f601_tok_follows_1(n) :- structural_before(n, g3), match("(?s)^.*\\S\\s*$", g3).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f601_tok_follows_2(n: node)
+.stored f601_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f601_tok_follows_2(n) :- next_sibling(s4, n), match("(?s).*..*", s4).
+f601_tok_follows_2(n) :- structural_before(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, st9, _), o8 = st9 - strlen(g6), token(p7, _, t5, _, o8),
+    match("(?s).*..*", t5).
+f601_tok_follows_2(n) :- structural_before(n, g6), match("(?s)^.*\\S\\s*$", g6).
+
+// demand_alt_5: the nodes alt_5 is asked at (its recursion looks at every descendant)
+.decl f601_demand_alt_5(n: node)
+f601_demand_alt_5(c2) :- f601_demand_any_annotation(n),
+    (kind(n, "string") ; kind(n, "concatenated_string")), parsed(n, "annotation", r1),
+    within(c2, r1).
+
+// demand_any_annotation: the nodes any_annotation is asked at (its recursion looks at every descendant)
+.decl f601_demand_any_annotation(n: node)
+f601_demand_any_annotation(n) :- node(_, n, _, _, _), KEYA = n, f601_escaped_or_concatenated(n).
+f601_demand_any_annotation(n) :- f601_demand_alt_5(n).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl f601_up_1(n: node, p: node)
+f601_up_1(n, p) :- f601_literal_key(n), f601_key_slot(n), within_stop(n, p, f601_stop_3), kind(p, "pair").
+
+// set_2: node kinds from a JSON `any`
+.decl f601_set_2(v: symbol)
+f601_set_2("integer"). f601_set_2("float"). f601_set_2("true"). f601_set_2("false"). f601_set_2("none").
+f601_set_2("ellipsis"). f601_set_2("tuple").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl f601_alt_1(n: node)
+f601_alt_1(n) :- (kind(n, "integer") ; kind(n, "float")).
+f601_alt_1(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), f601_complex(c1).
+
+// stop_3(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl f601_stop_3(n: node)
+f601_stop_3(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+//   KEYA: metavariable this relation binds for the calling rule
+.decl f601_alt_4(n: node, keya: loc)
+f601_alt_4(n, KEYA) :- f601_repeated_key(n), KEYA = n.
+f601_alt_4(n, KEYA) :- f601_in_annotation(n, KEYA).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl f601_alt_5(n: node)
+f601_alt_5(n) :- f601_demand_alt_5(n), f601_repeated_key(n).
+f601_alt_5(n) :- f601_demand_alt_5(n), f601_any_annotation(n).

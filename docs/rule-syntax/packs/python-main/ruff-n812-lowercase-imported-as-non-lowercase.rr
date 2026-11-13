@@ -1,0 +1,41 @@
+.policy "ruff-n812-lowercase-imported-as-non-lowercase" revision 1
+.guests off
+.description "Keep the alias of an imported lowercase name lowercase; an uppercase alias makes readers mistake a function or module for a class or constant."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// N812(n): a finding at node n, from clause `lowercase-imported-as-non-lowercase`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation N812(at: node, asname: loc, name: loc) "Use a lowercase alias instead of `{asname}` for `{name}` and update its uses; leave it if `{name}` is really a class or constant despite its lowercase name."
+    suppress noqa "N812"
+N812(n, ASNAME, NAME) :- kind(n, "aliased_import"), field(n, "name", c1),
+    kind(c1, "dotted_name"), child(c1, c2, _), kind(c2, "identifier"),
+    child(p3, c2, _), n812_counted_1(c2),
+    k5 = count : { child(p3, s4, _), precedes(c2, s4), n812_counted_1(s4) }, k5 = 0,
+    node(_, c2, _, _, _), NAME = c2, n812_cased_lower(c2), field(n, "alias", c6), kind(c6, "identifier"),
+    node(_, c6, _, _, _), ASNAME = c6,
+    !glob("{setUp,tearDown,setUpClass,tearDownClass,setUpModule,tearDownModule,asyncSetUp,asyncTearDown,setUpTestData,failureException,longMessage,maxDiff}", c6),
+    n812_not_lower(c6).
+
+// has_upper(n): the JSON util `has-upper`, used where the JSON says `matches: "has-upper"`
+.decl n812_has_upper(n: node)
+n812_has_upper(n) :- node(_, n, _, _, _),
+    match(".*[\\p{Uppercase}\\x{1C5}\\x{1C8}\\x{1CB}\\x{1F2}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}].*", n).
+
+// cased_lower(n): the JSON util `cased-lower`, used where the JSON says `matches: "cased-lower"`
+.decl n812_cased_lower(n: node)
+n812_cased_lower(n) :- node(_, n, _, _, _), match(".*\\p{Lowercase}.*", n), !n812_has_upper(n).
+
+// not_lower(n): the JSON util `not-lower`, used where the JSON says `matches: "not-lower"`
+.decl n812_not_lower(n: node)
+n812_not_lower(n) :- n812_has_upper(n).
+n812_not_lower(n) :- node(_, n, _, _, _), match(".*[\\p{Alphabetic}--\\p{Lowercase}].*", n).
+n812_not_lower(n) :- node(_, n, _, _, _),
+    match(".*[\\x{149}\\x{1E9A}\\x{2E4}\\x{107B6}-\\x{107B9}].*", n).
+
+// counted_1(n): the siblings the JSON `nthChild.ofRule` counts
+.decl n812_counted_1(n: node)
+n812_counted_1(n) :- kind(n, "identifier").

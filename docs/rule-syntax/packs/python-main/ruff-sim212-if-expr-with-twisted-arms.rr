@@ -1,0 +1,49 @@
+.policy "ruff-sim212-if-expr-with-twisted-arms" revision 1
+.guests off
+.description "Swap the arms of a conditional expression that tests not x and falls back to x, so the test reads x without the negation."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// SIM212(n): a finding at node n, from clause `if-expr-with-twisted-arms`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation SIM212(at: node, a: loc) "Swap the arms to read `{a} if {a} else ...`, dropping the `not` from `... if not {a} else {a}`."
+    suppress noqa "SIM212"
+SIM212(n, A) :- kind(n, "conditional_expression"), child(n, c1, _),
+    sim212_negated_name_a(c1, A), sim212_tok_follows_1(c1), child(n, c9, _), sim212_name_a(c9, A),
+    sim212_tok_follows_2(c9).
+
+// name_a(n): the JSON util `name-a`, used where the JSON says `matches: "name-a"`
+//   A: metavariable this relation binds for the calling rule
+.decl sim212_name_a(n: node, a: loc)
+sim212_name_a(n, A) :- kind(n, "identifier"), node(_, n, _, _, _), A = n.
+sim212_name_a(n, A) :- kind(n, "parenthesized_expression"), child(n, c1, _), sim212_name_a(c1, A).
+
+// negated_name_a(n): the JSON util `negated-name-a`, used where the JSON says `matches: "negated-name-a"`
+//   A: metavariable this relation binds for the calling rule
+.decl sim212_negated_name_a(n: node, a: loc)
+sim212_negated_name_a(n, A) :- kind(n, "not_operator"), child(n, c1, _), sim212_name_a(c1, A).
+sim212_negated_name_a(n, A) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    sim212_negated_name_a(c2, A).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim212_tok_follows_1(n: node)
+.stored sim212_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim212_tok_follows_1(n) :- next_sibling(s2, n), glob("if", s2).
+sim212_tok_follows_1(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("if", t3).
+sim212_tok_follows_1(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:if)\\s*)$", g4).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim212_tok_follows_2(n: node)
+.stored sim212_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim212_tok_follows_2(n) :- next_sibling(s10, n), glob("else", s10).
+sim212_tok_follows_2(n) :- structural_before(n, g12), match("\\s*", g12), child(p13, n, _),
+    node(_, n, _, st15, _), o14 = st15 - strlen(g12), token(p13, _, t11, _, o14),
+    match("else", t11).
+sim212_tok_follows_2(n) :- structural_before(n, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:else)\\s*)$", g12).

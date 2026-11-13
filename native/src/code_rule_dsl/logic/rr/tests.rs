@@ -221,7 +221,10 @@ fn rr_files() -> Vec<PathBuf> {
     let mut out = Vec::new();
     files(&rule_syntax(), "rr", &mut out);
     // `typing/programs` holds copies of the engine's typing programs (T's dialect, its own inputs): not rules.
-    out.retain(|p| !p.starts_with(rule_syntax().join("site")) && !p.starts_with(rule_syntax().join("typing")));
+    // `packs/python-main` is generated from all of main's rules (`site/regen_main_pack.sh`), the ones the reader
+    // refuses too, so a test over every rule of main sees them all; its own check is `reader-check.txt`.
+    let generated = rule_syntax().join("packs/python-main");
+    out.retain(|p| !p.starts_with(rule_syntax().join("site")) && !p.starts_with(rule_syntax().join("typing")) && !p.starts_with(&generated));
     out
 }
 

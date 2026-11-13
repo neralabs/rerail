@@ -1,0 +1,139 @@
+.policy "ruff-d102-undocumented-public-method" revision 1
+.guests off
+.description "Document each public Python method with a docstring describing its behavior, arguments and return value."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// D102(n): a finding at node n, from clause `undocumented-public-method`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation D102(at: node, n: loc) "Add a docstring as the first statement of method `{n}` describing what it does, its arguments and return value; if it overrides a documented base method, decorate it with `@override` instead."
+    suppress noqa "D102"
+D102_raw(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n,
+    match("(?:[^_]|__(?:new|call)__$).*", n), field(p1, "name", n),
+    kind(p1, "function_definition"), within_stop(p1, p2, d102_stop_3),
+    kind(p2, "class_definition"),
+    count : { inside(p1, p3, "function_definition"), node(_, p3, _, _, _) } = 0,
+    count : { inside(p1, p4, "class_definition"), field(p4, "name", c5), prefix("_", c5) } = 0,
+    inside(p1, p6, "class_definition"),
+    count : { inside(p6, p7, "class_definition"), node(_, p7, _, _, _) } = 0,
+    field(p6, "name", c8), node(_, c8, _, _, _), C = c8,
+    ( count : { inside(c8, p1_1, "module"), d102_stop_3_within(c2_1, p1_1), d102_all_stmt(c2_1) } = 0
+    ; site_exported(c8)
+    ; inside(c8, p3_3, "module"), within_stop(c4_3, p3_3, d102_stop_3), kind(c4_3, "string"), node(_, c4_3, _, _, _), S = c4_3, value(S, t5_3), value(C, t5_3), d102_all_entry(c4_3)
+    ),
+    count : { field(p1, "body", c9), child(c9, c10, _), d102_docstring(c10) } = 0,
+    count : { child(p11, p1, _), kind(p11, "decorated_definition"), child(p11, c12, _), kind(c12, "decorator"), child(c12, c13, _), d102_exempt_decorator(c13, N) } = 0.
+
+// doc_string(n): the JSON util `doc-string`, used where the JSON says `matches: "doc-string"`
+.decl d102_doc_string(n: node)
+d102_doc_string(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[bBfFtT]**", c1) } = 0.
+d102_doc_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), child(c2, c3, _), kind(c3, "string_start"), glob("**[bBfFtT]**", c3) } = 0.
+d102_doc_string(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), d102_doc_string(c4).
+
+// docstring(n): the JSON util `docstring`, used where the JSON says `matches: "docstring"`
+.decl d102_docstring(n: node)
+d102_docstring(n) :- kind(n, "expression_statement"),
+    count : { precedes(s1, n), !kind(s1, "comment") } = 0, child(n, c2, _),
+    d102_doc_string(c2), !d102_tok_has_1(n).
+
+// all_stmt(n): the JSON util `all-stmt`, used where the JSON says `matches: "all-stmt"`
+.decl d102_all_stmt(n: node)
+d102_all_stmt(n) :- (kind(n, "assignment") ; kind(n, "augmented_assignment")),
+    child(p1, n, _), kind(p1, "expression_statement"), field(n, "left", c2),
+    match("[(\\s]*__all__[\\s)]*", c2).
+
+// all_value(n): the JSON util `all-value`, used where the JSON says `matches: "all-value"`
+.decl d102_all_value(n: node)
+d102_all_value(n) :- field(p1, "right", n), d102_all_stmt(p1).
+d102_all_value(n) :- field(p2, "right", n), kind(p2, "assignment"), d102_all_value(p2).
+d102_all_value(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"), d102_all_value(p3).
+d102_all_value(n) :- field(p4, "left", n), kind(p4, "binary_operator"), d102_all_value(p4).
+
+// all_list(n): the JSON util `all-list`, used where the JSON says `matches: "all-list"`
+.decl d102_all_list(n: node)
+d102_all_list(n) :- d102_all_value(n).
+d102_all_list(n) :- field(p1, "right", n), kind(p1, "binary_operator"), d102_all_value(p1).
+d102_all_list(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"), d102_all_list(p2).
+d102_all_list(n) :- field(p3, "value", n), kind(p3, "named_expression"), d102_all_list(p3).
+
+// list_arg(n): the JSON util `list-arg`, used where the JSON says `matches: "list-arg"`
+.decl d102_list_arg(n: node)
+d102_list_arg(n) :- child(p1, n, _), kind(p1, "parenthesized_expression"), d102_list_arg(p1).
+d102_list_arg(n) :- child(p2, n, _), kind(p2, "argument_list"),
+    k4 = count : { child(p2, c3, _), !d102_alt_1(c3) }, k4 <= 1, child(p5, p2, _),
+    kind(p5, "call"), d102_all_list(p5), field(p5, "function", c6),
+    (kind(c6, "subscript"), field(c6, "value", c1), d102_list_func(c1) ; d102_list_func(c6)).
+
+// list_func(n): the JSON util `list-func`, used where the JSON says `matches: "list-func"`
+.decl d102_list_func(n: node)
+d102_list_func(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (global_ref(n, "list") ; global_ref(n, "tuple")),
+    (sym_of(n, "builtins.list") ; sym_of(n, "builtins.tuple")).
+
+// all_entry(n): the JSON util `all-entry`, used where the JSON says `matches: "all-entry"`
+.decl d102_all_entry(n: node)
+d102_all_entry(n) :- child(p1, n, _), kind(p1, "parenthesized_expression"), d102_all_entry(p1).
+d102_all_entry(n) :- child(p2, n, _),
+    (kind(p2, "list") ; kind(p2, "tuple") ; kind(p2, "expression_list")), d102_all_list(p2).
+d102_all_entry(n) :- child(p3, n, _),
+    (kind(p3, "list") ; kind(p3, "tuple") ; kind(p3, "set")), d102_list_arg(p3).
+
+// exempt_decorator(n): the JSON util `exempt-decorator`, used where the JSON says `matches: "exempt-decorator"`
+//   N: metavariable this relation binds for the calling rule
+.decl d102_exempt_decorator(n: node, n_mv: loc)
+// N: not bound by this rule, so empty (unset) here, as in ast-grep.
+d102_exempt_decorator(n, N) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), d102_set_5(q1), unset(N).
+d102_exempt_decorator(n, N) :- kind(n, "attribute"), field(n, "attribute", c2),
+    glob("{setter,deleter}", c2), field(n, "object", c3), d102_own_name(c3, N).
+d102_exempt_decorator(n, N) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    d102_exempt_decorator(c4, N).
+
+// own_name(n): the JSON util `own-name`, used where the JSON says `matches: "own-name"`
+//   N: metavariable this relation binds for the calling rule
+.decl d102_own_name(n: node, n_mv: loc)
+d102_own_name(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n.
+d102_own_name(n, N) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    d102_own_name(c1, N).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl d102_tok_has_1(n: node)
+.stored d102_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+d102_tok_has_1(n) :- child(n, c3, _), glob("\\,", c3).
+d102_tok_has_1(n) :- op(n, t4), match(",", t4).
+d102_tok_has_1(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:.*(?:,).*)$", g5).
+d102_tok_has_1(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:.*(?:,).*)$", g5).
+d102_tok_has_1(n) :- node_text(n, g5), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g5).
+
+// stop_3: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl d102_stop_3(kind: symbol)
+d102_stop_3("function_definition"). d102_stop_3("class_definition").
+
+// set_5: symbols from the JSON `resolves.import`
+.decl d102_set_5(v: symbol)
+d102_set_5("typing.overload"). d102_set_5("typing.override"). d102_set_5("typing_extensions.overload").
+d102_set_5("typing_extensions.override"). d102_set_5("_typeshed.overload").
+d102_set_5("_typeshed.override").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl d102_alt_1(n: node)
+d102_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).
+d102_alt_1(n) :- kind(n, "comment").
+
+// stop_3_within: within_stop over the stop set stop_3, read inside an aggregate
+.decl d102_stop_3_within(n: node, a: node)
+d102_stop_3_within(x, y) :- within_stop(x, y, d102_stop_3).
+
+// main's file condition {"notRegex": "\\.pyi$"}
+.decl D102_raw(at: node, n: loc)
+D102(v0, v1) :- D102_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

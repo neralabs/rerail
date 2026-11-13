@@ -1,0 +1,187 @@
+.policy "ruff-ruf020-never-union" revision 1
+.guests off
+.description "Remove Never and NoReturn from union types; they have no values, so the union equals its other members."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// never_like(n): the JSON util `never-like`, used where the JSON says `matches: "never-like"`
+.decl ruf020_never_like(n: node)
+ruf020_never_like(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), ruf020_set_1(q1).
+
+// union_ref(n): the JSON util `union-ref`, used where the JSON says `matches: "union-ref"`
+.decl ruf020_union_ref(n: node)
+ruf020_union_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Union")
+    ; sym_of(n, "typing_extensions.Union")
+    ; sym_of(n, "_typeshed.Union")
+    ).
+
+
+// pep604_operand(n): the JSON util `pep604-operand`, used where the JSON says `matches: "pep604-operand"`
+.decl ruf020_pep604_operand(n: node)
+ruf020_pep604_operand(n) :- ruf020_never_like(n), within_stop(n, p1, ruf020_stop_10),
+    ( kind(p1, "binary_operator"), ruf020_tok_has_2(p1)
+    ; kind(p1, "type"), child(p2, p1, _), kind(p2, "union_type")
+    ).
+
+
+// union_subscript(n): the JSON util `union-subscript`, used where the JSON says `matches: "union-subscript"`
+.decl ruf020_union_subscript(n: node)
+ruf020_union_subscript(n) :- kind(n, "subscript"), field(n, "value", c1), ruf020_union_ref(c1).
+
+// union_generic(n): the JSON util `union-generic`, used where the JSON says `matches: "union-generic"`
+.decl ruf020_union_generic(n: node)
+ruf020_union_generic(n) :- kind(n, "generic_type"), child(n, c1, _), ruf020_union_ref(c1).
+
+// union_member(n): the JSON util `union-member`, used where the JSON says `matches: "union-member"`
+.decl ruf020_union_member(n: node)
+ruf020_union_member(n) :- ruf020_never_like(n), ruf020_alt_13(n).
+
+// pep604_in_string(n): the JSON util `pep604-in-string`, used where the JSON says `matches: "pep604-in-string"`
+//   N: metavariable this relation binds for the calling rule
+.decl ruf020_pep604_in_string(n: node, n_mv: loc)
+ruf020_pep604_in_string(n, N) :- kind(n, "string"),
+    count : { has(n, c1, "escape_sequence"), node(_, c1, _, _, _) } = 0,
+    parsed(n, "annotation", r2), within(c3, r2), ruf020_alt_23(c3, N).
+
+// union_in_string(n): the JSON util `union-in-string`, used where the JSON says `matches: "union-in-string"`
+//   N: metavariable this relation binds for the calling rule
+.decl ruf020_union_in_string(n: node, n_mv: loc)
+ruf020_union_in_string(n, N) :- kind(n, "string"),
+    count : { has(n, c1, "escape_sequence"), node(_, c1, _, _, _) } = 0,
+    parsed(n, "annotation", r2), within(c3, r2), ruf020_alt_24(c3, N).
+
+// RUF020(n): a finding at node n, from clause `never-in-pep604-union`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF020(at: node, n: node) "Keep only the other members of this `|` union; `{n}` has no values, so it adds nothing. If that leaves `None | None`, write a single `None`."
+    suppress noqa "RUF020"
+RUF020(N, n) :- ruf020_pep604_operand(n), node(_, n, _, _, _), N = n.
+RUF020(N, n) :- ruf020_pep604_in_string(n, N).
+
+// RUF020_never_in_typing_union(n): a finding at node n, from clause `never-in-typing-union`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF020_never_in_typing_union(at: node, n: node) code "RUF020" "Keep only the other members of this `Union[...]`; `{n}` has no values, so it adds nothing. If one member is left, use it directly without `Union`."
+    suppress noqa "RUF020"
+RUF020_never_in_typing_union(N, n) :- ruf020_union_member(n), node(_, n, _, _, _), N = n.
+RUF020_never_in_typing_union(N, n) :- ruf020_union_in_string(n, N).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^\\|$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf020_tok_has_1(n: node)
+.stored ruf020_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf020_tok_has_1(n) :- child(n, c2, _), glob("|", c2).
+ruf020_tok_has_1(n) :- op(n, t3), match("\\|", t3).
+ruf020_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+ruf020_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+ruf020_tok_has_1(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^\\|$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf020_tok_has_2(n: node)
+.stored ruf020_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf020_tok_has_2(n) :- child(n, c1, _), glob("|", c1).
+ruf020_tok_has_2(n) :- op(n, t2), match("\\|", t2).
+ruf020_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+ruf020_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+ruf020_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\|)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf020_tok_has_3(n: node)
+.stored ruf020_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf020_tok_has_3(n) :- child(n, c13, _), glob("\\,", c13).
+ruf020_tok_has_3(n) :- op(n, t14), match(",", t14).
+ruf020_tok_has_3(n) :- child(n, c20, _), structural_before(c20, g15),
+    match("(?s)^(?:.*(?:,).*)$", g15).
+ruf020_tok_has_3(n) :- child(n, c20, _), structural_after(c20, g15),
+    match("(?s)^(?:.*(?:,).*)$", g15).
+ruf020_tok_has_3(n) :- node_text(n, g15), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g15).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf020_tok_has_4(n: node)
+.stored ruf020_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf020_tok_has_4(n) :- child(n, c27, _), glob("\\,", c27).
+ruf020_tok_has_4(n) :- op(n, t28), match(",", t28).
+ruf020_tok_has_4(n) :- child(n, c34, _), structural_before(c34, g29),
+    match("(?s)^(?:.*(?:,).*)$", g29).
+ruf020_tok_has_4(n) :- child(n, c34, _), structural_after(c34, g29),
+    match("(?s)^(?:.*(?:,).*)$", g29).
+ruf020_tok_has_4(n) :- node_text(n, g29), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g29).
+
+// demand_alt_13: the nodes alt_13 is asked at (it looks at every ancestor of every node)
+.decl ruf020_demand_alt_13(n: node)
+ruf020_demand_alt_13(n) :- ruf020_never_like(n).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl ruf020_up_1(n: node, p: node)
+ruf020_up_1(n, p) :- ruf020_demand_alt_13(n), within_stop(n, p, ruf020_stop_10), ruf020_union_subscript(p).
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl ruf020_up_2(n: node, p: node)
+ruf020_up_2(n, p) :- ruf020_demand_alt_13(n), within_stop(n, p, ruf020_stop_10), kind(p, "type").
+
+// up_3(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl ruf020_up_3(n: node, p: node)
+ruf020_up_3(n, p) :- ruf020_demand_alt_13(n), within_stop(n, p, ruf020_stop_10), kind(p, "tuple").
+
+// up_4(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl ruf020_up_4(n: node, p: node)
+ruf020_up_4(n, p) :- ruf020_demand_alt_13(n), within_stop(n, p, ruf020_stop_10), kind(p, "tuple").
+
+// set_1: symbols from the JSON `resolves.import`
+.decl ruf020_set_1(v: symbol)
+ruf020_set_1("typing.Never"). ruf020_set_1("typing.NoReturn"). ruf020_set_1("typing_extensions.Never").
+ruf020_set_1("typing_extensions.NoReturn"). ruf020_set_1("_typeshed.Never").
+ruf020_set_1("_typeshed.NoReturn").
+
+// stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf020_stop_10(n: node)
+ruf020_stop_10(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf020_alt_11(n: node)
+ruf020_alt_11(n) :- kind(n, "comment").
+ruf020_alt_11(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_15(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf020_alt_15(n: node)
+ruf020_alt_15(n) :- kind(n, "comment").
+ruf020_alt_15(n) :- node(_, n, _, _, _), glob("[\\[\\],]", n).
+
+// alt_13(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf020_alt_13(n: node)
+ruf020_alt_13(n) :- ruf020_demand_alt_13(n), ruf020_up_1(n, p1),
+    k3 = count : { child(p1, c2, _), !ruf020_alt_15(c2) }, k3 >= 3.
+ruf020_alt_13(n) :- ruf020_demand_alt_13(n), ruf020_up_2(n, p4), child(p5, p4, _),
+    kind(p5, "type_parameter"), k7 = count : { child(p5, c6, _), kind(c6, "type") },
+    k7 >= 2, child(p8, p5, _), ruf020_union_generic(p8).
+ruf020_alt_13(n) :- ruf020_demand_alt_13(n), ruf020_up_3(n, p9),
+    k11 = count : { child(p9, c10, _), !ruf020_alt_11(c10) }, k11 >= 2,
+    within_stop(p9, p12, ruf020_stop_10), ruf020_union_subscript(p12), !ruf020_tok_has_3(p12).
+ruf020_alt_13(n) :- ruf020_demand_alt_13(n), ruf020_up_4(n, p21),
+    k23 = count : { child(p21, c22, _), !ruf020_alt_11(c22) }, k23 >= 2,
+    within_stop(p21, p24, ruf020_stop_10), kind(p24, "type"), child(p25, p24, _),
+    kind(p25, "type_parameter"), child(p26, p25, _), ruf020_union_generic(p26),
+    !ruf020_tok_has_4(p25).
+
+// alt_23(n): the JSON `any`: n matches if any one of these rules does
+//   N: metavariable this relation binds for the calling rule
+.decl ruf020_alt_23(n: node, n_mv: loc)
+ruf020_alt_23(n, N) :- ruf020_pep604_operand(n), node(_, n, _, _, _), N = n, N = n.
+ruf020_alt_23(n, N) :- ruf020_pep604_in_string(n, N).
+
+// alt_24(n): the JSON `any`: n matches if any one of these rules does
+//   N: metavariable this relation binds for the calling rule
+.decl ruf020_alt_24(n: node, n_mv: loc)
+ruf020_alt_24(n, N) :- ruf020_union_member(n), node(_, n, _, _, _), N = n, N = n.
+ruf020_alt_24(n, N) :- ruf020_union_in_string(n, N).

@@ -276,8 +276,10 @@ def lower(prog, rule, v, vs, skip=()):
             lits.extend(count(prog, val, v, vs))
         elif k == "layout" and isinstance(val, dict) and main_terms.layout(prog, val, v, Vars()) is not None:
             lits.extend(main_terms.layout(prog, val, v, vs))
-        elif k == "nthChild" and isinstance(val, dict) and isinstance(val.get("position"), int):
+        elif k == "nthChild" and isinstance(val, dict) and nth_position(val.get("position")) is not None:
             lits.extend(nth_child(prog, val, v, vs))
+        elif k == "nthChild" and isinstance(val, str) and nth_position(val) is not None:
+            lits.extend(nth_child(prog, {"position": val}, v, vs))
         elif k == "binds" and val == {}:
             # the name binds (an assignment or for target, a parameter, an import, `x += 1`)
             prog.use("names")
@@ -384,21 +386,39 @@ def count(prog, c, v, vs):
         if key in c:
             if isinstance(c[key], (int, float)):
                 lits.append(f"{k} {op} {c[key]}")
-            else:                       # e.g. {"$option": …}: no .rr form yet
+            elif isinstance(c[key], dict) and "$option" in c[key]:
+                # a bound from the policy's options: option(name, value) holds the configured (or default) value
+                lits.append(opt_alts(c[key], lambda o: f"{k} {op} to_number({o})" if isinstance(o, OptVar)
+                                     else f"{k} {op} {o}"))
+            else:                       # no .rr form yet
                 prog.untranslated += 1
                 lits.append(f"ast({v}, {compact({'count': {key: c[key]}})})")
     return lits
 
 
+def nth_position(pos):
+    """A JSON `nthChild` position as the tests on k, the number of counted siblings before the node (its 1-based
+    position less one): `3` is k = 2; CSS's `n+3` (the third and later) is k >= 2, `-n+3` (the first three)
+    k <= 2. None for a form not lowered."""
+    if isinstance(pos, int) and not isinstance(pos, bool):
+        return lambda k: [f"{k} = {pos - 1}"]
+    m = re.fullmatch(r"\s*(-?)n\s*\+\s*(\d+)\s*", pos) if isinstance(pos, str) else None
+    if m:
+        b = int(m.group(2)) - 1
+        return (lambda k: [f"{k} <= {b}"]) if m.group(1) else (lambda k: [f"{k} >= {max(b, 0)}"])
+    return None
+
+
 def nth_child(prog, c, v, vs):
     p, s, k = vs.fresh("p"), vs.fresh("s"), vs.fresh("k")
+    at = nth_position(c["position"])(k)
     order = f"precedes({v}, {s})" if c.get("reverse") else f"precedes({s}, {v})"
     if "ofRule" in c:
         rel = prog.helper("counted", "the siblings the JSON `nthChild.ofRule` counts")
         prog.rules.append((f"{rel}(n)", lower(prog, c["ofRule"], "n", Vars())))
         return [f"child({p}, {v}, _), {rel}({v})",
-                f"{k} = count : {{ child({p}, {s}, _), {order}, {rel}({s}) }}", f"{k} = {c['position'] - 1}"]
-    return [f"child({p}, {v}, _), {k} = count : {{ child({p}, {s}, _), {order} }}", f"{k} = {c['position'] - 1}"]
+                f"{k} = count : {{ child({p}, {s}, _), {order}, {rel}({s}) }}"] + at
+    return [f"child({p}, {v}, _), {k} = count : {{ child({p}, {s}, _), {order} }}"] + at
 
 
 def site_filters(prog, filters, s, vs):
@@ -682,6 +702,108 @@ def stop_with_columns(entries, decls):
         e["lits"] = [pat.sub(one, l) for l in e["lits"]]
 
 
+# Characters an operator token is made of: a token test for one must not match part of a longer one (`*` in `**`).
+OP_CHARS = "-+*/%@&|^<>=!:.~"
+
+
+def _top_alts(x):
+    """x's top-level alternatives; one group around the whole is opened (`(a|b)`, `(?:a|b)`)."""
+    def split(x):
+        out, depth, cur, i, cls = [], 0, "", 0, False
+        while i < len(x):
+            ch = x[i]
+            if ch == "\\":
+                cur += x[i:i + 2]
+                i += 2
+                continue
+            if cls:
+                cls = ch != "]"
+            elif ch == "[":
+                cls = True
+            elif ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+            elif ch == "|" and depth == 0:
+                out.append(cur)
+                cur = ""
+                i += 1
+                continue
+            cur += ch
+            i += 1
+        return out + [cur]
+    m = re.fullmatch(r"\((?:\?:)?(.*)\)", x, re.S)
+    if m and len(split(x)) == 1:
+        inner = m.group(1)
+        depth = 0
+        ok = True
+        for i, ch in enumerate(inner):     # the outer parentheses are one group, not `(a)|(b)`
+            if ch == "(" and (i == 0 or inner[i - 1] != "\\"):
+                depth += 1
+            elif ch == ")" and (i == 0 or inner[i - 1] != "\\"):
+                depth -= 1
+                if depth < 0:
+                    ok = False
+                    break
+        if ok:
+            return split(inner)
+    return split(x)
+
+
+def _edge_class(alt, first):
+    """What kind of character starts (first) or ends alt: "w" a word character, "o" an operator character, "" other
+    or unknown. A token boundary is then a non-word (non-operator) character, or the gap's edge."""
+    if not alt:
+        return ""
+    if first:
+        if alt[0] == "\\":
+            ch = alt[1:2]
+            return "" if ch.isalnum() else ("o" if ch in OP_CHARS else "")
+        if alt[0] == "[":
+            body = alt[1:alt.find("]", 2)].replace("\\", "")
+            return "o" if body and all(c in OP_CHARS for c in body) else "w" if body.isalpha() else ""
+        return "w" if alt[0].isalpha() or alt[0] == "_" else "o" if alt[0] in OP_CHARS else ""
+    a = alt.rstrip("?")
+    if a.endswith("]"):
+        body = a[a.rfind("[") + 1:-1].replace("\\", "")
+        return "o" if body and all(c in OP_CHARS for c in body) else "w" if body.isalpha() else ""
+    if len(a) >= 2 and a[-2] == "\\":
+        ch = a[-1]
+        return "" if ch.isalnum() else ("o" if ch in OP_CHARS else "")
+    return "w" if a[-1:].isalpha() else "o" if a[-1:] in OP_CHARS else ""
+
+
+def token_gap_regex(rx, where):
+    """A regex over the source between two stored children (a gap: blanks and the tokens the tape leaves out) that
+    holds where a token in it matches rx, as ast-grep tests an anonymous child: `where` is "any" (some token),
+    "first" (the gap's first token) or "last" (its last). rx anchored (`^as$`, `^(==|!=)$`) tests whole tokens: a
+    word is bounded by non-word characters, an operator by non-operator ones; otherwise a token holding a match."""
+    flags = ""
+    m = re.match(r"\(\?([a-zA-Z]+)\)", rx)
+    if m:
+        flags, rx = m.group(1), rx[m.end():]
+    wrap = (lambda a: f"(?{flags}:{a})") if flags else (lambda a: f"(?:{a})")
+    anchored = rx.startswith("^") and rx.endswith("$") and not rx.endswith("\\$") and len(rx) > 1
+    body = rx[1:-1] if anchored else rx
+    if not anchored and body in ("", "^", ".", "$"):      # any token at all: any code in the gap
+        return {"any": r"(?s)^.*\S.*$", "first": r"(?s)^\s*\S.*$", "last": r"(?s)^.*\S\s*$"}[where]
+    if not anchored:
+        alts = [r"\S*?" + wrap(body) + r"\S*"]
+        lb = rb = {"": ""}
+        classes = [("", "")]
+    else:
+        alts = _top_alts(body)
+        classes = [(_edge_class(a, True), _edge_class(a, False)) for a in alts]
+        alts = [wrap(a) for a in alts]
+    left = {"w": r"\W", "o": r"[^\-+*/%@\&|\^<>=!:.\~]", "": ""}
+    pieces = []
+    for a, (lc, rc) in zip(alts, classes):
+        lpre = r"\s*" if where == "first" else (f"(?:.*{left[lc]})?" if left[lc] else ".*")
+        rpost = r"\s*" if where == "last" else (f"(?:{left[rc]}.*)?" if left[rc] else ".*")
+        pieces.append(lpre + a + rpost)
+    return "(?s)^(?:" + "|".join(pieces) + ")$"
+
+
 def relation(prog, k, sub, v, vs):
     f = sub.get("field")
     stop = sub.get("stopBy", "neighbor")
@@ -713,44 +835,67 @@ def relation(prog, k, sub, v, vs):
     lits.extend(lower(prog, sub, c, vs, skip=skip))
     if set(sub) - {"field", "stopBy"} == {"regex"} and not f and stop in ("neighbor", "end") \
             and not (k in ("has", "inside") and stop == "end") and k != "inside":
-        # ast-grep's siblings and children include anonymous tokens (`:`, `,`, `in`); the tape's are named
-        # only, so a regex-only target may also be a token: op(p, s) for a child, token_before/after for a sibling
-        t = vs.fresh("t")
+        # ast-grep's siblings and children include anonymous tokens (`:`, `,`, `in`). A tape stores the named
+        # nodes and the tokens its grammar does not imply (RER-131): a stored token is read off the tape (op, the
+        # parent's token list); a left-out one stands in the source between stored children (structural_before /
+        # structural_after), so the gap is tested for a token the regex matches (token_gap_regex).
+        t, g = vs.fresh("t"), vs.fresh("g")
+        rx = sub["regex"]
+        if isinstance(rx, str):
+            tok_rx = q(whole(caps(rx)))
+            stored_tok = lambda var: [f"match({tok_rx}, {var})"]
+        else:
+            stored_tok = lambda var: lower(prog, {"regex": rx}, var, vs)
+        gap = lambda where, var: [f"match({q(token_gap_regex(rx, where))}, {var})"] if isinstance(rx, str) else []
+        p_, o, st, en = vs.fresh("p"), vs.fresh("o"), vs.fresh("st"), vs.fresh("en")
+        toks = []
         if k == "has":
-            tok = [f"op({v}, {t})"]
-        else:
-            step = "token_after" if k == "precedes" else "token_before"
-            if stop == "neighbor":
-                tok = [f"{step}({v}, {t})"]
+            toks.append([f"op({v}, {t})"] + stored_tok(t))
+            if isinstance(rx, str):
+                c2 = vs.fresh("c")
+                toks.append([f"child({v}, {c2}, _)", f"structural_before({c2}, {g})"] + gap("any", g))
+                toks.append([f"child({v}, {c2}, _)", f"structural_after({c2}, {g})"] + gap("any", g))
+                toks.append([f"node_text({v}, {g})", f"!child({v}, _, _)"] + gap("any", g))
+        elif stop == "neighbor":
+            # the token right next to v: the first (last) one in the gap after (before) v; where the gap is blank,
+            # the stored child that starts (ends) where it ends (starts)
+            side, where = ("after", "first") if k == "precedes" else ("before", "last")
+            if k == "precedes":
+                at = [f"node(_, {v}, _, _, {en})", f"{o} = {en} + strlen({g})", f"token({p_}, _, {t}, {o}, _)"]
             else:
-                # the token before (after) v, the one before that, or the one before (after) a sibling that
-                # precedes (follows) v: a relation of its own (a disjunction inside an aggregate miscounts)
-                name = f"sibling_{step}"
-                sib = "precedes(s, n)" if k == "follows" else "precedes(n, s)"
-                side = "earlier" if k == "follows" else "later"
-                prog.lib[name] = (f".decl {name}(n: loc, t: span)",
-                                  [f"// {name}(n, t): an anonymous token among n's {side} siblings (approximately: "
-                                   f"the next two tokens, and the one next to each sibling)"],
-                                  [(f"{name}(n, t)", [f"{step}(n, t)"]),
-                                   (f"{name}(n, t)", [f"{step}(n, t0)", f"{step}(t0, t)"]),
-                                   (f"{name}(n, t)", [sib, f"{step}(s, t)"])])
-                tok = [f"{name}({v}, {t})"]
-        if k == "has" and isinstance(sub["regex"], str):     # op's token is a symbol: matched, not globbed
-            tok.append(f"match({q(whole(caps(sub['regex'])))}, {t})")
+                at = [f"node(_, {v}, _, {st}, _)", f"{o} = {st} - strlen({g})", f"token({p_}, _, {t}, _, {o})"]
+            toks.append([f"structural_{side}({v}, {g})", 'match("\\\\s*", ' + g + ")", f"child({p_}, {v}, _)"]
+                        + at + stored_tok(t))
+            if isinstance(rx, str):
+                toks.append([f"structural_{side}({v}, {g})"] + gap(where, g))
         else:
-            tok += lower(prog, {"regex": sub["regex"]}, t, vs)
+            # any later (earlier) sibling token: a stored one in the parent's token list past v, or one in the gap
+            # after (before) v or after (before) a later (earlier) sibling
+            side = "after" if k == "precedes" else "before"
+            if k == "precedes":
+                at = [f"node(_, {v}, _, _, {en})", f"token({p_}, _, {t}, {st}, _)", f"{st} >= {en}"]
+                sib = f"precedes({v}, {o})"
+            else:
+                at = [f"node(_, {v}, _, {st}, _)", f"token({p_}, _, {t}, _, {en})", f"{en} <= {st}"]
+                sib = f"precedes({o}, {v})"
+            toks.append([f"child({p_}, {v}, _)"] + at + stored_tok(t))
+            if isinstance(rx, str):
+                toks.append([f"structural_{side}({v}, {g})"] + gap("any", g))
+                toks.append([sib, f"structural_{side}({o}, {g})"] + gap("any", g))
         # one relation with a rule per form (a disjunction inside an aggregate is not counted right)
         ren = lambda ls: [re.sub(r"(?<![\w$])" + re.escape(v) + r"\b", "n", l) for l in ls]
-        rules = [("{0}(n)", ren(lits)), ("{0}(n)", ren(tok))]
+        rules = [("{0}(n)", ren(lits))] + [("{0}(n)", ren(tk)) for tk in toks]
         sig = repr(rules)
         seen = prog.__dict__.setdefault("token_rels", {})
         if sig not in seen:
             seen[sig] = f"tok_{k}_{len(seen) + 1}"
             name = seen[sig]
             what = {"has": "a child", "precedes": "a later sibling", "follows": "an earlier sibling"}[k]
-            prog.lib[name] = (f".decl {name}(n: node)",
+            prog.lib[name] = (f".decl {name}(n: node)\n.stored {name} \"its token reads are of tokens the tape "
+                              f"stores; one the tape leaves out is read from the source gap, in its own rule\"",
                               [f"// {name}(n): {what} of n, a named node or an anonymous token, matches "
-                               f"{json.dumps(sub['regex'])}"],
+                               f"{json.dumps(sub['regex'])}: a named node, a token the tape stores, or one it "
+                               f"leaves out, read from the source between stored children"],
                               [(h.format(name), b) for h, b in rules])
         lits = [f"{seen[sig]}({v})"]
     return lits

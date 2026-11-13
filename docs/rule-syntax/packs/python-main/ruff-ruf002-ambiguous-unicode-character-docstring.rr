@@ -1,0 +1,102 @@
+.policy "ruff-ruf002-ambiguous-unicode-character-docstring" revision 1
+.guests off
+.description "Avoid look-alike Unicode characters in docstrings; they read like ASCII letters or punctuation but are different characters."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl ruf002_plain_string(n: node)
+ruf002_plain_string(n) :- kind(n, "string"), match("[rRuU]{0,2}['\"].*", n).
+
+// string_expression(n): the JSON util `string-expression`, used where the JSON says `matches: "string-expression"`
+.decl ruf002_string_expression(n: node)
+ruf002_string_expression(n) :- ruf002_plain_string(n).
+ruf002_string_expression(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !ruf002_plain_string(c1) } = 0.
+ruf002_string_expression(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf002_string_expression(c2).
+
+// docstring_statement(n): the JSON util `docstring-statement`, used where the JSON says `matches: "docstring-statement"`
+.decl ruf002_docstring_statement(n: node)
+ruf002_docstring_statement(n) :- kind(n, "expression_statement"), child(n, c1, _),
+    ruf002_string_expression(c1), !ruf002_tok_has_1(n), child(p10, n, _), ruf002_counted_1(n),
+    k12 = count : { child(p10, s11, _), precedes(s11, n), ruf002_counted_1(s11) }, k12 = 0,
+    ( child(p1, n, _), kind(p1, "module")
+    ; child(p2, n, _), kind(p2, "block"), child(p3, p2, _), (kind(p3, "function_definition") ; kind(p3, "class_definition"))
+    ).
+
+
+// docstring_text(n): the JSON util `docstring-text`, used where the JSON says `matches: "docstring-text"`
+.decl ruf002_docstring_text(n: node)
+ruf002_docstring_text(n) :- kind(n, "string_content"), within(n, p1), ruf002_docstring_statement(p1).
+
+// symbol(n): the JSON util `symbol`, used where the JSON says `matches: "symbol"`
+//   CH: metavariable this relation binds for the calling rule
+.decl ruf002_symbol(n: node, ch: loc)
+ruf002_symbol(n, CH) :- node(_, n, _, _, _),
+    match(".*(?P<CH>[\\x{a0}´¸×˂-˄˗˛˜˴˸;΄՚՝։׀׃׳؍٫٭۔܁-܄᐀᙭᙮\\x{1680}᛬᛭᜵᠃᠉᾽᾿῀`´῾\\x{2000}-\\x{200a}‐-–‘-‛․\\x{2028}\\x{2029}\\x{202f}′‵‹›⁁⁃⁄⁎⁓⁚\\x{205f}℮−∕-∗∣∨∪∶∼⊤⋁⋃⋿⍳⍴⍺⏽╱╳❨❩❮❯❲-❵➕➖⟋⟍⟙⤫⤬⧵⧸⧹⨯⹀⼂⼃〔〕゠㇓㇔꓿꘎꞉﴾﴿︰﹍-﹏﹘﹨！-／：-＠［-｀｛-～￨𐩐𝄔\\x{1d16d}𝈆𝈍𝈏𝈒𝈓𝈖𝈪𝈶𝈷𝈺𝈻🝌🝨]).*", n).
+
+// any_letter(n): the JSON util `any-letter`, used where the JSON says `matches: "any-letter"`
+//   CH: metavariable this relation binds for the calling rule
+.decl ruf002_any_letter(n: node, ch: loc)
+ruf002_any_letter(n, CH) :- node(_, n, _, _, _),
+    match(".*(?P<CH>[ıſƄƍƦƧƷƼƽǀǃȜȢȣɁɑɡɣɩɪɯʋʏʔʹʻ-ʾˆˈˊˋːʹͺͿΑΒΕ-ΗΙΚΜΝΟΡΤΥΧαγινορσυϒϜϨϱ-ϳϹϺЅІЈАВЕЗКМ-ОР-УХЬабгеорсухѕіјѡѴѵҮүһҽӀӏӠԁԌԛ-ԝՍՏՕագզհոռսցքօוטיןסاه٠١٥٧ھہە۰۱۵۷߀ߊߴߵߺ\\x{903}०ॽ০৪৭੦੧੪\\x{a83}૦\\x{b03}ଠ୦୨௦\\x{c02}౦\\x{c82}೦\\x{d02}ഠ൦൭\\x{d82}๐໐ဝ၀ყჿሀዐᎠ-ᎢᎥᎩ-ᎬᎮᎳᎷᎻᎽᏀᏂᏃᏎᏏᏒᏔᏕᏙᏚᏞᏟᏢᏦᏧᏮᏳᏴᐯᐳᐸᑊᑌᑭᑯᑲᒍᒪᒿᕁᕼᕽᖇᖯᖴᗅᗞᗪᗰᗷᚲᚷᛁᛌᛕᛖᴄᴏᴑᴜᴠ-ᴢᴦᶃᶌẝỿιℂℊ-ℎℐ-ℓℕℙ-ℝℤℨKℬℭℯ-ℱℳℴℹℽⅅ-ⅉⅠⅤⅩⅬ-ⅰⅴⅹⅼ-ⅾⲅⲎⲒⲔⲘⲚⲞⲟⲢ-ⲦⲨⲬⲺⳆⳊⳌⳐⳒⴸⴹⵏⵑⵔⵕⵝ〇〳ノ丶丿ꓐ-ꓔꓖꓗꓙꓚꓜꓝꓟ-ꓣꓦꓧꓪ-ꓬꓮꓰꓲ-ꓴꓸꓹꓽꙄꙇꛟꛫꛯꜱꝚꝪꝮꝸꞌꞘꞙꞟꞫꞲ-Ꞵꬲꬵꬽꭇꭈꭎꭒꭚꭵꮁꮃꮓꮩꮪꮯﮦ-ﮭﺍﺎﻩ-ﻬ０-９Ａ-Ｚａ-ｚ𐊂𐊆𐊇𐊊𐊐𐊒𐊕-𐊗𐊛𐊠-𐊢𐊥𐊫𐊰-𐊲𐊴𐋏𐋵𐌁𐌂𐌉𐌑𐌕𐌗𐌚𐌟𐌠𐌢𐐄𐐕𐐛𐐠𐐬𐐽𐑈𐒴𐓂𐓎𐓒𐓪𐓶𐔓𐔖𐔘𐔜𐔝𐔥-𐔧𑓐𑜆𑜊𑜎𑜏𑢠𑢢-𑢤𑢦𑢩𑢬𑢮𑢯𑢲𑢵𑢸𑢻𑢼𑣀-𑣄𑣆𑣈𑣊𑣌𑣕-𑣘𑣜𑣠𑣥𑣦𑣩𑣬𑣯𑣲𖼈𖼊𖼖𖼨𖼵𖼺𖼻𖼿𖽀𖽂𖽃\\x{16f51}\\x{16f52}𝐀-𝑔𝑖-𝑙𝑛-𝒍𝒏-𝒜𝒞𝒟𝒢𝒥𝒦𝒩-𝒬𝒮-𝒹𝒻𝒽-𝓁𝓃𝓅-𝓵𝓷-𝔅𝔇-𝔊𝔍-𝔔𝔖-𝔜𝔞-𝔩𝔫-𝔹𝔻-𝔾𝕀-𝕄𝕆𝕊-𝕐𝕒-𝕝𝕟-𝖑𝖓-𝗅𝗇-𝗹𝗻-𝘭𝘯-𝙡𝙣-𝚕𝚗-𝚤𝚨𝚩𝚬-𝚮𝚰𝚱𝚳𝚴𝚶𝚸𝚻𝚼𝚾𝛂𝛄𝛊𝛎𝛐𝛒𝛔𝛖𝛠𝛢𝛣𝛦-𝛨𝛪𝛫𝛭𝛮𝛰𝛲𝛵𝛶𝛸𝛼𝛾𝜄𝜈𝜊𝜌𝜎𝜐𝜚𝜜𝜝𝜠-𝜢𝜤𝜥𝜧𝜨𝜪𝜬𝜯𝜰𝜲𝜶𝜸𝜾𝝂𝝄𝝆𝝈𝝊𝝔𝝖𝝗𝝚-𝝜𝝞𝝟𝝡𝝢𝝤𝝦𝝩𝝪𝝬𝝰𝝲𝝸𝝼𝝾𝞀𝞂𝞄𝞎𝞐𝞑𝞔-𝞖𝞘𝞙𝞛𝞜𝞞𝞠𝞣𝞤𝞦𝞪𝞬𝞲𝞶𝞸𝞺𝞼𝞾𝟈𝟊𝟎-𝟿𞣇𞣋𞸀𞸤𞹤𞺀𞺄🯰-🯹]).*", n).
+
+// after_ascii(n): the JSON util `after-ascii`, used where the JSON says `matches: "after-ascii"`
+//   CH: metavariable this relation binds for the calling rule
+.decl ruf002_after_ascii(n: node, ch: loc)
+ruf002_after_ascii(n, CH) :- node(_, n, _, _, _),
+    match(".*[0-9A-Za-z][\\p{Alphabetic}\\p{N}]*?(?P<CH>[ıſƄƍƦƧƷƼƽǀǃȜȢȣɁɑɡɣɩɪɯʋʏʔʹʻ-ʾˆˈˊˋːʹͺͿΑΒΕ-ΗΙΚΜΝΟΡΤΥΧαγινορσυϒϜϨϱ-ϳϹϺЅІЈАВЕЗКМ-ОР-УХЬабгеорсухѕіјѡѴѵҮүһҽӀӏӠԁԌԛ-ԝՍՏՕագզհոռսցքօוטיןסاه٠١٥٧ھہە۰۱۵۷߀ߊߴߵߺ\\x{903}०ॽ০৪৭੦੧੪\\x{a83}૦\\x{b03}ଠ୦୨௦\\x{c02}౦\\x{c82}೦\\x{d02}ഠ൦൭\\x{d82}๐໐ဝ၀ყჿሀዐᎠ-ᎢᎥᎩ-ᎬᎮᎳᎷᎻᎽᏀᏂᏃᏎᏏᏒᏔᏕᏙᏚᏞᏟᏢᏦᏧᏮᏳᏴᐯᐳᐸᑊᑌᑭᑯᑲᒍᒪᒿᕁᕼᕽᖇᖯᖴᗅᗞᗪᗰᗷᚲᚷᛁᛌᛕᛖᴄᴏᴑᴜᴠ-ᴢᴦᶃᶌẝỿιℂℊ-ℎℐ-ℓℕℙ-ℝℤℨKℬℭℯ-ℱℳℴℹℽⅅ-ⅉⅠⅤⅩⅬ-ⅰⅴⅹⅼ-ⅾⲅⲎⲒⲔⲘⲚⲞⲟⲢ-ⲦⲨⲬⲺⳆⳊⳌⳐⳒⴸⴹⵏⵑⵔⵕⵝ〇〳ノ丶丿ꓐ-ꓔꓖꓗꓙꓚꓜꓝꓟ-ꓣꓦꓧꓪ-ꓬꓮꓰꓲ-ꓴꓸꓹꓽꙄꙇꛟꛫꛯꜱꝚꝪꝮꝸꞌꞘꞙꞟꞫꞲ-Ꞵꬲꬵꬽꭇꭈꭎꭒꭚꭵꮁꮃꮓꮩꮪꮯﮦ-ﮭﺍﺎﻩ-ﻬ０-９Ａ-Ｚａ-ｚ𐊂𐊆𐊇𐊊𐊐𐊒𐊕-𐊗𐊛𐊠-𐊢𐊥𐊫𐊰-𐊲𐊴𐋏𐋵𐌁𐌂𐌉𐌑𐌕𐌗𐌚𐌟𐌠𐌢𐐄𐐕𐐛𐐠𐐬𐐽𐑈𐒴𐓂𐓎𐓒𐓪𐓶𐔓𐔖𐔘𐔜𐔝𐔥-𐔧𑓐𑜆𑜊𑜎𑜏𑢠𑢢-𑢤𑢦𑢩𑢬𑢮𑢯𑢲𑢵𑢸𑢻𑢼𑣀-𑣄𑣆𑣈𑣊𑣌𑣕-𑣘𑣜𑣠𑣥𑣦𑣩𑣬𑣯𑣲𖼈𖼊𖼖𖼨𖼵𖼺𖼻𖼿𖽀𖽂𖽃\\x{16f51}\\x{16f52}𝐀-𝑔𝑖-𝑙𝑛-𝒍𝒏-𝒜𝒞𝒟𝒢𝒥𝒦𝒩-𝒬𝒮-𝒹𝒻𝒽-𝓁𝓃𝓅-𝓵𝓷-𝔅𝔇-𝔊𝔍-𝔔𝔖-𝔜𝔞-𝔩𝔫-𝔹𝔻-𝔾𝕀-𝕄𝕆𝕊-𝕐𝕒-𝕝𝕟-𝖑𝖓-𝗅𝗇-𝗹𝗻-𝘭𝘯-𝙡𝙣-𝚕𝚗-𝚤𝚨𝚩𝚬-𝚮𝚰𝚱𝚳𝚴𝚶𝚸𝚻𝚼𝚾𝛂𝛄𝛊𝛎𝛐𝛒𝛔𝛖𝛠𝛢𝛣𝛦-𝛨𝛪𝛫𝛭𝛮𝛰𝛲𝛵𝛶𝛸𝛼𝛾𝜄𝜈𝜊𝜌𝜎𝜐𝜚𝜜𝜝𝜠-𝜢𝜤𝜥𝜧𝜨𝜪𝜬𝜯𝜰𝜲𝜶𝜸𝜾𝝂𝝄𝝆𝝈𝝊𝝔𝝖𝝗𝝚-𝝜𝝞𝝟𝝡𝝢𝝤𝝦𝝩𝝪𝝬𝝰𝝲𝝸𝝼𝝾𝞀𝞂𝞄𝞎𝞐𝞑𝞔-𝞖𝞘𝞙𝞛𝞜𝞞𝞠𝞣𝞤𝞦𝞪𝞬𝞲𝞶𝞸𝞺𝞼𝞾𝟈𝟊𝟎-𝟿𞣇𞣋𞸀𞸤𞹤𞺀𞺄🯰-🯹]).*", n).
+
+// before_ascii(n): the JSON util `before-ascii`, used where the JSON says `matches: "before-ascii"`
+//   CH: metavariable this relation binds for the calling rule
+.decl ruf002_before_ascii(n: node, ch: loc)
+ruf002_before_ascii(n, CH) :- node(_, n, _, _, _),
+    match(".*(?:^|[^\\p{Alphabetic}\\p{N}])[[\\p{Alphabetic}\\p{N}]--[0-9A-Za-z]]*?(?P<CH>[ıſƄƍƦƧƷƼƽǀǃȜȢȣɁɑɡɣɩɪɯʋʏʔʹʻ-ʾˆˈˊˋːʹͺͿΑΒΕ-ΗΙΚΜΝΟΡΤΥΧαγινορσυϒϜϨϱ-ϳϹϺЅІЈАВЕЗКМ-ОР-УХЬабгеорсухѕіјѡѴѵҮүһҽӀӏӠԁԌԛ-ԝՍՏՕագզհոռսցքօוטיןסاه٠١٥٧ھہە۰۱۵۷߀ߊߴߵߺ\\x{903}०ॽ০৪৭੦੧੪\\x{a83}૦\\x{b03}ଠ୦୨௦\\x{c02}౦\\x{c82}೦\\x{d02}ഠ൦൭\\x{d82}๐໐ဝ၀ყჿሀዐᎠ-ᎢᎥᎩ-ᎬᎮᎳᎷᎻᎽᏀᏂᏃᏎᏏᏒᏔᏕᏙᏚᏞᏟᏢᏦᏧᏮᏳᏴᐯᐳᐸᑊᑌᑭᑯᑲᒍᒪᒿᕁᕼᕽᖇᖯᖴᗅᗞᗪᗰᗷᚲᚷᛁᛌᛕᛖᴄᴏᴑᴜᴠ-ᴢᴦᶃᶌẝỿιℂℊ-ℎℐ-ℓℕℙ-ℝℤℨKℬℭℯ-ℱℳℴℹℽⅅ-ⅉⅠⅤⅩⅬ-ⅰⅴⅹⅼ-ⅾⲅⲎⲒⲔⲘⲚⲞⲟⲢ-ⲦⲨⲬⲺⳆⳊⳌⳐⳒⴸⴹⵏⵑⵔⵕⵝ〇〳ノ丶丿ꓐ-ꓔꓖꓗꓙꓚꓜꓝꓟ-ꓣꓦꓧꓪ-ꓬꓮꓰꓲ-ꓴꓸꓹꓽꙄꙇꛟꛫꛯꜱꝚꝪꝮꝸꞌꞘꞙꞟꞫꞲ-Ꞵꬲꬵꬽꭇꭈꭎꭒꭚꭵꮁꮃꮓꮩꮪꮯﮦ-ﮭﺍﺎﻩ-ﻬ０-９Ａ-Ｚａ-ｚ𐊂𐊆𐊇𐊊𐊐𐊒𐊕-𐊗𐊛𐊠-𐊢𐊥𐊫𐊰-𐊲𐊴𐋏𐋵𐌁𐌂𐌉𐌑𐌕𐌗𐌚𐌟𐌠𐌢𐐄𐐕𐐛𐐠𐐬𐐽𐑈𐒴𐓂𐓎𐓒𐓪𐓶𐔓𐔖𐔘𐔜𐔝𐔥-𐔧𑓐𑜆𑜊𑜎𑜏𑢠𑢢-𑢤𑢦𑢩𑢬𑢮𑢯𑢲𑢵𑢸𑢻𑢼𑣀-𑣄𑣆𑣈𑣊𑣌𑣕-𑣘𑣜𑣠𑣥𑣦𑣩𑣬𑣯𑣲𖼈𖼊𖼖𖼨𖼵𖼺𖼻𖼿𖽀𖽂𖽃\\x{16f51}\\x{16f52}𝐀-𝑔𝑖-𝑙𝑛-𝒍𝒏-𝒜𝒞𝒟𝒢𝒥𝒦𝒩-𝒬𝒮-𝒹𝒻𝒽-𝓁𝓃𝓅-𝓵𝓷-𝔅𝔇-𝔊𝔍-𝔔𝔖-𝔜𝔞-𝔩𝔫-𝔹𝔻-𝔾𝕀-𝕄𝕆𝕊-𝕐𝕒-𝕝𝕟-𝖑𝖓-𝗅𝗇-𝗹𝗻-𝘭𝘯-𝙡𝙣-𝚕𝚗-𝚤𝚨𝚩𝚬-𝚮𝚰𝚱𝚳𝚴𝚶𝚸𝚻𝚼𝚾𝛂𝛄𝛊𝛎𝛐𝛒𝛔𝛖𝛠𝛢𝛣𝛦-𝛨𝛪𝛫𝛭𝛮𝛰𝛲𝛵𝛶𝛸𝛼𝛾𝜄𝜈𝜊𝜌𝜎𝜐𝜚𝜜𝜝𝜠-𝜢𝜤𝜥𝜧𝜨𝜪𝜬𝜯𝜰𝜲𝜶𝜸𝜾𝝂𝝄𝝆𝝈𝝊𝝔𝝖𝝗𝝚-𝝜𝝞𝝟𝝡𝝢𝝤𝝦𝝩𝝪𝝬𝝰𝝲𝝸𝝼𝝾𝞀𝞂𝞄𝞎𝞐𝞑𝞔-𝞖𝞘𝞙𝞛𝞜𝞞𝞠𝞣𝞤𝞦𝞪𝞬𝞲𝞶𝞸𝞺𝞼𝞾𝟈𝟊𝟎-𝟿𞣇𞣋𞸀𞸤𞹤𞺀𞺄🯰-🯹])[\\p{Alphabetic}\\p{N}]*?[0-9A-Za-z].*", n).
+
+// single(n): the JSON util `single`, used where the JSON says `matches: "single"`
+//   CH: metavariable this relation binds for the calling rule
+.decl ruf002_single(n: node, ch: loc)
+ruf002_single(n, CH) :- node(_, n, _, _, _),
+    match(".*(?:^|[^\\p{Alphabetic}\\p{N}]|\\b)(?P<CH>[ıſƄƍƦƧƷƼƽǀǃȜȢȣɁɑɡɣɩɪɯʋʏʔʹʻ-ʾˆˈˊˋːʹͺͿΑΒΕ-ΗΙΚΜΝΟΡΤΥΧαγινορσυϒϜϨϱ-ϳϹϺЅІЈАВЕЗКМ-ОР-УХЬабгеорсухѕіјѡѴѵҮүһҽӀӏӠԁԌԛ-ԝՍՏՕագզհոռսցքօוטיןסاه٠١٥٧ھہە۰۱۵۷߀ߊߴߵߺ\\x{903}०ॽ০৪৭੦੧੪\\x{a83}૦\\x{b03}ଠ୦୨௦\\x{c02}౦\\x{c82}೦\\x{d02}ഠ൦൭\\x{d82}๐໐ဝ၀ყჿሀዐᎠ-ᎢᎥᎩ-ᎬᎮᎳᎷᎻᎽᏀᏂᏃᏎᏏᏒᏔᏕᏙᏚᏞᏟᏢᏦᏧᏮᏳᏴᐯᐳᐸᑊᑌᑭᑯᑲᒍᒪᒿᕁᕼᕽᖇᖯᖴᗅᗞᗪᗰᗷᚲᚷᛁᛌᛕᛖᴄᴏᴑᴜᴠ-ᴢᴦᶃᶌẝỿιℂℊ-ℎℐ-ℓℕℙ-ℝℤℨKℬℭℯ-ℱℳℴℹℽⅅ-ⅉⅠⅤⅩⅬ-ⅰⅴⅹⅼ-ⅾⲅⲎⲒⲔⲘⲚⲞⲟⲢ-ⲦⲨⲬⲺⳆⳊⳌⳐⳒⴸⴹⵏⵑⵔⵕⵝ〇〳ノ丶丿ꓐ-ꓔꓖꓗꓙꓚꓜꓝꓟ-ꓣꓦꓧꓪ-ꓬꓮꓰꓲ-ꓴꓸꓹꓽꙄꙇꛟꛫꛯꜱꝚꝪꝮꝸꞌꞘꞙꞟꞫꞲ-Ꞵꬲꬵꬽꭇꭈꭎꭒꭚꭵꮁꮃꮓꮩꮪꮯﮦ-ﮭﺍﺎﻩ-ﻬ０-９Ａ-Ｚａ-ｚ𐊂𐊆𐊇𐊊𐊐𐊒𐊕-𐊗𐊛𐊠-𐊢𐊥𐊫𐊰-𐊲𐊴𐋏𐋵𐌁𐌂𐌉𐌑𐌕𐌗𐌚𐌟𐌠𐌢𐐄𐐕𐐛𐐠𐐬𐐽𐑈𐒴𐓂𐓎𐓒𐓪𐓶𐔓𐔖𐔘𐔜𐔝𐔥-𐔧𑓐𑜆𑜊𑜎𑜏𑢠𑢢-𑢤𑢦𑢩𑢬𑢮𑢯𑢲𑢵𑢸𑢻𑢼𑣀-𑣄𑣆𑣈𑣊𑣌𑣕-𑣘𑣜𑣠𑣥𑣦𑣩𑣬𑣯𑣲𖼈𖼊𖼖𖼨𖼵𖼺𖼻𖼿𖽀𖽂𖽃\\x{16f51}\\x{16f52}𝐀-𝑔𝑖-𝑙𝑛-𝒍𝒏-𝒜𝒞𝒟𝒢𝒥𝒦𝒩-𝒬𝒮-𝒹𝒻𝒽-𝓁𝓃𝓅-𝓵𝓷-𝔅𝔇-𝔊𝔍-𝔔𝔖-𝔜𝔞-𝔩𝔫-𝔹𝔻-𝔾𝕀-𝕄𝕆𝕊-𝕐𝕒-𝕝𝕟-𝖑𝖓-𝗅𝗇-𝗹𝗻-𝘭𝘯-𝙡𝙣-𝚕𝚗-𝚤𝚨𝚩𝚬-𝚮𝚰𝚱𝚳𝚴𝚶𝚸𝚻𝚼𝚾𝛂𝛄𝛊𝛎𝛐𝛒𝛔𝛖𝛠𝛢𝛣𝛦-𝛨𝛪𝛫𝛭𝛮𝛰𝛲𝛵𝛶𝛸𝛼𝛾𝜄𝜈𝜊𝜌𝜎𝜐𝜚𝜜𝜝𝜠-𝜢𝜤𝜥𝜧𝜨𝜪𝜬𝜯𝜰𝜲𝜶𝜸𝜾𝝂𝝄𝝆𝝈𝝊𝝔𝝖𝝗𝝚-𝝜𝝞𝝟𝝡𝝢𝝤𝝦𝝩𝝪𝝬𝝰𝝲𝝸𝝼𝝾𝞀𝞂𝞄𝞎𝞐𝞑𝞔-𝞖𝞘𝞙𝞛𝞜𝞞𝞠𝞣𝞤𝞦𝞪𝞬𝞲𝞶𝞸𝞺𝞼𝞾𝟈𝟊𝟎-𝟿𞣇𞣋𞸀𞸤𞹤𞺀𞺄🯰-🯹])(?:$|[^\\p{Alphabetic}\\p{N}]).*", n).
+
+// unambiguous(n): the JSON util `unambiguous`, used where the JSON says `matches: "unambiguous"`
+.decl ruf002_unambiguous(n: node)
+ruf002_unambiguous(n) :- node(_, n, _, _, _),
+    match(".*[[\\p{Alphabetic}\\p{N}]--[\\x00-\\x7f]--[ıſƄƍƦƧƷƼƽǀǃȜȢȣɁɑɡɣɩɪɯʋʏʔʹʻ-ʾˆˈˊˋːʹͺͿΑΒΕ-ΗΙΚΜΝΟΡΤΥΧαγινορσυϒϜϨϱ-ϳϹϺЅІЈАВЕЗКМ-ОР-УХЬабгеорсухѕіјѡѴѵҮүһҽӀӏӠԁԌԛ-ԝՍՏՕագզհոռսցքօוטיןסاه٠١٥٧ھہە۰۱۵۷߀ߊߴߵߺ\\x{903}०ॽ০৪৭੦੧੪\\x{a83}૦\\x{b03}ଠ୦୨௦\\x{c02}౦\\x{c82}೦\\x{d02}ഠ൦൭\\x{d82}๐໐ဝ၀ყჿሀዐᎠ-ᎢᎥᎩ-ᎬᎮᎳᎷᎻᎽᏀᏂᏃᏎᏏᏒᏔᏕᏙᏚᏞᏟᏢᏦᏧᏮᏳᏴᐯᐳᐸᑊᑌᑭᑯᑲᒍᒪᒿᕁᕼᕽᖇᖯᖴᗅᗞᗪᗰᗷᚲᚷᛁᛌᛕᛖᴄᴏᴑᴜᴠ-ᴢᴦᶃᶌẝỿιℂℊ-ℎℐ-ℓℕℙ-ℝℤℨKℬℭℯ-ℱℳℴℹℽⅅ-ⅉⅠⅤⅩⅬ-ⅰⅴⅹⅼ-ⅾⲅⲎⲒⲔⲘⲚⲞⲟⲢ-ⲦⲨⲬⲺⳆⳊⳌⳐⳒⴸⴹⵏⵑⵔⵕⵝ〇〳ノ丶丿ꓐ-ꓔꓖꓗꓙꓚꓜꓝꓟ-ꓣꓦꓧꓪ-ꓬꓮꓰꓲ-ꓴꓸꓹꓽꙄꙇꛟꛫꛯꜱꝚꝪꝮꝸꞌꞘꞙꞟꞫꞲ-Ꞵꬲꬵꬽꭇꭈꭎꭒꭚꭵꮁꮃꮓꮩꮪꮯﮦ-ﮭﺍﺎﻩ-ﻬ０-９Ａ-Ｚａ-ｚ𐊂𐊆𐊇𐊊𐊐𐊒𐊕-𐊗𐊛𐊠-𐊢𐊥𐊫𐊰-𐊲𐊴𐋏𐋵𐌁𐌂𐌉𐌑𐌕𐌗𐌚𐌟𐌠𐌢𐐄𐐕𐐛𐐠𐐬𐐽𐑈𐒴𐓂𐓎𐓒𐓪𐓶𐔓𐔖𐔘𐔜𐔝𐔥-𐔧𑓐𑜆𑜊𑜎𑜏𑢠𑢢-𑢤𑢦𑢩𑢬𑢮𑢯𑢲𑢵𑢸𑢻𑢼𑣀-𑣄𑣆𑣈𑣊𑣌𑣕-𑣘𑣜𑣠𑣥𑣦𑣩𑣬𑣯𑣲𖼈𖼊𖼖𖼨𖼵𖼺𖼻𖼿𖽀𖽂𖽃\\x{16f51}\\x{16f52}𝐀-𝑔𝑖-𝑙𝑛-𝒍𝒏-𝒜𝒞𝒟𝒢𝒥𝒦𝒩-𝒬𝒮-𝒹𝒻𝒽-𝓁𝓃𝓅-𝓵𝓷-𝔅𝔇-𝔊𝔍-𝔔𝔖-𝔜𝔞-𝔩𝔫-𝔹𝔻-𝔾𝕀-𝕄𝕆𝕊-𝕐𝕒-𝕝𝕟-𝖑𝖓-𝗅𝗇-𝗹𝗻-𝘭𝘯-𝙡𝙣-𝚕𝚗-𝚤𝚨𝚩𝚬-𝚮𝚰𝚱𝚳𝚴𝚶𝚸𝚻𝚼𝚾𝛂𝛄𝛊𝛎𝛐𝛒𝛔𝛖𝛠𝛢𝛣𝛦-𝛨𝛪𝛫𝛭𝛮𝛰𝛲𝛵𝛶𝛸𝛼𝛾𝜄𝜈𝜊𝜌𝜎𝜐𝜚𝜜𝜝𝜠-𝜢𝜤𝜥𝜧𝜨𝜪𝜬𝜯𝜰𝜲𝜶𝜸𝜾𝝂𝝄𝝆𝝈𝝊𝝔𝝖𝝗𝝚-𝝜𝝞𝝟𝝡𝝢𝝤𝝦𝝩𝝪𝝬𝝰𝝲𝝸𝝼𝝾𝞀𝞂𝞄𝞎𝞐𝞑𝞔-𝞖𝞘𝞙𝞛𝞜𝞞𝞠𝞣𝞤𝞦𝞪𝞬𝞲𝞶𝞸𝞺𝞼𝞾𝟈𝟊𝟎-𝟿𞣇𞣋𞸀𞸤𞹤𞺀𞺄🯰-🯹]].*", n).
+
+// with_unambiguous(n): the JSON util `with-unambiguous`, used where the JSON says `matches: "with-unambiguous"`
+//   CH: metavariable this relation binds for the calling rule
+.decl ruf002_with_unambiguous(n: node, ch: loc)
+ruf002_with_unambiguous(n, CH) :- ruf002_unambiguous(n),
+    (ruf002_symbol(n, CH) ; ruf002_after_ascii(n, CH) ; ruf002_before_ascii(n, CH) ; ruf002_single(n, CH)).
+
+// without_unambiguous(n): the JSON util `without-unambiguous`, used where the JSON says `matches: "without-unambiguous"`
+//   CH: metavariable this relation binds for the calling rule
+.decl ruf002_without_unambiguous(n: node, ch: loc)
+ruf002_without_unambiguous(n, CH) :- !ruf002_unambiguous(n), (ruf002_symbol(n, CH) ; ruf002_any_letter(n, CH)).
+
+// RUF002(n): findings from clauses `with-unambiguous`, `without-unambiguous`, which say the same.
+// Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF002(at: node, ch: node) "Replace the look-alike character `{ch}` in this docstring with the ASCII character it imitates, unless the text is meant to hold it (for example a word in another language)."
+    suppress noqa "RUF002"
+RUF002(CH, n) :- ruf002_docstring_text(n), ruf002_with_unambiguous(n, CH).
+RUF002(CH, n) :- ruf002_docstring_text(n), ruf002_without_unambiguous(n, CH).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf002_tok_has_1(n: node)
+.stored ruf002_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf002_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
+ruf002_tok_has_1(n) :- op(n, t3), match(",", t3).
+ruf002_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+ruf002_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+ruf002_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// counted_1(n): the siblings the JSON `nthChild.ofRule` counts
+.decl ruf002_counted_1(n: node)
+ruf002_counted_1(n) :- node(_, n, _, _, _), !kind(n, "comment").

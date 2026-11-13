@@ -1,0 +1,15 @@
+.policy "ruff-f505-percent-format-missing-argument" revision 1
+.guests off
+.description "Supply a value for every %(key) placeholder in a %-format string; a missing key raises KeyError at run time."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+// F505(n): a finding at node n, from clause `percent-format-missing-argument`.
+// Each rule below is one way the JSON `rule` can match.
+.violation F505(at: node) "`%`-format string is missing argument(s) for placeholder(s)"
+    suppress noqa "F505"
+F505(n) :- n ~ `$S % $R`,
+    ast(n, {"formatArgs": {"style": "percent", "string": "S", "args": "R", "missing": {"kind": "placeholder", "has": {"kind": "mapping_key"}}}}).

@@ -1,0 +1,200 @@
+.policy "ruff-async100-cancel-scope-no-checkpoint" revision 1
+.guests off
+.description "Add an await inside asyncio, anyio or trio timeout and cancel-scope blocks; without a checkpoint the timeout can never fire."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// ASYNC100(n): a finding at node n, from clause `cancel-scope-no-checkpoint`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation ASYNC100(at: node, callee: loc) "Add an await inside this `with {callee}(...):` block; without a checkpoint the timeout can never fire."
+    suppress noqa "ASYNC100"
+ASYNC100(n, CALLEE) :- kind(n, "with_statement"), child(n, c1, _),
+    kind(c1, "with_clause"), child(c1, c2, _), async100_timeout_item(c2, CALLEE),
+    count : { precedes(c2, s3), async100_timeout_item_plain(s3) } = 0,
+    ( count : { child(p1, c2, _), child(p2, p1, _), async100_is_async(p2) } = 0
+    ; count : { precedes(c2, s1), kind(s1, "with_item") } = 0
+    ),
+    child(n, c7, _), kind(c7, "block"), !async100_alt_7(c7).
+
+// scope_body(n): the JSON util `scope-body`, used where the JSON says `matches: "scope-body"`
+.decl async100_scope_body(n: node)
+async100_scope_body(n) :- kind(n, "block"), child(p1, n, _),
+    (kind(p1, "function_definition") ; kind(p1, "class_definition")).
+
+// lambda_body(n): the JSON util `lambda-body`, used where the JSON says `matches: "lambda-body"`
+.decl async100_lambda_body(n: node)
+async100_lambda_body(n) :- child(p1, n, _), kind(p1, "lambda"), async100_tok_follows_1(n).
+
+// callee_position(n): the JSON util `callee-position`, used where the JSON says `matches: "callee-position"`
+.decl async100_callee_position(n: node)
+async100_callee_position(n) :- child(p1, n, _), kind(p1, "call"), next_sibling(n, s2),
+    (kind(s2, "argument_list") ; kind(s2, "generator_expression")).
+async100_callee_position(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"),
+    async100_callee_position(p3).
+
+// async_context(n): the JSON util `async-context`, used where the JSON says `matches: "async-context"`
+.decl async100_async_context(n: node)
+async100_async_context(n) :- within_stop(n, p1, async100_stop_1), kind(p1, "block"), child(p2, p1, _),
+    kind(p2, "function_definition"), async100_tok_has_2(p2).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl async100_target(n: node)
+async100_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, q1), async100_set_2(q1).
+
+// callee_of_target(n): the JSON util `callee-of-target`, used where the JSON says `matches: "callee-of-target"`
+.decl async100_callee_of_target(n: node)
+async100_callee_of_target(n) :- async100_target(n).
+async100_callee_of_target(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    async100_callee_of_target(c1).
+
+// item_value(n): the JSON util `item-value`, used where the JSON says `matches: "item-value"`
+//   CALLEE: metavariable this relation binds for the calling rule
+.decl async100_item_value(n: node, callee: loc)
+async100_item_value(n, CALLEE) :- kind(n, "call"), child(n, c1, _), node(_, c1, _, _, _), CALLEE = c1,
+    async100_callee_of_target(c1), next_sibling(c1, s2),
+    (kind(s2, "argument_list") ; kind(s2, "generator_expression")).
+async100_item_value(n, CALLEE) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    async100_item_value(c3, CALLEE).
+
+// item_value_plain(n): the JSON util `item-value-plain`, used where the JSON says `matches: "item-value-plain"`
+.decl async100_item_value_plain(n: node)
+async100_item_value_plain(n) :- kind(n, "call"), child(n, c1, _), async100_callee_of_target(c1),
+    next_sibling(c1, s2),
+    (kind(s2, "argument_list") ; kind(s2, "generator_expression")).
+async100_item_value_plain(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    async100_item_value_plain(c3).
+
+// timeout_item(n): the JSON util `timeout-item`, used where the JSON says `matches: "timeout-item"`
+//   CALLEE: metavariable this relation binds for the calling rule
+.decl async100_timeout_item(n: node, callee: loc)
+async100_timeout_item(n, CALLEE) :- kind(n, "with_item"), child(n, c1, _),
+    ( async100_item_value(c1, CALLEE)
+    ; kind(c1, "as_pattern"), child(c1, c2, _), async100_item_value(c2, CALLEE), async100_tok_precedes_4(c2)
+    ).
+
+
+// timeout_item_plain(n): the JSON util `timeout-item-plain`, used where the JSON says `matches: "timeout-item-plain"`
+.decl async100_timeout_item_plain(n: node)
+async100_timeout_item_plain(n) :- kind(n, "with_item"), child(n, c1, _),
+    ( async100_item_value_plain(c1)
+    ; kind(c1, "as_pattern"), child(c1, c2, _), async100_item_value_plain(c2), async100_tok_precedes_4(c2)
+    ).
+
+
+// is_async(n): the JSON util `is-async`, used where the JSON says `matches: "is-async"`
+.decl async100_is_async(n: node)
+async100_is_async(n) :- async100_tok_has_5(n).
+
+// checkpoint(n): the JSON util `checkpoint`, used where the JSON says `matches: "checkpoint"`
+.decl async100_checkpoint(n: node)
+async100_checkpoint(n) :- kind(n, "await").
+async100_checkpoint(n) :- kind(n, "with_statement"), async100_is_async(n).
+async100_checkpoint(n) :- kind(n, "for_statement"), async100_is_async(n).
+async100_checkpoint(n) :- kind(n, "for_in_clause"), async100_is_async(n).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl async100_tok_follows_1(n: node)
+.stored async100_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+async100_tok_follows_1(n) :- precedes(s2, n), glob(":", s2).
+async100_tok_follows_1(n) :- child(p5, n, _), node(_, n, _, st7, _), token(p5, _, t3, _, en8),
+    en8 <= st7, match(":", t3).
+async100_tok_follows_1(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+async100_tok_follows_1(n) :- precedes(o6, n), structural_before(o6, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^async$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl async100_tok_has_2(n: node)
+.stored async100_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+async100_tok_has_2(n) :- child(n, c3, _), glob("async", c3).
+async100_tok_has_2(n) :- op(n, t4), match("async", t4).
+async100_tok_has_2(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g5).
+async100_tok_has_2(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g5).
+async100_tok_has_2(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g5).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl async100_tok_precedes_3(n: node)
+.stored async100_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+async100_tok_precedes_3(n) :- precedes(n, s3), glob("as", s3).
+async100_tok_precedes_3(n) :- child(p6, n, _), node(_, n, _, _, en9), token(p6, _, t4, st8, _),
+    st8 >= en9, match("as", t4).
+async100_tok_precedes_3(n) :- structural_after(n, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g5).
+async100_tok_precedes_3(n) :- precedes(n, o7), structural_after(o7, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g5).
+
+// tok_precedes_4(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl async100_tok_precedes_4(n: node)
+.stored async100_tok_precedes_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+async100_tok_precedes_4(n) :- precedes(n, s2), glob("as", s2).
+async100_tok_precedes_4(n) :- child(p5, n, _), node(_, n, _, _, en8), token(p5, _, t3, st7, _),
+    st7 >= en8, match("as", t3).
+async100_tok_precedes_4(n) :- structural_after(n, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g4).
+async100_tok_precedes_4(n) :- precedes(n, o6), structural_after(o6, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g4).
+
+// tok_has_5(n): a child of n, a named node or an anonymous token, matches "^async$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl async100_tok_has_5(n: node)
+.stored async100_tok_has_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+async100_tok_has_5(n) :- child(n, c1, _), glob("async", c1).
+async100_tok_has_5(n) :- op(n, t2), match("async", t2).
+async100_tok_has_5(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g3).
+async100_tok_has_5(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g3).
+async100_tok_has_5(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g3).
+
+// tok_has_6(n): a child of n, a named node or an anonymous token, matches "^from$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl async100_tok_has_6(n: node)
+.stored async100_tok_has_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+async100_tok_has_6(n) :- child(n, c9, _), glob("from", c9).
+async100_tok_has_6(n) :- op(n, t10), match("from", t10).
+async100_tok_has_6(n) :- child(n, c16, _), structural_before(c16, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:from)(?:\\W.*)?)$", g11).
+async100_tok_has_6(n) :- child(n, c16, _), structural_after(c16, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:from)(?:\\W.*)?)$", g11).
+async100_tok_has_6(n) :- node_text(n, g11), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:from)(?:\\W.*)?)$", g11).
+
+// tok_has_7(n): a child of n, a named node or an anonymous token, matches "^from$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl async100_tok_has_7(n: node)
+.stored async100_tok_has_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+async100_tok_has_7(n) :- child(n, c2, _), glob("from", c2).
+async100_tok_has_7(n) :- op(n, t3), match("from", t3).
+async100_tok_has_7(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:from)(?:\\W.*)?)$", g4).
+async100_tok_has_7(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:from)(?:\\W.*)?)$", g4).
+async100_tok_has_7(n) :- node_text(n, g4), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:from)(?:\\W.*)?)$", g4).
+
+// set_2: symbols from the JSON `resolves.import`
+.decl async100_set_2(v: symbol)
+async100_set_2("asyncio.timeout"). async100_set_2("asyncio.timeout_at"). async100_set_2("anyio.move_on_after").
+async100_set_2("anyio.fail_after"). async100_set_2("anyio.CancelScope"). async100_set_2("trio.move_on_after").
+async100_set_2("trio.move_on_at"). async100_set_2("trio.fail_after"). async100_set_2("trio.fail_at").
+async100_set_2("trio.CancelScope").
+
+// stop_6: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl async100_stop_6(kind: symbol)
+async100_stop_6("function_definition"). async100_stop_6("class_definition").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl async100_stop_1(n: node)
+async100_stop_1(n) :- async100_scope_body(n).
+async100_stop_1(n) :- async100_lambda_body(n).
+
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+.decl async100_alt_7(n: node)
+async100_alt_7(n) :- has(n, c1, "yield"), !async100_tok_has_7(c1).
+async100_alt_7(n) :- within_stop(c10, n, async100_stop_6), async100_checkpoint(c10).

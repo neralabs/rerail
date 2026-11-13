@@ -1,0 +1,313 @@
+.policy "ruff-pd101-pandas-nunique-constant-series-check" revision 1
+.guests off
+.description "Avoid comparing nunique() with 1 to check whether a pandas Series is constant; compare its values with the first one instead, which stops at the first difference."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// literal_receiver(n): the JSON util `literal-receiver`, used where the JSON says `matches: "literal-receiver"`
+.decl pd101_literal_receiver(n: node)
+pd101_literal_receiver(n) :- kind(n, k1), pd101_set_1(k1).
+pd101_literal_receiver(n) :- kind(n, "string"), match("[uUbBrR]{0,2}['\"].*", n).
+pd101_literal_receiver(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), !match("[uUbBrR]{0,2}['\"].*", c2) } = 0.
+
+// relevant_name(n): the JSON util `relevant-name`, used where the JSON says `matches: "relevant-name"`
+.decl pd101_relevant_name(n: node)
+pd101_relevant_name(n) :- kind(n, "identifier"),
+    ( ref_site(n, b1), site_form(b1, f1), pd101_set_2(f1)
+    ; ref_site(n, b2), site_form(b2, "parameter"), !glob("{self,cls}", n)
+    ),
+
+    count : { ref_site(n, b4), site_scope(b4, "module"), within(b4, p5), pd101_dunder_all_statement(p5) } = 0,
+    count : { ref_site(n, b6), site_scope(b6, "comprehension"), inside(b6, p7, "with_clause"), node(_, p7, _, _, _) } = 0.
+
+// series_receiver(n): the JSON util `series-receiver`, used where the JSON says `matches: "series-receiver"`
+.decl pd101_series_receiver(n: node)
+pd101_series_receiver(n) :- pd101_relevant_name(n).
+pd101_series_receiver(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pd101_series_receiver(c1).
+pd101_series_receiver(n) :- node(_, n, _, _, _), !pd101_alt_5(n).
+
+// nunique_func(n): the JSON util `nunique-func`, used where the JSON says `matches: "nunique-func"`
+.decl pd101_nunique_func(n: node)
+pd101_nunique_func(n) :- kind(n, "attribute"), field(n, "attribute", c1),
+    glob("nunique", c1), field(n, "object", c2), pd101_series_receiver(c2).
+pd101_nunique_func(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    pd101_nunique_func(c3).
+
+// nunique_call(n): the JSON util `nunique-call`, used where the JSON says `matches: "nunique-call"`
+.decl pd101_nunique_call(n: node)
+pd101_nunique_call(n) :- kind(n, "call"), field(n, "function", c1), pd101_nunique_func(c1).
+pd101_nunique_call(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pd101_nunique_call(c2).
+
+// int_one(n): the JSON util `int-one`, used where the JSON says `matches: "int-one"`
+.decl pd101_int_one(n: node)
+pd101_int_one(n) :- kind(n, "integer"), value(n, "1").
+pd101_int_one(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pd101_int_one(c1).
+
+// dunder_all_statement(n): the JSON util `dunder-all-statement`, used where the JSON says `matches: "dunder-all-statement"`
+.decl pd101_dunder_all_statement(n: node)
+pd101_dunder_all_statement(n) :- kind(n, "expression_statement"), child(n, c1, _),
+    (kind(c1, "assignment") ; kind(c1, "augmented_assignment")), field(c1, "left", c2),
+    glob("__all__", c2).
+
+// pandas_import_file(n): the JSON util `pandas-import-file`, used where the JSON says `matches: "pandas-import-file"`
+.decl pd101_pandas_import_file(n: node)
+pd101_pandas_import_file(n) :- kind(n, "module"), within(c1, n),
+    ( kind(c1, "import_statement"), has(c1, c2, "dotted_name"), match("pandas(\\s*\\.|$).*", c2)
+    ; kind(c1, "import_from_statement"), field(c1, "module_name", c3), kind(c3, "dotted_name"), match("pandas(\\s*\\.|$).*", c3)
+    ).
+
+
+// annotation_type(n): the JSON util `annotation-type`, used where the JSON says `matches: "annotation-type"`
+.decl pd101_annotation_type(n: node)
+pd101_annotation_type(n) :- kind(n, "type"), child(p1, n, _),
+    ( kind(p1, "typed_parameter")
+    ; kind(p1, "typed_default_parameter")
+    ; kind(p1, "function_definition")
+    ; kind(p1, "assignment")
+    ).
+
+
+// deferred_annotation(n): the JSON util `deferred-annotation`, used where the JSON says `matches: "deferred-annotation"`
+.decl pd101_deferred_annotation(n: node)
+pd101_deferred_annotation(n) :- within(n, p1), pd101_annotation_type(p1), inside(n, p2, "module"),
+    child(p2, c3, _), kind(c3, "future_import_statement"), has(c3, c4, "dotted_name"),
+    imported_sym(c4, "__future__.annotations"), within(n, p5), pd101_pandas_import_file(p5).
+
+// comparison(n): the JSON util `comparison`, used where the JSON says `matches: "comparison"`
+.decl pd101_comparison(n: node)
+pd101_comparison(n) :- kind(n, "comparison_operator"), k9 = count : { pd101_tok_has_1(n) },
+    k9 >= 1, k9 <= 1, child(n, c10, _), pd101_nunique_call(c10), pd101_tok_precedes_2(c10),
+    child(n, c18, _), pd101_int_one(c18), pd101_tok_follows_3(c18).
+
+// pandas_gate(n): the JSON util `pandas-gate`, used where the JSON says `matches: "pandas-gate"`
+.decl pd101_pandas_gate(n: node)
+pd101_pandas_gate(n) :- node(d1, n, _, st2, _), pd101_seen_import(s3, h5, ks6), (h5 = "pandas"),
+    node(d1, s3, _, so4, _),
+    kn7 = count : { within(n, b8), field(f8, "body", b8), kind(f8, "function_definition") },
+    ( ks6 < kn7
+    ; ks6 = kn7, so4 < st2
+    ; count : { within(n, l8), field(m8, "body", l8), kind(m8, "lambda") } > 0
+    ).
+
+pd101_pandas_gate(n) :- pd101_deferred_annotation(n).
+
+// hit_core(n): the JSON util `hit-core`, used where the JSON says `matches: "hit-core"`
+.decl pd101_hit_core(n: node)
+pd101_hit_core(n) :- pd101_comparison(n), pd101_pandas_gate(n).
+
+// PD101(n, detail): findings from clauses `nunique-le-1`, `nunique-eq-1`, `nunique-ne-1`, `nunique-gt-1`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PD101(at: node, cmp: node, detail: symbol) "Check a NumPy array, not `nunique()`, which scans every value: `a = s.to_numpy()`, then `a.shape[0] {detail} (a[0] == a).all()`. Keep nunique if NaN handling matters or `s` isn't a pandas Series."
+    suppress noqa "PD101"
+PD101(CMP, n, "== 0 or") :- pd101_hit(n), node(_, n, _, _, _), CMP = n.
+PD101(CMP, n, "== 0 or") :- pd101_in_string(n, CMP).
+PD101(CMP, n, "> 0 and") :- pd101_hit_nunique_eq_1(n), node(_, n, _, _, _), CMP = n.
+PD101(CMP, n, "> 0 and") :- pd101_in_string_nunique_eq_1(n, CMP).
+PD101(CMP, n, "== 0 or not") :- pd101_hit_nunique_ne_1(n), node(_, n, _, _, _), CMP = n.
+PD101(CMP, n, "== 0 or not") :- pd101_in_string_nunique_ne_1(n, CMP).
+PD101(CMP, n, "> 0 and not") :- pd101_hit_nunique_gt_1(n), node(_, n, _, _, _), CMP = n.
+PD101(CMP, n, "> 0 and not") :- pd101_in_string_nunique_gt_1(n, CMP).
+
+// hit(n): the JSON util `hit`, used where the JSON says `matches: "hit"`
+.decl pd101_hit(n: node)
+pd101_hit(n) :- pd101_hit_core(n), pd101_tok_has_4(n).
+
+// in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   CMP: metavariable this relation binds for the calling rule
+.decl pd101_in_string(n: node, cmp: loc)
+pd101_in_string(n, CMP) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), pd101_alt_7(c2, CMP).
+
+// hit_nunique_eq_1(n): the JSON util `hit`, used where the JSON says `matches: "hit"`
+.decl pd101_hit_nunique_eq_1(n: node)
+pd101_hit_nunique_eq_1(n) :- pd101_hit_core(n), pd101_tok_has_5(n).
+
+// in_string_nunique_eq_1(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   CMP: metavariable this relation binds for the calling rule
+.decl pd101_in_string_nunique_eq_1(n: node, cmp: loc)
+pd101_in_string_nunique_eq_1(n, CMP) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), pd101_alt_8(c2, CMP).
+
+// hit_nunique_ne_1(n): the JSON util `hit`, used where the JSON says `matches: "hit"`
+.decl pd101_hit_nunique_ne_1(n: node)
+pd101_hit_nunique_ne_1(n) :- pd101_hit_core(n), pd101_tok_has_6(n).
+
+// in_string_nunique_ne_1(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   CMP: metavariable this relation binds for the calling rule
+.decl pd101_in_string_nunique_ne_1(n: node, cmp: loc)
+pd101_in_string_nunique_ne_1(n, CMP) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), pd101_alt_9(c2, CMP).
+
+// hit_nunique_gt_1(n): the JSON util `hit`, used where the JSON says `matches: "hit"`
+.decl pd101_hit_nunique_gt_1(n: node)
+pd101_hit_nunique_gt_1(n) :- pd101_hit_core(n), pd101_tok_has_7(n).
+
+// in_string_nunique_gt_1(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   CMP: metavariable this relation binds for the calling rule
+.decl pd101_in_string_nunique_gt_1(n: node, cmp: loc)
+pd101_in_string_nunique_gt_1(n, CMP) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), pd101_alt_10(c2, CMP).
+
+// PD101_stub_annotation(n): a finding at node n, from clause `stub-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PD101_stub_annotation(at: node, cmp: node) code "PD101" "Check a NumPy array, not `nunique()`, which scans every value: with `a = s.to_numpy()`, `a.shape[0] == 0` tests empty and `(a[0] == a).all()` tests constant. Keep nunique if NaN handling matters."
+    suppress noqa "PD101"
+PD101_stub_annotation_raw(CMP, n) :- pd101_comparison(n), node(_, n, _, _, _), CMP = n, pd101_up_1(n, p1), pd101_up_2(n, p2),
+    !pd101_pandas_gate(n).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^(<|<=|==|!=|>|>=|<>|in|is|not\\s+in|is\\s+not)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pd101_tok_has_1(n: node)
+.stored pd101_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pd101_tok_has_1(n) :- child(n, c1, _),
+    match("(<|<=|==|!=|>|>=|<>|in|is|not\\s+in|is\\s+not)", c1).
+pd101_tok_has_1(n) :- op(n, t2), match("(<|<=|==|!=|>|>=|<>|in|is|not\\s+in|is\\s+not)", t2).
+pd101_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:not\\s+in)(?:\\W.*)?|(?:.*\\W)?(?:is\\s+not)(?:\\W.*)?)$", g3).
+pd101_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:not\\s+in)(?:\\W.*)?|(?:.*\\W)?(?:is\\s+not)(?:\\W.*)?)$", g3).
+pd101_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*\\W)?(?:in)(?:\\W.*)?|(?:.*\\W)?(?:is)(?:\\W.*)?|(?:.*\\W)?(?:not\\s+in)(?:\\W.*)?|(?:.*\\W)?(?:is\\s+not)(?:\\W.*)?)$", g3).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^(<=|==|!=|>)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pd101_tok_precedes_2(n: node)
+.stored pd101_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pd101_tok_precedes_2(n) :- precedes(n, s11), glob("{<=,==,!=,>}", s11).
+pd101_tok_precedes_2(n) :- child(p14, n, _), node(_, n, _, _, en17),
+    token(p14, _, t12, st16, _), st16 >= en17, match("(<=|==|!=|>)", t12).
+pd101_tok_precedes_2(n) :- structural_after(n, g13),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g13).
+pd101_tok_precedes_2(n) :- precedes(n, o15), structural_after(o15, g13),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g13).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^(<=|==|!=|>)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pd101_tok_follows_3(n: node)
+.stored pd101_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pd101_tok_follows_3(n) :- precedes(s19, n), glob("{<=,==,!=,>}", s19).
+pd101_tok_follows_3(n) :- child(p22, n, _), node(_, n, _, st24, _),
+    token(p22, _, t20, _, en25), en25 <= st24, match("(<=|==|!=|>)", t20).
+pd101_tok_follows_3(n) :- structural_before(n, g21),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g21).
+pd101_tok_follows_3(n) :- precedes(o23, n), structural_before(o23, g21),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g21).
+
+// seen_import: import statement s imports absolute module h (its first segment), inside k function bodies
+.decl pd101_seen_import(s: node, h: symbol, k: number)
+pd101_seen_import(s, h, k) :- kind(s, "import_statement"), child(s, c, _),
+    (kind(c, "dotted_name"), x = c ; kind(c, "aliased_import"), field(c, "name", x)),
+    child(x, i, 0), kind(i, "identifier"), text(i, h),
+    k = count : { within(s, b), field(f, "body", b), kind(f, "function_definition") }.
+pd101_seen_import(s, h, k) :- kind(s, "import_from_statement"), field(s, "module_name", x),
+    kind(x, "dotted_name"), child(x, i, 0), kind(i, "identifier"), text(i, h),
+    k = count : { within(s, b), field(f, "body", b), kind(f, "function_definition") }.
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^<=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pd101_tok_has_4(n: node)
+.stored pd101_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pd101_tok_has_4(n) :- child(n, c1, _), glob("<=", c1).
+pd101_tok_has_4(n) :- op(n, t2), match("<=", t2).
+pd101_tok_has_4(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pd101_tok_has_4(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pd101_tok_has_4(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:<=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_has_5(n): a child of n, a named node or an anonymous token, matches "^==$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pd101_tok_has_5(n: node)
+.stored pd101_tok_has_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pd101_tok_has_5(n) :- child(n, c1, _), glob("==", c1).
+pd101_tok_has_5(n) :- op(n, t2), match("==", t2).
+pd101_tok_has_5(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pd101_tok_has_5(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pd101_tok_has_5(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:==)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_has_6(n): a child of n, a named node or an anonymous token, matches "^!=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pd101_tok_has_6(n: node)
+.stored pd101_tok_has_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pd101_tok_has_6(n) :- child(n, c1, _), glob("!=", c1).
+pd101_tok_has_6(n) :- op(n, t2), match("!=", t2).
+pd101_tok_has_6(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pd101_tok_has_6(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pd101_tok_has_6(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:!=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// tok_has_7(n): a child of n, a named node or an anonymous token, matches "^>$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pd101_tok_has_7(n: node)
+.stored pd101_tok_has_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pd101_tok_has_7(n) :- child(n, c1, _), glob(">", c1).
+pd101_tok_has_7(n) :- op(n, t2), match(">", t2).
+pd101_tok_has_7(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pd101_tok_has_7(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+pd101_tok_has_7(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:>)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g3).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pd101_up_1(n: node, p: node)
+pd101_up_1(n, p) :- pd101_comparison(n), within(n, p), pd101_annotation_type(p).
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pd101_up_2(n: node, p: node)
+pd101_up_2(n, p) :- pd101_comparison(n), within(n, p), pd101_pandas_import_file(p).
+
+// set_1: node kinds from a JSON `any`
+.decl pd101_set_1(v: symbol)
+pd101_set_1("integer"). pd101_set_1("float"). pd101_set_1("true"). pd101_set_1("false"). pd101_set_1("none").
+pd101_set_1("ellipsis"). pd101_set_1("tuple"). pd101_set_1("list"). pd101_set_1("set"). pd101_set_1("dictionary").
+pd101_set_1("list_comprehension"). pd101_set_1("set_comprehension").
+pd101_set_1("dictionary_comprehension"). pd101_set_1("generator_expression").
+
+// set_2: binding forms the JSON accepts
+.decl pd101_set_2(v: symbol)
+pd101_set_2("assignment"). pd101_set_2("annotated"). pd101_set_2("annotation"). pd101_set_2("augmented").
+pd101_set_2("named"). pd101_set_2("for"). pd101_set_2("global"). pd101_set_2("match"). pd101_set_2("typeAlias").
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl pd101_alt_5(n: node)
+pd101_alt_5(n) :- (kind(n, "identifier") ; kind(n, "parenthesized_expression") ; kind(n, "comment")).
+pd101_alt_5(n) :- pd101_literal_receiver(n).
+pd101_alt_5(n) :- node(_, n, _, _, _), glob("[()]", n).
+
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+//   CMP: metavariable this relation binds for the calling rule
+.decl pd101_alt_7(n: node, cmp: loc)
+pd101_alt_7(n, CMP) :- pd101_hit(n), CMP = n.
+pd101_alt_7(n, CMP) :- pd101_in_string(n, CMP).
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+//   CMP: metavariable this relation binds for the calling rule
+.decl pd101_alt_8(n: node, cmp: loc)
+pd101_alt_8(n, CMP) :- pd101_hit_nunique_eq_1(n), CMP = n.
+pd101_alt_8(n, CMP) :- pd101_in_string_nunique_eq_1(n, CMP).
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+//   CMP: metavariable this relation binds for the calling rule
+.decl pd101_alt_9(n: node, cmp: loc)
+pd101_alt_9(n, CMP) :- pd101_hit_nunique_ne_1(n), CMP = n.
+pd101_alt_9(n, CMP) :- pd101_in_string_nunique_ne_1(n, CMP).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+//   CMP: metavariable this relation binds for the calling rule
+.decl pd101_alt_10(n: node, cmp: loc)
+pd101_alt_10(n, CMP) :- pd101_hit_nunique_gt_1(n), CMP = n.
+pd101_alt_10(n, CMP) :- pd101_in_string_nunique_gt_1(n, CMP).
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PD101_stub_annotation_raw(at: node, cmp: node)
+PD101_stub_annotation(v0, v1) :- PD101_stub_annotation_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

@@ -1,0 +1,309 @@
+.policy "ruff-arg003-unused-class-method-argument" revision 1
+.guests off
+.description "Remove class method parameters the body never reads, or prefix them with an underscore when the signature must stay and no caller passes them by keyword."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+.options {"dummy-variable-rgx": {"type": "string", "default": "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$", "description": "Names of arguments that may be unused."}, "flake8-unused-arguments.ignore-variadic-names": {"type": "boolean", "default": false, "description": "Don't report unused *args and **kwargs."}}
+
+// ARG003(n): a finding at node n, from clause `unused-class-method-argument`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// `options` carries JSON settings that have no .rr form yet.
+.violation ARG003(at: node, n: loc) "Remove `{n}` if no caller passes it. If the signature must stay, such as to match a base class, prefix it with an underscore, but keep the name when callers pass it by keyword."
+    suppress noqa "ARG003"
+ARG003_raw(n, N) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, site_form(n, "parameter"),
+    site_scope(n, "function"), site_latest(n), !site_used(n),
+    inside(n, p1, "parameters"), child(p2, p1, _), kind(p2, "function_definition"),
+    arg003_class_method(p2), !arg003_alt_113(n),
+    ( child(p3, n, _), (kind(p3, "list_splat_pattern") ; kind(p3, "dictionary_splat_pattern"))
+    ; precedes(s1, n), arg003_plain_parameter(s1)
+    ; child(p4, n, _), (kind(p4, "default_parameter") ; kind(p4, "typed_default_parameter") ; kind(p4, "typed_parameter")), precedes(s2, p4), arg003_plain_parameter(s2)
+    ).
+
+
+// not_implemented(n): the JSON util `not-implemented`, used where the JSON says `matches: "not-implemented"`
+.decl arg003_not_implemented(n: node)
+arg003_not_implemented(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (global_ref(n, "NotImplementedError") ; global_ref(n, "NotImplemented")),
+    (sym_of(n, "builtins.NotImplementedError") ; sym_of(n, "builtins.NotImplemented")).
+
+// not_implemented_error(n): the JSON util `not-implemented-error`, used where the JSON says `matches: "not-implemented-error"`
+.decl arg003_not_implemented_error(n: node)
+arg003_not_implemented_error(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "NotImplementedError"), sym_of(n, "builtins.NotImplementedError").
+
+// overload(n): the JSON util `overload`, used where the JSON says `matches: "overload"`
+.decl arg003_overload(n: node)
+arg003_overload(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.overload")
+    ; sym_of(n, "typing_extensions.overload")
+    ; sym_of(n, "_typeshed.overload")
+    ).
+
+
+// docstring(n): the JSON util `docstring`, used where the JSON says `matches: "docstring"`
+.decl arg003_docstring(n: node)
+arg003_docstring(n) :- kind(n, "expression_statement"), k9 = count : { arg003_tok_has_1(n) },
+    k9 <= 1, child(n, c10, _),
+    ( arg003_alt_1(c10)
+    ; kind(c10, "parenthesized_expression"), within_stop(c1, c10, arg003_stop_10), arg003_alt_1(c1)
+    ).
+
+
+// positional(n): the JSON util `positional`, used where the JSON says `matches: "positional"`
+.decl arg003_positional(n: node)
+arg003_positional(n) :- node(_, n, _, _, _), !arg003_alt_8(n).
+
+// stub_body(n): the JSON util `stub-body`, used where the JSON says `matches: "stub-body"`
+.decl arg003_stub_body(n: node)
+arg003_stub_body(n) :- kind(n, "block"), count : { child(n, c1, _), !arg003_alt_28(c1) } = 0.
+
+// variable_stub_body(n): the JSON util `variable-stub-body`, used where the JSON says `matches: "variable-stub-body"`
+.decl arg003_variable_stub_body(n: node)
+arg003_variable_stub_body(n) :- kind(n, "block"), child(n, c1, _),
+    kind(c1, "raise_statement"), count : { precedes(c1, s2), !arg003_alt_29(s2) } = 0,
+    child(c1, c3, _), kind(c3, "call"), arg003_tok_follows_5(c3),
+    within_stop(c11, c3, arg003_stop_10), arg003_not_implemented_error(c11),
+    field(c3, "arguments", c12),
+    ( kind(c12, "argument_list"), k1 = count : { child(c12, c2, _), arg003_positional(c2) }, k1 >= 1, k1 <= 1
+    ; kind(c12, "generator_expression")
+    ),
+    arg003_alt_65(c1), precedes_stop(s29, c1, arg003_stop_51), kind(s29, "expression_statement"),
+    child(s29, c30, _), kind(c30, "assignment"),
+    count : { field(c30, "type", c31), kind(c31, "type") } = 0,
+    field(c30, "right", c32),
+    ( arg003_alt_82(c32)
+    ; kind(c32, "parenthesized_expression"), within_stop(c4, c32, arg003_stop_10), arg003_alt_82(c4)
+    ),
+    count : { precedes(s36, s29), !arg003_alt_91(s36) } = 0.
+
+// exempt(n): the JSON util `exempt`, used where the JSON says `matches: "exempt"`
+.decl arg003_exempt(n: node)
+arg003_exempt(n) :- field(n, "body", c1), (arg003_stub_body(c1) ; arg003_variable_stub_body(c1)).
+arg003_exempt(n) :- child(p2, n, _), kind(p2, "decorated_definition"), child(p2, c3, _),
+    kind(c3, "decorator"), within_stop(c4, c3, arg003_stop_10), arg003_overload(c4).
+arg003_exempt(n) :- child(p5, n, _), kind(p5, "decorated_definition"), child(p5, c6, _),
+    kind(c6, "decorator"), within_stop(c7, c6, arg003_stop_10), arg003_abstract_or_override(c7).
+
+// static(n): the JSON util `static`, used where the JSON says `matches: "static"`
+.decl arg003_static(n: node)
+arg003_static(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "staticmethod"),
+    (sym_of(n, "builtins.staticmethod") ; sym_of(n, "abc.abstractstaticmethod")).
+
+// class(n): the JSON util `class`, used where the JSON says `matches: "class"`
+.decl arg003_class(n: node)
+arg003_class(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "classmethod"),
+    (sym_of(n, "builtins.classmethod") ; sym_of(n, "abc.abstractclassmethod")).
+
+// abstract_or_override(n): the JSON util `abstract-or-override`, used where the JSON says `matches: "abstract-or-override"`
+.decl arg003_abstract_or_override(n: node)
+arg003_abstract_or_override(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), arg003_set_97(q1).
+
+// plain_parameter(n): the JSON util `plain-parameter`, used where the JSON says `matches: "plain-parameter"`
+.decl arg003_plain_parameter(n: node)
+arg003_plain_parameter(n) :-
+    ( kind(n, "identifier")
+    ; kind(n, "default_parameter")
+    ; kind(n, "typed_default_parameter")
+    ).
+
+arg003_plain_parameter(n) :- kind(n, "typed_parameter"),
+    count : { child(n, c1, _), (kind(c1, "list_splat_pattern") ; kind(c1, "dictionary_splat_pattern")) } = 0.
+
+// class_method(n): the JSON util `class-method`, used where the JSON says `matches: "class-method"`
+.decl arg003_class_method(n: node)
+arg003_class_method(n) :- arg003_demand_class_method(n), arg003_up_1(n, p1),
+    count : { field(n, "name", c2), match("__(?:_?|.*__)", c2), !glob("__{init,call}__", c2) } = 0,
+    child(p3, n, _), kind(p3, "decorated_definition"), child(p3, c4, _),
+    kind(c4, "decorator"), within_stop(c5, c4, arg003_stop_10),
+    (arg003_class(c5) ; kind(c5, "call"), within_stop(c1, c5, arg003_stop_10), arg003_class(c1)),
+    !arg003_alt_107(n).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl arg003_tok_has_1(n: node)
+.stored arg003_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+arg003_tok_has_1(n) :- child(n, c1, _), match("(?s).*..*", c1).
+arg003_tok_has_1(n) :- op(n, t2), match("(?s).*..*", t2).
+arg003_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3), match("(?s)^.*\\S.*$", g3).
+arg003_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3), match("(?s)^.*\\S.*$", g3).
+arg003_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^.*\\S.*$", g3).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl arg003_tok_has_2(n: node)
+.stored arg003_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+arg003_tok_has_2(n) :- child(n, c2, _), match("(?s).*..*", c2).
+arg003_tok_has_2(n) :- op(n, t3), match("(?s).*..*", t3).
+arg003_tok_has_2(n) :- child(n, c9, _), structural_before(c9, g4), match("(?s)^.*\\S.*$", g4).
+arg003_tok_has_2(n) :- child(n, c9, _), structural_after(c9, g4), match("(?s)^.*\\S.*$", g4).
+arg003_tok_has_2(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^.*\\S.*$", g4).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^raise$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl arg003_tok_follows_3(n: node)
+.stored arg003_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+arg003_tok_follows_3(n) :- next_sibling(s14, n), glob("raise", s14).
+arg003_tok_follows_3(n) :- structural_before(n, g16), match("\\s*", g16), child(p17, n, _),
+    node(_, n, _, st19, _), o18 = st19 - strlen(g16), token(p17, _, t15, _, o18),
+    match("raise", t15).
+arg003_tok_follows_3(n) :- structural_before(n, g16),
+    match("(?s)^(?:(?:.*\\W)?(?:raise)\\s*)$", g16).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^raise$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl arg003_tok_follows_4(n: node)
+.stored arg003_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+arg003_tok_follows_4(n) :- next_sibling(s13, n), glob("raise", s13).
+arg003_tok_follows_4(n) :- structural_before(n, g15), match("\\s*", g15), child(p16, n, _),
+    node(_, n, _, st18, _), o17 = st18 - strlen(g15), token(p16, _, t14, _, o17),
+    match("raise", t14).
+arg003_tok_follows_4(n) :- structural_before(n, g15),
+    match("(?s)^(?:(?:.*\\W)?(?:raise)\\s*)$", g15).
+
+// tok_follows_5(n): an earlier sibling of n, a named node or an anonymous token, matches "^raise$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl arg003_tok_follows_5(n: node)
+.stored arg003_tok_follows_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+arg003_tok_follows_5(n) :- next_sibling(s4, n), glob("raise", s4).
+arg003_tok_follows_5(n) :- structural_before(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, st9, _), o8 = st9 - strlen(g6), token(p7, _, t5, _, o8),
+    match("raise", t5).
+arg003_tok_follows_5(n) :- structural_before(n, g6),
+    match("(?s)^(?:(?:.*\\W)?(?:raise)\\s*)$", g6).
+
+// demand_alt_54: the rows of alt_54 its callers ask for (the metavariable columns they pass in)
+.decl arg003_demand_alt_54(n: node, var: loc)
+arg003_demand_alt_54(c6, VAR) :- precedes_stop(s1, n, arg003_stop_51), child(s1, c2, _),
+    kind(c2, "assignment"), field(c2, "left", c3), kind(c3, "identifier"), node(_, c3, _, _, _), VAR = c3,
+    child(n, c4, _), kind(c4, "call"), child(c4, c5, _), kind(c5, "argument_list"),
+    child(c5, c6, _), arg003_positional(c6).
+
+// demand_class_method: the nodes class_method is asked at (it looks at every ancestor of every node)
+.decl arg003_demand_class_method(n: node)
+arg003_demand_class_method(p2) :- kind(n, "identifier"), node(_, n, _, _, _), N = n, site_form(n, "parameter"),
+    site_scope(n, "function"), site_latest(n), inside(n, p1, "parameters"),
+    child(p2, p1, _), kind(p2, "function_definition").
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl arg003_up_1(n: node, p: node)
+arg003_up_1(n, p) :- arg003_demand_class_method(n), within_stop(n, p, arg003_stop_98),
+    kind(p, "class_definition").
+
+// set_97: symbols from the JSON `resolves.import`
+.decl arg003_set_97(v: symbol)
+arg003_set_97("abc.abstractmethod"). arg003_set_97("abc.abstractclassmethod").
+arg003_set_97("abc.abstractstaticmethod"). arg003_set_97("abc.abstractproperty").
+arg003_set_97("typing.override"). arg003_set_97("typing_extensions.override").
+arg003_set_97("_typeshed.override").
+
+// stop_98: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl arg003_stop_98(kind: symbol)
+arg003_stop_98("function_definition"). arg003_stop_98("class_definition").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl arg003_alt_1(n: node)
+arg003_alt_1(n) :- kind(n, "string"), match("[rRuU]{0,2}['\"].*", n).
+arg003_alt_1(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !match("[rRuU]{0,2}['\"].*", c1) } = 0.
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+.decl arg003_alt_8(n: node)
+arg003_alt_8(n) :- (kind(n, "comment") ; kind(n, "keyword_argument") ; kind(n, "dictionary_splat")).
+arg003_alt_8(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl arg003_stop_10(n: node)
+arg003_stop_10(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// alt_14(n): the JSON `any`: n matches if any one of these rules does
+.decl arg003_alt_14(n: node)
+arg003_alt_14(n) :- arg003_not_implemented(n).
+arg003_alt_14(n) :- kind(n, "call"), within_stop(c1, n, arg003_stop_10), arg003_not_implemented(c1).
+
+// alt_29(n): the JSON `any`: n matches if any one of these rules does
+.decl arg003_alt_29(n: node)
+arg003_alt_29(n) :- kind(n, "comment").
+arg003_alt_29(n) :- node(_, n, _, _, _), glob(";", n).
+
+// alt_28(n): the JSON `any`: n matches if any one of these rules does
+.decl arg003_alt_28(n: node)
+arg003_alt_28(n) :- arg003_alt_29(n).
+arg003_alt_28(n) :- kind(n, "pass_statement").
+arg003_alt_28(n) :- arg003_docstring(n).
+arg003_alt_28(n) :- kind(n, "expression_statement"), k9 = count : { arg003_tok_has_1(n) }, k9 <= 1,
+    child(n, c10, _),
+    ( kind(c10, "ellipsis")
+    ; kind(c10, "parenthesized_expression"), within_stop(c1, c10, arg003_stop_10), kind(c1, "ellipsis")
+    ).
+
+arg003_alt_28(n) :- kind(n, "raise_statement"), child(n, c12, _), arg003_tok_follows_4(c12),
+    ( arg003_alt_14(c12)
+    ; kind(c12, "parenthesized_expression"), within_stop(c1, c12, arg003_stop_10), arg003_alt_14(c1)
+    ).
+
+
+// stop_51(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl arg003_stop_51(n: node)
+arg003_stop_51(n) :- node(_, n, _, _, _), !arg003_alt_29(n).
+
+// alt_54(n): the JSON `any`: n matches if any one of these rules does
+//   VAR: metavariable of the calling rule, passed in (bound by the caller)
+.decl arg003_alt_54(n: node, var: loc)
+arg003_alt_54(n, VAR) :- arg003_demand_alt_54(n, VAR), kind(n, "identifier"),
+    text(n, t_var1), text(VAR, t_var1), @doc(n) = @doc(VAR).
+arg003_alt_54(n, VAR) :- arg003_demand_alt_54(n, VAR), kind(n, "parenthesized_expression"),
+    within_stop(c1, n, arg003_stop_10), kind(c1, "identifier"),
+    text(c1, t_var2), text(VAR, t_var2), @doc(c1) = @doc(VAR).
+
+// alt_59(n): the JSON `any`: n matches if any one of these rules does
+.decl arg003_alt_59(n: node)
+arg003_alt_59(n) :- kind(n, "identifier").
+arg003_alt_59(n) :- kind(n, "parenthesized_expression"), within_stop(c1, n, arg003_stop_10),
+    kind(c1, "identifier").
+
+// alt_65(n): the JSON `any`: n matches if any one of these rules does
+.decl arg003_alt_65(n: node)
+arg003_alt_65(n) :- precedes_stop(s1, n, arg003_stop_51), child(s1, c2, _), kind(c2, "assignment"),
+    field(c2, "left", c3), kind(c3, "identifier"), node(_, c3, _, _, _), VAR = c3, child(n, c4, _),
+    kind(c4, "call"), child(c4, c5, _), kind(c5, "argument_list"), child(c5, c6, _),
+    arg003_positional(c6), arg003_alt_54(c6, VAR).
+arg003_alt_65(n) :- precedes_stop(s8, n, arg003_stop_51), child(s8, c9, _), kind(c9, "assignment"),
+    field(c9, "left", c10), !kind(c10, "identifier"), child(n, c11, _),
+    kind(c11, "call"), field(c11, "arguments", c12),
+    ( kind(c12, "argument_list"), child(c12, c1, _), arg003_positional(c1), !arg003_alt_59(c1)
+    ; kind(c12, "generator_expression")
+    ).
+
+
+// alt_82(n): the JSON `any`: n matches if any one of these rules does
+.decl arg003_alt_82(n: node)
+arg003_alt_82(n) :- kind(n, "string"), match("[rRuUfF]{0,2}['\"].*", n).
+arg003_alt_82(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), !match("[rRuUfF]{0,2}['\"].*", c1) } = 0.
+
+// alt_91(n): the JSON `any`: n matches if any one of these rules does
+.decl arg003_alt_91(n: node)
+arg003_alt_91(n) :- arg003_alt_29(n).
+arg003_alt_91(n) :- arg003_docstring(n), count : { precedes(s1, n), !arg003_alt_29(s1) } = 0.
+
+// alt_107(n): the JSON `any`: n matches if any one of these rules does
+.decl arg003_alt_107(n: node)
+arg003_alt_107(n) :- arg003_exempt(n).
+arg003_alt_107(n) :- child(p1, n, _), kind(p1, "decorated_definition"), child(p1, c2, _),
+    kind(c2, "decorator"), within_stop(c3, c2, arg003_stop_10),
+    (arg003_static(c3) ; kind(c3, "call"), within_stop(c1, c3, arg003_stop_10), arg003_static(c1)).
+
+// alt_113(n): the JSON `any`: n matches if any one of these rules does
+.decl arg003_alt_113(n: node)
+arg003_alt_113(n) :- node(_, n, _, _, _), option("dummy-variable-rgx", o1), match(o1, n).
+arg003_alt_113(n) :- option("flake8-unused-arguments.ignore-variadic-names", "true"),
+    child(p1, n, _),
+    (kind(p1, "list_splat_pattern") ; kind(p1, "dictionary_splat_pattern")).
+
+// main's file condition {"notRegex": "\\.pyi$"}
+.decl ARG003_raw(at: node, n: loc)
+ARG003(v0, v1) :- ARG003_raw(v0, v1), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

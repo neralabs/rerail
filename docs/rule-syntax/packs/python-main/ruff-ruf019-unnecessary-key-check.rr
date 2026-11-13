@@ -1,0 +1,298 @@
+.policy "ruff-ruf019-unnecessary-key-check" revision 1
+.guests off
+.description "Use dict.get() instead of testing a key with in and then indexing the dictionary in the same condition; get() returns None for a missing key."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// RUF019(n): a finding at node n, from clause `unnecessary-key-check`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF019(at: node, c: node, d: loc, k: loc) "If `{d}` is a dict, use `{d}.get({k})` instead of testing `{k} in {d}` before reading `{d}[{k}]`; leave it if `{d}` is not a mapping."
+    suppress noqa "RUF019"
+RUF019(C, n, D, K) :- ruf019_unnecessary_key_check(n, D, K), node(_, n, _, _, _), C = n.
+RUF019(C, n, D, K) :- ruf019_check_in_string(n, C, D, K).
+
+// safe_binop_operand(n): the JSON util `safe-binop-operand`, used where the JSON says `matches: "safe-binop-operand"`
+.decl ruf019_safe_binop_operand(n: node)
+ruf019_safe_binop_operand(n) :-
+    ( kind(n, k1), ruf019_set_1(k1)
+    ; kind(n, "string"), !ruf019_tstring(n)
+    ; kind(n, "concatenated_string"), count : { child(n, c1, _), ruf019_tstring(c1) } = 0
+    ).
+
+ruf019_safe_binop_operand(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    ruf019_safe_binop_operand(c3).
+
+// effect(n): the JSON util `effect`, used where the JSON says `matches: "effect"`
+.decl ruf019_effect(n: node)
+ruf019_effect(n) :- kind(n, k1), ruf019_set_4(k1).
+ruf019_effect(n) :- kind(n, "call"),
+    count : { field(n, "function", c2), ruf019_iterable_init(c2), field(n, "arguments", c3), match("\\((?:\\s|#[^\\n]*)*\\)", c3) } = 0.
+ruf019_effect(n) :- kind(n, "binary_operator"), child(n, c4, _), !ruf019_alt_5(c4).
+
+// bool_callee(n): the JSON util `bool-callee`, used where the JSON says `matches: "bool-callee"`
+.decl ruf019_bool_callee(n: node)
+ruf019_bool_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "bool"), sym_of(n, "builtins.bool").
+ruf019_bool_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf019_bool_callee(c1).
+
+// boolean_test(n): the JSON util `boolean-test`, used where the JSON says `matches: "boolean-test"`
+.decl ruf019_boolean_test(n: node)
+ruf019_boolean_test(n) :- child(p1, n, _), kind(p1, "not_operator").
+ruf019_boolean_test(n) :- ruf019_tok_follows_1(n), child(p9, n, _),
+    ( kind(p9, "if_statement")
+    ; kind(p9, "elif_clause")
+    ; kind(p9, "while_statement")
+    ; kind(p9, "conditional_expression")
+    ).
+
+ruf019_boolean_test(n) :- ruf019_tok_follows_2(n).
+ruf019_boolean_test(n) :- child(p17, n, _), kind(p17, "if_clause").
+ruf019_boolean_test(n) :- precedes_stop(s18, n, ruf019_stop_10), glob("(", s18), child(p19, n, _),
+    kind(p19, "argument_list"), child(p20, p19, _), kind(p20, "call"),
+    field(p20, "function", c21), ruf019_bool_callee(c21).
+ruf019_boolean_test(n) :- child(p22, n, _),
+    (kind(p22, "parenthesized_expression") ; kind(p22, "boolean_operator")),
+    ruf019_boolean_test(p22).
+
+// and_op(n): the JSON util `and-op`, used where the JSON says `matches: "and-op"`
+.decl ruf019_and_op(n: node)
+ruf019_and_op(n) :- kind(n, "boolean_operator"), ruf019_tok_has_3(n).
+
+// key_in_dict(n): the JSON util `key-in-dict`, used where the JSON says `matches: "key-in-dict"`
+//   D, K: metavariables this relation binds for the calling rule
+.decl ruf019_key_in_dict(n: node, d: loc, k: loc)
+ruf019_key_in_dict(n, D, K) :- kind(n, "comparison_operator"), n ~ `$K in $D`,
+    k2 = count : { child(n, c1, _), !kind(c1, "comment") }, k2 <= 3.
+ruf019_key_in_dict(n, D, K) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    ruf019_key_in_dict(c3, D, K).
+
+// dict_item(n): the JSON util `dict-item`, used where the JSON says `matches: "dict-item"`
+//   E, L: metavariables this relation binds for the calling rule
+.decl ruf019_dict_item(n: node, e: loc, l: loc)
+ruf019_dict_item(n, E, L) :- kind(n, "subscript"), n ~ `$E[$L]`, !ruf019_tok_has_4(n).
+ruf019_dict_item(n, E, L) :- kind(n, "parenthesized_expression"), child(n, c9, _),
+    ruf019_dict_item(c9, E, L).
+
+// tuple_key_in_dict_1(n): the JSON util `tuple-key-in-dict-1`, used where the JSON says `matches: "tuple-key-in-dict-1"`
+//   D, K, K1: metavariables this relation binds for the calling rule
+.decl ruf019_tuple_key_in_dict_1(n: node, d: loc, k: loc, k1: loc)
+ruf019_tuple_key_in_dict_1(n, D, K, K1) :- kind(n, "comparison_operator"), n ~ `$K in $D`,
+    k2 = count : { child(n, c1, _), !kind(c1, "comment") }, k2 <= 3, child(n, c3, _),
+    ruf019_tuple_1(c3, K1), precedes_stop(c3, s4, ruf019_stop_10), glob("in", s4).
+ruf019_tuple_key_in_dict_1(n, D, K, K1) :- kind(n, "parenthesized_expression"),
+    child(n, c5, _), ruf019_tuple_key_in_dict_1(c5, D, K, K1).
+
+// tuple_dict_item_1(n): the JSON util `tuple-dict-item-1`, used where the JSON says `matches: "tuple-dict-item-1"`
+//   E, L1: metavariables this relation binds for the calling rule
+.decl ruf019_tuple_dict_item_1(n: node, e: loc, l1: loc)
+ruf019_tuple_dict_item_1(n, E, L1) :- kind(n, "subscript"), n ~ `$E[$L1,]`.
+ruf019_tuple_dict_item_1(n, E, L1) :- kind(n, "subscript"), n ~ `$E[$L1]`, child(n, c1, _),
+    kind(c1, "list_splat").
+ruf019_tuple_dict_item_1(n, E, L1) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf019_tuple_dict_item_1(c2, E, L1).
+
+// tuple_key_in_dict_2(n): the JSON util `tuple-key-in-dict-2`, used where the JSON says `matches: "tuple-key-in-dict-2"`
+//   D, K, K1, K2: metavariables this relation binds for the calling rule
+.decl ruf019_tuple_key_in_dict_2(n: node, d: loc, k: loc, k1: loc, k2: loc)
+ruf019_tuple_key_in_dict_2(n, D, K, K1, K2) :- kind(n, "comparison_operator"), n ~ `$K in $D`,
+    k2 = count : { child(n, c1, _), !kind(c1, "comment") }, k2 <= 3, child(n, c3, _),
+    ruf019_tuple_2(c3, K1, K2), precedes_stop(c3, s4, ruf019_stop_10), glob("in", s4).
+ruf019_tuple_key_in_dict_2(n, D, K, K1, K2) :- kind(n, "parenthesized_expression"),
+    child(n, c5, _), ruf019_tuple_key_in_dict_2(c5, D, K, K1, K2).
+
+// tuple_dict_item_2(n): the JSON util `tuple-dict-item-2`, used where the JSON says `matches: "tuple-dict-item-2"`
+//   E, L1, L2: metavariables this relation binds for the calling rule
+.decl ruf019_tuple_dict_item_2(n: node, e: loc, l1: loc, l2: loc)
+ruf019_tuple_dict_item_2(n, E, L1, L2) :- kind(n, "subscript"), n ~ `$E[$L1, $L2]`.
+ruf019_tuple_dict_item_2(n, E, L1, L2) :- kind(n, "parenthesized_expression"),
+    child(n, c1, _), ruf019_tuple_dict_item_2(c1, E, L1, L2).
+
+// tuple_key_in_dict_3(n): the JSON util `tuple-key-in-dict-3`, used where the JSON says `matches: "tuple-key-in-dict-3"`
+//   D, K, K1, K2, K3: metavariables this relation binds for the calling rule
+.decl ruf019_tuple_key_in_dict_3(n: node, d: loc, k: loc, k1: loc, k2: loc, k3: loc)
+ruf019_tuple_key_in_dict_3(n, D, K, K1, K2, K3) :- kind(n, "comparison_operator"),
+    n ~ `$K in $D`, k2 = count : { child(n, c1, _), !kind(c1, "comment") }, k2 <= 3,
+    child(n, c3, _), ruf019_tuple_3(c3, K1, K2, K3), precedes_stop(c3, s4, ruf019_stop_10),
+    glob("in", s4).
+ruf019_tuple_key_in_dict_3(n, D, K, K1, K2, K3) :- kind(n, "parenthesized_expression"),
+    child(n, c5, _), ruf019_tuple_key_in_dict_3(c5, D, K, K1, K2, K3).
+
+// tuple_dict_item_3(n): the JSON util `tuple-dict-item-3`, used where the JSON says `matches: "tuple-dict-item-3"`
+//   E, L1, L2, L3: metavariables this relation binds for the calling rule
+.decl ruf019_tuple_dict_item_3(n: node, e: loc, l1: loc, l2: loc, l3: loc)
+ruf019_tuple_dict_item_3(n, E, L1, L2, L3) :- kind(n, "subscript"), n ~ `$E[$L1, $L2, $L3]`.
+ruf019_tuple_dict_item_3(n, E, L1, L2, L3) :- kind(n, "parenthesized_expression"),
+    child(n, c1, _), ruf019_tuple_dict_item_3(c1, E, L1, L2, L3).
+
+// tuple_key_in_dict_4(n): the JSON util `tuple-key-in-dict-4`, used where the JSON says `matches: "tuple-key-in-dict-4"`
+//   D, K, K1, K2, K3, K4: metavariables this relation binds for the calling rule
+.decl ruf019_tuple_key_in_dict_4(n: node, d: loc, k: loc, k1: loc, k2: loc, k3: loc, k4: loc)
+ruf019_tuple_key_in_dict_4(n, D, K, K1, K2, K3, K4) :- kind(n, "comparison_operator"),
+    n ~ `$K in $D`, k2 = count : { child(n, c1, _), !kind(c1, "comment") }, k2 <= 3,
+    child(n, c3, _), ruf019_tuple_4(c3, K1, K2, K3, K4), precedes_stop(c3, s4, ruf019_stop_10),
+    glob("in", s4).
+ruf019_tuple_key_in_dict_4(n, D, K, K1, K2, K3, K4) :- kind(n, "parenthesized_expression"),
+    child(n, c5, _), ruf019_tuple_key_in_dict_4(c5, D, K, K1, K2, K3, K4).
+
+// tuple_dict_item_4(n): the JSON util `tuple-dict-item-4`, used where the JSON says `matches: "tuple-dict-item-4"`
+//   E, L1, L2, L3, L4: metavariables this relation binds for the calling rule
+.decl ruf019_tuple_dict_item_4(n: node, e: loc, l1: loc, l2: loc, l3: loc, l4: loc)
+ruf019_tuple_dict_item_4(n, E, L1, L2, L3, L4) :- kind(n, "subscript"),
+    n ~ `$E[$L1, $L2, $L3, $L4]`.
+ruf019_tuple_dict_item_4(n, E, L1, L2, L3, L4) :- kind(n, "parenthesized_expression"),
+    child(n, c1, _), ruf019_tuple_dict_item_4(c1, E, L1, L2, L3, L4).
+
+// unnecessary_key_check(n): the JSON util `unnecessary-key-check`, used where the JSON says `matches: "unnecessary-key-check"`
+//   D, K: metavariables this relation binds for the calling rule
+.decl ruf019_unnecessary_key_check(n: node, d: loc, k: loc)
+ruf019_unnecessary_key_check(n, D, K) :- ruf019_and_op(n), ruf019_boolean_test(n),
+    count : { child(p1, n, _), ruf019_and_op(p1) } = 0, field(n, "left", c2),
+    count : { within(c3, c2), ruf019_effect(c3) } = 0, ruf019_alt_11(n, D, K).
+
+// check_in_string(n): the JSON util `check-in-string`, used where the JSON says `matches: "check-in-string"`
+//   C, D, K: metavariables this relation binds for the calling rule
+.decl ruf019_check_in_string(n: node, c: loc, d: loc, k: loc)
+ruf019_check_in_string(n, C, D, K) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), ruf019_alt_12(c2, C, D, K).
+
+// tstring(n): the JSON util `tstring`, used where the JSON says `matches: "tstring"`
+.decl ruf019_tstring(n: node)
+ruf019_tstring(n) :- kind(n, "string"), child(n, c1, _), kind(c1, "string_start"),
+    match("[A-Za-z]*[tT].*", c1).
+
+// iterable_init(n): the JSON util `iterable-init`, used where the JSON says `matches: "iterable-init"`
+.decl ruf019_iterable_init(n: node)
+ruf019_iterable_init(n) :- kind(n, "identifier"), global_ref(n, g1), ruf019_set_13(g1).
+ruf019_iterable_init(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf019_iterable_init(c2).
+
+// tuple_1(n): the JSON util `tuple-1`, used where the JSON says `matches: "tuple-1"`
+//   K1: metavariable this relation binds for the calling rule
+.decl ruf019_tuple_1(n: node, k1: loc)
+ruf019_tuple_1(n, K1) :- kind(n, "tuple"), n ~ `($K1,)`.
+ruf019_tuple_1(n, K1) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf019_tuple_1(c1, K1).
+
+// tuple_2(n): the JSON util `tuple-2`, used where the JSON says `matches: "tuple-2"`
+//   K1, K2: metavariables this relation binds for the calling rule
+.decl ruf019_tuple_2(n: node, k1: loc, k2: loc)
+ruf019_tuple_2(n, K1, K2) :- kind(n, "tuple"), n ~ `($K1, $K2)`.
+ruf019_tuple_2(n, K1, K2) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf019_tuple_2(c1, K1, K2).
+
+// tuple_3(n): the JSON util `tuple-3`, used where the JSON says `matches: "tuple-3"`
+//   K1, K2, K3: metavariables this relation binds for the calling rule
+.decl ruf019_tuple_3(n: node, k1: loc, k2: loc, k3: loc)
+ruf019_tuple_3(n, K1, K2, K3) :- kind(n, "tuple"), n ~ `($K1, $K2, $K3)`.
+ruf019_tuple_3(n, K1, K2, K3) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf019_tuple_3(c1, K1, K2, K3).
+
+// tuple_4(n): the JSON util `tuple-4`, used where the JSON says `matches: "tuple-4"`
+//   K1, K2, K3, K4: metavariables this relation binds for the calling rule
+.decl ruf019_tuple_4(n: node, k1: loc, k2: loc, k3: loc, k4: loc)
+ruf019_tuple_4(n, K1, K2, K3, K4) :- kind(n, "tuple"), n ~ `($K1, $K2, $K3, $K4)`.
+ruf019_tuple_4(n, K1, K2, K3, K4) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf019_tuple_4(c1, K1, K2, K3, K4).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^(if|elif|while)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf019_tok_follows_1(n: node)
+.stored ruf019_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf019_tok_follows_1(n) :- next_sibling(s2, n), glob("{if,elif,while}", s2).
+ruf019_tok_follows_1(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(if|elif|while)", t3).
+ruf019_tok_follows_1(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:if)\\s*|(?:.*\\W)?(?:elif)\\s*|(?:.*\\W)?(?:while)\\s*)$", g4).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^assert$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf019_tok_follows_2(n: node)
+.stored ruf019_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf019_tok_follows_2(n) :- next_sibling(s10, n), glob("assert", s10).
+ruf019_tok_follows_2(n) :- structural_before(n, g12), match("\\s*", g12), child(p13, n, _),
+    node(_, n, _, st15, _), o14 = st15 - strlen(g12), token(p13, _, t11, _, o14),
+    match("assert", t11).
+ruf019_tok_follows_2(n) :- structural_before(n, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:assert)\\s*)$", g12).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^and$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf019_tok_has_3(n: node)
+.stored ruf019_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf019_tok_has_3(n) :- child(n, c1, _), glob("and", c1).
+ruf019_tok_has_3(n) :- op(n, t2), match("and", t2).
+ruf019_tok_has_3(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:and)(?:\\W.*)?)$", g3).
+ruf019_tok_has_3(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:and)(?:\\W.*)?)$", g3).
+ruf019_tok_has_3(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:and)(?:\\W.*)?)$", g3).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf019_tok_has_4(n: node)
+.stored ruf019_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf019_tok_has_4(n) :- child(n, c1, _), glob("\\,", c1).
+ruf019_tok_has_4(n) :- op(n, t2), match(",", t2).
+ruf019_tok_has_4(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+ruf019_tok_has_4(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+ruf019_tok_has_4(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// set_1: node kinds from a JSON `any`
+.decl ruf019_set_1(v: symbol)
+ruf019_set_1("integer"). ruf019_set_1("float"). ruf019_set_1("true"). ruf019_set_1("false"). ruf019_set_1("none").
+ruf019_set_1("ellipsis"). ruf019_set_1("list"). ruf019_set_1("tuple"). ruf019_set_1("set"). ruf019_set_1("dictionary").
+ruf019_set_1("list_comprehension"). ruf019_set_1("set_comprehension").
+ruf019_set_1("dictionary_comprehension").
+
+// set_4: node kinds from a JSON `any`
+.decl ruf019_set_4(v: symbol)
+ruf019_set_4("named_expression"). ruf019_set_4("await"). ruf019_set_4("yield"). ruf019_set_4("subscript").
+ruf019_set_4("list_comprehension"). ruf019_set_4("set_comprehension").
+ruf019_set_4("dictionary_comprehension"). ruf019_set_4("generator_expression").
+
+// set_13: names from the JSON `resolves.global`
+.decl ruf019_set_13(v: symbol)
+ruf019_set_13("list"). ruf019_set_13("tuple"). ruf019_set_13("set"). ruf019_set_13("dict"). ruf019_set_13("frozenset").
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf019_alt_5(n: node)
+ruf019_alt_5(n) :- ruf019_safe_binop_operand(n).
+ruf019_alt_5(n) :- node(_, n, _, _, _), glob("{+,-,\\*,/,//,%,\\*\\*,<<,>>,&,|,^,@}", n).
+
+// stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf019_stop_10(n: node)
+ruf019_stop_10(n) :- node(_, n, _, _, _), !kind(n, "comment").
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+//   D, K: metavariables this relation binds for the calling rule
+.decl ruf019_alt_11(n: node, d: loc, k: loc)
+ruf019_alt_11(n, D, K) :- field(n, "left", c1), ruf019_key_in_dict(c1, D, K), field(n, "right", c2),
+    ruf019_dict_item(c2, E, L), value(K, t3), value(L, t3), value(D, t5), value(E, t5).
+ruf019_alt_11(n, D, K) :- field(n, "left", c7), ruf019_tuple_key_in_dict_1(c7, D, K, K1),
+    field(n, "right", c8), ruf019_tuple_dict_item_1(c8, E, L1), value(K1, t9), value(L1, t9),
+    value(D, t11), value(E, t11).
+ruf019_alt_11(n, D, K) :- field(n, "left", c13), ruf019_tuple_key_in_dict_2(c13, D, K, K1, K2),
+    field(n, "right", c14), ruf019_tuple_dict_item_2(c14, E, L1, L2),
+    value(K1, t15), value(L1, t15), value(K2, t17), value(L2, t17),
+    value(D, t19), value(E, t19).
+ruf019_alt_11(n, D, K) :- field(n, "left", c21), ruf019_tuple_key_in_dict_3(c21, D, K, K1, K2, K3),
+    field(n, "right", c22), ruf019_tuple_dict_item_3(c22, E, L1, L2, L3),
+    value(K1, t23), value(L1, t23), value(K2, t25), value(L2, t25),
+    value(K3, t27), value(L3, t27), value(D, t29), value(E, t29).
+ruf019_alt_11(n, D, K) :- field(n, "left", c31),
+    ruf019_tuple_key_in_dict_4(c31, D, K, K1, K2, K3, K4), field(n, "right", c32),
+    ruf019_tuple_dict_item_4(c32, E, L1, L2, L3, L4), value(K1, t33), value(L1, t33),
+    value(K2, t35), value(L2, t35), value(K3, t37), value(L3, t37),
+    value(K4, t39), value(L4, t39), value(D, t41), value(E, t41).
+
+// alt_12(n): the JSON `any`: n matches if any one of these rules does
+//   C, D, K: metavariables this relation binds for the calling rule
+.decl ruf019_alt_12(n: node, c: loc, d: loc, k: loc)
+ruf019_alt_12(n, C, D, K) :- ruf019_unnecessary_key_check(n, D, K), node(_, n, _, _, _), C = n, C = n.
+ruf019_alt_12(n, C, D, K) :- ruf019_check_in_string(n, C, D, K).

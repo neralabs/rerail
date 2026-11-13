@@ -1,0 +1,73 @@
+.policy "ruff-try301-raise-within-try" revision 1
+.guests off
+.description "Avoid raising an exception inside a try block that catches it; move the raise into a helper function or restructure so it needs no handler."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// TRY301(n): a finding at node n, from clause `raise-within-try`.
+// Each rule below is one way the JSON `rule` can match.
+.violation TRY301(at: node) "Move this `raise` out of the `try` body into a helper function, or handle the condition without raising, so this `try` does not catch its own exception. Leave it if it is in a nested function."
+    suppress noqa "TRY301"
+TRY301(n) :- kind(n, "raise_statement"), child(n, c1, _), try301_raised(c1, X),
+    !try301_tok_follows_3(c1), within_stop(n, p9, "try_statement"), kind(p9, "block"),
+    field(p10, "body", p9), kind(p10, "try_statement"),
+    kind(p10, "try_statement"), child(p10, c1_3, _), kind(c1_3, "except_clause"), within_stop(c2_3, c1_3, "block"), node(_, c2_3, _, _, _), E = c2_3, try301_handled(c2_3), (value(X, t1_1_3), value(E, t1_1_3) ; (kind(c2_3, "identifier") ; kind(c2_3, "attribute")), (global_ref(c2_3, "Exception") ; global_ref(c2_3, "BaseException")), (sym_of(c2_3, "builtins.Exception") ; sym_of(c2_3, "builtins.BaseException"))).
+
+// top(n): the JSON util `top`, used where the JSON says `matches: "top"`
+.decl try301_top(n: node)
+try301_top(n) :- field(p1, "value", n), kind(p1, "except_clause").
+try301_top(n) :- try301_tok_follows_1(n), child(p9, n, _), kind(p9, "except_clause").
+try301_top(n) :- !try301_tok_follows_2(n), child(p17, n, _), kind(p17, "as_pattern"), try301_top(p17).
+try301_top(n) :- child(p18, n, _), kind(p18, "parenthesized_expression"), try301_top(p18).
+
+// pos(n): the JSON util `pos`, used where the JSON says `matches: "pos"`
+.decl try301_pos(n: node)
+try301_pos(n) :- try301_top(n).
+try301_pos(n) :- child(p1, n, _), kind(p1, "tuple"), try301_top(p1).
+try301_pos(n) :- child(p2, n, _), kind(p2, "parenthesized_expression"), try301_pos(p2).
+
+// handled(n): the JSON util `handled`, used where the JSON says `matches: "handled"`
+.decl try301_handled(n: node)
+try301_handled(n) :- try301_pos(n), !kind(n, "tuple"), !kind(n, "parenthesized_expression"),
+    !kind(n, "as_pattern").
+
+// raised(n): the JSON util `raised`, used where the JSON says `matches: "raised"`
+//   X: metavariable this relation binds for the calling rule
+.decl try301_raised(n: node, x: loc)
+try301_raised(n, X) :- kind(n, "call"), field(n, "function", c1), node(_, c1, _, _, _), X = c1.
+try301_raised(n, X) :- kind(n, "parenthesized_expression"), child(n, c2, _), try301_raised(c2, X).
+try301_raised(n, X) :- !kind(n, "call"), !kind(n, "parenthesized_expression"),
+    !kind(n, "comment"), !kind(n, "line_continuation"), node(_, n, _, _, _), X = n.
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl try301_tok_follows_1(n: node)
+.stored try301_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+try301_tok_follows_1(n) :- next_sibling(s2, n), glob("\\,", s2).
+try301_tok_follows_1(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match(",", t3).
+try301_tok_follows_1(n) :- structural_before(n, g4), match("(?s)^(?:.*(?:,)\\s*)$", g4).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl try301_tok_follows_2(n: node)
+.stored try301_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+try301_tok_follows_2(n) :- next_sibling(s10, n), match("(?s).*..*", s10).
+try301_tok_follows_2(n) :- structural_before(n, g12), match("\\s*", g12), child(p13, n, _),
+    node(_, n, _, st15, _), o14 = st15 - strlen(g12), token(p13, _, t11, _, o14),
+    match("(?s).*..*", t11).
+try301_tok_follows_2(n) :- structural_before(n, g12), match("(?s)^.*\\S\\s*$", g12).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^from$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl try301_tok_follows_3(n: node)
+.stored try301_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+try301_tok_follows_3(n) :- precedes(s2, n), glob("from", s2).
+try301_tok_follows_3(n) :- child(p5, n, _), node(_, n, _, st7, _), token(p5, _, t3, _, en8),
+    en8 <= st7, match("from", t3).
+try301_tok_follows_3(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:from)(?:\\W.*)?)$", g4).
+try301_tok_follows_3(n) :- precedes(o6, n), structural_before(o6, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:from)(?:\\W.*)?)$", g4).

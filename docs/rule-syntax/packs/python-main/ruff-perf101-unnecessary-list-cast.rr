@@ -1,0 +1,202 @@
+.policy "ruff-perf101-unnecessary-list-cast" revision 1
+.guests off
+.description "Iterate over a list, tuple or set directly in a for loop instead of first copying it into a new list, unless the loop changes it; the copy only costs time."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+#include "python/names.rr"
+
+// literal(n): the JSON util `literal`, used where the JSON says `matches: "literal"`
+.decl perf101_literal(n: node)
+perf101_literal(n) :- (kind(n, "tuple") ; kind(n, "list") ; kind(n, "set") ; kind(n, "expression_list")).
+perf101_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), perf101_literal(c1).
+
+// name_arg(n): the JSON util `name-arg`, used where the JSON says `matches: "name-arg"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl perf101_name_arg(n: node, name: loc)
+perf101_name_arg(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n.
+perf101_name_arg(n, NAME) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    perf101_name_arg(c1, NAME).
+
+// positional(n): the JSON util `positional`, used where the JSON says `matches: "positional"`
+.decl perf101_positional(n: node)
+perf101_positional(n) :- node(_, n, _, _, _), !perf101_alt_1(n).
+
+// list_callee(n): the JSON util `list-callee`, used where the JSON says `matches: "list-callee"`
+.decl perf101_list_callee(n: node)
+perf101_list_callee(n) :- field(n, "function", c1), global_ref(c1, "list"),
+    sym_of(c1, "builtins.list").
+
+// sole_arg(n): the JSON util `sole-arg`, used where the JSON says `matches: "sole-arg"`
+.decl perf101_sole_arg(n: node)
+perf101_sole_arg(n) :- kind(n, "argument_list"),
+    k2 = count : { child(n, c1, _), perf101_positional(c1) }, k2 >= 1, k2 <= 1.
+
+// del_target(n): the JSON util `del-target`, used where the JSON says `matches: "del-target"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl perf101_del_target(n: node, name: loc)
+perf101_del_target(n, NAME) :- kind(n, "subscript"), field(n, "value", c1), perf101_name_arg(c1, NAME).
+perf101_del_target(n, NAME) :- (kind(n, "expression_list") ; kind(n, "parenthesized_expression")),
+    child(n, c2, _), perf101_del_target(c2, NAME).
+
+// mutation(n): the JSON util `mutation`, used where the JSON says `matches: "mutation"`
+//   NAME: metavariable of the calling rule, passed in (bound by the caller)
+.decl perf101_mutation(n: node, name: loc)
+perf101_mutation(n, NAME) :- perf101_demand_mutation(n, NAME), kind(n, "expression_statement"),
+    !perf101_tok_has_1(n), child(n, c9, _), perf101_mutating_call(c9, NAME).
+perf101_mutation(n, NAME) :- perf101_demand_mutation(n, NAME), kind(n, "assignment"),
+    field(n, "left", c10), kind(c10, "subscript"), field(c10, "value", c11),
+    perf101_name_arg(c11, NAME).
+perf101_mutation(n, NAME) :- perf101_demand_mutation(n, NAME), kind(n, "augmented_assignment"),
+    field(n, "left", c12), kind(c12, "identifier"),
+    text(c12, t_name1), text(NAME, t_name1), @doc(c12) = @doc(NAME).
+perf101_mutation(n, NAME) :- perf101_demand_mutation(n, NAME), kind(n, "delete_statement"),
+    child(n, c13, _), perf101_del_target(c13, NAME).
+
+// mutating_call(n): the JSON util `mutating-call`, used where the JSON says `matches: "mutating-call"`
+//   NAME: metavariable this relation binds for the calling rule
+.decl perf101_mutating_call(n: node, name: loc)
+perf101_mutating_call(n, NAME) :- kind(n, "call"), field(n, "function", c1),
+    kind(c1, "attribute"), field(c1, "object", c2), perf101_name_arg(c2, NAME),
+    field(c1, "attribute", c3),
+    glob("{append,insert,extend,remove,pop,clear,reverse,sort}", c3).
+perf101_mutating_call(n, NAME) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    perf101_mutating_call(c4, NAME).
+
+// rebinding(n): the JSON util `rebinding`, used where the JSON says `matches: "rebinding"`
+//   NAME: metavariable of the calling rule, passed in (bound by the caller)
+.decl perf101_rebinding(n: node, name: loc)
+perf101_rebinding(n, NAME) :- perf101_demand_rebinding(n, NAME),
+    (kind(n, "identifier") ; kind(n, "dotted_name")),
+    text(n, t_name2), text(NAME, t_name2), site_form(n, f1), perf101_set_2(f1),
+    count : { (site_form(n, "assignment") ; site_form(n, "annotated") ; site_form(n, "named")), binding_value(n, x2), perf101_literal(x2) } = 0, @doc(n) = @doc(NAME).
+perf101_rebinding(n, NAME) :- perf101_demand_rebinding(n, NAME),
+    (kind(n, "function_definition") ; kind(n, "class_definition")),
+    field(n, "name", c3), text(c3, t_name3), text(NAME, t_name3), @doc(c3) = @doc(NAME).
+perf101_rebinding(n, NAME) :- perf101_demand_rebinding(n, NAME), kind(n, "dotted_name"),
+    child(p4, n, _), kind(p4, "import_statement"), child(n, c5, _), child(_, c5, 0),
+    text(c5, t_name4), text(NAME, t_name4), @doc(c5) = @doc(NAME).
+perf101_rebinding(n, NAME) :- perf101_demand_rebinding(n, NAME), within_stop(c6, n, perf101_stop_3),
+    kind(c6, "named_expression"), field(c6, "name", c7),
+    text(c7, t_name5), text(NAME, t_name5),
+    count : { field(c6, "value", c8), perf101_literal(c8) } = 0, perf101_comprehension(n), @doc(c7) = @doc(NAME).
+
+// comprehension(n): the JSON util `comprehension`, used where the JSON says `matches: "comprehension"`
+.decl perf101_comprehension(n: node)
+perf101_comprehension(n) :-
+    ( kind(n, "list_comprehension")
+    ; kind(n, "set_comprehension")
+    ; kind(n, "dictionary_comprehension")
+    ; kind(n, "generator_expression")
+    ).
+
+
+// new_scope(n): the JSON util `new-scope`, used where the JSON says `matches: "new-scope"`
+.decl perf101_new_scope(n: node)
+perf101_new_scope(n) :- (kind(n, "function_definition") ; kind(n, "class_definition") ; kind(n, "lambda")).
+perf101_new_scope(n) :- perf101_comprehension(n).
+
+// PERF101(n): a finding at node n, from clause `literal-list-cast`.
+// Each rule below is one way the JSON `rule` can match.
+.violation PERF101(at: node) "Loop over the list, tuple or set directly instead of copying it with `list(...)`; the copy changes nothing here."
+    suppress noqa "PERF101"
+PERF101(n) :- kind(n, "call"), perf101_list_callee(n), perf101_up_1(n, p1), field(_, "right", n),
+    field(n, "arguments", c2), perf101_sole_arg(c2), child(c2, c3, _), perf101_literal(c3).
+
+// PERF101_name_list_cast(n): a finding at node n, from clause `name-list-cast`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PERF101_name_list_cast(at: node, name: loc) code "PERF101" "Loop over `{name}` directly instead of `list({name})`. Keep the copy if the loop body changes `{name}` in a way the rule cannot see, such as through a helper call."
+    suppress noqa "PERF101"
+PERF101_name_list_cast(n, NAME) :- kind(n, "call"), perf101_list_callee(n),
+    field(n, "arguments", c1), perf101_sole_arg(c1), child(c1, c2, _), perf101_name_arg(c2, NAME),
+    ( ref_site(c2, b1), site_stop_at_global(b1), binding_value(b1, x1), perf101_literal(x1)
+    ; ref_site(c2, b2), site_stop_at_global(b2), site_form(b2, "with"), kind(b2, "as_pattern"), child(b2, c3, _), perf101_literal(c3)
+    ),
+    perf101_up_2(n, p7), field(_, "right", n), !perf101_alt_8(p7, NAME),
+    count : { perf101_stop_10_within(n, p11), (kind(p11, "function_definition") ; kind(p11, "class_definition")), perf101_stop_10_within(c12, p11), kind(c12, "nonlocal_statement"), child(c12, c13, _), kind(c13, "identifier"), node(_, c13, _, _, _), NAME = c13 } = 0.
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl perf101_tok_has_1(n: node)
+.stored perf101_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+perf101_tok_has_1(n) :- child(n, c1, _), glob("\\,", c1).
+perf101_tok_has_1(n) :- op(n, t2), match(",", t2).
+perf101_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+perf101_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+perf101_tok_has_1(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// demand_alt_8: the rows of alt_8 its callers ask for (the metavariable columns they pass in)
+.decl perf101_demand_alt_8(n: node, name: loc)
+perf101_demand_alt_8(p7, NAME) :- kind(n, "call"), perf101_list_callee(n), field(n, "arguments", c1),
+    perf101_sole_arg(c1), child(c1, c2, _), perf101_name_arg(c2, NAME),
+    ( ref_site(c2, b1), site_stop_at_global(b1), binding_value(b1, x1), perf101_literal(x1)
+    ; ref_site(c2, b2), site_stop_at_global(b2), site_form(b2, "with"), kind(b2, "as_pattern"), child(b2, c3, _), perf101_literal(c3)
+    ),
+    perf101_up_2(n, p7), field(_, "right", n).
+
+// demand_mutation: the rows of mutation its callers ask for (the metavariable columns they pass in)
+.decl perf101_demand_mutation(n: node, name: loc)
+perf101_demand_mutation(c2, NAME) :- perf101_demand_alt_8(n, NAME), field(n, "body", c1),
+    kind(c1, "block"), within(c2, c1).
+
+// demand_rebinding: the rows of rebinding its callers ask for (the metavariable columns they pass in)
+.decl perf101_demand_rebinding(n: node, name: loc)
+perf101_demand_rebinding(c3, NAME) :- perf101_demand_alt_8(n, NAME), within_stop(c3, n, perf101_stop_7).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl perf101_up_1(n: node, p: node)
+perf101_up_1(n, p) :- perf101_list_callee(n), within_stop(n, p, perf101_stop_4), kind(p, "for_statement").
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl perf101_up_2(n: node, p: node)
+perf101_up_2(n, p) :- perf101_list_callee(n), within_stop(n, p, perf101_stop_4), kind(p, "for_statement").
+
+// set_2: binding forms the JSON accepts
+.decl perf101_set_2(v: symbol)
+perf101_set_2("for"). perf101_set_2("with"). perf101_set_2("import"). perf101_set_2("definition"). perf101_set_2("deletion").
+perf101_set_2("match"). perf101_set_2("assignment"). perf101_set_2("annotated"). perf101_set_2("augmented").
+perf101_set_2("named").
+
+// stop_10: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl perf101_stop_10(kind: symbol)
+perf101_stop_10("function_definition"). perf101_stop_10("class_definition").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl perf101_alt_1(n: node)
+perf101_alt_1(n) :-
+    ( kind(n, "comment")
+    ; kind(n, "line_continuation")
+    ; kind(n, "keyword_argument")
+    ; kind(n, "dictionary_splat")
+    ).
+
+perf101_alt_1(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// stop_3(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl perf101_stop_3(n: node)
+perf101_stop_3(n) :- !perf101_comprehension(n), perf101_new_scope(n).
+
+// stop_4(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl perf101_stop_4(n: node)
+perf101_stop_4(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// stop_7(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl perf101_stop_7(n: node)
+perf101_stop_7(n) :- perf101_new_scope(n).
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+//   NAME: metavariable of the calling rule, passed in (bound by the caller)
+.decl perf101_alt_8(n: node, name: loc)
+perf101_alt_8(n, NAME) :- perf101_demand_alt_8(n, NAME), field(n, "body", c1), kind(c1, "block"),
+    within(c2, c1), perf101_mutation(c2, NAME).
+perf101_alt_8(n, NAME) :- perf101_demand_alt_8(n, NAME), within_stop(c3, n, perf101_stop_7),
+    perf101_rebinding(c3, NAME).
+
+// stop_10_within: within_stop over the stop set stop_10, read inside an aggregate
+.decl perf101_stop_10_within(n: node, a: node)
+perf101_stop_10_within(x, y) :- within_stop(x, y, perf101_stop_10).

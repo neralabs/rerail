@@ -1,0 +1,257 @@
+.policy "ruff-n804-invalid-first-argument-name-for-class-method" revision 1
+.guests off
+.description "Name the first parameter of class methods cls, as PEP 8 recommends, so it reads as the class and not as an instance."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// cls_name(n): the JSON util `cls-name`, used where the JSON says `matches: "cls-name"`
+.decl n804_cls_name(n: node)
+n804_cls_name(n) :- node(_, n, _, _, _), glob("cls", n).
+n804_cls_name(n) :- node(_, n, _, _, _),
+    glob("{setUp,tearDown,setUpClass,tearDownClass,setUpModule,tearDownModule,asyncSetUp,asyncTearDown,setUpTestData,failureException,longMessage,maxDiff}", n).
+
+// class_ref(n): the JSON util `class-ref`, used where the JSON says `matches: "class-ref"`
+.decl n804_class_ref(n: node)
+n804_class_ref(n) :- global_ref(n, "classmethod"),
+    (sym_of(n, "builtins.classmethod") ; sym_of(n, "abc.abstractclassmethod")).
+
+// static_ref(n): the JSON util `static-ref`, used where the JSON says `matches: "static-ref"`
+.decl n804_static_ref(n: node)
+n804_static_ref(n) :- global_ref(n, "staticmethod"),
+    (sym_of(n, "builtins.staticmethod") ; sym_of(n, "abc.abstractstaticmethod")).
+
+// type_ref(n): the JSON util `type-ref`, used where the JSON says `matches: "type-ref"`
+.decl n804_type_ref(n: node)
+n804_type_ref(n) :- global_ref(n, "type"), sym_of(n, "builtins.type").
+
+// meta_base(n): the JSON util `meta-base`, used where the JSON says `matches: "meta-base"`
+.decl n804_meta_base(n: node)
+n804_meta_base(n) :- n804_type_ref(n).
+n804_meta_base(n) :-
+    ( sym_of(n, "abc.ABCMeta")
+    ; sym_of(n, "enum.EnumMeta")
+    ; sym_of(n, "enum.EnumType")
+    ).
+
+n804_meta_base(n) :- kind(n, "subscript"), field(n, "value", c1), n804_type_ref(c1).
+n804_meta_base(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), n804_meta_base(c2).
+
+// meta_class(n): the JSON util `meta-class`, used where the JSON says `matches: "meta-class"`
+.decl n804_meta_class(n: node)
+n804_meta_class(n) :- n804_demand_meta_class(n), kind(n, "class_definition"), child(n, c1, _),
+    kind(c1, "argument_list"), child(c1, c2, _), n804_alt_1(c2),
+    count : { precedes(s3, c2), n804_alt_2(s3) } = 0.
+
+// local_meta(n): the JSON util `local-meta`, used where the JSON says `matches: "local-meta"`
+.decl n804_local_meta(n: node)
+n804_local_meta(n) :- n804_demand_local_meta(n), kind(n, "identifier"), ref_site(n, b1),
+    n804_meta_class(b1), site_scope(b1, "module"), site_latest(b1).
+n804_local_meta(n) :- n804_demand_local_meta(n), n804_meta_attr(n, P).
+n804_local_meta(n) :- n804_demand_local_meta(n), kind(n, "subscript"), field(n, "value", c2),
+    n804_local_meta(c2).
+n804_local_meta(n) :- n804_demand_local_meta(n), kind(n, "parenthesized_expression"),
+    child(n, c3, _), n804_local_meta(c3).
+
+// call_tainted_class(n): the JSON util `call-tainted-class`, used where the JSON says `matches: "call-tainted-class"`
+.decl n804_call_tainted_class(n: node)
+n804_call_tainted_class(n) :- n804_demand_call_tainted_class(n), kind(n, "class_definition"),
+    child(n, c1, _), kind(c1, "argument_list"), child(c1, c2, _), n804_alt_2(c2).
+
+// call_tainted(n): the JSON util `call-tainted`, used where the JSON says `matches: "call-tainted"`
+.decl n804_call_tainted(n: node)
+n804_call_tainted(n) :- n804_demand_call_tainted(n), kind(n, "identifier"), ref_site(n, b1),
+    n804_call_tainted_class(b1), site_scope(b1, "module"), site_latest(b1).
+n804_call_tainted(n) :- n804_demand_call_tainted(n), n804_tainted_attr(n, P).
+n804_call_tainted(n) :- n804_demand_call_tainted(n), kind(n, "subscript"), field(n, "value", c2),
+    n804_call_tainted(c2).
+n804_call_tainted(n) :- n804_demand_call_tainted(n), kind(n, "parenthesized_expression"),
+    child(n, c3, _), n804_call_tainted(c3).
+
+// class_method(n): the JSON util `class-method`, used where the JSON says `matches: "class-method"`
+.decl n804_class_method(n: node)
+n804_class_method(n) :- n804_demand_class_method(n), kind(n, "function_definition"), n804_up_2(n, p1),
+    !n804_static_decorated(n),
+    ( n804_class_decorated(n)
+    ; field(n, "name", c1), glob("{__init_subclass__,__class_getitem__}", c1)
+    ; count : { field(n, "name", c2), glob("__new__", c2) } = 0, n804_up_1(n, p2)
+    ).
+
+
+// static_decorated(n): the JSON util `static-decorated`, used where the JSON says `matches: "static-decorated"`
+.decl n804_static_decorated(n: node)
+n804_static_decorated(n) :- child(p1, n, _), kind(p1, "decorated_definition"),
+    child(p1, c2, _), kind(c2, "decorator"), child(c2, c3, _),
+    (n804_static_ref(c3) ; kind(c3, "call"), field(c3, "function", c1), n804_static_ref(c1)).
+
+// class_decorated(n): the JSON util `class-decorated`, used where the JSON says `matches: "class-decorated"`
+.decl n804_class_decorated(n: node)
+n804_class_decorated(n) :- child(p1, n, _), kind(p1, "decorated_definition"),
+    child(p1, c2, _), kind(c2, "decorator"), child(c2, c3, _),
+    (n804_class_ref(c3) ; kind(c3, "call"), field(c3, "function", c1), n804_class_ref(c1)).
+
+// first_slot(n): the JSON util `first-slot`, used where the JSON says `matches: "first-slot"`
+.decl n804_first_slot(n: node)
+n804_first_slot(n) :- n804_demand_first_slot(n), child(p1, n, _), n804_counted_10(n),
+    k3 = count : { child(p1, s2, _), precedes(s2, n), n804_counted_10(s2) }, k3 = 0,
+    count : { child(n, c4, _), (kind(c4, "list_splat_pattern") ; kind(c4, "dictionary_splat_pattern")) } = 0,
+    child(p5, n, _), kind(p5, "parameters"), child(p6, p5, _),
+    kind(p6, "function_definition"), n804_class_method(p6).
+
+// meta_attr(n, …): the JSON util `meta-attr`, called with `matches` and arguments P
+.decl n804_meta_attr(n: node, p: node)
+// P: not bound by this rule, so empty (unset) here, as in ast-grep.
+n804_meta_attr(n, P) :- n804_demand_meta_attr(n), kind(n, "attribute"),
+    field(n, "attribute", c1), node(_, c1, _, _, _), A = c1, field(n, "object", c2),
+    kind(c2, "identifier"), ref_site(c2, b3), site_scope(b3, "module"),
+    site_latest(b3), kind(b3, "class_definition"), field(b3, "body", c4),
+    within_stop(c5, c4, n804_stop_11), kind(c5, "class_definition"), n804_meta_class(c5),
+    field(c5, "name", c6), node(_, c6, _, _, _), A = c6, unset(P).
+
+// tainted_attr(n, …): the JSON util `tainted-attr`, called with `matches` and arguments P
+.decl n804_tainted_attr(n: node, p: node)
+// P: not bound by this rule, so empty (unset) here, as in ast-grep.
+n804_tainted_attr(n, P) :- n804_demand_tainted_attr(n), kind(n, "attribute"),
+    field(n, "attribute", c1), node(_, c1, _, _, _), A = c1, field(n, "object", c2),
+    kind(c2, "identifier"), ref_site(c2, b3), site_scope(b3, "module"),
+    site_latest(b3), kind(b3, "class_definition"), field(b3, "body", c4),
+    within_stop(c5, c4, n804_stop_11), kind(c5, "class_definition"), n804_call_tainted_class(c5),
+    field(c5, "name", c6), node(_, c6, _, _, _), A = c6, unset(P).
+
+// scope_node(n): the JSON util `scope-node`, used where the JSON says `matches: "scope-node"`
+.decl n804_scope_node(n: node)
+n804_scope_node(n) :- (kind(n, "function_definition") ; kind(n, "class_definition")).
+
+// N804(n): a finding at node n, from clause `invalid-first-argument-name`.
+// Each rule below is one way the JSON `rule` can match.
+.violation N804(at: node) "Rename this class method's first parameter to `cls` and update its uses in the body, unless another parameter already has that name; keep it if the project follows another convention."
+    suppress noqa "N804"
+N804(n) :- kind(n, "identifier"), n804_first_slot(n), !n804_cls_name(n).
+N804(n) :- kind(n, "identifier"), !n804_cls_name(n), field(p1, "name", n),
+    kind(p1, "default_parameter"), n804_first_slot(p1).
+N804(n) :- kind(n, "typed_parameter"), n804_first_slot(n), child(n, c2, _),
+    kind(c2, "identifier"), !n804_cls_name(c2).
+
+// N804_invalid_first_argument_name_annotated_default(n): a finding at node n, from clause `invalid-first-argument-name-annotated-default`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation N804_invalid_first_argument_name_annotated_default(at: node, param: node) code "N804" "Rename this class method's first parameter to `cls` and update its uses in the body, unless another parameter already has that name; keep it if the project follows another convention."
+    suppress noqa "N804"
+N804_invalid_first_argument_name_annotated_default(PARAM, n) :- kind(n, "typed_default_parameter"),
+    n804_first_slot(n),
+    match("(?P<PARAM>(?:[^=\\[\\]()\"']|\"[^\"]*\"|'[^']*'|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\])*\\])*\\]|\\((?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*\\))+?)\\s*=.*", n),
+    field(n, "name", c1), !n804_cls_name(c1).
+
+// demand_first_slot: the rows of first_slot its callers ask for (the metavariable columns they pass in)
+.decl n804_demand_first_slot(n: node)
+n804_demand_first_slot(n) :- kind(n, "identifier").
+n804_demand_first_slot(p1) :- kind(n, "identifier"), field(p1, "name", n),
+    kind(p1, "default_parameter").
+n804_demand_first_slot(n) :- kind(n, "typed_parameter"), child(n, c2, _),
+    kind(c2, "identifier").
+n804_demand_first_slot(n) :- kind(n, "typed_default_parameter"),
+    match("(?P<PARAM>(?:[^=\\[\\]()\"']|\"[^\"]*\"|'[^']*'|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[(?:[^\\[\\]]|\\[[^\\[\\]]*\\])*\\])*\\])*\\]|\\((?:[^()]|\\((?:[^()]|\\([^()]*\\))*\\))*\\))+?)\\s*=.*", n),
+    field(n, "name", c1).
+
+// demand_class_method: the rows of class_method its callers ask for (the metavariable columns they pass in)
+.decl n804_demand_class_method(n: node)
+n804_demand_class_method(p6) :- n804_demand_first_slot(n), child(p1, n, _), n804_counted_10(n),
+    child(p5, n, _), kind(p5, "parameters"), child(p6, p5, _),
+    kind(p6, "function_definition").
+
+// demand_alt_1: the nodes alt_1 is asked at (its recursion looks at every descendant)
+.decl n804_demand_alt_1(n: node)
+n804_demand_alt_1(c2) :- n804_demand_meta_class(n), kind(n, "class_definition"), child(n, c1, _),
+    kind(c1, "argument_list"), child(c1, c2, _).
+
+// demand_local_meta: the nodes local_meta is asked at (its recursion looks at every descendant)
+.decl n804_demand_local_meta(n: node)
+n804_demand_local_meta(c2) :- n804_demand_local_meta(n), kind(n, "subscript"),
+    field(n, "value", c2).
+n804_demand_local_meta(c3) :- n804_demand_local_meta(n), kind(n, "parenthesized_expression"),
+    child(n, c3, _).
+n804_demand_local_meta(n) :- n804_demand_alt_1(n).
+
+// demand_meta_attr: the nodes meta_attr is asked at (its recursion looks at every descendant)
+.decl n804_demand_meta_attr(n: node)
+n804_demand_meta_attr(n) :- n804_demand_local_meta(n).
+
+// demand_meta_class: the nodes meta_class is asked at (its recursion looks at every descendant)
+.decl n804_demand_meta_class(n: node)
+n804_demand_meta_class(b1) :- n804_demand_local_meta(n), kind(n, "identifier"), ref_site(n, b1),
+    site_scope(b1, "module"), site_latest(b1).
+n804_demand_meta_class(p2) :- n804_demand_class_method(n), kind(n, "function_definition"),
+    n804_up_2(n, p1), n804_up_3(n, p2).
+n804_demand_meta_class(c5) :- n804_demand_meta_attr(n), kind(n, "attribute"),
+    field(n, "attribute", c1), node(_, c1, _, _, _), A = c1, field(n, "object", c2),
+    kind(c2, "identifier"), ref_site(c2, b3), site_scope(b3, "module"),
+    site_latest(b3), kind(b3, "class_definition"), field(b3, "body", c4),
+    within_stop(c5, c4, n804_stop_11), kind(c5, "class_definition"), field(c5, "name", c6),
+    node(_, c6, _, _, _), A = c6.
+
+// demand_alt_2: the nodes alt_2 is asked at (its recursion looks at every descendant)
+.decl n804_demand_alt_2(n: node)
+n804_demand_alt_2(s3) :- n804_demand_meta_class(n), kind(n, "class_definition"), child(n, c1, _),
+    kind(c1, "argument_list"), child(c1, c2, _), precedes(s3, c2).
+n804_demand_alt_2(c2) :- n804_demand_call_tainted_class(n), kind(n, "class_definition"),
+    child(n, c1, _), kind(c1, "argument_list"), child(c1, c2, _).
+
+// demand_call_tainted: the nodes call_tainted is asked at (its recursion looks at every descendant)
+.decl n804_demand_call_tainted(n: node)
+n804_demand_call_tainted(c2) :- n804_demand_call_tainted(n), kind(n, "subscript"),
+    field(n, "value", c2).
+n804_demand_call_tainted(c3) :- n804_demand_call_tainted(n), kind(n, "parenthesized_expression"),
+    child(n, c3, _).
+n804_demand_call_tainted(n) :- n804_demand_alt_2(n).
+
+// demand_call_tainted_class: the nodes call_tainted_class is asked at (its recursion looks at every descendant)
+.decl n804_demand_call_tainted_class(n: node)
+n804_demand_call_tainted_class(b1) :- n804_demand_call_tainted(n), kind(n, "identifier"),
+    ref_site(n, b1), site_scope(b1, "module"), site_latest(b1).
+n804_demand_call_tainted_class(c5) :- n804_demand_tainted_attr(n), kind(n, "attribute"),
+    field(n, "attribute", c1), node(_, c1, _, _, _), A = c1, field(n, "object", c2),
+    kind(c2, "identifier"), ref_site(c2, b3), site_scope(b3, "module"),
+    site_latest(b3), kind(b3, "class_definition"), field(b3, "body", c4),
+    within_stop(c5, c4, n804_stop_11), kind(c5, "class_definition"), field(c5, "name", c6),
+    node(_, c6, _, _, _), A = c6.
+
+// demand_tainted_attr: the nodes tainted_attr is asked at (its recursion looks at every descendant)
+.decl n804_demand_tainted_attr(n: node)
+n804_demand_tainted_attr(n) :- n804_demand_call_tainted(n).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl n804_up_1(n: node, p: node)
+n804_up_1(n, p) :- n804_demand_class_method(n), within_stop(n, p, n804_stop_11),
+    kind(p, "class_definition"), n804_meta_class(p).
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl n804_up_2(n: node, p: node)
+n804_up_2(n, p) :- n804_demand_class_method(n), within_stop(n, p, n804_stop_11),
+    kind(p, "class_definition").
+
+// up_3(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl n804_up_3(n: node, p: node)
+n804_up_3(n, p) :- n804_demand_class_method(n), within_stop(n, p, n804_stop_11),
+    kind(p, "class_definition").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl n804_alt_1(n: node)
+n804_alt_1(n) :- n804_demand_alt_1(n), n804_meta_base(n).
+n804_alt_1(n) :- n804_demand_alt_1(n), n804_local_meta(n).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl n804_alt_2(n: node)
+n804_alt_2(n) :- n804_demand_alt_2(n), kind(n, "call").
+n804_alt_2(n) :- n804_demand_alt_2(n), n804_call_tainted(n).
+
+// counted_10(n): the siblings the JSON `nthChild.ofRule` counts
+.decl n804_counted_10(n: node)
+n804_counted_10(n) :- node(_, n, _, _, _), !kind(n, "comment"),
+    !kind(n, "line_continuation").
+
+// stop_11(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl n804_stop_11(n: node)
+n804_stop_11(n) :- n804_scope_node(n).

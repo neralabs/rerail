@@ -1,0 +1,129 @@
+.policy "ruff-b025-duplicate-try-block-exception" revision 1
+.guests off
+.description "Remove exception types repeated across handlers of the same try block; only the first handler that names one can ever run."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B025(n): a finding at node n, from clause `duplicate-try-block-exception`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation B025(at: node, e: loc) "try-except block with duplicate exception `{e}`"
+    suppress noqa "B025"
+B025(n, E) :- b025_dotted(n), node(_, n, _, _, _), E = n, b025_name_slot(n),
+    count : { precedes(s1, n), node(_, s1, _, _, _), E = s1 } = 0, b025_up_1(n, p2), precedes(s3, p2),
+    b025_lists_e(s3, E).
+
+// dotted(n): the JSON util `dotted`, used where the JSON says `matches: "dotted"`
+.decl b025_dotted(n: node)
+b025_dotted(n) :- kind(n, "identifier").
+b025_dotted(n) :- kind(n, "attribute"), child(n, c1, _), !b025_tok_follows_1(c1), b025_dotted(c1).
+
+// type_slot(n): the JSON util `type-slot`, used where the JSON says `matches: "type-slot"`
+.decl b025_type_slot(n: node)
+b025_type_slot(n) :- b025_tok_follows_2(n), !b025_tok_precedes_3(n), child(p15, n, _),
+    kind(p15, "except_clause").
+b025_type_slot(n) :- !b025_tok_follows_4(n), child(p23, n, _), kind(p23, "as_pattern"),
+    b025_type_slot(p23).
+b025_type_slot(n) :- child(p24, n, _), kind(p24, "parenthesized_expression"),
+    b025_type_slot(p24).
+
+// name_slot(n): the JSON util `name-slot`, used where the JSON says `matches: "name-slot"`
+.decl b025_name_slot(n: node)
+b025_name_slot(n) :- b025_type_slot(n).
+b025_name_slot(n) :- child(p1, n, _), kind(p1, "tuple"), b025_type_slot(p1).
+b025_name_slot(n) :- child(p2, n, _), kind(p2, "except_clause"),
+    (b025_tok_precedes_7(n) ; b025_tok_follows_8(n)).
+b025_name_slot(n) :- child(p17, n, _), kind(p17, "parenthesized_expression"),
+    b025_name_slot(p17).
+
+// lists_e(n): the JSON util `lists-e`, used where the JSON says `matches: "lists-e"`
+//   E: metavariable of the calling rule, passed in (bound by the caller)
+.decl b025_lists_e(n: node, e: loc)
+b025_lists_e(n, E) :- b025_demand_lists_e(n, E), kind(n, "except_clause"),
+    within_stop(c1, n, "block"), text(c1, t_e1), text(E, t_e1), b025_dotted(c1),
+    b025_name_slot(c1), @doc(c1) = @doc(E).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b025_tok_follows_1(n: node)
+.stored b025_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b025_tok_follows_1(n) :- next_sibling(s2, n), match("(?s).*..*", s2).
+b025_tok_follows_1(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?s).*..*", t3).
+b025_tok_follows_1(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^(except|\\*)$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b025_tok_follows_2(n: node)
+.stored b025_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b025_tok_follows_2(n) :- next_sibling(s1, n), glob("{except,\\*}", s1).
+b025_tok_follows_2(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match("(except|\\*)", t2).
+b025_tok_follows_2(n) :- structural_before(n, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:except)\\s*|(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\*)\\s*)$", g3).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b025_tok_precedes_3(n: node)
+.stored b025_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b025_tok_precedes_3(n) :- next_sibling(n, s8), glob("\\,", s8).
+b025_tok_precedes_3(n) :- structural_after(n, g10), match("\\s*", g10), child(p11, n, _),
+    node(_, n, _, _, en14), o12 = en14 + strlen(g10), token(p11, _, t9, o12, _),
+    match(",", t9).
+b025_tok_precedes_3(n) :- structural_after(n, g10), match("(?s)^(?:\\s*(?:,).*)$", g10).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b025_tok_follows_4(n: node)
+.stored b025_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b025_tok_follows_4(n) :- next_sibling(s16, n), match("(?s).*..*", s16).
+b025_tok_follows_4(n) :- structural_before(n, g18), match("\\s*", g18), child(p19, n, _),
+    node(_, n, _, st21, _), o20 = st21 - strlen(g18), token(p19, _, t17, _, o20),
+    match("(?s).*..*", t17).
+b025_tok_follows_4(n) :- structural_before(n, g18), match("(?s)^.*\\S\\s*$", g18).
+
+// tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b025_tok_precedes_5(n: node)
+.stored b025_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b025_tok_precedes_5(n) :- next_sibling(n, s3), glob("\\,", s3).
+b025_tok_precedes_5(n) :- structural_after(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, _, en9), o7 = en9 + strlen(g5), token(p6, _, t4, o7, _),
+    match(",", t4).
+b025_tok_precedes_5(n) :- structural_after(n, g5), match("(?s)^(?:\\s*(?:,).*)$", g5).
+
+// tok_follows_6(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b025_tok_follows_6(n: node)
+.stored b025_tok_follows_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b025_tok_follows_6(n) :- next_sibling(s10, n), glob("\\,", s10).
+b025_tok_follows_6(n) :- structural_before(n, g12), match("\\s*", g12), child(p13, n, _),
+    node(_, n, _, st15, _), o14 = st15 - strlen(g12), token(p13, _, t11, _, o14),
+    match(",", t11).
+b025_tok_follows_6(n) :- structural_before(n, g12), match("(?s)^(?:.*(?:,)\\s*)$", g12).
+
+// tok_precedes_7(n): a later sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b025_tok_precedes_7(n: node)
+.stored b025_tok_precedes_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b025_tok_precedes_7(n) :- next_sibling(n, s1), glob("\\,", s1).
+b025_tok_precedes_7(n) :- structural_after(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, _, en7), o5 = en7 + strlen(g3), token(p4, _, t2, o5, _),
+    match(",", t2).
+b025_tok_precedes_7(n) :- structural_after(n, g3), match("(?s)^(?:\\s*(?:,).*)$", g3).
+
+// tok_follows_8(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b025_tok_follows_8(n: node)
+.stored b025_tok_follows_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b025_tok_follows_8(n) :- next_sibling(s8, n), glob("\\,", s8).
+b025_tok_follows_8(n) :- structural_before(n, g10), match("\\s*", g10), child(p11, n, _),
+    node(_, n, _, st13, _), o12 = st13 - strlen(g10), token(p11, _, t9, _, o12),
+    match(",", t9).
+b025_tok_follows_8(n) :- structural_before(n, g10), match("(?s)^(?:.*(?:,)\\s*)$", g10).
+
+// demand_lists_e: the rows of lists_e its callers ask for (the metavariable columns they pass in)
+.decl b025_demand_lists_e(n: node, e: loc)
+b025_demand_lists_e(s3, E) :- b025_dotted(n), node(_, n, _, _, _), E = n, b025_name_slot(n), b025_up_1(n, p2),
+    precedes(s3, p2).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl b025_up_1(n: node, p: node)
+b025_up_1(n, p) :- b025_dotted(n), b025_name_slot(n), within_stop(n, p, "except_clause"),
+    kind(p, "except_clause").

@@ -1,0 +1,127 @@
+.policy "ruff-dtz007-call-datetime-strptime-without-zone" revision 1
+.guests off
+.description "Make datetimes parsed from text timezone-aware, by parsing a UTC offset or attaching a timezone afterwards; naive datetimes can't be safely compared with aware ones."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl dtz007_callee(n: node)
+dtz007_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "datetime.datetime.strptime").
+dtz007_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), dtz007_callee(c1).
+
+// astz_safe(n): the JSON util `astz-safe`, used where the JSON says `matches: "astz-safe"`
+.decl dtz007_astz_safe(n: node)
+dtz007_astz_safe(n) :- within_stop(n, p1, dtz007_stop_1), kind(p1, "attribute"), dtz007_alt_3(p1).
+
+// none_lit(n): the JSON util `none-lit`, used where the JSON says `matches: "none-lit"`
+.decl dtz007_none_lit(n: node)
+dtz007_none_lit(n) :- kind(n, "none").
+dtz007_none_lit(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), dtz007_none_lit(c1).
+
+// z_format(n): the JSON util `z-format`, used where the JSON says `matches: "z-format"`
+.decl dtz007_z_format(n: node)
+dtz007_z_format(n) :-
+    ( kind(n, "string"), !dtz007_alt_5(n)
+    ; kind(n, "concatenated_string"), count : { child(n, c1, _), kind(c1, "string"), dtz007_alt_5(c1) } = 0
+    ),
+    value(n, v6), contains("%z", v6).
+dtz007_z_format(n) :- dtz007_alt_10(n).
+dtz007_z_format(n) :- kind(n, "parenthesized_expression"), child(n, c16, _), dtz007_z_format(c16).
+
+// positional(n): the JSON util `positional`, used where the JSON says `matches: "positional"`
+.decl dtz007_positional(n: node)
+dtz007_positional(n) :- node(_, n, _, _, _), !kind(n, "keyword_argument"),
+    !kind(n, "dictionary_splat"), !kind(n, "comment"), !kind(n, "line_continuation").
+
+// zoned(n): the JSON util `zoned`, used where the JSON says `matches: "zoned"`
+.decl dtz007_zoned(n: node)
+dtz007_zoned(n) :- child(n, c1, _), kind(c1, "argument_list"), child(c1, c2, _),
+    child(p3, c2, _), dtz007_counted_11(c2),
+    k5 = count : { child(p3, s4, _), precedes(s4, c2), dtz007_counted_11(s4) }, k5 = 1,
+    dtz007_positional(c2), dtz007_z_format(c2).
+
+// replace_tz_none(n): the JSON util `replace-tz-none`, used where the JSON says `matches: "replace-tz-none"`
+.decl dtz007_replace_tz_none(n: node)
+dtz007_replace_tz_none(n) :- dtz007_demand_replace_tz_none(n), dtz007_up_1(n, p1),
+    field(p1, "attribute", c2), glob("replace", c2), within_stop(p1, p3, dtz007_stop_13),
+    kind(p3, "call"), child(p3, c4, _), kind(c4, "argument_list"), child(c4, c5, _),
+    kind(c5, "keyword_argument"), field(c5, "name", c6), glob("tzinfo", c6),
+    field(c5, "value", c7), dtz007_none_lit(c7).
+
+// replace_tz(n): the JSON util `replace-tz`, used where the JSON says `matches: "replace-tz"`
+.decl dtz007_replace_tz(n: node)
+dtz007_replace_tz(n) :- dtz007_demand_replace_tz(n), dtz007_up_2(n, p1), field(p1, "attribute", c2),
+    glob("replace", c2), within_stop(p1, p3, dtz007_stop_13), kind(p3, "call"),
+    child(p3, c4, _), kind(c4, "argument_list"), child(c4, c5, _),
+    kind(c5, "keyword_argument"), field(c5, "name", c6), glob("tzinfo", c6).
+
+// DTZ007(n, detail): findings from clauses `no-zone`, `replace-tzinfo-none`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+.violation DTZ007(at: node, detail: symbol) "{detail} is intended."
+    suppress noqa "DTZ007"
+DTZ007(n, "Make the result aware: parse a UTC offset with `%z`, else chain `.replace(tzinfo=...)` with the text's timezone (`.astimezone()` if it is local time); keep it naive only if that") :- kind(n, "call"),
+    field(n, "function", c1), dtz007_callee(c1), !dtz007_alt_16(n), !dtz007_replace_tz(n).
+DTZ007(n, "Pass the timezone the text is in to `tzinfo`, e.g. `datetime.timezone.utc`, instead of `None`; keep `None` only if a naive datetime") :- kind(n, "call"),
+    field(n, "function", c1), dtz007_callee(c1), !dtz007_alt_16(n), dtz007_replace_tz_none(n).
+
+// demand_replace_tz_none: the nodes replace_tz_none is asked at (it looks at every ancestor of every node)
+.decl dtz007_demand_replace_tz_none(n: node)
+dtz007_demand_replace_tz_none(n) :- kind(n, "call"), field(n, "function", c1), dtz007_callee(c1).
+
+// demand_replace_tz: the nodes replace_tz is asked at (it looks at every ancestor of every node)
+.decl dtz007_demand_replace_tz(n: node)
+dtz007_demand_replace_tz(n) :- kind(n, "call"), field(n, "function", c1), dtz007_callee(c1).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl dtz007_up_1(n: node, p: node)
+dtz007_up_1(n, p) :- dtz007_demand_replace_tz_none(n), within_stop(n, p, dtz007_stop_1),
+    kind(p, "attribute").
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl dtz007_up_2(n: node, p: node)
+dtz007_up_2(n, p) :- dtz007_demand_replace_tz(n), within_stop(n, p, dtz007_stop_1), kind(p, "attribute").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl dtz007_stop_1(n: node)
+dtz007_stop_1(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl dtz007_alt_3(n: node)
+dtz007_alt_3(n) :- field(n, "attribute", c1), glob("astimezone", c1).
+dtz007_alt_3(n) :- field(n, "attribute", c2), glob("replace", c2), within_stop(n, p3, dtz007_stop_1),
+    kind(p3, "call"), dtz007_astz_safe(p3).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl dtz007_alt_5(n: node)
+dtz007_alt_5(n) :- child(n, c1, _), kind(c1, "interpolation").
+dtz007_alt_5(n) :- child(n, c2, _), kind(c2, "string_start"), match("[A-Za-z]*[tT].*", c2).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl dtz007_alt_10(n: node)
+dtz007_alt_10(n) :- kind(n, "string"), child(n, c1, _), kind(c1, "interpolation"),
+    child(n, c2, _), kind(c2, "string_content"), contains("%z", c2),
+    count : { child(n, c3, _), kind(c3, "string_start"), match("[A-Za-z]*[tT].*", c3) } = 0.
+dtz007_alt_10(n) :- kind(n, "concatenated_string"), child(n, c4, _), kind(c4, "string"),
+    child(c4, c5, _), kind(c5, "interpolation"), child(n, c6, _), kind(c6, "string"),
+    child(c6, c7, _), kind(c7, "string_content"), contains("%z", c7),
+    count : { child(n, c8, _), kind(c8, "string"), child(c8, c9, _), kind(c9, "string_start"), match("[A-Za-z]*[tT].*", c9) } = 0.
+
+// counted_11(n): the siblings the JSON `nthChild.ofRule` counts
+.decl dtz007_counted_11(n: node)
+dtz007_counted_11(n) :- dtz007_positional(n).
+
+// stop_13(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl dtz007_stop_13(n: node)
+dtz007_stop_13(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression"),
+    !kind(n, "argument_list"), !kind(n, "keyword_argument"),
+    !kind(n, "dictionary_splat").
+
+// alt_16(n): the JSON `any`: n matches if any one of these rules does
+.decl dtz007_alt_16(n: node)
+dtz007_alt_16(n) :- dtz007_astz_safe(n).
+dtz007_alt_16(n) :- dtz007_zoned(n).

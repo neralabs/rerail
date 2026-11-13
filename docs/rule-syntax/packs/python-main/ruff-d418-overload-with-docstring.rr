@@ -1,0 +1,68 @@
+.policy "ruff-d418-overload-with-docstring" revision 1
+.guests off
+.description "Document an overloaded Python function on its implementation instead of its overload signatures, which the implementation replaces at runtime."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// D418(n): a finding at node n, from clause `overload-with-docstring`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation D418(at: node) "Remove the docstring from this `@overload` signature and document the function on its implementation instead."
+    suppress noqa "D418"
+D418_raw(n) :- kind(n, "identifier"), field(p1, "name", n),
+    kind(p1, "function_definition"), child(p2, p1, _),
+    kind(p2, "decorated_definition"), child(p2, c3, _), kind(c3, "decorator"),
+    child(c3, c4, _), d418_overload(c4), field(p1, "body", c5), child(c5, c6, _),
+    kind(c6, "expression_statement"), !d418_alt_1(c6), child(c6, c16, _), d418_doc_expr(c16).
+
+// overload(n): the JSON util `overload`, used where the JSON says `matches: "overload"`
+.decl d418_overload(n: node)
+d418_overload(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.overload")
+    ; sym_of(n, "typing_extensions.overload")
+    ; sym_of(n, "_typeshed.overload")
+    ).
+
+d418_overload(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), d418_overload(c1).
+
+// doc_expr(n): the JSON util `doc-expr`, used where the JSON says `matches: "doc-expr"`
+.decl d418_doc_expr(n: node)
+d418_doc_expr(n) :- kind(n, "string"),
+    count : { child(n, c1, _), kind(c1, "string_start"), glob("**[bBfFtT]**", c1) } = 0,
+    child(n, c2, _), kind(c2, "string_content"), match(".*\\S.*", c2).
+d418_doc_expr(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), d418_doc_expr(c3).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl d418_tok_has_1(n: node)
+.stored d418_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+d418_tok_has_1(n) :- child(n, c7, _), glob("\\,", c7).
+d418_tok_has_1(n) :- op(n, t8), match(",", t8).
+d418_tok_has_1(n) :- child(n, c14, _), structural_before(c14, g9),
+    match("(?s)^(?:.*(?:,).*)$", g9).
+d418_tok_has_1(n) :- child(n, c14, _), structural_after(c14, g9),
+    match("(?s)^(?:.*(?:,).*)$", g9).
+d418_tok_has_1(n) :- node_text(n, g9), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g9).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl d418_tok_has_2(n: node)
+.stored d418_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+d418_tok_has_2(n) :- child(n, c1, _), glob("\\,", c1).
+d418_tok_has_2(n) :- op(n, t2), match(",", t2).
+d418_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+d418_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+d418_tok_has_2(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl d418_alt_1(n: node)
+d418_alt_1(n) :- d418_tok_has_2(n).
+d418_alt_1(n) :- precedes(s9, n), !kind(s9, "comment").
+
+// main's file condition {"notRegex": "\\.pyi$"}
+.decl D418_raw(at: node)
+D418(v0) :- D418_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), !match("\\.pyi$", rr_p).

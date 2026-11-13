@@ -1,0 +1,105 @@
+.policy "ruff-t100-debugger" revision 1
+.guests off
+.description "Remove debugger imports and calls such as pdb.set_trace() and breakpoint() before committing."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// T100(n): a finding at node n, from clause `debugger-import`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation T100(at: node, d: loc) "Remove this debugger import of `{d}` before committing."
+    suppress noqa "T100"
+T100(n, D) :- kind(n, "import_statement"), has(n, c1, "dotted_name"),
+    t100_statement_name(c1, q2),
+    ( q2 = "pdb"
+    ; q2 = "pudb"
+    ; q2 = "ipdb"
+    ; q2 = "debugpy"
+    ; q2 = "ptvsd"
+    ; q2 = "IPython.terminal.embed"
+    ; q2 = "IPython.frontend.terminal.embed"
+    ; q2 = "celery.contrib.rdb"
+    ),
+    node(_, c1, _, _, _), D = c1.
+T100(n, D) :- kind(n, "import_from_statement"), has(n, c3, "dotted_name"),
+    t100_statement_name(c3, q4),
+    ( q4 = "pdb.set_trace"
+    ; q4 = "pudb.set_trace"
+    ; q4 = "ipdb.set_trace"
+    ; q4 = "ipdb.sset_trace"
+    ; q4 = "IPython.terminal.embed.InteractiveShellEmbed"
+    ; q4 = "IPython.frontend.terminal.embed.InteractiveShellEmbed"
+    ; q4 = "celery.contrib.rdb.set_trace"
+    ; q4 = "builtins.breakpoint"
+    ; q4 = "debugpy.breakpoint"
+    ; q4 = "debugpy.listen"
+    ; q4 = "debugpy.wait_for_client"
+    ; q4 = "ptvsd.break_into_debugger"
+    ; q4 = "ptvsd.wait_for_attach"
+    ; q4 = "sys.breakpointhook"
+    ; q4 = "sys.__breakpointhook__"
+    ),
+    node(_, c3, _, _, _), D = c3.
+T100(n, D) :- kind(n, "import_from_statement"), child(n, c5, _),
+    kind(c5, "relative_import"),
+    count : { child(c5, c6, _), kind(c6, "dotted_name") } = 0,
+    has(n, c7, "dotted_name"), t100_statement_name(c7, q8),
+    (q8 = "pdb" ; q8 = "pudb" ; q8 = "ipdb" ; q8 = "debugpy" ; q8 = "ptvsd"),
+    node(_, c7, _, _, _), D = c7.
+
+// T100_debugger_call(n): a finding at node n, from clause `debugger-call`.
+// Each rule below is one way the JSON `rule` can match.
+.violation T100_debugger_call(at: node) code "T100" "Remove this debugger call before committing."
+    suppress noqa "T100"
+T100_debugger_call(n) :- kind(n, "call"), child(n, c1, _), t100_debugger_callee(c1),
+    next_sibling(c1, s2), kind(s2, "argument_list").
+
+// debugger_callee(n): the JSON util `debugger-callee`, used where the JSON says `matches: "debugger-callee"`
+.decl t100_debugger_callee(n: node)
+t100_debugger_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "breakpoint"), sym_of(n, q1), t100_set_1(q1).
+t100_debugger_callee(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    t100_debugger_callee(c2).
+
+// from_module: the module text of from-import s, read as `relative: "text"` does (dots dropped)
+.decl t100_from_module(s: node, m: symbol)
+t100_from_module(s, m) :- kind(s, "future_import_statement"), m = "__future__".
+t100_from_module(s, m) :- kind(s, "import_from_statement"), field(s, "module_name", x),
+    kind(x, "dotted_name"), name(x, m).
+t100_from_module(s, m) :- kind(s, "import_from_statement"), field(s, "module_name", x),
+    kind(x, "relative_import"), child(x, y, _), kind(y, "dotted_name"), name(y, m).
+t100_from_module(s, "") :- kind(s, "import_from_statement"), field(s, "module_name", x),
+    kind(x, "relative_import"), count : { child(x, y, _), kind(y, "dotted_name") } = 0.
+
+// statement_name: dotted name n in an import statement imports q (relative modules by their text)
+.decl t100_statement_name(n: node, q: symbol)
+t100_statement_name(n, q) :- kind(n, "dotted_name"), child(s, n, _),
+    kind(s, "import_statement"), name(n, q).
+t100_statement_name(n, q) :- kind(n, "dotted_name"), child(s, n, _),
+    kind(s, "relative_import"), name(n, q).
+t100_statement_name(n, q) :- kind(n, "dotted_name"), field(a, "name", n),
+    kind(a, "aliased_import"), child(s, a, _), kind(s, "import_statement"), name(n, q).
+t100_statement_name(n, q) :- kind(n, "dotted_name"), field(a, "name", n),
+    kind(a, "aliased_import"), child(s, a, _),
+    (kind(s, "import_from_statement") ; kind(s, "future_import_statement")),
+    t100_from_module(s, m), name(n, x), q = @dot(m, x).
+t100_statement_name(n, m) :- kind(n, "dotted_name"), field(s, "module_name", n),
+    (kind(s, "import_from_statement") ; kind(s, "future_import_statement")),
+    t100_from_module(s, m).
+t100_statement_name(n, q) :- kind(n, "dotted_name"), child(s, n, _),
+    (kind(s, "import_from_statement") ; kind(s, "future_import_statement")),
+    !field(s, "module_name", n), t100_from_module(s, m), name(n, x), q = @dot(m, x).
+
+// set_1: symbols from the JSON `resolves.import`
+.decl t100_set_1(v: symbol)
+t100_set_1("pdb.set_trace"). t100_set_1("pudb.set_trace"). t100_set_1("ipdb.set_trace").
+t100_set_1("ipdb.sset_trace"). t100_set_1("IPython.terminal.embed.InteractiveShellEmbed").
+t100_set_1("IPython.frontend.terminal.embed.InteractiveShellEmbed").
+t100_set_1("celery.contrib.rdb.set_trace"). t100_set_1("builtins.breakpoint").
+t100_set_1("debugpy.breakpoint"). t100_set_1("debugpy.listen"). t100_set_1("debugpy.wait_for_client").
+t100_set_1("ptvsd.break_into_debugger"). t100_set_1("ptvsd.wait_for_attach").
+t100_set_1("sys.breakpointhook"). t100_set_1("sys.__breakpointhook__").

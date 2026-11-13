@@ -1,0 +1,52 @@
+.policy "ruff-pie804-unnecessary-dict-kwargs" revision 2
+.guests off
+.description "Pass keyword arguments directly instead of unpacking a dict literal into a Python call."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// PIE804(n): a finding at node n, from clause `unnecessary-dict-kwargs`.
+// Each rule below is one way the JSON `rule` can match.
+.violation PIE804(at: node) "Unnecessary `dict` kwargs"
+    suppress noqa "PIE804"
+PIE804(n) :- kind(n, "dictionary_splat"), child(p1, n, _), kind(p1, "argument_list"),
+    child(p2, p1, _), kind(p2, "call"), child(n, c3, _), pie804_spread_dict(c3).
+
+// kwarg_string(n): the JSON util `kwarg-string`, used where the JSON says `matches: "kwarg-string"`
+.decl pie804_kwarg_string(n: node)
+pie804_kwarg_string(n) :-
+    ( kind(n, "string"), match("[uUrR]{0,2}['\"].*", n)
+    ; kind(n, "concatenated_string"), count : { child(n, c1, _), kind(c1, "string"), !match("[uUrR]{0,2}['\"].*", c1) } = 0
+    ),
+    value(n, v2), match("[\\p{XID_Start}_]\\p{XID_Continue}*", v2),
+    count : { value(n, v3), glob("{False,None,True,and,as,assert,async,await,break,class,continue,def,del,elif,else,except,finally,for,from,global,if,import,in,is,lambda,nonlocal,not,or,pass,raise,return,try,while,with,yield}", v3) } = 0.
+
+// kwarg_key(n): the JSON util `kwarg-key`, used where the JSON says `matches: "kwarg-key"`
+.decl pie804_kwarg_key(n: node)
+pie804_kwarg_key(n) :- pie804_kwarg_string(n).
+pie804_kwarg_key(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pie804_kwarg_key(c1).
+
+// spread_dict(n): the JSON util `spread-dict`, used where the JSON says `matches: "spread-dict"`
+.decl pie804_spread_dict(n: node)
+pie804_spread_dict(n) :- kind(n, "dictionary"),
+    ( k1 = count : { child(n, c1, _), !pie804_alt_2(c1) }, k1 >= 1, k1 <= 1, child(n, c2, _), kind(c2, "dictionary_splat")
+    ; count : { child(n, c3, _), !pie804_alt_2(c3), count : { kind(c3, "pair"), child(c3, c4, _), !pie804_tok_follows_1(c4), pie804_kwarg_key(c4) } = 0 } = 0
+    ).
+
+pie804_spread_dict(n) :- kind(n, "parenthesized_expression"), child(n, c13, _),
+    pie804_spread_dict(c13).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie804_tok_follows_1(n: node)
+.stored pie804_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie804_tok_follows_1(n) :- next_sibling(s6, n), match("(?s).*..*", s6).
+pie804_tok_follows_1(n) :- structural_before(n, g8), match("\\s*", g8), child(p9, n, _),
+    node(_, n, _, st11, _), o10 = st11 - strlen(g8), token(p9, _, t7, _, o10),
+    match("(?s).*..*", t7).
+pie804_tok_follows_1(n) :- structural_before(n, g8), match("(?s)^.*\\S\\s*$", g8).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pie804_alt_2(n: node)
+pie804_alt_2(n) :- node(_, n, _, _, _), glob("[{},]", n).
+pie804_alt_2(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).

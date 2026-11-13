@@ -1,0 +1,397 @@
+.policy "ruff-pie810-multiple-starts-ends-with" revision 1
+.guests off
+.description "Pass a tuple to one startswith() or endswith() call instead of or-ing several calls on the same string."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PIE810(n): a finding at node n, from clause `multiple-starts-ends-with`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PIE810(at: node, first: loc, m: loc) "Call `{m}` once with a tuple of all the prefixes or suffixes instead of or-ing several calls."
+    suppress noqa "PIE810"
+PIE810(n, FIRST, M) :- kind(n, "boolean_operator"), pie810_or_op(n),
+    count : { child(p1, n, _), pie810_or_op(p1) } = 0, within_stop(c2, n, pie810_stop_10),
+    count : { pie810_or_op(c2) } = 0, count : { precedes(s1_2, c2), (!pie810_or_op(s1_2), pie810_affix_call(s1_2, M, R) ; pie810_or_op(s1_2), pie810_stop_10_within(c1_2, s1_2), !pie810_or_op(c1_2), pie810_affix_call(c1_2, M, R)) } = 0,
+    pie810_affix_call(c2, M, R), node(_, c2, _, _, _), FIRST = c2, within_stop(c2, p5, pie810_stop_10), pie810_or_op(p5),
+    count : { child(p6, p5, _), pie810_or_op(p6) } = 0, within_stop(c7, p5, pie810_stop_10),
+    !pie810_or_op(c7), pie810_affix_call(c7, M, R), node(_, c7, _, _, _), SECOND = c7,
+    text(SECOND, t8), text(FIRST, t9), t8 != t9.
+
+// or_op(n): the JSON util `or-op`, used where the JSON says `matches: "or-op"`
+.decl pie810_or_op(n: node)
+pie810_or_op(n) :- kind(n, "boolean_operator"), pie810_tok_has_1(n).
+
+// tuple_expr(n): the JSON util `tuple-expr`, used where the JSON says `matches: "tuple-expr"`
+.decl pie810_tuple_expr(n: node)
+pie810_tuple_expr(n) :- pie810_tuple_expr_u7(n).
+
+// tuple_init(n): the JSON util `tuple-init`, used where the JSON says `matches: "tuple-init"`
+.decl pie810_tuple_init(n: node)
+pie810_tuple_init(n) :- pie810_tuple_expr(n).
+pie810_tuple_init(n) :- kind(n, "call"), child(n, c1, _), pie810_tuple_callee(c1),
+    next_sibling(c1, s2),
+    (kind(s2, "argument_list") ; kind(s2, "generator_expression")).
+
+// tuple_callee(n): the JSON util `tuple-callee`, used where the JSON says `matches: "tuple-callee"`
+.decl pie810_tuple_callee(n: node)
+pie810_tuple_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "builtins.tuple"), global_ref(n, "tuple").
+pie810_tuple_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pie810_tuple_callee(c1).
+
+// tuple_ann(n): the JSON util `tuple-ann`, used where the JSON says `matches: "tuple-ann"`
+.decl pie810_tuple_ann(n: node)
+pie810_tuple_ann(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "builtins.tuple"), global_ref(n, "tuple").
+pie810_tuple_ann(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Tuple")
+    ; sym_of(n, "_typeshed.Tuple")
+    ; sym_of(n, "typing_extensions.Tuple")
+    ).
+
+pie810_tuple_ann(n) :- (kind(n, "subscript") ; kind(n, "generic_type")), child(n, c1, _),
+    !pie810_tok_follows_6(c1), pie810_tuple_ann(c1).
+pie810_tuple_ann(n) :- kind(n, "parenthesized_expression"), child(n, c9, _), pie810_tuple_ann(c9).
+
+// tuple_bound(n): the JSON util `tuple-bound`, used where the JSON says `matches: "tuple-bound"`
+.decl pie810_tuple_bound(n: node)
+pie810_tuple_bound(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pie810_tuple_bound(c1).
+pie810_tuple_bound(n) :- kind(n, "identifier"), pie810_alt_4(n).
+
+// plain_target(n): the JSON util `plain-target`, used where the JSON says `matches: "plain-target"`
+.decl pie810_plain_target(n: node)
+pie810_plain_target(n) :- kind(n, "identifier").
+pie810_plain_target(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pie810_plain_target(c1).
+
+// affix_call(n): the JSON util `affix-call`, used where the JSON says `matches: "affix-call"`
+//   M, R: metavariables this relation binds for the calling rule
+.decl pie810_affix_call(n: node, m: loc, r: loc)
+pie810_affix_call(n, M, R) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pie810_affix_call(c1, M, R).
+pie810_affix_call(n, M, R) :- kind(n, "call"), field(n, "function", c2),
+    kind(c2, "attribute"), field(c2, "object", c3), kind(c3, "identifier"), node(_, c3, _, _, _), R = c3,
+    field(c2, "attribute", c4), glob("{startswith,endswith}", c4), node(_, c4, _, _, _), M = c4,
+    field(n, "arguments", c5), kind(c5, "argument_list"),
+    k7 = count : { child(c5, c6, _), !glob("[(),]", c6) }, k7 >= 1, k7 <= 1,
+    count : { child(c5, c8, _), pie810_alt_6(c8) } = 0.
+
+.decl pie810_alt_1_u0(n: node)
+pie810_alt_1_u0(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+pie810_alt_1_u0(n) :- kind(n, "comment").
+
+.decl pie810_alt_1_u1(n: node)
+pie810_alt_1_u1(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+pie810_alt_1_u1(n) :- kind(n, "comment").
+pie810_alt_1_u1(n) :- pie810_tuple_expr_u0(n).
+
+.decl pie810_alt_1_u2(n: node)
+pie810_alt_1_u2(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+pie810_alt_1_u2(n) :- kind(n, "comment").
+pie810_alt_1_u2(n) :- pie810_tuple_expr_u1(n).
+
+.decl pie810_alt_1_u3(n: node)
+pie810_alt_1_u3(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+pie810_alt_1_u3(n) :- kind(n, "comment").
+pie810_alt_1_u3(n) :- pie810_tuple_expr_u2(n).
+
+.decl pie810_alt_1_u4(n: node)
+pie810_alt_1_u4(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+pie810_alt_1_u4(n) :- kind(n, "comment").
+pie810_alt_1_u4(n) :- pie810_tuple_expr_u3(n).
+
+.decl pie810_alt_1_u5(n: node)
+pie810_alt_1_u5(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+pie810_alt_1_u5(n) :- kind(n, "comment").
+pie810_alt_1_u5(n) :- pie810_tuple_expr_u4(n).
+
+.decl pie810_alt_1_u6(n: node)
+pie810_alt_1_u6(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+pie810_alt_1_u6(n) :- kind(n, "comment").
+pie810_alt_1_u6(n) :- pie810_tuple_expr_u5(n).
+
+.decl pie810_alt_1_u7(n: node)
+pie810_alt_1_u7(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+pie810_alt_1_u7(n) :- kind(n, "comment").
+pie810_alt_1_u7(n) :- pie810_tuple_expr_u6(n).
+
+.decl pie810_alt_2_u0(n: node)
+pie810_alt_2_u0(n) :- node(_, n, _, _, _), glob("+", n).
+pie810_alt_2_u0(n) :- kind(n, "comment").
+
+.decl pie810_alt_2_u1(n: node)
+pie810_alt_2_u1(n) :- node(_, n, _, _, _), glob("+", n).
+pie810_alt_2_u1(n) :- kind(n, "comment").
+pie810_alt_2_u1(n) :- pie810_tuple_expr_u0(n).
+
+.decl pie810_alt_2_u2(n: node)
+pie810_alt_2_u2(n) :- node(_, n, _, _, _), glob("+", n).
+pie810_alt_2_u2(n) :- kind(n, "comment").
+pie810_alt_2_u2(n) :- pie810_tuple_expr_u1(n).
+
+.decl pie810_alt_2_u3(n: node)
+pie810_alt_2_u3(n) :- node(_, n, _, _, _), glob("+", n).
+pie810_alt_2_u3(n) :- kind(n, "comment").
+pie810_alt_2_u3(n) :- pie810_tuple_expr_u2(n).
+
+.decl pie810_alt_2_u4(n: node)
+pie810_alt_2_u4(n) :- node(_, n, _, _, _), glob("+", n).
+pie810_alt_2_u4(n) :- kind(n, "comment").
+pie810_alt_2_u4(n) :- pie810_tuple_expr_u3(n).
+
+.decl pie810_alt_2_u5(n: node)
+pie810_alt_2_u5(n) :- node(_, n, _, _, _), glob("+", n).
+pie810_alt_2_u5(n) :- kind(n, "comment").
+pie810_alt_2_u5(n) :- pie810_tuple_expr_u4(n).
+
+.decl pie810_alt_2_u6(n: node)
+pie810_alt_2_u6(n) :- node(_, n, _, _, _), glob("+", n).
+pie810_alt_2_u6(n) :- kind(n, "comment").
+pie810_alt_2_u6(n) :- pie810_tuple_expr_u5(n).
+
+.decl pie810_alt_2_u7(n: node)
+pie810_alt_2_u7(n) :- node(_, n, _, _, _), glob("+", n).
+pie810_alt_2_u7(n) :- kind(n, "comment").
+pie810_alt_2_u7(n) :- pie810_tuple_expr_u6(n).
+
+.decl pie810_tuple_expr_u0(n: node)
+pie810_tuple_expr_u0(n) :- (kind(n, "tuple") ; kind(n, "expression_list")).
+pie810_tuple_expr_u0(n) :- kind(n, "boolean_operator"), count : { child(n, c26, _) } = 0.
+pie810_tuple_expr_u0(n) :- kind(n, "binary_operator"), pie810_tok_has_5(n),
+    count : { child(n, c35, _) } = 0.
+
+.decl pie810_tuple_expr_u1(n: node)
+pie810_tuple_expr_u1(n) :- (kind(n, "tuple") ; kind(n, "expression_list")).
+pie810_tuple_expr_u1(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pie810_tuple_expr_u0(c1).
+pie810_tuple_expr_u1(n) :- kind(n, "named_expression"), child(n, c2, _), pie810_tok_follows_2(c2),
+    pie810_tuple_expr_u0(c2).
+pie810_tuple_expr_u1(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    pie810_tok_precedes_3(c10), pie810_tuple_expr_u0(c10), child(n, c18, _), pie810_tok_follows_4(c18),
+    pie810_tuple_expr_u0(c18).
+pie810_tuple_expr_u1(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !pie810_alt_1_u0(c26) } = 0.
+pie810_tuple_expr_u1(n) :- kind(n, "binary_operator"), pie810_tok_has_5(n),
+    count : { child(n, c35, _), !pie810_alt_2_u0(c35) } = 0.
+
+.decl pie810_tuple_expr_u2(n: node)
+pie810_tuple_expr_u2(n) :- (kind(n, "tuple") ; kind(n, "expression_list")).
+pie810_tuple_expr_u2(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pie810_tuple_expr_u1(c1).
+pie810_tuple_expr_u2(n) :- kind(n, "named_expression"), child(n, c2, _), pie810_tok_follows_2(c2),
+    pie810_tuple_expr_u1(c2).
+pie810_tuple_expr_u2(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    pie810_tok_precedes_3(c10), pie810_tuple_expr_u1(c10), child(n, c18, _), pie810_tok_follows_4(c18),
+    pie810_tuple_expr_u1(c18).
+pie810_tuple_expr_u2(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !pie810_alt_1_u1(c26) } = 0.
+pie810_tuple_expr_u2(n) :- kind(n, "binary_operator"), pie810_tok_has_5(n),
+    count : { child(n, c35, _), !pie810_alt_2_u1(c35) } = 0.
+
+.decl pie810_tuple_expr_u3(n: node)
+pie810_tuple_expr_u3(n) :- (kind(n, "tuple") ; kind(n, "expression_list")).
+pie810_tuple_expr_u3(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pie810_tuple_expr_u2(c1).
+pie810_tuple_expr_u3(n) :- kind(n, "named_expression"), child(n, c2, _), pie810_tok_follows_2(c2),
+    pie810_tuple_expr_u2(c2).
+pie810_tuple_expr_u3(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    pie810_tok_precedes_3(c10), pie810_tuple_expr_u2(c10), child(n, c18, _), pie810_tok_follows_4(c18),
+    pie810_tuple_expr_u2(c18).
+pie810_tuple_expr_u3(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !pie810_alt_1_u2(c26) } = 0.
+pie810_tuple_expr_u3(n) :- kind(n, "binary_operator"), pie810_tok_has_5(n),
+    count : { child(n, c35, _), !pie810_alt_2_u2(c35) } = 0.
+
+.decl pie810_tuple_expr_u4(n: node)
+pie810_tuple_expr_u4(n) :- (kind(n, "tuple") ; kind(n, "expression_list")).
+pie810_tuple_expr_u4(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pie810_tuple_expr_u3(c1).
+pie810_tuple_expr_u4(n) :- kind(n, "named_expression"), child(n, c2, _), pie810_tok_follows_2(c2),
+    pie810_tuple_expr_u3(c2).
+pie810_tuple_expr_u4(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    pie810_tok_precedes_3(c10), pie810_tuple_expr_u3(c10), child(n, c18, _), pie810_tok_follows_4(c18),
+    pie810_tuple_expr_u3(c18).
+pie810_tuple_expr_u4(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !pie810_alt_1_u3(c26) } = 0.
+pie810_tuple_expr_u4(n) :- kind(n, "binary_operator"), pie810_tok_has_5(n),
+    count : { child(n, c35, _), !pie810_alt_2_u3(c35) } = 0.
+
+.decl pie810_tuple_expr_u5(n: node)
+pie810_tuple_expr_u5(n) :- (kind(n, "tuple") ; kind(n, "expression_list")).
+pie810_tuple_expr_u5(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pie810_tuple_expr_u4(c1).
+pie810_tuple_expr_u5(n) :- kind(n, "named_expression"), child(n, c2, _), pie810_tok_follows_2(c2),
+    pie810_tuple_expr_u4(c2).
+pie810_tuple_expr_u5(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    pie810_tok_precedes_3(c10), pie810_tuple_expr_u4(c10), child(n, c18, _), pie810_tok_follows_4(c18),
+    pie810_tuple_expr_u4(c18).
+pie810_tuple_expr_u5(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !pie810_alt_1_u4(c26) } = 0.
+pie810_tuple_expr_u5(n) :- kind(n, "binary_operator"), pie810_tok_has_5(n),
+    count : { child(n, c35, _), !pie810_alt_2_u4(c35) } = 0.
+
+.decl pie810_tuple_expr_u6(n: node)
+pie810_tuple_expr_u6(n) :- (kind(n, "tuple") ; kind(n, "expression_list")).
+pie810_tuple_expr_u6(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pie810_tuple_expr_u5(c1).
+pie810_tuple_expr_u6(n) :- kind(n, "named_expression"), child(n, c2, _), pie810_tok_follows_2(c2),
+    pie810_tuple_expr_u5(c2).
+pie810_tuple_expr_u6(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    pie810_tok_precedes_3(c10), pie810_tuple_expr_u5(c10), child(n, c18, _), pie810_tok_follows_4(c18),
+    pie810_tuple_expr_u5(c18).
+pie810_tuple_expr_u6(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !pie810_alt_1_u5(c26) } = 0.
+pie810_tuple_expr_u6(n) :- kind(n, "binary_operator"), pie810_tok_has_5(n),
+    count : { child(n, c35, _), !pie810_alt_2_u5(c35) } = 0.
+
+.decl pie810_tuple_expr_u7(n: node)
+pie810_tuple_expr_u7(n) :- (kind(n, "tuple") ; kind(n, "expression_list")).
+pie810_tuple_expr_u7(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pie810_tuple_expr_u6(c1).
+pie810_tuple_expr_u7(n) :- kind(n, "named_expression"), child(n, c2, _), pie810_tok_follows_2(c2),
+    pie810_tuple_expr_u6(c2).
+pie810_tuple_expr_u7(n) :- kind(n, "conditional_expression"), child(n, c10, _),
+    pie810_tok_precedes_3(c10), pie810_tuple_expr_u6(c10), child(n, c18, _), pie810_tok_follows_4(c18),
+    pie810_tuple_expr_u6(c18).
+pie810_tuple_expr_u7(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c26, _), !pie810_alt_1_u6(c26) } = 0.
+pie810_tuple_expr_u7(n) :- kind(n, "binary_operator"), pie810_tok_has_5(n),
+    count : { child(n, c35, _), !pie810_alt_2_u6(c35) } = 0.
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^or$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie810_tok_has_1(n: node)
+.stored pie810_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie810_tok_has_1(n) :- child(n, c1, _), glob("or", c1).
+pie810_tok_has_1(n) :- op(n, t2), match("or", t2).
+pie810_tok_has_1(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:or)(?:\\W.*)?)$", g3).
+pie810_tok_has_1(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:or)(?:\\W.*)?)$", g3).
+pie810_tok_has_1(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:or)(?:\\W.*)?)$", g3).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^:=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie810_tok_follows_2(n: node)
+.stored pie810_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie810_tok_follows_2(n) :- next_sibling(s3, n), glob(":=", s3).
+pie810_tok_follows_2(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match(":=", t4).
+pie810_tok_follows_2(n) :- structural_before(n, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::=)\\s*)$", g5).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie810_tok_precedes_3(n: node)
+.stored pie810_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie810_tok_precedes_3(n) :- next_sibling(n, s11), glob("if", s11).
+pie810_tok_precedes_3(n) :- structural_after(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, _, en17), o15 = en17 + strlen(g13), token(p14, _, t12, o15, _),
+    match("if", t12).
+pie810_tok_precedes_3(n) :- structural_after(n, g13),
+    match("(?s)^(?:\\s*(?:if)(?:\\W.*)?)$", g13).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie810_tok_follows_4(n: node)
+.stored pie810_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie810_tok_follows_4(n) :- next_sibling(s19, n), glob("else", s19).
+pie810_tok_follows_4(n) :- structural_before(n, g21), match("\\s*", g21), child(p22, n, _),
+    node(_, n, _, st24, _), o23 = st24 - strlen(g21), token(p22, _, t20, _, o23),
+    match("else", t20).
+pie810_tok_follows_4(n) :- structural_before(n, g21),
+    match("(?s)^(?:(?:.*\\W)?(?:else)\\s*)$", g21).
+
+// tok_has_5(n): a child of n, a named node or an anonymous token, matches "^\\+$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie810_tok_has_5(n: node)
+.stored pie810_tok_has_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie810_tok_has_5(n) :- child(n, c27, _), glob("+", c27).
+pie810_tok_has_5(n) :- op(n, t28), match("\\+", t28).
+pie810_tok_has_5(n) :- child(n, c34, _), structural_before(c34, g29),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g29).
+pie810_tok_has_5(n) :- child(n, c34, _), structural_after(c34, g29),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g29).
+pie810_tok_has_5(n) :- node_text(n, g29), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\+)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g29).
+
+// tok_follows_6(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie810_tok_follows_6(n: node)
+.stored pie810_tok_follows_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie810_tok_follows_6(n) :- next_sibling(s2, n), match("(?s).*..*", s2).
+pie810_tok_follows_6(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?s).*..*", t3).
+pie810_tok_follows_6(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
+
+// tok_precedes_7(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie810_tok_precedes_7(n: node)
+.stored pie810_tok_precedes_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie810_tok_precedes_7(n) :- precedes(n, s12), glob("as", s12).
+pie810_tok_precedes_7(n) :- child(p15, n, _), node(_, n, _, _, en18),
+    token(p15, _, t13, st17, _), st17 >= en18, match("as", t13).
+pie810_tok_precedes_7(n) :- structural_after(n, g14),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g14).
+pie810_tok_precedes_7(n) :- precedes(n, o16), structural_after(o16, g14),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g14).
+
+// tok_precedes_8(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pie810_tok_precedes_8(n: node)
+.stored pie810_tok_precedes_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pie810_tok_precedes_8(n) :- precedes(n, s11), glob("as", s11).
+pie810_tok_precedes_8(n) :- child(p14, n, _), node(_, n, _, _, en17),
+    token(p14, _, t12, st16, _), st16 >= en17, match("as", t12).
+pie810_tok_precedes_8(n) :- structural_after(n, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g13).
+pie810_tok_precedes_8(n) :- precedes(n, o15), structural_after(o15, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g13).
+
+// alt_1_u0_empty: level -1 of an unrolled recursion, empty
+.decl pie810_alt_1_u0_empty(n: node)
+
+// alt_2_u0_empty: level -1 of an unrolled recursion, empty
+.decl pie810_alt_2_u0_empty(n: node)
+
+// tuple_expr_u0_empty: level -1 of an unrolled recursion, empty
+.decl pie810_tuple_expr_u0_empty(n: node)
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pie810_alt_1(n: node)
+pie810_alt_1(n) :- pie810_alt_1_u7(n).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pie810_alt_2(n: node)
+pie810_alt_2(n) :- pie810_alt_2_u7(n).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl pie810_alt_4(n: node)
+pie810_alt_4(n) :- ref_site(n, b1), site_stop_at_global(b1),
+    ( kind(b1, "list_splat_pattern"), child(p1, b1, _), kind(p1, "parameters")
+    ; kind(b1, "typed_parameter"), child(p2, b1, _), kind(p2, "parameters"), child(b1, c1, _), kind(c1, "list_splat_pattern")
+    ).
+
+pie810_alt_4(n) :- ref_site(n, b5), site_stop_at_global(b5), binding_value(b5, x6),
+    pie810_tuple_init(x6), count : { child(b5, c7, _), kind(c7, "type") } = 0.
+pie810_alt_4(n) :- ref_site(n, b8), site_stop_at_global(b8), kind(b8, "as_pattern"),
+    child(p9, b8, _), kind(p9, "with_item"), child(b8, c10, _), pie810_tuple_init(c10),
+    pie810_tok_precedes_8(c10), child(b8, c18, _), kind(c18, "as_pattern_target"),
+    child(c18, c19, _), pie810_plain_target(c19).
+pie810_alt_4(n) :- ref_site(n, b20), site_annotation(b20, o21), pie810_tuple_ann(o21),
+    count : { child(b20, c22, _), (kind(c22, "list_splat_pattern") ; kind(c22, "dictionary_splat_pattern")) } = 0.
+pie810_alt_4(n) :- ref_site(n, b23), kind(b23, "function_definition"), child(b23, c24, _),
+    kind(c24, "type"), child(c24, c25, _), pie810_tuple_ann(c25).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl pie810_alt_6(n: node)
+pie810_alt_6(n) :- (kind(n, "keyword_argument") ; kind(n, "dictionary_splat")).
+pie810_alt_6(n) :- pie810_tuple_bound(n).
+
+// stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pie810_stop_10(n: node)
+pie810_stop_10(n) :- node(_, n, _, _, _), !pie810_or_op(n).
+
+// stop_10_within: within_stop over the stop set stop_10, read inside an aggregate
+.decl pie810_stop_10_within(n: node, a: node)
+pie810_stop_10_within(x, y) :- within_stop(x, y, pie810_stop_10).

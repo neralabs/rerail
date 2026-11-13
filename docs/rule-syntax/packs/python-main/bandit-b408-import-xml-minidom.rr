@@ -1,0 +1,17 @@
+.policy "bandit-b408-import-xml-minidom" revision 1
+.guests off
+.description "Avoid importing xml.dom.minidom to parse XML; it is open to XML attacks, so use defusedxml."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B408(n): a finding at node n, from clause `B408`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B408(at: node) "xml.dom.minidom parsing may be vulnerable to XML attacks; use defusedxml or defuse the standard library."
+    suppress nosec "B408"
+B408(n) :- n ~ `import xml.dom.minidom`.
+B408(n) :- n ~ `import xml.dom.minidom as $ALIAS`.
+B408(n) :- n ~ `from xml.dom.minidom import $$$NAMES`.
+B408(n) :- n ~ `from xml.dom import minidom`.
+B408(n) :- n ~ `from xml.dom import minidom as $ALIAS`.

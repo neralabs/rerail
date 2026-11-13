@@ -1,0 +1,139 @@
+.policy "ruff-pyi014-argument-default-in-stub" revision 1
+.guests off
+.description "Replace complex default values of untyped parameters in stub files with an ellipsis; only simple literal defaults belong in a stub."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PYI014(n): a finding at node n, from clause `argument-default-in-stub`.
+// Each rule below is one way the JSON `rule` can match.
+// `options` carries JSON settings that have no .rr form yet.
+.violation PYI014(at: node) "Replace this default value with `...`; a stub only needs to show that the parameter has a default, and keeps literal values only when they are simple."
+    suppress noqa "PYI014"
+PYI014_raw(n) :- !pyi014_alt_5(n), pyi014_default_slot(n), !pyi014_valid(n).
+
+// trivia(n): the JSON util `trivia`, used where the JSON says `matches: "trivia"`
+.decl pyi014_trivia(n: node)
+pyi014_trivia(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pyi014_trivia(n) :- node(_, n, _, _, _), glob("[,()\\[\\]{}]", n).
+
+// fstring(n): the JSON util `fstring`, used where the JSON says `matches: "fstring"`
+.decl pyi014_fstring(n: node)
+pyi014_fstring(n) :- kind(n, "string"), child(n, c1, _), kind(c1, "string_start"),
+    match("[A-Za-z]*[fFtT].*", c1).
+
+// number(n): the JSON util `number`, used where the JSON says `matches: "number"`
+.decl pyi014_number(n: node)
+pyi014_number(n) :- (kind(n, "integer") ; kind(n, "float")).
+
+// neg_arg(n): the JSON util `neg-arg`, used where the JSON says `matches: "neg-arg"`
+.decl pyi014_neg_arg(n: node)
+pyi014_neg_arg(n) :- pyi014_number(n).
+pyi014_neg_arg(n) :- kind(n, "attribute"),
+    ( sym_of(n, "math.inf")
+    ; sym_of(n, "math.e")
+    ; sym_of(n, "math.pi")
+    ; sym_of(n, "math.tau")
+    ).
+
+pyi014_neg_arg(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi014_neg_arg(c1).
+
+// complex_arg(n): the JSON util `complex-arg`, used where the JSON says `matches: "complex-arg"`
+.decl pyi014_complex_arg(n: node)
+pyi014_complex_arg(n) :- pyi014_number(n), glob("**[jJ]", n).
+pyi014_complex_arg(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pyi014_complex_arg(c1).
+
+// real_arg(n): the JSON util `real-arg`, used where the JSON says `matches: "real-arg"`
+.decl pyi014_real_arg(n: node)
+pyi014_real_arg(n) :- pyi014_number(n), !glob("**[jJ]", n), match(".{1,10}", n).
+pyi014_real_arg(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi014_real_arg(c1).
+
+// minus(n): the JSON util `minus`, used where the JSON says `matches: "minus"`
+.decl pyi014_minus(n: node)
+pyi014_minus(n) :- kind(n, "unary_operator"), field(n, "operator", c1), glob("-", c1).
+
+// complex_left(n): the JSON util `complex-left`, used where the JSON says `matches: "complex-left"`
+.decl pyi014_complex_left(n: node)
+pyi014_complex_left(n) :- pyi014_real_arg(n).
+pyi014_complex_left(n) :- pyi014_minus(n), field(n, "argument", c1), pyi014_real_arg(c1).
+pyi014_complex_left(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pyi014_complex_left(c2).
+
+// scalar(n): the JSON util `scalar`, used where the JSON says `matches: "scalar"`
+.decl pyi014_scalar(n: node)
+pyi014_scalar(n) :- (kind(n, "true") ; kind(n, "false") ; kind(n, "none") ; kind(n, "ellipsis")).
+pyi014_scalar(n) :- kind(n, "string"), !pyi014_fstring(n).
+pyi014_scalar(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), pyi014_fstring(c1) } = 0.
+pyi014_scalar(n) :- pyi014_number(n).
+pyi014_scalar(n) :- pyi014_minus(n), field(n, "argument", c2), pyi014_neg_arg(c2).
+pyi014_scalar(n) :- kind(n, "binary_operator"), field(n, "operator", c3), glob("[+-]", c3),
+    field(n, "left", c4), pyi014_complex_left(c4), field(n, "right", c5), pyi014_complex_arg(c5).
+pyi014_scalar(n) :- kind(n, "attribute"), sym_of(n, q6), pyi014_set_1(q6).
+
+// elem(n): the JSON util `elem`, used where the JSON says `matches: "elem"`
+.decl pyi014_elem(n: node)
+pyi014_elem(n) :- pyi014_scalar(n).
+pyi014_elem(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pyi014_elem(c1).
+
+// no_eleventh(n): the JSON util `no-eleventh`, used where the JSON says `matches: "no-eleventh"`
+.decl pyi014_no_eleventh(n: node)
+pyi014_no_eleventh(n) :- node(_, n, _, _, _),
+    count : { child(n, c1, _), child(p2, c1, _), pyi014_counted_2(c1), k4 = count : { child(p2, s3, _), precedes(s3, c1), pyi014_counted_2(s3) }, k4 = 10 } = 0.
+
+// pair_ok(n): the JSON util `pair-ok`, used where the JSON says `matches: "pair-ok"`
+.decl pyi014_pair_ok(n: node)
+pyi014_pair_ok(n) :- kind(n, "pair"), field(n, "key", c1), pyi014_elem(c1), field(n, "value", c2),
+    pyi014_elem(c2).
+
+// valid(n): the JSON util `valid`, used where the JSON says `matches: "valid"`
+.decl pyi014_valid(n: node)
+pyi014_valid(n) :- pyi014_elem(n).
+pyi014_valid(n) :- (kind(n, "list") ; kind(n, "tuple") ; kind(n, "set") ; kind(n, "expression_list")),
+    pyi014_no_eleventh(n), count : { child(n, c1, _), !pyi014_alt_3(c1) } = 0.
+pyi014_valid(n) :- kind(n, "dictionary"), pyi014_no_eleventh(n),
+    count : { child(n, c2, _), !pyi014_alt_4(c2) } = 0.
+pyi014_valid(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), pyi014_valid(c3).
+
+// default_slot(n): the JSON util `default-slot`, used where the JSON says `matches: "default-slot"`
+.decl pyi014_default_slot(n: node)
+pyi014_default_slot(n) :- field(p1, "value", n), kind(p1, "default_parameter").
+pyi014_default_slot(n) :- child(p2, n, _), pyi014_default_slot(p2),
+    kind(p2, "parenthesized_expression"), !kind(n, "comment").
+
+// set_1: symbols from the JSON `resolves.import`
+.decl pyi014_set_1(v: symbol)
+pyi014_set_1("math.inf"). pyi014_set_1("math.nan"). pyi014_set_1("math.e"). pyi014_set_1("math.pi").
+pyi014_set_1("math.tau"). pyi014_set_1("sys.stdin"). pyi014_set_1("sys.stdout"). pyi014_set_1("sys.stderr").
+pyi014_set_1("sys.version"). pyi014_set_1("sys.version_info"). pyi014_set_1("sys.platform").
+pyi014_set_1("sys.executable"). pyi014_set_1("sys.prefix"). pyi014_set_1("sys.exec_prefix").
+pyi014_set_1("sys.base_prefix"). pyi014_set_1("sys.byteorder"). pyi014_set_1("sys.maxsize").
+pyi014_set_1("sys.hexversion"). pyi014_set_1("sys.winver").
+
+// counted_2(n): the siblings the JSON `nthChild.ofRule` counts
+.decl pyi014_counted_2(n: node)
+pyi014_counted_2(n) :- node(_, n, _, _, _), !kind(n, "comment"),
+    !kind(n, "line_continuation").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi014_alt_3(n: node)
+pyi014_alt_3(n) :- pyi014_trivia(n).
+pyi014_alt_3(n) :- pyi014_elem(n).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi014_alt_4(n: node)
+pyi014_alt_4(n) :- pyi014_trivia(n).
+pyi014_alt_4(n) :- pyi014_pair_ok(n).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi014_alt_5(n: node)
+pyi014_alt_5(n) :- pyi014_trivia(n).
+pyi014_alt_5(n) :- kind(n, "parenthesized_expression").
+
+// main's file condition {"regex": "\\.pyi$"}
+.decl PYI014_raw(at: node)
+PYI014(v0) :- PYI014_raw(v0), rr_d = @doc(v0), doc(rr_d, rr_p, _), match("\\.pyi$", rr_p).

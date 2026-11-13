@@ -1,0 +1,74 @@
+.policy "ruff-sim117-multiple-with-statements" revision 1
+.guests off
+.description "Merge directly nested with statements into one with holding several context managers, except around asyncio, anyio or trio timeout scopes."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// SIM117(n): a finding at node n, from clause `multiple-with-statements`.
+// Each rule below is one way the JSON `rule` can match.
+.violation SIM117(at: node) "Use a single `with` statement with multiple contexts instead of nested `with` statements"
+    suppress noqa "SIM117"
+SIM117(n) :- kind(n, "with_statement"), sim117_mergeable(n),
+    count : { child(p1, n, _), kind(p1, "block"), child(p2, p1, _), sim117_mergeable(p2) } = 0.
+
+// timeout_func(n): the JSON util `timeout-func`, used where the JSON says `matches: "timeout-func"`
+.decl sim117_timeout_func(n: node)
+sim117_timeout_func(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, q1), sim117_set_1(q1).
+
+// explicit_items(n): the JSON util `explicit-items`, used where the JSON says `matches: "explicit-items"`
+.decl sim117_explicit_items(n: node)
+sim117_explicit_items(n) :- kind(n, "with_statement"), child(n, c1, _),
+    kind(c1, "with_clause"), k3 = count : { child(c1, c2, _), kind(c2, "with_item") },
+    k3 <= 1, child(c1, c4, _), kind(c4, "with_item"), child(c4, c5, _),
+    kind(c5, "call"), child(c5, c6, _), !sim117_tok_follows_1(c6), sim117_timeout_func(c6).
+
+// async_with(n): the JSON util `async-with`, used where the JSON says `matches: "async-with"`
+.decl sim117_async_with(n: node)
+sim117_async_with(n) :- kind(n, "with_statement"), sim117_tok_has_2(n).
+
+// mergeable(n): the JSON util `mergeable`, used where the JSON says `matches: "mergeable"`
+.decl sim117_mergeable(n: node)
+sim117_mergeable(n) :- kind(n, "with_statement"), !sim117_explicit_items(n), child(n, c1, _),
+    kind(c1, "block"), k3 = count : { child(c1, c2, _), !sim117_alt_2(c2) }, k3 >= 1, k3 <= 1,
+    child(c1, c4, _), !sim117_alt_2(c4), kind(c4, "with_statement"), !sim117_explicit_items(c4),
+    ( sim117_async_with(c4), child(p1, c4, _), child(p2, p1, _), sim117_async_with(p2)
+    ; !sim117_async_with(c4), child(p3, c4, _), child(p4, p3, _), !sim117_async_with(p4)
+    ).
+
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim117_tok_follows_1(n: node)
+.stored sim117_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim117_tok_follows_1(n) :- next_sibling(s7, n), match("(?s).*..*", s7).
+sim117_tok_follows_1(n) :- structural_before(n, g9), match("\\s*", g9), child(p10, n, _),
+    node(_, n, _, st12, _), o11 = st12 - strlen(g9), token(p10, _, t8, _, o11),
+    match("(?s).*..*", t8).
+sim117_tok_follows_1(n) :- structural_before(n, g9), match("(?s)^.*\\S\\s*$", g9).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^async$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim117_tok_has_2(n: node)
+.stored sim117_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim117_tok_has_2(n) :- child(n, c1, _), glob("async", c1).
+sim117_tok_has_2(n) :- op(n, t2), match("async", t2).
+sim117_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g3).
+sim117_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g3).
+sim117_tok_has_2(n) :- node_text(n, g3), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g3).
+
+// set_1: symbols from the JSON `resolves.import`
+.decl sim117_set_1(v: symbol)
+sim117_set_1("asyncio.timeout"). sim117_set_1("asyncio.timeout_at"). sim117_set_1("anyio.CancelScope").
+sim117_set_1("anyio.fail_after"). sim117_set_1("anyio.move_on_after"). sim117_set_1("trio.fail_after").
+sim117_set_1("trio.fail_at"). sim117_set_1("trio.move_on_after"). sim117_set_1("trio.move_on_at").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl sim117_alt_2(n: node)
+sim117_alt_2(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+sim117_alt_2(n) :- node(_, n, _, _, _), glob(";", n).

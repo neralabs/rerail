@@ -236,8 +236,126 @@ def same_document_joins(text, base):
     text = re.sub(r"(?ms)^[A-Za-z_]\w*\([^\n]*?\) :-.*?\.(?=\s*$)", same_doc, text)
     return text
 
+# `anchor file.start`: main reports at the file's start (line 1). The reader has no such anchor; the finding is at
+# the witness, which for such a rule is the module (it starts the file).
+def file_anchor(text, base):
+    return text.replace("    anchor file.start\n", "    // anchor file.start: at the witness, the module, which starts the file\n")
+
+
+# ast-grep leaves a metavariable empty where the match does not bind it; translate.py writes that `unset(X)` before
+# its simplify pass. Inlining and demand rewrites after it can leave a rule where X is bound in some branches of a
+# disjunction only, or (a column the relation passes out) nowhere in the body: the engine refuses it as ungrounded.
+# Checked again on the final text: a branch that does not bind X gets `unset(X)`; a head column the body never
+# names gets `unset(X)` at the end.
+def unset_unbound(text, base):
+    from souffle import check_rule
+    from translate import _split_top_text, head_span_ok
+    binds = lambda body, x: x not in check_rule(f"rr_probe({x}) :- {body}.")
+    out, pos = [], 0
+    for m in re.finditer(r"(?m)^([A-Za-z_]\w*)\(", text):
+        if m.start() < pos:
+            continue
+        try:
+            end = head_span(text, m.end() - 1)
+        except ValueError:
+            continue
+        if not text.startswith(" :- ", end):
+            continue
+        stop = rule_end(text, end)
+        rule = text[m.start():stop + 1]
+        try:
+            bad = [x for x in check_rule(rule) if re.fullmatch(r"[A-Z][A-Z0-9_]*", x)]
+        except Exception:
+            bad = []
+        if not bad:
+            continue
+        head, body = text[m.start():end], text[end + 4:stop]
+        lits = _split_top_text(body, ",")
+        changed = False
+        for x in bad:
+            done = False
+            for i, l in enumerate(lits):
+                t = l.strip()
+                if not (t.startswith("(") and t.endswith(")") and head_span_ok(t)):
+                    continue
+                branches = _split_top_text(t[1:-1], ";")
+                if len(branches) < 2:
+                    continue
+                ok = [binds(b, x) for b in branches]
+                if any(ok) and not all(ok):
+                    lits[i] = " " + "(" + " ; ".join(b.strip() if k else f"{b.strip()}, unset({x})"
+                                                   for b, k in zip(branches, ok)) + ")"
+                    done = changed = True
+                    break
+            if not done and not re.search(r"(?<![\w$])" + x + r"\b", re.sub(r'"(?:[^"\\]|\\.)*"', "", body)):
+                lits.append(f" unset({x})")
+                changed = True
+        if changed:
+            out.append(text[pos:m.start()] + head + " :- " + ",".join(lits).strip() + ".")
+            pos = stop + 1
+    out.append(text[pos:])
+    return "".join(out)
+
+
+# A JSON `compare` of two metavariables is written `t = A, t = B` (t a fresh variable). Where A or B is computed
+# later in the rule (a `transform`'s literals end it), t is bound by neither where it stands, and the reader
+# refuses t as ungrounded: `A = B` says the same and needs only that both be bound somewhere in the rule.
+def compare_pairs(text, base):
+    pat = re.compile(r"(?<![\w$])([a-z]\w*) = ([A-Z][A-Z0-9_]*), \1 = ([A-Z][A-Z0-9_]*)(?!\w)")
+
+    def rule(r):    # one rule (its text up to the `.` that ends it): t used only in the pair
+        body = r.group(0)
+        def one(m):
+            uses = len(re.findall(r"(?<![\w$])" + re.escape(m.group(1)) + r"(?!\w)", body))
+            return f"{m.group(2)} = {m.group(3)}" if uses == 2 else m.group(0)
+        return pat.sub(one, body)
+    return re.sub(r"(?ms)^[A-Za-z_]\w*\([^\n]*?\) :-.*?\.(?=\s*$)", rule, text)
+
+
+# `not: {compare: {left: X, right: X}}`, main's test that metavariable X is unbound (a compare of an unbound
+# metavariable is false), translates to `count : { text(X, t), text(X, t) } = 0`; where the caller passes X in,
+# the reader refuses X as ungrounded. It says X is unset: `unset(X)`.
+def unbound_tests(text, base):
+    return re.sub(r"count : \{ text\(([A-Z][A-Z0-9_]*), (\w+)\), text\(\1, \2\) \} = 0", r"unset(\1)", text)
+
+
+# An axis with a stop set inside an aggregate, `count : { within_stop(c, p, S), … }`: the engine's lowering of
+# the aggregate's context gives the set's name a head column, which the native engine declines (a strict run
+# aborts). The axis over that set becomes a relation of its own, read inside the aggregate.
+def stop_axes_in_aggregates(text, base):
+    made = {}
+    def inner(m):
+        def one(a):
+            axis, x, y, rel = a.groups()
+            name = f"{rel}_{axis.split('_')[0]}"
+            made[name] = (axis, rel)
+            return f"{name}({x}, {y})"
+        return re.sub(r"(?<![\w$])(within_stop|precedes_stop)\((\w+), (\w+), ([a-z]\w*)\)", one, m.group(0))
+    out, pos = [], 0
+    for m in re.finditer(r"(?:count|sum|min|max|mean|join)(?: \w+)? : \{", text):
+        if m.start() < pos:
+            continue
+        depth, i = 0, m.end() - 1
+        while i < len(text):
+            depth += text[i] == "{"
+            depth -= text[i] == "}"
+            if depth == 0:
+                break
+            i += 1
+        out.append(text[pos:m.start()])
+        out.append(inner(re.match(r"(?s).*", text[m.start():i + 1])))
+        pos = i + 1
+    out.append(text[pos:])
+    text = "".join(out)
+    for name, (axis, rel) in made.items():
+        cols = "n: node, a: node" if axis == "within_stop" else "a: node, b: node"
+        text += (f"\n// {name}: {axis} over the stop set {rel}, read inside an aggregate\n"
+                 f".decl {name}({cols})\n{name}(x, y) :- {axis}(x, y, {rel}).\n")
+    return text
+
+
 def engine_text(text, base):
-    for p in (anchor_captures, own_helpers, message_braces, lower_options, lone_metavariables,
-              same_document_joins):
+    for p in (stop_axes_in_aggregates, anchor_captures, file_anchor, own_helpers, message_braces, lower_options, lone_metavariables,
+              same_document_joins, compare_pairs, unbound_tests, unset_unbound):
         text = p(text, base)
     return text

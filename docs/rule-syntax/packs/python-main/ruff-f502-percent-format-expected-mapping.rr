@@ -1,0 +1,38 @@
+.policy "ruff-f502-percent-format-expected-mapping" revision 1
+.guests off
+.description "Pass a mapping, not a list, tuple or set, to a %-format string that uses %(key) placeholders; the call fails at run time."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// F502(n): a finding at node n, from clause `percent-format-expected-mapping`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `constraints` on S, R are added to every rule.
+.violation F502(at: node) "`%`-format string expected mapping but got sequence"
+    suppress noqa "F502"
+F502(n) :- n ~ `$S % $R`, f502_format_string(S), f502_operand(R).
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl f502_plain_string(n: node)
+f502_plain_string(n) :- kind(n, "string"), !match("[A-Za-z]*[fFbBtT][A-Za-z]*['\"].*", n).
+f502_plain_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), match("[A-Za-z]*[fFbBtT][A-Za-z]*['\"].*", c1) } = 0.
+
+// format_string(n): the JSON util `format-string`, used where the JSON says `matches: "format-string"`
+.decl f502_format_string(n: node)
+f502_format_string(n) :- f502_plain_string(n), parsed(n, "percentFormat", r1),
+    count : { child(r1, c2, _), kind(c2, "error") } = 0, has(r1, c3, "placeholder"),
+    child(c3, c4, _), kind(c4, "mapping_key").
+f502_format_string(n) :- kind(n, "parenthesized_expression"), child(n, c5, _),
+    f502_format_string(c5).
+
+// operand(n): the JSON util `operand`, used where the JSON says `matches: "operand"`
+.decl f502_operand(n: node)
+f502_operand(n) :- kind(n, k1), f502_set_1(k1).
+f502_operand(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), f502_operand(c2).
+
+// set_1: node kinds from a JSON `any`
+.decl f502_set_1(v: symbol)
+f502_set_1("list"). f502_set_1("tuple"). f502_set_1("set"). f502_set_1("list_comprehension").
+f502_set_1("set_comprehension"). f502_set_1("generator_expression").

@@ -1,0 +1,34 @@
+.policy "ruff-ruf034-useless-if-else" revision 1
+.guests off
+.description "Avoid a conditional expression whose two branches are identical; use the value directly, since the condition changes nothing."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// RUF034(n): a finding at node n, from clause `useless-if-else`.
+// Each rule below is one way the JSON `rule` can match.
+.violation RUF034(at: node) "Both branches are identical, so the condition changes nothing: use the branch value alone, or fix the branch that should differ. Keep the test only if evaluating it has side effects."
+    suppress noqa "RUF034"
+RUF034(n) :- kind(n, "conditional_expression"), n ~ `$A if $C else $B`,
+    value(A, t1), value(B, t1).
+
+// RUF034_useless_if_else_in_string_annotation(n): a finding at node n, from clause `useless-if-else-in-string-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF034_useless_if_else_in_string_annotation(at: node, cond: node) code "RUF034" "Both branches are identical, so the condition changes nothing: use the branch value alone, or fix the branch that should differ. Keep the test only if evaluating it has side effects."
+    suppress noqa "RUF034"
+RUF034_useless_if_else_in_string_annotation(COND, n) :- ruf034_in_string(n, COND).
+
+// in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   COND: metavariable this relation binds for the calling rule
+.decl ruf034_in_string(n: node, cond: loc)
+ruf034_in_string(n, COND) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), ruf034_alt_1(c2, COND).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   COND: metavariable this relation binds for the calling rule
+.decl ruf034_alt_1(n: node, cond: loc)
+ruf034_alt_1(n, COND) :- kind(n, "conditional_expression"), COND = n, n ~ `$A if $C else $B`,
+    value(A, t1), value(B, t1).
+ruf034_alt_1(n, COND) :- ruf034_in_string(n, COND).

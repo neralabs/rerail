@@ -1,0 +1,199 @@
+.policy "ruff-up032-f-string" revision 1
+.guests off
+.description "Prefer an f-string over a str.format() call on a string literal; it keeps each value next to its placeholder."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+#include "python/names.rr"
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl up032_plain_string(n: node)
+up032_plain_string(n) :- kind(n, "string"), !match("[A-Za-z]*[fFbBtT][A-Za-z]*['\"].*", n).
+up032_plain_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), match("[A-Za-z]*[fFbBtT][A-Za-z]*['\"].*", c1) } = 0.
+
+// segment_ok(n): the JSON util `segment-ok`, used where the JSON says `matches: "segment-ok"`
+.decl up032_segment_ok(n: node)
+up032_segment_ok(n) :- kind(n, "string"), parsed(n, "braceFormat", r1), !up032_alt_1(r1).
+
+// template(n): the JSON util `template`, used where the JSON says `matches: "template"`
+.decl up032_template(n: node)
+up032_template(n) :- up032_plain_string(n),
+    ( kind(n, "string"), up032_segment_ok(n)
+    ; kind(n, "concatenated_string"), count : { child(n, c1, _), kind(c1, "string"), !up032_segment_ok(c1) } = 0
+    ).
+
+up032_template(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), up032_template(c2).
+
+// multiline(n): the JSON util `multiline`, used where the JSON says `matches: "multiline"`
+.decl up032_multiline(n: node)
+up032_multiline(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), up032_multiline(c1).
+up032_multiline(n) :- !kind(n, "parenthesized_expression"), line(n, l2), end_line(n, l3),
+    k4 = l3 - l2, k4 >= 1.
+
+// real_arg(n): the JSON util `real-arg`, used where the JSON says `matches: "real-arg"`
+.decl up032_real_arg(n: node)
+up032_real_arg(n) :- node(_, n, _, _, _), !up032_alt_3(n).
+
+// bad_arg(n): the JSON util `bad-arg`, used where the JSON says `matches: "bad-arg"`
+.decl up032_bad_arg(n: node)
+up032_bad_arg(n) :- !kind(n, "comment"), up032_alt_4(n).
+
+// safe_operand(n): the JSON util `safe-operand`, used where the JSON says `matches: "safe-operand"`
+.decl up032_safe_operand(n: node)
+up032_safe_operand(n) :- kind(n, k1), up032_set_5(k1).
+up032_safe_operand(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    up032_safe_operand(c2).
+
+// effect_node(n): the JSON util `effect-node`, used where the JSON says `matches: "effect-node"`
+.decl up032_effect_node(n: node)
+up032_effect_node(n) :- kind(n, k1), up032_set_6(k1).
+up032_effect_node(n) :- kind(n, "binary_operator"),
+    count : { field(n, "left", c2), up032_safe_operand(c2), field(n, "right", c3), up032_safe_operand(c3) } = 0.
+
+// effectful(n): the JSON util `effectful`, used where the JSON says `matches: "effectful"`
+.decl up032_effectful(n: node)
+up032_effectful(n) :- up032_effect_node(n).
+up032_effectful(n) :- within(c1, n), up032_effect_node(c1).
+
+// segment_repeats_effect(n): the JSON util `segment-repeats-effect`, used where the JSON says `matches: "segment-repeats-effect"`
+.decl up032_segment_repeats_effect(n: node)
+up032_segment_repeats_effect(n) :- kind(n, "string"), parsed(n, "braceFormat", r1),
+    child(r1, c2, _), up032_alt_7(c2).
+
+// repeats_effect(n): the JSON util `repeats-effect`, used where the JSON says `matches: "repeats-effect"`
+.decl up032_repeats_effect(n: node)
+up032_repeats_effect(n) :- kind(n, "string"), up032_segment_repeats_effect(n).
+up032_repeats_effect(n) :- kind(n, "concatenated_string"), child(n, c1, _),
+    kind(c1, "string"), up032_segment_repeats_effect(c1).
+up032_repeats_effect(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    up032_repeats_effect(c2).
+
+// bad_arg_inline(n): the JSON util `bad-arg-inline`, used where the JSON says `matches: "bad-arg-inline"`
+.decl up032_bad_arg_inline(n: node)
+up032_bad_arg_inline(n) :- node(_, n, _, _, _), !kind(n, "comment"),
+    ((kind(n, "list_splat") ; kind(n, "dictionary_splat")) ; glob("**['\"]**", n)).
+
+// quoted(n): the JSON util `quoted`, used where the JSON says `matches: "quoted"`
+.decl up032_quoted(n: node)
+up032_quoted(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression"),
+    glob("**['\"]**", n).
+up032_quoted(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    !kind(c1, "comment"), up032_quoted(c1).
+
+// gen_seg(n): the JSON util `gen-seg`, used where the JSON says `matches: "gen-seg"`
+.decl up032_gen_seg(n: node)
+up032_gen_seg(n) :- kind(n, "string"), parsed(n, "braceFormat", r1), !up032_alt_9(r1).
+
+// seg_auto(n): the JSON util `seg-auto`, used where the JSON says `matches: "seg-auto"`
+.decl up032_seg_auto(n: node)
+up032_seg_auto(n) :- kind(n, "string"), parsed(n, "braceFormat", r1), has(r1, c2, "auto").
+
+// gen_template(n): the JSON util `gen-template`, used where the JSON says `matches: "gen-template"`
+.decl up032_gen_template(n: node)
+up032_gen_template(n) :- up032_template(n),
+    ( kind(n, "string"), up032_gen_seg(n)
+    ; kind(n, "concatenated_string"), count : { child(n, c1, _), kind(c1, "string"), !up032_gen_seg(c1) } = 0, count : { child(n, c2, _), kind(c2, "string"), up032_seg_auto(c2), precedes(c2, s1), kind(s1, "string"), up032_seg_auto(s1) } = 0
+    ).
+
+up032_gen_template(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    up032_gen_template(c4).
+
+// UP032(n): a finding at node n, from clause `f-string`.
+// Each rule below is one way the JSON `rule` can match.
+.violation UP032(at: node) "Replace this `.format()` call with an f-string, putting each argument inside its `{{}}` placeholder; keep `.format()` when the string is passed to a translation function."
+    suppress noqa "UP032"
+UP032(n) :- up032_alt_13(n),
+    count : { inside(n, p26, "call"), field(p26, "function", c27), (sym_of(c27, "django.utils.translation.gettext") ; sym_of(c27, "django.utils.translation.gettext_lazy")) } = 0.
+
+// UP032_f_string_annotation(n): a finding at node n, from clause `f-string-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation UP032_f_string_annotation(at: node, call: node) code "UP032" "Replace this `.format()` call with an f-string, putting each argument inside its `{{}}` placeholder; keep `.format()` when the string is passed to a translation function."
+    suppress noqa "UP032"
+UP032_f_string_annotation(CALL, n) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), has(r1, c2, "call"), CALL = c2, up032_alt_16(c2).
+
+// set_5: node kinds from a JSON `any`
+.decl up032_set_5(v: symbol)
+up032_set_5("integer"). up032_set_5("float"). up032_set_5("true"). up032_set_5("false"). up032_set_5("none").
+up032_set_5("ellipsis"). up032_set_5("list"). up032_set_5("tuple"). up032_set_5("set"). up032_set_5("dictionary").
+up032_set_5("list_comprehension"). up032_set_5("set_comprehension").
+up032_set_5("dictionary_comprehension").
+
+// set_6: node kinds from a JSON `any`
+.decl up032_set_6(v: symbol)
+up032_set_6("call"). up032_set_6("await"). up032_set_6("subscript"). up032_set_6("named_expression").
+up032_set_6("yield"). up032_set_6("list_comprehension"). up032_set_6("set_comprehension").
+up032_set_6("dictionary_comprehension"). up032_set_6("generator_expression").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl up032_alt_1(n: node)
+up032_alt_1(n) :- child(n, c1, _), kind(c1, "error").
+up032_alt_1(n) :- has(n, c2, "format_spec"), child(c2, c3, _), kind(c3, "field").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl up032_alt_3(n: node)
+up032_alt_3(n) :- kind(n, "comment").
+up032_alt_3(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl up032_alt_4(n: node)
+up032_alt_4(n) :- (kind(n, "list_splat") ; kind(n, "dictionary_splat")).
+up032_alt_4(n) :- !kind(n, "keyword_argument"), up032_quoted(n).
+up032_alt_4(n) :- kind(n, "keyword_argument"), field(n, "value", c1), up032_quoted(c1).
+up032_alt_4(n) :- kind(n, "keyword_argument"), field(n, "value", c2), up032_multiline(c2).
+up032_alt_4(n) :- !kind(n, "keyword_argument"), up032_multiline(n).
+
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+.decl up032_alt_7(n: node)
+up032_alt_7(n) :- kind(n, "field"), F1 = n, has(n, c1, "name"), H1 = c1, precedes(n, s2),
+    kind(s2, "field"), has(s2, c3, "name"), F2 = s2, value(F1, t4), value(F2, t4),
+    ast(n, {"host": {"inside": {"stopBy": "end", "kind": "call", "has": {"field": "arguments", "has": {"kind": "keyword_argument", "matches": "effectful", "has": {"field": "name", "pattern": "$KN"}}}}, "compare": {"left": "H1", "op": "eq", "right": "KN", "text": "source"}}}).
+up032_alt_7(n) :- kind(n, "field"), F1 = n, has(n, c6, "index"), H1 = c6, precedes(n, s7),
+    kind(s7, "field"), has(s7, c8, "index"), F2 = s7, value(F1, t9), value(F2, t9),
+    ast(n, {"host": {"inside": {"stopBy": "end", "kind": "call", "has": {"field": "arguments", "has": {"not": {"kind": "keyword_argument"}, "matches": "effectful"}}}}}).
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+.decl up032_alt_9(n: node)
+up032_alt_9(n) :- has(n, c1, "name").
+up032_alt_9(n) :- has(n, c2, "index"), !value(c2, "0").
+up032_alt_9(n) :- child(n, c3, _), kind(c3, "field"), precedes(c3, s4), kind(s4, "field").
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+.decl up032_alt_11(n: node)
+up032_alt_11(n) :- node(_, n, _, _, _), glob("**['\"]**", n).
+up032_alt_11(n) :- up032_multiline(n).
+
+// alt_13(n): the JSON `any`: n matches if any one of these rules does
+.decl up032_alt_13(n: node)
+up032_alt_13(n) :- n ~ `$S.format($$$A)`, field(n, "function", c1), field(c1, "object", c2),
+    up032_template(c2), field(n, "arguments", c3), child(c3, c4, _), up032_real_arg(c4),
+    count : { field(n, "arguments", c5), child(c5, c6, _), up032_bad_arg(c6) } = 0,
+    count : { field(n, "function", c7), field(c7, "object", c8), up032_repeats_effect(c8) } = 0,
+    !ast(n, {"formatArgs": {"style": "brace", "string": "S", "args": "A", "missing": {"kind": "field"}}}).
+up032_alt_13(n) :- n ~ `($S.format)($$$A)`, field(n, "function", c9), child(c9, c10, _),
+    kind(c10, "attribute"), field(c10, "object", c11), up032_template(c11),
+    field(n, "arguments", c12), child(c12, c13, _), up032_real_arg(c13),
+    count : { field(n, "arguments", c14), child(c14, c15, _), up032_bad_arg(c15) } = 0,
+    count : { field(n, "function", c16), child(c16, c17, _), kind(c17, "attribute"), field(c17, "object", c18), up032_repeats_effect(c18) } = 0,
+    !ast(n, {"formatArgs": {"style": "brace", "string": "S", "args": "A", "missing": {"kind": "field"}}}).
+up032_alt_13(n) :- kind(n, "call"), field(n, "arguments", c19),
+    kind(c19, "generator_expression"), !up032_alt_11(c19), field(n, "function", c20),
+    ( kind(c20, "attribute"), field(c20, "attribute", c1), glob("format", c1), field(c20, "object", c2), up032_gen_template(c2)
+    ; kind(c20, "parenthesized_expression"), child(c20, c3, _), kind(c3, "attribute"), field(c3, "attribute", c4), glob("format", c4), field(c3, "object", c5), up032_gen_template(c5)
+    ).
+
+
+// alt_16(n): the JSON `any`: n matches if any one of these rules does
+.decl up032_alt_16(n: node)
+up032_alt_16(n) :- n ~ `$S.format($$$A)`, child(n, c1, _), kind(c1, "attribute"),
+    child(c1, c2, _), up032_template(c2), child(n, c3, _), kind(c3, "argument_list"),
+    child(c3, c4, _), up032_real_arg(c4),
+    count : { child(n, c5, _), kind(c5, "argument_list"), child(c5, c6, _), up032_bad_arg_inline(c6) } = 0.
+up032_alt_16(n) :- child(n, c7, _), kind(c7, "generator_expression"), !glob("**['\"]**", c7),
+    child(n, c8, _), kind(c8, "attribute"), child(c8, c9, _), kind(c9, "identifier"),
+    glob("format", c9), child(c8, c10, _), up032_gen_template(c10).

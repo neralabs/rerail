@@ -1,0 +1,90 @@
+.policy "ruff-up022-replace-stdout-stderr" revision 1
+.guests off
+.description "Use capture_output with subprocess.run instead of setting both stdout and stderr to a pipe; it does the same thing in one argument."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// run_callee(n): the JSON util `run-callee`, used where the JSON says `matches: "run-callee"`
+.decl up022_run_callee(n: node)
+up022_run_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "subprocess.run").
+up022_run_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), up022_run_callee(c1).
+
+// pipe(n): the JSON util `pipe`, used where the JSON says `matches: "pipe"`
+.decl up022_pipe(n: node)
+up022_pipe(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "subprocess.PIPE").
+up022_pipe(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), up022_pipe(c1).
+
+// stdout_pipe(n): the JSON util `stdout-pipe`, used where the JSON says `matches: "stdout-pipe"`
+.decl up022_stdout_pipe(n: node)
+up022_stdout_pipe(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    kind(c1, "identifier"), glob("stdout", c1), field(n, "value", c2), up022_pipe(c2),
+    count : { precedes(s3, n), kind(s3, "keyword_argument"), field(s3, "name", c4), kind(c4, "identifier"), glob("stdout", c4) } = 0.
+
+// stderr_pipe(n): the JSON util `stderr-pipe`, used where the JSON says `matches: "stderr-pipe"`
+.decl up022_stderr_pipe(n: node)
+up022_stderr_pipe(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    kind(c1, "identifier"), glob("stderr", c1), field(n, "value", c2), up022_pipe(c2),
+    count : { precedes(s3, n), kind(s3, "keyword_argument"), field(s3, "name", c4), kind(c4, "identifier"), glob("stderr", c4) } = 0.
+
+// capture_output(n): the JSON util `capture-output`, used where the JSON says `matches: "capture-output"`
+.decl up022_capture_output(n: node)
+up022_capture_output(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    kind(c1, "identifier"), glob("capture_output", c1).
+
+// piped_run(n): the JSON util `piped-run`, used where the JSON says `matches: "piped-run"`
+.decl up022_piped_run(n: node)
+up022_piped_run(n) :- kind(n, "call"), field(n, "function", c1), up022_run_callee(c1),
+    child(n, c2, _), kind(c2, "argument_list"), child(c2, c3, _), up022_stdout_pipe(c3),
+    child(n, c4, _), kind(c4, "argument_list"), child(c4, c5, _), up022_stderr_pipe(c5).
+
+// without_capture(n): the JSON util `without-capture`, used where the JSON says `matches: "without-capture"`
+.decl up022_without_capture(n: node)
+up022_without_capture(n) :- up022_piped_run(n),
+    count : { child(n, c1, _), kind(c1, "argument_list"), child(c1, c2, _), up022_capture_output(c2) } = 0.
+
+// with_capture(n): the JSON util `with-capture`, used where the JSON says `matches: "with-capture"`
+.decl up022_with_capture(n: node)
+up022_with_capture(n) :- up022_piped_run(n), child(n, c1, _), kind(c1, "argument_list"),
+    child(c1, c2, _), up022_capture_output(c2).
+
+// without_capture_in_annotation(n): the JSON util `without-capture-in-annotation`, used where the JSON says `matches: "without-capture-in-annotation"`
+//   CALL: metavariable this relation binds for the calling rule
+.decl up022_without_capture_in_annotation(n: node, call: loc)
+up022_without_capture_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), up022_alt_1(c2, CALL).
+
+// with_capture_in_annotation(n): the JSON util `with-capture-in-annotation`, used where the JSON says `matches: "with-capture-in-annotation"`
+//   CALL: metavariable this relation binds for the calling rule
+.decl up022_with_capture_in_annotation(n: node, call: loc)
+up022_with_capture_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), up022_alt_2(c2, CALL).
+
+// UP022(n, detail): findings from clauses `use-capture-output`, `merge-into-capture-output`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation UP022(at: node, call: node, detail: symbol) "{detail}."
+    suppress noqa "UP022"
+UP022(CALL, n, "Replace `stdout=subprocess.PIPE` and `stderr=subprocess.PIPE` with `capture_output=True`; it is equivalent. Keep them only if the code must still run on Python 3.6") :- up022_without_capture(n),
+    node(_, n, _, _, _), CALL = n.
+UP022(CALL, n, "Replace `stdout=subprocess.PIPE` and `stderr=subprocess.PIPE` with `capture_output=True`; it is equivalent. Keep them only if the code must still run on Python 3.6") :- up022_without_capture_in_annotation(n, CALL).
+UP022(CALL, n, "Remove `stdout=subprocess.PIPE` and `stderr=subprocess.PIPE` and pass `capture_output=True` instead; a true `capture_output` combined with them raises ValueError") :- up022_with_capture(n),
+    node(_, n, _, _, _), CALL = n.
+UP022(CALL, n, "Remove `stdout=subprocess.PIPE` and `stderr=subprocess.PIPE` and pass `capture_output=True` instead; a true `capture_output` combined with them raises ValueError") :- up022_with_capture_in_annotation(n, CALL).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   CALL: metavariable this relation binds for the calling rule
+.decl up022_alt_1(n: node, call: loc)
+up022_alt_1(n, CALL) :- up022_without_capture(n), CALL = n.
+up022_alt_1(n, CALL) :- up022_without_capture_in_annotation(n, CALL).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+//   CALL: metavariable this relation binds for the calling rule
+.decl up022_alt_2(n: node, call: loc)
+up022_alt_2(n, CALL) :- up022_with_capture(n), CALL = n.
+up022_alt_2(n, CALL) :- up022_with_capture_in_annotation(n, CALL).

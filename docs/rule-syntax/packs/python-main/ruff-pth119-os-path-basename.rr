@@ -1,0 +1,95 @@
+.policy "ruff-pth119-os-path-basename" revision 1
+.guests off
+.description "Use the name property of a Path object instead of os.path.basename; pathlib reads better than string-based os.path functions."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PTH119(n): a finding at node n, from clause `os-path-basename`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PTH119(at: node, f: node) "Use `Path(...).name` instead of `os.path.basename(...)`. Path normalizes the path first (trailing slashes, `.`) and rejects bytes, so keep `basename` where the exact result matters."
+    suppress noqa "PTH119"
+PTH119(F, n) :- pth119_target(n, F).
+PTH119(F, n) :- pth119_in_string(n, F).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth119_callee(n: node, f: loc)
+pth119_callee(n, F) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "os.path.basename"), node(_, n, _, _, _), F = n.
+pth119_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth119_callee(c1, F).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth119_target(n: node, f: loc)
+pth119_target(n, F) :- kind(n, "call"), child(n, c1, _), pth119_callee(c1, F), precedes(c1, s2),
+    (kind(s2, "argument_list") ; kind(s2, "generator_expression")), child(n, c3, _),
+    ( kind(c3, "generator_expression")
+    ; kind(c3, "argument_list"), k1 = count : { child(c3, c2, _), !pth119_trivia(c2) }, k1 >= 1, k1 <= 1, child(c3, c4, _), pth119_alt_2(c4)
+    ).
+
+
+// in_string(n): the JSON util `in-string`, used where the JSON says `matches: "in-string"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth119_in_string(n: node, f: loc)
+pth119_in_string(n, F) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), pth119_alt_8(c2, F).
+
+// trivia(n): the JSON util `trivia`, used where the JSON says `matches: "trivia"`
+.decl pth119_trivia(n: node)
+pth119_trivia(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pth119_trivia(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth119_tok_precedes_1(n: node)
+.stored pth119_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth119_tok_precedes_1(n) :- precedes(n, s8), glob("=", s8).
+pth119_tok_precedes_1(n) :- child(p11, n, _), node(_, n, _, _, en14),
+    token(p11, _, t9, st13, _), st13 >= en14, match("=", t9).
+pth119_tok_precedes_1(n) :- structural_after(n, g10),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g10).
+pth119_tok_precedes_1(n) :- precedes(n, o12), structural_after(o12, g10),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g10).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth119_tok_precedes_2(n: node)
+.stored pth119_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth119_tok_precedes_2(n) :- precedes(n, s2), glob("=", s2).
+pth119_tok_precedes_2(n) :- child(p5, n, _), node(_, n, _, _, en8), token(p5, _, t3, st7, _),
+    st7 >= en8, match("=", t3).
+pth119_tok_precedes_2(n) :- structural_after(n, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+pth119_tok_precedes_2(n) :- precedes(n, o6), structural_after(o6, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth119_tok_precedes_3(n: node)
+.stored pth119_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth119_tok_precedes_3(n) :- precedes(n, s5), glob("=", s5).
+pth119_tok_precedes_3(n) :- child(p8, n, _), node(_, n, _, _, en11),
+    token(p8, _, t6, st10, _), st10 >= en11, match("=", t6).
+pth119_tok_precedes_3(n) :- structural_after(n, g7),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g7).
+pth119_tok_precedes_3(n) :- precedes(n, o9), structural_after(o9, g7),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g7).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pth119_alt_1(n: node)
+pth119_alt_1(n) :- (kind(n, "keyword_argument") ; kind(n, "list_splat") ; kind(n, "dictionary_splat")).
+pth119_alt_1(n) :- pth119_trivia(n).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl pth119_alt_2(n: node)
+pth119_alt_2(n) :- kind(n, "keyword_argument"), child(n, c1, _), kind(c1, "identifier"),
+    glob("p", c1), pth119_tok_precedes_2(c1).
+pth119_alt_2(n) :- node(_, n, _, _, _), !pth119_alt_1(n).
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+//   F: metavariable this relation binds for the calling rule
+.decl pth119_alt_8(n: node, f: loc)
+pth119_alt_8(n, F) :- pth119_target(n, F).
+pth119_alt_8(n, F) :- pth119_in_string(n, F).

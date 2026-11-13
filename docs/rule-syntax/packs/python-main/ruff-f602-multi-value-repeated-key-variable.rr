@@ -1,0 +1,59 @@
+.policy "ruff-f602-multi-value-repeated-key-variable" revision 1
+.guests off
+.description "Avoid repeating the same variable as a key in a Python dict literal; the later value silently overwrites the earlier one."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// F602(n): a finding at node n, from clause `multi-value-repeated-key-variable`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation F602(at: node, key: loc) "Remove or merge the repeated key `{key}` in this dict; the later value silently overwrites the earlier one."
+    suppress noqa "F602"
+F602(n, KEY) :- node(_, n, _, _, _), KEY = n, !kind(n, "parenthesized_expression"),
+    kind(n, "identifier"), f602_dict_key(n), f602_up_1(n, p1), precedes(s2, p1),
+    kind(s2, "pair"), child(s2, c3, _), !f602_tok_follows_2(c3), f602_earlier_same(c3, KEY).
+
+// dict_key(n): the JSON util `dict-key`, used where the JSON says `matches: "dict-key"`
+.decl f602_dict_key(n: node)
+f602_dict_key(n) :- !f602_tok_follows_1(n), child(p8, n, _), kind(p8, "pair").
+f602_dict_key(n) :- child(p9, n, _), kind(p9, "parenthesized_expression"), f602_dict_key(p9).
+
+// earlier_same(n): the JSON util `earlier-same`, used where the JSON says `matches: "earlier-same"`
+//   KEY: metavariable of the calling rule, passed in (bound by the caller)
+.decl f602_earlier_same(n: node, key: loc)
+f602_earlier_same(n, KEY) :- f602_demand_earlier_same(n, KEY),
+    !kind(n, "parenthesized_expression"), node(_, n, _, _, _), EARLIER = n, kind(n, "identifier"),
+    text(EARLIER, t1), text(KEY, t1), @doc(EARLIER) = @doc(KEY).
+f602_earlier_same(n, KEY) :- f602_demand_earlier_same(n, KEY),
+    kind(n, "parenthesized_expression"), child(n, c3, _), f602_earlier_same(c3, KEY).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f602_tok_follows_1(n: node)
+.stored f602_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f602_tok_follows_1(n) :- next_sibling(s1, n), match("(?s).*..*", s1).
+f602_tok_follows_1(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match("(?s).*..*", t2).
+f602_tok_follows_1(n) :- structural_before(n, g3), match("(?s)^.*\\S\\s*$", g3).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl f602_tok_follows_2(n: node)
+.stored f602_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+f602_tok_follows_2(n) :- next_sibling(s4, n), match("(?s).*..*", s4).
+f602_tok_follows_2(n) :- structural_before(n, g6), match("\\s*", g6), child(p7, n, _),
+    node(_, n, _, st9, _), o8 = st9 - strlen(g6), token(p7, _, t5, _, o8),
+    match("(?s).*..*", t5).
+f602_tok_follows_2(n) :- structural_before(n, g6), match("(?s)^.*\\S\\s*$", g6).
+
+// demand_earlier_same: the rows of earlier_same its callers ask for (the metavariable columns they pass in)
+.decl f602_demand_earlier_same(n: node, key: loc)
+f602_demand_earlier_same(c3, KEY) :- node(_, n, _, _, _), KEY = n, kind(n, "identifier"), f602_dict_key(n),
+    f602_up_1(n, p1), precedes(s2, p1), kind(s2, "pair"), child(s2, c3, _).
+f602_demand_earlier_same(c3, KEY) :- f602_demand_earlier_same(n, KEY),
+    kind(n, "parenthesized_expression"), child(n, c3, _).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl f602_up_1(n: node, p: node)
+f602_up_1(n, p) :- f602_dict_key(n), within_stop(n, p, "pair"), kind(p, "pair").

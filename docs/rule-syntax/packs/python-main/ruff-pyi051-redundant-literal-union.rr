@@ -1,0 +1,244 @@
+.policy "ruff-pyi051-redundant-literal-union" revision 1
+.guests off
+.description "Don't list a literal value in a union that already includes its builtin type; the broader type already covers every value of the literal."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PYI051(n): a finding at node n, from clause `redundant-literal-union`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PYI051(at: node, e: node, b: loc) "Drop `{e}` from this `Literal`: the union already includes `{b}`, which covers it. Remove the whole `Literal` if no values are left."
+    suppress noqa "PYI051"
+PYI051(E, n, B) :- pyi051_redundant(n, B, E).
+PYI051(E, n, B) :- pyi051_annotation_string(n), parsed(n, "annotation", r1), within(c2, r1),
+    pyi051_redundant(c2, B, E).
+
+// lit_ref(n): the JSON util `lit-ref`, used where the JSON says `matches: "lit-ref"`
+.decl pyi051_lit_ref(n: node)
+pyi051_lit_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Literal")
+    ; sym_of(n, "typing_extensions.Literal")
+    ; sym_of(n, "_typeshed.Literal")
+    ).
+
+
+// union_ref(n): the JSON util `union-ref`, used where the JSON says `matches: "union-ref"`
+.decl pyi051_union_ref(n: node)
+pyi051_union_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Union")
+    ; sym_of(n, "typing_extensions.Union")
+    ; sym_of(n, "_typeshed.Union")
+    ).
+
+
+// union_wrap(n): the JSON util `union-wrap`, used where the JSON says `matches: "union-wrap"`
+.decl pyi051_union_wrap(n: node)
+pyi051_union_wrap(n) :- (kind(n, "type") ; kind(n, "type_parameter") ; kind(n, "parenthesized_expression")).
+pyi051_union_wrap(n) :- kind(n, "tuple"), within_stop(n, p1, pyi051_stop_1),
+    (kind(p1, "subscript") ; kind(p1, "generic_type")), pyi051_union(p1).
+
+// lit_wrap(n): the JSON util `lit-wrap`, used where the JSON says `matches: "lit-wrap"`
+.decl pyi051_lit_wrap(n: node)
+pyi051_lit_wrap(n) :- pyi051_union_wrap(n).
+pyi051_lit_wrap(n) :- kind(n, "tuple").
+
+// lit_form(n): the JSON util `lit-form`, used where the JSON says `matches: "lit-form"`
+.decl pyi051_lit_form(n: node)
+pyi051_lit_form(n) :- kind(n, "subscript"), field(n, "value", c1), pyi051_lit_ref(c1).
+pyi051_lit_form(n) :- kind(n, "generic_type"), child(n, c2, _), pyi051_lit_ref(c2).
+
+// union(n): the JSON util `union`, used where the JSON says `matches: "union"`
+.decl pyi051_union(n: node)
+pyi051_union(n) :- kind(n, "union_type").
+pyi051_union(n) :- kind(n, "binary_operator"), field(n, "operator", c1), glob("|", c1).
+pyi051_union(n) :- kind(n, "subscript"), field(n, "value", c2), pyi051_union_ref(c2).
+pyi051_union(n) :- kind(n, "generic_type"), child(n, c3, _), pyi051_union_ref(c3).
+
+// annotation_string(n): the JSON util `annotation-string`, used where the JSON says `matches: "annotation-string"`
+.decl pyi051_annotation_string(n: node)
+pyi051_annotation_string(n) :- kind(n, "string"),
+    ( glob("[rR]['\"]**", n)
+    ; match("[uU]?['\"].*", n), count : { contains("\\", n) } = 0
+    ).
+
+
+// top_union(n): the JSON util `top-union`, used where the JSON says `matches: "top-union"`
+.decl pyi051_top_union(n: node)
+pyi051_top_union(n) :- pyi051_union(n), count : { pyi051_stop_3_within(n, p1), pyi051_union(p1) } = 0.
+
+// elem_str(n): the JSON util `elem-str`, used where the JSON says `matches: "elem-str"`
+.decl pyi051_elem_str(n: node)
+pyi051_elem_str(n) :- kind(n, "string"), match("[rRuU]{0,2}['\\\"].*", n),
+    count : { has(n, c1, "interpolation"), node(_, c1, _, _, _) } = 0.
+pyi051_elem_str(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), !match("[rRuU]{0,2}['\\\"].*", c2) } = 0.
+
+// elem_bytes(n): the JSON util `elem-bytes`, used where the JSON says `matches: "elem-bytes"`
+.decl pyi051_elem_bytes(n: node)
+pyi051_elem_bytes(n) :- kind(n, "string"), match("(?:[bB][rR]?|[rR][bB])['\\\"].*", n),
+    count : { has(n, c1, "interpolation"), node(_, c1, _, _, _) } = 0.
+pyi051_elem_bytes(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), !match("(?:[bB][rR]?|[rR][bB])['\\\"].*", c2) } = 0.
+
+// elem_int(n): the JSON util `elem-int`, used where the JSON says `matches: "elem-int"`
+.decl pyi051_elem_int(n: node)
+pyi051_elem_int(n) :- kind(n, "integer"), !glob("**[jJ]", n).
+
+// elem_float(n): the JSON util `elem-float`, used where the JSON says `matches: "elem-float"`
+.decl pyi051_elem_float(n: node)
+pyi051_elem_float(n) :- kind(n, "float"), !glob("**[jJ]", n).
+
+// elem_complex(n): the JSON util `elem-complex`, used where the JSON says `matches: "elem-complex"`
+.decl pyi051_elem_complex(n: node)
+pyi051_elem_complex(n) :- (kind(n, "integer") ; kind(n, "float")), glob("**[jJ]", n).
+
+// has_of(n, key): 6 copies of one rule set (`has-bool`, `has-bytes`, `has-complex` and 3 more), folded into one: row `key` of
+// has_of_case gives the strings each copy had.
+//   B: metavariable this relation binds for the calling rule
+.decl pyi051_has_of(n: node, key: symbol, b: loc)
+pyi051_has_of(n, q1, B) :- pyi051_demand_has_of(n), pyi051_has_of_case(q1, s1),
+    (kind(n, "identifier") ; kind(n, "attribute")), node(_, n, _, _, _), B = n, global_ref(n, q1),
+    sym_of(n, s1).
+pyi051_has_of(n, q1, B) :- pyi051_demand_has_of(n), pyi051_has_of_case(q1, s1), pyi051_union(n),
+    within_stop(c1, n, pyi051_stop_3), pyi051_has_of(c1, q1, B).
+
+// elem_bool(n): the JSON util `elem-bool`, used where the JSON says `matches: "elem-bool"`
+.decl pyi051_elem_bool(n: node)
+pyi051_elem_bool(n) :- (kind(n, "true") ; kind(n, "false")).
+
+// redundant(n): the JSON util `redundant`, used where the JSON says `matches: "redundant"`
+//   B, E: metavariables this relation binds for the calling rule
+.decl pyi051_redundant(n: node, b: loc, e: loc)
+pyi051_redundant(n, B, E) :- count : { pyi051_stop_10_within(n, p1), pyi051_inner_tuple(p1) } = 0,
+    pyi051_alt_29(n, B, E).
+
+// inner_tuple(n): the JSON util `inner-tuple`, used where the JSON says `matches: "inner-tuple"`
+.decl pyi051_inner_tuple(n: node)
+pyi051_inner_tuple(n) :- kind(n, "tuple"), within_stop(n, p1, pyi051_stop_48),
+    ( kind(p1, "tuple")
+    ; (kind(p1, "subscript") ; kind(p1, "type_parameter")), pyi051_tok_has_2(p1)
+    ).
+
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi051_tok_has_1(n: node)
+.stored pyi051_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi051_tok_has_1(n) :- child(n, c2, _), glob("\\,", c2).
+pyi051_tok_has_1(n) :- op(n, t3), match(",", t3).
+pyi051_tok_has_1(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+pyi051_tok_has_1(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+pyi051_tok_has_1(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pyi051_tok_has_2(n: node)
+.stored pyi051_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pyi051_tok_has_2(n) :- child(n, c1, _), glob("\\,", c1).
+pyi051_tok_has_2(n) :- op(n, t2), match(",", t2).
+pyi051_tok_has_2(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+pyi051_tok_has_2(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+pyi051_tok_has_2(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// demand_has_of: the nodes has_of is asked at (its recursion looks at every descendant)
+.decl pyi051_demand_has_of(n: node)
+pyi051_demand_has_of(c1) :- pyi051_demand_has_of(n), pyi051_has_of_case(q1, s1), pyi051_union(n),
+    within_stop(c1, n, pyi051_stop_3).
+pyi051_demand_has_of(p2) :- pyi051_elem_str(n), node(_, n, _, _, _), E = n, pyi051_up_1(n, p1), within_stop(p1, p2, pyi051_stop_12),
+    pyi051_top_union(p2).
+pyi051_demand_has_of(p4) :- pyi051_elem_bytes(n), node(_, n, _, _, _), E = n, pyi051_up_2(n, p3),
+    within_stop(p3, p4, pyi051_stop_12), pyi051_top_union(p4).
+pyi051_demand_has_of(p6) :- pyi051_elem_int(n), node(_, n, _, _, _), E = n, pyi051_up_3(n, p5), within_stop(p5, p6, pyi051_stop_12),
+    pyi051_top_union(p6).
+pyi051_demand_has_of(p8) :- pyi051_elem_float(n), node(_, n, _, _, _), E = n, pyi051_up_4(n, p7),
+    within_stop(p7, p8, pyi051_stop_12), pyi051_top_union(p8).
+pyi051_demand_has_of(p10) :- pyi051_elem_complex(n), node(_, n, _, _, _), E = n, pyi051_up_5(n, p9),
+    within_stop(p9, p10, pyi051_stop_12), pyi051_top_union(p10).
+pyi051_demand_has_of(p12) :- pyi051_elem_bool(n), node(_, n, _, _, _), E = n, pyi051_up_6(n, p11),
+    within_stop(p11, p12, pyi051_stop_12), pyi051_top_union(p12).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pyi051_up_1(n: node, p: node)
+pyi051_up_1(n, p) :- pyi051_elem_str(n), within_stop(n, p, pyi051_stop_10), pyi051_lit_form(p).
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pyi051_up_2(n: node, p: node)
+pyi051_up_2(n, p) :- pyi051_elem_bytes(n), within_stop(n, p, pyi051_stop_10), pyi051_lit_form(p).
+
+// up_3(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pyi051_up_3(n: node, p: node)
+pyi051_up_3(n, p) :- pyi051_elem_int(n), within_stop(n, p, pyi051_stop_10), pyi051_lit_form(p).
+
+// up_4(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pyi051_up_4(n: node, p: node)
+pyi051_up_4(n, p) :- pyi051_elem_float(n), within_stop(n, p, pyi051_stop_10), pyi051_lit_form(p).
+
+// up_5(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pyi051_up_5(n: node, p: node)
+pyi051_up_5(n, p) :- pyi051_elem_complex(n), within_stop(n, p, pyi051_stop_10), pyi051_lit_form(p).
+
+// up_6(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl pyi051_up_6(n: node, p: node)
+pyi051_up_6(n, p) :- pyi051_elem_bool(n), within_stop(n, p, pyi051_stop_10), pyi051_lit_form(p).
+
+// has_of_case: one row per relation folded into has_of: its key, then the strings that differed.
+.decl pyi051_has_of_case(key: symbol, s1: symbol)
+pyi051_has_of_case("bool", "builtins.bool"). pyi051_has_of_case("bytes", "builtins.bytes").
+pyi051_has_of_case("complex", "builtins.complex"). pyi051_has_of_case("float", "builtins.float").
+pyi051_has_of_case("int", "builtins.int"). pyi051_has_of_case("str", "builtins.str").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi051_stop_1(n: node)
+pyi051_stop_1(n) :- node(_, n, _, _, _), !kind(n, "type"), !kind(n, "type_parameter").
+
+// stop_3(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi051_stop_3(n: node)
+pyi051_stop_3(n) :- node(_, n, _, _, _), !pyi051_union_wrap(n).
+
+// stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi051_stop_10(n: node)
+pyi051_stop_10(n) :- node(_, n, _, _, _), !pyi051_lit_wrap(n).
+
+// alt_13(n): the JSON `any`: n matches if any one of these rules does
+.decl pyi051_alt_13(n: node)
+pyi051_alt_13(n) :- pyi051_union_wrap(n).
+pyi051_alt_13(n) :- pyi051_union(n).
+
+// stop_12(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi051_stop_12(n: node)
+pyi051_stop_12(n) :- node(_, n, _, _, _), !pyi051_alt_13(n).
+
+// alt_29(n): the JSON `any`: n matches if any one of these rules does
+//   B, E: metavariables this relation binds for the calling rule
+.decl pyi051_alt_29(n: node, b: loc, e: loc)
+pyi051_alt_29(n, B, E) :- pyi051_elem_str(n), node(_, n, _, _, _), E = n, pyi051_up_1(n, p1), within_stop(p1, p2, pyi051_stop_12),
+    pyi051_top_union(p2), pyi051_has_of(p2, "str", B).
+pyi051_alt_29(n, B, E) :- pyi051_elem_bytes(n), node(_, n, _, _, _), E = n, pyi051_up_2(n, p3), within_stop(p3, p4, pyi051_stop_12),
+    pyi051_top_union(p4), pyi051_has_of(p4, "bytes", B).
+pyi051_alt_29(n, B, E) :- pyi051_elem_int(n), node(_, n, _, _, _), E = n, pyi051_up_3(n, p5), within_stop(p5, p6, pyi051_stop_12),
+    pyi051_top_union(p6), pyi051_has_of(p6, "int", B).
+pyi051_alt_29(n, B, E) :- pyi051_elem_float(n), node(_, n, _, _, _), E = n, pyi051_up_4(n, p7), within_stop(p7, p8, pyi051_stop_12),
+    pyi051_top_union(p8), pyi051_has_of(p8, "float", B).
+pyi051_alt_29(n, B, E) :- pyi051_elem_complex(n), node(_, n, _, _, _), E = n, pyi051_up_5(n, p9),
+    within_stop(p9, p10, pyi051_stop_12), pyi051_top_union(p10), pyi051_has_of(p10, "complex", B).
+pyi051_alt_29(n, B, E) :- pyi051_elem_bool(n), node(_, n, _, _, _), E = n, pyi051_up_6(n, p11),
+    within_stop(p11, p12, pyi051_stop_12), pyi051_top_union(p12), pyi051_has_of(p12, "bool", B).
+
+// stop_48(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pyi051_stop_48(n: node)
+pyi051_stop_48(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression"),
+    !kind(n, "type").
+
+// stop_3_within: within_stop over the stop set stop_3, read inside an aggregate
+.decl pyi051_stop_3_within(n: node, a: node)
+pyi051_stop_3_within(x, y) :- within_stop(x, y, pyi051_stop_3).
+
+// stop_10_within: within_stop over the stop set stop_10, read inside an aggregate
+.decl pyi051_stop_10_within(n: node, a: node)
+pyi051_stop_10_within(x, y) :- within_stop(x, y, pyi051_stop_10).

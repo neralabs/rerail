@@ -1,0 +1,21 @@
+.policy "ruff-dtz012-call-date-fromtimestamp" revision 1
+.guests off
+.description "Derive a date from a timestamp through a timezone-aware datetime instead of the naive local date; the local date depends on the machine's timezone."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// DTZ012(n): a finding at node n, from clause `call-date-fromtimestamp`.
+// Each rule below is one way the JSON `rule` can match.
+.violation DTZ012(at: node) "Use `datetime.datetime.fromtimestamp(<timestamp>, tz=...).date()` with the timezone whose date you need; `date.fromtimestamp` gives the naive local date, so keep it only if intended."
+    suppress noqa "DTZ012"
+DTZ012(n) :- kind(n, "call"), field(n, "function", c1), dtz012_callee(c1).
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl dtz012_callee(n: node)
+dtz012_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "datetime.date.fromtimestamp").
+dtz012_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), dtz012_callee(c1).

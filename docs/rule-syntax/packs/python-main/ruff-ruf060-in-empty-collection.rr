@@ -1,0 +1,493 @@
+.policy "ruff-ruf060-in-empty-collection" revision 1
+.guests off
+.description "Avoid membership tests against an empty list, tuple, set, dict, string or bytes; the result is almost always fixed, so the test hides a mistake or dead code."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// global_declared_builtin(n): the JSON util `global-declared-builtin`, used where the JSON says `matches: "global-declared-builtin"`
+.decl ruf060_global_declared_builtin(n: node)
+ruf060_global_declared_builtin(n) :- kind(n, "identifier"), node(d1, n, _, st2, _),
+    ruf060_seen_import(s3, h5, ks6), (h5 = "builtins"), node(d1, s3, _, so4, _),
+    kn7 = count : { within(n, b8), field(f8, "body", b8), kind(f8, "function_definition") },
+    ( ks6 < kn7
+    ; ks6 = kn7, so4 < st2
+    ; count : { within(n, l8), field(m8, "body", l8), kind(m8, "lambda") } > 0
+    ),
+    !ruf060_alt_1(n).
+
+// callee_collection(n): the JSON util `callee-collection`, used where the JSON says `matches: "callee-collection"`
+.decl ruf060_callee_collection(n: node)
+ruf060_callee_collection(n) :- global_ref(n, g1), ruf060_set_2(g1), sym_of(n, q2), ruf060_set_3(q2).
+ruf060_callee_collection(n) :- glob("{list,tuple,set,frozenset,dict,bytes,bytearray,str}", n),
+    ruf060_global_declared_builtin(n).
+ruf060_callee_collection(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    ruf060_callee_collection(c3).
+
+// callee_set(n): the JSON util `callee-set`, used where the JSON says `matches: "callee-set"`
+.decl ruf060_callee_set(n: node)
+ruf060_callee_set(n) :- (global_ref(n, "set") ; global_ref(n, "frozenset")),
+    (sym_of(n, "builtins.set") ; sym_of(n, "builtins.frozenset")).
+ruf060_callee_set(n) :- glob("{set,frozenset}", n), ruf060_global_declared_builtin(n).
+ruf060_callee_set(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf060_callee_set(c1).
+
+// trivia(n): the JSON util `trivia`, used where the JSON says `matches: "trivia"`
+.decl ruf060_trivia(n: node)
+ruf060_trivia(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+
+// elem(n): the JSON util `elem`, used where the JSON says `matches: "elem"`
+.decl ruf060_elem(n: node)
+ruf060_elem(n) :- node(_, n, _, _, _), !ruf060_alt_4(n).
+
+// str_plain_empty(n): the JSON util `str-plain-empty`, used where the JSON says `matches: "str-plain-empty"`
+.decl ruf060_str_plain_empty(n: node)
+ruf060_str_plain_empty(n) :- ruf060_str_any_empty(n), !match("[A-Za-z]*[bB].*", n).
+
+// str_any_empty(n): the JSON util `str-any-empty`, used where the JSON says `matches: "str-any-empty"`
+.decl ruf060_str_any_empty(n: node)
+ruf060_str_any_empty(n) :- kind(n, "string"),
+    match("(?i:(?:[ubf]?(?:'(?:\\\\\\r?\\n)*'|\"(?:\\\\\\r?\\n)*\"|'''(?:\\\\\\r?\\n)*'''|\"\"\"(?:\\\\\\r?\\n)*\"\"\")|[rbfu]{1,2}(?:''|\"\"|''''''|\"\"\"\"\"\")))", n).
+
+// fstr_empty(n): the JSON util `fstr-empty`, used where the JSON says `matches: "fstr-empty"`
+.decl ruf060_fstr_empty(n: node)
+ruf060_fstr_empty(n) :- ruf060_fstr_empty_u7(n).
+
+// interp_empty(n): the JSON util `interp-empty`, used where the JSON says `matches: "interp-empty"`
+.decl ruf060_interp_empty(n: node)
+ruf060_interp_empty(n) :- ruf060_interp_empty_u7(n).
+
+// inner_part(n): the JSON util `inner-part`, used where the JSON says `matches: "inner-part"`
+.decl ruf060_inner_part(n: node)
+ruf060_inner_part(n) :- ruf060_inner_part_u7(n).
+
+// inner_empty(n): the JSON util `inner-empty`, used where the JSON says `matches: "inner-empty"`
+.decl ruf060_inner_empty(n: node)
+ruf060_inner_empty(n) :- ruf060_inner_empty_u7(n).
+
+// outer_part(n): the JSON util `outer-part`, used where the JSON says `matches: "outer-part"`
+.decl ruf060_outer_part(n: node)
+ruf060_outer_part(n) :- ruf060_str_any_empty(n).
+ruf060_outer_part(n) :- ruf060_fstr_empty(n).
+
+// empty(n): the JSON util `empty`, used where the JSON says `matches: "empty"`
+.decl ruf060_empty(n: node)
+ruf060_empty(n) :- kind(n, "list"), count : { child(n, c1, _), ruf060_elem(c1) } = 0.
+ruf060_empty(n) :- kind(n, "tuple"), count : { child(n, c2, _), ruf060_elem(c2) } = 0.
+ruf060_empty(n) :- kind(n, "dictionary"), count : { child(n, c3, _), ruf060_elem(c3) } = 0.
+ruf060_empty(n) :- ruf060_outer_part(n).
+ruf060_empty(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c4, _), !ruf060_alt_8(c4) } = 0.
+ruf060_empty(n) :- kind(n, "parenthesized_expression"), child(n, c5, _), ruf060_empty(c5).
+ruf060_empty(n) :- kind(n, "call"), ruf060_alt_9(n).
+
+// fstr_part(n): the JSON util `fstr-part`, used where the JSON says `matches: "fstr-part"`
+.decl ruf060_fstr_part(n: node)
+ruf060_fstr_part(n) :- kind(n, "string"), child(n, c1, _), kind(c1, "string_start"),
+    match("[A-Za-z]*[fF].*", c1).
+
+// in_compare(n): the JSON util `in-compare`, used where the JSON says `matches: "in-compare"`
+.decl ruf060_in_compare(n: node)
+ruf060_in_compare(n) :- ruf060_single_compare(n), child(n, c1, _), ruf060_empty(c1),
+    precedes_stop(s2, c1, ruf060_stop_10), glob("in", s2).
+
+// in_in_string(n): the JSON util `in-in-string`, used where the JSON says `matches: "in-in-string"`
+//   C: metavariable this relation binds for the calling rule
+.decl ruf060_in_in_string(n: node, c: loc)
+ruf060_in_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), ruf060_alt_11(c2, C).
+
+// not_in_compare(n): the JSON util `not-in-compare`, used where the JSON says `matches: "not-in-compare"`
+.decl ruf060_not_in_compare(n: node)
+ruf060_not_in_compare(n) :- ruf060_single_compare(n), child(n, c1, _), ruf060_empty(c1),
+    precedes_stop(s2, c1, ruf060_stop_10), match("not(?:\\s|\\\\)+in", s2).
+
+// not_in_in_string(n): the JSON util `not-in-in-string`, used where the JSON says `matches: "not-in-in-string"`
+//   C: metavariable this relation binds for the calling rule
+.decl ruf060_not_in_in_string(n: node, c: loc)
+ruf060_not_in_in_string(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), ruf060_alt_13(c2, C).
+
+// single_compare(n): the JSON util `single-compare`, used where the JSON says `matches: "single-compare"`
+.decl ruf060_single_compare(n: node)
+ruf060_single_compare(n) :- kind(n, "comparison_operator"),
+    k2 = count : { child(n, c1, _), !ruf060_trivia(c1) }, k2 <= 3.
+
+// RUF060(n, detail): findings from clauses `membership-in-empty`, `membership-not-in-empty`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF060(at: node, c: node, detail: symbol) "{detail} and simplify, or fill the collection if items were meant."
+    suppress noqa "RUF060"
+RUF060(C, n, "`in` on an empty collection is always False, except an empty string in an empty str or bytes; replace it with `False`") :- ruf060_in_compare(n),
+    node(_, n, _, _, _), C = n.
+RUF060(C, n, "`in` on an empty collection is always False, except an empty string in an empty str or bytes; replace it with `False`") :- ruf060_in_in_string(n, C).
+RUF060(C, n, "`not in` on an empty collection is always True, except an empty string against an empty str or bytes; replace it with `True`") :- ruf060_not_in_compare(n),
+    node(_, n, _, _, _), C = n.
+RUF060(C, n, "`not in` on an empty collection is always True, except an empty string against an empty str or bytes; replace it with `True`") :- ruf060_not_in_in_string(n, C).
+
+.decl ruf060_alt_5_u0(n: node)
+ruf060_alt_5_u0(n) :- kind(n, "string_start").
+ruf060_alt_5_u0(n) :- kind(n, "string_end"), glob("{',\",''',\"\"\"}", n).
+ruf060_alt_5_u0(n) :- kind(n, "string_content"), match("(?:\\\\\\r?\\n)+", n),
+    count : { precedes(s1, n), kind(s1, "string_start"), match("[A-Za-z]*[rR].*", s1) } = 0.
+
+.decl ruf060_alt_5_u1(n: node)
+ruf060_alt_5_u1(n) :- kind(n, "string_start").
+ruf060_alt_5_u1(n) :- kind(n, "string_end"), glob("{',\",''',\"\"\"}", n).
+ruf060_alt_5_u1(n) :- kind(n, "interpolation"), ruf060_interp_empty_u0(n).
+ruf060_alt_5_u1(n) :- kind(n, "string_content"), match("(?:\\\\\\r?\\n)+", n),
+    count : { precedes(s1, n), kind(s1, "string_start"), match("[A-Za-z]*[rR].*", s1) } = 0.
+
+.decl ruf060_alt_5_u2(n: node)
+ruf060_alt_5_u2(n) :- kind(n, "string_start").
+ruf060_alt_5_u2(n) :- kind(n, "string_end"), glob("{',\",''',\"\"\"}", n).
+ruf060_alt_5_u2(n) :- kind(n, "interpolation"), ruf060_interp_empty_u1(n).
+ruf060_alt_5_u2(n) :- kind(n, "string_content"), match("(?:\\\\\\r?\\n)+", n),
+    count : { precedes(s1, n), kind(s1, "string_start"), match("[A-Za-z]*[rR].*", s1) } = 0.
+
+.decl ruf060_alt_5_u3(n: node)
+ruf060_alt_5_u3(n) :- kind(n, "string_start").
+ruf060_alt_5_u3(n) :- kind(n, "string_end"), glob("{',\",''',\"\"\"}", n).
+ruf060_alt_5_u3(n) :- kind(n, "interpolation"), ruf060_interp_empty_u2(n).
+ruf060_alt_5_u3(n) :- kind(n, "string_content"), match("(?:\\\\\\r?\\n)+", n),
+    count : { precedes(s1, n), kind(s1, "string_start"), match("[A-Za-z]*[rR].*", s1) } = 0.
+
+.decl ruf060_alt_5_u4(n: node)
+ruf060_alt_5_u4(n) :- kind(n, "string_start").
+ruf060_alt_5_u4(n) :- kind(n, "string_end"), glob("{',\",''',\"\"\"}", n).
+ruf060_alt_5_u4(n) :- kind(n, "interpolation"), ruf060_interp_empty_u3(n).
+ruf060_alt_5_u4(n) :- kind(n, "string_content"), match("(?:\\\\\\r?\\n)+", n),
+    count : { precedes(s1, n), kind(s1, "string_start"), match("[A-Za-z]*[rR].*", s1) } = 0.
+
+.decl ruf060_alt_5_u5(n: node)
+ruf060_alt_5_u5(n) :- kind(n, "string_start").
+ruf060_alt_5_u5(n) :- kind(n, "string_end"), glob("{',\",''',\"\"\"}", n).
+ruf060_alt_5_u5(n) :- kind(n, "interpolation"), ruf060_interp_empty_u4(n).
+ruf060_alt_5_u5(n) :- kind(n, "string_content"), match("(?:\\\\\\r?\\n)+", n),
+    count : { precedes(s1, n), kind(s1, "string_start"), match("[A-Za-z]*[rR].*", s1) } = 0.
+
+.decl ruf060_alt_5_u6(n: node)
+ruf060_alt_5_u6(n) :- kind(n, "string_start").
+ruf060_alt_5_u6(n) :- kind(n, "string_end"), glob("{',\",''',\"\"\"}", n).
+ruf060_alt_5_u6(n) :- kind(n, "interpolation"), ruf060_interp_empty_u5(n).
+ruf060_alt_5_u6(n) :- kind(n, "string_content"), match("(?:\\\\\\r?\\n)+", n),
+    count : { precedes(s1, n), kind(s1, "string_start"), match("[A-Za-z]*[rR].*", s1) } = 0.
+
+.decl ruf060_alt_5_u7(n: node)
+ruf060_alt_5_u7(n) :- kind(n, "string_start").
+ruf060_alt_5_u7(n) :- kind(n, "string_end"), glob("{',\",''',\"\"\"}", n).
+ruf060_alt_5_u7(n) :- kind(n, "interpolation"), ruf060_interp_empty_u6(n).
+ruf060_alt_5_u7(n) :- kind(n, "string_content"), match("(?:\\\\\\r?\\n)+", n),
+    count : { precedes(s1, n), kind(s1, "string_start"), match("[A-Za-z]*[rR].*", s1) } = 0.
+
+.decl ruf060_alt_7_u0(n: node)
+ruf060_alt_7_u0(n) :- ruf060_trivia(n).
+
+.decl ruf060_alt_7_u1(n: node)
+ruf060_alt_7_u1(n) :- ruf060_inner_part_u0(n).
+ruf060_alt_7_u1(n) :- ruf060_trivia(n).
+
+.decl ruf060_alt_7_u2(n: node)
+ruf060_alt_7_u2(n) :- ruf060_inner_part_u1(n).
+ruf060_alt_7_u2(n) :- ruf060_trivia(n).
+
+.decl ruf060_alt_7_u3(n: node)
+ruf060_alt_7_u3(n) :- ruf060_inner_part_u2(n).
+ruf060_alt_7_u3(n) :- ruf060_trivia(n).
+
+.decl ruf060_alt_7_u4(n: node)
+ruf060_alt_7_u4(n) :- ruf060_inner_part_u3(n).
+ruf060_alt_7_u4(n) :- ruf060_trivia(n).
+
+.decl ruf060_alt_7_u5(n: node)
+ruf060_alt_7_u5(n) :- ruf060_inner_part_u4(n).
+ruf060_alt_7_u5(n) :- ruf060_trivia(n).
+
+.decl ruf060_alt_7_u6(n: node)
+ruf060_alt_7_u6(n) :- ruf060_inner_part_u5(n).
+ruf060_alt_7_u6(n) :- ruf060_trivia(n).
+
+.decl ruf060_alt_7_u7(n: node)
+ruf060_alt_7_u7(n) :- ruf060_inner_part_u6(n).
+ruf060_alt_7_u7(n) :- ruf060_trivia(n).
+
+.decl ruf060_fstr_empty_u0(n: node)
+ruf060_fstr_empty_u0(n) :- kind(n, "string"), count : { child(n, c1, _) } = 0, ruf060_fstr_part(n).
+
+.decl ruf060_fstr_empty_u1(n: node)
+ruf060_fstr_empty_u1(n) :- kind(n, "string"), count : { child(n, c1, _), !ruf060_alt_5_u0(c1) } = 0,
+    ruf060_fstr_part(n).
+
+.decl ruf060_fstr_empty_u2(n: node)
+ruf060_fstr_empty_u2(n) :- kind(n, "string"), count : { child(n, c1, _), !ruf060_alt_5_u1(c1) } = 0,
+    ruf060_fstr_part(n).
+
+.decl ruf060_fstr_empty_u3(n: node)
+ruf060_fstr_empty_u3(n) :- kind(n, "string"), count : { child(n, c1, _), !ruf060_alt_5_u2(c1) } = 0,
+    ruf060_fstr_part(n).
+
+.decl ruf060_fstr_empty_u4(n: node)
+ruf060_fstr_empty_u4(n) :- kind(n, "string"), count : { child(n, c1, _), !ruf060_alt_5_u3(c1) } = 0,
+    ruf060_fstr_part(n).
+
+.decl ruf060_fstr_empty_u5(n: node)
+ruf060_fstr_empty_u5(n) :- kind(n, "string"), count : { child(n, c1, _), !ruf060_alt_5_u4(c1) } = 0,
+    ruf060_fstr_part(n).
+
+.decl ruf060_fstr_empty_u6(n: node)
+ruf060_fstr_empty_u6(n) :- kind(n, "string"), count : { child(n, c1, _), !ruf060_alt_5_u5(c1) } = 0,
+    ruf060_fstr_part(n).
+
+.decl ruf060_fstr_empty_u7(n: node)
+ruf060_fstr_empty_u7(n) :- kind(n, "string"), count : { child(n, c1, _), !ruf060_alt_5_u6(c1) } = 0,
+    ruf060_fstr_part(n).
+
+.decl ruf060_inner_empty_u0(n: node)
+ruf060_inner_empty_u0(n) :- kind(n, "concatenated_string"), count : { child(n, c1, _) } = 0.
+ruf060_inner_empty_u0(n) :- kind(n, "concatenated_string"), child(n, c2, _), ruf060_fstr_part(c2),
+    count : { child(n, c3, _), ruf060_fstr_part(c3) } = 0.
+
+.decl ruf060_inner_empty_u1(n: node)
+ruf060_inner_empty_u1(n) :- ruf060_inner_part_u0(n).
+ruf060_inner_empty_u1(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !ruf060_alt_7_u0(c1) } = 0.
+ruf060_inner_empty_u1(n) :- kind(n, "concatenated_string"), child(n, c2, _), ruf060_fstr_part(c2),
+    count : { child(n, c3, _), ruf060_fstr_part(c3), !ruf060_fstr_empty_u0(c3) } = 0.
+ruf060_inner_empty_u1(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    ruf060_inner_empty_u0(c4).
+
+.decl ruf060_inner_empty_u2(n: node)
+ruf060_inner_empty_u2(n) :- ruf060_inner_part_u1(n).
+ruf060_inner_empty_u2(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !ruf060_alt_7_u1(c1) } = 0.
+ruf060_inner_empty_u2(n) :- kind(n, "concatenated_string"), child(n, c2, _), ruf060_fstr_part(c2),
+    count : { child(n, c3, _), ruf060_fstr_part(c3), !ruf060_fstr_empty_u1(c3) } = 0.
+ruf060_inner_empty_u2(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    ruf060_inner_empty_u1(c4).
+
+.decl ruf060_inner_empty_u3(n: node)
+ruf060_inner_empty_u3(n) :- ruf060_inner_part_u2(n).
+ruf060_inner_empty_u3(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !ruf060_alt_7_u2(c1) } = 0.
+ruf060_inner_empty_u3(n) :- kind(n, "concatenated_string"), child(n, c2, _), ruf060_fstr_part(c2),
+    count : { child(n, c3, _), ruf060_fstr_part(c3), !ruf060_fstr_empty_u2(c3) } = 0.
+ruf060_inner_empty_u3(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    ruf060_inner_empty_u2(c4).
+
+.decl ruf060_inner_empty_u4(n: node)
+ruf060_inner_empty_u4(n) :- ruf060_inner_part_u3(n).
+ruf060_inner_empty_u4(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !ruf060_alt_7_u3(c1) } = 0.
+ruf060_inner_empty_u4(n) :- kind(n, "concatenated_string"), child(n, c2, _), ruf060_fstr_part(c2),
+    count : { child(n, c3, _), ruf060_fstr_part(c3), !ruf060_fstr_empty_u3(c3) } = 0.
+ruf060_inner_empty_u4(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    ruf060_inner_empty_u3(c4).
+
+.decl ruf060_inner_empty_u5(n: node)
+ruf060_inner_empty_u5(n) :- ruf060_inner_part_u4(n).
+ruf060_inner_empty_u5(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !ruf060_alt_7_u4(c1) } = 0.
+ruf060_inner_empty_u5(n) :- kind(n, "concatenated_string"), child(n, c2, _), ruf060_fstr_part(c2),
+    count : { child(n, c3, _), ruf060_fstr_part(c3), !ruf060_fstr_empty_u4(c3) } = 0.
+ruf060_inner_empty_u5(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    ruf060_inner_empty_u4(c4).
+
+.decl ruf060_inner_empty_u6(n: node)
+ruf060_inner_empty_u6(n) :- ruf060_inner_part_u5(n).
+ruf060_inner_empty_u6(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !ruf060_alt_7_u5(c1) } = 0.
+ruf060_inner_empty_u6(n) :- kind(n, "concatenated_string"), child(n, c2, _), ruf060_fstr_part(c2),
+    count : { child(n, c3, _), ruf060_fstr_part(c3), !ruf060_fstr_empty_u5(c3) } = 0.
+ruf060_inner_empty_u6(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    ruf060_inner_empty_u5(c4).
+
+.decl ruf060_inner_empty_u7(n: node)
+ruf060_inner_empty_u7(n) :- ruf060_inner_part_u6(n).
+ruf060_inner_empty_u7(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !ruf060_alt_7_u6(c1) } = 0.
+ruf060_inner_empty_u7(n) :- kind(n, "concatenated_string"), child(n, c2, _), ruf060_fstr_part(c2),
+    count : { child(n, c3, _), ruf060_fstr_part(c3), !ruf060_fstr_empty_u6(c3) } = 0.
+ruf060_inner_empty_u7(n) :- kind(n, "parenthesized_expression"), child(n, c4, _),
+    ruf060_inner_empty_u6(c4).
+
+.decl ruf060_inner_part_u0(n: node)
+ruf060_inner_part_u0(n) :- ruf060_str_plain_empty(n).
+
+.decl ruf060_inner_part_u1(n: node)
+ruf060_inner_part_u1(n) :- ruf060_str_plain_empty(n).
+ruf060_inner_part_u1(n) :- ruf060_fstr_empty_u0(n).
+
+.decl ruf060_inner_part_u2(n: node)
+ruf060_inner_part_u2(n) :- ruf060_str_plain_empty(n).
+ruf060_inner_part_u2(n) :- ruf060_fstr_empty_u1(n).
+
+.decl ruf060_inner_part_u3(n: node)
+ruf060_inner_part_u3(n) :- ruf060_str_plain_empty(n).
+ruf060_inner_part_u3(n) :- ruf060_fstr_empty_u2(n).
+
+.decl ruf060_inner_part_u4(n: node)
+ruf060_inner_part_u4(n) :- ruf060_str_plain_empty(n).
+ruf060_inner_part_u4(n) :- ruf060_fstr_empty_u3(n).
+
+.decl ruf060_inner_part_u5(n: node)
+ruf060_inner_part_u5(n) :- ruf060_str_plain_empty(n).
+ruf060_inner_part_u5(n) :- ruf060_fstr_empty_u4(n).
+
+.decl ruf060_inner_part_u6(n: node)
+ruf060_inner_part_u6(n) :- ruf060_str_plain_empty(n).
+ruf060_inner_part_u6(n) :- ruf060_fstr_empty_u5(n).
+
+.decl ruf060_inner_part_u7(n: node)
+ruf060_inner_part_u7(n) :- ruf060_str_plain_empty(n).
+ruf060_inner_part_u7(n) :- ruf060_fstr_empty_u6(n).
+
+.decl ruf060_interp_empty_u1(n: node)
+ruf060_interp_empty_u1(n) :- kind(n, "interpolation"), child(n, c1, _), ruf060_inner_empty_u0(c1),
+    count : { child(n, c2, _), ruf060_alt_6(c2) } = 0.
+
+.decl ruf060_interp_empty_u2(n: node)
+ruf060_interp_empty_u2(n) :- kind(n, "interpolation"), child(n, c1, _), ruf060_inner_empty_u1(c1),
+    count : { child(n, c2, _), ruf060_alt_6(c2) } = 0.
+
+.decl ruf060_interp_empty_u3(n: node)
+ruf060_interp_empty_u3(n) :- kind(n, "interpolation"), child(n, c1, _), ruf060_inner_empty_u2(c1),
+    count : { child(n, c2, _), ruf060_alt_6(c2) } = 0.
+
+.decl ruf060_interp_empty_u4(n: node)
+ruf060_interp_empty_u4(n) :- kind(n, "interpolation"), child(n, c1, _), ruf060_inner_empty_u3(c1),
+    count : { child(n, c2, _), ruf060_alt_6(c2) } = 0.
+
+.decl ruf060_interp_empty_u5(n: node)
+ruf060_interp_empty_u5(n) :- kind(n, "interpolation"), child(n, c1, _), ruf060_inner_empty_u4(c1),
+    count : { child(n, c2, _), ruf060_alt_6(c2) } = 0.
+
+.decl ruf060_interp_empty_u6(n: node)
+ruf060_interp_empty_u6(n) :- kind(n, "interpolation"), child(n, c1, _), ruf060_inner_empty_u5(c1),
+    count : { child(n, c2, _), ruf060_alt_6(c2) } = 0.
+
+.decl ruf060_interp_empty_u7(n: node)
+ruf060_interp_empty_u7(n) :- kind(n, "interpolation"), child(n, c1, _), ruf060_inner_empty_u6(c1),
+    count : { child(n, c2, _), ruf060_alt_6(c2) } = 0.
+
+// seen_import: import statement s imports absolute module h (its first segment), inside k function bodies
+.decl ruf060_seen_import(s: node, h: symbol, k: number)
+ruf060_seen_import(s, h, k) :- kind(s, "import_statement"), child(s, c, _),
+    (kind(c, "dotted_name"), x = c ; kind(c, "aliased_import"), field(c, "name", x)),
+    child(x, i, 0), kind(i, "identifier"), text(i, h),
+    k = count : { within(s, b), field(f, "body", b), kind(f, "function_definition") }.
+ruf060_seen_import(s, h, k) :- kind(s, "import_from_statement"), field(s, "module_name", x),
+    kind(x, "dotted_name"), child(x, i, 0), kind(i, "identifier"), text(i, h),
+    k = count : { within(s, b), field(f, "body", b), kind(f, "function_definition") }.
+
+// all_expr: x is a module-level `__all__ =`, `+=` or `: T =` value, or a part of one that lists names
+//   (Ruff's extract_dunder_all_names: `+` chains, parentheses, walrus values, list(...) and tuple(...))
+.decl ruf060_all_expr(x: node)
+ruf060_all_expr(x) :- (kind(st, "assignment") ; kind(st, "augmented_assignment")),
+    field(st, "left", l), kind(l, "identifier"), text(l, "__all__"), child(es, st, _),
+    kind(es, "expression_statement"), child(m, es, _), kind(m, "module"),
+    field(st, "right", x).
+ruf060_all_expr(y) :- ruf060_all_expr(x), kind(x, "assignment"), field(x, "right", y).
+ruf060_all_expr(y) :- ruf060_all_expr(x), kind(x, "binary_operator"),
+    (field(x, "left", y) ; field(x, "right", y)).
+ruf060_all_expr(y) :- ruf060_all_expr(x), kind(x, "parenthesized_expression"), child(x, y, _),
+    !kind(y, "comment").
+ruf060_all_expr(y) :- ruf060_all_expr(x), kind(x, "named_expression"), field(x, "value", y).
+ruf060_all_expr(y) :- ruf060_all_expr(x), kind(x, "call"), field(x, "function", f),
+    kind(f, "identifier"), (text(f, "list") ; text(f, "tuple")),
+    field(x, "arguments", a), child(a, y, _).
+
+// all_entry: string e is an entry of a module `__all__` definition, exporting the name x
+.decl ruf060_all_entry(e: node, x: symbol)
+ruf060_all_entry(e, x) :- ruf060_all_expr(l), (kind(l, "list") ; kind(l, "tuple")), child(l, e, _),
+    (kind(e, "string") ; kind(e, "concatenated_string")),
+    count : { within(i, e), kind(i, "interpolation") } = 0, str(e, x).
+
+// alt_5_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf060_alt_5_u0_empty(n: node)
+
+// alt_7_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf060_alt_7_u0_empty(n: node)
+
+// fstr_empty_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf060_fstr_empty_u0_empty(n: node)
+
+// inner_empty_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf060_inner_empty_u0_empty(n: node)
+
+// inner_part_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf060_inner_part_u0_empty(n: node)
+
+// interp_empty_u0: level -1 of an unrolled recursion, empty
+.decl ruf060_interp_empty_u0(n: node)
+
+// interp_empty_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf060_interp_empty_u0_empty(n: node)
+
+// set_2: names from the JSON `resolves.global`
+.decl ruf060_set_2(v: symbol)
+ruf060_set_2("list"). ruf060_set_2("tuple"). ruf060_set_2("set"). ruf060_set_2("frozenset"). ruf060_set_2("dict").
+ruf060_set_2("bytes"). ruf060_set_2("bytearray"). ruf060_set_2("str").
+
+// set_3: symbols from the JSON `resolves.import`
+.decl ruf060_set_3(v: symbol)
+ruf060_set_3("builtins.list"). ruf060_set_3("builtins.tuple"). ruf060_set_3("builtins.set").
+ruf060_set_3("builtins.frozenset"). ruf060_set_3("builtins.dict"). ruf060_set_3("builtins.bytes").
+ruf060_set_3("builtins.bytearray"). ruf060_set_3("builtins.str").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf060_alt_1(n: node)
+ruf060_alt_1(n) :- ref_site(n, b1), !kind(b1, "global_statement").
+ruf060_alt_1(n) :- docof(n, d3), modnode(d3, m4),
+    ( kind(n, "identifier"), !bind_only(n), miss(n, x2)
+    ; (kind(n, "string") ; kind(n, "concatenated_string")), ruf060_all_entry(n, x2), !bound_in(m4, x2)
+    ),
+    !builtin(x2), !star(m4).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf060_alt_4(n: node)
+ruf060_alt_4(n) :- ruf060_trivia(n).
+ruf060_alt_4(n) :- node(_, n, _, _, _), glob("[\\[\\](){},]", n).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf060_alt_5(n: node)
+ruf060_alt_5(n) :- ruf060_alt_5_u7(n).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf060_alt_6(n: node)
+ruf060_alt_6(n) :- (kind(n, "type_conversion") ; kind(n, "format_specifier")).
+ruf060_alt_6(n) :- node(_, n, _, _, _), glob("=", n).
+
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf060_alt_7(n: node)
+ruf060_alt_7(n) :- ruf060_alt_7_u7(n).
+
+// alt_8(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf060_alt_8(n: node)
+ruf060_alt_8(n) :- ruf060_outer_part(n).
+ruf060_alt_8(n) :- ruf060_trivia(n).
+
+// alt_9(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf060_alt_9(n: node)
+ruf060_alt_9(n) :- field(n, "function", c1), ruf060_callee_collection(c1), field(n, "arguments", c2),
+    kind(c2, "argument_list"), count : { child(c2, c3, _), ruf060_elem(c3) } = 0.
+ruf060_alt_9(n) :- field(n, "function", c4), ruf060_callee_set(c4), field(n, "arguments", c5),
+    kind(c5, "argument_list"), child(c5, c6, _), ruf060_empty(c6),
+    count : { precedes(s7, c6), ruf060_elem(s7) } = 0.
+
+// stop_10(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf060_stop_10(n: node)
+ruf060_stop_10(n) :- node(_, n, _, _, _), !ruf060_trivia(n).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl ruf060_alt_11(n: node, c: loc)
+ruf060_alt_11(n, C) :- ruf060_in_compare(n), C = n.
+ruf060_alt_11(n, C) :- ruf060_in_in_string(n, C).
+
+// alt_13(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl ruf060_alt_13(n: node, c: loc)
+ruf060_alt_13(n, C) :- ruf060_not_in_compare(n), C = n.
+ruf060_alt_13(n, C) :- ruf060_not_in_in_string(n, C).

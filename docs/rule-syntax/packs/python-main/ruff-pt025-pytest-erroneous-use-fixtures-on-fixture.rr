@@ -1,0 +1,60 @@
+.policy "ruff-pt025-pytest-erroneous-use-fixtures-on-fixture" revision 1
+.guests off
+.description "Don't apply a pytest usefixtures marker to a fixture function; it has no effect there, so request other fixtures as parameters instead."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PT025(n): a finding at node n, from clause `usefixtures-on-fixture`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PT025(at: node, span: node) "Remove this `usefixtures` mark; it has no effect on a fixture. To make the fixture depend on other fixtures, list them as parameters of the fixture function."
+    suppress noqa "PT025"
+// SPAN: not bound by every branch, so empty (unset) where not bound, as in ast-grep.
+PT025(rr_at, SPAN) :- kind(n, "decorator"), child(n, c1, _), pt025_uf_expr(c1), child(p2, n, _),
+    kind(p2, "decorated_definition"), field(p2, "definition", c3),
+    kind(c3, "function_definition"), child(p2, c4, _), kind(c4, "decorator"),
+    child(c4, c5, _), pt025_fixture_expr(c5),
+    ( child(n, c1_1, _), (kind(c1_1, "comment") ; kind(c1_1, "line_continuation")), match("(?P<SPAN>(?:\"\"\"(?:[^\\\\]|\\\\[\\s\\S])*?\"\"\"|'''(?:[^\\\\]|\\\\[\\s\\S])*?'''|(?:[rR]?[fFtT]|[fFtT][rR])\"(?:\\{\\{|\\}\\}|\\{(?:\"[^\"\\n]*\"|'[^'\\n]*'|\\{[^{}\\n]*\\}|[^{}\"'\\n])*\\}|[^\"\\\\{}\\n]|\\\\[\\s\\S])+\"|(?:[rR]?[fFtT]|[fFtT][rR])'(?:\\{\\{|\\}\\}|\\{(?:\"[^\"\\n]*\"|'[^'\\n]*'|\\{[^{}\\n]*\\}|[^{}\"'\\n])*\\}|[^'\\\\{}\\n]|\\\\[\\s\\S])+'|\"(?:[^\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)(?:\\s|\\\\\\r?\\n|#[^\\n]*)*", n)
+    ; count : { child(n, c2_2, _), (kind(c2_2, "comment") ; kind(c2_2, "line_continuation")) } = 0, unset(SPAN)
+    ; !match("(?P<SPAN>(?:\"\"\"(?:[^\\\\]|\\\\[\\s\\S])*?\"\"\"|'''(?:[^\\\\]|\\\\[\\s\\S])*?'''|(?:[rR]?[fFtT]|[fFtT][rR])\"(?:\\{\\{|\\}\\}|\\{(?:\"[^\"\\n]*\"|'[^'\\n]*'|\\{[^{}\\n]*\\}|[^{}\"'\\n])*\\}|[^\"\\\\{}\\n]|\\\\[\\s\\S])+\"|(?:[rR]?[fFtT]|[fFtT][rR])'(?:\\{\\{|\\}\\}|\\{(?:\"[^\"\\n]*\"|'[^'\\n]*'|\\{[^{}\\n]*\\}|[^{}\"'\\n])*\\}|[^'\\\\{}\\n]|\\\\[\\s\\S])+'|\"(?:[^\"\\\\]|\\\\[\\s\\S])*\"|'(?:[^'\\\\]|\\\\[\\s\\S])*'|#[^\\n]*\\n|[^#'\"])*?)(?:\\s|\\\\\\r?\\n|#[^\\n]*)*", n), unset(SPAN)
+    ),
+    (unset(SPAN), rr_at = n ; !unset(SPAN), rr_at = SPAN).
+
+
+// uf_ref(n): the JSON util `uf-ref`, used where the JSON says `matches: "uf-ref"`
+.decl pt025_uf_ref(n: node)
+pt025_uf_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "pytest.mark.usefixtures").
+
+// uf_callee(n): the JSON util `uf-callee`, used where the JSON says `matches: "uf-callee"`
+.decl pt025_uf_callee(n: node)
+pt025_uf_callee(n) :- pt025_uf_ref(n).
+pt025_uf_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pt025_uf_callee(c1).
+
+// uf_expr(n): the JSON util `uf-expr`, used where the JSON says `matches: "uf-expr"`
+.decl pt025_uf_expr(n: node)
+pt025_uf_expr(n) :- pt025_uf_callee(n).
+pt025_uf_expr(n) :- kind(n, "call"), field(n, "function", c1), pt025_uf_callee(c1).
+pt025_uf_expr(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), pt025_uf_expr(c2).
+
+// fixture_ref(n): the JSON util `fixture-ref`, used where the JSON says `matches: "fixture-ref"`
+.decl pt025_fixture_ref(n: node)
+pt025_fixture_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "pytest.fixture") ; sym_of(n, "pytest.yield_fixture")).
+
+// fixture_callee(n): the JSON util `fixture-callee`, used where the JSON says `matches: "fixture-callee"`
+.decl pt025_fixture_callee(n: node)
+pt025_fixture_callee(n) :- pt025_fixture_ref(n).
+pt025_fixture_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt025_fixture_callee(c1).
+
+// fixture_expr(n): the JSON util `fixture-expr`, used where the JSON says `matches: "fixture-expr"`
+.decl pt025_fixture_expr(n: node)
+pt025_fixture_expr(n) :- pt025_fixture_callee(n).
+pt025_fixture_expr(n) :- kind(n, "call"), field(n, "function", c1), pt025_fixture_callee(c1).
+pt025_fixture_expr(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    pt025_fixture_expr(c2).

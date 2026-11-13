@@ -1,0 +1,124 @@
+.policy "ruff-pt014-pytest-duplicate-parametrize-test-cases" revision 1
+.guests off
+.description "Remove duplicate test cases from pytest parametrize values; a repeated case runs the same test twice and covers nothing new."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PT014(n): a finding at node n, from clause `pytest-duplicate-parametrize-test-cases`.
+// Each rule below is one way the JSON `rule` can match.
+.violation PT014(at: node) "Remove this repeat of an earlier case in the parametrize values, or fix its values if it was meant to differ; keep it when the element is a call that yields a new object each time."
+    suppress noqa "PT014"
+PT014(n) :- node(_, n, _, _, _), E = n, !pt014_alt_5(n), pt014_repeated_slot(n, E).
+
+// parametrize_ref(n): the JSON util `parametrize-ref`, used where the JSON says `matches: "parametrize-ref"`
+.decl pt014_parametrize_ref(n: node)
+pt014_parametrize_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "pytest.mark.parametrize").
+
+// parametrize_callee(n): the JSON util `parametrize-callee`, used where the JSON says `matches: "parametrize-callee"`
+.decl pt014_parametrize_callee(n: node)
+pt014_parametrize_callee(n) :- pt014_parametrize_ref(n).
+pt014_parametrize_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pt014_parametrize_callee(c1).
+
+// values(n): the JSON util `values`, used where the JSON says `matches: "values"`
+.decl pt014_values(n: node)
+pt014_values(n) :- (kind(n, "list") ; kind(n, "tuple")), node(_, n, _, _, _), L = n, inside(n, p1, "call"),
+    field(p1, "function", c2), pt014_parametrize_callee(c2), kind(p1, "call"),
+    pt014_arg_argvalues_1(p1, a3), V = a3,
+    ( text(n, t_l1_1), text(L, t_l1_1), text(L, t1_1), text(V, t1_1), @doc(n) = @doc(L), @doc(L) = @doc(V) ; within_stop(n, p3_2, pt014_stop_1), kind(p3_2, "parenthesized_expression"), node(_, p3_2, _, _, _), W = p3_2, text(W, t4_2), text(V, t4_2), @doc(W) = @doc(V) ).
+
+
+// repeated_slot(n): the JSON util `repeated-slot`, used where the JSON says `matches: "repeated-slot"`
+//   E: metavariable of the calling rule, passed in (bound by the caller)
+.decl pt014_repeated_slot(n: node, e: loc)
+pt014_repeated_slot(n, E) :- pt014_demand_repeated_slot(n, E), child(p1, n, _), pt014_values(p1),
+    precedes(s2, n), !pt014_alt_4(s2), node(_, s2, _, _, _), F = s2, value(F, t3), value(E, t3).
+pt014_repeated_slot(n, E) :- pt014_demand_repeated_slot(n, E), child(p5, n, _),
+    kind(p5, "parenthesized_expression"), pt014_repeated_slot(p5, E).
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl pt014_args_plain(l: node, a: node, i: number)
+pt014_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl pt014_args_splat(l: node, i: number)
+pt014_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl pt014_args_pos(l: node, a: node, j: number)
+pt014_args_pos(l, a, j) :- pt014_args_plain(l, a, i), count : { pt014_args_splat(l, k), k < i } = 0,
+    j = count : { pt014_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl pt014_args_star(l: node, j: number)
+pt014_args_star(l, j) :- pt014_args_splat(l, i), count : { pt014_args_splat(l, k), k < i } = 0,
+    j = count : { pt014_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl pt014_args_kwp(l: node, k: symbol, v: node)
+pt014_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl pt014_args_lit_dict(s: node, d: node)
+pt014_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !pt014_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl pt014_args_str_pair(p: node)
+pt014_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl pt014_args_kw(l: node, k: symbol, v: node)
+pt014_args_kw(l, k, v) :- pt014_args_kwp(l, k, v).
+pt014_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), pt014_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl pt014_args_kw_spread(l: node)
+pt014_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !pt014_args_lit_dict(s, _).
+
+// arg_argvalues_1: call n passes v for slot `argvalues` of (argnames, argvalues), syntactic: Ruff's find_argument
+.decl pt014_arg_argvalues_1(n: node, v: node)
+pt014_arg_argvalues_1(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    pt014_args_kwp(l, "argvalues", v).
+pt014_arg_argvalues_1(n, v) :- kind(n, "call"), field(n, "arguments", l), pt014_args_pos(l, v, 1),
+    !pt014_args_kwp(l, "argvalues", _).
+
+// arg_no_argvalues_1: call n does not pass slot `argvalues` of (argnames, argvalues), syntactic: Ruff's find_argument
+.decl pt014_arg_no_argvalues_1(n: node)
+pt014_arg_no_argvalues_1(n) :- kind(n, "call"), field(n, "arguments", l),
+    !pt014_args_kwp(l, "argvalues", _), !pt014_args_pos(l, _, 1).
+
+// demand_repeated_slot: the rows of repeated_slot its callers ask for (the metavariable columns they pass in)
+.decl pt014_demand_repeated_slot(n: node, e: loc)
+pt014_demand_repeated_slot(n, E) :- node(_, n, _, _, _), E = n.
+pt014_demand_repeated_slot(p5, E) :- pt014_demand_repeated_slot(n, E), child(p5, n, _),
+    kind(p5, "parenthesized_expression").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pt014_stop_1(n: node)
+pt014_stop_1(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl pt014_alt_4(n: node)
+pt014_alt_4(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pt014_alt_4(n) :- node(_, n, _, _, _), glob("[\\[\\](),]", n).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl pt014_alt_5(n: node)
+pt014_alt_5(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+pt014_alt_5(n) :- kind(n, "parenthesized_expression").

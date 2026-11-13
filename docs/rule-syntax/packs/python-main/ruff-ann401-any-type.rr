@@ -1,0 +1,903 @@
+.policy "ruff-ann401-any-type" revision 1
+.guests off
+.description "Use a specific type instead of Any in function signatures; Any switches off type checking for every value that passes through it."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// ANN401(n): a finding at node n, from clause `any-type`.
+// Each rule below is one way the JSON `rule` can match.
+.violation ANN401(at: node) "This annotation amounts to `Any`; replace it with the type the code actually accepts or returns (a union, a TypeVar or a Protocol), keeping `Any` only where every type is truly allowed."
+    suppress noqa "ANN401"
+ANN401(n) :- kind(n, k1), ann401_set_42(k1), ann401_up_1(n, p2),
+    ( field(p1, "return_type", p2), kind(p1, "function_definition"), ann401_checked_fn(p1)
+    ; field(p3, "type", p2), (kind(p3, "typed_parameter") ; kind(p3, "typed_default_parameter")), ann401_checked_param(p3)
+    ),
+    ann401_top_any(n).
+
+// seen_builtins(n): the JSON util `seen-builtins`, used where the JSON says `matches: "seen-builtins"`
+.decl ann401_seen_builtins(n: node)
+ann401_seen_builtins(n) :- inside(n, p1, "module"), has(p1, c2, "dotted_name"),
+    match("builtins\\b.*", c2),
+    ( field(p2, "name", c2), kind(p2, "import_statement")
+    ; child(p3, c2, _), kind(p3, "aliased_import"), child(p4, p3, _), kind(p4, "import_statement")
+    ; field(p5, "module_name", c2), kind(p5, "import_from_statement")
+    ).
+
+
+// static_ref(n): the JSON util `static-ref`, used where the JSON says `matches: "static-ref"`
+.decl ann401_static_ref(n: node)
+ann401_static_ref(n) :- kind(n, "identifier"), glob("staticmethod", n), !ann401_alt_3(n).
+ann401_static_ref(n) :- ann401_seen_builtins(n), (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "staticmethod"), sym_of(n, "builtins.staticmethod").
+ann401_static_ref(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), ann401_static_ref(c3).
+
+// overload_ref(n): the JSON util `overload-ref`, used where the JSON says `matches: "overload-ref"`
+.decl ann401_overload_ref(n: node)
+ann401_overload_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.overload")
+    ; sym_of(n, "typing_extensions.overload")
+    ; sym_of(n, "_typeshed.overload")
+    ).
+
+ann401_overload_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ann401_overload_ref(c1).
+
+// def_like(n): the JSON util `def-like`, used where the JSON says `matches: "def-like"`
+.decl ann401_def_like(n: node)
+ann401_def_like(n) :-
+    ( kind(n, "function_definition")
+    ; kind(n, "class_definition")
+    ; kind(n, "decorated_definition")
+    ).
+
+
+// overload_of_name(n): the JSON util `overload-of-name`, used where the JSON says `matches: "overload-of-name"`
+//   N: metavariable this relation binds for the calling rule
+.decl ann401_overload_of_name(n: node, n_mv: loc)
+ann401_overload_of_name(n, N) :- kind(n, "decorated_definition"), child(n, c1, _),
+    kind(c1, "decorator"), child(c1, c2, _), ann401_overload_ref(c2), child(n, c3, _),
+    kind(c3, "function_definition"), field(c3, "name", c4), node(_, c4, _, _, _), N = c4.
+
+// has_def(n): the JSON util `has-def`, used where the JSON says `matches: "has-def"`
+.decl ann401_has_def(n: node)
+ann401_has_def(n) :- ann401_def_like(n).
+ann401_has_def(n) :- within(c1, n), ann401_def_like(c1).
+
+// ends_with_overload(n): the JSON util `ends-with-overload`, used where the JSON says `matches: "ends-with-overload"`
+//   N: metavariable this relation binds for the calling rule
+.decl ann401_ends_with_overload(n: node, n_mv: loc)
+ann401_ends_with_overload(n, N) :- ann401_overload_of_name(n, N).
+ann401_ends_with_overload(n, N) :- !kind(n, "function_definition"), child(n, c1, _),
+    ann401_has_def(c1), count : { precedes(c1, s2), ann401_has_def(s2) } = 0,
+    ann401_ends_with_overload(c1, N).
+
+// after_overload(n): the JSON util `after-overload`, used where the JSON says `matches: "after-overload"`
+//   N: metavariable this relation binds for the calling rule
+.decl ann401_after_overload(n: node, n_mv: loc)
+ann401_after_overload(n, N) :- precedes_stop(s1, n, ann401_stop_5), ann401_ends_with_overload(s1, N).
+ann401_after_overload(n, N) :- count : { precedes(s2, n), ann401_has_def(s2) } = 0, child(p3, n, _),
+    !kind(p3, "function_definition"), !kind(p3, "class_definition"),
+    !kind(p3, "module"), ann401_after_overload(p3, N).
+
+// overload_impl(n): the JSON util `overload-impl`, used where the JSON says `matches: "overload-impl"`
+//   N: metavariable of the calling rule, passed in (bound by the caller)
+.decl ann401_overload_impl(n: node, n_mv: loc)
+ann401_overload_impl(n, N) :- ann401_demand_overload_impl(n, N), kind(n, "function_definition"),
+    count : { child(p1, n, _), kind(p1, "decorated_definition"), child(p1, c2, _), kind(c2, "decorator"), child(c2, c3, _), ann401_overload_ref(c3) } = 0,
+    ann401_after_overload(n, N).
+
+// override_ref(n): the JSON util `override-ref`, used where the JSON says `matches: "override-ref"`
+.decl ann401_override_ref(n: node)
+ann401_override_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.override")
+    ; sym_of(n, "typing_extensions.override")
+    ; sym_of(n, "_typeshed.override")
+    ).
+
+ann401_override_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ann401_override_ref(c1).
+
+// any_ref(n): the JSON util `any-ref`, used where the JSON says `matches: "any-ref"`
+.decl ann401_any_ref(n: node)
+ann401_any_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Any")
+    ; sym_of(n, "typing_extensions.Any")
+    ; sym_of(n, "_typeshed.Any")
+    ).
+
+ann401_any_ref(n) :- (kind(n, "parenthesized_expression") ; kind(n, "type")), child(n, c1, _),
+    ann401_any_ref(c1).
+ann401_any_ref(n) :- ann401_late_any_ref(n).
+
+// optional_ref(n): the JSON util `optional-ref`, used where the JSON says `matches: "optional-ref"`
+.decl ann401_optional_ref(n: node)
+ann401_optional_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Optional")
+    ; sym_of(n, "typing_extensions.Optional")
+    ; sym_of(n, "_typeshed.Optional")
+    ).
+
+ann401_optional_ref(n) :- (kind(n, "parenthesized_expression") ; kind(n, "type")),
+    child(n, c1, _), ann401_optional_ref(c1).
+ann401_optional_ref(n) :- ann401_late_optional_ref(n).
+
+// union_ref(n): the JSON util `union-ref`, used where the JSON says `matches: "union-ref"`
+.decl ann401_union_ref(n: node)
+ann401_union_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Union")
+    ; sym_of(n, "typing_extensions.Union")
+    ; sym_of(n, "_typeshed.Union")
+    ).
+
+ann401_union_ref(n) :- (kind(n, "parenthesized_expression") ; kind(n, "type")),
+    child(n, c1, _), ann401_union_ref(c1).
+ann401_union_ref(n) :- ann401_late_union_ref(n).
+
+// annotated_ref(n): the JSON util `annotated-ref`, used where the JSON says `matches: "annotated-ref"`
+.decl ann401_annotated_ref(n: node)
+ann401_annotated_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( sym_of(n, "typing.Annotated")
+    ; sym_of(n, "typing_extensions.Annotated")
+    ; sym_of(n, "_typeshed.Annotated")
+    ).
+
+ann401_annotated_ref(n) :- (kind(n, "parenthesized_expression") ; kind(n, "type")),
+    child(n, c1, _), ann401_annotated_ref(c1).
+ann401_annotated_ref(n) :- ann401_late_annotated_ref(n).
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl ann401_plain_string(n: node)
+ann401_plain_string(n) :- kind(n, "string"), match("[rRuU]{0,2}['\"].*", n),
+    count : { has(n, c1, "interpolation"), node(_, c1, _, _, _) } = 0.
+ann401_plain_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), !match("[rRuU]{0,2}['\"].*", c2) } = 0.
+
+// tuple_like(n): the JSON util `tuple-like`, used where the JSON says `matches: "tuple-like"`
+.decl ann401_tuple_like(n: node)
+ann401_tuple_like(n) :- kind(n, "tuple").
+ann401_tuple_like(n) :- (kind(n, "type") ; kind(n, "parenthesized_expression")),
+    child(n, c1, _), ann401_tuple_like(c1).
+
+// c_any(n): the JSON util `c-any`, used where the JSON says `matches: "c-any"`
+.decl ann401_c_any(n: node)
+ann401_c_any(n) :- ann401_any_ref(n).
+ann401_c_any(n) :- (kind(n, "parenthesized_expression") ; kind(n, "type")), child(n, c1, _),
+    ann401_c_any(c1).
+ann401_c_any(n) :- kind(n, "binary_operator"), field(n, "operator", c2), glob("|", c2),
+    ann401_alt_6(n).
+ann401_c_any(n) :- ann401_alt_7(n).
+ann401_c_any(n) :- ann401_alt_10(n).
+ann401_c_any(n) :- ann401_alt_15(n).
+ann401_c_any(n) :- ann401_plain_string(n), parsed(n, "annotation", r98), ann401_alt_19(r98).
+
+// tuple_first_c(n): the JSON util `tuple-first-c`, used where the JSON says `matches: "tuple-first-c"`
+.decl ann401_tuple_first_c(n: node)
+ann401_tuple_first_c(n) :- kind(n, "tuple"), child(n, c1, _), !ann401_alt_21(c1), ann401_c_any(c1).
+
+// first_c(n): the JSON util `first-c`, used where the JSON says `matches: "first-c"`
+.decl ann401_first_c(n: node)
+ann401_first_c(n) :- !ann401_tuple_like(n), ann401_c_any(n).
+ann401_first_c(n) :- ann401_tuple_like(n), child(p1, n, _), !ann401_tok_has_5(p1), has(n, c10, "tuple"),
+    child(c10, c11, _), !ann401_alt_22(c11), ann401_c_any(c11).
+
+// r_extra(n): the JSON util `r-extra`, used where the JSON says `matches: "r-extra"`
+.decl ann401_r_extra(n: node)
+ann401_r_extra(n) :- ann401_optional_ref(n).
+ann401_r_extra(n) :- (kind(n, "parenthesized_expression") ; kind(n, "type")), child(n, c1, _),
+    ann401_r_extra(c1).
+ann401_r_extra(n) :- ann401_alt_25(n).
+
+// first_r(n): the JSON util `first-r`, used where the JSON says `matches: "first-r"`
+.decl ann401_first_r(n: node)
+ann401_first_r(n) :- !ann401_tuple_like(n), ann401_r_extra(n).
+ann401_first_r(n) :- ann401_tuple_like(n), child(p1, n, _), !ann401_tok_has_5(p1), has(n, c10, "tuple"),
+    child(c10, c11, _), !ann401_alt_22(c11), ann401_r_extra(c11).
+
+// top_any(n): the JSON util `top-any`, used where the JSON says `matches: "top-any"`
+.decl ann401_top_any(n: node)
+ann401_top_any(n) :- !ann401_plain_string(n), ann401_alt_29(n).
+ann401_top_any(n) :- ann401_plain_string(n), parsed(n, "annotation", r1),
+    kind(r1, "expression_statement"), child(r1, c2, _), ann401_alt_29(c2).
+ann401_top_any(n) :- ann401_plain_string(n),
+    ( kind(n, "concatenated_string")
+    ; kind(n, "string"), match("(?s)[uU]?['\"].*\\\\.*", n)
+    ),
+    parsed(n, "annotation", r3), kind(r3, "expression_statement"), child(r3, c4, _),
+    ann401_plain_string(c4).
+
+// non_variadic(n): the JSON util `non-variadic`, used where the JSON says `matches: "non-variadic"`
+.decl ann401_non_variadic(n: node)
+ann401_non_variadic(n) :-
+    ( kind(n, "identifier")
+    ; kind(n, "default_parameter")
+    ; kind(n, "typed_default_parameter")
+    ).
+
+ann401_non_variadic(n) :- kind(n, "typed_parameter"),
+    count : { child(n, c1, _), (kind(c1, "list_splat_pattern") ; kind(c1, "dictionary_splat_pattern")) } = 0.
+
+// method_not_static(n): the JSON util `method-not-static`, used where the JSON says `matches: "method-not-static"`
+.decl ann401_method_not_static(n: node)
+ann401_method_not_static(n) :- kind(n, "function_definition"), within_stop(n, p1, ann401_stop_32),
+    kind(p1, "class_definition"),
+    count : { child(p2, n, _), kind(p2, "decorated_definition"), child(p2, c3, _), kind(c3, "decorator"), child(c3, c4, _), ann401_static_ref(c4) } = 0.
+
+// checked_fn(n): the JSON util `checked-fn`, used where the JSON says `matches: "checked-fn"`
+.decl ann401_checked_fn(n: node)
+ann401_checked_fn(n) :- kind(n, "function_definition"), field(n, "name", c1), node(_, c1, _, _, _), N = c1,
+    count : { child(p1_1, n, _), kind(p1_1, "decorated_definition"), child(p1_1, c2_1, _), kind(c2_1, "decorator"), child(c2_1, c3_1, _), ann401_override_ref(c3_1) } = 0, count : { ann401_overload_impl(n, N) } = 0.
+
+// checked_param(n): the JSON util `checked-param`, used where the JSON says `matches: "checked-param"`
+.decl ann401_checked_param(n: node)
+ann401_checked_param(n) :- child(p1, n, _), kind(p1, "parameters"), child(p2, p1, _),
+    kind(p2, "function_definition"), ann401_checked_fn(p2),
+    count : { ann401_non_variadic(n), count : { precedes(s3, n), ann401_non_variadic(s3) } = 0, child(p4, n, _), kind(p4, "parameters"), child(p5, p4, _), ann401_method_not_static(p5) } = 0.
+
+// late_any_ref(n): the JSON util `late-any-ref`, used where the JSON says `matches: "late-any-ref"`
+.decl ann401_late_any_ref(n: node)
+ann401_late_any_ref(n) :- kind(n, "identifier"), node(_, n, _, _, _), LA = n, docof(n, d2), modnode(d2, m3),
+    ( kind(n, "identifier"), !bind_only(n), miss(n, x1)
+    ; (kind(n, "string") ; kind(n, "concatenated_string")), ann401_all_entry(n, x1), !bound_in(m3, x1)
+    ),
+    !builtin(x1), !star(m3), inside(n, p4, "module"), within(c5, p4), ann401_alt_34(c5, LA).
+ann401_late_any_ref(n) :- kind(n, "attribute"), field(n, "attribute", c8), glob("Any", c8),
+    field(n, "object", c9), kind(c9, "identifier"), node(_, c9, _, _, _), LA = c9, docof(c9, d11),
+    modnode(d11, m12),
+    ( kind(c9, "identifier"), !bind_only(c9), miss(c9, x10)
+    ; (kind(c9, "string") ; kind(c9, "concatenated_string")), ann401_all_entry(c9, x10), !bound_in(m12, x10)
+    ),
+    !builtin(x10), !star(m12), inside(c9, p13, "module"), within(c14, p13),
+    ann401_alt_35(c14, LA).
+
+// late_optional_ref(n): the JSON util `late-optional-ref`, used where the JSON says `matches: "late-optional-ref"`
+.decl ann401_late_optional_ref(n: node)
+ann401_late_optional_ref(n) :- kind(n, "identifier"), node(_, n, _, _, _), LO = n, docof(n, d2),
+    modnode(d2, m3),
+    ( kind(n, "identifier"), !bind_only(n), miss(n, x1)
+    ; (kind(n, "string") ; kind(n, "concatenated_string")), ann401_all_entry(n, x1), !bound_in(m3, x1)
+    ),
+    !builtin(x1), !star(m3), inside(n, p4, "module"), within(c5, p4), ann401_alt_36(c5, LO).
+ann401_late_optional_ref(n) :- kind(n, "attribute"), field(n, "attribute", c8),
+    glob("Optional", c8), field(n, "object", c9), kind(c9, "identifier"), node(_, c9, _, _, _), LO = c9,
+    docof(c9, d11), modnode(d11, m12),
+    ( kind(c9, "identifier"), !bind_only(c9), miss(c9, x10)
+    ; (kind(c9, "string") ; kind(c9, "concatenated_string")), ann401_all_entry(c9, x10), !bound_in(m12, x10)
+    ),
+    !builtin(x10), !star(m12), inside(c9, p13, "module"), within(c14, p13),
+    ann401_alt_37(c14, LO).
+
+// late_union_ref(n): the JSON util `late-union-ref`, used where the JSON says `matches: "late-union-ref"`
+.decl ann401_late_union_ref(n: node)
+ann401_late_union_ref(n) :- kind(n, "identifier"), node(_, n, _, _, _), LU = n, docof(n, d2), modnode(d2, m3),
+    ( kind(n, "identifier"), !bind_only(n), miss(n, x1)
+    ; (kind(n, "string") ; kind(n, "concatenated_string")), ann401_all_entry(n, x1), !bound_in(m3, x1)
+    ),
+    !builtin(x1), !star(m3), inside(n, p4, "module"), within(c5, p4), ann401_alt_38(c5, LU).
+ann401_late_union_ref(n) :- kind(n, "attribute"), field(n, "attribute", c8),
+    glob("Union", c8), field(n, "object", c9), kind(c9, "identifier"), node(_, c9, _, _, _), LU = c9,
+    docof(c9, d11), modnode(d11, m12),
+    ( kind(c9, "identifier"), !bind_only(c9), miss(c9, x10)
+    ; (kind(c9, "string") ; kind(c9, "concatenated_string")), ann401_all_entry(c9, x10), !bound_in(m12, x10)
+    ),
+    !builtin(x10), !star(m12), inside(c9, p13, "module"), within(c14, p13),
+    ann401_alt_39(c14, LU).
+
+// late_annotated_ref(n): the JSON util `late-annotated-ref`, used where the JSON says `matches: "late-annotated-ref"`
+.decl ann401_late_annotated_ref(n: node)
+ann401_late_annotated_ref(n) :- kind(n, "identifier"), node(_, n, _, _, _), LT = n, docof(n, d2),
+    modnode(d2, m3),
+    ( kind(n, "identifier"), !bind_only(n), miss(n, x1)
+    ; (kind(n, "string") ; kind(n, "concatenated_string")), ann401_all_entry(n, x1), !bound_in(m3, x1)
+    ),
+    !builtin(x1), !star(m3), inside(n, p4, "module"), within(c5, p4), ann401_alt_40(c5, LT).
+ann401_late_annotated_ref(n) :- kind(n, "attribute"), field(n, "attribute", c8),
+    glob("Annotated", c8), field(n, "object", c9), kind(c9, "identifier"), node(_, c9, _, _, _), LT = c9,
+    docof(c9, d11), modnode(d11, m12),
+    ( kind(c9, "identifier"), !bind_only(c9), miss(c9, x10)
+    ; (kind(c9, "string") ; kind(c9, "concatenated_string")), ann401_all_entry(c9, x10), !bound_in(m12, x10)
+    ),
+    !builtin(x10), !star(m12), inside(c9, p13, "module"), within(c14, p13),
+    ann401_alt_41(c14, LT).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_has_1(n: node)
+.stored ann401_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_has_1(n) :- child(n, c6, _), glob("\\,", c6).
+ann401_tok_has_1(n) :- op(n, t7), match(",", t7).
+ann401_tok_has_1(n) :- child(n, c13, _), structural_before(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+ann401_tok_has_1(n) :- child(n, c13, _), structural_after(c13, g8),
+    match("(?s)^(?:.*(?:,).*)$", g8).
+ann401_tok_has_1(n) :- node_text(n, g8), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g8).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_2(n: node)
+.stored ann401_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_2(n) :- precedes(s15, n), glob("\\[", s15).
+ann401_tok_follows_2(n) :- child(p18, n, _), node(_, n, _, st20, _),
+    token(p18, _, t16, _, en21), en21 <= st20, match("\\[", t16).
+ann401_tok_follows_2(n) :- structural_before(n, g17), match("(?s)^(?:.*(?:\\[).*)$", g17).
+ann401_tok_follows_2(n) :- precedes(o19, n), structural_before(o19, g17),
+    match("(?s)^(?:.*(?:\\[).*)$", g17).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_has_3(n: node)
+.stored ann401_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_has_3(n) :- child(n, c24, _), glob("\\,", c24).
+ann401_tok_has_3(n) :- op(n, t25), match(",", t25).
+ann401_tok_has_3(n) :- child(n, c31, _), structural_before(c31, g26),
+    match("(?s)^(?:.*(?:,).*)$", g26).
+ann401_tok_has_3(n) :- child(n, c31, _), structural_after(c31, g26),
+    match("(?s)^(?:.*(?:,).*)$", g26).
+ann401_tok_has_3(n) :- node_text(n, g26), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g26).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_4(n: node)
+.stored ann401_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_4(n) :- precedes(s33, n), glob("\\[", s33).
+ann401_tok_follows_4(n) :- child(p36, n, _), node(_, n, _, st38, _),
+    token(p36, _, t34, _, en39), en39 <= st38, match("\\[", t34).
+ann401_tok_follows_4(n) :- structural_before(n, g35), match("(?s)^(?:.*(?:\\[).*)$", g35).
+ann401_tok_follows_4(n) :- precedes(o37, n), structural_before(o37, g35),
+    match("(?s)^(?:.*(?:\\[).*)$", g35).
+
+// tok_has_5(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_has_5(n: node)
+.stored ann401_tok_has_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_has_5(n) :- child(n, c2, _), glob("\\,", c2).
+ann401_tok_has_5(n) :- op(n, t3), match(",", t3).
+ann401_tok_has_5(n) :- child(n, c9, _), structural_before(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+ann401_tok_has_5(n) :- child(n, c9, _), structural_after(c9, g4),
+    match("(?s)^(?:.*(?:,).*)$", g4).
+ann401_tok_has_5(n) :- node_text(n, g4), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g4).
+
+// tok_follows_6(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_6(n: node)
+.stored ann401_tok_follows_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_6(n) :- precedes(s11, n), glob("\\[", s11).
+ann401_tok_follows_6(n) :- child(p14, n, _), node(_, n, _, st16, _),
+    token(p14, _, t12, _, en17), en17 <= st16, match("\\[", t12).
+ann401_tok_follows_6(n) :- structural_before(n, g13), match("(?s)^(?:.*(?:\\[).*)$", g13).
+ann401_tok_follows_6(n) :- precedes(o15, n), structural_before(o15, g13),
+    match("(?s)^(?:.*(?:\\[).*)$", g13).
+
+// tok_has_7(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_has_7(n: node)
+.stored ann401_tok_has_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_has_7(n) :- child(n, c20, _), glob("\\,", c20).
+ann401_tok_has_7(n) :- op(n, t21), match(",", t21).
+ann401_tok_has_7(n) :- child(n, c27, _), structural_before(c27, g22),
+    match("(?s)^(?:.*(?:,).*)$", g22).
+ann401_tok_has_7(n) :- child(n, c27, _), structural_after(c27, g22),
+    match("(?s)^(?:.*(?:,).*)$", g22).
+ann401_tok_has_7(n) :- node_text(n, g22), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g22).
+
+// tok_follows_8(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_8(n: node)
+.stored ann401_tok_follows_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_8(n) :- precedes(s29, n), glob("\\[", s29).
+ann401_tok_follows_8(n) :- child(p32, n, _), node(_, n, _, st34, _),
+    token(p32, _, t30, _, en35), en35 <= st34, match("\\[", t30).
+ann401_tok_follows_8(n) :- structural_before(n, g31), match("(?s)^(?:.*(?:\\[).*)$", g31).
+ann401_tok_follows_8(n) :- precedes(o33, n), structural_before(o33, g31),
+    match("(?s)^(?:.*(?:\\[).*)$", g31).
+
+// tok_has_9(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_has_9(n: node)
+.stored ann401_tok_has_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_has_9(n) :- child(n, c43, _), glob("\\,", c43).
+ann401_tok_has_9(n) :- op(n, t44), match(",", t44).
+ann401_tok_has_9(n) :- child(n, c50, _), structural_before(c50, g45),
+    match("(?s)^(?:.*(?:,).*)$", g45).
+ann401_tok_has_9(n) :- child(n, c50, _), structural_after(c50, g45),
+    match("(?s)^(?:.*(?:,).*)$", g45).
+ann401_tok_has_9(n) :- node_text(n, g45), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g45).
+
+// tok_has_10(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_has_10(n: node)
+.stored ann401_tok_has_10 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_has_10(n) :- child(n, c56, _), glob("\\,", c56).
+ann401_tok_has_10(n) :- op(n, t57), match(",", t57).
+ann401_tok_has_10(n) :- child(n, c63, _), structural_before(c63, g58),
+    match("(?s)^(?:.*(?:,).*)$", g58).
+ann401_tok_has_10(n) :- child(n, c63, _), structural_after(c63, g58),
+    match("(?s)^(?:.*(?:,).*)$", g58).
+ann401_tok_has_10(n) :- node_text(n, g58), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g58).
+
+// tok_has_11(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_has_11(n: node)
+.stored ann401_tok_has_11 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_has_11(n) :- child(n, c4, _), glob("\\,", c4).
+ann401_tok_has_11(n) :- op(n, t5), match(",", t5).
+ann401_tok_has_11(n) :- child(n, c11, _), structural_before(c11, g6),
+    match("(?s)^(?:.*(?:,).*)$", g6).
+ann401_tok_has_11(n) :- child(n, c11, _), structural_after(c11, g6),
+    match("(?s)^(?:.*(?:,).*)$", g6).
+ann401_tok_has_11(n) :- node_text(n, g6), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g6).
+
+// tok_has_12(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_has_12(n: node)
+.stored ann401_tok_has_12 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_has_12(n) :- child(n, c17, _), glob("\\,", c17).
+ann401_tok_has_12(n) :- op(n, t18), match(",", t18).
+ann401_tok_has_12(n) :- child(n, c24, _), structural_before(c24, g19),
+    match("(?s)^(?:.*(?:,).*)$", g19).
+ann401_tok_has_12(n) :- child(n, c24, _), structural_after(c24, g19),
+    match("(?s)^(?:.*(?:,).*)$", g19).
+ann401_tok_has_12(n) :- node_text(n, g19), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g19).
+
+// tok_follows_13(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_13(n: node)
+.stored ann401_tok_follows_13 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_13(n) :- precedes(s67, n), glob("\\[", s67).
+ann401_tok_follows_13(n) :- child(p70, n, _), node(_, n, _, st72, _),
+    token(p70, _, t68, _, en73), en73 <= st72, match("\\[", t68).
+ann401_tok_follows_13(n) :- structural_before(n, g69), match("(?s)^(?:.*(?:\\[).*)$", g69).
+ann401_tok_follows_13(n) :- precedes(o71, n), structural_before(o71, g69),
+    match("(?s)^(?:.*(?:\\[).*)$", g69).
+
+// tok_follows_14(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_14(n: node)
+.stored ann401_tok_follows_14 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_14(n) :- precedes(s74, n), glob("\\,", s74).
+ann401_tok_follows_14(n) :- child(p77, n, _), node(_, n, _, st79, _),
+    token(p77, _, t75, _, en80), en80 <= st79, match(",", t75).
+ann401_tok_follows_14(n) :- structural_before(n, g76), match("(?s)^(?:.*(?:,).*)$", g76).
+ann401_tok_follows_14(n) :- precedes(o78, n), structural_before(o78, g76),
+    match("(?s)^(?:.*(?:,).*)$", g76).
+
+// tok_follows_15(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_15(n: node)
+.stored ann401_tok_follows_15 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_15(n) :- precedes(s1, n), glob("\\,", s1).
+ann401_tok_follows_15(n) :- child(p4, n, _), node(_, n, _, st6, _), token(p4, _, t2, _, en7),
+    en7 <= st6, match(",", t2).
+ann401_tok_follows_15(n) :- structural_before(n, g3), match("(?s)^(?:.*(?:,).*)$", g3).
+ann401_tok_follows_15(n) :- precedes(o5, n), structural_before(o5, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+
+// tok_follows_16(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_16(n: node)
+.stored ann401_tok_follows_16 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_16(n) :- precedes(s84, n), glob("\\[", s84).
+ann401_tok_follows_16(n) :- child(p87, n, _), node(_, n, _, st89, _),
+    token(p87, _, t85, _, en90), en90 <= st89, match("\\[", t85).
+ann401_tok_follows_16(n) :- structural_before(n, g86), match("(?s)^(?:.*(?:\\[).*)$", g86).
+ann401_tok_follows_16(n) :- precedes(o88, n), structural_before(o88, g86),
+    match("(?s)^(?:.*(?:\\[).*)$", g86).
+
+// tok_follows_17(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_17(n: node)
+.stored ann401_tok_follows_17 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_17(n) :- precedes(s91, n), glob("\\,", s91).
+ann401_tok_follows_17(n) :- child(p94, n, _), node(_, n, _, st96, _),
+    token(p94, _, t92, _, en97), en97 <= st96, match(",", t92).
+ann401_tok_follows_17(n) :- structural_before(n, g93), match("(?s)^(?:.*(?:,).*)$", g93).
+ann401_tok_follows_17(n) :- precedes(o95, n), structural_before(o95, g93),
+    match("(?s)^(?:.*(?:,).*)$", g93).
+
+// tok_follows_18(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_18(n: node)
+.stored ann401_tok_follows_18 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_18(n) :- precedes(s3, n), glob("\\[", s3).
+ann401_tok_follows_18(n) :- child(p6, n, _), node(_, n, _, st8, _), token(p6, _, t4, _, en9),
+    en9 <= st8, match("\\[", t4).
+ann401_tok_follows_18(n) :- structural_before(n, g5), match("(?s)^(?:.*(?:\\[).*)$", g5).
+ann401_tok_follows_18(n) :- precedes(o7, n), structural_before(o7, g5),
+    match("(?s)^(?:.*(?:\\[).*)$", g5).
+
+// tok_follows_19(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_19(n: node)
+.stored ann401_tok_follows_19 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_19(n) :- precedes(s10, n), glob("\\,", s10).
+ann401_tok_follows_19(n) :- child(p13, n, _), node(_, n, _, st15, _),
+    token(p13, _, t11, _, en16), en16 <= st15, match(",", t11).
+ann401_tok_follows_19(n) :- structural_before(n, g12), match("(?s)^(?:.*(?:,).*)$", g12).
+ann401_tok_follows_19(n) :- precedes(o14, n), structural_before(o14, g12),
+    match("(?s)^(?:.*(?:,).*)$", g12).
+
+// tok_follows_20(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_20(n: node)
+.stored ann401_tok_follows_20 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_20(n) :- precedes(s20, n), glob("\\[", s20).
+ann401_tok_follows_20(n) :- child(p23, n, _), node(_, n, _, st25, _),
+    token(p23, _, t21, _, en26), en26 <= st25, match("\\[", t21).
+ann401_tok_follows_20(n) :- structural_before(n, g22), match("(?s)^(?:.*(?:\\[).*)$", g22).
+ann401_tok_follows_20(n) :- precedes(o24, n), structural_before(o24, g22),
+    match("(?s)^(?:.*(?:\\[).*)$", g22).
+
+// tok_follows_21(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_21(n: node)
+.stored ann401_tok_follows_21 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_21(n) :- precedes(s27, n), glob("\\,", s27).
+ann401_tok_follows_21(n) :- child(p30, n, _), node(_, n, _, st32, _),
+    token(p30, _, t28, _, en33), en33 <= st32, match(",", t28).
+ann401_tok_follows_21(n) :- structural_before(n, g29), match("(?s)^(?:.*(?:,).*)$", g29).
+ann401_tok_follows_21(n) :- precedes(o31, n), structural_before(o31, g29),
+    match("(?s)^(?:.*(?:,).*)$", g29).
+
+// tok_follows_22(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_22(n: node)
+.stored ann401_tok_follows_22 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_22(n) :- precedes(s12, n), glob("\\,", s12).
+ann401_tok_follows_22(n) :- child(p15, n, _), node(_, n, _, st17, _),
+    token(p15, _, t13, _, en18), en18 <= st17, match(",", t13).
+ann401_tok_follows_22(n) :- structural_before(n, g14), match("(?s)^(?:.*(?:,).*)$", g14).
+ann401_tok_follows_22(n) :- precedes(o16, n), structural_before(o16, g14),
+    match("(?s)^(?:.*(?:,).*)$", g14).
+
+// tok_follows_23(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_23(n: node)
+.stored ann401_tok_follows_23 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_23(n) :- precedes(s4, n), glob("\\[", s4).
+ann401_tok_follows_23(n) :- child(p7, n, _), node(_, n, _, st9, _), token(p7, _, t5, _, en10),
+    en10 <= st9, match("\\[", t5).
+ann401_tok_follows_23(n) :- structural_before(n, g6), match("(?s)^(?:.*(?:\\[).*)$", g6).
+ann401_tok_follows_23(n) :- precedes(o8, n), structural_before(o8, g6),
+    match("(?s)^(?:.*(?:\\[).*)$", g6).
+
+// tok_follows_24(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_24(n: node)
+.stored ann401_tok_follows_24 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_24(n) :- precedes(s11, n), glob("\\,", s11).
+ann401_tok_follows_24(n) :- child(p14, n, _), node(_, n, _, st16, _),
+    token(p14, _, t12, _, en17), en17 <= st16, match(",", t12).
+ann401_tok_follows_24(n) :- structural_before(n, g13), match("(?s)^(?:.*(?:,).*)$", g13).
+ann401_tok_follows_24(n) :- precedes(o15, n), structural_before(o15, g13),
+    match("(?s)^(?:.*(?:,).*)$", g13).
+
+// tok_follows_25(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\[$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_25(n: node)
+.stored ann401_tok_follows_25 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_25(n) :- precedes(s21, n), glob("\\[", s21).
+ann401_tok_follows_25(n) :- child(p24, n, _), node(_, n, _, st26, _),
+    token(p24, _, t22, _, en27), en27 <= st26, match("\\[", t22).
+ann401_tok_follows_25(n) :- structural_before(n, g23), match("(?s)^(?:.*(?:\\[).*)$", g23).
+ann401_tok_follows_25(n) :- precedes(o25, n), structural_before(o25, g23),
+    match("(?s)^(?:.*(?:\\[).*)$", g23).
+
+// tok_follows_26(n): an earlier sibling of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ann401_tok_follows_26(n: node)
+.stored ann401_tok_follows_26 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ann401_tok_follows_26(n) :- precedes(s28, n), glob("\\,", s28).
+ann401_tok_follows_26(n) :- child(p31, n, _), node(_, n, _, st33, _),
+    token(p31, _, t29, _, en34), en34 <= st33, match(",", t29).
+ann401_tok_follows_26(n) :- structural_before(n, g30), match("(?s)^(?:.*(?:,).*)$", g30).
+ann401_tok_follows_26(n) :- precedes(o32, n), structural_before(o32, g30),
+    match("(?s)^(?:.*(?:,).*)$", g30).
+
+// all_expr: x is a module-level `__all__ =`, `+=` or `: T =` value, or a part of one that lists names
+//   (Ruff's extract_dunder_all_names: `+` chains, parentheses, walrus values, list(...) and tuple(...))
+.decl ann401_all_expr(x: node)
+ann401_all_expr(x) :- (kind(st, "assignment") ; kind(st, "augmented_assignment")),
+    field(st, "left", l), kind(l, "identifier"), text(l, "__all__"), child(es, st, _),
+    kind(es, "expression_statement"), child(m, es, _), kind(m, "module"),
+    field(st, "right", x).
+ann401_all_expr(y) :- ann401_all_expr(x), kind(x, "assignment"), field(x, "right", y).
+ann401_all_expr(y) :- ann401_all_expr(x), kind(x, "binary_operator"),
+    (field(x, "left", y) ; field(x, "right", y)).
+ann401_all_expr(y) :- ann401_all_expr(x), kind(x, "parenthesized_expression"), child(x, y, _),
+    !kind(y, "comment").
+ann401_all_expr(y) :- ann401_all_expr(x), kind(x, "named_expression"), field(x, "value", y).
+ann401_all_expr(y) :- ann401_all_expr(x), kind(x, "call"), field(x, "function", f),
+    kind(f, "identifier"), (text(f, "list") ; text(f, "tuple")),
+    field(x, "arguments", a), child(a, y, _).
+
+// all_entry: string e is an entry of a module `__all__` definition, exporting the name x
+.decl ann401_all_entry(e: node, x: symbol)
+ann401_all_entry(e, x) :- ann401_all_expr(l), (kind(l, "list") ; kind(l, "tuple")), child(l, e, _),
+    (kind(e, "string") ; kind(e, "concatenated_string")),
+    count : { within(i, e), kind(i, "interpolation") } = 0, str(e, x).
+
+// demand_alt_34: the rows of alt_34 its callers ask for (the metavariable columns they pass in)
+.decl ann401_demand_alt_34(n: node, la: loc)
+ann401_demand_alt_34(c5, LA) :- kind(n, "identifier"), node(_, n, _, _, _), LA = n, docof(n, d2),
+    modnode(d2, m3), inside(n, p4, "module"), within(c5, p4).
+
+// demand_alt_35: the rows of alt_35 its callers ask for (the metavariable columns they pass in)
+.decl ann401_demand_alt_35(n: node, la: loc)
+ann401_demand_alt_35(c14, LA) :- kind(n, "attribute"), field(n, "attribute", c8),
+    glob("Any", c8), field(n, "object", c9), kind(c9, "identifier"), node(_, c9, _, _, _), LA = c9,
+    docof(c9, d11), modnode(d11, m12), inside(c9, p13, "module"), within(c14, p13).
+
+// demand_alt_36: the rows of alt_36 its callers ask for (the metavariable columns they pass in)
+.decl ann401_demand_alt_36(n: node, lo: loc)
+ann401_demand_alt_36(c5, LO) :- kind(n, "identifier"), node(_, n, _, _, _), LO = n, docof(n, d2),
+    modnode(d2, m3), inside(n, p4, "module"), within(c5, p4).
+
+// demand_alt_37: the rows of alt_37 its callers ask for (the metavariable columns they pass in)
+.decl ann401_demand_alt_37(n: node, lo: loc)
+ann401_demand_alt_37(c14, LO) :- kind(n, "attribute"), field(n, "attribute", c8),
+    glob("Optional", c8), field(n, "object", c9), kind(c9, "identifier"), node(_, c9, _, _, _), LO = c9,
+    docof(c9, d11), modnode(d11, m12), inside(c9, p13, "module"), within(c14, p13).
+
+// demand_alt_38: the rows of alt_38 its callers ask for (the metavariable columns they pass in)
+.decl ann401_demand_alt_38(n: node, lu: loc)
+ann401_demand_alt_38(c5, LU) :- kind(n, "identifier"), node(_, n, _, _, _), LU = n, docof(n, d2),
+    modnode(d2, m3), inside(n, p4, "module"), within(c5, p4).
+
+// demand_alt_39: the rows of alt_39 its callers ask for (the metavariable columns they pass in)
+.decl ann401_demand_alt_39(n: node, lu: loc)
+ann401_demand_alt_39(c14, LU) :- kind(n, "attribute"), field(n, "attribute", c8),
+    glob("Union", c8), field(n, "object", c9), kind(c9, "identifier"), node(_, c9, _, _, _), LU = c9,
+    docof(c9, d11), modnode(d11, m12), inside(c9, p13, "module"), within(c14, p13).
+
+// demand_alt_40: the rows of alt_40 its callers ask for (the metavariable columns they pass in)
+.decl ann401_demand_alt_40(n: node, lt: loc)
+ann401_demand_alt_40(c5, LT) :- kind(n, "identifier"), node(_, n, _, _, _), LT = n, docof(n, d2),
+    modnode(d2, m3), inside(n, p4, "module"), within(c5, p4).
+
+// demand_alt_41: the rows of alt_41 its callers ask for (the metavariable columns they pass in)
+.decl ann401_demand_alt_41(n: node, lt: loc)
+ann401_demand_alt_41(c14, LT) :- kind(n, "attribute"), field(n, "attribute", c8),
+    glob("Annotated", c8), field(n, "object", c9), kind(c9, "identifier"), node(_, c9, _, _, _), LT = c9,
+    docof(c9, d11), modnode(d11, m12), inside(c9, p13, "module"), within(c14, p13).
+
+// demand_overload_impl: the rows of overload_impl its callers ask for (the metavariable columns they pass in)
+.decl ann401_demand_overload_impl(n: node, n_mv: loc)
+ann401_demand_overload_impl(n, N) :- kind(n, "function_definition"), field(n, "name", c1),
+    node(_, c1, _, _, _), N = c1.
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl ann401_up_1(n: node, p: node)
+ann401_up_1(n, p) :- ann401_top_any(n), within_stop(n, p, ann401_stop_43), kind(p, "type").
+
+// stop_32: the kinds of the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ann401_stop_32(kind: symbol)
+ann401_stop_32("function_definition"). ann401_stop_32("class_definition").
+
+// set_42: node kinds from a JSON `any`
+.decl ann401_set_42(v: symbol)
+ann401_set_42("identifier"). ann401_set_42("attribute"). ann401_set_42("subscript"). ann401_set_42("generic_type").
+ann401_set_42("binary_operator"). ann401_set_42("string"). ann401_set_42("concatenated_string").
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl ann401_alt_2(n: node)
+ann401_alt_2(n) :- site_form(n, "annotation").
+ann401_alt_2(n) :- site_form(n, "except").
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl ann401_alt_3(n: node)
+ann401_alt_3(n) :- ann401_seen_builtins(n).
+ann401_alt_3(n) :- inside(n, p1, "module"), within(c2, p1),
+    (kind(c2, "identifier") ; kind(c2, "dotted_name")), glob("staticmethod", c2),
+    site_scope(c2, "module"), !ann401_alt_2(c2).
+
+// stop_5(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ann401_stop_5(n: node)
+ann401_stop_5(n) :- ann401_has_def(n).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl ann401_alt_6(n: node)
+ann401_alt_6(n) :- field(n, "left", c1), ann401_c_any(c1).
+ann401_alt_6(n) :- field(n, "right", c2), ann401_c_any(c2).
+
+// alt_7(n): the JSON `any`: n matches if any one of these rules does
+.decl ann401_alt_7(n: node)
+ann401_alt_7(n) :- kind(n, "subscript"), field(n, "value", c1), ann401_optional_ref(c1),
+    !ann401_tok_has_5(n), child(n, c10, _), ann401_tok_follows_6(c10), ann401_c_any(c10).
+ann401_alt_7(n) :- kind(n, "generic_type"), child(n, c18, _), kind(c18, "identifier"),
+    ann401_optional_ref(c18), child(n, c19, _), kind(c19, "type_parameter"), !ann401_tok_has_7(c19),
+    child(c19, c28, _), ann401_tok_follows_8(c28), ann401_c_any(c28).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+.decl ann401_alt_11(n: node)
+ann401_alt_11(n) :- ann401_c_any(n).
+ann401_alt_11(n) :- ann401_tuple_like(n), child(p1, n, _), !ann401_tok_has_5(p1), within(c10, n),
+    ann401_tuple_first_c(c10).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl ann401_alt_10(n: node)
+ann401_alt_10(n) :- kind(n, "subscript"), field(n, "value", c1), ann401_union_ref(c1),
+    child(n, c2, _), ann401_alt_11(c2).
+ann401_alt_10(n) :- kind(n, "generic_type"), child(n, c13, _), kind(c13, "identifier"),
+    ann401_union_ref(c13), child(n, c14, _), kind(c14, "type_parameter"), child(c14, c15, _),
+    ann401_alt_11(c15).
+
+// alt_13(n): the JSON `any`: n matches if any one of these rules does
+.decl ann401_alt_13(n: node)
+ann401_alt_13(n) :- ann401_tok_follows_15(n).
+ann401_alt_13(n) :- kind(n, "comment").
+
+// alt_15(n): the JSON `any`: n matches if any one of these rules does
+.decl ann401_alt_15(n: node)
+ann401_alt_15(n) :- kind(n, "subscript"), field(n, "value", c1), ann401_annotated_ref(c1),
+    child(n, c2, _), ann401_tok_follows_18(c2), !ann401_alt_13(c2), ann401_first_c(c2).
+ann401_alt_15(n) :- kind(n, "generic_type"), child(n, c17, _), kind(c17, "identifier"),
+    ann401_annotated_ref(c17), child(n, c18, _), kind(c18, "type_parameter"),
+    child(c18, c19, _), ann401_tok_follows_20(c19), !ann401_alt_13(c19), ann401_first_c(c19).
+
+// alt_18(n): the JSON `any`: n matches if any one of these rules does
+.decl ann401_alt_18(n: node)
+ann401_alt_18(n) :- ann401_plain_string(n).
+ann401_alt_18(n) :- ann401_c_any(n).
+
+// alt_19(n): the JSON `any`: n matches if any one of these rules does
+.decl ann401_alt_19(n: node)
+ann401_alt_19(n) :- kind(n, "ERROR").
+ann401_alt_19(n) :- kind(n, "expression_statement"), child(n, c1, _), ann401_alt_18(c1).
+
+// alt_21(n): the JSON `any`: n matches if any one of these rules does
+.decl ann401_alt_21(n: node)
+ann401_alt_21(n) :- node(_, n, _, _, _), glob("[(),]", n).
+ann401_alt_21(n) :- kind(n, "comment").
+
+// alt_22(n): the JSON `any`: n matches if any one of these rules does
+.decl ann401_alt_22(n: node)
+ann401_alt_22(n) :- node(_, n, _, _, _), glob("[(),]", n).
+ann401_alt_22(n) :- kind(n, "comment").
+ann401_alt_22(n) :- ann401_tok_follows_15(n).
+
+// alt_25(n): the JSON `any`: n matches if any one of these rules does
+.decl ann401_alt_25(n: node)
+ann401_alt_25(n) :- kind(n, "subscript"), field(n, "value", c1), ann401_annotated_ref(c1),
+    child(n, c2, _), ann401_tok_follows_18(c2), !ann401_alt_13(c2), ann401_first_r(c2).
+ann401_alt_25(n) :- kind(n, "generic_type"), child(n, c17, _), kind(c17, "identifier"),
+    ann401_annotated_ref(c17), child(n, c18, _), kind(c18, "type_parameter"),
+    child(c18, c19, _), ann401_tok_follows_20(c19), !ann401_alt_13(c19), ann401_first_r(c19).
+
+// alt_29(n): the JSON `any`: n matches if any one of these rules does
+.decl ann401_alt_29(n: node)
+ann401_alt_29(n) :- ann401_c_any(n).
+ann401_alt_29(n) :- ann401_r_extra(n).
+
+// alt_34(n): the JSON `any`: n matches if any one of these rules does
+//   LA: metavariable of the calling rule, passed in (bound by the caller)
+.decl ann401_alt_34(n: node, la: loc)
+ann401_alt_34(n, LA) :- ann401_demand_alt_34(n, LA), kind(n, "dotted_name"),
+    text(n, t_la1), text(LA, t_la1),
+    ( imported_sym(n, "typing.Any")
+    ; imported_sym(n, "typing_extensions.Any")
+    ; imported_sym(n, "_typeshed.Any")
+    ),
+    site_form(n, "import"), site_scope(n, "module"), site_latest(n), @doc(n) = @doc(LA).
+ann401_alt_34(n, LA) :- ann401_demand_alt_34(n, LA), kind(n, "aliased_import"),
+    field(n, "alias", c1), text(c1, t_la2), text(LA, t_la2), site_form(c1, "import"),
+    site_scope(c1, "module"), site_latest(c1), field(n, "name", c2),
+    ( imported_sym(c2, "typing.Any")
+    ; imported_sym(c2, "typing_extensions.Any")
+    ; imported_sym(c2, "_typeshed.Any")
+    ), @doc(c1) = @doc(LA).
+
+
+// alt_35(n): the JSON `any`: n matches if any one of these rules does
+//   LA: metavariable of the calling rule, passed in (bound by the caller)
+.decl ann401_alt_35(n: node, la: loc)
+ann401_alt_35(n, LA) :- ann401_demand_alt_35(n, LA), kind(n, "dotted_name"),
+    text(n, t_la3), text(LA, t_la3),
+    ( imported_sym(n, "typing")
+    ; imported_sym(n, "typing_extensions")
+    ; imported_sym(n, "_typeshed")
+    ),
+    site_form(n, "import"), site_scope(n, "module"), site_latest(n), @doc(n) = @doc(LA).
+ann401_alt_35(n, LA) :- ann401_demand_alt_35(n, LA), kind(n, "aliased_import"),
+    field(n, "alias", c1), text(c1, t_la4), text(LA, t_la4), site_form(c1, "import"),
+    site_scope(c1, "module"), site_latest(c1), field(n, "name", c2),
+    ( imported_sym(c2, "typing")
+    ; imported_sym(c2, "typing_extensions")
+    ; imported_sym(c2, "_typeshed")
+    ), @doc(c1) = @doc(LA).
+
+
+// alt_36(n): the JSON `any`: n matches if any one of these rules does
+//   LO: metavariable of the calling rule, passed in (bound by the caller)
+.decl ann401_alt_36(n: node, lo: loc)
+ann401_alt_36(n, LO) :- ann401_demand_alt_36(n, LO), kind(n, "dotted_name"),
+    text(n, t_lo5), text(LO, t_lo5),
+    ( imported_sym(n, "typing.Optional")
+    ; imported_sym(n, "typing_extensions.Optional")
+    ; imported_sym(n, "_typeshed.Optional")
+    ),
+    site_form(n, "import"), site_scope(n, "module"), site_latest(n), @doc(n) = @doc(LO).
+ann401_alt_36(n, LO) :- ann401_demand_alt_36(n, LO), kind(n, "aliased_import"),
+    field(n, "alias", c1), text(c1, t_lo6), text(LO, t_lo6), site_form(c1, "import"),
+    site_scope(c1, "module"), site_latest(c1), field(n, "name", c2),
+    ( imported_sym(c2, "typing.Optional")
+    ; imported_sym(c2, "typing_extensions.Optional")
+    ; imported_sym(c2, "_typeshed.Optional")
+    ), @doc(c1) = @doc(LO).
+
+
+// alt_37(n): the JSON `any`: n matches if any one of these rules does
+//   LO: metavariable of the calling rule, passed in (bound by the caller)
+.decl ann401_alt_37(n: node, lo: loc)
+ann401_alt_37(n, LO) :- ann401_demand_alt_37(n, LO), kind(n, "dotted_name"),
+    text(n, t_lo7), text(LO, t_lo7),
+    ( imported_sym(n, "typing")
+    ; imported_sym(n, "typing_extensions")
+    ; imported_sym(n, "_typeshed")
+    ),
+    site_form(n, "import"), site_scope(n, "module"), site_latest(n), @doc(n) = @doc(LO).
+ann401_alt_37(n, LO) :- ann401_demand_alt_37(n, LO), kind(n, "aliased_import"),
+    field(n, "alias", c1), text(c1, t_lo8), text(LO, t_lo8), site_form(c1, "import"),
+    site_scope(c1, "module"), site_latest(c1), field(n, "name", c2),
+    ( imported_sym(c2, "typing")
+    ; imported_sym(c2, "typing_extensions")
+    ; imported_sym(c2, "_typeshed")
+    ), @doc(c1) = @doc(LO).
+
+
+// alt_38(n): the JSON `any`: n matches if any one of these rules does
+//   LU: metavariable of the calling rule, passed in (bound by the caller)
+.decl ann401_alt_38(n: node, lu: loc)
+ann401_alt_38(n, LU) :- ann401_demand_alt_38(n, LU), kind(n, "dotted_name"),
+    text(n, t_lu9), text(LU, t_lu9),
+    ( imported_sym(n, "typing.Union")
+    ; imported_sym(n, "typing_extensions.Union")
+    ; imported_sym(n, "_typeshed.Union")
+    ),
+    site_form(n, "import"), site_scope(n, "module"), site_latest(n), @doc(n) = @doc(LU).
+ann401_alt_38(n, LU) :- ann401_demand_alt_38(n, LU), kind(n, "aliased_import"),
+    field(n, "alias", c1), text(c1, t_lu10), text(LU, t_lu10), site_form(c1, "import"),
+    site_scope(c1, "module"), site_latest(c1), field(n, "name", c2),
+    ( imported_sym(c2, "typing.Union")
+    ; imported_sym(c2, "typing_extensions.Union")
+    ; imported_sym(c2, "_typeshed.Union")
+    ), @doc(c1) = @doc(LU).
+
+
+// alt_39(n): the JSON `any`: n matches if any one of these rules does
+//   LU: metavariable of the calling rule, passed in (bound by the caller)
+.decl ann401_alt_39(n: node, lu: loc)
+ann401_alt_39(n, LU) :- ann401_demand_alt_39(n, LU), kind(n, "dotted_name"),
+    text(n, t_lu11), text(LU, t_lu11),
+    ( imported_sym(n, "typing")
+    ; imported_sym(n, "typing_extensions")
+    ; imported_sym(n, "_typeshed")
+    ),
+    site_form(n, "import"), site_scope(n, "module"), site_latest(n), @doc(n) = @doc(LU).
+ann401_alt_39(n, LU) :- ann401_demand_alt_39(n, LU), kind(n, "aliased_import"),
+    field(n, "alias", c1), text(c1, t_lu12), text(LU, t_lu12), site_form(c1, "import"),
+    site_scope(c1, "module"), site_latest(c1), field(n, "name", c2),
+    ( imported_sym(c2, "typing")
+    ; imported_sym(c2, "typing_extensions")
+    ; imported_sym(c2, "_typeshed")
+    ), @doc(c1) = @doc(LU).
+
+
+// alt_40(n): the JSON `any`: n matches if any one of these rules does
+//   LT: metavariable of the calling rule, passed in (bound by the caller)
+.decl ann401_alt_40(n: node, lt: loc)
+ann401_alt_40(n, LT) :- ann401_demand_alt_40(n, LT), kind(n, "dotted_name"),
+    text(n, t_lt13), text(LT, t_lt13),
+    ( imported_sym(n, "typing.Annotated")
+    ; imported_sym(n, "typing_extensions.Annotated")
+    ; imported_sym(n, "_typeshed.Annotated")
+    ),
+    site_form(n, "import"), site_scope(n, "module"), site_latest(n), @doc(n) = @doc(LT).
+ann401_alt_40(n, LT) :- ann401_demand_alt_40(n, LT), kind(n, "aliased_import"),
+    field(n, "alias", c1), text(c1, t_lt14), text(LT, t_lt14), site_form(c1, "import"),
+    site_scope(c1, "module"), site_latest(c1), field(n, "name", c2),
+    ( imported_sym(c2, "typing.Annotated")
+    ; imported_sym(c2, "typing_extensions.Annotated")
+    ; imported_sym(c2, "_typeshed.Annotated")
+    ), @doc(c1) = @doc(LT).
+
+
+// alt_41(n): the JSON `any`: n matches if any one of these rules does
+//   LT: metavariable of the calling rule, passed in (bound by the caller)
+.decl ann401_alt_41(n: node, lt: loc)
+ann401_alt_41(n, LT) :- ann401_demand_alt_41(n, LT), kind(n, "dotted_name"),
+    text(n, t_lt15), text(LT, t_lt15),
+    ( imported_sym(n, "typing")
+    ; imported_sym(n, "typing_extensions")
+    ; imported_sym(n, "_typeshed")
+    ),
+    site_form(n, "import"), site_scope(n, "module"), site_latest(n), @doc(n) = @doc(LT).
+ann401_alt_41(n, LT) :- ann401_demand_alt_41(n, LT), kind(n, "aliased_import"),
+    field(n, "alias", c1), text(c1, t_lt16), text(LT, t_lt16), site_form(c1, "import"),
+    site_scope(c1, "module"), site_latest(c1), field(n, "name", c2),
+    ( imported_sym(c2, "typing")
+    ; imported_sym(c2, "typing_extensions")
+    ; imported_sym(c2, "_typeshed")
+    ), @doc(c1) = @doc(LT).
+
+
+// stop_43(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ann401_stop_43(n: node)
+ann401_stop_43(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").

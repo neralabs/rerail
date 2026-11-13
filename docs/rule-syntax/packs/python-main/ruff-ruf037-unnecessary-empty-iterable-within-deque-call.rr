@@ -1,0 +1,454 @@
+.policy "ruff-ruf037-unnecessary-empty-iterable-within-deque-call" revision 1
+.guests off
+.description "Don't pass an empty list, tuple, dict, set or string as the iterable of a deque; a deque starts empty, so drop it and keep maxlen if it is set."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// empty_body(n): the JSON util `empty-body`, used where the JSON says `matches: "empty-body"`
+.decl ruf037_empty_body(n: node)
+ruf037_empty_body(n) :- node(_, n, _, _, _),
+    count : { child(n, c1, _), !ruf037_alt_1_family(c1, "alt_1") } = 0.
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+.decl ruf037_callee(n: node)
+ruf037_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "collections.deque").
+ruf037_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf037_callee(c1).
+
+// builtin_callee(n): the JSON util `builtin-callee`, used where the JSON says `matches: "builtin-callee"`
+.decl ruf037_builtin_callee(n: node)
+ruf037_builtin_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    ( global_ref(n, "set")
+    ; global_ref(n, "list")
+    ; global_ref(n, "dict")
+    ; global_ref(n, "tuple")
+    ),
+
+    ( sym_of(n, "builtins.set")
+    ; sym_of(n, "builtins.list")
+    ; sym_of(n, "builtins.dict")
+    ; sym_of(n, "builtins.tuple")
+    ).
+
+ruf037_builtin_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf037_builtin_callee(c1).
+
+// empty_builtin_call(n): the JSON util `empty-builtin-call`, used where the JSON says `matches: "empty-builtin-call"`
+.decl ruf037_empty_builtin_call(n: node)
+ruf037_empty_builtin_call(n) :- kind(n, "call"), field(n, "function", c1), ruf037_builtin_callee(c1),
+    field(n, "arguments", c2), kind(c2, "argument_list"),
+    count : { child(c2, c3, _), !ruf037_alt_1_family(c3, "trivia") } = 0.
+
+// t_prefix(n): the JSON util `t-prefix`, used where the JSON says `matches: "t-prefix"`
+.decl ruf037_t_prefix(n: node)
+ruf037_t_prefix(n) :- node(_, n, _, _, _), match("[a-zA-Z]*[tT].*", n).
+
+// b_prefix(n): the JSON util `b-prefix`, used where the JSON says `matches: "b-prefix"`
+.decl ruf037_b_prefix(n: node)
+ruf037_b_prefix(n) :- node(_, n, _, _, _), match("[a-zA-Z]*[bB].*", n).
+
+// empty_interpolation(n): the JSON util `empty-interpolation`, used where the JSON says `matches: "empty-interpolation"`
+.decl ruf037_empty_interpolation(n: node)
+ruf037_empty_interpolation(n) :- ruf037_empty_interpolation_u7(n).
+
+// empty_part(n): the JSON util `empty-part`, used where the JSON says `matches: "empty-part"`
+.decl ruf037_empty_part(n: node)
+ruf037_empty_part(n) :- ruf037_empty_part_u7(n).
+
+// empty_inner_part(n): the JSON util `empty-inner-part`, used where the JSON says `matches: "empty-inner-part"`
+.decl ruf037_empty_inner_part(n: node)
+ruf037_empty_inner_part(n) :- ruf037_empty_inner_part_u7(n).
+
+// empty_inner(n): the JSON util `empty-inner`, used where the JSON says `matches: "empty-inner"`
+.decl ruf037_empty_inner(n: node)
+ruf037_empty_inner(n) :- ruf037_empty_inner_u7(n).
+
+// empty_iterable(n): the JSON util `empty-iterable`, used where the JSON says `matches: "empty-iterable"`
+.decl ruf037_empty_iterable(n: node)
+ruf037_empty_iterable(n) :- kind(n, "dictionary"), ruf037_empty_body(n).
+ruf037_empty_iterable(n) :- kind(n, "list"), ruf037_empty_body(n).
+ruf037_empty_iterable(n) :- kind(n, "tuple"), ruf037_empty_body(n).
+ruf037_empty_iterable(n) :- ruf037_empty_builtin_call(n).
+ruf037_empty_iterable(n) :- ruf037_empty_part(n).
+ruf037_empty_iterable(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !ruf037_alt_6(c1) } = 0.
+ruf037_empty_iterable(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf037_empty_iterable(c2).
+
+// count_ok(n): the JSON util `count-ok`, used where the JSON says `matches: "count-ok"`
+.decl ruf037_count_ok(n: node)
+ruf037_count_ok(n) :- field(n, "arguments", c1), kind(c1, "argument_list"),
+    k3 = count : { child(c1, c2, _), !ruf037_alt_1_family(c2, "trivia") }, k3 >= 1, k3 <= 2.
+
+// target_str(n): the JSON util `target-str`, used where the JSON says `matches: "target-str"`
+.decl ruf037_target_str(n: node)
+ruf037_target_str(n) :- kind(n, "call"), field(n, "function", c1), ruf037_callee(c1), ruf037_count_ok(n),
+    field(n, "arguments", c2), kind(c2, "argument_list"),
+    ( child(c2, c3, _), ruf037_empty_iterable(c3), precedes_stop(s1, c3, ruf037_stop_7), glob("(", s1)
+    ; child(c2, c4, _), kind(c4, "keyword_argument"), field(c4, "name", c5), glob("iterable", c5), field(c4, "value", c6), ruf037_empty_iterable(c6)
+    ).
+
+
+// in_annotation(n): the JSON util `in-annotation`, used where the JSON says `matches: "in-annotation"`
+//   CALL: metavariable this relation binds for the calling rule
+.decl ruf037_in_annotation(n: node, call: loc)
+ruf037_in_annotation(n, CALL) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), ruf037_alt_10(c2, CALL).
+
+// RUF037(n, detail): findings from clauses `empty-iterable-with-maxlen`, `empty-iterable`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// The JSON `constraints` on IT are added to every rule.
+.violation RUF037(at: node, detail: symbol) "{detail} already starts empty."
+    suppress noqa "RUF037"
+RUF037(n, "Drop the empty iterable and pass the bound by keyword: `deque(maxlen=...)`; a deque") :- kind(n, "call"),
+    field(n, "function", c1), ruf037_callee(c1), ruf037_count_ok(n), ruf037_arg_iterable_1(n, a2), IT = a2,
+    ruf037_arg_maxlen_2(n, a3), ML = a3, ruf037_empty_iterable(IT).
+RUF037(n, "Remove the empty iterable argument; `deque()`") :- kind(n, "call"),
+    field(n, "function", c1), ruf037_callee(c1), ruf037_count_ok(n), ruf037_arg_iterable_1(n, a2), IT = a2,
+    ruf037_arg_no_maxlen_2(n), ruf037_empty_iterable(IT).
+
+// RUF037_empty_iterable_in_annotation(n): a finding at node n, from clause `empty-iterable-in-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF037_empty_iterable_in_annotation(at: node, call: node) code "RUF037" "Remove the empty iterable argument; a deque starts empty. Keep any `maxlen` as a keyword: `deque(maxlen=...)`."
+    suppress noqa "RUF037"
+RUF037_empty_iterable_in_annotation(CALL, n) :- ruf037_in_annotation(n, CALL).
+
+.decl ruf037_alt_3_u0(n: node)
+ruf037_alt_3_u0(n) :- (kind(n, "string_start") ; kind(n, "string_end")).
+
+.decl ruf037_alt_3_u1(n: node)
+ruf037_alt_3_u1(n) :- (kind(n, "string_start") ; kind(n, "string_end")).
+ruf037_alt_3_u1(n) :- ruf037_empty_interpolation_u0(n), child(p1, n, _), kind(p1, "string"),
+    !ruf037_t_prefix(p1).
+
+.decl ruf037_alt_3_u2(n: node)
+ruf037_alt_3_u2(n) :- (kind(n, "string_start") ; kind(n, "string_end")).
+ruf037_alt_3_u2(n) :- ruf037_empty_interpolation_u1(n), child(p1, n, _), kind(p1, "string"),
+    !ruf037_t_prefix(p1).
+
+.decl ruf037_alt_3_u3(n: node)
+ruf037_alt_3_u3(n) :- (kind(n, "string_start") ; kind(n, "string_end")).
+ruf037_alt_3_u3(n) :- ruf037_empty_interpolation_u2(n), child(p1, n, _), kind(p1, "string"),
+    !ruf037_t_prefix(p1).
+
+.decl ruf037_alt_3_u4(n: node)
+ruf037_alt_3_u4(n) :- (kind(n, "string_start") ; kind(n, "string_end")).
+ruf037_alt_3_u4(n) :- ruf037_empty_interpolation_u3(n), child(p1, n, _), kind(p1, "string"),
+    !ruf037_t_prefix(p1).
+
+.decl ruf037_alt_3_u5(n: node)
+ruf037_alt_3_u5(n) :- (kind(n, "string_start") ; kind(n, "string_end")).
+ruf037_alt_3_u5(n) :- ruf037_empty_interpolation_u4(n), child(p1, n, _), kind(p1, "string"),
+    !ruf037_t_prefix(p1).
+
+.decl ruf037_alt_3_u6(n: node)
+ruf037_alt_3_u6(n) :- (kind(n, "string_start") ; kind(n, "string_end")).
+ruf037_alt_3_u6(n) :- ruf037_empty_interpolation_u5(n), child(p1, n, _), kind(p1, "string"),
+    !ruf037_t_prefix(p1).
+
+.decl ruf037_alt_3_u7(n: node)
+ruf037_alt_3_u7(n) :- (kind(n, "string_start") ; kind(n, "string_end")).
+ruf037_alt_3_u7(n) :- ruf037_empty_interpolation_u6(n), child(p1, n, _), kind(p1, "string"),
+    !ruf037_t_prefix(p1).
+
+.decl ruf037_alt_5_u0(n: node)
+ruf037_alt_5_u0(n) :- ruf037_alt_1_family(n, "trivia").
+
+.decl ruf037_alt_5_u1(n: node)
+ruf037_alt_5_u1(n) :- ruf037_alt_1_family(n, "trivia").
+ruf037_alt_5_u1(n) :- ruf037_empty_inner_part_u0(n).
+
+.decl ruf037_alt_5_u2(n: node)
+ruf037_alt_5_u2(n) :- ruf037_alt_1_family(n, "trivia").
+ruf037_alt_5_u2(n) :- ruf037_empty_inner_part_u1(n).
+
+.decl ruf037_alt_5_u3(n: node)
+ruf037_alt_5_u3(n) :- ruf037_alt_1_family(n, "trivia").
+ruf037_alt_5_u3(n) :- ruf037_empty_inner_part_u2(n).
+
+.decl ruf037_alt_5_u4(n: node)
+ruf037_alt_5_u4(n) :- ruf037_alt_1_family(n, "trivia").
+ruf037_alt_5_u4(n) :- ruf037_empty_inner_part_u3(n).
+
+.decl ruf037_alt_5_u5(n: node)
+ruf037_alt_5_u5(n) :- ruf037_alt_1_family(n, "trivia").
+ruf037_alt_5_u5(n) :- ruf037_empty_inner_part_u4(n).
+
+.decl ruf037_alt_5_u6(n: node)
+ruf037_alt_5_u6(n) :- ruf037_alt_1_family(n, "trivia").
+ruf037_alt_5_u6(n) :- ruf037_empty_inner_part_u5(n).
+
+.decl ruf037_alt_5_u7(n: node)
+ruf037_alt_5_u7(n) :- ruf037_alt_1_family(n, "trivia").
+ruf037_alt_5_u7(n) :- ruf037_empty_inner_part_u6(n).
+
+.decl ruf037_empty_inner_u0(n: node)
+ruf037_empty_inner_u0(n) :- kind(n, "concatenated_string"), count : { child(n, c1, _) } = 0.
+
+.decl ruf037_empty_inner_u1(n: node)
+ruf037_empty_inner_u1(n) :- kind(n, "string"), ruf037_empty_inner_part_u0(n).
+ruf037_empty_inner_u1(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !ruf037_alt_5_u0(c1) } = 0.
+ruf037_empty_inner_u1(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf037_empty_inner_u0(c2).
+
+.decl ruf037_empty_inner_u2(n: node)
+ruf037_empty_inner_u2(n) :- kind(n, "string"), ruf037_empty_inner_part_u1(n).
+ruf037_empty_inner_u2(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !ruf037_alt_5_u1(c1) } = 0.
+ruf037_empty_inner_u2(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf037_empty_inner_u1(c2).
+
+.decl ruf037_empty_inner_u3(n: node)
+ruf037_empty_inner_u3(n) :- kind(n, "string"), ruf037_empty_inner_part_u2(n).
+ruf037_empty_inner_u3(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !ruf037_alt_5_u2(c1) } = 0.
+ruf037_empty_inner_u3(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf037_empty_inner_u2(c2).
+
+.decl ruf037_empty_inner_u4(n: node)
+ruf037_empty_inner_u4(n) :- kind(n, "string"), ruf037_empty_inner_part_u3(n).
+ruf037_empty_inner_u4(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !ruf037_alt_5_u3(c1) } = 0.
+ruf037_empty_inner_u4(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf037_empty_inner_u3(c2).
+
+.decl ruf037_empty_inner_u5(n: node)
+ruf037_empty_inner_u5(n) :- kind(n, "string"), ruf037_empty_inner_part_u4(n).
+ruf037_empty_inner_u5(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !ruf037_alt_5_u4(c1) } = 0.
+ruf037_empty_inner_u5(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf037_empty_inner_u4(c2).
+
+.decl ruf037_empty_inner_u6(n: node)
+ruf037_empty_inner_u6(n) :- kind(n, "string"), ruf037_empty_inner_part_u5(n).
+ruf037_empty_inner_u6(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !ruf037_alt_5_u5(c1) } = 0.
+ruf037_empty_inner_u6(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf037_empty_inner_u5(c2).
+
+.decl ruf037_empty_inner_u7(n: node)
+ruf037_empty_inner_u7(n) :- kind(n, "string"), ruf037_empty_inner_part_u6(n).
+ruf037_empty_inner_u7(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), !ruf037_alt_5_u6(c1) } = 0.
+ruf037_empty_inner_u7(n) :- kind(n, "parenthesized_expression"), child(n, c2, _),
+    ruf037_empty_inner_u6(c2).
+
+.decl ruf037_empty_inner_part_u1(n: node)
+ruf037_empty_inner_part_u1(n) :- ruf037_empty_part_u0(n), !ruf037_alt_4(n).
+
+.decl ruf037_empty_inner_part_u2(n: node)
+ruf037_empty_inner_part_u2(n) :- ruf037_empty_part_u1(n), !ruf037_alt_4(n).
+
+.decl ruf037_empty_inner_part_u3(n: node)
+ruf037_empty_inner_part_u3(n) :- ruf037_empty_part_u2(n), !ruf037_alt_4(n).
+
+.decl ruf037_empty_inner_part_u4(n: node)
+ruf037_empty_inner_part_u4(n) :- ruf037_empty_part_u3(n), !ruf037_alt_4(n).
+
+.decl ruf037_empty_inner_part_u5(n: node)
+ruf037_empty_inner_part_u5(n) :- ruf037_empty_part_u4(n), !ruf037_alt_4(n).
+
+.decl ruf037_empty_inner_part_u6(n: node)
+ruf037_empty_inner_part_u6(n) :- ruf037_empty_part_u5(n), !ruf037_alt_4(n).
+
+.decl ruf037_empty_inner_part_u7(n: node)
+ruf037_empty_inner_part_u7(n) :- ruf037_empty_part_u6(n), !ruf037_alt_4(n).
+
+.decl ruf037_empty_interpolation_u1(n: node)
+ruf037_empty_interpolation_u1(n) :- kind(n, "interpolation"), field(n, "expression", c1),
+    ruf037_empty_inner_u0(c1), count : { child(n, c2, _), ruf037_alt_1_family(c2, "alt_2") } = 0.
+
+.decl ruf037_empty_interpolation_u2(n: node)
+ruf037_empty_interpolation_u2(n) :- kind(n, "interpolation"), field(n, "expression", c1),
+    ruf037_empty_inner_u1(c1), count : { child(n, c2, _), ruf037_alt_1_family(c2, "alt_2") } = 0.
+
+.decl ruf037_empty_interpolation_u3(n: node)
+ruf037_empty_interpolation_u3(n) :- kind(n, "interpolation"), field(n, "expression", c1),
+    ruf037_empty_inner_u2(c1), count : { child(n, c2, _), ruf037_alt_1_family(c2, "alt_2") } = 0.
+
+.decl ruf037_empty_interpolation_u4(n: node)
+ruf037_empty_interpolation_u4(n) :- kind(n, "interpolation"), field(n, "expression", c1),
+    ruf037_empty_inner_u3(c1), count : { child(n, c2, _), ruf037_alt_1_family(c2, "alt_2") } = 0.
+
+.decl ruf037_empty_interpolation_u5(n: node)
+ruf037_empty_interpolation_u5(n) :- kind(n, "interpolation"), field(n, "expression", c1),
+    ruf037_empty_inner_u4(c1), count : { child(n, c2, _), ruf037_alt_1_family(c2, "alt_2") } = 0.
+
+.decl ruf037_empty_interpolation_u6(n: node)
+ruf037_empty_interpolation_u6(n) :- kind(n, "interpolation"), field(n, "expression", c1),
+    ruf037_empty_inner_u5(c1), count : { child(n, c2, _), ruf037_alt_1_family(c2, "alt_2") } = 0.
+
+.decl ruf037_empty_interpolation_u7(n: node)
+ruf037_empty_interpolation_u7(n) :- kind(n, "interpolation"), field(n, "expression", c1),
+    ruf037_empty_inner_u6(c1), count : { child(n, c2, _), ruf037_alt_1_family(c2, "alt_2") } = 0.
+
+.decl ruf037_empty_part_u0(n: node)
+ruf037_empty_part_u0(n) :- kind(n, "string"), count : { child(n, c1, _) } = 0.
+
+.decl ruf037_empty_part_u1(n: node)
+ruf037_empty_part_u1(n) :- kind(n, "string"), count : { child(n, c1, _), !ruf037_alt_3_u0(c1) } = 0.
+
+.decl ruf037_empty_part_u2(n: node)
+ruf037_empty_part_u2(n) :- kind(n, "string"), count : { child(n, c1, _), !ruf037_alt_3_u1(c1) } = 0.
+
+.decl ruf037_empty_part_u3(n: node)
+ruf037_empty_part_u3(n) :- kind(n, "string"), count : { child(n, c1, _), !ruf037_alt_3_u2(c1) } = 0.
+
+.decl ruf037_empty_part_u4(n: node)
+ruf037_empty_part_u4(n) :- kind(n, "string"), count : { child(n, c1, _), !ruf037_alt_3_u3(c1) } = 0.
+
+.decl ruf037_empty_part_u5(n: node)
+ruf037_empty_part_u5(n) :- kind(n, "string"), count : { child(n, c1, _), !ruf037_alt_3_u4(c1) } = 0.
+
+.decl ruf037_empty_part_u6(n: node)
+ruf037_empty_part_u6(n) :- kind(n, "string"), count : { child(n, c1, _), !ruf037_alt_3_u5(c1) } = 0.
+
+.decl ruf037_empty_part_u7(n: node)
+ruf037_empty_part_u7(n) :- kind(n, "string"), count : { child(n, c1, _), !ruf037_alt_3_u6(c1) } = 0.
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl ruf037_args_plain(l: node, a: node, i: number)
+ruf037_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl ruf037_args_splat(l: node, i: number)
+ruf037_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl ruf037_args_pos(l: node, a: node, j: number)
+ruf037_args_pos(l, a, j) :- ruf037_args_plain(l, a, i), count : { ruf037_args_splat(l, k), k < i } = 0,
+    j = count : { ruf037_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl ruf037_args_star(l: node, j: number)
+ruf037_args_star(l, j) :- ruf037_args_splat(l, i), count : { ruf037_args_splat(l, k), k < i } = 0,
+    j = count : { ruf037_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl ruf037_args_kwp(l: node, k: symbol, v: node)
+ruf037_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl ruf037_args_lit_dict(s: node, d: node)
+ruf037_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !ruf037_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl ruf037_args_str_pair(p: node)
+ruf037_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl ruf037_args_kw(l: node, k: symbol, v: node)
+ruf037_args_kw(l, k, v) :- ruf037_args_kwp(l, k, v).
+ruf037_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), ruf037_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl ruf037_args_kw_spread(l: node)
+ruf037_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !ruf037_args_lit_dict(s, _).
+
+// arg_iterable_1: call n passes v for slot `iterable` of (iterable, maxlen), syntactic: Ruff's find_argument
+.decl ruf037_arg_iterable_1(n: node, v: node)
+ruf037_arg_iterable_1(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    ruf037_args_kwp(l, "iterable", v).
+ruf037_arg_iterable_1(n, v) :- kind(n, "call"), field(n, "arguments", l), ruf037_args_pos(l, v, 0),
+    !ruf037_args_kwp(l, "iterable", _).
+ruf037_arg_iterable_1(n, v) :- kind(n, "call"), field(n, "arguments", v),
+    kind(v, "generator_expression").
+
+// arg_no_iterable_1: call n does not pass slot `iterable` of (iterable, maxlen), syntactic: Ruff's find_argument
+.decl ruf037_arg_no_iterable_1(n: node)
+ruf037_arg_no_iterable_1(n) :- kind(n, "call"), field(n, "arguments", l),
+    !ruf037_args_kwp(l, "iterable", _), !ruf037_args_pos(l, _, 0), !kind(l, "generator_expression").
+
+// arg_maxlen_2: call n passes v for slot `maxlen` of (iterable, maxlen), syntactic: Ruff's find_argument
+.decl ruf037_arg_maxlen_2(n: node, v: node)
+ruf037_arg_maxlen_2(n, v) :- kind(n, "call"), field(n, "arguments", l),
+    ruf037_args_kwp(l, "maxlen", v).
+ruf037_arg_maxlen_2(n, v) :- kind(n, "call"), field(n, "arguments", l), ruf037_args_pos(l, v, 1),
+    !ruf037_args_kwp(l, "maxlen", _).
+
+// arg_no_maxlen_2: call n does not pass slot `maxlen` of (iterable, maxlen), syntactic: Ruff's find_argument
+.decl ruf037_arg_no_maxlen_2(n: node)
+ruf037_arg_no_maxlen_2(n) :- kind(n, "call"), field(n, "arguments", l),
+    !ruf037_args_kwp(l, "maxlen", _), !ruf037_args_pos(l, _, 1).
+
+// alt_3_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf037_alt_3_u0_empty(n: node)
+
+// alt_5_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf037_alt_5_u0_empty(n: node)
+
+// empty_inner_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf037_empty_inner_u0_empty(n: node)
+
+// empty_inner_part_u0: level -1 of an unrolled recursion, empty
+.decl ruf037_empty_inner_part_u0(n: node)
+
+// empty_inner_part_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf037_empty_inner_part_u0_empty(n: node)
+
+// empty_interpolation_u0: level -1 of an unrolled recursion, empty
+.decl ruf037_empty_interpolation_u0(n: node)
+
+// empty_interpolation_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf037_empty_interpolation_u0_empty(n: node)
+
+// empty_part_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf037_empty_part_u0_empty(n: node)
+
+// alt_1_family_case: one row per relation folded into alt_1_family: its key, then the strings that differed.
+.decl ruf037_alt_1_family_case(key: symbol, s1: symbol, s2: symbol, s3: symbol)
+ruf037_alt_1_family_case("alt_1", "comment", "line_continuation", "[\\[\\]{}(),]").
+ruf037_alt_1_family_case("alt_2", "format_specifier", "type_conversion", "=").
+ruf037_alt_1_family_case("trivia", "comment", "line_continuation", "[(),]").
+
+// alt_1_family(n, key): 3 copies of one rule set (`alt_1`, `alt_2`, `trivia`), folded into one: row `key` of
+// alt_1_family_case gives the strings each copy had.
+.decl ruf037_alt_1_family(n: node, key: symbol)
+ruf037_alt_1_family(n, q1) :- ruf037_alt_1_family_case(q1, s1, s2, s3), (kind(n, s1) ; kind(n, s2)).
+ruf037_alt_1_family(n, q1) :- node(_, n, _, _, _), ruf037_alt_1_family_case(q1, s1, s2, s3),
+    glob(s3, n).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf037_alt_3(n: node)
+ruf037_alt_3(n) :- ruf037_alt_3_u7(n).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf037_alt_4(n: node)
+ruf037_alt_4(n) :- ruf037_t_prefix(n).
+ruf037_alt_4(n) :- ruf037_b_prefix(n).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf037_alt_5(n: node)
+ruf037_alt_5(n) :- ruf037_alt_5_u7(n).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf037_alt_6(n: node)
+ruf037_alt_6(n) :- ruf037_alt_1_family(n, "trivia").
+ruf037_alt_6(n) :- ruf037_empty_part(n).
+
+// stop_7(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf037_stop_7(n: node)
+ruf037_stop_7(n) :- node(_, n, _, _, _), !kind(n, "comment").
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+//   CALL: metavariable this relation binds for the calling rule
+.decl ruf037_alt_10(n: node, call: loc)
+ruf037_alt_10(n, CALL) :- ruf037_target_str(n), CALL = n.
+ruf037_alt_10(n, CALL) :- ruf037_in_annotation(n, CALL).

@@ -1,0 +1,34 @@
+.policy "ruff-pth105-os-replace" revision 1
+.guests off
+.description "Use Path.replace() instead of os.replace(); path objects read better than string-based os calls."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PTH105(n): a finding at node n, from clause `os-replace`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PTH105(at: node, f: node) "Use `Path(src).replace(dst)` instead of `os.replace(src, dst)`; leave it where the paths are bytes or `src_dir_fd`/`dst_dir_fd` come through `**kwargs`."
+    suppress noqa "PTH105"
+PTH105(F, n) :- kind(n, "call"), field(n, "function", c1), pth105_callee(c1, F),
+    count : { field(n, "arguments", c2), kind(c2, "argument_list"), child(c2, c3, _), kind(c3, "keyword_argument"), field(c3, "name", c4), glob("src_dir_fd", c4), field(c3, "value", c5), !pth105_none_literal(c5) } = 0,
+    count : { field(n, "arguments", c6), kind(c6, "argument_list"), child(c6, c7, _), kind(c7, "keyword_argument"), field(c7, "name", c8), glob("dst_dir_fd", c8), field(c7, "value", c9), !pth105_none_literal(c9) } = 0.
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl pth105_target(n: node)
+pth105_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "os.replace").
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth105_callee(n: node, f: loc)
+pth105_callee(n, F) :- pth105_target(n), node(_, n, _, _, _), F = n.
+pth105_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth105_callee(c1, F).
+
+// none_literal(n): the JSON util `none-literal`, used where the JSON says `matches: "none-literal"`
+.decl pth105_none_literal(n: node)
+pth105_none_literal(n) :- kind(n, "none").
+pth105_none_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pth105_none_literal(c1).

@@ -1,0 +1,37 @@
+.policy "ruff-up019-typing-text-str-alias" revision 1
+.guests off
+.description "Use str instead of typing.Text; Text is an alias of str that only exists for Python 2 compatibility and is deprecated."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// UP019(n): a finding at node n, from clause `typing-text`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation UP019(at: node, t: node) "Replace this `Text` alias with the builtin `str` (the same type) and drop the import if nothing else uses it; if `str` is rebound in this scope, use `builtins.str`."
+    suppress noqa "UP019"
+UP019(T, n) :- up019_text_ref(n), node(_, n, _, _, _), T = n.
+UP019(T, n) :- up019_text_in_string(n, T).
+
+// text_ref(n): the JSON util `text-ref`, used where the JSON says `matches: "text-ref"`
+.decl up019_text_ref(n: node)
+up019_text_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "typing.Text") ; sym_of(n, "typing_extensions.Text")).
+up019_text_ref(n) :- kind(n, "dotted_name"), inside(n, p1, "case_pattern"),
+    match("[^.\\s]+\\s*\\.\\s*Text", n), child(n, c2, _), kind(c2, "identifier"),
+    child(_, c2, 0), (sym_of(c2, "typing") ; sym_of(c2, "typing_extensions")).
+
+// text_in_string(n): the JSON util `text-in-string`, used where the JSON says `matches: "text-in-string"`
+//   T: metavariable this relation binds for the calling rule
+.decl up019_text_in_string(n: node, t: loc)
+up019_text_in_string(n, T) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), up019_alt_1(c2, T).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+//   T: metavariable this relation binds for the calling rule
+.decl up019_alt_1(n: node, t: loc)
+up019_alt_1(n, T) :- up019_text_ref(n), T = n.
+up019_alt_1(n, T) :- up019_text_in_string(n, T).

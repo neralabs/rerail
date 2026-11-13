@@ -1,0 +1,15 @@
+.policy "bandit-b411-import-xmlrpclib" revision 1
+.guests off
+.description "Avoid importing xmlrpc unprotected; its XML parsing is open to XML attacks unless patched with defusedxml."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B411(n): a finding at node n, from clause `B411`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B411(at: node) "xmlrpc parsing may be vulnerable to XML attacks; use defusedxml.xmlrpc.monkey_patch() to mitigate XML vulnerabilities."
+    suppress nosec "B411"
+B411(n) :- n ~ `import xmlrpc`.
+B411(n) :- n ~ `import xmlrpc as $ALIAS`.
+B411(n) :- n ~ `from xmlrpc import $$$NAMES`.

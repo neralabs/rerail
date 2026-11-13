@@ -1,0 +1,46 @@
+.policy "ruff-b033-duplicate-value" revision 1
+.guests off
+.description "Remove duplicate literal values from Python set literals; the repeat is dropped silently and usually hides a typo, and values like True, 1 and 1.0 count as the same."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B033(n): a finding at node n, from clause `duplicate-value`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation B033(at: node, v: loc) "Sets should not contain duplicate item `{v}`"
+    suppress noqa "B033"
+B033(n, V) :- b033_literal(n), node(_, n, _, _, _), V = n, b033_dup_slot(n, V).
+
+// literal(n): the JSON util `literal`, used where the JSON says `matches: "literal"`
+.decl b033_literal(n: node)
+b033_literal(n) :- kind(n, k1), b033_set_1(k1).
+b033_literal(n) :- kind(n, "string"), match("[rRuUbB]{0,2}['\"].*", n).
+b033_literal(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c2, _), kind(c2, "string"), !match("[rRuUbB]{0,2}['\"].*", c2) } = 0.
+
+// literal_p(n): the JSON util `literal-p`, used where the JSON says `matches: "literal-p"`
+.decl b033_literal_p(n: node)
+b033_literal_p(n) :- b033_literal(n).
+b033_literal_p(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), b033_literal_p(c1).
+
+// dup_slot(n): the JSON util `dup-slot`, used where the JSON says `matches: "dup-slot"`
+//   V: metavariable of the calling rule, passed in (bound by the caller)
+.decl b033_dup_slot(n: node, v: loc)
+b033_dup_slot(n, V) :- b033_demand_dup_slot(n, V), child(p1, n, _), kind(p1, "set"),
+    k5 = count : { precedes(s2, n), b033_literal_p(s2), node(_, s2, _, _, _), F = s2, value(F, t3), value(V, t3) },
+    k5 >= 1.
+b033_dup_slot(n, V) :- b033_demand_dup_slot(n, V), child(p6, n, _),
+    kind(p6, "parenthesized_expression"), b033_dup_slot(p6, V).
+
+// demand_dup_slot: the rows of dup_slot its callers ask for (the metavariable columns they pass in)
+.decl b033_demand_dup_slot(n: node, v: loc)
+b033_demand_dup_slot(n, V) :- b033_literal(n), node(_, n, _, _, _), V = n.
+b033_demand_dup_slot(p6, V) :- b033_demand_dup_slot(n, V), child(p6, n, _),
+    kind(p6, "parenthesized_expression").
+
+// set_1: node kinds from a JSON `any`
+.decl b033_set_1(v: symbol)
+b033_set_1("integer"). b033_set_1("float"). b033_set_1("true"). b033_set_1("false"). b033_set_1("none").
+b033_set_1("ellipsis").

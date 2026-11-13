@@ -1,0 +1,16 @@
+.policy "bandit-b323-unverified-context" revision 1
+.guests off
+.description "Don't create SSL contexts with ssl._create_unverified_context(); it turns off certificate and hostname verification and allows man-in-the-middle attacks."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// B323(n): a finding at node n, from clause `B323`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `constraints` on F are added to every rule.
+.violation B323(at: node) "Use ssl.create_default_context() instead, which verifies certificates and hostnames."
+    suppress nosec "B323"
+B323(n) :- n ~ `$F($$$ARGS)`, sym_of(F, "ssl._create_unverified_context").

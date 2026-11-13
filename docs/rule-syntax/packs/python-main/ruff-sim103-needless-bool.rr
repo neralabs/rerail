@@ -1,0 +1,136 @@
+.policy "ruff-sim103-needless-bool" revision 1
+.guests off
+.description "Return the condition directly instead of an if/else that returns True in one branch and False in the other."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// SIM103(n): a finding at node n, from clause `needless-bool`.
+// Each rule below is one way the JSON `rule` can match.
+.violation SIM103(at: node) "Replace this `if`/`else` with one `return` of the condition, negated with `not` if the `if` branch returns `False`."
+    suppress noqa "SIM103"
+SIM103(n) :- kind(n, "if_statement"), !sim103_exempt_if(n),
+    k2 = count : { child(n, c1, _), (kind(c1, "elif_clause") ; kind(c1, "else_clause")) },
+    k2 >= 1, k2 <= 1,
+    ( child(n, c2, _), sim103_block_true(c2), child(n, c3, _), kind(c3, "else_clause"), child(c3, c4, _), sim103_block_false(c4)
+    ; child(n, c5, _), sim103_block_false(c5), child(n, c6, _), kind(c6, "else_clause"), child(c6, c7, _), sim103_block_true(c7)
+    ).
+
+SIM103(n) :- kind(n, "elif_clause"), child(p9, n, _), kind(p9, "if_statement"),
+    !sim103_exempt_if(p9),
+    ( child(n, c1, _), sim103_block_true(c1), next_sibling(n, s1), kind(s1, "else_clause"), child(s1, c2, _), sim103_block_false(c2)
+    ; child(n, c3, _), sim103_block_false(c3), next_sibling(n, s2), kind(s2, "else_clause"), child(s2, c4, _), sim103_block_true(c4)
+    ).
+
+SIM103(n) :- kind(n, "if_statement"), !sim103_alt_10(n),
+    ( child(n, c1, _), sim103_block_true(c1), precedes_stop(n, s1, sim103_stop_11), sim103_return_false(s1)
+    ; child(n, c2, _), sim103_block_false(c2), precedes_stop(n, s2, sim103_stop_11), sim103_return_true(s2)
+    ).
+
+
+// true_lit(n): the JSON util `true-lit`, used where the JSON says `matches: "true-lit"`
+.decl sim103_true_lit(n: node)
+sim103_true_lit(n) :- kind(n, "true").
+sim103_true_lit(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), sim103_true_lit(c1).
+
+// false_lit(n): the JSON util `false-lit`, used where the JSON says `matches: "false-lit"`
+.decl sim103_false_lit(n: node)
+sim103_false_lit(n) :- kind(n, "false").
+sim103_false_lit(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), sim103_false_lit(c1).
+
+// return_true(n): the JSON util `return-true`, used where the JSON says `matches: "return-true"`
+.decl sim103_return_true(n: node)
+sim103_return_true(n) :- kind(n, "return_statement"), child(n, c1, _), sim103_true_lit(c1).
+
+// return_false(n): the JSON util `return-false`, used where the JSON says `matches: "return-false"`
+.decl sim103_return_false(n: node)
+sim103_return_false(n) :- kind(n, "return_statement"), child(n, c1, _), sim103_false_lit(c1).
+
+// block_true(n): the JSON util `block-true`, used where the JSON says `matches: "block-true"`
+.decl sim103_block_true(n: node)
+sim103_block_true(n) :- kind(n, "block"), k2 = count : { child(n, c1, _), !sim103_alt_1(c1) },
+    k2 >= 1, k2 <= 1, child(n, c3, _), !sim103_alt_1(c3), sim103_return_true(c3).
+
+// block_false(n): the JSON util `block-false`, used where the JSON says `matches: "block-false"`
+.decl sim103_block_false(n: node)
+sim103_block_false(n) :- kind(n, "block"), k2 = count : { child(n, c1, _), !sim103_alt_1(c1) },
+    k2 >= 1, k2 <= 1, child(n, c3, _), !sim103_alt_1(c3), sim103_return_false(c3).
+
+// sys_version(n): the JSON util `sys-version`, used where the JSON says `matches: "sys-version"`
+.decl sim103_sys_version(n: node)
+sim103_sys_version(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "sys.version_info") ; sym_of(n, "sys.platform")).
+
+// exempt_if(n): the JSON util `exempt-if`, used where the JSON says `matches: "exempt-if"`
+.decl sim103_exempt_if(n: node)
+sim103_exempt_if(n) :- kind(n, "if_statement"), child(n, c1, _), sim103_tok_follows_1(c1),
+    (within(c2, c1), sim103_sys_version(c2) ; sim103_sys_version(c1) ; sim103_alt_5(c1)).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim103_tok_follows_1(n: node)
+.stored sim103_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim103_tok_follows_1(n) :- next_sibling(s2, n), glob("if", s2).
+sim103_tok_follows_1(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("if", t3).
+sim103_tok_follows_1(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:if)\\s*)$", g4).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim103_tok_follows_2(n: node)
+.stored sim103_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim103_tok_follows_2(n) :- next_sibling(s11, n), glob(".", s11).
+sim103_tok_follows_2(n) :- structural_before(n, g13), match("\\s*", g13), child(p14, n, _),
+    node(_, n, _, st16, _), o15 = st16 - strlen(g13), token(p14, _, t12, _, o15),
+    match("\\.", t12).
+sim103_tok_follows_2(n) :- structural_before(n, g13),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g13).
+
+// tok_follows_3(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim103_tok_follows_3(n: node)
+.stored sim103_tok_follows_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim103_tok_follows_3(n) :- next_sibling(s2, n), glob(".", s2).
+sim103_tok_follows_3(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("\\.", t3).
+sim103_tok_follows_3(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g4).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^\\.$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl sim103_tok_follows_4(n: node)
+.stored sim103_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+sim103_tok_follows_4(n) :- next_sibling(s3, n), glob(".", s3).
+sim103_tok_follows_4(n) :- structural_before(n, g5), match("\\s*", g5), child(p6, n, _),
+    node(_, n, _, st8, _), o7 = st8 - strlen(g5), token(p6, _, t4, _, o7),
+    match("\\.", t4).
+sim103_tok_follows_4(n) :- structural_before(n, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:\\.)\\s*)$", g5).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl sim103_alt_1(n: node)
+sim103_alt_1(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+sim103_alt_1(n) :- node(_, n, _, _, _), glob(";", n).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl sim103_alt_5(n: node)
+sim103_alt_5(n) :- kind(n, "identifier"), glob("TYPE_CHECKING", n).
+sim103_alt_5(n) :- kind(n, "identifier"),
+    ( sym_of(n, "typing.TYPE_CHECKING")
+    ; sym_of(n, "_typeshed.TYPE_CHECKING")
+    ; sym_of(n, "typing_extensions.TYPE_CHECKING")
+    ).
+
+sim103_alt_5(n) :- kind(n, "attribute"), child(n, c1, _), kind(c1, "identifier"),
+    glob("TYPE_CHECKING", c1), sim103_tok_follows_3(c1).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl sim103_alt_10(n: node)
+sim103_alt_10(n) :- sim103_exempt_if(n).
+sim103_alt_10(n) :- child(n, c1, _), (kind(c1, "elif_clause") ; kind(c1, "else_clause")).
+
+// stop_11(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl sim103_stop_11(n: node)
+sim103_stop_11(n) :- node(_, n, _, _, _), !kind(n, "comment"), !kind(n, "line_continuation").

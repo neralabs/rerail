@@ -1,0 +1,22 @@
+.policy "ruff-n801-invalid-class-name" revision 1
+.guests off
+.description "Name classes in CapWords style, starting with a capital letter and without underscores between words, as PEP 8 recommends."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// N801(n): a finding at node n, from clause `invalid-class-name`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation N801(at: node, name: loc) "Rename class `{name}` to CapWords, such as `MyClass`, and update its references; keep the name if callers outside this code import it."
+    suppress noqa "N801"
+N801(n, NAME) :- kind(n, "identifier"), node(_, n, _, _, _), NAME = n, field(p1, "name", n),
+    kind(p1, "class_definition"), !n801_alt_1(n).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl n801_alt_1(n: node)
+n801_alt_1(n) :- node(_, n, _, _, _),
+    match("[_\\x{FE33}\\x{FE34}\\x{FE4D}-\\x{FE4F}\\x{FF3F}]*[\\p{Uppercase}\\x{1C5}\\x{1C8}\\x{1CB}\\x{1F2}\\x{1D2C}-\\x{1D2E}\\x{1D30}-\\x{1D3A}\\x{1D3C}-\\x{1D42}\\x{2C7D}\\x{A7F1}-\\x{A7F4}\\x{A7F8}][^_\\x{FE33}\\x{FE34}\\x{FE4D}-\\x{FE4F}\\x{FF3F}]*", n).
+n801_alt_1(n) :- node(_, n, _, _, _),
+    glob("{setUp,tearDown,setUpClass,tearDownClass,setUpModule,tearDownModule,asyncSetUp,asyncTearDown,setUpTestData,failureException,longMessage,maxDiff}", n).

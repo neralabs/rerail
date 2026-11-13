@@ -1,0 +1,46 @@
+.policy "bandit-b103-set-bad-file-permissions" revision 1
+.guests off
+.description "Avoid chmod modes that grant group-write, group-execute, world-write, or world-execute permission; overly broad permissions let other users tamper with files."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B103(n, detail): findings from clauses `world-writable-chmod`, `group-or-world-executable-chmod`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// The JSON `constraints` on F, MODE are added to every rule.
+.violation B103(at: node, detail: symbol) "{detail}."
+    suppress nosec "B103"
+B103(n, "Remove world-write from this chmod mode; use 0o644 for files or 0o755 for directories") :- n ~ `$F($PATH, $MODE)`,
+    contains("chmod", F), value(MODE, v1), value_type(v1, "int"),
+    (to_number(v1) / 2) % 2 = 1.
+B103(n, "Remove world-write from this chmod mode; use 0o644 for files or 0o755 for directories") :- n ~ `$F($PATH, mode=$MODE)`,
+    contains("chmod", F), value(MODE, v1), value_type(v1, "int"),
+    (to_number(v1) / 2) % 2 = 1.
+B103(n, "Remove world-write from this chmod mode; use 0o644 for files or 0o755 for directories") :- n ~ `$F(path=$PATH, mode=$MODE)`,
+    contains("chmod", F), value(MODE, v1), value_type(v1, "int"),
+    (to_number(v1) / 2) % 2 = 1.
+B103(n, "Narrow this chmod mode to owner-only write and execute, such as 0o600 or 0o700, unless others must run it") :- n ~ `$F($PATH, $MODE)`,
+    contains("chmod", F), value(MODE, v1), value_type(v1, "int"),
+    ( to_number(v1) % 2 = 1
+    ; (to_number(v1) / 8) % 2 = 1
+    ; (to_number(v1) / 16) % 2 = 1
+    ),
+
+    count : { value(MODE, v2), value_type(v2, "int"), (to_number(v2) / 2) % 2 = 1 } = 0.
+B103(n, "Narrow this chmod mode to owner-only write and execute, such as 0o600 or 0o700, unless others must run it") :- n ~ `$F($PATH, mode=$MODE)`,
+    contains("chmod", F), value(MODE, v1), value_type(v1, "int"),
+    ( to_number(v1) % 2 = 1
+    ; (to_number(v1) / 8) % 2 = 1
+    ; (to_number(v1) / 16) % 2 = 1
+    ),
+
+    count : { value(MODE, v2), value_type(v2, "int"), (to_number(v2) / 2) % 2 = 1 } = 0.
+B103(n, "Narrow this chmod mode to owner-only write and execute, such as 0o600 or 0o700, unless others must run it") :- n ~ `$F(path=$PATH, mode=$MODE)`,
+    contains("chmod", F), value(MODE, v1), value_type(v1, "int"),
+    ( to_number(v1) % 2 = 1
+    ; (to_number(v1) / 8) % 2 = 1
+    ; (to_number(v1) / 16) % 2 = 1
+    ),
+
+    count : { value(MODE, v2), value_type(v2, "int"), (to_number(v2) / 2) % 2 = 1 } = 0.

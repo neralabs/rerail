@@ -1,0 +1,15 @@
+.policy "ruff-f504-percent-format-extra-named-arguments" revision 1
+.guests off
+.description "Remove dict keys that no %(key) placeholder in the %-format string uses; an unused key usually means a typo or a stale argument."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+// F504(n): a finding at node n, from clause `percent-format-extra-named-arguments`.
+// Each rule below is one way the JSON `rule` can match.
+.violation F504(at: node) "`%`-format string has unused named argument(s)"
+    suppress noqa "F504"
+F504(n) :- n ~ `$S % $R`,
+    ast(n, {"formatArgs": {"style": "percent", "string": "S", "args": "R", "unused": {"kind": "pair"}}}).

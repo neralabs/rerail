@@ -1,0 +1,309 @@
+.policy "ruff-pth101-os-chmod" revision 1
+.guests off
+.description "Use Path.chmod() instead of os.chmod(); path objects read better than string-based os calls."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PTH101(n): a finding at node n, from clause `os-chmod`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+// The JSON `constraints` on S are added to every rule.
+.violation PTH101(at: node, f: node) "Use `Path(path).chmod(mode)` instead of `os.chmod(path, mode)`; leave it where the path is a file descriptor or bytes, or `dir_fd` comes through `**kwargs`."
+    suppress noqa "PTH101"
+PTH101(F, n) :- kind(n, "call"), field(n, "function", c1), pth101_callee(c1, F),
+    ( kind(n, "call"), pth101_arg_no_path_1(n), unset(S)
+    ; kind(n, "call"), pth101_arg_path_1(n, a1_2), S = a1_2
+    ),
+
+    count : { field(n, "arguments", c3), kind(c3, "argument_list"), child(c3, c4, _), kind(c4, "keyword_argument"), field(c4, "name", c5), glob("dir_fd", c5), field(c4, "value", c6), !pth101_none_literal(c6) } = 0,
+    !pth101_file_descriptor(S).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl pth101_target(n: node)
+pth101_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "os.chmod").
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth101_callee(n: node, f: loc)
+pth101_callee(n, F) :- pth101_target(n), node(_, n, _, _, _), F = n.
+pth101_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth101_callee(c1, F).
+
+// none_literal(n): the JSON util `none-literal`, used where the JSON says `matches: "none-literal"`
+.decl pth101_none_literal(n: node)
+pth101_none_literal(n) :- kind(n, "none").
+pth101_none_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pth101_none_literal(c1).
+
+// int_ref(n): the JSON util `int-ref`, used where the JSON says `matches: "int-ref"`
+.decl pth101_int_ref(n: node)
+pth101_int_ref(n) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "int"),
+    sym_of(n, "builtins.int").
+pth101_int_ref(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth101_int_ref(c1).
+
+// arm_if(n): the JSON util `arm-if`, used where the JSON says `matches: "arm-if"`
+.decl pth101_arm_if(n: node)
+pth101_arm_if(n) :- pth101_tok_precedes_1(n).
+
+// arm_else(n): the JSON util `arm-else`, used where the JSON says `matches: "arm-else"`
+.decl pth101_arm_else(n: node)
+pth101_arm_else(n) :- pth101_tok_follows_2(n).
+
+// int_t(n): the JSON util `int-t`, used where the JSON says `matches: "int-t"`
+.decl pth101_int_t(n: node)
+pth101_int_t(n) :- kind(n, "integer"), !glob("**[jJ]", n).
+pth101_int_t(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth101_int_t(c1).
+pth101_int_t(n) :- kind(n, "named_expression"), field(n, "value", c2), pth101_int_t(c2).
+pth101_int_t(n) :- kind(n, "unary_operator"), field(n, "argument", c3), pth101_intlike(c3).
+pth101_int_t(n) :- kind(n, "binary_operator"),
+    count : { field(n, "operator", c4), glob("[/@]", c4) } = 0, field(n, "left", c5),
+    pth101_intlike(c5), field(n, "right", c6), pth101_intlike(c6).
+pth101_int_t(n) :- kind(n, "boolean_operator"), field(n, "left", c7), pth101_intlike(c7),
+    field(n, "right", c8), pth101_intlike(c8), pth101_alt_1(n).
+pth101_int_t(n) :- kind(n, "conditional_expression"), child(n, c11, _), pth101_arm_if(c11),
+    pth101_intlike(c11), child(n, c12, _), pth101_arm_else(c12), pth101_intlike(c12), child(n, c13, _),
+    (pth101_arm_if(c13) ; pth101_arm_else(c13)), pth101_int_t(c13).
+
+// bool_t(n): the JSON util `bool-t`, used where the JSON says `matches: "bool-t"`
+.decl pth101_bool_t(n: node)
+pth101_bool_t(n) :- (kind(n, "true") ; kind(n, "false") ; kind(n, "not_operator")).
+pth101_bool_t(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth101_bool_t(c1).
+pth101_bool_t(n) :- kind(n, "named_expression"), field(n, "value", c2), pth101_bool_t(c2).
+pth101_bool_t(n) :- kind(n, "boolean_operator"), field(n, "left", c3), pth101_bool_t(c3),
+    field(n, "right", c4), pth101_bool_t(c4).
+pth101_bool_t(n) :- kind(n, "conditional_expression"), child(n, c5, _), pth101_arm_if(c5),
+    pth101_bool_t(c5), child(n, c6, _), pth101_arm_else(c6), pth101_bool_t(c6).
+
+// intlike(n): the JSON util `intlike`, used where the JSON says `matches: "intlike"`
+.decl pth101_intlike(n: node)
+pth101_intlike(n) :- pth101_int_t(n).
+pth101_intlike(n) :- pth101_bool_t(n).
+
+// int_ctor(n): the JSON util `int-ctor`, used where the JSON says `matches: "int-ctor"`
+.decl pth101_int_ctor(n: node)
+pth101_int_ctor(n) :- kind(n, "call"), field(n, "function", c1), pth101_int_ref(c1).
+pth101_int_ctor(n) :- kind(n, "parenthesized_expression"), child(n, c2, _), pth101_int_ctor(c2).
+
+// int_initializer(n): the JSON util `int-initializer`, used where the JSON says `matches: "int-initializer"`
+.decl pth101_int_initializer(n: node)
+pth101_int_initializer(n) :- pth101_int_t(n).
+pth101_int_initializer(n) :- pth101_int_ctor(n).
+
+// int_annotation(n): the JSON util `int-annotation`, used where the JSON says `matches: "int-annotation"`
+.decl pth101_int_annotation(n: node)
+pth101_int_annotation(n) :- pth101_int_ref(n).
+pth101_int_annotation(n) :- kind(n, "subscript"), field(n, "value", c1), pth101_int_ref(c1).
+pth101_int_annotation(n) :- kind(n, "type"), child(n, c2, _), pth101_int_annotation(c2).
+pth101_int_annotation(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    pth101_int_annotation(c3).
+
+// int_def(n): the JSON util `int-def`, used where the JSON says `matches: "int-def"`
+.decl pth101_int_def(n: node)
+pth101_int_def(n) :- kind(n, "function_definition"), field(n, "return_type", c1),
+    pth101_int_annotation(c1).
+pth101_int_def(n) :- kind(n, "decorated_definition"), field(n, "definition", c2), pth101_int_def(c2).
+
+// int_with(n): the JSON util `int-with`, used where the JSON says `matches: "int-with"`
+//   WN: metavariable of the calling rule, passed in (bound by the caller)
+.decl pth101_int_with(n: node, wn: loc)
+pth101_int_with(n, WN) :- pth101_demand_int_with(n, WN), kind(n, "as_pattern"), child(n, c1, _),
+    child(_, c1, 0), pth101_int_initializer(c1), field(n, "alias", c2), pth101_alt_3(c2, WN).
+
+// int_name(n): the JSON util `int-name`, used where the JSON says `matches: "int-name"`
+.decl pth101_int_name(n: node)
+pth101_int_name(n) :- kind(n, "identifier"), pth101_alt_5(n).
+
+// name_root(n): the JSON util `name-root`, used where the JSON says `matches: "name-root"`
+.decl pth101_name_root(n: node)
+pth101_name_root(n) :- pth101_int_name(n).
+pth101_name_root(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth101_name_root(c1).
+pth101_name_root(n) :- kind(n, "call"), field(n, "function", c2), pth101_name_root(c2).
+
+// file_descriptor(n): the JSON util `file-descriptor`, used where the JSON says `matches: "file-descriptor"`
+.decl pth101_file_descriptor(n: node)
+pth101_file_descriptor(n) :- kind(n, "integer"), !glob("**[jJ]", n).
+pth101_file_descriptor(n) :- pth101_class_int_attr(n).
+pth101_file_descriptor(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pth101_file_descriptor(c1).
+pth101_file_descriptor(n) :- pth101_name_root(n).
+
+// nested_class_body(n): the JSON util `nested-class-body`, used where the JSON says `matches: "nested-class-body"`
+.decl pth101_nested_class_body(n: node)
+pth101_nested_class_body(n) :- kind(n, "block"), child(p1, n, _),
+    kind(p1, "class_definition").
+
+// int_member(n): the JSON util `int-member`, used where the JSON says `matches: "int-member"`
+.decl pth101_int_member(n: node)
+pth101_int_member(n) :- kind(n, "identifier"), node(_, n, _, _, _), ATTR = n,
+    ( site_latest(n), site_scope(n, "class"), (site_form(n, "assignment") ; site_form(n, "named")), binding_value(n, x1), pth101_int_initializer(x1)
+    ; site_latest(n), site_scope(n, "class"), (site_form(n, "annotated") ; site_form(n, "annotation")), site_annotation(n, o1), pth101_int_annotation(o1)
+    ; site_latest(n), site_scope(n, "class"), site_form(n, "definition"), pth101_int_def(n)
+    ).
+
+
+// class_int_member(n): the JSON util `class-int-member`, used where the JSON says `matches: "class-int-member"`
+.decl pth101_class_int_member(n: node)
+pth101_class_int_member(n) :- kind(n, "class_definition"), field(n, "body", c1),
+    within_stop(c2, c1, pth101_stop_13), pth101_int_member(c2).
+
+// class_ref(n): the JSON util `class-ref`, used where the JSON says `matches: "class-ref"`
+.decl pth101_class_ref(n: node)
+pth101_class_ref(n) :- kind(n, "identifier"), ref_site(n, b1), pth101_alt_10(b1).
+pth101_class_ref(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), pth101_class_ref(c3).
+
+// inner_class_name(n): the JSON util `inner-class-name`, used where the JSON says `matches: "inner-class-name"`
+.decl pth101_inner_class_name(n: node)
+pth101_inner_class_name(n) :- kind(n, "identifier"), node(_, n, _, _, _), MID = n, site_latest(n),
+    site_scope(n, "class"), site_form(n, "definition"), pth101_alt_10(n).
+
+// outer_ref(n): the JSON util `outer-ref`, used where the JSON says `matches: "outer-ref"`
+.decl pth101_outer_ref(n: node)
+pth101_outer_ref(n) :- kind(n, "identifier"), ref_site(n, b1),
+    (pth101_outer_class(b1) ; field(b1, "definition", c1), pth101_outer_class(c1)).
+pth101_outer_ref(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), pth101_outer_ref(c3).
+
+// mid_ref(n): the JSON util `mid-ref`, used where the JSON says `matches: "mid-ref"`
+.decl pth101_mid_ref(n: node)
+pth101_mid_ref(n) :- kind(n, "attribute"), field(n, "attribute", c1), node(_, c1, _, _, _), MID = c1,
+    field(n, "object", c2), pth101_outer_ref(c2).
+pth101_mid_ref(n) :- kind(n, "parenthesized_expression"), child(n, c3, _), pth101_mid_ref(c3).
+
+// class_int_attr(n): the JSON util `class-int-attr`, used where the JSON says `matches: "class-int-attr"`
+.decl pth101_class_int_attr(n: node)
+pth101_class_int_attr(n) :- kind(n, "attribute"), field(n, "attribute", c1), node(_, c1, _, _, _), ATTR = c1,
+    field(n, "object", c2), (pth101_class_ref(c2) ; pth101_mid_ref(c2)).
+
+// outer_class(n): the JSON util `outer-class`, used where the JSON says `matches: "outer-class"`
+.decl pth101_outer_class(n: node)
+pth101_outer_class(n) :- kind(n, "class_definition"), field(n, "body", c1),
+    within_stop(c2, c1, pth101_stop_13), pth101_inner_class_name(c2).
+
+// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth101_tok_precedes_1(n: node)
+.stored pth101_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth101_tok_precedes_1(n) :- next_sibling(n, s1), glob("if", s1).
+pth101_tok_precedes_1(n) :- structural_after(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, _, en7), o5 = en7 + strlen(g3), token(p4, _, t2, o5, _),
+    match("if", t2).
+pth101_tok_precedes_1(n) :- structural_after(n, g3),
+    match("(?s)^(?:\\s*(?:if)(?:\\W.*)?)$", g3).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth101_tok_follows_2(n: node)
+.stored pth101_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth101_tok_follows_2(n) :- next_sibling(s1, n), glob("else", s1).
+pth101_tok_follows_2(n) :- structural_before(n, g3), match("\\s*", g3), child(p4, n, _),
+    node(_, n, _, st6, _), o5 = st6 - strlen(g3), token(p4, _, t2, _, o5),
+    match("else", t2).
+pth101_tok_follows_2(n) :- structural_before(n, g3),
+    match("(?s)^(?:(?:.*\\W)?(?:else)\\s*)$", g3).
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl pth101_args_plain(l: node, a: node, i: number)
+pth101_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl pth101_args_splat(l: node, i: number)
+pth101_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl pth101_args_pos(l: node, a: node, j: number)
+pth101_args_pos(l, a, j) :- pth101_args_plain(l, a, i), count : { pth101_args_splat(l, k), k < i } = 0,
+    j = count : { pth101_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl pth101_args_star(l: node, j: number)
+pth101_args_star(l, j) :- pth101_args_splat(l, i), count : { pth101_args_splat(l, k), k < i } = 0,
+    j = count : { pth101_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl pth101_args_kwp(l: node, k: symbol, v: node)
+pth101_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl pth101_args_lit_dict(s: node, d: node)
+pth101_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !pth101_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl pth101_args_str_pair(p: node)
+pth101_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl pth101_args_kw(l: node, k: symbol, v: node)
+pth101_args_kw(l, k, v) :- pth101_args_kwp(l, k, v).
+pth101_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), pth101_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl pth101_args_kw_spread(l: node)
+pth101_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !pth101_args_lit_dict(s, _).
+
+// arg_path_1: call n passes v for slot `path` of (path), syntactic: Ruff's find_argument
+.decl pth101_arg_path_1(n: node, v: node)
+pth101_arg_path_1(n, v) :- kind(n, "call"), field(n, "arguments", l), pth101_args_kwp(l, "path", v).
+pth101_arg_path_1(n, v) :- kind(n, "call"), field(n, "arguments", l), pth101_args_pos(l, v, 0),
+    !pth101_args_kwp(l, "path", _).
+pth101_arg_path_1(n, v) :- kind(n, "call"), field(n, "arguments", v),
+    kind(v, "generator_expression").
+
+// arg_no_path_1: call n does not pass slot `path` of (path), syntactic: Ruff's find_argument
+.decl pth101_arg_no_path_1(n: node)
+pth101_arg_no_path_1(n) :- kind(n, "call"), field(n, "arguments", l), !pth101_args_kwp(l, "path", _),
+    !pth101_args_pos(l, _, 0), !kind(l, "generator_expression").
+
+// demand_int_with: the rows of int_with its callers ask for (the metavariable columns they pass in)
+.decl pth101_demand_int_with(n: node, wn: loc)
+pth101_demand_int_with(b8, WN) :- node(_, n, _, _, _), WN = n, ref_site(n, b8), site_only(b8),
+    site_form(b8, "with").
+pth101_demand_int_with(c1, WN) :- node(_, n, _, _, _), WN = n, ref_site(n, b8), site_only(b8),
+    site_form(b8, "with"), within(c1, b8).
+
+// demand_alt_3: the rows of alt_3 its callers ask for (the metavariable columns they pass in)
+.decl pth101_demand_alt_3(n: node, wn: loc)
+pth101_demand_alt_3(c2, WN) :- pth101_demand_int_with(n, WN), kind(n, "as_pattern"), child(n, c1, _),
+    child(_, c1, 0), pth101_int_initializer(c1), field(n, "alias", c2).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl pth101_alt_1(n: node)
+pth101_alt_1(n) :- field(n, "left", c1), pth101_int_t(c1).
+pth101_alt_1(n) :- field(n, "right", c2), pth101_int_t(c2).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+//   WN: metavariable of the calling rule, passed in (bound by the caller)
+.decl pth101_alt_3(n: node, wn: loc)
+pth101_alt_3(n, WN) :- pth101_demand_alt_3(n, WN), text(n, t_wn1), text(WN, t_wn1), @doc(n) = @doc(WN).
+pth101_alt_3(n, WN) :- pth101_demand_alt_3(n, WN), child(n, c1, _), text(c1, t_wn2), text(WN, t_wn2), @doc(c1) = @doc(WN).
+
+// alt_5(n): the JSON `any`: n matches if any one of these rules does
+.decl pth101_alt_5(n: node)
+pth101_alt_5(n) :- ref_site(n, b1), site_only(b1),
+    count : { kind(b1, "assignment"), field(b1, "type", c2), kind(c2, "type") } = 0,
+    binding_value(b1, x3), pth101_int_initializer(x3).
+pth101_alt_5(n) :- ref_site(n, b4), site_only(b4),
+    count : { child(b4, c5, _), (kind(c5, "list_splat_pattern") ; kind(c5, "dictionary_splat_pattern")) } = 0,
+    site_annotation(b4, o6), pth101_int_annotation(o6).
+pth101_alt_5(n) :- ref_site(n, b7), site_only(b7), pth101_int_def(b7).
+pth101_alt_5(n) :- node(_, n, _, _, _), WN = n, ref_site(n, b8), site_only(b8), site_form(b8, "with"),
+    (pth101_int_with(b8, WN) ; within(c1, b8), pth101_int_with(c1, WN)).
+
+// alt_10(n): the JSON `any`: n matches if any one of these rules does
+.decl pth101_alt_10(n: node)
+pth101_alt_10(n) :- pth101_class_int_member(n).
+pth101_alt_10(n) :- field(n, "definition", c1), pth101_class_int_member(c1).
+
+// stop_13(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl pth101_stop_13(n: node)
+pth101_stop_13(n) :- pth101_nested_class_body(n).

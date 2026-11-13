@@ -1,0 +1,88 @@
+.policy "ruff-b032-unintentional-type-annotation" revision 1
+.guests off
+.description "Use = instead of : when setting a subscript or another object's attribute without a value; a colon there makes a type annotation that assigns nothing."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// B032(n): a finding at node n, from clause `unintentional-type-annotation`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B032(at: node) "Possible unintentional type annotation (using `:`). Did you mean to assign (using `=`)?"
+    suppress noqa "B032"
+B032(n) :- kind(n, "assignment"), child(p1, n, _), kind(p1, "expression_statement"),
+    child(n, c2, _), kind(c2, "type"), !b032_tok_has_4(n), child(n, c11, _),
+    !b032_tok_follows_5(c11), b032_target(c11).
+
+// name(n): the JSON util `name`, used where the JSON says `matches: "name"`
+.decl b032_name(n: node)
+b032_name(n) :- kind(n, "identifier").
+b032_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), b032_name(c1).
+
+// non_self_name(n): the JSON util `non-self-name`, used where the JSON says `matches: "non-self-name"`
+.decl b032_non_self_name(n: node)
+b032_non_self_name(n) :- kind(n, "identifier"), !glob("self", n).
+b032_non_self_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    b032_non_self_name(c1).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl b032_target(n: node)
+b032_target(n) :- b032_alt_1(n).
+b032_target(n) :- kind(n, "parenthesized_expression"), child(n, c26, _), b032_target(c26).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b032_tok_follows_1(n: node)
+.stored b032_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b032_tok_follows_1(n) :- next_sibling(s2, n), match("(?s).*..*", s2).
+b032_tok_follows_1(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?s).*..*", t3).
+b032_tok_follows_1(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b032_tok_follows_2(n: node)
+.stored b032_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b032_tok_follows_2(n) :- next_sibling(s10, n), match("(?s).*..*", s10).
+b032_tok_follows_2(n) :- structural_before(n, g12), match("\\s*", g12), child(p13, n, _),
+    node(_, n, _, st15, _), o14 = st15 - strlen(g12), token(p13, _, t11, _, o14),
+    match("(?s).*..*", t11).
+b032_tok_follows_2(n) :- structural_before(n, g12), match("(?s)^.*\\S\\s*$", g12).
+
+// tok_has_3(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b032_tok_has_3(n: node)
+.stored b032_tok_has_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b032_tok_has_3(n) :- child(n, c17, _), glob("\\,", c17).
+b032_tok_has_3(n) :- op(n, t18), match(",", t18).
+b032_tok_has_3(n) :- child(n, c24, _), structural_before(c24, g19),
+    match("(?s)^(?:.*(?:,).*)$", g19).
+b032_tok_has_3(n) :- child(n, c24, _), structural_after(c24, g19),
+    match("(?s)^(?:.*(?:,).*)$", g19).
+b032_tok_has_3(n) :- node_text(n, g19), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g19).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^=$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b032_tok_has_4(n: node)
+.stored b032_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b032_tok_has_4(n) :- child(n, c3, _), glob("=", c3).
+b032_tok_has_4(n) :- op(n, t4), match("=", t4).
+b032_tok_has_4(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+b032_tok_has_4(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+b032_tok_has_4(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?:=)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g5).
+
+// tok_follows_5(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl b032_tok_follows_5(n: node)
+.stored b032_tok_follows_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+b032_tok_follows_5(n) :- next_sibling(s12, n), match("(?s).*..*", s12).
+b032_tok_follows_5(n) :- structural_before(n, g14), match("\\s*", g14), child(p15, n, _),
+    node(_, n, _, st17, _), o16 = st17 - strlen(g14), token(p15, _, t13, _, o16),
+    match("(?s).*..*", t13).
+b032_tok_follows_5(n) :- structural_before(n, g14), match("(?s)^.*\\S\\s*$", g14).
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl b032_alt_1(n: node)
+b032_alt_1(n) :- kind(n, "subscript"), child(n, c1, _), !b032_tok_follows_1(c1), b032_name(c1).
+b032_alt_1(n) :- kind(n, "attribute"), child(n, c9, _), !b032_tok_follows_2(c9),
+    b032_non_self_name(c9).
+b032_alt_1(n) :- kind(n, "tuple_pattern"), !b032_tok_has_3(n), child(n, c25, _), b032_target(c25).

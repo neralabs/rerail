@@ -1,0 +1,28 @@
+.policy "ruff-f525-string-dot-format-mixing-automatic" revision 1
+.guests off
+.description "Don't mix automatic and manually numbered fields in one str.format() string; Python raises ValueError at runtime."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+// F525(n): a finding at node n, from clause `string-dot-format-mixing-automatic`.
+// Each rule below is one way the JSON `rule` can match.
+// The JSON `constraints` on S are added to every rule.
+.violation F525(at: node) "`.format` string mixes automatic and manual numbering"
+    suppress noqa "F525"
+F525(n) :- n ~ `$S.format($$$A)`, f525_format_string(S).
+
+// plain_string(n): the JSON util `plain-string`, used where the JSON says `matches: "plain-string"`
+.decl f525_plain_string(n: node)
+f525_plain_string(n) :- kind(n, "string"), !match("[A-Za-z]*[fFbBtT][A-Za-z]*['\"].*", n).
+f525_plain_string(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c1, _), kind(c1, "string"), match("[A-Za-z]*[fFbBtT][A-Za-z]*['\"].*", c1) } = 0.
+
+// format_string(n): the JSON util `format-string`, used where the JSON says `matches: "format-string"`
+.decl f525_format_string(n: node)
+f525_format_string(n) :- f525_plain_string(n), parsed(n, "braceFormat", r1),
+    count : { child(r1, c2, _), kind(c2, "error") } = 0, has(r1, c3, "auto"),
+    has(r1, c4, "index").
+f525_format_string(n) :- kind(n, "parenthesized_expression"), child(n, c5, _),
+    f525_format_string(c5).

@@ -1,0 +1,382 @@
+.policy "ruff-ruf046-unnecessary-cast-to-int" revision 1
+.guests off
+.description "Remove int() around a value that is already an integer, such as a length, an integer literal or arithmetic on integers."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// tb(n): the JSON util `tb`, used where the JSON says `matches: "tb"`
+.decl ruf046_tb(n: node)
+ruf046_tb(n) :- (kind(n, "true") ; kind(n, "false") ; kind(n, "not_operator")).
+ruf046_tb(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf046_tb(c1).
+ruf046_tb(n) :- kind(n, "named_expression"), field(n, "value", c2), ruf046_tb(c2).
+ruf046_tb(n) :- kind(n, "boolean_operator"), field(n, "left", c3), ruf046_tb(c3),
+    field(n, "right", c4), ruf046_tb(c4).
+ruf046_tb(n) :- kind(n, "conditional_expression"), child(n, c5, _), ruf046_tb(c5),
+    ruf046_tok_precedes_1(c5), child(n, c13, _), ruf046_tb(c13), ruf046_tok_follows_2(c13).
+
+// ti(n): the JSON util `ti`, used where the JSON says `matches: "ti"`
+.decl ruf046_ti(n: node)
+ruf046_ti(n) :- kind(n, "integer"), !glob("**[jJ]", n).
+ruf046_ti(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf046_ti(c1).
+ruf046_ti(n) :- kind(n, "named_expression"), field(n, "value", c2), ruf046_ti(c2).
+ruf046_ti(n) :- kind(n, "unary_operator"), field(n, "operator", c3), glob("[-+~]", c3),
+    field(n, "argument", c4), ruf046_ib(c4).
+ruf046_ti(n) :- kind(n, "binary_operator"), field(n, "operator", c5),
+    glob("{+,-,%,\\*,//,\\*\\*,&,|,^,<<,>>}", c5), field(n, "left", c6), ruf046_ib(c6),
+    field(n, "right", c7), ruf046_ib(c7).
+ruf046_ti(n) :- kind(n, "boolean_operator"), field(n, "left", c8), ruf046_ib(c8),
+    field(n, "right", c9), ruf046_ib(c9), ruf046_alt_1(n).
+ruf046_ti(n) :- kind(n, "conditional_expression"), child(n, c12, _), ruf046_ib(c12),
+    ruf046_tok_precedes_3(c12), child(n, c20, _), ruf046_ib(c20), ruf046_tok_follows_4(c20), ruf046_alt_2(n).
+
+// ib(n): the JSON util `ib`, used where the JSON says `matches: "ib"`
+.decl ruf046_ib(n: node)
+ruf046_ib(n) :- ruf046_ti(n).
+ruf046_ib(n) :- ruf046_tb(n).
+
+// none_p(n): the JSON util `none-p`, used where the JSON says `matches: "none-p"`
+.decl ruf046_none_p(n: node)
+ruf046_none_p(n) :- kind(n, "none").
+ruf046_none_p(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf046_none_p(c1).
+
+// int_callee_family(n, key): 3 copies of one rule set (`int-callee`, `int-ref`, `round-callee`), folded into one: row `key` of
+// int_callee_family_case gives the strings each copy had.
+.decl ruf046_int_callee_family(n: node, key: symbol)
+ruf046_int_callee_family(n, q1) :- ruf046_int_callee_family_case(q1, s1, s2),
+    (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, s1), sym_of(n, s2).
+ruf046_int_callee_family(n, q1) :- ruf046_int_callee_family_case(q1, s1, s2),
+    kind(n, "parenthesized_expression"), child(n, c1, _), ruf046_int_callee_family(c1, q1).
+
+// always_int_fn(n): the JSON util `always-int-fn`, used where the JSON says `matches: "always-int-fn"`
+.decl ruf046_always_int_fn(n: node)
+ruf046_always_int_fn(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, g1), ruf046_set_3(g1), sym_of(n, q2), ruf046_set_4(q2).
+ruf046_always_int_fn(n) :- kind(n, "parenthesized_expression"), child(n, c3, _),
+    ruf046_always_int_fn(c3).
+
+// rounding_fn(n): the JSON util `rounding-fn`, used where the JSON says `matches: "rounding-fn"`
+.decl ruf046_rounding_fn(n: node)
+ruf046_rounding_fn(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    (sym_of(n, "math.ceil") ; sym_of(n, "math.floor") ; sym_of(n, "math.trunc")).
+ruf046_rounding_fn(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf046_rounding_fn(c1).
+
+// positional(n): the JSON util `positional`, used where the JSON says `matches: "positional"`
+.decl ruf046_positional(n: node)
+ruf046_positional(n) :- node(_, n, _, _, _), !ruf046_alt_6(n).
+
+// pos0(n): the JSON util `pos0`, used where the JSON says `matches: "pos0"`
+.decl ruf046_pos0(n: node)
+ruf046_pos0(n) :- ruf046_positional(n), count : { precedes(s1, n), ruf046_positional(s1) } = 0.
+
+// pos1(n): the JSON util `pos1`, used where the JSON says `matches: "pos1"`
+.decl ruf046_pos1(n: node)
+ruf046_pos1(n) :- ruf046_positional(n), child(p1, n, _), ruf046_counted_8(n),
+    k3 = count : { child(p1, s2, _), precedes(s2, n), ruf046_counted_8(s2) }, k3 = 1.
+
+// kw_number(n): the JSON util `kw-number`, used where the JSON says `matches: "kw-number"`
+.decl ruf046_kw_number(n: node)
+ruf046_kw_number(n) :- kind(n, "keyword_argument"), field(n, "name", c1), glob("number", c1).
+
+// kw_ndigits(n): the JSON util `kw-ndigits`, used where the JSON says `matches: "kw-ndigits"`
+.decl ruf046_kw_ndigits(n: node)
+ruf046_kw_ndigits(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("ndigits", c1).
+
+// int_ann(n): the JSON util `int-ann`, used where the JSON says `matches: "int-ann"`
+.decl ruf046_int_ann(n: node)
+ruf046_int_ann(n) :- kind(n, "type"), child(n, c1, _), ruf046_int_ann(c1).
+ruf046_int_ann(n) :- ruf046_int_callee_family(n, "int_ref").
+ruf046_int_ann(n) :- kind(n, "generic_type"), child(n, c2, _), kind(c2, "identifier"),
+    ruf046_int_callee_family(c2, "int_ref").
+ruf046_int_ann(n) :- kind(n, "subscript"), field(n, "value", c3),
+    ruf046_int_callee_family(c3, "int_ref").
+ruf046_int_ann(n) :- kind(n, "parenthesized_expression"), child(n, c4, _), ruf046_int_ann(c4).
+
+// int_init(n): the JSON util `int-init`, used where the JSON says `matches: "int-init"`
+.decl ruf046_int_init(n: node)
+ruf046_int_init(n) :- ruf046_ti(n).
+ruf046_int_init(n) :- kind(n, "call"), field(n, "function", c1),
+    ruf046_int_callee_family(c1, "int_callee").
+
+// int_name(n): the JSON util `int-name`, used where the JSON says `matches: "int-name"`
+.decl ruf046_int_name(n: node)
+ruf046_int_name(n) :- kind(n, "identifier"), ref_site(n, b1), site_only(b1),
+    count : { child(b1, c2, _), (kind(c2, "list_splat_pattern") ; kind(c2, "dictionary_splat_pattern")) } = 0,
+    site_annotation(b1, o3), ruf046_int_ann(o3).
+ruf046_int_name(n) :- kind(n, "identifier"), ref_site(n, b4), site_only(b4),
+    ( kind(b4, "assignment"), count : { field(b4, "type", c1), kind(c1, "type") } = 0
+    ; kind(b4, "named_expression")
+    ),
+    binding_value(b4, x6), ruf046_int_init(x6).
+ruf046_int_name(n) :- kind(n, "identifier"), ref_site(n, b7), site_only(b7),
+    kind(b7, "as_pattern"), child(b7, c8, _), ruf046_int_init(c8), ruf046_tok_precedes_9(c8),
+    field(b7, "alias", c16), kind(c16, "as_pattern_target"), child(c16, c17, _),
+    kind(c17, "identifier").
+ruf046_int_name(n) :- kind(n, "identifier"), ref_site(n, b18), site_only(b18),
+    kind(b18, "function_definition"), field(b18, "return_type", c19), ruf046_int_ann(c19).
+ruf046_int_name(n) :- kind(n, "parenthesized_expression"), child(n, c20, _), ruf046_int_name(c20).
+
+// int_like(n): the JSON util `int-like`, used where the JSON says `matches: "int-like"`
+.decl ruf046_int_like(n: node)
+ruf046_int_like(n) :- ruf046_ti(n).
+ruf046_int_like(n) :- ruf046_int_name(n).
+
+// round_args(n): the JSON util `round-args`, used where the JSON says `matches: "round-args"`
+.decl ruf046_round_args(n: node)
+ruf046_round_args(n) :- kind(n, "argument_list"),
+    count : { child(n, c1, _), (kind(c1, "list_splat") ; kind(c1, "dictionary_splat")) } = 0,
+    k3 = count : { child(n, c2, _), !ruf046_arg_trivia(c2) }, k3 <= 2,
+    (ruf046_alt_11(n), ruf046_alt_12(n) ; ruf046_alt_13(n), ruf046_alt_14(n)).
+
+// round_call(n): the JSON util `round-call`, used where the JSON says `matches: "round-call"`
+.decl ruf046_round_call(n: node)
+ruf046_round_call(n) :- kind(n, "call"), field(n, "function", c1),
+    ruf046_int_callee_family(c1, "round_callee"),
+    ( field(n, "arguments", c2), ruf046_round_args(c2)
+    ; field(n, "arguments", c3), kind(c3, "generator_expression")
+    ).
+
+
+// rounding_call(n): the JSON util `rounding-call`, used where the JSON says `matches: "rounding-call"`
+.decl ruf046_rounding_call(n: node)
+ruf046_rounding_call(n) :- kind(n, "call"),
+    (field(n, "function", c1), ruf046_rounding_fn(c1) ; ruf046_round_call(n)).
+
+// int_fn_call(n): the JSON util `int-fn-call`, used where the JSON says `matches: "int-fn-call"`
+.decl ruf046_int_fn_call(n: node)
+ruf046_int_fn_call(n) :- kind(n, "call"), field(n, "function", c1), ruf046_always_int_fn(c1).
+
+// arg_int(n): the JSON util `arg-int`, used where the JSON says `matches: "arg-int"`
+.decl ruf046_arg_int(n: node)
+ruf046_arg_int(n) :- ruf046_ti(n).
+ruf046_arg_int(n) :- ruf046_int_fn_call(n).
+ruf046_arg_int(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf046_arg_int(c1).
+
+// arg_rounded(n): the JSON util `arg-rounded`, used where the JSON says `matches: "arg-rounded"`
+.decl ruf046_arg_rounded(n: node)
+ruf046_arg_rounded(n) :- ruf046_rounding_call(n).
+ruf046_arg_rounded(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf046_arg_rounded(c1).
+
+// arg_trivia(n): the JSON util `arg-trivia`, used where the JSON says `matches: "arg-trivia"`
+.decl ruf046_arg_trivia(n: node)
+ruf046_arg_trivia(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+ruf046_arg_trivia(n) :- node(_, n, _, _, _), glob("[(),]", n).
+
+// cast_of_int(n): the JSON util `cast-of-int`, used where the JSON says `matches: "cast-of-int"`
+.decl ruf046_cast_of_int(n: node)
+ruf046_cast_of_int(n) :- kind(n, "call"), field(n, "function", c1),
+    ruf046_int_callee_family(c1, "int_callee"), field(n, "arguments", c2),
+    kind(c2, "argument_list"), k4 = count : { child(c2, c3, _), !ruf046_arg_trivia(c3) },
+    k4 >= 1, k4 <= 1, child(c2, c5, _), ruf046_arg_int(c5).
+
+// cast_of_int_in_type(n): the JSON util `cast-of-int-in-type`, used where the JSON says `matches: "cast-of-int-in-type"`
+//   C: metavariable this relation binds for the calling rule
+.decl ruf046_cast_of_int_in_type(n: node, c: loc)
+ruf046_cast_of_int_in_type(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), ruf046_alt_22(c2, C).
+
+// cast_of_rounded(n): the JSON util `cast-of-rounded`, used where the JSON says `matches: "cast-of-rounded"`
+.decl ruf046_cast_of_rounded(n: node)
+ruf046_cast_of_rounded(n) :- kind(n, "call"), field(n, "function", c1),
+    ruf046_int_callee_family(c1, "int_callee"), field(n, "arguments", c2),
+    kind(c2, "argument_list"), k4 = count : { child(c2, c3, _), !ruf046_arg_trivia(c3) },
+    k4 >= 1, k4 <= 1, child(c2, c5, _), ruf046_arg_rounded(c5).
+
+// cast_of_rounded_in_type(n): the JSON util `cast-of-rounded-in-type`, used where the JSON says `matches: "cast-of-rounded-in-type"`
+//   C: metavariable this relation binds for the calling rule
+.decl ruf046_cast_of_rounded_in_type(n: node, c: loc)
+ruf046_cast_of_rounded_in_type(n, C) :- (kind(n, "string") ; kind(n, "concatenated_string")),
+    parsed(n, "annotation", r1), within(c2, r1), ruf046_alt_23(c2, C).
+
+// RUF046(n, detail): findings from clauses `int-of-integer`, `int-of-rounding`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// The JSON `constraints` on F, A are added to every rule.
+.violation RUF046(at: node, detail: symbol) "Drop the `int(...)` {detail}."
+    suppress noqa "RUF046"
+RUF046(n, "wrapper and use its argument directly; the argument is already an integer") :- kind(n, "call"),
+    n ~ `$F($A)`, ruf046_int_callee_family(F, "int_callee"), ruf046_arg_int(A).
+RUF046(n, "wrapper; this call already returns an int. Keep it if the operand's type overrides `__round__`, `__ceil__`, `__floor__` or `__trunc__` to return a non-int") :- kind(n, "call"),
+    n ~ `$F($A)`, ruf046_int_callee_family(F, "int_callee"), ruf046_arg_rounded(A).
+
+// RUF046_int_of_integer_in_string_type(n, detail): findings from clauses `int-of-integer-in-string-type`, `int-of-rounding-in-string-type`. Their messages differ only in
+// `detail`: each rule's head gives its clause's words. Each rule is one way a JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF046_int_of_integer_in_string_type(at: node, c: node, detail: symbol) code "RUF046" "Drop the `int(...)` {detail}."
+    suppress noqa "RUF046"
+RUF046_int_of_integer_in_string_type(C, n, "wrapper and use its argument directly; the argument is already an integer") :- ruf046_cast_of_int_in_type(n, C).
+RUF046_int_of_integer_in_string_type(C, n, "wrapper; this call already returns an int. Keep it if the operand's type overrides `__round__`, `__ceil__`, `__floor__` or `__trunc__` to return a non-int") :- ruf046_cast_of_rounded_in_type(n, C).
+
+// tok_precedes_1(n): a later sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf046_tok_precedes_1(n: node)
+.stored ruf046_tok_precedes_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf046_tok_precedes_1(n) :- precedes(n, s6), glob("if", s6).
+ruf046_tok_precedes_1(n) :- child(p9, n, _), node(_, n, _, _, en12),
+    token(p9, _, t7, st11, _), st11 >= en12, match("if", t7).
+ruf046_tok_precedes_1(n) :- structural_after(n, g8),
+    match("(?s)^(?:(?:.*\\W)?(?:if)(?:\\W.*)?)$", g8).
+ruf046_tok_precedes_1(n) :- precedes(n, o10), structural_after(o10, g8),
+    match("(?s)^(?:(?:.*\\W)?(?:if)(?:\\W.*)?)$", g8).
+
+// tok_follows_2(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf046_tok_follows_2(n: node)
+.stored ruf046_tok_follows_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf046_tok_follows_2(n) :- precedes(s14, n), glob("else", s14).
+ruf046_tok_follows_2(n) :- child(p17, n, _), node(_, n, _, st19, _),
+    token(p17, _, t15, _, en20), en20 <= st19, match("else", t15).
+ruf046_tok_follows_2(n) :- structural_before(n, g16),
+    match("(?s)^(?:(?:.*\\W)?(?:else)(?:\\W.*)?)$", g16).
+ruf046_tok_follows_2(n) :- precedes(o18, n), structural_before(o18, g16),
+    match("(?s)^(?:(?:.*\\W)?(?:else)(?:\\W.*)?)$", g16).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf046_tok_precedes_3(n: node)
+.stored ruf046_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf046_tok_precedes_3(n) :- precedes(n, s13), glob("if", s13).
+ruf046_tok_precedes_3(n) :- child(p16, n, _), node(_, n, _, _, en19),
+    token(p16, _, t14, st18, _), st18 >= en19, match("if", t14).
+ruf046_tok_precedes_3(n) :- structural_after(n, g15),
+    match("(?s)^(?:(?:.*\\W)?(?:if)(?:\\W.*)?)$", g15).
+ruf046_tok_precedes_3(n) :- precedes(n, o17), structural_after(o17, g15),
+    match("(?s)^(?:(?:.*\\W)?(?:if)(?:\\W.*)?)$", g15).
+
+// tok_follows_4(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf046_tok_follows_4(n: node)
+.stored ruf046_tok_follows_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf046_tok_follows_4(n) :- precedes(s21, n), glob("else", s21).
+ruf046_tok_follows_4(n) :- child(p24, n, _), node(_, n, _, st26, _),
+    token(p24, _, t22, _, en27), en27 <= st26, match("else", t22).
+ruf046_tok_follows_4(n) :- structural_before(n, g23),
+    match("(?s)^(?:(?:.*\\W)?(?:else)(?:\\W.*)?)$", g23).
+ruf046_tok_follows_4(n) :- precedes(o25, n), structural_before(o25, g23),
+    match("(?s)^(?:(?:.*\\W)?(?:else)(?:\\W.*)?)$", g23).
+
+// tok_precedes_5(n): a later sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf046_tok_precedes_5(n: node)
+.stored ruf046_tok_precedes_5 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf046_tok_precedes_5(n) :- precedes(n, s29), glob("if", s29).
+ruf046_tok_precedes_5(n) :- child(p32, n, _), node(_, n, _, _, en35),
+    token(p32, _, t30, st34, _), st34 >= en35, match("if", t30).
+ruf046_tok_precedes_5(n) :- structural_after(n, g31),
+    match("(?s)^(?:(?:.*\\W)?(?:if)(?:\\W.*)?)$", g31).
+ruf046_tok_precedes_5(n) :- precedes(n, o33), structural_after(o33, g31),
+    match("(?s)^(?:(?:.*\\W)?(?:if)(?:\\W.*)?)$", g31).
+
+// tok_follows_6(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf046_tok_follows_6(n: node)
+.stored ruf046_tok_follows_6 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf046_tok_follows_6(n) :- precedes(s37, n), glob("else", s37).
+ruf046_tok_follows_6(n) :- child(p40, n, _), node(_, n, _, st42, _),
+    token(p40, _, t38, _, en43), en43 <= st42, match("else", t38).
+ruf046_tok_follows_6(n) :- structural_before(n, g39),
+    match("(?s)^(?:(?:.*\\W)?(?:else)(?:\\W.*)?)$", g39).
+ruf046_tok_follows_6(n) :- precedes(o41, n), structural_before(o41, g39),
+    match("(?s)^(?:(?:.*\\W)?(?:else)(?:\\W.*)?)$", g39).
+
+// tok_precedes_7(n): a later sibling of n, a named node or an anonymous token, matches "^if$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf046_tok_precedes_7(n: node)
+.stored ruf046_tok_precedes_7 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf046_tok_precedes_7(n) :- precedes(n, s2), glob("if", s2).
+ruf046_tok_precedes_7(n) :- child(p5, n, _), node(_, n, _, _, en8), token(p5, _, t3, st7, _),
+    st7 >= en8, match("if", t3).
+ruf046_tok_precedes_7(n) :- structural_after(n, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:if)(?:\\W.*)?)$", g4).
+ruf046_tok_precedes_7(n) :- precedes(n, o6), structural_after(o6, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:if)(?:\\W.*)?)$", g4).
+
+// tok_follows_8(n): an earlier sibling of n, a named node or an anonymous token, matches "^else$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf046_tok_follows_8(n: node)
+.stored ruf046_tok_follows_8 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf046_tok_follows_8(n) :- precedes(s10, n), glob("else", s10).
+ruf046_tok_follows_8(n) :- child(p13, n, _), node(_, n, _, st15, _),
+    token(p13, _, t11, _, en16), en16 <= st15, match("else", t11).
+ruf046_tok_follows_8(n) :- structural_before(n, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:else)(?:\\W.*)?)$", g12).
+ruf046_tok_follows_8(n) :- precedes(o14, n), structural_before(o14, g12),
+    match("(?s)^(?:(?:.*\\W)?(?:else)(?:\\W.*)?)$", g12).
+
+// tok_precedes_9(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf046_tok_precedes_9(n: node)
+.stored ruf046_tok_precedes_9 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf046_tok_precedes_9(n) :- precedes(n, s9), glob("as", s9).
+ruf046_tok_precedes_9(n) :- child(p12, n, _), node(_, n, _, _, en15),
+    token(p12, _, t10, st14, _), st14 >= en15, match("as", t10).
+ruf046_tok_precedes_9(n) :- structural_after(n, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g11).
+ruf046_tok_precedes_9(n) :- precedes(n, o13), structural_after(o13, g11),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g11).
+
+// set_3: names from the JSON `resolves.global`
+.decl ruf046_set_3(v: symbol)
+ruf046_set_3("len"). ruf046_set_3("id"). ruf046_set_3("hash"). ruf046_set_3("ord"). ruf046_set_3("int").
+
+// set_4: symbols from the JSON `resolves.import`
+.decl ruf046_set_4(v: symbol)
+ruf046_set_4("builtins.len"). ruf046_set_4("builtins.id"). ruf046_set_4("builtins.hash").
+ruf046_set_4("builtins.ord"). ruf046_set_4("builtins.int"). ruf046_set_4("math.comb").
+ruf046_set_4("math.factorial"). ruf046_set_4("math.gcd"). ruf046_set_4("math.lcm"). ruf046_set_4("math.isqrt").
+ruf046_set_4("math.perm").
+
+// int_callee_family_case: one row per relation folded into int_callee_family: its key, then the strings that differed.
+.decl ruf046_int_callee_family_case(key: symbol, s1: symbol, s2: symbol)
+ruf046_int_callee_family_case("int_callee", "int", "builtins.int").
+ruf046_int_callee_family_case("int_ref", "int", "builtins.int").
+ruf046_int_callee_family_case("round_callee", "round", "builtins.round").
+
+// alt_1(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf046_alt_1(n: node)
+ruf046_alt_1(n) :- field(n, "left", c1), ruf046_ti(c1).
+ruf046_alt_1(n) :- field(n, "right", c2), ruf046_ti(c2).
+
+// alt_2(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf046_alt_2(n: node)
+ruf046_alt_2(n) :- child(n, c1, _), ruf046_ti(c1), ruf046_tok_precedes_7(c1).
+ruf046_alt_2(n) :- child(n, c9, _), ruf046_ti(c9), ruf046_tok_follows_8(c9).
+
+// alt_6(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf046_alt_6(n: node)
+ruf046_alt_6(n) :- (kind(n, "keyword_argument") ; kind(n, "dictionary_splat") ; kind(n, "list_splat")).
+ruf046_alt_6(n) :- ruf046_arg_trivia(n).
+
+// counted_8(n): the siblings the JSON `nthChild.ofRule` counts
+.decl ruf046_counted_8(n: node)
+ruf046_counted_8(n) :- ruf046_positional(n).
+
+// alt_11(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf046_alt_11(n: node)
+ruf046_alt_11(n) :- child(n, c1, _), ruf046_pos0(c1).
+ruf046_alt_11(n) :- child(n, c2, _), ruf046_kw_number(c2).
+
+// alt_12(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf046_alt_12(n: node)
+ruf046_alt_12(n) :- node(_, n, _, _, _), count : { child(n, c1, _), ruf046_pos1(c1) } = 0,
+    count : { child(n, c2, _), ruf046_kw_ndigits(c2) } = 0.
+ruf046_alt_12(n) :- child(n, c3, _), ruf046_pos1(c3), ruf046_none_p(c3).
+ruf046_alt_12(n) :- child(n, c4, _), ruf046_kw_ndigits(c4), field(c4, "value", c5), ruf046_none_p(c5).
+
+// alt_13(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf046_alt_13(n: node)
+ruf046_alt_13(n) :- child(n, c1, _), ruf046_pos0(c1), ruf046_int_like(c1).
+ruf046_alt_13(n) :- child(n, c2, _), ruf046_kw_number(c2), field(c2, "value", c3), ruf046_int_like(c3).
+
+// alt_14(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf046_alt_14(n: node)
+ruf046_alt_14(n) :- child(n, c1, _), ruf046_pos1(c1), ruf046_ti(c1).
+ruf046_alt_14(n) :- child(n, c2, _), ruf046_kw_ndigits(c2), field(c2, "value", c3), ruf046_ti(c3).
+
+// alt_22(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl ruf046_alt_22(n: node, c: loc)
+ruf046_alt_22(n, C) :- ruf046_cast_of_int(n), C = n.
+ruf046_alt_22(n, C) :- ruf046_cast_of_int_in_type(n, C).
+
+// alt_23(n): the JSON `any`: n matches if any one of these rules does
+//   C: metavariable this relation binds for the calling rule
+.decl ruf046_alt_23(n: node, c: loc)
+ruf046_alt_23(n, C) :- ruf046_cast_of_rounded(n), C = n.
+ruf046_alt_23(n, C) :- ruf046_cast_of_rounded_in_type(n, C).

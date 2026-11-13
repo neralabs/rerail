@@ -1,0 +1,209 @@
+.policy "bandit-b615-huggingface-unsafe-download" revision 5
+.guests off
+.description "Pin Hugging Face model and dataset downloads to a specific commit revision; an unpinned download can silently pull changed or tampered files."
+.language python
+.mode steer
+.scope include "**/*.py"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+// ast(n, {…}) atoms are JSON terms with no .rr form yet; the engine matches them as it does today.
+
+#include "python/names.rr"
+
+// B615(n): a finding at node n, from clause `b615`.
+// Each rule below is one way the JSON `rule` can match.
+.violation B615(at: node) "Pin ${{API}}() to a specific commit hash with revision=; an unpinned download can silently pull changed or tampered files."
+    suppress nosec "B615"
+B615(n) :- kind(n, "call"), field(n, "function", c1), b615_hf_callee(c1),
+    !b615_nonconstant_revision(n), !b615_pinned_revision(n), !b615_local_path_first_argument(n),
+    b615_after_hf_import(n).
+
+// ast_constant(n): the JSON util `ast-constant`, used where the JSON says `matches: "ast-constant"`
+.decl b615_ast_constant(n: node)
+b615_ast_constant(n) :- kind(n, k1), b615_set_1(k1).
+b615_ast_constant(n) :- kind(n, "string"),
+    count : { child(n, c2, _), kind(c2, "string_start"), glob("**[fFtT]**", c2) } = 0.
+b615_ast_constant(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c3, _), kind(c3, "string"), child(c3, c4, _), kind(c4, "string_start"), glob("**[fFtT]**", c4) } = 0.
+b615_ast_constant(n) :- kind(n, "parenthesized_expression"), child(n, c5, _),
+    !kind(c5, "comment"), b615_ast_constant(c5).
+
+// hf_import(n): the JSON util `hf-import`, used where the JSON says `matches: "hf-import"`
+.decl b615_hf_import(n: node)
+b615_hf_import(n) :- (kind(n, "import_statement") ; kind(n, "import_from_statement")),
+    has(n, c1, "identifier"), glob("**{transformers,datasets,huggingface_hub}**", c1),
+    child(p2, c1, _), kind(p2, "dotted_name").
+
+// hf_import_within(n): the JSON util `hf-import-within`, used where the JSON says `matches: "hf-import-within"`
+.decl b615_hf_import_within(n: node)
+b615_hf_import_within(n) :- b615_hf_import(n).
+b615_hf_import_within(n) :- within(c1, n), b615_hf_import(c1).
+
+// after_hf_import(n): the JSON util `after-hf-import`, used where the JSON says `matches: "after-hf-import"`
+.decl b615_after_hf_import(n: node)
+b615_after_hf_import(n) :- precedes(s1, n), b615_hf_import_within(s1).
+b615_after_hf_import(n) :- within(n, p2), precedes(s3, p2), b615_hf_import_within(s3).
+
+// alias_writer(n): the JSON util `alias-writer`, used where the JSON says `matches: "alias-writer"`
+//   HEAD: metavariable of the calling rule, passed in (bound by the caller)
+.decl b615_alias_writer(n: node, head: loc)
+b615_alias_writer(n, HEAD) :- node(_, HEAD, _, _, _), kind(n, "aliased_import"),
+    field(n, "alias", c1), text(c1, t_head1), text(HEAD, t_head1), @doc(c1) = @doc(HEAD).
+b615_alias_writer(n, HEAD) :- node(_, HEAD, _, _, _), kind(n, "dotted_name"),
+    text(n, t_head2), text(HEAD, t_head2),
+    count : { field(p2, "module_name", n), kind(p2, "import_from_statement") } = 0,
+    child(p3, n, _), kind(p3, "import_from_statement"), field(p3, "module_name", c4),
+    (kind(c4, "dotted_name") ; child(c4, c1, _), kind(c1, "dotted_name")), @doc(n) = @doc(HEAD).
+
+// writer(n, key): 3 copies of one rule set (`writer-datasets`, `writer-huggingface-hub`, `writer-transformers`), folded into one: row `key` of
+// writer_case gives the strings each copy had.
+//   HEAD: metavariable of the calling rule, passed in (bound by the caller)
+.decl b615_writer(n: node, key: symbol, head: loc)
+b615_writer(n, q1, HEAD) :- b615_segment_case(q1), b615_alias_writer(n, HEAD),
+    ( kind(n, "dotted_name"), glob(q1, n)
+    ; kind(n, "aliased_import"), field(n, "name", c1), child(c1, c2, _), kind(c2, "identifier"), glob(q1, c2)
+    ; child(p1, n, _), kind(p1, "import_from_statement"), field(p1, "module_name", c3), has(c3, c4, "identifier"), glob(q1, c4)
+    ).
+
+
+// segment(n, key): 3 copies of one rule set (`segment-datasets`, `segment-huggingface-hub`, `segment-transformers`), folded into one: row `key` of
+// segment_case gives the strings each copy had.
+.decl b615_segment(n: node, key: symbol)
+b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1),
+    kind(n, "parenthesized_expression"), child(n, c1, _), !kind(c1, "comment"),
+    b615_segment(c1, q1).
+b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "attribute"),
+    field(n, "attribute", c2), glob(q1, c2).
+b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "attribute"),
+    field(n, "object", c3), b615_segment(c3, q1).
+b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "identifier"),
+    glob(q1, n), count : { ref_site(n, b4), kind(b4, "aliased_import") } = 0.
+b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "identifier"),
+    ref_site(n, b5), kind(b5, "aliased_import"), field(b5, "name", c6),
+    child(c6, c7, _), kind(c7, "identifier"), glob(q1, c7).
+b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "identifier"),
+    ref_site(n, b8), inside(b8, p9, "import_from_statement"),
+    field(p9, "module_name", c10), has(c10, c11, "identifier"), glob(q1, c11).
+b615_segment(n, q1) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "identifier"),
+    node(_, n, _, _, _), HEAD = n, count : { ref_site(n, b12), site_form(b12, "import") } = 0,
+    within(n, p13), precedes(s14, p13), within(c15, s14), b615_writer(c15, q1, HEAD).
+
+// named(n, key): 3 copies of one rule set (`named-from-pretrained`, `named-hub-download`, `named-load-dataset`), folded into one: row `key` of
+// named_case gives the strings each copy had.
+.decl b615_named(n: node, key: symbol)
+b615_named(n, q1) :- b615_named_case(q1, s1, s2, s3), kind(n, "attribute"),
+    field(n, "attribute", c1), glob(s2, c1), node(_, c1, _, _, _), API = c1.
+b615_named(n, q1) :- b615_named_case(q1, s1, s2, s3), kind(n, "identifier"), glob(s2, n),
+    node(_, n, _, _, _), API = n, count : { ref_site(n, b2), kind(b2, "aliased_import") } = 0.
+b615_named(n, q1) :- b615_named_case(q1, s1, s2, s3), kind(n, "identifier"), ref_site(n, b3),
+    kind(b3, "aliased_import"), field(b3, "name", c4), child(c4, c5, _),
+    kind(c5, "identifier"), child(p6, c5, _), b615_counted(c5),
+    k8 = count : { child(p6, s7, _), precedes(c5, s7), b615_counted(s7) }, k8 = 0,
+    glob(s2, c5), node(_, c5, _, _, _), API = c5.
+b615_named(n, q1) :- b615_named_case(q1, s1, s2, s3), kind(n, "identifier"), node(_, n, _, _, _), CALLEE = n,
+    ref_site(n, b9), ast(b9, {"bindings": {"min": 2}}),
+    count : { ref_site(n, b10), site_form(b10, "import") } = 0, within(n, p11),
+    precedes(s12, p11), has(s12, c13, "aliased_import"), field(c13, "alias", c14),
+    node(_, c14, _, _, _), CALLEE = c14, field(c13, "name", c15), child(c15, c16, _),
+    kind(c16, "identifier"), child(p17, c16, _), b615_counted(c16),
+    k19 = count : { child(p17, s18, _), precedes(c16, s18), b615_counted(s18) }, k19 = 0,
+    glob(s2, c16), node(_, c16, _, _, _), API = c16.
+
+// hf_callee(n): the JSON util `hf-callee`, used where the JSON says `matches: "hf-callee"`
+.decl b615_hf_callee(n: node)
+b615_hf_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    !kind(c1, "comment"), b615_hf_callee(c1).
+b615_hf_callee(n) :- b615_named(n, "from_pretrained"), b615_segment(n, "transformers").
+b615_hf_callee(n) :- b615_named(n, "load_dataset"), b615_segment(n, "datasets").
+b615_hf_callee(n) :- b615_named(n, "hub_download"), b615_segment(n, "huggingface_hub").
+
+// revision_keyword(n): the JSON util `revision-keyword`, used where the JSON says `matches: "revision-keyword"`
+.decl b615_revision_keyword(n: node)
+b615_revision_keyword(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("revision", c1).
+
+// commit_id_keyword(n): the JSON util `commit-id-keyword`, used where the JSON says `matches: "commit-id-keyword"`
+.decl b615_commit_id_keyword(n: node)
+b615_commit_id_keyword(n) :- kind(n, "keyword_argument"), field(n, "name", c1),
+    glob("commit_id", c1).
+
+// hex_revision(n): the JSON util `hex-revision`, used where the JSON says `matches: "hex-revision"`
+.decl b615_hex_revision(n: node)
+b615_hex_revision(n) :- b615_ast_constant(n),
+    value(n, v1), match("[\"']*[0-9A-Fa-f]{7,}[\"']*", v1).
+
+// bandit_truthy(n): the JSON util `bandit-truthy`, used where the JSON says `matches: "bandit-truthy"`
+.decl b615_bandit_truthy(n: node)
+b615_bandit_truthy(n) :- b615_ast_constant(n),
+    ( value(n, v1), b615_truthy_value(n, "true")
+    ; value(n, v2), (value_type(v2, "boolean") ; value_type(v2, "NoneType"))
+    ).
+
+
+// nonconstant_revision(n): the JSON util `nonconstant-revision`, used where the JSON says `matches: "nonconstant-revision"`
+.decl b615_nonconstant_revision(n: node)
+b615_nonconstant_revision(n) :- field(n, "arguments", c1), kind(c1, "argument_list"),
+    child(c1, c2, _), kind(c2, "keyword_argument"), field(c2, "name", c3),
+    glob("{revision,commit_id}", c3), field(c2, "value", c4), !b615_ast_constant(c4).
+
+// pinned_revision(n): the JSON util `pinned-revision`, used where the JSON says `matches: "pinned-revision"`
+.decl b615_pinned_revision(n: node)
+b615_pinned_revision(n) :- field(n, "arguments", c1), kind(c1, "argument_list"),
+    ( child(c1, c2, _), b615_revision_keyword(c2), field(c2, "value", c3), b615_hex_revision(c3)
+    ; child(c1, c4, _), b615_commit_id_keyword(c4), field(c4, "value", c5), b615_hex_revision(c5), count : { child(c1, c6, _), b615_revision_keyword(c6), field(c6, "value", c7), b615_bandit_truthy(c7) } = 0
+    ).
+
+
+// local_path_first_argument(n): the JSON util `local-path-first-argument`, used where the JSON says `matches: "local-path-first-argument"`
+.decl b615_local_path_first_argument(n: node)
+b615_local_path_first_argument(n) :- field(n, "arguments", c1), kind(c1, "argument_list"),
+    child(c1, c2, _), !kind(c2, "comment"), child(p3, c2, _), b615_counted_14(c2),
+    k5 = count : { child(p3, s4, _), precedes(s4, c2), b615_counted_14(s4) }, k5 = 0,
+    b615_ast_constant(c2), value(c2, v6),
+    (prefix("./", v6) ; prefix("/", v6) ; prefix("../", v6)).
+
+// truthy_value: b is "true" when n's value is truthy (Python's bool(v)), "false" when it is falsy
+.decl b615_truthy_value(n: node, b: symbol)
+b615_truthy_value(n, "false") :- value(n, x), value_type(x, "NoneType").
+b615_truthy_value(n, b) :- value(n, x), value_type(x, "boolean"), b = x.
+b615_truthy_value(n, "false") :- value(n, x),
+    (value_type(x, "int") ; value_type(x, "float")),
+    (x = "0" ; x = "0.0" ; x = "-0.0").
+b615_truthy_value(n, "true") :- value(n, x),
+    (value_type(x, "int") ; value_type(x, "float")), x != "0", x != "0.0", x != "-0.0".
+b615_truthy_value(n, "false") :- value(n, x),
+    (value_type(x, "str") ; value_type(x, "bytes")), x = "".
+b615_truthy_value(n, "true") :- value(n, x),
+    (value_type(x, "str") ; value_type(x, "bytes")), x != "".
+
+// demand_segment: the nodes segment is asked at (its recursion looks at every descendant)
+.decl b615_demand_segment(n: node)
+b615_demand_segment(c1) :- b615_demand_segment(n), b615_segment_case(q1),
+    kind(n, "parenthesized_expression"), child(n, c1, _).
+b615_demand_segment(c3) :- b615_demand_segment(n), b615_segment_case(q1), kind(n, "attribute"),
+    field(n, "object", c3).
+b615_demand_segment(n) :- b615_named(n, "from_pretrained").
+b615_demand_segment(n) :- b615_named(n, "load_dataset").
+b615_demand_segment(n) :- b615_named(n, "hub_download").
+
+// set_1: node kinds from a JSON `any`
+.decl b615_set_1(v: symbol)
+b615_set_1("integer"). b615_set_1("float"). b615_set_1("true"). b615_set_1("false"). b615_set_1("none").
+b615_set_1("ellipsis").
+
+// named_case: one row per relation folded into named: its key, then the strings that differed.
+.decl b615_named_case(key: symbol, s1: symbol, s2: symbol, s3: symbol)
+b615_named_case("from_pretrained", "7", "from_pretrained", "6").
+b615_named_case("hub_download", "11", "{hf_hub_download,snapshot_download,repository_id}", "10").
+b615_named_case("load_dataset", "9", "load_dataset", "8").
+
+// segment_case: one row per relation folded into segment: its key, then the strings that differed.
+.decl b615_segment_case(key: symbol)
+b615_segment_case("datasets"). b615_segment_case("huggingface_hub"). b615_segment_case("transformers").
+
+// counted(n): 6 identical copies of one rule set (`counted_10`, `counted_11`, `counted_6` and 3 more), folded into one.
+.decl b615_counted(n: node)
+b615_counted(n) :- kind(n, "identifier").
+
+// counted_14(n): the siblings the JSON `nthChild.ofRule` counts
+.decl b615_counted_14(n: node)
+b615_counted_14(n) :- node(_, n, _, _, _), !kind(n, "comment").

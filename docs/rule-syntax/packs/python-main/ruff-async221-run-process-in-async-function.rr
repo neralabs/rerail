@@ -1,0 +1,195 @@
+.policy "ruff-async221-run-process-in-async-function" revision 1
+.guests off
+.description "Don't run processes with subprocess.run, os.system or other blocking process calls inside async functions; they block the event loop until the process exits."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// ASYNC221(n): a finding at node n, from clause `run-process`.
+// Each rule below is one way the JSON `rule` can match.
+.violation ASYNC221(at: node) "Async functions should not run processes with blocking methods"
+    suppress noqa "ASYNC221"
+ASYNC221(n) :- async221_callee_position(n), async221_async_context(n), (async221_target(n) ; async221_spawn(n), async221_alt_4(n)).
+
+// scope_body(n): the JSON util `scope-body`, used where the JSON says `matches: "scope-body"`
+.decl async221_scope_body(n: node)
+async221_scope_body(n) :- kind(n, "block"), child(p1, n, _),
+    (kind(p1, "function_definition") ; kind(p1, "class_definition")).
+
+// lambda_body(n): the JSON util `lambda-body`, used where the JSON says `matches: "lambda-body"`
+.decl async221_lambda_body(n: node)
+async221_lambda_body(n) :- child(p1, n, _), kind(p1, "lambda"), async221_tok_follows_1(n).
+
+// callee_position(n): the JSON util `callee-position`, used where the JSON says `matches: "callee-position"`
+.decl async221_callee_position(n: node)
+async221_callee_position(n) :- child(p1, n, _), kind(p1, "call"), next_sibling(n, s2),
+    (kind(s2, "argument_list") ; kind(s2, "generator_expression")).
+async221_callee_position(n) :- child(p3, n, _), kind(p3, "parenthesized_expression"),
+    async221_callee_position(p3).
+
+// async_context(n): the JSON util `async-context`, used where the JSON says `matches: "async-context"`
+.decl async221_async_context(n: node)
+async221_async_context(n) :- async221_demand_async_context(n), async221_up_1(n, p1), child(p2, p1, _),
+    kind(p2, "function_definition"), async221_tok_has_2(p2).
+
+// p_wait_value(n): the JSON util `p-wait-value`, used where the JSON says `matches: "p-wait-value"`
+.decl async221_p_wait_value(n: node)
+async221_p_wait_value(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    sym_of(n, "os.P_WAIT").
+async221_p_wait_value(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    async221_p_wait_value(c1).
+
+// p_wait_arg(n): the JSON util `p-wait-arg`, used where the JSON says `matches: "p-wait-arg"`
+.decl async221_p_wait_arg(n: node)
+async221_p_wait_arg(n) :- async221_p_wait_value(n).
+async221_p_wait_arg(n) :- kind(n, "identifier"), ref_site(n, b1), site_stop_at_global(b1),
+    binding_value(b1, x2), async221_p_wait_value(x2).
+async221_p_wait_arg(n) :- kind(n, "identifier"), node(_, n, _, _, _), PW = n, ref_site(n, b3),
+    site_stop_at_global(b3), kind(b3, "assignment"), field(b3, "left", c4),
+    child(c4, c5, _), kind(c5, "identifier"), node(_, c5, _, _, _), UT = c5, value(UT, t6), value(PW, t6),
+    count : { precedes(c5, s8), kind(s8, "identifier"), node(_, s8, _, _, _), UU = s8, value(UU, t9), value(PW, t9) } = 0,
+    field(b3, "right", c11), child(c11, c12, _), async221_p_wait_value(c12), node(_, c12, _, _, _), UV = c12,
+    value(UV, t13), value(UT, t13).
+async221_p_wait_arg(n) :- kind(n, "parenthesized_expression"), child(n, c15, _),
+    async221_p_wait_arg(c15).
+
+// spawn(n): the JSON util `spawn`, used where the JSON says `matches: "spawn"`
+.decl async221_spawn(n: node)
+async221_spawn(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, q1), async221_set_2(q1).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl async221_target(n: node)
+async221_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, q1), async221_set_3(q1).
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "^:$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl async221_tok_follows_1(n: node)
+.stored async221_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+async221_tok_follows_1(n) :- precedes(s2, n), glob(":", s2).
+async221_tok_follows_1(n) :- child(p5, n, _), node(_, n, _, st7, _), token(p5, _, t3, _, en8),
+    en8 <= st7, match(":", t3).
+async221_tok_follows_1(n) :- structural_before(n, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+async221_tok_follows_1(n) :- precedes(o6, n), structural_before(o6, g4),
+    match("(?s)^(?:(?:.*[^\\-+*/%@\\&|\\^<>=!:.\\~])?(?::)(?:[^\\-+*/%@\\&|\\^<>=!:.\\~].*)?)$", g4).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^async$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl async221_tok_has_2(n: node)
+.stored async221_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+async221_tok_has_2(n) :- child(n, c3, _), glob("async", c3).
+async221_tok_has_2(n) :- op(n, t4), match("async", t4).
+async221_tok_has_2(n) :- child(n, c10, _), structural_before(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g5).
+async221_tok_has_2(n) :- child(n, c10, _), structural_after(c10, g5),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g5).
+async221_tok_has_2(n) :- node_text(n, g5), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:async)(?:\\W.*)?)$", g5).
+
+// args_plain: a is child i of argument list l and a positional argument (not `k=v`, `*`, `**`, a comment)
+.decl async221_args_plain(l: node, a: node, i: number)
+async221_args_plain(l, a, i) :- kind(l, "argument_list"), child(l, a, i),
+    !kind(a, "keyword_argument"), !kind(a, "dictionary_splat"), !kind(a, "list_splat"),
+    !kind(a, "parenthesized_list_splat"), !kind(a, "comment").
+
+// args_splat: child i of argument list l is `*xs`
+.decl async221_args_splat(l: node, i: number)
+async221_args_splat(l, i) :- kind(l, "argument_list"), child(l, s, i),
+    (kind(s, "list_splat") ; kind(s, "parenthesized_list_splat")).
+
+// args_pos: a is the positional argument at position j of argument list l, before any `*xs`
+.decl async221_args_pos(l: node, a: node, j: number)
+async221_args_pos(l, a, j) :- async221_args_plain(l, a, i), count : { async221_args_splat(l, k), k < i } = 0,
+    j = count : { async221_args_plain(l, _, m), m < i }.
+
+// args_star: argument list l has `*xs`, after j positional arguments: positional slots from j on are unknown
+.decl async221_args_star(l: node, j: number)
+async221_args_star(l, j) :- async221_args_splat(l, i), count : { async221_args_splat(l, k), k < i } = 0,
+    j = count : { async221_args_plain(l, _, m), m < i }.
+
+// args_kwp: `k=v` in argument list l
+.decl async221_args_kwp(l: node, k: symbol, v: node)
+async221_args_kwp(l, k, v) :- kind(l, "argument_list"), child(l, a, _),
+    kind(a, "keyword_argument"), field(a, "name", x), text(x, k), field(a, "value", v).
+
+// args_lit_dict: `**{…}` s spreads the dict display d, whose every entry is a pair with a string key: its pairs are keywords
+.decl async221_args_lit_dict(s: node, d: node)
+async221_args_lit_dict(s, d) :- kind(s, "dictionary_splat"), child(s, d, _),
+    kind(d, "dictionary"), count : { child(s, o, _), !kind(o, "comment") } = 1,
+    count : { child(d, p, _), !kind(p, "comment"), !async221_args_str_pair(p) } = 0.
+
+// args_str_pair: p is a `"k": v` pair whose key is a string with a constant value
+.decl async221_args_str_pair(p: node)
+async221_args_str_pair(p) :- kind(p, "pair"), field(p, "key", k),
+    (kind(k, "string") ; kind(k, "concatenated_string")), str(k, _),
+    field(p, "value", _).
+
+// args_kw: keyword k passed with value v in argument list l, `**{…}` included
+.decl async221_args_kw(l: node, k: symbol, v: node)
+async221_args_kw(l, k, v) :- async221_args_kwp(l, k, v).
+async221_args_kw(l, k, v) :- kind(l, "argument_list"), child(l, s, _), async221_args_lit_dict(s, d),
+    child(d, p, _), kind(p, "pair"), field(p, "key", x), str(x, k),
+    field(p, "value", v).
+
+// args_kw_spread: argument list l has a `**kw` whose keywords are not known
+.decl async221_args_kw_spread(l: node)
+async221_args_kw_spread(l) :- kind(l, "argument_list"), child(l, s, _),
+    kind(s, "dictionary_splat"), !async221_args_lit_dict(s, _).
+
+// arg_mode_1: call n passes v for slot `mode` of (mode), syntactic: Ruff's find_argument
+.decl async221_arg_mode_1(n: node, v: node)
+async221_arg_mode_1(n, v) :- kind(n, "call"), field(n, "arguments", l), async221_args_kwp(l, "mode", v).
+async221_arg_mode_1(n, v) :- kind(n, "call"), field(n, "arguments", l), async221_args_pos(l, v, 0),
+    !async221_args_kwp(l, "mode", _).
+async221_arg_mode_1(n, v) :- kind(n, "call"), field(n, "arguments", v),
+    kind(v, "generator_expression").
+
+// arg_no_mode_1: call n does not pass slot `mode` of (mode), syntactic: Ruff's find_argument
+.decl async221_arg_no_mode_1(n: node)
+async221_arg_no_mode_1(n) :- kind(n, "call"), field(n, "arguments", l), !async221_args_kwp(l, "mode", _),
+    !async221_args_pos(l, _, 0), !kind(l, "generator_expression").
+
+// demand_alt_4: the nodes alt_4 is asked at (it looks at every ancestor of every node)
+.decl async221_demand_alt_4(n: node)
+async221_demand_alt_4(n) :- async221_callee_position(n), async221_async_context(n), async221_spawn(n).
+
+// demand_async_context: the nodes async_context is asked at (it looks at every ancestor of every node)
+.decl async221_demand_async_context(n: node)
+async221_demand_async_context(n) :- async221_callee_position(n).
+
+// up_1(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl async221_up_1(n: node, p: node)
+async221_up_1(n, p) :- async221_demand_async_context(n), within_stop(n, p, async221_stop_1), kind(p, "block").
+
+// up_2(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl async221_up_2(n: node, p: node)
+async221_up_2(n, p) :- async221_demand_alt_4(n), within_stop(n, p, "call"), kind(p, "call"),
+    async221_arg_no_mode_1(p).
+
+// up_3(n, p): p is an ancestor of n the `inside` step stops at and matches, from the n the rule allows
+.decl async221_up_3(n: node, p: node)
+async221_up_3(n, p) :- async221_demand_alt_4(n), within_stop(n, p, "call"), kind(p, "call").
+
+// set_2: symbols from the JSON `resolves.import`
+.decl async221_set_2(v: symbol)
+async221_set_2("os.spawnl"). async221_set_2("os.spawnle"). async221_set_2("os.spawnlp"). async221_set_2("os.spawnlpe").
+async221_set_2("os.spawnv"). async221_set_2("os.spawnve"). async221_set_2("os.spawnvp"). async221_set_2("os.spawnvpe").
+
+// set_3: symbols from the JSON `resolves.import`
+.decl async221_set_3(v: symbol)
+async221_set_3("os.system"). async221_set_3("os.posix_spawn"). async221_set_3("os.posix_spawnp").
+async221_set_3("subprocess.run"). async221_set_3("subprocess.call"). async221_set_3("subprocess.check_call").
+async221_set_3("subprocess.check_output"). async221_set_3("subprocess.getoutput").
+async221_set_3("subprocess.getstatusoutput").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl async221_stop_1(n: node)
+async221_stop_1(n) :- async221_scope_body(n).
+async221_stop_1(n) :- async221_lambda_body(n).
+
+// alt_4(n): the JSON `any`: n matches if any one of these rules does
+.decl async221_alt_4(n: node)
+async221_alt_4(n) :- async221_demand_alt_4(n), async221_up_2(n, p1).
+async221_alt_4(n) :- async221_demand_alt_4(n), async221_up_3(n, p2), async221_arg_mode_1(p2, a3), M = a3, within(c4, p2),
+    node(_, c4, _, _, _), MODE_ARG = c4, text(M, t5), text(MODE_ARG, t5), async221_p_wait_arg(c4), @doc(M) = @doc(MODE_ARG).

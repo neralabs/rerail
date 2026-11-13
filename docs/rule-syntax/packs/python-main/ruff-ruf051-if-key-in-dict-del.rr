@@ -1,0 +1,314 @@
+.policy "ruff-ruf051-if-key-in-dict-del" revision 1
+.guests off
+.description "Use dict pop with a None default instead of testing a key with in and then deleting it; it removes the key in one step."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// RUF051(n): a finding at node n, from clause `if-key-in-dict-del`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation RUF051(at: node, del: node, d: loc, k: loc) "Use `{d}.pop({k}, None)` instead of checking `{k} in {d}` and then running `del {d}[{k}]`; keep any comments from the removed lines."
+    suppress noqa "RUF051"
+RUF051(DEL, n, D, K) :- kind(n, "if_statement"),
+    count : { child(n, c1, _), (kind(c1, "elif_clause") ; kind(c1, "else_clause")) } = 0,
+    field(n, "condition", c2), ruf051_key_in_dict(c2, D, K), field(n, "consequence", c3),
+    kind(c3, "block"), k5 = count : { child(c3, c4, _), !ruf051_alt_21(c4) }, k5 >= 1,
+    k5 <= 1, child(c3, c6, _), ruf051_sole_del(c6, E, L), node(_, c6, _, _, _), DEL = c6,
+    value(K, t7), value(L, t7), value(D, t9), value(E, t9).
+
+// trivia(n): the JSON util `trivia`, used where the JSON says `matches: "trivia"`
+.decl ruf051_trivia(n: node)
+ruf051_trivia(n) :- (kind(n, "comment") ; kind(n, "line_continuation")).
+
+// dict_expr(n): the JSON util `dict-expr`, used where the JSON says `matches: "dict-expr"`
+.decl ruf051_dict_expr(n: node)
+ruf051_dict_expr(n) :- ruf051_dict_expr_u7(n).
+
+// dict_callee(n): the JSON util `dict-callee`, used where the JSON says `matches: "dict-callee"`
+.decl ruf051_dict_callee(n: node)
+ruf051_dict_callee(n) :- (kind(n, "identifier") ; kind(n, "attribute")),
+    global_ref(n, "dict"), sym_of(n, "builtins.dict").
+ruf051_dict_callee(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf051_dict_callee(c1).
+
+// dict_init(n): the JSON util `dict-init`, used where the JSON says `matches: "dict-init"`
+.decl ruf051_dict_init(n: node)
+ruf051_dict_init(n) :- ruf051_dict_expr(n).
+ruf051_dict_init(n) :- kind(n, "call"), field(n, "function", c1), ruf051_dict_callee(c1).
+
+// dict_ann(n): the JSON util `dict-ann`, used where the JSON says `matches: "dict-ann"`
+.decl ruf051_dict_ann(n: node)
+ruf051_dict_ann(n) :- (kind(n, "identifier") ; kind(n, "attribute")), global_ref(n, "dict"),
+    ( sym_of(n, "builtins.dict")
+    ; sym_of(n, "typing.Dict")
+    ; sym_of(n, "_typeshed.Dict")
+    ; sym_of(n, "typing_extensions.Dict")
+    ).
+
+ruf051_dict_ann(n) :- (kind(n, "subscript") ; kind(n, "generic_type")), child(n, c1, _),
+    !ruf051_tok_follows_1(c1), ruf051_dict_ann(c1).
+ruf051_dict_ann(n) :- kind(n, "parenthesized_expression"), child(n, c9, _), ruf051_dict_ann(c9).
+
+// plain_target(n): the JSON util `plain-target`, used where the JSON says `matches: "plain-target"`
+.decl ruf051_plain_target(n: node)
+ruf051_plain_target(n) :- kind(n, "identifier").
+ruf051_plain_target(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf051_plain_target(c1).
+
+// dict_bound(n): the JSON util `dict-bound`, used where the JSON says `matches: "dict-bound"`
+.decl ruf051_dict_bound(n: node)
+ruf051_dict_bound(n) :- kind(n, "identifier"),
+    ( ref_site(n, b1_3), site_only(b1_3), (kind(b1_3, "dictionary_splat_pattern"), child(p1_3, b1_3, _), kind(p1_3, "parameters") ; kind(b1_3, "typed_parameter"), child(p2_3, b1_3, _), kind(p2_3, "parameters"), child(b1_3, c1_3, _), kind(c1_3, "dictionary_splat_pattern"))
+    ; ref_site(n, b5_4), site_only(b5_4), binding_value(b5_4, x6_4), ruf051_dict_init(x6_4), count : { child(b5_4, c7_4, _), kind(c7_4, "type") } = 0
+    ; ref_site(n, b8_5), site_only(b8_5), kind(b8_5, "as_pattern"), within_stop(b8_5, p9_5, ruf051_stop_11), kind(p9_5, "with_item"), (child(b8_5, c1_1_5, _), ruf051_dict_init(c1_1_5), ruf051_tok_precedes_3(c1_1_5), child(b8_5, c9_1_5, _), kind(c9_1_5, "as_pattern_target"), child(c9_1_5, c10_1_5, _), ruf051_plain_target(c10_1_5) ; child(b8_5, c11_2_5, _), (kind(c11_2_5, "tuple") ; kind(c11_2_5, "list") ; kind(c11_2_5, "set")), precedes_stop(c11_2_5, s12_2_5, ruf051_stop_1), glob("as", s12_2_5), child(c11_2_5, c13_2_5, _), ruf051_dict_init(c13_2_5), node(_, c13_2_5, _, _, _), VE = c13_2_5, child(b8_5, c14_2_5, _), kind(c14_2_5, "as_pattern_target"), child(c14_2_5, c15_2_5, _), (kind(c15_2_5, "tuple") ; kind(c15_2_5, "list")), child(c15_2_5, c16_2_5, _), kind(c16_2_5, "identifier"), node(_, c16_2_5, _, _, _), TN = c16_2_5, text(TN, t17_2_5), text(RN, t17_2_5), value(TN, t19_2_5), value(VE, t19_2_5), @doc(TN) = @doc(RN) )
+    ; ref_site(n, b30_6), site_only(b30_6), site_annotation(b30_6, o31_6), ruf051_dict_ann(o31_6), count : { child(b30_6, c32_6, _), (kind(c32_6, "list_splat_pattern") ; kind(c32_6, "dictionary_splat_pattern")) } = 0
+    ; ref_site(n, b33_7), site_only(b33_7), kind(b33_7, "function_definition"), child(b33_7, c34_7, _), kind(c34_7, "type"), child(c34_7, c35_7, _), ruf051_dict_ann(c35_7)
+    ),
+    node(_, n, _, _, _), RN = n.
+
+// dict_name(n): the JSON util `dict-name`, used where the JSON says `matches: "dict-name"`
+.decl ruf051_dict_name(n: node)
+ruf051_dict_name(n) :- ruf051_dict_bound(n).
+ruf051_dict_name(n) :- kind(n, "parenthesized_expression"), child(n, c1, _), ruf051_dict_name(c1).
+
+// key_expr(n): the JSON util `key-expr`, used where the JSON says `matches: "key-expr"`
+.decl ruf051_key_expr(n: node)
+ruf051_key_expr(n) :- kind(n, k1), ruf051_set_15(k1).
+ruf051_key_expr(n) :- kind(n, "string"),
+    count : { child(n, c2, _), kind(c2, "string_start"), glob("**[fFtT]**", c2) } = 0.
+ruf051_key_expr(n) :- kind(n, "concatenated_string"),
+    count : { child(n, c3, _), kind(c3, "string"), child(c3, c4, _), kind(c4, "string_start"), glob("**[fFtT]**", c4) } = 0.
+ruf051_key_expr(n) :- kind(n, "parenthesized_expression"), child(n, c5, _), ruf051_key_expr(c5).
+
+// key_in_dict(n): the JSON util `key-in-dict`, used where the JSON says `matches: "key-in-dict"`
+//   D, K: metavariables this relation binds for the calling rule
+.decl ruf051_key_in_dict(n: node, d: loc, k: loc)
+ruf051_key_in_dict(n, D, K) :- kind(n, "comparison_operator"),
+    k2 = count : { child(n, c1, _), !ruf051_trivia(c1) }, k2 >= 3, k2 <= 3, child(n, c3, _),
+    ruf051_key_expr(c3), node(_, c3, _, _, _), K = c3, precedes_stop(c3, s4, ruf051_stop_1), glob("in", s4),
+    child(n, c5, _), ruf051_dict_name(c5), node(_, c5, _, _, _), D = c5, precedes_stop(s6, c5, ruf051_stop_1),
+    glob("in", s6).
+ruf051_key_in_dict(n, D, K) :- kind(n, "parenthesized_expression"), child(n, c7, _),
+    ruf051_key_in_dict(c7, D, K).
+
+// del_item(n): the JSON util `del-item`, used where the JSON says `matches: "del-item"`
+//   E, L: metavariables this relation binds for the calling rule
+.decl ruf051_del_item(n: node, e: loc, l: loc)
+ruf051_del_item(n, E, L) :- kind(n, "subscript"), n ~ `$E[$L]`, !ruf051_tok_has_4(n).
+ruf051_del_item(n, E, L) :- kind(n, "parenthesized_expression"), child(n, c9, _),
+    ruf051_del_item(c9, E, L).
+
+// sole_del(n): the JSON util `sole-del`, used where the JSON says `matches: "sole-del"`
+//   E, L: metavariables this relation binds for the calling rule
+.decl ruf051_sole_del(n: node, e: loc, l: loc)
+ruf051_sole_del(n, E, L) :- kind(n, "delete_statement"), child(n, c1, _),
+    ( ruf051_del_item(c1, E, L)
+    ; kind(c1, "expression_list"), k1 = count : { child(c1, c2, _), !ruf051_alt_18(c2) }, k1 >= 1, k1 <= 1, child(c1, c3, _), ruf051_del_item(c3, E, L)
+    ).
+
+
+.decl ruf051_alt_3_u0(n: node)
+ruf051_alt_3_u0(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+ruf051_alt_3_u0(n) :- kind(n, "comment").
+
+.decl ruf051_alt_3_u1(n: node)
+ruf051_alt_3_u1(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+ruf051_alt_3_u1(n) :- kind(n, "comment").
+ruf051_alt_3_u1(n) :- ruf051_dict_expr_u0(n).
+
+.decl ruf051_alt_3_u2(n: node)
+ruf051_alt_3_u2(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+ruf051_alt_3_u2(n) :- kind(n, "comment").
+ruf051_alt_3_u2(n) :- ruf051_dict_expr_u1(n).
+
+.decl ruf051_alt_3_u3(n: node)
+ruf051_alt_3_u3(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+ruf051_alt_3_u3(n) :- kind(n, "comment").
+ruf051_alt_3_u3(n) :- ruf051_dict_expr_u2(n).
+
+.decl ruf051_alt_3_u4(n: node)
+ruf051_alt_3_u4(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+ruf051_alt_3_u4(n) :- kind(n, "comment").
+ruf051_alt_3_u4(n) :- ruf051_dict_expr_u3(n).
+
+.decl ruf051_alt_3_u5(n: node)
+ruf051_alt_3_u5(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+ruf051_alt_3_u5(n) :- kind(n, "comment").
+ruf051_alt_3_u5(n) :- ruf051_dict_expr_u4(n).
+
+.decl ruf051_alt_3_u6(n: node)
+ruf051_alt_3_u6(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+ruf051_alt_3_u6(n) :- kind(n, "comment").
+ruf051_alt_3_u6(n) :- ruf051_dict_expr_u5(n).
+
+.decl ruf051_alt_3_u7(n: node)
+ruf051_alt_3_u7(n) :- node(_, n, _, _, _), glob("{and,or}", n).
+ruf051_alt_3_u7(n) :- kind(n, "comment").
+ruf051_alt_3_u7(n) :- ruf051_dict_expr_u6(n).
+
+.decl ruf051_dict_expr_u0(n: node)
+ruf051_dict_expr_u0(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+ruf051_dict_expr_u0(n) :- kind(n, "boolean_operator"), count : { child(n, c7, _) } = 0.
+
+.decl ruf051_dict_expr_u1(n: node)
+ruf051_dict_expr_u1(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+ruf051_dict_expr_u1(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf051_dict_expr_u0(c1).
+ruf051_dict_expr_u1(n) :- kind(n, "named_expression"), field(n, "value", c2),
+    ruf051_dict_expr_u0(c2).
+ruf051_dict_expr_u1(n) :- kind(n, "conditional_expression"), child(n, c3, _),
+    precedes_stop(c3, s4, ruf051_stop_1), glob("if", s4), ruf051_dict_expr_u0(c3), child(n, c5, _),
+    precedes_stop(s6, c5, ruf051_stop_1), glob("else", s6), ruf051_dict_expr_u0(c5).
+ruf051_dict_expr_u1(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c7, _), !ruf051_alt_3_u0(c7) } = 0.
+
+.decl ruf051_dict_expr_u2(n: node)
+ruf051_dict_expr_u2(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+ruf051_dict_expr_u2(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf051_dict_expr_u1(c1).
+ruf051_dict_expr_u2(n) :- kind(n, "named_expression"), field(n, "value", c2),
+    ruf051_dict_expr_u1(c2).
+ruf051_dict_expr_u2(n) :- kind(n, "conditional_expression"), child(n, c3, _),
+    precedes_stop(c3, s4, ruf051_stop_1), glob("if", s4), ruf051_dict_expr_u1(c3), child(n, c5, _),
+    precedes_stop(s6, c5, ruf051_stop_1), glob("else", s6), ruf051_dict_expr_u1(c5).
+ruf051_dict_expr_u2(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c7, _), !ruf051_alt_3_u1(c7) } = 0.
+
+.decl ruf051_dict_expr_u3(n: node)
+ruf051_dict_expr_u3(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+ruf051_dict_expr_u3(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf051_dict_expr_u2(c1).
+ruf051_dict_expr_u3(n) :- kind(n, "named_expression"), field(n, "value", c2),
+    ruf051_dict_expr_u2(c2).
+ruf051_dict_expr_u3(n) :- kind(n, "conditional_expression"), child(n, c3, _),
+    precedes_stop(c3, s4, ruf051_stop_1), glob("if", s4), ruf051_dict_expr_u2(c3), child(n, c5, _),
+    precedes_stop(s6, c5, ruf051_stop_1), glob("else", s6), ruf051_dict_expr_u2(c5).
+ruf051_dict_expr_u3(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c7, _), !ruf051_alt_3_u2(c7) } = 0.
+
+.decl ruf051_dict_expr_u4(n: node)
+ruf051_dict_expr_u4(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+ruf051_dict_expr_u4(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf051_dict_expr_u3(c1).
+ruf051_dict_expr_u4(n) :- kind(n, "named_expression"), field(n, "value", c2),
+    ruf051_dict_expr_u3(c2).
+ruf051_dict_expr_u4(n) :- kind(n, "conditional_expression"), child(n, c3, _),
+    precedes_stop(c3, s4, ruf051_stop_1), glob("if", s4), ruf051_dict_expr_u3(c3), child(n, c5, _),
+    precedes_stop(s6, c5, ruf051_stop_1), glob("else", s6), ruf051_dict_expr_u3(c5).
+ruf051_dict_expr_u4(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c7, _), !ruf051_alt_3_u3(c7) } = 0.
+
+.decl ruf051_dict_expr_u5(n: node)
+ruf051_dict_expr_u5(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+ruf051_dict_expr_u5(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf051_dict_expr_u4(c1).
+ruf051_dict_expr_u5(n) :- kind(n, "named_expression"), field(n, "value", c2),
+    ruf051_dict_expr_u4(c2).
+ruf051_dict_expr_u5(n) :- kind(n, "conditional_expression"), child(n, c3, _),
+    precedes_stop(c3, s4, ruf051_stop_1), glob("if", s4), ruf051_dict_expr_u4(c3), child(n, c5, _),
+    precedes_stop(s6, c5, ruf051_stop_1), glob("else", s6), ruf051_dict_expr_u4(c5).
+ruf051_dict_expr_u5(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c7, _), !ruf051_alt_3_u4(c7) } = 0.
+
+.decl ruf051_dict_expr_u6(n: node)
+ruf051_dict_expr_u6(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+ruf051_dict_expr_u6(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf051_dict_expr_u5(c1).
+ruf051_dict_expr_u6(n) :- kind(n, "named_expression"), field(n, "value", c2),
+    ruf051_dict_expr_u5(c2).
+ruf051_dict_expr_u6(n) :- kind(n, "conditional_expression"), child(n, c3, _),
+    precedes_stop(c3, s4, ruf051_stop_1), glob("if", s4), ruf051_dict_expr_u5(c3), child(n, c5, _),
+    precedes_stop(s6, c5, ruf051_stop_1), glob("else", s6), ruf051_dict_expr_u5(c5).
+ruf051_dict_expr_u6(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c7, _), !ruf051_alt_3_u5(c7) } = 0.
+
+.decl ruf051_dict_expr_u7(n: node)
+ruf051_dict_expr_u7(n) :- (kind(n, "dictionary") ; kind(n, "dictionary_comprehension")).
+ruf051_dict_expr_u7(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    ruf051_dict_expr_u6(c1).
+ruf051_dict_expr_u7(n) :- kind(n, "named_expression"), field(n, "value", c2),
+    ruf051_dict_expr_u6(c2).
+ruf051_dict_expr_u7(n) :- kind(n, "conditional_expression"), child(n, c3, _),
+    precedes_stop(c3, s4, ruf051_stop_1), glob("if", s4), ruf051_dict_expr_u6(c3), child(n, c5, _),
+    precedes_stop(s6, c5, ruf051_stop_1), glob("else", s6), ruf051_dict_expr_u6(c5).
+ruf051_dict_expr_u7(n) :- kind(n, "boolean_operator"),
+    count : { child(n, c7, _), !ruf051_alt_3_u6(c7) } = 0.
+
+// tok_follows_1(n): an earlier sibling of n, a named node or an anonymous token, matches "(?s).": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf051_tok_follows_1(n: node)
+.stored ruf051_tok_follows_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf051_tok_follows_1(n) :- next_sibling(s2, n), match("(?s).*..*", s2).
+ruf051_tok_follows_1(n) :- structural_before(n, g4), match("\\s*", g4), child(p5, n, _),
+    node(_, n, _, st7, _), o6 = st7 - strlen(g4), token(p5, _, t3, _, o6),
+    match("(?s).*..*", t3).
+ruf051_tok_follows_1(n) :- structural_before(n, g4), match("(?s)^.*\\S\\s*$", g4).
+
+// tok_precedes_2(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf051_tok_precedes_2(n: node)
+.stored ruf051_tok_precedes_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf051_tok_precedes_2(n) :- precedes(n, s11), glob("as", s11).
+ruf051_tok_precedes_2(n) :- child(p14, n, _), node(_, n, _, _, en17),
+    token(p14, _, t12, st16, _), st16 >= en17, match("as", t12).
+ruf051_tok_precedes_2(n) :- structural_after(n, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g13).
+ruf051_tok_precedes_2(n) :- precedes(n, o15), structural_after(o15, g13),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g13).
+
+// tok_precedes_3(n): a later sibling of n, a named node or an anonymous token, matches "^as$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf051_tok_precedes_3(n: node)
+.stored ruf051_tok_precedes_3 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf051_tok_precedes_3(n) :- precedes(n, s2), glob("as", s2).
+ruf051_tok_precedes_3(n) :- child(p5, n, _), node(_, n, _, _, en8), token(p5, _, t3, st7, _),
+    st7 >= en8, match("as", t3).
+ruf051_tok_precedes_3(n) :- structural_after(n, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g4).
+ruf051_tok_precedes_3(n) :- precedes(n, o6), structural_after(o6, g4),
+    match("(?s)^(?:(?:.*\\W)?(?:as)(?:\\W.*)?)$", g4).
+
+// tok_has_4(n): a child of n, a named node or an anonymous token, matches "^,$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl ruf051_tok_has_4(n: node)
+.stored ruf051_tok_has_4 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+ruf051_tok_has_4(n) :- child(n, c1, _), glob("\\,", c1).
+ruf051_tok_has_4(n) :- op(n, t2), match(",", t2).
+ruf051_tok_has_4(n) :- child(n, c8, _), structural_before(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+ruf051_tok_has_4(n) :- child(n, c8, _), structural_after(c8, g3),
+    match("(?s)^(?:.*(?:,).*)$", g3).
+ruf051_tok_has_4(n) :- node_text(n, g3), !child(n, _, _), match("(?s)^(?:.*(?:,).*)$", g3).
+
+// alt_3_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf051_alt_3_u0_empty(n: node)
+
+// dict_expr_u0_empty: level -1 of an unrolled recursion, empty
+.decl ruf051_dict_expr_u0_empty(n: node)
+
+// set_15: node kinds from a JSON `any`
+.decl ruf051_set_15(v: symbol)
+ruf051_set_15("identifier"). ruf051_set_15("none"). ruf051_set_15("ellipsis"). ruf051_set_15("true").
+ruf051_set_15("false"). ruf051_set_15("integer"). ruf051_set_15("float").
+
+// stop_1(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf051_stop_1(n: node)
+ruf051_stop_1(n) :- node(_, n, _, _, _), !ruf051_trivia(n).
+
+// alt_3(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf051_alt_3(n: node)
+ruf051_alt_3(n) :- ruf051_alt_3_u7(n).
+
+// stop_11(n): the JSON `stopBy` rule: the tree search stops at these nodes
+.decl ruf051_stop_11(n: node)
+ruf051_stop_11(n) :- node(_, n, _, _, _), !kind(n, "parenthesized_expression").
+
+// alt_18(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf051_alt_18(n: node)
+ruf051_alt_18(n) :- ruf051_trivia(n).
+ruf051_alt_18(n) :- node(_, n, _, _, _), glob("\\,", n).
+
+// alt_21(n): the JSON `any`: n matches if any one of these rules does
+.decl ruf051_alt_21(n: node)
+ruf051_alt_21(n) :- ruf051_trivia(n).
+ruf051_alt_21(n) :- node(_, n, _, _, _), glob(";", n).

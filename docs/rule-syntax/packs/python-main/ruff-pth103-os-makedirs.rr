@@ -1,0 +1,26 @@
+.policy "ruff-pth103-os-makedirs" revision 1
+.guests off
+.description "Use Path.mkdir(parents=True) instead of os.makedirs(); path objects read better than string-based os calls."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from today's JSON by docs/rule-syntax/site/translate.py. Display only: not compiled or run.
+
+#include "python/names.rr"
+
+// PTH103(n): a finding at node n, from clause `os-makedirs`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PTH103(at: node, f: node) "Use `Path(name).mkdir(parents=True)` instead of `os.makedirs(name)`, passing `mode`, `exist_ok` and any `parent_mode` on to `mkdir`; leave it where the path is bytes."
+    suppress noqa "PTH103"
+PTH103(F, n) :- kind(n, "call"), field(n, "function", c1), pth103_callee(c1, F).
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl pth103_target(n: node)
+pth103_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "os.makedirs").
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth103_callee(n: node, f: loc)
+pth103_callee(n, F) :- pth103_target(n), node(_, n, _, _, _), F = n.
+pth103_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth103_callee(c1, F).
