@@ -1417,7 +1417,7 @@ pub fn install_families(families: Vec<&'static dyn Families>) {
     let _ = FAMILIES.set(families);
 }
 
-pub(crate) fn families() -> &'static [&'static dyn Families] {
+pub fn families() -> &'static [&'static dyn Families] {
     FAMILIES.get().map_or(&[], Vec::as_slice)
 }
 

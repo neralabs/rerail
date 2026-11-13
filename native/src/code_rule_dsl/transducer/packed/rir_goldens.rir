@@ -1,12 +1,12 @@
 ; ast-grep pattern
-program sha256:cfb4b4c6560eab495037cde3e6e86ed81035090b9c2dbc70eaf668b12e16f1e4 ir=7 grammar=python@e3844d3566d29cd0 caps=interp,micro,pattern
+program sha256:d00fc6bdb6c300deeb5c29274e4724717f155001a1d886e687fede4ed952cca0 ir=7 grammar=python@e3844d3566d29cd0 caps=interp,micro,pattern
   mode set=0 query=0
-  pattern (internal call (terminal identifier named "exec") (internal argument_list (terminal "(" any "(") (single "A" named) (terminal ")" any ")")))
+  pattern (internal call (terminal identifier named "exec") (internal argument_list (single "A" named) (terminal #65534 any "")))
   0000 STOP 0
 ; ast-grep pattern with a multi-capture
-program sha256:fec7599178fb282ccd0c558e7f133098652eff883c1a3f7124d5dc9bf9ce6767 ir=7 grammar=python@e3844d3566d29cd0 caps=interp,micro,pattern
+program sha256:fd3532df90d7cb98b7f249c87d0cc7f5a0caa9f3c32a6a29eb2d8988700ef217 ir=7 grammar=python@e3844d3566d29cd0 caps=interp,micro,pattern
   mode set=0 query=0
-  pattern (internal function_definition (terminal "def" any "def") (single "F" named) (internal parameters (terminal "(" any "(") (ellipsis "ARGS") (terminal ")" any ")")) (terminal ":" any ":") (ellipsis "BODY"))
+  pattern (internal function_definition (terminal "def" any "def") (single "F" named) (internal parameters (ellipsis "ARGS")) (ellipsis "BODY"))
   0000 STOP 0
 ; ast-grep literal
 program sha256:0c1622da2a63be67a1e19dd55636a1e2902af6c5fa6ebd31e791a82212168fa8 ir=7 grammar=python@e3844d3566d29cd0 caps=interp,micro

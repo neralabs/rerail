@@ -2,7 +2,7 @@
 
 use super::connection::configure_connection;
 use super::{ContentStore, StoreError, StoreResult};
-use rusqlite::{Connection, TransactionBehavior};
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -723,6 +723,27 @@ impl ContentStore {
                 super::atoms::forget_identity(path);
                 super::frames::forget_snapshot(path);
             }
+        }
+        let id: Option<i64> = connection.query_row("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0)).optional()?;
+        if let Some(id) = id {
+            return Ok(id);
+        }
+        // A copy of a store published without an identity (the tests' template, `corpus::test_store`): it becomes a
+        // store of its own at its first open, as a store made here does, by a writer's thread.
+        rerail_accel::exec::scoped(|scope| {
+            scope
+                .spawn(|| -> StoreResult<()> {
+                    super::hazards::behind_the_run();
+                    let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                    transaction.execute("INSERT OR IGNORE INTO store_identity(singleton, id) VALUES (1, random())", [])?;
+                    transaction.commit()?;
+                    Ok(())
+                })
+                .join()
+                .unwrap_or_else(|p| std::panic::resume_unwind(p))
+        })?;
+        if let Some(path) = connection.path() {
+            super::atoms::forget_identity(path);
         }
         Ok(connection.query_row("SELECT id FROM store_identity WHERE singleton = 1", [], |row| row.get(0))?)
     }

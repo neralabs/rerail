@@ -498,6 +498,12 @@ pub fn run_all(programs: &[&str], root: &Path, out: &Path, modes: &str, binding:
 /// `violation` output are shared, and kind sets are named by their kinds (`ks<j>`), so programs asking for one set
 /// share its tape pass. The simplifier then merges relations that are equal across programs (decision 0038).
 pub fn combine(programs: &[&str], extra: &str) -> Result<front::Program> {
+    combine_keyed(programs, extra).map(|(program, _)| program)
+}
+
+/// `combine`, with the digest of its texts (`texts_digest`) it is kept by: a run keys what it prepares by the same
+/// digest, so it is taken once.
+fn combine_keyed(programs: &[&str], extra: &str) -> Result<(front::Program, [u8; 32])> {
     use std::sync::{Mutex, OnceLock};
     // A function of the texts alone (`rr::parse` reads no file), so kept for the process by their digest: a session or
     // a test that runs one program over many roots parses and hides it once. A few programs at a time are kept.
@@ -507,7 +513,7 @@ pub fn combine(programs: &[&str], extra: &str) -> Result<front::Program> {
     let cache = COMBINED.get_or_init(Default::default);
     if let Some(program) = cache.lock().expect("the combined programs").get(&key) {
         crate::code_rule_dsl::prof::count("corpus.combined_reused", 1);
-        return Ok(program.clone());
+        return Ok((program.clone(), key));
     }
     let program = combine_stored(programs, extra, &key)?;
     let mut kept = cache.lock().expect("the combined programs");
@@ -515,7 +521,7 @@ pub fn combine(programs: &[&str], extra: &str) -> Result<front::Program> {
         kept.clear();
     }
     kept.insert(key, program.clone());
-    Ok(program)
+    Ok((program, key))
 }
 
 /// `combine_texts`, kept in the persistent store across processes for a pack of programs (`combined`, decision 0094
@@ -1440,6 +1446,11 @@ impl Collecting {
     }
 }
 
+thread_local! {
+    /// The plans of the runs inside the outer run on this thread (its phases', the constants'), named by its manifest.
+    static INNER_PLANS: std::cell::RefCell<Vec<[u8; 32]>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Records the run's manifest and relations, then starts collection if a pass is due: queued behind the run's
 /// writes (decision 0102), so the manifest names only what is written, and the lease on collection is let go
 /// once it is.
@@ -1447,8 +1458,16 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
     memo::off();
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
     let root = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let (root, sources, also, relations) = (root.to_string_lossy().into_owned(), sources.to_vec(), also.to_vec(), relations.to_vec());
+    let (root, sources, mut also, relations) = (root.to_string_lossy().into_owned(), sources.to_vec(), also.to_vec(), relations.to_vec());
     let plan = memo::plan_digest(program);
+    // Only a root's newest manifests keep their plans live (its protected runs), and a run's phases record theirs
+    // under its root: the outer run's manifest names its inner runs' plans too, so a later process finds every phase's
+    // prepared program and memo, not only the last two's.
+    if outer {
+        also.extend(INNER_PLANS.with(|p| std::mem::take(&mut *p.borrow_mut())));
+    } else {
+        INNER_PLANS.with(|p| p.borrow_mut().extend(std::iter::once(plan).chain(also.iter().copied())));
+    }
     // A run inside another (a phase's, as phase 1's while the outer run lists its files; the constants') leaves
     // collection to the outer run, which collects after its last wave: here it would run beside the outer run's waves.
     let collect = !std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off") && outer;
@@ -1581,10 +1600,34 @@ fn close_beside(db: Connection) {
     rerail_accel::exec::drop_beside(db);
 }
 
+/// The store the process's runs use instead of the machine's while one is set (`use_store`): testing mode's
+/// (decision 0130), whose runs must not read what other runs left, nor wait behind their writes.
+static STORE: std::sync::RwLock<Option<std::path::PathBuf>> = std::sync::RwLock::new(None);
+
+/// While the guard lives, every run of the process (without `RERAIL_TAPE_CACHE`) uses the store at `path`.
+pub fn use_store(path: std::path::PathBuf) -> UsedStore {
+    let was = STORE.write().expect("the process's store").replace(path);
+    UsedStore(was)
+}
+
+/// `use_store`'s guard: the store before it comes back when it drops.
+pub struct UsedStore(Option<std::path::PathBuf>);
+
+impl Drop for UsedStore {
+    fn drop(&mut self) {
+        *STORE.write().expect("the process's store") = self.0.take();
+    }
+}
+
 /// The path `tape_cache` opens (`None`: `RERAIL_TAPE_CACHE=off`).
 pub fn tape_cache_path() -> Option<std::path::PathBuf> {
     #[cfg(any(test, feature = "test-hooks"))]
     if let Some(path) = TEST_TAPE_CACHE.with(|p| p.borrow().clone()) {
+        return Some(path);
+    }
+    if std::env::var_os("RERAIL_TAPE_CACHE").is_none()
+        && let Some(path) = STORE.read().expect("the process's store").clone()
+    {
         return Some(path);
     }
     match std::env::var("RERAIL_TAPE_CACHE") {
@@ -1594,7 +1637,47 @@ pub fn tape_cache_path() -> Option<std::path::PathBuf> {
         #[cfg(any(test, feature = "test-hooks"))]
         Err(_) => Some(test_store::own().unwrap_or_else(|| test_tape_cache().clone())),
         #[cfg(not(any(test, feature = "test-hooks")))]
-        Err(_) => Some(std::env::temp_dir().join("rerail-tape-cache.sqlite")),
+        Err(_) => Some(default_store().clone()),
+    }
+}
+
+/// The store a run uses when none is named: the project's for this build (`build_store`), the project being the
+/// working directory. Every stored key carries the engine's build, so another build's entries are of no use to a run;
+/// and another project's runs would leave their atoms and plans in it, and hold its writer.
+#[cfg(not(any(test, feature = "test-hooks")))]
+fn default_store() -> &'static std::path::PathBuf {
+    static PATH: std::sync::LazyLock<std::path::PathBuf> = std::sync::LazyLock::new(|| {
+        let cwd = std::env::current_dir().ok().and_then(|d| d.canonicalize().ok()).unwrap_or_default();
+        build_store("rerail-stores", Some(&cwd.to_string_lossy()))
+    });
+    &PATH
+}
+
+/// A store of this engine build's in `$TMPDIR/<dir>/`: `<build>.sqlite`, or `<build>-<key>.sqlite` for one `key` (a
+/// project) of several. Another build's files there, unused for a day, are removed (with their `-wal`, `-shm` and
+/// lock files, which start with the same name).
+pub fn build_store(dir: &str, key: Option<&str>) -> std::path::PathBuf {
+    use std::hash::{Hash, Hasher};
+    let dir = std::env::temp_dir().join(dir);
+    let _ = std::fs::create_dir_all(&dir);
+    let build = crate::code_rule_dsl::build_ids::engine();
+    let build = &build[..build.len().min(16)];
+    let day = std::time::Duration::from_secs(24 * 3600);
+    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let old = entry.metadata().and_then(|m| m.modified()).ok().and_then(|t| t.elapsed().ok()).is_some_and(|age| age > day);
+        if !name.starts_with(build) && old {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    match key {
+        // The hasher's keys are fixed: within a build, a project's name is the same in every process.
+        Some(key) => {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            key.hash(&mut h);
+            dir.join(format!("{build}-{:016x}.sqlite", h.finish()))
+        }
+        None => dir.join(format!("{build}.sqlite")),
     }
 }
 
@@ -1888,8 +1971,7 @@ fn run_observed(
         crate::code_rule_dsl::logic::profile::reset();
     }
     let combining = crate::code_rule_dsl::logic::profile::span(|| "parse the program".into());
-    let mut prog = combine(programs, "")?;
-    let mut texts = texts_digest(programs, "");
+    let (mut prog, mut texts) = combine_keyed(programs, "")?;
     drop(combining);
     // Typing programs' answers the rule reads (`bridge`): each program runs first, and its rows are the rule's facts.
     let (bridged, typing_runs) = bridge::facts(&prog, root, out, modes, binding, chunk_nodes, typing)?;
@@ -2067,8 +2149,7 @@ fn run_observed(
         let files: Vec<String> = docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p)).collect();
         let (facts, d) = typing::facts(typing, root, &files, &mut typed)?;
         if !facts.is_empty() {
-            prog = combine(programs, &facts)?;
-            texts = texts_digest(programs, &facts);
+            (prog, texts) = combine_keyed(programs, &facts)?;
             add_bridged(&mut prog);
             folded = fold_constants(&mut prog)?;
         }

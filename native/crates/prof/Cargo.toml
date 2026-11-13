@@ -97,3 +97,7 @@ tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1.6"
 metal = "0.33.0"
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-prof = { path = ".", features = ["test-hooks"] }

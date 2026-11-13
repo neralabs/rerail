@@ -43,9 +43,9 @@ removed_surface_imports("import_statement"). removed_surface_imports("import_fro
 .decl removed_surface_excluded(n: node)
 .decl removed_surface_hit(n: node)
 .decl removed_surface_name(s: symbol)
-.decl rr_agg1(p: node, s: number, t: symbol, xs: number)
-.decl rr_ctx2(p: node, xs: number)
-.decl rr_demand_agg_rr_agg1(p: node, xs: number)
+.decl rr_agg3(p: node, rr_any1: number, rr_any2: number, s: number, t: symbol, xs: number)
+.decl rr_ctx4(p: node, xs: number)
+.decl rr_demand_agg_rr_agg3(p: node, xs: number)
 .decl strprefix(n: node, p: symbol)
 .decl syntax_error(d: number)
 .decl tape_syntax_error(d: number)
@@ -97,9 +97,9 @@ pod_doc(d) :- node(d, m, "module", _, _), in_scope(d), !out_scope(d), !tape_synt
 pod_binary_cmp(c, s) :- node(_, c, "comparison_operator", _, _), child(c, _, 0), child(c, _, 1), !child(c, _, 2), op_at(c, 0, s), !op_at(c, 1, _), (s = "==" ; s = "is" ; s = "in").
 pod_nth_parent(c) :- pod_binary_cmp(c, _).
 pod_nth_parent(a) :- field(c, "arguments", a), node(_, c, "call", _, _).
-rr_ctx2(p, xs) :- child(p, x, i), node(_, x, _, xs, _).
-rr_agg1(p, s, t, xs) :- rr_demand_agg_rr_agg1(p, xs), rr_ctx2(p, xs), token(p, _, t, s, _), prefix("#", t), s < xs.
-pod_nth(p, x, k) :- pod_nth_parent(p), child(p, x, i), node(_, x, _, xs, _), j = count : { rr_agg1(p, _, _, xs) }, k = @add(@add(i, 1), j).
+rr_ctx4(p, xs) :- child(p, x, i), node(_, x, _, xs, _).
+rr_agg3(p, rr_any1, rr_any2, s, t, xs) :- rr_demand_agg_rr_agg3(p, xs), rr_ctx4(p, xs), token(p, rr_any1, t, s, rr_any2), prefix("#", t), s < xs.
+pod_nth(p, x, k) :- pod_nth_parent(p), child(p, x, i), node(_, x, _, xs, _), j = count : { rr_agg3(p, _, _, _, _, xs) }, k = @add(@add(i, 1), j).
 pod_enum_attr(a, e, m) :- node(_, a, "attribute", _, _), field(a, "object", o), node(_, o, "identifier", _, _), text(o, e), pod_enum_name(e), field(a, "attribute", x), text(x, m).
 pod_is_enum_attr(a) :- pod_enum_attr(a, _, _).
 pod_first_enum(c) :- pod_nth(c, a, 1), pod_is_enum_attr(a).
@@ -154,4 +154,4 @@ removed_base_name(n) :- node(_, n, "identifier", _, _), text(n, "ResultRowMateri
 removed_base_name(n) :- node(_, n, "attribute", _, _), field(n, "attribute", x), node(_, x, "identifier", _, _), text(x, "ResultRowMaterializer").
 violation("data-layer-post-op-no-internal-dispatch", "removed-base", "POSTOPDISPATCH008", p, l) :- node(d, c, "class_definition", _, _), field(c, "superclasses", sc), child(sc, b, _), removed_base_name(b), pod_doc(d), doc(d, p, _), line(c, l).
 violation("data-layer-post-op-no-internal-dispatch", "removed-keyword", "POSTOPDISPATCH009", p, l) :- node(d, c, "call", _, _), field(c, "arguments", args), child(args, kw, _), node(_, kw, "keyword_argument", _, _), field(kw, "name", x), node(_, x, "identifier", _, _), text(x, "row_materializer"), pod_doc(d), doc(d, p, _), line(c, l).
-rr_demand_agg_rr_agg1(p, xs) :- pod_nth_parent(p), child(p, x, i), node(_, x, _, xs, _).
+rr_demand_agg_rr_agg3(p, xs) :- pod_nth_parent(p), child(p, x, i), node(_, x, _, xs, _).

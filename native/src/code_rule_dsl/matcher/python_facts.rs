@@ -75,7 +75,7 @@ pub struct Target {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct BindingId {
+pub struct BindingId {
     pub scope: u32,
     // An index is relative to this row's normalized head name, not scope alone.
     pub index: usize,
@@ -99,7 +99,7 @@ pub struct Bindings {
 }
 impl Bindings {
     /// `only` needs a separate native lookup and is deliberately not guessed here.
-    pub(crate) fn get(&self, lookup: Lookup) -> Fact<Option<BindingProjection>> {
+    pub fn get(&self, lookup: Lookup) -> Fact<Option<BindingProjection>> {
         if lookup.only {
             unavailable(Reason::LookupNotProjected)
         } else if lookup.stop_at_global {
@@ -111,7 +111,7 @@ impl Bindings {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum QualifiedOrigin {
+pub enum QualifiedOrigin {
     Import,
     Definition,
 }
@@ -286,7 +286,7 @@ pub fn qualification_chain<D: Doc>(node: &Node<'_, D>) -> Fact<QualificationChai
 
 /// Well-formed call/subscript/other non-name heads cannot satisfy explicit native
 /// import/global qualification. Incomplete syntax stays unknown.
-pub(crate) fn qualification_eligibility<D: Doc>(node: &Node<'_, D>) -> Fact<()> {
+pub fn qualification_eligibility<D: Doc>(node: &Node<'_, D>) -> Fact<()> {
     match qualification_chain(node) {
         Fact::Known(_) => Fact::Known(()),
         Fact::NotApplicable(reason) => Fact::NotApplicable(reason),
@@ -461,5 +461,4 @@ fn binding(
     }
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

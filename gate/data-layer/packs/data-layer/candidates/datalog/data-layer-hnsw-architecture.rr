@@ -62,12 +62,12 @@ hnsw_architecture_patterns("case_pattern").
 .decl option_json(name: symbol, pointer: symbol, v: symbol)
 .decl option_value(name: symbol, v: symbol)
 .decl out_scope(d: number)
-.decl rr_agg1(h: node, s: number, t: number)
-.decl rr_agg3(h: node, i: number, j: number)
-.decl rr_ctx2(h: node, s: number)
-.decl rr_ctx4(h: node, i: number)
-.decl rr_demand_agg_rr_agg1(h: node, s: number)
-.decl rr_demand_agg_rr_agg3(h: node, i: number)
+.decl rr_agg2(h: node, rr_any1: node, s: number, t: number)
+.decl rr_agg5(h: node, i: number, j: number, rr_any4: symbol)
+.decl rr_ctx3(h: node, s: number)
+.decl rr_ctx6(h: node, i: number)
+.decl rr_demand_agg_rr_agg2(h: node, s: number)
+.decl rr_demand_agg_rr_agg5(h: node, i: number)
 .decl strprefix(n: node, p: symbol)
 .decl syntax_error(d: number)
 .decl tape_syntax_error(d: number)
@@ -165,14 +165,14 @@ hnsw_architecture_fpart(h, h) :- hnsw_architecture_host_str(h), hnsw_architectur
 hnsw_architecture_fpart(q, p) :- hnsw_architecture_mixed(q), child(q, p, _), hnsw_architecture_fstring(p).
 hnsw_architecture_interp(h, x, s) :- hnsw_architecture_fpart(h, p), child(p, x, _), node(_, x, "interpolation", s, _).
 hnsw_architecture_interp(h, x, s) :- hnsw_architecture_host_spec(h), child(h, x, _), node(_, x, "format_expression", s, _).
-rr_ctx2(h, s) :- hnsw_architecture_interp(h, x, s).
-rr_agg1(h, s, t) :- rr_demand_agg_rr_agg1(h, s), rr_ctx2(h, s), hnsw_architecture_interp(h, _, t), t < s.
-hnsw_architecture_interp_k(h, x, k) :- hnsw_architecture_interp(h, x, s), k = count : { rr_agg1(h, s, _) }.
+rr_ctx3(h, s) :- hnsw_architecture_interp(h, x, s).
+rr_agg2(h, rr_any1, s, t) :- rr_demand_agg_rr_agg2(h, s), rr_ctx3(h, s), hnsw_architecture_interp(h, rr_any1, t), t < s.
+hnsw_architecture_interp_k(h, x, k) :- hnsw_architecture_interp(h, x, s), k = count : { rr_agg2(h, _, s, _) }.
 hnsw_architecture_host(h) :- hnsw_architecture_host_str(h).
 hnsw_architecture_host(h) :- hnsw_architecture_host_spec(h).
-rr_ctx4(h, i) :- fstring_piece(h, i, "interpolation", _).
-rr_agg3(h, i, j) :- rr_demand_agg_rr_agg3(h, i), rr_ctx4(h, i), fstring_piece(h, j, "interpolation", _), j < i.
-hnsw_architecture_piece_node(h, i, x) :- hnsw_architecture_host(h), fstring_piece(h, i, "interpolation", _), k = count : { rr_agg3(h, i, _) }, hnsw_architecture_interp_k(h, x, k).
+rr_ctx6(h, i) :- fstring_piece(h, i, "interpolation", _).
+rr_agg5(h, i, j, rr_any4) :- rr_demand_agg_rr_agg5(h, i), rr_ctx6(h, i), fstring_piece(h, j, "interpolation", rr_any4), j < i.
+hnsw_architecture_piece_node(h, i, x) :- hnsw_architecture_host(h), fstring_piece(h, i, "interpolation", _), k = count : { rr_agg5(h, i, _, _) }, hnsw_architecture_interp_k(h, x, k).
 hnsw_architecture_lit(h, i, v) :- hnsw_architecture_host(h), fstring_piece(h, i, "literal", v).
 hnsw_architecture_frag(q, p, s) :- hnsw_architecture_mixed(q), child(q, p, _), node(_, p, "string", s, _), !hnsw_architecture_fstring(p).
 hnsw_architecture_frag(h, f, s) :- hnsw_architecture_fpart(h, p), child(p, f, _), node(_, f, k, s, _), k != "interpolation", k != "string_start", k != "string_end".
@@ -219,5 +219,5 @@ hnsw_architecture_found(d, l, "HNSW002") :- hnsw_architecture_piece_const(d, l, 
 hnsw_architecture_generated(d) :- doc(d, p, _), match("(?:.*/)?rust_bridge/(?:.*/)?generated_[^/]*", p).
 violation("data-layer-hnsw-architecture", "hnsw-architecture", issue, p, l) :- hnsw_architecture_found(d, l, issue), hnsw_architecture_gate(d), !hnsw_architecture_generated(d), in_scope(d), !out_scope(d), doc(d, p, _).
 violation("data-layer-hnsw-architecture", "hnsw-forbidden-files", "HNSW006", p, 1) :- hnsw_entry("find_hnsw_architecture_findings"), doc(d, p, _), hnsw_withheld_path(p), in_scope(d), !out_scope(d).
-rr_demand_agg_rr_agg1(h, s) :- hnsw_architecture_interp(h, x, s).
-rr_demand_agg_rr_agg3(h, i) :- hnsw_architecture_host(h), fstring_piece(h, i, "interpolation", _), hnsw_architecture_interp_k(h, x, k).
+rr_demand_agg_rr_agg2(h, s) :- hnsw_architecture_interp(h, x, s).
+rr_demand_agg_rr_agg5(h, i) :- hnsw_architecture_host(h), fstring_piece(h, i, "interpolation", _), hnsw_architecture_interp_k(h, x, k).

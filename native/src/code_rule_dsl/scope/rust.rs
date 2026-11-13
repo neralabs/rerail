@@ -16,7 +16,7 @@ use crate::code_rule_dsl::calls::rust::{LIBRARY_ROOTS, crate_module, std_macro};
 use ast_grep_core::{Doc, Node};
 
 /// The macro namespace: `macro_rules!` definitions and imported macros.
-pub(crate) const MACRO: u8 = 4;
+pub const MACRO: u8 = 4;
 /// Lifetime parameters (`'a`).
 pub(crate) const LIFETIME: u8 = 8;
 /// Loop and block labels (`'outer:`).

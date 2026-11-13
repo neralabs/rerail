@@ -266,7 +266,7 @@ pub fn operand<'r, D: Doc>(node: &Node<'r, D>) -> Option<Node<'r, D>> {
 
 /// A numeric literal: decimal with `_` separators, `0x`/`0o`/`0b`, legacy octal (`010`) and legacy
 /// decimal (`08`), and BigInts (`n`).
-pub(crate) fn number(text: &str) -> Value {
+pub fn number(text: &str) -> Value {
     if !separators_valid(text) {
         return Value::Unknown;
     }
@@ -349,7 +349,7 @@ fn radix_body(lower: &str) -> (u32, &str) {
 }
 
 /// A string node's code units: a JSX attribute's value as JSX reads it, any other as a literal.
-pub(crate) fn string_node<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
+pub fn string_node<D: Doc>(node: &Node<'_, D>) -> Option<Vec<u16>> {
     let text = node.text();
     if node
         .parent()
@@ -520,7 +520,7 @@ pub(crate) fn cooked_text(chunk: &str) -> Option<String> {
 }
 
 /// A template chunk's cooked code units: line terminators normalized to LF, escapes decoded.
-pub(super) fn cooked(chunk: &str) -> Option<Vec<u16>> {
+pub fn cooked(chunk: &str) -> Option<Vec<u16>> {
     let normalized = chunk.replace("\r\n", "\n").replace('\r', "\n");
     let units = escapes(&normalized, true)?;
     (units.len() * 2 <= MAX_STRING_BYTES).then_some(units)

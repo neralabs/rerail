@@ -94,7 +94,36 @@ pub fn parse_own(src: &str) -> Result<Program, Error> {
 }
 
 fn parse_with(src: &str, clauses: bool) -> Result<Program, Error> {
+    if clauses && let Some(program) = lowered(src) {
+        crate::code_rule_dsl::prof::count("rr.lowered_reused", 1);
+        return Ok(program);
+    }
     read_text(src)?.lower(clauses)
+}
+
+/// Programs already lowered, by the digest of the text they print as (`remember_lowered`).
+static LOWERED: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<[u8; 32], Program>>> = std::sync::LazyLock::new(Default::default);
+
+fn text_digest(src: &str) -> [u8; 32] {
+    use sha2::Digest as _;
+    sha2::Sha256::digest(src.as_bytes()).into()
+}
+
+/// Keeps `program` as the program `text` (its print) is: a run handed the text (`tools::run_rr`, which read the file
+/// and lowered it) parses it back to `program` itself, not lowering it a second time. Lowering a printed program
+/// is no identity (a regex's group bindings are added again, a unit atom grounds a rule of constants), so the run
+/// would otherwise hold another program than the one read.
+pub fn remember_lowered(text: &str, program: &Program) {
+    if let Ok(mut kept) = LOWERED.lock() {
+        if kept.len() >= 256 {
+            kept.clear();
+        }
+        kept.insert(text_digest(text), program.clone());
+    }
+}
+
+fn lowered(src: &str) -> Option<Program> {
+    LOWERED.lock().ok()?.get(&text_digest(src)).cloned()
 }
 
 /// A program text read once (its tape, its statements, its includes resolved), for what a run needs of it: its
@@ -350,10 +379,33 @@ fn modules_of(paths: Vec<PathBuf>) -> Result<Files, Error> {
 /// for a text that includes nothing, or while phase 0 itself runs.
 pub fn text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>, Error> {
     use super::plan::corpus::phase0;
-    if phase0::active() { return Ok(None); }
-    // Find directives lexically before constructing another syntax tree for a
-    // program without includes.
-    // Strings, patterns and comments containing "#include" are not directives.
+    use sha2::Digest as _;
+    use std::sync::{Mutex, OnceLock};
+    // An include is the lexer's `#include` (`syntax::Tok::Hash`): a text without those letters includes nothing.
+    // A printed program, its includes resolved, is not read for it; its parse errors are its parse's to report.
+    if phase0::active() || !src.contains("#include") {
+        return Ok(None);
+    }
+    // A function of the text alone, so read once a process: every digest of a run's texts (`texts_digest`) asks it.
+    static SEEDS: OnceLock<Mutex<std::collections::HashMap<[u8; 32], Option<phase0::Seed>>>> = OnceLock::new();
+    let key: [u8; 32] = sha2::Sha256::digest(src.as_bytes()).into();
+    let seeds = SEEDS.get_or_init(Default::default);
+    if let Some(seed) = seeds.lock().expect("text seeds").get(&key) {
+        return Ok(seed.clone());
+    }
+    let seed = read_text_seed(src)?;
+    let mut kept = seeds.lock().expect("text seeds");
+    if kept.len() >= 256 {
+        kept.clear();
+    }
+    kept.insert(key, seed.clone());
+    Ok(seed)
+}
+
+fn read_text_seed(src: &str) -> Result<Option<super::plan::corpus::phase0::Seed>, Error> {
+    use super::plan::corpus::phase0;
+    // The letters may stand in a string, a pattern or a comment, which are not directives: the lexer's tokens say,
+    // before another syntax tree is made for a program without includes.
     let lexed = syntax::lex(src);
     if lexed.error.is_none() && !lexed.toks.iter().any(|(t,_,_)| matches!(t, syntax::Tok::Hash(_))) {
         return Ok(None);
@@ -525,6 +577,16 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
         return Ok((program.clone(), files.clone()));
     }
     let (statements, files) = program(path)?;
+    let program = lower_files(path, statements)?;
+    cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
+    Ok((program, files))
+}
+
+/// A file's program from its modules' statements (`program`): its names checked, its own rules grounded, and lowered,
+/// as `read_file` reads it. Testing mode (`rr::testing`, decision 0130) gives the file's statements with a test's
+/// spliced in.
+pub fn lower_files(path: &Path, statements: Files) -> Result<Program, Error> {
+    let key = path.canonicalize().map_err(|e| Error::Syntax(format!("{}: {e}", path.display())))?;
     check_names(&statements, false)?;
     // The file's own rules grounded (`refuse_ungrounded`), its includes' `fix` relations given.
     let own_path = path.canonicalize().unwrap_or_else(|_| path.to_owned());
@@ -546,8 +608,7 @@ pub fn read_file(path: &Path) -> Result<(Program, Vec<LibraryFile>), Error> {
     if !library.is_empty() {
         program.settings.push((super::front::GLOBAL.to_owned(), format!("{} {}", super::front::LIBRARY, library.join(", "))));
     }
-    cache.lock().expect("the program cache").insert(key, (files.clone(), program.clone()));
-    Ok((program, files))
+    Ok(program)
 }
 
 /// The names a program's files may not declare or derive: `core.rr`'s, but in `core.rr` (decision 0047), and names
@@ -687,7 +748,7 @@ fn stored_statements(_path: &Path, src: String) -> Result<Vec<syntax::Statement>
     from_tape::statements(&src, &tape(&src))
 }
 
-type Files = Vec<(PathBuf, Vec<syntax::Statement>)>;
+pub type Files = Vec<(PathBuf, Vec<syntax::Statement>)>;
 
 /// `path` and what it includes, each once (`seen`), includes first, added to `out`; every library file read or
 /// probed, to `read_files`. An `included` file's `.output`s are left out, as are those of what it includes.

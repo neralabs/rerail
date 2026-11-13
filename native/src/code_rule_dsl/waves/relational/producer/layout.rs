@@ -3,10 +3,10 @@ use super::{Demand, Resident};
 use std::{collections::HashSet, sync::Arc};
 
 #[derive(Default)]
-pub(in crate::code_rule_dsl::waves::relational) struct Footprint {
+pub struct Footprint {
     documents: HashSet<usize>,
     selectors: HashSet<(usize, usize)>,
-    bytes: usize,
+    pub bytes: usize,
 }
 impl Footprint {
     pub(super) fn retained(resident: &Resident) -> Self {
@@ -16,7 +16,7 @@ impl Footprint {
             bytes: resident.resident_bytes,
         }
     }
-    pub(in crate::code_rule_dsl::waves::relational) fn admit(
+    pub fn admit(
         &mut self,
         demand: &Demand,
         limit: usize,
@@ -55,5 +55,4 @@ impl Footprint {
     }
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

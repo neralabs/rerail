@@ -405,3 +405,31 @@ fn tier2_programs_round_trip_through_the_disassembler() {
         assert!(first.contains(" TOKEN ") && first.contains("  switch 0 at "), "{first}");
     }
 }
+
+/// A keyword's leaf (`LEAF #65531`, `WORD_KIND`) takes its kind from its token's word
+/// (`wordkind sW #K`), as the lean parser maps a keyword to its kind: so arms differing only in
+/// the keyword's kind are one. A token naming no word is refused there.
+#[test]
+fn a_keyword_leaf_takes_its_kind_from_the_word() {
+    let keyed = RUN
+        .replace("  block 0 records 0 1 kinds=", "  string 0 \"a\"\n  wordkind s0 #2\n  block 0 records 0 1 kinds=")
+        .replace("  switch 0 at 0", "  block 0 word \"a\"\n  switch 0 at 0")
+        .replace("  0004 LEAF #2\n", &format!("  0004 LEAF #{WORD_KIND}\n"));
+    let p = crate::rir_asm::assemble(&keyed).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(p.word_kinds, [(0, 2)]);
+    // Each token's code names word 0 (its index plus one, above the kind's byte).
+    let mut t = tier1(b"aa a ", &[0, 1, 3], &[]);
+    let plain = run(&p, b"aa a ", &t);
+    assert!(plain.is_err(), "a token of no word at a keyword's leaf");
+    for c in &mut t.codes {
+        *c |= 1 << crate::records::KIND_BITS;
+    }
+    let nodes = run(&p, b"aa a ", &t).expect("parses");
+    let kinds: Vec<u16> = nodes.iter().map(|n| n.kind).collect();
+    assert_eq!(kinds, [1, 2, 2, 2]);
+    // The rows rise by string; a keyword's leaf needs them.
+    let twice = keyed.replace("  wordkind s0 #2\n", "  wordkind s0 #2\n  wordkind s0 #3\n");
+    assert!(crate::rir_asm::assemble(&twice).is_err());
+    let none = keyed.replace("  wordkind s0 #2\n", "");
+    assert!(crate::rir_asm::assemble(&none).is_err());
+}

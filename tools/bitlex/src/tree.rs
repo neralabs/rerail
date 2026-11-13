@@ -97,6 +97,8 @@ struct Parser<'a> {
     /// The flags this level runs with (`with F A`): its caller's, but where a `with` or a
     /// `without` set them.
     flags: Vec<String>,
+    /// The nested levels open: in one, a mark it can not take ends it, and is its caller's.
+    nested: usize,
 }
 
 impl<'a> Parser<'a> {
@@ -122,7 +124,9 @@ impl<'a> Parser<'a> {
             let me = self.out.len();
             self.out.push(Node { kind: kind.clone(), field: None, supertypes: vec![], extra: false, start: 0, end: 0, size: 0, leaf: false });
             self.open.push(me);
+            self.nested += usize::from(nested);
             let next = self.matches(body, at, follow);
+            self.nested -= usize::from(nested);
             self.open.pop();
             let next = next?;
             // Its span is its tokens', marks left out: a rule of marks alone has none.
@@ -140,7 +144,10 @@ impl<'a> Parser<'a> {
             Some(next)
         } else if let Some((_, supertype, body)) = decl.choices.iter().find(|c| &c.0 == name) {
             let me = self.out.len();
-            let next = self.matches(body, at, follow)?;
+            self.nested += usize::from(nested);
+            let next = self.matches(body, at, follow);
+            self.nested -= usize::from(nested);
+            let next = next?;
             let first = (at..next).find(|&i| !self.tokens[i].mark);
             let last = (at..next).rev().find(|&i| !self.tokens[i].mark);
             if let (Some(first), Some(last)) = (first, last) {
@@ -623,7 +630,8 @@ impl<'a> Parser<'a> {
     }
 
     /// From `at`, past the marks the grammar can not take here (`follow`): hidden ones are
-    /// skipped; one not hidden, `None`.
+    /// skipped; one not hidden, `None`. In a nested level, one not hidden ends the level, as
+    /// the machine's: its caller takes it or refuses the file (`sym`'s `rewound`).
     fn past_marks(&self, mut at: usize, follow: u64) -> Option<usize> {
         while let Some(t) = self.tokens.get(at).filter(|t| t.mark) {
             let bit = self.look_bit(&t.kind);
@@ -631,7 +639,7 @@ impl<'a> Parser<'a> {
                 break;
             }
             if self.hidden & bit == 0 {
-                return None;
+                return (self.nested > 0).then_some(at);
             }
             at += 1;
         }
@@ -745,7 +753,7 @@ pub fn nodes(decl: &TreeDecl, tokens: &[Token], n: usize) -> Result<Vec<Node>, S
         return Err("more than 64 marks and soft keywords".into());
     }
     let extra_at = extras.iter().map(|e| e.1.start).collect();
-    let mut p = Parser { decl, tokens: &plain, out: Vec::new(), looks, hidden, named: HashMap::new(), named_starts: HashMap::new(), open: Vec::new(), extras: extra_at, dissolved: None, fatal: None, word: None, flags: Vec::new() };
+    let mut p = Parser { decl, tokens: &plain, out: Vec::new(), looks, hidden, named: HashMap::new(), named_starts: HashMap::new(), open: Vec::new(), extras: extra_at, dissolved: None, fatal: None, word: None, flags: Vec::new(), nested: 0 };
     first_of(&mut p);
     // A whole root is opened at byte 0 and matched by its content, which may be empty. Marks
     // before the first token are kept where the root can start with them.

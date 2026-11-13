@@ -3762,6 +3762,86 @@ compiled only there.
 
 **Closure:** the target builds, and `base_tests` runs (O-p0-stats-flake's 20 runs).
 
+## O-rr-tests-bitlex (closed 2026-11-12). The compiled `.rr` grammar does not know `.test` blocks
+
+**Closed.** Step 22 of the ladder (`22-test-blocks.bitlex`), now `rerail-rr-parser`'s grammar, reads `.test` and
+`.fixtures` blocks to the engine's tape, as rules and as one machine, and refuses what the engine refuses
+(decision 0130 §4). `rule_files_with_tests_are_the_engines` checks the two files with tests; the ladder's step 22
+passes (`RERAIL_LADDER=22`). Two fixes outside the grammar came with it:
+- The reference (`tools/bitlex/src/tree.rs`) refused a file where a mark that is not hidden came after a nested
+  level's last token, though its caller takes it. It now ends the level there, as the machine does and as its
+  own comment says.
+- The one-machine shape refused a call that returns to state 0 ("extras with the root's start state entered
+  again"). For a `whole` root, state 0 is like any other state, so the guard now holds only for a root that is
+  not whole.
+
+The tier 2 ratchets rose: per rule, 371 states and 8,860 words to 380 and 9,348; one machine, 266 states and
+2,590 arms to 271 and 2,621.
+
+**Seen (2026-11-12), decision 0130.** The engine's parser (`syntax.rs`) and the lean parser (`lean.rs`) read a
+`.test` … `.end` block into a `test_block` node. The Bitlex grammar (`rr_syntax/bitlex_ladder/21-named-only.bitlex`,
+compiled by `rerail-rr-parser`) does not: it reads each of the block's lines as a setting and does not refuse the
+file, so its tape differs from the engine's on a file with tests. The compiled parser is on no read path yet
+(`transducer/packed.rs`), and its corpus test (`corpus_tapes_are_the_engines`) is ignored and was not run.
+
+**Closure:** the grammar reads the block as the engine does, and `corpus_tapes_are_the_engines` passes on the
+files with tests (`packs/python/bandit-b101-assert-used.rr`, `spikes/rr-tests/print-calls.rr`).
+
+## O-run-rr-strict (closed 2026-11-12). `run-rr` reads atoms inside the waves under `RERAIL_SQL_STRICT`
+
+**Closed: the store, not `run-rr`.** Decision 0104 reads a store's atoms whole before the first wave when they
+are at most 64 MB of text, and has a larger store look them up by key during the run, "which the strict mode
+reports". The machine's default store (`$TMPDIR/rerail-tape-cache.sqlite`) holds 4.9 M atoms, 421 MB of text.
+On the same binary and rule, with a one-file corpus: on that store, strict stops (exit 134, at an
+`atom_segment` read inside the waves); on a new store, the run passes and reports B101. `test-rr` uses a store
+of its own (decision 0130 §7) and passes all 8 tests under strict. What remains is O-store-atoms-grow.
+
+## O-store-atoms-grow (closed 2026-11-12). The machine's default store's atoms only grow
+
+**Closed** by decision 0131: there is no machine-wide default store. A run's default store is its project's for
+this build, and other builds' stores are removed after a day. The one-file B101 run passes under
+`RERAIL_SQL_STRICT=1` on it, with a 1.4 MB store. Atoms that no kept row names are still never collected inside
+one store; a project's store for one build stays near its corpus's size.
+
+**Seen (2026-11-12).** `$TMPDIR/rerail-tape-cache.sqlite` is 4.4 GB, with 4,890,262 atoms in 343,213 segments,
+421 MB of text: about 20 times the full corpus's 21 MB (decision 0049). Every run on the machine, from every
+worktree and build, adds its strings, and nothing removes an atom. Past 64 MB a run finds atoms by key inside
+its waves (decision 0104), so `RERAIL_SQL_STRICT=1` stops any run on that store.
+
+**Closure:** a store's atoms stay near what its kept facts name (atoms no kept row names are collected), or the
+CLI's default store is per build as testing mode's is; then a strict run on the default store passes.
+
+**Seen (2026-11-12).** `rerail-engine run-rr docs/rule-syntax/packs/python/bandit-b101-assert-used.rr <a one-file
+corpus> <out>` with `RERAIL_SQL_STRICT=1` stops at `SELECT id FROM atom_key WHERE h IN rarray(?1)`. The read is
+`atoms::find`, from `intern_atoms` while a chunk builds its matchers (`facts::vtab::syntax::with_matchers`,
+`run_observed`'s `cut_chunk`). `test-rr` runs through `run-rr`, so it stops the same way. Without strict SQL, both
+run and their results are right. Decision 0130's work does not touch that path. Whether it fails on the hub was not
+checked.
+
+**Closure:** a chunk's matchers intern their atoms before the first wave, or from what the run read then, and
+`run-rr` and `test-rr` pass under `RERAIL_SQL_STRICT=1`.
+
+## O-test-rr-busy (closed 2026-11-12). Back-to-back runs in one `test-rr` process can find the store's writer busy
+
+**Closed.** The cause was the store, not the runs. `test-rr`, and the addon's `testRr`, used the machine's store
+(`$TMPDIR/rerail-tape-cache.sqlite`, 4.4 GB), which every engine run on the machine writes. Its WAL was being
+written by another process while the tests failed, and the addon's first test failed the same way. Testing mode now
+has a store of its own per build (decision 0130 §7). Then `test-rr docs/rule-syntax` passed six times in a row, and
+the addon's `testRr` three times.
+
+**Seen (2026-11-12), decision 0130.** `rerail-engine test-rr docs/rule-syntax` runs six tests, each a run, one
+after another in one process, on the CLI's default store. Once in four tries, one test failed with "a write queued
+behind the run failed: … the batch's commit: content store writer is busy". The other three tries passed all six.
+A run's writes may lag it (decision: SQLite durable, memory ahead), so the next run's write can meet the last one's.
+No other `rerail-engine` process was running. The engine's tests did not show it: each test has its own store
+(decision 0118).
+
+**Closure:** a write queued behind one run waits for or joins the next run's writer, rather than failing. Or a run
+in a process waits for the last run's queued writes before it writes. Then twenty tries of `test-rr` pass.
+
+**Status (2026-11-12):** the target builds (the engine hosts the tests that read above the crate); 20 pass,
+the two text tests fail (O-device-step-counts).
+
 ## O-phase0-store-state. Phase 0's include graph depends on what the store already holds
 
 Each test now starts from a copy of a store template that already holds the
@@ -3783,6 +3863,191 @@ relations, not the observer: the module digests match.
 It passes with `RERAIL_TAPE_CACHE` pointing at an empty store. Next step: find
 whether the first or the second run is wrong (compare both with a run on an
 empty store), then fix the rule or the maintenance that loses the edge.
+
+**Closed (2026-11-12).** On the hub after the final roll-up, the test passes in the template's store: six
+runs alone, and `logic::plan::corpus` (73 tests) twice in one process. The maintenance merged in the roll-up
+keeps the edge. `bootstrap_resolves_as_the_builtin_reader_does` runs again (no `#[ignore]`).
+
+**Open again (2026-11-12): intermittent.** It failed once more, in `logic::native logic::plan` under load. Since
+then, four runs of that set in one process have passed. Four threads deriving the same seed at once agree with
+a derive alone, three rounds of it (a test written for the check, then removed). Shared derive state is not the
+cause, then; the graph side (`graph`, the kept text) is the suspect. On a failure, the assertion now prints both
+graphs (`Graph::describe`: includes, missing, absent), so the next one shows which edge differs.
+
+## O-repetition-implied-boundary. A `+` run on the tape does not end at an implied token
+
+**Seen (2026-11-12).** Tree-sitter ends a quantified sibling run at an anonymous
+sibling: `(list ((identifier) @item)+)` on `items = [a, b, c]` gives three
+matches of one item each. The tape stores no implied token (RER-131), so the
+transducer's run goes on over `a b c` and gives one match of three items.
+`repetition_across_an_implied_token_is_one_run_on_the_tape` pins both results.
+
+**Closure:** decide whether any rule depends on tree-sitter's boundary. If one
+does, the program reads the boundary from the gap between stored siblings
+(the tape's `implied` gaps, `tape.rs`), never from generated tokens.
+
+## O-slice-launch-limit (closed 2026-11-12). One file's Metal label passes take more launches than the bound
+
+**Seen (2026-11-12).** `slice::tests::the_backends_find_the_same_keys_on_real_files`: the interpreter and the
+JIT agree (101 files, 491 clauses, 2193 keys); the Metal backends end in `BackendLaunchLimit`.
+`roots_metal_split` halves the batch down to one file, and one file still needs more than
+`KERNEL_LAUNCH_LIMIT` (200, the user's decision of list step 26). `RERAIL_LAUNCHES=1`, refused dispatches of
+the whole batch: `label_settle` 1044, `label_micro_8` 912, `label_micro` 526, `clause_patterns` 33,
+`label_round` 5, a few `label_group_*` and `root_records_*`.
+
+**Closure:** the label passes' launches bounded by the plan (settle and micro passes batched over clauses), or
+a new bound decided by the user. The bound is not raised here.
+
+**Closed (2026-11-12): batched; the bound stays 200.** The plan counts every recursive group as one fused
+dispatch (`label_group_*`), but a group ran unfused, at rounds × levels launches, whenever one of its walks was a
+loop walk (no static depth) or had a static depth over 64. Three changes:
+
+- A group fuses whatever its walks' depths. A walk takes the fewest frames that hold its static depth, at most
+  the run's tier: 64, or 256 on the deep run (`label_group_128` and `label_group_256` added). A static depth
+  bounds the grammar's nesting, not a file's. A walk that does outgrow its frames flags it, and the group runs
+  again deep, then interpreted.
+- The deep run still overflowed on one file, at a fork (`MICRO_FAIL` tagged by site, a temporary trace). The
+  cause was not nesting but `bounded`'s loop, `top: step; FORK reached; SUPERTYPE bound; GOTO top`. Each node
+  it passed left the exit path as a frame, so walking a module's statements by `NEXT` held one frame per
+  statement. `bounded` now takes the exit first and keeps the path that goes on as the fork's frame:
+  `top: step; FORK on; GOTO reached; on: SUPERTYPE bound; GOTO top; reached:`. The loop holds one frame. A
+  label is a set of nodes, so the order of its paths is free.
+- Without overflows, nothing falls to the interpreter, whose workspace for that file was over the buffer budget
+  even at 512 states.
+
+The slice test passes with all four backends: 101 files, 491 clauses, 2193 keys each. The largest batch takes
+97 launches (planned 74). Batches over the buffer budget still split (`BackendCapacity`), as designed. Not
+measured here: the Metal backends' process CPU (430–450 s against the CPU backends' 130 s; the run is under
+`nice` and shares the machine).
+
+## O-closures-one-wave-flake. A level's closures sometimes launch in no wave
+
+**Seen (2026-11-12),** once in four runs of `logic::native logic::plan` in one process:
+`logic::plan::tests::closures_of_one_level_launch_in_one_wave` read `(0, 0)` waves and launches for the program
+mode, where it expects `(1, 3)`. The counter (`lanes::wave::flushed`) is the thread's own, so no wave ran on the
+test's thread. Ruled out: other tests' waves (thread-local counters), connection reuse (a closed connection's
+components and derived relations are dropped by its client-data destructor), and the device binding
+(thread-local). The remaining ways to get no wave are a closure that keeps levels (`prepare` returns no
+launches), a closure not recognized (the stratum placed on device rounds), and a caller that cannot wait.
+
+**Closure:** make the assertion name which of the three it was, then fix that one at its root.
+
+**Closed (2026-11-12): the count was read on the wrong thread.** None of the three. A level's closures run as a
+component's job on an executor thread, and they did go out as one wave of three, but the wave was counted on the
+job's thread while the test read the run's thread. A job now carries its waves back to the thread that takes it
+(`wave::since`, the `Strand`, `absorb` / `absorb_forms`): 4dde583e2 on `investigate-bend-vs-datalog`, merged into
+the hub. On the hub, 10 of 10 alone.
+
+## O-metal-slice-cpu. The Metal backends take three times the CPU backends' process CPU on the slice
+
+**Seen (2026-11-12)** in `slice::tests::the_backends_find_the_same_keys_on_real_files`, once the Metal backends
+completed (O-slice-launch-limit): interpreter 130 s, JIT 130 s, metal-interpreter 449 s, metal-jit 428 s of process
+CPU for the same 101 files and 2193 keys. One run, under `nice`, on a shared machine; not split by phase. The
+batch splits on `BackendCapacity` (101 → 50 → 25 → 12 files) each encode the clause again before it fails.
+
+**Closure:** measure warm and unprofiled (host CPU, GPU and wall apart, zero compiles in the timed run), split
+the host CPU by phase, and find the host work a Metal run repeats or does at all; then fix it at its shape.
+
+## O-pack-upstream-data. The Python pack's upstream sources are not in the checkout
+
+`compile_matcher_tests::the_gate_catches_a_widened_walk` fails here (`only 2 widened clauses differ`), with the
+`bounded` change and without it. `packs/python/upstream` holds 3 `.py` files; before #179 moved the pack's test
+data out of git (236fc98d2~1), it held 618. The test samples every fourth one. **Closure:** `npm run
+fixtures:pull` (CONTRIBUTING.md, "Pack test data"), then run the test again.
+
+## O-device-step-counts (closed 2026-11-12). The device's per-step counts of a cross join are not the CPU's
+
+**Seen (2026-11-12),** now that `rerail-device-metal`'s test target builds (O-device-metal-tests):
+`setfix::device::tests::text_tests_on_the_device_are_the_cpus` and `text_functions_on_the_device_are_the_cpus`.
+The rows were the same; the counts differed only at a step that joins `m` (60 rows) with `n` (2000 rows).
+The first reading had the sides backwards: the device counted the product, 120000; the CPU 78733 to 80169.
+The CPU's walk factors rows: a step whose key it has already seen fail (`Ctx.failed`) is skipped, and the
+skipped rows never reached the step counts.
+
+**Decided:** a step's count is the join's cardinality, the rows the plan's step sees, whatever a backend skips.
+That is what the planner estimates and what the device reports. The CPU now keeps, with each failed key, what
+its walk added to the counts of the steps below it, and adds that again when it skips the key. The saving is
+kept apart: `JoinRow` is charged for the skipped rows and `setfix::passed_over` gives them per join probe.
+`a_late_test_rejects_once_per_group_of_what_it_reads` asserts both (10000 counted, 8955 passed over).
+The device-metal target passes 22 of 22.
+
+## Setup cost of a batch of policies (measured 2026-11-12)
+
+The items below come from one sampled run: the 43 strict data-layer policies of `run-policies` over a one-file
+corpus (`dl1`), CPU, after commit 04f66708c (246G instructions retired, of which the main thread is nearly all).
+Shares are of the main thread's samples. Rule evaluation itself is a small part of such a run; a batch is mostly
+setup that each policy repeats. Each item says what repeats, why it need not, and how to close it.
+
+## O-batch-typing-once. Each policy reruns the same typing program over the same files
+
+**Seen (2026-11-12).** About 15% of the batch: `bridge::facts` → `run_typed` (13.5%), and reading the typing
+program's source again for each policy (`bridge::source` → `tools::program_text` → phase 0, 2.2%). Every policy
+that includes `lib/python/calls.rr` or `lib/python/types.rr` reads `typing_calls__<output>` relations, so its run
+first runs `typing/programs/calls.rr` in full over the corpus: planning it (`keeps::choose` →
+`calibrated_rows` → `plan_rule_explained`, 4.9%), then executing it (3.3%). Policies differ only in which of the
+seven outputs they read (the `typing_bridge_at` rules added to the program's text), so the same rounds run once
+per policy. O91 is the same work across runs; this is the same work within one batch.
+
+**Closure:** a batch runs each typing program once, for the union of the outputs its policies read, as the typing
+phase (P2 in the phase layout of decision 0083) ahead of the policies, and hands each policy its rows. Measured as
+`run_typed` once per batch, not once per policy, with findings unchanged on dl1 and dl10 (CPU and device).
+
+## O-batch-phase-sources. Earlier phases' sources are made again for each policy
+
+**Seen (2026-11-12).** 5.5% of the batch: `phases::sources` → `run_with_options`, inside each policy's run. The
+phases a policy's program reads (decision 0083 §1) run in their own fact spaces for every policy, though the
+policies of a batch read the same phases over the same files.
+
+**Closure:** as O-batch-typing-once: each phase runs once per batch for every policy that reads it, and is measured
+so.
+
+## O-lower-aggregate-demand. Aggregate demand clones and rescans the whole program for each aggregate
+
+**Seen (2026-11-12).** 8.3% of the batch, the largest part of lowering (lowering, `rr::read_file`, is 22%).
+`rr::aggregate_demand::optimize` loops over the program's aggregates. For each one it calls
+`dependencies(program)`, a scan of every rule (1.1%), and tries its candidate on a full copy of the program
+(`let mut next = program.clone()`; the clone alone is about 1.8%). Each aggregate's cost grows with the whole
+program, not with the rules it touches.
+
+**Closure:** one dependency map, updated as each candidate is placed, and candidates tried in place on the rules
+they change, with an undo when refused. `aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps` and
+the `lowering_is_idempotent_*` shards pass, and `optimize` costs a small fraction of lowering.
+
+## O-combine-hiding-single. A single program pays guest hiding's analysis in `combine`
+
+**Seen (2026-11-12).** 7.5% of the batch: `combine_texts` → `hiding::hide` (`analyse`, `carry`), for runs that
+combine one program. `combine`'s documentation says one program is parsed as it is, yet each policy's single text
+is still analysed for hiding (decision 0058 §2). O99 is hiding's cost at scale. This is its fixed cost for each
+program.
+
+**Closure:** either hiding is shown to change nothing for one program and is skipped, or what it computes is kept
+by the text's digest (like the combined program, decision 0094 §6). Measured as `hiding::hide` below 1% of a
+batch.
+
+## O-vocabulary-dfa-reuse. The text vocabulary's DFAs are built again for each policy
+
+**Seen (2026-11-12).** 3.5% of the batch: `strings::Vocabulary::compile` → `text::vocabulary::Searchers::new` →
+dense DFA determinization (`dfa::dense::Builder::build_from_nfa`), once per policy. The data-layer policies share
+most of their library patterns, but each policy's vocabulary is compiled from scratch.
+
+**Closure:** compiled searchers kept by pattern set (or per pattern, then combined), so a pattern set already built
+in the process is not built again; or a lazily determinized DFA where the dense build costs more than the search
+saves. Measured as `Vocabulary::compile` below 1% of a batch, with match results unchanged.
+
+## O-texts-digest-twice. A run's texts were digested twice (closed)
+
+**Seen (2026-11-12).** About 6% of the batch (`texts_digest` → `rr::graph_digest`, twice per policy). `combine`
+digested its texts for its cache key, then the run took the same digest again, each time tokenizing every program
+text for its `#include`s. **Closed (2026-11-12, 04f66708c):** `combine_keyed` returns the digest it computed;
+`text_seed` is kept per text digest, and a text without `#include` (a printed program) is not tokenized. dl1
+278G → 246G instructions retired (with 5db161b00), dl10 418G → 374G.
+
+## O-lower-idempotent. Lowering a printed program gave another program (closed)
+
+**Seen (2026-11-12).** Reading back a printed program added a second copy of each regex-group binding and
+`rr_unit(0)` atoms, renamed natively made relations, and split set memberships into one rule per value.
+**Closed (2026-11-12, 5db161b00):** each of the 1,140 programs under `docs/rule-syntax` prints, lowers and prints as
+the same text (`lowering_is_idempotent_*`, 11 shards within the run cap).
 
 ## O-replan-churn. Every edit replans about 3,350 rules whose kept order "grew over 4x" (closed)
 
@@ -3880,11 +4145,11 @@ What is not an opportunity: reprobes (0.05 s with the indexes they open) and the
 each, 0.11 s; they are what stands in for a search). The index builds in `open: joins` (0.36 s) are the joins'
 own cost, not replanning's.
 
-**Closed (2026-11-12, decision 0124 §1).** All five are built. A live replan keeps the re-priced order when its work
+**Closed (2026-11-12, decision 0132 §1).** All five are built. A live replan keeps the re-priced order when its work
 is under what a search costs (`search_rows`), or when it has one positive atom. Its distributions are compared in
 proportion, the state before the last is kept, and a live search's EXPLAIN is made only when its order is taken.
 Live searches went from 1,162 (0.40 s) to 558 (0.04 s) per edit. Planning fell from 4.5% to 3.1% of the edit's
-CPU, and the join work is the same in each later run (8,766,423). 0124 also makes the cold search a third
+CPU, and the join work is the same in each later run (8,766,423). 0132 also makes the cold search a third
 cheaper, with the same plans, and sizes greedy-first, classifiers and bulk planning.
 
 ## O-cutoff-phases. The whole-run cutoff never applies to a phased program
@@ -4003,9 +4268,9 @@ is about 21% of a warm step's CPU, but in instructions planning is not a big roc
 
 **Merged with O-replan-churn's form (2026-11-12).** Both branches had built the kept-plan rule. The merged engine
 keeps one form, O-replan-churn's (`plan_rule_reused`: re-priced under `REPLAN_ROWS`, whatever the distributions;
-`plan_rule_live`: kept when the re-priced work is under what a search costs, `search_rows`, decision 0124).
+`plan_rule_live`: kept when the re-priced work is under what a search costs, `search_rows`, decision 0132).
 `RERAIL_REPLAN_CHEAP` is gone. The live bound is a search's cost, not `REPLAN_ROWS`: a live search that changes the
-order saves up to the kept order's work, and a flat 10,000 rows gave up some of that (0124 §1). The step 01-03
+order saves up to the kept order's work, and a flat 10,000 rows gave up some of that (0132 §1). The step 01-03
 figures above were measured with the flat bound.
 
 **Closure:** a stratum's plans are kept from step to step and are planned again only when a statistic they read
@@ -4105,14 +4370,26 @@ open (7,696, 1.13 s) take back most of what the joins save. The `ifn__ins` case 
 is empty at open, is not covered. At step 07, planning (search, plan, replan, re-price, 4.8 s) costs about as much
 as the joins it plans (4.7 s), against decision 0122.
 
-## O-search-cost. One cost of a search, measured once (0122, 0124)
+## O-rr-tests-sigill. One run of `logic::rr::` and `logic::plan::corpus::tests::` died of SIGILL
+
+**Seen (2026-11-12), after merging the hub into `More-ergonomic-rule-syntax`.** `cargo test -p rerail-engine
+--lib -- logic::rr:: logic::plan::corpus::tests::` ended with "signal: 4, SIGILL: illegal instruction" after
+92.7 s, with a peak of 4.1 GB resident (load about 33). The next two runs of the same test binary
+(`rerail_engine-5a2aa8607bf76fd1`) passed all 136 tests, in 55 s and 51 s, with peaks of 1.7 GB. The output kept
+does not say which test was running when it died.
+
+**Closure:** the test that dies is found (a run with `--test-threads 1` and its whole output kept), and the cause
+is fixed, or it does not recur in ten runs.
+
+## O-search-cost. One cost of a search, measured once (0122, 0132)
 
 **Seen (2026-11-12, at the merge of phased-facts).** Two branches priced a join-order search in rows of join work
 and both prices are in the engine: 0122's `SEARCH_WORK` (250 rows: 0.16 ms a search at 0.74 µs a row, O125 step
-07) gates kept orders, the first wave's whole plans and a run's probe replans; 0124's `search_rows` (400 rows plus
+07) gates kept orders, the first wave's whole plans and a run's probe replans; 0132's `search_rows` (400 rows plus
 one per candidate: 0.3 ms plus 0.7 µs a candidate, the P3 bench) gates the re-priced live replan. They are one
 quantity. A long body's search costs many times a short one's (`fgp`: 11,665 rows), so a flat price keeps too few
 long rules' orders and searches short ones it could keep.
 
 **Closure:** one O125 measurement of a search's fixed cost and its cost per candidate, in the build both run; both
 gates read `search_rows`, and `SEARCH_WORK` is its fixed part.
+

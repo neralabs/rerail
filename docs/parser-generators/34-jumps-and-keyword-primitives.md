@@ -673,6 +673,648 @@ What is left, by Cranelift instructions in the rule functions:
 - **Fewer words,** from the two steps above:
   a leaf of its token's own kind, and code shared across rules.
 
+## Built: cheaper calls, fewer words
+
+Each word's machine code is now measured where it sits:
+the dump maps every instruction to its word (Cranelift's source locations),
+so a word's cost is its own bytes, not its share of the IR.
+
+- **A rule that returns one way gives back 0.**
+  412 of the 559 calls go to a rule whose `RETURN`s are all alike,
+  and the caller tests the result once (`cbnz`), as a `Result`'s.
+- **The calls open are an argument.**
+  Within one call of a rule function the count of calls open never changes,
+  so it is the function's last argument:
+  a call passes one more, a `RETURN` tests it against zero,
+  and `TOKEN`'s function takes it for its room check.
+  No load or store of the count is left around a call.
+  (Dropped since: with code shared from the middle of rules,
+  the count spilled; see below.)
+- **The stream's end is a token kind of its own.**
+  At the end, `TOKEN` sets the token to a kind past the records' kinds,
+  so a switch on kinds sends it to its end target in the same compare tree,
+  as the lean parser's end token. The separate end test is gone from every switch.
+- **A call goes to any rule's code that behaves the same as its callee's.**
+  The word merge (`merge_words`) also finds which words behave the same across rules,
+  and a call's `GOTO` goes to the first such place in any rule.
+  Rules that are copies, whole or from where a call enters, become one function,
+  as the lean parser's rules call one helper.
+  No word reaches another rule except by a call.
+
+| | Words as calls | Now | Lean parser |
+|---|---|---|---|
+| Words | 8,563 | 8,144 | |
+| Machine instructions | 43,654 | 38,750 | 10,008 |
+| Code bytes | 174,616 | 155,000 | |
+| Tier 2, instructions | 354.2M | 335.1M | 356.9M |
+| Tier 2, cycles | 72.3M | 63.9M | 69.6M |
+
+The load average was about 30 for the last measurement.
+
+Where the machine code is now, by word:
+
+| Word | Words | Instructions each | Share |
+|---|---|---|---|
+| `SWITCH` | 322 | 27 | 28% |
+| `PUSH` | 530 | 10 | 18% |
+| `ROW` | 351 | 7 | 8% |
+| `MARK` | 337 | 6 | 7% |
+
+A switch already has the lean parser's shape:
+rustc compiles its `match`es as compare trees too, with no jump table.
+What differs is how many switches there are:
+the lean parser has 1,198 compares, tier 2 has 5,102.
+
+### Tried first: code shared from the middle of rules
+
+Beyond whole callees, rules share tails:
+code from some state onwards that behaves the same in two rules.
+Sharing those as well would save about 6,200 instructions,
+through 196 places where one rule goes into another's code.
+
+- **As tail calls** (`return_call`), it saved nothing:
+  each one restores every callee-saved register first,
+  six `ldp`s and an `add`, at each of 587 places.
+- **As a call whose result is passed on**,
+  as the lean parser's `return self.helper()`, it still lost:
+  - in the largest functions, the register allocator then keeps `ctx` on the stack
+    and reloads it at each use: 5,700 stack loads, from 260;
+  - regalloc2 splits a value at most twice before it cuts it into one piece a use;
+  - the cliff stayed with the platform calling convention,
+    with copies at the calls, and with the calls-open count back in memory.
+
+Since the kept copy of shared code is in the earliest rule that has it,
+a rule only goes into earlier rules' code,
+so such calls nest no deeper than there are rules.
+What would make it pay is `ctx` outside the allocation,
+in a register of its own for the whole run (Cranelift's pinned register, x21).
+`tempo_stream` would save the host's x21 and restore it,
+and calls would no longer pass `ctx` at all.
+Both are built now: see the next section.
+
+## Built: `ctx` in a register, and code shared from the middle of rules
+
+The aim is the lean parser's code shape, not a faster benchmark.
+Each step below is judged by the machine code against rustc's:
+how many instructions and functions there are,
+what a call looks like, and how much goes through the stack.
+
+- **`ctx` in a register of its own.**
+  It sits in Cranelift's pinned register (x21) for the whole run.
+  Each function reads it once, into a value the allocator keeps
+  in one callee-saved register, as rustc keeps the lean parser's `self`.
+  No call passes it. `tempo_stream` saves the host's x21 and restores it.
+- **Rules share code from any place on.**
+  The word merge now treats words of two rules as alike when they behave the same.
+  A word goes to the first place of its kind, which is in the earliest rule that has it.
+  So a rule only goes into earlier rules' code,
+  and the verifier checks that: a jump that is not a call's
+  may go into an earlier rule, never into a later one.
+  Compiled, such a jump is a call of the earlier rule's function,
+  whose result is passed on, as the lean parser's `return self.helper()`.
+  These calls nest no deeper than there are rules.
+- **One call for each place gone to.**
+  However many words go to the same place in another rule,
+  they jump to one block that makes the call.
+- **A rule that returns one way gives back 0, across shared code.**
+  A rule's ways of returning now include those of the code it goes into.
+- **The calls-open count is back in `ctx`.**
+  It is read and written where a call is made and returns,
+  and read by `TOKEN`'s room check, as the lean parser's `self` fields are.
+
+Three ways to share code were tried and dropped, each because of what it did to the code:
+
+| Tried | What the machine code showed |
+|---|---|
+| The count as an argument, as before | One value through the whole function, given to every call: regalloc2 split it twice, then reloaded it from the stack at each use (1,148 loads) |
+| The count in the high bits of the entry index | The optimizer kept the incoming argument alive to rebuild it, and that spilled instead (1,674 loads) |
+| A helper function for each set of rules that share code | 84 functions instead of 56, and 1,700 more instructions |
+| A tail call into shared code | An epilogue at each of 198 places (785 register restores against 170) |
+
+| | Callees shared | `ctx` pinned | Now | Lean parser |
+|---|---|---|---|---|
+| Words | 8,144 | 8,144 | 6,441 | |
+| Functions | 56 | 56 | 56 | |
+| Machine instructions | 38,750 | 36,258 | 31,702 | 10,008 |
+| Code bytes | 155,000 | | 126,808 | |
+| Reloads from the stack | | 19 | 17 | 0 |
+| Compares | | 5,102 | 4,689 | 1,198 |
+| Tier 2, instructions | 335.1M | | 361.0M | 356.7M |
+| Tier 2, cycles | 63.9M | | 76.5M | 68.8M |
+
+The load average was about 34 for the last measurement.
+More instructions run now, since the code a rule goes into is a call away.
+The benchmark is reported, not used to judge the shape.
+
+What stands between a call here and a call in the lean parser:
+
+```
+// Tier 2: a rule calls another (14 instructions)
+ldr  x5, [x19, #400]    // the calls open
+cmp  x5, #1024          // too deep?
+b.ge refuse
+add  x7, x5, #1
+str  x7, [x19, #400]
+ldr  x23, [x19, #304]   // the level's word and flags, kept
+ldr  x24, [x19, #312]
+mov  x2, x25            // the callee's entry
+bl   rule
+str  x23, [x19, #304]   // given back
+str  x24, [x19, #312]
+cbz  x2, back           // the way it returned
+cmp  x2, #1
+b.ne end
+
+// The lean parser (3 instructions)
+mov  x0, x19            // self
+bl   comments_before
+ldr  x8, [x19, #0x58]
+```
+
+So the next levers are the call's bookkeeping (the depth check, the kept word and flags,
+the three-way result) and the number of compares.
+`PUSH` is now a fifth of the machine code (15 instructions each),
+and `SWITCH` still most of it (29%).
+
+## Built: a call's bookkeeping as the lean parser's
+
+A rule call cost 14 instructions here and 3 in the lean parser.
+The difference was bookkeeping the lean parser does not have:
+a count of the calls open, the level's word and flags kept around the call,
+and a result tested two ways.
+Each one now has the lean parser's shape.
+
+- **The machine's stack counts the calls.**
+  The count served four checks; two of them are proved unneeded,
+  and two moved to where rustc's code would have them:
+  - No `RETURN` runs with no call open, and no `ACCEPT` runs within a call.
+    Both are proved over the program,
+    by the words reached at the same depth from the start and from each callee.
+    Neither is checked at run time.
+    A test asserts the proof holds for `.rr`.
+  - Too deep: one check where each rule function is entered,
+    the stack pointer against a limit in `ctx`, as a stack check in a prologue.
+    Past the limit the file goes to the fallback, as before (a test nests 3,000 deep).
+  - `TOKEN`'s room for the nodes that returns write:
+    the calls open are at most the stack's depth over the smallest rule frame,
+    which Cranelift reports once the functions are compiled.
+    The bound is loose, but no file of the corpus runs again on a bigger tape.
+- **The word and flags are callee-saved.**
+  A function whose own words change them keeps the values it was entered with
+  and gives them back at its one exit, as a callee-saved register is.
+  Calls keep nothing.
+- **The callee takes its caller's token.**
+  Every call returns to the same `TOKEN`, in its caller, so a `RETURN m=0` takes that token itself,
+  as the lean parser's callee consumes the token and its caller peeks at it.
+  Then every return lands on the caller's switch, and every call tests its result once.
+  This was tried before and dropped: then, `ctx` spilled.
+  With `ctx` pinned, it does not.
+
+A rule call and a function's entry now:
+
+```
+// Tier 2: a call (3 instructions)
+mov   x2, #12          // the callee's entry
+bl    rule
+cbnz  x2, end          // the run's end, passed on
+
+// A rule function's entry: the stack check
+mov   x26, x21         // ctx
+ldr   x8, [x26, #232]  // the stack's limit
+mov   x9, sp
+cmp   x9, x8
+b.lo  refuse
+```
+
+| | Before | Stack counts calls | Callee-saved context | Callee takes the token | Lean parser |
+|---|---|---|---|---|---|
+| Machine instructions | 31,702 | 28,962 | 27,433 | 26,575 | 10,008 |
+| `PUSH`, instructions each | 15.1 | 8.1 | 4.1 | | 3 |
+| Calls tested once | 35 of 366 | | | 366 of 366 | all |
+| Stores | 1,826 | 1,435 | 737 | 737 | |
+| Stack reloads | 17 | 15 | 10 | 10 | 0 |
+| Compares | 4,689 | 4,348 | 4,348 | 3,972 | 1,198 |
+| Tier 2, instructions | 361.0M | 350.4M | | 331.1M | 356.4M |
+| Tier 2, cycles | 76.5M | 74.7M | | 64.0M | 68.3M |
+
+The load average was about 21 for the last measurement.
+
+Between the callee-saved context and the taken token, the single-way test was also made per entry
+(the `RETURN`s reached from where a call enters, not from the whole function):
+87 calls tested once, from 35.
+It stays as the fallback where the callee cannot take the token.
+
+What is left is mostly the switches: 36% of the machine code, 28 instructions each,
+and 3,972 compares against the lean parser's 1,198.
+
+## Built: switches as rustc lowers a `match`
+
+A switch was a binary tree over every run of one target, gaps included.
+rustc hands a `match` to LLVM, whose switch lowering does three things this did not:
+
+- **A default target.**
+  The tree splits only the cases that are not the default,
+  and each side knows the range its value is in.
+  So a case at a leaf is one test (an equality, a bound or a range),
+  and a switch that expects one kind is one compare, as `expect(kind)`.
+- **A keyword's kind is a value, not a branch.**
+  The lean parser maps a keyword to its node kind (`Kind::DotDecl + (d - W_DECL)`)
+  and then runs one code path.
+  Here, a switch over 30 keywords had 30 arms that differed only in the leaf's kind.
+  Now a leaf of a keyword's own kind names `WORD_KIND`,
+  and takes its kind from the token's word through the program's `wordkind` rows.
+  The keywords' strings are numbered in the order of their kinds, as the lean parser's words are,
+  so the map is one add over each run of kinds.
+  The arms are then the same words, and the lowering keeps one copy.
+- **Bit tests.**
+  Cases of at most three targets within 64 values
+  are a shift and a mask per target, as LLVM makes them when they save enough compares.
+
+```
+// One keyword switch, before: a compare per keyword (30 targets)
+ldrb  w6, [x25, #353]   // the token's word
+cmp   x6, #28
+b.lo  ...
+cmp   x6, #36
+b.lo  ...               // ... 30 more
+
+// After: the words of one arm are one range; the kind is an add in the leaf
+ldrb  w6, [x27, #353]
+cmp   x6, #21
+b.lo  ...
+sub   x8, x6, #3
+cmp   x8, #10
+b.lo  arm
+
+// A bit test: three targets over values 24..32
+sub   x8, x2, #24
+mov   x7, #1
+lsl   x7, x7, x8
+mov   x8, #89           // the first target's values
+and   x8, x7, x8
+cbnz  x8, first
+tbnz  w7, #7, second    // one value: one bit
+b     default
+```
+
+| | Before | A default | Keyword kinds as values | Bit tests | Lean parser |
+|---|---|---|---|---|---|
+| Machine instructions | 26,575 | 26,092 | 24,828 | 24,375 | 10,008 |
+| `SWITCH`, instructions | 8,123 | 7,371 | 6,734 | 6,147 | |
+| Compares | 3,972 | 3,755 | 3,439 | 3,004 | 1,198 |
+| Tier 2, instructions | 331.1M | | | 330.9M | 356.6M |
+
+The code is smaller, but tier 2 runs about as many instructions as before:
+the paths files take were short already, and the cases cut were mostly ones they rarely reach.
+(Cycles are not given: the load average was 58.)
+
+What is left in the switches is mostly inherent:
+switches whose arms call different rules, as the lean parser's `match` does too.
+The largest compare tree left is not a token's switch:
+it picks where a call enters a function of 21 entries,
+since a rule shared from the middle of another is entered there.
+The lean parser's functions have one entry each.
+
+## Built: one entry a function, as the lean parser's
+
+Each of the lean parser's methods is entered at its top.
+Tier 2's functions were not:
+a function held code other rules went into,
+and a compare tree at its entry picked which of up to 21 places a call meant.
+The places came from three things, each now gone or made lean-like:
+
+- **A field on a nested choice, set before the call.**
+  A rule called a nested choice with a field (`right: product`)
+  by entering the choice's code at its first token, from the caller's own switch.
+  The lean parser calls the choice, then sets the field where it returns:
+  `self.product()?; self.field(Field::Right)`.
+  Now so does tier 2: the call's return state sets the field (`NODE_FIELD m=4`)
+  on the node the call made, if the node has none,
+  so a field the choice sets inside still wins.
+  The choice's own function switches on its first token.
+- **Short tails alike in two rules.**
+  The words were shared across rules where they behaved alike,
+  so a leaf and a return in one rule jumped into another rule's copy.
+  The lean parser writes each method's code in that method.
+  Now each rule keeps its own words. Words are still shared within a rule.
+  A keyword's `REMEMBER` takes its kind from the word, as its leaf does,
+  so arms that remembered different keywords are one.
+- **A term's rest, copied.**
+  The grammar's `more` (the rest of a term after its first operand)
+  was its own copy of product's and term's loops in each rule that used it,
+  and those copies were shared with product's code: jumps into its middle.
+  The lean parser calls `self.term()` there.
+  `more` is now `[more1]`, a call of a function that takes at least one operator:
+
+```
+# Before: the loops again, wherever `more` is used
+choice more  = (wrap binary_expression left operator: multiplicative right: primary)*
+               (wrap binary_expression left operator: additive right: product)*
+# After: a call when an operator follows, as the lean parser's self.term()
+choice more  = [more1]
+```
+
+The verifier now refuses any jump from one rule into another that is not a call,
+so a function is entered by calls alone.
+
+| | Before | Field set where it returns | Own tails | A term's rest a call | Lean parser |
+|---|---|---|---|---|---|
+| Functions | 56 | 56 | 54 | 55 | 45 |
+| Entries | 247 | 171 | 94 | 60 | 45 |
+| Machine instructions | 24,375 | 22,226 | 22,258 | 23,981 | 10,008 |
+| Compares | 3,004 | 2,759 | 2,737 | 2,808 | 1,198 |
+| Tier 2, instructions | 330.9M | 346.1M | | 315.7M | 356.6M |
+| Tier 2, cycles | | 67.4M (lean 69.6M) | | 70.7M (lean 75.1M) | |
+
+The code grew by 1,700 instructions in the last step:
+each rule's copy of what it once shared.
+But tier 2 runs 9% fewer instructions than before it, and 11% fewer than the lean parser,
+since no call picks its entry any more.
+(Cycles are taken on a shared machine: load 17, then 30.)
+
+Five functions still had a second entry, each a call entered past its callee's start.
+Each is now a call at the start, as a lean parser's method is entered at its top:
+
+- **A callee whose first token merges into the leaf before** (a balanced pair's level).
+  A state whose arms call such a callee keeps its extras pending,
+  as a state whose arms merge does, so the merge still takes them as its text.
+- **A callee that may begin with a mark** (`braced_column`, which begins with `one_name`).
+  The caller's state tests the mark and keeps it (`MARK`, mode bit 64) for the callee,
+  which tests it again and takes it.
+- **A call with a flag set for it.** The flag is on the call's `PUSH`, as a parameter:
+  set after the caller's flags are saved, and the caller's given back where the call returns,
+  as `let f = self.flags; ..; self.call(); self.flags = f`.
+
+Every call now lands on its callee's first place: 55 functions, 55 entries.
+The rr test checks it.
+
+| | Before | One entry each | Lean parser |
+|---|---|---|---|
+| Entries | 60 | 55 | 45 |
+| Machine instructions | 23,981 | 23,758 | 10,008 |
+| Tier 2, instructions | 315.7M | 312.6M | 356.4M |
+| Tier 2, cycles | 70.7M | 61.8M (lean 68.4M) | |
+
+## Measured: where tier 2's code goes
+
+Tier 2 has 23,758 machine instructions, the lean parser 10,008.
+By the word that made it (19,294 of them are in words; the rest are word functions,
+prologues and epilogues):
+
+| What | Instructions | Share |
+|---|---|---|
+| Switches (`SWITCH`) | 5,607 | 29% |
+| Each state's test for a comment (`ROW`), and its way on | 3,307 | 17% |
+| Each state's comment arm (its leaf, back to the token) | 769 | 4% |
+| Each state's test for the `no_value` mark, and its refusal | 1,924 | 10% |
+| Taking a token (`TOKEN`) | 1,916 | 10% |
+
+Two checks made in every state are 31% of the code,
+and about 40% of the gap to the lean parser:
+
+- **Comments.** A comment is a row the record's kind does not name,
+  so every state tests for it after its switch and takes it with an arm of its own.
+  The lean parser takes comments in its token step (`skip_comments`), once.
+- **The `no_value` mark** (a `(` after an aggregate's word). It is not hidden,
+  so every state tests it after its token, to refuse it where no arm takes it.
+  The lean parser looks for it only where it reads an aggregate's `(`.
+
+## Measured: Cranelift's code against LLVM's, of one IR
+
+How much of the gap is Cranelift's, and how much the IR's?
+To find out, the same functions are built a second way, ahead of time:
+`clif_rust` writes the parser's Cranelift IR as Rust, tier 1's and tier 2's,
+and rustc compiles it with LLVM.
+The IR is the one Cranelift is given, after the lowering's own passes,
+so the two builds differ only in the compiler.
+
+Each function becomes one Rust function, `#[inline(never)]`, so the calls stay the JIT's.
+Each value is a local; a vector is NEON's (`uint8x16_t`), each vector operation its intrinsic.
+The graph is written as structured control,
+as WebAssembly's backends do ("Beyond Relooper", Ramsey 2022):
+
+```rust
+// A loop header: a labelled loop; a branch back to it, `continue`.
+'b12: loop {
+    // A block two forward branches reach: the code after a labelled block,
+    // which those branches leave with `break`.
+    'm40: {
+        v7 = v3 & 255;
+        if v7 != 0 { v9 = v7; break 'm40; } else { continue 'b12; }
+    }
+    // block40's code
+}
+```
+
+A first version wrote every function as a loop over a `match` on the block.
+LLVM does not thread jumps through a loop's header,
+so each branch went through a table: 1,182M instructions for tier 2, 3.8 times the JIT's.
+
+Thirteen of tier 2's functions have a loop entered at two places (an irreducible graph).
+Nine are made reducible by copying a block or two for one of the edges,
+about 30 instructions each.
+The other four, the largest rules, would need more than their own size in copies.
+Their loops get one entry instead: a dispatch,
+which the edges into the loop reach with a small label (`match d`).
+
+`cargo run -p rerail-rr-aot-gen` writes the source;
+the `rerail-rr-aot` crate runs it on the JIT's harness,
+and refuses if the JIT's program no longer translates to it.
+On the 1,362 corpus files, tier 1 writes the JIT's masks, positions and counts,
+and the two tiers the JIT's tape.
+
+Over the 1,360 files the grammar parses, on the profiling build (load 15):
+
+| | Cycles, JIT | Cycles, ahead of time |
+|---|---|---|
+| Tier 1 | 138.6M | 130.0M |
+| Tier 2 | 59.4M | 54.4M |
+| The whole parse, a file at a time | 209.2M | 195.8M |
+
+LLVM's code is 6 to 8% faster.
+The gap to the lean parser (68.6M) is in the IR, not in Cranelift.
+
+## Measured: the whole parse against the lean parser
+
+The 1,360 `.rr` files the grammar parses, 8.80 MB:
+one thread's CPU time, the least of 9 rounds, the profiling build (load 15).
+
+| | Time | MB/s | Cycles | Cycles a node |
+|---|---|---|---|---|
+| Lean parser, whole | 15.9 ms | 553 | 68.6M | 59 |
+| Lean parser, its lexer | 7.5 ms | 1,173 | 32.2M | 28 |
+| Bitlex, whole (JIT) | 48.3 ms | 182 | 209.2M | 179 |
+| Bitlex, whole (ahead of time) | 45.3 ms | 194 | 195.8M | 168 |
+| Tier 1 (JIT) | 32.1 ms | 274 | 138.6M | 119 |
+| Tier 2 (JIT) | 13.8 ms | 639 | 59.4M | 51 |
+| The engine's parser (`rr::tape`) | 139.8 ms | 63 | 606.0M | 520 |
+
+The whole parse is three times the lean parser's.
+Tier 1 alone costs twice the lean parser whole.
+Where the 141M cycles of the gap go:
+
+| Where | Bitlex | Lean | Gap |
+|---|---|---|---|
+| Tier 1 | 139M | 32M (the lexer) | 106M |
+| Tier 2 | 59M | 36M (the parse) | 23M |
+| The batch's layout, the tape's room, the columns | 11M | | 11M |
+
+Within tier 1, by pass (each run alone over the corpus, so as shares):
+the five forward passes 58%, the four backward passes 24%, the record pass 18%.
+
+- **Tier 1 does every check on every block.**
+  Its block program is 806 operations, 5,500 machine instructions a 64-byte block,
+  whatever the block holds. The lean lexer makes four masks a block,
+  then works a token at a time; a string, a comment, an escape
+  is read by a small lexer from its start.
+  The costliest statements are checks the lean parser makes only where they can fail:
+  a `\u` escape's digits (about 100 operations), JSON's rules (`json_bad`, 33),
+  the braces' depth (`count depth`, 62), an aggregate's word (`agg_word`, 49).
+- **Nine passes over each file.** Each of the 12 `back_fill`s needs a pass backward
+  and a forward pass after it. The four backward passes run at under one instruction a
+  cycle: a quarter of tier 1's time.
+  Each block stores 21 mask words (168 bytes for 64 read) for the passes after.
+- **Spills.** Pass 0 holds 45 vectors live, pass 2 73 integers,
+  against about 30 and 24 registers: 1,305 stack loads and stores.
+- **The record pass** runs 181 instructions a node to turn the masks into records,
+  more than the lean lexer's 114 for the whole token.
+- **Room and copies** (11M cycles). The batch copies the file and zeroes its mask words;
+  the tape is allocated for twice the rows it holds, 55 MB over the corpus.
+  The lean parser reads the file where it is.
+- **Tier 2**: its states test for comments and for the `no_value` mark in every state
+  (above, "where tier 2's code goes").
+
+## Built: comments in the token step
+
+The lean parser skips a comment where it reads the next token,
+and records the comment then. Tier 2 used to test for a comment in every state:
+an arm on `/`, a `ROW` test to tell a comment from a `/` token, a leaf, a jump back.
+Now `TOKEN` does it once, for every state.
+
+- **Tier 1** marks a comment's start in the token's record code.
+  This is one more mark bit, beside the keyword marks (`Words::extras`, in `rir`
+  `tokenextra b11 #48` for `.rr`).
+- **`TOKEN`** with mode bit `TOKEN_EXTRAS`, after reading a record, tests that bit.
+  Where it is set, it takes the comment's bytes and makes a deferred leaf
+  (as `SPAN m=1; LEAF m=1` did), then reads the next record.
+  That loop steps one token each turn: a stated `Token` loop.
+- **The states** keep no comment arms; only state 0 does,
+  where a comment opens the root.
+
+Tapes are identical over the corpus (1,360 files).
+
+| | Before | After |
+|---|---|---|
+| Tier 2's words | 5,271 | 3,341 |
+| Comment tests (`ROW 12`) | 322 | 40 |
+| Comment leaves (`LEAF m=1`) | 140 | 0 |
+| Tier 2's machine instructions | 23,758 | 17,460 |
+| Tier 2, benchmark instructions (cycles) | 312.6M (61.8M) | 311.3M (60.7M) |
+
+The code is 27% smaller; the time is unchanged.
+The removed arms ran only at a `/`, so they cost little at run time.
+Each token now pays a shift, a mask and a branch for the comment bit.
+The gain in time has to come from the next steps: marks tested only where their token can be,
+and one compare on a held kind in place of a ladder.
+
+## Built: a mark refused only where its token can be
+
+`no_value` is a mark on a `(` after an aggregate's word. It is not hidden,
+so a state that has no arm for it must refuse it. Each such state tested it
+right after its token, whatever the token: 277 tests, one in almost every state.
+The lean parser looks for it only where it reads a `(`.
+
+Now each mark has the bytes its token can begin with (`Mark::first`),
+found by proof when the program is compiled:
+
+- The mark holds only at the grammar's token starts (`m & ~starts` is never).
+  So moving it to the next token start adds nothing.
+- A byte is left out where the mark and that byte are proved apart (`never`).
+  For `.rr`: `no_value` and `empty_parens` hold only at `(`, `one_name` only at `{`.
+
+A state's refusal of such a mark moves into its switch:
+the target of each of those bytes gets the test first.
+It stays after the token where a later test jumps to a mark's arm,
+because the order of mark tests decides which one wins.
+Refusals can move past each other, since each one only refuses.
+
+| | Before | After |
+|---|---|---|
+| Tier 2's words | 3,341 | 3,193 |
+| Mark tests | 320 | 193 |
+| Tier 2's machine instructions | 17,460 | 17,278 |
+| Tier 2, benchmark instructions (cycles) | 311.3M (60.7M) | 307.1M (58.4M) |
+
+Tapes are identical over the corpus.
+The gain is small: each moved test was a bit test on the record's code, two or three
+instructions a token.
+
+## Measured: where tier 2's run time goes, by word
+
+Each word's runs over the corpus (the interpreter's), times its machine code
+(every path of it, so an upper bound), per token (1,531,635 tokens):
+
+| Word | Runs a token | Instructions a token, at most |
+|---|---|---|
+| `SWITCH` | 2.67 | 55.8 |
+| `TOKEN` | 0.98 | 5.3 |
+| `PUSH` | 0.94 | 1.9 |
+| `RETURN` | 0.97 | 2.7 |
+| `MARK` | 0.30 | 1.2 |
+| All others | | under 1 each |
+
+The switches are the cost. A token is switched on 2.67 times:
+once by its state, again by each callee entered on it,
+and again by its caller where a level ends at it (`RETURN m=1`, 0.73 a token).
+The lean parser also tests a token again in each function it calls,
+but each test is one compare on the token's kind.
+
+A switch here has two levels. First a compare tree on the record's kind, of which there are 8;
+then, for a kind whose words it names (punctuation, keywords), a tree on the word.
+A switch of two ways has up to 17.9 instructions on its paths;
+a `match` on two kinds needs about five.
+
+Tier 2 is 263 instructions a node, against about 191 for the lean parser's parse
+(its 305 whole, less its lexer's 114). That gap is 72 instructions a node,
+about 7% of the whole parse. Tier 1's gap to the lean lexer is 532 a node (646 against 114).
+
+## Built: token marks, tested from the records
+
+Eight of `.rr`'s marks say what the next tokens are: `empty_parens` is a `(` whose next
+token is `)`; `no_value` is an aggregate's word, then `(`, `)` and `:`.
+Tier 1 computed each one as byte masks. "The next token is X" was
+`next(back_fill(X, solid))`, and each `back_fill` cost a pass backward over the file
+and a forward pass after it.
+
+Now a mark may be written as its tokens (decision 0129):
+
+```
+# A `(` whose next token is `)`.
+mark empty_parens = tokens "(" ")"
+# After `min` (or another aggregate's word): `(`, `)`, `:`.
+mark no_value     = tokens after "min" | "max" | "sum" | "mean" | "join" "(" ")" ":"
+```
+
+Tier 1 makes no mask for it. In the record, the mark's bit is set at each token whose word
+is the first element's, so tier 2's `Live` gates it as any mark.
+Then `MARK` calls the pattern's function, which reads the records after the token
+(and the one before, for `after`), skipping comments, as the lean parser's `kind_at(1)` does.
+
+The reference evaluator places the marks the same way under both grammars, over the corpus
+and samples written for each mark (1,385 files). Tapes are identical over the corpus.
+
+| | Before | After |
+|---|---|---|
+| Tier 1's passes | 9 and the records (5 forward, 4 backward) | 3 and the records (2 forward, 1 backward) |
+| Tier 1, instructions (cycles) | 752.8M (140.5M) | 634.5M (116.3M) |
+| Tier 2, instructions (cycles) | 307.1M (58.4M) | 321.5M (56.1M) |
+| The whole parse, JIT | 48.97 ms, 180 MB/s | 45.32 ms, 194 MB/s |
+| The whole parse, ahead of time | 46.73 ms, 188 MB/s | 40.83 ms, 216 MB/s |
+
+The backward pass left is `tt_later`'s: whether a two-backtick literal has its closer later in
+the file (3.7M cycles). Tier 1 now costs pass 2 (259.7M instructions), the record pass (234.4M)
+and pass 0 (137.5M).
+
 ## The order
 
 1. One symbol a token: rows and keywords in the record, one switch a state.
@@ -680,7 +1322,13 @@ What is left, by Cranelift instructions in the rule functions:
 2. Marks in the record. Built: the record pass writes them into the code.
 3. A cheaper `TOKEN`, and the state as the lean parser's.
    Built: no select, nothing held across calls, the tape in rows, one exit a function,
-   the state as locals, a token taken for good, words as calls (and so the frame-free path).
-   Next: cheaper calls, then fewer words.
+   the state as locals, a token taken for good, words as calls (and so the frame-free path),
+   cheaper calls, callees shared across rules,
+   `ctx` in a register of its own, code shared from the middle of rules,
+   a call's bookkeeping as the lean parser's, switches as rustc lowers a `match`,
+   one entry a function (all 55).
+   Built: comments in the token step.
+   Built: marks refused only where their token can be.
+   Next: a token test as one compare on a held kind, and one failure exit a function.
 4. Keyword marks from the records. Built for the marks of one word.
 5. Tier 1's primitives: the picked hash, then nibble fingerprints.

@@ -66,7 +66,7 @@ impl super::Families for Families {
 }
 
 /// The batch's `py.*` families: the producer's grammar, the atoms of its names, and the rows, made on the first read.
-pub(crate) struct Py {
+pub struct Py {
     pub grammar: py::Grammar,
     pub(crate) contexts: [i64; 5],
     pub(crate) spreads: [i64; 3],

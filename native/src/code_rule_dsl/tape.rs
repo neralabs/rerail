@@ -61,7 +61,7 @@ pub fn stored_tape_tag(bytes: &[u8]) -> Option<u8> {
 
 /// Each column starts at this alignment from the image's start (format 11), so a reader of the
 /// image in place, as the device reads a resident tape (PIAT §20.2.3), reads aligned columns.
-pub(super) const COLUMN_ALIGN: usize = 16;
+pub const COLUMN_ALIGN: usize = 16;
 
 /// `length` rounded up to `COLUMN_ALIGN`.
 pub const fn padded(length: usize) -> usize {
@@ -77,7 +77,7 @@ pub const CODE_MISSING: u8 = 4;
 pub const KIND_LIMIT: usize = 1024;
 pub const FIELD_LIMIT: usize = 64;
 pub const SENTINEL: u16 = u16::MAX;
-const NONE: u32 = u32::MAX;
+pub const NONE: u32 = u32::MAX;
 pub const CHECKPOINT_LIMIT: usize = 0x00ff_ffff;
 /// Tree-sitter's ERROR symbol does not fit the 10-bit kind code. ERROR records store the
 /// grammar's hidden end symbol, which never labels a visible node, and are listed in `error`.
@@ -91,8 +91,7 @@ pub mod navigation;
 pub use index::IndexImage;
 pub mod wire;
 pub mod tokens;
-#[cfg(test)]
-pub mod tokens_tests;
+// tokens_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 // cratify: `token_readers` is rerail-w's (it mounts it)
 pub mod resident;
 pub mod validated;

@@ -311,14 +311,14 @@ fn unwrapped(node: Node<'_>) -> Option<Node<'_>> {
 
 /// A template expression as the view oracle lists it.
 #[cfg(any(test, feature = "test-hooks"))]
-pub(crate) struct Region {
-    pub(crate) kind: String,
-    pub(crate) range: Range<usize>,
-    pub(crate) parse: Parse,
+pub struct Region {
+    pub kind: String,
+    pub range: Range<usize>,
+    pub parse: Parse,
 }
 /// The template's expressions as the view oracle lists them, sorted.
 #[cfg(any(test, feature = "test-hooks"))]
-pub(crate) fn regions(root: Node<'_>, source: &str, dialect: GrammarDialect) -> Vec<Region> {
+pub fn regions(root: Node<'_>, source: &str, dialect: GrammarDialect) -> Vec<Region> {
     let mut out = Vec::new();
     fn trim(r: Range<usize>, s: &str) -> Option<Range<usize>> {
         let t = s[r.clone()].trim();

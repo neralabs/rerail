@@ -76,7 +76,7 @@ fn children(doc: &TapeDoc, parent: u32) -> impl Iterator<Item = u32> + '_ {
 fn field(doc: &TapeDoc, parent: u32, field: u16) -> Option<u32> {
     children(doc, parent).find(|&child| doc.transducer_field(child) == field)
 }
-fn at<'t>(root: &Node<'t, TapeDoc>, ordinal: u32) -> Node<'t, TapeDoc> {
+pub fn at<'t>(root: &Node<'t, TapeDoc>, ordinal: u32) -> Node<'t, TapeDoc> {
     root.root().adopt(root.get_doc().node(ordinal))
 }
 fn node_ref(doc_id: u32, doc: &TapeDoc, ordinal: u32) -> NodeRef {
@@ -255,18 +255,18 @@ pub fn collect<'t>(
 }
 
 #[derive(Default, Debug)]
-pub(crate) struct ArgumentCounters {
+pub struct ArgumentCounters {
     pub requested_calls: usize,
     pub distinct_calls: usize,
     pub argument_rows: usize,
 }
 #[derive(Debug)]
-pub(crate) struct CallArguments {
+pub struct CallArguments {
     pub call: NodeRef,
     pub arguments: std::ops::Range<usize>,
 }
 #[derive(Default, Debug)]
-pub(crate) struct ArgumentBatch {
+pub struct ArgumentBatch {
     pub calls: Vec<CallArguments>,
     /// Argument.call is an index into this batch's calls, not collect().calls.
     pub arguments: Vec<Argument>,
@@ -274,7 +274,7 @@ pub(crate) struct ArgumentBatch {
 }
 /// Produces argument facts only for the explicitly requested call nodes. Repeated
 /// (document, node ID) demands execute once; no demand performs no AST work.
-pub(crate) fn collect_arguments<'t>(calls: &[(u32, Node<'t, TapeDoc>)]) -> ArgumentBatch {
+pub fn collect_arguments<'t>(calls: &[(u32, Node<'t, TapeDoc>)]) -> ArgumentBatch {
     let mut out = ArgumentBatch::default();
     out.counters.requested_calls = calls.len();
     let mut seen = FxHashSet::default();
@@ -378,5 +378,4 @@ pub(crate) fn collect_arguments<'t>(calls: &[(u32, Node<'t, TapeDoc>)]) -> Argum
     out
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

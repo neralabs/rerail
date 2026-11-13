@@ -2,7 +2,7 @@
 use rusqlite::{Connection, Result};
 use std::collections::BTreeMap;
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct Storage {
+pub struct Storage {
     objects: BTreeMap<String, Object>,
 }
 struct Object {

@@ -334,6 +334,9 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
                 _ => return not_yet(format!(".pragma {words:?}")).map_err(at),
             },
             Item::Policy(document) => l.prog.policies.push(document),
+            // A test is never the program's (decision 0130): testing mode splices its statements into a program of
+            // its own (`rr::testing`).
+            Item::Test { .. } | Item::Fixtures { .. } => {}
             Item::Setting { key, text } => l.prog.settings.push((key, text)),
             Item::Violation { name, cols, code, code_in, tag, suppress, fixes, message, .. } => l.violation(name, cols, code, code_in, tag, suppress, fixes, message).map_err(at)?,
             Item::Clause { heads, body, edits } => {
@@ -394,7 +397,68 @@ pub fn lower(statements: Vec<Statement>) -> Result<Program, Error> {
     }
     let mut program = crate::code_rule_dsl::logic::front::finish(l.prog)?;
     super::aggregate_demand::optimize(&mut program);
+    // The demand's rules, and the rules whose aggregate it made an existence test, read no relation either.
+    unit(&mut program);
+    // A body is a conjunction: a literal twice is the literal once. Lowering keeps each once, so a printed program
+    // (`match`'s groups printed as their bindings beside the test) lowers back to itself.
+    for rule in &mut program.rules {
+        let mut kept: Vec<Literal> = Vec::with_capacity(rule.body.len());
+        for l in rule.body.drain(..) {
+            if !kept.contains(&l) {
+                kept.push(l);
+            }
+        }
+        rule.body = kept;
+    }
+    // A rule whose body is its own head derives nothing: a natively made relation's rule as printed
+    // (`r(x) :- dfs_first_memo(x, …)`), whose construct lowers to the relation itself.
+    program.rules.retain(|r| !matches!(r.body.as_slice(), [Literal::Atom(a)] if !a.neg && a.rel == r.head.rel && a.args == r.head.args));
+    // So are a program's rules: a printed program states the rules its settings make (`.on syntax_error`'s finding,
+    // the scope's guards), which lowering its settings again makes once more.
+    {
+        use std::hash::{Hash, Hasher};
+        let mut seen: std::collections::HashMap<u64, Vec<usize>> = std::collections::HashMap::new();
+        let mut kept: Vec<Rule> = Vec::with_capacity(program.rules.len());
+        for rule in program.rules.drain(..) {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            rule.hash(&mut h);
+            let same = seen.entry(h.finish()).or_default();
+            if same.iter().all(|&i| kept[i] != rule) {
+                same.push(kept.len());
+                kept.push(rule);
+            }
+        }
+        program.rules = kept;
+    }
+    // A relation's facts are a set too.
+    for rows in program.facts.values_mut() {
+        let mut kept: Vec<Vec<Value>> = Vec::with_capacity(rows.len());
+        for row in rows.drain(..) {
+            if !kept.contains(&row) {
+                kept.push(row);
+            }
+        }
+        *rows = kept;
+    }
     Ok(program)
+}
+
+/// [`Lowerer::unit`]'s rule over a program: each rule that reads no relation reads `rr_unit(0)`.
+fn unit(prog: &mut Program) {
+    const UNIT: &str = "rr_unit";
+    let mut used = false;
+    for rule in &mut prog.rules {
+        // A matcher atom (`ast(…)`) or a walk reads the tree itself; an aggregate reads its atom.
+        let reads = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg) || matches!(l, Literal::Ast { .. } | Literal::Nearest { .. } | Literal::Agg { .. });
+        if !rule.body.iter().any(reads) {
+            rule.body.insert(0, Literal::Atom(Atom { rel: UNIT.to_owned().into(), args: vec![Term::Int(0)], neg: false, gated: false }));
+            used = true;
+        }
+    }
+    if used {
+        prog.decls.insert(UNIT.to_owned(), vec![("x".to_owned(), "int".to_owned())]);
+        prog.facts.insert(UNIT.to_owned(), vec![vec![Value::Int(0)]]);
+    }
 }
 
 /// A nullary relation is a Boolean set: empty, or the single empty tuple. SQL tables need a column,
@@ -668,8 +732,10 @@ impl Lowerer {
             .to_owned();
         let scoped = self.scope_filter();
         self.prog.decls.insert("violation".to_owned(), [("rule", "sym"), ("clause", "sym"), ("code", "sym"), ("path", "sym"), ("line", "int")].iter().map(|(c, t)| ((*c).to_owned(), (*t).to_owned())).collect());
-        self.prog.outputs.retain(|o| o != "violation");
-        self.prog.outputs.push("violation".to_owned());
+        // Where it is already (a printed program's `.output`), else last.
+        if !self.prog.outputs.iter().any(|o| o == "violation") {
+            self.prog.outputs.push("violation".to_owned());
+        }
         let v = |s: &str| Term::Var(s.to_owned());
         let atom = |rel: &str, args: Vec<Term>| Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg: false, gated: false });
         // Whether a rule makes a `@place` value: only then can a span or loc `at` hold one.
@@ -904,7 +970,9 @@ impl Lowerer {
         // `guest_policy("library", "on")`, a stated fact, so `!guest_policy("library", "off")` is decided before the
         // run (`simplify`) instead of reading a relation nothing gives.
         let reads = self.prog.rules.iter().flat_map(|r| &r.body).filter_map(Literal::atom).any(|a| a.rel == GUEST_POLICY);
-        if reads && !facts.iter().any(|(k, _)| k == "library") {
+        // A program printed with the fact states it already.
+        let stated = self.prog.facts.get(GUEST_POLICY).is_some_and(|rows| rows.iter().any(|r| matches!(r.first(), Some(Value::Str(k)) if k == "library")));
+        if reads && !stated && !facts.iter().any(|(k, _)| k == "library") {
             facts.push(("library".to_owned(), "on".to_owned()));
         }
         if !facts.is_empty() {
@@ -922,6 +990,9 @@ impl Lowerer {
                 Lit::Group { alts, neg: false } => alts.iter().any(|a| binds_top(a)),
                 _ => false,
             })
+        }
+        if self.native_definition(heads, body) {
+            return Ok(());
         }
         self.top_is_var = binds_top(body);
         self.heads = heads.iter().map(|h| h.rel.clone()).collect();
@@ -1595,6 +1666,87 @@ impl Lowerer {
         ])
     }
 
+    /// `name(s, g_…)`: the matches of `re` over the texts of `input` (a unary relation), each named group a column
+    /// (and the match's ordinal, start and end with `positions`), made natively (`front::Native::MatchAll`). Its one
+    /// rule orders it after its input; the evaluator makes its rows.
+    fn match_all_native(&mut self, name: &str, input: &str, re: &str, gs: &[String], positions: bool) {
+        let mut cols: Vec<_> = std::iter::once("s".to_owned()).chain(gs.iter().map(|g| format!("g_{g}"))).map(|c| (c, "sym".to_owned())).collect();
+        if positions {
+            cols.extend(["ordinal", "start", "end"].map(|c| (c.to_owned(), "int".to_owned())));
+        }
+        self.prog.decls.insert(name.to_owned(), cols);
+        let x = |n: &str| Term::Var(n.to_owned());
+        let mut body = vec![Literal::Atom(Atom { rel: input.to_owned().into(), args: vec![x("s")], neg: false, gated: false })];
+        body.extend(gs.iter().map(|g| Literal::Cmp { l: x(&format!("g_{g}")), op: "=", r: x("s") }));
+        let mut head_args: Vec<_> = std::iter::once(x("s")).chain(gs.iter().map(|g| x(&format!("g_{g}")))).collect();
+        if positions {
+            // The native producer replaces these seed values. They establish dependency and numeric types.
+            head_args.extend([Term::Int(0), Term::Int(0), Term::Int(0)]);
+        }
+        self.prog.rules.push(Rule { head: Atom { rel: name.to_owned().into(), args: head_args, neg: false, gated: false }, body });
+        self.prog.natives.insert(name.to_owned(), Native::MatchAll { input: input.to_owned(), pattern: re.to_owned(), groups: gs.to_vec(), positions });
+    }
+
+    /// A clause that is a natively made relation's definition as `print` writes it, whose relation lowering would
+    /// otherwise name afresh: `h(s, g…[, o, b, e]) :- c(s), match_all(re, s[, o, b, e])` (the head the text, each
+    /// group by its name, then the positions), or `python_candidates_definition`'s. The relation is made natively
+    /// under its own name (`match_all_native`), as the clause says, not as another that h copies, so lowering a
+    /// printed program gives the program again.
+    fn native_definition(&mut self, heads: &[Head], body: &[Lit]) -> bool {
+        if self.python_candidates_definition(heads, body) {
+            return true;
+        }
+        let ([h], [Lit::Atom { rel: input, args: of, neg: false }, Lit::Atom { rel: m, args, neg: false }]) = (heads, body) else { return false };
+        let ([STerm::Var(s)], Some(STerm::Str(re)), Some(STerm::Var(scanned))) = (of.as_slice(), args.first(), args.get(1)) else { return false };
+        if m != "match_all" || scanned != s || h.modal.is_some() || self.prog.natives.contains_key(&h.rel) {
+            return false;
+        }
+        let coordinates = &args[2..];
+        if !(coordinates.is_empty() || coordinates.len() == 3 && coordinates.iter().all(|t| matches!(t, STerm::Var(_)))) {
+            return false;
+        }
+        let gs = groups(re);
+        let want: Vec<STerm> = std::iter::once(STerm::Var(s.clone())).chain(gs.iter().map(|g| STerm::Var(g.clone()))).chain(coordinates.iter().cloned()).collect();
+        if h.args != want {
+            return false;
+        }
+        // Over texts, as print writes it: a relation of one text column read, and the head declared (if it is) with
+        // the native's columns. Over a node or span (`piece(t: loc)`) the matches are spans placed in the file,
+        // which `text_matches` makes.
+        let types = |rel: &str| self.prog.decls.get(rel).map(|cols| cols.iter().map(|(_, t)| t.as_str()).collect::<Vec<_>>());
+        if types(input).as_deref() != Some(&["sym"][..]) {
+            return false;
+        }
+        let made: Vec<&str> = std::iter::repeat_n("sym", 1 + gs.len()).chain(std::iter::repeat_n("int", coordinates.len())).collect();
+        if types(&h.rel).is_some_and(|t| t != made) {
+            return false;
+        }
+        self.match_all_native(&h.rel, input, re, &gs, !coordinates.is_empty());
+        true
+    }
+
+    /// A clause that is a `python_candidates` relation's definition as `print` writes it, `h(c, f, r, o) :-
+    /// python_candidates(c, f, r, o, input, targets, "context", "member")`: the relation made natively under its own
+    /// name, not another that h copies (as `native_definition`'s `match_all`).
+    fn python_candidates_definition(&mut self, heads: &[Head], body: &[Lit]) -> bool {
+        let ([h], [Lit::Atom { rel, args, neg: false }]) = (heads, body) else { return false };
+        let [c, f, r, o, STerm::Var(input), STerm::Var(targets), STerm::Str(context), STerm::Str(member)] = args.as_slice() else { return false };
+        let cols = [c, f, r, o];
+        let distinct: BTreeSet<_> = cols.iter().filter_map(|t| if let STerm::Var(x) = t { Some(x) } else { None }).collect();
+        if rel != "python_candidates" || h.modal.is_some() || distinct.len() != 4 || h.args.iter().ne(cols.into_iter()) || self.prog.natives.contains_key(&h.rel) {
+            return false;
+        }
+        if !crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS.contains(&context.as_str()) {
+            return false;
+        }
+        let native = Native::PythonCandidates { input: input.clone(), targets: targets.clone(), context: context.clone(), member: member.clone() };
+        if self.prog.natives.values().any(|n| *n == native) {
+            return false;
+        }
+        self.python_candidates_native(&h.rel, native);
+        true
+    }
+
     /// `match_all("re", s)`, and `match` with named groups (`core.rr`).
     ///
     /// - Over a `source` or `src_line` span (a sibling binds s so), the captures are spans: the batch runs the regex
@@ -1649,22 +1801,7 @@ impl Lowerer {
         self.siblings = saved;
         let ctx = ctx?;
         let name = self.fresh("mall");
-        let mut cols: Vec<_> = std::iter::once("s".to_owned()).chain(gs.iter().map(|g| format!("g_{g}"))).map(|c| (c, "sym".to_owned())).collect();
-        if !positions.is_empty() {
-            cols.extend(["ordinal", "start", "end"].map(|c| (c.to_owned(), "int".to_owned())));
-        }
-        self.prog.decls.insert(name.clone(), cols);
-        // Its one rule orders it after the context; the evaluator makes its rows.
-        let x = |n: &str| Term::Var(n.to_owned());
-        let mut body = vec![Literal::Atom(Atom { rel: ctx.rel.clone(), args: vec![x("s")], neg: false, gated: false })];
-        body.extend(gs.iter().map(|g| Literal::Cmp { l: x(&format!("g_{g}")), op: "=", r: x("s") }));
-        let mut head_args: Vec<_> = std::iter::once(x("s")).chain(gs.iter().map(|g| x(&format!("g_{g}")))).collect();
-        if !positions.is_empty() {
-            // The native producer replaces these seed values. They establish dependency and numeric types.
-            head_args.extend([Term::Int(0), Term::Int(0), Term::Int(0)]);
-        }
-        self.prog.rules.push(Rule { head: Atom { rel: name.clone().into(), args: head_args, neg: false, gated: false }, body });
-        self.prog.natives.insert(name.clone(), Native::MatchAll { input: ctx.rel.to_string(), pattern: re.clone(), groups: gs.clone(), positions: !positions.is_empty() });
+        self.match_all_native(&name, &ctx.rel, re, &gs, !positions.is_empty());
         let args = std::iter::once(Term::Var(v.clone())).chain(gs.iter().map(|g| Term::Var(g.clone())))
             .map(Ok).chain(positions.iter().map(|p| self.term(p))).collect::<Result<Vec<_>, Error>>()?;
         Ok(vec![vec![Literal::Atom(Atom { rel: name.into(), args, neg: false, gated: false })]])
@@ -1745,9 +1882,19 @@ impl Lowerer {
         for r in &self.prog.rules {
             by_head.entry(r.head.rel.as_str()).or_default().push(r);
         }
+        // The relations whose rules read each relation (positive atoms, what `binder` reads): a round derives again
+        // only the readers of the columns the round before changed, the rest being what they were.
+        let mut readers: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+        for r in &self.prog.rules {
+            for a in r.body.iter().filter_map(Literal::atom).filter(|a| !a.neg) {
+                readers.entry(a.rel.as_str()).or_default().insert(r.head.rel.as_str());
+            }
+        }
+        let mut dirty: BTreeSet<&str> = by_head.keys().copied().collect();
         loop {
             let mut found = BTreeMap::new();
-            for (&rel, rules) in &by_head {
+            for &rel in &dirty {
+                let rules = &by_head[rel];
                 for i in 0..rules[0].head.args.len() {
                     let each: Option<Vec<BTreeSet<SpanIn>>> = rules.iter().map(|r| match r.head.args.get(i) {
                         Some(Term::Var(x)) => binder(&r.body, x, &columns),
@@ -1766,6 +1913,7 @@ impl Lowerer {
             if found.is_empty() || rounds > 64 {
                 break;
             }
+            dirty = found.keys().filter_map(|(r, _)| readers.get(r.as_str())).flatten().copied().collect();
             columns.extend(found);
         }
         // Top-down: a helper's column its own rules do not bind to spans, where every rule that reads the helper binds
@@ -1774,6 +1922,14 @@ impl Lowerer {
         // gives every reader the same rows. Not for a column the run outputs, which no reader bounds.
         let mut demand: BTreeMap<(String, usize), BTreeSet<SpanIn>> = BTreeMap::new();
         let outputs: BTreeSet<&str> = self.prog.outputs.iter().map(String::as_str).collect();
+        // Each relation's reading atoms with their rules, in the rules' and bodies' order: a column's readers, not a
+        // scan of every rule for each column and round.
+        let mut sites_of: BTreeMap<&str, Vec<(&Rule, &Atom)>> = BTreeMap::new();
+        for r in &self.prog.rules {
+            for a in r.body.iter().filter_map(Literal::atom) {
+                sites_of.entry(a.rel.as_str()).or_default().push((r, a));
+            }
+        }
         let mut rounds = 0;
         loop {
             let mut found = BTreeMap::new();
@@ -1785,8 +1941,8 @@ impl Lowerer {
                     let mut all = BTreeSet::new();
                     let mut sites = 0;
                     let mut bound = true;
-                    for r in &self.prog.rules {
-                        for a in r.body.iter().filter_map(Literal::atom).filter(|a| a.rel == rel) {
+                    for &(r, a) in sites_of.get(rel).map_or(&[][..], Vec::as_slice) {
+                        {
                             sites += 1;
                             let got = match a.args.get(i) {
                                 Some(Term::Var(y)) => binder(&r.body, y, &columns).or_else(|| {
@@ -1925,11 +2081,21 @@ impl Lowerer {
                 }
                 _ => false,
             },
+            Lit::Atom { .. } | Lit::Group { .. } => self.node_in(l, v),
+            _ => false,
+        })
+    }
+
+    /// Whether `l` binds `v` at a node column: a positive atom, or alternatives that each do
+    /// (`(php_arg(c, 1, l) ; php_named_arg(c, "level", l)), match("…", l)` tests l's text, not its id).
+    fn node_in(&self, l: &Lit, v: &str) -> bool {
+        match l {
             Lit::Atom { rel, args, neg: false } => self.prog.decls.get(rel).is_some_and(|cols| {
                 args.iter().zip(cols).any(|(a, (_, t))| matches!(a, STerm::Var(x) if x == v) && t == "node")
             }),
+            Lit::Group { alts, neg: false } => !alts.is_empty() && alts.iter().all(|alt| alt.iter().any(|l| self.node_in(l, v))),
             _ => false,
-        })
+        }
     }
 
     /// `match("(?<x>…)", s)`: s matches, and each named group binds the variable of its name to its text:
@@ -2100,16 +2266,8 @@ impl Lowerer {
                 let rel=if let Some((name,_))=self.prog.natives.iter().find(|(_,n)|**n==native) {name.clone()}else {
                     let mut serial=self.prog.natives.len();
                     let rel=loop {let name=format!("rr_python_candidates_{serial}");if !self.prog.decls.contains_key(&name){break name;}serial+=1;};
-                    let v=|s:&str|Term::Var(s.to_owned());
-                    let a=|r:&str,args:Vec<Term>|Literal::Atom(Atom{rel:r.into(),args,neg:false,gated:false});
-                    // The targets are read as `python_qualified`'s are, so every pass that follows rule bodies
-                    // (shared library parts, strata, demand) makes them before the candidates.
-                    let mut body=vec![a(&input,vec![v("d")]),a(&targets,vec![v("q")])];
-                    // Locality proof only: the native contract emits nodes from these documents.
-                    for n in ["c","f","r","o"] {body.push(a("node",vec![v("d"),v(n),Term::Wild,Term::Wild,Term::Wild]));}
-                    self.prog.decls.insert(rel.clone(),["c","f","r","o"].into_iter().map(|n|(n.into(),"node".into())).collect());
-                    self.prog.rules.push(Rule{head:Atom{rel:rel.clone().into(),args:["c","f","r","o"].into_iter().map(v).collect(),neg:false,gated:false},body});
-                    self.prog.natives.insert(rel.clone(),native);rel
+                    self.python_candidates_native(&rel, native);
+                    rel
                 };
                 return Ok(Literal::Atom(Atom{rel: rel.into(),args:[call,report,reference,receiver].into_iter().map(|a|self.term(a)).collect::<Result<Vec<_>,_>>()?,neg,gated:false}));
             }
@@ -2139,6 +2297,23 @@ impl Lowerer {
         }
         let args = args.iter().map(|a| self.term(a)).collect::<Result<Vec<_>, _>>()?;
         Ok(Literal::Atom(Atom { rel: rel.to_owned().into(), args, neg, gated: false }))
+    }
+
+    /// `name(c, f, r, o)`: `native`'s Python call candidates (`Native::PythonCandidates`), made natively. Its one rule
+    /// reads the input and the targets, so every pass that follows rule bodies (shared library parts, strata, demand)
+    /// makes them before the candidates; its node atoms are a locality proof only (the native contract emits nodes
+    /// from these documents).
+    fn python_candidates_native(&mut self, name: &str, native: Native) {
+        let Native::PythonCandidates { input, targets, .. } = &native else { unreachable!("python candidates") };
+        let v = |s: &str| Term::Var(s.to_owned());
+        let a = |r: &str, args: Vec<Term>| Literal::Atom(Atom { rel: r.into(), args, neg: false, gated: false });
+        let mut body = vec![a(input, vec![v("d")]), a(targets, vec![v("q")])];
+        for n in ["c", "f", "r", "o"] {
+            body.push(a("node", vec![v("d"), v(n), Term::Wild, Term::Wild, Term::Wild]));
+        }
+        self.prog.decls.insert(name.to_owned(), ["c", "f", "r", "o"].into_iter().map(|n| (n.into(), "node".into())).collect());
+        self.prog.rules.push(Rule { head: Atom { rel: name.to_owned().into(), args: ["c", "f", "r", "o"].into_iter().map(v).collect(), neg: false, gated: false }, body });
+        self.prog.natives.insert(name.to_owned(), native);
     }
 
     fn python_producer(&mut self, kind:&str, input:&str, targets:Option<&str>)->String {
@@ -2435,11 +2610,22 @@ impl Lowerer {
         }
         let groups: Vec<usize> = (0..context.len()).map(|k| root(&mut group, k)).collect();
         let binds = |l: &Lit| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && rel != "earlier");
+        // The variables a binding atom binds: its plain arguments. One it computes from (`jb(@sub(p, 1), 92)`) it
+        // reads: lowered, that is `t = @sub(p, 1), jb(t, 92)`, and a cover of it alone could not place `p`.
+        let bound_by = |l: &Lit| -> BTreeSet<String> {
+            match l {
+                Lit::Atom { args, .. } if binds(l) => args.iter().filter_map(|a| match a { STerm::Var(v) => Some(v.clone()), _ => None }).collect(),
+                _ => BTreeSet::new(),
+            }
+        };
         // Per group: the asked variables its binding atoms bind, and those any of its literals reads.
         let asked_in = |g: usize, only_binding: bool| -> BTreeSet<String> {
             (0..context.len())
-                .filter(|&k| groups[k] == g && (!only_binding || binds(&context[k])))
-                .flat_map(|k| of[k].iter().filter(|v| asked.contains(*v)).cloned().collect::<Vec<_>>())
+                .filter(|&k| groups[k] == g)
+                .flat_map(|k| {
+                    let vars = if only_binding { bound_by(&context[k]) } else { of[k].clone() };
+                    vars.into_iter().filter(|v| asked.contains(v)).collect::<Vec<_>>()
+                })
                 .collect()
         };
         let mut covered: BTreeSet<String> = BTreeSet::new();
@@ -2608,7 +2794,38 @@ impl Lowerer {
             .filter(|l| matches!(l, Lit::Atom { rel, neg: false, .. } if test_of(rel).is_none() && rel != "earlier"))
             .cloned()
             .collect();
-        body_vars(&atoms).contains(v)
+        let mut bound = body_vars(&atoms);
+        // And what the rule's equalities bind from those, to a fixed point: `x = t` once t's variables are bound,
+        // and a bound text split by `q = @dot(m, x)` (`cat`'s parts), as lowering writes `split_dot`: a printed
+        // program binds by these what its source bound by an atom.
+        let vars = |t: &STerm| {
+            let mut out = Vec::new();
+            t.vars(&mut out);
+            out
+        };
+        loop {
+            let before = bound.len();
+            for l in &self.siblings {
+                let Lit::Cmp { l, op: "=", r } = l else { continue };
+                for (a, b) in [(l, r), (r, l)] {
+                    match (a, b) {
+                        (STerm::Var(x), t) if !bound.contains(x) && !vars(t).contains(x) && vars(t).iter().all(|y| bound.contains(y)) => {
+                            bound.insert(x.clone());
+                        }
+                        (STerm::Var(q), STerm::Call { name, functor: true, args }) if name == "dot" && bound.contains(q) => {
+                            for t in args {
+                                bound.extend(vars(t));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            if bound.len() == before {
+                break;
+            }
+        }
+        bound.contains(v)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2879,11 +3096,23 @@ impl Lowerer {
                     continue;
                 }
             };
-            self.prog.kindsets.insert(set.clone(), kinds);
-            // A set no rule reads is no relation of the program; one that rules read (`lfscope(k) :- fscope(k)`)
-            // stays one as well.
-            let read = self.prog.rules.iter().filter(|r| r.head.rel != set).any(|r| r.body.iter().filter_map(Literal::atom).any(|a| a.rel == set));
-            if !read {
+            self.prog.kindsets.insert(set, kinds);
+        }
+        // A set no rule reads is no relation of the program; one that rules read (`lfscope(k) :- fscope(k)`) stays
+        // one as well, until those rules go with their own set: to a fixed point, in whatever order the sets come.
+        loop {
+            let unread: Vec<String> = self
+                .prog
+                .kindsets
+                .keys()
+                .filter(|set| self.prog.decls.contains_key(*set) || self.prog.facts.contains_key(*set) || self.prog.rules.iter().any(|r| r.head.rel == set.as_str()))
+                .filter(|set| !self.prog.rules.iter().filter(|r| r.head.rel != set.as_str()).any(|r| r.body.iter().filter_map(Literal::atom).any(|a| a.rel == set.as_str())))
+                .cloned()
+                .collect();
+            if unread.is_empty() {
+                break;
+            }
+            for set in unread {
                 self.prog.facts.remove(&set);
                 self.prog.decls.remove(&set);
                 self.prog.rules.retain(|r| r.head.rel != set);
@@ -3026,20 +3255,7 @@ impl Lowerer {
     /// aggregates over the relational unit, and the SQL executor maintains it as a scalar rule over its aggregates'
     /// inputs (a unit atom would hide them from its retained support).
     fn unit(&mut self) {
-        const UNIT: &str = "rr_unit";
-        let mut used = false;
-        for rule in &mut self.prog.rules {
-            // A matcher atom (`ast(…)`) or a walk reads the tree itself; an aggregate reads its atom.
-            let reads = |l: &Literal| matches!(l, Literal::Atom(a) if !a.neg) || matches!(l, Literal::Ast { .. } | Literal::Nearest { .. } | Literal::Agg { .. });
-            if !rule.body.iter().any(reads) {
-                rule.body.insert(0, Literal::Atom(Atom { rel: UNIT.to_owned().into(), args: vec![Term::Int(0)], neg: false, gated: false }));
-                used = true;
-            }
-        }
-        if used {
-            self.prog.decls.insert(UNIT.to_owned(), vec![("x".to_owned(), "int".to_owned())]);
-            self.prog.facts.insert(UNIT.to_owned(), vec![vec![Value::Int(0)]]);
-        }
+        unit(&mut self.prog);
     }
 
     /// The kinds of a unary relation of kinds: its facts, and the kinds of `s` for each rule `set(k) :- s(k)`.

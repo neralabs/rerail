@@ -273,8 +273,7 @@ pub mod code_rule_dsl {
         pub mod arguments {
             pub use rerail_w::code_rule_dsl::matcher::arguments::*;
             pub mod rust;
-            #[cfg(test)]
-            pub mod rust_tests;
+            // rust_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
             #[allow(unused_imports)]
             use crate::code_rule_dsl::tree::Tree;
             #[allow(unused_imports)]

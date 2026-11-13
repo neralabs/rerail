@@ -451,6 +451,21 @@ fn a_context_joins_a_later_group_by_what_it_binds() {
     assert!(p.decls.iter().any(|(rel, cols)| rel.starts_with("rr_cover") && cols.len() == 1), "a relation of s alone");
 }
 
+/// A group that only computes from an asked variable (`jb(p - 1, 92)`) does not bind it: covered alone it would be
+/// `rr_cover(p) :- t = @sub(p, 1), jb(t, 92)`, which cannot place `p` (serverplan-state-tripwires' `jbs_odd`).
+#[test]
+fn a_context_covers_no_group_that_only_computes_from_an_asked_variable() {
+    let p = parse(concat!(
+        ".decl jb(p: number, c: number)\n.input jb\n",
+        ".decl odd(p: number)\n.output odd\n",
+        "odd(p) :- jb(p, _), jb(p - 1, 92), m = max j : { jb(j, 92), j < p }, m > 0.\n",
+    ))
+    .unwrap();
+    front::strata(&p).unwrap_or_else(|e| panic!("{e}"));
+    let cover: Vec<String> = p.rules.iter().filter(|r| r.head.rel.starts_with("rr_cover")).map(|r| r.to_string()).collect();
+    assert!(cover.iter().all(|r| r.contains("jb(p,")), "a cover binds what it is a relation of: {cover:?}");
+}
+
 /// Tests of one span in a disjunction, folded into one set test, test its text as a single test does
 /// (bootstrap-engine-invariants' `source(d, sp), (contains("a", sp) ; contains("b", sp))`).
 #[test]
@@ -2841,4 +2856,382 @@ fn a_text_read_once_is_read_as_each_reader_reads_it() {
 fn quoting_escapes_only_what_needs_it() {
     assert_eq!(super::quote("plain text é"), "\"plain text é\"");
     assert_eq!(super::quote("a\"b\\c\nd\te\u{1}"), "\"a\\\"b\\\\c\\nd\\te\\u{1}\"");
+}
+
+// ---------------------------------------------------------------- tests in rule files (decision 0130)
+
+/// `text` with each `.test` … `.end` block's lines blank: its program, were tests part of it, would differ.
+fn without_tests(text: &str) -> String {
+    let mut inside = false;
+    text.lines()
+        .map(|l| {
+            let t = l.trim_start();
+            let blank = inside || t.starts_with(".test ");
+            if t.starts_with(".test ") {
+                inside = true;
+            } else if t == ".end" {
+                inside = false;
+            }
+            if blank { "" } else { l }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn files_with_tests() -> Vec<PathBuf> {
+    let files: Vec<PathBuf> = rr_files().into_iter().filter(|f| super::testing::may_hold_tests(&std::fs::read_to_string(f).unwrap())).collect();
+    assert!(files.len() >= 2, "the B101 pack rule and the spike carry tests: {files:?}");
+    files
+}
+
+/// Every test a rule file carries passes (`rerail-engine test-rr` over `docs/rule-syntax/`).
+#[test]
+fn rule_files_pass_their_own_tests() {
+    let work = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-tests");
+    let mut failed = Vec::new();
+    let mut ran = 0;
+    for (k, file) in files_with_tests().iter().enumerate() {
+        for (j, test) in super::testing::tests(file).unwrap().iter().enumerate() {
+            ran += 1;
+            match super::testing::run(file, test, &work.join(format!("{k}-{j}"))) {
+                Ok(outcome) if outcome.passed() => {}
+                Ok(outcome) => failed.push(format!("{}::{}: {:?} (findings {:?})", file.display(), test.name, outcome.failures, outcome.findings)),
+                Err(e) => failed.push(format!("{}::{}: {e}", file.display(), test.name)),
+            }
+        }
+    }
+    let _ = std::fs::remove_dir_all(&work);
+    assert!(ran >= 6, "{ran} tests");
+    assert!(failed.is_empty(), "{failed:#?}");
+}
+
+/// A test is no part of its file's program (decision 0130): the program, and so every key made of it, is the one the
+/// file has with its tests' lines blank.
+#[test]
+fn a_rule_files_tests_are_no_part_of_its_program() {
+    for file in files_with_tests() {
+        let text = std::fs::read_to_string(&file).unwrap();
+        let with = super::parse(&text).unwrap();
+        let without = super::parse(&without_tests(&text)).unwrap();
+        assert_eq!(format!("{with:?}"), format!("{without:?}"), "{}", file.display());
+        assert!(!super::testing::tests(&file).unwrap().is_empty());
+    }
+}
+
+/// A failed `.expect` names its line and what the run had instead; `exactly` names the findings no `.expect` lists.
+#[test]
+fn failed_expectations_say_what_the_run_had() {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-test-fail");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("t.rr");
+    std::fs::write(&file, r#".policy "t:fail" revision 1
+.language python
+.scope include "**/*.py"
+.violation Call(at: node) code "C1" "a call"
+Call(c) :- kind(c, "call").
+.test wrong exactly
+    .fixture "a.py" ```
+        f()
+        g()
+        ```
+    .decl called(l: number)
+    called(l) :- Call(c), line(c, l).
+    .expect C1 at "a.py":1
+    .expect called(7)
+    .expect count C1 = 3
+.end
+"#).unwrap();
+    let tests = super::testing::tests(&file).unwrap();
+    let outcome = super::testing::run(&file, &tests[0], &dir.join("work")).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(outcome.failures, [
+        "line 14: .expect called(7): called has 2 rows: (1), (2)",
+        "line 15: .expect count C1 = 3: counted 2",
+        "line 6: exactly: also reported C1 at \"a.py\":2",
+    ], "{outcome:?}");
+}
+
+/// A test's block is checked as it is parsed: closed by `.end`, not nested, and no `.end` outside one.
+#[test]
+fn test_blocks_parse_only_whole() {
+    for (text, why) in [
+        (".test a\n.expect X\n", "`.end`"),
+        (".test a\n.test b\n.end\n.end\n", "do not nest"),
+        (".fixtures s\n.test b\n.end\n.end\n", "do not nest"),
+        (".end\n", "a `.test` or `.fixtures` before its `.end`"),
+    ] {
+        let error = super::parse(text).map(|_| ()).unwrap_err().to_string();
+        assert!(error.contains(why), "{text:?}: {error}");
+    }
+    assert_eq!(super::testing::dedent("\n    a\n      b\n\n    c\n    "), "a\n  b\n\nc\n");
+    // The closing fence says the indent: lines deeper than it keep the rest.
+    assert_eq!(super::testing::dedent("\n      a\n        b\n    "), "  a\n    b\n");
+    // A closing fence after text: the indent the lines share.
+    assert_eq!(super::testing::dedent("\n    a\n      b"), "a\n  b\n");
+}
+
+/// A file of `text` in a directory of its own, its tests, and each one's outcome (or its error).
+fn run_tests_of(name: &str, text: &str) -> Vec<(String, Result<Vec<String>, String>)> {
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("t.rr");
+    std::fs::write(&file, text).unwrap();
+    let out = match super::testing::tests(&file) {
+        Ok(tests) => tests
+            .iter()
+            .enumerate()
+            .map(|(k, t)| (t.name.clone(), super::testing::run(&file, t, &dir.join(format!("w{k}"))).map(|o| o.failures)))
+            .collect(),
+        Err(e) => vec![(String::new(), Err(e))],
+    };
+    let _ = std::fs::remove_dir_all(&dir);
+    out
+}
+
+/// A unit test (decision 0130): `.given r` drops r's rules, so r holds the test's facts alone, and the test reads
+/// no file. A file of rules with no `.violation` (a library's) is tested so too. `.expect only` names every row.
+#[test]
+fn a_unit_test_gives_a_relation_its_rows_and_reads_no_file() {
+    let library = r#"
+.decl seed(x: symbol)
+seed("from the rule").
+.decl edge(a: symbol, b: symbol)
+edge(x, "end") :- seed(x).
+.decl reach(a: symbol, b: symbol)
+reach(a, b) :- edge(a, b).
+reach(a, c) :- reach(a, b), edge(b, c).
+.test given_edges uses chain
+    .expect only reach("a", "b")
+    .expect only reach("b", "c")
+    .expect only reach("a", "c")
+    .expect no reach(_, "end")
+.end
+.fixtures chain
+    .given edge
+    edge("a", "b").
+    edge("b", "c").
+.end
+.test only_names_every_row
+    .given edge
+    edge("a", "b").
+    edge("b", "c").
+    .expect only reach("a", "b")
+.end
+.test the_rules_left_alone
+    .expect only reach("from the rule", "end")
+    .expect count reach = 1
+.end
+"#;
+    let got = run_tests_of("rr-unit", library);
+    assert_eq!(got, [
+        ("given_edges".to_owned(), Ok(vec![])),
+        ("only_names_every_row".to_owned(), Ok(vec!["line 24: .expect only reach: also 2: (a, c), (b, c)".to_owned()])),
+        ("the_rules_left_alone".to_owned(), Ok(vec![])),
+    ]);
+}
+
+/// What a test may not do is refused with its line: give a core relation, give one no rule declares, use a set that
+/// is not there, or have two fixtures at one path.
+#[test]
+fn a_test_that_cannot_run_is_refused_with_its_line() {
+    let head = ".decl r(x: symbol)\nr(\"a\").\n";
+    for (test, why) in [
+        (".test t\n    .given kind\n.end\n", "t.rr:4: .given kind: a core relation is the engine's"),
+        (".test t\n    .given nothing\n.end\n", "t.rr:4: .given nothing: no rule declares it"),
+        (".test t uses absent\n.end\n", "t.rr:3: no fixture set named absent"),
+        (".test t\n    .fixture \"a.py\" ```\n        x\n        ```\n    .fixture \"a.py\" ```\n        y\n        ```\n.end\n", "t.rr:3: two fixtures at \"a.py\""),
+        (".test t\n    .expect r(\"a\"\n.end\n", "t.rr:4: `.expect"),
+    ] {
+        let got = run_tests_of("rr-refused", &format!("{head}{test}"));
+        let error = match &got[0].1 { Err(e) => e.clone(), Ok(f) => format!("ran: {f:?}") };
+        assert!(error.contains(why), "{test:?}: {error}");
+    }
+}
+
+/// A test printed (`print_test`, as the converter prints a case) reads back as written: its fixture's bytes, however
+/// many backticks and blank lines they hold, and its expectations.
+#[test]
+fn a_printed_test_reads_back_as_written() {
+    // Every line indented: the closing fence keeps it.
+    let content = "  x = ```a```\n\n    y = \"````\"\n";
+    let text = format!(
+        ".decl r(x: symbol)\nr(\"a\").\n{}",
+        super::testing::print_test("printed", false, &[("src/a.py".to_owned(), content.to_owned())], &["no _ at \"src/a.py\"".to_owned(), "r(\"a\")".to_owned()])
+    );
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-printed");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("t.rr"), &text).unwrap();
+    let tests = super::testing::tests(&dir.join("t.rr")).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(tests.len(), 1, "{text}");
+    assert_eq!(tests[0].fixtures, [("src/a.py".to_owned(), content.as_bytes().to_vec())], "{text}");
+    assert_eq!(tests[0].expects.iter().map(ToString::to_string).collect::<Vec<_>>(), ["no _ at \"src/a.py\"", "r(\"a\")"]);
+}
+
+/// `flatten` keeps a file's text as written (`program_text`), so its tests and fixture sets go with it.
+#[test]
+fn a_flattened_file_keeps_its_tests() {
+    let file = rule_syntax().join("spikes/rr-tests/print-calls.rr");
+    let flat = crate::code_rule_dsl::tools::flatten(&file).unwrap();
+    let blocks = super::testing::blocks(&std::fs::read_to_string(&file).unwrap());
+    assert!(blocks.len() >= 6 && blocks.iter().any(|b| b.starts_with(".fixtures logging_app")), "{blocks:?}");
+    assert_eq!(super::testing::blocks(&flat), blocks);
+    assert_eq!(format!("{:?}", super::parse(&flat).unwrap()), format!("{:?}", super::parse(&without_tests(&flat)).unwrap()));
+}
+
+/// `convert-rr --cases` prints a draft's cases as tests: a caught case expects a finding in its file, a passed one
+/// none. They are printed for a rule that needs a hand-written port too, and read back one test a case.
+#[test]
+fn converted_cases_are_tests() {
+    let rule = repo().join("packs/rerail/rules/rerail-fixed-value-lists.json");
+    let cases = repo().join("fixtures/rerail/rerail-fixed-value-lists.cases.json");
+    let report = crate::code_rule_dsl::tools::convert_rr_with(&[(rule, Some(cases.clone()))]);
+    let tests = report[0]["tests"].as_str().unwrap_or_else(|| panic!("{report}"));
+    let n: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&cases).unwrap()).unwrap();
+    let (caught, passed) = (n["caught"].as_array().unwrap().len(), n["passed"].as_array().unwrap().len());
+    let dir = crate::code_rule_dsl::prefilter::tests::temp().with_extension("rr-cases");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("t.rr"), tests).unwrap();
+    let read = super::testing::tests(&dir.join("t.rr")).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(read.len(), caught + passed);
+    assert_eq!(read.iter().filter(|t| t.expects[0].negated).count(), passed);
+    let first = &n["caught"][0];
+    assert_eq!(read[0].fixtures, [(first["path"].as_str().unwrap().to_owned(), first["content"].as_str().unwrap().as_bytes().to_vec())]);
+}
+
+/// A policy file's program, printed, reads back as the program itself once remembered (`remember_lowered`): what
+/// `run-rr` hands the run. Every data-layer policy, by its print.
+#[test]
+fn a_policys_printed_program_reads_back_as_the_program_read() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer");
+    let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "rr")).collect();
+    paths.sort();
+    let mut read = 0;
+    for path in paths.iter().take(12) {
+        let Ok((program, _)) = super::read_file(path) else { continue };
+        read += 1;
+        let printed = super::print(&program).unwrap();
+        super::remember_lowered(&printed, &program);
+        assert_eq!(super::print(&super::parse(&printed).unwrap()).unwrap(), printed, "{}", path.display());
+    }
+    assert!(read > 5, "{read} policies read");
+}
+
+/// Aggregate demand's stratification shortcut (`aggregate_demand::optimize`): every data-layer policy lowers to the
+/// program it lowers to with each candidate stratified whole.
+#[test]
+fn aggregate_demand_keeps_the_candidates_a_whole_stratification_keeps() {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer");
+    let mut paths: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|e| e == "rr")).collect();
+    paths.sort();
+    let (mut read, mut demanded) = (0, 0);
+    for path in &paths {
+        let text = std::fs::read_to_string(path).unwrap();
+        let lowered = |full: bool| {
+            super::aggregate_demand::FULL_CHECKS.with(|c| c.set(full));
+            let p = super::read_text(&text).and_then(|t| t.lower(true)).map(|p| super::print(&p).unwrap());
+            super::aggregate_demand::FULL_CHECKS.with(|c| c.set(false));
+            p
+        };
+        let (Ok(short), Ok(whole)) = (lowered(false), lowered(true)) else { continue };
+        read += 1;
+        demanded += usize::from(short.contains("rr_demand_agg_"));
+        assert_eq!(short, whole, "{}", path.display());
+    }
+    assert!(read > 20 && demanded > 3, "{read} policies read, {demanded} with aggregate demand");
+}
+
+/// Lowering is idempotent: each program file under `dirs` (shard `k` of `n`, by its place in name order), printed and
+/// lowered again (not from `remember_lowered`'s cache), prints as the same text, statement for statement and in order.
+/// A file that is no program of its own (a library module's part) is passed over. `RERAIL_IDEMPOTENCY_DUMP=<dir>`
+/// writes both prints of each that differs.
+fn lowers_back(dirs: &[&str], k: usize, n: usize) {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
+    let mut paths: Vec<_> = dirs
+        .iter()
+        .flat_map(|d| std::fs::read_dir(root.join(d)).unwrap().map(|e| e.unwrap().path()))
+        .filter(|p| p.extension().is_some_and(|e| e == "rr"))
+        .collect();
+    paths.sort();
+    let (mut read, mut differ) = (0, Vec::new());
+    for path in paths.iter().skip(k).step_by(n) {
+        let Ok((program, _)) = super::read_file(path) else { continue };
+        let Ok(printed) = super::print(&program) else { continue };
+        read += 1;
+        let again = match super::read_text(&printed).and_then(|t| t.lower(true)).and_then(|p| super::print(&p)) {
+            Ok(again) => again,
+            Err(e) => {
+                differ.push(format!("{}: its print does not lower: {e}", path.display()));
+                continue;
+            }
+        };
+        if again != printed {
+            if let Some(dir) = std::env::var_os("RERAIL_IDEMPOTENCY_DUMP") {
+                let name = path.file_stem().unwrap().to_string_lossy().into_owned();
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(std::path::Path::new(&dir).join(format!("{name}.first.rr")), &printed).unwrap();
+                std::fs::write(std::path::Path::new(&dir).join(format!("{name}.again.rr")), &again).unwrap();
+            }
+            let at = printed.lines().zip(again.lines()).position(|(a, b)| a != b).unwrap_or(printed.lines().count().min(again.lines().count()));
+            differ.push(format!("{}: line {at}: {:?} / {:?}", path.display(), printed.lines().nth(at), again.lines().nth(at)));
+        }
+    }
+    assert!(read > 0, "no program read in {dirs:?}");
+    assert!(differ.is_empty(), "{} of {read} lower to another program:\n{}", differ.len(), differ.join("\n"));
+}
+
+#[test]
+fn lowering_is_idempotent_data_layer() {
+    lowers_back(&["data-layer"], 0, 1);
+}
+
+#[test]
+fn lowering_is_idempotent_python_0() {
+    lowers_back(&["packs/python"], 0, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_python_1() {
+    lowers_back(&["packs/python"], 1, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_python_2() {
+    lowers_back(&["packs/python"], 2, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_python_3() {
+    lowers_back(&["packs/python"], 3, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_python_4() {
+    lowers_back(&["packs/python"], 4, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_python_5() {
+    lowers_back(&["packs/python"], 5, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_python_6() {
+    lowers_back(&["packs/python"], 6, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_python_7() {
+    lowers_back(&["packs/python"], 7, 8);
+}
+
+#[test]
+fn lowering_is_idempotent_javascript_typescript() {
+    lowers_back(&["packs/javascript", "packs/typescript"], 0, 1);
+}
+
+#[test]
+fn lowering_is_idempotent_other_packs() {
+    lowers_back(&["packs/react", "packs/node", "packs/rust", "packs/vue", "packs/sql", "packs/next", "packs/php", "packs/blade", "packs/complexity", "packs/rr"], 0, 1);
 }

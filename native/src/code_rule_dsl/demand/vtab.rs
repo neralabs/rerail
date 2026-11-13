@@ -66,28 +66,28 @@ pub(in crate::code_rule_dsl) struct DocumentMapSpan {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct HardPartition {
-    pub(in crate::code_rule_dsl) cause: &'static str,
-    pub(in crate::code_rule_dsl) limit: usize,
-    pub(in crate::code_rule_dsl) task_range: Range<usize>,
+pub struct HardPartition {
+    pub cause: &'static str,
+    pub limit: usize,
+    pub task_range: Range<usize>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct PackedExecutionCounters {
-    pub(in crate::code_rule_dsl) registrations: usize,
-    pub(in crate::code_rule_dsl) virtual_table_scans: usize,
-    pub(in crate::code_rule_dsl) filters: usize,
-    pub(in crate::code_rule_dsl) demand_executions: usize,
-    pub(in crate::code_rule_dsl) backend_invocations: usize,
-    pub(in crate::code_rule_dsl) hard_partitions: usize,
-    pub(in crate::code_rule_dsl) partitions: Vec<HardPartition>,
-    pub(in crate::code_rule_dsl) demanded_producers: usize,
-    pub(in crate::code_rule_dsl) terminal_tasks: usize,
-    pub(in crate::code_rule_dsl) command_buffers: usize,
-    pub(in crate::code_rule_dsl) packed_dispatches: usize,
-    pub(in crate::code_rule_dsl) anchor_dispatches: usize,
-    pub(in crate::code_rule_dsl) matcher_calls: usize,
-    pub(in crate::code_rule_dsl) host_callbacks: usize,
+pub struct PackedExecutionCounters {
+    pub registrations: usize,
+    pub virtual_table_scans: usize,
+    pub filters: usize,
+    pub demand_executions: usize,
+    pub backend_invocations: usize,
+    pub hard_partitions: usize,
+    pub partitions: Vec<HardPartition>,
+    pub demanded_producers: usize,
+    pub terminal_tasks: usize,
+    pub command_buffers: usize,
+    pub packed_dispatches: usize,
+    pub anchor_dispatches: usize,
+    pub matcher_calls: usize,
+    pub host_callbacks: usize,
 }
 
 struct MaterializedDemand {
@@ -270,7 +270,7 @@ impl RootsExecution {
 const RANGE_BYTES: u64 = 64 << 20;
 
 /// `0..file_count` as the ranges that fit, in order: a range that does not fit is halved.
-fn stable_partition_ranges(file_count: usize, fits: impl Fn(&Range<usize>) -> bool) -> Vec<Range<usize>> {
+pub fn stable_partition_ranges(file_count: usize, fits: impl Fn(&Range<usize>) -> bool) -> Vec<Range<usize>> {
     fn split(range: Range<usize>, fits: &impl Fn(&Range<usize>) -> bool) -> Vec<Range<usize>> {
         if range.len() <= 1 || fits(&range) {
             return vec![range];
@@ -662,7 +662,7 @@ impl PackedDemand {
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(in crate::code_rule_dsl) fn with_failure_injection(
+    pub fn with_failure_injection(
         mut self,
         producer: usize,
         code: String,
@@ -675,7 +675,7 @@ impl PackedDemand {
         Ok(self)
     }
 
-    fn partition_records(&self, ranges: &[Range<usize>]) -> Vec<HardPartition> {
+    pub fn partition_records(&self, ranges: &[Range<usize>]) -> Vec<HardPartition> {
         if ranges.len() <= 1 {
             return Vec::new();
         }
@@ -1435,13 +1435,13 @@ struct CaptureData {
 
 #[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::code_rule_dsl) struct TestProducerStatusRow {
+pub struct TestProducerStatusRow {
     pub(in crate::code_rule_dsl) producer: i64,
     pub(in crate::code_rule_dsl) file: i64,
-    pub(in crate::code_rule_dsl) complete: i64,
+    pub complete: i64,
     pub(in crate::code_rule_dsl) verdict: Option<i64>,
     pub(in crate::code_rule_dsl) work_used: Option<i64>,
-    pub(in crate::code_rule_dsl) error: Option<String>,
+    pub error: Option<String>,
 }
 
 /// A structure key's part as a digest: the keys are compared only for equality (`relational_ir`'s
@@ -1753,7 +1753,7 @@ pub struct MatchRegistry {
 }
 
 impl MatchRegistry {
-    pub(in crate::code_rule_dsl) fn register(&self, demand: PackedDemand) -> i64 {
+    pub fn register(&self, demand: PackedDemand) -> i64 {
         let token = self.next.fetch_add(1, Ordering::Relaxed) + 1;
         self.batches
             .lock()
@@ -1772,7 +1772,7 @@ impl MatchRegistry {
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(in crate::code_rule_dsl) fn query_producer_status_rows(
+    pub fn query_producer_status_rows(
         &self,
         token: i64,
     ) -> Vec<TestProducerStatusRow> {
@@ -1798,7 +1798,7 @@ impl MatchRegistry {
     }
 
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(in crate::code_rule_dsl) fn query_execution_counters(
+    pub fn query_execution_counters(
         &self,
         token: i64,
     ) -> Option<(usize, usize)> {
@@ -1810,7 +1810,7 @@ impl MatchRegistry {
         })
     }
 
-    pub(in crate::code_rule_dsl) fn query_execution_report(
+    pub fn query_execution_report(
         &self,
         token: i64,
     ) -> Option<PackedExecutionCounters> {
@@ -2286,8 +2286,7 @@ unsafe impl VTabCursor for MatchCursor<'_> {
     }
 }
 
-#[cfg(test)]
-pub mod tests;
+// tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 /// Root programs fused into one walk (`PackedDemand::packs`).
 struct RootPack {
