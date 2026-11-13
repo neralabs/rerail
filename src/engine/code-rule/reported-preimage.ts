@@ -118,8 +118,8 @@ function inFileForm(text: string, after: string): string {
 
 /**
  * The text a line diff made `after` from: each hunk's lines put back as they were before it. Lines on both sides keep
- * the file's own bytes, and a line only the diff holds takes the file's line ending, so a file with CRLF endings is
- * rebuilt with them whether or not the diff's lines carry the carriage return. Undefined when a hunk's lines are not
+ * the file's own bytes, and a line only the diff holds takes the file's form (`FileForm`), so a file with CRLF endings
+ * is rebuilt with them whether or not the diff's lines carry the carriage return. Undefined when a hunk's lines are not
  * where it places them in `after`, when hunks overlap, or when a line has no mark.
  */
 function unpatched(after: string, hunks: readonly ReportedHunk[]): string | undefined {
@@ -129,7 +129,8 @@ function unpatched(after: string, hunks: readonly ReportedHunk[]): string | unde
   let next = 0;
   for (const hunk of [...hunks].sort((left, right) => left.newStart - right.newStart)) {
     const at = Math.max(hunk.newStart - 1, 0);
-    const before = at < next ? undefined : hunkBefore(lines, at, hunk.lines, ending);
+    const form = { ending, tabs: indentsWithTabs(lines.slice(at, at + heldCount(hunk.lines))) };
+    const before = at < next ? undefined : hunkBefore(lines, at, hunk.lines, form);
     if (before === undefined) return undefined;
     parts.push(lines.slice(next, at).join(""), before.text);
     next = before.next;
@@ -144,6 +145,36 @@ function lineEnding(text: string): string {
 }
 
 /**
+ * How the file writes a line only the diff holds: with its line `ending`, and with tabs where the diff shows each tab of
+ * a line's leading indentation as two spaces, as Claude Code's line diff does, when the hunk's lines in the file indent
+ * with tabs (`tabs`).
+ */
+interface FileForm {
+  readonly ending: string;
+  readonly tabs: boolean;
+}
+
+/** How many of the file's lines a hunk's lines cover: those on both sides and those after only. */
+function heldCount(hunk: readonly string[]): number {
+  return hunk.filter((line) => line.startsWith(" ") || line.startsWith("+")).length;
+}
+
+/** Whether any of `lines` starts with a tab. */
+function indentsWithTabs(lines: readonly string[]): boolean {
+  return lines.some((line) => line.startsWith("\t"));
+}
+
+/** `line` as Claude Code's line diff shows it: each tab of its leading indentation as two spaces. */
+function shownIndentation(line: string): string {
+  return line.replace(/^[ \t]+/u, (indentation) => indentation.replaceAll("\t", "  "));
+}
+
+/** `text` with each pair of spaces of its leading indentation as a tab, as a file that indents with tabs writes it. */
+function tabbedIndentation(text: string): string {
+  return text.replace(/^(?: {2})+/u, (spaces) => "\t".repeat(spaces.length / 2));
+}
+
+/**
  * One hunk's lines before the diff, read against the file's `lines` from `at`, and the index of the file's first line
  * past the hunk. Undefined when the file's lines there are not the hunk's lines after the diff.
  */
@@ -151,12 +182,12 @@ function hunkBefore(
   lines: readonly string[],
   at: number,
   hunk: readonly string[],
-  ending: string,
+  form: FileForm,
 ): { readonly text: string; readonly next: number } | undefined {
   const before: string[] = [];
   let next = at;
   for (const [index, line] of hunk.entries()) {
-    const step = hunkLine(line, hunk[index + 1], lines[next], ending);
+    const step = hunkLine(line, hunk[index + 1], lines[next], form);
     if (step === undefined) return undefined;
     if (step.before !== undefined) before.push(step.before);
     next += step.takes;
@@ -172,16 +203,22 @@ interface HunkStep {
 
 /**
  * One line of a hunk, read where the hunk has got to in the file: `held` is the file's line there, and `following` the
- * hunk's next line, which marks this one as ending its file without a line feed. A `-` line puts its text back with
- * the file's line `ending`; the others are read by `heldLine`. Undefined when the line does not fit the file there.
+ * hunk's next line, which marks this one as ending its file without a line feed. A `-` line puts its text back in the
+ * file's `form` (`removedLine`); the others are read by `heldLine`. Undefined when the line does not fit the file there.
  */
-function hunkLine(line: string, following: string | undefined, held: string | undefined, ending: string): HunkStep | undefined {
+function hunkLine(line: string, following: string | undefined, held: string | undefined, form: FileForm): HunkStep | undefined {
   const mark = line.charAt(0);
   if (mark === "\\") return { takes: 0 };
   const text = line.slice(1).replace(/\r$/u, "");
   const ends = following?.startsWith("\\") !== true;
-  if (mark === "-") return { before: ends ? `${text}${ending}` : text, takes: 0 };
+  if (mark === "-") return { before: removedLine(text, ends, form), takes: 0 };
   return heldLine(mark, held, text, ends);
+}
+
+/** A line only the diff holds, as the file wrote it before the diff: with the file's tabs and line ending. */
+function removedLine(text: string, ends: boolean, form: FileForm): string {
+  const line = form.tabs ? tabbedIndentation(text) : text;
+  return ends ? `${line}${form.ending}` : line;
 }
 
 /**
@@ -194,7 +231,14 @@ function heldLine(mark: string, held: string | undefined, text: string, ends: bo
   return mark === "+" ? { takes: 1 } : undefined;
 }
 
-/** Whether the file's line `held` is the diff's line `text`, ending in a line feed (with or without a carriage return) when `ends`. */
+/**
+ * Whether the file's line `held` is the diff's line `text`, as it is or with its leading tabs shown as two spaces each
+ * (`shownIndentation`), ending in a line feed (with or without a carriage return) when `ends`.
+ */
 function sameLine(held: string, text: string, ends: boolean): boolean {
-  return ends ? held === `${text}\n` || held === `${text}\r\n` : held === text;
+  return sameText(held, text, ends) || sameText(shownIndentation(held), text, ends);
+}
+
+function sameText(line: string, text: string, ends: boolean): boolean {
+  return ends ? line === `${text}\n` || line === `${text}\r\n` : line === text;
 }
