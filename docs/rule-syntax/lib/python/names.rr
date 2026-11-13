@@ -389,10 +389,11 @@ ann_root(t) :- kind(a, "assignment"), field(a, "type", t).
 .decl ann_ctx(s: node)  // s is an annotation root or inside one: where a string annotation can stand
 ann_ctx(s) :- ann_root(a), (s = a ; within(s, a)).
 parsed_in(e, s) :- !guest_policy("library", "off"), ann_ctx(s), ann_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
-// s is a string inside a parsed annotation (a fragment document): only those are asked to be parsed again.
-parsed_in(e, s0) :- !guest_policy("library", "off"), parsed_in(s, s0), frag_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
-.decl frag_str(s: node)  // a string inside a parsed annotation (a fragment document)
-frag_str(s) :- ann_str(s), d = @doc(s), doc_role(d, "fragment").
+// s is a string inside a parsed annotation: only those are asked to be parsed again. parsed_in binds s inside a
+// parsed tree, so s is in a fragment document already; a test of its document's role (`d = @doc(s), doc_role(d,
+// "fragment")`, once frag_str) was planned before the fragments existed and crossed each with every string of the
+// chunk (4.2 M rows on 859 posthog files, none kept).
+parsed_in(e, s0) :- !guest_policy("library", "off"), parsed_in(s, s0), ann_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
 .decl str_node(s: node)  // a string or an implicit concatenation: what a parse request may name
 str_node(s) :- kind(s, "string").
 str_node(s) :- kind(s, "concatenated_string").

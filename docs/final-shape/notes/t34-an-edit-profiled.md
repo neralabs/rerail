@@ -139,7 +139,8 @@ Open, largest first (the edit after items 1–5: 12.85 s of span CPU):
    each, dozens per edit), although decision 0120 keeps statistics in the frames under the rows' digest.
 10. **`frag_str`'s `doc_role(d, 17505)` is planned from statistics made before its rows exist:** estimated at 1 row,
     2,455 found, 7.1 M rows, none kept. The floor (item 2) bounds this but does not fix it. The plan should be made
-    when the relation is known.
+    when the relation is known. (2026-11-13, django-bugs: `python/names.rr` no longer has this rule; `parsed_in`
+    reads `ann_str` alone, as what it binds is in a fragment already. The planner's fault stays open, and its test.)
 11. **Smaller:** `p149_LOG001` scans `import_alias` with nothing bound (3.9 M rows → 0). `rr_agg48` goes from 135 k
     to 3.1 M rows. There are 1.5 M scalar node visits.
 
