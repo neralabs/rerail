@@ -12,8 +12,10 @@
 //!
 //! The plan names what preparing reads besides the texts: the engine build, the grammar version, the dialect and what
 //! the run added to the program (`prepared_key`). The split (`file_local::programs`) is a function of the lowered
-//! program, kept too (`split_local`, `split_cross` and `prepared_export` …): making it again cost about 0.6 s of the
-//! Python pack's warm run. The text tests' matchers are made again on reading (from their specs).
+//! program, and what it found is kept too (`prepared_file_local`, `prepared_constant`, `prepared_location` …): finding
+//! it again cost about 0.6 s of the Python pack's warm run. Its two parts are not kept: each is a part of the lowered
+//! program's rules, made from it again on reading (`file_local::assemble`). The text tests' matchers are made again
+//! on reading (from their specs).
 //!
 //! A prepared program holds atoms of the store, which lowering interned. They are never given out again (decision
 //! 0049); `prepared_interned` lists every intern call, and the run asks them again before it uses the program, as it
@@ -23,18 +25,20 @@ pub use super::Prepared;
 use super::lower;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::logic::front::Value;
-use crate::code_rule_dsl::logic::program_facts::{self, Facts};
+use crate::code_rule_dsl::logic::program_facts::{self, Cell, Facts, Rows};
 use crate::code_rule_dsl::logic::strings::Vocabulary;
 use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, SourceId, StoreError, StoreResult};
 use sha2::{Digest as _, Sha256};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-/// The pointer's schema (program text and plan to document): bumped when its meaning changes.
-const POINTER: u32 = 103;
+/// The pointer's schema (program text and plan to document): bumped when its meaning changes (104: documents of facts
+/// schema 105).
+const POINTER: u32 = 104;
 /// The document facts' schema: bumped when the encoding or the facts' meaning changes (103: `fact_rel`; 104: `match_all`'s
-/// regexes and the f-string markers, `prepared_match` and `prepared_marker`).
-const FACTS: u32 = 104;
+/// regexes and the f-string markers, `prepared_match` and `prepared_marker`; 105: the split as what it found,
+/// `prepared_file_local` and `prepared_constant`, not its two programs).
+const FACTS: u32 = 105;
 
 /// The path a lookup names. The entries read no path (`path_dependent: false`); the store keeps them under none.
 const PATH: &str = "rerail/prepared";
@@ -85,10 +89,11 @@ pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
         // The vocabulary's `match_all` regexes (their sources) and `fstring_template` markers, in order.
         ("prepared_match", &["k:int", "regex:sym"]),
         ("prepared_marker", &["k:int", "marker:sym"]),
-        // The split (`file_local::programs`): its programs are `split_local` and `split_cross`.
+        // The split (`file_local::programs`): what it found, the file-local relations and those of constants. Its two
+        // parts are the lowered program's rules, a part each, made from it again on reading (`file_local::assemble`).
         ("prepared_split", &["ok:int"]),
-        ("prepared_export", &["k:int", "rel:sym"]),
-        ("prepared_base", &["k:int", "rel:sym"]),
+        ("prepared_file_local", &["k:int", "rel:sym"]),
+        ("prepared_constant", &["k:int", "rel:sym"]),
         ("prepared_location", &["rel:sym", "i:int", "col:int"]),
         ("prepared_same_doc", &["rel:sym", "i:int", "col:int"]),
     ];
@@ -132,11 +137,13 @@ pub fn facts_of(prepared: &Prepared) -> Facts {
 }
 
 /// `prepared` as facts, a group at a time: each of its programs', then the rest. Made one by one as they are written
-/// (`remember`), so the writer holds one program's facts at a time, not all four's (about 0.47 GB of the Python pack's
-/// peak at once, a row a `Vec` of `Value`s).
+/// (`remember`), so the writer holds one program's facts at a time, not both's (about 0.47 GB of the Python pack's
+/// peak at once when the split's two were written too, a row a `Vec` of `Value`s).
 fn groups(prepared: &Prepared) -> impl Iterator<Item = Facts> + '_ {
-    // The split too: a function of the lowered program, but about 0.6 s of the Python pack's to make again.
-    let programs = [("front", &prepared.prog), ("lowered", &prepared.lowered.program), ("split_local", &prepared.split.local), ("split_cross", &prepared.split.cross)];
+    // Not the split's two programs: each is a part of the lowered program's rules (`file_local::assemble`), so the
+    // rest keeps what the split found (about 0.6 s of the Python pack's to find again), and the parts are made from
+    // the lowered program on reading. Written whole, they were 36% of a dl1 batch's stored rows, all read again.
+    let programs = [("front", &prepared.prog), ("lowered", &prepared.lowered.program)];
     programs
         .into_iter()
         .map(|(p, prog)| {
@@ -195,11 +202,11 @@ fn rest_of(prepared: &Prepared) -> Facts {
         }
     }
     row("prepared_split", vec![n(1)]);
-    for (k, rel) in prepared.split.exports.iter().enumerate() {
-        row("prepared_export", vec![n(k), s(rel)]);
+    for (k, rel) in prepared.split.file_local.iter().enumerate() {
+        row("prepared_file_local", vec![n(k), s(rel)]);
     }
-    for (k, rel) in prepared.split.base.iter().enumerate() {
-        row("prepared_base", vec![n(k), s(rel)]);
+    for (k, rel) in prepared.split.constants.iter().enumerate() {
+        row("prepared_constant", vec![n(k), s(rel)]);
     }
     for (which, map) in [("prepared_location", &prepared.split.locations), ("prepared_same_doc", &prepared.split.same_doc)] {
         for (rel, cols) in map {
@@ -229,32 +236,26 @@ fn bad(what: impl std::fmt::Display) -> String {
     format!("prepared facts: {what}")
 }
 
-fn int(v: &Value) -> Result<i64, String> {
-    match v {
-        Value::Int(i) => Ok(*i),
-        Value::Str(x) => Err(bad(format!("{x:?} where a number goes"))),
-    }
+fn int(v: &impl Cell) -> Result<i64, String> {
+    v.int().ok_or_else(|| bad(format!("{:?} where a number goes", v.str().unwrap_or_default())))
 }
 
-fn text(v: &Value) -> Result<String, String> {
-    match v {
-        Value::Str(x) => Ok(x.clone()),
-        Value::Int(i) => Err(bad(format!("{i} where a string goes"))),
-    }
+fn text(v: &impl Cell) -> Result<String, String> {
+    v.str().map(str::to_owned).ok_or_else(|| bad(format!("{} where a string goes", v.int().unwrap_or_default())))
 }
 
 /// The rows of `rel` by their first column (an index): each row less that column, in order.
-fn indexed<'a>(facts: &'a Facts, rel: &str) -> Result<Vec<(i64, &'a [Value])>, String> {
-    let mut rows: Vec<(i64, &[Value])> = facts.get(rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, &r[1..]))).collect::<Result<_, String>>()?;
+fn indexed<'a, C: Cell>(facts: &Rows<'a, C>, rel: &str) -> Result<Vec<(i64, &'a [C])>, String> {
+    let mut rows: Vec<(i64, &[C])> = facts.get(rel).into_iter().flatten().map(|&r| Ok((int(&r[0])?, &r[1..]))).collect::<Result<_, String>>()?;
     rows.sort_by_key(|(k, _)| *k);
     Ok(rows)
 }
 
 /// The rows of `rel` grouped by their first column (an index), each group in the order of its second (an index), each
 /// row less both.
-fn nested<'a>(facts: &'a Facts, rel: &str) -> Result<BTreeMap<i64, Vec<&'a [Value]>>, String> {
-    let mut out: BTreeMap<i64, Vec<(i64, &[Value])>> = BTreeMap::new();
-    for r in facts.get(rel).into_iter().flatten() {
+fn nested<'a, C: Cell>(facts: &Rows<'a, C>, rel: &str) -> Result<BTreeMap<i64, Vec<&'a [C]>>, String> {
+    let mut out: BTreeMap<i64, Vec<(i64, &[C])>> = BTreeMap::new();
+    for &r in facts.get(rel).into_iter().flatten() {
         out.entry(int(&r[0])?).or_default().push((int(&r[1])?, &r[2..]));
     }
     Ok(out
@@ -267,7 +268,14 @@ fn nested<'a>(facts: &'a Facts, rel: &str) -> Result<BTreeMap<i64, Vec<&'a [Valu
 }
 
 /// The prepared program `facts` holds, for `dialect`.
+#[cfg(any(test, feature = "test-hooks"))]
 pub fn prepared_of(facts: &Facts, dialect: GrammarDialect) -> Result<Prepared, String> {
+    prepared_from(&program_facts::rows_of(facts), dialect)
+}
+
+/// The prepared program whose rows are `facts`, for `dialect`: read off a store's bytes in place (`lookup`), or off
+/// facts (`prepared_of`).
+pub fn prepared_from<C: Cell>(facts: &Rows<'_, C>, dialect: GrammarDialect) -> Result<Prepared, String> {
     // Its programs' rows, grouped by program in one pass (`Grouped`).
     let grouped = program_facts::Grouped::of(facts);
     let (prog, program) = {
@@ -342,7 +350,7 @@ pub fn prepared_of(facts: &Facts, dialect: GrammarDialect) -> Result<Prepared, S
     };
     let split = match facts.get("prepared_split").is_some_and(|r| !r.is_empty()) {
         true => {
-            let _s = crate::code_rule_dsl::logic::profile::span(|| "read the split off the facts".into());
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "the split's parts, of the lowered program and what the split found".into());
             let columns = |rel: &str| -> Result<BTreeMap<String, Vec<usize>>, String> {
                 let mut by: BTreeMap<String, Vec<(i64, usize)>> = BTreeMap::new();
                 for r in facts.get(rel).into_iter().flatten() {
@@ -356,14 +364,8 @@ pub fn prepared_of(facts: &Facts, dialect: GrammarDialect) -> Result<Prepared, S
                     (rel, cs.into_iter().map(|(_, c)| c).collect())
                 }).collect())
             };
-            crate::code_rule_dsl::typing::file_local::Programs {
-                local: grouped.program("split_local")?,
-                cross: grouped.program("split_cross")?,
-                exports: list("prepared_export")?,
-                base: list("prepared_base")?,
-                locations: columns("prepared_location")?,
-                same_doc: columns("prepared_same_doc")?,
-            }
+            let set = |rel: &str| -> Result<std::collections::BTreeSet<String>, String> { Ok(list(rel)?.into_iter().collect()) };
+            crate::code_rule_dsl::typing::file_local::assemble(&program, set("prepared_file_local")?, set("prepared_constant")?, columns("prepared_location")?, columns("prepared_same_doc")?)
         }
         false => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "split the lowered program".into());
@@ -390,26 +392,23 @@ fn invalid(e: impl std::fmt::Display) -> StoreError {
     StoreError::Invalid(e.to_string())
 }
 
-/// The document's facts as the store keeps them; read off its tape when they are not kept (and kept then). `text` is
-/// the document's, when the caller has it.
-fn document_facts(store: &ContentStore, document: SourceId, text: Option<&str>) -> StoreResult<Option<Facts>> {
+/// The document's facts, encoded (`program_facts::encode`), as the store keeps them; read off its tape when they are
+/// not kept, or no longer decode (`kept` false), and kept then.
+fn document_entry(store: &ContentStore, document: SourceId, kept: bool) -> StoreResult<Option<Vec<u8>>> {
     let set = facts_plan();
-    let memo = store.facts_memo(FactsMemoKey { source: document, fact_schema: FACTS, path: PATH })?;
-    if let Some(result) = memo.results.get(&set.plans[0])
-        && let Ok(facts) = program_facts::decode(&result.entry)
-    {
-        return Ok(Some(facts));
+    if kept {
+        let mut memo = store.facts_memo(FactsMemoKey { source: document, fact_schema: FACTS, path: PATH })?;
+        if let Some(result) = memo.results.remove(&set.plans[0]) {
+            return Ok(Some(result.entry));
+        }
     }
     // Read off the document's tape (decision 0062): the tape the store keeps for it, made now if it has none.
-    let text = match text {
-        Some(t) => t.to_owned(),
-        None => String::from_utf8(store.get_source(document)?).map_err(invalid)?,
-    };
+    let text = String::from_utf8(store.get_source(document)?).map_err(invalid)?;
     let Ok(facts) = crate::code_rule_dsl::logic::rr::parse_stored(PATH, text).map(|p| p.facts) else { return Ok(None) };
     let entry = program_facts::encode(&facts);
     crate::code_rule_dsl::logic::profile::work(crate::code_rule_dsl::logic::profile::Unit::Byte, entry.len() as u64);
-    store.put_facts_memo(FactsMemoKey { source: document, fact_schema: FACTS, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry }], &[])?;
-    Ok(Some(facts))
+    store.put_facts_memo(FactsMemoKey { source: document, fact_schema: FACTS, path: PATH }, &set, &[FactsResult { plan: set.plans[0], path_dependent: false, entry: entry.clone() }], &[])?;
+    Ok(Some(entry))
 }
 
 /// The most rows a part of a stored program's facts holds: each part is its own document, and its tape is parsed
@@ -459,22 +458,43 @@ pub(super) fn lookup(store: &ContentStore, source: SourceId, dialect: GrammarDia
     if result.entry.is_empty() || result.entry.len() % 32 != 0 {
         return Ok(None);
     }
-    let mut facts = Facts::new();
+    // Each part's bytes, read in place (`program_facts::Decoded`): its rows' strings are borrowed from them, and only
+    // those the program keeps are copied.
+    let mut entries = Vec::new();
     let mut documents = Vec::new();
     for digest in result.entry.chunks(32) {
         let digest: [u8; 32] = digest.try_into().expect("32 bytes");
         let Some(document) = store.held_source_by_hash(HashKey::from_sha256_digest(digest))? else { return Ok(None) };
-        let part = {
+        let entry = {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "read a part's facts".into());
-            document_facts(store, document, None)?
+            document_entry(store, document, true)?
         };
-        let Some(part) = part else { return Ok(None) };
-        for (rel, rows) in part {
-            facts.entry(rel).or_default().extend(rows);
-        }
+        let Some(entry) = entry else { return Ok(None) };
+        entries.push(entry);
         documents.push(document);
     }
-    Ok(prepared_of(&facts, dialect).ok().map(|p| (p, documents)))
+    fn read(entries: &[Vec<u8>]) -> Option<Vec<program_facts::Decoded<'_>>> {
+        entries.iter().map(|e| program_facts::Decoded::of(e)).collect::<Result<Vec<_>, _>>().ok()
+    }
+    let parts = match read(&entries) {
+        Some(parts) => parts,
+        // A part whose kept bytes no longer decode is read off its tape again.
+        None => {
+            for (entry, &document) in entries.iter_mut().zip(&documents) {
+                if program_facts::Decoded::of(entry).is_err() {
+                    let Some(again) = document_entry(store, document, false)? else { return Ok(None) };
+                    *entry = again;
+                }
+            }
+            let Some(parts) = read(&entries) else { return Ok(None) };
+            parts
+        }
+    };
+    let mut rows = Rows::new();
+    for part in &parts {
+        part.rows_into(&mut rows);
+    }
+    Ok(prepared_from(&rows, dialect).ok().map(|p| (p, documents)))
 }
 
 /// What the write of the program `key` is queued under (`write_back`, decision 0102).

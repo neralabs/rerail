@@ -28,6 +28,61 @@ use std::collections::BTreeMap;
 /// Rows by relation, as a program's `facts` holds them.
 pub type Facts = BTreeMap<String, Vec<Vec<Value>>>;
 
+/// A value of a row as the reader takes it: a program's `Value`, or a `Ref` read straight off `encode`'s bytes.
+pub trait Cell {
+    fn int(&self) -> Option<i64>;
+    fn str(&self) -> Option<&str>;
+}
+
+impl Cell for Value {
+    fn int(&self) -> Option<i64> {
+        match self {
+            Value::Int(i) => Some(*i),
+            Value::Str(_) => None,
+        }
+    }
+
+    fn str(&self) -> Option<&str> {
+        match self {
+            Value::Str(x) => Some(x),
+            Value::Int(_) => None,
+        }
+    }
+}
+
+/// A value read off `encode`'s bytes (`Decoded`), its string borrowed from them: a stored program is read into its
+/// `Program` without first copying every string of its rows (a warm batch's decoded rows were most of reading one).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Ref<'a> {
+    Int(i64),
+    Str(&'a str),
+}
+
+impl Cell for Ref<'_> {
+    fn int(&self) -> Option<i64> {
+        match self {
+            Ref::Int(i) => Some(*i),
+            Ref::Str(_) => None,
+        }
+    }
+
+    fn str(&self) -> Option<&str> {
+        match self {
+            Ref::Str(x) => Some(x),
+            Ref::Int(_) => None,
+        }
+    }
+}
+
+/// Rows by relation, each a slice of its values: what the reader reads, of `Facts` (`rows_of`) or of bytes
+/// (`Decoded::rows_into`).
+pub type Rows<'a, C> = BTreeMap<&'a str, Vec<&'a [C]>>;
+
+/// `facts`' rows as the reader reads them.
+pub fn rows_of(facts: &Facts) -> Rows<'_, Value> {
+    facts.iter().map(|(rel, rows)| (rel.as_str(), rows.iter().map(Vec::as_slice).collect())).collect()
+}
+
 /// Each relation of the schema and its columns (`int` or `sym`).
 pub fn schema() -> BTreeMap<String, Vec<(String, String)>> {
     const SCHEMA: &[(&str, &[&str])] = &[
@@ -385,37 +440,37 @@ fn bad(what: impl std::fmt::Display) -> String {
 }
 
 /// One program's rows of the schema, by relation, and the ids they index.
-struct Reader<'a> {
-    rows: BTreeMap<&'a str, Vec<&'a [Value]>>,
-    terms: rustc_hash::FxHashMap<i64, &'a [Value]>,
+struct Reader<'a, C> {
+    rows: Rows<'a, C>,
+    terms: rustc_hash::FxHashMap<i64, &'a [C]>,
     call_args: rustc_hash::FxHashMap<i64, BTreeMap<i64, i64>>,
-    atoms: rustc_hash::FxHashMap<i64, &'a [Value]>,
+    atoms: rustc_hash::FxHashMap<i64, &'a [C]>,
     args: rustc_hash::FxHashMap<i64, BTreeMap<i64, i64>>,
 }
 
 /// Each program's rows in `facts`, by program and relation, found in one pass: a reader per program scanned every
 /// row for its own (the prepared program's four programs were four scans of all of them, decision 0116 step 4).
-pub(in crate::code_rule_dsl) struct Grouped<'a>(BTreeMap<&'a str, BTreeMap<&'a str, Vec<&'a [Value]>>>);
+pub(in crate::code_rule_dsl) struct Grouped<'a, C>(BTreeMap<&'a str, Rows<'a, C>>);
 
-impl<'a> Grouped<'a> {
-    pub(in crate::code_rule_dsl) fn of(facts: &'a Facts) -> Self {
-        let mut by: BTreeMap<&str, BTreeMap<&str, Vec<&[Value]>>> = BTreeMap::new();
-        for (rel, all) in facts {
+impl<'a, C: Cell> Grouped<'a, C> {
+    pub(in crate::code_rule_dsl) fn of(rows: &Rows<'a, C>) -> Self {
+        let mut by: BTreeMap<&str, Rows<'a, C>> = BTreeMap::new();
+        for (&rel, all) in rows {
             // Rows of one program come together in a relation's rows as written: each run of them is added at once,
             // the map looked up when the program changes, not per row.
-            let mut run: Option<(&str, Vec<&[Value]>)> = None;
-            let flush = |run: Option<(&'a str, Vec<&'a [Value]>)>, by: &mut BTreeMap<&'a str, BTreeMap<&'a str, Vec<&'a [Value]>>>| {
+            let mut run: Option<(&str, Vec<&[C]>)> = None;
+            let flush = |run: Option<(&'a str, Vec<&'a [C]>)>, by: &mut BTreeMap<&'a str, Rows<'a, C>>| {
                 if let Some((p, rows)) = run {
-                    by.entry(p).or_default().entry(rel.as_str()).or_default().extend(rows);
+                    by.entry(p).or_default().entry(rel).or_default().extend(rows);
                 }
             };
-            for row in all {
-                let Some(Value::Str(q)) = row.first() else { continue };
+            for &row in all {
+                let Some(q) = row.first().and_then(Cell::str) else { continue };
                 match &mut run {
-                    Some((p, rows)) if *p == q.as_str() => rows.push(&row[1..]),
+                    Some((p, rows)) if *p == q => rows.push(&row[1..]),
                     _ => {
                         flush(run.take(), &mut by);
-                        run = Some((q.as_str(), vec![&row[1..]]));
+                        run = Some((q, vec![&row[1..]]));
                     }
                 }
             }
@@ -431,26 +486,17 @@ impl<'a> Grouped<'a> {
     }
 }
 
-fn int(v: &Value) -> Result<i64, String> {
-    match v {
-        Value::Int(i) => Ok(*i),
-        Value::Str(x) => Err(bad(format!("{x:?} where a number goes"))),
-    }
+fn int(v: &impl Cell) -> Result<i64, String> {
+    v.int().ok_or_else(|| bad(format!("{:?} where a number goes", v.str().unwrap_or_default())))
 }
 
-/// A string value, borrowed: for a kind matched on, not kept.
-fn str_of(v: &Value) -> Result<&str, String> {
-    match v {
-        Value::Str(x) => Ok(x),
-        Value::Int(i) => Err(bad(format!("{i} where a string goes"))),
-    }
+/// A string value, borrowed: for a kind matched on, or a key, not kept.
+fn str_of(v: &impl Cell) -> Result<&str, String> {
+    v.str().ok_or_else(|| bad(format!("{} where a string goes", v.int().unwrap_or_default())))
 }
 
-fn text(v: &Value) -> Result<String, String> {
-    match v {
-        Value::Str(x) => Ok(x.clone()),
-        Value::Int(i) => Err(bad(format!("{i} where a string goes"))),
-    }
+fn text(v: &impl Cell) -> Result<String, String> {
+    str_of(v).map(str::to_owned)
 }
 
 /// `items` by their index column, in order.
@@ -459,9 +505,9 @@ fn ordered<T>(mut items: Vec<(i64, T)>) -> Vec<T> {
     items.into_iter().map(|(_, t)| t).collect()
 }
 
-impl<'a> Reader<'a> {
+impl<'a> Reader<'a, Value> {
     fn of(facts: &'a Facts, p: &str) -> Result<Self, String> {
-        let mut rows: BTreeMap<&str, Vec<&[Value]>> = BTreeMap::new();
+        let mut rows: Rows<'a, Value> = BTreeMap::new();
         for (rel, all) in facts {
             for row in all {
                 if matches!(row.first(), Some(Value::Str(q)) if q == p) {
@@ -471,8 +517,10 @@ impl<'a> Reader<'a> {
         }
         Self::from_rows(rows, p)
     }
+}
 
-    fn from_rows(rows: BTreeMap<&'a str, Vec<&'a [Value]>>, p: &str) -> Result<Self, String> {
+impl<'a, C: Cell> Reader<'a, C> {
+    fn from_rows(rows: Rows<'a, C>, p: &str) -> Result<Self, String> {
         if !rows.contains_key("program") {
             return Err(bad(format!("no program {p:?}")));
         }
@@ -492,7 +540,7 @@ impl<'a> Reader<'a> {
         Ok(Reader { rows, terms, call_args, atoms, args })
     }
 
-    fn get(&self, rel: &str) -> &[&'a [Value]] {
+    fn get(&self, rel: &str) -> &[&'a [C]] {
         self.rows.get(rel).map_or(&[], Vec::as_slice)
     }
 
@@ -519,8 +567,8 @@ impl<'a> Reader<'a> {
     }
 
     /// Rows of `rel` keyed by their first column (an id), each row less that column.
-    fn by_id(&self, rel: &str) -> Result<BTreeMap<i64, Vec<&'a [Value]>>, String> {
-        let mut out: BTreeMap<i64, Vec<&[Value]>> = BTreeMap::new();
+    fn by_id(&self, rel: &str) -> Result<BTreeMap<i64, Vec<&'a [C]>>, String> {
+        let mut out: BTreeMap<i64, Vec<&[C]>> = BTreeMap::new();
         for row in self.get(rel) {
             out.entry(int(&row[0])?).or_default().push(&row[1..]);
         }
@@ -586,7 +634,7 @@ impl<'a> Reader<'a> {
         let decls = self.by_id_text("decl")?;
         for row in self.get("relation") {
             let rel = text(&row[0])?;
-            let cols = ordered(decls.get(&rel).into_iter().flatten().map(|d| Ok((int(&d[0])?, (text(&d[1])?, text(&d[2])?)))).collect::<Result<Vec<_>, String>>()?);
+            let cols = ordered(decls.get(rel.as_str()).into_iter().flatten().map(|d| Ok((int(&d[0])?, (text(&d[1])?, text(&d[2])?)))).collect::<Result<Vec<_>, String>>()?);
             if cols.len() as i64 != int(&row[1])? {
                 return Err(bad(format!("{rel} has {} of its {} columns", cols.len(), int(&row[1])?)));
             }
@@ -603,8 +651,8 @@ impl<'a> Reader<'a> {
         let widens = self.by_id_text("lattice_widen")?;
         for row in self.get("lattice") {
             let rel = text(&row[0])?;
-            let merge = merges.get(&rel).and_then(|r| r.first()).map(|r| text(&r[0])).transpose()?;
-            let widen = widens.get(&rel).and_then(|r| r.first()).map(|r| int(&r[0]).map(|k| k as u32)).transpose()?;
+            let merge = merges.get(rel.as_str()).and_then(|r| r.first()).map(|r| text(&r[0])).transpose()?;
+            let widen = widens.get(rel.as_str()).and_then(|r| r.first()).map(|r| int(&r[0]).map(|k| k as u32)).transpose()?;
             prog.lattice.insert(rel, LatticeDecl { keys: int(&row[1])? as usize, ty: text(&row[2])?, merge, widen });
         }
         // Keyed by the relation's name as the rows hold it, borrowed.
@@ -636,7 +684,7 @@ impl<'a> Reader<'a> {
         let kinds = self.by_id_text("kindset_kind")?;
         for row in self.get("kindset") {
             let set = text(&row[0])?;
-            let members = ordered(kinds.get(&set).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
+            let members = ordered(kinds.get(set.as_str()).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
             prog.kindsets.insert(set, members);
         }
         prog.demand_dropped = ordered(self.get("demand_dropped").iter().map(|r| Ok((int(&r[0])?, (text(&r[1])?, text(&r[2])?)))).collect::<Result<Vec<_>, String>>()?);
@@ -659,7 +707,7 @@ impl<'a> Reader<'a> {
         let srcs = self.by_id("gate_src")?;
         let quiet = self.by_id("gate_quiet")?;
         let deps = self.by_id("gate_dep")?;
-        let indexed = |rows: Option<&Vec<&[Value]>>| -> Result<Vec<String>, String> { Ok(ordered(rows.into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?)) };
+        let indexed = |rows: Option<&Vec<&[C]>>| -> Result<Vec<String>, String> { Ok(ordered(rows.into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?)) };
         let mut gates = Vec::new();
         for row in self.get("gate") {
             let k = int(&row[0])?;
@@ -672,13 +720,13 @@ impl<'a> Reader<'a> {
         let roots = self.by_id_text("native_roots")?;
         for row in self.get("native_dfs") {
             let rel = text(&row[0])?;
-            let roots = roots.get(&rel).and_then(|r| r.first()).map(|r| text(&r[0])).transpose()?;
+            let roots = roots.get(rel.as_str()).and_then(|r| r.first()).map(|r| text(&r[0])).transpose()?;
             prog.natives.insert(rel, Native::DfsFirst { edge: text(&row[1])?, target: text(&row[2])?, roots });
         }
         let groups = self.by_id_text("native_group")?;
         for row in self.get("native_match") {
             let rel = text(&row[0])?;
-            let groups = ordered(groups.get(&rel).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
+            let groups = ordered(groups.get(rel.as_str()).into_iter().flatten().map(|r| Ok((int(&r[0])?, text(&r[1])?))).collect::<Result<Vec<_>, String>>()?);
             prog.natives.insert(rel, Native::MatchAll { input: text(&row[1])?, pattern: text(&row[2])?, groups, positions: int(&row[3])? != 0 });
         }
         for row in self.get("native_python_candidates") {
@@ -742,10 +790,10 @@ impl<'a> Reader<'a> {
     }
 
     /// Rows of `rel` keyed by their first column (a name), each row less that column.
-    fn by_id_text(&self, rel: &str) -> Result<BTreeMap<String, Vec<&'a [Value]>>, String> {
-        let mut out: BTreeMap<String, Vec<&[Value]>> = BTreeMap::new();
-        for row in self.get(rel) {
-            out.entry(text(&row[0])?).or_default().push(&row[1..]);
+    fn by_id_text(&self, rel: &str) -> Result<BTreeMap<&'a str, Vec<&'a [C]>>, String> {
+        let mut out: BTreeMap<&str, Vec<&[C]>> = BTreeMap::new();
+        for &row in self.get(rel) {
+            out.entry(str_of(&row[0])?).or_default().push(&row[1..]);
         }
         Ok(out)
     }
@@ -819,51 +867,96 @@ pub fn encode(facts: &Facts) -> Vec<u8> {
     out
 }
 
+/// Bytes `encode` made, read in place: each relation's rows, their values one flat list, the strings borrowed from
+/// the bytes. Nothing is copied but the values' tags and numbers; `rows_into` gives the reader its slices.
+pub struct Decoded<'a> {
+    cells: Vec<Ref<'a>>,
+    /// Each relation, and where each of its rows ends in `cells`.
+    rels: Vec<(&'a str, Vec<usize>)>,
+}
+
+impl<'a> Decoded<'a> {
+    pub fn of(bytes: &'a [u8]) -> Result<Self, String> {
+        struct At<'a>(&'a [u8], usize);
+        impl<'a> At<'a> {
+            fn take(&mut self, n: usize) -> Result<&'a [u8], String> {
+                let out = self.0.get(self.1..self.1.checked_add(n).ok_or_else(|| bad("truncated"))?).ok_or_else(|| bad("truncated"))?;
+                self.1 += n;
+                Ok(out)
+            }
+            fn u64(&mut self) -> Result<u64, String> {
+                Ok(u64::from_le_bytes(self.take(8)?.try_into().expect("eight bytes")))
+            }
+            fn len(&mut self) -> Result<usize, String> {
+                usize::try_from(self.u64()?).map_err(|e| bad(e))
+            }
+        }
+        let mut at = At(bytes, 0);
+        let count = at.len()?;
+        let mut table: Vec<&'a str> = Vec::with_capacity(count.min(1 << 20));
+        for _ in 0..count {
+            let n = at.len()?;
+            table.push(std::str::from_utf8(at.take(n)?).map_err(|e| bad(e))?);
+        }
+        let string = |k: u64| table.get(k as usize).copied().ok_or_else(|| bad("no such string"));
+        // Each value is at least nine bytes: what is left bounds the cells.
+        let mut cells = Vec::with_capacity((bytes.len() - at.1) / 9);
+        let rels_n = at.len()?;
+        let mut rels = Vec::with_capacity(rels_n.min(1 << 16));
+        for _ in 0..rels_n {
+            let rel = string(at.u64()?)?;
+            let rows_n = at.len()?;
+            let mut ends = Vec::with_capacity(rows_n.min(1 << 20));
+            for _ in 0..rows_n {
+                for _ in 0..at.len()? {
+                    cells.push(match at.take(1)?[0] {
+                        0 => Ref::Int(i64::from_le_bytes(at.take(8)?.try_into().expect("eight bytes"))),
+                        1 => Ref::Str(string(at.u64()?)?),
+                        tag => return Err(bad(format!("no value tag {tag}"))),
+                    });
+                }
+                ends.push(cells.len());
+            }
+            rels.push((rel, ends));
+        }
+        if at.1 != bytes.len() {
+            return Err(bad("bytes after the facts"));
+        }
+        Ok(Decoded { cells, rels })
+    }
+
+    /// Each relation's rows, added to `into` after those it holds: the parts of one stored program read as one.
+    pub fn rows_into<'b>(&'b self, into: &mut Rows<'b, Ref<'a>>) {
+        let mut start = 0;
+        for (rel, ends) in &self.rels {
+            let rows = into.entry(*rel).or_default();
+            rows.reserve(ends.len());
+            for &end in ends {
+                rows.push(&self.cells[start..end]);
+                start = end;
+            }
+        }
+    }
+}
+
 /// Bytes `encode` made, as facts.
 pub fn decode(bytes: &[u8]) -> Result<Facts, String> {
-    struct At<'a>(&'a [u8], usize);
-    impl At<'_> {
-        fn take(&mut self, n: usize) -> Result<&[u8], String> {
-            let out = self.0.get(self.1..self.1 + n).ok_or_else(|| bad("truncated"))?;
-            self.1 += n;
-            Ok(out)
-        }
-        fn u64(&mut self) -> Result<u64, String> {
-            Ok(u64::from_le_bytes(self.take(8)?.try_into().expect("eight bytes")))
-        }
-        fn len(&mut self) -> Result<usize, String> {
-            usize::try_from(self.u64()?).map_err(|e| bad(e))
-        }
-    }
-    let mut at = At(bytes, 0);
-    let count = at.len()?;
-    let mut table = Vec::with_capacity(count.min(1 << 20));
-    for _ in 0..count {
-        let n = at.len()?;
-        table.push(std::str::from_utf8(at.take(n)?).map_err(|e| bad(e))?.to_owned());
-    }
-    let string = |k: u64| table.get(k as usize).cloned().ok_or_else(|| bad("no such string"));
+    let decoded = Decoded::of(bytes)?;
+    let mut start = 0;
     let mut facts = Facts::new();
-    for _ in 0..at.len()? {
-        let rel = string(at.u64()?)?;
-        let rows_n = at.len()?;
-        let mut rows = Vec::with_capacity(rows_n.min(1 << 20));
-        for _ in 0..rows_n {
-            let width = at.len()?;
-            let mut row = Vec::with_capacity(width.min(64));
-            for _ in 0..width {
-                row.push(match at.take(1)?[0] {
-                    0 => Value::Int(i64::from_le_bytes(at.take(8)?.try_into().expect("eight bytes"))),
-                    1 => Value::Str(string(at.u64()?)?),
-                    tag => return Err(bad(format!("no value tag {tag}"))),
+    for (rel, ends) in &decoded.rels {
+        let rows = ends
+            .iter()
+            .map(|&end| {
+                let row = decoded.cells[start..end].iter().map(|c| match c {
+                    Ref::Int(i) => Value::Int(*i),
+                    Ref::Str(x) => Value::Str((*x).to_owned()),
                 });
-            }
-            rows.push(row);
-        }
-        facts.insert(rel, rows);
-    }
-    if at.1 != bytes.len() {
-        return Err(bad("bytes after the facts"));
+                start = end;
+                row.collect()
+            })
+            .collect();
+        facts.insert((*rel).to_owned(), rows);
     }
     Ok(facts)
 }
