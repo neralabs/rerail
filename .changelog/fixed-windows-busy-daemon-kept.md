@@ -1,0 +1,1 @@
+On Windows, Rerail no longer forgets a busy daemon. Once four lookups had found it busy, the next waited 30 s, said it was not running and deleted its record, so later commands found none and a start could launch a second daemon. Lookups now read it as not answering within their usual wait and keep its record.
