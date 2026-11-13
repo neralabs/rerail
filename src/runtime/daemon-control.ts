@@ -793,16 +793,25 @@ export async function daemonEngineEndpoint(
   const daemon = autostartOff(machine.env)
     ? await runningDaemon(control.home, deadline, machine)
     : await startedDaemon(control, replaceOtherPackage, deadline, machine);
-  // Only the lookup an off autostart makes finds no daemon, or one of another package (a start replaces that one), so
-  // both errors spell the setting as the person set it, `0` or `false`.
-  const setting = `RERAIL_AUTOSTART=${machine.env.RERAIL_AUTOSTART}`;
+  // Only the lookup an off autostart makes finds no daemon, so this error spells the setting as the person set it.
   if (daemon === undefined) {
-    throw new AutostartOffError(`${setting} requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET`);
+    throw new AutostartOffError(`RERAIL_AUTOSTART=${machine.env.RERAIL_AUTOSTART} requires a running daemon; run rerail daemon start or set RERAIL_ENGINE_SOCKET`);
   }
   if (replaceOtherPackage && !(await daemonUsesPackageRoot(daemon.state, control.packageRoot))) {
-    throw new Error(`${setting} requires a daemon from the active Rerail package; run rerail daemon start or set RERAIL_ENGINE_SOCKET`);
+    throw new Error(otherPackageDaemon(machine.env));
   }
   return engineEndpointOf(daemon.state);
+}
+
+/**
+ * Why the caller sends no event to the daemon of another package it found. An off autostart may not replace that
+ * daemon, so the error names the setting as the person set it. With autostart on, a start replaces it unless it was
+ * busy when the start looked and answered only later, so the error names no setting.
+ */
+function otherPackageDaemon(env: NodeJS.ProcessEnv): string {
+  return autostartOff(env)
+    ? `RERAIL_AUTOSTART=${env.RERAIL_AUTOSTART} requires a daemon from the active Rerail package; run rerail daemon start or set RERAIL_ENGINE_SOCKET`
+    : "the running Rerail daemon is from another Rerail package; run rerail daemon stop, then rerail daemon start";
 }
 
 /**
