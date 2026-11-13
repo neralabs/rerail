@@ -25,10 +25,12 @@ function vacuum(path: string): void {
 /**
  * Whether the file has free pages to give back, read while this connection holds the write lock; when it has, writes
  * `HOLDING` and the file's page count on stdout before it lets the lock go. No other connection commits while this one
- * holds the lock, and the `VACUUM` asks for it again at once, failing with `BUSY_EXIT` when another connection took it
- * in between. So the page count falls below the one written only once this process's `VACUUM` commits: the attempt
- * takes that fall, and no other, as its commit, whatever another connection's `VACUUM` (`rerail scrub`, `rerail reset`)
- * did before. The write is synchronous: the line is on the pipe before the `VACUUM`, which holds this thread, begins.
+ * holds the lock, and the `VACUUM` asks for it again at once, failing with `BUSY_EXIT` when another connection holds it
+ * then. So the page count falls below the one written when this process's `VACUUM` commits, and before that only if
+ * another connection's `VACUUM` takes the lock and commits in the instant between the two, so it took no longer than
+ * that instant. The attempt takes that fall as its commit (`committedBy`), whatever another connection's `VACUUM`
+ * (`rerail scrub`, `rerail reset`) did before the read. The write is synchronous: the line is on the pipe before the
+ * `VACUUM`, which holds this thread, begins.
  */
 function saidHolding(client: Database.Database): boolean {
   client.exec("BEGIN IMMEDIATE");

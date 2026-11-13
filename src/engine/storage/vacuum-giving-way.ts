@@ -235,8 +235,8 @@ async function vacuumOnce(client: Database.Database, path: string, { watch, sign
  * Whether the `VACUUM` of `child`, the attempt's process, has committed. It gives the free pages back, so the file's
  * page count falls; but another connection's `VACUUM` (`rerail scrub`, `rerail reset`) lowers it too, at any moment
  * before `child` takes the write lock. So a fall counts only below the page count `child` read while it held that lock
- * and wrote on stdout just before its `VACUUM` (`HOLDING`, `vacuum-process.ts`): from that read to the `VACUUM`'s commit
- * no other connection commits. Until `child` has written that line, its `VACUUM` has not begun.
+ * and wrote on stdout just before its `VACUUM` (`HOLDING`, `saidHolding` in `vacuum-process.ts`), which no commit of
+ * another connection before that read reaches. Until `child` has written that line, its `VACUUM` has not begun.
  */
 function committedBy(child: ChildProcess, client: Database.Database): () => boolean {
   let said = "";
