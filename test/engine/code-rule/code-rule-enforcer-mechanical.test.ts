@@ -635,7 +635,11 @@ describe("mechanical code rule regressions", () => {
 
   it("audits a Git checkout through the native repository index and records its clean directories for reuse", async () => {
     const { recorder, audits } = recordingAudits();
-    const { root, enforcer } = await fixture({ audits: recorder });
+    const attached = Promise.withResolvers<void>();
+    const { root, enforcer } = await fixture({
+      audits: recorder,
+      timingLog: line => { if (line.startsWith("rerail: repository storage")) attached.resolve(); },
+    });
     try {
       await writeFile(join(root, ".gitignore"), ".rerail/\ncapabilities.json\napi/ignored.py\n");
       await writeFile(join(root, "api", "a.py"), "NEEDLE\n");
@@ -645,6 +649,8 @@ describe("mechanical code rule regressions", () => {
       execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
       await writeFile(join(root, "api", "ignored.py"), "NEEDLE\n");
       await enforcer.openWorkspace("git-repository-audit");
+      // The evaluator opens before its content store attaches, and the attach may make the store: count once it has.
+      await attached.promise;
       const before = completedDirectories();
       const [auditId] = await enforcer.audit("git-repository-audit", { scope: "repository", mode: "log" });
       expect(audits.get(auditId!)?.result).toMatchObject({
@@ -1409,6 +1415,88 @@ describe("mechanical code rule regressions", () => {
       expect(closed).toBe(true);
     } finally {
       binding.mockRestore();
+      await enforcer.close();
+    }
+  });
+
+  it("closes a workspace whose storage attach fails after it opened, and records why", async () => {
+    const { recorder, audits } = recordingAudits();
+    const { enforcer } = await fixture({ audits: recorder });
+    let closed = false;
+    const workspace = Object.assign(pagingWorkspace(() => { throw new Error("the workspace is never paged"); }), {
+      enableStorageAsync: async () => { throw new Error("the content store is unreadable"); },
+      close: () => { closed = true; },
+    });
+    const binding = nativeWorkspaces(workspace);
+    try {
+      await enforcer.openWorkspace("failing-attach");
+      await vi.waitFor(() => expect(closed).toBe(true));
+      expect([...audits.values()].map(audit => audit.result)).toEqual([expect.objectContaining({
+        status: "failed",
+        failures: [expect.objectContaining({ clauseId: "catalog", code: "adapter-error", message: "the content store is unreadable" })],
+      })]);
+    } finally {
+      binding.mockRestore();
+      await enforcer.close();
+    }
+  });
+
+  it("opens once its code rules are registered, and checks the first edit once its content store has attached", async () => {
+    const { recorder, audits } = recordingAudits();
+    const { enforcer } = await fixture({ audits: recorder });
+    const attachments = gateStorageAttachments();
+    try {
+      let opened = false;
+      const opening = enforcer.openWorkspace("open-before-attach").then(() => { opened = true; });
+      // The store's attach is held: the evaluator is open, its scopes answer, and nothing has been evaluated.
+      await vi.waitFor(() => expect(opened).toBe(true));
+      await opening;
+      expect(enforcer.acceptsPath("api/held.py")).toBe(true);
+      await enforcer.auditGeneratedEdits("open-before-attach", {
+        revision: 1,
+        checkpoints: ["edit"],
+        edits: [{ path: "api/held.py", language: "python", generatedText: "NEEDLE\n" }],
+      });
+      await new Promise<void>(resolve => setTimeout(resolve, 50));
+      expect(auditForPath(audits, "api/held.py")?.result).toBeUndefined();
+      attachments.workspaces[0]!.release();
+      await settled(enforcer);
+      expect(auditForPath(audits, "api/held.py")?.result).toMatchObject({
+        status: "completed", violations: [expect.objectContaining({ code: "NEEDLE", path: "api/held.py" })],
+      });
+    } finally {
+      for (const workspace of attachments.workspaces) workspace.release();
+      attachments.restore();
+      await enforcer.close();
+    }
+  });
+
+  it("closes without waiting for a content store attach an edit's check waits for, and records that check interrupted", async () => {
+    const { recorder, audits } = recordingAudits();
+    const { enforcer } = await fixture({ audits: recorder });
+    const attachments = gateStorageAttachments();
+    try {
+      await enforcer.openWorkspace("close-during-attach");
+      await enforcer.auditGeneratedEdits("close-during-attach", {
+        revision: 1,
+        checkpoints: ["edit"],
+        edits: [{ path: "api/held.py", language: "python", generatedText: "NEEDLE\n" }],
+      });
+      // The check has started and waits for the held attach.
+      await vi.waitFor(() => expect(auditForPath(audits, "api/held.py")).toBeDefined());
+      let closed = false;
+      const closing = enforcer.close({ interruptAudits: false }).then(() => { closed = true; });
+      await vi.waitFor(() => expect(closed).toBe(true), { timeout: 2_000 });
+      await closing;
+      expect(auditForPath(audits, "api/held.py")?.result).toMatchObject({ status: "interrupted" });
+      // The attach ends later, against a closed workspace: no failure is recorded for it.
+      attachments.workspaces[0]!.release();
+      await attachments.workspaces[0]!.attached;
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect([...audits.values()].filter(audit => audit.result?.status === "failed")).toEqual([]);
+    } finally {
+      for (const workspace of attachments.workspaces) workspace.release();
+      attachments.restore();
       await enforcer.close();
     }
   });
