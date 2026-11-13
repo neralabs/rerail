@@ -18,6 +18,7 @@ import {
   type SourceObservationCache,
 } from "../../../src/engine/code-rule/code-rule-bridge.js";
 import { MAX_FINISHED_CALLS, ToolCallWindows } from "../../../src/engine/code-rule/tool-call-windows.js";
+import { claudeCodeReportedPreimage } from "../../../src/engine/code-rule/reported-preimage.js";
 import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
 import type { IgnoreRulesChange } from "../../../src/engine/code-rule/ignore-rule-files.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
@@ -1004,7 +1005,7 @@ describe("CodeRuleBridge and a call it takes up only after its tool wrote the fi
     const { bridge, auditGeneratedEdits } = await opened(root);
     await writeFile(path, after);
     await bridge.begin("edit-1", "Edit", { file_path: path });
-    await bridge.finish("edit-1", false, { output: output(path) });
+    await bridge.finish("edit-1", false, { reported: claudeCodeReportedPreimage(output(path)) });
     return auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits);
   }
   /** Claude Code's Edit result with the line diff it made (`structuredPatch`) and no copy of the text it replaced. */

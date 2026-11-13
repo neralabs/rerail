@@ -42,7 +42,7 @@ import { sensitiveByName } from "../path-boundary.js";
 import { containsSecret, scrubSecrets } from "../secret-scrub.js";
 import { IgnoreRuleFiles, type IgnoreRulesChange, shownIgnoreFile } from "./ignore-rule-files.js";
 import { ToolCallWindows } from "./tool-call-windows.js";
-import { claudeCodeReportedPreimage, type ReportedPreimage, reportedText } from "./reported-preimage.js";
+import { type ReportedPreimage, reportedText } from "./reported-preimage.js";
 
 
 /** The name of the ignore files a walk observes whatever Git says of them. */
@@ -1071,13 +1071,17 @@ export class CodeRuleBridge {
 
   /**
    * A failed command may still have written files, so command results reconcile regardless of `failed`. With
-   * `rewindable` the call's own captures are kept for `rewind` until `release`. `output`, the tool's result, may say
-   * what the file it wrote held before (`claudeCodeReportedPreimage`): the edit is read against that where the call's
-   * own capture already holds the write, as it does when the call reached Rerail only after the tool ran. That text is
-   * never rewindable: `rewind` writes a preimage back as the whole file, and this one was not read from the file, so a
-   * rewind of such an edit leaves the file as the tool left it.
+   * `rewindable` the call's own captures are kept for `rewind` until `release`. `reported` is what the tool's result
+   * says the file it wrote held before (`ReportedPreimage`): the edit is read against that where the call's own capture
+   * already holds the write, as it does when the call reached Rerail only after the tool ran. That text is never
+   * rewindable: `rewind` writes a preimage back as the whole file, and this one was not read from the file, so a rewind
+   * of such an edit leaves the file as the tool left it.
    */
-  async finish(toolCallId: string, failed = false, options: { rewindable?: boolean; output?: unknown } = {}): Promise<readonly CodeRuleResponse[]> {
+  async finish(
+    toolCallId: string,
+    failed = false,
+    options: { rewindable?: boolean; reported?: ReportedPreimage | undefined } = {},
+  ): Promise<readonly CodeRuleResponse[]> {
     const discovery = this.#requireDiscovery();
     discovery.toolCalls.finish(toolCallId, await filesystemClock());
     if (this.#commands.delete(toolCallId)) {
@@ -1093,7 +1097,7 @@ export class CodeRuleBridge {
       this.refreshCodeRules();
       this.#reportIgnoredEdits(discovery.root, pending.paths);
       await this.#noteIgnoreRules(pending.paths);
-      const { edits, uncaptured } = await this.#readEdits(discovery, pending, claudeCodeReportedPreimage(options.output));
+      const { edits, uncaptured } = await this.#readEdits(discovery, pending, options.reported);
       if (edits.length === 0) return [];
       // Kept before the audit starts, so a steer its evaluation publishes finds it.
       if (options.rewindable === true) {
