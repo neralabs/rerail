@@ -90,10 +90,9 @@ uses(n, f) :- imp(n, q), def(f, q).
     assert_eq!(run(&text).unwrap().cross, (1, 2));
     assert_eq!(uses(), derived);
     // Verify: nothing replayed, every found component's stored rows equal to those derived.
-    // SAFETY: only this test reads RERAIL_CROSS_MEMO while it is set (the others declare no pragma).
-    unsafe { std::env::set_var("RERAIL_CROSS_MEMO", "verify") };
+    let switched = super::switches::set(&[("RERAIL_CROSS_MEMO", "verify")]);
     let verified = run(&text);
-    unsafe { std::env::remove_var("RERAIL_CROSS_MEMO") };
+    drop(switched);
     assert_eq!(verified.unwrap().cross, (3, 0));
     assert_eq!(uses(), derived);
     // The contract: a memoised relation reading a cross-file relation the pragma does not name is refused.
@@ -107,10 +106,9 @@ uses(n, f) :- imp(n, q), def(f, q).
     // A memoised relation is stored, though inlining would unfold it into its readers (decision 0099): its derived
     // rows are read from its table to be recorded ("no such table: near" before).
     let near = program("uses near", ".decl near(n: node, f: node)\nnear(n, f) :- uses(n, f).\n.decl far(n: node)\nfar(n) :- near(n, _).\n.output far");
-    // SAFETY: only this test reads RERAIL_INLINE_ONLY while it is set (the others declare no pragma).
-    unsafe { std::env::set_var("RERAIL_INLINE_ONLY", "near") };
+    let switched = super::switches::set(&[("RERAIL_INLINE_ONLY", "near")]);
     let stored = run(&near);
-    unsafe { std::env::remove_var("RERAIL_INLINE_ONLY") };
+    drop(switched);
     stored.unwrap();
     assert_eq!(std::fs::read_to_string(out.join("far.csv")).unwrap().lines().count(), 1);
     let _ = std::fs::remove_dir_all(&dir);

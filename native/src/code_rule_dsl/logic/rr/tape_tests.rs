@@ -316,16 +316,10 @@ fn a_reader_that_only_negates_a_demanded_relation_reads_it_whole() {
         report["diagnostics"].as_array().unwrap().iter().map(|d| d["code"].as_str().unwrap_or("").to_owned()).collect()
     };
     let kept = codes("kept");
-    let vars = [("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off")];
-    let was: Vec<Option<String>> = vars.iter().map(|(k, _)| std::env::var(k).ok()).collect();
-    unsafe { vars.iter().for_each(|(k, v)| std::env::set_var(k, v)) };
+    // The oracle's switches, held from this run's start to its end (no other test's run reads them meanwhile).
+    let switched = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off")]);
     let fresh = codes("fresh");
-    for ((k, _), w) in vars.iter().zip(was) {
-        match w {
-            Some(v) => unsafe { std::env::set_var(k, v) },
-            None => unsafe { std::env::remove_var(k) },
-        }
-    }
+    drop(switched);
     let _ = std::fs::remove_dir_all(&root);
     assert_eq!(fresh, kept, "the run from nothing kept and the default run");
     assert!(!kept.iter().any(|c| c == "PHA000"), "the allowlist's status is valid: {kept:?}");

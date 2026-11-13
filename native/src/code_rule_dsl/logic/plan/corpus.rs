@@ -79,6 +79,7 @@ pub mod connections;
 pub mod reuse;
 pub mod phase0;
 pub mod cross_memo;
+pub mod switches;
 pub mod matchers;
 /// The prefix of an `ast` matcher's relation (decision 0106).
 pub(in crate::code_rule_dsl) const AST_MATCHES: &str = matchers::PREFIX;
@@ -1908,6 +1909,8 @@ fn run_handed(
     typing: &Typing,
     options: &serde_json::Value,
 ) -> Result<Report> {
+    // The `RERAIL_*` switches stay as they are until the run ends: a test sets them only while no run reads them.
+    let _switches = switches::reading();
     let lifecycle_start = usage();
     // Library and test callers do not pass through the CLI/Node pool setup.
     // Initialize before phase 0 or a parallel read can create rayon's default pool.

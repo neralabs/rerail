@@ -323,10 +323,9 @@ CYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).
     start(&base.join("session")).unwrap();
     run();
     std::fs::write(src.join("a.py"), "from b import x\nfrom c import q\n").unwrap();
-    // SAFETY: the session tests run one at a time (`SERIAL`), and only a session's run reads the variable.
-    unsafe { std::env::set_var("RERAIL_CROSS_DELTA_COUNTS", "1") };
+    let switched = super::super::switches::set(&[("RERAIL_CROSS_DELTA_COUNTS", "1")]);
     let report = run();
-    unsafe { std::env::remove_var("RERAIL_CROSS_DELTA_COUNTS") };
+    drop(switched);
     stop();
     let _ = std::fs::remove_dir_all(&base);
     let [_, inserted, _, _, _, new] = report.cross_delta_counts;
@@ -359,16 +358,12 @@ fn a_session_derives_again_only_the_strata_priced_cheaper_so() {
 
 fn derive_again_with(vars: &[(&str, &str)]) {
     let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-    unsafe {
-        vars.iter().for_each(|(k, v)| std::env::set_var(k, v));
-    }
+    let switched = super::super::switches::set(vars);
     let run = std::panic::catch_unwind(|| {
         recursive_cross_file_stratum();
         cross_file_aggregate();
     });
-    unsafe {
-        vars.iter().for_each(|(k, _)| std::env::remove_var(k));
-    }
+    drop(switched);
     if let Err(e) = run {
         std::panic::resume_unwind(e);
     }
@@ -382,16 +377,9 @@ fn derive_again_with(vars: &[(&str, &str)]) {
 fn wave0_case(tag: &str, rules: &str, files: &[(&str, &str)], edits: &[(&str, &str)]) {
     let _one = SERIAL.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     for mode in ["changes", "kept"] {
-        // SAFETY: the session tests run one at a time (`SERIAL`), and only a session's run reads the variables.
-        unsafe {
-            std::env::set_var("RERAIL_AGAIN", "off");
-            std::env::set_var("RERAIL_WAVE0", mode);
-        }
+        let switched = super::super::switches::set(&[("RERAIL_AGAIN", "off"), ("RERAIL_WAVE0", mode)]);
         let run = std::panic::catch_unwind(|| wave0_session(&format!("{tag}-{mode}"), rules, files, edits));
-        unsafe {
-            std::env::remove_var("RERAIL_AGAIN");
-            std::env::remove_var("RERAIL_WAVE0");
-        }
+        drop(switched);
         if let Err(e) = run {
             eprintln!("wave0 case {tag} failed with RERAIL_WAVE0={mode}");
             std::panic::resume_unwind(e);
@@ -421,16 +409,9 @@ fn wave0_session(tag: &str, rules: &str, files: &[(&str, &str)], edits: &[(&str,
     // K4, and t32 4.1's kept part) and maintains it from them, so a plain full run after the first one shares any
     // missed derivation of the mode under test. This one keeps none, and must maintain no stratum.
     let full = || {
-        let vars = [("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off"), ("RERAIL_WAVE0", "kept")];
-        let was: Vec<Option<String>> = vars.iter().map(|(k, _)| std::env::var(k).ok()).collect();
-        unsafe { vars.iter().for_each(|(k, v)| std::env::set_var(k, v)) };
+        let switched = super::super::switches::set(&[("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off"), ("RERAIL_WAVE0", "kept")]);
         let report = full(run);
-        for ((k, _), w) in vars.iter().zip(was) {
-            match w {
-                Some(v) => unsafe { std::env::set_var(k, v) },
-                None => unsafe { std::env::remove_var(k) },
-            }
-        }
+        drop(switched);
         assert_eq!((report.cross_maintained.0, report.cross_maintained.1), (0, 0), "{tag}: the oracle maintains nothing");
         findings()
     };

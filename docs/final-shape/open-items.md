@@ -4729,6 +4729,24 @@ recur in ten runs of the chunk.
 
 ## O-kept-strata-flake. A second run over unchanged files sometimes plans twice the cross part's strata
 
+**Closed (2026-11-13).** The shared state was the process's `RERAIL_*` switches. `rr::tape_tests::
+a_reader_that_only_negates_a_demanded_relation_reads_it_whole` (in the `tape` filter) and the session tests set
+`RERAIL_CROSS_K4=off`, `RERAIL_KEPT_PART=off` and others for their own oracle runs, and every other thread's run read
+them as it went. So this test's first run sometimes kept its strata without K4 (3 strata, `kept_strata`), and its
+second run with K4 (6, the maintained part with its supports). Now each corpus run holds
+`corpus::switches::reading()` from start to end. A test changes switches only through `switches::set`, which waits
+until no other thread's run holds them, keeps new runs out, and restores the variables when dropped. Nested runs and
+the setter's own runs take nothing. Every test that set a switch beside other runs goes through it (`corpus::tests`,
+`session::tests`, `rr::tape_tests`). The ignored typing spikes run alone and still set theirs directly. Ten runs of
+the `tape` filter: 10 of 10 pass (7 of 10 failed before), and `plan::corpus` passes (77).
+
+Found on the way: the plan choices (`plan::choices`, schema 3) and kept plans (2) used fact schemas that
+`RETIRED_CORPUS_MEMO_SCHEMAS` sweeps. So a new store's first collection deleted the first run's entries, and the next
+process planned again. The slice memo (3) had the same collision. They are now 106, 107 and 108, and every
+`facts_results` user declares its schema through `content_store::live_fact_schema`, which refuses a retired number at
+compile time. `kept_choices_are_taken_at_their_scale_or_less_and_read_back_from_the_store` now runs a collection pass
+on the new store before reading back.
+
 **Seen (2026-11-13, after the merge of the final-rerail-shape trunk, 293647a70).**
 `corpus::tests::cross_file_strata_are_kept_across_runs_in_the_tape_cache` fails in about half the runs of the
 engine's `tape` filter (104 tests, the default threads): its second or third run reports `(6, 6)` strata where
@@ -4742,6 +4760,13 @@ sets them), and sessions (none of the 104 opens one). Not checked: whether the h
 of the `tape` filter pass.
 
 ## O-collector-busy-flake. The corpus collector beside three writers sometimes reports `Busy`
+
+**Closed (2026-11-13).** The call was `collect_held`, the pass's store collection. It is a write, but it opened its
+immediate transaction once, with only SQLite's busy timeout (250 ms). It also ran its vacuum the same way, and
+`release_pins` (an orphan's release) too. Under three writers at load 60-80 that timed out. Now each attempt runs under
+`retry_busy`, as every other store write does: the transaction, then the checkpoint and vacuum, then the release, each
+holding the connection for one attempt only. The pass's reads (`corpus_due` and the rest) are WAL reads, which a writer
+does not block. Ten runs of the store crate's tests: 10 of 10 pass (189 each).
 
 **Seen (2026-11-13, once in 8 runs of the store crate's tests, load average 60-80).**
 `corpus_runs::tests::parallel_writers_and_a_collector_share_one_store`: `collect_corpus_pass` returned
