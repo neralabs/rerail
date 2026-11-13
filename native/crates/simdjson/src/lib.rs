@@ -255,6 +255,41 @@ mod tests {
         assert_ne!(implementation(), "fallback");
     }
 
+    /// The tree's cost alone, for `/usr/bin/time -l`: `RERAIL_TREE_RUN` is `none` (read the files), `index`
+    /// (parse and index) or `tree`, 10 rounds over the repository's `.json` files up to 1 MB.
+    #[test]
+    #[ignore = "a measurement: run by name with RERAIL_TREE_RUN"]
+    fn tree_cost() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let (mut files, mut work) = (Vec::new(), vec![root]);
+        while let Some(dir) = work.pop() {
+            let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+            for e in entries.flatten() {
+                let p = e.path();
+                let skip = p.file_name().is_some_and(|n| [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref()));
+                if p.is_dir() && !skip {
+                    work.push(p);
+                } else if p.extension().is_some_and(|x| x == "json") && e.metadata().is_ok_and(|m| m.len() <= 1 << 20) {
+                    files.extend(std::fs::read(&p).ok());
+                }
+            }
+        }
+        files.retain(|f| structurals(f, |_| ()).is_ok());
+        let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, key_field: 1, value_field: 2 };
+        let run = std::env::var("RERAIL_TREE_RUN").unwrap_or_default();
+        let mut n = 0usize;
+        for _ in 0..10 {
+            for f in &files {
+                n += match run.as_str() {
+                    "index" => structurals(f, <[u32]>::len).unwrap(),
+                    "tree" => tree(f, &kinds).unwrap().nodes.len(),
+                    _ => f.len(),
+                };
+            }
+        }
+        eprintln!("{} files, {n}", files.len());
+    }
+
     #[test]
     fn invalid_documents_are_refused() {
         for bad in [&b""[..], b"{", b"[1,]", b"// c\n1", b"\"\\x\"", b"01", b"[\"\xff\"]", b"123456789012345678901234567890"] {

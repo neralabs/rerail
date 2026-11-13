@@ -2015,11 +2015,13 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
 }
 
 
-/// What reading the repository's JSON costs, in instructions retired and thread CPU time: simdjson's parse
-/// and index, and the tape from it (the product's path); tree-sitter-json's parse, and the tape from it.
+/// What reading the repository's JSON costs, in instructions retired and thread CPU time, over the files
+/// both simdjson and the Bitlex parser accept: each parser's parse, and its tape (the product's path).
+/// With `RERAIL_JSON_COST_LOOP` set to a step's name, runs that step alone for 20 s (for a profiler).
 #[test]
 #[ignore = "a measurement: run by name with --nocapture"]
 fn json_parse_costs() {
+    use crate::code_rule_dsl::transducer::packed::json_parser as jp;
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let (mut files, mut work) = (Vec::new(), vec![root]);
     while let Some(dir) = work.pop() {
@@ -2034,7 +2036,8 @@ fn json_parse_costs() {
             }
         }
     }
-    files.retain(|f| rerail_simdjson::structurals(f.as_bytes(), |_| ()).is_ok());
+    let all = files.len();
+    files.retain(|f| rerail_simdjson::structurals(f.as_bytes(), |_| ()).is_ok() && jp::columns(f).is_some());
     let bytes: usize = files.iter().map(String::len).sum();
     let retired = rerail_compiler::native_cpu_codegen::retired;
     let cpu = || {
@@ -2042,43 +2045,48 @@ fn json_parse_costs() {
         unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
         t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
     };
-    let mut parser = tree_sitter::Parser::new();
-    parser.set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
+    let parser = std::cell::RefCell::new(tree_sitter::Parser::new());
+    parser.borrow_mut().set_language(&GrammarDialect::Json.get_ts_language()).unwrap();
     let grammar = Grammar::new(GrammarDialect::Json).unwrap();
-    let mut best = [(f64::MAX, u64::MAX); 5];
-    let kinds = &crate::code_rule_dsl::transducer::packed::json_parser::simdjson::kinds().unwrap().0;
-    for _ in 0..3 {
-        let mut n = 0usize;
-        let (i0, t0) = (retired().0, cpu());
-        for f in &files {
-            n += rerail_simdjson::structurals(f.as_bytes(), <[u32]>::len).unwrap();
+    let kinds = &jp::simdjson::kinds().unwrap().0;
+    let nodes: usize = files.iter().map(|f| rerail_simdjson::tree(f.as_bytes(), kinds).unwrap().nodes.len()).sum();
+    let steps: Vec<(&str, Box<dyn Fn(&str) -> usize>)> = vec![
+        ("simdjson: parse and index", Box::new(|f| rerail_simdjson::structurals(f.as_bytes(), <[u32]>::len).unwrap())),
+        ("simdjson: parse, index and tree", Box::new(|f| rerail_simdjson::tree(f.as_bytes(), kinds).unwrap().nodes.len())),
+        // Through `TreeParser::parse`, as the product calls it (the tape's generic code is made in the parser's crate).
+        ("simdjson: the tape", Box::new(|f| usize::from(std::hint::black_box(jp::simdjson::Simdjson.parse(&grammar, f, &|| false)).is_some_and(|t| t.is_ok())))),
+        ("bitlex: parse (node table)", Box::new(|f| jp::columns(f).unwrap().rows.len())),
+        ("bitlex: the tape", Box::new(|f| usize::from(std::hint::black_box(jp::tape::Bitlex.parse(&grammar, f, &|| false)).is_some_and(|t| t.is_ok())))),
+        ("tree-sitter-json: parse", Box::new(|f| parser.borrow_mut().parse(f, None).unwrap().root_node().child_count() as usize)),
+        ("tree-sitter-json: the tape", Box::new(|f| {
+            let tree = parser.borrow_mut().parse(f, None).unwrap();
+            usize::from(std::hint::black_box(TapeImage::encode(tree.root_node(), &grammar, f, &|| false)).is_ok())
+        })),
+        ("the tape's source digest (SHA-256)", Box::new(|f| { use sha2::Digest; std::hint::black_box(sha2::Sha256::digest(f.as_bytes()))[0] as usize })),
+    ];
+    if let Ok(only) = std::env::var("RERAIL_JSON_COST_LOOP") {
+        let (_, step) = steps.iter().find(|(name, _)| *name == only).expect("a step's name");
+        let t0 = cpu();
+        let mut n = 0;
+        while cpu() - t0 < 20.0 {
+            files.iter().for_each(|f| n += step(f));
         }
-        let (i1, t1) = (retired().0, cpu());
-        for f in &files {
-            n += rerail_simdjson::tree(f.as_bytes(), kinds).unwrap().nodes.len();
-        }
-        let (i1b, t1b) = (retired().0, cpu());
-        for f in &files {
-            n += usize::from(std::hint::black_box(crate::code_rule_dsl::transducer::packed::json_parser::simdjson::encode(&grammar, f, &|| false)).is_ok());
-        }
-        let (i2, t2) = (retired().0, cpu());
-        for f in &files {
-            n += parser.parse(f, None).unwrap().root_node().child_count() as usize;
-        }
-        let (i3, t3) = (retired().0, cpu());
-        for f in &files {
-            let tree = parser.parse(f, None).unwrap();
-            n += usize::from(std::hint::black_box(TapeImage::encode(tree.root_node(), &grammar, f, &|| false)).is_ok());
-        }
-        let (i4, t4) = (retired().0, cpu());
         std::hint::black_box(n);
-        for (k, (t, i)) in [(t1 - t0, i1 - i0), (t1b - t1, i1b - i1), (t2 - t1b, i2 - i1b), (t3 - t2, i3 - i2), (t4 - t3, i4 - i3)].into_iter().enumerate() {
-            best[k] = (best[k].0.min(t), best[k].1.min(i));
+        return;
+    }
+    let mut best = vec![(f64::MAX, u64::MAX); steps.len()];
+    for _ in 0..3 {
+        for ((_, step), best) in steps.iter().zip(&mut best) {
+            let (i0, t0) = (retired().0, cpu());
+            let n: usize = files.iter().map(|f| step(f)).sum();
+            let (i1, t1) = (retired().0, cpu());
+            std::hint::black_box(n);
+            *best = (best.0.min(t1 - t0), best.1.min(i1 - i0));
         }
     }
     let mb = bytes as f64 / 1e6;
-    for (name, (t, i)) in ["simdjson: parse and index", "simdjson: parse, index and tree", "simdjson: the tape", "tree-sitter-json: parse", "tree-sitter-json: the tape"].iter().zip(best) {
-        eprintln!("{name:40} {:8.1} M instructions {:7.1} ms  {:6.1} MB/s", i as f64 / 1e6, t * 1e3, mb / t);
+    for ((name, _), (t, i)) in steps.iter().zip(best) {
+        eprintln!("{name:36} {:8.1} M instructions {:6.0} a node {:7.1} ms {:7.1} MB/s", i as f64 / 1e6, i as f64 / nodes as f64, t * 1e3, mb / t);
     }
-    eprintln!("{} files, {mb:.1} MB, simdjson's kernel {}", files.len(), rerail_simdjson::implementation());
+    eprintln!("{} of {all} files (both parsers accept them), {mb:.1} MB, {nodes} nodes; simdjson's kernel {}", files.len(), rerail_simdjson::implementation());
 }

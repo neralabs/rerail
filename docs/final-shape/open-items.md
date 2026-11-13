@@ -4036,13 +4036,23 @@ saves. Measured as `Vocabulary::compile` below 1% of a batch, with match results
 
 ## O-tape-pack-cost. Packing a tape costs 30 times simdjson's parse
 
-**Seen (2026-11-12, 0134).** Over the repository's JSON (2,200 files, 73.6 MB), simdjson parses and builds the tree in
-1.1 G instructions, and the engine's packing of that tree into a tape (`TapeImage::finish` → `pack`) takes 31.5 G,
-in a debug build. The same packing follows tree-sitter's trees, so every language pays it.
+**Seen (2026-11-12, 0134).** Over the repository's JSON (2,200 files, 73.6 MB, 7.2 M nodes), simdjson parses and builds
+the tree in 1.1 G instructions; the tape from it takes 32.6 G (4,530 a node) in a debug build.
 
-**Closure:** the packing measured per node in the build that runs it, and brought near the tree's own cost
-(written straight from a parser's rows into the tape's columns, or moved to a crate that is optimized as a
-dependency is); `json_parse_costs` shows the tape within a few times the tree.
+**Measured why (`json_parse_costs`):**
+- **Most of it is the debug build.** `TapeImage::finish` and `pack` are generic over the budget closure, so they
+  are compiled in the caller's crate (`rerail-lang-json`), unoptimized. With `rerail-lang` and `rerail-lang-json`
+  at `-O3`, the same step is 5.0 G (697 a node): the packing 3.9 G (543 a node), 3.5 times the tree. The debug
+  profile's top frames are std's `precondition_check`s and iterator adapters.
+- **What is left, optimized** (profile): `finish`/`pack`'s loops 29% (each node's code folded through an
+  `FxHashMap` of `Code`, sizes summed from parents, parents checked, block minima, widths); the three column
+  writes 23% (`put_cell`, a `Vec::extend_from_slice` of 2–4 bytes a cell); the tree 13%; SHA-256 of the source
+  11%; simdjson 10%; the tree copied into `Pending` records (with an `Option<(String, bool)>` alias each) 7%.
+
+**Closure:** the tape packed in code that is optimized in every build (not generic over the budget, or in a crate
+optimized as a dependency is), written from a parser's rows straight into the columns: sizes known from the
+parse, no `Pending` copy, a code by a table over the grammar's (kind, field, flags, supertypes) instead of a hash,
+cells written at fixed widths. Measured as the tape within 2 times the tree in a debug build.
 
 ## O-jsonc-simdjson. JSON with comments goes to tree-sitter-json
 

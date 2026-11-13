@@ -78,5 +78,17 @@ debug build (the engine unoptimized, dependencies at `-O3`), least of 3 rounds, 
 
 2,199 tapes equal tree-sitter-json's; 1 is tree-sitter's error (`7e+308`); 1 file is refused.
 
-What is left is the engine's tape packing (`TapeImage::finish`, unoptimized in a debug build):
-31.5 of the 32.6 G. It is the same for every parser (O-tape-pack-cost).
+What is left is the engine's tape packing: 31.5 of the 32.6 G. `TapeImage::finish` is generic, so
+it is compiled unoptimized in the parser's crate. Built at `-O3` (`rerail-lang`, `rerail-lang-json`),
+the tape is 5.0 G, of which packing is 3.9 G (O-tape-pack-cost).
+
+Against the Bitlex parser (same files):
+
+| | debug build | tape code at `-O3` |
+|---|---:|---:|
+| simdjson: parse and tree | 1.1 G | 1.1 G |
+| Bitlex: parse (node table) | 3.3 G | 3.3 G |
+| simdjson: the tape | 32.6 G | 5.0 G |
+| Bitlex: the tape | 35.6 G | 7.5 G |
+
+The Bitlex parse is 85% generated code (tier 2 51%, tier 1 34%), the rest buffer set-up.
