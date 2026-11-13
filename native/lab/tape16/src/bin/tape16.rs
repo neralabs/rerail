@@ -5,6 +5,7 @@
 //!              (A: codec, layout, cut, dict, k, extras, dictcut; all = every one but codec and dictcut)
 //! tape16 text  <cap>                                    T6, E5: text levels against the stored source
 //! tape16 edits <pairs.cap>                              T7, E4: blocks and rows an edit changes, per identity
+//! tape16 writer <cap> (--features lean for A)           E6: format 16's writer against format 15's, on .rr files
 //! tape16 keys  <cap>                                    E8: widths every key and count needs
 //! tape16 scan  <cap>                                    T5 on Metal: positions, depth, parents, ends from events
 //! tape16 dicts <cap>                                    T4: the dictionary size training gives per size asked
@@ -511,6 +512,52 @@ fn cmd_scan(path: &str) {
     }
 }
 
+/// E6: format 16's writer against format 15's on the captured `.rr` files (tag 13); with `--features lean`,
+/// the lean parse too (A), else A is left out.
+fn cmd_writer(path: &str) {
+    use rerail_tape_lab::measure::cost;
+    use rerail_tape_lab::writer;
+    let files: Vec<capture::File> = capture::read(std::path::Path::new(path)).unwrap_or_else(|e| die(&e)).into_iter().filter(|f| f.tag == 13).collect();
+    #[allow(unused_mut)]
+    let (mut a, mut b, mut c) = (rerail_tape_lab::measure::Cost::default(), rerail_tape_lab::measure::Cost::default(), rerail_tape_lab::measure::Cost::default());
+    let (mut nodes, mut bytes, mut same) = (0usize, 0usize, 0usize);
+    for f in &files {
+        let recs = writer::records(&f.image).unwrap_or_else(|e| die(&format!("{}: {e}", f.path)));
+        nodes += recs.len();
+        bytes += f.source.len();
+        #[cfg(feature = "lean")]
+        {
+            let src = std::str::from_utf8(&f.source).unwrap_or("");
+            let (img, x) = cost(|| rerail_rr_syntax::lean::tape(src));
+            a += x;
+            same += (img == f.image) as usize;
+        }
+        let (img, x) = cost(|| rerail_tape_format::preorder_image(f.tag, &f.source, &recs));
+        b += x;
+        if !cfg!(feature = "lean") {
+            same += (img == f.image) as usize;
+        }
+        let (planes, x) = cost(|| std::hint::black_box(writer::events_writer(f.source.len() as u64, &recs)));
+        c += x;
+        if planes != writer::events_writer_reference(f.source.len() as u64, &recs) {
+            die(&format!("{}: the one-pass writer differs from the reference", f.path));
+        }
+    }
+    let m = |x: &rerail_tape_lab::measure::Cost| x.instructions as f64 / 1e6;
+    println!("{path}: {} .rr files, {nodes} nodes, {} KB of source; images equal to the capture: {same}\n", files.len(), bytes / 1024);
+    println!("| part | M instructions | instructions/node | ms |");
+    println!("|---|---|---|---|");
+    if cfg!(feature = "lean") {
+        println!("| A: lean parse + format-15 write | {:.1} | {:.0} | {:.1} |", m(&a), a.instructions as f64 / nodes as f64, a.nanos as f64 / 1e6);
+    }
+    println!("| B: format-15 writer alone | {:.1} | {:.0} | {:.1} |", m(&b), b.instructions as f64 / nodes as f64, b.nanos as f64 / 1e6);
+    println!("| C: format-16 writer alone (events + byte planes) | {:.1} | {:.0} | {:.1} |", m(&c), c.instructions as f64 / nodes as f64, c.nanos as f64 / 1e6);
+    if cfg!(feature = "lean") {
+        let e = a.instructions as f64 - b.instructions as f64 + c.instructions as f64;
+        println!("| A − B + C: lean parse + format-16 write | {:.1} | {:.0} | |", e / 1e6, e / nodes as f64);
+    }
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flag = |f: &str| args.iter().any(|a| a == f);
@@ -532,6 +579,7 @@ fn main() {
         "text" => cmd_text(path),
         "edits" => cmd_edits(path),
         "keys" => cmd_keys(path),
+        "writer" => cmd_writer(path),
         "dicts" => cmd_dicts(path),
         #[cfg(target_os = "macos")]
         "scan" => cmd_scan(path),
