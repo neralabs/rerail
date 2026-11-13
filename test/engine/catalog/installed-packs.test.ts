@@ -346,10 +346,10 @@ describe("the installed-pack catalog", () => {
   it("reads the packs again when the active core changes, checking their range against the new one", () => {
     installPackDirectory(VALID, "valid");
     expect([...loadRuleCatalog().packs.keys()]).toEqual(["valid"]);
-    // `rerail update` makes a core active whose version is outside the pack's range; the packs themselves are unchanged.
+    // `rerail update rollback` makes a core active that is older than the pack fits; the packs themselves are unchanged.
     const current = join(process.env.RERAIL_HOME!, "current");
     mkdirSync(current, { recursive: true });
-    writeFileSync(join(current, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "9.0.0" }));
+    writeFileSync(join(current, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.0.9" }));
     try {
       const catalog = loadRuleCatalog();
       expect(catalog.packs.size).toBe(0);
@@ -387,7 +387,7 @@ async function tinyPack(version: string, rules: readonly TinyRule[]): Promise<st
     version,
     license: "Apache-2.0",
     files: ["pack.json", "rules"],
-    peerDependencies: { "@neralabs/rerail": ">=0.1.0-0 <0.2.0" },
+    peerDependencies: { "@neralabs/rerail": ">=0.1.0-0" },
   });
   writeJson(join(directory, "pack.json"), {
     format: "rerail.rule-pack/v1",
