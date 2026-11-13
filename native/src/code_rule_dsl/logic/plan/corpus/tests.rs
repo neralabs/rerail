@@ -653,7 +653,8 @@ fn a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test() {
             assert_ne!(path, template);
             assert!(path.to_string_lossy().contains("rerail-test-store-"), "{}", path.display());
             let count = |sql: &str| -> i64 { rusqlite::Connection::open(&path).unwrap().query_row(sql, [], |r| r.get(0)).unwrap() };
-            assert!(count("SELECT count(*) FROM tape_objects") > tapes, "the library's tapes and the test's own");
+            let held = count("SELECT count(*) FROM tape_objects");
+            assert!(held > tapes, "the library's tapes and the test's own: {held} tapes, the template's {tapes}");
             assert_ne!(count("SELECT id FROM store_identity"), identity, "a copy is a store of its own");
             path.parent().unwrap().to_path_buf()
         }).unwrap()

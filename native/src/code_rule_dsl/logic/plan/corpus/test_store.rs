@@ -78,7 +78,10 @@ fn make(path: &Path) {
 }
 
 /// Phase 0 over every library module and the core program, then a run of the core program over an empty corpus:
-/// what a test's first run would do before it reads its own files.
+/// what a test's first run would do before it reads its own files. Then collected, as a run's collection would leave
+/// it: a process whose include graphs were already in memory (the template is made by a test, mid-suite) writes
+/// `core.rr`'s tape with no manifest naming it, and a copy's first collection, due ten minutes after the template's
+/// decision, took it out from under the test (`a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test`).
 fn fill(store: &Path) -> std::result::Result<(), String> {
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.to_owned()));
     let lib = std::fs::canonicalize(crate::code_rule_dsl::logic::rr::library()).map_err(|e| e.to_string())?;
@@ -100,6 +103,16 @@ fn fill(store: &Path) -> std::result::Result<(), String> {
     let handle = crate::content_store::ContentStore::open(store).map_err(|e| e.to_string())?;
     handle.flush_atoms().map_err(|e| e.to_string())?;
     handle.written().map_err(|e| e.to_string())?;
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    let policy = crate::content_store::CorpusPolicy::default();
+    handle.keep_corpus_runs(&policy, now).map_err(|e| e.to_string())?;
+    // A pass collects what is older than the store's generation, then advances it: two at least, then until one
+    // finds nothing.
+    for pass in 0.. {
+        if !handle.collect_corpus_pass(&policy, now).map_err(|e| e.to_string())?.did_work() && pass >= 1 {
+            break;
+        }
+    }
     Ok(())
 }
 
