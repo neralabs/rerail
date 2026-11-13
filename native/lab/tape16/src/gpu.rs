@@ -221,8 +221,9 @@ using namespace metal;
 // within the block, how many sequences it decodes, and the index of its first.
 struct Task { uint out; uint block; uint at; uint li; uint nseq; uint si; };
 // Each block's first byte in the global sequence and literal buffers, its first checkpoint, K, and its
-// first entry in the sequence table (the index pass's output).
-struct Block { uint seq_base; uint lit_base; uint ck_base; uint k; uint tab_base; };
+// first entry in the sequence table (the index pass's output), and its dictionary (a range of the dictionary
+// buffer, so one dispatch can hold several languages).
+struct Block { uint seq_base; uint lit_base; uint ck_base; uint k; uint tab_base; uint dict_base; uint dict_len; };
 // A checkpoint's literal and body offsets, for the sequence-index form's walk.
 struct Check { uint li; uint at; };
 struct Frame { uint block; uint at; uint li; uint left; uint si; };
@@ -303,6 +304,8 @@ kernel void decode_span(device const Task* tasks [[buffer(0)]],
         uint b = st[top].block;
         device const uchar* s = seqs + blocks[b].seq_base;
         device const uchar* l = lits + blocks[b].lit_base;
+        device const uchar* dict_b = dict + blocks[b].dict_base;
+        uint dl = blocks[b].dict_len;
         uint at = st[top].at, li = st[top].li, si = st[top].si;
         Tok k = tok(s, at, b, li, si, fmt);
         for (uint j = 0; j < k.lits; j++) out[o + j] = l[li + j];
@@ -313,7 +316,7 @@ kernel void decode_span(device const Task* tasks [[buffer(0)]],
         } else if (k.op == 2) {
             for (uint j = 0; j < k.len; j++) {
                 uint q = k.arg + j;
-                out[o + j] = q < dict_len ? dict[q] : l[q - dict_len];
+                out[o + j] = q < dl ? dict_b[q] : l[q - dl];
             }
             o += k.len;
         }
@@ -368,7 +371,7 @@ kernel void index_seqs(device const Task* tasks [[buffer(0)]],
 /// The span pass's inputs: tasks, the block table and checkpoints, and the expected output.
 pub(crate) struct SpanInputs {
     pub(crate) tasks: Vec<[u32; 6]>,
-    pub(crate) blocks: Vec<[u32; 5]>,
+    pub(crate) blocks: Vec<[u32; 7]>,
     pub(crate) checks: Vec<[u32; 2]>,
     /// Sequences so far: the size of the index pass's table.
     pub(crate) seqs: u32,
@@ -379,9 +382,11 @@ impl SpanInputs {
         SpanInputs { tasks: Vec::new(), blocks: Vec::new(), checks: Vec::new(), seqs: 0 }
     }
     /// A block's tasks and table entries; `checks` are (output, literal, body) offsets.
-    pub(crate) fn add(&mut self, out_base: u32, seq_base: u32, lit_base: u32, checks: &[[u32; 3]], nseq: usize, k: usize) {
+    /// `dict`: the block's dictionary as (first byte, length) in the dictionary buffer.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn add(&mut self, out_base: u32, seq_base: u32, lit_base: u32, checks: &[[u32; 3]], nseq: usize, k: usize, dict: (u32, u32)) {
         let g = self.blocks.len() as u32;
-        self.blocks.push([seq_base, lit_base, self.checks.len() as u32, k as u32, self.seqs]);
+        self.blocks.push([seq_base, lit_base, self.checks.len() as u32, k as u32, self.seqs, dict.0, dict.1]);
         self.seqs += nseq as u32;
         for (i, ck) in checks.iter().enumerate() {
             self.checks.push([ck[1], ck[2]]);
@@ -445,7 +450,7 @@ pub fn decode_span(files: &[Vec<Vec<u8>>], dict: &[u8], ptr: crate::span::Ptr, i
     for file in files {
         for (b, c) in file.iter().enumerate() {
             let p = lp::parts(c);
-            inputs.add(expected.len() as u32, seqs.len() as u32, lits.len() as u32, &p.checks, p.nseq, p.k);
+            inputs.add(expected.len() as u32, seqs.len() as u32, lits.len() as u32, &p.checks, p.nseq, p.k, (0, dict.len() as u32));
             seqs.extend_from_slice(p.seqs);
             lits.extend_from_slice(p.lits);
             expected.extend(crate::span::decompress(file, b, &pool, ptr));
@@ -489,7 +494,8 @@ pub(crate) const HUFF_SOURCE: &str = r#"
 using namespace metal;
 
 // One thread per checkpoint segment: decode its sequence bytes and its literal bytes from their bit offsets.
-struct HTask { uint seq_out; uint seq_n; uint seq_bit; uint lit_out; uint lit_n; uint lit_bit; };
+// `table`: which language's tables (a multiple of 4096 entries into each LUT buffer).
+struct HTask { uint seq_out; uint seq_n; uint seq_bit; uint lit_out; uint lit_n; uint lit_bit; uint table; };
 
 static inline void run(device const uchar* bits, uint bit, uint n, device const ushort* lut, device uchar* out) {
     for (uint i = 0; i < n; i++) {
@@ -512,8 +518,8 @@ kernel void huff(device const HTask* tasks [[buffer(0)]],
                  uint id [[thread_position_in_grid]]) {
     if (id >= ntasks) return;
     HTask t = tasks[id];
-    run(seq_bits, t.seq_bit, t.seq_n, seq_lut, seqs + t.seq_out);
-    run(lit_bits, t.lit_bit, t.lit_n, lit_lut, lits + t.lit_out);
+    run(seq_bits, t.seq_bit, t.seq_n, seq_lut + t.table * 4096, seqs + t.seq_out);
+    run(lit_bits, t.lit_bit, t.lit_n, lit_lut + t.table * 4096, lits + t.lit_out);
 }
 "#;
 
@@ -540,7 +546,7 @@ pub fn decode_span_huff(files: &[Vec<Vec<u8>>], dict: &[u8], seq_t: &crate::huff
     let (hp, sp, ip) = (pipe(HUFF_SOURCE, "huff")?, pipe(SPAN_SOURCE, "decode_span")?, pipe(SPAN_SOURCE, "index_seqs")?);
     let pool = lp::Dict::new(dict.to_vec());
     let (mut sbits, mut lbits) = (Vec::new(), Vec::new());
-    let (mut htasks, mut inputs) = (Vec::<[u32; 6]>::new(), SpanInputs::new());
+    let (mut htasks, mut inputs) = (Vec::<[u32; 7]>::new(), SpanInputs::new());
     let (mut nseq, mut nlit) = (0usize, 0usize);
     let mut expected = Vec::new();
     for file in files {
@@ -548,7 +554,7 @@ pub fn decode_span_huff(files: &[Vec<Vec<u8>>], dict: &[u8], seq_t: &crate::huff
         for (b, c) in file.iter().enumerate() {
             let p = huff::coded(c);
             let plain_checks: Vec<[u32; 3]> = p.checks.iter().map(|c| [c[0], c[1], c[2]]).collect();
-            inputs.add(expected.len() as u32, nseq as u32, nlit as u32, &plain_checks, p.nseq, p.k);
+            inputs.add(expected.len() as u32, nseq as u32, nlit as u32, &plain_checks, p.nseq, p.k, (0, dict.len() as u32));
             let (sb, lb) = (sbits.len() as u64 * 8, lbits.len() as u64 * 8);
             sbits.extend_from_slice(p.seq_bits);
             lbits.extend_from_slice(p.lit_bits);
@@ -556,7 +562,7 @@ pub fn decode_span_huff(files: &[Vec<Vec<u8>>], dict: &[u8], seq_t: &crate::huff
                 let next = p.checks.get(i + 1);
                 let s_end = next.map_or(p.nseq_bytes, |n| n[2] as usize) as u32;
                 let l_end = next.map_or(p.nlit, |n| n[1] as usize) as u32;
-                htasks.push([nseq as u32 + ck[2], s_end - ck[2], (sb + u64::from(ck[3])) as u32, nlit as u32 + ck[1], l_end - ck[1], (lb + u64::from(ck[4])) as u32]);
+                htasks.push([nseq as u32 + ck[2], s_end - ck[2], (sb + u64::from(ck[3])) as u32, nlit as u32 + ck[1], l_end - ck[1], (lb + u64::from(ck[4])) as u32, 0]);
             }
             nseq += p.nseq_bytes;
             nlit += p.nlit;

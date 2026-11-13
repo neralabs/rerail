@@ -32,13 +32,14 @@ training half only, and every number is measured on the test half.
 
 ```sh
 scripts/build.sh            # nice, plus the Homebrew rustc workaround
-target/debug/tape16 grid   <cap> [--axis codec|layout|cut|dict|k|extras|dictcut|huff|final] [--full] [--langs]
+target/debug/tape16 grid   <cap> [--axis codec|layout|cut|dict|k|extras|dictcut|huff|span|final] [--full] [--langs]
                                  [--shards N [--only i]]
 target/debug/tape16 text   <cap>
 target/debug/tape16 edits  <pairs.cap>
 target/debug/tape16 keys   <cap>
 target/debug/tape16 dicts  <cap>
-target/debug/tape16 gpu    <cap> [--dict KB] [--k K] [--cut N]
+target/debug/tape16 gpu    <cap> [--dict KB] [--k K] [--cut N] [--lang L] [--codecs S]
+target/debug/tape16 columns <cap> [--cut N] [--lang L]
 target/debug/tape16 scan   <cap>
 target/debug/tape16 writer <cap>             # --features lean adds the lean parse (E6 A)
 ```
@@ -55,6 +56,7 @@ the test half is measured shard by shard, the rows summed.
 | `keys` | E8, U5 | The largest value every key and field takes, in bits. |
 | `dicts` | T4 | The dictionary size training gives for each size asked. |
 | `gpu` | E3 | Every LZ codec (span LZ and the Huffman stage included) decoded on Metal: threads, GB/s warm, against the CPU decoder, checked byte for byte. |
+| `columns` | E7, E3, T5 | Format 16 (span LZ with sequence-index pointers, Huffman, byte planes) decoded on Metal straight into reader columns: kind, field, flags, membership, start, end, parent, subtree end. GPU µs per pass, against the same decode on one CPU thread into a tree, checked node by node. |
 | `scan` | T5, E3 | Positions, depth, parents and subtree ends derived on Metal from events and placements (a pass per block, per file, per node), per block size, against the CPU pass, checked. |
 | `writer` | E6 | Instructions per node of format 15's writer, format 16's one-pass byte-plane writer (checked against the reference writer), and with `--features lean` the lean parse that feeds them. |
 
@@ -76,7 +78,9 @@ layout and cut through blocks and back to the tree, and a source past 8 GiB (U5)
     block rather than into its output.
   - span LZ (`span.rs`): a span re-runs a run of earlier compressed sequences, from the same block or
     (`x`) from earlier blocks of the file, and spans nest to a depth. So a block copies compressed
-    input, and every block still decodes in parallel.
+    input, and every block still decodes in parallel. Its pointer has four forms (`Ptr`): full, split
+    (same-block and earlier-block spans as two ops), split without the output length, and by sequence
+    index. The last is the smallest. On Metal it needs an index pass to keep its speed.
 
   The LZ codecs keep a checkpoint every K sequences, so a read starts at the checkpoint before it.
 - **Entropy stage** (`huff.rs`, `+huff`): static canonical Huffman tables shared per language, one for
@@ -88,7 +92,8 @@ layout and cut through blocks and back to the tree, and a source past 8 GiB (U5)
 
 ## What it does not measure yet
 
-- The CPU span decoder runs a closure per byte, so its CPU numbers are slow; the Metal kernels are the
-  ones to read.
-- Random reads under the entropy stage decode the whole block (an upper bound).
+- Random reads under the entropy stage are exact for span LZ (only the segments a read reaches are
+  decoded). The other LZ codecs still decode the block.
 - E7 lives in the engine (the `tape-reads` feature), not here.
+- `columns` decodes one language per dispatch. A corpus-wide dispatch needs a Huffman table index per
+  block.

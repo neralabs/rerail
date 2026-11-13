@@ -67,9 +67,11 @@ kernel void unplane_trails(device const UB* blocks [[buffer(0)]],
 }
 "#;
 
-/// A file as the pipeline takes it: its entropy-coded span LZ blocks (byte planes inside), placements, and
-/// each block's (opens, closes).
+/// A file as the pipeline takes it: its language, its entropy-coded span LZ blocks (byte planes inside),
+/// placements, and each block's (opens, closes).
 pub struct FileIn<'a> {
+    /// Which of `decode`'s languages (its dictionary and tables).
+    pub lang: usize,
     pub coded: &'a [Vec<u8>],
     pub places: &'a [Placement],
     pub counts: &'a [(u32, u32)],
@@ -91,12 +93,25 @@ pub struct Columns {
 
 pub const PASSES: [&str; 8] = ["huff", "index", "span", "unplane", "scan A", "scan B", "scan C", "closes"];
 
-pub fn decode(files: &[FileIn], dict: &[u8], tables: &(huff::Table, huff::Table), ptr: Ptr, max_depth: usize) -> Result<Columns, String> {
+/// A language's dictionary and Huffman tables.
+pub struct Lang<'a> {
+    pub dict: &'a [u8],
+    pub tables: &'a (huff::Table, huff::Table),
+}
+
+/// Every file in one set of dispatches, whatever its language: each Huffman task names its language's
+/// tables, and each block its dictionary.
+pub fn decode(files: &[FileIn], langs: &[Lang], ptr: Ptr, max_depth: usize) -> Result<Columns, String> {
     use metal::{Device, MTLResourceOptions, MTLSize};
     let device = Device::system_default().ok_or("no Metal device")?;
     let meta = Meta::new(files.iter().map(|f| (f.places, f.counts)));
     // Host preparation: tables of offsets only; no block is decoded on the host.
-    let (mut sbits, mut lbits, mut htasks, mut inputs) = (Vec::new(), Vec::new(), Vec::<[u32; 6]>::new(), SpanInputs::new());
+    let (mut sbits, mut lbits, mut htasks, mut inputs) = (Vec::new(), Vec::new(), Vec::<[u32; 7]>::new(), SpanInputs::new());
+    let (mut dict, mut dict_at) = (Vec::new(), Vec::new());
+    for l in langs {
+        dict_at.push((dict.len() as u32, l.dict.len() as u32));
+        dict.extend_from_slice(l.dict);
+    }
     let (mut ub, mut trail_block) = (Vec::<[u32; 5]>::new(), Vec::<u32>::new());
     let (mut nseq, mut nlit, mut out, mut bytes_in, mut gb) = (0usize, 0usize, 0usize, 0usize, 0usize);
     for f in files {
@@ -104,7 +119,7 @@ pub fn decode(files: &[FileIn], dict: &[u8], tables: &(huff::Table, huff::Table)
             bytes_in += c.len();
             let p = huff::coded(c);
             let checks: Vec<[u32; 3]> = p.checks.iter().map(|c| [c[0], c[1], c[2]]).collect();
-            inputs.add(out as u32, nseq as u32, nlit as u32, &checks, p.nseq, p.k);
+            inputs.add(out as u32, nseq as u32, nlit as u32, &checks, p.nseq, p.k, dict_at[f.lang]);
             let (sb, lb) = (sbits.len() as u64 * 8, lbits.len() as u64 * 8);
             sbits.extend_from_slice(p.seq_bits);
             lbits.extend_from_slice(p.lit_bits);
@@ -112,7 +127,7 @@ pub fn decode(files: &[FileIn], dict: &[u8], tables: &(huff::Table, huff::Table)
                 let next = p.checks.get(i + 1);
                 let s_end = next.map_or(p.nseq_bytes, |n| n[2] as usize) as u32;
                 let l_end = next.map_or(p.nlit, |n| n[1] as usize) as u32;
-                htasks.push([nseq as u32 + ck[2], s_end - ck[2], (sb + u64::from(ck[3])) as u32, nlit as u32 + ck[1], l_end - ck[1], (lb + u64::from(ck[4])) as u32]);
+                htasks.push([nseq as u32 + ck[2], s_end - ck[2], (sb + u64::from(ck[3])) as u32, nlit as u32 + ck[1], l_end - ck[1], (lb + u64::from(ck[4])) as u32, f.lang as u32]);
             }
             let (node, trail) = meta.bases[gb];
             ub.push([out as u32, n, m, node, trail]);
@@ -141,10 +156,10 @@ pub fn decode(files: &[FileIn], dict: &[u8], tables: &(huff::Table, huff::Table)
     };
     let (hp, ip, sp) = (compile(gpu::HUFF_SOURCE, "huff")?, compile(gpu::SPAN_SOURCE, "index_seqs")?, compile(gpu::SPAN_SOURCE, "decode_span")?);
     let (np, tp) = (compile(SOURCE, "unplane_nodes")?, compile(SOURCE, "unplane_trails")?);
-    let (bh, bsb, blb, bsl, bll) = (buf(as_bytes(htasks.as_flattened())), buf(&sbits), buf(&lbits), buf(&lut(&tables.0)), buf(&lut(&tables.1)));
+    let (bh, bsb, blb, bsl, bll) = (buf(as_bytes(htasks.as_flattened())), buf(&sbits), buf(&lbits), buf(&langs.iter().flat_map(|l| lut(&l.tables.0)).collect::<Vec<_>>()), buf(&langs.iter().flat_map(|l| lut(&l.tables.1)).collect::<Vec<_>>()));
     drop((sbits, lbits));
     let (bseq, blit) = (zeros(nseq), zeros(nlit));
-    let (bt, bd) = (buf(as_bytes(inputs.tasks.as_flattened())), buf(dict));
+    let (bt, bd) = (buf(as_bytes(inputs.tasks.as_flattened())), buf(&dict));
     let (bb, bc, btab) = (buf(as_bytes(inputs.blocks.as_flattened())), buf(as_bytes(inputs.checks.as_flattened())), zeros(inputs.seqs as usize * 8));
     let blaid = zeros(out);
     let (bub, bnb, btb) = (buf(as_bytes(ub.as_flattened())), buf(as_bytes(meta.node_block())), buf(as_bytes(&trail_block)));

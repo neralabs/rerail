@@ -94,6 +94,9 @@ fn grid(full: bool, axis: &str) -> Vec<Solution> {
         push(Solution { codec: Codec::LzOutput, cut: Cut::Target(1024), dict: 16 * 1024, entropy: true, ..b }, &mut v);
         push(Solution { codec: Codec::span(4, true), cut: Cut::Target(1024), dict: 16 * 1024, entropy: true, ..b }, &mut v);
         push(Solution { codec: Codec::span(4, true), cut: Cut::Target(256), dict: 16 * 1024, entropy: true, ..b }, &mut v);
+        let seq = Codec::LpSpan { depth: 4, cross: true, ptr: Ptr::Seq };
+        push(Solution { codec: seq, cut: Cut::Target(1024), dict: 16 * 1024, entropy: true, ..b }, &mut v);
+        push(Solution { codec: seq, cut: Cut::Target(256), dict: 16 * 1024, entropy: true, ..b }, &mut v);
     }
     if axis == "dictcut" {
         for cut in [Cut::Target(256), Cut::Target(1024)] {
@@ -535,8 +538,9 @@ fn cmd_scan(path: &str) {
 }
 
 /// E7's reader form on the GPU: format 16 (span LZ, sequence-index pointers, Huffman, byte planes) decoded
-/// straight into columns (kind, field, flags, membership, start, end, parent, subtree end), per language,
-/// checked against the tree; against the same decode on one CPU thread into a tree.
+/// straight into columns (kind, field, flags, membership, start, end, parent, subtree end), per language and
+/// then every language in one set of dispatches, checked against the tree; against the same decode on one CPU
+/// thread into a tree.
 #[cfg(target_os = "macos")]
 fn cmd_columns(path: &str, cut: Cut, lang: Option<&str>) {
     use rerail_tape_lab::columns;
@@ -550,18 +554,28 @@ fn cmd_columns(path: &str, cut: Cut, lang: Option<&str>) {
     }
     println!(" GPU total µs | GPU ns/node | CPU ms (one thread, into a tree) | CPU ns/node | correct |");
     println!("|---|---|---|---|---|---|{}---|---|---|---|---|", "---|".repeat(columns::PASSES.len()));
-    let tags: std::collections::BTreeSet<u8> =
-        corpus.files.iter().filter(|p| p.test).map(|p| p.tag).filter(|&t| lang.is_none_or(|l| capture::language(t) == l)).collect();
-    for tag in tags {
+    let tags: Vec<u8> = corpus
+        .files
+        .iter()
+        .filter(|p| p.test)
+        .map(|p| p.tag)
+        .filter(|&t| lang.is_none_or(|l| capture::language(t) == l))
+        .collect::<std::collections::BTreeSet<u8>>()
+        .into_iter()
+        .collect();
+    struct F {
+        lang: usize,
+        coded: Vec<Vec<u8>>,
+        places: Vec<rerail_tape_lab::blocks::Placement>,
+        counts: Vec<(u32, u32)>,
+        lens: Vec<usize>,
+    }
+    let mut per: Vec<(Vec<u8>, std::sync::Arc<(rerail_tape_lab::huff::Table, rerail_tape_lab::huff::Table)>)> = Vec::new();
+    let (mut all, mut all_test, mut all_cpu, mut max_all) = (Vec::<F>::new(), Vec::<&solution::Prepared>::new(), 0u64, 0usize);
+    for (li, &tag) in tags.iter().enumerate() {
         let dict = dicts.get(&corpus, tag, &s);
         let t = dicts.tables(&corpus, tag, &s);
         let test: Vec<&solution::Prepared> = corpus.files.iter().filter(|p| p.test && p.tag == tag).collect();
-        struct F {
-            coded: Vec<Vec<u8>>,
-            places: Vec<rerail_tape_lab::blocks::Placement>,
-            counts: Vec<(u32, u32)>,
-            lens: Vec<usize>,
-        }
         let files: Vec<F> = test
             .iter()
             .map(|p| {
@@ -569,7 +583,7 @@ fn cmd_columns(path: &str, cut: Cut, lang: Option<&str>) {
                 let laid: Vec<Vec<u8>> = bs.iter().map(|b| layout::lay(b, s.layout, s.extras, &[], &[])).collect();
                 let comp = codec::compress_file(s.codec, &laid, &dict, s.k);
                 let coded = comp.iter().map(|b| rerail_tape_lab::huff::encode(b, &t.0, &t.1)).collect();
-                F { coded, places, counts: bs.iter().map(|b| (b.opens.len() as u32, b.trails.len() as u32)).collect(), lens: laid.iter().map(Vec::len).collect() }
+                F { lang: li, coded, places, counts: bs.iter().map(|b| (b.opens.len() as u32, b.trails.len() as u32)).collect(), lens: laid.iter().map(Vec::len).collect() }
             })
             .collect();
         let max_depth = test.iter().map(|p| p.tree(&corpus).depth().into_iter().max().unwrap_or(0)).max().unwrap_or(0) as usize + 1;
@@ -582,43 +596,53 @@ fn cmd_columns(path: &str, cut: Cut, lang: Option<&str>) {
                 std::hint::black_box(events::decode(&blocks::join(&back), p.tag, &corpus.candidates, p.source.len() as u64));
             }
         });
-        let ins: Vec<columns::FileIn> = files.iter().map(|f| columns::FileIn { coded: &f.coded, places: &f.places, counts: &f.counts }).collect();
-        let r = metal::objc::rc::autoreleasepool(|| columns::decode(&ins, &dict.bytes, &t, Ptr::Seq, max_depth));
-        let c = match r {
-            Ok(c) => c,
-            Err(e) => {
-                println!("| {} | error: {e} |", capture::language(tag));
-                continue;
-            }
-        };
-        // Checked node by node against the events and the tree.
-        let (mut ok, mut base) = (true, 0usize);
-        for p in &test {
-            let tr = p.tree(&corpus);
-            for (i, o) in p.events.opens.iter().enumerate() {
-                let g = base + i;
-                let parent = if tr.parent[i] == u32::MAX { u32::MAX } else { tr.parent[i] + base as u32 };
-                ok &= c.kind[g] == o.kind && c.field[g] == o.field && c.flags[g] == o.flags && c.memb[g] == o.memb;
-                ok &= c.derived.start[g] == tr.nodes[i].start && c.derived.end[g] == tr.nodes[i].end && c.derived.parent[g] == parent;
-                ok &= c.derived.sub[g] == (g + tr.size[i] as usize) as u32;
-            }
-            base += tr.len();
-        }
-        let nodes = base.max(1);
-        let total: f64 = c.seconds.iter().sum();
-        print!(
-            "| {} | {nodes} | {} | {} | {:.2} | {:.2} |",
-            capture::language(tag),
-            c.derived.blocks,
-            c.threads,
-            c.bytes_in as f64 / 1e6,
-            c.laid_bytes as f64 / 1e6
-        );
-        for x in c.seconds {
-            print!(" {:.0} |", x * 1e6);
-        }
-        println!(" {:.0} | {:.2} | {:.1} | {:.1} | {ok} |", total * 1e6, total * 1e9 / nodes as f64, cpu.nanos as f64 / 1e6, cpu.nanos as f64 / nodes as f64);
+        per.push((dict.bytes.clone(), t.clone()));
+        let langs = [columns::Lang { dict: &per[li].0, tables: &per[li].1 }];
+        let ins: Vec<columns::FileIn> = files.iter().map(|f| columns::FileIn { lang: 0, coded: &f.coded, places: &f.places, counts: &f.counts }).collect();
+        columns_row(capture::language(tag), &corpus, &test, &ins, &langs, max_depth, cpu.nanos);
+        all_cpu += cpu.nanos;
+        max_all = max_all.max(max_depth);
+        all.extend(files);
+        all_test.extend(test);
     }
+    if tags.len() > 1 {
+        let langs: Vec<columns::Lang> = per.iter().map(|(d, t)| columns::Lang { dict: d, tables: t }).collect();
+        let ins: Vec<columns::FileIn> = all.iter().map(|f| columns::FileIn { lang: f.lang, coded: &f.coded, places: &f.places, counts: &f.counts }).collect();
+        columns_row("all, one dispatch", &corpus, &all_test, &ins, &langs, max_all, all_cpu);
+    }
+}
+
+/// One row of `columns`: the pipeline over `ins`, checked against `test`'s events and trees.
+#[cfg(target_os = "macos")]
+fn columns_row(name: &str, corpus: &Corpus, test: &[&solution::Prepared], ins: &[rerail_tape_lab::columns::FileIn], langs: &[rerail_tape_lab::columns::Lang], max_depth: usize, cpu_nanos: u64) {
+    use rerail_tape_lab::columns;
+    let r = metal::objc::rc::autoreleasepool(|| columns::decode(ins, langs, Ptr::Seq, max_depth));
+    let c = match r {
+        Ok(c) => c,
+        Err(e) => {
+            println!("| {name} | error: {e} |");
+            return;
+        }
+    };
+    let (mut ok, mut base) = (true, 0usize);
+    for p in test {
+        let tr = p.tree(corpus);
+        for (i, o) in p.events.opens.iter().enumerate() {
+            let g = base + i;
+            let parent = if tr.parent[i] == u32::MAX { u32::MAX } else { tr.parent[i] + base as u32 };
+            ok &= c.kind[g] == o.kind && c.field[g] == o.field && c.flags[g] == o.flags && c.memb[g] == o.memb;
+            ok &= c.derived.start[g] == tr.nodes[i].start && c.derived.end[g] == tr.nodes[i].end && c.derived.parent[g] == parent;
+            ok &= c.derived.sub[g] == (g + tr.size[i] as usize) as u32;
+        }
+        base += tr.len();
+    }
+    let nodes = base.max(1);
+    let total: f64 = c.seconds.iter().sum();
+    print!("| {name} | {nodes} | {} | {} | {:.2} | {:.2} |", c.derived.blocks, c.threads, c.bytes_in as f64 / 1e6, c.laid_bytes as f64 / 1e6);
+    for x in c.seconds {
+        print!(" {:.0} |", x * 1e6);
+    }
+    println!(" {:.0} | {:.2} | {:.1} | {:.1} | {ok} |", total * 1e6, total * 1e9 / nodes as f64, cpu_nanos as f64 / 1e6, cpu_nanos as f64 / nodes as f64);
 }
 
 /// E6: format 16's writer against format 15's on the captured `.rr` files (tag 13); with `--features lean`,

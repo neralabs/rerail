@@ -260,9 +260,25 @@ peaked at about 760 MB, with 0 round-trip errors.
 | lz-out+huff, CDC 1024 | 1.19 | 2.21 | 0.86 |
 | span4x+huff, CDC 1024 | 1.32 | 2.56 | 0.93 |
 | span4x+huff, CDC 256 | 1.46 | 2.76 | 1.05 |
+| span4x-seq+huff, CDC 1024 | **1.13** | 2.39 | 0.73 |
+| span4x-seq+huff, CDC 256 | 1.27 | 2.60 | 0.85 |
 
 The tenth-of-the-repository numbers hold at full size. Every GPU-decodable codec beats v15 overall.
-For Python, only lz-out does, and span LZ is 4% over.
+With full pointers, only lz-out beats v15 on Python, and span LZ is 4% over. Sequence-index pointers
+(below) bring span LZ under v15 on Python at CDC 1024 (2.39 against 2.45). Overall they reach 0.73×
+v15, the best GPU-decodable result, ahead of lz-out.
+
+The seq+huff rows by language, against v15 as stored:
+
+| CDC | javascript | json | python | rust | sql | typescript |
+|---|---|---|---|---|---|---|
+| v15 | 2.95 | 1.27 | 2.45 | 2.24 | 3.32 | 2.95 |
+| 1024 | 3.47 | **0.73** | **2.39** | 2.62 | **2.26** | 3.20 |
+| 256 | 3.62 | 0.85 | 2.60 | 2.82 | **2.26** | 3.43 |
+
+JavaScript, TypeScript and Rust stay over v15. In this repository they are few files, and training
+takes only 1 in 9 of the JavaScript files, so their dictionaries are thin. Both runs: decode 1,150
+instructions per node, random read 8–10 µs, 0 errors. Shards peaked at 735–786 MB.
 
 ## CPython (2,000 files of CPython 3.13.0, 3.16M test nodes)
 
@@ -311,6 +327,119 @@ The scan runs in three passes:
 The CPU decode of the same tapes takes 109 ms. The scan matches the CPU's derivation everywhere. On
 rerail the best is 1.08 ns/node, at CDC 256. So parents and sizes can be derived on the device at
 CDC 256–1024, for less than storing them costs (T5: +33% bytes).
+
+## How a span names its target (data-layer and CPython, every 10th file, 16 KB dictionary)
+
+A span's pointer was five varints: back, n − 1, body, literal, output length. That made Python pay
+against replays. Three other forms (`span::Ptr`):
+
+- **split:** op 4 means this block and op 5 an earlier one, so the common same-block span carries no
+  `back`.
+- **nolen:** split without the output length. A reader that wants bytes after a span expands the span
+  instead of skipping it.
+- **seq:** the target named by its sequence index. Op 4 takes the distance back and n; op 5 takes the
+  block, the index and n. The decoder finds the target's body and literal offsets from its
+  checkpoint, or from an index of them.
+
+| B/node, cross-block, depth 4 | whole | whole +huff | CDC 1024 | CDC 1024 +huff | CDC 256 +huff |
+|---|---|---|---|---|---|
+| full (the first form) | 1.88 | 1.39 | 1.72 | 1.34 | 1.47 |
+| split | 1.78 | 1.36 | 1.66 | 1.31 | 1.46 |
+| nolen | 1.67 | 1.24 | 1.58 | 1.22 | 1.36 |
+| **seq** | **1.54** | **1.14** | **1.48** | **1.15** | **1.29** |
+| lz-out +huff (reference) | | 1.20 | | 1.20 | 1.45 |
+
+| B/node at CDC 1024 +huff | data-layer python | data-layer json | CPython |
+|---|---|---|---|
+| v15 as stored | 2.43 | 1.26 | 2.12 |
+| span, full | 2.54 | 0.96 | 2.57 |
+| span, seq | **2.36** | **0.76** | 2.36 |
+| lz-out | 2.21 | 0.88 | 2.14 |
+
+- **Bytes.** The sequence-index form is the smallest. With the entropy stage it takes 0.75× v15 on
+  the data-layer at CDC 1024, below lz-out (0.78×), and it brings the data-layer's Python under v15.
+- **Where lz-out still wins.** On CPython it is 1.12× v15, against 1.01× for lz-out.
+- **CPU decode cost.** A whole-file decode records each sequence's offsets as it passes them
+  (`Src::index`), so the CPU decode costs the same as the other forms: about 1,165 instructions a
+  node, tree rebuild included.
+
+### On Metal: the index pass (data-layer, CDC 1024, warm, checked)
+
+Walking from the checkpoint costs the GPU 2–4×. An index pass removes the walk: one thread per
+checkpoint segment walks its headers once and records every sequence's offsets. The span pass then
+finds a target in one read.
+
+| GB/s | python | python +huff | json | json +huff |
+|---|---|---|---|---|
+| span, full | 5.30 | 5.25 | 10.44 | 9.90 |
+| span, nolen | 5.31 | 5.27 | 10.47 | 10.52 |
+| span, seq, walking | 2.25 | 2.24 | 2.75 | 2.71 |
+| **span, seq, index pass** | **5.21** | **4.75** | **10.47** | **10.07** |
+
+The index pass takes 60–110 µs, about 1–3% of the decode. With it, the smallest form decodes as fast
+as the others.
+
+### Random reads, exactly (data-layer, every 10th file)
+
+Under the entropy stage, a read now decodes only the checkpoint segments it reaches (`span::Src`):
+its own, and those of any sequence a span names. Before, the lab decoded whole blocks, which was an
+upper bound.
+
+| µs per read, CDC 1024 | plain | +huff |
+|---|---|---|
+| span, full | 2.0 | 5.9 |
+| span, seq | 6.9 | 10.7 |
+| lz-out | | 46.0 |
+
+A sequence-index read walks up to K − 1 headers to each target. That is its price, and it is still a
+quarter of lz-out's whole-block decode.
+
+## Format 16 into reader columns on Metal
+
+E7 says readers sweep kind and flags, and otherwise take a few nodes' parts, except in tree walks.
+`columns` decodes format 16 on the GPU straight into one array per part: kind, field, flags,
+membership mask, start, end, parent and subtree end. The next sibling of node i is `sub[i]`. No pass
+returns to the host.
+
+The passes:
+
+1. Huffman.
+2. The index pass.
+3. Span LZ, into byte planes.
+4. Unplane: one thread per node gathers its record from the planes, and one thread per close its
+   trailing distance.
+5. The scan: positions, depth, parents and subtree ends.
+
+Every column is checked against the tree, node by node.
+
+| data-layer, every 10th file | nodes | CDC | GPU µs (all passes) | GPU ns/node | CPU ns/node (one thread, into a tree) |
+|---|---|---|---|---|---|
+| python | 1.12M | 1024 | 6,100 | 5.44 | 104 |
+| python | 1.12M | 256 | 4,806 | **4.29** | 68 |
+| json | 3.71M | 1024 | 11,555 | 3.11 | 75 |
+| json | 3.71M | 256 | 7,841 | **2.11** | 96 |
+
+At CDC 256 the time goes to the span pass (65%) and scan pass A (16–24%). At CDC 1024, pass A takes
+60% for Python, because it runs one thread per block and there are only 803 blocks.
+
+On rerail's ten languages (every 5th file, CDC 256) every column is correct. Small batches pay a fixed
+cost of about 5–7 ms per run: Rust's 0.86M nodes take 7 ns a node, and Python's 125k take 56.
+
+### Every language in one dispatch
+
+Each Huffman task names its language's tables (one 4,096-entry lookup table per language,
+concatenated). Each span block names its dictionary's range (dictionaries concatenated). So one set
+of dispatches decodes a mixed batch.
+
+| rerail, every 5th file, CDC 256 | nodes | blocks | GPU ms | GPU ns/node | CPU ns/node (one thread) | correct |
+|---|---|---|---|---|---|---|
+| ten languages, one at a time (sum) | 3.61M | 5,615 | 45.5 | 12.6 | 67.5 | yes |
+| **all ten, one dispatch** | 3.61M | 5,615 | **8.5** | **2.36** | 67.5 | yes |
+
+The fixed cost is paid once: 8.5 ms instead of 45.5 ms, and 29× one CPU thread. The span pass still
+takes 5.2 ms of the 8.5, about what it takes for Python's 196 blocks alone (6.4 ms). It looks bound by
+its longest task, not by the bytes (not traced). At CDC 1024 the same batch takes 13.6 ms (3.76
+ns/node), because scan pass A then has fewer, longer blocks.
 
 ## E2: the cursor check
 
@@ -377,23 +506,25 @@ Line and column points, previous siblings and subtree sizes are never read throu
 
 What this means for format 16:
 
-- **One sweep of every node.** The packed residency admission
-  (`residency/admission/relational/syntax/packed.rs`) copies every node's kind, flags, field,
-  parent, span and end into columns of its own. That gives the 1.00 for flags, and one of kind's
-  reads.
+- **Two sweeps of every node, both index builds.** The prefilter's positional kind index
+  (`prefilter.rs`, through `search_index::kind_code`) reads every node's flags and kind. The search
+  index's kind stream (`search_index.rs`) reads every kind again. That accounts for kind's 2 reads a
+  node and flags' 1, and `transducer_flags` takes `named` with it.
+- **The packed residency admission did not run.** It would copy every node's parent, span and size
+  (`residency/admission/relational/syntax/packed.rs`). These runs are on the CPU, and `size` was never
+  read.
 - **Sparse otherwise.** Past that sweep, most rules read under 5% of the nodes' other parts. A
   format-16 reader that decodes kind and flags in bulk, and the rest on demand, covers them.
 - **Except tree walks.** schema-introspection-data-paths walks the tree: 5 parent reads and 3.2 span
   reads a node. Those parts must be cheap at random (parents and ends from the GPU scan, or stored).
-- **Three copies of every document.** A file built for the facts is decoded twice from its image:
-  once into a kept `TapeDoc` (`kept_tape`) and once into facts columns (`from_image`,
-  `facts/core.rs`). The packed admission then copies the `TapeDoc` a third time.
-  - `from_tape(doc)` already builds the facts from a kept document.
-  - Over the run, facts columns are built for 1.42 nodes per restored node: some documents' facts are
-    built more than once.
+- **Two decodes of every document.** A file built for the facts is decoded twice from its image:
+  once into a kept `TapeDoc` (`kept_tape`), and once into facts columns (`from_image`,
+  `facts/core.rs`). `from_tape(doc)` already builds the facts from a kept document, and over the
+  whole repository facts columns are built for exactly 2.0 nodes per restored node.
 
-  Format 16 could give all three readers one decoded columnar form. Until then, the double decode is
-  a read of unchanged data, and the engine could remove it.
+  Format 16 could give both readers one decoded columnar form. The section "Format 16 into reader
+  columns on Metal" below builds that form. Until then, the double decode is a read of unchanged
+  data, and the engine could remove it.
 
 ## Open items found along the way
 
