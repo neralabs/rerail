@@ -123,7 +123,7 @@ describe("Rerail daemon CLI", () => {
       const state = JSON.parse(await readFile(join(root, "daemon.json"), "utf8")) as Pick<DaemonState, "url" | "accessToken"> & { remoteRefused?: unknown };
       const why = String(state.remoteRefused);
       expect(why).toMatch(exposed);
-      expect(stdout).toContain(`Other machines cannot reach this daemon, which serves this computer alone, on loopback, until its TLS key is fixed: ${why}`);
+      expect(stdout).toContain(`This daemon serves this computer alone, over plain http on loopback, until its TLS key is fixed: ${why}`);
       const health = await fetch(new URL("/healthz", state.url), { headers: { "x-rerail-access": state.accessToken! } });
       expect(health.status).toBe(200);
       expect(await readFile(join(root, "daemon.log"), "utf8")).toContain(`until its TLS key is fixed: ${why}`);

@@ -222,7 +222,7 @@ function printDaemon(daemon: RunningDaemon): void {
     ? `Engine: ok (version ${health.native.kernelVersion})\n`
     : `Engine: unavailable: ${health.native.error}\n`);
   process.stdout.write(`${modelStatusLine(health.model)}\n`);
-  // Asked to be reachable from other machines, it serves this one alone until its TLS key is fixed.
+  // Started with a TLS key others can read, it serves this computer alone, over plain http, until the key is fixed.
   if (state.remoteRefused !== undefined) process.stdout.write(`${loopbackOnlyNotice(state.remoteRefused)}\n`);
 }
 

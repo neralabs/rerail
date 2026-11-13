@@ -106,8 +106,9 @@ export interface RerailDaemonOptions {
    */
   tls?: DaemonTlsMaterial;
   /**
-   * Why a daemon whose arguments asked to be reachable from other machines serves this computer alone, on loopback: its
-   * TLS key is not its owner's alone (`serveRerailDaemon`). The state file records it, for `rerail status` to say.
+   * Why a daemon started with a TLS key serves this computer alone, over plain http on loopback: other accounts can read
+   * the key (`serveRerailDaemon`). Its arguments asked for https, and may have asked to be reachable from other
+   * machines. The state file records it, for `rerail status` to say.
    */
   remoteRefused?: string;
   /**
@@ -862,15 +863,15 @@ export function loopbackArguments(argv: readonly string[]): string[] {
 
 /** What daemon.log, `rerail daemon start` and `rerail status` say of a daemon that serves this computer alone. */
 export function loopbackOnlyNotice(reason: string): string {
-  return `Other machines cannot reach this daemon, which serves this computer alone, on loopback, until its TLS key is fixed: ${reason}`;
+  return `This daemon serves this computer alone, over plain http on loopback, until its TLS key is fixed: ${reason}`;
 }
 
 /**
  * The daemon process: `runRerailDaemon`, except that a TLS key it may not serve with (`TlsKeyExposedError`), which keeps
- * it from other machines, no longer keeps it from this one. The daemon starts again without the options that reach
- * other machines (`loopbackArguments`): on loopback, over http, as a daemon started with no options is, so hooks keep
- * recording and steering, and the state file, daemon.log, `rerail daemon start` and `rerail status` say why
- * (`loopbackOnlyNotice`). The refusal comes before anything is opened, so the second start begins from nothing.
+ * it from serving https and from other machines, no longer keeps it from this one. The daemon starts again without the
+ * options that reach other machines (`loopbackArguments`): on loopback, over http, as a daemon started with no options
+ * is, so hooks keep recording and steering, and the state file, daemon.log, `rerail daemon start` and `rerail status`
+ * say why (`loopbackOnlyNotice`). The refusal comes before anything is opened, so the second start begins from nothing.
  */
 export async function serveRerailDaemon(argv: readonly string[], services: RerailDaemonServices = {}): Promise<void> {
   try {
