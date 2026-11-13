@@ -39,10 +39,20 @@ SideEffectsReadError(@place("",0),output,k,n,d,b,s,e,r) :- pse_disk_file(p),pse_
 
 // pathlib.rglob emits a directory's matches before walking its real child directories.
 // Enumeration positions are independent of the shared, sorted name column.
-.decl pse_iter_walk(path:symbol,order_key:symbol)
-pse_iter_walk(".","") :- option("entryPoint","_pse_iter").
+.decl pse_iter_walk(path:symbol)
+pse_iter_walk(".") :- option("entryPoint","_pse_iter").
 .decl pse_entry_order(path:symbol,name:symbol,padded:symbol)
-pse_entry_order(p,n,@slice(s,strlen(s)-20,strlen(s))) :- pse_iter_walk(p,_),dir_order(p,n,i),s=cat("00000000000000000000",to_string(i)).
-pse_iter_walk(cat(p,"/",n),cat(k,"1",i,"/")) :- pse_iter_walk(p,k),dir_entry(p,n,1),dir_metadata(p,n,_,0,_),pse_entry_order(p,n,i),!pse_constant("SKIP_DIRS",n).
+pse_entry_order(p,n,@printf("%020d",i)) :- pse_iter_walk(p),dir_order(p,n,i).
+.decl pse_iter_parent(child:symbol,parent:symbol,ordinal:symbol)
+pse_iter_parent(cat(p,"/",n),p,i) :- pse_iter_walk(p),dir_entry(p,n,1),dir_metadata(p,n,_,0,_),pse_entry_order(p,n,i),!pse_constant("SKIP_DIRS",n).
+pse_iter_walk(child) :- pse_iter_parent(child,_,_).
+.decl pse_iter_ancestor(path:symbol,ancestor:symbol)
+pse_iter_ancestor(p,p) :- pse_iter_walk(p).
+pse_iter_ancestor(p,a) :- pse_iter_ancestor(p,c),pse_iter_parent(c,a,_).
+.decl pse_iter_match(path:symbol,parent:symbol,ordinal:symbol)
+pse_iter_match(cat(p,"/",n),p,i) :- pse_iter_walk(p),dir_entry(p,n,_),pse_entry_order(p,n,i),suffix(".py",n),!pse_constant("SKIP_DIRS",n).
+.decl pse_iter_token(path:symbol,depth:number,text:symbol)
+pse_iter_token(f,strlen(c)-strlen(@replace_all(c,"/",""))-1,cat("1",i,"/")) :- pse_iter_match(f,p,_),pse_iter_ancestor(p,c),pse_iter_parent(c,_,i).
+pse_iter_token(f,strlen(p)-strlen(@replace_all(p,"/","")),cat("0",i)) :- pse_iter_match(f,p,i).
 .violation SideEffectsIter(at:span,path:symbol,order_key:symbol) code "PSE_ITER" "Selected Python path"
-SideEffectsIter(@place("",0),@replace_all(cat(p,"/",n),"\\A\\./",""),cat(k,"0",i)) :- pse_iter_walk(p,k),dir_entry(p,n,_),pse_entry_order(p,n,i),suffix(".py",n),!pse_constant("SKIP_DIRS",n).
+SideEffectsIter(@place("",0),@replace_all(f,"\\A\\./",""),key) :- pse_iter_match(f,_,_),key=join token by depth sep "":{pse_iter_token(f,depth,token)}.
