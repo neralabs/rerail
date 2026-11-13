@@ -150,15 +150,16 @@ describe("engine service session concurrency", () => {
       partial.on("error", () => undefined);
       await once(partial, "connect");
       partial.write("POST /events HTTP/1.1\r\nHost: localhost\r\ncontent-type: application/json\r\ncontent-length: 1000\r\n\r\n{");
-      const cutOff = once(partial, "close").then(() => "cut off");
+      const cutOff = once(partial, "close").then(() => performance.now());
       // The server takes the connection in before the close begins.
       await sleep(250);
+      const began = performance.now();
       const closing = held.service.close();
       try {
-        // The close cuts the stalled request off while the running event still waits. Before, it waited for the request
-        // with no limit, since `server.close()` stops the check behind the server's request timeout: past the 10 s
-        // `rerail daemon stop` gives before its kill.
-        expect(await Promise.race([cutOff, sleep(5_000).then(() => "still open")])).toBe("cut off");
+        // The close cuts the stalled request off 1 s in, while the running event still waits. Before, it waited for the
+        // request with no limit, since `server.close()` stops the check behind the server's request timeout: past the
+        // 10 s `rerail daemon stop` gives before its kill.
+        expect(await whenCut(cutOff, began)).toBe("cut off 1 s in");
       } finally {
         partial.destroy();
         held.release();
@@ -179,13 +180,14 @@ describe("engine service session concurrency", () => {
       // A hook that connected and then wrote nothing.
       const silent = connect(held.engine.socketPath);
       silent.on("error", () => undefined);
-      const cutOff = new Promise<string>(done => silent.once("close", () => done("cut off")));
+      const cutOff = new Promise<number>(done => silent.once("close", () => done(performance.now())));
       await once(silent, "connect");
       // The server takes the connection in before the close begins.
       await sleep(250);
+      const began = performance.now();
       const closing = held.service.close();
       try {
-        expect(await Promise.race([cutOff, sleep(5_000).then(() => "still open")])).toBe("cut off");
+        expect(await whenCut(cutOff, began)).toBe("cut off 1 s in");
       } finally {
         silent.destroy();
         held.release();
@@ -283,6 +285,17 @@ async function handHook(socketPath: string, body: string, sent = body.length): P
       return Buffer.concat(chunks).toString("utf8");
     },
   };
+}
+
+/**
+ * When a connection the close cut off closed (`closed`, a `performance.now()` time), counted from the close's start
+ * (`began`): `cut off 1 s in` at the look 1 s in, which finds it silent since the look the close takes as it begins;
+ * how long it took when a later look cut it; or `still open` after 5 s.
+ */
+async function whenCut(closed: Promise<number>, began: number): Promise<string> {
+  const at = await Promise.race([closed, sleep(5_000).then(() => undefined)]);
+  if (at === undefined) return "still open";
+  return at - began < 1_950 ? "cut off 1 s in" : `cut off ${Math.round(at - began)} ms in`;
 }
 
 /** `whole` when `answer` is a 200 whose body carries the event `eventId`; otherwise its status line and its length. */
