@@ -153,8 +153,9 @@ pub(in crate::code_rule_dsl) fn placements(r: &mut String, state: &State) {
 }
 
 /// Where the process's CPU went, by thread: the spans measure their own thread's CPU, so a worker's is under a span
-/// only where it opens one (`span_at`). Threads by name, digits folded (a pool's threads are one line).
-fn cpu_by_thread(r: &mut String, threads: &super::Threads) {
+/// only where it opens one (`span_at`). Threads by name, digits folded (a pool's threads are one line). `gaps` are
+/// read before the profile's state is taken: a thread closing a span holds its own lock, then takes the state's.
+fn cpu_by_thread(r: &mut String, threads: &super::Threads, gaps: &[super::Gap]) {
     let covered: f64 = threads.rows.iter().map(|t| t.covered).sum();
     let _ = writeln!(
         r,
@@ -180,8 +181,7 @@ fn cpu_by_thread(r: &mut String, threads: &super::Threads) {
     }
     // By the spans' last steps: a pool's items share them wherever they were started (gaps.tsv has the paths).
     let mut by: BTreeMap<(&str, &str), (f64, usize)> = BTreeMap::new();
-    let gaps = super::gaps();
-    for g in &gaps {
+    for g in gaps {
         let e = by.entry((last_step(&g.after), last_step(&g.before))).or_default();
         e.0 += g.cpu;
         e.1 += 1;
@@ -214,7 +214,8 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     }
     std::fs::write(dir.join("threads.tsv"), threads_tsv)?;
     let mut gaps_tsv = String::from("after\tbefore\tcpu_s\n");
-    for g in super::gaps() {
+    let gaps = super::gaps();
+    for g in &gaps {
         let _ = writeln!(gaps_tsv, "{}\t{}\t{:.4}", g.after, g.before, g.cpu);
     }
     std::fs::write(dir.join("gaps.tsv"), gaps_tsv)?;
@@ -256,7 +257,7 @@ pub fn write(dir: &Path, header: &str) -> std::io::Result<()> {
     let mut r = String::new();
     r.push_str(header);
     let _ = writeln!(r, "Memory budgets (decision 0126): overall {} MB, Metal {} MB on top of it", rerail_accel::budget::memory() >> 20, rerail_accel::budget::metal() >> 20);
-    cpu_by_thread(&mut r, &threads);
+    cpu_by_thread(&mut r, &threads, &gaps);
     let (analysis_text, analysis_json) = analysis_report::report(&state);
     std::fs::write(dir.join("analysis.txt"), &analysis_text)?;
     std::fs::write(dir.join("analysis.json"), serde_json::to_vec_pretty(&analysis_json)?)?;
