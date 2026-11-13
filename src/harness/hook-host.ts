@@ -1,6 +1,9 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import Database from "better-sqlite3";
 import type { AdapterEvent, AdapterSession, RerailEventLoop, RerailHost } from "../engine/adapter-contract.js";
+import { GitUnavailableError } from "../engine/git.js";
+import { GitDidNotAnswerError } from "../engine/catalog/repository-identity.js";
 import { resolveSessionPaths } from "../runtime/session-paths.js";
 import { readRepositoryState } from "../presentation/session-presentation.js";
 import { answeredStartState, isRerailStarted } from "../runtime/repository-start.js";
@@ -85,17 +88,28 @@ function gitEnvironmentMovesLookup(environment: NodeJS.ProcessEnv): boolean {
 }
 
 /**
+ * Whether `error`, from this process's own read of the start state, is one a live daemon answers past: no Git here, a
+ * Git that gave no answer, or a database SQLite could not read (SQLite's error, or Drizzle's query error carrying it).
+ */
+function daemonAnswersPast(error: unknown): boolean {
+  const cause = error instanceof Error && error.cause !== undefined ? error.cause : error;
+  return error instanceof GitUnavailableError || error instanceof GitDidNotAnswerError || cause instanceof Database.SqliteError;
+}
+
+/**
  * The start state of the checkout `workspace` is in, as this process reads it from the database; undefined where it
  * cannot be sure to read what the daemon reads: the agent's environment can move Git's lookup, Git is not installed
  * here or gave no answer (the daemon keeps the locations its Git found), a SQLite binding this Node does not load, a
- * database it cannot open or read, or one whose creator has not committed the schema yet.
+ * database it cannot open or read, or one whose creator has not committed the schema yet. Any other failure is a fault
+ * of this read and is thrown, so it shows rather than sending every hook back to the daemon.
  */
 function localStartState(workspace: string): RepositoryStartState | undefined {
   if (gitEnvironmentMovesLookup(process.env)) return undefined;
   try {
     return answeredStartState(workspace);
-  } catch {
-    return undefined;
+  } catch (error) {
+    if (daemonAnswersPast(error)) return undefined;
+    throw error;
   }
 }
 

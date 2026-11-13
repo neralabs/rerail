@@ -7,6 +7,8 @@ import type { AddressInfo } from "node:net";
 import { basename, join } from "node:path";
 import { Readable, Writable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
+import Database from "better-sqlite3";
+import { DrizzleQueryError } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type AdapterDelivery, sessionStartNote } from "../../src/engine/index.js";
 import { encodeRerailEventResult, type EngineEndpoint, workspaceStartState } from "../../src/runtime/index.js";
@@ -699,6 +701,21 @@ async function hookHostWithSilentGit(
   return await import("../../src/harness/hook-host.js");
 }
 
+const corruptDatabase = (): Error => new Database.SqliteError("database disk image is malformed", "SQLITE_CORRUPT");
+
+/**
+ * Failures of the hook's own read of the start state: a database SQLite cannot read, which a live daemon with its own
+ * open database answers past, and a fault of the read itself, which is the hook's.
+ */
+const readFailures = [
+  { what: "SQLite cannot read the database", error: corruptDatabase(), asked: true, outcome: "asks a live daemon" },
+  {
+    what: "a Drizzle query fails on SQLite's error", error: new DrizzleQueryError("select 1", [], corruptDatabase()), asked: true,
+    outcome: "asks a live daemon",
+  },
+  { what: "the read itself fails", error: new TypeError("Cannot read properties of undefined"), asked: false, outcome: "throws, asking no daemon" },
+];
+
 describe("the hook start check", () => {
   beforeEach(() => {
     stubAgentGitEnvironment();
@@ -820,6 +837,26 @@ describe("the hook start check", () => {
         .toEqual({ started: true, requests: ["/api/presentation"] });
     } finally {
       vi.unstubAllEnvs();
+      await daemon.close();
+    }
+  });
+
+  it.each(readFailures)("$what: $outcome", async ({ error, asked }) => {
+    const root = await temporaryDirectory({ started: false });
+    const daemon = await countingDaemon(process.env.RERAIL_HOME!, "started");
+    vi.resetModules();
+    vi.doMock("../../src/runtime/repository-start.js", async () => ({
+      ...await vi.importActual<typeof import("../../src/runtime/repository-start.js")>("../../src/runtime/repository-start.js"),
+      answeredStartState: (): never => { throw error; },
+    }));
+    try {
+      const host = await import("../../src/harness/hook-host.js");
+      const started = host.hookRerailStarted("claude-code", root);
+      await (asked ? expect(started).resolves.toBe(true) : expect(started).rejects.toBe(error));
+      expect(daemon.requests).toEqual(asked ? ["/api/presentation"] : []);
+    } finally {
+      vi.doUnmock("../../src/runtime/repository-start.js");
+      vi.resetModules();
       await daemon.close();
     }
   });
