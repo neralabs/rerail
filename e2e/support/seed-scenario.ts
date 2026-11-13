@@ -14,5 +14,5 @@ if (scenario === undefined || folder === undefined || !isScenarioName(scenario) 
   process.stderr.write(`usage: seed-scenario <${SCENARIO_NAMES.join("|")}> <folder> [<now ms>]\n`);
   process.exit(2);
 }
-const manifest = seedScenario(scenario, folder, now);
+const manifest = await seedScenario(scenario, folder, now);
 writeFileSync(join(manifest.root, "scenario.json"), `${JSON.stringify(manifest, null, 2)}\n`);
