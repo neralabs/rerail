@@ -105,7 +105,22 @@ struct FailureInjection {
 #[allow(dead_code)]
 struct ContractExpected {
     oracle: ExpectedOracle,
+    /// W's violations this engine does not give, each with why (`Departure`): the oracle holds the rest.
+    #[serde(default)]
+    departures: Vec<Departure>,
 }
+
+/// A violation W gives that the engine does not, by design: `violation` as W committed it, and `reason`.
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[allow(dead_code)]
+struct Departure {
+    violation: Value,
+    reason: String,
+}
+
+/// Why a departure is: the tape stores no token its grammar implies (RER-131), and no reader makes one up.
+const IMPLIED_TOKEN: &str = "RER-131: the tape stores no token the grammar implies, and no reader makes one up";
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -619,6 +634,34 @@ fn production_contract_phase_one_distinct_count_uses_related_capture() {
         "$A"
     );
     assert!(!case.expected.oracle.violations.is_empty());
+}
+
+/// Each departure from W's committed results is a match at a token the tape leaves out (RER-131): an implied
+/// token's text, one of W's violations no longer in the oracle. The contracts that read one: `not-unknown` (an
+/// assignment's `=`), `inside-neighbor`, `inside-end`, `inside-stop-rule` (a definition's `(`, `)`, `:`, `=`).
+#[test]
+fn production_contract_departures_are_tokens_the_tape_leaves_out() {
+    let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(crate::code_rule_dsl::language::GrammarDialect::Python)
+        .expect("Python's token grammar");
+    let implied = grammar.implied_tokens();
+    let mut named = BTreeSet::new();
+    for case in cases() {
+        for departure in &case.expected.departures {
+            named.insert(case.name.clone());
+            assert_eq!(departure.reason, IMPLIED_TOKEN, "{}", case.name);
+            let span = &departure.violation["span"];
+            let (a, b) = (span["startByte"].as_u64().unwrap() as usize, span["endByte"].as_u64().unwrap() as usize);
+            let source = &case.workspace.files[0].source;
+            let text = &source[a..b];
+            // The anonymous token there, and its parent's kind: that kind's tape may leave the token out.
+            let root = ast_grep_language::LanguageExt::ast_grep(&GrammarDialect::Python, source);
+            let parent = root.root().dfs().find(|n| !n.is_named() && n.range() == (a..b)).and_then(|n| n.parent()).map(|p| p.kind().to_string());
+            let left_out = parent.as_ref().and_then(|k| implied.get(k)).is_some_and(|pairs| pairs.iter().any(|(t, _)| t == text));
+            assert!(left_out, "{}: {text:?} at {a}..{b} (in {parent:?}) is no implied token", case.name);
+            assert!(!case.expected.oracle.violations.contains(&departure.violation), "{}: {a}..{b} is in the oracle too", case.name);
+        }
+    }
+    assert_eq!(named, ["inside-end", "inside-neighbor", "inside-stop-rule", "not-unknown"].map(String::from).into(), "the contracts with departures");
 }
 
 #[test]

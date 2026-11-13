@@ -4309,10 +4309,17 @@ dependencies = [
 name = "rerail-simdjson"
 version = "0.1.0"
 dependencies = [
- "cc",
  "libc",
  "memchr",
+ "rerail-simdjson-native",
  "sha2 0.11.1",
+]
+
+[[package]]
+name = "rerail-simdjson-native"
+version = "0.1.0"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
@@ -4328,6 +4335,7 @@ dependencies = [
  "regex",
  "regex-syntax",
  "rerail-accel",
+ "rerail-prof",
  "rerail-store",
  "rusqlite",
  "serde",

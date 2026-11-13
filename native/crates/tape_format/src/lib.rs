@@ -75,9 +75,14 @@ pub const fn key(kind: u16, field: u16, flags: u8) -> u32 {
 /// (itself counted): each closed where its subtree ends. The widths are the narrowest, from
 /// `Widths::guess` and again where it does not hold.
 pub fn preorder_image(tag: u8, src: &[u8], nodes: &[(u32, u32, u32, u32)]) -> Vec<u8> {
+    preorder_image_in(tag, &[], src, nodes)
+}
+
+/// `preorder_image`, the keys naming the supertype `classes` (`Writer::classes`).
+pub fn preorder_image_in(tag: u8, classes: &[u16], src: &[u8], nodes: &[(u32, u32, u32, u32)]) -> Vec<u8> {
     let mut widths = Widths::guess(src.len());
     loop {
-        let mut w = Writer::new(tag, widths, nodes.len());
+        let mut w = Writer::new(tag, widths, nodes.len()).classes(classes);
         // The open nodes, each its place and where its subtree ends.
         let mut open: Vec<(usize, usize, u32)> = Vec::new();
         for (i, &(key, start, end, size)) in nodes.iter().enumerate() {
@@ -174,8 +179,14 @@ impl Layout for Widths {
 pub const SIZE_GUESS_BYTES: usize = 320_000;
 
 const NO_CODE: u16 = u16::MAX;
-/// The id table's slots: a key is below this (`kf` 16 bits, flags 3).
+/// The id table's slots: a key is below this (`kf` 16 bits, flags 3), with no supertype
+/// classes (`Writer::classes`): each class doubles it.
 const ID_SLOTS: usize = 1 << 19;
+/// A key's first class bit (`Writer::classes`): bit `CLASS_SHIFT + j` puts the node in the
+/// writer's class `j`.
+pub const CLASS_SHIFT: u32 = 19;
+/// The most supertype classes a writer's keys name.
+pub const MAX_CLASSES: usize = 4;
 
 /// A tape written as a parser parses: each node's columns at their final widths, at its place,
 /// as it is made. The parser gives each node in preorder (`push`), its end and so its size at
@@ -184,7 +195,8 @@ const ID_SLOTS: usize = 1 << 19;
 /// (`truncate`). Each edit rewrites only the nodes from its place on. At the end (`finish`) the
 /// columns are moved into place after the code column, and the header and code table written.
 ///
-/// A node's key is its code: `kf | flags << 16`.
+/// A node's key is its code: `kf | flags << 16`, and a bit for each supertype class it is in
+/// (`classes`, from `CLASS_SHIFT`).
 pub struct Writer<L: Layout = Widths> {
     /// The header, then the code column: the image's start, as it will be. Reserved for the
     /// whole image at `cap` nodes, so that `finish` appends the columns in place.
@@ -207,6 +219,10 @@ pub struct Writer<L: Layout = Widths> {
     /// The nodes before this have their codes written; the rest only their keys.
     coded: usize,
     id_of: Vec<u16>,
+    /// The id table's slots in use: `ID_SLOTS`, doubled for each class.
+    slots: usize,
+    /// The supertype classes a key's bits name, ascending (none for most languages).
+    classes: Vec<u16>,
     layout: L,
     /// An offset or tail from which a push or close takes the long way: 0x10000, or 0 once a
     /// node is marked (then every node does, and its marks are kept exact).
@@ -271,11 +287,25 @@ impl<L: Layout> Writer<L> {
                 ids.resize(ID_SLOTS, NO_CODE);
                 ids
             }),
+            slots: ID_SLOTS,
+            classes: Vec::new(),
             layout,
             wide_from: 0x10000,
             marks: Vec::new(),
             tag,
         }
+    }
+
+    /// The supertype classes a key's bits from `CLASS_SHIFT` name, ascending, at most
+    /// `MAX_CLASSES`: each node's code carries the classes its key has. Before the first push.
+    pub fn classes(mut self, classes: &[u16]) -> Self {
+        assert!(classes.len() <= MAX_CLASSES && classes.windows(2).all(|w| w[0] < w[1]) && self.n == 0);
+        self.slots = ID_SLOTS << classes.len();
+        if self.id_of.len() < self.slots {
+            self.id_of.resize(self.slots, NO_CODE);
+        }
+        self.classes = classes.to_vec();
+        self
     }
 
     /// Room for twice the nodes: every column at once.
@@ -368,10 +398,10 @@ impl<L: Layout> Writer<L> {
         // The columns as locals: a store to one is not a store to the writer's fields.
         let keys = &self.keys[from..to];
         let code = &mut self.out[HEADER_BYTES + 2 * from..HEADER_BYTES + 2 * to];
-        let (id_of, codes) = (&mut self.id_of[..], &mut self.codes);
+        let (id_of, codes, mask) = (&mut self.id_of[..], &mut self.codes, self.slots - 1);
         for (k, (&key, cell)) in keys.iter().zip(code.chunks_exact_mut(2)).enumerate() {
-            // A key is below `ID_SLOTS` (`push`'s assertion): the mask is no change, and no check.
-            let slot = &mut id_of[(key as usize) & (ID_SLOTS - 1)];
+            // A key is below `slots` (`push`'s assertion): the mask is no change, and no check.
+            let slot = &mut id_of[(key as usize) & mask];
             if *slot == NO_CODE {
                 *slot = codes.len() as u16;
                 codes.push((key, (from + k) as u32));
@@ -409,7 +439,7 @@ impl<L: Layout> Writer<L> {
     /// close: every node is closed before `finish`. Its code is written when it is committed.
     #[inline(always)]
     pub fn push(&mut self, key: u32, start: u32) -> usize {
-        debug_assert!((key as usize) < ID_SLOTS);
+        debug_assert!((key as usize) < self.slots);
         let node = self.n;
         if node == self.cap {
             self.grow();
@@ -537,7 +567,8 @@ impl<L: Layout> Writer<L> {
         }
         let w = self.layout.widths();
         let nodes = self.n;
-        let code_bytes = 6 * self.codes.len();
+        let class_count = |key: u32| (key >> CLASS_SHIFT).count_ones() as usize;
+        let code_bytes: usize = self.codes.iter().map(|&(key, _)| 6 + 2 * class_count(key)).sum();
         let pad = |out: &mut Vec<u8>| out.resize(padded(out.len()), 0);
         let mut out = std::mem::take(&mut self.out);
         out.truncate(HEADER_BYTES + 2 * nodes);
@@ -556,9 +587,14 @@ impl<L: Layout> Writer<L> {
         pad(&mut out);
         for &(key, _) in &self.codes {
             out.extend_from_slice(&((key & 0xffff) as u16).to_le_bytes());
-            out.push((key >> 16) as u8);
+            out.push((key >> 16 & 0x7) as u8);
             out.extend_from_slice(&SENTINEL.to_le_bytes());
-            out.push(0);
+            out.push(class_count(key) as u8);
+            for (j, c) in self.classes.iter().enumerate() {
+                if key >> (CLASS_SHIFT + j as u32) & 1 != 0 {
+                    out.extend_from_slice(&c.to_le_bytes());
+                }
+            }
         }
         let mut h = Vec::with_capacity(HEADER_BYTES);
         h.extend_from_slice(MAGIC);

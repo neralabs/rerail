@@ -82,3 +82,12 @@ fn sweep() {
 pub fn open(path: &std::path::Path) -> crate::content_store::ContentStore {
     crate::content_store::ContentStore::open(path).unwrap()
 }
+/// The repository's root: the nearest directory above the test's crate that holds `docs/rule-syntax`, so a test reads
+/// the same files whichever crate compiles it (`native/` or `native/crates/<crate>/`).
+pub fn repository() -> PathBuf {
+    let mut dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    while !dir.join("docs/rule-syntax").is_dir() {
+        assert!(dir.pop(), "no directory above {} holds docs/rule-syntax", env!("CARGO_MANIFEST_DIR"));
+    }
+    dir
+}

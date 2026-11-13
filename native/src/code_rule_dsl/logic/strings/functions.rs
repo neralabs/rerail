@@ -109,6 +109,9 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("rx_extract", &[Text, Text, Number], Text),
     ("rx_replace", &[Text, Text, Text], Text),
     ("rr_to_string", &[Number], Text),
+    // C's `%0Nd`: an integer's digits zero-padded to `width` columns, the sign first, never truncated (`@printf`'s
+    // lowering, `rr::lower::printf_pieces`).
+    ("zero_pad", &[Number, Number], Text),
     // A node's text past `text`'s inline bound (`facts::vtab::syntax::long_node_text`): none for a shorter one, which
     // `text` holds. The long-text twin of a rule reading `text(v, t)` reads it (`syntax::long_text_twins`).
     ("rr_node_text", &[Number], Text),
@@ -290,6 +293,7 @@ pub fn eval(name: &str, text: &[&str], numbers: &[i64]) -> Value {
         }
         "rx_replace" => with_regex(t(1), |re| re.replace_all(t(0), t(2)).into_owned()),
         "rr_to_string" => Some(numbers[0].to_string()),
+        "zero_pad" => Some(format!("{:0w$}", numbers[0], w = usize::try_from(numbers[1].clamp(0, 64)).unwrap_or(0))),
         "rr_node_text" => crate::code_rule_dsl::facts::vtab::syntax::long_node_text(numbers[0]),
         "rr_substr" => Some(substr(t(0), numbers[0], numbers[1])),
         "semver_valid" => return Value::Integer(i64::from(crate::code_rule_dsl::semver::Range::parse(t(0)).is_some())),
@@ -642,4 +646,36 @@ pub fn json_str(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Smoking gun 6 (t34, 2026-11-13): a maintained stratum has no SQL fallback, and `@place` in a head (`spot(d,
+    /// @place(p, 7))`) had no native form, so the edit failed. `@place`, `@place_path` and `@place_line` are native
+    /// functions, and their values are those of SQL's encoding (`plan::sql_term`), the path a symbol's atom.
+    #[test]
+    fn a_place_is_native_and_encoded_as_sql_encodes_it() {
+        for f in ["place", "place_path", "place_line"] {
+            let (_, kinds, ret) = native_call(f).unwrap_or_else(|| panic!("@{f} has a native function"));
+            assert!(kinds.iter().chain([&ret]).all(|k| *k == Kind::Number), "@{f} is over numbers: a symbol is its atom");
+        }
+        let int = |v: Value| match v {
+            Value::Integer(n) => n,
+            other => panic!("{other:?}"),
+        };
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        for (p, l) in [(0, 0), (5, 7), (123_456, (1 << 32) - 1), (9, -1), (9, 1 << 32)] {
+            let sql: i64 = db
+                .query_row("SELECT CASE WHEN ?2 >= 0 AND ?2 < 4294967296 THEN -2 - (?1 * 4294967296 + ?2) ELSE -1 END", [p, l], |r| r.get(0))
+                .unwrap();
+            let place = int(eval("rr_place", &[], &[p, l]));
+            assert_eq!(place, sql, "@place({p}, {l}) as SQL makes it");
+            if sql != -1 {
+                assert_eq!(int(eval("rr_place_path", &[], &[place])), p);
+                assert_eq!(int(eval("rr_place_line", &[], &[place])), l);
+            }
+        }
+    }
 }

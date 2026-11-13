@@ -24,7 +24,8 @@ pub fn aot(tiers: Tiers) -> Result<rerail_rr_parser::Compiled, String> {
     native_cpu_stream::KEEP_IR.store(true, std::sync::atomic::Ordering::Relaxed);
     let mut c = rerail_rr_parser::compile_with(rerail_compiler::bitlex_masks::Shape::Rules)?;
     let one = clif_rust::rust_source(&c.parser)?;
-    let two = rust_stream::rust_source(&native_ir::lower(&c.program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?)?;
+    let (widths, tag) = c.parser.tier2.widths_tag();
+    let two = rust_stream::rust_source_at(&native_ir::lower(&c.program, 0, 0).map_err(|e| format!("lowers: {e:?}"))?, widths, tag)?;
     let sealed = |src: &str| src.lines().last().and_then(|l| l.strip_prefix("pub const SOURCE: u64 = 0x")?.strip_suffix(';').and_then(|h| u64::from_str_radix(h, 16).ok()));
     if sealed(&one) != Some(tier1_aot::SOURCE) || sealed(&two) != Some(tier2_aot::SOURCE) {
         return Err("the ahead-of-time source is of another program: run `cargo run -p rerail-rr-aot-gen`".into());

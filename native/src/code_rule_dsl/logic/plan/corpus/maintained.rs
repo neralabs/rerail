@@ -144,7 +144,7 @@ pub(in crate::code_rule_dsl) fn run(
     let outputs: BTreeMap<String, (Vec<String>, Vec<usize>)> = got.outputs.iter().map(|(rel, lines)| (rel.clone(), (lines.clone(), got.nodes[rel].clone()))).collect();
     drop(s);
     let _s = span("retain");
-    let mut next = retain::after(kept, key, digests, &cut, rows, &outputs, &sources, HashMap::new(), HashMap::new(), input_docs, Default::default(), HashMap::new());
+    let mut next = retain::after(kept, key, digests, &cut, rows, &outputs, &sources, HashMap::new(), HashMap::new(), input_docs, Default::default(), HashMap::new(), retain::budget());
     if let Some(frames) = frames {
         next.with_frames(frames, &cut);
     }

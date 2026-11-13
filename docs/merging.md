@@ -64,7 +64,14 @@ ls ../*/docs/final-shape/decisions | grep -oE '^[0-9]{4}' | sort -n | tail -1
 ```
 
 Add a line "Numbered N where it was written" to the moved file. Update every reference to it, and
-its row in `docs/final-shape/decisions/README.md`.
+its row in `docs/final-shape/decisions/README.md`. A reference is a decision number in code
+comments, profile strings, rule files and docs, not only links. Decide which record each one means
+from the topic beside it, or from which record existed when the line was written (`git blame`).
+
+Only renumber a collision your merge creates. A collision that both sides already have (one
+inherited from the hub, the branch `final-shape-serverplan-quality`) is the hub's to fix. If a
+branch renumbers it too, the two renumberings conflict at the next merge. When a merge brings the
+hub's renumbering, take it, and move your branch's references to match.
 
 ## Before committing: audit what was dropped
 
@@ -100,7 +107,9 @@ The message says, for each conflict that needed a choice:
 
 Run the targeted tests that each side added or changed since the base (`git diff --stat $base
 <side> -- '*tests*.rs' '*_tests.rs'`), and the tests of the files that had conflicts. Do not run
-full suites (see AGENTS.md). A failing test that one side had passing is a merge defect. Fix it in
+full suites (see AGENTS.md). Build the test targets, not only the library, and judge the build by
+cargo's exit status or its `Finished` line. A build piped through `grep` reports success
+whatever cargo does. A failing test that one side had passing is a merge defect. Fix it in
 the merge, or in the commit right after it, naming the merge.
 
 ## If a loss is found later
