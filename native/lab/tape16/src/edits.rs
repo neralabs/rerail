@@ -1,9 +1,11 @@
 //! Edits (E4) and node identity (T7): for a file's old and new revision, which blocks are new, and how many
 //! per-node rows downstream change under each way of naming a node.
 //!
-//! Nodes are matched between revisions by the longest equal prefix of preorder (kind, field, flags,
-//! classes, start) and the longest equal suffix (the same, with spans shifted by the length change). The
-//! prefix's nodes whose end moved are the edit's ancestors; the rest between is what the edit replaced.
+//! Nodes are matched between revisions through a line diff of the two sources (patience: lines unique in
+//! both anchor, then the gaps between anchors recursively, trimming equal ends). A new node whose span lies
+//! in one unchanged region matches the old node of the same kind, field and flags at the mapped span; an
+//! unmatched node whose start lies in an unchanged region matches the old node of the same kind and field at
+//! the mapped start (it contains an edit: an ancestor). The rest is what the edits replaced.
 
 use crate::blocks::{self, Cut};
 use crate::events::Events;
@@ -35,9 +37,136 @@ pub struct EditStats {
 
 pub const IDENTITIES: [&str; 4] = ["A ordinal", "B block+local", "C path", "D ordinal+shift"];
 
-fn same(a: &Tree, i: usize, b: &Tree, j: usize, shift: i64) -> bool {
-    let (x, y) = (&a.nodes[i], &b.nodes[j]);
-    x.kind == y.kind && x.field == y.field && x.flags == y.flags && x.classes == y.classes && x.start as i64 + shift == y.start as i64
+fn line_hashes(src: &[u8]) -> (Vec<u64>, Vec<usize>) {
+    let (mut h, mut starts) = (Vec::new(), vec![0usize]);
+    for (i, line) in src.split_inclusive(|&b| b == b'\n').enumerate() {
+        let mut x = 0xcbf29ce484222325u64;
+        for &b in line {
+            x = (x ^ u64::from(b)).wrapping_mul(0x100000001b3);
+        }
+        h.push(x);
+        starts.push(starts[i] + line.len());
+    }
+    (h, starts)
+}
+
+/// Matched line pairs (old, new), ascending: patience diff.
+fn patience(a: &[u64], b: &[u64]) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut work = vec![(0usize, a.len(), 0usize, b.len())];
+    while let Some((mut a0, mut a1, mut b0, mut b1)) = work.pop() {
+        while a0 < a1 && b0 < b1 && a[a0] == b[b0] {
+            out.push((a0, b0));
+            (a0, b0) = (a0 + 1, b0 + 1);
+        }
+        while a0 < a1 && b0 < b1 && a[a1 - 1] == b[b1 - 1] {
+            out.push((a1 - 1, b1 - 1));
+            (a1, b1) = (a1 - 1, b1 - 1);
+        }
+        if a0 == a1 || b0 == b1 {
+            continue;
+        }
+        let mut count: HashMap<u64, (u32, u32, usize, usize)> = HashMap::new();
+        for i in a0..a1 {
+            let e = count.entry(a[i]).or_insert((0, 0, 0, 0));
+            e.0 += 1;
+            e.2 = i;
+        }
+        for j in b0..b1 {
+            if let Some(e) = count.get_mut(&b[j]) {
+                e.1 += 1;
+                e.3 = j;
+            }
+        }
+        let mut uniq: Vec<(usize, usize)> = count.values().filter(|e| e.0 == 1 && e.1 == 1).map(|e| (e.2, e.3)).collect();
+        if uniq.is_empty() {
+            continue;
+        }
+        uniq.sort_unstable();
+        // The longest increasing run of new indexes (patience sorting).
+        let mut tails: Vec<usize> = Vec::new();
+        let mut back = vec![usize::MAX; uniq.len()];
+        for (k, &(_, j)) in uniq.iter().enumerate() {
+            let at = tails.partition_point(|&t| uniq[t].1 < j);
+            if at > 0 {
+                back[k] = tails[at - 1];
+            }
+            if at == tails.len() {
+                tails.push(k);
+            } else {
+                tails[at] = k;
+            }
+        }
+        let mut chain = Vec::new();
+        let mut k = *tails.last().unwrap();
+        loop {
+            chain.push(uniq[k]);
+            if back[k] == usize::MAX {
+                break;
+            }
+            k = back[k];
+        }
+        chain.reverse();
+        let (mut pa, mut pb) = (a0, b0);
+        for &(i, j) in &chain {
+            out.push((i, j));
+            work.push((pa, i, pb, j));
+            (pa, pb) = (i + 1, j + 1);
+        }
+        work.push((pa, a1, pb, b1));
+    }
+    out.sort_unstable();
+    out
+}
+
+/// For each new node, its old node (or `usize::MAX`), and how many matched nodes are ancestors of an edit.
+pub fn match_nodes(old: &Tree, new: &Tree, old_src: &[u8], new_src: &[u8]) -> (Vec<usize>, usize) {
+    let (ha, sa) = line_hashes(old_src);
+    let (hb, sb) = line_hashes(new_src);
+    // Unchanged regions in byte terms: runs of consecutive matched lines, (new start, new end, old start).
+    let mut regions: Vec<(u64, u64, u64)> = Vec::new();
+    for (i, j) in patience(&ha, &hb) {
+        let (ns, ne, os) = (sb[j] as u64, sb[j + 1] as u64, sa[i] as u64);
+        match regions.last_mut() {
+            Some(r) if r.1 == ns && r.2 + (r.1 - r.0) == os => r.1 = ne,
+            _ => regions.push((ns, ne, os)),
+        }
+    }
+    // The (old − new) offset of the unchanged region holding [pos, end), if one does.
+    let region_of = |pos: u64, end: u64| -> Option<i64> {
+        let k = regions.partition_point(|r| r.0 <= pos);
+        let r = regions.get(k.checked_sub(1)?)?;
+        (end <= r.1).then_some(r.2 as i64 - r.0 as i64)
+    };
+    let mut by_span: HashMap<(u64, u64, u16, u8, u8), usize> = HashMap::new();
+    let mut by_start: HashMap<(u64, u16, u8), usize> = HashMap::new();
+    for (i, n) in old.nodes.iter().enumerate() {
+        by_span.entry((n.start, n.end, n.kind, n.field, n.flags)).or_insert(i);
+        by_start.entry((n.start, n.kind, n.field)).or_insert(i);
+    }
+    let mut of_new = vec![usize::MAX; new.len()];
+    let mut ancestors = 0;
+    let mut used = vec![false; old.len()];
+    for (j, n) in new.nodes.iter().enumerate() {
+        if let Some(d) = region_of(n.start, n.end) {
+            let key = ((n.start as i64 + d) as u64, (n.end as i64 + d) as u64, n.kind, n.field, n.flags);
+            if let Some(&i) = by_span.get(&key) {
+                if !used[i] {
+                    (of_new[j], used[i]) = (i, true);
+                    continue;
+                }
+            }
+        }
+        if let Some(d) = region_of(n.start, n.start) {
+            if let Some(&i) = by_start.get(&((n.start as i64 + d) as u64, n.kind, n.field)) {
+                if !used[i] {
+                    (of_new[j], used[i]) = (i, true);
+                    ancestors += 1;
+                }
+            }
+        }
+    }
+    (of_new, ancestors)
 }
 
 /// Keys under C: (parent's key, kind, field, ordinal among siblings with that kind and field), hashed.
@@ -75,9 +204,12 @@ fn block_keys(ev: &Events, cut: Cut, lay: impl Fn(&blocks::Block) -> Vec<u8>) ->
     (keys, bodies)
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn compare(
     old: &Tree,
     new: &Tree,
+    old_src: &[u8],
+    new_src: &[u8],
     old_ev: &Events,
     new_ev: &Events,
     cut: Cut,
@@ -85,28 +217,12 @@ pub fn compare(
     stats: &mut EditStats,
 ) {
     let (n0, n1) = (old.len(), new.len());
-    let shift = new.source_len as i64 - old.source_len as i64;
-    let mut pre = 0;
-    while pre < n0 && pre < n1 && same(old, pre, new, pre, 0) {
-        pre += 1;
-    }
-    let mut suf = 0;
-    while suf < n0 - pre && suf < n1 - pre && same(old, n0 - 1 - suf, new, n1 - 1 - suf, shift) && old.nodes[n0 - 1 - suf].end as i64 + shift == new.nodes[n1 - 1 - suf].end as i64 {
-        suf += 1;
-    }
-    // The match: new node j ↔ old node.
-    let mut of_new = vec![usize::MAX; n1];
-    for j in 0..pre {
-        of_new[j] = j;
-    }
-    for s in 0..suf {
-        of_new[n1 - 1 - s] = n0 - 1 - s;
-    }
-    let ancestors = (0..pre).filter(|&j| old.nodes[j].end != new.nodes[j].end).count();
+    let (of_new, ancestors) = match_nodes(old, new, old_src, new_src);
+    let matched = of_new.iter().filter(|&&i| i != usize::MAX).count();
     stats.pairs += 1;
     stats.old_nodes += n0 as u64;
     stats.new_nodes += n1 as u64;
-    stats.replaced += (n1 - pre - suf) as u64;
+    stats.replaced += (n1 - matched) as u64;
     stats.ancestors += ancestors as u64;
     // Blocks: new bodies not among the old revision's.
     let (kb0, b0) = block_keys(old_ev, cut, lay);
@@ -122,7 +238,6 @@ pub fn compare(
     }
     let kc0 = path_keys(old);
     let kc1 = path_keys(new);
-    let moved = n1 != n0;
     for j in 0..n1 {
         let i = of_new[j];
         if i == usize::MAX {
@@ -154,8 +269,19 @@ pub fn compare(
         stats.link_changed[2] += (key_c || parent_c) as u64;
         stats.link_changed[3] += parent_d as u64;
     }
-    if moved && suf > 0 {
-        stats.shift_ops += 1;
-        stats.shifted_rows += suf as u64;
+    // D: one shift op per run of matched nodes with the same (new − old) ordinal offset, when it is not 0.
+    let mut last: Option<i64> = None;
+    for (j, &i) in of_new.iter().enumerate() {
+        if i == usize::MAX {
+            continue;
+        }
+        let d = j as i64 - i as i64;
+        if d != 0 {
+            stats.shifted_rows += 1;
+            if last != Some(d) {
+                stats.shift_ops += 1;
+            }
+        }
+        last = Some(d);
     }
 }

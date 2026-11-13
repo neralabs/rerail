@@ -1,10 +1,12 @@
 //! The lab's CLI: each command measures one group of 0156's tradeoffs on a capture (`rerail-engine capture-tapes`).
 //!
 //! ```text
-//! tape16 grid  <cap> [--full] [--langs] [--no-check]   T1–T5, E1/E2/E6: bytes, codes, speed, random reads
+//! tape16 grid  <cap> [--axis A] [--full] [--langs] [--no-check]   T1–T5, E1/E2/E6: bytes, codes, speed, random reads
+//!              (A: layout, cut, dict, k, extras; all by default)
 //! tape16 text  <cap>                                    T6, E5: text levels against the stored source
 //! tape16 edits <pairs.cap>                              T7, E4: blocks and rows an edit changes, per identity
 //! tape16 keys  <cap>                                    E8: widths every key and count needs
+//! tape16 dicts <cap>                                    T4: the dictionary size training gives per size asked
 //! tape16 gpu   <cap> [--dict KB] [--k K]                E3: literal-pool LZ decoded on Metal
 //! ```
 
@@ -19,8 +21,9 @@ fn base() -> Solution {
     Solution { layout: Layout::BytePlanes, codec: Codec::LpLz, cut: Cut::Whole, dict: 64 * 1024, k: 64, extras: Extras::default() }
 }
 
-/// One axis at a time from the base, or (`full`) every combination of the main axes.
-fn grid(full: bool) -> Vec<Solution> {
+/// One axis at a time from the base (`axis`: layout, cut, dict, k, extras, or all), or (`full`) every
+/// combination of layout, codec, cut and dictionary size.
+fn grid(full: bool, axis: &str) -> Vec<Solution> {
     let b = base();
     let mut v = vec![b];
     let push = |s: Solution, v: &mut Vec<Solution>| {
@@ -42,25 +45,42 @@ fn grid(full: bool) -> Vec<Solution> {
         }
         return v;
     }
-    for layout in Layout::ALL {
-        for codec in Codec::ALL {
-            push(Solution { layout, codec, ..b }, &mut v);
+    let on = |a: &str| axis == "all" || axis == a;
+    if on("layout") {
+        for layout in Layout::ALL {
+            for codec in Codec::ALL {
+                push(Solution { layout, codec, ..b }, &mut v);
+            }
         }
     }
-    for cut in cuts {
-        push(Solution { cut, ..b }, &mut v);
-        push(Solution { cut, codec: Codec::Zstd, ..b }, &mut v);
+    let codecs = [Codec::Zstd, Codec::LpLz, Codec::LpReplay];
+    if on("cut") {
+        for cut in cuts {
+            for codec in codecs {
+                push(Solution { cut, codec, ..b }, &mut v);
+            }
+        }
     }
-    for dict in dicts {
-        push(Solution { dict, ..b }, &mut v);
-        push(Solution { dict, codec: Codec::Zstd, ..b }, &mut v);
+    if on("dict") {
+        for dict in dicts {
+            for codec in codecs {
+                push(Solution { dict, codec, ..b }, &mut v);
+            }
+        }
     }
-    for k in [16, 64, 256] {
-        push(Solution { k, ..b }, &mut v);
+    if on("k") {
+        for k in [16, 64, 256] {
+            for codec in [Codec::LpLz, Codec::LpReplay] {
+                push(Solution { k, codec, ..b }, &mut v);
+            }
+        }
     }
-    for extras in [Extras { parent: true, size: false }, Extras { parent: false, size: true }, Extras { parent: true, size: true }] {
-        push(Solution { extras, ..b }, &mut v);
-        push(Solution { extras, codec: Codec::Zstd, ..b }, &mut v);
+    if on("extras") {
+        for extras in [Extras { parent: true, size: false }, Extras { parent: false, size: true }, Extras { parent: true, size: true }] {
+            for codec in codecs {
+                push(Solution { extras, codec, ..b }, &mut v);
+            }
+        }
     }
     v
 }
@@ -75,14 +95,14 @@ fn die(e: &str) -> ! {
     std::process::exit(1)
 }
 
-fn cmd_grid(path: &str, full: bool, langs: bool, check: bool) {
+fn cmd_grid(path: &str, full: bool, axis: &str, langs: bool, check: bool) {
     let corpus = load(path);
     let test = corpus.files.iter().filter(|p| p.test).count();
     let nodes: usize = corpus.files.iter().filter(|p| p.test).map(|p| p.nodes).sum();
     println!("{path}: {} files, {test} in the test half ({nodes} nodes)\n", corpus.files.len());
     let mut dicts = Dicts::default();
     let mut rows = Vec::new();
-    for s in grid(full) {
+    for s in grid(full, axis) {
         let r = solution::evaluate(&corpus, &s, &mut dicts, check);
         eprintln!("  {}", s.name());
         rows.push(r);
@@ -91,6 +111,7 @@ fn cmd_grid(path: &str, full: bool, langs: bool, check: bool) {
     if langs {
         report::print_langs(&rows[0]);
     }
+    report::print_lang_matrix(&rows);
     println!("\nWidest supertype masks (language: kind with the most candidates):");
     for (tag, (n, kind)) in corpus.candidates.widest() {
         println!("  {}: {n} candidates (kind {kind})", capture::language(tag));
@@ -183,7 +204,7 @@ fn cmd_edits(path: &str) {
     for cut in [Cut::Whole, Cut::Target(256), Cut::Target(1024), Cut::Target(4096)] {
         let mut st = edits::EditStats::default();
         for (old, new) in &pairs {
-            edits::compare(&old.tree(&corpus), &new.tree(&corpus), &old.events, &new.events, cut, &lay, &mut st);
+            edits::compare(&old.tree(&corpus), &new.tree(&corpus), &old.source, &new.source, &old.events, &new.events, cut, &lay, &mut st);
         }
         let pct = |a: u64, b: u64| 100.0 * a as f64 / b.max(1) as f64;
         let ids: Vec<String> = (0..4).map(|i| format!("{:.2} / {:.2}", pct(st.key_changed[i], st.new_nodes), pct(st.link_changed[i], st.new_nodes))).collect();
@@ -200,7 +221,7 @@ fn cmd_edits(path: &str) {
             ids.join(" | "),
         );
         if cut == Cut::Whole {
-            println!("|  | (D: {} shift ops covering {} rows) |", st.shift_ops, st.shifted_rows);
+            println!("|  | (D: {} shift ops over {} pairs, covering {} rows) |", st.shift_ops, st.pairs, st.shifted_rows);
         }
     }
 }
@@ -305,7 +326,10 @@ fn main() {
         die("usage: tape16 grid|text|edits|keys|gpu <capture> [options]")
     };
     match cmd.as_str() {
-        "grid" => cmd_grid(path, flag("--full"), flag("--langs"), !flag("--no-check")),
+        "grid" => {
+            let axis = args.iter().position(|a| a == "--axis").and_then(|i| args.get(i + 1)).map_or("all", String::as_str);
+            cmd_grid(path, flag("--full"), axis, flag("--langs"), !flag("--no-check"))
+        }
         "text" => cmd_text(path),
         "edits" => cmd_edits(path),
         "keys" => cmd_keys(path),

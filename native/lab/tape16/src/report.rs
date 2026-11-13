@@ -60,3 +60,18 @@ pub fn print_langs(r: &Row) {
         );
     }
 }
+
+/// Stored B/node (blocks and placement) per language, one row per solution, with format 15 stored first.
+pub fn print_lang_matrix(rows: &[Row]) {
+    let Some(first) = rows.first() else { return };
+    let langs: Vec<&String> = first.by_lang.keys().collect();
+    println!("\nStored B/node by language (v15 = format 15 as the store keeps it)\n");
+    println!("| solution | {} |", langs.iter().map(|l| l.as_str()).collect::<Vec<_>>().join(" | "));
+    println!("|---|{}", "---|".repeat(langs.len()));
+    let cell = |l: &Lang, v: u64| format!("{:.2}", per(v as f64, l.nodes));
+    println!("| v15 | {} |", langs.iter().map(|k| cell(&first.by_lang[*k], first.by_lang[*k].v15_stored)).collect::<Vec<_>>().join(" | "));
+    for r in rows {
+        let cells: Vec<String> = langs.iter().map(|k| r.by_lang.get(*k).map_or("-".into(), |l| cell(l, l.stored + l.placement))).collect();
+        println!("| {} | {} |", r.solution, cells.join(" | "));
+    }
+}

@@ -521,6 +521,15 @@ Each reports a curve over its options, not a pass or fail. Each runs on captured
 E1 and E2 need only a CPU reference encoder over existing tapes, so they come first. They also
 decide the layouts E3 should try on the device.
 
+**Measured so far** (2026-11-13). The lab in `native/lab/tape16` runs E1, E3, E4, E5 and E8, and the
+T3–T5 sweeps. Its README says how to rerun them and add a candidate. The first numbers are in
+[t36](../notes/t36-tape16-lab-results.md):
+
+- events under zstd take 0.45–0.57× format 15 as stored;
+- literal-pool LZ decodes at 4.6–5.4 GB/s on Metal, and costs 2.4× format 15 at rest without
+  replays, 1.4× with them;
+- identity D (ordinal + shift map) changes 3% of rows per edit, against 71% for A and 16% for C.
+
 ## Answered by the user (2026-11-13)
 
 - **Size:** the choice is made from measured tradeoffs, not from a bar set before measuring (T1–T4).
