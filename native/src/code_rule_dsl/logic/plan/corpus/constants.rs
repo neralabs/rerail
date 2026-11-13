@@ -93,8 +93,15 @@ pub(super) fn as_outputs(prog: &mut Program, wanted: &[String]) {
         let Some(cols) = prog.decls.get(rel).cloned() else { continue };
         let args: Vec<Term> = (0..cols.len()).map(|i| Term::Var(format!("c{i}"))).collect();
         let atom = |r: String| Atom { rel: r.into(), args: args.clone(), neg: false, gated: false };
+        // Quote only text columns at this transport boundary. Facts and native
+        // producers retain their ordinary typed columns, without encoded payloads.
+        let encoded = args.iter().zip(&cols).map(|(arg, (_, ty))| {
+            if matches!(ty.as_str(), "symbol" | "sym") {
+                Term::Call("json_str".into(), vec![arg.clone()])
+            } else { arg.clone() }
+        }).collect();
         prog.decls.insert(copy(rel), cols);
-        prog.rules.push(Rule { head: atom(copy(rel)), body: vec![Literal::Atom(atom(rel.clone()))] });
+        prog.rules.push(Rule { head: Atom { rel: copy(rel).into(), args: encoded, neg: false, gated: false }, body: vec![Literal::Atom(atom(rel.clone()))] });
         prog.outputs.push(copy(rel));
     }
 }
@@ -175,7 +182,7 @@ fn derive(
 fn key(programs: &[&str], root: &Path, options: &serde_json::Value, wanted: &BTreeSet<String>) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
-    h.update(b"rerail.constants/v1\0");
+    h.update(b"rerail.constants/v2\0");
     for p in programs {
         h.update(p.as_bytes());
         h.update([0]);
@@ -223,15 +230,20 @@ fn keep(key: &str, rows: &std::collections::BTreeMap<String, String>, consulted:
 
 // Decode the constants' internal boundary before putting values back into facts.
 fn read_rows(rel: &str, text: &str, types: &[String]) -> Result<Vec<Vec<Value>>> {
-    let mut rows = Vec::new();
-        for line in text.lines() {
-            let vals: Vec<&str> = line.split('\t').collect();
-            if vals.len() != types.len() {
-                return Err(super::super::Error::Plan(format!("the run's constant {rel}: a row of {} values, not {}: {line:?}", vals.len(), types.len())));
-            }
-            rows.push(vals.iter().zip(types).map(|(v, t)| if t == "number" || t == "int" { v.parse::<i64>().map_or_else(|_| Value::Str((*v).to_owned()), Value::Int) } else { Value::Str((*v).to_owned()) }).collect());
+    text.lines().map(|line| {
+        let vals: Vec<&str> = line.split('\t').collect();
+        if vals.len() != types.len() {
+            return Err(super::super::Error::Plan(format!("the run's constant {rel}: a row of {} values, not {}: {line:?}", vals.len(), types.len())));
         }
-    Ok(rows)
+        vals.iter().zip(types).map(|(value, ty)| {
+            if matches!(ty.as_str(), "symbol" | "sym") {
+                serde_json::from_str::<String>(value).map(Value::Str)
+                    .map_err(|error| super::super::Error::Plan(format!("the run's constant {rel}: invalid encoded text: {error}")))
+            } else if matches!(ty.as_str(), "number" | "int") {
+                Ok(value.parse::<i64>().map_or_else(|_| Value::Str((*value).to_owned()), Value::Int))
+            } else { Ok(Value::Str((*value).to_owned())) }
+        }).collect()
+    }).collect()
 }
 
 #[cfg(test)]
