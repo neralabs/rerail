@@ -7,6 +7,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { describe, expect, it } from "vitest";
 import type { AdapterDelivery } from "../../../src/engine/index.js";
 import { ingestEngineEvent, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
+import { decodeRerailEventResult } from "../../../src/runtime/event-protocol.js";
 import { SqliteSessionReader } from "../../../src/runtime/session-store.js";
 import { testEngineEndpoint } from "../../support/platform/engine-endpoint.js";
 import { testEmbedder } from "../../support/hook-events.js";
@@ -169,7 +170,93 @@ describe("engine service session concurrency", () => {
       await removeFolder(root);
     }
   }, 20_000);
+
+  it("keeps a request whose rest came in time while its event loop was busy past a look for stalled requests", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-sessions-"));
+    const held = await holdingService(root);
+    try {
+      const body = JSON.stringify({ event: { kind: "user-prompt", eventId: "late", sessionId: "busy", text: "continue" } });
+      const late = await handHook(held.engine.socketPath, body, Math.floor(body.length / 2));
+      // The server takes the first half in before the close begins.
+      await sleep(250);
+      const began = performance.now();
+      const closing = held.service.close();
+      // 0.7 s in, a check phase writes the rest and holds the loop to 1.3 s, past the look due at 1 s: no poll phase
+      // has read the rest when that look's timer fires, as when a daemon's loop is held while a hook's bytes arrive.
+      await sleep(700);
+      const wroteAt = await busyFromCheckPhase(() => late.finish(), began + 1_300) - began;
+      held.release();
+      const answer = wholeAnswer(await late.answer(), "late");
+      await closing;
+      expect({ wroteBeforeTheLook: wroteAt < 1_000, late: answer }).toEqual({ wroteBeforeTheLook: true, late: "whole" });
+      expect(recorded(held.databasePath)).toContain("late");
+    } finally {
+      held.release();
+      await removeFolder(root);
+    }
+  }, 20_000);
 });
+
+/** A hook's request written by hand, so a test chooses when the rest of its body goes and when it reads the answer. */
+interface HandHook {
+  /** Writes the rest of the body. */
+  finish(): void;
+  /** How many bytes of the answer have arrived and wait unread. */
+  waiting(): number;
+  /** Reads the answer until the connection closes. */
+  answer(): Promise<string>;
+}
+
+/**
+ * Connects to the engine at `socketPath` and writes a request for `body`, its first `sent` characters only, then
+ * reads nothing until `answer`: the socket stops reading at its high-water mark, so the server's write of a larger
+ * answer stays unfinished.
+ */
+async function handHook(socketPath: string, body: string, sent = body.length): Promise<HandHook> {
+  const socket = connect(socketPath);
+  socket.on("error", () => undefined);
+  const closed = new Promise<void>(done => socket.once("close", () => done()));
+  await once(socket, "connect");
+  socket.write(`POST /events HTTP/1.1\r\nHost: localhost\r\nconnection: close\r\ncontent-type: application/json\r\ncontent-length: ${Buffer.byteLength(body)}\r\n\r\n${body.slice(0, sent)}`);
+  return {
+    finish: () => {
+      socket.write(body.slice(sent));
+    },
+    waiting: () => socket.readableLength,
+    answer: async () => {
+      const chunks: Buffer[] = [];
+      socket.on("data", (chunk: Buffer) => chunks.push(chunk));
+      await closed;
+      return Buffer.concat(chunks).toString("utf8");
+    },
+  };
+}
+
+/** `whole` when `answer` is a 200 whose body carries the event `eventId`; otherwise its status line and its length. */
+function wholeAnswer(answer: string, eventId: string): string {
+  const [head = "", body = ""] = answer.split("\r\n\r\n");
+  try {
+    if (head.startsWith("HTTP/1.1 200") && decodeRerailEventResult(body).eventId === eventId) return "whole";
+  } catch {
+    // A body cut short is not JSON.
+  }
+  return `${head.split("\r\n")[0] || "no answer"}, ${answer.length} characters`;
+}
+
+/**
+ * Runs `first` in the next check phase, then keeps the event loop busy until `until` (a `performance.now()` time), as a
+ * synchronous call does in a daemon. Resolves with the time `first` ran.
+ */
+async function busyFromCheckPhase(first: () => void, until: number): Promise<number> {
+  return await new Promise<number>(done => setImmediate(() => {
+    const at = performance.now();
+    first();
+    while (performance.now() < until) {
+      // The loop stays busy.
+    }
+    done(at);
+  }));
+}
 
 function busySession(root: string): { host: "claude-code"; sessionId: string; cwd: string } {
   return { host: "claude-code", sessionId: "busy", cwd: root };
