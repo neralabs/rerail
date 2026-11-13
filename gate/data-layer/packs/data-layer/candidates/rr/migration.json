@@ -5333,17 +5333,44 @@
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-side-effects-production.rr",
       "ruleSha256": "466e568aced4e07460fc01047a9a70d2448904f19a1391024a06a271ac8bdd3b",
       "migrationProgress": {
-        "status": "hub kernel parity; full rule remains draft",
-        "receipt": "gate/data-layer/fixtures/host/data-layer-port/rr-hub1ee-kernel-progress.json.gz",
-        "sha256": "3904066cc3e405ac647a8682ad24898f265cdda14a86387c256a22d3bd7264dc",
-        "casesPerApi": 497,
+        "status": "Current integrated production and public-contract parity; full rule remains draft",
+        "receipts": [
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-side-effects-production-current.json.gz",
+            "sha256": "f37835ebc6915e7b7ee2c8871bc17e55d04d0c57e16a631046575ea0a4c67b37"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-side-effects-conversion-current.json.gz",
+            "sha256": "927b67b89bdfff70f24e0f75295bb2f74fdbc0d29c13283e274c094c16891401"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-side-effects-cli-current.json.gz",
+            "sha256": "d33f4cade3a1a96d1385c7fcec1df71df51ac6d14620d3a8d9ba15f69a10dc2d"
+          },
+          {
+            "path": "gate/data-layer/fixtures/host/data-layer-port/rr-side-effects-files-current.json.gz",
+            "sha256": "e323aab9202b14b292dfab702e42937497635299994b60ca26d7722a05095801"
+          }
+        ],
+        "engineSha256": "cd8079b4bc291599d741d78e211e4bb391b973196d239aa41b7ba593f22f162c",
+        "upstreamCommit": "2f42857e4250f25f8e1dad28df1e5b7e8078ec15",
+        "recordedCasesPerAPI": 421,
         "interfaces": [
           "snapshot",
           "workspace"
         ],
-        "failures": 0,
-        "semanticFallbacks": 0,
-        "fullMigrationAcceptance": false
+        "parityMismatches": 0,
+        "startupFailures": 1,
+        "unresolvedStartupFailures": 1,
+        "fullMigrationAcceptance": false,
+        "remaining": [
+          "Current-cohort helper, callback and plugin acceptance",
+          "Historical inputs",
+          "Retained updates",
+          "Effective removal controls",
+          "Strict admission",
+          "Metal startup crash root cause"
+        ]
       },
       "migrationProgressHistory": [
         {
@@ -5353,6 +5380,19 @@
           "helperSnapshotCases": 197,
           "tapeSnapshotCases": 142,
           "tapeFailures": 1,
+          "fullMigrationAcceptance": false
+        },
+        {
+          "status": "hub kernel parity; full rule remains draft",
+          "receipt": "gate/data-layer/fixtures/host/data-layer-port/rr-hub1ee-kernel-progress.json.gz",
+          "sha256": "3904066cc3e405ac647a8682ad24898f265cdda14a86387c256a22d3bd7264dc",
+          "casesPerApi": 497,
+          "interfaces": [
+            "snapshot",
+            "workspace"
+          ],
+          "failures": 0,
+          "semanticFallbacks": 0,
           "fullMigrationAcceptance": false
         }
       ]

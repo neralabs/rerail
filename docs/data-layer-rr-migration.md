@@ -10,6 +10,68 @@ The source stays pinned to `2b1504adc4291daaf080b2e932962b134da1a69a`.
 The current inventory has twenty-two admitted rules, seventy-seven drafts, and one absent translation.
 Draft policies do not count as completed migrations.
 
+## 2026-11-13 — Production parity and lean Python parser integration
+
+Merge `274d9e1ce` adopts integration hub `2f42857e4`, including decision 0163 and its lean Python parser.
+The merge audit has zero findings. Shared tape definitions and all local generic extensions remain in place.
+The frozen CLI is `cd8079b4bc291599…`.
+Its successful build costs 212.12 seconds wall, 1,165.66 seconds user CPU, and 36.95 seconds system CPU.
+
+The rule inventory now selects the production policy.
+Its discovery, fact generation, filtering, and reports execute in native relations.
+Public helper entry points retain their separate programs.
+Production and plugin discovery use one generated root definition.
+
+Both APIs pass **421 recorded cases each** on this binary:
+
+| Contract | Cases per API |
+| --- | ---: |
+| Production selection, facts, metadata, and findings | 25 |
+| CLI and report streams | 42 |
+| Conversion helpers | 105 |
+| Unread conversion payloads | 3 |
+| Filesystem APIs | 47 |
+| Public scanners | 35 |
+| Discovery and tree updates | 15 |
+| Native syntax facts and parse errors | 142 |
+| Unchanged upstream tests | 7 |
+
+The production corpus includes two findings on one line and a 64-file positive batch.
+Each batch uses one native fact execution and one public-report execution.
+Complete facts preserve audit rows. Reports exclude those rows, as the source does.
+Selected files, absent facts, empty fact lists, payload order, and finding order receive separate comparisons.
+
+The broken-link repair retains OS errors for selected final file links under an authorized parent.
+Missing ordinary paths remain refused. Directory links cannot widen the scope.
+The regression first fails because no error exists.
+Seven filesystem reader tests now pass, including retained failed snapshots and invalidation after target repair.
+The two new product parser tests, Python table test, and SIMD mask test also pass.
+
+One workspace shard crashes during setup, before any case runs.
+The macOS report identifies `SIGBUS`, an FS page-in error, in Apple's `MTLCompilerFSCache`.
+The stack shows background random-forest training that compiles a Metal kernel.
+The unchanged shard passes all seventeen cases on retry.
+The [production receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-side-effects-production-current.json.gz) retains the crash stack with `resolved: false`.
+This result identifies the failing stack. It does not establish the underlying cause or a repair.
+Replay errors now include the subprocess status, even when stderr is empty.
+Two failing transport assertions precede that diagnostic repair. All eleven transport checks then pass.
+
+All **823 tooling tests pass without skips** in three disjoint partitions: 275, 274, and 274 tests.
+Their runner times are 23.065, 23.932, and 23.742 seconds.
+The receipt retains every collected identity and partition result.
+An added check rejects incomplete partitions that claim full suite coverage.
+The conversion, CLI, and filesystem receipts also use this same binary.
+
+Cleanup removes 54 obsolete incremental-cache directories, totaling 12.82 GiB of allocated storage.
+Three recent configurations per crate remain available.
+Sources, frozen binaries, and parity receipts remain available.
+
+The inventory remains **22 historical admissions, 77 drafts, and one absent translation**.
+This checkpoint does not re-admit those historical rules on the new engine.
+Full current-cohort helper, callback, and plugin acceptance, historical inputs, retained updates, effective removal controls, and strict admission remain open.
+The Metal startup crash remains open. No Linear issues are created.
+All tests retain high nice priority and bounded commands. No whole-repository cold benchmark runs.
+
 ## 2026-11-13 — Native conversion and CLI parity on the integrated engine
 
 Merge `d9768cdc6` adopts integration hub `e65a89165`.
