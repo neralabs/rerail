@@ -68,6 +68,8 @@ def exercise(module,case,scratch):
 def install(backend,module,detectors=False):
     from side_effects_scanners import install as scanners
     scanners(backend,module,detectors)
+    from side_effects_cli_port import install as cli
+    cli(backend,module)
 
 
 if __name__=='__main__':main(CHECK,'rerail.side-effects-cli/v1',cases,exercise,install,['side_effects_cli_contract.py','side_effects_scanners.py'])

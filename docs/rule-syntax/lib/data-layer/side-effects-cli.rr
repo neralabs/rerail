@@ -1,0 +1,45 @@
+// Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_plan_scope_side_effects.py#L547
+#include "python/values.rr"
+.violation SideEffectsCliConfiguration(at:span,schema:symbol,fields:symbol) code "PSE_CLI_CONFIG" "CLI transport schema"
+SideEffectsCliConfiguration(@place("",0),s,"code,file_path,line_number,message,severity") :- option("entryPoint","_pse_cli_configuration"),pse_config("cli_schema",s).
+.violation SideEffectsCliRoot(at:span,path:symbol) code "PSE_CLI_ROOT" "CLI repository root"
+SideEffectsCliRoot(@place("",0),@dir(@dir(s))) :- option("entryPoint","_pse_cli_root"),option("pseCliSource",s).
+.decl pcli_row(i:number,n:number)
+pcli_row(i,n) :- option("entryPoint","_pse_print_report"),pv_kind(0,"list"),pv_child(0,_,i,n).
+.decl pcli_truth(n:number)
+pcli_truth(n) :- pv_kind(n,"str"),pv_text(n,t),t!="".
+pcli_truth(n) :- pv_kind(n,"int"),pv_text(n,t),t!="0".
+pcli_truth(n) :- pv_kind(n,"bool"),pv_text(n,"true").
+pcli_truth(n) :- pv_kind(n,"float"),pv_text(n,b),t=@py_float_str(b),t!="0.0",t!="-0.0".
+pcli_truth(n) :- pv_kind(n,k),(k="list";k="tuple";k="dict"),pv_child(n,_,_,_).
+.decl pcli_bad_pattern(text:symbol)
+pcli_bad_pattern("plan scopes contain eager execution or Python side effects") :- pcli_row(_,_),option("pseVerbose","0").
+pcli_bad_pattern(t) :- pcli_row(0,n),option("pseVerbose","1"),pv_member(n,"message",m),pcli_truth(m),pv_str(m,t).
+pv_need(m) :- pcli_row(0,n),option("pseVerbose","1"),pv_member(n,"message",m),pcli_truth(m).
+.decl pcli_error(i:number,kind:symbol,detail:symbol)
+pcli_error(i,"AttributeError",cat("'",k,"' object has no attribute 'upper'")) :- pcli_row(i,n),pv_member(n,"severity",s),pv_kind(s,k),k!="str".
+.decl pcli_first_error(i:number)
+pcli_first_error(i) :- i=min index:{pcli_error(index,_,_)}.
+.decl pcli_printable(i:number,n:number)
+pcli_printable(i,n) :- pcli_row(i,n),!pcli_first_error(_).
+pcli_printable(i,n) :- pcli_row(i,n),pcli_first_error(first),i<first.
+pv_need(v) :- pcli_printable(_,n),pv_member(n,k,v),(k="code";k="file_path";k="line_number";k="message").
+.decl pcli_output(phase:number,ordinal:number,text:symbol)
+pcli_output(0,0,"No plan-scope side-effect violations found.\n") :- option("entryPoint","_pse_print_report"),!pcli_row(_,_).
+pcli_output(0,i,cat(t,"\n")) :- pcli_row(_,_),pse_feedback(i,t).
+pcli_output(0,7,cat("Bad pattern: ",t,"\n")) :- pcli_bad_pattern(t).
+pcli_output(1,0,"\n") :- pcli_row(_,_).
+pcli_output(1,1,"========================================================================\n") :- pcli_row(_,_).
+pcli_output(1,2,cat("PLAN-SCOPE SIDE-EFFECT VIOLATIONS: ",to_string(count:{pcli_row(_,_)}),"\n")) :- pcli_row(_,_).
+pcli_output(1,3,"========================================================================\n") :- pcli_row(_,_).
+pcli_output(2,i,cat(p,":",l,": ",c," ",@convert(s,"upperCase","")," ",m,"\n")) :- pcli_printable(i,n),pv_member(n,"code",ci),pv_str(ci,c),pv_member(n,"file_path",pi),pv_str(pi,p),pv_member(n,"line_number",li),pv_str(li,l),pv_member(n,"message",mi),pv_str(mi,m),pv_member(n,"severity",si),pv_kind(si,"str"),pv_text(si,s).
+.violation SideEffectsCliOutput(at:span,phase:number,ordinal:number,text:symbol) code "PSE_CLI_OUTPUT" "Exact report output"
+SideEffectsCliOutput(@place("",0),p,i,t) :- pcli_output(p,i,t).
+.violation SideEffectsCliError(at:span,error_type:symbol,detail:symbol) code "PSE_CLI_ERROR" "Report error after prior output"
+SideEffectsCliError(@place("",0),k,d) :- pcli_first_error(i),pcli_error(i,k,d).
+.decl pcli_blocking()
+pcli_blocking() :- option_item("pseSeverities",_,"error").
+.violation SideEffectsCliExit(at:span,status:number) code "PSE_CLI_EXIT" "CLI result"
+SideEffectsCliExit(@place("",0),1) :- option("entryPoint","_pse_cli_exit"),option("pseCheck","1"),pcli_blocking().
+SideEffectsCliExit(@place("",0),0) :- option("entryPoint","_pse_cli_exit"),!option("pseCheck","1").
+SideEffectsCliExit(@place("",0),0) :- option("entryPoint","_pse_cli_exit"),!pcli_blocking().

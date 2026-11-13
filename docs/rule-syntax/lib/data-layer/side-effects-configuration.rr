@@ -68,3 +68,13 @@ pse_constant("WRITE_PLAN_OPENERS","open_provider_versioned_write_plan").
 pse_constant("WRITE_PLAN_OPENERS","open_provider_write_plan").
 pse_constant("WRITE_PLAN_OPENERS","open_write_plan").
 pse_config("extractor","{\"extractor_id\": \"plan_scope_side_effects.violations\", \"schema_version\": \"1\", \"implementation_version\": \"plan-scope-side-effects-v2\", \"parser_mode\": \"ast_collect\", \"source_triggers\": [\"open_provider_read_plan\", \"open_provider_versioned_read_plan\", \"open_provider_versioned_write_plan\", \"open_provider_write_plan\", \"open_read_plan\", \"open_write_plan\"], \"source_trigger_groups\": [], \"cacheable\": true, \"workload_scope\": \"file\", \"project_input_facts\": [], \"project_input_scope\": null, \"implementation_digest\": \"4c15cedd59205f1a\", \"node_kinds\": [\"With\", \"AsyncWith\", \"Assign\", \"AnnAssign\", \"If\", \"Attribute\", \"Call\"]}").
+pse_config("cli_schema","{\"description\": \"Reject eager execution and Python side effects inside explicit plan scopes.\", \"arguments\": [{\"names\": [\"--check\"], \"kwargs\": {\"action\": \"store_true\", \"help\": \"Exit 1 when violations are found.\"}}, {\"names\": [\"--verbose\"], \"kwargs\": {\"action\": \"store_true\", \"help\": \"Print detailed findings.\"}}]}").
+.decl pse_feedback(ordinal:number,text:symbol)
+pse_feedback(0,"ARCHITECTURAL problem.").
+pse_feedback(1,"This is not a linter failure; it validates architecture.").
+pse_feedback(2,"STEP BACK AND REARCHITECTURE.").
+pse_feedback(3,"Fix the subsystem architecture, not the local symptom.").
+pse_feedback(4,"ARCHITECTURAL FEEDBACK FROM THE USER.").
+pse_feedback(5,"Invariant: Explicit plan scopes are symbolic builders; they must not hide eager resolution, raw execution, nested legacy callbacks, or Python side effects.").
+pse_feedback(6,"Documentation: docs/design/SERVERPLAN_ARCHITECTURE.md").
+pse_feedback(8,"Example commits from origin/main: before=0fe6f14f1c after=317fba17f").

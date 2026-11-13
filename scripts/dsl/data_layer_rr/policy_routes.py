@@ -2,6 +2,8 @@
 
 
 def policy_filename(check, entry):
+    if check=='plan_scope_side_effects' and entry in {'_pse_cli_configuration','_pse_cli_root','_pse_print_report','_pse_cli_exit'}:
+        return 'plan-scope-side-effects-cli.rr'
     if check=='plan_scope_side_effects' and entry=='_pse_from_fact':
         return 'plan-scope-side-effects-from-fact.rr'
     if check=='plan_scope_side_effects' and entry in {'_pse_conversion_configuration','_pse_from_structured'}:
