@@ -30,6 +30,12 @@ pub trait DialectFacts: Send + Sync {
         let _ = (prefix, text);
         None
     }
+    /// Each node's value, by node id, of a document of tape tag `tag` and text `source`, where the family's parser
+    /// gives values the node's text does not (a format string's: `literal::format_tape::values`).
+    fn node_values(&self, tag: u8, source: &str) -> Vec<Option<(String, &'static str)>> {
+        let _ = (tag, source);
+        Vec::new()
+    }
     /// A document's syntax verdict where the family gives its own (`verdict`); `None`: the tree's first error.
     fn verdict(&self, f: &Facts) -> Option<Result<Option<(u32, String)>, String>> {
         let _ = f;
@@ -75,12 +81,14 @@ pub enum Family {
     Rust,
     /// `.rr` rule files (decision 0061).
     Rr,
+    /// Python's format strings (decision 0176): `percent-format` and `brace-format` guests.
+    Format,
     Other,
 }
 
 impl Family {
     /// How many families there are.
-    const COUNT: usize = 6;
+    const COUNT: usize = 7;
 
     pub(super) fn of(label: Option<&str>) -> Self {
         match label {
@@ -89,6 +97,7 @@ impl Family {
             Some("php" | "blade") => Self::Php,
             Some("rust") => Self::Rust,
             Some("rr") => Self::Rr,
+            Some("percent-format" | "brace-format") => Self::Format,
             _ => Self::Other,
         }
     }
@@ -539,6 +548,9 @@ pub(super) fn first_error(f: &Facts, lines: &Lines, kind_name: &dyn Fn(u32) -> &
 pub(super) struct CoreRows {
     /// The per-node relations no rule reads (`Batch::build`, from the projection): their rows are not made.
     pub(super) skip: Skip,
+    /// The values of the format string document being read (decision 0176: `literal::format_tape::values`), by
+    /// node id, with the document's source they were read off: one parse a document, not one a node.
+    format_values: Option<(std::sync::Arc<String>, Vec<Option<(String, &'static str)>>)>,
     /// The node kinds whose `text` is made at any length (`Projection::long_text`).
     pub(super) long_text: BTreeSet<String>,
     /// Every node's `text` at any length (`Projection::long_text_any`).
@@ -699,7 +711,17 @@ impl CoreRows {
                 (Family::Php, "encapsed_string") => named_child(&|k| !matches!(k, "string_content" | "escape_sequence")),
                 _ => false,
             };
-            let lit = if self.skip.literal { Literal::default() } else { literal(dialect.family, kind, text, interpolated) };
+            let mut lit = if self.skip.literal { Literal::default() } else { literal(dialect.family, kind, text, interpolated) };
+            // A format string's node: its value is its parser's (an `error`'s message, a `field_name`'s argument).
+            if !self.skip.literal
+                && dialect.family == Family::Format
+                && let Some(own) = dialect_facts(Family::Format)
+            {
+                if self.format_values.as_ref().is_none_or(|(src, _)| !std::sync::Arc::ptr_eq(src, &f.source)) {
+                    self.format_values = Some((std::sync::Arc::clone(&f.source), own.node_values(dialect.tag, &f.source)));
+                }
+                lit.value = self.format_values.as_ref().and_then(|(_, v)| v.get(id as usize).cloned().flatten());
+            }
             if let Some(prefix) = &lit.prefix {
                 self.strprefix.push([n, string(prefix) as i64]);
                 token_like = true;

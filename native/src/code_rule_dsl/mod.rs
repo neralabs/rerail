@@ -1544,6 +1544,7 @@ mod literal {
     }
     pub use rerail_lang_python::code_rule_dsl::literal::identifier_words;
     pub use rerail_lang_python::code_rule_dsl::literal::percent;
+    pub use rerail_lang_python::code_rule_dsl::literal::format_tape;
     pub use rerail_lang_php::code_rule_dsl::literal::php_string;
     pub mod phpdoc {
         pub use rerail_lang_php::code_rule_dsl::literal::phpdoc::*;
@@ -4724,7 +4725,7 @@ pub(crate) use rule_api::CodeRuleDslEditor;
 pub(crate) fn install_languages() {
     use language::Family;
     use language::adapter::pack::{Pack, pack, register};
-    use language::adapter::{blade::Blade, ecma::Ecma, json::Json, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
+    use language::adapter::{blade::Blade, ecma::Ecma, format::Format, json::Json, php::Php, python::Python, rr::Rr, rust::Rust, sql::Sql, vue::Vue};
     register(Family::Python, &Pack::<Python>::NEW);
     language::register_base(Family::Python, &Pack::<Python>::NEW);
     register(Family::Ecma, &Pack::<Ecma>::NEW);
@@ -4743,6 +4744,8 @@ pub(crate) fn install_languages() {
     language::register_base(Family::Rr, &Pack::<Rr>::NEW);
     register(Family::Json, &Pack::<Json>::NEW);
     language::register_base(Family::Json, &Pack::<Json>::NEW);
+    register(Family::Format, &Pack::<Format>::NEW);
+    language::register_base(Family::Format, &Pack::<Format>::NEW);
     // The linters' suppressions, in the order `suppress` is parsed and checked in.
     {
         use suppress::{eslint, noqa, nosec, oxlint, biome, phpstan, psalm, phpcs, clippy, sqlfluff, kind};
@@ -4793,6 +4796,7 @@ pub(crate) fn install_languages() {
         core_rr::register_dialect_facts(Family::Python, &python_core::PythonFacts);
         core_rr::register_dialect_facts(Family::Ecma, &ecma_core::EcmaFacts);
         core_rr::register_dialect_facts(Family::Rr, &rr_core::RrFacts);
+        core_rr::register_dialect_facts(core_rr::Family::Format, &literal::format_tape::FormatFacts);
     }
     // A workspace's project context of ECMAScript's files (manifests, project configurations, server graphs).
     workspace::ingest::install_project(|| Box::new(workspace::ingest::ecma::EcmaProject::default()));
@@ -4876,6 +4880,11 @@ pub(crate) fn install_languages() {
         let mut parsers: Vec<(language::GrammarDialect, &'static dyn tape::TreeParser)> = Vec::new();
         if cfg!(feature = "lang-blade") {
             parsers.push((language::GrammarDialect::Blade, &blade::tape::Forte));
+        }
+        // Python's format strings (decision 0176): guests only, parsed by Ruff's parsers' ports.
+        if cfg!(feature = "lang-python") {
+            parsers.push((language::GrammarDialect::PercentFormat, &literal::format_tape::FormatStrings(language::GrammarDialect::PercentFormat)));
+            parsers.push((language::GrammarDialect::BraceFormat, &literal::format_tape::FormatStrings(language::GrammarDialect::BraceFormat)));
         }
         if cfg!(feature = "lang-json") {
             // simdjson where it builds; the Bitlex parser (`json_parser::tape::Bitlex`) is not yet the product's.

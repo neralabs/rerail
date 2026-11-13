@@ -7,6 +7,8 @@ One `rerail.language/v1` file per language: `<id>.json`. Each file holds:
 - suppression comments
 - embedded languages
 - the status: `supported` or `planned`
+- `builtWith` (optional): the language whose `lang-<id>` feature builds this one, for a guest language with no
+  feature of its own (`python-format` is built with `lang-python`)
 
 This directory is the single source of truth for both sides:
 - `native/build.rs` validates it and generates the engine's language tables.

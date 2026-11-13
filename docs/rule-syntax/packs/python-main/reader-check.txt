@@ -174,20 +174,20 @@ reader-passed ruff-f403-undefined-local-with-import-star
 reader-passed ruff-f405-undefined-local-with-import-star-usage
 reader-passed ruff-f406-undefined-local-with-nested-import-star-usage
 reader-passed ruff-f407-future-feature-not-defined
-reader-failed ruff-f501-percent-format-invalid-format  f501_format_string: no grammar "percentFormat"; a grammar is a language registry dialect's label or fragment (languages/*.json)
-reader-failed ruff-f502-percent-format-expected-mapping  f502_format_string: no grammar "percentFormat"; a grammar is a language registry dialect's label or fragment (languages/*.json)
-reader-failed ruff-f503-percent-format-expected-sequence  rr_ctx12: no grammar "percentFormat"; a grammar is a language registry dialect's label or fragment (languages/*.json)
+reader-passed ruff-f501-percent-format-invalid-format
+reader-passed ruff-f502-percent-format-expected-mapping
+reader-passed ruff-f503-percent-format-expected-sequence
 reader-passed ruff-f504-percent-format-extra-named-arguments
 reader-passed ruff-f505-percent-format-missing-argument
-reader-failed ruff-f506-percent-format-mixed-positional-and-named  f506_format_string: no grammar "percentFormat"; a grammar is a language registry dialect's label or fragment (languages/*.json)
+reader-passed ruff-f506-percent-format-mixed-positional-and-named
 reader-passed ruff-f507-percent-format-positional-count-mismatch
-reader-failed ruff-f508-percent-format-star-requires-sequence  f508_format_string: no grammar "percentFormat"; a grammar is a language registry dialect's label or fragment (languages/*.json)
-reader-failed ruff-f509-percent-format-unsupported-format-character  f509_format_string: no grammar "percentFormat"; a grammar is a language registry dialect's label or fragment (languages/*.json)
-reader-failed ruff-f521-string-dot-format-invalid-format  f521_format_string: no grammar "braceFormat"; a grammar is a language registry dialect's label or fragment (languages/*.json)
+reader-passed ruff-f508-percent-format-star-requires-sequence
+reader-passed ruff-f509-percent-format-unsupported-format-character
+reader-passed ruff-f521-string-dot-format-invalid-format
 reader-passed ruff-f522-string-dot-format-extra-named-arguments
-reader-failed ruff-f523-string-dot-format-extra-positional-arguments  rr_ctx12: no grammar "braceFormat"; a grammar is a language registry dialect's label or fragment (languages/*.json)
-reader-failed ruff-f524-string-dot-format-missing-arguments  f524_reads_past_one: no grammar "braceFormat"; a grammar is a language registry dialect's label or fragment (languages/*.json)
-reader-failed ruff-f525-string-dot-format-mixing-automatic  f525_format_string: no grammar "braceFormat"; a grammar is a language registry dialect's label or fragment (languages/*.json)
+reader-passed ruff-f523-string-dot-format-extra-positional-arguments
+reader-passed ruff-f524-string-dot-format-missing-arguments
+reader-passed ruff-f525-string-dot-format-mixing-automatic
 reader-passed ruff-f541-f-string-missing-placeholders
 reader-passed ruff-f601-multi-value-repeated-key-literal
 reader-passed ruff-f602-multi-value-repeated-key-variable
@@ -208,7 +208,7 @@ reader-passed ruff-f842-unused-annotation
 reader-passed ruff-f901-raise-not-implemented
 reader-passed ruff-fast001-fast-api-redundant-response-model
 reader-passed ruff-fast002-fast-api-non-annotated-dependency
-reader-failed ruff-fast003-fast-api-unused-path-parameter  FAST003: no grammar "braceFormat"; a grammar is a language registry dialect's label or fragment (languages/*.json)
+reader-passed ruff-fast003-fast-api-unused-path-parameter
 reader-passed ruff-fbt001-boolean-type-hint-positional-argument
 reader-passed ruff-fbt002-boolean-default-value-positional-argument
 reader-passed ruff-fbt003-boolean-positional-value-in-call
@@ -514,7 +514,7 @@ reader-passed ruff-up026-deprecated-mock-import
 reader-passed ruff-up028-yield-in-for-loop
 reader-passed ruff-up029-unnecessary-builtin-import
 reader-failed ruff-up030-format-literals  line 104: a JSON term or an `ast` capture outside `ast(…)`
-reader-failed ruff-up031-printf-string-formatting  up031_seg_err: no grammar "percentFormat"; a grammar is a language registry dialect's label or fragment (languages/*.json)
+reader-passed ruff-up031-printf-string-formatting
 reader-failed ruff-up032-f-string  line 173: a JSON term or an `ast` capture outside `ast(…)`
 reader-passed ruff-up033-lru-cache-with-maxsize-none
 reader-passed ruff-up034-extraneous-parentheses

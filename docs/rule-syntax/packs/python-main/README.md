@@ -72,17 +72,19 @@ on one file, under the caps (2 minutes, 2 GB).
 | COM818, PYI010 | A regex with captures over a node whose kind the rule does not name. | The translator names the kinds the node can have, from the grammar's node types under its parent, as the overrides do by hand. |
 | N806 | A util that reads the caller's metavariable (`NAME`). | The translator's `demand()` pass already hands a caller's metavariable to a helper; it is extended to a util whose only binder is the caller's. |
 
-### 14 refused by the reader
+### 14 refused by the reader: 12 fixed, 2 left
 
-- **12 use the `percentFormat` or `braceFormat` grammar** (F501–F503, F506, F508, F509, F521, F523–F525, FAST003, UP031). These
-  are main's grammars of the format mini-languages, the `%` printf formats and `str.format`'s `{}` templates. Main parses
-  a string's value with Rust ports of Ruff's own parsers (`native/src/code_rule_dsl/literal/percent.rs`, `brace.rs`) and
-  hands the rule the tree (`format`, `placeholder`, `mapping_key`, …, and `error` with Ruff's message). The engine's
-  guests (decision 0055) parse only the registry's grammars (`languages/*.json`: a dialect or a fragment), so the reader
-  refuses the name. **Plan:** make the two parsers guest grammars, giving a guest document with main's tree kinds and the
-  error's message as its value. The rules then run as written. The final shape is a transducer program per grammar
-  (rank 0 allows a lean parser until then).
-- **UP030 and UP032 use `formatArgs` outside `ast(…)`**: the same plan, then `formatArgs` in Datalog (below).
+- **Done: the `percentFormat` and `braceFormat` grammars** (F501–F503, F506, F508, F509, F521, F523–F525, FAST003,
+  UP031; decision 0176). These are the grammars of the format mini-languages: `%` printf formats and `str.format`'s
+  `{}` templates. Main parses a string's value with Rust ports of Ruff's own parsers (`literal/percent.rs`,
+  `brace.rs`) and hands the rule the tree (`format`, `placeholder`, `mapping_key`, …, and an `error` node holding
+  Ruff's message). They are now the guest dialects `percent-format` and `brace-format` of the registry language
+  `languages/python-format.json`. The same ported parsers write the tree, and the error's message is the node's
+  value. The reader passes all 12 rules. On 10 files, F501, F502, F503, F506, F508, F509, F521, F525 and UP031 run.
+  Their findings have not been compared with main's yet. F523 and F524 need `formatArgs` (below). FAST003 needs the
+  `host` term (`{"host": {"not": {"matches": …}}}`), which the engine's matcher compiler lacks. The final shape is a
+  transducer program per grammar (rank 0 allows a lean parser until then).
+- **Left: UP030 and UP032 use `formatArgs` outside `ast(…)`**: `formatArgs` in Datalog (below).
 
 ### 13 refused at run time: 9 fixed, 4 left
 

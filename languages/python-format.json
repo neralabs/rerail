@@ -1,0 +1,33 @@
+{
+  "format": "rerail.language/v1",
+  "id": "python-format",
+  "status": "supported",
+  "family": "format",
+  "builtWith": "python",
+  "dialects": [
+    {
+      "label": "percent-format",
+      "variant": "PercentFormat",
+      "suffixes": [".percent-format"],
+      "parser": "literal",
+      "grammar": "native:percent-format",
+      "tapeTag": 15
+    },
+    {
+      "label": "brace-format",
+      "variant": "BraceFormat",
+      "suffixes": [".brace-format"],
+      "parser": "literal",
+      "grammar": "native:brace-format",
+      "tapeTag": 16
+    }
+  ],
+  "capabilities": {
+    "scope": "refused",
+    "value": "refused",
+    "arguments": "refused",
+    "calls": "refused",
+    "formatArgs": "refused"
+  },
+  "suppressions": []
+}
