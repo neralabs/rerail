@@ -277,6 +277,7 @@ Prerequisites (set-up checks them before changing anything, and says what to do)
 - `rerail setup [--answer <answer>] [--repo <dir>] [--agents omp,pi,claude-code,codex,cursor] [--port <n>] [--json] [--relay] [--powershell]` takes the answers as arguments. With `--powershell` each answer command is written for PowerShell (`& '<node>' '<rerail home>\current\dist\cli\cli.js' setup ...`), every value PowerShell would read in single quotes (`--packs 'typescript@0.1.1,complexity@0.1.1'`, which it would otherwise split at the comma), and carries `--powershell` on; Codex's and Cursor's `/rerail-start` pass it on Windows, where they run PowerShell. Without it the answers are written for a POSIX shell, Git Bash on Windows, where Claude Code runs them, starting with the sh launcher `rerail`. No answer runs `rerail.cmd`, since cmd.exe would read its arguments again: a `&` in a folder name would end the command there.
 - `rerail install --agents <list> [--dry-run]` only connects coding agents.
 - `rerail install --remove` removes Rerail, keeping `rerail.sqlite` in a dated backup.
+- `rerail install --remove --delete-data` removes Rerail and deletes its data, backups and home.
 
 <details>
 <summary>Launcher, PATH and removal details</summary>
@@ -284,6 +285,8 @@ Prerequisites (set-up checks them before changing anything, and says what to do)
 On Windows the launcher is `rerail.cmd`, plus `rerail` for Git Bash. The `PATH` entry is a marked block in your shell startup file, or the Windows user `Path`; `RERAIL_MODIFY_PATH=0` leaves `PATH` to you. `rerail update` adds it where an older set-up didn't. `rerail update` shells out to `npm` with your `~/.npmrc`.
 
 `rerail install --remove` disconnects every coding agent, takes Rerail off `PATH` and stops the daemon. It moves `rerail.sqlite` to a dated backup, so rules and history are kept. Then it deletes `current`, the launcher, every version, the rule packs and the content cache (`~/.cache/rerail`; on Windows `%USERPROFILE%\AppData\Local\rerail`, and the `~/.cache/rerail` an earlier release used there), naming each.
+
+`rerail install --remove --delete-data` deletes instead of backing up, then deletes the rest of the Rerail home. [What each removal leaves behind](how-setup-works.md#what-each-removal-leaves-behind) lists what stays after each.
 
 </details>
 
@@ -740,7 +743,7 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 | `/rerail-start` | Start in this checkout and its worktrees, attached to the session; runs set-up's questions first if needed. |
 | `/rerail-stop` | Stop recording, evaluation, steering and daemon autostart here and in its worktrees. |
 | `/rerail-update` | Install the newest version. |
-| `/rerail-uninstall` | `rerail install --remove`, keeping a backup of rules and history. Asks first. |
+| `/rerail-uninstall` | `rerail install --remove`, keeping a backup of rules and history, or `--remove --delete-data`, deleting everything. Asks first. |
 | `/rerail-help` | Same as `/rerail`. |
 | `/rerail-show-me` | One-minute demo: the agent breaks a demo rule, is steered and fixes it. |
 | `/rerail-bug-report` | The agent reads a support bundle to tell an engine bug, a shipped-rule bug or your rule's bug. |
@@ -753,7 +756,7 @@ OMP and Pi expose these natively, with slash-completion descriptions; Claude Cod
 - **`/rerail-create`**: suggestions come from sessions (`rerail rules evidence`) and written standards. Following `skills/rerail-create`, the agent drafts the rule, tests it (`rerail rules test <draft.json>`) and reads it back. On your yes, `rerail rules add <draft.json>` and `rerail rules approve <id>` add it to your library and this repository, setting the repository up with that rule if needed. It also tunes misfiring rules, changes where a rule applies (its scope only, a shipped rule's as your copy, without the full review), and audits a pending rule or pack before asking you to approve it.
 - **`/rerail-start`**: OMP and Pi ask set-up's questions via their picker; Claude Code and Cursor as text.
 - **`/rerail-stop`**: the shared daemon keeps running; the reply names `rerail daemon stop`, run in a terminal.
-- **`/rerail-uninstall`**: OMP and Pi ask via a native selector; Claude Code doesn't pre-approve it.
+- **`/rerail-uninstall`**: offers both removals, keeping a backup or deleting everything, the second with its `--dry-run` output. OMP and Pi ask via a native selector, then confirm a full deletion after showing that output; Claude Code doesn't pre-approve either removal.
 - **`/rerail-show-me`**: `rerail show-me` adds rule `local:rerail-show-me`, scoped to `rerail-show-me.js`. The agent writes that file breaking the rule, is steered, and fixes it. `rerail show-me --cleanup` removes both (a concurrent demo elsewhere keeps the rule). It needs Rerail on and set up, never starts or sets up Rerail, and touches only what it wrote. The steer stays in History.
 - **`/rerail-bug-report`**: following `skills/rerail-bug-report`, the agent reads `rerail support-bundle` output (allowlisted, scrubbed diagnostics). It fixes your rule via `/rerail-create`'s Tune. Otherwise it checks the bundle with you and offers a filled-in issue, or files it if asked. Nothing is sent without you ([what the bundle holds](troubleshooting.md#reporting-a-problem)). Claude Code pre-approves the bundle's fixed invocations, `rerail update check` and `rerail rules test`; `--output`, `rerail rules add` and filing ask first.
 

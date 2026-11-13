@@ -699,12 +699,17 @@ Report a vulnerability through [SECURITY.md](../SECURITY.md) instead.
 ## Removing Rerail completely
 
 `rerail install --remove` deletes the installation and keeps your settings, data and backups for you to delete.
+`rerail install --remove --delete-data` deletes those too, and `~/.rerail` itself; it cannot be undone.
 
-It names what it kept; delete those too to remove everything:
+What `--remove` keeps, and names:
 
 - **`~/.rerail`**: Rerail's settings, logs and records, such as `consent.json` and `daemon.log`.
 - **`~/.rerail-clean-YYYYMMDD/`**: your rules and history.
 - **`<file>.<timestamp>.bak`** copies beside every agent config file it changed.
+
+`--delete-data` keeps only what it cannot reach, such as those `.bak` copies, which hold your own settings, and
+names each with the command that deletes it. Both lists in full:
+[What each removal leaves behind](how-setup-works.md#what-each-removal-leaves-behind).
 
 <details>
 <summary>Steps it runs, shared folders, and what it prints</summary>
