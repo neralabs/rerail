@@ -627,6 +627,8 @@ export interface SessionSuspension {
   readonly ownerClaim: PolicyOwnerClaim | undefined;
   /** Undefined when the session's evaluator had not opened, or could not. */
   readonly walk: SessionWalkResume | undefined;
+  /** The database that records the session, whose record `endSuspendedSessions` ends if it never opens again. */
+  readonly databasePath: string;
 }
 
 /** The suspended sessions a runtime opens again, by session id: an engine service keeps them across its runtimes. */
@@ -1837,7 +1839,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
   /** What `state`'s session keeps while suspended: its owner claim, and where its walks stand once its evaluator is open. */
   async #suspension(state: RuntimeSessionState): Promise<SessionSuspension> {
     const walk = state.codeRuleReady ? await state.codeRuleBridge?.walkResume() : undefined;
-    return { descriptor: state.descriptor, ownerClaim: state.ownerClaim, walk };
+    return { descriptor: state.descriptor, ownerClaim: state.ownerClaim, walk, databasePath: this.#sessionStore.path };
   }
 
   /**

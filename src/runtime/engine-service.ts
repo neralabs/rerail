@@ -473,10 +473,7 @@ function endEntries(entries: readonly SuspendedEntry[]): void {
 /** The suspensions of `entries` by the database that records them. */
 function byDatabase(entries: readonly SuspendedEntry[]): Map<string, SessionSuspension[]> {
   const grouped = new Map<string, SessionSuspension[]>();
-  for (const { runtimeOptions, suspension } of entries) {
-    const databasePath = runtimeOptions?.databasePath;
-    if (databasePath !== undefined) grouped.set(databasePath, [...(grouped.get(databasePath) ?? []), suspension]);
-  }
+  for (const { suspension } of entries) grouped.set(suspension.databasePath, [...(grouped.get(suspension.databasePath) ?? []), suspension]);
   return grouped;
 }
 
