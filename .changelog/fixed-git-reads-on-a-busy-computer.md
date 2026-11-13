@@ -1,0 +1,1 @@
+On a busy computer, Rerail no longer reads a Git command that finished as one that printed nothing, so a shell edit to a file changed before the session is steered only on the lines the agent changed. When Git cannot list those files in time, Rerail reports the check as incomplete and lists them at the next one.

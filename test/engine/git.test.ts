@@ -7,7 +7,9 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("node:child_process", { spy: true });
+vi.mock("../../src/engine/child-process.js", { spy: true });
 
+import { endProcessTree } from "../../src/engine/child-process.js";
 import {
   findGit, gitBehindLauncher, gitBranchTips, gitCandidates, gitCommitsBetween, gitConfigFiles, gitCrlfPaths, gitExcludeFiles, gitExecutable, gitHead, gitHome,
   gitInstalled, gitModifiedOrUntrackedPaths, GitReads, GitUnavailableError, gitUnmergedReader, headMovedOnlyByCommits, readGitBlobIds,
@@ -169,7 +171,8 @@ describe("GitReads", () => {
     await expect(reads.run(signal => readGitBlobs(root, ["HEAD:./a.py"], { maxBlobBytes: 1_000, signal }))).resolves.toEqual(new Map());
     await expect(new GitReads().run(signal => gitHead(root, { signal }))).resolves.toMatch(/^[0-9a-f]{40}/u);
     await writeFile(join(root, "b.py"), "untracked\n");
-    await expect(reads.run(signal => gitModifiedOrUntrackedPaths(root, { signal }))).resolves.toEqual([]);
+    // A stopped listing names no file changed, and says it cannot tell rather than none.
+    await expect(reads.run(signal => gitModifiedOrUntrackedPaths(root, { signal }))).resolves.toBeUndefined();
     await expect(new GitReads().run(signal => gitModifiedOrUntrackedPaths(root, { signal }))).resolves.toEqual(["b.py"]);
   });
 
@@ -246,6 +249,21 @@ describe("GitReads", () => {
     expect(running).toEqual([]);
     await expect(answers).resolves.toEqual([undefined, new Map()]);
   });
+});
+
+describe("Git reads and their time limit", () => {
+  it("answers with what Git printed when the event loop stalls past the time limit after Git finished", async () => {
+    const root = await repository({ "a.py": "print(1)\n" });
+    await writeFile(join(root, "a.py"), "print(2)\n");
+    const head = git(root, "rev-parse", "HEAD").trim();
+    vi.mocked(endProcessTree).mockClear();
+    const reads = Promise.all([gitModifiedOrUntrackedPaths(root), gitHead(root)]);
+    // Both Gits finish during the stall, and the event loop handles their exits only once it ends, past the 10 s limit.
+    setImmediate(() => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10_500));
+    await expect(reads).resolves.toEqual([["a.py"], head]);
+    // Neither read was ended: on Windows that ran `taskkill /T /F` on the pid of a Git already gone.
+    expect(endProcessTree).not.toHaveBeenCalled();
+  }, 30_000);
 });
 
 describe("gitExcludeFiles", () => {

@@ -439,20 +439,38 @@ async function gitOutput(cwd: string, args: readonly string[], signal: AbortSign
 
 /** Stdout, as Git wrote it, of a successful Git command run as `gitOutput` runs one; undefined past `maxBuffer` bytes. */
 async function gitStdout(cwd: string, args: readonly string[], signal: AbortSignal | undefined, maxBuffer = 1024 * 1024): Promise<string | undefined> {
+  const read = await readGit(cwd, args, signal, maxBuffer);
+  return read.ended === "printed" ? read.stdout : undefined;
+}
+
+/**
+ * How a Git read ended: with what Git printed, failing (no Git, an error, past `maxBuffer`), or ended past its time limit;
+ * one its `signal` stopped reads the same ({@link GitReadOptions}).
+ */
+type GitRead = { readonly ended: "printed"; readonly stdout: string } | { readonly ended: "failed" | "timed-out" };
+
+/** Runs a Git command as `gitOutput` does, and says how it ended. */
+async function readGit(cwd: string, args: readonly string[], signal: AbortSignal | undefined, maxBuffer: number): Promise<GitRead> {
   const executable = readerGit(signal);
-  if (executable === undefined) return undefined;
-  const { promise, resolve: settle } = Promise.withResolvers<string | undefined>();
+  if (executable === undefined) return { ended: signal?.aborted === true ? "timed-out" : "failed" };
+  const { promise, resolve: settle } = Promise.withResolvers<GitRead>();
+  let cutShort = false;
+  const unfinished = (): GitRead => ({ ended: cutShort || signal?.aborted === true ? "timed-out" : "failed" });
   const child = execFile(
     executable,
     [...SAFE_CONFIG, "-C", cwd, ...args],
     { encoding: "utf8", maxBuffer, env: { ...process.env, GIT_OPTIONAL_LOCKS: "0", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0" } },
-    (error, stdout) => settle(error === null && signal?.aborted !== true ? stdout : undefined),
+    (error, stdout) => settle(error === null && signal?.aborted !== true ? { ended: "printed", stdout } : unfinished()),
   );
   // execFile's own `close` listener comes first and answers with the output; this one answers a Git that was ended and
   // whose output stays open.
-  settleWhenDone(child, () => settle(undefined), { timeoutMs: DEFAULT_TIMEOUT_MS, signal });
-  const [output] = await Promise.all([promise, exited(child)]);
-  return output;
+  settleWhenDone(child, () => settle(unfinished()), {
+    timeoutMs: DEFAULT_TIMEOUT_MS, signal, ending: () => {
+      cutShort = true;
+    },
+  });
+  const [read] = await Promise.all([promise, exited(child)]);
+  return read;
 }
 
 /** The commit `HEAD` names in `cwd`; undefined outside a repository, or before its first commit. */
@@ -672,12 +690,14 @@ const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;
 
 /**
  * The files of the checkout at `cwd` whose text its index may not hold: modified since staged (or deleted), and untracked
- * but not ignored; relative to `cwd`. Empty without Git, outside a repository, past the timeout, or past
- * `MAX_LISTED_PATH_BYTES` of paths.
+ * but not ignored; relative to `cwd`. Empty without Git, outside a repository, or past `MAX_LISTED_PATH_BYTES` of paths.
+ * Undefined when Git ran past its time limit, or `options.signal` stopped it: it did not say which files changed, and
+ * none is not its answer.
  */
-export async function gitModifiedOrUntrackedPaths(cwd: string, options: GitReadOptions = {}): Promise<string[]> {
-  const listed = await gitStdout(cwd, ["ls-files", "-z", "--modified", "--others", "--exclude-standard"], options.signal, MAX_LISTED_PATH_BYTES);
-  return listed === undefined ? [] : listed.split("\0").filter(path => path !== "");
+export async function gitModifiedOrUntrackedPaths(cwd: string, options: GitReadOptions = {}): Promise<string[] | undefined> {
+  const read = await readGit(cwd, ["ls-files", "-z", "--modified", "--others", "--exclude-standard"], options.signal, MAX_LISTED_PATH_BYTES);
+  if (read.ended === "timed-out") return undefined;
+  return read.ended === "printed" ? read.stdout.split("\0").filter(path => path !== "") : [];
 }
 
 /**
@@ -706,10 +726,18 @@ export async function readGitBlobIds(cwd: string, revisions: readonly string[], 
 /** How long a read waits for Git's output to close once the Git it ended has exited. */
 const EXIT_DRAIN_MS = 500;
 
+/**
+ * How often a Git read checks its time limit. Each check counts this long however late it runs, so the limit counts the
+ * time the event loop ran, not the time it stalled: a Git that finished during a stall has its exit handled first.
+ */
+const TIME_LIMIT_TICK_MS = 1_000;
+
 /** What ends a Git read before its Git is done: its time limit, and the signal that stops the reads it belongs to. */
 interface ReadLimits {
   readonly timeoutMs: number;
   readonly signal: AbortSignal | undefined;
+  /** Called when the time limit or the signal ends the read, before its Git is ended. */
+  readonly ending?: () => void;
 }
 
 /**
@@ -720,12 +748,13 @@ interface ReadLimits {
  * killing only the launcher left the real Git running in the repository. Node's own `signal` option kills the child
  * alone, so it is not used. The real Git holds the output too, so the output closes once the whole tree has exited;
  * should it stay open anyway, the answer does not wait for it. A Git that exits by itself is read to the end of its
- * output; one a signal from elsewhere ended is waited for as one this ended.
+ * output; one a signal from elsewhere ended is waited for as one this ended. `timeoutMs` counts event-loop time
+ * ({@link TIME_LIMIT_TICK_MS}).
  */
-function settleWhenDone(child: ChildProcess, settle: () => void, { timeoutMs, signal }: ReadLimits): void {
+function settleWhenDone(child: ChildProcess, settle: () => void, { timeoutMs, signal, ending }: ReadLimits): void {
   let ended = false;
   const forget = (): void => {
-    clearTimeout(timer);
+    clearInterval(ticks);
     signal?.removeEventListener("abort", end);
   };
   const drain = (): void => {
@@ -736,12 +765,19 @@ function settleWhenDone(child: ChildProcess, settle: () => void, { timeoutMs, si
     }, EXIT_DRAIN_MS).unref();
   };
   const end = (): void => {
+    clearInterval(ticks);
     ended = true;
+    ending?.();
     // A child that has exited has no tree left to reach, and its pid may name another process by now.
     if (child.exitCode === null && child.signalCode === null) endProcessTree(child);
     else drain();
   };
-  const timer = setTimeout(end, timeoutMs);
+  const tick = Math.min(TIME_LIMIT_TICK_MS, timeoutMs);
+  let counted = 0;
+  const ticks = setInterval(() => {
+    counted += tick;
+    if (counted >= timeoutMs) end();
+  }, tick);
   signal?.addEventListener("abort", end, { once: true });
   const done = (): void => {
     forget();
