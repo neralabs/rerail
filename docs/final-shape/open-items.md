@@ -4049,6 +4049,10 @@ the tree in 1.1 G instructions; the tape from it takes 32.6 G (4,530 a node) in 
   writes 23% (`put_cell`, a `Vec::extend_from_slice` of 2–4 bytes a cell); the tree 13%; SHA-256 of the source
   11%; simdjson 10%; the tree copied into `Pending` records (with an `Option<(String, bool)>` alias each) 7%.
 
+**JSON closed (2026-11-12, 0134):** simdjson writes the columns itself (`rerail_simdjson::tape`,
+`TapeImage::written`): the tape 1.89 G, against 32.6 G packed. **Still open for the parsers that pack:** tree-sitter's
+trees (every other language) and the Bitlex path (O-bitlex-writes-tape).
+
 **Closure:** the tape packed in code that is optimized in every build (not generic over the budget, or in a crate
 optimized as a dependency is), written from a parser's rows straight into the columns: sizes known from the
 parse, no `Pending` copy, a code by a table over the grammar's (kind, field, flags, supertypes) instead of a hash,
@@ -4061,12 +4065,18 @@ pass whose sizes come from the passes before it"; doc 13 §7 step 3: "the CPU ex
 byte". Neither exists, on this branch or on `Parser-generators` (33e9b514f): tier 2 writes `NodeRow`s
 (`native_cpu_stream::Columns`), and `json_parser::tape::encode_columns` copies them into `Pending` records and runs
 the engine's `TapeImage::finish`/`pack`, a second packing (O-tape-pack-cost: 31.5 of 35.6 G on the repository's JSON
-in a debug build). simdjson's hookup (0134) copied that route.
+in a debug build). simdjson's first hookup copied that route; it now writes the columns itself (0134).
+
+**Why the table:** on 2026-11-08 tier 2 wrote the v9np columns (decision 0054; doc 19 §4, "four stores, a table probe
+and three ORs a node"). Doc 20 deleted those backends the same day, because the format, widths and first-use
+numbering were held in the backend, not stated by any instruction. The node table replaced them, generic but one
+step short: the tape writing was never stated in the program (doc 13 §2–§3 gives each column as one write at
+`ord`). Doc 34 then made the table 24-byte rows.
 
 **Closure:** the executors' last pass writes the v9np columns (codes, sizes, base and offsets, tails) from the
 records, with the sizes the passes before it found; no `Pending`, no `finish`. Tapes equal `TapeImage::encode`'s
 byte for byte (`json_tapes_from_the_bitlex_parser_are_tree_sitters`), and the tape's cost in `json_parse_costs` is
-the parse's plus the writing of its bytes. The same for simdjson's tree (`rerail_simdjson::tree` writes the columns).
+the parse's plus the writing of its bytes, as simdjson's writer now does (`rerail_simdjson::tape`, 0134).
 
 ## O-jsonc-simdjson. JSON with comments goes to tree-sitter-json
 

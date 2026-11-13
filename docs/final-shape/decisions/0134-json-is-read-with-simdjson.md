@@ -43,8 +43,16 @@ after:  source -> simdjson (DOM: validate; stage 1 index) -> tree -> tape
      1 MB (the DOM parser holds about 14 bytes a source byte);
    - `structurals(src, read)`: the parse, then the structural index (`{ } [ ] : ,` and each
      scalar's first byte), lent to `read`.
-2. **The tree is built in Rust in that crate** (`rerail_simdjson::tree`), optimized as a
-   dependency is (`[profile.dev.package.rerail-simdjson]`):
+2. **The tape is written straight from simdjson's index**, in Rust in that crate
+   (`rerail_simdjson::tape`), optimized as a dependency is (`[profile.dev.package.rerail-simdjson]`).
+   One pass writes each column at the node's preorder slot, as doc 13 §2 describes:
+   - at a node's start: its code (numbered by first use), its offset from its block's base, and a
+     base for every 16 nodes;
+   - at its end: its size (the nodes written since it) and its tail (its end less the last
+     descendant's start);
+   - `size`, `off` and `tail` are narrowed to 2 bytes at the end where the file's largest fits.
+
+   What the index leaves to the writer:
    - a string's closing quote and a scalar's end are the last byte before the next index that
      is not whitespace;
    - a string's escapes are found with `memchr`; each is two bytes (tree-sitter-json's
@@ -52,8 +60,9 @@ after:  source -> simdjson (DOM: validate; stage 1 index) -> tree -> tape
    - the document runs from its first token to the end of the file, as tree-sitter's root;
    - offsets after a byte order mark are shifted by its 3 bytes (simdjson skips it);
    - the `_value` supertype marks the document's child, array elements and pair values.
-   The engine names the kinds with tree-sitter-json's ids and writes the tape's nodes from the
-   tree (`json_parser::simdjson`, registered as JSON's `TreeParser`).
+
+   The engine takes the columns as written (`TapeImage::written`: their lengths checked, the
+   source's digest added). No `Pending` record is made, and `TapeImage::finish` does not run.
 3. **A file simdjson refuses goes to tree-sitter-json:** comments (JSONC), a trailing comma, a
    number past simdjson's range, nesting past 1,024, invalid JSON. Its tape is what it was.
 4. **The oracle** (`json_tapes_from_simdjson_are_tree_sitters`): hand-written cases (escapes,
@@ -65,30 +74,26 @@ after:  source -> simdjson (DOM: validate; stage 1 index) -> tree -> tape
 
 ## Results
 
-Every `.json` file of the repository up to 1 MB that simdjson accepts (2,200 files, 73.6 MB),
-debug build (the engine unoptimized, dependencies at `-O3`), least of 3 rounds, load 8–10:
+Every `.json` file of the repository up to 1 MB that both simdjson and the Bitlex parser accept (2,200
+files, 73.6 MB, 7.2 M nodes), debug build (the engine unoptimized, dependencies at `-O3`), least of 3
+rounds (`tape::tests::json_parse_costs`):
 
-| | instructions | CPU | |
+| | instructions | a node | CPU |
 |---|---:|---:|---:|
-| simdjson: parse and index | 0.45 G | 25 ms | 2.9 GB/s |
-| simdjson: parse, index and tree | 1.1 G | 53 ms | 1.4 GB/s |
-| **simdjson: the tape** (the product's path) | **32.6 G** | 1.62 s | 45 MB/s |
-| tree-sitter-json: parse | 34.8 G | 1.44 s | 51 MB/s |
-| tree-sitter-json: the tape (before) | 130.3 G | 7.03 s | 10.5 MB/s |
+| simdjson: parse and index | 0.45 G | 62 | 25 ms |
+| simdjson: parse, index and the columns | 1.63 G | 227 | 73 ms |
+| **simdjson: the tape** (the product's path) | **1.89 G** | 263 | 99 ms |
+| Bitlex: parse (its node table) | 3.35 G | 465 | 178 ms |
+| Bitlex: the tape (node table, then `finish`) | 35.6 G | 4,937 | 1.80 s |
+| tree-sitter-json: parse | 34.8 G | 4,832 | 1.43 s |
+| tree-sitter-json: the tape (before) | 130.3 G | 18,089 | 6.96 s |
 
-2,199 tapes equal tree-sitter-json's; 1 is tree-sitter's error (`7e+308`); 1 file is refused.
+The tape is the columns plus the source's SHA-256 (0.21 G). 2,199 tapes equal tree-sitter-json's
+byte for byte; 1 is tree-sitter's error (`7e+308`); 1 file is refused.
 
-What is left is the engine's tape packing: 31.5 of the 32.6 G. `TapeImage::finish` is generic, so
-it is compiled unoptimized in the parser's crate. Built at `-O3` (`rerail-lang`, `rerail-lang-json`),
-the tape is 5.0 G, of which packing is 3.9 G (O-tape-pack-cost).
-
-Against the Bitlex parser (same files):
-
-| | debug build | tape code at `-O3` |
-|---|---:|---:|
-| simdjson: parse and tree | 1.1 G | 1.1 G |
-| Bitlex: parse (node table) | 3.3 G | 3.3 G |
-| simdjson: the tape | 32.6 G | 5.0 G |
-| Bitlex: the tape | 35.6 G | 7.5 G |
+The first build made a tree, then packed it as tree-sitter's trees are packed: 32.6 G, of which
+31.5 G was `TapeImage::finish` (generic, so compiled unoptimized in the parser's crate). The
+Bitlex path still packs that way (O-bitlex-writes-tape); tree-sitter's trees do too
+(O-tape-pack-cost).
 
 The Bitlex parse is 85% generated code (tier 2 51%, tier 1 34%), the rest buffer set-up.

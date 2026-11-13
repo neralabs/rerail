@@ -364,6 +364,16 @@ pub struct Code {
 }
 
 impl Code {
+    /// A code of `kind` under `field`, with no flags or alias, in the supertypes `classes` (ascending).
+    pub fn plain(kind: u16, field: u16, classes: &[u16]) -> Result<Self, String> {
+        if kind as usize >= KIND_LIMIT || field as usize >= FIELD_LIMIT || kind == ERROR_CODE || classes.len() > MAX_NODE_SUPERTYPES {
+            return Err(format!("kind {kind}, field {field} or {} supertypes past the tape's codes", classes.len()));
+        }
+        let mut code = Code { kf: kind | (field << 10), flags: 0, alias: SENTINEL, class_count: classes.len() as u8, classes: [0; MAX_NODE_SUPERTYPES] };
+        code.classes[..classes.len()].copy_from_slice(classes);
+        Ok(code)
+    }
+
     fn classes(&self) -> &[u16] {
         &self.classes[..usize::from(self.class_count)]
     }
@@ -1332,6 +1342,51 @@ impl TapeImage {
             }
         }
         Self::pack(&nodes, std::mem::take(&mut supertypes), grammar, source, budget)
+    }
+
+    /// An image from columns a parser wrote itself, in this format (codes numbered by first use, `base`
+    /// per `CHECKPOINT_STRIDE` nodes, each of `size`, `off` and `tail` at its narrowest width): no node is
+    /// packed again, and only the columns' lengths are checked (a code's range is the writer's: a node's code
+    /// is numbered as the node is written). Not generic, so it is compiled once, here.
+    #[allow(clippy::too_many_arguments)]
+    pub fn written(
+        code: Vec<u8>,
+        size: Vec<u8>,
+        base: Vec<u8>,
+        off: Vec<u8>,
+        tail: Vec<u8>,
+        widths: [u8; 3],
+        codes: Vec<Code>,
+        grammar: &Grammar,
+        source: &str,
+        budget: &dyn Fn() -> bool,
+    ) -> Result<Self, String> {
+        let count = code.len() / 2;
+        let [size_width, off_width, tail_width] = widths.map(|w| usize::from(w & !TAIL_FROM_START));
+        if count == 0
+            || code.len() % 2 != 0
+            || ![size_width, off_width, tail_width].iter().all(|w| matches!(w, 2 | 4))
+            || size.len() != count * size_width
+            || off.len() != count * off_width
+            || tail.len() != count * tail_width
+            || base.len() != count.div_ceil(CHECKPOINT_STRIDE) * 4
+            || codes.is_empty()
+        {
+            return Err("a written tape's columns do not agree".into());
+        }
+        Ok(Self {
+            code,
+            size,
+            base,
+            off,
+            tail,
+            widths,
+            codes,
+            kind_aliases: Vec::new(),
+            language: grammar.lang,
+            source_len: source.len(),
+            source_digest: Some(source_digest(source, &budget)?),
+        })
     }
 
     /// The columns of `nodes`, in preorder with their sizes set: codes folded and numbered by

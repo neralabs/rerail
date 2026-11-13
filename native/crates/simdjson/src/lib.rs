@@ -54,7 +54,7 @@ pub fn structurals<R>(src: &[u8], read: impl FnOnce(&[u32]) -> R) -> Result<R, E
     result
 }
 
-/// The kinds and fields a JSON tree is written with: tree-sitter-json's ids, which the caller looks up.
+/// The kinds and fields a JSON tape is written with: tree-sitter-json's ids, which the caller looks up.
 #[derive(Clone, Copy, Debug)]
 pub struct Kinds {
     pub document: u16,
@@ -72,36 +72,51 @@ pub struct Kinds {
     pub value_field: u16,
 }
 
-/// A node of the tree: its kind, its field under its parent (0 for none), its span, and its parent's row
-/// (`u32::MAX` for the document).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Node {
-    pub kind: u16,
-    pub field: u16,
-    pub start: u32,
-    pub end: u32,
-    pub parent: u32,
-}
-
-/// A JSON document's tree, tree-sitter-json's node for node: `document`, `object`, `pair` (its `key` and
-/// `value`), `array`, `string` (its `string_content` and `escape_sequence`), `number`, `true`, `false`,
-/// `null`; in preorder, without the tokens each node implies (braces, brackets, commas, colons, quotes).
+/// A JSON document's tape, written straight from simdjson's index in the engine's v9np columns
+/// (`tape::TapeImage`): tree-sitter-json's nodes in preorder (`document`, `object`, `pair` with its `key` and
+/// `value`, `array`, `string` with its `string_content` and `escape_sequence`, `number`, `true`, `false`,
+/// `null`), without the tokens each node implies.
+///
+/// One pass over the index writes every column at the node's preorder slot `ord`:
+/// - at a node's start, its `code` (numbered by first use in the file), its `off` from its block's
+///   `base`, and the `base` of each block of 16 nodes (starts never decrease in preorder);
+/// - at its end, its `size` (the nodes written since it) and its `tail` (its end less the start of
+///   the last node written, its last descendant).
+///
+/// `size`, `off` and `tail` are written as `u32`s, then narrowed to 2 bytes where the file's largest
+/// value fits, as the tape stores them.
 #[derive(Clone, Debug, Default)]
-pub struct Tree {
-    pub nodes: Vec<Node>,
-    /// The rows of the nodes in a value's place (tree-sitter-json's `_value` supertype): the document's
-    /// child, each array element, each pair's value.
-    pub values: Vec<u32>,
+pub struct Tape {
+    /// Each node's code, an index into `codes`, 2 bytes little-endian.
+    pub code: Vec<u8>,
+    /// The file's codes, in first-use order: kind, field, and whether the node is in a value's place
+    /// (tree-sitter-json's `_value` supertype: the document's child, an array element, a pair's value).
+    pub codes: Vec<(u16, u16, bool)>,
+    pub size: Vec<u8>,
+    pub base: Vec<u8>,
+    pub off: Vec<u8>,
+    pub tail: Vec<u8>,
+    /// `size`, `off` and `tail`'s widths in bytes (2 or 4); every tail is from the last descendant's start.
+    pub widths: [u8; 3],
 }
 
-/// Why a document has no tree.
+impl Tape {
+    pub fn node_count(&self) -> usize {
+        self.code.len() / 2
+    }
+}
+
+/// A block of the tape: `base` holds one start per this many nodes (`tape::CHECKPOINT_STRIDE`).
+pub const STRIDE: usize = 16;
+
+/// Why a document has no tape.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Refusal {
     /// simdjson refused it.
     Simdjson(Error),
     /// Its index is not one a valid document has (never, for a document simdjson accepts).
     Shape(&'static str),
-    /// It is past the tree's offsets (4 GB).
+    /// It is past the tape's offsets (4 GB).
     TooLarge,
 }
 
@@ -115,20 +130,20 @@ impl std::fmt::Display for Refusal {
     }
 }
 
-/// `src`'s tree, read from simdjson's index (its DOM parser validates the whole document first).
+/// `src`'s tape (simdjson's DOM parser validates the whole document first).
 ///
-/// What the index leaves to the tree: a string's closing quote and a scalar's end are the last byte before
-/// the next index that is not whitespace; a string's escapes are found with `memchr`, and its content is
-/// the runs between them. Each escape is two bytes, `\` and
-/// its letter (tree-sitter-json's `escape_sequence`: a `\u`'s four digits are content). The document runs
-/// from its first token to the end of the file, as tree-sitter's root does.
-pub fn tree(src: &[u8], kinds: &Kinds) -> Result<Tree, Refusal> {
+/// What the index leaves to the writer: a string's closing quote and a scalar's end are the last byte
+/// before the next index that is not whitespace; a string's escapes are found with `memchr`, and its
+/// content is the runs between them. Each escape is two bytes, `\` and its letter (tree-sitter-json's
+/// `escape_sequence`: a `\u`'s four digits are content). The document runs from its first token to the
+/// end of the file, as tree-sitter's root does.
+pub fn tape(src: &[u8], kinds: &Kinds) -> Result<Tape, Refusal> {
     if src.len() >= u32::MAX as usize {
         return Err(Refusal::TooLarge);
     }
     // simdjson skips a UTF-8 byte order mark, and its offsets start after it.
     let shift = if src.starts_with(b"\xef\xbb\xbf") { 3 } else { 0 };
-    structurals(src, |index| build(src, index, shift, kinds)).map_err(Refusal::Simdjson)?
+    structurals(src, |index| write(src, index, shift, kinds)).map_err(Refusal::Simdjson)?
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -138,9 +153,106 @@ enum Open {
     Pair,
 }
 
-fn build(src: &[u8], index: &[u32], shift: u32, k: &Kinds) -> Result<Tree, Refusal> {
+/// The kinds a code names, by slot; a code is `slot * 3 + field` (0 none, 1 `key`, 2 `value`).
+const DOCUMENT: usize = 0;
+const PAIR: usize = 1;
+const CONTENT: usize = 2;
+const ESCAPE: usize = 3;
+const OBJECT: usize = 4;
+const ARRAY: usize = 5;
+const STRING: usize = 6;
+const NUMBER: usize = 7;
+const TRUE: usize = 8;
+const FALSE: usize = 9;
+const NULL: usize = 10;
+const SLOTS: usize = 11;
+const NO_FIELD: usize = 0;
+const KEY: usize = 1;
+const VALUE: usize = 2;
+
+/// The columns as they are written: wide cells, narrowed at the end.
+struct Writer<'k> {
+    kinds: &'k Kinds,
+    /// A code's id in this file, by `slot * 3 + field`; `u16::MAX` until first used.
+    ids: [u16; SLOTS * 3],
+    tape: Tape,
+    size: Vec<u32>,
+    off: Vec<u32>,
+    tail: Vec<u32>,
+    base: u32,
+    /// The start of the last node written: an ending node's last descendant.
+    last_start: u32,
+    max_off: u32,
+    max_tail: u32,
+}
+
+impl Writer<'_> {
+    /// Writes a node's start columns; its `ord`.
+    #[inline(always)]
+    fn open(&mut self, slot: usize, field: usize, start: u32) -> u32 {
+        let ord = self.size.len() as u32;
+        let key = slot * 3 + field;
+        let mut id = self.ids[key];
+        if id == u16::MAX {
+            id = self.tape.codes.len() as u16;
+            self.ids[key] = id;
+            let k = self.kinds;
+            let kind = [k.document, k.pair, k.string_content, k.escape_sequence, k.object, k.array, k.string, k.number, k.true_, k.false_, k.null][slot];
+            let field_id = [0, k.key_field, k.value_field][field];
+            // A value's place: the kinds a value can be, unless keyed.
+            self.tape.codes.push((kind, field_id, slot >= OBJECT && field != KEY));
+        }
+        self.tape.code.extend_from_slice(&id.to_le_bytes());
+        if ord as usize % STRIDE == 0 {
+            self.base = start;
+            self.tape.base.extend_from_slice(&start.to_le_bytes());
+        }
+        let off = start - self.base;
+        self.max_off = self.max_off.max(off);
+        self.off.push(off);
+        self.size.push(0);
+        self.tail.push(0);
+        self.last_start = start;
+        ord
+    }
+
+    /// Writes an ended node's end columns.
+    #[inline(always)]
+    fn close(&mut self, ord: u32, end: u32) {
+        let tail = end - self.last_start;
+        self.max_tail = self.max_tail.max(tail);
+        self.size[ord as usize] = self.size.len() as u32 - ord;
+        self.tail[ord as usize] = tail;
+    }
+
+    /// A node with no children.
+    #[inline(always)]
+    fn leaf(&mut self, slot: usize, field: usize, start: u32, end: u32) {
+        let ord = self.open(slot, field, start);
+        self.close(ord, end);
+    }
+
+    fn finish(mut self) -> Tape {
+        let narrow = |cells: &[u32], max: u32, out: &mut Vec<u8>| -> u8 {
+            if max <= 0xffff {
+                out.reserve(cells.len() * 2);
+                out.extend(cells.iter().flat_map(|&c| (c as u16).to_le_bytes()));
+                2
+            } else {
+                out.reserve(cells.len() * 4);
+                out.extend(cells.iter().flat_map(|&c| c.to_le_bytes()));
+                4
+            }
+        };
+        let count = self.size.len() as u32;
+        let t = &mut self.tape;
+        t.widths = [narrow(&self.size, count, &mut t.size), narrow(&self.off, self.max_off, &mut t.off), narrow(&self.tail, self.max_tail, &mut t.tail)];
+        self.tape
+    }
+}
+
+fn write(src: &[u8], index: &[u32], shift: u32, kinds: &Kinds) -> Result<Tape, Refusal> {
     let len = src.len() as u32;
-    let node = |kind, field, start, end, parent| Node { kind, field, start, end, parent };
     let end_before = |start: u32, next: u32| {
         let mut end = next;
         while end > start + 1 && matches!(src[end as usize - 1], b' ' | b'\t' | b'\n' | b'\r') {
@@ -149,13 +261,26 @@ fn build(src: &[u8], index: &[u32], shift: u32, k: &Kinds) -> Result<Tree, Refus
         end
     };
     let first = *index.first().ok_or(Refusal::Shape("an empty index"))? + shift;
-    let mut tree = Tree { nodes: Vec::with_capacity(index.len() * 2), values: Vec::with_capacity(index.len()) };
-    tree.nodes.push(node(k.document, 0, first, len, u32::MAX));
+    // A node an index entry, and half again for pairs, contents and escapes (the vectors grow past it).
+    let guess = index.len() + index.len() / 2;
+    let mut w = Writer {
+        kinds,
+        ids: [u16::MAX; SLOTS * 3],
+        tape: Tape { code: Vec::with_capacity(guess * 2), base: Vec::with_capacity(guess / STRIDE * 4 + 4), ..Tape::default() },
+        size: Vec::with_capacity(guess),
+        off: Vec::with_capacity(guess),
+        tail: Vec::with_capacity(guess),
+        base: 0,
+        last_start: 0,
+        max_off: 0,
+        max_tail: 0,
+    };
+    let document = w.open(DOCUMENT, NO_FIELD, first);
     let mut open: Vec<(Open, u32)> = Vec::with_capacity(64);
     // A value ended at `end`: the pair it is the value of ends there too.
-    let close_pair = |open: &mut Vec<(Open, u32)>, nodes: &mut [Node], end: u32| {
+    let close_pair = |open: &mut Vec<(Open, u32)>, w: &mut Writer, end: u32| {
         if let Some(&(Open::Pair, pair)) = open.last() {
-            nodes[pair as usize].end = end;
+            w.close(pair, end);
             open.pop();
         }
     };
@@ -165,75 +290,71 @@ fn build(src: &[u8], index: &[u32], shift: u32, k: &Kinds) -> Result<Tree, Refus
         match byte {
             b',' | b':' => continue,
             b'}' | b']' => {
-                let (_, row) = open.pop().ok_or(Refusal::Shape("a close with nothing open"))?;
-                tree.nodes[row as usize].end = at + 1;
-                close_pair(&mut open, &mut tree.nodes, at + 1);
+                let (_, ord) = open.pop().ok_or(Refusal::Shape("a close with nothing open"))?;
+                w.close(ord, at + 1);
+                close_pair(&mut open, &mut w, at + 1);
                 continue;
             }
             _ => {}
         }
         let next = index.get(i + 1).map_or(len, |&n| n + shift);
         // A key (a string in an object), or a value.
-        let (parent, field, value) = match open.last() {
-            None => (0, 0, true),
-            Some(&(Open::Array, row)) => (row, 0, true),
-            Some(&(Open::Pair, row)) => (row, k.value_field, true),
-            Some(&(Open::Object, row)) => {
-                let pair = tree.nodes.len() as u32;
-                tree.nodes.push(node(k.pair, 0, at, at, row));
+        let field = match open.last() {
+            None | Some(&(Open::Array, _)) => NO_FIELD,
+            Some(&(Open::Pair, _)) => VALUE,
+            Some(&(Open::Object, _)) => {
+                let pair = w.open(PAIR, NO_FIELD, at);
                 open.push((Open::Pair, pair));
-                (pair, k.key_field, false)
+                KEY
             }
         };
-        let me = tree.nodes.len() as u32;
-        if value {
-            tree.values.push(me);
-        }
         match byte {
             b'{' => {
-                tree.nodes.push(node(k.object, field, at, at, parent));
-                open.push((Open::Object, me));
+                let ord = w.open(OBJECT, field, at);
+                open.push((Open::Object, ord));
             }
             b'[' => {
-                tree.nodes.push(node(k.array, field, at, at, parent));
-                open.push((Open::Array, me));
+                let ord = w.open(ARRAY, field, at);
+                open.push((Open::Array, ord));
             }
             b'"' => {
                 let end = end_before(at, next);
-                tree.nodes.push(node(k.string, field, at, end, parent));
+                let string = w.open(STRING, field, at);
                 let (mut from, close) = (at + 1, end - 1);
                 while let Some(found) = memchr::memchr(b'\\', &src[from as usize..close as usize]) {
                     let escape = from + found as u32;
                     if escape > from {
-                        tree.nodes.push(node(k.string_content, 0, from, escape, me));
+                        w.leaf(CONTENT, NO_FIELD, from, escape);
                     }
-                    tree.nodes.push(node(k.escape_sequence, 0, escape, escape + 2, me));
+                    w.leaf(ESCAPE, NO_FIELD, escape, escape + 2);
                     from = escape + 2;
                 }
                 if close > from {
-                    tree.nodes.push(node(k.string_content, 0, from, close, me));
+                    w.leaf(CONTENT, NO_FIELD, from, close);
                 }
-                if value {
-                    close_pair(&mut open, &mut tree.nodes, end);
+                w.close(string, end);
+                if field != KEY {
+                    close_pair(&mut open, &mut w, end);
                 }
             }
             _ => {
-                let kind = match byte {
-                    b't' => k.true_,
-                    b'f' => k.false_,
-                    b'n' => k.null,
-                    _ => k.number,
+                let slot = match byte {
+                    b't' => TRUE,
+                    b'f' => FALSE,
+                    b'n' => NULL,
+                    _ => NUMBER,
                 };
                 let end = end_before(at, next);
-                tree.nodes.push(node(kind, field, at, end, parent));
-                close_pair(&mut open, &mut tree.nodes, end);
+                w.leaf(slot, field, at, end);
+                close_pair(&mut open, &mut w, end);
             }
         }
     }
     if !open.is_empty() {
         return Err(Refusal::Shape("a node left open"));
     }
-    Ok(tree)
+    w.close(document, len);
+    Ok(w.finish())
 }
 
 /// The kernel simdjson chose for this CPU (`arm64`, `haswell`, …).
@@ -255,11 +376,11 @@ mod tests {
         assert_ne!(implementation(), "fallback");
     }
 
-    /// The tree's cost alone, for `/usr/bin/time -l`: `RERAIL_TREE_RUN` is `none` (read the files), `index`
-    /// (parse and index) or `tree`, 10 rounds over the repository's `.json` files up to 1 MB.
+    /// The tape's cost alone, for `/usr/bin/time -l`: `RERAIL_TAPE_RUN` is `none` (read the files), `index`
+    /// (parse and index) or `tape`, 10 rounds over the repository's `.json` files up to 1 MB.
     #[test]
-    #[ignore = "a measurement: run by name with RERAIL_TREE_RUN"]
-    fn tree_cost() {
+    #[ignore = "a measurement: run by name with RERAIL_TAPE_RUN"]
+    fn tape_cost() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         let (mut files, mut work) = (Vec::new(), vec![root]);
         while let Some(dir) = work.pop() {
@@ -276,13 +397,13 @@ mod tests {
         }
         files.retain(|f| structurals(f, |_| ()).is_ok());
         let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, key_field: 1, value_field: 2 };
-        let run = std::env::var("RERAIL_TREE_RUN").unwrap_or_default();
+        let run = std::env::var("RERAIL_TAPE_RUN").unwrap_or_default();
         let mut n = 0usize;
         for _ in 0..10 {
             for f in &files {
                 n += match run.as_str() {
                     "index" => structurals(f, <[u32]>::len).unwrap(),
-                    "tree" => tree(f, &kinds).unwrap().nodes.len(),
+                    "tape" => tape(f, &kinds).unwrap().node_count(),
                     _ => f.len(),
                 };
             }

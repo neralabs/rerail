@@ -58,7 +58,7 @@ fn compile() -> Result<Compiled, String> {
 /// did not compile: the reason is [`compile_error`]).
 // Its tape (`tape::TreeParser`).
 pub mod tape;
-// The engine's JSON parser: simdjson's structural index, read as tree-sitter-json's node table.
+// The engine's JSON parser: simdjson, its tape written straight from its structural index (0134).
 #[cfg(not(target_family = "wasm"))]
 pub mod simdjson;
 
