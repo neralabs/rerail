@@ -50,9 +50,9 @@ def exercise(module,case,scratch):
     except Exception as error:return dict(error=dict(type=type(error).__name__,args=canonical(error.args,scratch)))
 
 
-def install(_backend,_module,detectors=False):
-    # The source-call guard deliberately exposes these remaining unported APIs.
-    pass
+def install(backend,module,detectors=False):
+    from side_effects_conversion_port import install as configure
+    configure(backend,module)
 
 
-if __name__=='__main__':main(CHECK,'rerail.side-effects-conversion/v1',cases,exercise,install,['side_effects_conversion_contract.py'])
+if __name__=='__main__':main(CHECK,'rerail.side-effects-conversion/v1',cases,exercise,install,['side_effects_conversion_contract.py','side_effects_conversion_port.py','value_columns.py'])

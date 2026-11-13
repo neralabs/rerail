@@ -3566,6 +3566,20 @@
       "origin": "authored",
       "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
       "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
+    },
+    {
+      "destination": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-side-effects-conversion.rr",
+      "sha256": "7e722c7f361cbf96fb3295f0abb47dd81f00e79f039e268fde13e51c985b19f1",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
+    },
+    {
+      "destination": "docs/rule-syntax/lib/data-layer/side-effects-conversion.rr",
+      "sha256": "c30f0c66c9de75767333cd39b1be4853932e1ec85a3f4b53d12cb0aa1e1cd3b6",
+      "origin": "authored",
+      "sourceCommit": "2b1504adc4291daaf080b2e932962b134da1a69a",
+      "upstreamPath": "scripts/lint_plan_scope_side_effects.py"
     }
   ],
   "rules": [

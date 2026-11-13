@@ -1,0 +1,24 @@
+// Source: https://github.com/neralabs/nera-data-layer/blob/2b1504adc4291daaf080b2e932962b134da1a69a/scripts/lint_plan_scope_side_effects.py#L393
+#include "python/paths.rr"
+#include "python/values.rr"
+.violation SideEffectsConversionConfiguration(at:span,fields:symbol,extract_error_type:symbol,extract_error:symbol) code "PSE_CONVERSION_CONFIG" "Public conversion contracts"
+SideEffectsConversionConfiguration(@place("",0),"code,file_path,line_number,message,severity","RuntimeError","plan_scope_side_effects uses AstEventCollector facts") :- option("entryPoint","_pse_conversion_configuration").
+
+pyp_input(0,r) :- option("entryPoint","_pse_from_structured"),option("pseRoot",r).
+pyp_input(1,p) :- option("entryPoint","_pse_from_structured"),option("psePath",p).
+.decl psc_relative(path:symbol,result:symbol)
+psc_relative(p,".") :- pyp_path(1,p),pyp_path(0,p).
+psc_relative(p,@slice(p,strlen(r)+1,strlen(p))) :- pyp_path(1,p),pyp_path(0,r),r!="/",r!="//",r!=".",prefix(cat(r,"/"),p).
+psc_relative(p,@slice(p,1,strlen(p))) :- pyp_path(1,p),pyp_path(0,"/"),p!="/",prefix("/",p),!prefix("//",p).
+psc_relative(p,@slice(p,2,strlen(p))) :- pyp_path(1,p),pyp_path(0,"//"),p!="//",prefix("//",p).
+psc_relative(p,p) :- pyp_path(1,p),pyp_path(0,"."),!prefix("/",p).
+.decl psc_path(path:symbol)
+psc_path(r) :- psc_relative(_,r).
+psc_path(p) :- pyp_path(1,p),!psc_relative(p,_).
+.decl psc_audit()
+psc_audit() :- option("entryPoint","_pse_from_structured"),pv_kind(0,"str"),pv_text(0,"audit").
+.decl psc_severity(value:symbol)
+psc_severity("audit") :- psc_audit().
+psc_severity("error") :- option("entryPoint","_pse_from_structured"),!psc_audit().
+.violation SideEffectsStructuredConversion(at:span,file_path:symbol,severity:symbol) code "PSE_STRUCTURED_CONVERSION" "Converted structured finding"
+SideEffectsStructuredConversion(@place("",0),p,s) :- psc_path(p),psc_severity(s).
