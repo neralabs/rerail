@@ -384,13 +384,13 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
     writeln!(
         out,
         "    #[inline(always)]
-    fn open(&mut self, kind: u16) {{
+    /// `OPEN`: its kind, with its field above it (or none), and its start.
+    fn open(&mut self, kind_field: u32) {{
         self.pending = 0;
         let n = self.nodes;
         unsafe {{
             let r = self.row(n);
-            (*r).kind = kind;
-            (*r).field = 0;
+            *(r as *mut u32) = kind_field;
             (*r).start = self.start;
             *Self::col(self.open, self.nopen) = n;
             {}
@@ -417,7 +417,8 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
     }}
 
     #[inline(always)]
-    fn leaf<const DEFERRED: bool, const EXTRA: bool>(&mut self, kind: u32, end: u32) {{
+    /// `LEAF`: its kind, with its field above it (or none); its bytes; one record.
+    fn leaf<const DEFERRED: bool, const EXTRA: bool>(&mut self, kind_field: u32, end: u32) {{
         if DEFERRED {{
             if self.pending == 0 {{
                 self.keep = self.last_end;
@@ -429,8 +430,7 @@ fn node_words(out: &mut String, x: &Facts<'_>) {
         let n = self.nodes;
         unsafe {{
             let r = self.row(n);
-            (*r).kind = kind as u16;
-            (*r).field = 0;
+            *(r as *mut u32) = kind_field;
             (*r).start = self.start;
             (*r).end = end;
             (*r).size = 1;
@@ -998,6 +998,8 @@ fn check(out: &mut String, on_p: &mut String, i: usize, c: &LocalCheck, o: usize
 fn succ(x: &Facts<'_>, pc: usize) -> Vec<usize> {
     let n = x.native.structural.len();
     let v = match x.native.structural[pc].operation {
+        // A node's field set by the next word, stored with its kind: on past that word.
+        Op::Open { .. } | Op::Leaf { .. } if field_after(x, pc).is_some() => vec![pc + 2],
         Op::Goto { target } => vec![usize::from(target)],
         Op::Switch { table } => switch_plan(x, &x.native.switches[usize::from(table)]).refs.into_iter().map(usize::from).collect(),
         Op::Word { test: true, .. } | Op::Mark { .. } | Op::Row { .. } | Op::Flag { op: FlagOp::Test, .. } => vec![pc + 1, pc + 2],
@@ -1006,6 +1008,15 @@ fn succ(x: &Facts<'_>, pc: usize) -> Vec<usize> {
         _ => vec![pc + 1],
     };
     v.into_iter().filter(|&t| t < n).collect()
+}
+
+/// The field the word after a node's sets on it (`NODE_FIELD` on the node just made), stored
+/// with the node's kind: one 32-bit store of both, as the JIT's (`with_field`).
+fn field_after(x: &Facts<'_>, pc: usize) -> Option<u16> {
+    match x.native.structural.get(pc + 1).map(|w| w.operation) {
+        Some(Op::NodeField { field, on: On::Here }) => Some(field),
+        _ => None,
+    }
 }
 
 /// Whether a switch is on the record's kind (`records`): at offset 0, with records.
@@ -1157,10 +1168,15 @@ fn word(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, String>
         Op::Empty { total } => format!("if s.total({total}) != 0 {{ return Err(false); }}\n{}", jump(0)?),
         Op::Word { string, test: true } => format!("if s.word() == {} {{ {} }} else {{ {} }}", u32::from(string) + 1, jump(0)?, jump(1)?),
         Op::Word { string, test: false } => format!("if s.word() != {} {{ return Err(false); }}\n{}", u32::from(string) + 1, jump(0)?),
-        Op::Open { kind } => format!("s.open({kind});\n{}", jump(0)?),
+        Op::Open { kind } => format!("s.open({});\n{}", u32::from(kind) | u32::from(field_after(x, pc).unwrap_or(0)) << 16, jump(0)?),
         Op::Close { this } => format!("s.close::<{this}>({})?;\n{}", if this { end } else { "0" }, jump(0)?),
         Op::Leaf { kind, deferred, extra } => {
-            let k = if kind == WORD_KIND { "s.word_kind()?".to_string() } else { format!("{kind}") };
+            let f = u32::from(field_after(x, pc).unwrap_or(0)) << 16;
+            let k = match (kind == WORD_KIND, f) {
+                (true, 0) => "s.word_kind()?".to_string(),
+                (true, f) => format!("s.word_kind()? | {f}"),
+                (false, f) => format!("{}", u32::from(kind) | f),
+            };
             format!("s.leaf::<{deferred}, {extra}>({k}, {end});\n{}", jump(0)?)
         }
         Op::Settle { .. } => format!("s.pending = 0;\n{}", jump(0)?),
