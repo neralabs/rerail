@@ -556,7 +556,18 @@ cut off when the run was stopped.
   store (decision 0171).** A lease taken again after a phase's end had forgotten that every atom
   was held. And a store of a few large segments (154 MB in 7) is now read whole before the first
   wave, because a lookup reads its segment whole anyway.
-- **A cold run with the tape cache on stops on the writer's back-pressure.** It queues about 295 MB
+- **Rules that intern node texts.** A rule that reads `node_text` interned every node's exact text:
+  a module's, each class's in it, each function's in those. On `impl/` (69 MB of source) that left
+  468 MB of atoms, so a warm store passed the size it is read whole at (decision 0171), and the next
+  run looked atoms up inside its waves. `node_text` is now made only for the nodes a rule reads it
+  of: by kind (T's `node(d, n, "k", …)` fixes `n`'s kind too), by field, or as the children of a
+  node of a fixed kind. With `authentication-plan-purity`: 468 → 56 MB of atoms, 32 → 11 s, and
+  1.5 → 0.8 GB peak, with the same findings. Still open: `schema-introspection-data-paths` keeps
+  468 MB, from `value(n, v)` (W's values), made for every node.
+- **A cold run with the tape cache on stops on the writer's back-pressure.** Fixed for the queue's
+  bytes: sources and tapes are compressed on the parse workers, and the queue holds their frames
+  only (`impl/`: 144 → 32 MB queued, peak 125 → 73 MB, no producer held under strict mode).
+  Earlier notes on it: It queues about 295 MB
   of tapes and sources (9,839 jobs) against the writer's 192 MB queue cap, and under strict mode the
   wait is refused (`wait_in_wave`). This was seen at load average 79, with the writer at nice 19.
   Decision 0138 cleared cold runs on a quiet machine. Not yet traced: whether the writer is too slow,

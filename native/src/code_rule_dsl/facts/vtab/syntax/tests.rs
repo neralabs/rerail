@@ -1129,7 +1129,7 @@ fn long_text_twins_where_no_body_fixes_the_kind() {
 fn text_only_for_the_nodes_read() {
     let prelude = std::fs::read_to_string(crate::code_rule_dsl::logic::rr::library().join("core.rr")).unwrap();
     let fun = |rule: &str| format!(r#"{{"language": "python", "syntax": "valid", "rule": {rule}}}"#);
-    let some = |kinds: &[&str], fields: &[&str]| Some(TextNodes { kinds: kinds.iter().map(|k| k.to_string()).collect(), fields: fields.iter().map(|k| k.to_string()).collect() });
+    let some = |kinds: &[&str], fields: &[&str]| Some(TextNodes { kinds: kinds.iter().map(|k| k.to_string()).collect(), fields: fields.iter().map(|k| k.to_string()).collect(), parents: BTreeSet::new() });
     for (body, read) in [
         ("out(t) :- kind(n, \"call\"), text(n, t).".to_owned(), some(&["call"], &[])),
         ("out(t) :- field(_, \"name\", n), text(n, t).".to_owned(), some(&[], &["name"])),
@@ -1141,6 +1141,28 @@ fn text_only_for_the_nodes_read() {
         let mut program = crate::code_rule_dsl::logic::rr::parse(&format!("{prelude}\n.decl out(t: symbol)\n{body}\n.output out\n")).unwrap();
         let matchers = crate::code_rule_dsl::logic::plan::corpus::matchers::lower(&mut program);
         assert_eq!(text_kind_demand(&program, &matchers).read, read, "{body}");
+    }
+}
+
+/// `node_text` (a node's exact text, at any length) is made only for the nodes a rule reads it of, as `text` is: by
+/// kind (T's `node(d, n, "module", _, _)` fixes `n`'s), by field, or as the children of a node of a fixed kind. Made for
+/// every node, a module's text, each class's in it and each function's in those were all interned (390 MB of atoms
+/// from 69 MB of source).
+#[test]
+fn node_text_only_for_the_nodes_read() {
+    let decls = ".decl node(d: number, n: node, k: symbol, a: number, b: number)\n.decl child(p: node, c: node, i: number)\n.decl field(p: node, f: symbol, c: node)\n.decl node_text(n: node, s: symbol)\n.input node, child, field, node_text\n.decl out(s: symbol)\n.output out\n";
+    let nodes = |kinds: &[&str], fields: &[&str], parents: &[&str]| {
+        let set = |x: &[&str]| x.iter().map(|k| k.to_string()).collect::<BTreeSet<_>>();
+        Some(TextNodes { kinds: set(kinds), fields: set(fields), parents: set(parents) })
+    };
+    for (body, read) in [
+        ("out(s) :- node(_, m, \"module\", _, _), node_text(m, s).", nodes(&["module"], &[], &[])),
+        ("out(s) :- field(_, \"type\", y), node_text(y, s).", nodes(&[], &["type"], &[])),
+        ("out(s) :- node(_, dc, \"decorator\", _, _), child(dc, n, _), node_text(n, s).", nodes(&[], &[], &["decorator"])),
+        ("out(s) :- node(_, n, _, _, _), node_text(n, s).", None),
+    ] {
+        let program = crate::code_rule_dsl::logic::rr::parse(&format!("{decls}{body}\n")).unwrap();
+        assert_eq!(text_kind_demand(&program, &[]).node_text, read, "{body}");
     }
 }
 

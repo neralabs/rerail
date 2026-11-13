@@ -545,7 +545,7 @@ pub(super) struct CoreRows {
     pub(super) long_text_any: bool,
     /// The nodes whose `text` is made (`Projection::text_nodes`): of these kinds, or in one of these fields of their
     /// parent. `None` every node.
-    pub(super) text_nodes: Option<(BTreeSet<String>, BTreeSet<String>)>,
+    pub(super) text_nodes: Option<super::TextNodes>,
     op: Vec<[i64; 2]>,
     op_at: Vec<[i64; 3]>,
     text: Vec<[i64; 2]>,
@@ -741,7 +741,7 @@ impl CoreRows {
                 }
             }
         }
-        let read = self.text_nodes.as_ref().is_none_or(|(kinds, fields)| kinds.contains(kind) || dialect.catalog.field_name(f.field[id as usize]).is_some_and(|name| fields.contains(name)));
+        let read = self.text_nodes.as_ref().is_none_or(|nodes| nodes.reads(f, id, dialect));
         if wants_text && read && (token_like || text.len() <= TEXT_INLINE || self.long_text_any || self.long_text.contains(kind)) {
             self.text.push([n, string(text) as i64]);
         }
