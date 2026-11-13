@@ -194,7 +194,7 @@ pub struct Step {
 }
 
 /// Tells each kind-set axis a planned order reads by its `n` how many keys come into that step (the rows the planner
-/// expects after the step before): the axis chooses between its batch's solve and lookups per node (decision 0105).
+/// expects after the step before): the axis chooses between its batch's solve and lookups per node (decision 0143).
 fn expect_axis_lookups(db: impl crate::code_rule_dsl::facts::vtab::Scoped, plan: &super::profile::RulePlan) {
     let mut into = 1.0;
     for step in &plan.steps {
@@ -701,9 +701,24 @@ pub struct Model {
     /// The run's documents are node-id intervals by their keys (`d << 32` to `d << 32 | 0xffff_ffff`,
     /// `docs_by_shift`): a range read computes its interval, and reads no table of them.
     pub docs_by_shift: bool,
+    /// The program's join shape directives (`front::Shape`), for every form planned with this model.
+    pub shapes: std::sync::Arc<Vec<crate::code_rule_dsl::logic::front::Shape>>,
     /// The relations the program's rules derive or its facts state. Their columns are `c0`, `c1`, … even where an
     /// input of the same name has named columns: `rr::lower`'s projections (`kind`, `docof` over nodes) are rules.
     pub derived: std::sync::Arc<HashSet<String>>,
+}
+
+thread_local! {
+    /// Set while a rule is searched without its join shape directives (`Model::plan_inner`).
+    static NO_SHAPES: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Reads of an input delta (`r__plus`, `r__minus`) priced with no size: each is priced at the default's 1,000 rows. A
+/// delta is bound with the run and measured, so none should be (the guard in `a_session_maintains_a_recursive_cross_file_stratum`).
+static UNSIZED_DELTAS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
+pub fn unsized_deltas() -> u64 {
+    UNSIZED_DELTAS.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 impl Model {
@@ -784,7 +799,7 @@ impl Model {
         stats.solve(BTreeSet::new());
         let analysis = std::sync::OnceLock::new();
         if let Some(a) = self.analysis.get() { let _ = analysis.set(a.clone()); }
-        Model { analysis, input_set: Default::default(), stats, ndv, docof: self.docof.clone(), view_src: self.view_src.clone(), inputs: self.inputs.clone(), docs_by_shift: self.docs_by_shift, derived: self.derived.clone() }
+        Model { shapes: self.shapes.clone(), analysis, input_set: Default::default(), stats, ndv, docof: self.docof.clone(), view_src: self.view_src.clone(), inputs: self.inputs.clone(), docs_by_shift: self.docs_by_shift, derived: self.derived.clone() }
     }
 
     /// Takes back what a component's model (`fork`) learnt of its own relations `own` and its rules `rules` (their
@@ -1513,7 +1528,15 @@ impl Model {
             // 0038): at least one string.
             self.stats.card.get(rel).copied().unwrap_or(1000.0).max(1.0)
         } else {
-            self.stats.card.get(rel).copied().unwrap_or(1000.0)
+            // Any relation empty when it plans is not empty where its plans are reused, for the same reason: at least
+            // one row. At 0, every step after it was priced 0 rows and every order was free: annotation demand's
+            // `rel_base` planned before its guest round made `rr_ast_1_1`, scanned `pkg` whole and then probed
+            // `docof` (10,728 -> 25.8 M -> 10,728 rows); `impmod`, `ruff_qual` and `frag_str` the same.
+            let card = self.stats.card.get(rel).copied();
+            if card.is_none() && (rel.ends_with("__plus") || rel.ends_with("__minus")) && !self.stats.lazy.0.contains_key(rel) {
+                UNSIZED_DELTAS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            card.unwrap_or(1000.0).max(1.0)
         }
     }
 
@@ -1926,6 +1949,8 @@ impl Model {
             d.u64((self.stats.solving_digest >> 64) as u64);
             // A changed key domain can make another order cheaper while row and distinct counts stay fixed.
             for i in self.delta_misses(body, first) { d.u64(i as u64); }
+            // A join shape directive narrows the search: an order kept without it is not this rule's.
+            for shape in self.shapes_for(head) { d.str(&shape.text); }
         })
     }
 
@@ -1985,6 +2010,12 @@ impl Model {
     /// the next run's planning budget (decision 0122).
     pub(in crate::code_rule_dsl) fn ran(key: PlanKey, work: f64) {
         plans_update(&key, |k| k.5 = Some(work));
+    }
+
+    /// Tests: `ran`, under the key `plan_rule_reused` keeps the rule's plan under now.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn ran_as_planned(&self, head: &Atom, body: &[Literal], first: Option<usize>, work: f64) {
+        Self::ran(self.plan_key("", head, body, first), work);
     }
 
     /// The key `plan_rule_reused` keeps a rule's plan under now (it reads the statistics: taken when planned).
@@ -2116,7 +2147,101 @@ impl Model {
     /// fanout and distinct values skewed by a fixed factor in [1/f, f]; a search is also made with the statistics as
     /// they are, and the skewed order priced with them, so `RERAIL_STATS_SKEW_LOG` gets the regret: the skewed
     /// order's work over the best order's, by the true statistics.
+    /// The join shape directives on `head`'s rules and their forms (`front::shape_base`).
+    fn shapes_for(&self, head: &Atom) -> Vec<&crate::code_rule_dsl::logic::front::Shape> {
+        if self.shapes.is_empty() {
+            return Vec::new();
+        }
+        let base = crate::code_rule_dsl::logic::front::shape_base(&head.rel);
+        self.shapes.iter().filter(|s| s.head == base).collect()
+    }
+
+    /// The rule's join shape directives as waits of its joins (`.shape`, O-join-shape-directives): `(join, any of the
+    /// joins it waits for, the variables it waits for, the directive's text)`. A join is held back until a literal of
+    /// the relation it waits for is joined, or the variables it waits for are bound; the delta that drives the rule
+    /// (`first`) never is. Each wait is on the subset joined and what it binds, as a gate's is, so the search stays
+    /// exact within them. `joins`: the body's join literals, in order.
+    fn shape_waits<'s>(&'s self, head: &Atom, body: &[Literal], first: Option<usize>, joins: &[usize]) -> Vec<(usize, Vec<usize>, Vec<String>, &'s str)> {
+        use crate::code_rule_dsl::logic::front::{ShapeWait, shape_base};
+        let mut waits = Vec::new();
+        for shape in self.shapes_for(head) {
+            for (i, &bi) in joins.iter().enumerate() {
+                if first == Some(bi) || !body[bi].atom().is_some_and(|a| shape_base(&a.rel) == shape.lit) {
+                    continue;
+                }
+                match &shape.wait {
+                    ShapeWait::After(x) => {
+                        let any: Vec<usize> = joins.iter().enumerate().filter(|&(j, &bj)| j != i && body[bj].atom().is_some_and(|b| shape_base(&b.rel) == x)).map(|(j, _)| j).collect();
+                        if !any.is_empty() {
+                            waits.push((i, any, Vec::new(), shape.text.as_str()));
+                        }
+                    }
+                    ShapeWait::Bound(vars) => {
+                        let vars: Vec<String> = vars.iter().filter(|v| body.iter().any(|l| l.vars().contains(*v))).cloned().collect();
+                        if !vars.is_empty() {
+                            waits.push((i, Vec::new(), vars, shape.text.as_str()));
+                        }
+                    }
+                }
+            }
+        }
+        waits
+    }
+
+    /// The search within the join shape directives on the rule (`.shape`, O-join-shape-directives). Where they leave no
+    /// order, the search without them, said in the profile. Profiled, the search without them too: a directive whose
+    /// order is the planner's own is no longer needed (estimates cannot judge it: a directive is written where they
+    /// are wrong).
     fn plan_inner(
+        &self,
+        prog: &Program,
+        head: &Atom,
+        body: &[Literal],
+        first: Option<usize>,
+        fixed: Option<&[Step]>,
+        explain: bool,
+    ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
+        if self.shapes_for(head).is_empty() || NO_SHAPES.with(std::cell::Cell::get) {
+            return self.plan_unshaped(prog, head, body, first, fixed, explain);
+        }
+        let free = |this: &Self, explain: bool| {
+            NO_SHAPES.with(|n| n.set(true));
+            let got = this.plan_unshaped(prog, head, body, first, None, explain);
+            NO_SHAPES.with(|n| n.set(false));
+            got
+        };
+        match self.plan_unshaped(prog, head, body, first, fixed, explain) {
+            Ok(got) => {
+                // The directives that hold back a step of this search: those of the rule's body as searched.
+                let joins: Vec<usize> = (0..body.len()).filter(|&i| is_join(&body[i])).collect();
+                let used: Vec<String> = {
+                    let mut t: Vec<String> = self.shape_waits(head, body, first, &joins).iter().map(|w| w.3.to_owned()).collect();
+                    t.dedup();
+                    t
+                };
+                if fixed.is_none()
+                    && super::profile::on()
+                    && !used.is_empty()
+                    && let Ok(own) = free(self, false)
+                {
+                    if shown(&own.0.0) == shown(&got.0.0) {
+                        super::profile::decision("a join shape directive no longer needed (O-join-shape-directives)", || format!("{head}: the planner's own order is the directive's ({})", used.join("; ")));
+                    } else {
+                        super::profile::decision("join shape directives (O-join-shape-directives)", || format!("{head}: est work {:.0}, the planner's own {:.0} ({})", got.0.1, own.0.1, used.join("; ")));
+                    }
+                }
+                Ok(got)
+            }
+            // A kept order the directives do not admit is searched again by the caller.
+            Err(e) if fixed.is_some() => Err(e),
+            Err(e) => {
+                super::profile::decision("a join shape directive that cannot hold (O-join-shape-directives)", || format!("{head}: no order within its directives ({e}); planned without them"));
+                free(self, explain)
+            }
+        }
+    }
+
+    fn plan_unshaped(
         &self,
         prog: &Program,
         head: &Atom,
@@ -2226,12 +2351,16 @@ impl Model {
                         let dfreq = stats.dfreq.get(&key);
                         let name = m.col(&a.rel, c);
                         let freq = if self.input { stats.const_freq(&a.rel, &name, &k) } else { None };
+                        // A count is at least one row, as `card`: a constant absent from the chunk that plans is not
+                        // absent from the chunks that reuse the plan (`frag_str`'s `doc_role(d, 17505)` priced 0.01
+                        // rows, 2,455 found, each joined with every string: 7.1 M rows, none kept). The memo's count
+                        // is exact (a delta's complete constant memo: an absence proof), and stays as it is.
                         konst = if let Some(d) = dfreq {
-                            Some(d.get(&k).copied().unwrap_or(0) as f64)
+                            Some((d.get(&k).copied().unwrap_or(0) as f64).max(1.0))
                         } else if let Some(&f) = stats.memo.get(a.rel.as_str()).and_then(|m| m.get(&(name.clone(), k.clone()))) {
                             Some(f as f64)
                         } else {
-                            freq.map(|f| f as f64)
+                            freq.map(|f| (f as f64).max(1.0))
                         };
                         counted = freq.map(|f| f as f64).or_else(|| dfreq.map(|d| d.get(&k).copied().unwrap_or(0) as f64));
                     }
@@ -2549,6 +2678,11 @@ impl Model {
         if !joins.is_empty() && !joins.iter().any(|&i| matches!(body[i], Literal::Atom(_))) {
             return Err(Error::Plan(format!("rule for {head} has no positive atom")));
         }
+        let waits = if NO_SHAPES.with(std::cell::Cell::get) { Vec::new() } else { self.shape_waits(head, body, first, &joins) };
+        let shaped: Vec<String> = { let mut t: Vec<String> = waits.iter().map(|w| w.3.to_owned()).collect(); t.dedup(); t };
+        let shape_waits = |i: usize, placed: u64, bound: &dyn Fn(&str) -> bool| -> bool {
+            waits.iter().any(|(k, any, vars, _)| *k == i && ((!any.is_empty() && !any.iter().any(|j| placed & (1 << j) != 0)) || vars.iter().any(|v| !bound(v))))
+        };
         let mut candidates = 0u64;
         let (work, rows, order, subsets) = if joins.is_empty() {
             // A body of filters and aggregates alone (`n = count : { … }`) runs over the relational unit, one empty
@@ -2567,8 +2701,15 @@ impl Model {
             if fixed.len() != body.len() {
                 return Err(Error::Plan("a kept plan of another body".into()));
             }
+            let mut placed: u64 = 0;
             for s in fixed {
                 let l = body.get(s.at).filter(|l| **l == s.lit).ok_or_else(|| Error::Plan("a kept plan of another body".into()))?;
+                if let Some(i) = joins.iter().position(|&j| j == s.at) {
+                    if shape_waits(i, placed, &|v: &str| bound.contains(v)) {
+                        return Err(Error::Plan("a kept plan its join shape directives do not admit".into()));
+                    }
+                    placed |= 1 << i;
+                }
                 if is_join(l) {
                     let (w, out, mode) = step(l, rows, &bound).ok_or_else(|| Error::Plan("a kept step cannot run".into()))?;
                     candidates += 1;
@@ -2619,6 +2760,14 @@ impl Model {
                 var_ids.entry(v).or_insert(n);
             }
         }
+        // No cross product priced from a default size (O-join-shape-directives, item 4): while a connected step remains,
+        // a step sharing no variable with what is joined is not taken where it or a connected step has no size of its
+        // own (`card`'s 1,000 rows): `pv__ins` crossed `pv` with `retparam` before an unsized 15-row `posarg__plus`.
+        let jmask: Vec<u128> = joins.iter().map(|&j| body[j].vars().iter().filter_map(|v| var_ids.get(v)).fold(0u128, |m, &k| if k < 128 { m | 1u128 << k } else { m })).collect();
+        let unsized_join = |i: usize| matches!(&body[joins[i]], Literal::Atom(a) if !a.neg && a.rel != "node" && !self.stats.card.contains_key(a.rel.as_str()) && !self.stats.lazy.0.contains_key(a.rel.as_str()) && !self.stats.solving.contains(a.rel.as_str()));
+        let unfounded_cross = |i: usize, prev: u64, bound: u128| -> bool {
+            prev != 0 && jmask[i] & bound == 0 && (0..joins.len()).any(|j| j != i && prev & (1 << j) == 0 && jmask[j] & bound != 0 && (unsized_join(i) || unsized_join(j)))
+        };
         // The greedy order (Postgres's `geqo_threshold`): the cheapest connected step next. Long bodies take it; under
         // `RERAIL_PLAN_GREEDY_PROBE` (a measurement aid) every searched body is also ordered so, and compared.
         let greedy = |candidates: &mut u64| -> Option<Best> {
@@ -2631,7 +2780,7 @@ impl Model {
                     if done & (1 << i) != 0 || order.is_empty() && (!matches!(l, Literal::Atom(_)) || !starts(joins[i])) {
                         continue;
                     }
-                    if disconnected(i, done, &bound) || gate_waits(i, &|v: &str| bound.contains(v)) {
+                    if disconnected(i, done, &bound) || gate_waits(i, &|v: &str| bound.contains(v)) || shape_waits(i, done, &|v: &str| bound.contains(v)) {
                         continue;
                     }
                     let Some((w, out, mode)) = step(l, rows, &bound) else { continue };
@@ -2828,7 +2977,7 @@ impl Model {
                         continue; // The delta or a connected, fixed changed-input demand.
                     }
                     let (bound, h_prev) = &closed[prev as usize];
-                    if gate_waits(i, &|v: &str| bound >> var_ids[v] & 1 == 1) {
+                    if gate_waits(i, &|v: &str| bound >> var_ids[v] & 1 == 1) || shape_waits(i, prev, &|v: &str| bound >> var_ids[v] & 1 == 1) || unfounded_cross(i, prev, *bound) {
                         continue;
                     }
                     let Some((w, mut out, mode)) = priced(price(i, *bound), from.rows) else { continue };
@@ -2959,7 +3108,7 @@ impl Model {
         // The orders priced, charged to the planning span they were priced in (the roofline's candidate work).
         super::profile::work(super::profile::Unit::Candidate, candidates);
         // Also when the run may use the device: placement prices each join step from these (decision 0095); and when
-        // the body reads a kind-set axis, which takes its expected lookups from them (decision 0105).
+        // the body reads a kind-set axis, which takes its expected lookups from them (decision 0143).
         let axis = || body.iter().any(|l| matches!(l, Literal::Atom(a) if !a.neg && super::front::is_transduced(&a.rel)));
         let explained = (explain && (super::profile::on() || placement::device_on() || EXPLAIN_ALWAYS.with(std::cell::Cell::get) || axis())).then(|| {
             let _explain = super::profile::span(|| "explain record".into());
@@ -3044,7 +3193,7 @@ impl Model {
                 bound.extend(s.lit.vars());
                 steps.push(super::profile::StepPlan { literal: s.lit.to_string(), access, source: src, rows: r, passed, basis });
             }
-            super::profile::RulePlan { work, rows, subsets, candidates, steps }
+            super::profile::RulePlan { work, rows, subsets, candidates, steps, shaped: shaped.clone() }
         });
         Ok(((order, work, rows), explained))
     }
@@ -3223,7 +3372,7 @@ pub fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<
         for rel in prog.inputs.iter().filter(|rel| !inputs.batch.contains_key(*rel)) {
             Arc::make_mut(&mut stats.indexes).insert(rel.clone(), vtab_indexes(rel));
         }
-        return Ok(Model { analysis, input_set: Default::default(), stats, ndv, docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), docs_by_shift: by_shift(db), derived: derived.into() });
+        return Ok(Model { shapes: std::sync::Arc::new(prog.shapes.clone()), analysis, input_set: Default::default(), stats, ndv, docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), docs_by_shift: by_shift(db), derived: derived.into() });
     }
     for rel in &prog.inputs {
         let mut st = db.prepare(&format!("PRAGMA f.table_info({rel})"))?;
@@ -3244,7 +3393,7 @@ pub fn make_plan(prog: &Program, db: &Connection, mut inputs: Inputs) -> Result<
         }
         Arc::make_mut(&mut stats.indexes).insert(rel.clone(), indexes);
     }
-    Ok(Model { analysis, input_set: Default::default(), stats, ndv, docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), docs_by_shift: by_shift(db), derived: derived.into() })
+    Ok(Model { shapes: std::sync::Arc::new(prog.shapes.clone()), analysis, input_set: Default::default(), stats, ndv, docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), docs_by_shift: by_shift(db), derived: derived.into() })
 }
 
 /// T's facts file's indexes, which the base-relation vtabs' lookups mirror.
@@ -10026,5 +10175,27 @@ impl SqlKey {
             SqlKey::Int(i) => SqlValue::Integer(*i),
             SqlKey::Text(t) => SqlValue::Text(t.clone()),
         }
+    }
+}
+
+#[cfg(test)]
+mod ambient_tests {
+    use super::super::lanes::wave;
+
+    /// Smoking gun 7 (t34, 2026-11-13): a level's strata run as a job off the run's thread (decision 0113 §4) and flush
+    /// their wave there. The job works in the run's ambient, and its waves are the run's: `closures_of_one_level_…`
+    /// read none about one run in three.
+    #[test]
+    fn a_strata_jobs_waves_are_the_runs() {
+        let before = wave::flushed();
+        let ambient = super::Ambient::here();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let _in = ambient.enter();
+                wave::defer(Box::new(|| Ok(())));
+                wave::flush(1).unwrap();
+            });
+        });
+        assert_eq!(wave::flushed().0 - before.0, 1, "the job's wave counts as the run's");
     }
 }

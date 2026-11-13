@@ -1,4 +1,6 @@
-# 0119. A rule file carries its own tests
+# 0130. A rule file carries its own tests
+
+Numbered 0119 where it was written (More-ergonomic-rule-syntax); 0130 in the hub, where 0119 is the reach index.
 
 Status: built (2026-11-12).
 
@@ -141,7 +143,7 @@ B101(a) :- kind(a, "assert_statement").
 7. **A store of its own.** In the engine's tests each test has its own store (decision 0118). Elsewhere testing
    mode uses `$TMPDIR/rerail-test-rr-stores/<build>.sqlite`, one per engine build, kept between invocations, unless
    `RERAIL_TAPE_CACHE` names one (`corpus::use_store`, for the report's length). The project's store (decision
-   0120) is its real runs': a test's run would read what they left there, and wait behind their writes
+   0131) is its real runs': a test's run would read what they left there, and wait behind their writes
    (O-test-rr-busy).
 
 8. **Where testing mode is.**
@@ -191,7 +193,7 @@ B101(a) :- kind(a, "assert_statement").
   `exactly: also reported …`).
 - The engine's nine tests of testing mode take 8.2 s of wall time together.
 - Under `RERAIL_SQL_STRICT=1`, `test-rr docs/rule-syntax` passes all 8: testing mode's store is small enough to
-  read whole before the first wave. So does `run-rr` on its default store (decision 0120).
+  read whole before the first wave. So does `run-rr` on its default store (decision 0131).
 - The compiled grammar reads both files with tests as the engine does, as rules and as one machine
   (`rule_files_with_tests_are_the_engines`), and refuses what the engine refuses: a nested block, a `.end`
   outside a block, a block with no `.end` (`tape_is_the_engines`).

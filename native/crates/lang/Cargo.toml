@@ -78,6 +78,8 @@ zstd = "=0.14.3"
 tempfile = { version = "=3.27.0", optional = true }
 rerail-prof = { path = "../prof" }
 rerail-rr-syntax = { path = "../rr_syntax" }
+# The tape's format and the writer the parsers write it with (decision 0140).
+rerail-tape-format = { path = "../tape_format" }
 rerail-store = { path = "../store" }
 rerail-accel = { path = "../../../accel" }
 rerail-compiler = { path = "../compiler" }

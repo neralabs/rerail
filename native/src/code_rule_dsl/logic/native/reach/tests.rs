@@ -108,4 +108,26 @@ mod form {
         let err = format!("{:?}", find(&mut prog).unwrap_err());
         assert!(err.contains("more than one rule reads it"), "{err}");
     }
+    /// A rewrite after `find` (magic sets' demand, decision 0145) can read a closure inside its edges' or seeds'
+    /// component: then it is rows again, with its rules as written, and so is a relation through it. At O125 the
+    /// demand put `anc` in a component of 44 relations, which had no maintained form and was derived at every edit.
+    #[test]
+    fn a_closure_a_later_rewrite_puts_in_a_cycle_is_rows_again() {
+        let mut prog = program("", ".decl w(a: number)\n.input w\nr(d, d) :- w(d).\n");
+        assert_eq!(find(&mut prog).unwrap(), (1, 1));
+        assert!(crate::code_rule_dsl::logic::reach_form::undo_in_cycles(&mut prog).unwrap().is_empty(), "no cycle yet");
+        // As a demand rewrite would: `w` is made from `r`, which a seed reads.
+        let rule = parse_own(".decl r(a: number, b: number)\n.decl w(a: number)\nw(a) :- r(a, _).\n").unwrap().rules.remove(0);
+        prog.rules.push(rule);
+        prog.inputs.retain(|i| i != "w");
+        let mut undone = crate::code_rule_dsl::logic::reach_form::undo_in_cycles(&mut prog).unwrap();
+        undone.sort();
+        assert_eq!(undone, vec!["r".to_owned(), "s".to_owned()]);
+        assert!(prog.natives.is_empty());
+        assert!(!prog.decls.contains_key("rr_reach_seed_r") && prog.rules.iter().all(|r| !r.to_string().contains("rr_reach_seed_r")));
+        let own: Vec<String> = prog.rules.iter().filter(|r| r.head.rel == "r").map(|r| r.to_string()).collect();
+        assert_eq!(own.len(), 3, "{own:#?}");
+        assert!(own.iter().any(|r| r.contains(":- r(") && r.contains("e(")), "its recursive rule again: {own:#?}");
+    }
 }
+

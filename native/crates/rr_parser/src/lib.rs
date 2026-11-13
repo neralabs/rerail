@@ -186,24 +186,6 @@ fn metal_tapes(c: &Compiled, files: &[&str], out: &mut Vec<Columns>) -> bool {
     }
 }
 
-// The compiled parser's rows and the lean parser's are one layout: a tape either writes.
-const _: () = {
-    use std::mem::{offset_of, size_of};
-    use rr::tape::Row;
-    assert!(size_of::<NodeRow>() == size_of::<Row>() && std::mem::align_of::<NodeRow>() == std::mem::align_of::<Row>());
-    assert!(offset_of!(NodeRow, kind) == offset_of!(Row, kind) && offset_of!(NodeRow, field) == offset_of!(Row, field));
-    assert!(offset_of!(NodeRow, start) == offset_of!(Row, start) && offset_of!(NodeRow, end) == offset_of!(Row, end));
-    assert!(offset_of!(NodeRow, size) == offset_of!(Row, size) && offset_of!(NodeRow, parent) == offset_of!(Row, parent));
-    assert!(offset_of!(NodeRow, extra) == offset_of!(Row, extra) && offset_of!(NodeRow, pad) == offset_of!(Row, pad));
-    assert!(NO_PARENT == rr::tape::NO_PARENT);
-};
-
-/// A compiled tape's rows as the lean parser's (`rr::tape::Row`), in place: the same bytes.
-pub fn as_rows(c: &Columns) -> &[rr::tape::Row] {
-    // SAFETY: the two are one layout (checked above), plain integers each.
-    unsafe { std::slice::from_raw_parts(c.rows.as_ptr().cast(), c.rows.len()) }
-}
-
 /// The fallback: the engine's parser's nodes, in the compiled parser's rows.
 pub fn engine_columns(nodes: &[rr::tape::Node]) -> Columns {
     let mut rows: Vec<NodeRow> = nodes
@@ -278,7 +260,7 @@ pub mod tests {
         // code, as the lean parser's methods do (4,841 words when rules shared alike code), and
         // a term's rest (`more`) is a call: fewer states and arms. A callee that begins with a
         // mark or a merge is called too, at its start (375 states, 3,064 arms, 5,385 words before).
-        // With a rule file's tests in the grammar (0119, More-ergonomic) on these calls: 413 states,
+        // With a rule file's tests in the grammar (0130, More-ergonomic) on these calls: 413 states,
         // 3,004 arms, 3,773 words (the grammar's tests alone had taken it to 380 and 9,348). With
         // Parser-generators' tier 2 merged (token marks from the records, 0129; tier 1's checks at
         // the token, 0133): 3,932 words, the states and arms the same.
@@ -324,7 +306,7 @@ pub mod tests {
             "r(x) :- s(x), !t(x). // c\n.decl r(a: number)\n",
             "r(n) :- n = sum min x : { s(x) } : { t(n) }, m = count : { u(_) }.",
             ".policy {\"a\": [1, {\"b\": null}]}\n/* d */ r(x) :- x ~ `a`, y = \"s\".",
-            // A rule file's tests (decision 0119): a fixture set, and a test that uses it.
+            // A rule file's tests (decision 0130): a fixture set, and a test that uses it.
             ".fixtures app\n    .fixture \"a.py\" ```\n        x = 1\n        ```\n.end\n.test t exactly uses app, b\n    #include \"c.rr\"\n    seen(1).\n    r(x) :- seen(x).\n    .given seen\n    .expect B101 at \"a.py\":1\n    .expect no r(_)\n.end\nr(x) :- s(x).\n",
             // `exactly` and `uses` as names; a block's statements end at `. end`.
             ".test exactly\n.end\n.test uses uses a\n. // c\n end\n.fixtures f exactly(1).\n.end",
@@ -333,7 +315,6 @@ pub mod tests {
             assert!(super::compiled_tape(src).is_some(), "the grammar refuses {src:?}");
             assert_eq!(super::tape(src), super::engine_columns(&super::rr::engine_tape(src)), "{src:?}");
             // The lean parser writes the same rows.
-            assert_eq!(super::as_rows(&super::tape(src)), &super::rr::lean::tape(src)[..], "{src:?}");
         }
         // 127 deep, the most (tier 2's count, `COUNT`), is taken; 128 deep is not.
         let most = format!(".policy {{\"a\": {}{}}}", "[".repeat(126), "]".repeat(126));
@@ -357,7 +338,7 @@ pub mod tests {
         }
     }
 
-    /// The rule files that carry tests (decision 0119): the grammar takes each, and its tape is the engine's.
+    /// The rule files that carry tests (decision 0130): the grammar takes each, and its tape is the engine's.
     #[test]
     fn rule_files_with_tests_are_the_engines() {
         let machine = crate::compile_with(rerail_compiler::bitlex_masks::Shape::Machine).expect("compiles as one machine");
@@ -402,7 +383,7 @@ pub mod tests {
     /// place, `.rr` had 858 states and 8,370 arms; shared, 438 and 4,014. A ratchet: lower it as
     /// the compiler improves. Named-only tapes (step 21) raised it from 234 and 2,225 (to 266 and 2,590): a group's
     /// body and an aggregate word's arguments are rules of their own, which drop their `,`.
-    /// A rule file's tests (step 22, decision 0119) raised it to 271 and 2,621: a block's statements are a level of
+    /// A rule file's tests (step 22, decision 0130) raised it to 271 and 2,621: a block's statements are a level of
     /// their own, which shares the setting with the root.
     /// Of the state machine (`Shape::Machine`); the product's shape, a function a rule, has its
     /// own (`tier2_is_a_function_a_grammar_rule`).
@@ -556,7 +537,7 @@ pub mod tests {
                 if let Ok(t) = c.parser.columns(f.as_bytes()) {
                     taken[k] += 1;
                     // The engine's, and the lean parser's rows byte for byte.
-                    if t != engine || crate::as_rows(&t) != &crate::rr::lean::tape(f)[..] {
+                    if t != engine {
                         differ.push((i, k));
                     }
                 }
@@ -565,6 +546,36 @@ pub mod tests {
         eprintln!("{} files: rules take {}, one machine {}", files.len(), taken[0], taken[1]);
         assert_eq!(differ, Vec::new(), "(file, shape) whose tape is not the engine's");
         assert_eq!(taken[0], taken[1], "the shapes take the same files");
+    }
+
+    /// The engine's bytes over the corpus, against the lean parser's: the interpreter's tape
+    /// (`stream::image`), and the JIT's node table through the tape's writer (a bridge while
+    /// tier 2 writes its rows; decision 0140).
+    #[test]
+    #[ignore = "the corpus: run by name"]
+    fn corpus_images_are_the_lean_tapes() {
+        use rerail_tape_format::{CODE_EXTRA, RR_TAG, key, preorder_image};
+        let files = corpus();
+        let c = crate::compiled().expect("compiles");
+        let extras = &c.program.readings.extras;
+        let (mut taken, mut jit, mut interp) = (0, Vec::new(), Vec::new());
+        for (i, f) in files.iter().enumerate() {
+            let Ok(cols) = c.parser.columns(f.as_bytes()) else { continue };
+            taken += 1;
+            let lean = crate::rr::lean::tape(f);
+            let rows: Vec<_> = cols.rows.iter().map(|r| (key(r.kind, r.field, r.extra * CODE_EXTRA), r.start, r.end, r.size)).collect();
+            if preorder_image(RR_TAG, f.as_bytes(), &rows) != lean {
+                jit.push(i);
+            }
+            let run = c.program.block_programs[0].run(f.as_bytes());
+            let same = rerail_compiler::stream::run(&c.program, f.as_bytes(), &run).is_ok_and(|n| rerail_compiler::stream::image(&n, extras, RR_TAG, f.as_bytes()) == lean);
+            if !same {
+                interp.push(i);
+            }
+        }
+        eprintln!("{} files, {taken} taken", files.len());
+        assert_eq!(jit, Vec::<usize>::new(), "files whose JIT image is not the lean tape");
+        assert_eq!(interp, Vec::<usize>::new(), "files whose interpreter image is not the lean tape");
     }
 
     /// `tapes` over the corpus as one batch equals `tape` file by file. Prints the time.

@@ -213,15 +213,15 @@ pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, late
     );
 }
 
-/// How many runs of a plan may leave an entry unread before it is forgotten (decision 0108 §4): the plan's runs are
+/// How many runs of a plan may leave an entry unread before it is forgotten (decision 0146 §4): the plan's runs are
 /// every root's, so worktrees that take turns keep theirs.
 const MEMO_RUNS: i64 = 32;
 
 /// How many contents of one path the memo keeps (decision 0117): the newest, by their last use. Worktrees or
-/// branches that take turns at a file keep theirs (decision 0108 §4); an edited file's earlier contents go.
+/// branches that take turns at a file keep theirs (decision 0146 §4); an edited file's earlier contents go.
 const MEMO_CONTENTS: usize = 4;
 
-/// The memo's relation in its plan's space: one frame per entry (decision 0108).
+/// The memo's relation in its plan's space: one frame per entry (decision 0146).
 pub(super) fn entry_rel(plan: &[u8; 32]) -> crate::content_store::FrameRel {
     crate::content_store::FrameRel { name: "local".to_owned(), ident: *plan }
 }
@@ -347,11 +347,19 @@ impl Found {
     }
 
     /// The whole entry this was found for, when it is a frame of its outputs (`Memo::found_outputs_all`): its frame
-    /// of rows, by its content's digest, as the waves read frames (from memory). A held entry is whole already.
+    /// of rows, by its content's digest, read from the store. A held entry is whole already. It is asked only when the
+    /// kept inputs were not taken, inside the waves; the waves' snapshot holds no entry of a file looked up before
+    /// them (`admit_memo_entries`), so a read of the snapshot found none ("its memo entry is gone").
     pub(super) fn whole(&self, store: &ContentStore, program: &[u8; 32]) -> StoreResult<Option<Found>> {
         match self {
             Found::Held(e) => Ok(Some(Found::Held(std::sync::Arc::clone(e)))),
-            Found::Frame(f) => Ok(by_digest(store, &plan_digest(program), &[f.path.as_str()], vec![(0, f.digest)])?.pop().map(|(_, found)| found)),
+            // From the store, inside the waves too: a hit read for its outputs alone was looked up before the first
+            // wave, and the snapshot holds no entry of a path looked up then (`admit_memo_entries`). Read from the
+            // snapshot, its entry was always missing when the kept inputs were not taken (O-store-single-program).
+            Found::Frame(f) => {
+                let plan = plan_digest(program);
+                Ok(by_digest_from(store, &plan, &[f.path.as_str()], vec![(0, f.digest)], entry_rel(&plan), true)?.pop().map(|(_, found)| found))
+            }
         }
     }
 
@@ -393,13 +401,19 @@ fn by_digest(store: &ContentStore, plan: &[u8; 32], paths: &[&str], wanted: Vec<
 
 /// `by_digest`, of the frames of `rel`: the entries' (`entry_rel`) or their outputs' (`outputs_rel`).
 fn by_digest_in(store: &ContentStore, plan: &[u8; 32], paths: &[&str], wanted: Vec<(usize, [u8; 32])>, rel: crate::content_store::FrameRel) -> StoreResult<Vec<(usize, Found)>> {
+    // An entry (not its outputs) looked up before the waves is read from the store by its key: the snapshot holds a
+    // run's entries only for what its waves look up (`admit_memo_entries`, decision 0117).
+    let stored = rel.name == entry_rel(plan).name && !crate::code_rule_dsl::logic::profile::inside_waves();
+    by_digest_from(store, plan, paths, wanted, rel, stored)
+}
+
+/// `by_digest_in`, from the store (`stored`) or from the run's snapshot.
+fn by_digest_from(store: &ContentStore, plan: &[u8; 32], paths: &[&str], wanted: Vec<(usize, [u8; 32])>, rel: crate::content_store::FrameRel, stored: bool) -> StoreResult<Vec<(usize, Found)>> {
     let wanted: Vec<(usize, [u8; 32], i64)> = wanted.into_iter().map(|(i, d)| (i, d, part_of(&d, paths[i]))).collect();
     let docs: Vec<((), &str)> = paths.iter().map(|p| ((), *p)).collect();
     let space = crate::content_store::local_space(plan);
     let parts: Vec<i64> = wanted.iter().map(|(_, _, p)| *p).collect();
-    // An entry (not its outputs) looked up before the waves is read from the store by its key: the snapshot holds a
-    // run's entries only for what its waves look up (`admit_memo_entries`, decision 0117).
-    let mut frames = if rel.name == entry_rel(plan).name && !crate::code_rule_dsl::logic::profile::inside_waves() {
+    let mut frames = if stored {
         store.admit_parts_stored(&space, &rel, &parts)?
     } else {
         store.admit_parts_of(&space, &rel, &parts)?
@@ -415,6 +429,12 @@ fn by_digest_in(store: &ContentStore, plan: &[u8; 32], paths: &[&str], wanted: V
         }
     }
     if !used.is_empty() {
+        // An outputs frame is used with its entry's (O-store-single-program): a hit read for its outputs alone falls
+        // back to its whole entry when the kept inputs are not taken. Marked alone, the entry aged out after
+        // `MEMO_RUNS` runs that read only outputs (one 44-policy batch), and the next batch's fallback found it gone.
+        if rel.name == outputs_rel(plan).name {
+            store.queue_frame_parts_used(space.clone(), entry_rel(plan), used.clone(), super::run_token(), MEMO_RUNS);
+        }
         store.queue_frame_parts_used(space, rel, used, super::run_token(), MEMO_RUNS);
     }
     Ok(out)
@@ -461,7 +481,7 @@ pub(super) fn found_sources(store: &ContentStore, digests: &[[u8; 32]]) -> Store
 }
 
 /// Memoises many documents' entries at once, each `(content, path, key, entry)` under `program`: their frames in
-/// one transaction (decision 0108). Queued behind the run (decision 0102): encoded and written by the store's
+/// one transaction (decision 0146). Queued behind the run (decision 0102): encoded and written by the store's
 /// writer, each entry read from memory until it is written. A content is keyed by its digest, so one the store
 /// does not hold yet is written with the others.
 pub(super) fn remember_all(store: &ContentStore, program: &[u8; 32], entries: Vec<(Content, String, i64, Entry)>) {
@@ -762,7 +782,7 @@ pub(super) fn document_of(value: i64) -> i64 {
     if value >= 1 << 32 { value >> 32 } else { value }
 }
 
-// An entry's frame (decision 0108): typed rows of integers, each row's first value its kind, its second the
+// An entry's frame (decision 0146): typed rows of integers, each row's first value its kind, its second the
 // relation or output it is of. A relation's rows are rows of it, a value to a column; text (names, lines) is packed
 // eight bytes to a value.
 const NODES: i64 = 0;

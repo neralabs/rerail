@@ -1,4 +1,6 @@
-# 0120. A run's store is its project's, one per engine build
+# 0131. A run's store is its project's, one per engine build
+
+Numbered 0120 where it was written (More-ergonomic-rule-syntax); 0131 in the hub, where 0120 is an edit reaching strata by their deltas.
 
 Status: built (2026-11-12).
 
@@ -28,7 +30,7 @@ That store fitted badly:
    directory that have not changed for a day are removed, with their WAL, shared-memory and lock files
    (`corpus::build_store`). A store is never removed while its build is the one running.
 3. **Unchanged:** `RERAIL_TAPE_CACHE=<path>` names a store, and `=off` runs with none. Testing mode keeps a
-   store of its own per build (`$TMPDIR/rerail-test-rr-stores/`, decision 0119 §7), so a test never reads what a
+   store of its own per build (`$TMPDIR/rerail-test-rr-stores/`, decision 0130 §7), so a test never reads what a
    project's runs left. The engine's tests keep their own copies of a template (decision 0118).
 
 The addon (`CodeRuleDslRuntime`) chooses its store the same way, so its project is its process's working

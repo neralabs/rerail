@@ -321,11 +321,11 @@ pub enum Item {
     /// A setting directive (`.policy "id" revision 1`, `.mode`, `.scope`, …): its name and its text.
     Setting { key: String, text: String },
     Clause { heads: Vec<Head>, body: Vec<Lit>, edits: Vec<Term> },
-    /// `.test name [exactly]` … `.end` (decision 0119): a test of the file's rules, its statements (`.fixture`,
+    /// `.test name [exactly]` … `.end` (decision 0130): a test of the file's rules, its statements (`.fixture`,
     /// `.expect`: settings; the test's own declarations and clauses) in order. Lowering never reads it; only testing
     /// mode does (`logic::rr::testing`).
     Test { name: String, exactly: bool, uses: Vec<String>, items: Vec<Statement> },
-    /// `.fixtures name` … `.end` (decision 0119): what the tests that name it in `uses` read (`.fixture`s, `.given`s,
+    /// `.fixtures name` … `.end` (decision 0130): what the tests that name it in `uses` read (`.fixture`s, `.given`s,
     /// facts and rules). Like a test, never the program's.
     Fixtures { name: String, items: Vec<Statement> },
 }
@@ -847,7 +847,7 @@ impl<'s> Parser<'s> {
         }
     }
 
-    /// `.test name [exactly] [uses a, b]` or `.fixtures name`, its statements, `.end` (decision 0119). The kind
+    /// `.test name [exactly] [uses a, b]` or `.fixtures name`, its statements, `.end` (decision 0130). The kind
     /// implies `.test` (`.fixtures`), `uses`, its commas and `.end`.
     fn test(&mut self) -> Result<Item, Error> {
         let test = matches!(self.peek_at(1), Tok::Id(d) if d == "test");

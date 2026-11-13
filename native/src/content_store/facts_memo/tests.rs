@@ -182,9 +182,10 @@ fn opening_a_store_without_the_facts_tables_adds_them_at_the_same_floor() {
             .pragma_query_value(None, "user_version", |row| row.get(0))
             .unwrap();
         assert_eq!(floor, SCHEMA_VERSION);
-        // The facts memo is additive: it raised no floor (3 is the atom segments', decision 0049).
-        assert_eq!(SCHEMA_VERSION, 3);
-        assert_eq!(STORE_FILE_NAME, "content-v3.sqlite");
+        // The facts memo is additive: it raised no floor (4 is the manifests' lane column; 3 was the atom segments',
+        // decision 0049).
+        assert_eq!(SCHEMA_VERSION, 4);
+        assert_eq!(STORE_FILE_NAME, "content-v4.sqlite");
     }
     assert_eq!(store.get_source(old).unwrap(), b"older source");
     let source = store.put_facts_source(b"older source", content(b"older source"), &[]).unwrap();

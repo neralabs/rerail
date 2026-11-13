@@ -301,6 +301,61 @@ fn python_and_rr_policies_run_over_one_repository() {
     assert!(files[0].ends_with("x.py") && files[1].ends_with("a.rr"), "{files:?}");
 }
 
+/// O-pha000-kept-part: a reader whose body is only a negation of a demanded relation (`PHA000 :- !allow_status(
+/// "plan_helpers", "valid")`) demands nothing, so the relation is built whole: computed only for its other readers'
+/// keys, it held no row for this one, and the constant finding was reported though the status is valid. The run
+/// from nothing kept (no K4, no kept part: the session tests' oracle, which demands) and the default run agree.
+#[test]
+fn a_reader_that_only_negates_a_demanded_relation_reads_it_whole() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("negation-only-reader");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("x.py"), "x = 1\n").unwrap();
+    let policy = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer/plan-helpers-allowlist.rr");
+    let codes = |out: &str| -> Vec<String> {
+        let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &root.join(out), &serde_json::Value::Null).unwrap();
+        report["diagnostics"].as_array().unwrap().iter().map(|d| d["code"].as_str().unwrap_or("").to_owned()).collect()
+    };
+    let kept = codes("kept");
+    let vars = [("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off")];
+    let was: Vec<Option<String>> = vars.iter().map(|(k, _)| std::env::var(k).ok()).collect();
+    unsafe { vars.iter().for_each(|(k, v)| std::env::set_var(k, v)) };
+    let fresh = codes("fresh");
+    for ((k, _), w) in vars.iter().zip(was) {
+        match w {
+            Some(v) => unsafe { std::env::set_var(k, v) },
+            None => unsafe { std::env::remove_var(k) },
+        }
+    }
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(fresh, kept, "the run from nothing kept and the default run");
+    assert!(!kept.iter().any(|c| c == "PHA000"), "the allowlist's status is valid: {kept:?}");
+}
+
+/// O-store-single-program: a policy whose kept inputs cannot be taken (`public-api-triples.rr`: an export's rows kept
+/// by another column than the memo attributes them by) is refused the kept route before its first wave, and every
+/// run over one store gives the first one's findings. In one process this held before too: the fault was a later
+/// process's, whose snapshot holds no memo entry of a path looked up before the first wave, so a hit read for its
+/// outputs alone and decoded whole at the waves' end was "gone" (or, strict, a read inside the waves). The CLI's
+/// batches over one store, strict, show that one; this test keeps the route's refusal from changing the findings.
+#[test]
+fn a_policy_refused_its_kept_inputs_runs_again_over_its_store() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("kept-route-refused");
+    std::fs::create_dir_all(root.join("_internal")).unwrap();
+    std::fs::write(root.join("_internal/__init__.py"), "\"\"\"Internal helpers.\"\"\"\n\ndef get(o, name):\n    return getattr(o, name)\n").unwrap();
+    let policy = Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer/public-api-triples.rr");
+    let run = |out: &str| -> Vec<String> {
+        let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &root.join(out), &serde_json::Value::Null).unwrap_or_else(|e| panic!("run {out}: {e}"));
+        let mut codes: Vec<String> = report["diagnostics"].as_array().unwrap().iter().map(|d| d.to_string()).collect();
+        codes.sort();
+        codes
+    };
+    let first = run("1");
+    let (second, third) = (run("2"), run("3"));
+    let _ = std::fs::remove_dir_all(&root);
+    assert_eq!(second, first, "the second run over the store");
+    assert_eq!(third, first, "the third run over the store");
+}
+
 /// Decision 0062: the statements lowering reads come off the tape. For every `.rr` file in the repository they are
 /// the parser's own, statement for statement, and a file that does not parse gives the parser's error.
 #[test]
@@ -321,7 +376,7 @@ fn statements_from_the_tape_are_the_parsers() {
             }
             let src = std::fs::read_to_string(&path).unwrap();
             let parsed = syntax::Parser::new(&src).and_then(|mut p| p.statements());
-            let taped = from_tape::statements(&src, &tape(&src));
+            let taped = from_tape::statements(&src, &crate::code_rule_dsl::logic::rr::nodes(&src));
             match (parsed, taped) {
                 (Ok(parsed), Ok(taped)) => {
                     assert_eq!(parsed.len(), taped.len(), "{}", path.display());

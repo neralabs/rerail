@@ -81,7 +81,8 @@ fn with_settings(programs: &[&str], root: &Path, options: &serde_json::Value) ->
 }
 
 /// The library files the programs include, each with its digest now: the record's `rule` entries.
-pub fn rule_files(programs: &[String], options: &serde_json::Value) -> Result<Vec<(String, String, String)>> {
+pub fn rule_files(given: &super::Texts<'_>, options: &serde_json::Value) -> Result<Vec<(String, String, String)>> {
+    let read = given.names()?;
     let mut out = Vec::new();
     // Phase 1's program (`sources.rr`), which every run's documents come from: its includes are core's, as the
     // programs' are.
@@ -90,9 +91,9 @@ pub fn rule_files(programs: &[String], options: &serde_json::Value) -> Result<Ve
     out.push(("rule".to_owned(), sources.to_string_lossy().into_owned(), digest));
     // The programs' includes, and every phase program they read (with its includes).
     let dir = options.get("phase_dir").and_then(|v| v.as_str()).map(std::path::PathBuf::from);
-    let mut paths = super::phases::phase_files(programs, dir.as_deref())?;
-    for p in programs {
-        paths.extend(crate::code_rule_dsl::logic::rr::included_files(p)?);
+    let mut paths = super::phases::phase_files(read, dir.as_deref())?;
+    for t in read {
+        paths.extend(t.included.iter().cloned());
     }
     for path in paths {
         let digest = observe(|o| o.digest(&path)).map(|d| crate::content_store::observe::hex(&d)).unwrap_or_default();
@@ -151,7 +152,8 @@ pub fn decode_outputs(mut b: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
 
 /// The kept outputs written into `out`, when every read of the last run under this key is as it was.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn reused(programs: &[&str], root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value) -> Result<Option<Report>> {
+pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value) -> Result<Option<Report>> {
+    let programs = given.programs;
     let checking = super::thread_usage();
     let texts = with_settings(programs, root, options)?;
     let key = key(&texts, root, options, modes, typing);
@@ -173,11 +175,11 @@ pub(super) fn reused(programs: &[&str], root: &Path, out: &Path, modes: &str, ty
         miss(&format!("{} {} changed", c.0, c.1));
         return Ok(None);
     }
-    if rule_files(&texts, options)? != rules {
+    if rule_files(given, options)? != rules {
         miss("the rule files differ");
         return Ok(None);
     }
-    if !unchanged(programs, root, typing, options, &rest)? {
+    if !unchanged(programs, &given.graphs, root, typing, options, &rest)? {
         miss("a consulted file or read changed");
         return Ok(None);
     }
@@ -207,7 +209,8 @@ fn miss(why: &str) {
     }
 }
 
-pub(super) fn record(programs: &[&str], root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report) -> Result<()> {
+pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report) -> Result<()> {
+    let programs = given.programs;
     // Every phase's program is among the rule files (`rule_files`), and what each phase consulted is the record's
     // too: a phase's exports are a function of its program and what it consulted, so a run whose every read, its
     // phases' included, is as it was derives the same (O-cutoff-phases). Phase 1's are the source files, and the
@@ -218,7 +221,7 @@ pub(super) fn record(programs: &[&str], root: &Path, out: &Path, modes: &str, ty
     }
     let texts = with_settings(programs, root, options)?;
     let key = key(&texts, root, options, modes, typing);
-    let mut consulted = rule_files(&texts, options)?;
+    let mut consulted = rule_files(given, options)?;
     let mut read: Vec<(String, String, String)> = report.consulted.iter().cloned().chain(report.phase_runs.iter().flat_map(|r| r.report.consulted.iter().cloned())).collect();
     read.sort();
     read.dedup();

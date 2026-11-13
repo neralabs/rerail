@@ -618,7 +618,7 @@ describe("rerail rules test", () => {
   });
 });
 
-/** A `.rr` rule with one test that passes and one that fails (decision 0119). */
+/** A `.rr` rule with one test that passes and one that fails (decision 0130). */
 const RR_WITH_TESTS = [
   '.policy "local:no-print" revision 1',
   ".language python",

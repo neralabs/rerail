@@ -353,9 +353,31 @@ impl ContentStore {
         let (tx, rx) = mpsc::channel::<Queued>();
         let w = Arc::clone(w);
         let store = self.sibling();
+        // The WAL is checkpointed beside the writer, not in its commits: SQLite's automatic checkpoint copies the
+        // WAL into the database and syncs it inside the commit that crosses its threshold, so the writer took no
+        // job meanwhile (3.0 s of a cold run's 7.7 s on the writer). A checkpoint is `PASSIVE` on a connection of
+        // its own: in WAL mode it neither blocks the writer nor waits for it. Told after each commit; signals that
+        // come while it checkpoints are one.
+        let (told, tells) = mpsc::channel::<()>();
+        let checkpointer = self.sibling();
+        rerail_accel::exec::service("rerail-store-checkpoint", None, move || {
+            super::hazards::behind_the_run();
+            while tells.recv().is_ok() {
+                while tells.try_recv().is_ok() {}
+                let Ok(connection) = checkpointer.connection.lock() else { break };
+                if let Err(e) = connection.query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(())) {
+                    eprintln!("rerail: the store's checkpoint failed: {e}");
+                }
+            }
+        })
+        .expect("the store's checkpoint thread");
         let thread = rerail_accel::exec::service("rerail-store-writer", None, move || {
                 // What this thread sends to SQLite no wave waits for.
                 super::hazards::behind_the_run();
+                // Its commits leave the WAL to the checkpointer (above).
+                if let Ok(connection) = store.connection.lock() {
+                    let _ = connection.pragma_update(None, "wal_autocheckpoint", 0);
+                }
                 let mut next: Option<Queued> = None;
                 loop {
                     let Some(first) = next.take().or_else(|| rx.recv().ok()) else { break };
@@ -366,6 +388,7 @@ impl ContentStore {
                         let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(&store)))
                             .unwrap_or_else(|_| Err(StoreError::Invalid("a queued write panicked".into())));
                         w.shared.state.lock().expect("the writer's state").by_what.entry(what).or_default().2 += thread_cpu() - before;
+                        let _ = told.send(());
                         finish(&w.shared, bytes, &keys, outcome, thread_cpu() - before, run != Run::Commit);
                         continue;
                     }
@@ -408,6 +431,7 @@ impl ContentStore {
                         Ok(outcomes) => outcomes,
                         Err(e) => batch.iter().map(|_| Err(StoreError::Invalid(format!("the batch's commit: {e}")))).collect(),
                     };
+                    let _ = told.send(());
                     let cpu = (thread_cpu() - before) / batch.len() as f64;
                     w.shared.state.lock().expect("the writer's state").batches += 1;
                     for ((_, bytes, keys, _, _, _), outcome) in batch.into_iter().zip(outcomes) {

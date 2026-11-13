@@ -1034,24 +1034,38 @@ pub fn check(prog: &Program) -> Result<Vec<BTreeSet<String>>, Error> {
     for rule in &prog.rules {
         by_head.entry(rule.head.rel.as_str()).or_default().push(rule);
     }
-    for component in &sccs {
-        // A component's guarantees, for its own rules and the components above it.
-        let recursive = component.len() > 1 || component.iter().any(|r| edges_by.get(r).is_some_and(|e| e.iter().any(|(w, _)| w == r)));
-        summarize(prog, component, &by_head, &mut moves, recursive);
-        depth_summaries(prog, component, &by_head, &mut depths, recursive);
-        if !recursive {
-            continue;
+    // Each component: whether it recurses, and whether its value cycle needs a bound (neither reads the summaries).
+    // A recursion through constants only (`era_re("EXPR", …) :- era_re("OPD", …)`): finitely many rules, so finitely
+    // many values when the constants do not come back.
+    let kinds: Vec<(bool, Option<bool>)> = sccs
+        .iter()
+        .map(|component| {
+            let recursive = component.len() > 1 || component.iter().any(|r| edges_by.get(r).is_some_and(|e| e.iter().any(|(w, _)| w == r)));
+            if !recursive {
+                return (false, None);
+            }
+            let rules: Vec<&Rule> = component.iter().flat_map(|rel| by_head.get(rel.as_str()).into_iter().flatten().copied()).collect();
+            (true, value_cycle(prog, &rules, component).then(|| !constant_keyed(&rules, component)))
+        })
+        .collect();
+    // The guarantees are read by the components that need a bound, of those below them: none are made past the last.
+    let last = kinds.iter().rposition(|(_, bound)| *bound == Some(true));
+    for (i, component) in sccs.iter().enumerate() {
+        let (recursive, bound) = kinds[i];
+        if last.is_some_and(|last| i <= last) {
+            // A component's guarantees, for its own rules and the components above it.
+            summarize(prog, component, &by_head, &mut moves, recursive);
+            depth_summaries(prog, component, &by_head, &mut depths, recursive);
+        }
+        match bound {
+            None => continue,
+            Some(false) => {
+                treed.push(component.clone());
+                continue;
+            }
+            Some(true) => {}
         }
         let rules: Vec<&Rule> = component.iter().flat_map(|rel| by_head.get(rel.as_str()).into_iter().flatten().copied()).collect();
-        if !value_cycle(prog, &rules, component) {
-            continue;
-        }
-        // A recursion through constants only (`era_re("EXPR", …) :- era_re("OPD", …)`): finitely many rules, so
-        // finitely many values when the constants do not come back.
-        if constant_keyed(&rules, component) {
-            treed.push(component.clone());
-            continue;
-        }
         let creating: Vec<bool> = rules.iter().map(|r| creates(r, component)).collect();
         // The relations with no node column that are functions of their inputs, which need no key.
         let keyless: BTreeSet<&str> = component.iter().map(String::as_str).filter(|rel| columns(prog, rel, "node").is_empty()).collect();

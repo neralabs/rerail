@@ -44,10 +44,15 @@ struct Bridged {
 
 /// The bridged relations a rule reaching one of `prog`'s outputs reads.
 fn wanted(prog: &Program) -> Vec<Bridged> {
+    // Only a declared relation named as bridged can be one: a program that declares none is not pruned or read.
+    if !prog.decls.keys().any(|rel| rel.starts_with(PREFIX)) {
+        return Vec::new();
+    }
     let pruned = front::prune(prog.clone());
     let read: BTreeSet<&str> = pruned.rules.iter().flat_map(|r| r.body.iter().filter_map(Literal::atom).map(|a| a.rel.as_str())).collect();
+    let derived: BTreeSet<&str> = pruned.rules.iter().map(|r| r.head.rel.as_str()).collect();
     read.into_iter()
-        .filter(|rel| prog.decls.contains_key(*rel) && !pruned.rules.iter().any(|r| r.head.rel == *rel))
+        .filter(|rel| rel.starts_with(PREFIX) && prog.decls.contains_key(*rel) && !derived.contains(rel))
         .filter_map(|rel| {
             let (program, output) = rel.strip_prefix(PREFIX)?.split_once(SEP)?;
             Some(Bridged { rel: rel.to_owned(), program: program.to_owned(), output: output.to_owned() })

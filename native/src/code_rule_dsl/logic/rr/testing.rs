@@ -1,4 +1,4 @@
-//! Testing mode (decision 0119): the tests a `.rr` file carries, each run as the file's program over its fixtures.
+//! Testing mode (decision 0130): the tests a `.rr` file carries, each run as the file's program over its fixtures.
 //!
 //! A test is `.test name [exactly] [uses a, b]` … `.end` (`syntax::Item::Test`); a fixture set, `.fixtures name` …
 //! `.end` (`syntax::Item::Fixtures`), is what the tests that name it in `uses` read too. Lowering never reads either,

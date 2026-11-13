@@ -14,7 +14,7 @@
     suppress nosec "B101"
 B101(a) :- kind(a, "assert_statement").
 
-// Tests (decision 0119): run by `rerail-engine test-rr`, left out of the rule otherwise.
+// Tests (decision 0130): run by `rerail-engine test-rr`, left out of the rule otherwise.
 .test asserts_are_reported
     .fixture "app/views.py" ```
         def view(user):
