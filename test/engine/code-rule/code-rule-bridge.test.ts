@@ -17,6 +17,7 @@ import { MAX_FINISHED_CALLS, ToolCallWindows } from "../../../src/engine/code-ru
 import type { CodeRuleEditBatch, CodeRuleAuditor, CodeRuleResponse } from "../../../src/engine/code-rule/code-rule.js";
 import type { IgnoreRulesChange } from "../../../src/engine/code-rule/ignore-rule-files.js";
 import { codeRuleDialectForPath } from "../../../src/engine/code-rule/code-rule-languages.js";
+import type * as WalkReads from "../../../src/engine/code-rule/walk-read-buffers.js";
 
 const discovery = vi.hoisted(() => ({
   reads: new Map<string, Array<() => Promise<void>>>(),
@@ -27,8 +28,10 @@ const discovery = vi.hoisted(() => ({
  * Git command (`failing`) that is made to fail, by an option Git does not know, while it is set.
  */
 const asyncGitCalls = vi.hoisted(() => ({ args: [] as string[][], failing: undefined as string | undefined }));
-/** How many of the files a walk read were made into text (`toString`), for the tests that pin what a walk keeps. */
+/** How many of the files a walk read were made into text (`LentBytes.text`), for the tests that pin what a walk keeps. */
 const decodedReads = vi.hoisted(() => ({ count: 0 }));
+/** Each buffer a file read filled while `watching`, by `readFile` or a file handle's `read`, for what a walk allocates. */
+const readBuffers = vi.hoisted(() => ({ watching: false, seen: new Set<ArrayBufferLike>() }));
 vi.mock("node:child_process", async importOriginal => {
   const actual = await importOriginal<typeof ChildProcess>();
   const { promisify } = await import("node:util");
@@ -51,21 +54,42 @@ vi.mock("node:fs/promises", async importOriginal => {
     ...actual,
     readFile: async (...args: Parameters<typeof actual.readFile>) => {
       const contents = await actual.readFile(...args);
-      await discovery.reads.get(String(args[0]))?.shift()?.();
-      if (Buffer.isBuffer(contents)) {
-        const decode = contents.toString.bind(contents);
-        contents.toString = (...format: Parameters<Buffer["toString"]>) => {
-          decodedReads.count += 1;
-          return decode(...format);
-        };
-      }
+      if (readBuffers.watching && Buffer.isBuffer(contents)) readBuffers.seen.add(contents.buffer);
       return contents;
+    },
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const handle = await actual.open(...args);
+      if (!readBuffers.watching) return handle;
+      // Every form of `read` passes through unchanged; only the buffer it fills is noted.
+      const read = handle.read.bind(handle) as (...call: unknown[]) => ReturnType<typeof handle.read>;
+      handle.read = ((...call: unknown[]) => {
+        if (Buffer.isBuffer(call[0])) readBuffers.seen.add(call[0].buffer);
+        return read(...call);
+      }) as typeof handle.read;
+      return handle;
     },
     opendir: async (...args: Parameters<typeof actual.opendir>) => {
       await discovery.directories.get(String(args[0]))?.shift()?.();
       return await actual.opendir(...args);
     },
   };
+});
+vi.mock("../../../src/engine/code-rule/walk-read-buffers.js", async importOriginal => {
+  const actual = await importOriginal<typeof WalkReads>();
+  /** A walk's read held once its bytes are in and the file closed (`discovery.reads`), each copy made into text counted. */
+  class HeldReadBuffers extends actual.WalkReadBuffers {
+    override async lend<T>(absolute: string, size: number, use: (read: WalkReads.LentBytes) => Promise<T>): Promise<T> {
+      return await super.lend(absolute, size, async read => {
+        await discovery.reads.get(absolute)?.shift()?.();
+        return await use({ bytes: read.bytes, text: () => countedText(read) });
+      });
+    }
+  }
+  function countedText(read: WalkReads.LentBytes): string {
+    decodedReads.count += 1;
+    return read.text();
+  }
+  return { ...actual, WalkReadBuffers: HeldReadBuffers };
 });
 
 interface DiscoveryGate {
@@ -118,6 +142,8 @@ afterEach(async () => {
   releases.splice(0).forEach(release => release());
   discovery.reads.clear();
   discovery.directories.clear();
+  readBuffers.watching = false;
+  readBuffers.seen.clear();
   await Promise.all(passes.splice(0));
   await Promise.all(bridges.splice(0).map(bridge => bridge.close()));
   await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true })));
@@ -1256,6 +1282,22 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     ]);
     // The one file that changed is the one read made into text.
     expect(decodedReads.count).toBe(1);
+  });
+
+  it("reads the files of a worktree's first walk into buffers it reuses, not a buffer of their own each", async () => {
+    const root = await twoBranches();
+    const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const files = Array.from({ length: 64 }, (_, index) => join(worktree, "src", `f${index}.py`));
+    await Promise.all(files.map((file, index) => writeFile(file, `x = ${index}\n`)));
+    git(worktree, "add", ".");
+    git(worktree, "commit", "--quiet", "-m", "files");
+    await awaitClockAfter(...files);
+    readBuffers.watching = true;
+    await opened(root, extra);
+    readBuffers.watching = false;
+    // A walk runs 16 reads at once (OBSERVATION_CONCURRENCY), and two walked here: the session folder and the worktree.
+    expect(readBuffers.seen.size).toBeGreaterThan(0);
+    expect(readBuffers.seen.size).toBeLessThanOrEqual(2 * 16);
   });
 
   it("makes no text of the files a later worktree walk first sees, as its baseline, in a folder the last one could not read", async () => {
