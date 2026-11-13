@@ -1,0 +1,145 @@
+# 0174: A node's source attributes are answered on request, by rules
+
+Status: draft (2026-11-13), for review. It applies decision 0145's shape ("Building on it": a relation answered by a
+native step) to the per-node relations the projection makes eagerly today, and replaces the Rust demand analysis
+of decisions 0109 and 0108 §1 with rules.
+
+## Intro
+
+**The problem.** Some per-node relations hold a node's own source text, or a value read from it:
+
+- `node_text(n, s)`: the node's exact text, at any length;
+- `text(n, s)` past its 256-byte inline bound;
+- `value(n, v)`: W's value of a node (`facts::core::value_reader`).
+
+The projection makes their rows in Rust, before the waves. Every value is interned as an atom, and atoms are kept in
+the store. Rows were made for every node a rule could read, and a node's text holds all of its descendants' text.
+So a module's text, each class's in it and each function's in those are interned once each.
+
+Measured over `impl/` of the data-layer repository (3,217 files, 69 MB of source), each rule alone on a fresh store,
+strict SQL:
+
+| Rule | Atoms left in the store | Run | Peak memory |
+|---|---|---|---|
+| `authentication-plan-purity`, every node's `node_text` | 468 MB | 32 s | 1.5 GB |
+| the same, `node_text` narrowed by the Rust demand below | 56 MB | 11 s | 0.8 GB |
+| `schema-introspection-data-paths`, narrowed | 468 MB, from `value` (every node) | 25 s | 1.2 GB |
+
+Past 256 MB of atoms the next run cannot read them whole before its first wave (0171), and looks them up inside the
+waves, which strict mode refuses.
+
+**How it is narrowed today, in Rust.**
+
+- `text_kind_demand` (`facts/vtab/syntax.rs`) walks the rules' bodies. It finds the kinds a `text(v, …)` reads from
+  `kind(v, "k")`, T's `node(d, v, "k", …)`, a matcher's root, derived columns to a fixpoint, the fields `v` sits in,
+  and (330d9cc2c) the kinds of the node `v` is a child of.
+- Text past the bound comes from twin rules reading `@rr_node_text(v)` (0109), with `rr_long_text_node` to seed
+  them, and 0167 to keep the call after the joins that narrow it.
+- 330d9cc2c gave `node_text` the same analysis.
+
+That is a second, hand-written evaluator of the rules' bodies. It approximates by kind: every decorator child's
+text where a rule wants a few. Each new way a rule binds a node needs a new case. `value` has no case yet.
+
+**What changes.** These relations are read through a **request relation**, as 0145 reads the file system's:
+
+- the rewrite derives, from each reader's own literals, the nodes it asks for;
+- one rule per relation answers the requests, with a generic native function over the node's document.
+
+No demand analysis in Rust, no twins, no kinds.
+
+## 1. The form
+
+For each per-node source relation, the lowering (`rr::lower`, beside `WORLD`) writes a request relation. A rule
+reading the relation with its node bound by other literals asks for those nodes:
+
+```text
+// the rule as written
+introspection_text_doc(d) :- node(d, m, "module", _, _), node_text(m, s), introspection_trigger(x), contains(x, s).
+
+// what the rewrite adds: the literals that bind m and read nothing node_text gives (world_demand's `context`)
+rr_node_text_req(m) :- node(_, m, "module", _, _).
+
+// the answer, one rule for the relation
+node_text(n, s) :- rr_node_text_req(n), s = @rr_node_text(n).
+```
+
+The reader's rule is unchanged: it reads `node_text`, which is now derived.
+
+**A node nothing binds asks for every node.** `world_demand` asks for nothing where no other literal binds the key.
+Here that would be unsound, since `node_text` has rows for every node. The request is then every node:
+
+```text
+rr_node_text_req(n) :- node(_, n, _, _, _).
+```
+
+That is today's behaviour, for the rules that need it.
+
+The same holds for `value` (`rr_value_req`, `@rr_node_value(n)`) and for `text` past the bound
+(`rr_long_text_req`, `@rr_node_text(n)`).
+
+## 2. What backs it in Rust: one generic function per attribute
+
+The answer is a computed value over a request row, `s = @rr_node_text(n)`: evaluated by the engine as every function
+is. Behind it is one generic mechanism, not per-relation code:
+
+- **A node's document, by its key.** 0109's registry (`TEXTS`, by document key, the latest batch holding each
+  document) already finds a node's document from its id. It is used for every attribute, not only long text.
+- **The attribute.** `@rr_node_text(n)` returns the node's text at any length (today it returns only text past the
+  bound). `@rr_node_value(n)` calls the registered value reader on the node, and returns nothing where the node has
+  no value.
+
+Only requested nodes are read and interned, so the atoms a run leaves are the texts its rules can read.
+
+## 3. Why this is sound, and how it is maintained
+
+- **The answers are right.** This is 0145's magic-sets argument. A request is derived from literals that hold in
+  the original program, so every row a reader can join is answered. Asking for too much is sound, asking for too
+  little is not, and an unbound key asks for every node.
+- **Strata.** A request reads base relations (`node`, `field`, `child`) or derived ones lower than its reader. It
+  does not read the attribute it requests, so it stratifies below the reader: requests, then answers, then the
+  reader, in ordinary order. A request that reads a derived value makes the answer part of that value's stratum.
+  0144 §5 measured that this can cost more than it saves, so such a case is measured before it is kept.
+- **Maintenance.** Requests and answers are derived relations of the file-local part. They are memoised and kept
+  by the per-file memo (frames, 0146), and an edit's delta maintains them as any derived relation's (0077).
+
+## 4. What goes
+
+Once all three relations are answered on request:
+
+- `text_kind_demand`, `TextDemand`, `TextNodes` and their filters in the projection (`Extra::nodes`, core_rr's
+  `text` rows);
+- 0109's twin rules and `rr_long_text_node`;
+- 330d9cc2c's `node_text` demand;
+- for these relations, the reason for 0167's reordering. 0167 stays for other computed values.
+
+`text` within the bound stays eager. It is read for most identifiers in most rules, and one request row per node
+would cost more than the row it asks for (§6).
+
+## 5. How it is checked
+
+- **An oracle** (a switch to add): `RERAIL_NODE_SOURCES=eager` makes the three relations as today, for every node. A run with it and
+  one without must give the same findings.
+- **Rules with findings.** On rules with nonzero findings over the data-layer's `impl/` and over rerail's `.rr`
+  files. Today's checks of `node_text` compared 0 rows with 0 rows.
+- **The atoms.** The atoms a cold run leaves are counted (`atom_segment`, by length), against the table in the
+  Intro.
+- Each step runs in seconds on `impl/` or smaller, never the whole repository.
+
+## 6. Open, to measure
+
+- **Request rows.** One row per requested node. A module request is one row a file, but an unbound reader asks for
+  every node, which is today's cost plus the requests. Measured on the rules above before `text` within the bound is
+  considered.
+- **Metal.** A stratum with a computed term is declined by the Metal path today ("computed term: `@rr_node_text` in
+  a comparison"). The answer rule runs on the CPU until the function has a kernel, and by the rule that the Metal
+  path does no host work, that is listed as remaining host work.
+- **Where the requests are derived.** In the file-local part, the requests and answers are per file. A reader in
+  the cross-file part that binds a node of another file asks across files. The cross-file part then needs that
+  document's batch, which 0109's registry keeps only while a batch holds it.
+
+## 7. Order
+
+1. `node_text` on request, checked by §5. Remove 330d9cc2c's demand.
+2. `value` on request, measured on `schema-introspection-data-paths`.
+3. `text` past the bound on request. Remove the twins, `rr_long_text_node` and `text_kind_demand`'s long half.
+4. Measure `text` within the bound (§6), and keep it eager unless requests are cheaper.
