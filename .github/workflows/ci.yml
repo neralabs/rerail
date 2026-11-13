@@ -447,11 +447,13 @@ jobs:
   # rustfmt and clippy, and the engine's own tests, side by side; nothing downstream waits for them.
   # Each keeps its own cache: clippy's check metadata and the test binaries share no artifacts. The tests read three
   # tool-packs' test data (native/src/code_rule_dsl/test_support.rs's callers), restored from what the test-data job
-  # saved, so the job runs where that job does (the note at the top). The tests run in five legs, each inside the
-  # job's timeout on a 4-core runner with room to spare: the workspace's (much of it waiting out the store's busy
-  # timeouts) and the anchor index's, with the profiling labs' checks after them (`profiling`); the logic engine's rule
-  # files and converters; the rest of the logic engine with the typing phases; the SQL executor and the slice; then
-  # every other, skipping exactly what the first four run.
+  # saved, so the job runs where that job does (the note at the top). The tests run in five legs: the workspace's (much
+  # of it waiting out the store's busy timeouts), the anchor index's, the waves' and the transducer's, with the
+  # profiling labs' checks after them (`profiling`); the logic engine's rule files and converters; the rest of the logic
+  # engine with the typing phases; the SQL executor and the slice; then every other, skipping exactly what the first
+  # four run. On the 4-vCPU runner (2 cores, hyperthreaded) the slowest legs run 14 to 15 minutes of tests after a build
+  # of up to 12, and no leg can be cut below its longest test (the slice's real-file check, 14 minutes): the timeout is
+  # 40 minutes, so each leg ends with at least 5 to spare.
   rust:
     name: Rust engine (${{ matrix.name }})
     needs: [changes, test-data]
@@ -464,7 +466,7 @@ jobs:
         )
       }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     permissions:
       contents: read
     strategy:
@@ -475,8 +477,8 @@ jobs:
             name: fmt, clippy
             run: npm run check:native
           - task: test
-            name: tests, workspace and anchors
-            run: "npm run test:native -- -- code_rule_dsl::workspace:: code_rule_dsl::matcher::anchors::"
+            name: tests, workspace, anchors, waves and transducer
+            run: "npm run test:native -- -- code_rule_dsl::workspace:: code_rule_dsl::matcher::anchors:: code_rule_dsl::waves:: code_rule_dsl::transducer::"
             profiling: true
           - task: test
             name: tests, logic rules and converters
@@ -489,7 +491,7 @@ jobs:
             run: "npm run test:native -- -- code_rule_dsl::sql_executor:: code_rule_dsl::slice::"
           - task: test
             name: tests, the rest
-            run: "npm run test:native -- -- --skip code_rule_dsl::workspace:: --skip code_rule_dsl::matcher::anchors:: --skip code_rule_dsl::logic:: --skip code_rule_dsl::typing:: --skip code_rule_dsl::sql_executor:: --skip code_rule_dsl::slice::"
+            run: "npm run test:native -- -- --skip code_rule_dsl::workspace:: --skip code_rule_dsl::matcher::anchors:: --skip code_rule_dsl::waves:: --skip code_rule_dsl::transducer:: --skip code_rule_dsl::logic:: --skip code_rule_dsl::typing:: --skip code_rule_dsl::sql_executor:: --skip code_rule_dsl::slice::"
     # Line tables keep file:line in panics at a fraction of full debuginfo; incremental state only
     # bloats the cache, since dependencies never build incrementally.
     env:
