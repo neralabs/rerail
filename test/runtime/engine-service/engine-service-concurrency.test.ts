@@ -155,8 +155,9 @@ describe("engine service session concurrency", () => {
       await sleep(250);
       const closing = held.service.close();
       try {
-        // The close cuts the stalled request off while the running event still waits; before, it waited out the
-        // request's 30 s timeout, past the 10 s `rerail daemon stop` gives before its kill.
+        // The close cuts the stalled request off while the running event still waits. Before, it waited for the request
+        // with no limit, since `server.close()` stops the check behind the server's request timeout: past the 10 s
+        // `rerail daemon stop` gives before its kill.
         expect(await Promise.race([cutOff, sleep(5_000).then(() => "still open")])).toBe("cut off");
       } finally {
         partial.destroy();
