@@ -136,3 +136,17 @@ registers).
 The ahead-of-time translation reads a constant inside the tables as their static and an
 offset (`clif_rust::translate`'s spans).
 
+## The block loop's registers
+
+The pass's arguments, the row's index and the file's places were live through the block
+loop, which reads none of them: 15 integer values through the hot loop. They are now in a
+stack slot, read before and after a file's blocks. Values live through the loop 15 to 4,
+peak integer pressure 61 to 50, spills 299 to 277; tier 1 through the JIT 496.6M to 494.7M.
+
+Keeping the carried state words in a slot as well, read where used, made it worse (560.0M
+to 572.3M, 355 spills): there are only two, each read often.
+
+What holds the registers now is the body's own values, by statement: the floats' rounds
+until settled (6,119 points over the registers), `uesc` (3,692), the region walk (3,406),
+`two` (1,747).
+
