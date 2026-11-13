@@ -322,6 +322,83 @@ These are stated requirements, not preferences. Each is quoted from where it was
 - **Kind codes local in the tape, global in indexes.** Global codes in the record were rejected at
   +16.7% (0055).
 
+## Requirements the user added (2026-11-13)
+
+The user listed five requirements after reading the survey above. Below, each is checked against
+the code: where the current format stands, and what in the findings it touches.
+
+**U1. A compression format the GPU can decode, which still compresses reasonably.**
+The user's gpu-csv-parser (2019, `v8-decompress-on-gpu.cc`) shows the shape:
+- an LZ4 frame of independent blocks;
+- one thread walks the block headers to an index of (offset, length, output offset);
+- then one threadgroup per block decodes, spreading each literal run and back-reference copy over
+  its threads;
+- line starts come from a map and a prefix scan (`v6`).
+
+Today:
+- Tapes and sources are zstd frames, decoded on the host before any read (`content_store/objects.rs`).
+- Resident slabs are decompressed on the host into the slab (`residency/slabs.rs`, `plan`).
+- Small frames use a trained dictionary.
+
+For a design:
+- 152k of 179k tapes are under 512 B (t28). Independent blocks that small compress poorly unless they
+  share a dictionary, so the dictionary has to be resident on the device too. gpu-csv-parser's
+  decoder refuses dictionaries.
+- zstd's entropy stage (FSE/Huffman) is serial within a block; LZ4's literal and match copies are
+  not. That is the reason to prefer the LZ4 shape.
+
+Touches 29, 30, 31, 32.
+
+**U2. The same structure repeated gives the same bits, without hurting decoding.**
+Today a repeated subtree gets different bytes:
+- `base` and `off` are absolute positions.
+- Code ids depend on what came first in the file.
+- The widths depend on the whole document.
+- The code table is per tape: `00 00 01 00 02 00…` starts 95–99% of tapes (t28).
+
+Size and tail are already relative. Making positions relative too, with absolutes recovered by a
+prefix scan (gpu-csv-parser's `v6` does this for line numbers), would make repeats byte-equal, which
+the compressor can then find. It also bears on edits (25) and on identity by bytes (33).
+
+Touches 6, 7, 14, 18, 20, 25, 33.
+
+**U3. Room for a second hash when SHA-256 is deprecated, without wasting bits.**
+Not in the survey above.
+- The store is half ready. `hashes` has an `algorithm_id` (SHA-256, git SHA-1, git SHA-256 and
+  BLAKE3 are defined), but each hash is a fixed four 64-bit lanes (256 bits:
+  `content_store/schema.rs`), so a longer digest does not fit.
+- The engine is hard-wired to SHA-256:
+  - `tape_identity` returns `[u8; 32]` and expects a SHA-256 identity;
+  - `validated::visit` and `encode_rr` hash with `Sha256`;
+  - 83 files under `code_rule_dsl` and `content_store` hold `[u8; 32]`.
+- The tape itself carries no digest since format 12 (it was 32 B, about 7% of compressed tapes).
+  So the bits a second hash needs belong in the store's rows, keyed by algorithm, and the format's
+  job is only not to bake one algorithm into identity.
+
+**U4. Loading a tape without the full source, with a compact side form that rebuilds the text that
+is not implicit.**
+Not in the survey above as a goal. Related to 22, 27 and 39.
+- Today every restore needs the whole source: `validated::visit` hashes it and checks UTF-8
+  boundaries, `TapeDoc` holds it, `MetalNode` copies it, and readers rescan it for tokens and lines.
+- Compressed tapes already cost more than the text they describe: named-only tapes are 1.3–1.8× the
+  zstd'd source on every language in t28's table (Python 2.81 MB of tape for 1.74 MB of source,
+  Rust 3.05 for 1.72). So structure plus a side form of the non-implicit text (identifiers,
+  literals, comments, layout) could cost less than tape plus source.
+- The grammar already decides which tokens are implicit (formats 14 and 15); that machinery is
+  what tells the side form what it may leave out.
+
+**U5. Files over 4 GB (up to 1 TB, at most 1 PB).**
+Item 12 noted u32 offsets only in passing. Today:
+- `encode_tree_image` and `encode_rr` refuse sources over `u32::MAX`; `validated` and `resident`
+  refuse more than `u32::MAX` nodes.
+- Starts, ends, bases and every per-node record (`Rec`, `Facts`, `MetalNode`) are u32.
+- The header's source length is already u64.
+- SQLite holds a blob of at most 2^31−1 bytes (1 GB by default). So a file that large cannot be
+  one stored frame whatever the format, and has to be stored in blocks, which U1 wants anyway.
+
+Bounds: 1 TB is 2^40 bytes and 1 PB is 2^50. Positions relative to a block (U2) keep the per-node
+fields narrow; only block-level bases need 40–50 bits.
+
 ## Where the costs sit
 
 Most per-read cost is in the implementation (sections 8 and 9: hashes, validation, copies and
