@@ -2,12 +2,12 @@
 //! `/* */` comments, as tree-sitter-json reads it), compiled once per process through the Bitlex
 //! compiler to tier 1 and tier 2 on Cranelift, and shared by every thread.
 //!
-//! The grammar's kinds, fields and supertype take tree-sitter-json's ids by name, so its node
-//! table is the tree-sitter tree's, node for node (`bitlex_json_tests`): the tape of a JSON file is
-//! encoded from it (`tape::TapeImage::parse`). A file the grammar refuses (invalid JSON, an empty
+//! The grammar's kinds, fields and supertype take tree-sitter-json's ids by name, so the tape its
+//! tier 2 writes (the engine's bytes, decision 0140) is the tree-sitter tree's, node for node
+//! (`json_tapes_from_the_bitlex_parser_are_tree_sitters`), but for the supertypes, which tier 2
+//! records beside the image: the engine's tape adds them (`tape::encode_written`). A file the grammar refuses (invalid JSON, an empty
 //! file, a comment holding a quote) goes to tree-sitter-json.
 
-pub use rerail_compiler::native_cpu_stream::{Columns, NO_PARENT};
 use rerail_compiler::bitlex_masks as bitlex_compile;
 use rerail_compiler::{native_cpu_stream, native_ir, rir_asm as rir};
 
@@ -54,8 +54,6 @@ fn compile() -> Result<Compiled, String> {
     Ok(Compiled { parser })
 }
 
-/// `src`'s node table, with tree-sitter-json's ids; `None` where the grammar refuses the file (or
-/// did not compile: the reason is [`compile_error`]).
 // Its tape (`tape::TreeParser`).
 pub mod tape;
 // The engine's JSON parser: simdjson's stage 1 (the source hashed in it) and a stage 2 of ours, which
@@ -63,8 +61,18 @@ pub mod tape;
 #[cfg(not(target_family = "wasm"))]
 pub mod simdjson;
 
-pub fn columns(src: &str) -> Option<Columns> {
-    compiled().ok()?.parser.columns(src.as_bytes()).ok()
+/// What tier 2 wrote for a JSON file: its image (tree-sitter-json's ids; no supertype classes in
+/// its codes) and the supertypes beside it, each a node's index and the supertype's kind.
+pub struct Written {
+    pub image: Vec<u8>,
+    pub supers: Vec<(u32, u16)>,
+}
+
+/// `src` as tier 2 writes it; `None` where the grammar refuses the file (or did not compile: the
+/// reason is [`compile_error`]).
+pub fn written(src: &str) -> Option<Written> {
+    let (image, supers) = compiled().ok()?.parser.image_supers(src.as_bytes()).ok()?;
+    Some(Written { image, supers })
 }
 
 /// Why the grammar did not compile, if it did not.

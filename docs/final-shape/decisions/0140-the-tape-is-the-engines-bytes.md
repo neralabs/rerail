@@ -1,6 +1,7 @@
 # 0140: The parsers write the engine's tape, its bytes
 
-Status: decided (2026-11-13). Built for the lean parser; tier 2 next.
+Status: decided (2026-11-13). Built for the lean parser, and for tier 2's
+interpreter, Cranelift and Rust ahead of time (docs/parser-generators/37).
 Corrects 0136.
 
 ## Intro
@@ -113,7 +114,19 @@ the new columns' zeroing, and the columns moved into place at the end.
 - `wide_tapes_are_parsed_again_at_their_widths`: a 70,000-byte string, a 70,000-byte
   comment, 20,000 facts.
 
-## Next
+## Tier 2
 
-Tier 2 (the interpreter, the JIT, ahead of time, Metal) writes the same bytes.
-Its node table goes.
+Tier 2 writes the same bytes (docs/parser-generators/37): a working row a node
+(key, start, end), the columns at their place, the widths constants of its code.
+Over the corpus, the interpreter's, the JIT's and the ahead-of-time tapes
+are the lean parser's, byte for byte.
+
+Next: wide files parsed again at their widths, not refused; Metal's own kernel.
+
+In the hub (2026-11-13), tier 2 writes format 15's header as the lean parser does: at
+`rerail_tape_format::header`'s offsets, with no digest (the Cranelift code, the ahead-of-time
+Rust, the harness). Its codes carry no supertype classes yet. The `.rr` grammar has none, but
+the Bitlex JSON parser (tree-sitter-json's `_value`) does: tier 2 records them beside the image
+(`Parser::image_supers`), and the engine reads the image back with its own readers
+(`tape::resident`) and makes the tape with them (`json_parser::tape::encode_written`). Writing
+the classes into the codes would make that one pass the image alone.

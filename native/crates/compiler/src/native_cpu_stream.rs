@@ -41,8 +41,8 @@ pub struct Ctx {
     lasts: *const u32,
     codes: *const u32,
     totals: *const u64,
-    /// The node table, a row a node (`NodeRow`), as the lean parser's tape.
-    rows: *mut NodeRow,
+    /// The working rows, 12 bytes a node (`native_cpu_tape`): key, start, end.
+    rows: *mut u8,
     super_node: *mut u32,
     super_kind: *mut u32,
     open: *mut u32,
@@ -65,8 +65,8 @@ pub struct Ctx {
     head: *mut u32,
     link: *mut u32,
     place: *mut u32,
-    /// The node table in preorder, written at `ACCEPT` when the file had a wrap.
-    out_rows: *mut NodeRow,
+    /// Unused: the table is written in place (decision 0136).
+    out_rows: *mut u8,
     /// Tier 1's layout: the bytes from one output's words to the next's (8 on the CPU, where a
     /// block's outputs are together; a file's blocks times 8 on Metal, an output's words
     /// together); the bytes from one total to the next, and the mask of a total's bits (64-bit
@@ -89,7 +89,27 @@ pub struct Ctx {
     /// In clusters (`compile_cut`), the run's state (`Mem`): every cluster reaches it through
     /// `ctx`, its first argument.
     state: [u64; Mem::COUNT as usize],
+    /// The tape (docs/parser-generators/37): its columns at the compiled widths, the bases, the
+    /// image (the header's room, then the code column in place), and the code ids: each key's
+    /// (`NO_CODE`: none), and each code's key and first node.
+    size_c: *mut u8,
+    off_c: *mut u8,
+    tail_c: *mut u8,
+    base_c: *mut u32,
+    image: *mut u8,
+    id_of: *mut u16,
+    code_kf: *mut u16,
+    code_first: *mut u32,
 }
+
+const SIZE_C: i32 = std::mem::offset_of!(Ctx, size_c) as i32;
+const OFF_C: i32 = std::mem::offset_of!(Ctx, off_c) as i32;
+const TAIL_C: i32 = std::mem::offset_of!(Ctx, tail_c) as i32;
+const BASE_C: i32 = std::mem::offset_of!(Ctx, base_c) as i32;
+const IMAGE: i32 = std::mem::offset_of!(Ctx, image) as i32;
+const ID_OF: i32 = std::mem::offset_of!(Ctx, id_of) as i32;
+const CODE_KF: i32 = std::mem::offset_of!(Ctx, code_kf) as i32;
+const CODE_FIRST: i32 = std::mem::offset_of!(Ctx, code_first) as i32;
 
 /// The run stopped for the tape's room: the host runs it again with the bound's room.
 pub const OVERFLOW: u64 = u64::MAX;
@@ -132,42 +152,9 @@ const FRAME_SHIFT: i32 = 240;
 const STATE: i32 = 248;
 const _: () = assert!(std::mem::offset_of!(Ctx, out_rows) == OUT_ROWS as usize && std::mem::offset_of!(Ctx, stack_base) == STACK_BASE as usize && std::mem::offset_of!(Ctx, state) == STATE as usize);
 
-/// A node of the table, as the lean parser's tape has one (`rr_syntax::tape::Row`, 24 bytes, the
-/// same layout): its kind and field, its bytes, the records in its subtree (its own counted),
-/// its parent and whether it is an extra, each written with the row as it stands at the end.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct NodeRow {
-    pub kind: u16,
-    pub field: u16,
-    pub start: u32,
-    pub end: u32,
-    pub size: u32,
-    /// The parent's record; `NO_PARENT` for the root.
-    pub parent: u32,
-    /// 1 for an extra (a comment).
-    pub extra: u8,
-    pub pad: [u8; 3],
-}
-
-/// A node row's bytes, and where its fields are in it.
-const ROW: i64 = 24;
-const AT_KIND: i32 = 0;
-const AT_FIELD: i32 = 2;
-const AT_START: i32 = 4;
-const AT_END: i32 = 8;
-const AT_SIZE: i32 = 12;
-const AT_PARENT: i32 = 16;
-const AT_EXTRA: i32 = 20;
-const _: () = assert!(
-    std::mem::size_of::<NodeRow>() == ROW as usize
-        && std::mem::offset_of!(NodeRow, field) == AT_FIELD as usize
-        && std::mem::offset_of!(NodeRow, start) == AT_START as usize
-        && std::mem::offset_of!(NodeRow, end) == AT_END as usize
-        && std::mem::offset_of!(NodeRow, size) == AT_SIZE as usize
-        && std::mem::offset_of!(NodeRow, parent) == AT_PARENT as usize
-        && std::mem::offset_of!(NodeRow, extra) == AT_EXTRA as usize
-);
+// The working rows (`native_cpu_tape`): a node's key, start and end, 12 bytes. The tape's columns
+// are apart, at the compiled widths.
+use crate::native_cpu_tape::{AT_END, AT_FIELD, AT_KIND, AT_START, ROW};
 
 /// A field of the node rows: the rows' address and the field's place in a row.
 #[derive(Clone, Copy)]
@@ -191,7 +178,7 @@ impl NodeCol {
         f.ins().bitcast(types::I64, MemFlags::new(), a)
     }
 
-    /// Row `i`'s field, stored (its width: kind and field 16 bits, the extra flag 8).
+    /// Row `i`'s field, stored (its width: kind and field 16 bits).
     fn put(self, f: &mut FunctionBuilder<'_>, i: Value, x: Value) {
         let a = Self::row(f, self.rows, i);
         self.put_row(f, a, x);
@@ -203,7 +190,6 @@ impl NodeCol {
         let flags = MemFlags::trusted();
         match self.at {
             AT_KIND | AT_FIELD => f.ins().istore16(flags, x, a, self.at),
-            AT_EXTRA => f.ins().istore8(flags, x, a, self.at),
             _ => f.ins().istore32(flags, x, a, self.at),
         };
     }
@@ -219,14 +205,10 @@ impl NodeCol {
         let flags = MemFlags::trusted();
         match self.at {
             AT_KIND | AT_FIELD => f.ins().uload16(types::I64, flags, a, self.at),
-            AT_EXTRA => f.ins().uload8(types::I64, flags, a, self.at),
             _ => f.ins().uload32(flags, a, self.at),
         }
     }
 }
-
-/// The root's parent in the table's `parent` column.
-pub const NO_PARENT: u32 = u32::MAX;
 
 /// Returns 0 when the words accept, else one more than the refusing word's place.
 /// Tier 2's entry: `ctx`, the run's end.
@@ -265,6 +247,9 @@ pub struct CompiledStream {
     marks: u64,
     /// The program has `WRAP`: the tape has the frames, chains and preorder columns.
     pub wraps: bool,
+    /// The widths the tape is written at (docs/parser-generators/37), and the language's tag.
+    pub widths: rerail_tape_format::Widths,
+    tag: u8,
     /// The program has context beside each return (`has_context`): two return slots a call.
     context: bool,
     pub clif: String,
@@ -605,11 +590,20 @@ enum Mem {
     Live,
     /// The count of tokens (`COUNT`).
     Depth,
+    /// The tape: the last block's base; the nodes committed (their codes written) and the
+    /// codes; the flags of values that did not fit their widths (`native_cpu_tape::WIDE_OFF`).
+    BlockBase,
+    Coded,
+    Codes,
+    Wide,
 }
 
 impl Mem {
-    const COUNT: u32 = 23;
+    const COUNT: u32 = 27;
 }
+
+/// `Ctx::state`'s slots (`rust_stream` writes `Ctx` field for field).
+pub(crate) const STATE_SLOTS: usize = Mem::COUNT as usize;
 
 /// The fields a rule's function holds in registers (`Cut::held`) and passes to its calls, given
 /// back with their results (`Cut::pass`): none. The whole state stays in memory, read and
@@ -1389,14 +1383,13 @@ fn word_kind(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, word_kinds: &[(u16, u
     f.block_params(join)[0]
 }
 
-/// What the node words need to write the table as it stands at the end (`TableFns`): the
-/// extras' kinds (a row's flag), whether rows carry marks (`head`, `rust_stream::marks`: a
-/// wrap, `WRAPPED`; a dropped row taken out from among its children, `DROPPED_IN`), the
-/// functions.
+/// What the node words need to write the tape as it stands at the end (`TableFns`): whether
+/// rows carry marks (`head`, `rust_stream::marks`: a wrap, `WRAPPED`; a dropped row taken out
+/// from among its children, `DROPPED_IN`), the tape's widths, the functions.
 #[derive(Clone, Copy)]
 struct Table<'a> {
-    extras: &'a [u16],
     inner: bool,
+    w: rerail_tape_format::Widths,
     fns: &'a TableFns,
 }
 
@@ -1404,46 +1397,135 @@ const WRAPPED: i64 = 1;
 const DROPPED_IN: i64 = 2;
 
 impl Table<'_> {
-    /// A kind's extra flag, as a row's last word (its three pad bytes zero).
-    fn extra(&self, f: &mut FunctionBuilder<'_>, kind: Value) -> Value {
-        let k = f.ins().band_imm(kind, 0xffff);
-        let mut x = f.ins().iconst(types::I8, 0);
-        for &e in self.extras {
-            let is = f.ins().icmp_imm(IntCC::Equal, k, i64::from(e));
-            x = f.ins().bor(x, is);
-        }
-        f.ins().uextend(types::I32, x)
-    }
-
-    /// The innermost open node (`open` nodes open), or none: a node's parent written now.
-    fn top(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, open: Value) -> Value {
-        let open_c = (e.ctx)(f, OPEN);
-        let any = f.ins().icmp_imm(IntCC::NotEqual, open, 0);
-        let o1 = f.ins().iadd_imm(open, -1);
-        let at = f.ins().select(any, o1, open);
-        let top = slot_get(f, open_c, at);
-        let none = f.ins().iconst(types::I64, i64::from(NO_PARENT));
-        f.ins().select(any, top, none)
-    }
-
-    /// Row `row`'s parent and extra flag.
-    fn place(&self, f: &mut FunctionBuilder<'_>, row: Value, parent: Value, kind: Value) {
-        f.ins().istore32(MemFlags::trusted(), parent, row, AT_PARENT);
-        let x = self.extra(f, kind);
-        f.ins().store(MemFlags::trusted(), x, row, AT_EXTRA);
-    }
-
-    /// A row's kind changed: its kind and its extra flag.
+    /// A kind's change on row `at`: its key's kind (16 bits).
     fn retag(&self, f: &mut FunctionBuilder<'_>, rows: Value, at: Value, kind: Value) {
         let row = NodeCol::row(f, rows, at);
         f.ins().istore16(MemFlags::trusted(), kind, row, AT_KIND);
-        let x = self.extra(f, kind);
-        f.ins().store(MemFlags::trusted(), x, row, AT_EXTRA);
+    }
+
+    /// Node `node`'s offset, at its push with start `start`: from its block's base, which it sets
+    /// where it starts a block; where it starts before the base or 0x10000 past it, the block's
+    /// base and offsets again (`blocks`). `n`: the nodes, it counted.
+    fn push_off(&self, f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, node: Value, start: Value, n: Value) {
+        let off_c = (e.ctx)(f, OFF_C);
+        let low = f.ins().band_imm(node, rerail_tape_format::CHECKPOINT_STRIDE as i64 - 1);
+        let base = (e.get)(f, Mem::BlockBase);
+        let off = f.ins().isub(start, base);
+        let off = f.ins().band_imm(off, 0xffff_ffff);
+        let far = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, off, 0xffff);
+        let (first, other, near, again, done) = (f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block());
+        f.ins().brif(low, other, &[], first, &[]);
+        // The block's first node: its start is the base.
+        f.switch_to_block(first);
+        let base_c = (e.ctx)(f, BASE_C);
+        let b = f.ins().ushr_imm(node, rerail_tape_format::CHECKPOINT_STRIDE.trailing_zeros() as i64);
+        slot_put(f, base_c, b, start);
+        (e.set)(f, Mem::BlockBase, start);
+        let zero = f.ins().iconst(types::I64, 0);
+        crate::native_cpu_tape::put(f, off_c, node, zero, self.w.off);
+        f.ins().jump(done, &[]);
+        f.switch_to_block(other);
+        f.ins().brif(far, again, &[], near, &[]);
+        f.switch_to_block(near);
+        crate::native_cpu_tape::put(f, off_c, node, off, self.w.off);
+        f.ins().jump(done, &[]);
+        f.switch_to_block(again);
+        f.set_cold_block(again);
+        let b = f.ins().ushr_imm(node, rerail_tape_format::CHECKPOINT_STRIDE.trailing_zeros() as i64);
+        self.blocks(f, e, b, n);
+        f.ins().jump(done, &[]);
+        f.switch_to_block(done);
+    }
+
+    /// Blocks `b` on, of `n` nodes: their bases and offsets again (`native_cpu_tape::blocks_from`),
+    /// the last base kept, a wide offset flagged.
+    fn blocks(&self, f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, b: Value, n: Value) {
+        let (rows, base_c, off_c) = ((e.ctx)(f, ROWS), (e.ctx)(f, BASE_C), (e.ctx)(f, OFF_C));
+        let (id, sig, _) = &self.fns.blocks;
+        let r = call_own(f, *id, sig, &[rows, base_c, off_c, b, n]);
+        (e.set)(f, Mem::BlockBase, r[0]);
+        let wide = (e.get)(f, Mem::Wide);
+        let wide = f.ins().bor(wide, r[1]);
+        (e.set)(f, Mem::Wide, wide);
+    }
+
+    /// The table cut back to `n` nodes (a fold, a merge, a drop): its last block's base again,
+    /// where a block is left part full.
+    fn cut_to(&self, f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, n: Value) {
+        let low = f.ins().band_imm(n, rerail_tape_format::CHECKPOINT_STRIDE as i64 - 1);
+        let (part, done) = (f.create_block(), f.create_block());
+        f.ins().brif(low, part, &[], done, &[]);
+        f.switch_to_block(part);
+        let n1 = f.ins().iadd_imm(n, -1);
+        let b = f.ins().ushr_imm(n1, rerail_tape_format::CHECKPOINT_STRIDE.trailing_zeros() as i64);
+        self.blocks(f, e, b, n);
+        f.ins().jump(done, &[]);
+        f.switch_to_block(done);
+    }
+
+    /// Node `at` closed: its size, and its tail from its last descendant (`last`, a row) to
+    /// `end`; a tail that does not fit 2 bytes (or wraps: an end before its last descendant's
+    /// start) flagged.
+    fn close_cells(&self, f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, at: Value, size: Value, last: Value, end: Value) {
+        let rows = (e.ctx)(f, ROWS);
+        let from = if self.w.from_start { at } else { last };
+        let s = crate::native_cpu_tape::start(f, rows, from);
+        let tail = f.ins().isub(end, s);
+        let tail = f.ins().band_imm(tail, 0xffff_ffff);
+        let (size_c, tail_c) = ((e.ctx)(f, SIZE_C), (e.ctx)(f, TAIL_C));
+        crate::native_cpu_tape::put(f, size_c, at, size, self.w.size);
+        crate::native_cpu_tape::put(f, tail_c, at, tail, self.w.tail);
+        let mut odd = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, tail, if self.w.tail == 2 { 0xffff } else { 0x7fff_ffff });
+        if self.w.from_start {
+            let ls = crate::native_cpu_tape::start(f, rows, last);
+            let early = f.ins().icmp(IntCC::UnsignedLessThan, end, ls);
+            odd = f.ins().bor(odd, early);
+        }
+        let (flag, done) = (f.create_block(), f.create_block());
+        f.ins().brif(odd, flag, &[], done, &[]);
+        f.switch_to_block(flag);
+        f.set_cold_block(flag);
+        let wide = (e.get)(f, Mem::Wide);
+        let wide = f.ins().bor_imm(wide, crate::native_cpu_tape::WIDE_TAIL);
+        (e.set)(f, Mem::Wide, wide);
+        f.ins().jump(done, &[]);
+        f.switch_to_block(done);
+    }
+
+    /// Nodes `from..to` final: their codes (`native_cpu_tape::commit`).
+    fn commit(&self, f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, to: Value) {
+        let from = (e.get)(f, Mem::Coded);
+        let (rows, image, id_of, kf, first) = ((e.ctx)(f, ROWS), (e.ctx)(f, IMAGE), (e.ctx)(f, ID_OF), (e.ctx)(f, CODE_KF), (e.ctx)(f, CODE_FIRST));
+        let code = f.ins().iadd_imm(image, rerail_tape_format::HEADER_BYTES as i64);
+        let codes = (e.get)(f, Mem::Codes);
+        let (id, sig, _) = &self.fns.commit;
+        let r = call_own(f, *id, sig, &[rows, code, id_of, kf, first, from, to, codes]);
+        (e.set)(f, Mem::Codes, r[0]);
+        (e.set)(f, Mem::Coded, to);
+    }
+
+    /// An edit of node `node`: where it is committed, the codes from it taken back
+    /// (`native_cpu_tape::uncode`), numbered again at the next commit.
+    fn uncode(&self, f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, node: Value) {
+        let coded = (e.get)(f, Mem::Coded);
+        let before = f.ins().icmp(IntCC::UnsignedLessThan, node, coded);
+        let (back, done) = (f.create_block(), f.create_block());
+        f.ins().brif(before, back, &[], done, &[]);
+        f.switch_to_block(back);
+        f.set_cold_block(back);
+        let (id_of, kf, first) = ((e.ctx)(f, ID_OF), (e.ctx)(f, CODE_KF), (e.ctx)(f, CODE_FIRST));
+        let codes = (e.get)(f, Mem::Codes);
+        let (id, sig, _) = &self.fns.uncode;
+        let r = call_own(f, *id, sig, &[id_of, kf, first, codes, node]);
+        (e.set)(f, Mem::Codes, r[0]);
+        (e.set)(f, Mem::Coded, node);
+        f.ins().jump(done, &[]);
+        f.switch_to_block(done);
     }
 }
 
-/// `LEAF`: its row (its kind, with its field above it or none; its bytes; one record; its
-/// parent and extra flag), the pending extras, the level's last node.
+/// `LEAF`: its row (its key, its field above its kind or none; its bytes), its offset, its size
+/// (1) and tail, the pending extras, the level's last node.
 fn leaf_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: Value, deferred: bool, extra: bool, end_at: EndAt, wrapping: bool) {
     let flags = MemFlags::trusted();
     let zero = f.ins().iconst(types::I64, 0);
@@ -1457,41 +1539,38 @@ fn leaf_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: V
         zero
     };
     (e.set)(f, Mem::Pending, pending);
-    let (nodes, start, end, open) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Start), token_end_at(f, e, end_at), (e.get)(f, Mem::Open));
-    let parent = Table::top(f, e, open);
-    let one = f.ins().iconst(types::I64, 1);
+    let (nodes, start, end) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Start), token_end_at(f, e, end_at));
     let rows = (e.ctx)(f, ROWS);
     let row = NodeCol::row(f, rows, nodes);
     f.ins().istore32(flags, kind, row, AT_KIND);
     NodeCol::of(rows, AT_START).put_row(f, row, start);
     NodeCol::of(rows, AT_END).put_row(f, row, end);
-    NodeCol::of(rows, AT_SIZE).put_row(f, row, one);
-    t.place(f, row, parent, kind);
+    let n1 = f.ins().iadd_imm(nodes, 1);
+    t.push_off(f, e, nodes, start, n1);
+    let one = f.ins().iconst(types::I64, 1);
+    t.close_cells(f, e, nodes, one, nodes, end);
     if t.inner {
         let head = (e.ctx)(f, HEAD);
         slot_put(f, head, nodes, zero);
     }
     if wrapping && !deferred && !extra {
         // The last node made at the innermost open node's level.
-        let n1 = f.ins().iadd_imm(nodes, 1);
         (e.set)(f, Mem::LastMade, n1);
     }
-    let nodes = f.ins().iadd_imm(nodes, 1);
-    (e.set)(f, Mem::Nodes, nodes);
+    (e.set)(f, Mem::Nodes, n1);
 }
 
-/// `OPEN`: its row (its kind, with its field above it or none; its start; its parent and extra
-/// flag), open.
+/// `OPEN`: its row (its key, its field above its kind or none; its start), its offset; open.
 fn open_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: Value, wrapping: bool) {
     let zero = f.ins().iconst(types::I64, 0);
     (e.set)(f, Mem::Pending, zero);
     let (nodes, start, open) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Start), (e.get)(f, Mem::Open));
-    let parent = Table::top(f, e, open);
     let rows = (e.ctx)(f, ROWS);
     let row = NodeCol::row(f, rows, nodes);
     f.ins().istore32(MemFlags::trusted(), kind, row, AT_KIND);
     NodeCol::of(rows, AT_START).put_row(f, row, start);
-    t.place(f, row, parent, kind);
+    let n1 = f.ins().iadd_imm(nodes, 1);
+    t.push_off(f, e, nodes, start, n1);
     let open_c = (e.ctx)(f, OPEN);
     slot_put(f, open_c, open, nodes);
     if t.inner {
@@ -1503,14 +1582,14 @@ fn open_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: V
         (e.set)(f, Mem::LastMade, zero);
     }
     let open = f.ins().iadd_imm(open, 1);
-    let nodes = f.ins().iadd_imm(nodes, 1);
     (e.set)(f, Mem::Open, open);
-    (e.set)(f, Mem::Nodes, nodes);
+    (e.set)(f, Mem::Nodes, n1);
 }
 
 /// `CLOSE`: the innermost open node's end (`this`: the token's; else the last taken's, or
-/// the one before the pending extras) and size; the pending extras its parent's now (`unpend`,
-/// rare); with wraps, it is the last node made at its parent's level.
+/// the one before the pending extras), size and tail; the pending extras its parent's (they
+/// follow its subtree); with wraps, it is the last node made at its parent's level. A node
+/// closed at the top level: the nodes before it are final, their codes committed.
 fn close_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, this: bool, end_at: EndAt, wrapping: bool) {
     let open = (e.get)(f, Mem::Open);
     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
@@ -1533,24 +1612,23 @@ fn close_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, this: 
         let at1 = f.ins().iadd_imm(at, 1);
         (e.set)(f, Mem::LastMade, at1);
     }
-    let size = f.ins().isub(nodes, at);
-    let size = f.ins().isub(size, pending);
-    NodeCol::of(rows, AT_SIZE).put_row(f, at_row, size);
-    let Some((id, sig, _)) = &t.fns.unpend else { return };
-    let (some, after) = (f.create_block(), f.create_block());
-    f.ins().brif(pending, some, &[], after, &[]);
-    f.switch_to_block(some);
-    f.set_cold_block(some);
-    let parent = Table::top(f, e, open);
-    let from = f.ins().isub(nodes, pending);
-    call_own(f, *id, sig, &[rows, from, nodes, parent]);
-    f.ins().jump(after, &[]);
-    f.switch_to_block(after);
+    let kept = f.ins().isub(nodes, pending);
+    let size = f.ins().isub(kept, at);
+    let last = f.ins().iadd_imm(kept, -1);
+    t.close_cells(f, e, at, size, last, end);
+    let top = f.ins().icmp_imm(IntCC::Equal, open, 1);
+    let (commit, done) = (f.create_block(), f.create_block());
+    f.ins().brif(top, commit, &[], done, &[]);
+    f.switch_to_block(commit);
+    t.commit(f, e, at);
+    f.ins().jump(done, &[]);
+    f.switch_to_block(done);
 }
 
 /// `WRAP`: a node before the last node made at the innermost open node's level, its field that
 /// one's; open around it. That node and the rest of the table (the pending extras) move up a
-/// row: one row and nothing else where it is a leaf no supertype names, else `shift`.
+/// cell: one row and nothing else where it is a leaf no supertype names, else `shift`, then
+/// the blocks from it again.
 fn wrap_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: Value) {
     let flags = MemFlags::trusted();
     let zero = f.ins().iconst(types::I64, 0);
@@ -1562,11 +1640,13 @@ fn wrap_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: V
     (e.guard)(f, none);
     (e.guard)(f, no_last);
     let r = f.ins().iadd_imm(last, -1);
+    t.uncode(f, e, r);
     let (nodes, supers) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Supers));
-    let x = Table::top(f, e, open);
+    let n1 = f.ins().iadd_imm(nodes, 1);
     let rows = (e.ctx)(f, ROWS);
     let head = if t.inner { (e.ctx)(f, HEAD) } else { zero };
     let snode = (e.ctx)(f, SUPER_NODE);
+    let (size_c, tail_c) = ((e.ctx)(f, SIZE_C), (e.ctx)(f, TAIL_C));
     // One row: the leaf at the end, no supertype on it.
     let tail = f.ins().isub(nodes, r);
     let one = f.ins().icmp_imm(IntCC::Equal, tail, 1);
@@ -1583,6 +1663,12 @@ fn wrap_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: V
     let (src, dst) = (NodeCol::row(f, rows, r), NodeCol::row(f, rows, nodes));
     let w = row_words(f, src);
     put_row_words(f, dst, w);
+    let size = crate::native_cpu_tape::get(f, size_c, r, t.w.size);
+    crate::native_cpu_tape::put(f, size_c, nodes, size, t.w.size);
+    let tl = crate::native_cpu_tape::get(f, tail_c, r, t.w.tail);
+    crate::native_cpu_tape::put(f, tail_c, nodes, tl, t.w.tail);
+    let st = f.ins().uload32(flags, dst, AT_START);
+    t.push_off(f, e, nodes, st, n1);
     if t.inner {
         let h = slot_get(f, head, r);
         slot_put(f, head, nodes, h);
@@ -1591,20 +1677,18 @@ fn wrap_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: V
     f.switch_to_block(long);
     f.set_cold_block(long);
     let (id, sig, _) = t.fns.shift.as_ref().expect("a program that wraps has its shift");
-    call_own(f, *id, sig, &[rows, head, snode, r, nodes, x, supers]);
+    call_own(f, *id, sig, &[rows, head, snode, r, nodes, supers, size_c, tail_c]);
+    let b = f.ins().ushr_imm(r, rerail_tape_format::CHECKPOINT_STRIDE.trailing_zeros() as i64);
+    t.blocks(f, e, b, n1);
     f.ins().jump(placed, &[]);
     f.switch_to_block(placed);
-    // The wrap at r, the wrapped node after it.
+    // The wrap at r (its start the wrapped node's: r's offset holds), the wrapped node after it.
     let (to, from) = (NodeCol::row(f, rows, r), NodeCol::row(f, rows, last));
     let fld = f.ins().uload16(types::I64, flags, from, AT_FIELD);
-    let st = f.ins().uload32(flags, from, AT_START);
     let kf = f.ins().ishl_imm(fld, 16);
     let kf = f.ins().bor(kf, kind);
     f.ins().istore32(flags, kf, to, AT_KIND);
-    f.ins().istore32(flags, st, to, AT_START);
-    t.place(f, to, x, kind);
     f.ins().istore16(flags, zero, from, AT_FIELD);
-    f.ins().istore32(flags, r, from, AT_PARENT);
     if t.inner {
         let mark = f.ins().iconst(types::I64, WRAPPED);
         slot_put(f, head, r, mark);
@@ -1617,23 +1701,35 @@ fn wrap_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: V
     (e.set)(f, Mem::Pending, zero);
     let open1 = f.ins().iadd_imm(open, 1);
     (e.set)(f, Mem::Open, open1);
-    let n1 = f.ins().iadd_imm(nodes, 1);
     (e.set)(f, Mem::Nodes, n1);
 }
 
-/// A dropped node's rows taken out from row `from` on (`drop`).
+/// A dropped node's rows taken out from row `from` on (`drop`), then the tails of the nodes
+/// left there and the blocks from there again.
 fn drop_from(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, from: Value) {
     let zero = f.ins().iconst(types::I64, 0);
+    t.uncode(f, e, from);
     let rows = (e.ctx)(f, ROWS);
-    let (before, to) = ((e.ctx)(f, FRAME_BASE), (e.ctx)(f, LINK));
+    let (before, to, stack) = ((e.ctx)(f, FRAME_BASE), (e.ctx)(f, LINK), (e.ctx)(f, PLACE));
     let head = if t.inner { (e.ctx)(f, HEAD) } else { zero };
     let (snode, skind) = ((e.ctx)(f, SUPER_NODE), (e.ctx)(f, SUPER_KIND));
+    let (size_c, tail_c) = ((e.ctx)(f, SIZE_C), (e.ctx)(f, TAIL_C));
     let (nodes, supers, moved) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Supers), (e.get)(f, Mem::Moved));
+    // The innermost open node: a dropped row's parent where no row of the range holds it.
+    let open = (e.get)(f, Mem::Open);
+    let o1 = f.ins().iadd_imm(open, -1);
+    let open_c = (e.ctx)(f, OPEN);
+    let outer = slot_get(f, open_c, o1);
     let (id, sig, _) = t.fns.drop.as_ref().expect("a program that drops has its drop");
-    let r = call_own(f, *id, sig, &[rows, before, to, head, snode, skind, from, nodes, supers, moved]);
+    let r = call_own(f, *id, sig, &[rows, before, to, head, snode, skind, from, nodes, supers, moved, size_c, tail_c, stack, outer]);
     (e.set)(f, Mem::Nodes, r[0]);
     (e.set)(f, Mem::Supers, r[1]);
     (e.set)(f, Mem::Moved, r[2]);
+    let wide = (e.get)(f, Mem::Wide);
+    let wide = f.ins().bor(wide, r[3]);
+    (e.set)(f, Mem::Wide, wide);
+    let b = f.ins().ushr_imm(from, rerail_tape_format::CHECKPOINT_STRIDE.trailing_zeros() as i64);
+    t.blocks(f, e, b, r[0]);
 }
 
 /// `RETAG m=2`, `NODE_FIELD m=2`: the node made last at the innermost open node's level
@@ -1683,7 +1779,7 @@ fn here_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: V
 }
 
 /// `MERGE m=1`: the innermost open node holds two leaves and nothing else, no extra pending:
-/// the first becomes one leaf through the second's end.
+/// the first becomes one leaf through the second's end, closed again.
 fn fold_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: Value, wrapping: bool) {
     let (nodes, pending, open) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Pending), (e.get)(f, Mem::Open));
     let none = f.ins().icmp_imm(IntCC::Equal, open, 0);
@@ -1699,9 +1795,10 @@ fn fold_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: V
     (e.guard)(f, waiting);
     let (a, b) = (f.ins().iadd_imm(o, 1), f.ins().iadd_imm(o, 2));
     let rows = (e.ctx)(f, ROWS);
-    let (end_c, size_c) = (NodeCol::of(rows, AT_END), NodeCol::of(rows, AT_SIZE));
+    let size_c = (e.ctx)(f, SIZE_C);
+    let end_c = NodeCol::of(rows, AT_END);
     let (ra, rb) = (NodeCol::row(f, rows, a), NodeCol::row(f, rows, b));
-    let (sa, sb) = (size_c.get_row(f, ra), size_c.get_row(f, rb));
+    let (sa, sb) = (crate::native_cpu_tape::get(f, size_c, a, t.w.size), crate::native_cpu_tape::get(f, size_c, b, t.w.size));
     let na = f.ins().icmp_imm(IntCC::NotEqual, sa, 1);
     let nb = f.ins().icmp_imm(IntCC::NotEqual, sb, 1);
     (e.guard)(f, na);
@@ -1709,7 +1806,10 @@ fn fold_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: V
     let end = end_c.get_row(f, rb);
     t.retag(f, rows, a, kind);
     end_c.put_row(f, ra, end);
+    let one = f.ins().iconst(types::I64, 1);
+    t.close_cells(f, e, a, one, a, end);
     (e.set)(f, Mem::Nodes, b);
+    t.cut_to(f, e, b);
     if wrapping {
         // The first is the last node made at this level now.
         (e.set)(f, Mem::LastMade, b);
@@ -1717,7 +1817,7 @@ fn fold_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: V
 }
 
 /// `MERGE`: the grammar's leaf before the pending extras, a leaf inside the innermost open
-/// node; the extras are its text: dropped.
+/// node; the extras are its text: dropped. The leaf closed again at its new end.
 fn merge_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: Value, end_at: EndAt) {
     let zero = f.ins().iconst(types::I64, 0);
     let (nodes, pending, open) = ((e.get)(f, Mem::Nodes), (e.get)(f, Mem::Pending), (e.get)(f, Mem::Open));
@@ -1726,9 +1826,10 @@ fn merge_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: 
     (e.guard)(f, none);
     let leaf = f.ins().iadd_imm(kept, -1);
     let rows = (e.ctx)(f, ROWS);
-    let (end_c, size_c) = (NodeCol::of(rows, AT_END), NodeCol::of(rows, AT_SIZE));
+    let size_c = (e.ctx)(f, SIZE_C);
+    let end_c = NodeCol::of(rows, AT_END);
     let leaf_row = NodeCol::row(f, rows, leaf);
-    let size = size_c.get_row(f, leaf_row);
+    let size = crate::native_cpu_tape::get(f, size_c, leaf, t.w.size);
     let not_leaf = f.ins().icmp_imm(IntCC::NotEqual, size, 1);
     (e.guard)(f, not_leaf);
     let any = f.ins().icmp_imm(IntCC::NotEqual, open, 0);
@@ -1742,8 +1843,17 @@ fn merge_word(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, t: Table<'_>, kind: 
     let end = token_end_at(f, e, end_at);
     t.retag(f, rows, leaf, kind);
     end_c.put_row(f, leaf_row, end);
+    let one = f.ins().iconst(types::I64, 1);
+    t.close_cells(f, e, leaf, one, leaf, end);
     (e.set)(f, Mem::Nodes, kept);
     (e.set)(f, Mem::Pending, zero);
+    // The extras taken back: where there were any, the last block's base again.
+    let (cut, done) = (f.create_block(), f.create_block());
+    f.ins().brif(pending, cut, &[], done, &[]);
+    f.switch_to_block(cut);
+    t.cut_to(f, e, kept);
+    f.ins().jump(done, &[]);
+    f.switch_to_block(done);
 }
 
 /// What `TOKEN` reads besides `ctx`: the room each token's path may need, and the marks.
@@ -1923,51 +2033,56 @@ type OwnFn = (cranelift_module::FuncId, cranelift_codegen::ir::Signature, cranel
 /// supertype names); `unpend`: a close the pending extras outlive; `drop`: a dropped node's.
 struct TableFns {
     shift: Option<OwnFn>,
-    unpend: Option<OwnFn>,
     drop: Option<OwnFn>,
+    /// The tape's (`native_cpu_tape`): a block's base and offsets again, a commit of code ids,
+    /// codes taken back, the image's end.
+    blocks: OwnFn,
+    commit: OwnFn,
+    uncode: OwnFn,
+    finish: OwnFn,
 }
 
 impl TableFns {
-    fn make(module: &mut JITModule, words: &[crate::native_ir::StructuralBlock]) -> Result<Self, Error> {
+    fn make(module: &mut JITModule, words: &[crate::native_ir::StructuralBlock], x: crate::native_cpu_tape::Image<'_>) -> Result<Self, Error> {
+        let w = x.widths;
         let inner = words.iter().any(|b| matches!(b.operation, Op::NodeField { on: On::Inner, .. } | Op::Reread { .. }));
         let wraps = words.iter().any(|b| matches!(b.operation, Op::Wrap { .. }));
         let drops = words.iter().any(|b| matches!(b.operation, Op::Reread { .. } | Op::Retag { kind: DEAD, on: On::Made }));
-        let shift = if wraps { Some(outline(module, "tempo_stream_shift", 7, 0, false, &[], |f, p, heads| shift_rows(f, p, inner, heads))?) } else { None };
-        // Leaves pending only where a leaf is deferred (an extra's).
-        let defers = words.iter().any(|b| matches!(b.operation, Op::Leaf { deferred: true, .. } | Op::Token { extras: true, .. }));
-        let unpend = if defers { Some(outline(module, "tempo_stream_unpend", 4, 0, false, &[], unpend_rows)?) } else { None };
-        let drop = if drops { Some(outline(module, "tempo_stream_drop", 10, 3, false, &[], |f, p, heads| drop_rows(f, p, inner, heads))?) } else { None };
-        Ok(TableFns { shift, unpend, drop })
+        let shift = if wraps { Some(outline(module, "tempo_stream_shift", 8, 0, false, &[], |f, p, heads| shift_rows(f, p, inner, w, heads))?) } else { None };
+        let drop = if drops { Some(outline(module, "tempo_stream_drop", 14, 4, false, &[], |f, p, heads| drop_rows(f, p, inner, w, heads))?) } else { None };
+        let blocks = outline(module, "tempo_tape_blocks", 5, 2, false, &[], |f, p, heads| crate::native_cpu_tape::blocks_from(f, p, w.off, heads))?;
+        let commit = outline(module, "tempo_tape_commit", 8, 1, false, &[], crate::native_cpu_tape::commit)?;
+        let uncode = outline(module, "tempo_tape_uncode", 5, 1, false, &[], crate::native_cpu_tape::uncode)?;
+        let finish = outline(module, "tempo_tape_finish", 10, 1, false, &[], |f, p, heads| crate::native_cpu_tape::finish(f, p, x, heads))?;
+        Ok(TableFns { shift, drop, blocks, commit, uncode, finish })
     }
 
     /// The functions' names: the node words' functions call them.
     fn names(&self) -> Vec<cranelift_codegen::ir::UserExternalName> {
-        self.shift.iter().chain(&self.unpend).chain(&self.drop).map(|f| cranelift_codegen::ir::UserExternalName::new(0, f.0.as_u32())).collect()
+        self.shift.iter().chain(&self.drop).chain([&self.blocks, &self.commit, &self.uncode, &self.finish]).map(|f| cranelift_codegen::ir::UserExternalName::new(0, f.0.as_u32())).collect()
     }
 
     fn all(self) -> impl Iterator<Item = OwnFn> {
-        self.shift.into_iter().chain(self.unpend).chain(self.drop)
+        self.shift.into_iter().chain(self.drop).chain([self.blocks, self.commit, self.uncode, self.finish])
     }
 }
 
-/// A row's three words, loaded or stored.
-fn row_words(f: &mut FunctionBuilder<'_>, row: Value) -> [Value; 3] {
-    [0, 8, 16].map(|o| f.ins().load(types::I64, MemFlags::trusted(), row, o))
+/// A row's 12 bytes (its key and start, its end), loaded or stored.
+fn row_words(f: &mut FunctionBuilder<'_>, row: Value) -> [Value; 2] {
+    [f.ins().load(types::I64, MemFlags::trusted(), row, 0), f.ins().uload32(MemFlags::trusted(), row, 8)]
 }
 
-fn put_row_words(f: &mut FunctionBuilder<'_>, row: Value, w: [Value; 3]) {
-    for (k, o) in [0, 8, 16].into_iter().enumerate() {
-        f.ins().store(MemFlags::trusted(), w[k], row, o);
-    }
+fn put_row_words(f: &mut FunctionBuilder<'_>, row: Value, w: [Value; 2]) {
+    f.ins().store(MemFlags::trusted(), w[0], row, 0);
+    f.ins().istore32(MemFlags::trusted(), w[1], row, 8);
 }
 
-/// `(rows, head, snode, r, n, x, supers)`: a wrap at row `r`, inside `x`, of a table of `n`:
-/// rows `r..n` up a row, latest first; in each moved past the first, its parent `x` the wrap's,
-/// a parent from `r` on one more. `head` (which rows are wraps) moves with them. The
-/// supertypes' nodes from `r` on, the last ones, one more. A step a row (`Step::Node`).
-fn shift_rows(f: &mut FunctionBuilder<'_>, p: &[Value], inner: bool, heads: &mut Vec<(Block, Step)>) {
-    let flags = MemFlags::trusted();
-    let (rows, head, snode, r, n, x, supers) = (p[0], p[1], p[2], p[3], p[4], p[5], p[6]);
+/// `(rows, head, snode, r, n, supers, size, tail)`: a wrap at row `r` of a table of `n`: rows
+/// `r..n` up a row, latest first, with their size and tail cells; `head` (which rows are wraps)
+/// moves with them. The supertypes' nodes from `r` on, the last ones, one more. A step a row
+/// (`Step::Node`). The caller sets the blocks from `r` again.
+fn shift_rows(f: &mut FunctionBuilder<'_>, p: &[Value], inner: bool, w: rerail_tape_format::Widths, heads: &mut Vec<(Block, Step)>) {
+    let (rows, head, snode, r, n, supers, size_c, tail_c) = (p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]);
     let (step, body, sups, done) = (f.create_block(), f.create_block(), f.create_block(), f.create_block());
     f.append_block_param(step, types::I64);
     f.append_block_param(sups, types::I64);
@@ -1981,18 +2096,12 @@ fn shift_rows(f: &mut FunctionBuilder<'_>, p: &[Value], inner: bool, heads: &mut
     f.switch_to_block(body);
     let from = f.ins().iadd_imm(i, -1);
     let (src, dst) = (NodeCol::row(f, rows, from), NodeCol::row(f, rows, i));
-    let w = row_words(f, src);
-    put_row_words(f, dst, w);
-    // Past the first (the wrapped node, which the wrap sets): its parent.
-    let past = f.ins().icmp(IntCC::UnsignedGreaterThan, from, r);
-    let pr = f.ins().uload32(flags, dst, AT_PARENT);
-    let is_x = f.ins().icmp(IntCC::Equal, pr, x);
-    let after = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, pr, r);
-    let up = f.ins().iadd_imm(pr, 1);
-    let to = f.ins().select(after, up, pr);
-    let to = f.ins().select(is_x, r, to);
-    let to = f.ins().select(past, to, pr);
-    f.ins().istore32(flags, to, dst, AT_PARENT);
+    let x = row_words(f, src);
+    put_row_words(f, dst, x);
+    for (col, width) in [(size_c, w.size), (tail_c, w.tail)] {
+        let v = crate::native_cpu_tape::get(f, col, from, width);
+        crate::native_cpu_tape::put(f, col, i, v, width);
+    }
     if inner {
         let h = slot_get(f, head, from);
         slot_put(f, head, i, h);
@@ -2016,55 +2125,37 @@ fn shift_rows(f: &mut FunctionBuilder<'_>, p: &[Value], inner: bool, heads: &mut
     f.ins().return_(&[]);
 }
 
-/// `(rows, from, to, parent)`: rows `from..to` (the pending extras) are `parent`'s.
-fn unpend_rows(f: &mut FunctionBuilder<'_>, p: &[Value], heads: &mut Vec<(Block, Step)>) {
-    let (rows, from, to, parent) = (p[0], p[1], p[2], p[3]);
-    let (step, body, done) = (f.create_block(), f.create_block(), f.create_block());
-    f.append_block_param(step, types::I64);
-    heads.push((step, Step::Node));
-    f.ins().jump(step, &[BlockArg::from(from)]);
-    f.switch_to_block(step);
-    let i = f.block_params(step)[0];
-    let end = f.ins().icmp(IntCC::Equal, i, to);
-    f.ins().brif(end, done, &[], body, &[]);
-    f.switch_to_block(body);
-    let row = NodeCol::row(f, rows, i);
-    f.ins().istore32(MemFlags::trusted(), parent, row, AT_PARENT);
-    let i1 = f.ins().iadd_imm(i, 1);
-    f.ins().jump(step, &[BlockArg::from(i1)]);
-    f.switch_to_block(done);
-    f.ins().return_(&[]);
-}
-
-/// `(rows, before, to, head, snode, skind, from, n, supers, moved)`: the dropped rows (`DEAD`)
-/// of rows `from..n` taken out, the rest moved down. First each row's count of dropped before
-/// it (`before`); then each kept row to its place, its size less the dropped in its range, its
-/// parent the nearest kept (`to`: a kept row's place, a dropped one's parent's); then the
-/// supertypes of the tail's nodes on to their rows, a dropped node's gone. Gives back the
-/// rows, the supertypes, and the node the last wrap moved, at its place. A step a row.
-fn drop_rows(f: &mut FunctionBuilder<'_>, p: &[Value], inner: bool, heads: &mut Vec<(Block, Step)>) {
+/// `(rows, before, to, head, snode, skind, from, n, supers, moved, size, tail, stack, outer)`: the
+/// dropped rows (`DEAD`) of rows `from..n` taken out, the rest moved down. First each row's
+/// count of dropped before it (`before`); then each kept row to its place, its size less the
+/// dropped in its range (`to`: a kept row's place, a dropped one's parent's). A dropped row's
+/// parent is the innermost of the rows before it whose range holds it: a stack of them
+/// (`stack`, each its row and its range's end), or else `outer`, the innermost open node; it is
+/// marked (`DROPPED_IN`). Then each kept
+/// row's tail again, from its last descendant now; then the supertypes of the tail's nodes on
+/// to their rows, a dropped node's gone. Gives back the rows, the supertypes, the node the last
+/// wrap moved at its place, and `WIDE_TAIL` where a tail does not fit. A step a row.
+fn drop_rows(f: &mut FunctionBuilder<'_>, p: &[Value], inner: bool, w: rerail_tape_format::Widths, heads: &mut Vec<(Block, Step)>) {
     let flags = MemFlags::trusted();
-    let (rows, before, to, head, snode, skind, from, n, supers, moved) = (p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9]);
+    let (rows, before, to, head, snode, skind, from, n, supers, moved, size_c, tail_c, stack, outer) = (p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11], p[12], p[13]);
     let zero = f.ins().iconst(types::I64, 0);
-    // count(i, d).
-    let (count, cbody, place, pbody, kept_row, back, sback, sstep, sbody, sput, done) = (
-        f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(),
-        f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(),
+    let (count, cbody, place, pbody, pop, popped, kept_row, tails, tbody, back, sback, sstep, sbody, sput, done) = (
+        f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(),
+        f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(),
     );
-    f.append_block_param(count, types::I64);
-    f.append_block_param(count, types::I64);
-    f.append_block_param(place, types::I64);
-    f.append_block_param(back, types::I64);
-    f.append_block_param(sstep, types::I64);
-    f.append_block_param(sstep, types::I64);
-    f.append_block_param(done, types::I64);
-    heads.extend([(count, Step::Node), (place, Step::Node), (back, Step::Node), (sstep, Step::Node)]);
+    // count(i, d); place(i, depth); pop(depth); tails(j, wide); back(k); sstep(s, kept); done(kept, wide).
+    for (x, k) in [(count, 2), (place, 2), (pop, 1), (popped, 1), (tails, 2), (back, 2), (sback, 1), (sstep, 3), (sbody, 1), (sput, 1), (done, 2)] {
+        for _ in 0..k {
+            f.append_block_param(x, types::I64);
+        }
+    }
+    heads.extend([(count, Step::Node), (place, Step::Node), (pop, Step::Node), (tails, Step::Node), (back, Step::Node), (sstep, Step::Node)]);
     f.ins().jump(count, &[BlockArg::from(from), BlockArg::from(zero)]);
     f.switch_to_block(count);
     let (i, d) = (f.block_params(count)[0], f.block_params(count)[1]);
     slot_put(f, before, i, d);
     let end = f.ins().icmp(IntCC::Equal, i, n);
-    f.ins().brif(end, place, &[BlockArg::from(from)], cbody, &[]);
+    f.ins().brif(end, place, &[BlockArg::from(from), BlockArg::from(zero)], cbody, &[]);
     f.switch_to_block(cbody);
     let k = NodeCol::of(rows, AT_KIND).get(f, i);
     let dead = f.ins().icmp_imm(IntCC::Equal, k, i64::from(DEAD));
@@ -2072,20 +2163,50 @@ fn drop_rows(f: &mut FunctionBuilder<'_>, p: &[Value], inner: bool, heads: &mut 
     let d1 = f.ins().iadd(d, dead);
     let i1 = f.ins().iadd_imm(i, 1);
     f.ins().jump(count, &[BlockArg::from(i1), BlockArg::from(d1)]);
-    // place(i).
+    // place(i, depth): row i; the stack holds `depth` rows whose ranges were open before it.
     f.switch_to_block(place);
-    let i = f.block_params(place)[0];
+    let (i, depth) = (f.block_params(place)[0], f.block_params(place)[1]);
     let end = f.ins().icmp(IntCC::Equal, i, n);
-    f.ins().brif(end, back, &[BlockArg::from(supers)], pbody, &[]);
+    let wide0 = zero;
+    f.ins().brif(end, tails, &[BlockArg::from(from), BlockArg::from(wide0)], pbody, &[]);
     f.switch_to_block(pbody);
-    let row = NodeCol::row(f, rows, i);
-    let w = row_words(f, row);
-    let pr = f.ins().uload32(flags, row, AT_PARENT);
-    let outside = f.ins().icmp(IntCC::UnsignedLessThan, pr, from);
-    let safe = f.ins().select(outside, from, pr);
-    let mapped = slot_get(f, to, safe);
-    let pr = f.ins().select(outside, pr, mapped);
-    let k = f.ins().uload16(types::I64, flags, row, AT_KIND);
+    f.ins().jump(pop, &[BlockArg::from(depth)]);
+    // pop(depth): the rows whose ranges end at or before i, off the stack.
+    f.switch_to_block(pop);
+    let depth = f.block_params(pop)[0];
+    let (look, off) = (f.create_block(), f.create_block());
+    f.ins().brif(depth, look, &[], popped, &[BlockArg::from(depth)]);
+    f.switch_to_block(look);
+    let d1 = f.ins().iadd_imm(depth, -1);
+    let e_at = f.ins().ishl_imm(d1, 1);
+    let e_at = f.ins().iadd_imm(e_at, 1);
+    let top_end = slot_get(f, stack, e_at);
+    let ended = f.ins().icmp(IntCC::UnsignedLessThanOrEqual, top_end, i);
+    f.ins().brif(ended, off, &[], popped, &[BlockArg::from(depth)]);
+    f.switch_to_block(off);
+    f.ins().jump(pop, &[BlockArg::from(d1)]);
+    f.switch_to_block(popped);
+    let depth = f.block_params(popped)[0];
+    // The parent: the stack's top (its place, `to`), or else the innermost open node (`outer`,
+    // before `from`).
+    let has = f.ins().icmp_imm(IntCC::NotEqual, depth, 0);
+    let d1 = f.ins().iadd_imm(depth, -1);
+    let d1 = f.ins().select(has, d1, zero);
+    let j_at = f.ins().ishl_imm(d1, 1);
+    let pj = slot_get(f, stack, j_at);
+    let pj = f.ins().select(has, pj, from);
+    let mapped = slot_get(f, to, pj);
+    let pr = f.ins().select(has, mapped, outer);
+    let size = crate::native_cpu_tape::get(f, size_c, i, w.size);
+    let e = f.ins().iadd(i, size);
+    let e = f.ins().umin(e, n);
+    // Row i on the stack, its range to `e`.
+    let at = f.ins().ishl_imm(depth, 1);
+    slot_put(f, stack, at, i);
+    let at1 = f.ins().iadd_imm(at, 1);
+    slot_put(f, stack, at1, e);
+    let depth1 = f.ins().iadd_imm(depth, 1);
+    let k = NodeCol::of(rows, AT_KIND).get(f, i);
     let dead = f.ins().icmp_imm(IntCC::Equal, k, i64::from(DEAD));
     let (gone, i1) = (f.create_block(), f.ins().iadd_imm(i, 1));
     f.ins().brif(dead, gone, &[], kept_row, &[]);
@@ -2096,59 +2217,83 @@ fn drop_rows(f: &mut FunctionBuilder<'_>, p: &[Value], inner: bool, heads: &mut 
         let m = f.ins().bor_imm(m, DROPPED_IN);
         slot_put(f, head, pr, m);
     }
-    f.ins().jump(place, &[BlockArg::from(i1)]);
+    f.ins().jump(place, &[BlockArg::from(i1), BlockArg::from(depth1)]);
     f.switch_to_block(kept_row);
     let bi = slot_get(f, before, i);
     let j = f.ins().isub(i, bi);
     slot_put(f, to, i, j);
-    let size = f.ins().uload32(flags, row, AT_SIZE);
-    let e = f.ins().iadd(i, size);
-    let e = f.ins().umin(e, n);
     let be = slot_get(f, before, e);
     let lost = f.ins().isub(be, bi);
     let size = f.ins().isub(size, lost);
-    let dst = NodeCol::row(f, rows, j);
-    put_row_words(f, dst, w);
-    f.ins().istore32(flags, size, dst, AT_SIZE);
-    f.ins().istore32(flags, pr, dst, AT_PARENT);
+    let (src, dst) = (NodeCol::row(f, rows, i), NodeCol::row(f, rows, j));
+    let x = row_words(f, src);
+    put_row_words(f, dst, x);
+    crate::native_cpu_tape::put(f, size_c, j, size, w.size);
     if inner {
         let h = slot_get(f, head, i);
         slot_put(f, head, j, h);
     }
-    f.ins().jump(place, &[BlockArg::from(i1)]);
-    // back(k): the first supertype of a node from `from` on.
+    f.ins().jump(place, &[BlockArg::from(i1), BlockArg::from(depth1)]);
+    // tails(j, wide): each kept row's tail, from its last descendant now.
+    f.switch_to_block(tails);
+    let (j, wide) = (f.block_params(tails)[0], f.block_params(tails)[1]);
+    let dn = slot_get(f, before, n);
+    let kept_n = f.ins().isub(n, dn);
+    let end = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, j, kept_n);
+    f.ins().brif(end, back, &[BlockArg::from(supers), BlockArg::from(wide)], tbody, &[]);
+    f.switch_to_block(tbody);
+    let size = crate::native_cpu_tape::get(f, size_c, j, w.size);
+    let last = f.ins().iadd(j, size);
+    let last = f.ins().iadd_imm(last, -1);
+    let base = if w.from_start { j } else { last };
+    let s = crate::native_cpu_tape::start(f, rows, base);
+    let row_j = NodeCol::row(f, rows, j);
+    let end_j = f.ins().uload32(flags, row_j, AT_END);
+    let tl = f.ins().isub(end_j, s);
+    let tl = f.ins().band_imm(tl, 0xffff_ffff);
+    crate::native_cpu_tape::put(f, tail_c, j, tl, w.tail);
+    let odd = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, tl, if w.tail == 2 { 0xffff } else { 0x7fff_ffff });
+    let odd = f.ins().uextend(types::I64, odd);
+    let odd = f.ins().imul_imm(odd, crate::native_cpu_tape::WIDE_TAIL);
+    let wide = f.ins().bor(wide, odd);
+    let j1 = f.ins().iadd_imm(j, 1);
+    f.ins().jump(tails, &[BlockArg::from(j1), BlockArg::from(wide)]);
+    // back(k, wide): the first supertype of a node from `from` on.
     f.switch_to_block(back);
-    let k = f.block_params(back)[0];
+    let (k, wide) = (f.block_params(back)[0], f.block_params(back)[1]);
     let look = f.create_block();
-    f.ins().brif(k, look, &[], sback, &[]);
+    f.ins().brif(k, look, &[], sback, &[BlockArg::from(k)]);
     f.switch_to_block(look);
     let k1 = f.ins().iadd_imm(k, -1);
     let s = slot_get(f, snode, k1);
     let tail = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, s, from);
-    f.ins().brif(tail, back, &[BlockArg::from(k1)], sback, &[]);
+    f.ins().brif(tail, back, &[BlockArg::from(k1), BlockArg::from(wide)], sback, &[BlockArg::from(k)]);
     f.switch_to_block(sback);
-    f.ins().jump(sstep, &[BlockArg::from(k), BlockArg::from(k)]);
-    // sstep(s, kept).
+    let k = f.block_params(sback)[0];
+    f.ins().jump(sstep, &[BlockArg::from(k), BlockArg::from(k), BlockArg::from(wide)]);
+    // sstep(s, kept, wide).
     f.switch_to_block(sstep);
-    let (s, kept) = (f.block_params(sstep)[0], f.block_params(sstep)[1]);
+    let (s, kept, wide) = (f.block_params(sstep)[0], f.block_params(sstep)[1], f.block_params(sstep)[2]);
     let end = f.ins().icmp(IntCC::Equal, s, supers);
-    f.ins().brif(end, done, &[BlockArg::from(kept)], sbody, &[]);
+    f.ins().brif(end, done, &[BlockArg::from(kept), BlockArg::from(wide)], sbody, &[BlockArg::from(wide)]);
     f.switch_to_block(sbody);
+    let wide = f.block_params(sbody)[0];
     let at = slot_get(f, snode, s);
     let a1 = f.ins().iadd_imm(at, 1);
     let (b0, b1) = (slot_get(f, before, at), slot_get(f, before, a1));
     let s1 = f.ins().iadd_imm(s, 1);
     let lost = f.ins().icmp(IntCC::NotEqual, b0, b1);
-    f.ins().brif(lost, sstep, &[BlockArg::from(s1), BlockArg::from(kept)], sput, &[]);
+    f.ins().brif(lost, sstep, &[BlockArg::from(s1), BlockArg::from(kept), BlockArg::from(wide)], sput, &[BlockArg::from(wide)]);
     f.switch_to_block(sput);
+    let wide = f.block_params(sput)[0];
     let place_at = slot_get(f, to, at);
     slot_put(f, snode, kept, place_at);
     let sk = slot_get(f, skind, s);
     slot_put(f, skind, kept, sk);
     let kept1 = f.ins().iadd_imm(kept, 1);
-    f.ins().jump(sstep, &[BlockArg::from(s1), BlockArg::from(kept1)]);
+    f.ins().jump(sstep, &[BlockArg::from(s1), BlockArg::from(kept1), BlockArg::from(wide)]);
     f.switch_to_block(done);
-    let kept = f.block_params(done)[0];
+    let (kept, wide) = (f.block_params(done)[0], f.block_params(done)[1]);
     let dn = slot_get(f, before, n);
     let nodes = f.ins().isub(n, dn);
     let lo = f.ins().icmp(IntCC::UnsignedGreaterThanOrEqual, moved, from);
@@ -2157,7 +2302,7 @@ fn drop_rows(f: &mut FunctionBuilder<'_>, p: &[Value], inner: bool, heads: &mut 
     let safe = f.ins().select(inside, moved, from);
     let m = slot_get(f, to, safe);
     let moved = f.ins().select(inside, m, moved);
-    f.ins().return_(&[nodes, kept, moved]);
+    f.ins().return_(&[nodes, kept, moved, wide]);
 }
 
 
@@ -2354,6 +2499,13 @@ struct Lowered {
 /// calling convention): no stack grows, and every function returns the run's result to
 /// `tempo_stream`.
 pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) -> Result<CompiledStream, Error> {
+    compile_at(native, cut, rerail_tape_format::Narrow::WIDTHS, native.tag)
+}
+
+/// `compile_cut`, the tape written at `widths` (constants of the code: docs/parser-generators/37)
+/// with the language's tag `tag`.
+pub fn compile_at(native: &Structure, cut: &crate::native_cpu_clusters::Cut, widths: rerail_tape_format::Widths, tag: u8) -> Result<CompiledStream, Error> {
+    let widths_tag = (widths, tag);
     if cut.of.len() != native.structural.len() || cut.count == 0 || (native.structural.is_empty() && cut.count > 1) {
         return Err(Error::UnsupportedBackend);
     }
@@ -2461,8 +2613,9 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     };
     let mut fctx = FunctionBuilderContext::new();
     // The node words' rare loops, outlined (`TableFns`).
-    let table_fns = TableFns::make(&mut module, &native.structural)?;
-    let table = Table { extras: &native.readings.extras, inner: crate::rust_stream::marks(native), fns: &table_fns };
+    let image = crate::native_cpu_tape::Image { tag: widths_tag.1, widths: widths_tag.0, extras: &native.readings.extras };
+    let table_fns = TableFns::make(&mut module, &native.structural, image)?;
+    let table = Table { inner: crate::rust_stream::marks(native), w: widths_tag.0, fns: &table_fns };
     // The words made as functions of their own (`WordFn`), with a function a grammar rule.
     let outlined = !native.rules.is_empty() && cut.calls;
     // The calls open counted by the machine's stack (`calls_on_stack`), with `ctx` pinned.
@@ -3003,8 +3156,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                 (v.0, v.1, v.2, v.3, v.4, v.5, v.6, v.7, v.8, v.9, v.10, v.11, v.12, v.13, v.14, v.15, v.16, v.17, v.18, wc)
             };
             // The node rows' fields.
-            let (kind_c, field_c, _start_c, end_c, size_c) =
-                (NodeCol::of(rows_here, AT_KIND), NodeCol::of(rows_here, AT_FIELD), NodeCol::of(rows_here, AT_START), NodeCol::of(rows_here, AT_END), NodeCol::of(rows_here, AT_SIZE));
+            let (kind_c, field_c, end_c) = (NodeCol::of(rows_here, AT_KIND), NodeCol::of(rows_here, AT_FIELD), NodeCol::of(rows_here, AT_END));
             let fall = goto(pc + 1);
             // What a word's body reads and writes here (`WordEnv`): the state's fields, `ctx`'s
             // columns as this word has them, its refusal at its place.
@@ -3740,7 +3892,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         }
                         match way {
                             KEEP => {
-                                let size = size_c.get_row(&mut f, nrow);
+                                let sc = env_ctx(&mut f, SIZE_C);
+                                let size = crate::native_cpu_tape::get(&mut f, sc, i, table.w.size);
                                 let past = f.ins().iadd(i, size);
                                 f.ins().jump(scan, &[BlockArg::from(past), BlockArg::from(gone)]);
                             }
@@ -4017,7 +4170,8 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                     end_c.put_row(&mut f, root_row, len);
                     let nodes = mget(&mut f, Mem::Nodes);
                     let size = f.ins().isub(nodes, root);
-                    size_c.put_row(&mut f, root_row, size);
+                    let last = f.ins().iadd_imm(nodes, -1);
+                    table.close_cells(&mut f, &env, root, size, last, len);
                     if !native.readings.provisional.is_empty() {
                         // No node left holds a provisional field (a dropped record aside): a loop
                         // over the table, a step a record.
@@ -4045,11 +4199,26 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
                         f.ins().jump(check, &[BlockArg::from(i1)]);
                         f.switch_to_block(after);
                     }
+                    // A value past its width (an offset, a tail, the node count): refused at
+                    // these widths (docs/parser-generators/37: parsed again at wider ones).
+                    let wide = mget(&mut f, Mem::Wide);
+                    guard(&mut f, wide, pc);
+                    if table.w.size == 2 {
+                        let many = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, nodes, 0xffff);
+                        guard(&mut f, many, pc);
+                    }
+                    // The codes of the nodes not yet committed, then the image's end.
+                    table.commit(&mut f, &env, nodes);
+                    let image_p = env_ctx(&mut f, IMAGE);
+                    let cols = [SIZE_C, BASE_C, OFF_C, TAIL_C, CODE_KF, ID_OF].map(|at| env_ctx(&mut f, at));
+                    let codes = mget(&mut f, Mem::Codes);
+                    let (id, sig, _) = &table.fns.finish;
+                    let total = call_own(&mut f, *id, sig, &[image_p, cols[0], cols[1], cols[2], cols[3], cols[4], cols[5], nodes, codes, len])[0];
                     f.ins().store(flags, nodes, counts_c, 0);
                     let supers = mget(&mut f, Mem::Supers);
                     f.ins().store(flags, supers, counts_c, 8);
-                    // The table is written as it stands: no pass over it.
-                    f.ins().store(flags, zero, counts_c, 16);
+                    // The image's length.
+                    f.ins().store(flags, total, counts_c, 16);
                     f.ins().jump(fin, &[BlockArg::from(rows_here), BlockArg::from(nodes)]);
                     fin_used = true;
                 }
@@ -4362,7 +4531,7 @@ pub fn compile_cut(native: &Structure, cut: &crate::native_cpu_clusters::Cut) ->
     let marks = words.iter().filter_map(|b| if let Op::Mark { order, .. } = b.operation { Some(u64::from(order) + 1) } else { None }).max().unwrap_or(0);
     let wraps = framed(words);
     let two_slots = has_context(words);
-    Ok(CompiledStream { _module: module, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, wraps, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
+    Ok(CompiledStream { _module: module, entry, frame_shift, bounds: bounds(native), starts, lasts, marks, wraps, widths, tag, context: two_slots, clif, disassembly, code_bytes, heads, own_calls, clusters: cut.count as usize, crossings, word_insts, word_bytes, word_ranges, ir, entry_id: id.as_u32() })
 }
 
 /// What an instruction does to `ctx`'s fields (`state_in_registers`).
@@ -4779,22 +4948,54 @@ pub struct Tier1View {
 
 /// The buffers one call writes, sized from the stream and the program's `Bounds`.
 pub struct Tape {
-    /// The node table, a row a node.
-    pub rows: Vec<NodeRow>,
+    /// The working rows, 12 bytes a node (key, start, end): never part of the tape.
+    rows: Vec<u8>,
+    /// The tape's columns at the compiled widths (`SLACK` bytes past each), the bases, and the
+    /// image: the header's room, the code column in place, then room for the columns moved
+    /// after it and the code table (`native_cpu_tape::finish`).
+    size: Vec<u8>,
+    off: Vec<u8>,
+    tail: Vec<u8>,
+    base: Vec<u32>,
+    pub image: Vec<u8>,
+    /// The code ids: each key's (the thread's table, cleared by the image's end), each code's key
+    /// and first node.
+    id_of: Vec<u16>,
+    code_kf: Vec<u16>,
+    code_first: Vec<u32>,
     pub super_node: Vec<u32>,
     pub super_kind: Vec<u32>,
     open: Vec<u32>,
     returns: Vec<u32>,
-    /// The node count, the supertype count, the wraps (then the table is in `out`).
+    /// The node count, the supertype count, the image's length.
     pub counts: [u64; 3],
-    /// A program with `WRAP`'s: frames, chains, places, and the table in preorder. Empty
-    /// otherwise.
+    /// A program with `WRAP`'s: frames, chains, places (a drop's stack: two slots a node).
     frames: [Vec<u32>; 3],
     chains: [Vec<u32>; 3],
-    out: Vec<NodeRow>,
+}
+
+thread_local! {
+    /// The code ids by key, kept between a thread's tapes: each image's end clears what it set.
+    static IDS: std::cell::RefCell<Vec<u16>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+impl Drop for Tape {
+    /// The id table back to the thread. A run that stopped before its end clears what it set.
+    fn drop(&mut self) {
+        let mut ids = std::mem::take(&mut self.id_of);
+        if self.counts[2] == 0 {
+            ids.fill(crate::native_cpu_tape::NO_CODE as u16);
+        }
+        IDS.with(|t| *t.borrow_mut() = ids);
+    }
 }
 
 impl CompiledStream {
+    /// The widths the tape is written at, and the language's tag.
+    pub fn widths_tag(&self) -> (rerail_tape_format::Widths, u8) {
+        (self.widths, self.tag)
+    }
+
     /// Room for a stream of `n` starts: from the token count, as the lean parser sizes its
     /// tape (half again as many nodes as tokens; on the `.rr` corpus, 0.76 a token), and a
     /// token's path past it. A run that could pass it stops at a token word (`OVERFLOW`) and
@@ -4818,27 +5019,37 @@ impl CompiledStream {
     /// (`Tape::written`). `RERAIL_TAPE_POISON=1` fills them with ones instead, to show a slot
     /// read before it is written.
     fn sized(&self, nodes: usize, supers: usize, pushes: usize) -> Tape {
+        use crate::native_cpu_tape::SLACK;
         let poison = std::env::var_os("RERAIL_TAPE_POISON").is_some();
         let room = |n: usize| -> Vec<u32> { if poison { vec![u32::MAX; n] } else { Vec::with_capacity(n) } };
-        let rows = |n: usize| -> Vec<NodeRow> {
-            if poison {
-                // SAFETY: a row is plain bytes; all ones is one.
-                vec![unsafe { std::mem::transmute::<[u8; ROW as usize], NodeRow>([u8::MAX; ROW as usize]) }; n]
-            } else {
-                Vec::with_capacity(n)
-            }
-        };
+        let bytes = |n: usize| -> Vec<u8> { if poison { vec![u8::MAX; n] } else { Vec::with_capacity(n) } };
         let wraps = |n: usize| if self.wraps { n } else { 0 };
+        let w = self.widths;
+        let pad = rerail_tape_format::padded;
+        let blocks = nodes.div_ceil(rerail_tape_format::CHECKPOINT_STRIDE) + 1;
+        let image = rerail_tape_format::HEADER_BYTES + pad(2 * nodes) + pad(usize::from(w.size) * nodes) + pad(4 * blocks) + pad(usize::from(w.off) * nodes) + pad(usize::from(w.tail) * nodes) + 6 * nodes + 2 * SLACK;
+        let id_of = IDS.with(|t| {
+            let mut ids = std::mem::take(&mut *t.borrow_mut());
+            ids.resize(crate::native_cpu_tape::ID_SLOTS, crate::native_cpu_tape::NO_CODE as u16);
+            ids
+        });
         let mut t = Tape {
-            rows: rows(nodes),
+            rows: bytes(ROW as usize * nodes + SLACK),
+            size: bytes(usize::from(w.size) * nodes + SLACK),
+            off: bytes(usize::from(w.off) * nodes + SLACK),
+            tail: bytes(usize::from(w.tail) * nodes + SLACK),
+            base: room(blocks + SLACK),
+            image: bytes(image),
+            id_of,
+            code_kf: Vec::with_capacity(nodes + 1),
+            code_first: room(nodes + 1),
             super_node: room(supers),
             super_kind: room(supers),
             open: room(nodes),
             returns: room(if self.context { 2 * pushes } else { pushes }),
             counts: [0; 3],
             frames: std::array::from_fn(|_| room(wraps(nodes + 1))),
-            chains: std::array::from_fn(|_| room(wraps(nodes))),
-            out: rows(wraps(nodes)),
+            chains: std::array::from_fn(|k| room(wraps(if k == 2 { 2 * nodes + 2 } else { nodes }))),
         };
         t.clear();
         t
@@ -4865,7 +5076,7 @@ impl CompiledStream {
         // SAFETY: the caller's contract.
         let r = unsafe { self.call_once(bytes, len, tier1, tape) };
         if r != OVERFLOW {
-            // SAFETY: the code wrote the records and supertypes it counted.
+            // SAFETY: the code wrote the image and supertypes it counted.
             unsafe { tape.written(r == 0) };
             return r;
         }
@@ -4910,17 +5121,25 @@ impl CompiledStream {
             head: tape.chains[0].as_mut_ptr(),
             link: tape.chains[1].as_mut_ptr(),
             place: tape.chains[2].as_mut_ptr(),
-            out_rows: tape.out.as_mut_ptr(),
+            out_rows: std::ptr::null_mut(),
             output_stride: tier1.output_stride as u64,
             totals_stride: tier1.totals_stride as u64,
             totals_mask: tier1.totals_mask,
-            room_nodes: tape.rows.capacity() as u64,
+            room_nodes: (tape.code_first.capacity() - 1) as u64,
             room_supers: tape.super_node.capacity() as u64,
             room_pushes: (tape.returns.capacity() / if self.context { 2 } else { 1 }) as u64,
             stack_base: 0,
             stack_limit: 0,
             frame_shift: self.frame_shift,
             state: [0; Mem::COUNT as usize],
+            size_c: tape.size.as_mut_ptr(),
+            off_c: tape.off.as_mut_ptr(),
+            tail_c: tape.tail.as_mut_ptr(),
+            base_c: tape.base.as_mut_ptr(),
+            image: tape.image.as_mut_ptr(),
+            id_of: tape.id_of.as_mut_ptr(),
+            code_kf: tape.code_kf.as_mut_ptr(),
+            code_first: tape.code_first.as_mut_ptr(),
         };
         // SAFETY: the caller's contract; the function writes only the tape's buffers and the
         // state in `ctx`.
@@ -4974,87 +5193,85 @@ impl CompiledStream {
     }
 }
 
-/// The node table as tier 2 wrote it, in preorder: a row a node (`NodeRow`), the tape's own
-/// buffer (`Tape::columns`), not copied.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Columns {
-    pub rows: Vec<NodeRow>,
-    /// The supertypes, one row each: the node's record and the supertype's kind.
-    pub super_node: Vec<u32>,
-    pub super_kind: Vec<u32>,
-}
-
-impl Columns {
-    pub fn len(&self) -> usize {
-        self.rows.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.rows.is_empty()
-    }
-}
-
 impl Tape {
     /// The columns' lengths: none, before a call (the code writes through their room).
     fn clear(&mut self) {
-        for v in [&mut self.super_node, &mut self.super_kind, &mut self.open, &mut self.returns] {
+        for v in [&mut self.super_node, &mut self.super_kind, &mut self.open, &mut self.returns, &mut self.base, &mut self.code_first] {
             v.clear();
         }
         for v in self.frames.iter_mut().chain(&mut self.chains) {
             v.clear();
         }
-        self.rows.clear();
-        self.out.clear();
+        for v in [&mut self.rows, &mut self.size, &mut self.off, &mut self.tail, &mut self.image] {
+            v.clear();
+        }
+        self.code_kf.clear();
     }
 
-    /// The columns' lengths after a call: where it accepted, the records and supertypes it
-    /// counted (`counts`), the table's columns where it wrote them; else none.
+    /// The lengths after a call: where it accepted, the image's (`counts[2]`) and the
+    /// supertypes; else none. The header holds no digest (format 15: the engine keeps a
+    /// source's SHA-256 in memory).
     ///
     /// # Safety
-    /// The call wrote, where it accepted, each record's columns, its parent and extra flag, and
-    /// (with a wrap) the table in preorder, `counts[0]` of them, and `counts[1]` supertypes.
+    /// The call wrote, where it accepted, the image's `counts[2]` bytes and `counts[1]`
+    /// supertypes.
     unsafe fn written(&mut self, accepted: bool) {
+        let (len, s) = (self.counts[2] as usize, self.counts[1] as usize);
         self.clear();
         if !accepted {
+            self.counts[2] = 0;
             return;
         }
-        let (n, s) = (self.counts[0] as usize, self.counts[1] as usize);
-        let wrapped = self.counts[2] > 0;
         // SAFETY: the caller's contract; each is within its room (the code checks it).
         unsafe {
             for v in [&mut self.super_node, &mut self.super_kind] {
                 v.set_len(s);
             }
-            if wrapped {
-                self.out.set_len(n);
-            } else {
-                self.rows.set_len(n);
-            }
+            self.image.set_len(len);
         }
     }
 
-    /// The node table's rows, in preorder.
-    pub fn table(&self) -> &[NodeRow] {
-        let n = self.counts[0] as usize;
-        let rows = if self.counts[2] > 0 { &self.out } else { &self.rows };
-        &rows[..n.min(rows.len())]
+    /// The nodes the tape has room for.
+    pub fn room_nodes(&self) -> usize {
+        self.code_first.capacity() - 1
     }
 
-    /// The node table: the tape's own rows, cut to the records written.
-    pub fn columns(mut self) -> Columns {
-        let n = self.counts[0] as usize;
-        let mut rows = if self.counts[2] > 0 { std::mem::take(&mut self.out) } else { std::mem::take(&mut self.rows) };
-        rows.truncate(n);
-        let s = self.counts[1] as usize;
-        let (mut super_node, mut super_kind) = (std::mem::take(&mut self.super_node), std::mem::take(&mut self.super_kind));
-        super_node.truncate(s);
-        super_kind.truncate(s);
-        Columns { rows, super_node, super_kind }
+    /// The engine's tape: the image's bytes, as tier 2 wrote them (no copy).
+    pub fn image(mut self) -> Vec<u8> {
+        std::mem::take(&mut self.image)
     }
 
-    /// The node table as `stream::Node`s.
+    /// The tape's nodes as `stream::Node`s (the tests' comparisons with the interpreter), read
+    /// back from the image: each node's code's kind and field, its start (its block's base and
+    /// its offset), its size, and its end (its tail from where tails are measured).
     pub fn nodes(&self) -> Vec<Node> {
-        let mut out: Vec<Node> = self.table().iter().map(|r| Node { kind: r.kind, field: r.field, supers: Vec::new(), start: r.start, end: r.end, size: r.size }).collect();
+        let b = &self.image;
+        let u64_at = |at: usize| u64::from_le_bytes(b[at..at + 8].try_into().expect("8 bytes"));
+        let (n, codes) = (u64_at(rerail_tape_format::header::NODES) as usize, u64_at(rerail_tape_format::header::CODES) as usize);
+        let wd = rerail_tape_format::header::WIDTHS;
+        let (ws, wo, wt) = (usize::from(b[wd]), usize::from(b[wd + 1]), usize::from(b[wd + 2] & 0x7f));
+        let from_start = b[wd + 2] & rerail_tape_format::TAIL_FROM_START != 0;
+        let pad = rerail_tape_format::padded;
+        let code_at = rerail_tape_format::HEADER_BYTES;
+        let size_at = pad(code_at + 2 * n);
+        let base_at = pad(size_at + ws * n);
+        let off_at = pad(base_at + 4 * n.div_ceil(rerail_tape_format::CHECKPOINT_STRIDE));
+        let tail_at = pad(off_at + wo * n);
+        let table_at = pad(tail_at + wt * n);
+        let cell = |at: usize, w: usize, i: usize| -> u32 {
+            let c = &b[at + w * i..at + w * i + w];
+            if w == 2 { u32::from(u16::from_le_bytes([c[0], c[1]])) } else { u32::from_le_bytes([c[0], c[1], c[2], c[3]]) }
+        };
+        let kfs: Vec<u16> = (0..codes).map(|c| u16::from_le_bytes([b[table_at + 6 * c], b[table_at + 6 * c + 1]])).collect();
+        let starts: Vec<u32> = (0..n).map(|i| cell(base_at, 4, i / rerail_tape_format::CHECKPOINT_STRIDE) + cell(off_at, wo, i)).collect();
+        let mut out: Vec<Node> = (0..n)
+            .map(|i| {
+                let kf = kfs[cell(code_at, 2, i) as usize];
+                let size = cell(size_at, ws, i);
+                let from = if from_start { starts[i] } else { starts[i + size as usize - 1] };
+                Node { kind: kf & 0x3ff, field: kf >> rerail_tape_format::KIND_BITS, supers: Vec::new(), start: starts[i], end: from.wrapping_add(cell(tail_at, wt, i)), size }
+            })
+            .collect();
         for s in 0..self.counts[1] as usize {
             out[self.super_node[s] as usize].supers.push(self.super_kind[s] as u16);
         }
@@ -5082,14 +5299,27 @@ impl Parser {
         Ok(Parser { tier1: crate::native_cpu_block::compile(block)?, tier2: compile_cut(native, cut)? })
     }
 
-    /// The node table of `bytes` as tier 2 wrote it, or the word that refused it (the file goes
-    /// to tree-sitter).
-    pub fn columns(&self, bytes: &[u8]) -> Result<Columns, Refused> {
+    /// The engine's tape of `bytes` as tier 2 wrote it (its bytes), or the word that refused
+    /// it (the file goes to the fallback).
+    pub fn image(&self, bytes: &[u8]) -> Result<Vec<u8>, Refused> {
         let mut batch = crate::native_cpu_block::Batch::new(&self.tier1, &[bytes]);
         batch.call(&self.tier1);
         let mut tape = self.tape(&batch);
         self.words(&batch, &mut tape)?;
-        Ok(tape.columns())
+        Ok(tape.image())
+    }
+
+    /// `image`, with the supertypes tier 2 recorded beside it: each a node's index in the image
+    /// and the supertype's kind, in the order the words wrote them. The image's codes carry no
+    /// supertype classes yet (`native_cpu_tape::finish`), so a grammar with supertypes (JSON's
+    /// `_value`) adds them when the engine makes its tape.
+    pub fn image_supers(&self, bytes: &[u8]) -> Result<(Vec<u8>, Vec<(u32, u16)>), Refused> {
+        let mut batch = crate::native_cpu_block::Batch::new(&self.tier1, &[bytes]);
+        batch.call(&self.tier1);
+        let mut tape = self.tape(&batch);
+        self.words(&batch, &mut tape)?;
+        let supers = tape.super_node.iter().zip(&tape.super_kind).map(|(&n, &k)| (n, k as u16)).collect();
+        Ok((tape.image(), supers))
     }
 
 
