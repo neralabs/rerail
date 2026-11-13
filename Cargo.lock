@@ -3276,6 +3276,7 @@ dependencies = [
  "rerail-compiler",
  "rerail-rr-parser",
  "rerail-rr-syntax",
+ "rerail-tape-format",
 ]
 
 [[package]]
