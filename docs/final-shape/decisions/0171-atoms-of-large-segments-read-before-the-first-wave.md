@@ -55,6 +55,16 @@ before the first wave costs no more, and it takes the SQL out of the waves.
 Decision 0111's case is unchanged: the shared test store, 437 MB in 261,847 mostly tiny
 segments, is still looked up by key, because there a lookup reads little.
 
+## Checked
+
+A 44-file corpus (`l9750_graphql`), run against a copy of the warm data-layer store
+(`RERAIL_TAPE_CACHE=<copy>`, strict SQL):
+
+| Engine | Result |
+|---|---|
+| Before the fix | aborts after 5 s: `SELECT id FROM atom_key WHERE h IN rarray(?1)` |
+| After the fix | passes in 3 s; a second run passes in 1 s, with the same findings |
+
 ## What it costs
 
 - Memory: up to 256 MB of atom text held from the first wave. A warm whole-repository run held
