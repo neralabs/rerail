@@ -4,6 +4,21 @@ Every notable change to this rule pack, latest first. Each release says how many
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 every release is a patch, and a patch can add, change or remove rules, so read the notes before you update.
 
+## 0.1.9 (2026-11-12)
+
+537 rules, 316 of them on by default.
+
+### Changed
+
+- `ruff-b009-get-attr-with-constant` now starts off (was in Steer).
+- `ruff-b010-set-attr-with-constant` now starts off (was in Steer).
+
+### Fixed
+
+- `ruff-b009-get-attr-with-constant` no longer tells agents to swap every constant-name `getattr()` for a plain attribute read, which type checkers reject when the object's type does not declare the attribute. It asks for the read only where the type declares the attribute, and to keep `getattr()` otherwise rather than add a `# type: ignore`.
+- `ruff-b010-set-attr-with-constant` no longer tells agents to swap every constant-name `setattr()` for a plain assignment, which in type-checked code led them to add `# type: ignore`. It asks for the assignment only where the object's type declares the attribute, and to keep `setattr()` otherwise.
+- `ruff-up026-deprecated-mock-import` now checks long files in full. In a file of a few hundred lines or more it ran out of its work budget and missed `mock.mock` uses.
+
 ## 0.1.8 (2026-11-06)
 
 537 rules, 318 of them on by default.

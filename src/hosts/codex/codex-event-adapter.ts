@@ -1,4 +1,4 @@
-import { hookText, type AdapterDelivery, type AdapterEvent, type AdapterSession, type RerailEventLoop } from "../../engine/adapter-contract.js";
+import { hookText, stopContinuation, type AdapterDelivery, type AdapterEvent, type AdapterSession, type RerailEventLoop } from "../../engine/adapter-contract.js";
 
 export type CodexHookInput = Readonly<Record<string, unknown>>;
 
@@ -58,7 +58,7 @@ export function codexHookEvents(input: CodexHookInput): readonly AdapterEvent[] 
   }
   if (hook === "Stop") {
     const turnId = requiredText(input, "turn_id");
-    const continuation = input.stop_hook_active === true ? ":continued" : "";
+    const continuation = stopContinuation(input.stop_hook_active, input.last_assistant_message);
     const text = input.last_assistant_message;
     if (text !== null && typeof text !== "string") throw new TypeError("Codex Stop requires a string or null last_assistant_message");
     const events: AdapterEvent[] = [];

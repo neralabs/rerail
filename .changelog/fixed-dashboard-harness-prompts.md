@@ -1,1 +1,0 @@
-In the dashboard's Claude Code sessions, a subagent's report and the reminders Claude Code adds to a prompt (`<task-notification>`, `<agent-message>`, `<system-reminder>`) no longer show as what you said, and no longer become the session's title.
