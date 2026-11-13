@@ -451,6 +451,40 @@ owns(p,o) :- node(d,n,"call",_,_), doc(d,p,_), nearest(n,a,scope), field(a,"name
     );
 }
 
+/// `nearest` from a bound ancestor walks down its subtree, and finds what climbing from every node finds. Under node
+/// ids per definition `node_order`'s keys are in preorder but not dense (by granule run, decision 0121): a walk that
+/// stepped over keys stopped at the first granule boundary, so a scope's nodes past it were never reached.
+#[test]
+fn nearest_descends_across_granule_boundaries_as_the_climb_finds() {
+    if !crate::code_rule_dsl::facts::vtab::syntax::definition_ids() {
+        return;
+    }
+    let (_d, mut e) = executor();
+    let source = "import os\ndef f():\n    a = 1\n    def g():\n        return a\n    return g\nclass C:\n    def m(self):\n        return f()\nx = f()\ny = C()\n";
+    e.bind_snapshot(json!({"files":[{"path":"m.py","language":"python","source":source}]}).to_string()).unwrap();
+    // `down` binds `$a` alone, so it descends; `up` binds `$n` alone, so it climbs.
+    let program = r#"
+.decl node(d:number,n:node,k:symbol,s:number,e:number)
+.decl tape(n:node,p:node,s:number,d:number)
+.decl node_order(n:node,k:number)
+.input node,tape,node_order
+.decl scope(k:symbol)
+scope("module"). scope("function_definition"). scope("class_definition").
+.decl down(a:node,n:node)
+down(a,n) :- node(_,a,k,_,_), scope(k), nearest(n,a,scope).
+.decl up(a:node,n:node)
+up(a,n) :- node(_,n,_,_,_), nearest(n,a,scope).
+.output down,up
+"#;
+    e.run(program.into(), "python".into(), None).unwrap();
+    let keys = rows(&mut e, "SELECT max(k) - min(k) + 1, count(*) FROM node_order");
+    assert!(keys[0][0].as_i64() > keys[0][1].as_i64(), "the keys skip at granule boundaries: {keys}");
+    let up = rows(&mut e, "SELECT * FROM up ORDER BY c0, c1");
+    // Every node but the module's root has a scope above it.
+    assert_eq!(json!([[up.as_array().unwrap().len() + 1]]), rows(&mut e, "SELECT count(*) FROM node"));
+    assert_eq!(rows(&mut e, "SELECT * FROM down ORDER BY c0, c1"), up);
+}
+
 #[test]
 fn warm_lattice_extrema_use_key_indexes_over_a_large_group() {
     let (_d, mut e) = executor();

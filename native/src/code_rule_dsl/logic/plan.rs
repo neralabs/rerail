@@ -3992,61 +3992,35 @@ impl Model {
                         ctes.push(Cte::walk(near.clone(), None, vec![arm]));
                         a
                     } else {
-                        // A subtree is a run of preorder positions: the walk steps over preorder keys (`node_order`),
-                        // which are the node ids themselves when nodes are numbered in preorder. Ids by definition
-                        // are not contiguous in a subtree, so there each position is mapped back to its node.
-                        let keyed = crate::code_rule_dsl::facts::vtab::syntax::definition_ids();
-                        walk_columns.extend(["cur".to_owned(), "stop".to_owned()]);
-                        let size = col("t", "size");
-                        let start = if keyed { col("o", "k") } else { col("s", a) };
-                        let mut seed_from = vec![FromItem::cross(Relation::Cte(seed.clone()), "s")];
-                        if keyed {
-                            seed_from.push(on("node_order", "o", vec![eq(col("o", "n"), col("s", a))]));
-                        }
-                        seed_from.push(on("tape", "t", vec![eq(col("t", "n"), col("s", a))]));
-                        // The node at the walk's position.
-                        let at = if keyed { col("o", "n") } else { col("w", "cur") };
-                        let mut walk_from = vec![FromItem::cross(Relation::Cte(walk.clone()), "w")];
-                        if keyed {
-                            walk_from.push(on("node_order", "o", vec![eq(col("o", "k"), col("w", "cur"))]));
-                        }
-                        walk_from.push(on("node", "k", vec![eq(col("k", "n"), at.clone())]));
-                        walk_from.push(on("tape", "t", vec![eq(col("t", "n"), at.clone())]));
+                        // Down the tree from $a by parent lookups (`tape`'s `par`, indexed through the children lists):
+                        // every child is a candidate, and the walk goes on below each one not of the set, whose own
+                        // subtree has a nearer ancestor. Not by stepping over positions: ids per definition are not
+                        // contiguous in a subtree, and neither are `node_order`'s keys (by granule run, decision 0121).
+                        walk_columns.push("cur".to_owned());
                         let arms = vec![
                             Select {
-                                columns: with("s", vec![bin(Op::Add, start.clone(), integer(1)), bin(Op::Add, start, size.clone())]),
-                                from: seed_from,
-                                predicates: vec![bin(Op::Greater, size.clone(), integer(0))],
+                                columns: with("s", vec![col("t", "n")]),
+                                from: vec![FromItem::cross(Relation::Cte(seed.clone()), "s"), on("tape", "t", vec![eq(col("t", "par"), col("s", a))])],
                                 ..Select::default()
                             },
                             Select {
-                                columns: with(
-                                    "w",
-                                    vec![
-                                        Expr::Case {
-                                            branches: vec![(member(col("k", "kind")), bin(Op::Add, bin(Op::Add, col("w", "cur"), size), integer(1)))],
-                                            fallback: Box::new(bin(Op::Add, col("w", "cur"), integer(1))),
-                                        },
-                                        col("w", "stop"),
-                                    ],
-                                ),
-                                from: walk_from,
-                                predicates: vec![bin(Op::Less, col("w", "cur"), col("w", "stop"))],
+                                columns: with("w", vec![col("t", "n")]),
+                                from: vec![
+                                    FromItem::cross(Relation::Cte(walk.clone()), "w"),
+                                    on("node", "k", vec![eq(col("k", "n"), col("w", "cur")), Expr::Unary { operator: SqlUnaryOperator::Not, input: Box::new(member(col("k", "kind"))) }]),
+                                    on("tape", "t", vec![eq(col("t", "par"), col("w", "cur"))]),
+                                ],
                                 ..Select::default()
                             },
                         ];
                         ctes.push(Cte::walk(walk.clone(), Some(walk_columns), arms));
-                        let mut predicates = vec![bin(Op::LessOrEqual, col("w", "cur"), col("w", "stop"))];
+                        let mut predicates = Vec::new();
                         if env.contains_key(n) {
-                            predicates.push(eq(at.clone(), col("w", n)));
-                        }
-                        let mut from = vec![FromItem::cross(Relation::Cte(walk.clone()), "w")];
-                        if keyed {
-                            from.push(on("node_order", "o", vec![eq(col("o", "k"), col("w", "cur"))]));
+                            predicates.push(eq(col("w", "cur"), col("w", n)));
                         }
                         let arm = Select {
-                            columns: with("w", Vec::new()).into_iter().chain([(at, Some("near_out".to_owned()))]).collect(),
-                            from,
+                            columns: with("w", Vec::new()).into_iter().chain([(col("w", "cur"), Some("near_out".to_owned()))]).collect(),
+                            from: vec![FromItem::cross(Relation::Cte(walk.clone()), "w")],
                             predicates,
                             ..Select::default()
                         };
