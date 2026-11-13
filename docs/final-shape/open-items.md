@@ -4688,6 +4688,11 @@ graph comes from `KEPT`, which other tests in the process fill. Suspects: a modu
 run had begun phase 0's observer (`observe::begin`), or a graph cut (`Graph::of`) from a run batched with other
 seeds. The message now prints each graph's module digests, so the next failure shows which.
 
+**Seen again (2026-11-13, after the roll-up of 473167aa5 and 128796c88):** once in seven runs of its chunk at four
+threads, under load (average 59); the same file and the same part (`kept includes` `python/env.rr`). The run kept
+only the first 200 characters of the message, so the digests were lost; the chunk runner now keeps each chunk's
+whole log.
+
 **Closure:** the field that differs is known from a failure's message, and the cause is fixed; or it does not
 recur in ten runs of the chunk.
 
