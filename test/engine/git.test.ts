@@ -334,7 +334,9 @@ describe("gitBehindLauncher", () => {
   });
 
   it("runs the git.exe of Git for Windows 2.56's x64 build from ucrt64, and another build's where an install also holds one", () => {
-    const ucrt = String.raw`${git}\ucrt64\bin\git.exe`;
+    // Joined, not written in a template: there `\u` starts a Unicode escape, and a parser that holds to that skips
+    // the whole file.
+    const ucrt = win32.join(git, "ucrt64", "bin", "git.exe");
     const x64 = String.raw`${git}\mingw64\bin\git.exe`;
     const arm = String.raw`${git}\clangarm64\bin\git.exe`;
     expect(gitBehindLauncher(launcher, search, installed(ucrt))).toBe(ucrt);
