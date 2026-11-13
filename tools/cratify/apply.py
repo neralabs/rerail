@@ -440,7 +440,9 @@ class Facades(mounts.Facades):
             if a is None:
                 continue
             body = '\n'.join(indent + l for l in a.strip().split('\n'))
-            lines.append(f'{indent}#[allow(unused_imports)]\n{body}\n')
+            # in the engine a file's own use may shadow its owner's glob (the crates allow that in their lib.rs)
+            allow = 'unused_imports, hidden_glob_reexports' if self.c == mounts.ENGINE else 'unused_imports'
+            lines.append(f'{indent}#[allow({allow})]\n{body}\n')
 
 
 mounts.Facades = Facades
