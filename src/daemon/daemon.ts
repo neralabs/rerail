@@ -758,8 +758,8 @@ function privateKeyHint(platform: NodeJS.Platform): string {
 }
 
 /**
- * A TLS private key the daemon may not serve with because other accounts can read it. Its message names the key and
- * the command that makes it its owner's alone.
+ * A TLS private key file this account reads that the daemon may not serve with because other accounts can read it too.
+ * Its message names the key and the command that makes it its owner's alone.
  */
 export class TlsKeyExposedError extends Error {
   override readonly name = "TlsKeyExposedError";
@@ -770,9 +770,10 @@ export class TlsKeyExposedError extends Error {
  * other users can read lets any of them impersonate the daemon, so a key with any group or other permission is refused,
  * as ssh refuses one, and on Windows, which has no mode bits, a key whose ACL lets any account beyond the person,
  * SYSTEM and Administrators read it, as OpenSSH for Windows refuses one. A key outside the profile folder, under
- * `C:\certs` say, inherits an ACL that lets every local user read it. A key others can read is a `TlsKeyExposedError`,
- * on which the daemon serves this computer alone (`serveRerailDaemon`). A key whose readers cannot be read, a missing
- * or misspelled one among them, is a mistake in the command and stops the start. `access` is for tests.
+ * `C:\certs` say, inherits an ACL that lets every local user read it. A key file this account reads and others can read
+ * too is a `TlsKeyExposedError`, on which the daemon serves this computer alone (`serveRerailDaemon`). Any other path
+ * that is no key this account can read (a missing or misspelled one, a folder, a file this account may not read, one
+ * whose readers cannot be read) is a mistake in the command and stops the start. `access` is for tests.
  */
 export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = {}): Promise<DaemonTlsMaterial> {
   let others: string | undefined;
@@ -785,10 +786,22 @@ export async function loadDaemonTls(tls: DaemonTlsFiles, access: AccessReader = 
   if (others !== undefined) {
     // A function, so a `$` in the key's path is never read as a replacement pattern.
     const hint = privateKeyHint(access.platform ?? process.platform).replace("key.pem", () => `"${tls.keyFile}"`);
-    throw new TlsKeyExposedError(`${tls.keyFile} ${others}; a TLS private key must be readable by its owner only: ${hint}`);
+    const refusal = `${tls.keyFile} ${others}; a TLS private key must be readable by its owner only: ${hint}`;
+    throw (await readsAsFile(tls.keyFile)) ? new TlsKeyExposedError(refusal) : new Error(refusal);
   }
   const [cert, key] = await Promise.all([readFile(tls.certFile, "utf8"), readFile(tls.keyFile, "utf8")]);
   return { cert, key };
+}
+
+/** Whether this account can read `path` as a file. A folder or FIFO is never read: a FIFO's read waits for a writer. */
+async function readsAsFile(path: string): Promise<boolean> {
+  try {
+    if (!(await stat(path)).isFile()) return false;
+    await readFile(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** The SHA-256 fingerprint of the first certificate in `pem`, the one a TLS server presents as its own. */

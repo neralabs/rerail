@@ -295,7 +295,8 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
   everything written in it inherits; a home an earlier release made gets it at the next daemon launch
   (`src/engine/storage/windows-acl.ts`). A daemon TLS key whose ACL lets anyone else read it, or that has no DACL
-  (everyone has full control), is never served with: the daemon then serves this computer alone, on loopback (T9).
+  (everyone has full control), is never served with: when this account can read it, the daemon then serves this
+  computer alone, on loopback (T9).
 - The repository identity file is read without following a symlink (`openNoFollowSync`) plus size and format checks,
   and created with `wx` (`src/engine/catalog/repository-identity.ts`).
 - A ledger root in `.rerail/` gets a `.gitignore` of `*`, rewritten whenever it differs, and nothing in it is written
@@ -640,10 +641,11 @@ capability.
 **Mitigated** (`src/daemon/daemon.ts:loadDaemonTls`, `src/runtime/daemon-control.ts:daemonFetch`):
 
 - `rerail daemon start --tls-cert <pem> --tls-key <pem>` serves HTTPS, and never serves with a key file other users
-  could read: the daemon then starts without `--host`, `--public-host` and the TLS files (`serveRerailDaemon`), so it
-  binds loopback alone, as a daemon started with no options does, and other machines reach nothing. `daemon.json`
-  (`remoteRefused`), `daemon.log`, `rerail daemon start` and `rerail status` name the key and the command that makes it
-  private. A key file whose readers it cannot read, a missing one included, stops the start.
+  could read: when this account reads it, the daemon then starts without `--host`, `--public-host` and the TLS files
+  (`serveRerailDaemon`), so it binds loopback alone, as a daemon started with no options does, and other machines reach
+  nothing. `daemon.json` (`remoteRefused`), `daemon.log`, `rerail daemon start` and `rerail status` name the key and the
+  command that makes it private. Any other `--tls-key` that is no key this account can read stops the start: a missing
+  path, a folder, a file this account may not read, or one whose readers it cannot read.
 - A daemon other machines can reach (judged from its bind address or `--public-host`) refuses to start without TLS
   unless `--insecure-http` is passed.
 - `daemon.json` records the certificate's SHA-256. Rerail's clients (probe, MCP bridge, CLI, native session client)
