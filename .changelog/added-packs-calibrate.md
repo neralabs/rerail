@@ -1,1 +1,1 @@
-`rerail packs calibrate` reads a set-up repository's lint config again and updates the rule settings it gave, keeping any setting you made yourself; `--dry-run` shows the changes first.
+`rerail packs calibrate` reads a set-up repository's lint config again and updates the rule settings it gave, keeping any setting you made yourself; `--dry-run` shows the changes first. Rule settings set-up wrote before this release are not marked as the lint config's, so calibrate counts them as yours and keeps them.

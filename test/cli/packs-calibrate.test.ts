@@ -3,7 +3,7 @@ import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   listRepositoryRules,
   loadRuleCatalog,
@@ -21,6 +21,29 @@ import { fakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { installPack, removeInstalledPacks } from "../support/installed-packs.js";
 import { agentIo, fixture, removeFixtures, request, SETUP_TIMEOUT_MS, TYPESCRIPT } from "../support/repository-setup.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
+
+/** What calibrating does, in order: the rule catalog loaded, the lint config read, a transaction opened. */
+const steps = vi.hoisted((): string[] => []);
+vi.mock("../../src/engine/catalog/rule-catalog.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/engine/catalog/rule-catalog.js")>("../../src/engine/catalog/rule-catalog.js");
+  return { ...actual, loadRuleCatalog: (...args: Parameters<typeof actual.loadRuleCatalog>) => (steps.push("catalog loaded"), actual.loadRuleCatalog(...args)) };
+});
+vi.mock("../../src/engine/catalog/lint-config/repository-lint-config.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/engine/catalog/lint-config/repository-lint-config.js")>("../../src/engine/catalog/lint-config/repository-lint-config.js");
+  return { ...actual, readRepositoryLintConfig: (...args: Parameters<typeof actual.readRepositoryLintConfig>) => (steps.push("lint config read"), actual.readRepositoryLintConfig(...args)) };
+});
+vi.mock("../../src/engine/storage/database.js", async () => {
+  const actual = await vi.importActual<typeof import("../../src/engine/storage/database.js")>("../../src/engine/storage/database.js");
+  return {
+    ...actual,
+    openRerailDatabase: (...args: Parameters<typeof actual.openRerailDatabase>) => {
+      const database = actual.openRerailDatabase(...args);
+      const transaction = database.transaction.bind(database);
+      database.transaction = ((run, config) => (steps.push("transaction opened"), transaction(run, config))) as typeof database.transaction;
+      return database;
+    },
+  };
+});
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
@@ -176,6 +199,45 @@ describe("rerail packs calibrate", () => {
     expect(kinds(calibrated(where))).toEqual({ [NO_NAMESPACE]: "kept" });
   });
 
+  it("loads the rule catalog and reads the lint config before it opens the transaction that writes", async () => {
+    const where = await repository();
+    eslintrc(where.repo, { "@typescript-eslint/ban-ts-comment": "off" });
+    steps.length = 0;
+    expect(kinds(calibrated(where))).toEqual({ [TS_COMMENT]: "turned-off" });
+    expect(steps).toEqual(["catalog loaded", "lint config read", "transaction opened"]);
+  });
+
+  it("leaves a person's setting that agrees with the lint config unmentioned, and keeps one that differs without calling it a change", async () => {
+    const where = await repository({
+      // Off, as the config has it; the mode and options are theirs.
+      [NO_NAMESPACE]: { on: false, mode: "block", config: { allowDeclarations: true } },
+      // The pack's value, on, with the options the config gives.
+      [NO_EXPLICIT_ANY]: { mode: "block", config: { ignoreRestArgs: true } },
+      // On where the config turns it off; the pack's value, off, where the config turns it on.
+      [NO_THIS_ALIAS]: { on: true },
+      [ARRAY_TYPE]: { mode: "block" },
+    });
+    eslintrc(where.repo, {
+      "@typescript-eslint/no-namespace": "off",
+      "@typescript-eslint/no-explicit-any": ["error", { ignoreRestArgs: true }],
+      "@typescript-eslint/no-this-alias": "off",
+      "@typescript-eslint/array-type": "error",
+    });
+    const ids = [NO_NAMESPACE, NO_EXPLICIT_ANY, NO_THIS_ALIAS, ARRAY_TYPE];
+    const stored = rows(where.databasePath, ids);
+
+    expect(kinds(calibrated(where))).toEqual({ [NO_THIS_ALIAS]: "kept", [ARRAY_TYPE]: "kept" });
+    expect(calibrate(where, ["--dry-run"])).toBe([
+      "● acme-api's rule settings already follow its lint config (read as data, never run), except yours:",
+      "  Kept yours (set by you, or by an earlier Rerail release's set-up; your lint config says otherwise):",
+      `    ${ARRAY_TYPE}  ${because("array-type", "error")}`,
+      `    ${NO_THIS_ALIAS}  ${because("no-this-alias", "off")}`,
+      "  About your lint config:",
+      `    ${EXTENDS_NOTE}`,
+    ].join("\n") + "\n");
+    expect(rows(where.databasePath, ids)).toEqual(stored);
+  });
+
   it("names the notes on the lint config of the packs' linters, and leaves another linter's config alone", async () => {
     const where = await repository();
     eslintrc(where.repo, { "@typescript-eslint/no-explicit-any": ["error", { noSuchOption: true }] });
@@ -267,7 +329,7 @@ describe("calibrationText", () => {
       '    opts with max = 3, style = "x"  opts in config',
       "  Back to the pack's value (your lint config no longer sets them):",
       "    back",
-      "  Kept yours (you set them yourself; your lint config says otherwise):",
+      "  Kept yours (set by you, or by an earlier Rerail release's set-up; your lint config says otherwise):",
       "    mine  mine in config",
       "  About your lint config:",
       "    a note",
@@ -280,6 +342,14 @@ describe("calibrationText", () => {
     [
       "a change, with --dry-run", [change("turned-on", "r")], true,
       ["● Calibrating would change acme-api's rule settings from its lint config (read as data, never run):", "  Turned on:", "    r  r in config", "  Nothing was written (--dry-run)."],
+    ],
+    [
+      "only a person's settings kept, with --dry-run", [change("kept", "mine")], true,
+      [
+        "● acme-api's rule settings already follow its lint config (read as data, never run), except yours:",
+        "  Kept yours (set by you, or by an earlier Rerail release's set-up; your lint config says otherwise):",
+        "    mine  mine in config",
+      ],
     ],
   ])("says %s", (_, changes, dryRun, lines) => {
     expect(text(changes, { dryRun })).toBe(lines.join("\n"));
