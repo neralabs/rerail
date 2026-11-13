@@ -7604,11 +7604,11 @@ fn bind_kept(b: &mut Binder, modules: &Modules, db: &rusqlite::Connection, stats
             let extra = constant_counts(Some(&missing), source.as_ref());
             stats.measured(&rel, names.iter().cloned().zip(cols.iter().copied()), vals.iter().map(|(c, v, n)| (names[*c].clone(), *v, *n)).chain(extra));
         } else {
-            let patched = held.as_ref().and_then(|h| b.cell.and_then(|k| k.patched(&rel, h)).filter(|p| p.tested == tested).cloned());
+            let patched = held.as_ref().and_then(|h| b.cell.and_then(|k| k.patched(&rel, h)).filter(|p| p.tested == tested));
             // Kept, and known neither by delta nor as measured for these constants: its statistics are
             // made when a stratum first plans with it (decision 0101 §4), as the eager path below would
             // make them. Most strata a step reaches are quiet or join an empty delta and never do.
-            let measured_before = held.as_ref().and_then(|h| b.cell.and_then(|k| k.measured(&rel, h)).filter(|m| m.2 == tested).cloned());
+            let measured_before = held.as_ref().and_then(|h| b.cell.and_then(|k| k.measured(&rel, h)).filter(|m| m.2 == tested));
             // Decision 0123: made only when a planning round requests them, measured before or not.
             if patched.is_none() && b.lazy_kept
                 && let Some(h) = &held
@@ -7690,7 +7690,7 @@ fn bind_kept(b: &mut Binder, modules: &Modules, db: &rusqlite::Connection, stats
             }
             let known = match patched {
                 Some(p) => Some((p.stats.statistics(&|_| true), p.counts, tested.clone())),
-                None => held.as_ref().and_then(|h| b.cell.and_then(|k| k.measured(&rel, h)).filter(|m| m.2 == tested).cloned()),
+                None => held.as_ref().and_then(|h| b.cell.and_then(|k| k.measured(&rel, h)).filter(|m| m.2 == tested)),
             };
             let (measured, counts) = match known {
                 Some((measured, counts, _)) => (measured, counts),
