@@ -737,18 +737,23 @@ function heldCallsOf(restored: ReadonlyMap<string, RestoredCall>): HeldCall[] {
 
 /**
  * Ends suspended sessions no runtime opened again, as `closeSession` ends an open one when its daemon stops: their queued
- * scans are interrupted, their owner released and their record ended now.
+ * scans are interrupted, their owner released and their record ended now. One that fails is reported and the rest are
+ * still ended, as a runtime's close ends each of its sessions whatever another's does.
  */
 export function endSuspendedSessions(databasePath: string, suspensions: readonly SessionSuspension[]): void {
   const sessions = new SqliteSessionStore(databasePath);
   const controls = new SqliteAuditControlStore(databasePath);
   try {
     for (const { descriptor, ownerClaim } of suspensions) {
-      if (ownerClaim !== undefined) {
-        controls.interrupt(descriptor.sessionId);
-        controls.releaseOwner(descriptor.sessionId, ownerClaim);
+      try {
+        if (ownerClaim !== undefined) {
+          controls.interrupt(descriptor.sessionId);
+          controls.releaseOwner(descriptor.sessionId, ownerClaim);
+        }
+        sessions.closeSession(descriptor.sessionId);
+      } catch (error) {
+        process.stderr.write(`rerail: ending quiet session ${descriptor.sessionId} failed: ${error instanceof Error ? error.message : String(error)}\n`);
       }
-      sessions.closeSession(descriptor.sessionId);
     }
   } finally {
     controls.close();

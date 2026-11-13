@@ -731,16 +731,17 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     resumeSession: sessionId => resumeSuspended(routing, sessionId, options.now ?? Date.now),
     async close() {
       clearInterval(idleSweep);
-      const closed = Promise.withResolvers<void>();
-      server.close((error) => (error ? closed.reject(error) : closed.resolve()));
-      await closed.promise;
-      for (const timer of routing.idle.values()) clearTimeout(timer);
-      routing.idle.clear();
-      await Promise.allSettled(routing.pending);
       try {
+        const closed = Promise.withResolvers<void>();
+        server.close((error) => (error ? closed.reject(error) : closed.resolve()));
+        await closed.promise;
+        for (const timer of routing.idle.values()) clearTimeout(timer);
+        routing.idle.clear();
+        await Promise.allSettled(routing.pending);
         await Promise.all([...routing.runtimes.values()].map(runtime => runtime.dispose()));
       } finally {
-        // Also when a runtime's close failed: a suspended session left open would read as live with no daemon.
+        // Also when the server's or a runtime's close failed: a suspended session left open would read as live with no
+        // daemon.
         endSuspended(routing);
       }
     },
