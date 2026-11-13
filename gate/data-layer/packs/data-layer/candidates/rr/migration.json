@@ -5109,14 +5109,29 @@
       "rulePath": "gate/data-layer/packs/data-layer/candidates/rr/plan-scope-side-effects.rr",
       "ruleSha256": "d70da7cc31b5bed4b4172a95cf291ce59b15c752cecfc6207e2e01c8a578c4f2",
       "migrationProgress": {
-        "status": "kernel-progress; full rule remains draft",
-        "receipt": "gate/data-layer/fixtures/host/data-layer-port/rr-side-effects-kernel-progress.json.gz",
-        "sha256": "8cbe9a03be7bcf794d5b627875bf82d8087733a421b9af354fbb81c712d47d7e",
-        "helperSnapshotCases": 197,
-        "tapeSnapshotCases": 142,
-        "tapeFailures": 1,
+        "status": "hub kernel parity; full rule remains draft",
+        "receipt": "gate/data-layer/fixtures/host/data-layer-port/rr-hub1ee-kernel-progress.json.gz",
+        "sha256": "3904066cc3e405ac647a8682ad24898f265cdda14a86387c256a22d3bd7264dc",
+        "casesPerApi": 497,
+        "interfaces": [
+          "snapshot",
+          "workspace"
+        ],
+        "failures": 0,
+        "semanticFallbacks": 0,
         "fullMigrationAcceptance": false
-      }
+      },
+      "migrationProgressHistory": [
+        {
+          "status": "kernel-progress; full rule remains draft",
+          "receipt": "gate/data-layer/fixtures/host/data-layer-port/rr-side-effects-kernel-progress.json.gz",
+          "sha256": "8cbe9a03be7bcf794d5b627875bf82d8087733a421b9af354fbb81c712d47d7e",
+          "helperSnapshotCases": 197,
+          "tapeSnapshotCases": 142,
+          "tapeFailures": 1,
+          "fullMigrationAcceptance": false
+        }
+      ]
     },
     {
       "check": "plan_scope_ownership",
@@ -6401,10 +6416,54 @@
     "checkout": ".",
     "upstreamCommit": "1ee25bdf678c8fef902f66c2f3bebe4f5fb172f9",
     "upstreamBranch": "refs/heads/jeremybarnes/final-shape-serverplan-quality",
-    "status": "Serverplan-quality integration hub adopted exactly; root build and compatibility acceptance pending",
+    "status": "Serverplan-quality hub 1ee25bdf6 adopted exactly; root CLI 6e03c07070fbd0d0 registered; compatibility migration in progress",
     "nativeExtensions": [],
     "previousUpstreamCommit": "fcce32b26cf5e561ded72575ed6d327394f822fe",
-    "retiredCheckout": ".rerail/rr-migration-20261106/engine"
+    "retiredCheckout": ".rerail/rr-migration-20261106/engine",
+    "adoptionAudit": {
+      "format": "rerail.engine-cohort-adoption/v1",
+      "upstreamCommit": "1ee25bdf678c8fef902f66c2f3bebe4f5fb172f9",
+      "engineCommit": "333bd18a75fe2e33ca4f14c1385e919965603204",
+      "sourceTrees": {
+        "native": "8a5fe06ce9d5d66f6eab404b8127ecfa9748b5f0",
+        "accel": "b1d220195c1733143a144b414ef93b41956596ef",
+        "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
+        "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
+        "Cargo.toml": "cbe7eb09c3f22ebfb9b6c9cfefa738d24cb9dc95",
+        "Cargo.lock": "abf7bd05eded9842a426abd41372d8cf98025ded"
+      }
+    },
+    "cliArtifact": {
+      "format": "rerail.root-engine-build/v1",
+      "engineCommit": "333bd18a75fe2e33ca4f14c1385e919965603204",
+      "upstreamCommit": "1ee25bdf678c8fef902f66c2f3bebe4f5fb172f9",
+      "sourceTrees": {
+        "native": "8a5fe06ce9d5d66f6eab404b8127ecfa9748b5f0",
+        "accel": "b1d220195c1733143a144b414ef93b41956596ef",
+        "forest": "f55c107c6ff984f80be3a32e8ad1c4d84676d394",
+        "tools/bitlex": "52c6d259bd67cb1d5f1f1474390ad2d037475124",
+        "Cargo.toml": "cbe7eb09c3f22ebfb9b6c9cfefa738d24cb9dc95",
+        "Cargo.lock": "abf7bd05eded9842a426abd41372d8cf98025ded"
+      },
+      "path": ".rerail/modern-engine-alignment/cli-6e03c07070fbd0d0",
+      "sha256": "6e03c07070fbd0d0ae7da0c6950408396a19a9300dfde0acc865510e71b138ee",
+      "command": "RUSTUP_TOOLCHAIN=1.97.1 timeout 110 nice -n 19 cargo build -p rerail-engine --features headless --bin rerail-engine --profile profiling --locked",
+      "buildAttempts": [
+        {
+          "wallSeconds": 110.02,
+          "userCpuSeconds": 368.16,
+          "systemCpuSeconds": 52.31
+        },
+        {
+          "wallSeconds": 108.6,
+          "userCpuSeconds": 885.04,
+          "systemCpuSeconds": 33.57
+        }
+      ],
+      "wallSeconds": 218.62,
+      "userCpuSeconds": 1253.2,
+      "systemCpuSeconds": 85.88
+    }
   },
   "engineSourceSnapshots": [
     {

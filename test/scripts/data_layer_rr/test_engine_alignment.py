@@ -267,9 +267,9 @@ class EngineAlignmentTests(unittest.TestCase):
                 dict(path=name, sha256=replay.sha(path.read_bytes()))])
             def git(_root, *args):
                 if args == ('merge-base', '--is-ancestor', 'modern', 'HEAD'): return ''
-                if args == ('diff', '--name-only', 'modern', '--', 'native', 'accel', 'Cargo.toml', 'Cargo.lock'):
+                if args == ('diff', '--name-only', 'modern', '--', *migration.ENGINE_SOURCE_TREES):
                     return name
-                if args == ('ls-files', '--others', '--exclude-standard', '--', 'native', 'accel'): return ''
+                if args == ('ls-files', '--others', '--exclude-standard', '--', *migration.ENGINE_SOURCE_TREES): return ''
                 raise AssertionError(args)
             with patch.object(migration, 'git', git):
                 migration.verify_engine_alignment(root, receipt)

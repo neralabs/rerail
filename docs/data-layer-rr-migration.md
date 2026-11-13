@@ -22,6 +22,39 @@ The source cohort also covers the new `forest` crate.
 Earlier admissions and receipts retain their historical engines. They do not prove acceptance on the new hub.
 The new cohort requires a recorded root build, rule compatibility checks, and focused positive-case replays before further admission.
 
+## Hub acceptance checkpoint and remaining compatibility
+
+The root build now uses frozen CLI `6e03c07070fbd0d0…`, compiled from merge `333bd18a7`.
+Both bounded build attempts together cost 218.62 seconds wall, 1,253.20 seconds user CPU, and 85.88 seconds system CPU.
+These are compile costs, separate from rule execution. The first attempt reached its 110-second deadline; the second completed.
+
+Both APIs pass all 142 direct-parsing cases, all 158 supplied-tree and collector cases, and all 197 syntax helper cases.
+The comparisons retain positive findings, order, multiplicity, state, complete facts, and exact syntax-error text.
+The [hub receipt](../gate/data-layer/fixtures/host/data-layer-port/rr-hub1ee-kernel-progress.json.gz) retains all 994 comparisons, their programs, and their harness revisions.
+No source linter callback executes. Framework-owned parsing remains explicit; the separate tape corpus checks the same syntax outcome natively.
+The source-audit guard now checks `forest` and Bitlex, including untracked files. A four-failure TDD ladder proves the previous gap.
+All 749 Python tooling tests pass in 47.274 seconds after the guard repair and fixture update.
+
+The root compiler survey covers all 99 authored policies. It passes 62 and rejects 37 before execution.
+Reader acceptance does not prove runtime parity. The first visible failures are:
+
+| Interface or query | Policies | Required compatibility work |
+| --- | ---: | --- |
+| `dir_metadata` | 26 | Preserve file type and symlink metadata through the hub's observer and batched world requests. |
+| Anonymous token queries | 5 | Preserve Name versus singleton Tuple targets and union annotations through supported tape queries. |
+| `str_part_offset` | 3 | Preserve decoded-string offsets and their source locations, including escapes and Unicode. |
+| `bfs_walk` | 2 | Preserve ordered class-graph walks, repeated bases, cycles, and first member selection. |
+| `file_error` | 1 | Preserve read-error kinds, errno, raw bytes, and decoding positions. |
+
+The hub's directory listing follows symlinks. Removing the missing metadata guard can follow cycles and change Python discovery behavior.
+The BFS consumer walks supplied class graphs. Its replacement must preserve graph order, including an owner reached again through a cycle.
+The survey reports only each policy's first refusal. Runtime checks must also cover ownership metadata, typed input projections, printing, and native signing.
+Existing positive production and API receipts motivate those checks. No new Linear issue was created.
+
+The side-effects rule remains a draft. Its complete public API, incremental callbacks, original assertions, CLI, production, historical inputs, updates, and controls remain open.
+The 22 earlier admissions retain their historical receipts. This checkpoint does not re-certify them on the hub or increase the admission count.
+The four legacy gzip payloads remain byte-identical; their Git entries return to LFS pointers after the merge's filter conversion.
+
 ## Plan-scope side-effects: kernel checkpoint before hub integration
 
 The draft no longer resolves import aliases or removes eager-read names after rebinding.
@@ -172,9 +205,10 @@ It does not certify workspace acceptance, retained updates, controls, or admissi
 
 ## Active engine
 
-The latest registered root CLI is `f4db14313662e14c…`, built from native repair commit `4e0774680`.
-It includes Final `fcce32b26`. Generated-index sources, connection-union, and ForwardRef pass complete acceptance on this cohort.
-The thirteen earlier admissions retain their recorded engine versions.
+The latest registered root CLI is `6e03c07070fbd0d0…`, built from merge `333bd18a7` with hub `1ee25bdf6`.
+The engine source matches the integration hub exactly, including its `forest` crate. The current cohort has no local native extensions.
+Side-effects kernel parity passes through both APIs. Whole-rule hub acceptance remains open.
+Earlier admissions retain their original engine versions and receipts.
 
 Build and develop the engine in this repository root.
 Final `fcce32b26` is merged in `b9aee60a0`. Its earlier checkpoint used root CLI `f5e7abbacdd014c5…`.
