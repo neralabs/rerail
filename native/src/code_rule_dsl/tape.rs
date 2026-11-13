@@ -371,6 +371,14 @@ impl Code {
         Ok(code)
     }
 
+    /// An `ERROR` node's code under `field` (a parser that recovers writes it as tree-sitter does).
+    pub fn error(field: u16) -> Result<Self, String> {
+        if field as usize >= FIELD_LIMIT {
+            return Err(format!("field {field} past the tape's codes"));
+        }
+        Ok(Code { kf: ERROR_CODE | (field << 10), flags: CODE_ERROR, alias: SENTINEL, class_count: 0, classes: [0; MAX_NODE_SUPERTYPES] })
+    }
+
     /// Its supertype memberships, ascending.
     pub fn classes(&self) -> &[u16] {
         &self.classes[..usize::from(self.class_count)]

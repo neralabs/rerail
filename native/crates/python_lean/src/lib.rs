@@ -213,6 +213,36 @@ pub enum K {
     TFuture,
     TYield,
     TBackslash,
+    // In an `ERROR` (a recovered statement's pieces) alone: tokens elsewhere implied.
+    Error,
+    TLBracket,
+    TLBrace,
+    TIf,
+    TElse,
+    TElif,
+    TWhile,
+    TTry,
+    TFinally,
+    TClass,
+    TLambda,
+    TReturn,
+    TPass,
+    TBreak,
+    TContinue,
+    TRaise,
+    TDel,
+    TGlobal,
+    TNonlocal,
+    TAssert,
+    TAs,
+    TPrint,
+    TExec,
+    TAwait,
+    TArrow,
+    TWalrus,
+    TMatch,
+    TCase,
+    TType,
 }
 
 /// Each kind's name in tree-sitter-python and whether it is named, in `K`'s order.
@@ -401,6 +431,36 @@ pub const KINDS: &[(&str, bool)] = &[
     ("__future__", false),
     ("yield", false),
     ("\\", false),
+    // `ERROR` is tree-sitter's error node: the engine gives it the tape's own code (`ERROR_CODE`).
+    ("ERROR", true),
+    ("[", false),
+    ("{", false),
+    ("if", false),
+    ("else", false),
+    ("elif", false),
+    ("while", false),
+    ("try", false),
+    ("finally", false),
+    ("class", false),
+    ("lambda", false),
+    ("return", false),
+    ("pass", false),
+    ("break", false),
+    ("continue", false),
+    ("raise", false),
+    ("del", false),
+    ("global", false),
+    ("nonlocal", false),
+    ("assert", false),
+    ("as", false),
+    ("print", false),
+    ("exec", false),
+    ("await", false),
+    ("->", false),
+    (":=", false),
+    ("match", false),
+    ("case", false),
+    ("type", false),
 ];
 
 /// Fields, as the tape names them; 0 is no field.
@@ -546,12 +606,15 @@ pub fn tape_text(tape: &Tape) -> String {
         let from = if tape.widths[2] & TAIL_FROM_START != 0 { s } else { start(i + size - 1) };
         let end = from + cell(&tape.tail, tape.widths[2], i);
         let classes = CLASSES[usize::from(class)];
+        // ERROR as the engine's plain text names it: by the tape's code 0, tree-sitter's `end`.
+        let error = kind == K::Error as u8;
+        let flags = u8::from(extra) | 2 * u8::from(error);
         out.push_str(&format!(
             "{}{}{}{}{} [{s}..{end}]\n",
             "  ".repeat(open.len()),
-            KINDS[usize::from(kind)].0,
+            if error { "end" } else { KINDS[usize::from(kind)].0 },
             if field == 0 { String::new() } else { format!(" {}:", FIELDS[usize::from(field)]) },
-            if extra { " flags=1" } else { "" },
+            if flags == 0 { String::new() } else { format!(" flags={flags}") },
             if classes.is_empty() { String::new() } else { format!(" {{{}}}", classes.join(",")) },
         ));
         open.push(i + size);
@@ -568,7 +631,7 @@ mod tests {
 
     #[test]
     fn the_tables_agree() {
-        assert_eq!(KINDS.len(), K::TBackslash as usize + 1);
+        assert_eq!(KINDS.len(), K::TType as usize + 1);
         assert_eq!(FIELDS.len(), f::VALUE as usize + 1);
         assert!(KINDS.len() < 256 && FIELDS.len() <= 64 && CLASSES.len() <= 8);
     }

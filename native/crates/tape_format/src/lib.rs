@@ -329,12 +329,27 @@ impl<L: Layout> Writer<L> {
         self.starts[node]
     }
 
-    /// A closed node's subtree: itself and its descendants.
+    /// A closed node's subtree: itself and its descendants (0: the node is open).
     #[inline]
     pub fn size(&self, node: usize) -> u32 {
         let w = self.layout.widths().size;
         let at = node * usize::from(w);
         if w == 2 { u32::from(u16::from_le_bytes([self.size[at], self.size[at + 1]])) } else { u32::from_le_bytes(self.size[at..at + 4].try_into().expect("4 bytes")) }
+    }
+
+    /// Whether `node` is open: pushed or inserted, not yet closed.
+    #[inline]
+    pub fn is_open(&self, node: usize) -> bool {
+        self.size(node) == 0
+    }
+
+    /// A closed node's end.
+    pub fn end(&self, node: usize) -> u32 {
+        let w = self.layout.widths();
+        let at = node * usize::from(w.tail);
+        let tail = if w.tail == 2 { u32::from(u16::from_le_bytes([self.tail[at], self.tail[at + 1]])) } else { u32::from_le_bytes(self.tail[at..at + 4].try_into().expect("4 bytes")) };
+        let from = if w.from_start { self.starts[node] } else { self.starts[node + self.size(node) as usize - 1] };
+        from.wrapping_add(tail)
     }
 
     /// Cell `at` of a column of `width`-byte cells: a 2- or 4-byte store.
@@ -428,6 +443,8 @@ impl<L: Layout> Writer<L> {
             *self.keys.get_unchecked_mut(node) = key;
             *self.starts.get_unchecked_mut(node) = start;
         }
+        // Size 0 until its close: an open node (`is_open`).
+        Self::put(&mut self.size, node, self.layout.widths().size, 0);
         // The block's base holds unless the node starts a block, or starts before its base
         // (its offset wraps), or its offset needs 4 bytes, or nodes are marked.
         let off = start.wrapping_sub(self.block_base);
@@ -496,7 +513,7 @@ impl<L: Layout> Writer<L> {
         self.n = n + 1;
         self.keys[at] = key;
         self.starts[at] = start;
-        Self::put(&mut self.size, at, ws.size, 1);
+        Self::put(&mut self.size, at, ws.size, 0);
         Self::put(&mut self.tail, at, ws.tail, 0);
         self.uncode_from(at);
         for m in self.marks.iter_mut().filter(|m| m.0 as usize >= at) {

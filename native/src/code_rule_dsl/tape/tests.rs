@@ -2509,8 +2509,9 @@ pub(crate) fn python_tape_text(image: &TapeImage, grammar: &Grammar, source: &st
 }
 
 /// For the lean Python parser's oracle (`rerail-python-lean`'s `oracle` test): each file of
-/// `RERAIL_PY_FILES` (a list of paths) that tree-sitter-python parses without an error, its tape as
-/// `python_tape_plain` writes it, to `RERAIL_PY_OUT/<n>.txt` (the path on the first line).
+/// `RERAIL_PY_FILES` (a list of paths), its tape as `python_tape_plain` writes it, to
+/// `RERAIL_PY_OUT/<n>.txt` (the path on the first line; then an `ERROR` line where
+/// tree-sitter-python's tree has an error).
 #[test]
 #[ignore = "writes the oracle's expected tapes; needs RERAIL_PY_FILES and RERAIL_PY_OUT"]
 fn python_tape_expect() {
@@ -2521,14 +2522,18 @@ fn python_tape_expect() {
     let mut parser = tree_sitter::Parser::new();
     parser.set_language(&GrammarDialect::Python.get_ts_language()).unwrap();
     // With `RERAIL_PY_CUTS=k`, also each file cut at `k` places, as a file is while it is written:
-    // `<n>-<j>.txt`, the path and the cut on the first line, and `ERROR` where tree-sitter-python's
-    // tree has an error (which the lean parser must refuse).
+    // `<n>-<j>.txt`, the path and the cut on the first line, and an `ERROR` line before the tape
+    // where tree-sitter-python's tree has an error.
     let cuts: usize = std::env::var("RERAIL_PY_CUTS").ok().and_then(|s| s.parse().ok()).unwrap_or(0);
     let (mut written, mut errors) = (0usize, 0usize);
     for (n, path) in list.lines().filter(|l| !l.is_empty()).enumerate() {
         let Ok(source) = std::fs::read_to_string(path) else { continue };
         let tree = parser.parse(&source, None).unwrap();
         if tree.root_node().has_error() {
+            // Its tape with tree-sitter's recovery (`ERROR` nodes, missing tokens), after an
+            // `ERROR` line: what a forgiving lean parser is to write.
+            let image = TapeImage::encode(tree.root_node(), &grammar, &source, &|| false).unwrap().primary;
+            std::fs::write(out.join(format!("{n:05}.txt")), format!("{path}\nERROR\n{}", python_tape_plain(&image, &grammar))).unwrap();
             errors += 1;
             continue;
         }
@@ -2543,11 +2548,8 @@ fn python_tape_expect() {
             }
             let text = &source[..cut];
             let tree = parser.parse(text, None).unwrap();
-            let body = if tree.root_node().has_error() {
-                "ERROR\n".to_owned()
-            } else {
-                python_tape_plain(&TapeImage::encode(tree.root_node(), &grammar, text, &|| false).unwrap().primary, &grammar)
-            };
+            let tape = python_tape_plain(&TapeImage::encode(tree.root_node(), &grammar, text, &|| false).unwrap().primary, &grammar);
+            let body = if tree.root_node().has_error() { format!("ERROR\n{tape}") } else { tape };
             std::fs::write(out.join(format!("{n:05}-{j}.txt")), format!("{path}\t{cut}\n{body}")).unwrap();
         }
     }
@@ -2616,7 +2618,25 @@ fn python_tapes_from_the_lean_parser_are_tree_sitters() {
         let theirs = TapeImage::encode(tree.root_node(), &grammar, source, &|| false).unwrap().primary;
         assert!(ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(), "the tapes of {source:?} differ:\n{}\n{}", python_tape_plain(&ours, &grammar), python_tape_plain(&theirs, &grammar));
     }
-    for invalid in ["def f(:\n", "x = (1,\n", "if a\n    b\n", "x = 'open\n", "f(a b)\n", "class\n", "x = [1, 2\n"] {
+    // A text that ends in a statement (a file being written): recovered as tree-sitter recovers it,
+    // its `ERROR` byte for byte.
+    for cut in [
+        "x = (1,\n",
+        "x = [1, 2\n",
+        "def f(x):\n    return foo(a, b",
+        "import os\nfrom a.b import (c,",
+        "class A:\n    def f(self):\n        return 1\n\n    x = g(y.z",
+        "# c\nif x:\n    y = 1\n    # d\n    z = [a for",
+        "from os.path impor",
+    ] {
+        let tree = parser.parse(cut, None).unwrap();
+        assert!(tree.root_node().has_error(), "{cut:?} reads without an error");
+        let ours = python_lean::encode(&grammar, cut, &|| false).unwrap_or_else(|why| panic!("refused {cut:?}: {why:?}")).unwrap();
+        let theirs = TapeImage::encode(tree.root_node(), &grammar, cut, &|| false).unwrap().primary;
+        assert!(ours.to_bytes().unwrap() == theirs.to_bytes().unwrap(), "the tapes of {cut:?} differ:\n{}\n{}", python_tape_plain(&ours, &grammar), python_tape_plain(&theirs, &grammar));
+    }
+    // An error before the end: refused, for tree-sitter-python.
+    for invalid in ["if a\n    b\n", "x = 'open\n", "f(a b)\n", "x = (1,\ny = 2\n"] {
         assert!(parser.parse(invalid, None).unwrap().root_node().has_error(), "{invalid:?} reads without an error");
         assert!(python_lean::encode(&grammar, invalid, &|| false).is_err(), "accepted {invalid:?}");
     }
