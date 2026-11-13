@@ -301,7 +301,8 @@ These are stated requirements, not preferences. Each is quoted from where it was
 - **Processable in SQL with ast-index-spike techniques**, including the pure-SQL fallback over a
   tape table function (G7).
 - **No size increase.** 8–11 B a node was rejected, and a change must show clear benefits (G3,
-  0025).
+  0025). The user, 2026-11-13: for format 16 this is a tradeoff to measure
+  (bytes against GPU decode and random access, 0156 T1), not a bar set beforehand.
 - **Random access**, for anchor indexing (0025).
 - **The only per-node structure stored.** Everything else is a bare index or an aggregate of at most
   0.25 rows a node; no sidecars and nothing keyed by the digest (0026, G4; enforced by

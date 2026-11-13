@@ -1,6 +1,8 @@
 # 0156: Tape format 16, events, blocks and a codec the GPU decodes (draft)
 
-Status: draft (2026-11-13), a design pass for the user's review. Nothing is built.
+Status: draft (2026-11-13), a design pass for the user's review. Nothing is built. Revised the same
+day after the user's answers: open choices are written as tradeoffs to measure, not as bars to meet
+("Tradeoffs", below).
 Replaces, if accepted: 0025 (v9np), 0140's writer, and parts of 0026 and 0032.
 Survey: `notes/t35-tape-format-issues.md` (cited below as "t35 n").
 
@@ -85,7 +87,10 @@ file, so values stay small (the spike: v7's delta varints compress well, absolut
 **Fixed widths, always.** Every field has one width in every tape: no per-document widths, no
 `Redo`, no width branches in readers (t35 14–16). The bytes that are nearly always zero cost almost
 nothing once compressed (2). Limits: one gap or leaf under 2 GiB (bit 31 of `trail`); a block under
-2^32 nodes. Files have no limit but the 2^48-byte placement (3.3).
+2^32 nodes. Files have no limit but the 2^48-byte placement (3.3). The user accepted the 2 GiB
+limit (2026-11-13). If it ever binds, it can be lifted without changing the record: a longer gap is
+written as a chain of gaps, and a longer leaf as a leaf with continuations (zero-width extra events
+carrying the next 2 GiB).
 
 **What is not stored, and why that is now cheap.** Size, parent, depth, absolute start and end are
 all derived at decode by scans (4). The writer never patches a cell it already wrote: a node's size
@@ -114,8 +119,25 @@ grammar build. So the mask is exact, and needs no learned table, catalog or per-
 
 Measured here on the 31 grammars in the cargo registry: at most 11 supertypes can contain a kind
 (Ruby's `constant`; Python 4, Rust 4, JavaScript 3), so 16 bits hold every mask. The same count
-shows format 15's limits would fail a grammar we may add: Haskell has 84 fields, past its 64. Rerail's vendored,
-patched grammars still need the same count (experiment E2).
+shows format 15's limits would fail a grammar we may add: Haskell has 84 fields, past its 64.
+
+On Rerail's vendored grammars (`native/grammars/*/grammar.json`, supertypes expanded through hidden
+rules), plus tree-sitter-php 0.24.2 and tree-sitter-rust 0.24.2:
+
+```text
+grammar       fields   supertypes   most candidates for one kind
+python          32        6           4  (identifier)
+javascript      36        5           3
+typescript      43        7           5  (member_expression)
+php             31        5           3
+rust            31        6           4
+sql             61        0           0     61 fields: three short of format 15's limit of 64
+vue              0        0           0
+```
+
+Every mask fits in 5 bits today, so 16 bits leave room. SQL's 61 fields mean the u8 field is needed
+now, not only for grammars we might add. This counts from `grammar.json`; E2 checks it against the
+parser's cursor on a corpus.
 
 The removals:
 - **Code ids:** no first-use numbering, no 1 MiB id map, no renumbering, no `DeviceCode` rebuild per
@@ -164,11 +186,10 @@ It reads literal bytes, which sit in the compressed block or in the dictionary. 
   plane, and the encoder references the first occurrence's literals or the dictionary's.
 
 The cost of the rule: a repeat whose first occurrence was itself partly a copy has no contiguous
-literal source, so it becomes several copies. There is no entropy stage, so literals cost a byte
-each; zstd's entropy stage is what this gives up to be parallel and random-access. Whether the
-result meets "no size increase" is experiment E1, the first gate. If it does not, the fallback is an
-entropy stage that GPUs decode in parallel (interleaved rANS per plane), which gives up some random
-access.
+literal source, so it becomes several copies. And there is no entropy stage, so a literal costs a
+whole byte; zstd's entropy stage is what this gives up to stay parallel and random-access. How much
+that costs in bytes, against what it buys in decode speed and access, is the first tradeoff to
+measure (T1 in "Tradeoffs").
 
 A block may also be stored raw (no codec). Then every field is fixed-width at a known offset, so
 pure SQL can read it with `substr` arithmetic, as the spike's fallback did. That needed uncompressed
@@ -184,7 +205,7 @@ meets a condition, with a minimum and a maximum count (first guess: 1,024 to 16,
 4,096, to be measured). The cuts depend only on nearby content:
 - **Edits change only nearby blocks.** After an edit, the cuts realign within a block or two, and
   every other block is byte-identical. A one-line edit re-encodes one or two blocks, not the file
-  (t35 25). Node ordinals after it still shift; see question Q3.
+  (t35 25). Node ordinals after it still shift; see T7.
 - **The store keeps each block once**, by its body hash: across revisions, vendored copies and
   generated files.
 
@@ -291,8 +312,11 @@ This does not conflict with formats 14 and 15. No token is rebuilt from the gram
 still has no node for an implied token. A gap piece is the literal text of the gap, and rules still
 cannot read the token as a node (t31). Gaps repeat heavily, and the dictionary holds the common ones.
 
-Whether the store then keeps sources at all is question Q2. Named-only tapes are already 1.3–1.8×
-the zstd'd source (t28's table), so the comparison (E5) is structure + pieces against tape + source.
+**The text stream may replace the source** (the user, 2026-11-13). The source does not go away:
+the repository has it, and git's hashes stay. But a loaded document need not hold it, so memory
+shrinks. Named-only tapes are already 1.3–1.8× the zstd'd source (t28's table), so the comparison
+(E5) is structure + pieces against tape + source, both at rest and resident. See T6 for what each
+level costs to load.
 
 ## 7. Writers
 
@@ -343,7 +367,7 @@ Removed or made unnecessary, by t35 number:
 Not removed by a format:
 - **Sections 8 and 9 of t35** (conversions per phase, repeated hashing and validation, copies) are
   the code's. Format 16 gives them one complete resident form to converge on.
-- **Preorder ordinals as identity** (t35 25): they still shift after an edit (Q3).
+- **Preorder ordinals as identity** (t35 25): they still shift after an edit (T7).
 - **The named-only rule's effects on rule meaning** (t35 28) are untouched.
 
 ## Departures
@@ -366,33 +390,142 @@ Not removed by a format:
   - nothing else stored per node;
   - at-rest and resident forms designed together, with 16-byte aligned resident columns.
 
-## Experiments, in order
+## Tradeoffs
 
-Each runs on captured corpora (data-layer, CPython, the rerail repository), scaled 1 → 10 → 50
-files → full.
+None of these is decided. Each is a choice whose cost on one side and gain on the other have to be
+measured before it is made. Each lists the options, what moves between them, and the experiment that
+measures it.
 
-- **E1, size (the gate).** Format 16 + literal-pool LZ + shared dictionary, against format 15 + zstd
-  with its dictionary, at rest, per language. Also format 16 under plain zstd and plain LZ4, to
-  separate layout from codec. Bar: the stated "no size increase", or the measured ratio put to the
-  user (Q1).
-- **E2, codes.** On Rerail's vendored, patched grammars: supertypes per kind (16 bits?), fields
-  (u8?), kinds (u16), and the alias ids.
-- **E3, decode.** On Metal: GB/s and ns a node for codec + scans + the parent pass, cold and warm,
-  against today's host zstd + restore (0.7 ms a document). On the CPU: the same, against
-  `restore_tree`.
-- **E4, edits.** Blocks changed per commit over the data-layer repository's history, against whole
-  files today, and how many blocks the store shares.
-- **E5, text.** Structure + pieces + dictionary, against tape + zstd'd source; and names-only load
-  size.
-- **E6, writer.** The lean parser through the event writer, against 425.6M instructions (doc 35).
+### T1. The codec: how much compression to give for parallel decode and random access
 
-## Questions for the user
+```text
+option                          bytes at rest   GPU decode            random access      sync between copies
+literal-pool LZ (2)             most            fully parallel        one hop, K seqs    none
+literal-pool LZ + rANS/plane    fewer           parallel by lanes     per rANS block     none
+LZ4, references into output     fewer           threadgroup per blk   from block start   where they overlap
+zstd + dictionary (today)       fewest          host only, today      whole frame        n/a
+```
 
-- **Q1.** "Compresses reasonably": does the "no size increase" bar still stand for a codec chosen
-  for GPU decode and random access, or is a measured ratio acceptable?
-- **Q2.** If the source level of the text stream is exact, may it replace stored sources, keeping
-  only git's hashes for the source? Or should both be kept?
-- **Q3.** Should node identity stay the preorder ordinal, or become (block id, local index), so that
-  a node's key survives edits elsewhere in the file? That changes keys downstream (granules, facts,
-  memos).
-- **Q4.** Is "no single gap or leaf of 2 GiB or more" acceptable as the one per-node limit?
+- **What moves:** bytes (store size, I/O, memory for frames that are kept compressed) against
+  decode throughput on the device, the latency of one random read, and the encoder's cost.
+- **What moves it:** the planes' zero runs and the dictionary's hit rate decide how close the
+  literal-pool codec gets to zstd. An entropy stage recovers bytes but decodes in lanes, not one
+  byte at a time.
+- **Measured by:** E1 (bytes per node at rest, per language and option) and E3 (decode GB/s and the
+  latency of one read, per option). Wanted: the curve, so the choice is made from it.
+
+### T2. What the codec sees: byte planes, field planes or records
+
+- **Byte planes** make zero high bytes one run each. But a repeated subtree becomes one copy per
+  plane (18 copies).
+- **Whole records (16–18 B)** make a repeated subtree one long copy. But their zero bytes are
+  literals unless the codec has runs inside records.
+- **Field planes** (one per field, at its width) sit between the two.
+- **What moves:** bytes, and the sequence count, which is decode work.
+- **Measured by:** E1, all three layouts, on the same blocks.
+
+### T3. Block size and checkpoint interval
+
+- **Larger blocks:** fewer placement entries, fewer parents found across blocks, and better
+  compression within a block.
+- **Smaller blocks:** finer edits and sharing (more identical blocks), more threadgroups to occupy
+  the device, and a smaller resident unit.
+- **The checkpoint interval K** trades index bytes (about 12 B per K sequences) against the work of
+  one random read (up to K sequences).
+- **Measured by:** E1 and E4, at block targets of 1K, 4K and 16K nodes, and K of 16, 64 and 256.
+
+### T4. The dictionary: size and scope
+
+- **Per grammar build** (shared across repositories) or **per repository** (trained on its own
+  code).
+- **Larger:** more copies hit it, but more resident memory. A dictionary resident on the device
+  counts against the 1 GB, and every GPU invocation shares it.
+- **Training cost and versioning:** a new dictionary is a new id, old blocks keep theirs, and the
+  store keeps every dictionary any live block names.
+- **Measured by:** E1, at 16, 64 and 256 KB, per grammar and per repository.
+
+### T5. What is stored and what is derived
+
+- **Stored per node:** the open and close records only.
+- **Derived at decode:** position, depth, parent and size.
+- **A stored parent delta** (rec6's, 1 B in 96.6% of nodes) would turn the parent pass into a
+  subtraction: more bytes for less decode work. A stored size does the same for subtree skips.
+- **The balance differs by reader:** the device derives with scans in parallel; the CPU with a
+  stack; SQL climbs parents, and in the spike a climb was 1.6–3× faster than interval containment.
+- **Measured by:** E3, derive against store, on CPU and Metal. E7 counts how often each reader asks
+  for a parent.
+
+### T6. Text: which level a reader loads
+
+- **Structure only** needs no text.
+- **Names** add the leaf pieces.
+- **Source** adds the gaps too.
+- **What moves:** memory and I/O per loaded document against the work of rebuilding text for a text
+  test. A regex over source text needs the source level, or the text tests move to leaf pieces,
+  where the value index already is.
+- **Piece granularity:** a gap as one piece, or split into its implied part and its whitespace. A
+  split makes more pieces repeat, but costs more ids.
+- **Lengths:** `lead` and `trail` duplicate the pieces' lengths when text is present. Keeping both
+  lets structure load alone. Dropping the deltas when text is stored saves bytes, but ties positions
+  to the piece table.
+- **Measured by:** E5, bytes and load time per level, against tape + source as today.
+
+### T7. Node identity
+
+Today a node is its preorder ordinal in its file. Four ways to name a node:
+
+| | Key | Survives an edit elsewhere | Navigation | Key width in rows | Shared across files |
+|---|---|---|---|---|---|
+| A | preorder ordinal | no: every later node shifts | arithmetic (`i + 1`, `i + size`) | u32, u64 past 2^32 nodes | no |
+| B | (block, local index) | yes, outside the edited blocks | arithmetic within a block; through placement across blocks | block id interned to u32 + u16 | the block's own nodes, yes |
+| C | content path (granules, definition ids, 0121) | yes, while the path holds | needs a map to positions | a hash or interned id | no |
+| D | ordinal plus each edit's shift map | renumbered by the map | as A | as A | no |
+
+- **A** is today's. It is dense and fastest to navigate, but a 9-line commit changed 929k input rows
+  (t35 25), and 0121 built granules and definition ids on top to recover from that.
+- **B** comes nearly free with content-defined blocks. Its costs:
+  - a node next to an edit changes key even if it is unchanged, because its block was re-cut;
+  - rows carry a wider key;
+  - a fact that depends on context outside its block (a parent, a scope) is still per file.
+  It also opens a choice: facts computed per block body could be shared by every file holding that
+  block, where they depend only on the block.
+- **C** is the most stable, but it is not a position, so every read through it goes through a map.
+- **D** keeps A's keys and makes downstream maintenance apply each edit's shift, as DRed sessions
+  apply deltas (0077). The shift is a range: nodes from i on move by k.
+- **Constraint:** rows are budgeted at 4.5–8 B (the approved index target), and a key's width counts
+  against it.
+- **Measured by:** E4's history replay, rows changed per commit under A, B and D, and E8, the key
+  width's effect on the index and fact stores.
+
+## Experiments
+
+Each reports a curve over its options, not a pass or fail. Each runs on captured corpora
+(data-layer, CPython, the rerail repository), scaled 1 → 10 → 50 files → full.
+
+- **E1, bytes** (T1–T4). Bytes a node at rest per language, for codec × layout × block size ×
+  dictionary. With format 15 + zstd + its dictionary as the reference line.
+- **E2, codes.** Supertype masks, fields and kinds, checked against the parser's cursor on a corpus.
+  The grammar counts are in 1.3.
+- **E3, decode** (T1, T5). On Metal and on the CPU: throughput, the latency of one random read, and
+  the parent pass derived against stored. Against today's host zstd + restore (0.7 ms a document).
+- **E4, edits** (T3, T7). Replay the data-layer repository's history: blocks re-encoded per commit,
+  blocks shared, and rows changed downstream under each identity.
+- **E5, text** (T6). Bytes and load time for each level, against tape + zstd'd source; the share of
+  gaps the dictionary covers.
+- **E6, writer.** The lean parser through the event writer, against 425.6M instructions (doc 35), and
+  the tree-sitter path against `pack`.
+- **E7, readers' needs** (T5). How often each reader asks for a parent, a size, a line, a text.
+- **E8, key width** (T7). Index and fact store bytes a row under each identity, against the
+  4.5–8 B/row target.
+
+E1 and E2 need only a CPU reference encoder over existing tapes, so they come first. They also
+decide the layouts E3 should try on the device.
+
+## Answered by the user (2026-11-13)
+
+- **Size:** the choice is made from measured tradeoffs, not from a bar set before measuring (T1–T4).
+- **Sources:** the text stream may replace the source in what is loaded. The source does not go
+  away, but less data in memory is the aim (6).
+- **Node identity:** to be explored (T7).
+- **Limits:** a 2 GiB gap or leaf is fair. It can be lifted with chained gaps and leaf continuations
+  if ever needed (1.1).
