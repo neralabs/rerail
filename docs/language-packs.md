@@ -453,7 +453,7 @@ cp LICENSE packs/laravel/LICENSE
   "version": "0.1.0",
   "license": "Apache-2.0",
   "files": ["pack.json", "rules", "LICENSE", "README.md"],
-  "peerDependencies": { "@neralabs/rerail": ">=0.1.0-0 <0.2.0" },
+  "peerDependencies": { "@neralabs/rerail": ">=0.1.0-0" },
   "peerDependenciesMeta": { "@neralabs/rerail": { "optional": true } },
   "publishConfig": { "access": "public" }
 }

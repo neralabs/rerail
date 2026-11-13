@@ -122,7 +122,7 @@ Pack changes run one at a time, a running daemon picks them up without a restart
 
 - **Lock.** Set-up's install, `rerail packs add` and `remove` hold `$RERAIL_HOME/packs/.lock`. Others wait up to five minutes; a lock whose process has gone is taken over.
 - **Reload.** A running daemon re-reads the catalog at once after an install, removal or active-core change (`rerail update`), and rebuilds every checkout's rules and the dashboard's activity. Edits inside a folder-linked pack are seen only when its `pack.json` or `package.json` changes.
-- **Core range.** `peerDependencies["@neralabs/rerail"]` (`>=0.1.0-0 <0.2.0` today) covers the core versions a pack was released for. When `rerail update` activates a core outside an installed pack's range, it names the pack and range. Repositories adding it run none of its rules until a fitting version is installed (`rerail packs add <package>`).
+- **Core range.** `peerDependencies["@neralabs/rerail"]` names the core versions a pack fits. Rerail's own packs name the oldest and no newest (`>=0.1.0-0` today), so a newer core never leaves one out by its range; a third party's pack may name a newest too. When `rerail update` activates a core outside an installed pack's range, it names the pack and range. Repositories adding it run none of its rules until a fitting version is installed (`rerail packs add <package>`).
 
 </details>
 
