@@ -177,7 +177,7 @@ def _execute(engine, rule, files, options, sources, workspace_name, *, physical_
         if attempted.exists():
             raise AssertionError('Native rule execution attempted Python: '+attempted.read_text().strip())
         if run.returncode:
-            raise RuntimeError(run.stderr)
+            raise RuntimeError(f'Native run-rr exited with status {run.returncode}: {run.stderr}')
         native = json.loads(run.stdout)
         native['programInputs'] = program_inputs(native['programInputs'])
         return native
